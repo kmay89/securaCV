@@ -50,12 +50,20 @@
 //     from any host inside the tap's 30 s took it): with the owner's page
 //     asking from before the tap, a second address asking in the same
 //     window gets 409 tap_contended (no cookie, no secret, a body that
-//     parses), the owner's page gets 409 too, the tap is closed and one
-//     health line, naming no address, says so; a sole asker is served at
+//     parses, a hint that sends the owner's client in first and never
+//     advises a bare re-tap), the owner's page gets 409 too, the tap is
+//     closed and one health line, naming no address in its message or its
+//     detail, says so; the 409 ends lookback after the other address's last
+//     ask, so the owner's retry 10 s after the other device stopped asks
+//     first (403) and its next tap is served; a re-tap served to anyone
+//     ends the 409; a sole asker is served at
 //     once; an attacker that asks first after the tap loses to an owner who
 //     asked before it; a wrong bearer or a wrong claim from the second
 //     address counts as an ask, a right bearer or a right claim does not;
-//     the BLE OTA break-glass take leaves nothing to take; contention does
+//     the BLE OTA break-glass take leaves nothing to take, and a take or a
+//     re-tap that lands between the tap step's judgment and its take
+//     refuses the request (403, nothing served; the re-tap left for the next
+//     ask); contention does
 //     not carry into a clean next tap; a socket that cannot say is refused
 //     with the tap left for the next asker; a held bearer still gets its
 //     429 under contention; the 409 clears no backoff; an expired tap is
@@ -157,6 +165,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <map>
 #include <set>
@@ -251,13 +260,21 @@ static void secure_zero(void* p, size_t n) {
   while (n--) *vp++ = 0;
 }
 
+// Each health line as /api/logs would serve it: the message, then " | " and
+// the detail when there is one (the device's ring entry keeps both, and any
+// session can read them), so a check that a line names no address holds
+// both halves.
 static std::vector<std::string> g_health_lines;
 // Milliseconds each health line moves the fake clock (0 but in the one test
 // that needs time to pass inside the handler, between its reads).
 static uint32_t g_health_line_ms = 0;
 void log_health(LogLevel, LogCategory, const char* message, const char* detail = nullptr) {
-  (void)detail;
-  g_health_lines.push_back(message ? message : "");
+  std::string line = message ? message : "";
+  if (detail && *detail) {
+    line += " | ";
+    line += detail;
+  }
+  g_health_lines.push_back(line);
   stub_grant::now_ms += g_health_line_ms;
 }
 
@@ -393,6 +410,7 @@ void reset_device() {
   g_qr_payloads.clear();
   g_health_lines.clear();
   g_health_line_ms = 0;
+  stub_grant::millis_hook = nullptr;
   g_live_session = "";
   g_cookie_checks = 0;
   csi_integration::g_pair_token.clear();
@@ -494,7 +512,14 @@ void check_tap_contended(const httpd_req_t& r) {
   const json_strict::Value* err = v.get("error");
   CHECK(err && err->kind == json_strict::Value::String && err->text == "tap_contended");
   const json_strict::Value* hint = v.get("hint");
-  CHECK(hint && hint->text.find("wait 10 seconds") != std::string::npos);
+  // The hint sends the owner's client in first (sweep F342's review): the
+  // device sends this answer only while another address is asking, and a
+  // bare re-tap then goes to that address if it is the one still asking.
+  CHECK(hint && hint->text.find("start your request first and keep it asking, then press BOOT") !=
+                    std::string::npos);
+  CHECK_MSG(hint && hint->text.find("tap BOOT again") == std::string::npos &&
+                hint->text.find("wait 10 seconds") == std::string::npos,
+            "the 409's hint advises a bare re-tap: " + (hint ? hint->text : std::string()));
   CHECK(!carries_secret(r));
   CHECK(!has_header(r, "Set-Cookie"));
 }
@@ -1127,6 +1152,7 @@ void test_two_hosts_in_one_tap_are_both_refused() {
   CHECK(receipt(a_after) == 0);
   check_tap_contended(a_after.r);
   CHECK_MSG(tap_closed_lines() == 1, "the closed tap wrote " + std::to_string(tap_closed_lines()) + " lines");
+  // Message and detail alike (the stub keeps both, as /api/logs serves them).
   for (const auto& l : g_health_lines) {
     CHECK_MSG(l.find("192.168") == std::string::npos, "a health line names an address: " + l);
   }
@@ -1137,18 +1163,194 @@ void test_two_hosts_in_one_tap_are_both_refused() {
     }
   }
   CHECK_MSG(console_names_both, "the console does not name both askers");
-  // Every ask for the rest of the tap's 30 s hears the same, and then the
-  // route answers its 403 again.
-  stub_grant::now_ms += 20000;
-  Req a_later;
-  CHECK(receipt(a_later) == 0);
-  check_tap_contended(a_later.r);
-  stub_grant::now_ms += 10000;        // T+31.1 s
+  // The 409 lasts while B is still asking: at B's last ask plus the lookback
+  // (T+10.1 s) the owner still hears it, and one millisecond later, inside
+  // the closed tap's 30 s, the route answers its 403 again, so a page that
+  // waited and asks again keeps asking for the next tap. (Before, every ask
+  // was 409 until T+30 s.)
+  stub_grant::now_ms += 9100;         // T+10.1 s
+  Req a_edge;
+  CHECK(receipt(a_edge) == 0);
+  check_tap_contended(a_edge.r);
+  stub_grant::now_ms += 1;
   Req a_done;
   CHECK(receipt(a_done) == 0);
   check_gate_refusal(a_done.r);
   CHECK(tap_closed_lines() == 1);
   CHECK(g_served.empty());
+}
+
+// The bench row (hardware_verification_checklist.md, "A second asker closes
+// the tap"): B asks once and stops; the owner's page stops on its 409; the
+// owner waits about 10 s and clicks Use BOOT Tap Once again. That click's
+// first poll is 403, not 409, so the page keeps asking, and the owner's next
+// tap serves it. Before, the first poll of a click 10 to 30 s after the tap
+// was 409 and the page stopped again before the press.
+void test_the_owner_retries_after_the_other_device_stops() {
+  reset_device();
+  Req a_click;
+  CHECK(receipt(a_click) == 0);
+  stub_grant::now_ms += 1000;
+  const uint32_t T = stub_grant::now_ms;
+  open_tap();
+  stub_grant::now_ms += 100;
+  Req b;
+  b.from(192, 168, 1, 21);
+  CHECK(receipt(b) == 0);
+  check_tap_contended(b.r);
+  stub_grant::now_ms += 900;
+  Req a_stops;
+  CHECK(receipt(a_stops) == 0);
+  check_tap_contended(a_stops.r);     // the page stops here
+  stub_grant::now_ms = T + 12000;     // waited 10 s, clicked again
+  Req a_retry;
+  CHECK(receipt(a_retry) == 0);
+  CHECK_MSG(a_retry.r.status == "403 Forbidden",
+            "the retry's first poll, B quiet 11.9 s, answered " + a_retry.r.status);
+  check_gate_refusal(a_retry.r);
+  stub_grant::now_ms += 2000;
+  Req a_poll;
+  CHECK(receipt(a_poll) == 0);
+  check_gate_refusal(a_poll.r);
+  stub_grant::now_ms += 1000;         // T+15 s: the tap
+  open_tap();
+  stub_grant::now_ms += 1000;
+  Req a_served;
+  CHECK_MSG(receipt(a_served) == 1, "the owner's retry was not served after the other device stopped");
+  CHECK(g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  CHECK(has_header(a_served.r, "Set-Cookie"));
+  CHECK(tap_closed_lines() == 1);
+}
+
+// A re-tap served inside the first tap's 30 s ends the contention: the asks
+// after it hear 403, never "the tap was closed". Here B polls every 200 ms,
+// the owner asks once after the closed tap (409) and then re-taps without
+// asking first, the bare re-tap the 409's hint used to advise: the re-tap
+// goes to B, the residual a tap no client of the owner's was asking for.
+// Before, the owner's next ask was 409 although the token, the SoftAP
+// password and the pin had just been handed out.
+void test_a_served_retap_ends_the_contention() {
+  reset_device();
+  Req a_click;
+  CHECK(receipt(a_click) == 0);
+  stub_grant::now_ms += 1000;
+  const uint32_t T = stub_grant::now_ms;
+  open_tap();
+  size_t b_served = 0;
+  bool retapped = false;
+  for (uint32_t d = 100; d <= 12700; d += 200) {
+    stub_grant::now_ms = T + d;
+    if (d == 2100) {
+      Req a;
+      CHECK(receipt(a) == 0);
+      check_tap_contended(a.r);
+    }
+    if (!retapped && d >= 12500) {
+      open_tap();
+      retapped = true;
+    }
+    Req b;
+    b.from(192, 168, 1, 21);
+    b_served += receipt(b);
+  }
+  CHECK_MSG(b_served == 1, "the poller was served " + std::to_string(b_served) + " times");
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  stub_grant::now_ms = T + 13000;
+  Req a_next;
+  CHECK(receipt(a_next) == 0);
+  CHECK_MSG(a_next.r.status == "403 Forbidden",
+            "after a served re-tap the owner heard " + a_next.r.status + " (\"the tap was closed\")");
+  check_gate_refusal(a_next.r);
+  CHECK(tap_closed_lines() == 1);
+}
+
+// The millis() hook (stubs/receipt_grant/Arduino.h), armed with its call
+// count zeroed, and disarmed.
+void arm_millis_hook(std::function<uint32_t(unsigned)> hook) {
+  stub_grant::millis_calls = 0;
+  stub_grant::millis_hook = std::move(hook);
+}
+void disarm_millis_hook() { stub_grant::millis_hook = nullptr; }
+
+// Which millis() call of a credential-less receipt request is the tap
+// step's clock read (tap_arbitrate()'s now_ms, read after the peek()): each
+// call returns a clock one millisecond further on, and the arbiter records
+// the ask at the time it read. The request is an ask with the tap closed
+// (403), so it stands for the owner's click before the tap.
+unsigned tap_step_clock_call() {
+  const uint32_t base = stub_grant::now_ms;
+  arm_millis_hook([base](unsigned i) { return base + 1 + i; });
+  Req a;
+  CHECK(receipt(a) == 0);
+  disarm_millis_hook();
+  check_gate_refusal(a.r);
+  const uint32_t got = g_tap_arbiter.recent.last_ms;
+  CHECK_MSG(got > base, "the tap step read no clock through millis()");
+  return got - base - 1;
+}
+
+// The tap step peeks the stamp, judges it, then takes exactly that stamp:
+// when another consumer takes the tap between the judgment and the take,
+// the request is refused (403) and nothing is served. Two consumers race
+// for the stamp on a device: the BLE OTA break-glass take() on the NimBLE
+// task, and the loop task's BOOT handler storing a re-tap. The hook acts on
+// the tap step's clock read, between peek() and take_exact(), and the
+// arbiter's record of the ask at the hook's time proves it acted there. A
+// tap step that ignored take_exact()'s false (`take_exact(...); return
+// true;`) served both: the receipt on a tap another consumer held.
+void test_a_take_lost_after_the_judgment_is_refused() {
+  // The break-glass take between the judgment and the take.
+  reset_device();
+  const unsigned k = tap_step_clock_call();
+  stub_grant::now_ms += 1000;
+  open_tap();
+  stub_grant::now_ms += 500;
+  const uint32_t at = stub_grant::now_ms + 3;
+  bool ran = false;
+  arm_millis_hook([&](unsigned i) -> uint32_t {
+    if (i != k) return stub_grant::now_ms;
+    ran = true;
+    CHECK(provisioning_gate_take());   // the NimBLE task's break-glass take
+    return at;
+  });
+  Req a;
+  CHECK_MSG(receipt(a) == 0, "served on a tap the break-glass take held");
+  disarm_millis_hook();
+  check_gate_refusal(a.r);
+  CHECK(ran);
+  CHECK_MSG(g_tap_arbiter.recent.last_ms == at, "the hook did not run at the tap step's clock read");
+  CHECK(g_served.empty());
+  CHECK(gate_stamp() == 0);
+  // A re-tap stored between the judgment and the take: the request is
+  // refused, the new stamp is left open, and the next ask is served once.
+  reset_device();
+  const unsigned k2 = tap_step_clock_call();
+  stub_grant::now_ms += 1000;
+  open_tap();
+  const uint32_t first = gate_stamp();
+  stub_grant::now_ms += 500;
+  const uint32_t at2 = stub_grant::now_ms + 3;
+  const uint32_t retap = stub_grant::now_ms + 2;
+  arm_millis_hook([&](unsigned i) -> uint32_t {
+    if (i != k2) return stub_grant::now_ms;
+    canary::net::provisioning_gate::open(g_provisioning_gate, retap);   // the loop task's BOOT handler
+    return at2;
+  });
+  Req a1;
+  CHECK_MSG(receipt(a1) == 0, "served on a stamp nobody judged");
+  disarm_millis_hook();
+  check_gate_refusal(a1.r);
+  CHECK_MSG(g_tap_arbiter.recent.last_ms == at2, "the hook did not run at the tap step's clock read");
+  CHECK(g_served.empty());
+  CHECK_MSG(gate_stamp() == retap && retap != first, "the re-tap was consumed unjudged");
+  stub_grant::now_ms += 100;
+  Req a2;
+  CHECK(receipt(a2) == 1);
+  CHECK(!g_served.empty() && g_served.back() == receipt_authority::Grant::BOOT_TAP);
+  Req a3;
+  CHECK(receipt(a3) == 0);
+  check_gate_refusal(a3.r);
+  CHECK(g_served.size() == 1);
 }
 
 // (b) A sole asker is served at once: no settle delay, the cookie with it.
@@ -2528,6 +2730,9 @@ int main() {
   test_what_counts_as_an_ask();
   test_break_glass_leaves_nothing_to_take();
   test_contention_does_not_carry_into_a_clean_next_tap();
+  test_the_owner_retries_after_the_other_device_stops();
+  test_a_served_retap_ends_the_contention();
+  test_a_take_lost_after_the_judgment_is_refused();
   test_unreadable_peer_is_refused_and_leaves_the_tap();
   test_held_bearer_under_contention_is_429_and_the_409_clears_nothing();
   test_an_expired_tap_is_burned_by_the_request_that_finds_it();

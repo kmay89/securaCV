@@ -2014,8 +2014,9 @@ so — see D2 below.)
   distinct addresses that asked `GET /api/provisioning-receipt` without a
   bearer or a matching claim, before or after the tap. It serves the tap only
   to the sole address seen from ten seconds before the tap onward; a second
-  address closes the tap, and every asker gets `409 tap_contended` for the
-  rest of its 30 s. The dashboard's **Use BOOT Tap Once** and now the
+  address closes the tap, and an asker gets `409 tap_contended` while another
+  address keeps asking (up to the closed tap's 30 s; it ends ten seconds
+  after the other's last ask). The dashboard's **Use BOOT Tap Once** and now the
   companion's recovery-kit save start asking before the tap, so a host that
   polls the route, one that watches `/api/logs` for the tap, or one that
   delays the owner's next poll is refused loudly instead of handed the token,
@@ -2034,7 +2035,9 @@ so — see D2 below.)
     browser) are one asker;
   - a host that keeps the WAP's one web server busy for more than ten seconds
     before the tap can hide the owner's client;
-  - a host polling without pause makes every tap refuse, loudly.
+  - a host polling without pause makes every tap the owner's client is
+    already asking for refuse, loudly (a bare re-tap with no client of the
+    owner's asking is the first residual, and goes to the poller).
   In that last case the owner's ways out are the recovery kit's token, the
   USB serial console (the receipt prints at every boot), and holding BOOT
   10 s, then setting up again from the iPhone through the setup door: the
@@ -2084,6 +2087,36 @@ so — see D2 below.)
     had `.show` set, so its guidance was never on screen; the save now
     shows it. Its Home Assistant banner (`#wiz-ha-err`) has the same defect
     and is not changed here.
+  - Review fixes (same PR). The `409` outlived its cause: `tap_arbitrate()`
+    answered CONTENDED to every ask until the closed tap's 30 s had run, and
+    both pages stop on their first `409`, so a retry 10 to 30 s after the
+    tap, as the pages' "wait 10 seconds, and try again" and two bench rows
+    prescribe, stopped on its first poll before the press. Now an ask inside
+    the closed tap's TTL is CONTENDED only while an address other than the
+    asker asked within the lookback, and a served tap clears the record (the
+    asks after a re-tap served to someone were `409` "the tap was closed"
+    although the token had just been handed out). The `409`'s hint said
+    "wait 10 seconds, then tap BOOT again", which under a poller hands the
+    bare re-tap to the poller; it now says to start the request first and
+    keep it asking, then press BOOT, or use the kit's token or the USB
+    console. The dashboard's copy said the 10 s hold "clears its Wi-Fi"; it
+    now says it clears the Wi-Fi, the Home Assistant link and the name and
+    keeps the token (`factory_reset_by_hold()`'s list). `spend_if_match()`
+    no longer burns a claim minted after its caller read the clock (the
+    sketch passes `millis()` read before `take()` loads the word, so a mint
+    on the loop task in between read as 2^32 ms old and a wrong `?claim=`
+    burned it). Test seams added: `expire_seen()` in both headers (the
+    sweep's compare-and-swap on a word read before a re-tap or re-mint), a
+    `millis()` hook in the receipt harness (a break-glass take or a re-tap
+    between the tap step's judgment and its take is refused; a tap step
+    that ignored `take_exact()`'s false served both), and the harness's
+    `log_health()` now keeps the detail too, so the no-address check reads
+    what `/api/logs` serves. `test_receipt_grant.cpp` is 2429 checks, of
+    which the headers and sketch before these fixes (with `expire_seen()`
+    added as a shim so the suite compiles) fail 56; `test_provisioning_gate`
+    and `test_claim_ticket` fail 7 and 5 on the old behavior;
+    `recovery_kit.test.js` is 41 tests, the old page failing the hold-copy
+    pin. Host-tested; not run on a device.
   Host-tested: `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),
   `test_provisioning_gate.cpp` (the arbiter rows; the old header does not
@@ -2527,9 +2560,9 @@ so — see D2 below.)
   (`securacv_network.cpp`'s `receipt_decide()`) and its page-token consumer
   (`page_token_decide()`) still take the tap for the first request. Adopt
   `tap_arbitrate()` for both; the page load is a load, not a poll, so the
-  unlock banner must ask before the tap. It adds a shared peer-key mapping
-  beside `provisioning_gate.h`'s `ipv4_host_order_from_addr()`. From code;
-  not probed. Filed by F342, 2026-10-20.
+  unlock banner must ask before the tap. It reads the request's peer
+  through `provisioning_gate.h`'s existing `peer_key_from_addr()`, as the
+  WAP does. From code; not probed. Filed by F342, 2026-10-20.
 - [ ] **F355 [code] Canary Vision's SPA polls a WAP's receipt it cannot read.**
   `startReceiptCapture` (`canary-vision/spa/app.js`) polls a WAP's
   `GET /api/provisioning-receipt` with no credential. The WAP's receipt

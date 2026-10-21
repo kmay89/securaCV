@@ -8677,9 +8677,10 @@ static canary::net::provisioning_gate::TapArbiter g_tap_arbiter = {};
 // goes to ONE asker (provisioning_gate::tap_arbitrate()): served only when
 // the request's peer (request_peer_key(), the socket, never a header) is
 // the sole address that asked from TAP_LOOKBACK_MS before the tap onward.
-// A second address in that window closes the tap, and every asker gets
-// `*verdict` CONTENDED (the handler's 409 tap_contended) for the rest of the
-// closed tap's TTL. The stamp is peeked, judged and then taken exactly
+// A second address in that window closes the tap, and an asker gets
+// `*verdict` CONTENDED (the handler's 409 tap_contended) while another
+// address keeps asking, up to the end of the closed tap's TTL. The stamp is
+// peeked, judged and then taken exactly
 // (take_exact()), so a re-tap or the BLE OTA break-glass take between the
 // two is never consumed unjudged. A socket that cannot say is refused with
 // the tap left for the next asker: the arbiter is never skipped. An expired
@@ -8894,16 +8895,20 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
       return ESP_OK;
     }
     // A second address asked for the receipt in the ten seconds before the
-    // tap or during it: the tap is closed and nothing is handed out. Every
-    // asker hears so for the rest of the tap's 30 s, the owner's page
-    // included, so it can say another device asked. No cookie, no secret.
-    // The body is a literal here (the receipt suite cuts this handler, not
-    // the file's constants).
+    // tap or during it: the tap is closed and nothing is handed out. An
+    // asker hears so while the other address keeps asking (up to the closed
+    // tap's 30 s), the owner's page included, so it can say another device
+    // asked; ten seconds after the other address stops, the route answers
+    // its 403 again. No cookie, no secret. The hint never advises a bare
+    // re-tap: a tap no client of the owner's is asking for goes to the
+    // first asker, and the device sends this answer only when another
+    // address is asking. The body is a literal here (the receipt suite cuts
+    // this handler, not the file's constants).
     if (tap == canary::net::provisioning_gate::TapVerdict::CONTENDED) {
       httpd_resp_set_status(req, "409 Conflict");
       httpd_resp_set_type(req, "application/json");
       httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-      return httpd_resp_sendstr(req, "{\"error\":\"tap_contended\",\"hint\":\"Another device on this network asked for the receipt during the same BOOT tap, so the tap was closed. Close other Canary pages, wait 10 seconds, then tap BOOT again.\"}");
+      return httpd_resp_sendstr(req, "{\"error\":\"tap_contended\",\"hint\":\"Another device on this network asked for the receipt during the same BOOT tap, so the tap was closed and nothing was handed out. When only one device is asking, start your request first and keep it asking, then press BOOT. Or send the recovery kit's token as a bearer, or read the token from the USB serial console.\"}");
     }
     // Derive the advertised TTL from the constant so the 403 contract
     // and the gate behavior can never drift apart.

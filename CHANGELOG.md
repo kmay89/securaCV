@@ -15,7 +15,9 @@
   bounded nothing. `take()` now loads the word, compares in constant time,
   and spends with one compare-and-swap of the word it loaded
   (`spend_if_match()`): a wrong, short or truncated value changes nothing,
-  exactly one matching taker wins, and an expired claim is still burned. The
+  exactly one matching taker wins, and an expired claim is still burned (a
+  claim minted after the request read its clock is compared like a fresh
+  one, never burned as expired). The
   refusal's health line drops "(claim spent)" and is written once per 10 s
   at most. Host-tested (`firmware/tests_host/test_claim_ticket.cpp`,
   `firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp`); not
@@ -33,6 +35,14 @@
   device asking in that window closes the tap with `409 tap_contended`, and
   the dashboard's **Use BOOT Tap Once** and Settings recovery-kit save say
   another device asked instead of "Didn't see a tap" or "HTTP 409". The
+  `409` lasts while the other device keeps asking (up to the closed tap's
+  30 s) and ends 10 s after its last ask, so the pages' "wait 10 seconds,
+  and try again" works: the new click asks first and the next tap serves
+  it. The `409`'s own hint says to start the request first and keep it
+  asking, then press BOOT, never a bare re-tap (a tap no client of the
+  owner's is asking for goes to whoever asks first). The dashboard's copy
+  says the 10 s BOOT hold clears the Wi-Fi, the Home Assistant link and the
+  name and keeps the token. The
   first-boot companion's recovery-kit save now asks first and waits up to
   30 s for the press ("Tap Save my recovery kit, then short-press BOOT"; the
   old order still works), and its message banner is now on screen (the
@@ -42,8 +52,9 @@
   both addresses while the health log names neither. Residuals: a tap no
   client of the owner's was asking for still goes to the first asker; hosts
   behind one address are one asker; a host polling without pause makes every
-  tap refuse, and then the recovery kit's token, the USB serial console and
-  the 10 s BOOT hold followed by a fresh iPhone setup are the ways in.
+  tap the owner's client is already asking for refuse, and then the
+  recovery kit's token, the USB serial console and the 10 s BOOT hold
+  followed by a fresh iPhone setup are the ways in.
   Host-tested (`test_provisioning_gate.cpp`, `test_receipt_grant.cpp`,
   `test_receipt_authority.cpp`, `recovery_kit.test.js`); not run on a device.
 

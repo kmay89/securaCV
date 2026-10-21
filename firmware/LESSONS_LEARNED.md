@@ -2889,9 +2889,28 @@
   `test_receipt_grant.cpp` over the cut handler (`409` with no cookie and no
   secret, one health line naming no address, a wrong bearer or claim counted
   as an ask, a held bearer still `429`); `test_receipt_authority.cpp` pins
-  `getpeername` once in the sketch and three callers of `request_peer_key()`.
+  `getpeername` once in the sketch and `request_peer_key()` as its
+  definition and two callers (the lockout's source and the tap's asker).
   Host-tested; the peer read on the dual-stack listener is not yet proven on
   a device (U1).
+- **Found in review, same PR:** a refusal answer must end when its cause
+  ends, and its advice must be followable. The first `409` lasted the
+  closed tap's whole 30 s whoever was still asking, while both pages stop on
+  their first `409` and say "wait 10 seconds, and try again", so following
+  the copy stopped the retry again before the press; and the device's own
+  hint said to tap BOOT again, which under a host still polling hands the
+  bare re-tap to that host. Now the `409` ends 10 s after the other
+  address's last ask and on a served re-tap, and the hint sends the client
+  in first. Two test gaps closed with it: a seam result the code must honor
+  (`take_exact()`'s false after a TAKE verdict) needs a row that makes it
+  false at that exact point (the receipt harness's `millis()` hook acts on
+  the tap step's clock read, and a calibration call finds which read that
+  is), and a privacy check on a log line must read every field the log
+  serves (the harness's `log_health()` used to drop `detail`). A clock read
+  before an atomic load is the same trap the sweep's comment warns about:
+  `claim_ticket::take()` is handed `millis()` before it loads the word, so a
+  mint in between read 2^32 ms old and a wrong value burned it; a word
+  ahead of the clock is now compared like a fresh one.
 - **Date learned:** 2026-10
 
 ### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)

@@ -559,8 +559,14 @@ addresses that asked for the receipt without a credential (any request the
 bearer and the claim did not serve: a wrong bearer and a wrong claim count),
 including asks made **before** the tap, and serves the tap only to the sole
 address seen from 10 s before the tap onward. A second address in that
-window closes the tap, and every asker gets `409 tap_contended` for the rest
-of the tap's 30 s; nothing is handed out. A sole asker is served at once,
+window closes the tap, and nothing is handed out. An asker then gets `409
+tap_contended` while another address keeps asking, up to the closed tap's
+30 s: the answer ends 10 s after the other address's last ask (and when a
+re-tap is served), so a page that waits 10 s after the other device stops
+and asks again hears `403`, keeps asking, and its next tap serves it. The
+`409`'s hint says to start the request first and keep it asking, then
+press BOOT; it never advises a bare re-tap, which no client of the owner's
+would be asking for. A sole asker is served at once,
 with no settle delay. The asker is the request's socket peer, read by
 `request_peer_key()` (`getpeername`, never a header), the same read the
 per-address lockout keys on. A socket that cannot say is refused `403` and
@@ -588,8 +594,10 @@ What stays open, and is the ledger's, not a claim of this design:
   browser) are one asker.
 - A host that keeps the WAP's one web server busy for more than 10 s before
   the tap can hide the owner's earlier ask.
-- A host polling without pause makes every tap refuse, loudly. The owner's
-  ways out: the recovery kit's token (the iPhone app pairs from the kit);
+- A host polling without pause makes every tap the owner's client is
+  already asking for refuse, loudly (a bare re-tap with no client of the
+  owner's asking is the first residual, and goes to the poller). The
+  owner's ways out: the recovery kit's token (the iPhone app pairs from the kit);
   the USB serial console, which prints the receipt with the token at every
   boot; or hold BOOT 10 s, then set the Canary up again from the iPhone
   through the setup door. The hold clears the saved Wi-Fi, the broker login

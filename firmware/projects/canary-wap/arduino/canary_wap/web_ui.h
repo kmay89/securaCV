@@ -3001,13 +3001,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // out avoid the token box on purpose: on a page the landing session
     // signed in, that box still takes the cookie's word for a token, so a
     // mistyped one looks accepted (the ledger's owner-authority items
-    // revisit this copy once the box checks the token itself).
+    // revisit this copy once the box checks the token itself). "Wait 10
+    // seconds" is the device's rule: its 409 ends ten seconds after the
+    // other device's last ask, and a new click then asks first (403) and is
+    // served on the next tap. The hold's list is factory_reset_by_hold()'s.
     function tapContendedText() {
       return "Another device on your network asked for this Canary's keys at the same time, so it said no. " +
              'Close any other Canary pages, wait 10 seconds, and try again. ' +
              'If this keeps happening: the iPhone app can pair from your recovery kit, the USB console prints ' +
-             'the token each time the Canary starts, or hold BOOT for 10 seconds (this clears its Wi-Fi) and ' +
-             'set it up again from the iPhone app.';
+             'the token each time the Canary starts, or hold BOOT for 10 seconds (this clears its Wi-Fi, its ' +
+             'Home Assistant link and its name, and keeps the token) and set it up again from the iPhone app.';
     }
 
     async function requestFromDevice() {

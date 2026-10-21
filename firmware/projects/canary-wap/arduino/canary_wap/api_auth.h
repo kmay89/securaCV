@@ -375,10 +375,11 @@ static canary::net::auth_backoff::BearerResult api_auth_bearer_result(httpd_req_
 // receipt compared silently, so it was the one route where guessing the
 // token cost nothing. The lockout never gates the claim or the tap: a page
 // holding a stale token, or a backoff a guesser armed, is still served by the
-// claim or a BOOT tap. (What the lockout does not decide: any host on the
-// network can spend a pending claim with one wrong ?claim=, or take an open
-// tap by asking first.) Also the bearer half of api_auth_check_optional()
-// and csi_mqtt.cpp's move gate (POST /api/mqtt/config).
+// claim or a BOOT tap. (What the lockout does not decide is who those two
+// serve: the claim is spent only by a match, and the tap goes to one asker,
+// provisioning_gate.h's tap_arbitrate(); sweep F342.) Also the bearer half
+// of api_auth_check_optional() and csi_mqtt.cpp's move gate
+// (POST /api/mqtt/config).
 
 static bool api_auth_bearer_grant(httpd_req_t* req, const char* expected_token, bool* held = nullptr) {
   const canary::net::auth_backoff::BearerResult r = api_auth_bearer_result(req, expected_token);

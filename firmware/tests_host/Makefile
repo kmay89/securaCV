@@ -178,11 +178,13 @@ WIFIJOIN_BIN = $(BUILD_DIR)/test_wifi_join_policy
 # and the WAP's BOOT tap goes to one asker (sweep F342): peek() and
 # take_exact() take only the stamp that was judged, and tap_arbitrate(), on a
 # 32-bit test clock, refuses a poller and the owner across one tap, serves a
-# sole owner who asked before it, and fails closed across a 49.7-day silence;
-# and the sweep (sweep F347): expire() clears a stamp at its TTL and never a
-# fresher one, so a tap nobody took cannot read as fresh again when millis()
-# comes back round to it (an unswept one does, which is why both trees sweep
-# every loop pass). It also reads the canary tree's main.cpp (its path is
+# sole owner who asked before it, ends its 409 once the other address has
+# been quiet for the lookback (and on a served re-tap), and fails closed
+# across a 49.7-day silence; and the sweep (sweep F347): expire() clears a
+# stamp at its TTL and never a fresher one or one re-tapped since its read
+# (expire_seen(), the seam), so a tap nobody took cannot read as fresh again
+# when millis() comes back round to it (an unswept one does, which is why
+# both trees sweep every loop pass). It also reads the canary tree's main.cpp (its path is
 # passed in): handle_boot_button(), called from loop() every pass, sweeps
 # g_prov_gate as its first statement.
 # Consumed by the canary tree's securacv_network + main.cpp; the canary-wap
@@ -211,7 +213,8 @@ IMPROV_BIN = $(BUILD_DIR)/test_improv_core
 # once over the link that asked, spent by one GET on the home LAN. Mint
 # spelling, single use on a match (a mismatch spends nothing, sweep F342;
 # the spend is one compare-and-swap of the word the taker loaded, so a
-# spend whose word moved is refused), the TTL (an expired claim is burned),
+# spend whose word moved is refused), the TTL (an expired claim is burned;
+# a claim minted after the taker read its clock is compared, never burned),
 # millis()==0, a fresh claim across the wrap, the sweep that keeps a stamp
 # from aging into the wrap (expire(), sweep F347: a swept claim stays spent
 # when millis() comes back round, an unswept one reads pending again), and

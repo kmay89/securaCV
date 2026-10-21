@@ -2847,8 +2847,9 @@ is CI's; nothing here ran on a device or in a browser. Owner: U1.
     - host A with `curl` and the API token, and host B with `curl`, both on
       IPv4;
     - the serial console open;
-    - no other device asking for the receipt during the tap (the tap has
-      one consumer: whoever asks first is served, F342).
+    - no other device asking for the receipt during the tap (a second
+      address asking during the tap closes it with `409 tap_contended`,
+      F342).
   - Repro:
     1. From A, five times, 20 s apart (each strike doubles the backoff from
        2 s, so the fifth runs about 32 s): `curl -s -o /dev/null -w
@@ -2958,8 +2959,8 @@ certgen guard tests for `mbedtls/x509write_crt.h`, which no installed core
 ships, so no stock WAP serves HTTPS. An HTTPS variant of the first two rows
 is blocked until a WAP serves HTTPS. The 49.7-day wraps (F347) are
 host-tested only; a bench cannot wait them out. The earlier tap rows in the
-F289 sections above assume no other host on the network is asking for the
-receipt; a second asker turns them into `409`. The first two rows must pass
+F255/F257 and F289 sections above assume no other host on the network is
+asking for the receipt; a second asker turns them into `409`. The first two rows must pass
 before the next WAP firmware release: a peer read that always fails would
 refuse every tap sign-in. Run F343's per-address row (the F289 follow-up
 section above) in the same session; it proves the same read. Code:
@@ -2978,10 +2979,11 @@ the session and pair-token slots' seconds clock (`uptime_s()`) in
   - On laptop A, open the dashboard at `http://canary-<suffix>.local/`, choose **Use BOOT Tap Once**, and short-tap BOOT.
   - Expect:
     - within about 2 s, A shows "Another device on your network asked…" and holds no token;
-    - B prints `403`s, then `409`s, and never `200`;
+    - B prints `403`s, then `409`s (until about 10 s after A's page stopped asking, then `403`s again), and never `200`;
     - `/api/logs` has one "BOOT tap closed: two devices asked for the receipt" line, with no addresses;
     - the serial console names both addresses.
-  - Stop B, wait 10 s, and sign in on A again: signed in within about 2 s of the tap.
+  - With B still running, run `while :; do curl -s http://<STA address>/api/provisioning-receipt; echo; sleep 2; done` on A and short-tap BOOT: A prints `403` bodies, then `409` bodies whose `hint` says to start the request first and keep it asking, then press BOOT (never "tap BOOT again"), and never a receipt. Stop A's loop.
+  - Stop B, wait 10 s, and sign in on A again (within 30 s of the last tap, too): the page says "Listening for BOOT tap", not "Another device…", and A is signed in within about 2 s of the tap.
 - [ ] **A sole asker is served at once.**
   - With laptop A alone, at `http://canary-<suffix>.local/`: **Use BOOT Tap Once**, then short-tap BOOT. A is signed in within about 2 s of the tap.
   - Short-tap BOOT and within 30 s run `curl -s http://canary-<suffix>.local/api/provisioning-receipt` from A: `200`. Repeat at `http://<STA address>/api/provisioning-receipt`: `200`.

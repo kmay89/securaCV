@@ -43,11 +43,17 @@
 //     an address silent for longer than the lookback does not contend, at
 //     the boundary to the millisecond; one address alone is served (the
 //     residual); a clean re-tap after contention serves and a re-tap inside
-//     the lookback does not; the same address never contends with itself;
-//     the record fails closed across a 49.7-day silence; and a peer key
-//     prints as a.b.c.d or as eight hex groups;
+//     the lookback does not; the 409 ends once the other address has been
+//     quiet for the lookback (to the millisecond), so a retry 10 s after the
+//     other device stopped is NO_TAP and its next tap serves, while two
+//     addresses still asking hear it to the closed tap's TTL; a re-tap
+//     served to anyone ends it; the same address never contends with
+//     itself; the record fails closed across a 49.7-day silence; and a peer
+//     key prints as a.b.c.d (only behind a zero prefix) or as eight hex
+//     groups;
 //   * the sweep (sweep F347): expire() clears a stamp at its TTL and never
-//     one a millisecond younger, never a stamp re-opened since it was read,
+//     one a millisecond younger, and its step on a stamp it read
+//     (expire_seen()) never clears one re-opened since that read,
 //     and a swept tap stays closed when millis() comes back round to it
 //     2^32 ms later, where an unswept one reads open again (the
 //     characterization row: why the sweep exists); and the canary tree's
@@ -197,17 +203,25 @@ static void an_unswept_tap_reads_open_after_the_wrap() {
 }
 
 static void expire_leaves_a_stamp_reopened_since_it_was_read() {
-  // A single-thread property of the compare-and-swap: a sweep holding an
-  // old stamp cannot clear the newer one a re-tap stored (the cross-task
-  // race is the compare-and-swap's; take_exact()'s rows above exercise it).
+  // The sweep's compare-and-swap, through its seam: a sweep that read an
+  // expired stamp and finds a re-tap stored before its swap clears nothing.
+  // (The loop task opens and sweeps, so on a device the re-tap cannot land
+  // in between; the swap is the guard if a second task ever opens.)
   State s{0};
   open(s, 1000);
   const uint32_t seen = peek(s);
-  open(s, 1000 + kTtl + 50);   // the owner taps again
-  CHECK(!take_exact(s, seen), "the old stamp's swap fails (expire()'s step)");
-  CHECK(!expire(s, 1000 + kTtl + 60, kTtl), "a sweep now sees the fresh tap and keeps it");
+  open(s, 1000 + kTtl + 50);   // the owner taps again, after the sweep's read
+  CHECK(!expire_seen(s, seen, 1000 + kTtl + 60, kTtl), "the sweep's swap of the old stamp fails");
   CHECK(peek(s) == 1000 + kTtl + 50, "the re-tap's stamp is kept");
   CHECK(is_open(s, 1000 + kTtl + 60, kTtl), "and the gate is open for it");
+  CHECK(!expire(s, 1000 + kTtl + 60, kTtl), "a sweep now reads the fresh tap and keeps it");
+  // The same seam on an unmoved stamp clears it, and on a fresh one keeps it.
+  State u{0};
+  open(u, 1000);
+  CHECK(!expire_seen(u, peek(u), 1000 + kTtl - 1, kTtl), "one ms before the TTL: kept");
+  CHECK(expire_seen(u, peek(u), 1000 + kTtl, kTtl), "at the TTL, unmoved: cleared");
+  CHECK(peek(u) == 0, "closed");
+  CHECK(!expire_seen(u, 0, 1000 + kTtl, kTtl), "a closed gate: nothing");
 }
 
 // ── the canary tree's sweep (firmware/canary/src/main.cpp) ──────────────────
@@ -1030,14 +1044,105 @@ static void a_clean_next_tap_serves_and_a_retap_inside_the_lookback_does_not() {
   open(b.gate, T + 11000);
   CHECK(b.ask(kOwner, T + 11500) == TapVerdict::TAKE, "a clean re-tap serves the owner");
   CHECK(b.served == 1, "once");
-  // The closed tap's window runs out with no tap: NO_TAP, not CONTENDED.
+  // Both addresses keep asking (each within the lookback of the other's
+  // last ask): the 409 lasts to the closed tap's TTL, and the window running
+  // out with no tap is NO_TAP, not CONTENDED.
   Bench w;
   w.ask(kOwner, T - 1000);
   open(w.gate, T);
   w.ask(kOther, T + 200);
-  CHECK(w.ask(kOwner, T + kTtl - 1) == TapVerdict::CONTENDED, "the 409 lasts the closed tap's TTL");
-  CHECK(w.ask(kOwner, T + kTtl) == TapVerdict::NO_TAP, "and ends with it");
+  CHECK(w.ask(kOwner, T + 9000) == TapVerdict::CONTENDED, "the owner, B asked 8.8 s ago");
+  CHECK(w.ask(kOther, T + 18000) == TapVerdict::CONTENDED, "B, the owner asked 9 s ago");
+  CHECK(w.ask(kOwner, T + 27000) == TapVerdict::CONTENDED, "the owner, B asked 9 s ago");
+  CHECK(w.ask(kOther, T + kTtl - 1) == TapVerdict::CONTENDED, "both still asking: CONTENDED to the TTL");
+  CHECK(w.ask(kOwner, T + kTtl) == TapVerdict::NO_TAP, "and it ends with it");
   CHECK(w.arb.contended_tap == 0, "the record is cleared");
+}
+
+// (6b) The 409 ends when its cause ends: once the other address has been
+// quiet for the lookback, an ask inside the closed tap's 30 s is NO_TAP (the
+// page keeps asking) and the owner's next tap serves it. This is the flow the
+// pages' "wait 10 seconds, and try again" prescribes. Before, every ask was
+// CONTENDED until the closed tap's TTL had run, so a retry 10 to 30 s after
+// the tap stopped on its first answer, before the press.
+static void the_409_ends_when_the_other_address_goes_quiet() {
+  Bench b;
+  const uint32_t T = 700000;
+  CHECK(b.ask(kOwner, T - 1000) == TapVerdict::NO_TAP, "the owner's click, before the tap");
+  open(b.gate, T);
+  CHECK(b.ask(kOther, T + 100) == TapVerdict::CONTENDED, "B closes the tap");
+  CHECK(b.ask(kOwner, T + 1000) == TapVerdict::CONTENDED, "the owner hears it (the page stops)");
+  CHECK(b.ask(kOwner, T + 100 + TAP_LOOKBACK_MS) == TapVerdict::CONTENDED,
+        "B's last ask exactly the lookback ago: still CONTENDED");
+  CHECK(b.ask(kOwner, T + 100 + TAP_LOOKBACK_MS + 1) == TapVerdict::NO_TAP,
+        "one ms later, B quiet past the lookback: NO_TAP, inside the closed tap's 30 s");
+  CHECK(b.arb.contended_tap == 0, "the contention is cleared");
+  // The bench row: B stopped, the owner waits, clicks (its first poll at
+  // T+12 s is NO_TAP, not CONTENDED), keeps asking, and taps.
+  Bench r;
+  r.ask(kOwner, T - 1000);
+  open(r.gate, T);
+  r.ask(kOther, T + 100);
+  r.ask(kOwner, T + 1000);
+  CHECK(r.ask(kOwner, T + 12000) == TapVerdict::NO_TAP, "the retry's first poll is not a 409");
+  CHECK(r.ask(kOwner, T + 14000) == TapVerdict::NO_TAP, "nor its second");
+  open(r.gate, T + 15000);
+  CHECK(r.ask(kOwner, T + 16000) == TapVerdict::TAKE, "and the next tap serves the owner");
+  CHECK(r.served == 1, "once");
+  // B's own asks hear the 409 while the owner keeps asking, and NO_TAP once
+  // the owner has been quiet for the lookback.
+  Bench o;
+  o.ask(kOwner, T - 1000);
+  open(o.gate, T);
+  o.ask(kOther, T + 100);
+  o.ask(kOwner, T + 2000);
+  CHECK(o.ask(kOther, T + 12000) == TapVerdict::CONTENDED, "B, the owner asked 10 s ago");
+  CHECK(o.ask(kOther, T + 12001) == TapVerdict::NO_TAP, "B, the owner quiet past the lookback");
+}
+
+// (6c) A tap served to one asker ends the earlier contention: the asks after
+// it are NO_TAP, never "the tap was closed". Here B polls every 200 ms, the
+// owner asked once after the closed tap and then re-tapped without asking
+// first (the bare re-tap the 409's hint no longer advises): the re-tap goes
+// to B, the residual (a tap no client of the owner's was asking for). The
+// owner's next ask is NO_TAP. Before, it was CONTENDED for the rest of the
+// first tap's 30 s, though the token had just been handed out.
+static void a_served_retap_ends_the_contention() {
+  Bench b;
+  const uint32_t T = 800000;
+  b.ask(kOwner, T - 1000);
+  open(b.gate, T);
+  bool retapped = false;
+  TapVerdict b_at_retap = TapVerdict::NO_TAP;
+  for (uint32_t t = T + 100; t <= T + 12700; t += 200) {
+    if (t == T + 2100) CHECK(b.ask(kOwner, t) == TapVerdict::CONTENDED, "the owner's one ask: CONTENDED");
+    if (!retapped && t >= T + 12500) { open(b.gate, T + 12500); retapped = true; }
+    const TapVerdict v = b.ask(kOther, t);
+    if (retapped && b_at_retap == TapVerdict::NO_TAP) b_at_retap = v;
+  }
+  CHECK(b_at_retap == TapVerdict::TAKE, "the bare re-tap went to the poller (the residual)");
+  CHECK(b.served == 1, "served once");
+  CHECK(b.arb.contended_tap == 0, "and no contention is left on record");
+  CHECK(b.ask(kOwner, T + 13000) == TapVerdict::NO_TAP, "the owner's next ask: NO_TAP, not CONTENDED");
+  // The 409's way instead: the owner's client asks first and keeps asking,
+  // then the re-tap. With B still polling, every ask is CONTENDED and
+  // nothing is served.
+  // (d counts 100 ms steps from T-5 s: B asks on every odd one, 200 ms
+  // apart; the owner every 2 s from T-1 s; the taps at T and T+12.5 s.)
+  Bench h;
+  const uint32_t start = T - 5000;
+  for (uint32_t d = 0; d <= 25000; d += 100) {
+    const uint32_t t = start + d;
+    if (d == 5000 || d == 17500) open(h.gate, t);
+    if (d >= 4000 && (d - 4000) % 2000 == 0) {
+      CHECK(h.ask(kOwner, t) != TapVerdict::TAKE, "the owner was served beside a poller at %u", (unsigned)t);
+    }
+    if (d % 200 == 100) {
+      CHECK(h.ask(kOther, t) != TapVerdict::TAKE, "the poller was served at %u", (unsigned)t);
+    }
+  }
+  CHECK(h.served == 0, "following the hint under a poller serves nothing, got %d", h.served);
+  CHECK(h.closed_by == 2, "both taps closed (%d)", h.closed_by);
 }
 
 // (7) The same address asking again and again never contends with itself.
@@ -1094,6 +1199,16 @@ static void a_peer_key_prints_as_ipv4_or_eight_groups() {
   const uint8_t ll[16] = {0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0x02, 0x11, 0x22, 0xff, 0xfe, 0x33, 0x44, 0x55};
   CHECK(peer_key_text(ll, out, sizeof(out)) == 39, "IPv6: 39 characters");
   CHECK(std::strcmp(out, "fe80:0000:0000:0000:0211:22ff:fe33:4455") == 0, "IPv6: %s", out);
+  // ff ff at bytes 10-11 behind a nonzero prefix (2001:db8::ffff:c0a8:114)
+  // is a real IPv6 address, not ::ffff:192.168.1.20.
+  const uint8_t ff_tail[16] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xc0, 0xa8, 0x01, 0x14};
+  CHECK(peer_key_text(ff_tail, out, sizeof(out)) == 39, "a nonzero prefix: 39 characters");
+  CHECK(std::strcmp(out, "2001:0db8:0000:0000:0000:ffff:c0a8:0114") == 0, "a nonzero prefix: %s", out);
+  // One nonzero byte anywhere in the prefix is enough.
+  uint8_t one_byte[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 192, 168, 1, 20};
+  one_byte[9] = 1;
+  peer_key_text(one_byte, out, sizeof(out));
+  CHECK(std::strcmp(out, "0000:0000:0000:0000:0001:ffff:c0a8:0114") == 0, "byte 9 set: %s", out);
   char small[PEER_KEY_TEXT_CAP - 1];
   small[0] = 'x';
   CHECK(peer_key_text(kOwner.key, small, sizeof(small)) == 0 && small[0] == '\0',
@@ -1147,6 +1262,8 @@ int main() {
   an_address_silent_past_the_lookback_does_not_contend();
   a_lone_poller_is_served_the_residual();
   a_clean_next_tap_serves_and_a_retap_inside_the_lookback_does_not();
+  the_409_ends_when_the_other_address_goes_quiet();
+  a_served_retap_ends_the_contention();
   the_same_address_never_contends();
   a_stamp_that_moved_since_the_peek_is_not_taken();
   a_stale_record_fails_closed_across_the_wrap();

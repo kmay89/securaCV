@@ -126,8 +126,18 @@ inline bool take_exact(State& s, uint32_t seen) {
                                      __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
 }
 
+// The sweep's step on a stamp `seen` its caller read (peek()): clear it when
+// it is `ttl_ms` old or older, with one compare-and-swap of `seen`
+// (take_exact()), so a fresh re-tap stored since the read is never cleared.
+// True when it cleared one. The seam a test drives with a stamp it read
+// before a re-tap; expire() is this with the stamp it reads now.
+inline bool expire_seen(State& s, uint32_t seen, uint32_t now_ms, uint32_t ttl_ms) {
+  if (seen == 0 || (uint32_t)(now_ms - seen) < ttl_ms) return false;
+  return take_exact(s, seen);
+}
+
 // The sweep (sweep F347): clear a stamp that is `ttl_ms` old or older, with
-// one compare-and-swap of the stamp it read (take_exact()), so a fresh
+// one compare-and-swap of the stamp it read (expire_seen()), so a fresh
 // re-tap that lands between the read and the swap is never cleared. True
 // when it cleared one. Its owner calls it every loop pass, ON THE TASK THAT
 // OPENS the State (on both trees, the loop task's BOOT handler): a
@@ -135,9 +145,7 @@ inline bool take_exact(State& s, uint32_t seen) {
 // 2^32 ms old. With the sweep, no stamp outlives its TTL by more than one
 // pass, so none can age into the wrap of millis() and read as fresh again.
 inline bool expire(State& s, uint32_t now_ms, uint32_t ttl_ms) {
-  const uint32_t opened = peek(s);
-  if (opened == 0 || (uint32_t)(now_ms - opened) < ttl_ms) return false;
-  return take_exact(s, opened);
+  return expire_seen(s, peek(s), now_ms, ttl_ms);
 }
 
 // ── Page-token policy ───────────────────────────────────────────────────────
@@ -395,9 +403,18 @@ inline size_t peer_key_text(const uint8_t key[PEER_KEY_LEN], char* out, size_t c
 // caller asks it only for a request the bearer and the claim did not
 // serve), before a tap as well as after it, and serves the tap only to the
 // sole address seen from `lookback_ms` before the tap onward. A second
-// address in that window closes the tap, and every asker is answered
-// CONTENDED until the closed tap's TTL has run. A sole asker is served at
-// once: there is no settle delay.
+// address in that window closes the tap. After that, an ask is answered
+// CONTENDED while the closed tap's TTL runs AND an address other than the
+// asker asked within `lookback_ms` of it: the answer ends when its cause
+// ends, so a page that waits `lookback_ms` after the other device stopped
+// and asks again is answered NO_TAP and keeps asking for the owner's next
+// tap (an earlier version answered CONTENDED for the whole TTL, and a page
+// that followed its own "wait 10 seconds" copy stopped again before the
+// press). Any ask that finds no other address asking ends it, for every
+// asker: a page that comes back while a host still polls hears NO_TAP,
+// and its next tap is judged on the lookback like any other, so it is
+// closed again. A served tap ends it too. A sole asker is served at once:
+// there is no settle delay.
 //
 // Why two entries answer the question exactly: `recent` is the address of
 // the latest ask, and `prior.last_ms` is the time of the latest ask by any
@@ -412,11 +429,13 @@ inline size_t peer_key_text(const uint8_t key[PEER_KEY_LEN], char* out, size_t c
 // host that polls the route, that times the tap from the logs, or that
 // delays the owner's next poll gets CONTENDED, never the receipt. What it
 // cannot see: a tap no client of the owner's was asking for (an accidental
-// tap, a page or curl started after it) still goes to the first asker;
+// tap, a page or curl started after it, a bare re-tap after a 409) still
+// goes to the first asker, a poller included, which is why the WAP's 409
+// says to start the request first and keep it asking, then press BOOT;
 // hosts behind one address are one asker; a host that keeps the one web
 // server busy for longer than the lookback before the tap can hide the
 // owner's earlier ask; and a host that polls without pause makes every tap
-// refuse, loudly.
+// the owner's client is already asking for refuse, loudly.
 //
 // The record ages on 32-bit millis() and is never swept: after a silence of
 // 2^32 ms (49.7 days) a stale entry's age wraps and can read as recent, which
@@ -460,8 +479,12 @@ inline TapVerdict tap_arbitrate(TapArbiter& a, uint32_t stamp_seen,
   }
   const bool fresh = stamp_seen != 0 && (uint32_t)(now_ms - stamp_seen) < ttl_ms;
   if (a.contended_tap != 0) {
-    if ((uint32_t)(now_ms - a.contended_tap) >= ttl_ms) {
-      a.contended_tap = 0;   // the closed tap's window has run: judge afresh
+    // `prior` is the latest ask by an address other than this one.
+    const bool other_asking =
+        a.prior.has && (uint32_t)(now_ms - a.prior.last_ms) <= lookback_ms;
+    if ((uint32_t)(now_ms - a.contended_tap) >= ttl_ms || !other_asking) {
+      a.contended_tap = 0;   // the closed tap's window has run, or the other
+                             // address has gone quiet: judge afresh
     } else if (!(fresh && stamp_seen != a.contended_tap)) {
       return TapVerdict::CONTENDED;   // inside it, and no new tap: still closed
     }
@@ -476,6 +499,11 @@ inline TapVerdict tap_arbitrate(TapArbiter& a, uint32_t stamp_seen,
     a.contended_tap = stamp_seen;
     return TapVerdict::CONTENDED;
   }
+  // Served: no earlier contention outlives a tap that went to one asker, so
+  // the asks after it are NO_TAP, never "the tap was closed". (The rule
+  // above already cleared any: a TAKE means no other address asked since
+  // lookback_ms before this tap, so none within lookback_ms of now.)
+  a.contended_tap = 0;
   return TapVerdict::TAKE;
 }
 

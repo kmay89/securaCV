@@ -13,11 +13,14 @@
 //     loaded (spend_if_match()), so a spend whose word moved since its load
 //     (a re-mint in between) is refused and leaves the new claim pending;
 //   * an expired claim is refused and burned, a wrong value against it too;
+//     a claim minted after the taker read its clock (the word reads ahead of
+//     now_ms) is compared like a fresh one, never burned as 2^32 ms old;
 //     millis()==0 is a real mint;
 //   * the 49-day wrap of millis() does not expire a fresh claim;
 //   * the sweep (sweep F347): expire() burns a claim at its TTL (the word
-//     cleared and the hex zeroed) and never one a millisecond younger or one
-//     re-minted since it was read, and a swept claim stays spent when
+//     cleared and the hex zeroed) and never one a millisecond younger, and
+//     its step on a word it loaded (expire_seen()) never burns one re-minted
+//     since that load; a swept claim stays spent when
 //     millis() comes back round to it 2^32 ms later, where an unswept twin
 //     reads pending again (why the WAP's loop() sweeps every pass);
 //   * the compare runs over the whole string whatever the first wrong
@@ -147,6 +150,33 @@ static void a_spend_whose_stamp_changed_is_refused() {
   CHECK(pending(u, 1000 + TTL_MS + 20), "and the fresh claim is not burned");
 }
 
+// take() is handed a clock its caller read BEFORE take() loads the word (the
+// sketch's take(g_improv_claim, presented, millis()) on the httpd task), so a
+// mint on the loop task can land in between, and the word then reads ahead
+// of now_ms. Unsigned, that is 2^32 ms old: before, a wrong ?claim= in that
+// gap burned the phone's fresh claim. A word ahead of the clock is compared
+// like a fresh one, never burned.
+static void a_mint_after_the_takers_clock_is_compared_not_burned() {
+  Ticket t{};
+  mint(t, kRaw, 5002);   // the loop task mints 2 ms after the taker read 5000
+  CHECK(!take(t, "00000000000000000000000000000000", 5000), "a wrong value is refused");
+  CHECK(pending(t, 5003), "and the fresh claim is still pending");
+  CHECK(std::strcmp(t.hex, kHex) == 0, "its hex whole");
+  CHECK(take(t, kHex, 5001), "the right one, against a clock read before the mint, serves");
+  CHECK(!pending(t, 5003), "and is spent");
+  // The same against the seam, with the word one tick ahead of the clock.
+  Ticket u{};
+  mint(u, kRaw, 9000);
+  CHECK(!spend_if_match(u, u.minted_at_ms, "00000000000000000000000000000000", 8999), "wrong: refused");
+  CHECK(pending(u, 9000), "and nothing burned");
+  CHECK(spend_if_match(u, u.minted_at_ms, kHex, 8999), "right: spent");
+  // A word that really is past its TTL is still burned by a wrong value.
+  Ticket w{};
+  mint(w, kRaw, 1000);
+  CHECK(!take(w, "00000000000000000000000000000000", 1000 + TTL_MS), "expired: refused");
+  CHECK(w.minted_at_ms == 0, "and burned");
+}
+
 static void millis_zero_is_a_real_mint() {
   Ticket t{};
   mint(t, kRaw, 0);
@@ -234,9 +264,17 @@ static void a_swept_claim_does_not_revive_after_the_wrap() {
   uint8_t other[RAW_LEN];
   for (size_t i = 0; i < RAW_LEN; ++i) other[i] = (uint8_t)(0xA0 + i);
   mint(u, other, 1000 + TTL_MS + 50);
-  CHECK(!clear_if_unchanged(u, seen), "the old word's swap fails (expire()'s step)");
-  CHECK(!expire(u, 1000 + TTL_MS + 60), "a sweep now sees the fresh claim and keeps it");
+  CHECK(!expire_seen(u, seen, 1000 + TTL_MS + 60), "the sweep's swap of the old word fails");
   CHECK(pending(u, 1000 + TTL_MS + 60) && !hex_is_zero(u), "the re-mint is pending, its hex whole");
+  CHECK(!expire(u, 1000 + TTL_MS + 60), "a sweep now reads the fresh claim and keeps it");
+  CHECK(pending(u, 1000 + TTL_MS + 60) && !hex_is_zero(u), "still pending, its hex whole");
+  // The seam on an unmoved word burns at the TTL, and keeps one younger.
+  Ticket v{};
+  mint(v, kRaw, 1000);
+  CHECK(!expire_seen(v, v.minted_at_ms, 1000 + TTL_MS - 1), "one ms before the TTL: kept");
+  CHECK(expire_seen(v, v.minted_at_ms, 1000 + TTL_MS), "at the TTL, unmoved: burned");
+  CHECK(v.minted_at_ms == 0 && hex_is_zero(v), "the word cleared and the hex zeroed");
+  CHECK(!expire_seen(v, 0, 1000 + TTL_MS), "a word of 0: nothing");
   // Across the wrap: a claim minted just before millis() wraps is swept on
   // its age.
   Ticket w{};
@@ -260,6 +298,7 @@ int main() {
   a_mismatch_spends_nothing();
   expired_claim_is_refused_and_burned();
   a_spend_whose_stamp_changed_is_refused();
+  a_mint_after_the_takers_clock_is_compared_not_burned();
   millis_zero_is_a_real_mint();
   wrap_is_not_expiry();
   the_compare_accepts_upper_case_and_refuses_other_lengths();

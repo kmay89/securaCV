@@ -34,9 +34,11 @@
 //     session does not cover it, never a token the page never had;
 //   * the BOOT tap goes to one asker (sweep F342): a 409 tap_contended
 //     stops the dashboard's sign-in on that answer and says another device
-//     asked, keeping no token and offering no kit, and the Settings save
+//     asked, keeping no token and offering no kit, and a second click then
+//     asks first and signs in on the next tap; the Settings save
 //     says the same instead of "HTTP 409"; neither sends the owner to the
-//     token box (on a cookie page it still takes the cookie's word); the
+//     token box (on a cookie page it still takes the cookie's word), and
+//     the 10 s hold is said to clear what it clears; the
 //     companion's Save asks first and keeps asking every 2 s for 30 s while
 //     the owner presses BOOT (403, 403, 200 saves; a 409 says another device
 //     asked and gives Save back; fifteen 403s say no press was seen), and
@@ -250,7 +252,7 @@ function carried(asked, text) {
 const GATE_403 = { status: 403, body: '{"error":"physical_confirmation_required","gate_ttl_seconds":30}' };
 // The device's answer when another address asked during the same BOOT tap
 // (canary_wap.ino handle_provisioning_receipt, sweep F342).
-const TAP_409 = { status: 409, body: '{"error":"tap_contended","hint":"Another device on this network asked for the receipt during the same BOOT tap, so the tap was closed. Close other Canary pages, wait 10 seconds, then tap BOOT again."}' };
+const TAP_409 = { status: 409, body: '{"error":"tap_contended","hint":"Another device on this network asked for the receipt during the same BOOT tap, so the tap was closed and nothing was handed out. When only one device is asking, start your request first and keep it asking, then press BOOT. Or send the recovery kit\'s token as a bearer, or read the token from the USB serial console."}' };
 const CONTENDED = /^Another device on your network asked for this Canary's keys at the same time, so it said no\./;
 
 describe('one builder, two pages', () => {
@@ -437,6 +439,22 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.equal(api.kitText(), null);
   });
 
+  it('after a 409, a second click asks first and is served on the next tap (the bench retry)', async () => {
+    // The device's 409 ends ten seconds after the other device's last ask
+    // (sweep F342's review), so the click the copy prescribes ("wait 10
+    // seconds, and try again") hears 403 first and keeps listening.
+    const d = dashboard([GATE_403, TAP_409]);
+    await d.api.requestFromDevice();
+    assert.match(d.win.els.authStatus.textContent, CONTENDED);
+    assert.equal(d.api.token(), null);
+    d.more([GATE_403, GATE_403, { status: 200, body: RECEIPT }]);
+    await d.api.requestFromDevice();
+    assert.equal(d.api.token(), FIELDS.token, 'the retry signs in');
+    assert.equal(d.calls.start, 1, 'the dashboard starts once');
+    assert.equal(d.win.els.recoveryKitCard.style.display, 'block', 'and offers the kit');
+    assert.doesNotMatch(d.win.els.authStatus.textContent, CONTENDED);
+  });
+
   it("the contention copy names ways out that do not go through the token box", () => {
     const d = dashboard([GATE_403]);
     const fn = uiFunction(read(UI), 'tapContendedText');
@@ -446,6 +464,9 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.match(text, /recovery kit/);
     assert.match(text, /USB console/);
     assert.match(text, /hold BOOT for 10 seconds/);
+    // What the hold clears is factory_reset_by_hold()'s list (the saved
+    // Wi-Fi, the MQTT bridge's broker, the device name), not "its Wi-Fi".
+    assert.match(text, /this clears its Wi-Fi, its Home Assistant link and its name, and keeps the token/);
     assert.doesNotMatch(text, /paste|token box|type the token/i,
       'on a cookie page the token box still takes the cookie\'s word for a token');
     assert.ok(d.api);
