@@ -1865,9 +1865,11 @@ static_assert(sizeof(LONGEST_HELD_HOST) - 1 == 95, "the longest held row is 95 b
 
 void test_receipt_foreign_host_is_refused_first() {
   CHECK(canary::net::host_names_this_device(std::string(OVERSIZE_REBINDING_HOST, 95).c_str()));
-  for (const char* host : {"evil.example", "canary.local.evil.example", OVERSIZE_REBINDING_HOST,
+  // An empty and a blank Host too (review 4 of F344): host_guard.h calls an
+  // empty authority foreign, and the receipt's question must not pass one.
+  for (const char* host : {"evil.example", "canary.local.evil.example", OVERSIZE_REBINDING_HOST, "", "   ",
                            (const char*)nullptr}) {
-    const std::string why = host ? std::string("Host ") + host : std::string("no Host");
+    const std::string why = host ? std::string("Host '") + host + "'" : std::string("no Host");
     // An open tap: refused, and the tap stays open. The owner then asks
     // from another address under the device's name and is served.
     reset_device();

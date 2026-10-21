@@ -3132,7 +3132,7 @@ Owner: U1.
   - Setup: unit 1 serving `https://canary.local`; unit 2, or the same unit factory-reset; desktop Chrome and Safari; `curl`.
   - Repro:
     1. Use unit 1 at `https://canary.local`: follow **Open dashboard**.
-    2. Within 24 h, set up unit 2 at `http://canary.local` (factory-reset variant: the same unit at `http://192.168.4.1`).
+    2. Within 24 h, set up unit 2 at `http://canary.local` (factory-reset variant: the same unit, also at `http://canary.local`). Not at `http://192.168.4.1`: a cookie follows the host name, so one from `https://canary.local` never blocks that address, and the step would pass on the old sketch too.
     3. Save the recovery kit, then run the Home Assistant step.
     4. Holding both cookies, load the dashboard over HTTPS in desktop Chrome and Safari.
     5. Read the headers of both HTTPS mint answers with `curl -sk -D - -o /dev/null` (a GET; the routes answer no HEAD): `'https://canary.local/?cv_pair=<token>'`, and `https://canary.local/api/provisioning-receipt` inside a BOOT tap's window.

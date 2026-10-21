@@ -90,8 +90,9 @@ an object or a pointer) passes it. Whether a gate decides right, whether the
 receipt's tap and claim are right, and what the move gate counts as a move
 are the host suites' (test_receipt_grant, test_receipt_authority,
 test_mqtt_reinit, test_session_cookie). Its fixtures (_assert_secret_rules)
-run first, every run: a clean sketch that passes and fifty-four plants
-that each fail it.
+run first, every run: a clean sketch that passes and fifty-five plants
+that each fail it, through the same text_rule_problems() main() runs over
+the tree, so a rule dropped from that list fails the plants that need it.
 
 Run from the repo root (CI: firmware.yml host tests):
     python3 firmware/projects/canary-wap/tests_host/check_route_security.py
@@ -1729,6 +1730,14 @@ _FIX_PLANTS = (
      "    if (csi_integration::pair_token_issue(hex, sizeof(hex))) return ESP_OK;\n  }\n",
      "  }\n  char tok[65];\n  if (csi_integration::pair_token_issue(tok, sizeof(tok))) return ESP_OK;\n",
      "handle_landing() calls pair_token_issue() not after its gate"),
+    # The grant's lower bound (review 4 of F344): a mint in front of the
+    # grant's `if`, which the plant above (after its `}`) does not reach.
+    ("the setup token minted before its grant", "canary_wap.ino",
+     "  if (request_host_is_setup_name(req)) {\n    char hex[65];\n"
+     "    if (csi_integration::pair_token_issue(hex, sizeof(hex))) return ESP_OK;\n  }\n",
+     "  char hex[65];\n  if (csi_integration::pair_token_issue(hex, sizeof(hex))) return ESP_OK;\n"
+     "  if (request_host_is_setup_name(req)) {\n  }\n",
+     "handle_landing() calls pair_token_issue() not after its gate"),
     ("the credential-gated route minting before its gate", "csi_integration.cpp",
      "  CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n  return pair_token_issue",
      "  char hex[65];\n  pair_token_issue(hex, sizeof(hex));\n  CSI_AUTH_OR_RETURN(req);\n"
@@ -1786,15 +1795,26 @@ def _fixture_sources() -> dict:
             "bluetooth_api.h": _FIX_BT}
 
 
-def _fixture_problems(sources: dict) -> list:
-    """The rules the fixtures exercise: the secret rule, the raw compare
-    rule, the backoff's clear and the mints, as main() runs them over the
-    tree."""
-    return (answer_gate_rule_problems(sources, _FIX_HANDLERS, **_FIX_TABLES)
+def text_rule_problems(sources: dict, handlers: set, tables=None, clear_homes=BACKOFF_CLEARS,
+                       mint_sites=None) -> list:
+    """Every text rule, in the one list main() runs over the tree and the
+    self-test runs over its fixtures: the secret rule, the raw compare rule,
+    the backoff's clear, the lockout table and the mints. The tables
+    default to the tree's (the fixtures pass their own). One list, so a rule
+    dropped from it fails every plant that needs it (review 4 of F344:
+    main() called each rule itself, and deleting one of those calls passed
+    the self-test and the tree)."""
+    tables = {} if tables is None else tables
+    return (answer_gate_rule_problems(sources, handlers, **tables)
             + raw_compare_problems(sources)
-            + backoff_clear_problems(sources, ("handle_kit",), _FIX_TABLES["grants"])
+            + backoff_clear_problems(sources, clear_homes, tables.get("grants"))
             + auth_table_problems(sources)
-            + mint_site_problems(sources, _FIX_MINT_SITES))
+            + mint_site_problems(sources, mint_sites))
+
+
+def _fixture_problems(sources: dict) -> list:
+    """The rules the fixtures exercise, as main() runs them over the tree."""
+    return text_rule_problems(sources, _FIX_HANDLERS, _FIX_TABLES, ("handle_kit",), _FIX_MINT_SITES)
 
 
 def _assert_secret_rules() -> None:
@@ -1819,7 +1839,7 @@ def _assert_secret_rules() -> None:
     assert raw_compare_problems(quiet) == [], (
         "the raw compare rule read a comment or a string as a call: "
         + "; ".join(raw_compare_problems(quiet)))
-    assert len(_FIX_PLANTS) == 54, "the module docstring counts the plants: update it"
+    assert len(_FIX_PLANTS) == 55, "the module docstring counts the plants: update it"
 
 
 def main() -> int:
@@ -1911,11 +1931,7 @@ def main() -> int:
                             f"({fname}) has NO credential gate and is not "
                             f"on the public allowlist")
 
-    failures += answer_gate_rule_problems(secret_sources, handler_names(routes))
-    failures += raw_compare_problems(secret_sources)
-    failures += backoff_clear_problems(secret_sources)
-    failures += auth_table_problems(secret_sources)
-    failures += mint_site_problems(secret_sources)
+    failures += text_rule_problems(secret_sources, handler_names(routes))
 
     stale = set(PUBLIC_ALLOWLIST) - matched_allowlist
     for key in sorted(stale):

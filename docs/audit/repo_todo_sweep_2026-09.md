@@ -1834,6 +1834,23 @@ so — see D2 below.)
   the reader's 512-byte ceiling and sign the browser out (integrity, not
   availability), as THREAT_MODEL, the CHANGELOG and the writer's comment
   say. Docs only.
+  *Review 4 (2026-10-21, #<PR>):* a correction to the Decided text above
+  and to this PR's docs. A cookie follows the host name: RFC 6265bis's
+  "Leave Secure Cookies Alone" refuses a non-`Secure` cookie only when a
+  `Secure` one of the same name and path has a domain that domain-matches
+  the new one's, and a host-only cookie from `canary.local` does not match
+  `192.168.4.1`. So the lockout this item removes is at `canary.local` (a
+  second unit, the same unit after a factory reset, or a failed HTTPS
+  start, met over plain HTTP at that name). At `192.168.4.1` it happens
+  only to a browser that used a standalone unit over `https://192.168.4.1`;
+  a cookie from `https://canary.local` never blocked `http://192.168.4.1`.
+  The Decided text, the CHANGELOG, THREAT_MODEL's HTTP row, the writer's
+  comment above `session_cookie_header()` and LESSONS_LEARNED paired the
+  two addresses; all but the dated Decided text now say it by host name.
+  The U1 HTTPS row's factory-reset variant ran the wizard at
+  `http://192.168.4.1`, where the old sketch passes too (the setup branch's
+  `302` is relative, so the wizard and the kit save stay on that host); it
+  now runs at `http://canary.local`. Docs only.
 - [ ] **F338 [code+decision] The flagship's route check has no secret-answer
   rule.** `firmware/canary/scripts/check_route_security.py` holds the
   Host-first order and names every reader of `auth_get_token()` as an emitter
@@ -2861,6 +2878,46 @@ so — see D2 below.)
     foreign name (the captive page has no links, and the wizard's two names
     pass).
   Host-tested; not run against a browser or on a device.
+  *Review 4 (2026-10-21, #<PR>):*
+  - Review 3's "Still open" list named `/api/wifi/connect` and
+    `/api/wifi/ap-only` as the routes that read a carried pair token with no
+    Host. `/api/wifi/qr-scan` reads it too, with no Host and no setup gate:
+    `handle_qr_scan_start()` starts a camera scan on `pair_token_valid()`
+    (taking over from the boot scan), and `qr_scan_request_allowed()` lets
+    `?token=` read the scan's status (the scanned SSID, the error text) and
+    stop it. A started scan acts only on a code held to the camera (the
+    MQTT row's F289/F333 residual). SECURITY_MODEL, THREAT_MODEL's
+    DNS-rebinding row and the CHANGELOG now name all three; F334's decision
+    answers the scan's start `404` outside setup. Docs only.
+  - The CHANGELOG's F344 bullet said the pair token's Wi-Fi road was
+    "still open to a host that names the device". `wifi_change_authorize()`
+    takes a live pair token first and reads no Host, so its value works
+    from any page for its ten minutes. The bullet now says so, and its
+    "Not covered here" names the bearer's open Host question (F57) and the
+    carried pair token beside F357.
+  - The mint rule's self-test had no plant with a mint in front of its
+    grant's `if` (the "outside its grant" plant puts it after the `}`), so
+    a `_gate_before()` without the grant's lower bound passed all 54 plants
+    and the tree, and with it a mint above `if
+    (request_host_is_setup_name(req))` in `handle_ui()` passed the check.
+    Plant 55 ("the setup token minted before its grant") fails it. And
+    `main()` called the five text rules one by one while the self-test
+    called them through its own list, so deleting one of `main()`'s calls
+    passed both. Both now run `text_rule_problems()`, so a rule dropped from
+    it fails the plants that need it (each of the five, dropped, fails the
+    self-test). Deleting `main()`'s one call of it still passes the
+    self-test: that call is the tree's only run of the rules.
+  - `kForeignHosts` (`test_session_cookie.cpp`) and the receipt's
+    foreign-Host rows (`test_receipt_grant.cpp`) had no empty or blank Host,
+    so a `request_host_names_device()` that passed one passed both suites
+    (943 and 3924 checks). Both lists now carry `""` and `"   "`, and that
+    mutant fails 58 of 1035 and 74 of 4098. No browser sends an empty Host,
+    so no shipped behavior changes.
+  - `csi_integration.h`'s contract for `session_validate_cookie()`, which
+    F337 edited, now names the Host condition review 3 added, and its
+    "can't forge them" is scoped to cross-site requests. The certificate
+    comment in `setup()` now says no stock build stores a certificate
+    (F15). No new number.
 - [ ] **F345 [decision] canary-wap: Forget Wi-Fi from any session re-arms the
   Bluetooth setup door, whose claim buys the receipt.** `POST
   /api/wifi/forget` takes `api_auth_check` (any session, the landing page's

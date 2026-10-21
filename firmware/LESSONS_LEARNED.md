@@ -692,15 +692,18 @@
 ### One cookie name for HTTPS and plain HTTP locks a browser out of the plain one
 - **What happened:** Since #1832 the WAP's session cookie carries `Secure`
   over HTTPS and not over plain HTTP, under one name, `cv_session`. A browser
-  that holds a `Secure` cookie refuses a same-name cookie from an http page
-  (RFC 6265bis, "Leave Secure Cookies Alone"), and every WAP claims
-  `canary.local` while every SoftAP is `192.168.4.1`. So once HTTPS runs, a
-  browser that used one unit at `https://canary.local` and then sets up a
-  second (or the same one after a factory reset, or one whose HTTPS start
-  failed) over plain HTTP drops every session cookie the plain page sets,
-  and the wizard's Home Assistant step answers 401, until the old cookie's
-  24 h run out. No stock unit serves HTTPS yet (F15), so no owner has hit
-  it; F337 lands before HTTPS does.
+  that holds a `Secure` cookie refuses a same-name cookie that an http page
+  at the same host name sets (RFC 6265bis, "Leave Secure Cookies Alone"),
+  and every WAP claims `canary.local`. So once HTTPS runs, a browser that
+  used one unit over HTTPS at `canary.local` and then meets a unit over
+  plain HTTP at `canary.local` (a second unit, the same one after a factory
+  reset, or one whose HTTPS start failed) drops every session cookie the
+  plain page sets, and the wizard's Home Assistant step answers 401, until
+  the old cookie's 24 h run out. A cookie follows the host name, so the
+  same happens at `192.168.4.1` only to a browser that used a standalone
+  unit over `https://192.168.4.1`; one from `https://canary.local` never
+  blocks `http://192.168.4.1`. No stock unit serves HTTPS yet (F15), so no
+  owner has hit it; F337 lands before HTTPS does.
 - **Root cause:** A cookie's name is shared across both schemes at one host,
   and the `Secure` attribute does not make two cookies of one name.
 - **Fix:** Over HTTPS the cookie is `__Host-cv_session`, which in current

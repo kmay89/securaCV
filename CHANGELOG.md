@@ -12,10 +12,13 @@
   header no pinned core ships, F15), so a page on another site whose name is
   re-pointed at the WAP's address could load those as its own origin: a
   session that reads the live camera and the vault download, a pair token
-  that authorizes `/api/wifi/connect` (still open to a host that names the
-  device until the owner-authority PR, F334, removes it after setup), and
-  around a BOOT tap or the post-join setup window, the bearer token and the
-  SoftAP password. The WAP now stages the
+  that authorizes `/api/wifi/connect`, and around a BOOT tap or the
+  post-join setup window, the bearer token and the SoftAP password. (The
+  landing now hands a pair token only to a Host that names the device, but
+  a live one's value, wherever it is carried, still works for its ten
+  minutes on `/api/wifi/connect`, `/api/wifi/ap-only` and
+  `/api/wifi/qr-scan` with no Host question, until the owner-authority PR,
+  F334, removes that road after setup.) The WAP now stages the
   shared `firmware/common/network/host_guard.h` that the flagship and the
   display already use (byte-identical, held by `check_improv_sync.sh`).
   After setup, `/`, `/?cv_pair=`, `/admin`, `/settings` and `/companion`
@@ -46,7 +49,10 @@
   covered here: `/api/wifi`, `/api/wifi/scan` and `/api/fleet` answer with
   `Access-Control-Allow-Origin: *`, so any web page can read them at the
   device's address, rebinding or not, and the other public routes ask no
-  Host (F357, a decision still open). Host-tested (`test_session_cookie.cpp`,
+  Host (F357, a decision still open); outside the receipt a bearer asks no
+  Host (a rebinding page that holds the bearer token is F57's open
+  question); and a pair token's value carried off the LAN works for its
+  ten minutes, as above. Host-tested (`test_session_cookie.cpp`,
   `test_receipt_grant.cpp`); not run against a browser or on a device.
 - **The first-boot wizard answers exactly `canary.local` or `192.168.4.1`
   (sweep F344).** `/`'s setup branch and the wizard token's re-issue
@@ -69,14 +75,17 @@
   Host-tested; not run on a device.
 - **canary-wap's session cookie is `__Host-cv_session` over HTTPS and stays
   `cv_session` over plain HTTP (sweep F337).** A browser that holds a
-  `Secure` cookie refuses a same-name cookie from an http page, so with one
-  name a browser that had used one WAP at `https://canary.local` could not
-  sign in to a second unit it set up at `http://canary.local` or
-  `http://192.168.4.1` (every WAP claims `canary.local`), to the same unit
-  after a factory reset, or to a unit whose HTTPS start failed, until the
-  old cookie's 24 hours ran out; the wizard's Home Assistant step answered
-  "This needs the recovery-kit step first" meanwhile. The two names never
-  meet. The device reads `__Host-cv_session` first and a malformed one reads
+  `Secure` cookie refuses a same-name cookie that an http page at the same
+  host name sets, so with one name a browser that had used one WAP over
+  HTTPS at `canary.local` could not sign in to a unit it then met over plain
+  HTTP at `canary.local` (a second unit, since every WAP claims
+  `canary.local`; the same unit after a factory reset; or a unit whose HTTPS
+  start failed) until the old cookie's 24 hours ran out, and the wizard's
+  Home Assistant step answered "This needs the recovery-kit step first"
+  meanwhile. The same held at `192.168.4.1` only for a browser that had
+  used a standalone unit over `https://192.168.4.1`: cookies follow the host
+  name, so one from `https://canary.local` never blocked
+  `http://192.168.4.1`. The two names never meet. The device reads `__Host-cv_session` first and a malformed one reads
   nothing; plain `cv_session` is still read. In current browsers only an
   https answer from the device can set the `__Host-` name, so a cookie
   planted over http cannot shadow it (integrity, not availability: an

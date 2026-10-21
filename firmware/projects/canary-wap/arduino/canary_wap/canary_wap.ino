@@ -3815,13 +3815,16 @@ static bool request_host_is_setup_name(httpd_req_t* req) {
 //     a browser drops a Secure cookie an http page sets.
 //   - The name follows the transport too (sweep F337): __Host-cv_session
 //     over HTTPS, cv_session over plain HTTP. A browser holding a Secure
-//     cookie refuses a same-name cookie from an http page, so one name for
-//     both would leave a browser that used https://canary.local unable to
-//     sign in over http at the same name: a second unit set up at
-//     canary.local or 192.168.4.1 (every WAP claims canary.local and every
-//     SoftAP is 192.168.4.1), the same unit after a factory reset, or one
-//     whose HTTPS start failed, until the old cookie's 24 h ran out (the
-//     wizard's Home Assistant step answering 401 meanwhile). With two names
+//     cookie refuses a same-name cookie that an http page at the same host
+//     name sets, so one name for both would leave a browser that used a unit
+//     over HTTPS at canary.local unable to sign in to a unit it then met over
+//     plain HTTP at canary.local: a second unit (every WAP claims
+//     canary.local), the same unit after a factory reset, or one whose HTTPS
+//     start failed, until the old cookie's 24 h ran out (the wizard's Home
+//     Assistant step answering 401 meanwhile). The same holds at 192.168.4.1
+//     only for a browser that used a standalone unit over
+//     https://192.168.4.1: a cookie follows the host name, so one from
+//     https://canary.local never blocks http://192.168.4.1. With two names
 //     the two never meet. And in current browsers only an https answer from
 //     this host, Secure, Path=/ and with no Domain, can set the __Host- name,
 //     so a cv_session planted over http cannot shadow the HTTPS cookie.
@@ -12819,8 +12822,13 @@ void setup() {
 
   // ── TLS Certificate Initialization ──
   // Two facts, kept apart. THE CERTIFICATE IS KNOWN on every initialized
-  // boot: init_tls_cert() loads it from NVS, or generates it once and stores
-  // it, so g_tls_cert_fp_hex is populated on the first boot too. THE HTTPS
+  // boot once one is stored: init_tls_cert() loads it from NVS, or generates
+  // it once and stores it, so g_tls_cert_fp_hex is populated on the first
+  // boot too. No stock build stores one (sweep F15: the generator compiles
+  // out on every pinned core, SECURACV_HAS_TLS_CERTGEN, and nothing else
+  // writes the stored certificate), so on a stock unit init_tls_cert()
+  // returns false, the fingerprint stays empty and everything below runs
+  // plain HTTP; the rest of this note is what happens once one is. THE HTTPS
   // SERVER IS UP (g_tls_enabled: the port-443 server and the port-80
   // redirect, init_http_server) only outside first-boot setup: the
   // captive-portal flow runs over plain HTTP on the AP, and a self-signed

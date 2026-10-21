@@ -401,8 +401,10 @@ first), the pages that start a sign-in and the cookie, not by every API
 route as the flagship asks it: outside the receipt a bearer asks no Host,
 so a rebinding page that holds the bearer token itself is F57's open
 question, and a pair token's value carried off the LAN is read with no Host
-on `/api/wifi/connect` and `/api/wifi/ap-only` for its ten minutes, until
-the owner-authority PR (F334) removes that road after setup. Refused after
+on `/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` (start,
+status and stop; a started scan acts only on a code held to the camera) for
+its ten minutes, until the owner-authority PR (F334) removes that road after
+setup. Refused after
 setup: a router name under another suffix (`.fritz.box`, `.localdomain`,
 `.home`), a name with a trailing dot, a public split-horizon name, and a
 reverse proxy that forwards a public Host; use the `.local` name, the IP or

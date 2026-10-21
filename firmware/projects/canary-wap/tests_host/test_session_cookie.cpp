@@ -685,12 +685,18 @@ static_assert(sizeof(OVERSIZE_REBINDING_HOST) - 1 == 108, "the oversize row is 1
   "ccccccccccccccccccccccccc.local"
 static_assert(sizeof(LONGEST_HELD_HOST) - 1 == 95, "the longest held row is 95 bytes");
 
-// A DNS-rebinding page's names (one too long for the buffer), and a request
-// with no Host at all.
+// A DNS-rebinding page's names (one too long for the buffer), an empty and a
+// blank Host, and a request with no Host at all. host_guard.h calls an empty
+// authority foreign; no browser sends one, but the pages and the receipt
+// must not read it as the device's name (review 4 of F344: a
+// request_host_names_device() that passed an empty or blank Host passed
+// every row before these two).
 const char* const kForeignHosts[] = {"evil.example", "evil.example:80", "canary.local.evil.example",
                                      "canary-7916.local.evil.example", "192.168.1.50.nip.io",
-                                     OVERSIZE_REBINDING_HOST, nullptr};
-std::string host_label(const char* host) { return host ? std::string("Host ") + host : std::string("no Host"); }
+                                     OVERSIZE_REBINDING_HOST, "", "   ", nullptr};
+std::string host_label(const char* host) {
+  return host ? std::string("Host '") + host + "'" : std::string("no Host");
+}
 
 void test_foreign_host_gets_no_pair_token_and_no_session() {
   for (const char* host : kForeignHosts) {
@@ -1211,16 +1217,16 @@ void test_every_cookie_gate_asks_the_host() {
     CHECK_MSG(cookie_validates(host, "theme=dark; " + prefixed),
               std::string("Host ") + host + ": the live __Host- session was refused");
   }
-  // A rebinding page's names, none, the 108-byte one, and the router names
-  // the rule leaves out: the same live value, set by the page itself for its
-  // own name, is refused (before: it validated, so every cookie gate let it
-  // in).
+  // A rebinding page's names, an empty or blank Host, none, the 108-byte
+  // one, and the router names the rule leaves out: the same live value, set
+  // by the page itself for its own name, is refused (before: it validated,
+  // so every cookie gate let it in).
   for (const char* host : kForeignHosts) {
     CHECK_MSG(!cookie_validates(host, plain), host_label(host) + ": a live session validated under it");
     CHECK_MSG(!cookie_validates(host, prefixed), host_label(host) + ": a live __Host- session validated under it");
   }
   for (const char* host : {"canary-7916.fritz.box", "canary-7916.localdomain", "canary-7916.home",
-                           "canary-7916.local.", "", "   "}) {
+                           "canary-7916.local."}) {
     CHECK_MSG(!cookie_validates(host, plain), std::string("Host '") + host + "': a live session validated under it");
   }
   // Asking under a foreign name spends nothing: the owner's session still
