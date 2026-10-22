@@ -1658,7 +1658,7 @@ const fleetBook = {
     return "No stored key for this board — reflash it once with this app (any version) and the key is minted and kept automatically.";
   },
   staleTokenNote() {
-    return "The board refused the stored key — it was probably reflashed elsewhere. One reflash here mints a fresh one.";
+    return "The board refused the stored key — it was probably reflashed elsewhere, or, on an all-rounder Canary, reset with its 10-second BOOT hold (which drops a key a flasher seeded). One reflash here mints a fresh one.";
   },
   note(key, text) {
     this.opNote[key] = text;
@@ -1946,8 +1946,10 @@ const BOOT_SIGNATURES = [
     signature: "panic",
     test: /guru meditation|backtrace:|panic'?ed|abort\(\) was called|assert failed/i,
     means: "The new firmware crashed as it started up.",
-    fix: "A clean install usually clears this — it wipes stale settings a previous " +
-      "firmware may have left behind. Reconnect and tick first contact.",
+    fix: "A clean install usually clears this. Every install starts the settings " +
+      "region over; the full erase also wipes the partitions an install never writes " +
+      "(the second firmware slot, the file system), where a previous firmware may have " +
+      "left stale data. Reconnect and tick first contact.",
     action: "clean-install",
   },
   {
@@ -3884,7 +3886,7 @@ function renderTokenOnce(apiToken) {
   box.innerHTML =
     `<b>This board's local API key — shown once.</b> ` +
     `<span class="muted">Written into the board with the Wi-Fi, and kept in ${esc(secretStore.where())} ` +
-    `for the fleet book. Copy it if you want it somewhere else too — a reflash mints a new one.</span>` +
+    `for the fleet book. Copy it if you want it somewhere else too — a reflash mints a new one, and an all-rounder Canary's 10-second BOOT reset drops it for one the board derives from its own key.</span>` +
     `<span class="token-row"><code>${esc(apiToken)}</code>` +
     `<button type="button" class="btn btn-ghost btn-small" id="token-copy">Copy</button></span>`;
   box.classList.remove("hidden");

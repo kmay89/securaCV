@@ -119,8 +119,13 @@ its uptime can only make itself the coordinator, which gives it nothing.
 Things that were true before and remain true: a node never refuses to boot
 over its key's storage tier (`key_at_rest.h` rule 1); no MAC, stable id or
 timestamp finer than the ten-minute bucket crosses the wire in any of the
-above (Invariants II/III); the first-boot 30-minute Improv window and the
-BOOT-tap minute are the only times a node takes Wi-Fi from a phone.
+above (Invariants II/III); the Improv door takes Wi-Fi over Bluetooth only
+in its 30-minute window while no network is saved (a first boot, or after
+the owner cleared it) and in the BOOT-tap minute. A WAP also takes it over
+its bonded Bluetooth lane (`ble_provision.cpp`'s CREDS, an authenticated
+link, one write per 5 s and ten an hour) from any peer that holds a bond,
+with or without credentials saved: the iPhone app never reaches that lane
+(ledger A65), but a peer that bonds does (F346).
 
 ## 6. Where each rule is enforced and tested
 

@@ -567,8 +567,8 @@ warning; signed in with the token, choose **Settings**, **Device**,
 **Recovery kit**, **Save my recovery kit**; signed out, or signed in only
 through the landing page's link, choose **Use BOOT Tap Once**, short-tap
 BOOT when the page says to, then **Save my recovery kit** — the kit holds the token and the setup
-network's password, so only a BOOT tap or the token itself fetches it, never
-the dashboard's own session. The tap goes to the one device asking for it:
+network's password, so only a BOOT tap, the token itself or the setup
+door's one-time claim fetches it, never the dashboard's own session. The tap goes to the one device asking for it:
 if another device on your network asks during the same tap, the Canary
 hands out nothing and the page says so; close other Canary pages, wait 10
 seconds, then click **Use BOOT Tap Once** again and short-tap BOOT when

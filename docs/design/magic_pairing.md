@@ -144,8 +144,9 @@ first boot but also when a *saved* network keeps failing (a changed
 password, a router that rebooted, an SSID that went away). That turned "my
 router is down" into "anyone in radio range can re-point my Canary at their
 network." The two cases look alike from the portal's side and are opposite
-from the owner's: the first is a device nobody owns, the second is a device
-that has an owner and a bad day.
+from the owner's: the first is a device with no network saved (a new one, or
+one its owner cleared, §2.2), the second is a device that has an owner and a
+bad day.
 
 So the door takes the **stored-credentials fact**, never the portal's. The
 glue passes `no_credentials` as what NVS holds; `session_set_no_credentials`

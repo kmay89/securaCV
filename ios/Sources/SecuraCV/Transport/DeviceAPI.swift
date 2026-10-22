@@ -39,7 +39,10 @@ struct DeviceInfo: Codable, Sendable {
     }
 }
 
-/// The one-shot receipt handed over after a physical BOOT-tap (Trust-on-Pair).
+/// The provisioning receipt a Canary serves (`GET /api/provisioning-receipt`)
+/// to its bearer, to a WAP's setup-door claim, or after a short BOOT tap. This
+/// app takes it from a WAP's claim or from a recovery kit the device's own
+/// pages saved; it has no BOOT-tap pairing of its own.
 struct ProvisioningReceipt: Codable, Sendable {
     var deviceID: String
     var baseURL: URL

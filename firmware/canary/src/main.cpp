@@ -1239,12 +1239,14 @@ void setup() {
                   g_boot_status.reset_counted ? "" : " (power-on reset: not counted)",
                   g_boot_status.image_confirmed ? "" : " (new image, pending confirmation)");
   }
-  // Bench row E6: a re-flash of another build resets the count only if the
-  // build filled app_elf_sha256 in the app descriptor. Say so on every boot.
+  // Bench row E6: a PlatformIO or Arduino IDE upload of another build, which
+  // leaves NVS alone, resets the count only if the build filled
+  // app_elf_sha256 in the app descriptor (an install in either flasher starts
+  // NVS over, the count with it, whatever the identity). Say so on every boot.
   Serial.printf("[..] Image identity (app_elf_sha256): %s\n",
                 bootguard::image_id_present()
                     ? "non-zero"
-                    : "ZERO or unreadable - a re-flash will not reset the crash-loop count");
+                    : "ZERO or unreadable - an upload that keeps NVS will not reset the crash-loop count");
   if (g_boot_status.mode == bootpolicy::BootMode::SafeMode) {
     safe_mode_run();
   }

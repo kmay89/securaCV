@@ -433,6 +433,38 @@ hold keeps; and the per-address lockout's ways out.
   retired sentence where it stood. Host-tested; not run on a device or in a
   browser.
 
+- **"Keys never leave the device" is the firmware's promise, and every
+  remaining copy of the four corrections says what the code does (#1843's
+  sweep, fifth pass).** Both flashers' pre-flash safety copy is a full read
+  of the flash over USB, through the chip's ROM download mode, so that file
+  holds the identity key in the clear and a restore puts it back:
+  `SECURITY_MODEL.md`, `THREAT_MODEL.md` (Principle 1 and Scenario 6),
+  `PENTEST_SCOPE.md`, `secure_defaults.h` and a lesson now say so, and the
+  pentest scope no longer calls a documented flash read a Critical finding.
+  An install in either flasher starts NVS over, the crash-loop count and
+  the device's handle with it: the flagship's E6 boot line, `boot_guard.h`,
+  the multi-Canary guide (which said the handle is the same every time you
+  flash), the captive portal test plan, the onboarding evaluation, the
+  getting started guide's setup-network paragraph, both flashers' "clean
+  install" advice, and the F360 notes here, in the ledger and in a lesson
+  say what the flashers do. The provisioning kit's Phase 2 leaves flash
+  encryption off and Secure Boot enabled with nothing to verify against,
+  and is a dry run today: `THREAT_MODEL.md`, `PENTEST_SCOPE.md`, the intake
+  guide, `secure_provisioning.md`, the kit's sdkconfig, `firmware/README.md`,
+  `mesh_state.cpp` and the bench validation runbook follow. A WAP's token
+  may be one a flasher seeded, and the flagship's 10 s hold drops a seeded
+  token, which the WAP sketch's README and secrets note and both flashers'
+  token and stale-key copy now say. `TRUST_MODEL.md` names the WAP's bonded
+  lane among the ways a node takes Wi-Fi; the improvement roadmap, a lesson
+  and the hub walkthrough entry below carry amendments for the Bluetooth lane no WAP
+  fills (A65); `magic_pairing.md` no longer calls a unit with no network
+  saved one nobody owns; the FAQ, `wap_server.h` and the iPhone app's
+  receipt comment name every grant of the receipt; the Lab's WAP page says
+  the keys ride through a tap of RESET (`gen_wap.py` run). `test_docs_claims.py`
+  bans 64 more retired sentences where they stood (192 of 192 row mutants
+  fail it) and holds the safety-copy claim to both flashers' code.
+  Host-tested; not run on a device or in a browser.
+
 ### The flagship and the canary-wap halt on a stored identity key they cannot read, instead of running on a zero key or replacing it (sweep F360, #1840)
 
 - **The `firmware/canary` flagship's key load tells "no key stored" from
@@ -504,7 +536,9 @@ hold keeps; and the per-address lockout's ways out.
   lookup of it, makes a new identity that same boot. The
   WAP's BOOT hold keeps the identity (it has no wipe stage), so a clean
   install in either flasher is its only way to a new identity on purpose,
-  halted or not. It halts, where other provisioning failures go on (sweep
+  halted or not *(amended 2026-10-22, #1843's sweep: any install in either
+  flasher, with or without its full erase, is: its factory image starts NVS
+  over)*. It halts, where other provisioning failures go on (sweep
   F336), because from there the boot record and the mesh would use the
   zeroed key and the chain would restart at seq 0 over the stored one. A
   working unit and a first boot are unchanged.
@@ -2869,7 +2903,10 @@ that was still running when it merged. Design: `docs/design/magic_pairing.md`.
   or typed, the phone joining `SecuraCV-XXXX` itself (NEHotspotConfiguration,
   a new entitlement) and posting the home Wi-Fi to the portal's `/join` with
   the device's `/status` verdict shown; a WAP's bonded Bluetooth provisioning
-  service for a brand-new unit; and the Fleet tab's discovery for the
+  service for a brand-new unit *(amended 2026-10-22, #1843: that step could
+  never list a WAP, since the app dials only a peripheral advertising the
+  console service, which no WAP advertises, ledger A65; the walkthrough now
+  names the WAP's own setup page)*; and the Fleet tab's discovery for the
   appearance. Pure halves host-tested (`HubOnboardingTests`,
   `HubProvisionPlanTests`, `SetupPortalTests`, `HubDiscoveryRowsTests`,
   `SetupGuideTests`); the gated iOS CI is the compiler.

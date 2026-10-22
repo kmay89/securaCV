@@ -51,7 +51,8 @@ The sketch takes no board-pin or config header from elsewhere in the repo:
 its pins are in `canary_wap.ino` and its feature flags in `build_config.h`.
 (The script also creates a `secrets.h`, but nothing reads it — canary-wap
 takes no compile-time credentials; Wi-Fi is provisioned over the captive
-portal and the AP password and API token are derived per device. See
+portal, the AP password is derived per device, and the API token is the one
+a flasher seeded at install or, with none, one derived per device. See
 `secrets/secrets.example.h`.)
 
 ### 1. Board Installation

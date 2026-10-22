@@ -46,7 +46,7 @@ user on this list.**
 ### 1. Keys Never Leave the Device
 
 The Ed25519 private key is generated on the ESP32-family chip's hardware RNG
-and stored in NVS. It is **never**:
+and stored in NVS. By anything the firmware runs, it is **never**:
 - Transmitted over WiFi, USB, or any interface
 - Included in exports, logs, diagnostics, or crash dumps
 - Derivable from any data that leaves the device
@@ -62,17 +62,23 @@ the device, an adversary with sufficient power WILL extract it.
 #### Scope of this principle
 
 Every item above is a statement about
-*software* paths. It is not a claim that the key survives an adversary who
-takes the device to a bench: the key lives in NVS, which flash encryption
+*firmware* paths. It is not a claim that the key survives an adversary who
+holds the device, over its USB port or on a bench: the key lives in NVS, which flash encryption
 (an opt-in tier the provisioning kit does not yet turn on) does not cover,
 and the NVS encryption that would is not
 available under `framework = arduino`, which every released firmware tree
 builds with, so on every tier today the key is recoverable by reading the
-flash directly, on a fused board too (Scenario 4 below). What
+flash directly, on a fused board too (Scenario 4 below). Our own flashers
+do exactly that read: before an install, unless told to skip it, each reads
+the whole flash over USB, through the chip's ROM download mode, which the
+Canary firmware does not control, and saves it as a safety copy on the
+computer (the browser's in its downloads, the desktop app's in its backups
+folder). That file holds the key in the clear, and restoring it puts the
+same key back on a board. What
 that does and does not buy an attacker — forward forgery yes, rewriting
 anchored history no — is stated in
 [`SECURITY_MODEL.md`](SECURITY_MODEL.md#physical-extraction-and-the-flash-encryption-default).
-Reviewers should hold this principle to the software boundary and treat
+Reviewers should hold this principle to the firmware boundary and treat
 physical extraction as the separately-documented trade it is.
 
 ### 2. Zero Phone-Home
@@ -485,9 +491,9 @@ stated, bounded to coarse claims, and revocable.
   and the bytes stay in flash until NVS erases that page to reuse it: the
   home network's password and the broker's are still plaintext in flash
   after the hold, on every tier today (NVS is plaintext on a fused board
-  too, the secure-tier bullet above), and on the default tier, whose flash
-  is readable on a bench, an install or a full erase in either flasher, each
-  of which rewrites the settings region, is what removes them. The hold keeps the identity key, the chain state, the witness
+  too, the secure-tier bullet above), and on the default tier an install or
+  a full erase in either flasher, each of which rewrites the settings
+  region, is what removes them. The hold keeps the identity key, the chain state, the witness
   records and the health log on SD, the API token, the HTTPS certificate and
   its private key (NVS `tls_cert` and `tls_key`, which the next boot loads
   again; the iPhone app pins that certificate, so a seizer who reads the key
@@ -546,10 +552,13 @@ firmware update.
 
 **Attack:** Adversary attempts to create false evidence records.
 
-**Result:** Requires Ed25519 private key (never leaves device) AND
+**Result:** Requires Ed25519 private key (no firmware path exports it, but
+it is plaintext in NVS, so a full read of the flash carries it: a bench
+read, or a flasher's pre-flash safety copy, Principle 1's scope) AND
 re-hashing/re-signing every subsequent record in the chain.
 
-**PASS if:** Forgery requires physical device possession AND key extraction.
+**PASS if:** Forgery requires the device, or a full read of its flash such as
+a flasher's safety copy, AND key extraction from it.
 
 ### Scenario 7: Evidence deletion
 
@@ -638,8 +647,10 @@ NVS from the first, 24-byte encoder.
 - ESP32-S3 manufactured by Espressif (China-based) — acknowledged boundary
 - Mitigations: no undisclosed outbound connections, no Espressif cloud
   services used. Secure boot and flash encryption are prepared in the opt-in
-  provisioning kit but enabled on no tier today (Scenario 4); its Phase 2
-  burns the JTAG-disable fuses, and is NOT run on default builds
+  provisioning kit but work on no tier today (Scenario 4): its Phase 2
+  leaves flash encryption off and Secure Boot enabled with nothing to
+  verify against, burns the JTAG-disable fuses, and is NOT run on default
+  builds
 - Future: RISC-V based designs with open-source silicon
 
 ---

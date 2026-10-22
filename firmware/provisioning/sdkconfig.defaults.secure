@@ -63,10 +63,11 @@ CONFIG_BLE_MESH=n
 # ─────────────────────────────────────────────────────────────────
 
 # ─────────────────────────────────────────────────────────────────
-# NVS ENCRYPTION (Protects stored keys and settings)
+# NVS ENCRYPTION (would protect stored keys and settings; inert)
 # ─────────────────────────────────────────────────────────────────
-# This can be enabled independently of flash encryption for Phase 1.
-# It encrypts NVS partition contents using a key stored in eFuse.
+# An ESP-IDF build would encrypt the NVS partition's contents with it. No
+# Canary build is one, so it protects nothing on any board, Phase 1 or
+# Phase 2.
 # KNOWN INERT under framework = arduino (platformio_secure.ini): the line
 # below never reaches the Arduino core's precompiled build, so no released
 # image has NVS encryption, and NVS stays plaintext on every board.

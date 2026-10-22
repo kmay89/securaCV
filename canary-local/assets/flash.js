@@ -4739,7 +4739,8 @@ function phaseDone(opts) {
     const p = el("p", "muted",
       "Minted fresh for this board and written into its settings with the WiFi. " +
       "It unlocks the Canary's own local API (status, settings, over-the-air updates) — " +
-      "the device's settings page shows it again later, and a reflash mints a new one. " +
+      "the device's settings page shows it again later, and a reflash mints a new one " +
+      "(an all-rounder Canary's 10-second BOOT reset drops it for one the board derives from its own key). " +
       "Copy it now if you'll want it:");
     t.append(p);
     const row = el("div", "flash-token-row");

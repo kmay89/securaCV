@@ -813,7 +813,10 @@ BOOT resets Wi-Fi and settings and keeps the device's keypair, and the
 key is made from that keypair. Only the all-rounder Canary has a longer
 stage: held to 30 seconds it wipes the keypair too, so the setup
 network's name and key both change, and the new ones print on serial. A
-WAP has no such stage, and no BOOT hold changes its key.
+WAP has no such stage, and no BOOT hold changes its key. An install in
+either flasher does change both, on the all-rounder Canary and a WAP alike:
+it starts the settings region over, so the next boot makes a new keypair,
+and the new name and key print on serial and on the flasher's done card.
 
 **After a firmware update.** Older firmware for the all-rounder Canary
 (`firmware/canary`) made the setup network's key from the device's
@@ -883,7 +886,7 @@ reinstall or erase it** —
 | Symptom | Likely cause |
 |---|---|
 | Phone can't see `SecuraCV-XXXX` | Power LED off → check USB cable. (Safe mode does *not* hide the network — the Wi-Fi AP keeps running.) |
-| The iPhone app shows no *new Canary is nearby* card | Only a Sense, Vision or WAP has the door — the all-rounder Canary build from `firmware/canary` never shows a card and uses its `SecuraCV-XXXX` setup network instead. On a Sense, Vision or WAP the door is open only for 30 minutes after power-on on a unit with no Wi-Fi saved — unplug and replug it. A unit whose saved Wi-Fi has stopped working keeps the door shut on purpose and raises `SecuraCV-XXXX` instead. Nothing here is bench-tested yet; the setup network always works. |
+| The iPhone app shows no *new Canary is nearby* card | Only a Sense, Vision or WAP has the door — the all-rounder Canary build from `firmware/canary` never shows a card and uses its `SecuraCV-XXXX` setup network instead. On a Sense, Vision or WAP the door is open for 30 minutes after power-on on a unit with no Wi-Fi saved (a new one, or one whose Wi-Fi you cleared), and on a Sense or Vision for a minute after a short BOOT tap — unplug and replug it, or tap BOOT. A unit whose saved Wi-Fi has stopped working keeps the door shut on purpose and raises `SecuraCV-XXXX` instead. Nothing here is bench-tested yet; the setup network always works. |
 | Dashboard shows a yellow **Safe mode active** bar | The Canary *crashed* (firmware panic / watchdog / brownout) several times in a row and disabled optional peripherals (camera, SD, mesh, BLE, presence, GPS) to protect the core witness functions. Ordinary power cycling, unplugging, or pressing reset does **not** trigger this — only genuine crashes do. It auto-reboots once it has run stably for ~60 s. If a persistent fault keeps crashing it back into safe mode it stops retrying and stays put — fix the underlying issue (reseat the SD card, check power), then click **Retry full boot** on the bar. |
 | `canary.local` doesn't load | Some Android browsers don't resolve `.local` names. Use **http://192.168.4.1** instead — it works on every phone. |
 | Phone drops the Wi-Fi or warns "no internet" | This shouldn't happen on current firmware (the Canary answers the connectivity check to stay connected). If it does, update the firmware, then reconnect. |

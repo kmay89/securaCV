@@ -107,7 +107,7 @@ firmware/
 ├── envs/           # PlatformIO .ini per product (envs/platformio/)
 ├── canary/         # the ACTIVE flagship tree (its own platformio.ini + lib/)
 ├── projects/       # product entry points; each one's lifecycle is VARIANT_POLICY.md
-├── provisioning/   # production key + eFuse tooling (and the compile-only secure envs)
+├── provisioning/   # the opt-in key + eFuse kit, Phase 2 dry-run only (and the compile-only secure envs)
 ├── scripts/        # CI checks, release and OTA tooling
 ├── tests_host/     # host-side unit tests for the pure cores
 ├── examples/       # standalone samples (CSI, a module stub)
@@ -328,7 +328,10 @@ the Canary displays show the fleet on their own glass.
 
 ## Provisioning
 
-Production device provisioning tools are in `provisioning/`:
+The opt-in provisioning kit is in `provisioning/`. Its Phase 2, the
+lockdown, runs only as a dry run today: as tooled it turns on neither Secure
+Boot nor flash encryption, and the board may not boot after its burn
+([`docs/secure_provisioning.md`](../docs/secure_provisioning.md), Step 3).
 
 ```bash
 # Generate signing keys
@@ -337,7 +340,7 @@ Production device provisioning tools are in `provisioning/`:
 # Verify virgin device
 python3 provisioning/verify_device.py --port /dev/ttyACM0
 
-# Full provisioning workflow
+# Phase 1 workflow (the default; burns no eFuse)
 ./provisioning/provision_canary.sh --port /dev/ttyACM0
 
 # Dry run (preview without burning eFuses)

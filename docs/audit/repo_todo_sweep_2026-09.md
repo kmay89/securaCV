@@ -3152,6 +3152,69 @@ so — see D2 below.)
       row is still held one by one: its deletion, its file swapped for
       `README.md` or for another scoped file, an emptied reason and a dead
       needle each fail the suite.
+  - The sweep for every remaining copy, fifth pass (#1843, its review round
+    4, taken before the review: every family searched across the whole tree
+    at once, each hit read against the code).
+    - "Keys never leave the device" is the firmware's promise. Both flashers'
+      pre-flash safety copy reads the whole flash over USB, through the
+      chip's ROM download mode (the browser's `takeBackup()` from offset 0
+      for the board's flash size, saved to the downloads folder; the
+      desktop engine's `read-flash 0x0 <size>` into its backups folder), so
+      that file holds the key's plaintext NVS, and a restore writes it back
+      at offset 0, key included. `SECURITY_MODEL.md` (the principle's list,
+      its limit, the forgery list and the honest statement, which said a
+      thief must open the case), `THREAT_MODEL.md` (Principle 1's list and
+      scope, Scenario 6), `PENTEST_SCOPE.md` (the Critical and not-a-finding
+      rows and the withheld key, which said extraction by any means is
+      Critical while the plaintext NVS is documented), `secure_defaults.h`
+      and a lesson's principle now say so.
+    - An install in either flasher starts NVS over, the crash-loop count
+      and the handle with it: the flagship's E6 boot line and comment and
+      `boot_guard.h` named a re-flash as what a zero image identity cannot
+      reset; `onboarding_multiple_canaries.md` said the handle comes from
+      immutable hardware and is the same every time you flash; the captive
+      portal test plan said the SSID suffix comes from the hardware;
+      `onboarding_workflow_evaluation.md` called the `device_id` stable and
+      the token derived; the getting started guide's setup-network key
+      paragraph named every cause but the install; the F360 entries here,
+      in the CHANGELOG and in a lesson named a clean install as the only way
+      to a new identity; the flasher's "clean install" advice said the erase
+      is what wipes stale settings, in both flashers.
+    - The kit: `THREAT_MODEL.md`'s Hardware Trust bullet and the intake
+      guide said Secure Boot is prepared but enabled on no tier (a Phase 2
+      board has `SECURE_BOOT_EN` burned with nothing to verify against);
+      `PENTEST_SCOPE.md` called both off on every Canary;
+      `secure_provisioning.md`'s file table and the sdkconfig's NVS section
+      implied the commented lines would take effect if uncommented, or that
+      NVS encryption could be enabled for Phase 1; `firmware/README.md`
+      called the kit production provisioning; `mesh_state.cpp` said a board
+      stores the secret once "the eFuse is committed" (the kit burns the key
+      but no counter); the bench validation runbook said to enable flash
+      encryption with no word that the kit does not; Scenario 4's
+      "default tier, whose flash is readable" implied the fused tier's is
+      not; the 2026 roadmap's `nvs_keys` "from eFuse" carries an amendment.
+    - Tokens: the WAP sketch README, `secrets.example.h` and `setup.sh`
+      said the token is derived per device (a flasher may seed it); the
+      desktop fleet book's stale-key note, its doc and both flashers' token
+      cards left out the flagship's 10 s hold, which drops a seeded token.
+    - The rest: `TRUST_MODEL.md` said the Improv window and the tap minute
+      are the only times a node takes Wi-Fi from a phone (a WAP's bonded
+      lane takes it from any bonded peer, F346); the roadmap's row 13, a
+      lesson and a CHANGELOG walkthrough entry offered the Bluetooth lane
+      no WAP fills (A65) and carry amendments; `magic_pairing.md` §2.3
+      called a no-credentials unit one nobody owns; the FAQ left the setup
+      door's claim out of what fetches the kit; `wap_server.h` said a BOOT
+      press is required for the receipt; `DeviceAPI.swift` said the app's
+      receipt comes after a BOOT tap; the Lab's WAP page said the keys ride
+      through every reset (`gen_wap.py` run; only `wap.json` changed).
+    - Tests: `test_docs_claims.py` bans 64 more retired sentences where they
+      stood, and a new test holds the safety-copy claim to the code (both
+      flashers' full reads from offset 0, both restores' writes at offset
+      0). Five replacements earlier passes wrote were themselves retired and
+      are banned now. Every new row's deletion, the row pointed at
+      `README.md` and a dead needle each fail the suite (192 of 192).
+      Totals: 41 BANNED, 424 RETIRED_IN over 145 files, 480 forms
+      (MUST_FAIL's 41 and MUST_FAIL_IN's 439), 403 replacements, 24 tests.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),
@@ -4124,7 +4187,9 @@ so — see D2 below.)
   identity. The WAP's BOOT hold never wipes the identity (it has no wipe
   stage: `factory_reset_by_hold()` keeps it, and `gen_wap.py` fails the Lab
   build if the sketch arms one), so a clean install in either flasher is
-  its only way to a new identity on purpose, halted or not; the halt
+  its only way to a new identity on purpose, halted or not *(amended
+  2026-10-22, #1843's sweep: any install in either flasher, with or without
+  its full erase, is: its factory image starts NVS over)*; the halt
   removes no path that was there. It halts rather than returning `false`
   and going on, as `setup()` does after the other provisioning failures
   (F336): from there the boot attestation record and `mesh_network::init()`

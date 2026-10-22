@@ -39,11 +39,15 @@
 // PRINCIPLE 1: KEYS NEVER LEAVE THE DEVICE
 // ════════════════════════════════════════════════════════════════════
 // No configuration needed — enforced by the absence of any export API.
-// The Ed25519 private key is stored in NVS and has no read interface.
-// This comment exists to document that the omission is intentional.
+// The Ed25519 private key is stored in NVS and the firmware has no read
+// interface for it. This comment exists to document that the omission is
+// intentional.
 //
-// That is the SOFTWARE boundary. At-rest confidentiality against a bench
-// read of the flash is a separate, opt-in tier (Tier 3+ of
+// That is the FIRMWARE boundary. A read of the whole flash goes around it:
+// over USB through the chip's ROM download mode, which this firmware does
+// not control (both flashers make that read for their pre-flash safety
+// copy, which so holds the key), or off the chip on a bench. At-rest
+// confidentiality against such a read is a separate, opt-in tier (Tier 3+ of
 // docs/design/hardware_root_of_trust.md), and it needs NVS encryption on top
 // of flash encryption: flash encryption alone does not cover NVS, where the
 // key lives, and NVS encryption is not available in this framework = arduino

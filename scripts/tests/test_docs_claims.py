@@ -1475,6 +1475,208 @@ RETIRED_IN = (
     ('docs/security/THREAT_MODEL.md',
      'Once Secure Boot is enabled (no tier enables it today)',
      'a Phase 2 board has SECURE_BOOT_EN burned with nothing to verify against; what no tier has is a working Secure Boot'),
+
+    # #1843's sweep, fifth pass (its review round 4): the copies the fourth
+    # pass left. A flasher's pre-flash safety copy is a full read of the
+    # flash over USB, so the key's plaintext NVS rides it to the computer:
+    # "never leaves" is the firmware's promise, not the chip's. An install in
+    # either flasher starts NVS over, the boot count and the handle with it.
+    # Phase 2 leaves flash encryption off and Secure Boot enabled with nothing
+    # to verify against. A WAP's token may be a flasher's seeded one, and the
+    # flagship's hold drops a seeded token. The iPhone app reaches no WAP's
+    # Bluetooth lane (A65), and a cleared unit is not one nobody owns.
+    ("firmware/canary/src/main.cpp",
+     "a re-flash will not reset the crash-loop count",
+     "an install in either flasher starts NVS over, the count with it; only an upload that keeps NVS keeps a count a zero image identity cannot reset"),
+    ("firmware/canary/src/main.cpp",
+     "Bench row E6: a re-flash of another build resets the count only if the",
+     "a PlatformIO or Arduino IDE upload of another build does; an install in either flasher starts NVS over whatever the identity"),
+    ("firmware/common/health/boot_guard.h",
+     "and a re-flash of another build silently stops resetting the count",
+     "an upload that keeps NVS does; a flasher install starts the count over regardless"),
+    ("docs/design/magic_pairing.md",
+     "the first is a device nobody owns, the second is a device that has an owner and a bad day.",
+     "the first is a device with no network saved, a new one or one its owner cleared (§2.2)"),
+    ("docs/security/THREAT_MODEL.md",
+     "and on the default tier, whose flash is readable on a bench, an install or a full erase",
+     "NVS is plaintext on a fused board too, so the default tier is not the only one a bench reads"),
+    ("docs/security/THREAT_MODEL.md",
+     "Requires Ed25519 private key (never leaves device) AND",
+     "no firmware path exports it, but a full read of the flash, a flasher's safety copy included, carries it"),
+    ("docs/security/THREAT_MODEL.md",
+     "Forgery requires physical device possession AND key extraction.",
+     "the device or a full read of its flash, a flasher's safety copy included"),
+    ("docs/security/THREAT_MODEL.md",
+     "and stored in NVS. It is **never**:",
+     "the list holds for anything the firmware runs; the flashers' safety copy reads the whole flash over USB"),
+    ("docs/security/THREAT_MODEL.md",
+     "Every item above is a statement about *software* paths. It is not a claim that the key survives an adversary who takes the device to a bench:",
+     "firmware paths; a flasher's safety copy is a software path that reads the key over USB"),
+    ("docs/security/THREAT_MODEL.md",
+     "Reviewers should hold this principle to the software boundary",
+     "the firmware boundary"),
+    ("docs/security/THREAT_MODEL.md",
+     "provisioning kit but enabled on no tier today (Scenario 4); its Phase 2",
+     "Phase 2 leaves flash encryption off and Secure Boot enabled with nothing to verify against"),
+    ("docs/unflashed_board_intake.md",
+     "where secure boot and flash encryption are staged, prepared but not yet enabled:",
+     "Phase 2 sets SECURE_BOOT_EN with no digest: Secure Boot enabled with nothing to verify against"),
+    ("docs/secure_provisioning.md",
+     "and Flash Encryption (release mode) **prepared but not enabled** (commented out)",
+     "the whole file is inert under framework = arduino, so uncommenting them turns nothing on"),
+    ("firmware/provisioning/sdkconfig.defaults.secure",
+     "NVS ENCRYPTION (Protects stored keys and settings)",
+     "it would; no Canary build reads the file"),
+    ("firmware/provisioning/sdkconfig.defaults.secure",
+     "This can be enabled independently of flash encryption for Phase 1.",
+     "no Canary build can enable it, Phase 1 or Phase 2"),
+    ("firmware/provisioning/sdkconfig.defaults.secure",
+     "# It encrypts NVS partition contents using a key stored in eFuse. # KNOWN INERT",
+     "an ESP-IDF build would encrypt NVS; no Canary build is one"),
+    ("firmware/canary/lib/securacv_mesh/src/mesh_state.cpp",
+     "pairing on every boot until the eFuse is committed.",
+     "until flash encryption is on, which the kit's Phase 2 does not do, and then the secret is still plaintext NVS"),
+    ("docs/TRUST_MODEL.md",
+     "BOOT-tap minute are the only times a node takes Wi-Fi from a phone.",
+     "a WAP also takes it over its bonded Bluetooth lane from any bonded peer (F346)"),
+    ("docs/IMPROVEMENT_ROADMAP.md",
+     "**Swift compiled and tested by the PR's iOS CI; the WAP endpoint and fixture are host-tested.** | S |",
+     "row 13 carries its amendment: no device fills the BLE lane (A65)"),
+    ("firmware/LESSONS_LEARNED.md",
+     "rollout prefers the bonded BLE lane and discloses plain http. - **Guidance:**",
+     "the lesson carries its amendment: no WAP fills that lane (A65)"),
+    ("firmware/LESSONS_LEARNED.md",
+     "has no export, backup, or read interface - **Why:**",
+     "in the firmware; a flasher's safety copy reads the whole flash, key included"),
+    ("firmware/LESSONS_LEARNED.md",
+     "way to start fresh on purpose is the flagship's 30 s BOOT wipe, or a clean install on the canary-wap,",
+     "an install in either flasher starts fresh on either tree, with or without its erase"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/README.md",
+     "portal and the AP password and API token are derived per device.",
+     "the token is a flasher's seeded one, or with none one derived per device"),
+    ("firmware/projects/canary-wap/secrets/secrets.example.h",
+     "The API token: derived per device from the private key",
+     "the one a flasher seeded at install or, with none, one derived from the key"),
+    ("firmware/projects/canary-wap/setup.sh",
+     "The API token: derived per device from the private key",
+     "the same, in the heredoc that writes secrets.example.h"),
+    ("docs/onboarding_workflow_evaluation.md",
+     "keypair, then derives a stable `device_id`",
+     "stable while the keypair is: an install in either flasher makes a new one"),
+    ("docs/onboarding_workflow_evaluation.md",
+     "event_contract §10), and derives the API token. (`canary_wap.ino`)",
+     "it loads the stored token (a flasher's seeded one included) and derives one only when none is stored"),
+    ("docs/security/PENTEST_SCOPE.md",
+     "Extracting a device identity key by any means. Reading footage",
+     "every means but a read of the flash of a board in hand, which is documented"),
+    ("docs/security/PENTEST_SCOPE.md",
+     "**Retrieving key bytes is always a finding, including from a device whose key you already hold**",
+     "by any path but the documented flash read"),
+    ("docs/security/PENTEST_SCOPE.md",
+     "*retrieval* of key bytes is always a finding**",
+     "the same"),
+    ("docs/security/PENTEST_SCOPE.md",
+     "and it is the key-extraction target. Handing over every key",
+     "a read of its flash recovers it on every tier and is documented; the target is every other path"),
+    ("docs/security/PENTEST_SCOPE.md",
+     "are off by default.** Off on every Canary today, in fact:",
+     "neither works on any Canary today: Phase 2 leaves Secure Boot enabled with nothing to verify against"),
+    ("docs/security/SECURITY_MODEL.md",
+     "Stored only on the device's internal flash memory",
+     "a flasher's safety copy holds it too"),
+    ("docs/security/SECURITY_MODEL.md",
+     "Never transmitted over any interface (WiFi, USB, or otherwise)",
+     "never sent by the firmware; a flasher's safety copy reads it over USB"),
+    ("docs/security/SECURITY_MODEL.md",
+     "Not backed up, escrowed, or recoverable by anyone — including ERRERlabs",
+     "a flasher's safety copy is a backup that holds it, and restoring it restores the key"),
+    ("docs/security/SECURITY_MODEL.md",
+     "is no software path that will hand it over",
+     "no firmware path"),
+    ("docs/security/SECURITY_MODEL.md",
+     "It is a statement about software. Someone who physically takes the device and reads the flash chip directly is a different adversary,",
+     "a statement about the firmware; a read over the USB port, the flashers' safety copy among them, carries the key"),
+    ("docs/security/SECURITY_MODEL.md",
+     "Ed25519 private key (which never leaves the device)",
+     "no firmware path exports it; a full read of the flash carries it"),
+    ("docs/security/SECURITY_MODEL.md",
+     "someone who takes a Canary away and opens it up can read the private key out of the flash chip,",
+     "it reads over the USB port too, and a flasher's safety copy holds it"),
+    ("CHANGELOG.md",
+     "is its only way to a new identity on purpose, halted or not. It halts,",
+     "the F360 entry carries its amendment: any install in either flasher is"),
+    ("CHANGELOG.md",
+     "a WAP's bonded Bluetooth provisioning service for a brand-new unit; and the Fleet tab's discovery",
+     "the walkthrough entry carries its amendment: that step never listed a WAP (A65)"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "its only way to a new identity on purpose, halted or not; the halt removes no path",
+     "the F360 note carries its amendment: any install in either flasher is"),
+    ("firmware/README.md",
+     "Production device provisioning tools are in `provisioning/`:",
+     "the opt-in kit; its Phase 2 runs only as a dry run today"),
+    ("firmware/README.md",
+     "production key + eFuse tooling",
+     "the opt-in key + eFuse kit, Phase 2 dry-run only"),
+    ("firmware/README.md",
+     "# Full provisioning workflow",
+     "the default run is Phase 1, which burns no eFuse"),
+    ("firmware/canary/include/secure_defaults.h",
+     "The Ed25519 private key is stored in NVS and has no read interface.",
+     "the firmware has none; the chip's ROM download mode reads the whole flash"),
+    ("firmware/canary/include/secure_defaults.h",
+     "That is the SOFTWARE boundary.",
+     "the FIRMWARE boundary: a flasher's safety copy goes around it"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/wap_server.h",
+     "Physical BOOT button required for provisioning receipt",
+     "the bearer, the setup door's claim, or a tap to the one address asking"),
+    ("ios/Sources/SecuraCV/Transport/DeviceAPI.swift",
+     "The one-shot receipt handed over after a physical BOOT-tap (Trust-on-Pair).",
+     "served to a bearer, a WAP's claim or a tap; the app takes it from a claim or a kit"),
+    ("desktop/src/app.js",
+     "it was probably reflashed elsewhere. One reflash here mints a fresh one.",
+     "or an all-rounder Canary's 10 s hold dropped a seeded token"),
+    ("desktop/src/app.js",
+     "Copy it if you want it somewhere else too — a reflash mints a new one.</span>",
+     "and the all-rounder Canary's 10 s reset drops it"),
+    ("desktop/src/app.js",
+     "A clean install usually clears this — it wipes stale settings a previous",
+     "every install starts the settings region over; the erase adds the partitions an install never writes"),
+    ("canary-local/assets/flash-core.js",
+     "A clean install usually clears this — it wipes stale settings a previous",
+     "the same"),
+    ("canary-local/assets/flash.js",
+     "the device's settings page shows it again later, and a reflash mints a new one.",
+     "the all-rounder Canary's 10 s reset drops it for a derived one"),
+    ("docs/flasher_profiles_fleet_book.md",
+     "(reflashed elsewhere → reflash here mints a fresh one)",
+     "or an all-rounder Canary reset with its 10 s hold"),
+    ("docs/onboarding_multiple_canaries.md",
+     "Because the handle is derived from immutable hardware, it is **the same every time you flash**",
+     "it lasts as long as the key; an install in either flasher makes a new key and handle"),
+    ("docs/onboarding_multiple_canaries.md",
+     "Each board has a globally-unique hardware identity. The firmware derives a stable per-device handle from it",
+     "the handle derives from the key's public fingerprint, never the hardware"),
+    ("docs/manual_test_plan_captive_portal.md",
+     "a 4-char suffix derived from the device's hardware identity",
+     "from the identity key fingerprint, which an install in either flasher replaces"),
+    ("docs/manual_test_plan_captive_portal.md",
+     "The softAP is always on (AP+STA)",
+     "it drops once the home link has held for AP_DROP_GRACE_MS and comes back when it drops"),
+    ("docs/FAQ.md",
+     "so only a BOOT tap or the token itself fetches it,",
+     "the setup door's one-time claim fetches it too"),
+    ("canary-local/tools/gen_wap.py",
+     "keys and witness chain ride through every reset)",
+     "every tap of RESET; the 10 s hold clears the WiFi, and an install starts NVS over"),
+    ("canary-local/devices/wap.json",
+     "keys and witness chain ride through every reset)",
+     "the same, regenerated"),
+    ("docs/review/02-roadmap.md",
+     "anticipates `nvs_keys` from eFuse). *Acceptance:* device key not recoverable from a config seed. *Status 2026-09:*",
+     "the roadmap carries its amendment: no Canary build reads nvs_keys"),
+    ("docs/review/02-roadmap.md",
+     "`nvs_keys` for this (but fix its 4 MB assumption — F-06). 6. **Always keep big buffers in PSRAM**",
+     "the same"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -1889,15 +2091,6 @@ MUST_PASS_IN = [
      '  `framework = arduino` (`platformio_secure.ini`, "KNOWN INERT"), so a Phase 2\n'
      "  board's NVS (the identity key, the saved Wi-Fi and broker passwords, the\n"
      '  bonds) stays plaintext until the arduino-as-IDF-component migration'),
-    ('docs/secure_provisioning.md',
-     '| `sdkconfig.defaults.secure` | ESP-IDF Kconfig with BT disabled; Secure Boot v2 (with anti-rollback) and Flash Encryption (release mode) **prepared but not enabled** (commented'),
-    ('firmware/provisioning/sdkconfig.defaults.secure',
-     '# It encrypts NVS partition contents using a key stored in eFuse.\n'
-     '# KNOWN INERT under framework = arduino (platformio_secure.ini): the line\n'
-     "# below never reaches the Arduino core's precompiled build, so no released\n"
-     '# image has NVS encryption, and NVS stays plaintext on every board.\n'
-     '#\n'
-     'CONFIG_NVS_ENCRYPTION=y'),
     ('docs/audit/mesh_and_chirp_audit_v1.md',
      '| NVS confidentiality | M | No FE gate (O2). *(Amended 2026-10-21: the O2 gate keeps the secret off boards without flash encryption; it does not give NVS confidentiality, since flash encryption'),
     ('docs/audit/mesh_and_chirp_audit_v1.md',
@@ -1973,9 +2166,6 @@ MUST_PASS_IN = [
     ('docs/security/THREAT_MODEL.md',
      "Secure Boot and flash encryption are in no tier's boundary today: the"),
     ('docs/security/THREAT_MODEL.md',
-     '  services used. Secure boot and flash encryption are prepared in the opt-in\n'
-     '  provisioning kit but enabled on no tier today (Scenario 4); its Phase 2'),
-    ('docs/security/THREAT_MODEL.md',
      "- **Secure tier: FAIL today, as the default.** The provisioning kit's"),
     ('docs/security/THREAT_MODEL.md',
      '  Secure Boot would refuse unsigned firmware and flash encryption would keep\n'
@@ -1990,9 +2180,6 @@ MUST_PASS_IN = [
      '`SECURE_BOOT_EN` with no key digest, so nothing is verified), a'),
     ('docs/security/THREAT_MODEL.md',
      '- No undisclosed outbound connections (a compromised chip would have to originate traffic of its own on a network whose expected traffic is short and known; SECURITY_MODEL.md, Hardware Trust Boundary)'),
-    ('docs/security/THREAT_MODEL.md',
-     'takes the device to a bench: the key lives in NVS, which flash encryption\n'
-     '(an opt-in tier the provisioning kit does not yet turn on) does not cover,'),
     ('docs/security/SECURITY_MODEL.md',
      'mitigations, but **neither works on any Canary today**: the provisioning kit prepares both and turns on neither'),
     ('docs/security/SECURITY_MODEL.md',
@@ -2042,10 +2229,6 @@ MUST_PASS_IN = [
     ('docs/design/vault_operator_ux_v1_1.md',
      '   signing scheme; the fuse steps are partly tooled (not the crypt counter or a\n'
      '   Secure Boot key digest, so the kit turns neither on yet), and NVS encryption, without'),
-    ('docs/security/PENTEST_SCOPE.md',
-     '- **Flash encryption and Secure Boot are off by default.** Off on every\n'
-     '  Canary today, in fact: the opt-in provisioning kit stages both and turns on\n'
-     '  neither (its Phase 2 burns fuses but writes a plaintext image and burns no'),
     ('firmware/common/network/improv_core.h',
      ' *   a device with NO NETWORK SAVED (a new one nobody owns yet, or one its'),
     ('firmware/projects/canary-wap/arduino/canary_wap/improv_core.h',
@@ -2477,6 +2660,171 @@ MUST_PASS_IN = [
     ('docs/audit/repo_todo_sweep_2026-09.md',
      "      only then tap *(amended 2026-10-22, #1843's sweep, fourth pass: both\n"
      "      now say to short-tap BOOT when the sign-in's line says to)*; the companion"),
+
+    ('firmware/canary/src/main.cpp',
+     ': "ZERO or unreadable - an upload that keeps NVS will not reset the crash-loop count");'),
+    ('firmware/canary/src/main.cpp',
+     '  // Bench row E6: a PlatformIO or Arduino IDE upload of another build, which'),
+    ('firmware/common/health/boot_guard.h',
+     '// and a PlatformIO or Arduino IDE upload of another build (which leaves NVS'),
+    ('docs/design/magic_pairing.md',
+     "from the owner's: the first is a device with no network saved (a new one, or\n"
+     'one its owner cleared, §2.2), the second is a device that has an owner and a\n'
+     'bad day.'),
+    ('docs/security/THREAT_MODEL.md',
+     '  too, the secure-tier bullet above), and on the default tier an install or\n'
+     '  a full erase in either flasher, each of which rewrites the settings\n'
+     '  region, is what removes them.'),
+    ('docs/security/THREAT_MODEL.md',
+     '**Result:** Requires Ed25519 private key (no firmware path exports it, but'),
+    ('docs/security/THREAT_MODEL.md',
+     '**PASS if:** Forgery requires the device, or a full read of its flash such as\n'
+     "a flasher's safety copy, AND key extraction from it."),
+    ('docs/security/THREAT_MODEL.md',
+     'and stored in NVS. By anything the firmware runs, it is **never**:'),
+    ('docs/security/THREAT_MODEL.md',
+     '*firmware* paths. It is not a claim that the key survives an adversary who\n'
+     'holds the device, over its USB port or on a bench: the key lives in NVS, which flash encryption\n'
+     '(an opt-in tier the provisioning kit does not yet turn on) does not cover,'),
+    ('docs/security/THREAT_MODEL.md',
+     'flash directly, on a fused board too (Scenario 4 below). Our own flashers\n'
+     'do exactly that read: before an install, unless told to skip it, each reads\n'
+     'the whole flash over USB, through the chip\'s ROM download mode, which the\n'
+     'Canary firmware does not control, and saves it as a safety copy on the\n'
+     'computer'),
+    ('docs/security/THREAT_MODEL.md',
+     'Reviewers should hold this principle to the firmware boundary and treat'),
+    ('docs/security/THREAT_MODEL.md',
+     '  provisioning kit but work on no tier today (Scenario 4): its Phase 2\n'
+     '  leaves flash encryption off and Secure Boot enabled with nothing to\n'
+     '  verify against, burns the JTAG-disable fuses,'),
+    ('docs/unflashed_board_intake.md',
+     'where secure boot and flash encryption are staged, and as tooled it turns on\n'
+     'neither: it leaves flash encryption off and Secure Boot enabled with nothing\n'
+     'to verify against.'),
+    ('docs/secure_provisioning.md',
+     '| `sdkconfig.defaults.secure` | ESP-IDF Kconfig, staged: BT disabled, Secure Boot v2 (with anti-rollback) and Flash Encryption (release mode) commented out, NVS encryption named. The whole file is inert under `framework = arduino`, so uncommenting those lines turns nothing on;'),
+    ('firmware/provisioning/sdkconfig.defaults.secure',
+     '# NVS ENCRYPTION (would protect stored keys and settings; inert)'),
+    ('firmware/provisioning/sdkconfig.defaults.secure',
+     "# An ESP-IDF build would encrypt the NVS partition's contents with it. No\n"
+     '# Canary build is one, so it protects nothing on any board, Phase 1 or\n'
+     '# Phase 2.\n'
+     '# KNOWN INERT under framework = arduino (platformio_secure.ini): the line\n'
+     "# below never reaches the Arduino core's precompiled build, so no released\n"
+     '# image has NVS encryption, and NVS stays plaintext on every board.'),
+    ('firmware/canary/lib/securacv_mesh/src/mesh_state.cpp',
+     ' * user must complete pairing on every boot until flash encryption is\n'
+     ' * on, and then the stored secret is still plaintext NVS, which flash\n'
+     ' * encryption does not cover (mesh_state.h).'),
+    ('docs/TRUST_MODEL.md',
+     "its bonded Bluetooth lane (`ble_provision.cpp`'s CREDS, an authenticated"),
+    ('docs/IMPROVEMENT_ROADMAP.md',
+     '*(Amended 2026-10-22, #1843: no device fills the BLE lane today.'),
+    ('firmware/LESSONS_LEARNED.md',
+     '  2026-10-22, #1843: no WAP fills that lane, since the app dials only a'),
+    ('firmware/LESSONS_LEARNED.md',
+     '  in the firmware. *(Amended 2026-10-22, #1843: a read of the whole flash goes'),
+    ('firmware/LESSONS_LEARNED.md',
+     '  ways to start fresh on purpose are an install in either flasher, with or\n'
+     '  without its full erase (its factory image starts NVS over), on either\n'
+     "  tree, and the flagship's 30 s BOOT wipe;"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/README.md',
+     'a flasher seeded at install or, with none, one derived per device. See'),
+    ('firmware/projects/canary-wap/secrets/secrets.example.h',
+     ' *   - The API token: the one a flasher seeded at install or, with none,\n'
+     ' *     one derived per device from the private key (derive_api_token);'),
+    ('firmware/projects/canary-wap/setup.sh',
+     ' *   - The API token: the one a flasher seeded at install or, with none,\n'
+     ' *     one derived per device from the private key (derive_api_token);'),
+    ('docs/onboarding_workflow_evaluation.md',
+     '   keypair, then derives a `device_id` (`canary-s3-4dC2`) and AP SSID'),
+    ('docs/onboarding_workflow_evaluation.md',
+     '   when none is stored. (`canary_wap.ino`)'),
+    ('docs/security/PENTEST_SCOPE.md',
+     'Extracting a device identity key by any means but a read of the flash of a board in your hands'),
+    ('docs/security/PENTEST_SCOPE.md',
+     '**Retrieving key bytes by any path but the documented flash read is always a finding'),
+    ('docs/security/PENTEST_SCOPE.md',
+     '   *retrieval* of key bytes by any path but that documented flash read is\n'
+     '   always a finding**'),
+    ('docs/security/PENTEST_SCOPE.md',
+     '   target. A read of its flash, over USB or on a bench, recovers it on every'),
+    ('docs/security/PENTEST_SCOPE.md',
+     '- **Flash encryption and Secure Boot are off by default.** Neither works on\n'
+     '  any Canary today, in fact: the opt-in provisioning kit stages both and turns\n'
+     '  on neither'),
+    ('docs/security/SECURITY_MODEL.md',
+     "- Stored on the device's internal flash memory, in plaintext NVS"),
+    ('docs/security/SECURITY_MODEL.md',
+     '- Never sent by the firmware over any interface (WiFi, USB, or otherwise)'),
+    ('docs/security/SECURITY_MODEL.md',
+     '- Not backed up or escrowed by the firmware, and never held by ERRERlabs'),
+    ('docs/security/SECURITY_MODEL.md',
+     'is no firmware path that will hand it over: no API, no export, no'),
+    ('docs/security/SECURITY_MODEL.md',
+     '**The limit of that promise.** It is a statement about the firmware.'),
+    ('docs/security/SECURITY_MODEL.md',
+     "1. The device's Ed25519 private key (which no firmware path exports; a"),
+    ('docs/security/SECURITY_MODEL.md',
+     '**The honest statement: someone who takes a Canary away can read the\n'
+     'private key out of its flash, over its USB port or off the chip, in its'),
+    ('CHANGELOG.md',
+     "  halted or not *(amended 2026-10-22, #1843's sweep: any install in either"),
+    ('CHANGELOG.md',
+     '  service for a brand-new unit *(amended 2026-10-22, #1843: that step could'),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     '  its only way to a new identity on purpose, halted or not *(amended\n'
+     "  2026-10-22, #1843's sweep: any install in either flasher, with or without"),
+    ('firmware/README.md',
+     'The opt-in provisioning kit is in `provisioning/`. Its Phase 2, the'),
+    ('firmware/README.md',
+     '# the opt-in key + eFuse kit, Phase 2 dry-run only'),
+    ('firmware/README.md',
+     '# Phase 1 workflow (the default; burns no eFuse)'),
+    ('firmware/canary/include/secure_defaults.h',
+     '// The Ed25519 private key is stored in NVS and the firmware has no read'),
+    ('firmware/canary/include/secure_defaults.h',
+     '// That is the FIRMWARE boundary. A read of the whole flash goes around it:'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/wap_server.h',
+     " * - Provisioning receipt only for the bearer token, the setup door's claim, or"),
+    ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
+     "/// to its bearer, to a WAP's setup-door claim, or after a short BOOT tap. This"),
+    ('desktop/src/app.js',
+     'it was probably reflashed elsewhere, or, on an all-rounder Canary, reset with its 10-second BOOT hold'),
+    ('desktop/src/app.js',
+     "a reflash mints a new one, and an all-rounder Canary's 10-second BOOT reset drops it"),
+    ('desktop/src/app.js',
+     '"region over; the full erase also wipes the partitions an install never writes " +\n'
+     '      "(the second firmware slot, the file system), where a previous firmware may have " +\n'
+     '      "left stale data. Reconnect and tick first contact.",'),
+    ('canary-local/assets/flash-core.js',
+     '"region over; the full erase also wipes the partitions an install never writes " +\n'
+     '      "(the second firmware slot, the file system), where a previous firmware may have " +\n'
+     '      "left stale data. Reconnect and choose “clean install”.",'),
+    ('canary-local/assets/flash.js',
+     "\"(an all-rounder Canary's 10-second BOOT reset drops it for one the board derives from its own key). \" +"),
+    ('docs/flasher_profiles_fleet_book.md',
+     '  elsewhere, or an all-rounder Canary reset with its 10 s BOOT hold, which'),
+    ('docs/onboarding_multiple_canaries.md',
+     'as long as the key: an over-the-air update and the 10-second BOOT reset keep'),
+    ('docs/onboarding_multiple_canaries.md',
+     'Each board makes its own Ed25519 identity key on its first boot. The firmware'),
+    ('docs/manual_test_plan_captive_portal.md',
+     "  device's identity key fingerprint, never the MAC, encoded in the"),
+    ('docs/manual_test_plan_captive_portal.md',
+     '  new key and so a new suffix. The softAP runs beside the station (AP+STA)'),
+    ('docs/FAQ.md',
+     "network's password, so only a BOOT tap, the token itself or the setup\n"
+     "door's one-time claim fetches it, never the dashboard's own session."),
+    ('canary-local/tools/gen_wap.py',
+     '"tap of RESET; an install in either flasher is what starts NVS over)",'),
+    ('canary-local/devices/wap.json',
+     'witness chain ride through every tap of RESET; an install in either flasher is what starts NVS over)'),
+    ('docs/review/02-roadmap.md',
+     "  *(Amended 2026-10-22, #1843: `nvs_keys` is where an ESP-IDF build's NVS encryption would keep its"),
+    ('docs/review/02-roadmap.md',
+     '   `nvs_keys` for this (but fix its 4 MB assumption — F-06). *(Amended 2026-10-22, #1843: no'),
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -3465,6 +3813,185 @@ MUST_FAIL_IN = [
      'enabled on any tier ([`key_at_rest.h`](../../firmware/common/identity/key_at_rest.h)).'),
     ('docs/security/THREAT_MODEL.md',
      '**LIMITATION:** Once Secure Boot is enabled (no tier enables it today), a'),
+
+    ('firmware/canary/src/main.cpp',
+     '                    : "ZERO or unreadable - a re-flash will not reset the crash-loop count");'),
+    ('firmware/canary/src/main.cpp',
+     '  // Bench row E6: a re-flash of another build resets the count only if the\n'
+     '  // build filled app_elf_sha256 in the app descriptor. Say so on every boot.'),
+    ('firmware/common/health/boot_guard.h',
+     '// descriptor; if it reads as all zeros, every build looks like the same image\n'
+     '// and a re-flash of another build silently stops resetting the count (the'),
+    ('docs/design/magic_pairing.md',
+     "from the owner's: the first is a device nobody owns, the second is a device\n"
+     'that has an owner and a bad day.'),
+    ('docs/security/THREAT_MODEL.md',
+     '  too, the secure-tier bullet above), and on the default tier, whose flash\n'
+     '  is readable on a bench, an install or a full erase in either flasher, each\n'
+     '  of which rewrites the settings region, is what removes them.'),
+    ('docs/security/THREAT_MODEL.md',
+     '**Result:** Requires Ed25519 private key (never leaves device) AND\n'
+     're-hashing/re-signing every subsequent record in the chain.'),
+    ('docs/security/THREAT_MODEL.md',
+     '**PASS if:** Forgery requires physical device possession AND key extraction.'),
+    ('docs/security/THREAT_MODEL.md',
+     "The Ed25519 private key is generated on the ESP32-family chip's hardware RNG\n"
+     'and stored in NVS. It is **never**:\n'
+     '- Transmitted over WiFi, USB, or any interface'),
+    ('docs/security/THREAT_MODEL.md',
+     'Every item above is a statement about\n'
+     '*software* paths. It is not a claim that the key survives an adversary who\n'
+     'takes the device to a bench: the key lives in NVS, which flash encryption'),
+    ('docs/security/THREAT_MODEL.md',
+     'Reviewers should hold this principle to the software boundary and treat\n'
+     'physical extraction as the separately-documented trade it is.'),
+    ('docs/security/THREAT_MODEL.md',
+     '  services used. Secure boot and flash encryption are prepared in the opt-in\n'
+     '  provisioning kit but enabled on no tier today (Scenario 4); its Phase 2\n'
+     '  burns the JTAG-disable fuses, and is NOT run on default builds'),
+    ('docs/unflashed_board_intake.md',
+     'The Phase 2 lockdown in [secure_provisioning.md](secure_provisioning.md) is\n'
+     'where secure boot and flash encryption are staged, prepared but not yet\n'
+     'enabled: today it does not make you the last person who can change what runs'),
+    ('docs/secure_provisioning.md',
+     '| `sdkconfig.defaults.secure` | ESP-IDF Kconfig with BT disabled; Secure Boot v2 (with anti-rollback) and Flash Encryption (release mode) **prepared but not enabled** (commented out); NVS encryption named but inert under `framework = arduino`;'),
+    ('firmware/provisioning/sdkconfig.defaults.secure',
+     '# NVS ENCRYPTION (Protects stored keys and settings)'),
+    ('firmware/provisioning/sdkconfig.defaults.secure',
+     '# This can be enabled independently of flash encryption for Phase 1.'),
+    ('firmware/provisioning/sdkconfig.defaults.secure',
+     '# It encrypts NVS partition contents using a key stored in eFuse.\n'
+     '# KNOWN INERT under framework = arduino (platformio_secure.ini): the line'),
+    ('firmware/canary/lib/securacv_mesh/src/mesh_state.cpp',
+     ' * on its opera_config write/load paths. Devices without FE blown\n'
+     ' * simply cannot store an opera_secret — the user must complete\n'
+     ' * pairing on every boot until the eFuse is committed. The device\'s'),
+    ('docs/TRUST_MODEL.md',
+     'above (Invariants II/III); the first-boot 30-minute Improv window and the\n'
+     'BOOT-tap minute are the only times a node takes Wi-Fi from a phone.'),
+    ('docs/IMPROVEMENT_ROADMAP.md',
+     '`FleetWiFiRolloutTests` extended (lanes, pilot order, disclosure, gate). **Swift compiled and tested by the PR\'s iOS CI; the WAP endpoint and fixture are host-tested.** | S |'),
+    ('firmware/LESSONS_LEARNED.md',
+     '  rollout prefers the bonded BLE lane and discloses plain http.\n'
+     '- **Guidance:** a contract that exists only as "what the other side sends'),
+    ('firmware/LESSONS_LEARNED.md',
+     '- **Principle:** The Ed25519 private key has no export, backup, or read interface\n'
+     '- **Why:** A key that can be exported can be compelled (court orders, coercion)'),
+    ('firmware/LESSONS_LEARNED.md',
+     '  way to start fresh on purpose is the flagship\'s 30 s BOOT wipe, or a clean\n'
+     '  install on the canary-wap, whose BOOT hold keeps the identity.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/README.md',
+     'takes no compile-time credentials; Wi-Fi is provisioned over the captive\n'
+     'portal and the AP password and API token are derived per device. See'),
+    ('firmware/projects/canary-wap/secrets/secrets.example.h',
+     ' *   - The API token: derived per device from the private key\n'
+     ' *     (derive_api_token), stored in NVS, shown on the serial banner.'),
+    ('firmware/projects/canary-wap/setup.sh',
+     ' *   - The API token: derived per device from the private key\n'
+     ' *     (derive_api_token), stored in NVS, shown on the serial banner.'),
+    ('docs/onboarding_workflow_evaluation.md',
+     '1. **Boot / identity** — `provision_device()` loads/creates the Ed25519\n'
+     '   keypair, then derives a stable `device_id` (`canary-s3-4dC2`) and AP SSID'),
+    ('docs/onboarding_workflow_evaluation.md',
+     '   event_contract §10), and derives the API token. (`canary_wap.ino`)'),
+    ('docs/security/PENTEST_SCOPE.md',
+     '| **Critical** | Forging a record that passes verification. Extracting a device identity key by any means. Reading footage or event content off a device you have not been granted access to.'),
+    ('docs/security/PENTEST_SCOPE.md',
+     '**Retrieving key bytes is always a finding, including from a device whose key you already hold** (see below).'),
+    ('docs/security/PENTEST_SCOPE.md',
+     '   To be explicit, because the distinction is the whole point: **demonstrating\n'
+     '   *retrieval* of key bytes is always a finding**, including from device #1 or'),
+    ('docs/security/PENTEST_SCOPE.md',
+     "3. **The third device's key is withheld**, and it is the key-extraction\n"
+     '   target. Handing over every key would have made the entire Critical'),
+    ('docs/security/PENTEST_SCOPE.md',
+     '- **Flash encryption and Secure Boot are off by default.** Off on every\n'
+     '  Canary today, in fact: the opt-in provisioning kit stages both and turns on'),
+    ('docs/security/SECURITY_MODEL.md',
+     "- Stored only on the device's internal flash memory"),
+    ('docs/security/SECURITY_MODEL.md',
+     '- Never transmitted over any interface (WiFi, USB, or otherwise)'),
+    ('docs/security/SECURITY_MODEL.md',
+     '- Not backed up, escrowed, or recoverable by anyone — including ERRERlabs'),
+    ('docs/security/SECURITY_MODEL.md',
+     'the device, an adversary with sufficient power WILL extract it. So there\n'
+     'is no software path that will hand it over: no API, no export, no'),
+    ('docs/security/SECURITY_MODEL.md',
+     '**The limit of that promise.** It is a statement about software. Someone\n'
+     'who physically takes the device and reads the flash chip directly is a\n'
+     'different adversary, and today they can recover the key from any Canary,'),
+    ('docs/security/SECURITY_MODEL.md',
+     "1. The device's Ed25519 private key (which never leaves the device)"),
+    ('docs/security/SECURITY_MODEL.md',
+     '**The honest statement: someone who takes a Canary away and opens it up\n'
+     'can read the private key out of the flash chip, in its default'),
+    ('CHANGELOG.md',
+     '  install in either flasher is its only way to a new identity on purpose,\n'
+     '  halted or not. It halts, where other provisioning failures go on (sweep'),
+    ('CHANGELOG.md',
+     "  the device's `/status` verdict shown; a WAP's bonded Bluetooth provisioning\n"
+     "  service for a brand-new unit; and the Fleet tab's discovery for the"),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     '  build if the sketch arms one), so a clean install in either flasher is\n'
+     '  its only way to a new identity on purpose, halted or not; the halt\n'
+     '  removes no path that was there.'),
+    ('firmware/README.md',
+     'Production device provisioning tools are in `provisioning/`:'),
+    ('firmware/README.md',
+     '├── provisioning/   # production key + eFuse tooling (and the compile-only secure envs)'),
+    ('firmware/README.md',
+     '# Full provisioning workflow\n'
+     './provisioning/provision_canary.sh --port /dev/ttyACM0'),
+    ('firmware/canary/include/secure_defaults.h',
+     '// The Ed25519 private key is stored in NVS and has no read interface.'),
+    ('firmware/canary/include/secure_defaults.h',
+     '// That is the SOFTWARE boundary. At-rest confidentiality against a bench'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/wap_server.h',
+     ' * - Physical BOOT button required for provisioning receipt'),
+    ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
+     '/// The one-shot receipt handed over after a physical BOOT-tap (Trust-on-Pair).'),
+    ('desktop/src/app.js',
+     '    return "The board refused the stored key — it was probably reflashed elsewhere. One reflash here mints a fresh one.";'),
+    ('desktop/src/app.js',
+     "    `for the fleet book. Copy it if you want it somewhere else too — a reflash mints a new one.</span>` +"),
+    ('desktop/src/app.js',
+     '    fix: "A clean install usually clears this — it wipes stale settings a previous " +\n'
+     '      "firmware may have left behind. Reconnect and tick first contact.",'),
+    ('canary-local/assets/flash-core.js',
+     '    fix: "A clean install usually clears this — it wipes stale settings a previous " +\n'
+     '      "firmware may have left behind. Reconnect and choose “clean install”.",'),
+    ('canary-local/assets/flash.js',
+     '      "the device\'s settings page shows it again later, and a reflash mints a new one. " +'),
+    ('docs/flasher_profiles_fleet_book.md',
+     '- a 401 is surfaced as "the board refused the stored key" (reflashed\n'
+     '  elsewhere → reflash here mints a fresh one), never retried blindly.'),
+    ('docs/onboarding_multiple_canaries.md',
+     'you might misread. Because the handle is derived from immutable hardware, it is\n'
+     '**the same every time you flash** — that stability is the point: it\'s how'),
+    ('docs/onboarding_multiple_canaries.md',
+     'Each board has a globally-unique hardware identity. The firmware derives a\n'
+     'stable per-device handle from it (`device_id` = `canary-s3-4dC2`, AP SSID'),
+    ('docs/manual_test_plan_captive_portal.md',
+     '- **AP SSID** is `SecuraCV-XXXX` (a 4-char suffix derived from the device\'s\n'
+     '  hardware identity, encoded in the unambiguous alphabet — no `0/O/o`,'),
+    ('docs/manual_test_plan_captive_portal.md',
+     '  `1/I/i/l/L`) in both setup and steady state. The softAP is always on\n'
+     '  (AP+STA) and does **not** NAT.'),
+    ('docs/FAQ.md',
+     "network's password, so only a BOOT tap or the token itself fetches it, never\n"
+     "the dashboard's own session."),
+    ('canary-local/tools/gen_wap.py',
+     '         "what": "chip reset — RAM clears, NVS flash survives (your WiFi credentials, keys and witness chain ride through every reset)",'),
+    ('canary-local/devices/wap.json',
+     '        "what": "chip reset \\u2014 RAM clears, NVS flash survives (your WiFi credentials, keys and witness chain ride through every reset)",'),
+    ('docs/review/02-roadmap.md',
+     '  Element / ESP32-S3 **eFuse + flash encryption + secure boot** (the secure partition table already\n'
+     '  anticipates `nvs_keys` from eFuse). *Acceptance:* device key not recoverable from a config seed.\n'
+     '  *Status 2026-09:* the prerequisite is done'),
+    ('docs/review/02-roadmap.md',
+     '   encryption + secure boot v2**; the `provisioning/partitions_secure.csv` already reserves\n'
+     '   `nvs_keys` for this (but fix its 4 MB assumption — F-06).\n'
+     '6. **Always keep big buffers in PSRAM** (CSI rings, web scratch).'),
 ]
 
 
@@ -3917,6 +4444,36 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
             with self.subTest(table=str(table.relative_to(REPO))):
                 self.assertEqual(len(nvs), 1)
                 self.assertTrue(0x8000 + 0xC00 <= nvs[0] < min(apps), (hex(nvs[0]), [hex(a) for a in apps]))
+
+    def test_the_flashers_safety_copy_reads_the_whole_flash(self):
+        # #1843's sweep, fifth pass: SECURITY_MODEL.md, THREAT_MODEL.md
+        # (Principle 1's scope, Scenario 6), secure_defaults.h and
+        # LESSONS_LEARNED.md say the key's "never leaves" is the firmware's
+        # promise: both flashers read the whole flash over USB for their
+        # pre-flash safety copy, a file on the computer that so holds the
+        # key's plaintext NVS, and restoring it puts the key back. Held to the
+        # code: the browser reads from offset 0 for the board's whole flash
+        # and saves it as a download, the desktop engine runs read-flash 0x0
+        # <size> into its backups folder, and both restores write the file
+        # back at offset 0. A safety copy that starts to skip NVS fails here
+        # until the docs follow.
+        js = (REPO / "canary-local/assets/flash.js").read_text(encoding="utf-8")
+        take = body_after(js, "async function takeBackup(box) {", r"\n}\n")
+        self.assertIn("const total = state.flashBytes;", take)
+        self.assertIn("await readFlashChunked(esploader, 0, total,", take)
+        self.assertIn("downloadBytes(bytes, name);", take)
+        self.assertIn("a backup holds the board's \" +\n    \"identity key and saved WiFi", js)
+        rescue = (REPO / "desktop/flash-engine/src/rescue.rs").read_text(encoding="utf-8")
+        self.assertIn('pub fn read_flash_args(port: &str, size: u64, out: &str, baud: u32) -> Vec<String> {\n'
+                      '    vec![\n        "read-flash".into(),\n        "0x0".into(),\n        size.to_string(),',
+                      rescue)
+        self.assertIn('pub fn write_bin_args(port: &str, path: &str, baud: u32) -> Vec<String> {\n'
+                      '    vec![\n        "write-bin".into(),\n        "0x0".into(),', rescue)
+        lib = (REPO / "desktop/src-tauri/src/lib.rs").read_text(encoding="utf-8")
+        self.assertIn("rescue::read_flash_args(&port, flash_size, &out_path, baud),", lib)
+        self.assertIn('.join("backups");', lib)
+        self.assertIn('let staged = stage_firmware(&bytes, "rescue-restore")?;', lib)
+        self.assertIn("rescue::write_bin_args(&port, &staged_path, baud),", lib)
 
     def test_the_flagship_hold_keeps_no_seeded_token(self):
         # #1843's sweep, fourth pass: the docs say the 10 s hold keeps the

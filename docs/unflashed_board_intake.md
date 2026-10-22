@@ -309,12 +309,13 @@ back after. The device identity keypair is generated on first boot *after* the
 erase, so nothing pre-existing carries into the device's identity.
 
 The Phase 2 lockdown in [secure_provisioning.md](secure_provisioning.md) is
-where secure boot and flash encryption are staged, prepared but not yet
-enabled: today it does not make you the last person who can change what runs
-on the board, and it does not protect the key or the saved Wi-Fi in NVS. Its
-burn is still irreversible, and it sets `SECURE_BOOT_EN` with no Secure Boot
-key digest, which has not been run on a bench (a board may not boot after
-it), so it is an explicit opt-in and never a default.
+where secure boot and flash encryption are staged, and as tooled it turns on
+neither: it leaves flash encryption off and Secure Boot enabled with nothing
+to verify against. So today it does not make you the last person who can
+change what runs on the board, and it does not protect the key or the saved
+Wi-Fi in NVS. Its burn is still irreversible, and it sets `SECURE_BOOT_EN`
+with no Secure Boot key digest, which has not been run on a bench (a board
+may not boot after it), so it is an explicit opt-in and never a default.
 
 ## What this does not do
 

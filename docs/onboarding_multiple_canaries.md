@@ -26,14 +26,17 @@ what changes once a second device joins the network.
 | **USB-C cable** | For flashing |
 | microSD, GPS | Optional |
 
-Each board has a globally-unique hardware identity. The firmware derives a
-stable per-device handle from it (`device_id` = `canary-s3-4dC2`, AP SSID
-`SecuraCV-wap-4dC2`), so you never have to configure anything to make two devices
-distinct at the hardware level. The four-character suffix is encoded in an
-unambiguous alphabet (no `0/O/o` or `1/I/i/l/L`), so it never contains glyphs
-you might misread. Because the handle is derived from immutable hardware, it is
-**the same every time you flash** — that stability is the point: it's how
-`canary.local`, Home Assistant, and MQTT keep tracking the same board.
+Each board makes its own Ed25519 identity key on its first boot. The firmware
+derives a per-device handle from that key's public fingerprint (`device_id` =
+`canary-s3-4dC2`, AP SSID `SecuraCV-wap-4dC2`), never from the MAC, so you
+never have to configure anything to make two devices distinct. The
+four-character suffix is encoded in an unambiguous alphabet (no `0/O/o` or
+`1/I/i/l/L`), so it never contains glyphs you might misread. The handle lasts
+as long as the key: an over-the-air update and the 10-second BOOT reset keep
+it, and that stability is the point: it's how `canary.local`, Home Assistant,
+and MQTT keep tracking the same board. An install in either flasher is not an
+update in that sense: it starts the board's settings region over, so the next
+boot makes a new key, and with it a new handle.
 
 ---
 

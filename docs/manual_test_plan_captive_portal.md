@@ -16,10 +16,14 @@ job; this plan covers the parts only real hardware and real OS supplicants can
 exercise.
 
 ## How the firmware behaves (reference)
-- **AP SSID** is `SecuraCV-XXXX` (a 4-char suffix derived from the device's
-  hardware identity, encoded in the unambiguous alphabet — no `0/O/o`,
-  `1/I/i/l/L`) in both setup and steady state. The softAP is always on
-  (AP+STA) and does **not** NAT.
+- **AP SSID** is `SecuraCV-wap-XXXX` (a 4-char suffix derived from the
+  device's identity key fingerprint, never the MAC, encoded in the
+  unambiguous alphabet — no `0/O/o`, `1/I/i/l/L`) in both setup and steady
+  state. It lasts as long as the key: an OTA update and the 10 s BOOT hold
+  keep it, and an install in either flasher (which starts NVS over) gives a
+  new key and so a new suffix. The softAP runs beside the station (AP+STA)
+  until the home link has held for `AP_DROP_GRACE_MS`, comes back when that
+  link drops, and does **not** NAT.
 - **Transport**: the dashboard / setup wizard / provisioning flow is served
   over **HTTPS on port 443** (TLS, self-signed cert generated on-device).
   Plain **HTTP port 80 returns a 301 redirect to HTTPS** for everything

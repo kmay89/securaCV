@@ -1229,7 +1229,8 @@ FLASH = {
              "held LOW through a reset: the mask ROM parks in download mode and waits for a flasher",
          ]},
         {"id": "reset", "label": "RESET",
-         "what": "chip reset — RAM clears, NVS flash survives (your WiFi credentials, keys and witness chain ride through every reset)",
+         "what": "chip reset — RAM clears, NVS flash survives (your WiFi credentials, keys and witness chain ride through every "
+                 "tap of RESET; an install in either flasher is what starts NVS over)",
          "gestures": ["tap: reboot the app", "tap while BOOT is held: enter download mode"]},
     ],
     "download_mode": {

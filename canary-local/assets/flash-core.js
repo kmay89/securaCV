@@ -1575,8 +1575,10 @@ const BOOT_SIGNATURES = [
     signature: "panic",
     test: /guru meditation|backtrace:|panic'?ed|abort\(\) was called|assert failed/i,
     means: "The new firmware crashed as it started up.",
-    fix: "A clean install usually clears this — it wipes stale settings a previous " +
-      "firmware may have left behind. Reconnect and choose “clean install”.",
+    fix: "A clean install usually clears this. Every install starts the settings " +
+      "region over; the full erase also wipes the partitions an install never writes " +
+      "(the second firmware slot, the file system), where a previous firmware may have " +
+      "left stale data. Reconnect and choose “clean install”.",
     action: "clean-install",
   },
   {

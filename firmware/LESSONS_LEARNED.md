@@ -72,7 +72,10 @@
   at a one-second cadence still places it finely. A wider bucket is not a
   coarse chain. §3 now says so, and keeps coarsening a reader's duty.
   The app pins `tls_cert_fp` and refuses an https device without it; the
-  rollout prefers the bonded BLE lane and discloses plain http.
+  rollout prefers the bonded BLE lane and discloses plain http. *(Amended
+  2026-10-22, #1843: no WAP fills that lane, since the app dials only a
+  peripheral advertising the console service, which no WAP advertises, so
+  a WAP rides http or is unreachable; ledger A65.)*
 - **Guidance:** a contract that exists only as "what the other side sends
   today" is not a contract. Put the shape in `spec/`, put ONE fixture beside
   it, and have every implementer decode the same bytes in its own test —
@@ -551,8 +554,10 @@
   lookup, once the open succeeded, answers only found, not found or a bad
   handle, so a test's other answers are ones the load refuses for not
   knowing them, not ones a device sends today. The
-  way to start fresh on purpose is the flagship's 30 s BOOT wipe, or a clean
-  install on the canary-wap, whose BOOT hold keeps the identity. A read's
+  ways to start fresh on purpose are an install in either flasher, with or
+  without its full erase (its factory image starts NVS over), on either
+  tree, and the flagship's 30 s BOOT wipe; the canary-wap's BOOT hold keeps
+  the identity. A read's
   count is part of its answer; a buffer the read refused, filled or not, is
   zeroed before anything sees it. And a refusal that does not halt is only
   as safe as whatever runs after it: before choosing "return false and go
@@ -1496,6 +1501,10 @@
 
 ### Private keys must never leave the device
 - **Principle:** The Ed25519 private key has no export, backup, or read interface
+  in the firmware. *(Amended 2026-10-22, #1843: a read of the whole flash goes
+  around it, over USB through the chip's ROM download mode or on a bench, and
+  both flashers make that read for their pre-flash safety copy, a file that
+  holds the key in the clear: the key is plaintext in NVS on every tier.)*
 - **Why:** A key that can be exported can be compelled (court orders, coercion)
 - **Rule:** No API endpoint, log statement, debug output, or export path may
   include private key material. There is no recovery mechanism by design.

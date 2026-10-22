@@ -241,9 +241,9 @@ the other two:
 
 The device's cryptographic identity (an Ed25519 private key) is:
 - Generated on the device's own hardware random number generator
-- Stored only on the device's internal flash memory
-- Never transmitted over any interface (WiFi, USB, or otherwise)
-- Not backed up, escrowed, or recoverable by anyone — including ERRERlabs
+- Stored on the device's internal flash memory, in plaintext NVS
+- Never sent by the firmware over any interface (WiFi, USB, or otherwise)
+- Not backed up or escrowed by the firmware, and never held by ERRERlabs
 
 There is no "export private key" function. There is no backdoor, master
 key, or recovery mechanism. If the device is lost or destroyed, the
@@ -253,16 +253,21 @@ requires a new device with a new identity.
 **Why no backup?** Because a key that can be exported can be compelled.
 A court order, a warrant, or physical coercion — if the key CAN leave
 the device, an adversary with sufficient power WILL extract it. So there
-is no software path that will hand it over: no API, no export, no
+is no firmware path that will hand it over: no API, no export, no
 diagnostic, no debug interface, and nothing to compel us to hand over
 because we never had it.
 
-**The limit of that promise.** It is a statement about software. Someone
-who physically takes the device and reads the flash chip directly is a
-different adversary, and today they can recover the key from any Canary,
-a board with flash encryption fused included: the key is in NVS, which
-flash encryption does not cover, and the NVS encryption that would is not
-in any released build. Leaving the irreversible fuses off by default is a
+**The limit of that promise.** It is a statement about the firmware.
+Someone who holds the device can read its flash, over its USB port
+through the chip's ROM download mode (which the firmware does not
+control) or off the chip on a bench, and today they can recover the key
+from any Canary, a board with flash encryption fused included: the key is
+in NVS, which flash encryption does not cover, and the NVS encryption that
+would is not in any released build. Our own flashers make that USB read:
+before an install, unless told to skip it, each saves a full copy of the
+flash to your computer as its undo button (the browser's to your
+downloads, the desktop app's to its backups folder), and that file holds
+the key in the clear; restoring it puts the same key back on a board. Leaving the irreversible fuses off by default is a
 deliberate trade — the alternative permanently bricks devices whose owners
 lose a key — and both are spelled out, with what key recovery does and
 doesn't let an attacker do, under
@@ -756,7 +761,8 @@ The witness chain is append-only:
   who checks
 
 To forge a record, an adversary would need:
-1. The device's Ed25519 private key (which never leaves the device)
+1. The device's Ed25519 private key (which no firmware path exports; a
+   full read of the flash, a flasher's safety copy included, carries it)
 2. To re-hash and re-sign every subsequent record in the chain
 
 To hide a deletion, an adversary would need to re-sign the entire chain
@@ -840,11 +846,12 @@ not necessarily *what happened* in full detail.
 
 ### Physical extraction and the flash-encryption default
 
-**The honest statement: someone who takes a Canary away and opens it up
-can read the private key out of the flash chip, in its default
-configuration and, today, on a board with flash encryption fused too (the
-key is in NVS, which flash encryption does not cover: `key_at_rest`
-below).**
+**The honest statement: someone who takes a Canary away can read the
+private key out of its flash, over its USB port or off the chip, in its
+default configuration and, today, on a board with flash encryption fused
+too (the key is in NVS, which flash encryption does not cover:
+`key_at_rest` below), and so can anyone who holds a flasher's safety copy
+of that board.**
 
 Leaving flash encryption off by default is deliberate, not an oversight,
 and the trade is worth understanding because it is the one place where

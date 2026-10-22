@@ -1165,7 +1165,7 @@
       {
         "id": "reset",
         "label": "RESET",
-        "what": "chip reset \u2014 RAM clears, NVS flash survives (your WiFi credentials, keys and witness chain ride through every reset)",
+        "what": "chip reset \u2014 RAM clears, NVS flash survives (your WiFi credentials, keys and witness chain ride through every tap of RESET; an install in either flasher is what starts NVS over)",
         "gestures": [
           "tap: reboot the app",
           "tap while BOOT is held: enter download mode"

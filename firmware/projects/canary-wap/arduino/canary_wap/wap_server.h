@@ -20,7 +20,8 @@
  * - Bearer token authentication on protected endpoints
  * - Constant-time token comparison (timing attack mitigation)
  * - Exponential backoff on auth failures (brute-force mitigation)
- * - Physical BOOT button required for provisioning receipt
+ * - Provisioning receipt only for the bearer token, the setup door's claim, or
+ *   a short BOOT tap, which goes to the one address asking (canary_wap.ino)
  * - No sensitive data in URLs (POST for actions, Authorization header for tokens)
  * - CORS restricted to same-origin
  * - Rate limiting on sensitive endpoints
