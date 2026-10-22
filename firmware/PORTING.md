@@ -56,6 +56,23 @@ firmware/boards/<board-id>/
   #define BOARD_VARIANT "<variant>"
   ```
 
+- The board token, when a build compiles against the header: define
+  `CANARY_FIGURE_HARDWARE` as the board id. It is what `GET /api/status`
+  (`hardware`), the `GET /api/fleet` row and the mDNS TXT (`hw`) name, and
+  without it they name no board. CI requires it for every board a
+  canary-sense, -vision or -sentinel env compiles against, and refuses any
+  other value (check 10 of `scripts/check_board_registry.py`):
+
+  ```cpp
+  #ifndef CANARY_FIGURE_HARDWARE
+  #define CANARY_FIGURE_HARDWARE "<board-id>"
+  #endif
+  ```
+
+  A build that names its board in words (the canary tree's
+  `CANARY_BOARD_NAME`, the canary-wap sketch's `HARDWARE_BOARD_NAME`) uses
+  this header's `BOARD_NAME`, and the same check holds it there.
+
 - Required baseline capability flags — take a position on every one, even
   when the answer is 0 (an undefined flag is an accidental 0):
 

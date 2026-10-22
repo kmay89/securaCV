@@ -43,6 +43,7 @@ from _tooling import die, repo_root
 REPO = repo_root()
 FW = REPO / "firmware/projects/canary-wap/arduino/canary_wap"
 INO = FW / "canary_wap.ino"
+BUILD_CONFIG_H = FW / "build_config.h"
 WAP_SERVER_H = FW / "wap_server.h"
 SETUP_WIZARD_H = FW / "setup_wizard.h"
 SETUP_PAGE_H = FW / "setup_page_html.h"
@@ -414,6 +415,20 @@ for needle in ("Waking up...", "This is your privacy witness device.",
                "Checking the hardware...", "The canary is singing. Everything is working."):
     must(BOOT_BANNER_CPP, needle, "boot banner")
 
+# The banner's Model and Board lines come from the hardware target the page
+# emulates, the XIAO ESP32-S3 Sense, as build_config.h names it (the
+# HARDWARE_BOARD_NAME beside HARDWARE_TARGET_NAME "XIAO_ESP32S3") and as
+# setup() composes them (bi.model, bi.board_name): never a name typed here.
+S3_BOARD_NAME = grab(
+    BUILD_CONFIG_H,
+    r'#define HARDWARE_TARGET_NAME "XIAO_ESP32S3"\n\s*#define HARDWARE_BOARD_NAME\s+"([^"]+)"',
+    "the S3 target's HARDWARE_BOARD_NAME")
+_model = re.search(r'bi\.model\s*=\s*"([^"]*)"\s*HARDWARE_BOARD_NAME\s*"([^"]*)";', read(INO))
+if not _model:
+    die("boot banner: bi.model is no longer composed from HARDWARE_BOARD_NAME in canary_wap.ino")
+MODEL_PREFIX, MODEL_SUFFIX = _model.groups()
+must(INO, "bi.board_name    = HARDWARE_BOARD_NAME;", "boot banner Board line")
+
 BANNER = [
     "              ,_,          Waking up...",
     "             (o.o)",
@@ -425,7 +440,7 @@ BANNER = [
     "    sees, so nobody can change the story later.",
     "",
     f"    Type        {DEVICE_TYPE}",
-    f"    Model       {BOARD_NAME_FULL or 'XIAO ESP32S3 Sense'}",
+    f"    Model       {MODEL_PREFIX}{S3_BOARD_NAME}{MODEL_SUFFIX}",
     "    ------------------------------------------------",
     "",
     "              ,_,",
@@ -433,7 +448,7 @@ BANNER = [
     "             (  >)",
     "              \" \"          What am I running on?",
     "    ------------------------------------------------",
-    "    Board       XIAO ESP32S3",
+    f"    Board       {S3_BOARD_NAME}",
     "    Chip        ESP32-S3 rev 0",
     "    CPU         240 MHz, 2 core(s)",
     "    Flash       8 MB",

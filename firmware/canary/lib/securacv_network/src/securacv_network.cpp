@@ -417,7 +417,12 @@ static void start_mdns(const char* device_id) {
     f.name = named ? dev_name : f.device_id;
     f.host = MDNS_HOSTNAME;
     f.fw = FIRMWARE_VERSION;
-    f.model = "XIAO ESP32S3";
+    // The board this env was made for (canary_config.h): it said
+    // "XIAO ESP32S3" on every board port. A build that names no board
+    // leaves `model` out of the advert, the way `hw` is left out below.
+#ifdef CANARY_BOARD_NAME
+    f.model = CANARY_BOARD_NAME;
+#endif
     f.dt = DEVICE_TYPE;
     f.role = mt::ROLE_WITNESS;
 #ifdef CANARY_FIGURE_HARDWARE

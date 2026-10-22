@@ -288,7 +288,9 @@ ClaimCb   s_claim_cb;
 // ── Commands (loop task) ───────────────────────────────────────────────────
 
 void answer_device_info() {
-  const char* strings[4] = { "canary-wap", ble_improv_firmware_version(), "XIAO ESP32-S3", s_adv_name };
+  // The hardware is the build target's board (build_config.h): it said
+  // "XIAO ESP32-S3" on the C3 build too.
+  const char* strings[4] = { "canary-wap", ble_improv_firmware_version(), HARDWARE_BOARD_NAME, s_adv_name };
   send_result(Command::GetDeviceInfo, strings, 4);
 }
 

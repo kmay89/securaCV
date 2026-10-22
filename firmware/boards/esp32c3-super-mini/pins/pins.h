@@ -18,6 +18,18 @@
 #define BOARD_ESP32C3_SUPER_MINI 1
 #endif
 
+// Which physical board this is, in the fleet-figure vocabulary. Named here
+// rather than in the build env because THIS header is what a build compiles
+// against, so the id cannot drift away from the pins it travels with. It is
+// what GET /api/status (`hardware`), the GET /api/fleet row (`hw`) and the
+// mDNS TXT (`hw`) name, and the board a version-2 OTA manifest binds to
+// (release manifests are version 1 today, which bind no board). The board
+// has no figure yet (canary-local/devices/figures.json lists it under
+// hardware.unmapped), so canary::figures::my_figure() returns nullptr.
+#ifndef CANARY_FIGURE_HARDWARE
+#define CANARY_FIGURE_HARDWARE "esp32c3-super-mini"
+#endif
+
 // ============================================================================
 // BOARD IDENTIFICATION
 // ============================================================================

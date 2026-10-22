@@ -16,7 +16,9 @@
  *   name        the human name, or the id again
  *   host        the per-unit mDNS hostname the Wall dials (`<label>.local`)
  *   fw          firmware version
- *   model       the board family word the build was made for
+ *   model       the board the build was made for, as the build names it
+ *               (omitted when the build names none — absent means "cannot
+ *               say", never a default board's name)
  *   dt          canonical device type: "canary-sense", "canary-wap", …
  *   role        witness | display | hub
  *   hw          the pins header's CANARY_FIGURE_HARDWARE token (omitted when
@@ -120,7 +122,7 @@ struct Fields {
   const char* name = nullptr;
   const char* host = nullptr;
   const char* fw = nullptr;
-  const char* model = nullptr;
+  const char* model = nullptr;     ///< omitted when null/""
   const char* dt = nullptr;
   const char* role = nullptr;
   const char* hw = nullptr;        ///< omitted when null/""
@@ -158,7 +160,7 @@ inline size_t enumerate(const Fields& f, Kv* out, size_t cap, Scratch& s) {
   out[n++] = {"name", (f.name && f.name[0]) ? f.name : id};
   out[n++] = {"host", f.host ? f.host : ""};
   out[n++] = {"fw", f.fw ? f.fw : ""};
-  out[n++] = {"model", f.model ? f.model : ""};
+  if (f.model && f.model[0]) out[n++] = {"model", f.model};
   out[n++] = {"dt", f.dt ? f.dt : ""};
   out[n++] = {"role", (f.role && f.role[0]) ? f.role : ROLE_WITNESS};
   if (f.hw && f.hw[0]) out[n++] = {"hw", f.hw};

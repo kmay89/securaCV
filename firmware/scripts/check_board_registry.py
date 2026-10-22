@@ -31,6 +31,20 @@ Checks:
      input, -DHAS_TAMPER_INPUT=0 so canary_config.h refuses the flag. The
      env -> board join is the device manifests' (devices/<slug>/device.json
      board.board_id / board.envs).
+ 10. The names and board tokens a build reports come from its board, never
+     from one literal every build shares (device-details §1.4):
+       - the canary tree names each env's board as that board's pins.h
+         BOARD_NAME: canary_config.h's default CANARY_BOARD_NAME is the
+         default board's (xiao-esp32s3-sense), and every board-port env
+         passes -DCANARY_BOARD_NAME="<its board's BOARD_NAME>";
+       - the canary-wap sketch's build_config.h names each hardware target's
+         board (HARDWARE_BOARD_NAME) as that board's BOARD_NAME, and the S3
+         target's CANARY_FIGURE_HARDWARE is "board:" plus the PlatformIO
+         board its envs build on (the key figures.json maps to the WAP);
+       - every pins.h that defines CANARY_FIGURE_HARDWARE defines its own
+         BOARD_ID, and every board a canary-sense, -vision or -sentinel env
+         compiles against defines one (absent, its /api/status, /api/fleet
+         and mDNS name no board).
 
 Run from the repo root (CI) or anywhere inside the repo:
     python3 firmware/scripts/check_board_registry.py
@@ -263,6 +277,138 @@ def check_tamper_pin_canon():
                     err(f"{where}: tamper contact polarity != the board map's TAMPER_ACTIVE {active}")
 
 
+# Check 10: names and tokens from the board. The trio's env files (every
+# boards/<id>/pins include in them is a board one of their envs compiles).
+TRIO_INIS = ("canary-sense.ini", "canary-vision.ini", "canary-sentinel.ini")
+WAP_BUILD_CONFIG = (REPO_ROOT / "firmware" / "projects" / "canary-wap" / "arduino"
+                    / "canary_wap" / "build_config.h")
+WAP_INI = ENVS_DIR / "canary-wap.ini"
+# The WAP sketch's hardware targets and the registered board each is.
+WAP_TARGET_BOARDS = {"HARDWARE_XIAO_ESP32S3": "xiao-esp32s3-sense",
+                     "HARDWARE_XIAO_ESP32C3": "xiao-esp32c3"}
+CANARY_CONFIG = REPO_ROOT / "firmware" / "canary" / "include" / "canary_config.h"
+
+
+def _string_define(text: str, name: str):
+    """The string literals `name` is #defined to, in order (comments stripped)."""
+    return re.findall(r'^\s*#\s*define\s+' + name + r'\s+"([^"]*)"', strip_comments(text), re.M)
+
+
+def _board_name(bid: str):
+    pins = BOARDS_DIR / bid / "pins" / "pins.h"
+    if not pins.is_file():
+        return None
+    names = _string_define(pins.read_text(), "BOARD_NAME")
+    return names[0] if names else None
+
+
+def _defines_by_target(text: str, name: str) -> dict:
+    """{HARDWARE_* target: [values]} for `name`'s string #defines inside an
+    `#if/#elif defined(HARDWARE_*)` branch (the build_config.h shape)."""
+    out, cur, depth = {}, None, 0
+    for line in strip_comments(text).splitlines():
+        t = line.strip()
+        m = re.match(r"#\s*(if|elif)\s+defined\((HARDWARE_XIAO_ESP32[A-Z0-9]+)\)\s*$", t)
+        if m and (m.group(1) == "elif" or depth == 0):
+            cur, depth = m.group(2), 1
+            continue
+        if cur is None:
+            continue
+        if re.match(r"#\s*if", t):
+            depth += 1
+        elif re.match(r"#\s*endif", t):
+            depth -= 1
+            if depth == 0:
+                cur = None
+            continue
+        elif re.match(r"#\s*(elif|else)", t) and depth == 1:
+            cur = None
+            continue
+        d = re.match(r'#\s*define\s+' + name + r'\s+"([^"]*)"', t)
+        if d:
+            out.setdefault(cur, []).append(d.group(1))
+    return out
+
+
+def check_names_from_the_board():
+    # The canary tree: the default board's name in canary_config.h ...
+    default_name = _board_name(TAMPER_DEFAULT_BOARD)
+    if not CANARY_CONFIG.is_file():
+        err("firmware/canary/include/canary_config.h is gone — check 10 cannot read "
+            "the default CANARY_BOARD_NAME")
+    else:
+        got = _string_define(CANARY_CONFIG.read_text(), "CANARY_BOARD_NAME")
+        if got != [default_name]:
+            err(f"firmware/canary/include/canary_config.h names the default board "
+                f"{got or 'nowhere'}; {TAMPER_DEFAULT_BOARD}/pins/pins.h's BOARD_NAME is "
+                f'"{default_name}" — define CANARY_BOARD_NAME once, as that')
+    # ... and each board-port env's name in its own build flags.
+    envs = _ini_env_sections(CANARY_INI.read_text()) if CANARY_INI.is_file() else {}
+    ports = 0
+    for manifest in sorted(DEVICES_DIR.glob("*/device.json")):
+        try:
+            board = json.loads(manifest.read_text()).get("board", {})
+        except (OSError, json.JSONDecodeError):
+            continue
+        bid, benvs = board.get("board_id"), board.get("envs") or []
+        if bid == TAMPER_DEFAULT_BOARD or not benvs or not all(e in envs for e in benvs):
+            continue  # not a canary board port (or the default board itself)
+        want = _board_name(bid)
+        for env in benvs:
+            ports += 1
+            got = re.findall(r"""'-DCANARY_BOARD_NAME="([^"]*)"'""", envs[env])
+            if got != [want]:
+                err(f"firmware/canary/platformio.ini [env:{env}] ({bid}): names its board "
+                    f"{got or 'nowhere'}; pass '-DCANARY_BOARD_NAME=\"{want}\"' once "
+                    f"(the BOARD_NAME of boards/{bid}/pins/pins.h), or every surface "
+                    "names no board on it")
+    if envs and ports == 0:
+        err("check 10 found no canary board-port env to prove (devices/*/device.json "
+            "board.envs no longer join firmware/canary/platformio.ini?)")
+
+    # The canary-wap sketch: each hardware target's board name, and the S3's token.
+    if not WAP_BUILD_CONFIG.is_file():
+        err("the canary-wap build_config.h is gone — check 10 cannot read its board names")
+        return
+    cfg = WAP_BUILD_CONFIG.read_text()
+    names = _defines_by_target(cfg, "HARDWARE_BOARD_NAME")
+    for target, bid in WAP_TARGET_BOARDS.items():
+        want = _board_name(bid)
+        if names.get(target) != [want]:
+            err(f"canary-wap build_config.h: {target} names its board "
+                f"{names.get(target) or 'nowhere'}; define HARDWARE_BOARD_NAME once in "
+                f'its branch, as boards/{bid}/pins/pins.h\'s BOARD_NAME "{want}"')
+    tokens = _defines_by_target(cfg, "CANARY_FIGURE_HARDWARE")
+    pio = re.search(r"^board\s*=\s*(\S+)", WAP_INI.read_text(), re.M) if WAP_INI.is_file() else None
+    want_tok = f"board:{pio.group(1)}" if pio else None
+    if tokens.get("HARDWARE_XIAO_ESP32S3") != [want_tok]:
+        err(f"canary-wap build_config.h: the S3 target's CANARY_FIGURE_HARDWARE is "
+            f"{tokens.get('HARDWARE_XIAO_ESP32S3') or 'undefined'}; it is \"{want_tok}\", "
+            "the board the WAP's envs build on (the key figures.json maps to the WAP)")
+    if tokens.get("HARDWARE_XIAO_ESP32C3"):
+        err("canary-wap build_config.h: the C3 target defines CANARY_FIGURE_HARDWARE, "
+            "but no figure maps a C3 WAP; leave it undefined so `hw` is omitted")
+
+    # Every pins header's token is its own id, and the trio's boards each have one.
+    trio_boards = set()
+    for name in TRIO_INIS:
+        ini = ENVS_DIR / name
+        if ini.is_file():
+            trio_boards |= set(re.findall(r"boards/([A-Za-z0-9_-]+)/pins", ini.read_text()))
+    if not trio_boards:
+        err("check 10 found no board a canary-sense, -vision or -sentinel env compiles")
+    for pins in sorted(BOARDS_DIR.glob("*/pins/pins.h")):
+        bid = pins.parent.parent.name
+        tok = _string_define(pins.read_text(), "CANARY_FIGURE_HARDWARE")
+        if tok and tok != [bid]:
+            err(f"{bid}: pins/pins.h defines CANARY_FIGURE_HARDWARE {tok}; a board's "
+                f'token is its own id, "{bid}"')
+        if bid in trio_boards and not tok:
+            err(f"{bid}: a canary-sense/-vision/-sentinel env compiles against this board "
+                f'and its pins.h names no CANARY_FIGURE_HARDWARE; define it "{bid}", or '
+                "its /api/status, /api/fleet and mDNS name no board")
+
+
 def main() -> int:
     try:
         entries = json.loads(REGISTRY.read_text())
@@ -283,6 +429,7 @@ def main() -> int:
     check_env_refs(registry_ids)
     check_readme_mentions(registry_ids)
     check_tamper_pin_canon()
+    check_names_from_the_board()
 
     if errors:
         for e in errors:
