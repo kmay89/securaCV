@@ -601,7 +601,7 @@ says online; the **Online** sensor stays available to report offline.
    - **Health** — `healthy` / `warning` / `critical` from battery and free memory, with `public_key`, uptime and firmware version, and the committed-event egress's counters (`csi_event_egress`, `offline_queue`) as attributes when the firmware sends them (`health_status`; `health` and `egress` topics, unsigned)
    - **GPS Fix** — GPS fix status, with satellites and HDOP (`gps_fix`; `health` topic, unsigned)
    - **SD Wear Estimate** — estimated SD-card wear percent, only when the firmware reports its `sd` object (`sd_wear`; `health` topic, unsigned; diagnostic)
-   - **Radar Link** — `ok` / `stale` / `down` for the UART link to the radar module, canary-sense devices only (`radar_link`; `health` topic, unsigned; diagnostic)
+   - **Radar Link** — `ok` / `stale` / `down` for the UART link to the radar module, on a canary-sense, and on a canary-sentinel whose health reports a `radar` object, which a Sentinel Lite (no radar) never sends (`radar_link`; `health` topic, unsigned; diagnostic)
 
    Binary sensors:
    - **Online** — device connectivity, from the `status` topic (`online`; unsigned)

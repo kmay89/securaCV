@@ -339,6 +339,26 @@ def _device_type_for(
     return None
 
 
+def _wants_radar_link(topic_type: str, device_type: str | None, payload: Any) -> bool:
+    """Whether a Canary's message earns it the radar-link diagnostic.
+
+    A canary-sense always carries the radar, so its status (which names the
+    device type) creates the sensor before any health arrives, as before.
+    Any other Canary earns it by reporting a radar: a health payload with a
+    `radar` object. That is how a Sentinel with the radar (its Standard and
+    Heavy presets) gets one and a Sentinel Lite, which has no radar and sends
+    no object, never grows a sensor that could only say "unknown".
+    """
+    if topic_type not in (TOPIC_STATUS, TOPIC_HEALTH):
+        return False
+    if device_type == DEVICE_TYPE_CANARY_SENSE:
+        return True
+    if topic_type != TOPIC_HEALTH:
+        return False
+    data = parse_mqtt_json(payload)
+    return data is not None and isinstance(data.get("radar"), dict)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -443,17 +463,19 @@ async def _setup_mqtt_sensors(
                 SecuraCVCanarySDWearSensor(prefix, device_id, entry)
             )
 
-        # Radar-link diagnostic (Phase 3): only for radar witnesses. Created
-        # when the device advertises device_type "canary-sense" in its status
-        # payload — mirrors the conditional, device-type-aware creation the
-        # design asks for so non-radar canaries never grow a phantom sensor.
-        # Discovery fires on STATUS (carries device_type) and HEALTH (carries
-        # the radar-link metrics) so the sensor appears regardless of which
-        # topic arrives first, as long as a status has identified the device.
+        # Radar-link diagnostic (Phase 3): only for radar witnesses, so
+        # non-radar canaries never grow a phantom sensor. A canary-sense is
+        # one by type: created when its status names device_type
+        # "canary-sense", on STATUS or HEALTH, whichever arrives once a status
+        # has identified it. Any other Canary is one when its health reports
+        # a `radar` object (a Sentinel with the radar), whatever its status
+        # says or whether one has arrived (_wants_radar_link).
         if (
             topic_type in (TOPIC_STATUS, TOPIC_HEALTH)
             and "radar_link" not in entities_added[device_id]
-            and _device_type_for(hass, entry, device_id) == DEVICE_TYPE_CANARY_SENSE
+            and _wants_radar_link(
+                topic_type, _device_type_for(hass, entry, device_id), msg.payload
+            )
         ):
             entities_added[device_id].add("radar_link")
             new_entities.append(
@@ -1414,7 +1436,10 @@ class SecuraCVCanaryGPSSensor(SecuraCVCanarySensorBase):
 
 
 class SecuraCVCanaryRadarLinkSensor(SecuraCVCanarySensorBase):
-    """Radar-link health diagnostic for canary-sense (MR60BHA2) devices.
+    """Radar-link health diagnostic for the MR60BHA2 radar on a canary-sense,
+    and on a canary-sentinel whose preset carries it (its health payload
+    reports the same `radar` object; the Sentinel counts any decoded frame
+    as the link speaking, and calls it down past its preset's stall window).
 
     Surfaces the UART link between the ESP32-C6 host and the 60GHz radar
     module: the link state (ok / stale / down) plus the age of the last
