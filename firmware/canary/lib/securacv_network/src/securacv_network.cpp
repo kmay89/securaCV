@@ -2523,8 +2523,9 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //   3. no valid bearer (none, a wrong one, or a held one): consume the
   //      physical gate in ONE atomic step (a second poll, or a second
   //      consumer on another task, reads it closed). A tap that serves
-  //      also ends the asking address's backoff (auth_handed_token, sweep
-  //      F341): it holds the token now.
+  //      also ends the asking address's own backoff (auth_handed_token,
+  //      sweep F341; never the shared overflow's, so an address held only
+  //      through the overflow stays held): it holds the token now.
   const ReceiptVerdict verdict = receipt_decide(
       host_is_foreign(req),
       [req]() { return bearer_present_and_valid(req); },

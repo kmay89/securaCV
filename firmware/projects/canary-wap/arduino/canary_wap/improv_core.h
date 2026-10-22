@@ -54,13 +54,16 @@
  *
  *   The standard leaves "authorization" to the device: a button press, or
  *   nothing at all. SecuraCV's rule, in one sentence: the door is open for
- *   a device NOBODY OWNS YET, and for an owner's own tap — never for a
- *   device that has an owner and a bad day.
+ *   a device with NO NETWORK SAVED (a new one nobody owns yet, or one its
+ *   owner cleared), and for an owner's own tap — never for a device that
+ *   has an owner and a bad day.
  *
- *   - NO CREDENTIALS STORED (first boot, or after a factory reset or Forget
- *     Wi-Fi, which the owner chose: on a WAP both keep the identity and the
- *     token, so that unit still has an owner, and the door goes to whichever
- *     client connects first, docs/design/magic_pairing.md §2.2): the
+ *   - NO CREDENTIALS STORED (first boot, or after the owner cleared them:
+ *     the 10 s factory-reset hold on every board with this door, or Forget
+ *     Wi-Fi on a WAP. The hold keeps the witness identity on a Sense, a
+ *     Vision and a WAP, and a WAP's hold and Forget Wi-Fi keep its token
+ *     too, so a cleared unit still has an owner, and the door goes to
+ *     whichever client connects first, docs/design/magic_pairing.md §2.2): the
  *     door opens on its own for a bounded first-boot window
  *     (Timing::first_boot_window_ms, half an hour by default; a power cycle
  *     re-arms it; a compile-time 0 makes the device tap-only). Long enough

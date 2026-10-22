@@ -72,9 +72,14 @@ hardware root of trust closes.
 `firmware/provisioning/` ships real tooling — `generate_keys.sh` (RSA-3072 Secure
 Boot key + XTS-AES flash-encryption key), `sdkconfig.defaults.secure`,
 `partitions_secure.csv` (`nvs_keys` + `spiffs` flagged `encrypted`, `nvs` deliberately not), `provision_canary.sh`
-(virgin-verify → burn → flash → post-verify, with `--dry-run`), and
+(virgin-verify → flash → burn → post-verify, with `--dry-run`), and
 `verify_device.py` (reads the security eFuses). [`secure_provisioning.md`](../secure_provisioning.md)
-documents the eFuse target state. The firmware full audit
+documents the eFuse target state. As tooled, a Phase 2 run turns neither
+protection on: it writes a plaintext, unsigned image, burns the
+flash-encryption key but no `SPI_BOOT_CRYPT_CNT`, and burns `SECURE_BOOT_EN`
+with no Secure Boot key digest (what the ROM does then has not been run on a
+bench), and its post-verify fails on the fuses it does not burn
+([`secure_provisioning.md`](../secure_provisioning.md), Step 3). The firmware full audit
 ([`audit/esp32s3_firmware_full_audit_2026-07.md`](../audit/esp32s3_firmware_full_audit_2026-07.md))
 records these as **"exist as a reference … not wired up"** — a staged capability,
 not a live one.

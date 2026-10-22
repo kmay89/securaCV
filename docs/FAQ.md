@@ -487,9 +487,14 @@ the pairing receipt over your Wi-Fi — see
 [magic pairing (design)](design/magic_pairing.md).
 
 **When the door is open** — the rule, in the firmware's own words: *for a
-device nobody owns yet, and for an owner's own tap — never for a device that
-has an owner and a bad day.* A Canary with no Wi-Fi saved opens it for 30
-minutes after power-on (unplug and replug to get another 30). A Sense or
+device with no network saved (a new one nobody owns yet, or one its owner
+cleared), and for an owner's own tap — never for a device that has an owner
+and a bad day.* A Canary with no Wi-Fi saved opens it for 30 minutes after
+power-on (unplug and replug to get another 30). That includes one you
+cleared yourself with the 10-second BOOT hold or, on a WAP, Forget Wi-Fi: it
+keeps its identity and is still yours, but for that half hour the door goes
+to whichever phone or computer nearby connects first, so do it where no
+stranger is in Bluetooth range. A Sense or
 Vision that already has Wi-Fi opens it for 60 seconds when you tap its BOOT
 button. A Canary whose saved Wi-Fi has merely *stopped working* (the router
 rebooted, you changed the password) does **not** open it — it raises its

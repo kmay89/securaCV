@@ -1551,8 +1551,10 @@ void setup() {
      * wiped after the call — mesh_session derives + caches the
      * 16-byte opera_id and 8-byte sender_fp and does NOT retain
      * the 32-byte secret. mesh_state::load_opera_secret returns
-     * false on first-boot / factory-reset / FE-disabled devices —
-     * those flows leave the firmware in an unpaired state and the
+     * false on a device that never paired, left its opera (POST
+     * /api/mesh/leave), was wiped (the 30 s BOOT hold) or has flash
+     * encryption off; the 10 s BOOT reset keeps the secret. Those
+     * flows leave the firmware in an unpaired state and the
      * Scout broadcast queue drains harmlessly. */
     uint8_t opera_secret_buf[mesh_crypto::OPERA_SECRET_LEN];
     if (mesh_state::load_opera_secret(opera_secret_buf)) {
@@ -1599,8 +1601,9 @@ void setup() {
 
     /* Load persisted trusted peers (#480) and register each so this
      * boot's receive path can verify inbound BEACON_EVENT frames
-     * from peers paired in previous sessions. Empty-list (first
-     * boot / factory reset) is fine — mesh_session::on_opera_frame
+     * from peers paired in previous sessions. Empty-list (never
+     * paired, a leave, the 30 s wipe; the 10 s reset keeps the list)
+     * is fine — mesh_session::on_opera_frame
      * silently drops unknown senders, and the dashboard / UI will
      * trigger pairing to populate. */
     {

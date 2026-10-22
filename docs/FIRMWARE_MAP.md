@@ -349,7 +349,10 @@ canary-vision, canary-sense and canary-sentinel. Facts:
   `/api/fleet`, appear in displays' fleet models via mDNS, rebind an
   uncredentialed display's broker by referral, POST `/api/ota` on a display;
   in radio range spoof the presence beacon for any fingerprint suffix, and
-  claim an unowned device during its 30-minute first-boot window.
+  claim an unowned device during its 30-minute first-boot window *(amended
+  2026-10-22: or an owned one its owner reset or made forget its Wi-Fi,
+  which keeps its identity: the door goes to whichever client connects
+  first, `design/magic_pairing.md` §2.2)*.
 - **The only pairing-grade trust** is the WAP's Opera mesh (owner-confirmed
   code, per-frame Ed25519), which has a documented grindable MITM
   (`spec/canary_mesh_network_v0.md` §11.1), has never paired on a radio, and

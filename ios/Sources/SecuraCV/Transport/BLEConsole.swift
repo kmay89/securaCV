@@ -66,7 +66,11 @@ final class BLEConsole: NSObject, ObservableObject {
     static let consoleServiceUUID = CBUUID(string: "8fc1cee0-b162-4401-9607-c8ac21383e90")
     static let snapshotUUID       = CBUUID(string: "8fc1cee1-b162-4401-9607-c8ac21383e90")
     /// canary-wap's bonded Wi-Fi provisioning service (ble_provision.h) —
-    /// the rescue path for a Canary the router password change stranded.
+    /// meant as the rescue path for a Canary the router password change
+    /// stranded. It never fills for a WAP today: the rescue uses only a
+    /// peripheral this class dialed for advertising the console service
+    /// above (the setup ceremony's dial, beginSetup, is the Improv door's),
+    /// and a WAP does not advertise it (ledger A65).
     static let provisionServiceUUID = CBUUID(string: "8fc1cef0-b162-4401-9607-c8ac21383e90")
     static let provisionCredsUUID   = CBUUID(string: "8fc1cef3-b162-4401-9607-c8ac21383e90")
     static let provisionStateUUID   = CBUUID(string: "8fc1cef4-b162-4401-9607-c8ac21383e90")

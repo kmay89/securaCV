@@ -1860,7 +1860,9 @@ final class FleetStore: ObservableObject {
 
     /// The fleet as the Wi-Fi rollout sees it: who can take new credentials
     /// over which path RIGHT NOW. Paired WAP-class Canaries are updatable
-    /// (HTTP when online, the BLE rescue when dark but in range); everything
+    /// (HTTP when online, the BLE rescue when dark but in range, a path that
+    /// never fills for a WAP today: `ble.provisionableDeviceIDs` holds only a
+    /// connected console, which a WAP does not advertise, ledger A65); everything
     /// else that lives on home Wi-Fi is named hands-on so the sheet can say
     /// so instead of leaving it out and looking finished. Demo rows and
     /// BLE-beacon-only sightings (no Wi-Fi to update) are excluded.

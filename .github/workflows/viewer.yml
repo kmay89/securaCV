@@ -24,7 +24,15 @@ on:
       # the address DeviceAPI builds, so an edit to either alone runs it.
       - 'ios/Sources/SecuraCV/Views/PairView.swift'
       - 'ios/Sources/SecuraCV/Transport/DeviceAPI.swift'
-      # the recorded-reads gate on selftest-ui: its recorder and its checker
+      # the viewer job's suites read the witness dictionary (timeline_core,
+      # the HA timeline card and gen_timeline_parity.mjs) and run the
+      # break-glass console's test against its page, so an edit to any of
+      # them alone runs the job (the recorded-reads gate below found them)
+      - 'spec/witness_dictionary.json'
+      - 'src/break_glass/breakglass.html'
+      - 'src/break_glass/breakglass.test.js'
+      # the recorded-reads gate on viewer and selftest-ui: its recorder and
+      # its checker
       - 'scripts/path_filter_reads/**'
       - 'scripts/check_path_filter_reads.py'
       - '.github/workflows/viewer.yml'
@@ -48,7 +56,15 @@ on:
       # the address DeviceAPI builds, so an edit to either alone runs it.
       - 'ios/Sources/SecuraCV/Views/PairView.swift'
       - 'ios/Sources/SecuraCV/Transport/DeviceAPI.swift'
-      # the recorded-reads gate on selftest-ui: its recorder and its checker
+      # the viewer job's suites read the witness dictionary (timeline_core,
+      # the HA timeline card and gen_timeline_parity.mjs) and run the
+      # break-glass console's test against its page, so an edit to any of
+      # them alone runs the job (the recorded-reads gate below found them)
+      - 'spec/witness_dictionary.json'
+      - 'src/break_glass/breakglass.html'
+      - 'src/break_glass/breakglass.test.js'
+      # the recorded-reads gate on viewer and selftest-ui: its recorder and
+      # its checker
       - 'scripts/path_filter_reads/**'
       - 'scripts/check_path_filter_reads.py'
       - '.github/workflows/viewer.yml'
@@ -68,23 +84,69 @@ jobs:
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version-file: pyproject.toml
     - uses: actions/setup-node@v7
       with:
         node-version: '22'
+    # The recorded-reads gate (scripts/check_path_filter_reads.py), as
+    # selftest-ui below runs it: each step records the repo paths its
+    # processes read, and the last step fails on a read outside this
+    # workflow's pull_request paths. These steps read the witness
+    # dictionary and the break-glass page, which the filter left out until
+    # the gate was armed here; a PR editing only those ran nothing.
     - name: Cross-language verifier parity tests
+      env:
+        PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads-viewer
+        NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+        PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
       run: node --test viewer/verify_core.test.js
     - name: Timeline scrub-view model tests
+      env:
+        PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads-viewer
+        NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+        PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
       run: node --test viewer/timeline_core.test.js
     - name: Timeline cross-language parity fixture is up to date
+      env:
+        PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads-viewer
+        NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+        PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
       run: node viewer/tools/gen_timeline_parity.mjs --check
     - name: Offline viewer is up to date (no drift from its inlined sources)
+      env:
+        PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads-viewer
+        NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+        PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
       run: node viewer/build.mjs --check
     - name: HA timeline card helper tests
+      env:
+        PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads-viewer
+        NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+        PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
       run: node --test custom_components/securacv/www/securacv-timeline-card.test.js
     - name: HA aim card helper tests
+      env:
+        PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads-viewer
+        NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+        PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
       run: node --test custom_components/securacv/www/securacv-aim-card.test.js
     - name: Break-glass console polling tests
+      env:
+        PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads-viewer
+        NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+        PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
       run: node --test src/break_glass/breakglass.test.js
+    - name: Every file the viewer job's steps read is inside this workflow's path filter
+      # Reads the recordings the seven steps above left (nothing is run
+      # again). A miss names the test, the file, the line that read it and
+      # the line to add to BOTH path lists (R6). PyYAML reads this file.
+      run: |
+        python3 -m pip install --quiet pyyaml
+        python3 scripts/check_path_filter_reads.py \
+          --workflow .github/workflows/viewer.yml --job viewer \
+          --reads "$RUNNER_TEMP/path-filter-reads-viewer"
 
   canary-bridge:
     runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires

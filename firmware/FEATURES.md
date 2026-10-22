@@ -253,10 +253,10 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Boot count persistence | ✅ | ✅ | ✅ | ✅ |
 | Chain sequence persistence | ✅ | ⚠️ Basic | ✅ | ⚠️ |
 | Previous hash persistence | ✅ | ❌ | ✅ | ⚠️ |
-| Factory reset via BOOT button | ✅ (short/long press) | ✅ (10 s hold: Wi-Fi, broker, name; identity and token kept) | ✅ (10 s: credentials + settings, identity kept; 30 s: wipe, identity too) | ❌ |
-| API token NVS storage | ✅ | ❌ | ❌ | ❌ |
-| TLS cert NVS storage | ✅ | ❌ | ❌ | ❌ |
-| WiFi credentials NVS storage | ✅ | ❌ | ❌ | ❌ |
+| Factory reset via BOOT button | ✅ (short/long press) | ✅ (10 s hold: Wi-Fi, broker, name; identity and token kept) | ✅ (10 s: credentials + settings, identity kept; 30 s: wipe, identity too) | ✅ (same sketch as Arduino IDE via `src_dir`) |
+| API token NVS storage | ✅ | ✅ (`api_tkn`) | ✅ (`api_token`) | ✅ (same sketch as Arduino IDE via `src_dir`) |
+| TLS cert NVS storage | ✅ | ✅ (`tls_cert` / `tls_key`) | ✅ (`tls_cert` / `tls_key`, in the HTTPS builds) | ✅ (same sketch as Arduino IDE via `src_dir`) |
+| WiFi credentials NVS storage | ✅ | ✅ (`wifi_ssid` / `wifi_pass` and the `wifi_nets` ring) | ✅ (the same keys and ring) | ✅ (same sketch as Arduino IDE via `src_dir`) |
 
 ## SD Card Storage
 
@@ -449,7 +449,7 @@ bench-validated; CI compiles it on (`firmware.yml`, compile-only).
 |-----------|--------|-------|
 | `generate_keys.sh` | ✅ | RSA-3072 + XTS-AES key generation, entropy checks |
 | `verify_device.py` | ✅ | eFuse verification (pre/post provisioning) |
-| `provision_canary.sh` | ✅ | Full workflow with --dry-run |
+| `provision_canary.sh` | ⚠️ | the workflow, with `--dry-run`; its Phase 2 turns on neither Secure Boot nor flash encryption (a plaintext image, no `SPI_BOOT_CRYPT_CNT`, `SECURE_BOOT_EN` with no key digest), and its own lockdown check fails (`docs/secure_provisioning.md`, Step 3) |
 | `create_manifest.py` | ✅ | Fleet device manifest management |
 | `platformio_secure.ini` | ✅ | the secure env: its sdkconfig stages Secure Boot v2 and flash encryption (commented out) and names NVS encryption, all inert under `framework = arduino`; it sets `SECURACV_REQUIRE_FLASH_ENCRYPTION=1`, so it refuses the identity key on every board; compile-only in CI (F42), no bench pass |
 | `partitions_secure.csv` | ✅ | OTA A/B + `nvs_keys`; `nvs` itself is not flagged `encrypted` (NVS encryption, not flash encryption, protects it — none under `framework = arduino`) |

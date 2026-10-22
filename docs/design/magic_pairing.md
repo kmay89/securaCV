@@ -49,8 +49,12 @@ What "magic" does **not** mean: it is not a pairing that happens without the
 person, and it is not open to whoever walks past. The whole design is the
 sentence from `improv_core.h`:
 
-> the door is open for a device NOBODY OWNS YET, and for an owner's own tap —
-> never for a device that has an owner and a bad day.
+> the door is open for a device with NO NETWORK SAVED (a new one nobody owns
+> yet, or one its owner cleared), and for an owner's own tap — never for a
+> device that has an owner and a bad day.
+
+A unit its owner cleared (the 10 s hold, or Forget Wi-Fi on a WAP) still has
+an owner, and its door goes to whichever client connects first (§2.2).
 
 ---
 
@@ -60,7 +64,7 @@ sentence from `improv_core.h`:
 
 | Situation | Door | Why |
 |---|---|---|
-| No credentials stored (first boot, or after a factory reset or Forget Wi-Fi), within **30 minutes** of power-on (after a reset, of the credentials vanishing) | **Open** (`Door::NoCredentials`) | A device nobody owns yet — or, after a reset, one whose owner chose to reopen it: on a WAP the hold and Forget Wi-Fi keep the identity and the token, and the door goes to whichever client connects first (§2.2). The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, a factory reset re-arms it from the moment the credentials vanish; compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on, a brownout, a power glitch or a reset a host asserted from the USB / JTAG port — the Flasher's, so a re-flashed unit never inherits the old image's spent window (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |
+| No credentials stored (first boot, or after a factory reset or Forget Wi-Fi), within **30 minutes** of power-on (after Forget Wi-Fi, of the credentials vanishing; after a WAP's hold, of the restart on release) | **Open** (`Door::NoCredentials`) | A device nobody owns yet — or, after a reset, one whose owner chose to reopen it: the hold keeps the witness identity on a Sense, a Vision and a WAP, a WAP's hold and Forget Wi-Fi keep its token too, and the door goes to whichever client connects first (§2.2). The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, and so does the credentials vanishing (Forget Wi-Fi re-arms it at that moment; a WAP's hold zeroes the carried record and restarts on release, so its fresh window runs from the restart); compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on, a brownout, a power glitch or a reset a host asserted from the USB / JTAG port — the Flasher's, so a re-flashed unit never inherits the old image's spent window (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |
 | No credentials stored, the window has run out | Shut | "A unit forgotten in a drawer is not claimable from the street for the rest of its life." A power cycle or a tap reopens it; a software restart does not. |
 | Credentials stored, the network is fine | Shut | A device that has an owner offers nothing. |
 | Credentials stored, the saved network is **failing** (the SoftAP recovery portal is up) | **Shut** | The recovery portal has a key printed on the unit; this door does not. See §2.3. |
@@ -92,11 +96,12 @@ While the door is **shut** (the steady state of every owned Canary):
   authorization** (`0x01`) on the state characteristic. A `WIFI_SETTINGS`
   write earns `NotAuthorized` (`0x04`) and starts nothing.
 
-While the door is **open** (a new unit, or the owner tapped it):
+While the door is **open** (a new unit, one its owner cleared with the hold
+or Forget Wi-Fi, or the owner tapped it):
 
 - They can connect and, after the Just Works pairing, write credentials for
-  *their* network. That is the inherent exposure of any "no owner yet"
-  door, and it is bounded: the window is 30 minutes from power-on, not
+  *their* network. That is the inherent exposure of any "no network saved"
+  door, whether or not the unit has an owner, and it is bounded: the window is 30 minutes from power-on, not
   forever; a join that succeeds stores credentials and shuts the door. An
   owner who finds the unit on the wrong network still holds it, but on a WAP
   a reset does not undo a stranger who took the door. The network the WAP

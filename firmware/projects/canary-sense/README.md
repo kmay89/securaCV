@@ -232,14 +232,17 @@ encryption again) into the portal's own join path
 (`setup_portal_submit_join`: persist only on success, same linger, same
 teardown). Door shut: today's beacon bytes, not connectable.
 
-**When the door is open** (the header's rule: for a device nobody owns yet,
-and for an owner's own tap — never for a device that has an owner and a bad
-day):
+**When the door is open** (the header's rule: for a device with no network
+saved — a new one nobody owns yet, or one its owner cleared — and for an
+owner's own tap; never for a device that has an owner and a bad day):
 
 - **No credentials stored:** for **30 minutes after power-on**
-  (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle or a factory reset re-arms
-  it; 0 = tap-only). Not for life — a unit forgotten in a drawer is not
-  claimable from the street.
+  (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle or the 10 s factory-reset
+  hold re-arms it; 0 = tap-only). Not for life — a unit forgotten in a drawer
+  is not claimable from the street. A unit reset with the hold still has an
+  owner (the hold keeps the witness identity and the chain), yet for that
+  half hour its door goes to whichever phone connects first
+  (`docs/design/magic_pairing.md` §2.2).
 - **A short BOOT tap** (`BOOT_BUTTON_PIN` from `pins.h`, GPIO9 on the XIAO
   ESP32-C6; `common/io/short_tap.h`: ≥40 ms, <700 ms): **60 s**, with or
   without credentials — the owner's own act. On a witness that already has

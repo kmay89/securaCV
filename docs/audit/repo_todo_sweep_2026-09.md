@@ -2936,6 +2936,25 @@ so — see D2 below.)
     - Counts now: `recovery_kit.test.js` 66 tests, the sketch's `*.test.js`
       192, `test_docs_claims.py` 13. `web_assets_gz.h` unchanged (no page
       changed). Host-tested; not run on a device.
+  - The sweep for every remaining copy, second pass (#1843, its review round
+    1). The secure kit as tooled turns on neither Secure Boot nor flash
+    encryption (`provision_canary.sh --phase 2` writes a plaintext image and
+    burns no `SPI_BOOT_CRYPT_CNT` and no Secure Boot key digest, and its
+    `--expect-locked` check fails on fuses it never burns), so the seizure
+    scenario's secure tier is FAIL today, as the default, and every copy that
+    credited the tier with either now says what the kit does; the
+    "Firmware corrupt" row now credits every tier's bootloader image check.
+    The door rule names a cleared unit, which still has an owner, and its
+    first-come door; no factory reset clears the mesh or scout keys; a served
+    tap frees its own slot only, in the flagship's receipt comment too; the
+    one-asker tap is scoped to the WAP in the guide, the multi-Canary doc and
+    the Vision SPA's comment; the Fleet Wi-Fi copy names only the WAP's setup
+    network (A65). `test_docs_claims.py` ties each scoped row to its file
+    (the review's mutants, a row deleted beside a sibling with its needle or
+    pointed at `README.md`, survived before), `viewer.yml`'s `viewer` job runs
+    the recorded-reads gate (its filter had missed the witness dictionary and
+    the break-glass page and test, on `main` too), and the Vision SPA's
+    capture has behavior rows. Host-tested; not run on a device.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),
@@ -2968,8 +2987,9 @@ so — see D2 below.)
   so one host's wrong bearers held every other host's right token at `429`.
   The F289 follow-up's replay refused 86 of 86 owner polls. The likeliest
   striker was the owner's own phone, still polling a reset unit with its old
-  token. *(Amended 2026-10-21, #1843: a re-flashed unit; the 10 s hold keeps
-  the token, and only a full erase in a flasher changes it, F352.)*
+  token. *(Amended 2026-10-21, #1843: a fully erased unit; the 10 s hold and
+  an ordinary re-flash keep the token, and only a full erase in a flasher
+  changes it, F352.)*
   What it is now. The backoff is keyed by the request's socket peer address,
   never a header. It is read by `request_peer_key()` (`getpeername`), the
   sketch's one peer reader, and `auth_request_source()` turns that key into
@@ -3156,8 +3176,8 @@ so — see D2 below.)
   `test_receipt_authority.cpp` (the reader's text). The ESP32 compile is
   CI's; not run on a device (U1: the "one host's wrong bearers hold only
   that host" row in `hardware_verification_checklist.md`). Filed: F352
-  (iOS, a reset unit's stale pairing; amended 2026-10-21, #1843: a
-  re-flashed unit's, since the 10 s hold keeps the token).
+  (iOS, a reset unit's stale pairing; amended 2026-10-21, #1843: a fully
+  erased unit's, since the 10 s hold keeps the token).
   *Review (2026-10-19, the PR's second round):* the strike's console line
   is now read by a test: it prints the count and the backoff, with
   " (shared overflow)" only for a strike that landed there, and names no
@@ -3531,9 +3551,10 @@ so — see D2 below.)
   is the shape a per-source budget could take. Decide whether the budget
   stays per device, becomes per source, or both. From code; not probed.
   Found by the F340 decision's security review, 2026-10-19.
-- [ ] **F352 [code] iOS: a pairing for a re-flashed Canary keeps polling with
-  its old token.** A full erase in a flasher, which regenerates the WAP's key
-  (the 10 s hold keeps the key and the token), changes both its token and its
+- [ ] **F352 [code] iOS: a pairing for a fully erased Canary keeps polling
+  with its old token.** A full erase in a flasher, which regenerates the WAP's
+  key (the 10 s hold and an ordinary re-flash keep the key and the token),
+  changes both its token and its
   `device_id`. *(Amended 2026-10-21, #1843: this item had said a factory
   reset, which keeps both.)* `DeviceStore.add`
   (`ios/Sources/SecuraCV/Security/DeviceStore.swift`) dedupes by id, so the

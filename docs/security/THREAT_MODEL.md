@@ -64,7 +64,8 @@ the device, an adversary with sufficient power WILL extract it.
 Every item above is a statement about
 *software* paths. It is not a claim that the key survives an adversary who
 takes the device to a bench: the key lives in NVS, which flash encryption
-(an opt-in tier) does not cover, and the NVS encryption that would is not
+(an opt-in tier the provisioning kit does not yet turn on) does not cover,
+and the NVS encryption that would is not
 available under `framework = arduino`, which every released firmware tree
 builds with, so on every tier today the key is recoverable by reading the
 flash directly, on a fused board too (Scenario 4 below). What
@@ -240,7 +241,7 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | Auth failure | Lock out the failing source address with exponential backoff, per address on the kernel and on both Canary firmwares (the WAP and the flagship run one table, `firmware/common/network/auth_backoff.h`: at most 60 s per address, and a shared overflow slot bounds the addresses beyond its 8-address table; a host's wrong bearers hold only that host's address, F343, F340). On the Canaries a request with no credential is no strike (the kernel counts a missing token as one, `src/api/mod.rs`), and a BOOT tap (or the WAP's setup-door claim) that hands an address the token clears that address's own slot, never the shared overflow (F341) |
 | TLS client cannot verify the WAP's self-signed certificate | The iPhone app pins the receipt's `tls_cert_fp` and refuses an https Canary whose certificate does not match or that has no pin on record (`DeviceAPI.swift`, `PinnedTrustDelegate`); browsers show their self-signed warning. No API asks the client for a certificate — the kernel's rustls config is `with_no_client_auth()` and the WAP's `httpd_ssl_config_t` carries only the server certificate and key |
 | HTTPS server fails to start on the WAP | Serves plain HTTP and logs `[HTTPS] Server start FAILED — falling back to HTTP`; setup mode is HTTP-only by design (both stated, never silent) |
-| Firmware corrupt | No tier refuses to boot it today: Secure Boot is prepared in the provisioning kit but not enabled (and is NOT on default builds — see [Scope of this principle](#scope-of-this-principle)); every tier relies on the OTA signature check before the image is written |
+| Firmware corrupt | Every tier's bootloader checks an app image's checksum and appended SHA-256 before it boots it (neither pinned core's precompiled bootloader sets `CONFIG_BOOTLOADER_SKIP_VALIDATE_ON_POWER_ON`; it does skip the check on a wake from deep sleep), and on a failed check it tries the other app slot instead (ESP-IDF's `bootloader_utility_load_boot_image`; read from the cores' `sdkconfig` and IDF source, not run on a device). What no tier refuses today is a well-formed image that is unsigned or forged: that is Secure Boot's job, which the provisioning kit prepares but does not enable (it is NOT on default builds — see [Scope of this principle](#scope-of-this-principle)), so every tier relies on the OTA path's SHA-256 and Ed25519 release-signature check, which runs on the image written to the spare slot before the device switches its boot slot to it (`firmware/common/ota`) |
 | A phone asks to pair with the WAP over BLE | A Numeric Comparison (what a phone that shows six digits and a yes/no gets, as current phones do) is answered yes only by a confirm of the six digits in the web UI (`require_pin`; the phone's link and digits must still be the ones shown): the owner's, or any landing session's, since `GET /api/bluetooth` shows the digits and `POST /api/bluetooth/pair/confirm` takes the session cookie (F346), on every profile that compiles the pairing channel; with no pairing channel to ask, it is answered no. Until F171 (2026-10) the default FULL profile's Opera module replaced the channel's NimBLE server callbacks, NimBLE-Arduino's default answered every Numeric Comparison yes, with no owner and no MITM check, and a Passkey Entry took the library's fixed 123456: one dispatcher (`ble_server_dispatch.h`) now gives the security callbacks to the channel alone. Not every pairing asks the owner (NimBLE 2.3.8's pairing tables, read from source): a DisplayOnly or NoInputNoOutput initiator, and on legacy pairing a DisplayYesNo one, pairs by Just Works, with no owner and no MITM protection (the channel neither lists that bond nor gives its link the authenticated characteristics, but NimBLE stores the bond). NimBLE-Arduino keeps 3 bonds by default and, when a new one found the store full, unpaired the oldest (when its busy guard allowed); since F189 (2026-10) the channel refuses a new phone's pairing that finds the store full (the phone's pairing fails; a phone the store holds still re-pairs) and never deletes a bond to make room (nor for a bonded phone's subscription record, whose 8-record store NimBLE's default made room in by unpairing another phone, the F189 review), so such a stranger's bonds can no longer push the owner's out, but three of them fill the store and the owner's next pairing is refused until Clear all (`DELETE /api/bluetooth/paired/all`, which deletes every bond the stack keeps; the health log says `BLE pairing refused: the bond store is full`); a keyboard-only initiator pairs by Passkey Entry, which needs the six digits the WAP shows in the PIN box and writes to the health log, in or out of pairing mode (filed in the 2026-09 sweep). A build without the pairing channel pairs by Just Works under NimBLE's defaults. Host-tested over a NimBLE stand-in (both modules' inits); not bench-tested |
 | The owner removes a paired phone | Its bond is deleted from NimBLE's store under the phone's identity address (the key NimBLE keeps it by), with the radio quiet for the call: NimBLE refuses to forget a bond that carries the phone's IRK (a phone using private addresses hands its IRK over) while it advertises or scans (`ble_gap_unpair()`, `BLE_HS_EBUSY`), so the loop task ends the owner's scan, pauses the presence scan and stops the shared advertiser (Opera's beacon with it, on FULL) for the delete and starts them again after. When the stack keeps the bond anyway (another task restarted the advertiser in that window), the phone stays listed and the owner is told to try again; only a phone whose bond is gone must pair again. Until F172 the delete named a byte-reversed over-the-air address, and until the F172 review the stack's refusal went unnoticed and Remove answered ok: either way the phone kept its bond and came back encrypted with no owner asked. A link that comes up while Bluetooth is off is dropped (F173). Host-tested over a stand-in that answers as `ble_gap_unpair()` does; not bench-tested |
 | Watchdog trigger | Reboot, resume from last good state |
@@ -273,13 +274,18 @@ physically destroy the device.
 │  └──────────────┘  └──────────────┘  └──────────────┘  │
 │                                                          │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  Secure Boot │  │  Flash       │  │  GPS Time    │  │
-│  │  (firmware   │  │  Encryption  │  │  (SNTP on    │  │
-│  │   verify)    │  │  (data at    │  │  glass only) │  │
-│  │              │  │   rest)      │  │              │  │
+│  │  OTA image   │  │  Bootloader  │  │  GPS Time    │  │
+│  │  signature   │  │  image check │  │  (SNTP on    │  │
+│  │  (Ed25519,   │  │  (checksum,  │  │  glass only) │  │
+│  │  before boot)│  │   SHA-256)   │  │              │  │
 │  └──────────────┘  └──────────────┘  └──────────────┘  │
 │                                                          │
 └─────────────────────────────────────────────────────────┘
+
+Secure Boot and flash encryption are in no tier's boundary today: the
+provisioning kit prepares both but turns on neither (Scenario 4), and flash
+encryption would cover the app image, not the NVS that holds the private
+key, which is plaintext on every tier.
 
 ┌─────────────────────────────────────────────────────────┐
 │              ACKNOWLEDGED TRUST ASSUMPTIONS               │
@@ -444,16 +450,25 @@ stated, bounded to coarse claims, and revocable.
 **Attack:** Device is confiscated by adversary with forensic capability.
 
 **Result:**
-- **Default tier: FAIL.** Secure boot and flash encryption are an opt-in
-  secure-provisioning build (`firmware/provisioning/sdkconfig.defaults.secure`
-  ships them commented out; so does `canary-ota/sdkconfig.production`). On a
+- **Default tier: FAIL.** Secure boot and flash encryption are staged for an
+  opt-in secure-provisioning build that turns on neither today
+  (`firmware/provisioning/sdkconfig.defaults.secure` ships them commented
+  out; so does `canary-ota/sdkconfig.production`). On a
   default Canary the flash — identity key included — is readable on a bench.
   What that buys an attacker (forward forgery yes, rewriting anchored history
   no) is stated in [SECURITY_MODEL.md](SECURITY_MODEL.md#physical-extraction-and-the-flash-encryption-default).
-- **Secure tier: PARTIAL PASS.** Secure Boot, which the provisioning kit
-  prepares but does not yet enable, would refuse unsigned firmware;
-  flash encryption keeps the app image from being read off the chip, but it
-  does not cover NVS (ESP-IDF encrypts the app, OTA-data and NVS-key
+- **Secure tier: FAIL today, as the default.** The provisioning kit's
+  Phase 2 (`provision_canary.sh --phase 2`) burns a flash-encryption key,
+  `SECURE_BOOT_EN`, the JTAG fuses and `DIS_DOWNLOAD_MANUAL_ENCRYPT`, but it
+  turns on neither protection: it writes the app in plaintext, burns no
+  `SPI_BOOT_CRYPT_CNT` (so the chip does not decrypt or encrypt flash) and
+  no Secure Boot key digest, and flashes no signed bootloader (what the ROM
+  does on a board with `SECURE_BOOT_EN` and no key digest has not been run
+  on a bench). Its own post-check, `verify_device.py --expect-locked`,
+  expects fuses it never burns, so it fails. Once the kit enables them,
+  Secure Boot would refuse unsigned firmware and flash encryption would keep
+  the app image from being read off the chip, but flash encryption does
+  not cover NVS (ESP-IDF encrypts the app, OTA-data and NVS-key
   partitions), and the NVS encryption that would is not available under
   `framework = arduino`, which the canary-wap sketch and the
   `firmware/canary` flagship build with (the O2 bullet in the Opera mesh
@@ -496,12 +511,16 @@ stated, bounded to coarse claims, and revocable.
   erases that page to reuse it, and on the default tier a full erase in
   either flasher is what removes the key. Neither hold erases the SD card.
 
-**LIMITATION:** A sufficiently resourced adversary with physical access
-can potentially bypass ESP32 secure boot (active area of research).
+**LIMITATION:** Once Secure Boot is enabled (no tier enables it today), a
+sufficiently resourced adversary with physical access can potentially bypass
+it (active area of research).
 SD card contents are readable if not encrypted at application layer.
 
-**PARTIAL PASS:** Documented limitation. Future mitigations: application-layer
-SD card encryption, RISC-V open silicon.
+**FAIL on both tiers today, documented:** the limitation is disclosed
+(SECURITY_MODEL.md), not mitigated. Future mitigations: NVS encryption (the
+arduino-as-IDF-component migration), a provisioning kit that turns on flash
+encryption and Secure Boot, application-layer SD card encryption, RISC-V
+open silicon.
 
 ### Scenario 5: ERRERlabs pushes malicious firmware
 
@@ -542,11 +561,11 @@ the original chain state.
 **Attack:** Backdoored ESP32-S3 chips in manufacturing.
 
 **Result:** Acknowledged risk. Mitigated by:
-- No outbound connections (compromised chip has no exfiltration channel)
+- No undisclosed outbound connections (a compromised chip would have to originate traffic of its own on a network whose expected traffic is short and known; SECURITY_MODEL.md, Hardware Trust Boundary)
 - Secure boot (would verify firmware integrity; prepared in the provisioning kit, not yet enabled on any tier)
-- Flash encryption (the app image at rest; not NVS, where the keys and the
-  saved passwords stay plaintext on every tier today, Scenario 4) — opt-in
-  secure-provisioning tier only
+- Flash encryption (would cover the app image at rest, not NVS, where the
+  keys and the saved passwords stay plaintext on every tier today; prepared
+  in the provisioning kit, not yet enabled on any tier, Scenario 4)
 - Future: open-source RISC-V silicon
 
 **DOCUMENTED LIMITATION:** Disclosed to users in SECURITY_MODEL.md.
@@ -612,9 +631,10 @@ NVS from the first, 24-byte encoder.
 
 ### Hardware Trust
 - ESP32-S3 manufactured by Espressif (China-based) — acknowledged boundary
-- Mitigations: no outbound connections, no Espressif cloud services used;
-  secure boot, flash encryption and eFuse locks on the opt-in
-  secure-provisioning tier (NOT on default builds)
+- Mitigations: no undisclosed outbound connections, no Espressif cloud
+  services used. Secure boot and flash encryption are prepared in the opt-in
+  provisioning kit but enabled on no tier today (Scenario 4); its Phase 2
+  burns the JTAG-disable fuses, and is NOT run on default builds
 - Future: RISC-V based designs with open-source silicon
 
 ---

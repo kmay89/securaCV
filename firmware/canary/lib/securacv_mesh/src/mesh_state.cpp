@@ -135,7 +135,7 @@ bool clear_opera_secret() {
   if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
   /* Preferences::remove returns false when the key is absent OR on a
    * real NVS error (flash corruption, hardware fault). To make this
-   * call idempotent across factory-reset semantics WITHOUT swallowing
+   * call idempotent (a leave on a board that never paired) WITHOUT swallowing
    * real failures, we check isKey() on the false path:
    *   • remove → true                 ⇒ erased successfully
    *   • remove → false, isKey → false ⇒ already absent, idempotent OK

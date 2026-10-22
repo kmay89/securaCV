@@ -164,12 +164,15 @@ Four rules keep "beautiful" from decaying into "busy":
   Options → "Update fleet Wi-Fi…". The staged plan (`FleetWiFiRollout`,
   host-tested) sends ONE pilot Canary first and touches nothing else until
   the pilot actually answers on the new network — a typo'd password strands
-  one device (which keeps its rescues), never the fleet. Each device rides
+  one device (which keeps its own setup network for the correction), never
+  the fleet. Each device rides
   the transport it can actually use right now — and the sheet names the
   wire: a pinned https Canary takes `/api/wifi/connect` over its checked
   TLS connection, a Canary whose console is connected takes the firmware's
   bonded BLE provisioning service (preferred over plain http even while it
-  is online), plain http is offered only when nothing encrypted reaches the
+  is online; no WAP's console connects today, since the app dials a console
+  only for a peripheral advertising the console service and a WAP does not,
+  so that lane stays empty until ledger A65 is settled), plain http is offered only when nothing encrypted reaches the
   device and then only behind a disclosure you switch on ("sends it across
   your Wi-Fi unencrypted"), and the display family is named hands-on up
   front (its credentials live in its own first-boot portal).
@@ -413,8 +416,8 @@ parts a phone can. Adding a Canary comes first everywhere; the hub second:
     yet) the claim is unspent, so the card offers **Try again** while it
     lives (180 s). A refused or expired claim ends on the device's row under
     **Ready to pair** on the Fleet tab, where `PairView` takes its recovery
-    kit (the receipt its own pages save after a BOOT tap; opened from
-    Files or pasted, a kit of that WAP is moved onto the address it
+    kit (the receipt its own pages save once a save started there is asking
+    and BOOT is then short-tapped; opened from Files or pasted, a kit of that WAP is moved onto the address it
     answers at now by `ProvisioningReceipt.rebased`, whatever address the
     kit named — the setup network's, or a `.local` name from before the
     WAP was named — the scheme, port and pin still the kit's own; another

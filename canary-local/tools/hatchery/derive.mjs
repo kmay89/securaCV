@@ -15,8 +15,10 @@
 //   key — the same input on any surface, at any time, forever. Nothing is
 //   stored, nothing is synced, and there is nothing to drift, because every
 //   client computes it rather than remembering it. An already-flashed Canary
-//   gets its certificate the moment a client can see its key; a factory reset
-//   that mints a NEW key is honestly a new bird, and says so.
+//   gets its certificate the moment a client can see its key; a full erase
+//   (or the all-rounder Canary's 30 s BOOT wipe) that mints a NEW key is
+//   honestly a new bird, and says so. The 10 s factory reset keeps the key,
+//   and so the bird.
 //
 // THE RNG
 //   Deliberately NOT a cryptographic one. The fingerprint is already a

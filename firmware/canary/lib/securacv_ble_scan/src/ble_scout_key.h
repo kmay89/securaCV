@@ -50,7 +50,10 @@ bool ble_scout_key_hash_beacon(const uint8_t mac[ble_scan::MAC_LEN],
 void ble_scout_key_deinit();
 
 /* Erase the persisted key. Next ble_scout_key_init() will generate
- * a new one. Use for "unpair all Scouts" / factory reset. Returns
+ * a new one. Meant for an "unpair all Scouts" action, which no route
+ * offers yet: nothing calls this today, and no BOOT hold touches the key
+ * (the 10 s reset keeps it on both trees; the flagship's 30 s wipe and a
+ * full erase in a flasher remove it with the rest of NVS). Returns
  * false if NVS write fails. Host build is a no-op + returns true. */
 bool ble_scout_key_factory_reset();
 

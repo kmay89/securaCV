@@ -118,7 +118,9 @@ bool save_opera_secret(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN]);
  *              * out is null
  *              * flash encryption disabled (refuse to load too —
  *                matches canary-wap's symmetric load+save FE gate)
- *              * no secret persisted (first boot, factory-reset state)
+ *              * no secret persisted (never paired, after POST
+ *                /api/mesh/leave, or after the 30 s BOOT wipe; the
+ *                10 s BOOT reset keeps it)
  *              * NVS read failure
  *
  * On failure the contents of out[] are NOT modified — callers can
@@ -129,12 +131,15 @@ bool save_opera_secret(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN]);
  * yet" and skip mesh_session::set_opera_secret(). */
 bool load_opera_secret(uint8_t out[mesh_crypto::OPERA_SECRET_LEN]);
 
-/* Erase the persisted opera_secret. Use on factory reset or
- * "un-pair from this opera" UI.
+/* Erase the persisted opera_secret. Called by POST /api/mesh/leave
+ * (securacv_network.cpp's handle_mesh_leave) and by persist_rotation()'s
+ * failure path. No factory reset calls it: the 10 s BOOT reset keeps the
+ * secret, and the 30 s wipe drops it with the whole namespace
+ * (nvs.clear()).
  *
  * Returns true when:
  *   • the key was removed successfully, OR
- *   • the key was already absent (idempotent — factory-reset semantics)
+ *   • the key was already absent (idempotent)
  *
  * Returns false when the NVS partition can't be opened OR a real
  * remove failed (key still present after remove returned false).
@@ -181,8 +186,9 @@ bool save_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
  * out_pubkeys are populated.
  *
  * Returns false on null pointer, FE disabled, NVS read failure, or
- * buffer too small. On "no peers persisted" (first boot / factory
- * reset), returns true with *out_count = 0.
+ * buffer too small. On "no peers persisted" (never paired, after POST
+ * /api/mesh/leave or the 30 s BOOT wipe; the 10 s reset keeps the list),
+ * returns true with *out_count = 0.
  *
  * On the host build, always returns true with *out_count = 0
  * (deterministic empty list for tests). */
@@ -329,8 +335,9 @@ bool save_elected_hub(const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN]);
 
 /* Load the persisted elected-Hub fingerprint into `out`. Returns:
  *   true  — a fingerprint was present and copied into out[].
- *   false — null pointer, FE disabled, nothing persisted (first boot /
- *           factory reset), or NVS read failure.
+ *   false — null pointer, FE disabled, nothing persisted (never elected,
+ *           after POST /api/mesh/leave or the 30 s BOOT wipe; the 10 s
+ *           reset keeps it), or NVS read failure.
  * On failure out[] is left untouched. On the host build, always
  * returns false (no persistence stub). */
 bool load_elected_hub(uint8_t out[mesh_crypto::FINGERPRINT_LEN]);

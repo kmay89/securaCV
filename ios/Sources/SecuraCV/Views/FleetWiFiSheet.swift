@@ -6,7 +6,8 @@
 // path, who goes FIRST and why, who needs hands-on and is told so up front.
 // The staging is the safety story (FleetWiFiRollout): one pilot proves the
 // password before anything else is touched, so a typo strands one Canary —
-// which keeps its Bluetooth rescue — never the fleet. Progress is honest
+// which keeps its own setup network for the correction (the Bluetooth rescue
+// never reaches a WAP today, ledger A65) — never the fleet. Progress is honest
 // per-device truth, and the closing line claims exactly what was proven.
 
 import SwiftUI

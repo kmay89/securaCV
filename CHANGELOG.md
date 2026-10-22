@@ -272,6 +272,77 @@ hold keeps; and the per-address lockout's ways out.
   (`canary-vision` SPA tests, the sketch's tests); not run on a device or in
   a browser.
 
+- **The secure kit turns on neither Secure Boot nor flash encryption, and
+  the docs now say so (#1843's sweep, second pass).** The
+  provisioning kit's Phase 2 (`provision_canary.sh --phase 2`) writes the app
+  in plaintext, burns a flash-encryption key, `SECURE_BOOT_EN` with no Secure
+  Boot key digest, and the JTAG fuses, but no `SPI_BOOT_CRYPT_CNT`, and its own
+  `verify_device.py --expect-locked` then fails on three fuses it never burns.
+  So a Phase 2 board has neither protection, and what the chip's ROM does with
+  `SECURE_BOOT_EN` and no digest has not been run on a bench. `THREAT_MODEL.md`
+  (its trust-boundary diagram, the seizure scenario's secure tier, which is
+  FAIL today like the default, so the scenario's own grade is FAIL too, the
+  supply-chain mitigations and the hardware trust line), `SECURITY_MODEL.md`
+  (the opt-in tiers buy nothing yet), the in-browser flasher's trust card,
+  `secure_provisioning.md` (its Step 3 list, its lockdown check's output,
+  its eFuse table and its build step), `FEATURES.md`'s kit row, the bench
+  runbook's C0 row and the hardware checklist's preamble, the script's own
+  help, warning and summary, `secure_defaults.h`, the strategy
+  doc's evidence-grade SKU, the vault and root-of-trust design notes, the
+  intake guide and `PENTEST_SCOPE.md` said or implied otherwise; each now
+  says what the kit does (and `PENTEST_SCOPE.md`'s known-and-accepted list
+  now says the 10 s reset keeps the identity, the token and the certificate
+  by design). The `THREAT_MODEL.md`
+  "Firmware corrupt" row also said no tier refuses a corrupt image: every
+  tier's bootloader checks the image's checksum and SHA-256 and tries the
+  other slot (read from the pinned cores' `sdkconfig`), and what no tier
+  refuses is a well-formed unsigned image. Other copies the same pass
+  corrected:
+  - The Bluetooth setup door's rule called the door one "for a device nobody
+    owns yet" in `improv_core.h` (both copies), `magic_pairing.md`,
+    `ble_protocol.md`, `GLOSSARY.md`, `FAQ.md` and the Sense and Vision
+    READMEs. It is a door for a device with no network saved: one its owner
+    cleared with the 10 s hold (or, on a WAP, Forget Wi-Fi) still has an
+    owner, since the hold keeps the witness identity on a Sense, a Vision and
+    a WAP and a WAP's token too, and the door still goes to whichever client
+    connects first.
+  - `mesh_state.h`, the flagship's `main.cpp` and `ble_scout_key.h` (both
+    copies) said a factory reset clears the opera secret, the peers, the
+    elected hub or the scout key. The 10 s reset keeps all of them, the
+    flagship's 30 s wipe drops them with the namespace, and only
+    `POST /api/mesh/leave` and the rotation's failure path clear the secret.
+  - The flagship's receipt comment and a WAP test comment said a served tap
+    ends the address's backoff with no overflow exception.
+  - The getting started guide's recovery section gave the WAP's one-asker
+    tap to both trees (its `gen_wap.py` pin now holds the WAP-scoped
+    sentence), and `onboarding_multiple_canaries.md`, the Vision SPA's header
+    comment and `ios/README.md` gave the old press-first order.
+  - The iPhone app's Fleet Wi-Fi did-not-return copy offered a Bluetooth
+    rescue the app never reaches on a WAP (ledger A65); it now names the
+    WAP's own setup network only.
+  - The WAP dashboard's Forget Wi-Fi confirm now says the setup door opens
+    only on a build that has it, with Bluetooth on (gen_web_assets_gz.py,
+    gen_wap.py, gen_homeassistant.py and gen_csp.py run).
+  - A dated legal audit's recommended "never leaves the secure element"
+    carries an amendment (no Canary has one), the readiness list no longer
+    states as current a rule Forget Wi-Fi already breaks (F345), and
+    "re-flashed" no longer stands for "fully erased" (an ordinary re-flash
+    keeps NVS).
+  `viewer.yml`'s `viewer` job now runs the recorded-reads gate too, and its
+  path filter lists the witness dictionary and the break-glass page and test,
+  which its steps read and which no PR editing them alone used to run (this
+  was on `main` before #1843). `test_docs_claims.py` ties every scoped
+  retirement to its own file: each retired form and each replacement now
+  names the file it stood in, each form must trip a row of that file and
+  each row must have a form there, and each replacement must stand in its
+  file, so a row deleted beside a sibling with the same needle, or pointed at
+  another file, fails; three new tests hold the kit, the resets and the
+  iPhone's Bluetooth filter to the code. The Vision SPA's capture has behavior rows
+  (`tests/spa/receipt-capture.test.js`, run on a stub device in a VM): the
+  press line waits for the first `403`, a `409` stops the capture, and the
+  timeout says whether the device ever answered. Host-tested; not run on a
+  device or in a browser.
+
 ### The flagship and the canary-wap halt on a stored identity key they cannot read, instead of running on a zero key or replacing it (sweep F360, #1840)
 
 - **The `firmware/canary` flagship's key load tells "no key stored" from
@@ -609,8 +680,9 @@ hold keeps; and the per-address lockout's ways out.
   bearer whenever the backoff was not running held every other caller's right
   token at `429`: the F289 follow-up's replay refused 86 of 86 of the owner's
   polls over ten minutes. The likeliest such host was the owner's own phone,
-  still polling a re-flashed unit (a full erase gives it a new key and
-  token; the 10 s hold keeps the token) with its old token (filed as F352). The backoff
+  still polling a fully erased unit (a full erase gives it a new key and
+  token; the 10 s hold and an ordinary re-flash keep the token) with its old
+  token (filed as F352). The backoff
   is now one per source address, the request's socket peer and never a
   header, on the new pure `firmware/common/network/auth_backoff.h` (staged
   into the sketch, held by `check_improv_sync.sh`): 8 tracked addresses, each

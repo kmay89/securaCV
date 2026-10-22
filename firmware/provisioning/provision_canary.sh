@@ -5,8 +5,11 @@ set -euo pipefail
 # ═══════════════════════════════════════════════════════════════
 #
 # Full orchestration for production device provisioning:
-#   1. Virgin verify → 2. Flash signed firmware → 3. Burn keys →
+#   1. Virgin verify → 2. Flash firmware (plaintext, unsigned) → 3. Burn keys →
 #   4. Burn security eFuses → 5. Post-verify → 6. Generate manifest
+# As tooled it turns on neither Secure Boot nor flash encryption: step 4
+# burns SECURE_BOOT_EN with no key digest and no SPI_BOOT_CRYPT_CNT, and
+# step 5 fails on the fuses it does not burn (docs/secure_provisioning.md).
 #
 # IMPORTANT: This script has IRREVERSIBLE operations in Phase 2 mode.
 # Always use --dry-run first to preview what will happen.
@@ -94,14 +97,13 @@ Phases:
     - Record device identity
     - NO eFuse burning (safe for development)
 
-  Phase 2 (production):
+  Phase 2 (production; it does NOT yet turn on Secure Boot or flash
+  encryption, see docs/secure_provisioning.md Step 3):
     - Verify device is virgin
-    - Flash signed firmware
-    - Burn flash encryption key
-    - Enable Secure Boot v2
-    - Disable JTAG
-    - Enable anti-rollback
-    - Verify lockdown
+    - Flash the secure env's app image, in plaintext and unsigned
+    - Burn the flash encryption key (unused: SPI_BOOT_CRYPT_CNT is not burned)
+    - Burn SECURE_BOOT_EN (with no key digest) and the JTAG-disable fuses
+    - Verify lockdown (fails today: it expects fuses this script never burns)
     - Add to fleet manifest
     - IRREVERSIBLE - device cannot return to dev mode
 
@@ -422,9 +424,9 @@ print_summary() {
             echo "  Device is ready for development and testing."
             echo "  Security eFuses have NOT been burned."
         else
-            print_success "Phase 2 provisioning complete (production lockdown)"
-            echo "  Device is locked down and ready for production."
-            echo "  Security eFuses have been burned (IRREVERSIBLE)."
+            print_success "Phase 2 provisioning complete"
+            echo "  Security eFuses have been burned (IRREVERSIBLE), but neither"
+            echo "  Secure Boot nor flash encryption is on (docs/secure_provisioning.md)."
         fi
     fi
     echo ""
@@ -492,10 +494,13 @@ if [[ ${PHASE} -eq 2 && "${DRY_RUN}" == "false" ]]; then
     print_warning "═══════════════════════════════════════════════════════════════"
     echo ""
     echo "This will PERMANENTLY:"
-    echo "  - Burn flash encryption key"
-    echo "  - Enable Secure Boot v2"
+    echo "  - Burn the flash encryption key (flash encryption itself stays off:"
+    echo "    no SPI_BOOT_CRYPT_CNT burn, and the image is written in plaintext)"
+    echo "  - Burn SECURE_BOOT_EN with no key digest and no signed bootloader"
+    echo "    (Secure Boot is not set up; what the ROM then does is untested)"
     echo "  - Disable JTAG"
-    echo "  - Enable anti-rollback"
+    echo "No anti-rollback fuse is burned, and the lockdown check after the burn"
+    echo "fails today. See docs/secure_provisioning.md, Step 3."
     echo ""
     echo "The device CANNOT be returned to development mode after this."
     echo ""

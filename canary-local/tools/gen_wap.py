@@ -1194,10 +1194,14 @@ must_words(DOC, "The ready banner prints the setup network's name (`WiFi AP`) an
 must_words(DOC, "A WAP repeats them in its `[WIFI] AP started` line at boot, and its serial command `w` "
                 "prints both at any time.", "docs: the WAP's AP-started line and w command")
 must_words(DOC, f"A short BOOT press prints neither: it opens the provisioning gate for "
-                f"{GATE_TTL_MS // 1000} seconds, which hands the recovery kit to the one page already "
-                "asking for it, so click **Use BOOT Tap Once** on the dashboard first and press when "
-                "the page says to.",
-           "docs: a short press opens the gate for the page already asking")
+                f"{GATE_TTL_MS // 1000} seconds.",
+           "docs: a short press opens the gate and prints no key")
+# The one-asker rule is the WAP's (tap_arbitrate()); the all-rounder Canary's
+# tap goes to whichever asks first, so the guide scopes the press-after-asking
+# order to a WAP, and this pin holds that scope.
+must_words(DOC, "On a WAP it hands the recovery kit only to the one page already asking for it, "
+                "so click **Use BOOT Tap Once** on the dashboard first and press when the page says to.",
+           "docs: a short press on a WAP serves the page already asking")
 must_words(DOC, f"Held for {RESET_HOLD_MS // 1000} seconds, BOOT resets Wi-Fi and settings and keeps "
                 "the device's keypair", "docs: the reset keeps the keypair")
 must_words(DOC, "A WAP has no such stage, and no BOOT hold changes its key.", "docs: no wipe on a WAP")

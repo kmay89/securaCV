@@ -132,10 +132,14 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
         the token, and reopens the first-come Bluetooth setup door). Whether
         `POST /api/factory-reset` may exist is the decision;
         the recommendation is yes, but only behind the Bearer credential AND
-        a BOOT-tap `provisioning_gate_take()` (a remote credential alone must
-        never be able to reopen the setup door), with a two-step confirmation in the
+        a BOOT-tap `provisioning_gate_take()`, with a two-step confirmation in the
         companion PWA, `total_handlers` raised, and both route audits kept
-        green.
+        green. The rule that recommendation serves, that a remote credential
+        alone should not be able to reopen the setup door, is not today's
+        posture: `POST /api/wifi/forget` takes only `api_auth_check`, which
+        any session passes, the landing page's included, and Forget Wi-Fi
+        reopens the same first-come door (ledger F345, the open decision on
+        that route; F346 for what a landing session reaches).
   - [x] Credential reset path without the serial monitor: one BOOT tap
         releases the provisioning receipt (`GET /api/provisioning-receipt`,
         one tap = one fetch), which re-reveals the API token and the AP

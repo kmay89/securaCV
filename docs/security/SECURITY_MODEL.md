@@ -805,8 +805,11 @@ no undisclosed outbound path — the few it has are named above, two of
 them pinned by host tests — so a compromised blob would have to
 originate traffic of its own, on a network whose expected traffic is
 short and known, and a WAP on its own access point gives it no route
-out at all. Secure boot and flash encryption are additional
-mitigations, but they are **off unless you turn them on** — see
+out at all. Secure boot and flash encryption would be additional
+mitigations, but they are **off on every Canary today**: the provisioning
+kit prepares both and turns on neither (its Phase 2 burns fuses but
+writes a plaintext image and burns no flash-encryption counter and no
+Secure Boot key digest) — see
 [Physical extraction and the flash-encryption default](#physical-extraction-and-the-flash-encryption-default).
 
 ### Physical Access
@@ -898,13 +901,19 @@ and then disagree is not something the real device can do, so if both ever
 reach a verifier, the clone is provable.
 
 **If your threat model includes device seizure**, know what the opt-in
-tiers buy today before you burn anything: at most the firmware image's
-protection (flash encryption keeps the app image from being read off the
-chip; Secure Boot, which the provisioning kit prepares but does not yet
-enable, would refuse unsigned firmware), not the key's. The identity key,
-the saved Wi-Fi and broker passwords and the Bluetooth bonds stay
-plaintext in NVS on a fused board too, and the WAP's mesh secret, which it
-saves only on such a board, sits beside them in plaintext. They stay so
+tiers buy today before you burn anything: nothing yet. The provisioning
+kit's Phase 2 (`provision_canary.sh --phase 2`) burns a flash-encryption
+key, `SECURE_BOOT_EN` and the JTAG fuses, but it writes the app in
+plaintext and burns no `SPI_BOOT_CRYPT_CNT` and no Secure Boot key digest,
+so neither flash encryption nor Secure Boot is on after it (what the chip
+does with `SECURE_BOOT_EN` and no key digest has not been run on a bench).
+Once the kit turns them on they would buy at most the firmware image's
+protection (flash encryption would keep the app image from being read off
+the chip; Secure Boot would refuse unsigned firmware), not the key's.
+The identity key, the saved Wi-Fi and broker passwords and the Bluetooth
+bonds stay plaintext in NVS on a board with flash encryption on too, and
+the WAP's mesh secret, which it saves only on such a board, sits beside
+them in plaintext. They stay so
 until NVS encryption is in the build, which needs the
 arduino-as-IDF-component migration
 (`firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` item 9; the Tier 3 row of

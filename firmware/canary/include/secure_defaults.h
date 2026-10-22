@@ -123,9 +123,13 @@
 // ════════════════════════════════════════════════════════════════════
 // HARDWARE SECURITY
 // ════════════════════════════════════════════════════════════════════
-// Secure Boot v2 and flash encryption are opt-in, through the provisioning
-// kit (firmware/provisioning/: platformio_secure.ini, provision_canary.sh).
-// Shipped dev/release images enable neither, and a device reports what it
-// has (`key_at_rest`) rather than what this file once claimed.
+// Secure Boot v2 and flash encryption are staged in the provisioning kit
+// (firmware/provisioning/: platformio_secure.ini, provision_canary.sh), which
+// as tooled turns on neither: its sdkconfig lines are commented out (and
+// inert under framework = arduino), and provision_canary.sh --phase 2 writes
+// a plaintext image and burns no SPI_BOOT_CRYPT_CNT and no Secure Boot key
+// digest (docs/secure_provisioning.md, Step 3). Shipped dev/release images
+// enable neither, and a device reports what it has (`key_at_rest`) rather
+// than what this file once claimed.
 
 #endif // SECURE_DEFAULTS_H

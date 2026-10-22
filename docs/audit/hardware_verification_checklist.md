@@ -5,8 +5,9 @@ Audit: `docs/audit/mesh_and_chirp_audit_v1.md` §7
 Closeout: `docs/audit/v0.3_closeout.md`
 
 Every item below requires physical XIAO-ESP32S3 boards on the bench
-(or equivalent ESP32-S3 dev kit with flash encryption enabled in
-production builds). Host-side and lint-side gates are already green;
+(or equivalent ESP32-S3 dev kit; the rows that need flash encryption on say
+so, and no released build or provisioning-kit step turns it on today:
+`docs/secure_provisioning.md`, Step 3). Host-side and lint-side gates are already green;
 this is what's still hardware-bound.
 
 When you finish a repro, drop the artifact (terminal log, BLE console

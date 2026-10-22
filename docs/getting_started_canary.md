@@ -535,7 +535,7 @@ name and password. Keep it somewhere private — anyone holding it can use
 the dashboard, and the iPhone app pairs from it.
 
 **Why the all-rounder Canary's dashboard asks to be unlocked on your home
-network.** (This and the next paragraph are the all-rounder Canary's,
+network.** (This paragraph and its list are the all-rounder Canary's,
 `firmware/canary`. A WAP's dashboard shows no such banner: its sign-in's
 **Use BOOT Tap Once** asks first, and you press BOOT only when the page
 says to.) The page
@@ -554,13 +554,13 @@ it *without* the key and shows a banner with three ways in:
 On the all-rounder Canary each BOOT tap unlocks exactly one thing within
 those 30 seconds: one page load, or one browser fetching the recovery kit —
 whichever asks first. A page you unlocked with the tap can save the
-recovery kit without a second tap. On a WAP the tap unlocks no page load:
-it hands the recovery kit only to the one device asking for it, so click
-**Use BOOT Tap Once** (or **Save my recovery kit**) first and press BOOT
-when the page says to; if another device on your network asks during the
-same tap, the WAP hands out nothing and the page says so. The iPhone app
-never fetches the kit with a tap: it pairs during setup, or from a kit you
-open in it. That is how you get the kit back later without a USB cable. *(New in 2026-09; checked by automated tests, with its first automated build pending; not
+recovery kit without a second tap: that is how you get the kit back later
+without a USB cable. On a WAP the tap unlocks no page load: it hands the
+recovery kit only to the one device asking for it, so click **Use BOOT Tap
+Once** (or **Save my recovery kit**) first and press BOOT when the page says
+to; if another device on your network asks during the same tap, the WAP
+hands out nothing and the page says so. The iPhone app never fetches the
+kit with a tap: it pairs during setup, or from a kit you open in it. *(New in 2026-09; checked by automated tests, with its first automated build pending; not
 yet on a bench device.)*
 
 **Encrypted dashboard (development and full images only, for now).** On
@@ -794,10 +794,12 @@ The all-rounder Canary (`firmware/canary`) repeats both in its
 `[SETUP] Setup network up` line whenever the setup network comes up, a
 home Wi-Fi outage included. A WAP repeats them in its `[WIFI] AP started`
 line at boot, and its serial command `w` prints both at any time. A short
-BOOT press prints neither: it opens the provisioning gate for 30 seconds,
-which hands the recovery kit to the one page already asking for it, so
-click **Use BOOT Tap Once** on the dashboard first and press when the page
-says to.
+BOOT press prints neither: it opens the provisioning gate for 30 seconds.
+On the all-rounder Canary that unlocks one home-network page load or one
+recovery-kit fetch, whichever asks first, so tap BOOT and then reload the
+dashboard within the 30 seconds. On a WAP it hands the recovery kit only
+to the one page already asking for it, so click **Use BOOT Tap Once** on the
+dashboard first and press when the page says to.
 
 Either flasher's done card shows the same pair after a flash, and a
 recovery kit saved from the dashboard carries the key as `ap_password`

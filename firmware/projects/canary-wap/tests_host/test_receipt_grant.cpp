@@ -996,8 +996,9 @@ void check_right_bearer_served_at_once(const char* after) {
 void test_receipt_lockout_never_holds_the_tap_or_the_claim() {
   // A page holding a stale token, the backoff running (a guesser on the
   // network, or the page's own earlier tries): the owner's tap serves it,
-  // and the tap ends that address's backoff (sweep F341): the page just got
-  // the token, so its next right-token call is served at once. Before F341
+  // and the tap ends that address's own backoff (sweep F341; never the
+  // shared overflow's: firmware/tests_host/test_auth_backoff.cpp): the page just
+  // got the token, so its next right-token call is served at once. Before F341
   // the count stayed at 5 and that call was 429 for the rest of the backoff.
   reset_device();
   arm_lockout(5);

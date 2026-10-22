@@ -51,9 +51,9 @@ final class DeviceStore: ObservableObject {
         TokenStore.forget(id)
         // The pinned key goes with the pairing: re-pairing is a fresh
         // physical-presence ceremony, so trust is re-established on first
-        // sight then (TOFU) — a fully erased (re-flashed) device with a new
-        // key must not inherit a permanent "signature failed" from its
-        // previous life.
+        // sight then (TOFU) — a device fully erased in a flasher, with a new
+        // key, must not inherit a permanent "signature failed" from its
+        // previous life (an ordinary re-flash keeps the key).
         PinnedKeyStore.forget(id)
         // The cloud copy goes too — `push` only writes devices still present,
         // so without an explicit delete the next hydration resurrects this

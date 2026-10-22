@@ -1692,7 +1692,8 @@ function renderDiscoveredPeerSection(peers) {
 // --------------- Add Canary Wizard ---------------
 //
 // Pairing leads with the zero-typing path: pick (or discover) a device,
-// short-tap its BOOT button, and the app captures the provisioning
+// let the app ask it first, short-tap its BOOT button once the step says
+// to (after the device's first 403), and the app captures the provisioning
 // receipt itself — the same physical gate the device's own dashboard
 // uses. Typing a token is the last resort, not the front door.
 
@@ -1747,7 +1748,8 @@ function startReceiptCapture(baseUrl, handlers) {
         if (err && err.status === 409) {
           // Another device asked during the same tap (a WAP, sweep F342):
           // the tap was closed and nothing was handed out, so stop here.
-          canceled = true;
+          // Returning without scheduling a tick is the stop: no ask is in
+          // flight past this one (receipt-capture.test.js).
           handlers.onContended();
           return;
         }

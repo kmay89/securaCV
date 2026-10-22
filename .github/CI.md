@@ -31,11 +31,14 @@ or files anywhere in the tree, belongs in `lint.yml` (unfiltered,
 file it reads outside the workflow's own trees in both path lists (R6) —
 otherwise an edit to that file alone runs nothing, and the red lands on the
 next unrelated PR. The first half is on the reviewer. The second is
-machine-checked for two jobs so far, canary-local.yml's logic tests and
-viewer.yml's `selftest-ui` (the WAP sketch's page suites, whose
-`recovery_kit.test.js` reads two iPhone app files), through
-`scripts/path_filter_reads/`. In each armed test step (five in each job)
-every node process records the repo paths it opens, stats, lists or only
+machine-checked for three jobs so far, canary-local.yml's logic tests,
+viewer.yml's `viewer` (the offline viewer, the Home Assistant cards and the
+break-glass console, whose steps read the witness dictionary and the
+break-glass page) and viewer.yml's `selftest-ui` (the WAP sketch's page
+suites, whose `recovery_kit.test.js` reads two iPhone app files), through
+`scripts/path_filter_reads/`. In each armed test step (five in
+canary-local's job and in `selftest-ui`, seven in `viewer`) every node
+process records the repo paths it opens, stats, lists or only
 checks for existence, and every python3 process the paths it opens and
 lists: CPython raises no
 audit event for a stat or an exists check, so a python3 existence check is

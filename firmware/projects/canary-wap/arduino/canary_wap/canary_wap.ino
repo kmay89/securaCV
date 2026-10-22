@@ -988,8 +988,8 @@ static constexpr uint32_t IMPROV_WINDOW_MAGIC = 0x444F4F52;  // "DOOR"
 // previous image's spent window: RTC memory survives a flash); or a reset
 // the chip cannot name (the record is RTC garbage as far as anyone can
 // tell, and clearing re-arms the window, which is the safe side — a half
-// hour of door on a unit nobody owns, not a door that never opens or never
-// shuts). A software reset, a watchdog, a panic and a deep-sleep wake keep
+// hour of door on a unit with no network saved, not a door that never opens
+// or never shuts). A software reset, a watchdog, a panic and a deep-sleep wake keep
 // the record. The USB / JTAG / glitch reasons exist from IDF 5.1 (core 3.x).
 // Mirrors firmware/common/network/improv_ble.cpp's reset_is_power_cycle.
 static bool improv_window_reset_is_power_cycle(esp_reset_reason_t why) {
