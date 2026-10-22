@@ -1939,9 +1939,11 @@ so — see D2 below.)
     entry of a `lib_deps` value in the flag files (under that key or
     `lib_use`, `lib_force` or `lib_install`, the older names PlatformIO still
     reads as it, in any case and at any indent, as configparser reads the
-    ini; one a line, or split on `, ` in a one-line value, as PlatformIO
-    splits it; an interpolated `${section.option}` read where the flag files
-    set it) and each dependency a library manifest under the tree declares
+    ini; split by line and on `, ` in every line, which splits more than
+    PlatformIO does, never less, as it splits a one-line value on `, ` and a
+    longer one only by line; an interpolated `${section.option}` read where
+    the flag files set it, a `${sysenv.*}` or built-in one failing) and each
+    dependency a library manifest under the tree declares
     (`library.json`'s `"dependencies"`, `library.properties`' `depends=`).
     A row is an `owner/name`: a library no row names fails until a reviewer
     adds its row (`library_problems`), as `PUBLIC_ALLOWLIST`'s routes are
@@ -1974,8 +1976,8 @@ so — see D2 below.)
   rule, which replaces the old `auth_get_token` loop (rule 5 keeps its
   emitter-behind-the-Host half). A function defined twice (an `#if` body
   and its `#else` one) is every one of its bodies, whatever its head, in
-  this rule, the route-gate rule and the Host-first rule. 292 planted
-  fixtures (267 source edits, 25 table edits), with the self-test's lexer,
+  this rule, the route-gate rule and the Host-first rule. 293 planted
+  fixtures (268 source edits, 25 table edits), with the self-test's lexer,
   flag-file, build-input, library, reach, header, file-kind, route-form,
   symbol-binding and raw-literal cases, each fail for their named reason
   before the tree is read; the tree passes with its 83 registrations, in
@@ -2569,8 +2571,9 @@ so — see D2 below.)
     split as PlatformIO's `parse_multi_values` splits it, one a line or on
     `, ` in a one-line value, so `bblanchon/ArduinoJson @ >=7.0.0,<8.0.0` is
     one entry where it failed as an unknown library `<8.0.0` (an
-    interpolated one-line value is split where it lands, which may split
-    more than PlatformIO does, never less). On 13 `lib_deps` spellings the
+    interpolated one-line value was split where it landed, meant to split
+    more than PlatformIO does, never less; the ninth review found it read
+    two entries as one, below). On 13 `lib_deps` spellings the
     entries match `ProjectConfig.get()`'s, but one where that wider split
     reads more; on about 11,000 generated ini texts `_ini_options` reads
     each option's value lines as configparser does;
@@ -2605,16 +2608,73 @@ so — see D2 below.)
     says an angled `#include <WebServer.h>` is a mention, a quoted one or
     `<ESPAsyncWebServer.h>` not.
   Two plants and the self-test's new library cases were added: 292 planted
-  fixtures (267 source, 25 table). Of 20 checker mutants that each undo one
-  of these fixes (the indent rule, the lowercased key or reference, the
-  older key names, an empty line ending a value, an inline comment kept,
-  the split on every comma or on none for an interpolated value, a trailing
-  empty line kept, the option read on the unstripped line, the owner
-  ignored, any version taken, a manifest's version a URL only by `://`, a
-  bare-name row unnamed or admitting a bare spec, `library_manifests()`
-  reading one manifest name or one folder level, and either provisioning
-  manager dropped from the server row), the self-test refuses all 20.
+  fixtures (267 source, 25 table). It counted 20 checker mutants that each
+  undo one of these fixes and said the self-test refused all 20, but its
+  list (the indent rule, the lowercased key or reference, the older key
+  names, an empty line ending a value, an inline comment kept, the split on
+  every comma or on none for an interpolated value, a trailing empty line
+  kept, the option read on the unstripped line, the owner ignored, any
+  version taken, a manifest's version a URL only by `://`, a bare-name row
+  unnamed or admitting a bare spec, `library_manifests()` reading one
+  manifest name or one folder level, and either provisioning manager
+  dropped from the server row) names 19. Of the 20 the ninth round built
+  from that list on the eighth version (the trailing empty line kept once
+  for each of its two pops), the self-test refuses 18: it passes an
+  interpolated one-line value split on every comma rather than on `, `,
+  and an interpolated value's trailing empty line kept (the ninth review's
+  nit). The ninth version has neither that split nor that pop.
   Host-tested; not run on a device. No new number.
+  *Review (2026-10-22, the PR's ninth round):* held to the same threat
+  model, it found the eighth round's split reading less than PlatformIO
+  does, its reference skip reading no `${sysenv.*}` named like a `lib_deps`
+  key, and six nits. Each now fails, or is stated:
+  - a one-line `lib_deps` that interpolates another one-line list,
+    `lib_deps = ${common.libs}, WiFiManager` with `[common]`'s `libs =
+    bblanchon/ArduinoJson @ ^7.0.0, knolleary/PubSubClient @ ^2.8`, is one
+    line to PlatformIO, which splits all of it on `, `, and PlatformIO
+    6.2.0's `ProjectConfig` returned WiFiManager among the env's `lib_deps`;
+    the rule split only the interpolated list, glued its last entry to the
+    text after it and read `knolleary/PubSubClient @ ^2.8, WiFiManager` as
+    one entry (the version group took `^2.8, WiFiManager`), and printed "83
+    registrations checked". So did `${common.libs_core},
+    ${common.libs_portal}` with WiFiManager first in the second. The rule
+    now splits every line of the expanded value on `, `: PlatformIO inserts
+    an interpolated value with its own line breaks, or a list option's
+    entries with a break between them, so each break of its value is a
+    piece's end in the rule or a `, ` inside one, and the rule splits
+    wherever PlatformIO does, and more where a line of a longer value holds
+    a `, ` (one entry to PlatformIO). On 21
+    `lib_deps` spellings its entries are `ProjectConfig.get()`'s in 17 and
+    the same split wider in 4, each a PlatformIO entry holding `, `; the
+    eighth version read 3 of the 21 as fewer entries. The honest spelling of
+    that list, `${common.libs}, rweather/Crypto`, which the eighth version
+    failed as one entry, now passes. The two trailing-empty-line pops the
+    old split needed are gone, the untested one with them;
+  - `${sysenv.LIB_DEPS}` in a `lib_deps` value passed: the eighth round
+    lowercased a reference's option and skipped every one named like a
+    `lib_deps` key, whatever its section, as a value read on its own, while
+    PlatformIO reads it as the environment variable (with `LIB_DEPS` set to
+    `WiFiManager`, `ProjectConfig` returned WiFiManager). A `lib_deps`-keyed
+    reference adds nothing only when it names a section (PlatformIO reads it
+    as a `lib_deps` value the flag files set, each read on its own, as
+    nothing or as a build error); a `${sysenv.*}` or built-in one fails as
+    unset, as `${sysenv.EXTRA_LIBS}` did;
+  - the nits: a manifest dependency whose version is an `owner/name`, which
+    PlatformIO's `dependency_to_spec` reads as that library, holds the `/`
+    of the URL guard; a `WiFiProvClass` of its own is a plant; a bare name
+    that is a row's name (`ArduinoJson`), `library.json`'s list of names,
+    and a library under the tree named only by its manifest or only by its
+    folder are self-test cases, as is an interpolated `lib_ignore` with an
+    empty line after it; the `REGISTRY_LIBS` comment says the census row
+    names some of the core's servers and lists those it does not, and that
+    a row matches whatever version range it names; and the eighth round's
+    mutant count is restated above.
+  One plant and the self-test's new library cases were added: 293 planted
+  fixtures (268 source, 25 table). Of 28 checker mutants that each undo or
+  alter one of the ninth round's fixes or nits (12) or one of the eighth
+  round's fixes still in the code (16), the self-test refuses all 28. The
+  tree passes with its 83 registrations, in about 20 s. Host-tested; not
+  run on a device. No new number.
 - [x] **F339 [code] canary-wap: other bearer compares stay silent beside the
   lockout.** `csi_integration.cpp`'s `CSI_AUTH_OR_RETURN`
   (`api_auth_check_optional`, every CSI dashboard route), `csi_mqtt.cpp`'s

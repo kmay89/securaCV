@@ -152,14 +152,15 @@ every other gate), and the premise the last one stands on:
     in the flag files, under that key or an older name PlatformIO reads as it
     (`lib_use`, `lib_force`, `lib_install`), in any case and at any indent,
     as configparser reads the ini, an interpolated `${section.option}` read
-    where they set it, split as PlatformIO splits it; and each dependency a
-    library manifest under ROOTS declares), so a library that raises its own
-    access point or serves its own routes (WiFiManager's autoConnect(),
-    handed no AP password, raises an open SoftAP and serves a firmware
-    upload) fails until a reviewer adds its row. A row is an `owner/name` and
-    vouches for the dependencies its library declares, which are not read
-    (the four rows' libraries declare none); no row admits a bare registry
-    name or a URL.
+    where they set it (a `${sysenv.*}` or built-in one fails), split by line
+    and on ", " in every line, which splits more than PlatformIO does, never
+    less; and each dependency a library manifest under ROOTS declares), so a
+    library that raises its own access point or serves its own routes
+    (WiFiManager's autoConnect(), handed no AP password, raises an open
+    SoftAP and serves a firmware upload) fails until a reviewer adds its
+    row. A row is an `owner/name` and vouches for the dependencies its
+    library declares, which are not read (the four rows' libraries declare
+    none); no row admits a bare registry name or a URL.
     Every reader is named: an accessor in its home (SECRET_ACCESSORS), an
     emitter in its home carrying exactly what TOKEN_EMITTERS says, its
     reading statements pinned (EMITTER_STATEMENTS), a comparer reading only
@@ -4447,7 +4448,7 @@ def build_input_problems(flags: dict) -> list:
 # flag files' lib_deps fetch (under that key or an older name PlatformIO still
 # reads as it, LIB_DEPS_KEYS), and every dependency a library manifest under
 # ROOTS declares (library.json's "dependencies", library.properties'
-# `depends=`), is a row here, matched by `owner/name` whatever version it
+# `depends=`), is a row here, matched by `owner/name` whatever version range it
 # names, or a library under ROOTS by its name. A row is an `owner/name` and
 # admits only that: a library no row names fails until a reviewer adds its row
 # with a reason, as PUBLIC_ALLOWLIST's routes are added, and a bare registry
@@ -4457,7 +4458,8 @@ def build_input_problems(flags: dict) -> list:
 # declare none (no dependency in the manifests of Crypto 0.4.0, ArduinoJson
 # 7.4.3, PubSubClient 2.8 and NimBLE-Arduino 2.5.1, versions within the ranges
 # the flag files name). A core library is not fetched; the core's servers are
-# the "another HTTP server" census row's.
+# the "another HTTP server" census row's to name (it names some and lists those
+# it does not).
 REGISTRY_LIBS = {
     "rweather/Crypto": "Ed25519, Curve25519 and ChaChaPoly, with the hashes they use: no "
                        "network and no server",
@@ -4572,10 +4574,13 @@ def library_problems(sources: dict, flags: dict, manifests: dict, registry: dict
     for its library's own dependencies): each entry of a lib_deps value in
     the flag files (under any of LIB_DEPS_KEYS, read as _ini_options reads
     the ini, an interpolated `${section.option}` read where the flag files
-    set it, split as PlatformIO splits it: one a line, or on ", " in a
-    one-line value), and each dependency a library manifest under ROOTS
-    declares (`manifests`, library_manifests()). A row is an `owner/name`;
-    no row admits a bare registry name or a URL."""
+    set it, a `${sysenv.*}` or built-in one failing, split by line and on
+    ", " in every line: PlatformIO splits a one-line value on ", " and a
+    longer one only by line, so this splits wherever it does, and more
+    where a line of a longer value holds a ", "), and each dependency a
+    library manifest under ROOTS declares (`manifests`,
+    library_manifests()). A row is an `owner/name`; no row admits a bare
+    registry name or a URL."""
     problems, specs = [], []
     known = {k.casefold() for k in registry if k.count("/") == 1}
     problems.extend(f"REGISTRY_LIBS: {k!r} is no owner/name row — a row admits the one "
@@ -4590,10 +4595,15 @@ def library_problems(sources: dict, flags: dict, manifests: dict, registry: dict
 
     def expand(fname, section, lines, via, seen):
         """[[where, via, text]]: a value's lines with each `${section.option}`
-        replaced by the lines of the value it names (a lib_deps one by
-        nothing: every lib_deps value is read on its own), a one-line value
-        split on ", " where it lands, so no piece holds two of PlatformIO's
-        entries."""
+        replaced by the lines of the value it names. PlatformIO inserts a
+        value it names with that value's own line breaks, or, for a list
+        option, with a break between its entries (split by line, or on ", "
+        when it is one line), so every line break of its expanded value is a
+        piece's end here or a ", " inside one, and the caller splits every
+        piece on ", ". A lib_deps one of a section adds nothing: PlatformIO
+        reads it as a lib_deps value the flag files set, each read on its
+        own, as nothing or as a build error; a `${sysenv.*}` or built-in one
+        is the environment's, which no flag file sets."""
         out = []
         for n, line in lines:
             out.append([f"{fname}:{n}", via, ""])
@@ -4604,9 +4614,11 @@ def library_problems(sources: dict, flags: dict, manifests: dict, registry: dict
                 m = _INTERPOLATION_REF.fullmatch(part)
                 sec, opt = (m.group(1), m.group(2).lower()) if m else (None, part)
                 sec = section if sec == "this" else sec
-                if opt in LIB_DEPS_KEYS or (sec, opt) in seen:
-                    continue  # every lib_deps value is read on its own
-                hits = [(f, o) for f, o in options if sec is not None and o[:2] == (sec, opt)]
+                if (sec, opt) in seen or (opt in LIB_DEPS_KEYS
+                                          and sec not in (None, "sysenv")):
+                    continue  # a section's lib_deps value is read on its own
+                hits = [(f, o) for f, o in options
+                        if sec not in (None, "sysenv") and o[:2] == (sec, opt)]
                 if not hits:
                     problems.append(f"{fname}:{n}: lib_deps interpolates ${{{part}}}, which "
                                     f"no flag file sets, so the libraries it names are not "
@@ -4615,10 +4627,6 @@ def library_problems(sources: dict, flags: dict, manifests: dict, registry: dict
                 for f, o in hits:
                     got += expand(f, o[0], o[2], f"{via} through ${{{part}}}",
                                   seen | {(sec, opt)})
-                while got and not got[-1][2].strip():
-                    got.pop()
-                if len(got) == 1:
-                    got = [[got[0][0], got[0][1], s] for s in got[0][2].split(", ")]
                 for j, g in enumerate(got):
                     if j:
                         out.append(list(g))
@@ -4630,15 +4638,16 @@ def library_problems(sources: dict, flags: dict, manifests: dict, registry: dict
 
     for fname, (section, key, lines) in options:
         if key in LIB_DEPS_KEYS:
-            pieces = expand(fname, section, lines, f"[{section}] {key}", set())
-            while pieces and not pieces[-1][2].strip():
-                pieces.pop()
-            if len(pieces) == 1:
-                pieces = [[pieces[0][0], pieces[0][1], s] for s in pieces[0][2].split(", ")]
-            for where, via, item in pieces:
-                item = re.sub(r"\s+;.*$", "", item.strip()).strip()
-                if item and not item.startswith((";", "#")):
-                    specs.append((where, via, item, True))
+            # PlatformIO splits the expanded value by line, or on ", " when it
+            # is one line (parse_multi_values); every piece is split on ", "
+            # here, which splits more than it does where a line of a longer
+            # value holds a ", " (one entry to PlatformIO), never less.
+            for where, via, piece in expand(fname, section, lines, f"[{section}] {key}",
+                                            set()):
+                for item in piece.split(", "):
+                    item = re.sub(r"\s+;.*$", "", item.strip()).strip()
+                    if item and not item.startswith((";", "#")):
+                        specs.append((where, via, item, True))
     for fname, text in sorted(manifests.items()):
         items, names, bad = _manifest_deps(fname, text)
         local |= set(names)
@@ -6805,6 +6814,11 @@ _FIX_PLANTS = (
      _FIX_SETUP_PRINT, _FIX_SETUP_PRINT + "  WiFiProv.beginProvision(WIFI_PROV_SCHEME_SOFTAP, "
      "WIFI_PROV_SCHEME_HANDLER_NONE, WIFI_PROV_SECURITY_0, NULL, \"SecuraCV-Recovery\");\n",
      ("another HTTP server named in setup",)),
+    ("a WiFiProvClass instance of its own raising the SoftAP", _FIX_MAIN, "",
+     "static WiFiProvClass s_prov;\nstatic void recovery_begin() {\n"
+     "  s_prov.beginProvision(WIFI_PROV_SCHEME_SOFTAP, WIFI_PROV_SCHEME_HANDLER_NONE, "
+     "WIFI_PROV_SECURITY_0, NULL, \"SecuraCV-Recovery\");\n}\n",
+     ("another HTTP server named outside every function: 'static WiFiProvClass s_prov;'",)),
     # ...and the ESP-IDF provisioning manager it wraps, called directly (IDF's
     # wifi_prov_mgr example, ported; handed no service key, its SoftAP is open).
     ("the ESP-IDF provisioning manager raising its own SoftAP from setup()", _FIX_MAIN,
@@ -7434,8 +7448,12 @@ def _assert_answer_gate_rule() -> None:
                  "lib_deps =\n    securacv_mesh\n",
                  "[common]\nlibs = bblanchon/ArduinoJson @ ^7.0.0\n[env:x]\n"
                  "more = rweather/Crypto\nlib_deps =\n    ${common.libs}\n    ${this.more}\n",
-                 # a version range is one entry, as PlatformIO splits it (a
-                 # one-line value on ", ", a multi-line one by line)...
+                 # (a one-line list interpolated into a one-line value, which
+                 # PlatformIO splits whole on ", ")
+                 "[common]\nlibs = bblanchon/ArduinoJson @ ^7.0.0, knolleary/PubSubClient @ ^2.8\n"
+                 "[env:x]\nlib_deps = ${common.libs}, rweather/Crypto\n",
+                 # a version range is one entry (it holds no ", ", which
+                 # PlatformIO splits a one-line value on)...
                  "lib_deps = bblanchon/ArduinoJson @ >=7.0.0,<8.0.0\n",
                  "lib_deps =\n    bblanchon/ArduinoJson @ >=7.0.0,<8.0.0\n",
                  # ...and an indented block, an inline comment and an older key
@@ -7464,15 +7482,29 @@ def _assert_answer_gate_rule() -> None:
             ("[common]\nlibs_external =\n    tzapu/WiFiManager\n[env:x]\n"
              "lib_deps =\n    ${env.lib_deps}\n    ${common.libs_external}\n",
              "tzapu/WiFiManager"),
-            # a one-line value interpolated is split where it lands (PlatformIO
-            # joins a list option's entries by line), its key and the
-            # reference read lowercased as PlatformIO looks it up, and an
-            # empty line inside a value stays in it
+            # a one-line value interpolated is split on ", " (PlatformIO joins a
+            # list option's entries by line), its key and the reference read
+            # lowercased as PlatformIO looks it up, and an empty line inside a
+            # value stays in it
             ("[common]\nLibs = bblanchon/ArduinoJson @ ^7.0.0, tzapu/WiFiManager\n[env:x]\n"
              "lib_deps = ${common.LIBS}\n", "tzapu/WiFiManager"),
             ("[env:a]\nlib_ignore = rweather/Crypto @ ^0.4.0, WiFiManager\n[env:x]\n"
              "lib_deps =\n    ${env:a.lib_ignore}\n", "WiFiManager"),
+            ("[env:a]\nlib_ignore = rweather/Crypto @ ^0.4.0, WiFiManager\n\n[env:x]\n"
+             "lib_deps =\n    ${env:a.lib_ignore}\n    knolleary/PubSubClient\n", "WiFiManager"),
             ("lib_deps =\n    rweather/Crypto\n\n    tzapu/WiFiManager\n", "tzapu/WiFiManager"),
+            # The round-9 review: a one-line value that interpolates another
+            # one-line value is one line to PlatformIO, which splits all of it
+            # on ", " (the eighth version split only the value it names, then
+            # read the line's last two entries as one, `@ ^2.8, WiFiManager` a
+            # version)...
+            ("[common]\nlibs = bblanchon/ArduinoJson @ ^7.0.0, knolleary/PubSubClient @ ^2.8\n"
+             "[env:recovery]\nlib_deps = ${common.libs}, WiFiManager\n", "WiFiManager"),
+            ("[common]\nlibs_core = bblanchon/ArduinoJson @ ^7.0.0\n"
+             "libs_portal = WiFiManager, knolleary/PubSubClient @ ^2.8\n[env:recovery]\n"
+             "lib_deps = ${common.libs_core}, ${common.libs_portal}\n", "WiFiManager"),
+            # ...and a bare name is no row though a row's name is the same.
+            ("lib_deps =\n    ArduinoJson\n", "ArduinoJson"),
             # The round-8 review: configparser reads an option at any indent (a
             # tab- or space-indented block, each key a new option, each deeper
             # line its value), lowercases its key, and PlatformIO reads lib_deps'
@@ -7493,8 +7525,9 @@ def _assert_answer_gate_rule() -> None:
              "thingsboard/PubSubClient @ ^2.8"),
             # ...and a version holding an `@`, `:` or `/` is a URL to PlatformIO,
             # which fetches what it names, so a row's owner/name before it is
-            # no row (nor is one line of a multi-line value that holds two
-            # entries, which PlatformIO reads as one URL).
+            # no row (a line of a multi-line value that holds two entries,
+            # which PlatformIO reads as one URL, is split on ", " here, and its
+            # second entry is no row).
             ("lib_deps =\n    rweather/Crypto @ https://github.com/rweather/arduinolibs.git\n",
              "rweather/Crypto @ https://github.com/rweather/arduinolibs.git"),
             ("lib_deps =\n    rweather/Crypto @ git@github.com:tzapu/WiFiManager.git\n",
@@ -7502,7 +7535,7 @@ def _assert_answer_gate_rule() -> None:
             ("lib_deps = rweather/Crypto @ ^0.4.0,tzapu/WiFiManager\n",
              "rweather/Crypto @ ^0.4.0,tzapu/WiFiManager"),
             ("lib_deps =\n    rweather/Crypto @ ^0.4.0, tzapu/WiFiManager\n",
-             "rweather/Crypto @ ^0.4.0, tzapu/WiFiManager")):
+             "tzapu/WiFiManager")):
         got = check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": ini + libs})
         assert any("a library no REGISTRY_LIBS row names" in p and repr(spec) in p
                    for p in got), (libs, got)
@@ -7512,17 +7545,27 @@ def _assert_answer_gate_rule() -> None:
         flags={"fx/platformio.ini": ini + "lib_deps =\n    WiFiManager\n"})
     assert any("REGISTRY_LIBS: 'WiFiManager' is no owner/name row" in p for p in got) and any(
         "fetches 'WiFiManager'" in p for p in got), got
-    got = check_bearer_only_answers(clean, tables, flags={
-        "fx/platformio.ini": ini + "lib_deps =\n    ${sysenv.EXTRA_LIBS}\n"})
-    assert any("interpolates ${sysenv.EXTRA_LIBS}, which no flag file sets" in p
-               for p in got), got
+    # A `${sysenv.*}` or built-in reference is no flag file's, whatever its name
+    # (a `${section.lib_deps}` adds nothing, its value read where it is set, but
+    # `${sysenv.LIB_DEPS}` is the environment variable, the round-9 review).
+    for ref in ("sysenv.EXTRA_LIBS", "sysenv.LIB_DEPS", "lib_deps"):
+        got = check_bearer_only_answers(clean, tables, flags={
+            "fx/platformio.ini": ini + f"lib_deps =\n    ${{env.lib_deps}}\n    ${{{ref}}}\n"})
+        assert any(f"interpolates ${{{ref}}}, which no flag file sets" in p
+                   for p in got), (ref, got)
     # A library manifest's dependencies are held the same way: a registry row
     # or a library under ROOTS passes, anything else fails.
     manifests = dict(mesh, **{
         "fx/lib/securacv_network/library.json":
             '{"name": "securacv_network", "dependencies": {"bblanchon/ArduinoJson": "^7.0.0"}}',
         "fx/lib/securacv_ble_scan/library.json":
-            '{"name": "securacv_ble_scan", "dependencies": {"securacv_mesh": "*"}}'})
+            '{"name": "securacv_ble_scan", "dependencies": {"securacv_mesh": "*"}}',
+        # (a list of names; a library under ROOTS by the name its manifest
+        # gives, its folder named otherwise, or by its folder's name, its
+        # manifest giving none)
+        "fx/lib/scan/library.json":
+            '{"name": "securacv_scan", "dependencies": ["securacv_mesh", "securacv_diag"]}',
+        "fx/lib/securacv_diag/library.json": '{"dependencies": ["securacv_scan"]}'})
     assert check_bearer_only_answers(clean, tables, manifests=manifests) == []
     for path, text, word in (
             ("fx/lib/securacv_network/library.json",
@@ -7540,6 +7583,11 @@ def _assert_answer_gate_rule() -> None:
              '{"dependencies": [{"owner": "rweather", "name": "Crypto", '
              '"version": "git@github.com:tzapu/WiFiManager.git"}]}',
              "'rweather/Crypto=git@github.com:tzapu/WiFiManager.git'"),
+            # (and an owner/name as the version is the library PlatformIO fetches)
+            ("fx/lib/securacv_network/library.json",
+             '{"dependencies": [{"owner": "rweather", "name": "Crypto", '
+             '"version": "tzapu/WiFiManager"}]}',
+             "'rweather/Crypto=tzapu/WiFiManager'"),
             ("fx/lib/securacv_network/library.json",
              '{"dependencies": {"diag": "symlink://../../../common/diag"}}',
              "'diag=symlink://../../../common/diag'"),

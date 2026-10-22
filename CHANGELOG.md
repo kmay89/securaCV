@@ -204,9 +204,11 @@
   - a library the build fetches, as an entry of a `lib_deps` value in the
     flag files (under that key or `lib_use`, `lib_force` or `lib_install`,
     the older names PlatformIO still reads as it, in any case and at any
-    indent, as configparser reads the ini; one a line, or split on `, ` in a
-    one-line value, as PlatformIO splits it; or interpolated from another
-    option) or as a dependency a library manifest under the tree declares,
+    indent, as configparser reads the ini; split by line and on `, ` in
+    every line, which splits more than PlatformIO does, never less, as it
+    splits a one-line value on `, ` and a longer one only by line; or
+    interpolated from another option, a `${sysenv.*}` or built-in one
+    failing) or as a dependency a library manifest under the tree declares,
     that no `REGISTRY_LIBS` row names. Each row is an `owner/name` with its
     reason, and the four rows are the libraries the flag files name today
     (`rweather/Crypto`, `bblanchon/ArduinoJson`, `knolleary/PubSubClient`,
@@ -382,9 +384,10 @@
   env written as an indented block is read), under `Lib_Deps` (it lowercases
   a key) and under `lib_install`, `lib_use` or `lib_force` (older names
   PlatformIO still reads as `lib_deps`). The rule now reads the ini as
-  configparser does, takes all four keys, and splits a value as PlatformIO
-  does, so a version range (`>=7.0.0,<8.0.0`) is one entry rather than an
-  unknown library `<8.0.0`; a version holding an `@`, a `:` or a `/` is a
+  configparser does and takes all four keys, and a version range
+  (`>=7.0.0,<8.0.0`) is one entry rather than an unknown library `<8.0.0`
+  (its split of an interpolated value, which the ninth review found reading
+  two entries as one, below); a version holding an `@`, a `:` or a `/` is a
   URL, as PlatformIO reads it, and a row is an `owner/name`, which no bare
   name or URL matches. It also found no self-test driving
   `library_manifests()`, a row's owner or the URL guard, and the docs saying
@@ -395,13 +398,38 @@
   provisioning manager `WiFiProv` wraps, a row vouches for its library's own
   dependencies (the four declare none), the docs state one rule for a bare
   name and a URL, and the server row's comment says which `#include`
-  spellings are a mention. Of 20 checker mutants that each undo one of these
-  fixes, the self-test refuses all 20.
+  spellings are a mention. Of the 20 checker mutants the ninth round built
+  from its list of these fixes, the eighth version's self-test refuses 18
+  (it passes an interpolated one-line value split on every comma rather
+  than on `, `, and an interpolated value's trailing empty line kept; the
+  ninth version has neither that split nor that line's pop).
+  Its ninth review found that split reading less than PlatformIO does: a
+  one-line `lib_deps` that interpolates another one-line list
+  (`${common.libs}, WiFiManager`) is one line to PlatformIO, which splits
+  all of it on `, `, while the rule split only the list and read
+  `knolleary/PubSubClient @ ^2.8, WiFiManager` as one entry, its version
+  `^2.8, WiFiManager`, so a bare `WiFiManager` passed; and
+  `${sysenv.LIB_DEPS}` passed, skipped as a `lib_deps` value read on its
+  own, though PlatformIO reads it as the environment variable. The rule now
+  splits every line of the expanded value on `, `, which splits wherever
+  PlatformIO does and more where a line of a longer value holds a `, `
+  (on 21 `lib_deps` spellings its entries are PlatformIO 6.2.0's, or the
+  same split wider in the 4 where a PlatformIO entry holds `, `), and a
+  `lib_deps`-keyed reference adds nothing only when it names a section, a
+  `${sysenv.*}` or built-in one failing as unset. It carried the nits:
+  self-test cases for the `/` of a manifest's URL guard, a `WiFiProvClass`
+  of its own, a bare name that is a row's name, `library.json`'s list of
+  names, a library named only by its manifest or only by its folder and an
+  interpolated `lib_ignore` with an empty line after it; the
+  `REGISTRY_LIBS` comment says the census row names some of the core's
+  servers and lists those it does not. Of 28 checker mutants that each undo
+  or alter one of the ninth review's fixes or nits, or one of the eighth's
+  still in the code, the self-test refuses all 28.
   The head parser names a constructor
   for its class (it named `ScvNetworkManager`'s body after its last
   initializer, `m_peers_last_browse_ms`), a member as `Class::name`, and a
   function whose head ends in `noexcept`, `override`, `final`, a member's
-  `const` or a trailing return type. 292 planted fixtures (267 source, 25
+  `const` or a trailing return type. 293 planted fixtures (268 source, 25
   table), with the self-test's lexer, flag-file, build-input, library, reach,
   header, file-kind, route-form, symbol-binding and raw-literal cases, each
   fail for their named reason before the tree is read; they refuse each of
