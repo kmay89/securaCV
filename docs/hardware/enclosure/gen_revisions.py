@@ -363,10 +363,63 @@ def read_stl(data: bytes) -> list[tuple]:
     return tris
 
 
+def surface_area(tris: list[tuple]) -> float:
+    """The mesh's true surface area, robust to how OpenSCAD triangulates a
+    face. A planar face with a vertex lying almost on one of its edges is
+    sometimes exported as a FOLD — two overlapping coplanar triangles, one
+    wound backwards (measured on the 7" stand gauge: the same sources gave
+    14869.3 and 14711.4 mm² of plain triangle area on two runs, with identical
+    triangle counts and volumes). Volume and moments are signed sums, so a
+    fold cancels out of them; plain area counts it twice. Here triangles are
+    joined into coplanar patches across shared edges (parallel or
+    anti-parallel normals, within 1e-6), each patch's area is the signed sum
+    against its own normal, and the folds cancel the same way."""
+    n = len(tris)
+    normals = []
+    for a, b, c in tris:
+        ux, uy, uz = b[0] - a[0], b[1] - a[1], b[2] - a[2]
+        vx, vy, vz = c[0] - a[0], c[1] - a[1], c[2] - a[2]
+        normals.append((uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx))
+    lens = [math.sqrt(x * x + y * y + z * z) for x, y, z in normals]
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    edges: dict = {}
+    for t, (a, b, c) in enumerate(tris):
+        if lens[t] < 1e-12:
+            continue
+        for p1, p2 in ((a, b), (b, c), (c, a)):
+            edges.setdefault((p1, p2) if p1 < p2 else (p2, p1), []).append(t)
+    for ts in edges.values():
+        for i in range(1, len(ts)):
+            t0, t1 = ts[0], ts[i]
+            na, nb = normals[t0], normals[t1]
+            dot = (na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2]) / (lens[t0] * lens[t1])
+            if abs(dot) > 1 - 1e-6:
+                parent[find(t1)] = find(t0)
+    patch: dict = {}
+    for t in range(n):
+        if lens[t] < 1e-12:
+            continue
+        r = find(t)
+        ref = normals[r]
+        if lens[r] < 1e-12:
+            continue
+        nt = normals[t]
+        patch[r] = patch.get(r, 0.0) + (nt[0] * ref[0] + nt[1] * ref[1] + nt[2] * ref[2]) / lens[r] / 2
+    return sum(abs(v) for v in patch.values())
+
+
 def fingerprint(tris: list[tuple]) -> dict:
     """What the mesh IS, as numbers a re-render of the same design reproduces
     (measured: two renders of one part agree to ~1e-11 in every moment) and
-    a moved feature does not: triangle count, volume, surface area, bounding
+    a moved feature does not: triangle count, volume, surface area (per
+    coplanar patch, so a triangulation fold cannot move it), bounding
     box and its low corner, centroid, the central second moments (diagonal
     and the products of inertia xy/xz/yz) and the central third moments.
     The products are what tell a pair of holes on one diagonal from the same
@@ -375,7 +428,6 @@ def fingerprint(tris: list[tuple]) -> dict:
     lo = [math.inf] * 3
     hi = [-math.inf] * 3
     vol6 = 0.0
-    area = 0.0
     c1 = [0.0, 0.0, 0.0]
     c2 = [[0.0] * 3 for _ in range(3)]
     c3 = [0.0, 0.0, 0.0]
@@ -398,10 +450,7 @@ def fingerprint(tris: list[tuple]) -> dict:
             ai, bi, ci = a[i], b[i], c[i]
             c3[i] += v6 * (ai ** 3 + bi ** 3 + ci ** 3 + ai * ai * (bi + ci) + bi * bi * (ai + ci)
                            + ci * ci * (ai + bi) + ai * bi * ci)
-        ux, uy, uz = b[0] - a[0], b[1] - a[1], b[2] - a[2]
-        vx, vy, vz = c[0] - a[0], c[1] - a[1], c[2] - a[2]
-        nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
-        area += math.sqrt(nx * nx + ny * ny + nz * nz) / 2
+    area = surface_area(tris)
     vol = vol6 / 6
     if abs(vol) < 1e-9:
         cen = [0.0, 0.0, 0.0]

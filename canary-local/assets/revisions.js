@@ -147,12 +147,55 @@ export function loadLedger(url = "devices/revisions.json") {
 // centroid and second moments, all read off the triangle soup. STL vertices
 // are float32 on both sides, so a file the generator measured measures the
 // same here to well inside the ledger's tolerance.
+// gen_revisions.py surface_area(), read: triangles joined into coplanar
+// patches across shared edges (parallel or anti-parallel normals within
+// 1e-6), each patch's area its signed sum against its own normal — so a
+// triangulation FOLD (an overlapping coplanar triangle wound backwards, which
+// OpenSCAD emits for some faces on some runs) cancels, as it does out of the
+// volume. tri(t) returns the three [x, y, z] vertices of triangle t.
+export function surfaceArea(n, tri) {
+  const nrm = new Array(n), len = new Float64Array(n), parent = new Int32Array(n);
+  for (let t = 0; t < n; t++) {
+    const [a, b, c] = tri(t);
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+    const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    nrm[t] = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+    len[t] = Math.hypot(nrm[t][0], nrm[t][1], nrm[t][2]);
+    parent[t] = t;
+  }
+  const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+  const edges = new Map();
+  for (let t = 0; t < n; t++) {
+    if (len[t] < 1e-12) continue;
+    const v = tri(t).map((p) => p.join(","));
+    for (const [p, q] of [[v[0], v[1]], [v[1], v[2]], [v[2], v[0]]]) {
+      const k = p < q ? p + "|" + q : q + "|" + p;
+      const first = edges.get(k);
+      if (first === undefined) { edges.set(k, t); continue; }
+      const na = nrm[first], nb = nrm[t];
+      const dot = (na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2]) / (len[first] * len[t]);
+      if (Math.abs(dot) > 1 - 1e-6) parent[find(t)] = find(first);
+    }
+  }
+  const patch = new Map();
+  for (let t = 0; t < n; t++) {
+    if (len[t] < 1e-12) continue;
+    const r = find(t);
+    if (len[r] < 1e-12) continue;
+    const ref = nrm[r], nt = nrm[t];
+    patch.set(r, (patch.get(r) || 0) + (nt[0] * ref[0] + nt[1] * ref[1] + nt[2] * ref[2]) / len[r] / 2);
+  }
+  let area = 0;
+  for (const v of patch.values()) area += Math.abs(v);
+  return area;
+}
+
 export function meshFingerprint(mesh) {
   const { pos } = mesh;
   const idx = mesh.idx;
   const n = idx ? idx.length / 3 : pos.length / 9;
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  let vol6 = 0, area = 0;
+  let vol6 = 0;
   const c1 = [0, 0, 0], c3 = [0, 0, 0];
   const c2 = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
   const v = (i, k) => pos[i * 3 + k];
@@ -169,11 +212,11 @@ export function meshFingerprint(mesh) {
       const A = a[i], B = b[i], C = c[i];
       c3[i] += v6 * (A ** 3 + B ** 3 + C ** 3 + A * A * (B + C) + B * B * (A + C) + C * C * (A + B) + A * B * C);
     }
-    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
-    const wx = c[0] - a[0], wy = c[1] - a[1], wz = c[2] - a[2];
-    const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
-    area += Math.sqrt(nx * nx + ny * ny + nz * nz) / 2;
   }
+  const area = surfaceArea(n, (t) => {
+    const ia = idx ? idx[t * 3] : t * 3, ib = idx ? idx[t * 3 + 1] : t * 3 + 1, ic = idx ? idx[t * 3 + 2] : t * 3 + 2;
+    return [[v(ia, 0), v(ia, 1), v(ia, 2)], [v(ib, 0), v(ib, 1), v(ib, 2)], [v(ic, 0), v(ic, 1), v(ic, 2)]];
+  });
   const vol = vol6 / 6;
   const flat = Math.abs(vol) < 1e-9;
   const cen = flat ? [0, 0, 0] : c1.map((x) => x / (4 * vol6));

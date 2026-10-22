@@ -538,7 +538,7 @@
      "geom": {
       "triangles": 3448,
       "volume_mm3": 19936.371,
-      "area_mm2": 19655.999,
+      "area_mm2": 19402.51,
       "bbox_mm": [
        57.2,
        78.697,
@@ -574,7 +574,7 @@
      "introduced_in": "7b043e563448243cca85756af4f3392101f1c00c",
      "changes": {
       "volume_mm3": -101.396,
-      "area_mm2": 251.428,
+      "area_mm2": -2.061,
       "bbox_mm": [
        0.0,
        0.0,
@@ -613,7 +613,7 @@
      "geom": {
       "triangles": 3624,
       "volume_mm3": 19603.175,
-      "area_mm2": 19733.955,
+      "area_mm2": 19480.466,
       "bbox_mm": [
        57.2,
        78.697,
@@ -856,7 +856,7 @@
      "geom": {
       "triangles": 3536,
       "volume_mm3": 19598.32,
-      "area_mm2": 19805.237,
+      "area_mm2": 19551.748,
       "bbox_mm": [
        57.2,
        78.697,
@@ -954,7 +954,7 @@
      "geom": {
       "triangles": 4224,
       "volume_mm3": 18933.902,
-      "area_mm2": 19671.814,
+      "area_mm2": 19418.324,
       "bbox_mm": [
        57.2,
        78.697,
@@ -990,7 +990,7 @@
      "introduced_in": "e89826a5fa2a15bbc443747742a041fe6285602c",
      "changes": {
       "volume_mm3": -664.418,
-      "area_mm2": -133.423,
+      "area_mm2": -133.424,
       "bbox_mm": [
        0.0,
        0.0,
@@ -1099,7 +1099,7 @@
      "geom": {
       "triangles": 4224,
       "volume_mm3": 18921.643,
-      "area_mm2": 19659.991,
+      "area_mm2": 19406.502,
       "bbox_mm": [
        57.2,
        78.697,
@@ -1135,7 +1135,7 @@
      "introduced_in": "5c1ca91c2117c3010614ceace83871f2e9114fe2",
      "changes": {
       "volume_mm3": -12.259,
-      "area_mm2": -11.823,
+      "area_mm2": -11.822,
       "bbox_mm": [
        0.0,
        0.0,
@@ -1197,7 +1197,7 @@
      "introduced_in": "f30ea6f6f4694f407e226de281e57ee2807c8b05",
      "changes": {
       "volume_mm3": -7013.457,
-      "area_mm2": -9725.462,
+      "area_mm2": -9471.973,
       "bbox_mm": [
        -0.8,
        -21.697,
@@ -11198,7 +11198,7 @@
      "geom": {
       "triangles": 4420,
       "volume_mm3": 140204.811,
-      "area_mm2": 26434.628,
+      "area_mm2": 26434.627,
       "bbox_mm": [
        56.7,
        135.842,
@@ -11234,7 +11234,7 @@
      "introduced_in": "2a752e2accbe7924a5e86584c997993d4af0a083",
      "changes": {
       "volume_mm3": 38338.777,
-      "area_mm2": 4651.802,
+      "area_mm2": 4651.801,
       "bbox_mm": [
        6.8,
        10.0,
@@ -11476,7 +11476,7 @@
      "introduced_in": "7b0167369c7b4d9f20d437664b29ffdb3101ae00",
      "changes": {
       "volume_mm3": 86955.425,
-      "area_mm2": 9539.946,
+      "area_mm2": 9539.947,
       "bbox_mm": [
        0.0,
        40.0,
@@ -13805,7 +13805,7 @@
      "geom": {
       "triangles": 3848,
       "volume_mm3": 24720.687,
-      "area_mm2": 24489.894,
+      "area_mm2": 24151.437,
       "bbox_mm": [
        74.8,
        96.497,
@@ -13841,7 +13841,7 @@
      "introduced_in": "7b043e563448243cca85756af4f3392101f1c00c",
      "changes": {
       "volume_mm3": -135.383,
-      "area_mm2": 336.395,
+      "area_mm2": -2.062,
       "bbox_mm": [
        0.0,
        0.0,
@@ -13891,7 +13891,7 @@
      "geom": {
       "triangles": 4380,
       "volume_mm3": 23924.001,
-      "area_mm2": 23823.582,
+      "area_mm2": 23485.125,
       "bbox_mm": [
        74.8,
        96.497,
@@ -14086,7 +14086,7 @@
      "geom": {
       "triangles": 4292,
       "volume_mm3": 23920.38,
-      "area_mm2": 23876.721,
+      "area_mm2": 23538.265,
       "bbox_mm": [
        74.8,
        96.497,
@@ -14122,7 +14122,7 @@
      "introduced_in": "d1395d9b228a0cc773e69871b0390aa67a136689",
      "changes": {
       "volume_mm3": -3.621,
-      "area_mm2": 53.139,
+      "area_mm2": 53.14,
       "bbox_mm": [
        0.0,
        0.0,
@@ -14172,7 +14172,7 @@
      "geom": {
       "triangles": 4980,
       "volume_mm3": 23216.163,
-      "area_mm2": 23661.396,
+      "area_mm2": 23322.94,
       "bbox_mm": [
        74.8,
        96.497,
@@ -14288,7 +14288,7 @@
      "geom": {
       "triangles": 4980,
       "volume_mm3": 23203.905,
-      "area_mm2": 23649.574,
+      "area_mm2": 23311.117,
       "bbox_mm": [
        74.8,
        96.497,
@@ -14324,7 +14324,7 @@
      "introduced_in": "5c1ca91c2117c3010614ceace83871f2e9114fe2",
      "changes": {
       "volume_mm3": -12.258,
-      "area_mm2": -11.822,
+      "area_mm2": -11.823,
       "bbox_mm": [
        0.0,
        0.0,
@@ -14386,7 +14386,7 @@
      "introduced_in": "f30ea6f6f4694f407e226de281e57ee2807c8b05",
      "changes": {
       "volume_mm3": -5177.22,
-      "area_mm2": -10224.033,
+      "area_mm2": -9885.576,
       "bbox_mm": [
        -0.8,
        -21.297,
@@ -23939,7 +23939,7 @@
      "geom": {
       "triangles": 2168,
       "volume_mm3": 17444.482,
-      "area_mm2": 18329.346,
+      "area_mm2": 17993.349,
       "bbox_mm": [
        104.5,
        39.0,
@@ -23975,7 +23975,7 @@
      "introduced_in": "7b043e563448243cca85756af4f3392101f1c00c",
      "changes": {
       "volume_mm3": -134.398,
-      "area_mm2": 332.975,
+      "area_mm2": -3.022,
       "bbox_mm": [
        0.0,
        0.0,
@@ -24014,7 +24014,7 @@
      "geom": {
       "triangles": 2276,
       "volume_mm3": 17494.382,
-      "area_mm2": 18260.254,
+      "area_mm2": 17924.257,
       "bbox_mm": [
        104.5,
        39.0,
@@ -24241,7 +24241,7 @@
      "geom": {
       "triangles": 2188,
       "volume_mm3": 17491.008,
-      "area_mm2": 18309.765,
+      "area_mm2": 17973.769,
       "bbox_mm": [
        104.5,
        39.0,
@@ -24277,7 +24277,7 @@
      "introduced_in": "d1395d9b228a0cc773e69871b0390aa67a136689",
      "changes": {
       "volume_mm3": -3.374,
-      "area_mm2": 49.511,
+      "area_mm2": 49.512,
       "bbox_mm": [
        0.0,
        0.0,
@@ -24327,7 +24327,7 @@
      "geom": {
       "triangles": 3436,
       "volume_mm3": 16957.11,
-      "area_mm2": 18167.554,
+      "area_mm2": 17831.558,
       "bbox_mm": [
        104.5,
        39.0,
@@ -24449,7 +24449,7 @@
      "geom": {
       "triangles": 3436,
       "volume_mm3": 16944.851,
-      "area_mm2": 18155.732,
+      "area_mm2": 17819.735,
       "bbox_mm": [
        104.5,
        39.0,
@@ -24485,7 +24485,7 @@
      "introduced_in": "5c1ca91c2117c3010614ceace83871f2e9114fe2",
      "changes": {
       "volume_mm3": -12.259,
-      "area_mm2": -11.822,
+      "area_mm2": -11.823,
       "bbox_mm": [
        0.0,
        0.0,
@@ -24557,7 +24557,7 @@
      "introduced_in": "f30ea6f6f4694f407e226de281e57ee2807c8b05",
      "changes": {
       "volume_mm3": -6044.464,
-      "area_mm2": -7098.046,
+      "area_mm2": -6762.049,
       "bbox_mm": [
        -0.8,
        4.0,
@@ -27986,7 +27986,7 @@
      "geom": {
       "triangles": 2000,
       "volume_mm3": 6625.98,
-      "area_mm2": 6888.96,
+      "area_mm2": 6728.649,
       "bbox_mm": [
        33.7,
        36.6,
@@ -28022,7 +28022,7 @@
      "introduced_in": "7b043e563448243cca85756af4f3392101f1c00c",
      "changes": {
       "volume_mm3": -64.124,
-      "area_mm2": 157.289,
+      "area_mm2": -3.022,
       "bbox_mm": [
        0.0,
        0.0,
@@ -28061,7 +28061,7 @@
      "geom": {
       "triangles": 2092,
       "volume_mm3": 6662.669,
-      "area_mm2": 6839.335,
+      "area_mm2": 6679.025,
       "bbox_mm": [
        33.7,
        36.6,
@@ -28097,7 +28097,7 @@
      "introduced_in": "c0de7e4e77e62b628d3e2c353c669be4e929fff1",
      "changes": {
       "volume_mm3": 36.689,
-      "area_mm2": -49.625,
+      "area_mm2": -49.624,
       "bbox_mm": [
        0.0,
        0.0,
@@ -28264,7 +28264,7 @@
      "geom": {
       "triangles": 2004,
       "volume_mm3": 6660.467,
-      "area_mm2": 6871.606,
+      "area_mm2": 6711.295,
       "bbox_mm": [
        33.7,
        36.6,
@@ -28300,7 +28300,7 @@
      "introduced_in": "d1395d9b228a0cc773e69871b0390aa67a136689",
      "changes": {
       "volume_mm3": -2.202,
-      "area_mm2": 32.271,
+      "area_mm2": 32.27,
       "bbox_mm": [
        0.0,
        0.0,
@@ -28350,7 +28350,7 @@
      "geom": {
       "triangles": 3252,
       "volume_mm3": 6081.575,
-      "area_mm2": 6660.599,
+      "area_mm2": 6500.288,
       "bbox_mm": [
        33.7,
        36.6,
@@ -28472,7 +28472,7 @@
      "geom": {
       "triangles": 3252,
       "volume_mm3": 6069.317,
-      "area_mm2": 6648.776,
+      "area_mm2": 6488.465,
       "bbox_mm": [
        33.7,
        36.6,
@@ -28580,7 +28580,7 @@
      "introduced_in": "f30ea6f6f4694f407e226de281e57ee2807c8b05",
      "changes": {
       "volume_mm3": -2842.122,
-      "area_mm2": -3259.883,
+      "area_mm2": -3099.572,
       "bbox_mm": [
        -0.8,
        -0.8,
@@ -35120,7 +35120,7 @@
        -0.0
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -35213,7 +35213,7 @@
        -0.145
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -35306,7 +35306,7 @@
        0.779
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -35399,7 +35399,7 @@
        0.0
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -35492,7 +35492,7 @@
        -0.0
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -35585,7 +35585,7 @@
        0.005
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -35679,7 +35679,7 @@
        -16.694
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -35773,7 +35773,7 @@
        4.181
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -35867,7 +35867,7 @@
        -21.776
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -35961,7 +35961,7 @@
        -39.016
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -36055,7 +36055,7 @@
        8.592
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -36149,7 +36149,7 @@
        1.462
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -36244,7 +36244,7 @@
        0.069
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -36339,7 +36339,7 @@
        -20.356
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -36434,7 +36434,7 @@
        -49.705
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -36529,7 +36529,7 @@
        27.905
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -36624,7 +36624,7 @@
        4.265
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -36718,7 +36718,7 @@
        3.749
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -36812,7 +36812,7 @@
        15.016
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -36907,7 +36907,7 @@
        6.616
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -37002,7 +37002,7 @@
        23.786
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -37095,7 +37095,7 @@
        73.19
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -37188,7 +37188,7 @@
        266.982
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -37281,7 +37281,7 @@
        3.323
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -37374,7 +37374,7 @@
        2.638
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -37467,7 +37467,7 @@
        0.0
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -37560,7 +37560,7 @@
        -13.493
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -37653,7 +37653,7 @@
        1.086
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -37746,7 +37746,7 @@
        20.688
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -37839,7 +37839,7 @@
        1783.952
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -37930,7 +37930,7 @@
        8.48
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -38023,7 +38023,7 @@
        -0.02
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -38116,7 +38116,7 @@
        66.097
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -38209,7 +38209,7 @@
        230.201
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -38302,7 +38302,7 @@
        0.0
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -38395,7 +38395,7 @@
        0.484
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -38488,7 +38488,7 @@
        3.92
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -38581,7 +38581,7 @@
        9.595
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -38674,7 +38674,7 @@
        26.925
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -38767,7 +38767,7 @@
        0.0
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -38860,7 +38860,7 @@
        0.622
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -38953,7 +38953,7 @@
        133.265
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -39046,7 +39046,7 @@
        55.227
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -39139,7 +39139,7 @@
        1.095
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -39232,7 +39232,7 @@
        372.994
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -39325,7 +39325,7 @@
        77.287
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -39418,7 +39418,7 @@
        -0.0
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -39511,7 +39511,7 @@
        -7.027
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -39604,7 +39604,7 @@
        -11.221
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -39697,7 +39697,7 @@
        39.078
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -39790,7 +39790,7 @@
        1.251
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -39883,7 +39883,7 @@
        285.282
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -39976,7 +39976,7 @@
        5.163
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -39996,7 +39996,7 @@
    "geom": {
     "triangles": 58202,
     "volume_mm3": 107918.431,
-    "area_mm2": 79647.521,
+    "area_mm2": 79643.587,
     "bbox_mm": [
      197.26,
      115.06,
@@ -40037,7 +40037,7 @@
      "geom": {
       "triangles": 58202,
       "volume_mm3": 107918.431,
-      "area_mm2": 79647.521,
+      "area_mm2": 79643.587,
       "bbox_mm": [
        197.26,
        115.06,
@@ -40069,7 +40069,7 @@
        347.306
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -40089,7 +40089,7 @@
    "geom": {
     "triangles": 4816,
     "volume_mm3": 15032.729,
-    "area_mm2": 10144.253,
+    "area_mm2": 10143.778,
     "bbox_mm": [
      49.03,
      45.805,
@@ -40130,7 +40130,7 @@
      "geom": {
       "triangles": 4816,
       "volume_mm3": 15032.729,
-      "area_mm2": 10144.253,
+      "area_mm2": 10143.778,
       "bbox_mm": [
        49.03,
        45.805,
@@ -40162,7 +40162,7 @@
        137.438
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -40255,7 +40255,7 @@
        5.122
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -40348,7 +40348,7 @@
        217.936
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -40441,7 +40441,7 @@
        3.365
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -40534,7 +40534,7 @@
        6.491
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -40627,7 +40627,7 @@
        -0.03
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -40720,7 +40720,7 @@
        23.329
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -40740,7 +40740,7 @@
    "geom": {
     "triangles": 20036,
     "volume_mm3": 271609.224,
-    "area_mm2": 90575.576,
+    "area_mm2": 90417.626,
     "bbox_mm": [
      174.0,
      126.0,
@@ -40781,7 +40781,7 @@
      "geom": {
       "triangles": 20036,
       "volume_mm3": 271609.224,
-      "area_mm2": 90575.576,
+      "area_mm2": 90417.626,
       "bbox_mm": [
        174.0,
        126.0,
@@ -40813,7 +40813,7 @@
        22141.212
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -40833,7 +40833,7 @@
    "geom": {
     "triangles": 1300,
     "volume_mm3": 44303.316,
-    "area_mm2": 14869.332,
+    "area_mm2": 14711.382,
     "bbox_mm": [
      22.0,
      126.0,
@@ -40874,7 +40874,7 @@
      "geom": {
       "triangles": 1300,
       "volume_mm3": 44303.316,
-      "area_mm2": 14869.332,
+      "area_mm2": 14711.382,
       "bbox_mm": [
        22.0,
        126.0,
@@ -40906,7 +40906,7 @@
        19596.981
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -40999,7 +40999,7 @@
        233.585
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -41092,7 +41092,7 @@
        2.04
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -41185,7 +41185,7 @@
        122.502
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -41278,7 +41278,7 @@
        390.62
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -41371,7 +41371,7 @@
        0.95
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -41464,7 +41464,7 @@
        0.036
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -41557,7 +41557,7 @@
        5.673
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -41651,7 +41651,7 @@
        26.376
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -41745,7 +41745,7 @@
        0.036
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -41839,7 +41839,7 @@
        -4.391
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -41932,7 +41932,7 @@
        2.788
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -42025,7 +42025,7 @@
        17838.933
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -42118,7 +42118,7 @@
        0.035
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -42211,7 +42211,7 @@
        4.78
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -42304,7 +42304,7 @@
        17.225
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -42397,7 +42397,7 @@
        4222.724
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -42490,7 +42490,7 @@
        35.787
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -42583,7 +42583,7 @@
        -2.388
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -42676,7 +42676,7 @@
        3.5
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -42769,7 +42769,7 @@
        298.852
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -42862,7 +42862,7 @@
        3156.209
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -42955,7 +42955,7 @@
        -540.721
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }
@@ -43048,7 +43048,7 @@
        0.467
       ]
      },
-     "recorded_on": "a4402210eeab90a15bcaeb3a91065b3cc30d202d",
+     "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
     }

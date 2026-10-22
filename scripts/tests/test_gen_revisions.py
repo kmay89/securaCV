@@ -103,6 +103,22 @@ class Fingerprint(unittest.TestCase):
         self.assertIsNone(gr.geom_equal(old, fp))
         self.assertIsNone(gr.geom_equal(fp, old))
 
+    def test_a_triangulation_fold_does_not_move_the_area(self):
+        # OpenSCAD sometimes exports a planar face as a FOLD: an overlapping
+        # coplanar triangle wound backwards (the 7" stand gauge: 14869.3 vs
+        # 14711.4 mm² of plain area from the same sources on two runs). The
+        # fold must cancel out of the area as it does out of the volume.
+        p1, p2, p3, p4 = (0.0, 0.0, 0.0), (4.0, 0.0, 0.0), (0.0, 4.0, 0.0), (1.0, 2.0, 0.0)
+        clean = [(p1, p2, p3)]
+        fold = [(p1, p2, p3), (p1, p3, p4), (p1, p4, p3)]   # an overlap and its reverse
+        self.assertAlmostEqual(gr.surface_area(clean), 8.0)
+        self.assertAlmostEqual(gr.surface_area(fold), 8.0)
+        # a real neighbor face at an angle is not merged into the patch
+        wall = [(p1, p2, (0.0, 0.0, 3.0))]
+        self.assertAlmostEqual(gr.surface_area(clean + wall), 8.0 + 6.0)
+        # a closed box measures its six faces
+        self.assertAlmostEqual(gr.surface_area(box_tris((0, 0, 0), (2, 3, 4))), 2 * (6 + 8 + 12))
+
     def test_render_noise_is_not_a_move(self):
         fp = gr.fingerprint(box_tris((0, 0, 0), (40, 30, 20)))
         noisy = dict(fp, volume_mm3=fp["volume_mm3"] + 0.01, area_mm2=fp["area_mm2"] + 0.005,
