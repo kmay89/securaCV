@@ -1,0 +1,76 @@
+name: Backoffice image
+
+# Builds the backoffice container and, on main, publishes it to GHCR as
+# ghcr.io/<owner>/securacv-backoffice:{latest,<sha>}. That is what makes
+# the public demo one command on any host:
+#   docker run -e BACKOFFICE_DEMO=1 -p 8787:8787 ghcr.io/kmay89/securacv-backoffice
+# On a PR the image is built (the Dockerfile is validated) and not pushed.
+on:
+  pull_request:
+    paths:
+      - "backoffice/**"
+      - ".github/workflows/backoffice-image.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backoffice/**"
+      - ".github/workflows/backoffice-image.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+# A publisher (CI.md R3, publisher half — main_queue_ok): PR builds collapse,
+# main publishes queue in order so :latest always ends on the newest commit.
+concurrency:
+  group: backoffice-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  image:
+    name: build${{ github.event_name != 'pull_request' && ' + publish' || ' (validate only)' }}
+    runs-on: ubuntu-24.04  # the image the job was written against (CI.md R11)
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image name (owner lower-cased, as GHCR requires)
+        id: meta
+        run: |
+          owner_lc="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/${owner_lc}/securacv-backoffice" >> "$GITHUB_OUTPUT"
+          echo "sha=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build${{ github.event_name != 'pull_request' && ' and push' || '' }}
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: backoffice
+          file: backoffice/deploy/Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          provenance: false
+          cache-from: type=gha,scope=backoffice
+          cache-to: type=gha,scope=backoffice,mode=max
+          tags: |
+            ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha }}
+
+      - name: The image boots in demo mode and serves the login page
+        run: |
+          docker build -q -t backoffice-smoke -f backoffice/deploy/Dockerfile backoffice
+          docker run -d --rm --name bo -e BACKOFFICE_DEMO=1 -p 8787:8787 backoffice-smoke
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1 && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8787/login | grep -q "DEMO MODE"
+          docker logs bo | grep -q "demo mode: seeded"
+          docker stop bo

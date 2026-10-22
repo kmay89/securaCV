@@ -14,6 +14,7 @@ against the sprawl becoming a maintenance nightmare.
 | `kernel/` | 2 | **Docs only** — `architecture.md` etc., the constitutional reference CONTRIBUTING points at. Not code. | No — rename candidate (see below) |
 | `privacy_witness_kernel/` | 12 | **The Home Assistant add-on** — packaging wrapper that ships the kernel as a HACS/add-on. Not a second kernel. | No |
 | `desktop/` | 92 | **Hub & flasher** — the Tauri Flasher app and the `hub-io`/`hub-core` Rust crates (provisioning, flashing, hub image writing). | No |
+| `backoffice/` | 35 | **The business backend** — orders, support inbox, contacts/consent, mail, inventory, serial registry, warranty, invoices, books, status page, exceptions; one Node 22 process on one SQLite file, zero dependencies. Strategy doc 31. | No |
 | `desktop-lab/` | 30 | **The Lab desktop app** — a Tauri shell around `canary-local` (the browser Lab), for Mac/Linux. Different app, different job. | No |
 | `firmware/canary/` | 141 | **Active firmware** (PlatformIO, `seeed_xiao_esp32s3`) and the shared `lib/` the other trees pull from. | No — canonical |
 | `firmware/projects/canary-wap/` | 267 | **The WAP variant** — Arduino compatibility lane **plus** a PlatformIO lane that FEATURES.md flags as a skeleton. Carries sketch copies of `common/csi`, mesh and signature code, kept byte-identical by the sync checks in `firmware/scripts/`. | Partial — see decision 1 |
