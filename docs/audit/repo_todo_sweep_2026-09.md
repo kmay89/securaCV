@@ -14276,6 +14276,75 @@ so — see D2 below.)
   release (CHANGELOG [Unreleased] names the REST change for out-of-tree
   readers). Host-tested (`figures.test.js`, `wap.test.js`); the ESP32 compile
   is CI's; nothing to bench.
+- [x] **F398 [code] Names every surface already shows were wrong on some
+  or all builds.** The device-details design (`docs/design/device_details.md`
+  §1.4) found them while asking what a Details screen could show, and fixes
+  them before any screen does (its PR 6; PR 5 depends on it). At the time:
+  the flagship's mDNS `model` was "XIAO ESP32S3" on every env, the
+  ESP32-CAM, WROOM and Freenove ports included
+  (`securacv_network.cpp` `start_mdns`), and its Home Assistant Model was
+  "Canary v1" (`securacv_mqtt.cpp` `add_device_info`); its watchdog self-test
+  returned `true` on both branches of its `#if` (`securacv_diagnostics.cpp`),
+  a tenth of the health score the fleet beacon, the BLE health
+  characteristic and the OTA confirm gate read; its dashboard's Firmware row
+  read "2.0.1" until answered and fell back to it (`securacv_webui.cpp`).
+  The canary-wap's boot banner, serial system monitor and Improv hardware
+  string named the S3 on the C3 build (`canary_wap.ino`, `sys_monitor.h`,
+  `ble_improv.cpp`), its chip fallback was "ESP32-S3", `/admin` showed
+  "3.1.0", "3.0.0", a "v3.1.0" footer and an "ESP32" chip fallback
+  (`web_ui.h`), and its `/api/status` and `/api/fleet` named no board. The
+  display mirror page called every display but the watch a "wall panel" and
+  printed a dBm reading as "dB" (`mirror_html.h`). Sense, Vision and Sentinel
+  published `"battery":100` beside `"battery_present":false`, and Home
+  Assistant's health attribute showed every unread battery as 100; three of
+  their boards (`esp32c3-super-mini`, `xiao-esp32c6-sentinel`,
+  `xiao-esp32c3-sentinel-lite`) defined no board token, so their status,
+  fleet row and advert named none. Found by the device-details survey; filed
+  and fixed by #<PR>, 2026-10-22.
+  *Done (#<PR>):* every one of those names now comes from the build and the
+  board. The flagship's `canary_config.h` defines `CANARY_PRODUCT_NAME`
+  ("Canary") and `CANARY_BOARD_NAME` ("XIAO ESP32-S3 Sense" on the
+  `seeed_xiao_esp32s3` envs, each port's own in its env); the mDNS `model` and
+  Home Assistant's Hardware (`hw`) carry the board and Model the product, and
+  a build that names no board omits both (`mdns_txt.h` now leaves `model`
+  out, as it leaves out `hw`). The flagship sends no `hw` token, by decision,
+  until a flagship figure exists. The watchdog row is listed with no probe
+  function: it says `"probe":false` in `GET /api/diagnostics`, `[--] ... not
+  a probe` in the wake scene, and counts toward neither the passes nor the
+  score, which is now over the nine probes (a unit with four of nine passing
+  scores 44 where it scored 50). The two dashboards read "--" for a
+  firmware or chip they were not told, and `/admin`'s footer version is gone
+  (its gzip 64,938 B to 64,910 B). The WAP's `build_config.h` names each
+  target's board and chip, and the S3 target's token,
+  `board:seeed_xiao_esp32s3` (the key `figures.json` maps to the WAP),
+  reaches `/api/status` `hardware` and the `/api/fleet` row's `hw`; the C3
+  has none. The Lab's WAP serial preview (`gen_wap.py`, `wap.json`) reads the
+  banner's Model and Board from the same source. The mirror page takes its Kind from the device type `/api/status`
+  names and shows the signal as the glass's own word: `microcopy_lint.sh`'s
+  plain-words audit keeps "dBm" out of that page, so the unit the design
+  asked for is not the fix. The three boards define their tokens (the OTA
+  board binding they turn on is inert under the version-1 release
+  manifests), the trio's health drops the `battery` value, and Home
+  Assistant reads `battery_percent` as unknown whenever no battery is
+  present. `firmware/scripts/check_board_registry.py` check 10 holds every
+  name and token to the board's `pins.h` (ten errors on the old tree). Held
+  also by `test_mdns_txt.cpp`, `test_canary_diagnostics.cpp`,
+  `test_console_scene.cpp`, `test_honest_names.test.js` and
+  `custom_components/securacv/tests/test_absent_battery.py`, each of which
+  fails on the old code. Not changed here: the display's own health still
+  sends `"battery":100` (its `mqtt_mgr.cpp` is emulator-compiled; the display
+  dist PR, device-details PR 17), and the Touch 1.69 banner's glass line
+  (`main.cpp`, emulator-compiled; same PR). Compiled on the core-3
+  platform with PlatformIO, each beside the same env built from `origin/main`:
+  `canary-wap-default` (+80 B), `canary-display-nightstand-c6` (+608 B, the
+  mirror page's script; 48,000 B under its 0x1F0000 guard),
+  `canary-sense-default` (-16 B), `canary-sense-wellbeing` (+0 B),
+  `canary-sentinel-door` (+32 B) and the flagship's `[env:full]` (+496 B),
+  every guarded one inside its `flavors.json` size guard. Not built here: the
+  core-2.0.17 envs (the flagship's `dev`, `release`, `release_ha` and its
+  three board ports, every Vision env, Sentinel Lite), whose platform this
+  machine does not have, and the WAP's C3 target, whose only build is CI's
+  arduino-cli leg. Host-tested; not run on a device.
 
 ---
 
