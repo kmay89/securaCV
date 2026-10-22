@@ -33,6 +33,10 @@ test('the permission rule: owner everything, ops the shop, support the people, v
   assert.ok(can('viewer', 'GET', '/health') && can('viewer', 'GET', '/tickets/3') && can('viewer', 'POST', '/me/password') && !can('viewer', 'POST', '/tickets/3/reply') && !can('viewer', 'POST', '/orders/3/note') && !can('viewer', 'GET', '/users'));
   assert.ok(!can('nobody', 'GET', '/orders') && !can(undefined, 'GET', '/'));
   assert.ok(can('viewer', 'GET', '/api/orders') && !can('viewer', 'POST', '/api/orders') && !can('ops', 'POST', '/api/jobs/backup') && can('ops', 'POST', '/api/orders/EL-1/transition'));
+  // the id segment is matched by position, decoded, never by spelling: an encoded or signed id is the same id to the handler
+  for (const p of ['/contacts/%31/export.json', '/contacts/+1/forget', '/contacts/1e0/forget', '/api/customers/%31/export', '/api/customers/+1/forget', '/contacts/1/export.json/']) assert.ok(!can('ops', 'GET', p) && !can('ops', 'POST', p) && !can('viewer', 'GET', p), p);
+  assert.ok(!can('viewer', 'GET', '/contacts/%zz/export.json'), 'a path that does not decode is refused');
+  assert.ok(can('support', 'POST', '/orders/%31/note') && !can('viewer', 'POST', '/orders/%31/note'));
 });
 
 test('invite → password → authenticator → open: the link works once, for 48 hours, and nobody is handed a password', async () => {
@@ -82,6 +86,8 @@ test('roles are enforced on every request: the sidebar shrinks, a forbidden POST
     // owner-only pages
     assert.equal((await b.as(S.ops).get('/users')).status, 403); assert.equal((await b.as(S.ops).get('/settings')).status, 403); assert.equal((await b.as(S.ops).get('/books')).status, 403); assert.equal((await b.as(S.vw).get('/books')).status, 403); assert.equal((await b.as(owner).get('/users')).status, 200);
     assert.equal((await b.as(S.sup).get(`/contacts/${order.contact_id}/export.json`)).status, 403);
+    assert.equal((await b.as(S.ops).get(`/contacts/%3${order.contact_id}/export.json`)).status, 403, 'a percent-encoded id is the same id'); assert.equal((await b.as(S.ops).post(`/contacts/+${order.contact_id}/forget`, { sure: 'forget' })).status, 403, 'a signed id too'); assert.ok(!b.db.get('SELECT forgotten_at FROM contacts WHERE id = ?', order.contact_id).forgotten_at);
+    assert.equal((await b.as(S.vw).get(`/api/customers/%3${order.contact_id}/export`)).status, 403);
     // a forbidden POST goes back to the page with the reason; an allowed one works
     let r = await b.as(S.sup).post(`/orders/${order.id}/transition`, { to: 'packed' }); assert.equal(r.status, 403, 'no referer: a plain refusal'); assert.equal(b.db.get('SELECT status FROM orders WHERE id = ?', order.id).status, 'paid');
     r = await fetch(`${b.base}/orders/${order.id}/transition`, { method: 'POST', redirect: 'manual', headers: { cookie: S.sup.cookie, referer: `${b.base}/orders/${order.id}`, accept: 'text/html', 'content-type': 'application/x-www-form-urlencoded' }, body: form({ _csrf: S.sup.csrf, to: 'packed' }) });

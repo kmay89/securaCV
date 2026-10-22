@@ -55,9 +55,13 @@ export const ROLE_TEXT = {
   support: 'answers people: tickets, canned replies, customers (tags, notes, opt-in mail), warranty claims, notes and tags on orders, the waitlist mail; reads the rest',
   viewer: 'reads everything a role can look at, changes nothing',
 };
-const OWNER_ONLY = /^\/(settings|users|books|api\/books|api\/jobs|api\/exceptions|settings\.json)(\/|$|\?)|^\/contacts\/\d+\/(forget|export\.json)|^\/api\/customers\/\d+\/(forget|export)/;
-const SUPPORT_WRITES = /^\/(tickets|canned|warranty|waitlist|contacts\/(new|\d+\/(tags|notes|consent)))(\/|$)|^\/orders\/\d+\/(note|tags)$|^\/api\/(tickets|mail\/ingest|customers\/\d+\/tags|orders\/[^/]+\/(note|tags))/;
-export function can(role, method, path) {
+// Id segments match any one segment, never only digits: the handler coerces whatever the
+// router decoded (`%31`, `+1`), so the rule must refuse by position, not by spelling.
+const OWNER_ONLY = /^\/(settings|users|books|api\/books|api\/jobs|api\/exceptions|settings\.json)(\/|$|\?)|^\/contacts\/[^/]+\/(forget|export\.json)(\/|$)|^\/api\/customers\/[^/]+\/(forget|export)(\/|$)/;
+const SUPPORT_WRITES = /^\/(tickets|canned|warranty|waitlist|contacts\/(new|[^/]+\/(tags|notes|consent)))(\/|$)|^\/orders\/[^/]+\/(note|tags)\/?$|^\/api\/(tickets|mail\/ingest|customers\/[^/]+\/tags|orders\/[^/]+\/(note|tags))(\/|$)/;
+// The path is checked decoded (what the handler will see), and a path that does not decode is refused.
+export function can(role, method, rawPath) {
+  let path; try { path = decodeURIComponent(String(rawPath)); } catch { return false; }
   if (role === 'owner') return true;
   if (!ROLES.includes(role)) return false;
   if (OWNER_ONLY.test(path)) return false;

@@ -144,7 +144,13 @@ const main = async () => {
       out(flags.reset ? await resetDemo(db, cfg) : await seedDemo(db, cfg));
       return out(`Demo data loaded (synthetic; nothing leaves this machine). Now: backoffice serve  → http://127.0.0.1:${cfg.port}/  — the login page shows the password and the current code.`);
     }
-    case 'code': { const secret = isDemo(db) ? DEMO_TOTP_SECRET : db.get("SELECT totp_secret FROM users WHERE email = ? OR (? = '' AND role = 'owner') ORDER BY id LIMIT 1", flags.email || '', flags.email || '')?.totp_secret; if (!secret) throw new Error('no person yet — run setup or demo'); return out(totp(secret)); }
+    case 'code': {
+      if (isDemo(db)) return out(totp(DEMO_TOTP_SECRET));
+      const owners = flags.email ? db.all('SELECT email, totp_secret FROM users WHERE email = ? AND status = \'active\' AND totp_secret IS NOT NULL', String(flags.email).toLowerCase()) : db.all("SELECT email, totp_secret FROM users WHERE role = 'owner' AND status = 'active' AND totp_secret IS NOT NULL ORDER BY id");
+      if (!owners.length) throw new Error(flags.email ? `${flags.email} is not an active person with an authenticator` : 'no active owner yet — run setup or demo');
+      if (owners.length > 1) throw new Error(`more than one active owner — say which: backoffice code --email <one of ${owners.map(o => o.email).join(', ')}>`);
+      return out(totp(owners[0].totp_secret));
+    }
     case 'users': {
       const sub = args[0];
       if (!sub) return out(listUsers(db).map(u => `${u.email.padEnd(40)} ${u.role.padEnd(8)} ${u.status.padEnd(9)} ${u.name}${u.last_login_at ? `  last login ${u.last_login_at.slice(0, 16)}` : ''}${u.locked_until && u.locked_until > new Date().toISOString() ? '  LOCKED' : ''}`).join('\n') || 'nobody yet');
