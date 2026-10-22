@@ -36,24 +36,34 @@ is a product service with a timestamping authority behind it, not back-office
 plumbing), and anything that moves money on its own. Refunds, payouts and
 Stripe going live stay human clicks; this records them.
 
-## Two minutes to play with it
+## Two minutes to play with it (demo mode)
 
 No accounts, no keys, nothing leaves your machine:
 
 ```sh
 git clone https://github.com/kmay89/securaCV && cd securaCV/backoffice
-node bin/backoffice.mjs demo      # an operator + a realistic week: orders, tickets, stock, books, a claim, an invoice
-node bin/backoffice.mjs serve     # http://127.0.0.1:8787
-node bin/backoffice.mjs code      # the authenticator code the login page asks for (the demo prints the password)
+npm run demo            # wipes ./data-demo, seeds a synthetic week, serves http://127.0.0.1:8787
 ```
 
-Log in, then: pack and ship an order (it consumes the recipe parts and
-queues the tracking mail — queued, not sent, until `SMTP_URL` is set),
-answer the ticket that is past its SLA, resolve the warped-lid warranty
-claim, post an expense and watch the trial balance stay balanced, open
-`/status` for the public page. `backoffice help` lists the CLI side of the
-same data. The demo only loads into an empty database; point
-`BACKOFFICE_DATA_DIR` at a fresh directory to start over.
+The login page shows the demo password and the current authenticator code.
+Every page carries a yellow **DEMO MODE** banner, and **Demo scenarios** in
+the nav is a page of buttons that push synthetic events through the real
+code paths: a signed Stripe webhook that creates an order, a refund, a
+payout, an inbound support email, a customer reply, an out-of-office
+bounce, a website waitlist signup with double opt-in, a probe going down
+three times and recovering, delivering the outbox, running every scheduled
+job. Each shows its result and the affected pages update.
+
+What makes it safe to leave running: the database carries a `demo` flag,
+and while it does the app refuses every real service — SMTP, IMAP, GitHub,
+Stripe's API are blanked no matter what the environment says, the webhook
+accepts only the demo signing secret, probes point at the app itself, and
+the outbox marks mail "sent" without opening a socket. The data is
+unmistakably synthetic: people are named Placeholder, Fixture and Stub,
+every address ends in the reserved `.example.test`, the school is "Example
+Academy (fictional)". `npm run dev` serves the same data with auto-restart
+on file change, for developing against it. `backoffice demo --reset`
+starts over; the operator login survives.
 
 ## Fifteen minutes to running
 

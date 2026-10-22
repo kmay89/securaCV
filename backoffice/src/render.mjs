@@ -32,6 +32,8 @@ button.quiet{background:transparent;color:var(--fg);border-color:var(--line)}.ro
 pre{background:var(--card);border:1px solid var(--line);padding:.8rem;overflow:auto;border-radius:6px;font-size:13px}.msg{border:1px solid var(--line);border-radius:8px;padding:.7rem .9rem;margin:.6rem 0;background:var(--card);white-space:pre-wrap}
 .msg.out{border-left:4px solid var(--accent)}.msg.note{border-left:4px solid var(--muted);opacity:.9}.msg .meta{font-size:12px;color:var(--muted);margin-bottom:.3rem}
 footer{color:var(--muted);font-size:12px;padding:2rem 1rem;text-align:center}
+.demo{background:repeating-linear-gradient(135deg,#f6d66b,#f6d66b 12px,#f0c84a 12px,#f0c84a 24px);color:#2a2000;text-align:center;font-size:13px;font-weight:600;padding:.35rem 1rem}.demo a{color:#2a2000}
+.scen{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:.8rem}.scen form{margin:0}.scen button{width:100%;text-align:left}
 `;
 
 export const NAV = [
@@ -40,11 +42,12 @@ export const NAV = [
   ['/status-admin', 'Status'], ['/exceptions', 'Exceptions'], ['/settings', 'Settings'],
 ];
 
-export function layout({ title, body, path = '/', flash = null, company = 'Errer Labs', nav = true, csrf = '' }) {
-  const navHtml = nav ? `<nav>${NAV.map(([p, l]) => `<a href="${p}" class="${path === p || (p !== '/' && path.startsWith(p)) ? 'on' : ''}">${l}</a>`).join('')}</nav>` : '';
+export function layout({ title, body, path = '/', flash = null, company = 'Errer Labs', nav = true, csrf = '', demo = false }) {
+  const items = demo ? [...NAV, ['/demo', 'Demo scenarios']] : NAV;
+  const navHtml = nav ? `<nav>${items.map(([p, l]) => `<a href="${p}" class="${path === p || (p !== '/' && path.startsWith(p)) ? 'on' : ''}">${l}</a>`).join('')}</nav>` : '';
   const flashHtml = flash ? `<div class="flash ${flash.kind === 'err' ? 'err' : ''}">${escapeHtml(flash.text)}</div>` : '';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${e(title)} · ${e(company)} backoffice</title><style>${CSS}</style></head>
-<body><header><b>${e(company)}</b>${navHtml}${nav ? `<form method="post" action="/logout" class="inline" style="margin-left:auto"><input type="hidden" name="_csrf" value="${e(csrf)}"><button class="quiet">Log out</button></form>` : ''}</header>
+<body>${demo ? '<div class="demo">DEMO MODE — every name, order and dollar here is synthetic; nothing is sent, charged, or reported anywhere. <a href="/demo">Scenarios</a></div>' : ''}<header><b>${e(company)}</b>${demo ? ' <span class="pill warn">demo</span>' : ''}${navHtml}${nav ? `<form method="post" action="/logout" class="inline" style="margin-left:auto"><input type="hidden" name="_csrf" value="${e(csrf)}"><button class="quiet">Log out</button></form>` : ''}</header>
 <main>${flashHtml}<h1>${e(title)}</h1>${body}</main><footer>backoffice · one SQLite file, no SaaS · <a href="/api">API</a> · <a href="/status">public status</a></footer></body></html>`;
 }
 

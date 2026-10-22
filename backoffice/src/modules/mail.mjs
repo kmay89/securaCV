@@ -100,7 +100,8 @@ export function enqueue(db, { to, subject, text, kind = 'transactional', ref = n
 // suppressed at send time, not just at queue time — consent can be withdrawn
 // between the two.
 export async function sendOutbox(db, cfg, { transport = null, limit = 50, now = nowIso } = {}) {
-  const tx = transport || (cfg.smtpUrl ? (m) => smtpSend(cfg.smtpUrl, m) : null);
+  // Demo mode never opens a socket: the message is built, logged as sent, and kept in the outbox to read.
+  const tx = transport || (cfg.demo ? async () => true : cfg.smtpUrl ? (m) => smtpSend(cfg.smtpUrl, m) : null);
   const rows = db.all('SELECT * FROM mail_outbox WHERE status = \'queued\' AND attempts < 5 ORDER BY id LIMIT ?', limit);
   const out = { sent: 0, failed: 0, suppressed: 0, skipped: 0 };
   for (const m of rows) {
