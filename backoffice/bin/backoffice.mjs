@@ -22,7 +22,7 @@ import { snapshot } from '../src/modules/dashboard.mjs';
 import { notifyWaitlist, createCampaign, queueCampaign } from '../src/modules/campaigns.mjs';
 import { sendOutbox } from '../src/modules/mail.mjs';
 import { openExceptions } from '../src/modules/exceptions.mjs';
-import { seedDemo, resetDemo, isEmpty, isDemo, DEMO_PASSWORD } from '../src/modules/demo.mjs';
+import { seedDemo, resetDemo, isEmpty, isDemo, ensureDemo, DEMO_PASSWORD } from '../src/modules/demo.mjs';
 import { totp } from '../src/auth.mjs';
 import { join } from 'node:path';
 
@@ -103,6 +103,8 @@ const main = async () => {
     }
     case 'code': { const secret = db.setting('auth:totp'); if (!secret) throw new Error('no operator yet — run setup or demo'); return out(totp(secret)); }
     case 'serve': {
+      // BACKOFFICE_DEMO=1 on an empty database: seed itself, so a container is the whole demo.
+      if (cfg.demo) { const r = await ensureDemo(db, cfg); if (r) console.log('[backoffice] demo mode: seeded', JSON.stringify(r)); }
       if (!hasOperator(db)) console.error('[backoffice] no operator yet — run `backoffice setup` in another shell; serving anyway');
       const addr = await app.listen(); startScheduler(app);
       console.log(`[backoffice] listening on http://${addr.address}:${addr.port}  (public base: ${cfg.baseUrl})`);
