@@ -3738,11 +3738,16 @@ static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_l
 // HTTPS with a self-signed certificate, whose warning the owner accepts, and
 // only a client that pins the certificate checks it (the iPhone app pins the
 // receipt's tls_cert_fp; F256 asks whether it may learn one over mDNS). F15
-// would still shut out a page planted over plain HTTP once HTTPS runs after
-// setup (port 80 then keeps only the captive probes, /api/fleet and the
-// redirect, so such a page is cross-origin here), but not one served over
-// https at that name whose certificate warning the owner accepted, nor any
-// page during the first-boot setup or on a unit whose HTTPS start failed.
+// would narrow it once HTTPS runs after setup: port 80 then keeps only the
+// captive probes, /api/fleet and the redirect, so a page planted over plain
+// HTTP is cross-origin here and reads nothing. It is not cross-site in every
+// browser: SameSite=Strict compares sites, and only a browser that counts
+// the scheme in the site (Chromium does) keeps the session cookie off its
+// requests; in one that does not, it can still write blind with the owner's
+// session (a reboot, or any other write a session may make). F15 narrows
+// nothing for a page served over https at that name whose certificate
+// warning the owner accepted, nor for any page during the first-boot setup
+// or on a unit whose HTTPS start failed.
 //
 // No SoftAP or interface exemption, unlike the flagship's: the WAP's captive
 // DNS answers every name with the device (setup_wizard.h), so an exemption
@@ -3817,7 +3822,10 @@ static bool request_host_is_setup_name(httpd_req_t* req) {
 // longest, the HTTPS one, is 140 bytes and the NUL; both callers pass 160).
 //   - 86400 = 24 h, matching SESSION_TTL_MS in csi_integration.cpp.
 //   - HttpOnly: no JS can read the cookie (mitigates XSS exfil).
-//   - SameSite=Strict: cross-origin requests can't carry it (CSRF).
+//   - SameSite=Strict: cross-site requests can't carry it (CSRF). It
+//     compares sites, not origins: another origin on the same site (another
+//     port, or http beside https where the browser does not count the
+//     scheme) still sends it.
 //   - Path=/: covers /, /tune, /api/*.
 //   - Secure exactly when THIS answer goes out over the HTTPS server
 //     (sweep F289's residual): the request arrived on g_https_server, as the

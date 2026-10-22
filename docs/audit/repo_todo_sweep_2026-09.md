@@ -906,7 +906,11 @@ so — see D2 below.)
   F15 would still help: once a WAP serves HTTPS after setup, port 80
   answers only the captive probes, `/api/fleet` and a redirect, so a page
   planted over plain HTTP is cross-origin to the device and takes none of
-  these; a page served over https at that name whose certificate warning
+  these (it reads nothing; but `SameSite=Strict` compares sites, so in a
+  browser that does not count the scheme in the site, as Chromium does, its
+  requests still carry the session cookie and it can write blind with the
+  owner's session: a reboot, or any other write a session may make); a page
+  served over https at that name whose certificate warning
   the owner accepted still does, and so does any page during the first-boot
   setup or on a unit whose HTTPS start failed, which serve plain HTTP.
   From code; the cache half seen in headless Chromium against
@@ -3302,6 +3306,27 @@ so — see D2 below.)
     plan's transport bullet, which this PR rewrote, said port 80 redirects
     everything but the probes; it keeps `GET /api/fleet` too, and the
     redirect takes GET and POST. Docs only.
+  *Review 10 (2026-10-22, #<PR>):*
+  - Review 9 said F15 would shut out a page planted over plain HTTP after
+    setup, since that page is then cross-origin to the device. Being
+    cross-origin keeps it from reading the landing, the exchange or the
+    receipt; it does not keep the session cookie off its requests, which
+    `SameSite=Strict` decides by site, not origin. In headless Chromium 141,
+    which counts the scheme in the site, a blind credentialed `POST` from
+    `http://canary.local:8080` to a stand-in `https://canary.local` carried
+    no `Strict` cookie, and the same `POST` from the same-site
+    `https://canary.local:8444` carried it. So in a browser that does not
+    count the scheme, such a page can still write blind with the owner's
+    session (`POST /api/reboot` reaches `ESP.restart()` through
+    `api_auth_check()`); the sketch checks no `Origin` or `Sec-Fetch-Site`.
+    SECURITY_MODEL, THREAT_MODEL's DNS-rebinding row, the CHANGELOG, F57's
+    note, the sketch README and the comment above
+    `request_host_names_device()` now say it reads nothing and may still
+    write blind, and the cookie writer's `SameSite=Strict` comment says
+    sites, not origins. Only Chromium was tried.
+  - Review 8's runbook bullet said D2 to D4 are blocked by F15; D5 (the
+    dashboard and MJPEG over TLS) needs the same certificate, so the runbook
+    now says D2 to D5. Docs and comments only.
 - [ ] **F345 [decision] canary-wap: Forget Wi-Fi from any session re-arms the
   Bluetooth setup door, whose claim buys the receipt.** `POST
   /api/wifi/forget` takes `api_auth_check` (any session, the landing page's

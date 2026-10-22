@@ -444,7 +444,11 @@ it (the iPhone app pins the receipt's `tls_cert_fp`; F256 asks whether it may
 learn one over mDNS). F15 would still help: once a unit serves HTTPS after
 setup, port 80 answers only the captive probes, `/api/fleet` and a redirect,
 so a page planted over plain HTTP is cross-origin to the device and takes
-none of these; a page served over https at that name whose certificate
+none of these (it reads nothing; but `SameSite=Strict` compares sites, so in
+a browser that does not count the scheme in the site, as Chromium does, its
+requests still carry the session cookie and it can write blind with the
+owner's session: a reboot, or any other write a session may make); a page
+served over https at that name whose certificate
 warning the owner accepted still does, and so does any page during the
 first-boot setup or on a unit whose HTTPS start failed, which serve plain
 HTTP. And a cross-site page
