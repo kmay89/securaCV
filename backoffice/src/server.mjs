@@ -7,7 +7,9 @@ const e = escapeHtml;
 import { layout, setTimezone, dt as fmtDt, day as fmtDay } from './render.mjs';
 import { orderToken, deliveryLine, trackingUrl } from './modules/delivery.mjs';
 import { editItems } from './modules/orders.mjs';
-import { sessionFor, login, logout, apiTokenFor, hasOperator } from './auth.mjs';
+import { sessionFor, login, logout, apiTokenFor, hasOperator, carryLegacyOperator, can } from './auth.mjs';
+import { actorStore } from './db.mjs';
+import { registerUsers } from './admin_users.mjs';
 import { loadCatalog } from './modules/catalog.mjs';
 import { verifyStripeSignature, eventToOrder, fetchLineItems, resolveDiscountCode } from './modules/stripe.mjs';
 import { recordOrder, refund, orderByNumber, transition, listOrders, timeline, addNote, setTags, batches, statusCounts } from './modules/orders.mjs';
@@ -29,12 +31,13 @@ import { openExceptions, resolve as resolveException, raise as raiseException } 
 import { snapshot } from './modules/dashboard.mjs';
 import { registerAdmin } from './admin.mjs';
 import { runJob, JOBS } from './jobs.mjs';
-import { isDemo, DEMO_PASSWORD, DEMO_WEBHOOK_SECRET, DEMO_CATALOG, SCENARIOS, localBase } from './modules/demo.mjs';
+import { isDemo, DEMO_PASSWORD, DEMO_USERS, DEMO_TOTP_SECRET, DEMO_WEBHOOK_SECRET, DEMO_CATALOG, SCENARIOS, localBase } from './modules/demo.mjs';
 import { totp } from './auth.mjs';
 import { weekLabel as weekLabelNow } from './modules/orders.mjs';
 
 export function createApp({ db, cfg }) {
   cfg.tz = setTimezone(cfg.tz);
+  carryLegacyOperator(db, { email: cfg.supportAddr || 'owner@localhost' });
   cfg.secret = cfg.secret || db.setting('app:secret') || (() => { const s = randomBytes(32).toString('base64url'); db.setSetting('app:secret', s); return s; })();
   // Demo mode: synthetic data, and a hard rule that nothing reaches a real service.
   if (cfg.demo || isDemo(db)) {
@@ -111,13 +114,13 @@ export function createApp({ db, cfg }) {
   router.add('OPTIONS', '/forms/:kind', (c) => { c.res.writeHead(204, corsHeaders(cfg)); c.res.end(); }, { public: true });
 
   // ---------- auth
-  router.get('/login', (c) => html(c.res, loginPage(cfg, c.query.get('err'), hasOperator(db), cfg.demo ? { password: DEMO_PASSWORD, code: totp(db.setting('auth:totp') || 'AAAAAAAAAAAAAAAA') } : null)));
+  router.get('/login', (c) => html(c.res, loginPage(cfg, c.query.get('err'), hasOperator(db), c.query.get('ok'), cfg.demo ? { password: DEMO_PASSWORD, code: totp(DEMO_TOTP_SECRET), email: c.query.get('as') || DEMO_USERS[0].email, users: DEMO_USERS } : null)));
   router.post('/login', (c) => {
     const ip = clientIp(c.req);
     if (!app.limiter.allow(`login:${ip}`)) throw new HttpError(429, 'slow down');
     // Eight wrong attempts in fifteen minutes and this address waits the window out; the audit log keeps every attempt.
     if (app.lockout.locked(ip)) { db.audit('web', 'auth.login.locked', 'session', null, { ip }); throw new HttpError(429, 'too many failed logins from this address — try again in fifteen minutes'); }
-    const s = login(db, c.body.password, c.body.code, { sessionHours: cfg.sessionHours, ip });
+    const s = login(db, { email: c.body.email, password: c.body.password, code: c.body.code }, { sessionHours: cfg.sessionHours, ip });
     if (!s) { app.lockout.fail(ip); return redirect(c.res, '/login?err=1'); }
     app.lockout.clear(ip);
     redirect(c.res, '/', { 'Set-Cookie': cookie('bo_session', s.id, { maxAge: cfg.sessionHours * 3600, secure: cfg.secure }) });
@@ -168,6 +171,7 @@ export function createApp({ db, cfg }) {
   router.post('/api/demo/:scenario', async (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); const sc = SCENARIOS[c.params.scenario]; if (!sc) throw new HttpError(404, 'unknown scenario'); json(c.res, await sc.run(app)); });
 
   registerAdmin(app);
+  registerUsers(app);
 
   // ---------- the pipeline
   const server = createServer(async (req, res) => {
@@ -183,16 +187,18 @@ export function createApp({ db, cfg }) {
       const session = sessionFor(db, cookies.bo_session);
       const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
       const tokenRow = url.pathname.startsWith('/api') ? apiTokenFor(db, bearer) : null;
-      const c = { req, res, url, params: route.params, query: url.searchParams, session, csrf: session?.csrf, actor: tokenRow ? `token:${tokenRow.name}` : session ? 'web' : 'public', app, db, cfg, body: {}, raw: null };
+      const c = { req, res, url, params: route.params, query: url.searchParams, session, user: session ? { id: session.user_id, email: session.email, name: session.name, role: session.role } : null, csrf: session?.csrf, actor: tokenRow ? `token:${tokenRow.name}` : session ? session.email : 'public', app, db, cfg, body: {}, raw: null };
       if (req.method === 'POST' || req.method === 'PUT') { c.raw = await readBody(req); if (!route.opts.raw) c.body = parseBody(c.raw, req.headers['content-type'] || ''); }
-      if (!route.opts.public && !url.pathname.startsWith('/login') && !['/healthz', '/status', '/status.json'].includes(url.pathname) && !url.pathname.startsWith('/confirm/') && !url.pathname.startsWith('/u/') && !url.pathname.startsWith('/i/') && !url.pathname.startsWith('/o/')) {
+      if (!route.opts.public && !url.pathname.startsWith('/login') && !['/healthz', '/status', '/status.json'].includes(url.pathname) && !url.pathname.startsWith('/confirm/') && !url.pathname.startsWith('/u/') && !url.pathname.startsWith('/i/') && !url.pathname.startsWith('/o/') && !url.pathname.startsWith('/invite/')) {
         if (url.pathname.startsWith('/api')) { if (!tokenRow && !session) throw new HttpError(401, 'bearer token or session required'); if (tokenRow?.scope === 'ro' && !['GET', 'HEAD'].includes(req.method)) throw new HttpError(403, 'this token is read-only'); }
         else if (!session) return redirect(res, '/login');
+        // A person's role decides, by path and method; an owner-made API token is not bound to a role.
+        if (session && !tokenRow && !can(session.role, req.method, url.pathname)) throw new HttpError(403, `your role (${session.role}) cannot do this — an owner can`);
         if (session && !tokenRow && req.method === 'POST' && route.opts.csrf !== false && !url.pathname.startsWith('/api')) {
           if (c.body._csrf !== session.csrf) throw new HttpError(403, 'bad CSRF token');
         }
       }
-      await route.handler(c);
+      await actorStore.run({ actor: c.actor }, () => route.handler(c));
     } catch (err) {
       // A business rule ("cannot move", "unknown SKU") is the caller's mistake: 400. A thrown
       // TypeError or a database error is ours: 500, and it is logged.
@@ -205,6 +211,8 @@ export function createApp({ db, cfg }) {
         // Back to the admin page the form came from — only ever a local admin path.
         const back = safeLocalPath(req.headers.referer);
         if (status < 500 && req.method === 'POST' && back && !back.startsWith('/login')) return redirect(res, `${back}?err=${encodeURIComponent(message)}`);
+        const who = (() => { try { return sessionFor(db, parseCookies(req).bo_session); } catch { return null; } })();
+        if (who) return html(res, layout({ title: `${status}`, body: `<p>${escapeHtml(message)}</p><p><a href="/">← Home</a></p>`, path: url.pathname, company: cfg.company, csrf: who.csrf, user: { id: who.user_id, email: who.email, name: who.name, role: who.role }, demo: cfg.demo, demoResetMinutes: cfg.demoResetMinutes }), status);
         return html(res, plain(cfg, `${status}`, escapeHtml(message)), status);
       }
       json(res, { error: message, status }, status);
@@ -270,10 +278,10 @@ const API_INDEX = ['GET /api/snapshot', 'GET /api/analytics?days=7|30|90|365', '
 
 export const plain = (cfg, title, bodyHtml) => layout({ title, body: `<p>${bodyHtml}</p><p><a href="${e(cfg.siteOrigin)}">← back to ${e(cfg.product || 'the site')}</a></p>`, company: cfg.company, nav: false, demo: cfg.demo });
 
-function loginPage(cfg, err, ready, demo = null) {
-  const hint = demo ? `<div class="flash"><b>Demo mode — synthetic data, nothing leaves this machine.</b><br>The form is filled in: password <code>${e(demo.password)}</code>, authenticator code <code>${e(demo.code)}</code> right now (it changes every 30 s — reload if a login is refused). Just press <b>Log in</b>.</div>` : '';
-  return layout({ title: 'Log in', company: cfg.company, nav: false, demo: !!demo, demoResetMinutes: cfg.demoResetMinutes, body: hint + (ready
-    ? `${err ? '<div class="flash err">Wrong password or code.' + (demo ? ' The code has probably rolled over — this page now carries the current one; press Log in again.' : '') + '</div>' : ''}<form method="post" action="/login" class="box"><label for="pw">Password</label><input id="pw" type="${demo ? 'text' : 'password'}" name="password" value="${demo ? e(demo.password) : ''}" required autocomplete="current-password"><label for="code">Authenticator code</label><input id="code" name="code" value="${demo ? e(demo.code) : ''}" inputmode="numeric" pattern="[0-9]{6}" required autocomplete="one-time-code"><div style="margin-top:.8rem"><button>Log in</button></div></form>`
+function loginPage(cfg, err, ready, ok = null, demo = null) {
+  const hint = demo ? `<div class="flash"><b>Demo mode — synthetic data, nothing leaves this machine.</b><br>The form is filled in: password <code>${e(demo.password)}</code>, authenticator code <code>${e(demo.code)}</code> right now (it changes every 30 s — reload if a login is refused). Just press <b>Log in</b>.<br><span class="muted">Every demo person shares that password and authenticator, so you can see what each role may do: ${demo.users.map(u => `<a href="/login?as=${encodeURIComponent(u.email)}">${e(u.name)}</a> (${e(u.role)})`).join(' · ')}.</span></div>` : '';
+  return layout({ title: 'Log in', company: cfg.company, nav: false, demo: !!demo, demoResetMinutes: cfg.demoResetMinutes, flash: ok ? { text: ok } : null, body: hint + (ready
+    ? `${err ? '<div class="flash err">Wrong password or code.' + (demo ? ' The code has probably rolled over — this page now carries the current one; press Log in again.' : '') + '</div>' : ''}<form method="post" action="/login" class="box"><label for="email">Email <span class="muted">(leave empty if you are the only person here)</span></label><input id="email" type="email" name="email" value="${demo ? e(demo.email) : ''}" autocomplete="username"><label for="pw">Password</label><input id="pw" type="${demo ? 'text' : 'password'}" name="password" value="${demo ? e(demo.password) : ''}" required autocomplete="current-password"><label for="code">Authenticator code</label><input id="code" name="code" value="${demo ? e(demo.code) : ''}" inputmode="numeric" pattern="[0-9]{6}" required autocomplete="one-time-code"><div style="margin-top:.8rem"><button>Log in</button></div></form>`
     : '<p>No operator yet. On the server, run <code>backoffice setup</code> to set the password and get the authenticator QR.</p>') });
 }
 

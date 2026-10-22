@@ -45,7 +45,8 @@ already chose it. Everything *around* Stripe is here.
 | A human-in-the-loop queue | **Decide (on Home)** | the system drafts the next move and says why — approve a drafted PO, send the one in-stock mail, answer a ticket with the canned reply that matches, mark a week-old parcel delivered, remind about an overdue invoice — one button each; nothing acts on its own, and a card disappears when its condition clears |
 | A privacy desk (GDPR tooling) | **Customers** | the right to a copy (everything held about a person as one JSON) and the right to be forgotten (name, addresses, messages, attachments and mail blanked in one transaction; order numbers, amounts and dates kept so the books still add up), both logged |
 | Attachments in a helpdesk | **Support** | the photo of the warped lid and the PDF of the purchase order travel with the mail, stored with the message (images, PDFs and text, 5 MB each), shown inline, served same-origin and sandboxed |
-| An admin login | **Auth** | one operator, password + authenticator code, lockout after eight failures, strict cookies, CSRF plus a cross-site refusal, read-only or read-write bearer tokens. The whole model is in [`SECURITY.md`](SECURITY.md) |
+| User accounts and permissions (what every SaaS charges per seat for) | **People** | each person with their own password and authenticator, invited by a link that works once (they set their own password and scan a QR off the page — no QR service, the code is drawn here), four roles checked on every request (owner, ops, support, viewer), every action written down under the person's name, lockout per address and per person, a role change or a disable that applies to live sessions at once, *Your account* for password and authenticator rotation |
+| An admin login | **Auth** | password + authenticator code for everyone, lockout after eight failures, strict cookies, CSRF plus a cross-site refusal, read-only or read-write bearer tokens. The whole model is in [`SECURITY.md`](SECURITY.md) |
 
 What is deliberately **not** here: the attestation service (LICENSING.md §2b
 is a product service with a timestamping authority behind it, not back-office
@@ -61,8 +62,11 @@ git clone https://github.com/kmay89/securaCV && cd securaCV/backoffice
 npm run demo            # wipes ./data-demo, seeds a synthetic week, serves http://127.0.0.1:8787
 ```
 
-The login form comes filled in (password `demo1234`, the current
-authenticator code) — press **Log in**. Sixty days of a small company are
+The login form comes filled in (the demo owner's email, password `demo1234`,
+the current authenticator code) — press **Log in**. The demo people (an
+owner, an ops person, a support person, a viewer, one open invitation) share
+that password and authenticator so you can log in as any of them and see
+what each role may do. Sixty days of a small company are
 waiting: ~45 orders across nine weekly batches, repeat buyers, five discount
 codes, a refund and a cancellation, answered tickets, the books balanced.
 Every page carries a yellow **DEMO MODE** banner, and **Demo scenarios** in

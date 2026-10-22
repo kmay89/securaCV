@@ -2,6 +2,7 @@
 // set of plain pages and forms so it works from a phone, a text browser and
 // an AI operator's fetch() alike.
 import { escapeHtml } from './http.mjs';
+import { can } from './auth.mjs';
 const e = escapeHtml;
 
 export const money = (cents, cur = 'usd') => {
@@ -29,7 +30,7 @@ const CSS = `
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased}
 a{color:var(--accent)}h1{font-size:1.55rem;letter-spacing:-.01em;margin:.2rem 0 1rem;font-weight:650}h2{font-size:1.02rem;margin:1.6rem 0 .55rem;font-weight:650}
 /* the frame: a sidebar on wide screens, a top strip on narrow ones */
-.frame{display:grid;grid-template-columns:1fr;min-height:100vh}@media(min-width:960px){.frame{grid-template-columns:236px 1fr}}
+.frame{display:grid;grid-template-columns:1fr;min-height:100vh}@media(min-width:960px){.frame{grid-template-columns:236px 1fr}.frame.solo{grid-template-columns:1fr}}.solo main{max-width:720px}
 aside{background:var(--side);border-right:1px solid var(--line);padding:.9rem .8rem;position:sticky;top:0;align-self:start;max-height:100vh;overflow:auto}
 @media(max-width:959px){aside{position:static;max-height:none;border-right:0;border-bottom:1px solid var(--line);padding:.6rem .8rem}}
 .brand{display:flex;align-items:center;gap:.5rem;padding:.2rem .5rem .7rem;font-weight:700;letter-spacing:-.01em}.brand .pill{font-weight:600}
@@ -96,18 +97,18 @@ export const NAV_GROUPS = [
   ['', [['/', 'Home'], ['/pack', 'Pack bench'], ['/ship', 'Ship bench']]],
   ['Sell', [['/orders', 'Orders'], ['/products', 'Products'], ['/contacts', 'Customers'], ['/discounts', 'Discounts'], ['/marketing', 'Marketing'], ['/analytics', 'Analytics']]],
   ['Run', [['/tickets', 'Support'], ['/inventory', 'Inventory'], ['/purchasing', 'Purchasing'], ['/devices', 'Devices'], ['/warranty', 'Warranty'], ['/invoices', 'Invoices'], ['/campaigns', 'Mail']]],
-  ['Trust', [['/books', 'Books'], ['/status-admin', 'Status'], ['/exceptions', 'Exceptions'], ['/health', 'Health'], ['/audit', 'Audit log'], ['/settings', 'Settings']]],
+  ['Trust', [['/books', 'Books'], ['/status-admin', 'Status'], ['/exceptions', 'Exceptions'], ['/health', 'Health'], ['/audit', 'Audit log'], ['/users', 'People'], ['/settings', 'Settings']]],
 ];
 export const NAV = NAV_GROUPS.flatMap(([, items]) => items);
 
-export function layout({ title, body, path = '/', flash = null, company = 'Errer Labs', nav = true, csrf = '', demo = false, demoResetMinutes = 0, q = '', h1 = true }) {
-  const groups = demo ? [...NAV_GROUPS, ['Demo', [['/demo', 'Scenarios']]]] : NAV_GROUPS;
+export function layout({ title, body, path = '/', flash = null, company = 'Errer Labs', nav = true, csrf = '', demo = false, demoResetMinutes = 0, q = '', h1 = true, user = null }) {
+  const groups = (demo ? [...NAV_GROUPS, ['Demo', [['/demo', 'Scenarios']]]] : NAV_GROUPS).map(([g, items]) => [g, user ? items.filter(([p]) => can(user.role, 'GET', p)) : items]).filter(([, items]) => items.length);
   const on = (p) => path === p || (p !== '/' && path.startsWith(p));
   const navHtml = nav ? `<nav aria-label="Sections">${groups.map(([g, items]) => `${g ? `<div class="g">${e(g)}</div>` : ''}${items.map(([p, l]) => `<a href="${p}" class="${on(p) ? 'on' : ''}">${l}</a>`).join('')}`).join('')}</nav>` : '';
   const flashHtml = flash ? `<div class="flash ${flash.kind === 'err' ? 'err' : ''}">${escapeHtml(flash.text)}</div>` : '';
-  const side = nav ? `<aside><div class="brand">${e(company)}${demo ? ' <span class="pill warn">demo</span>' : ''}</div><form method="get" action="/search" class="search" role="search"><input type="search" name="q" value="${e(q)}" placeholder="Search anything…" aria-label="Search"></form>${navHtml}<div class="foot"><span>one SQLite file</span><form method="post" action="/logout" class="inline"><input type="hidden" name="_csrf" value="${e(csrf)}"><button class="quiet" style="padding:.25rem .6rem;font-size:12px">Log out</button></form></div></aside>` : '';
+  const side = nav ? `<aside><div class="brand">${e(company)}${demo ? ' <span class="pill warn">demo</span>' : ''}</div><form method="get" action="/search" class="search" role="search"><input type="search" name="q" value="${e(q)}" placeholder="Search anything…" aria-label="Search"></form>${navHtml}<div class="foot"><span>${user ? `<a href="/me" title="your account">${e(user.name)}</a> · ${e(user.role)}` : 'one SQLite file'}</span><form method="post" action="/logout" class="inline"><input type="hidden" name="_csrf" value="${e(csrf)}"><button class="quiet" style="padding:.25rem .6rem;font-size:12px">Log out</button></form></div></aside>` : '';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${e(title)} · ${e(company)} backoffice</title><style>${CSS}</style></head>
-<body>${demo ? '<div class="demo">DEMO MODE — every name, order and dollar here is synthetic; nothing is sent, charged, or reported anywhere. <a href="/demo">Scenarios</a></div>' : ''}<div class="frame">${side}<div><main>${flashHtml}${h1 ? `<h1>${e(title)}</h1>` : ''}${body}</main>${nav ? '' : `<footer>backoffice · one SQLite file, no SaaS · <a href="/api">API</a> · <a href="/status">public status</a></footer>`}</div></div></body></html>`;
+<body>${demo ? '<div class="demo">DEMO MODE — every name, order and dollar here is synthetic; nothing is sent, charged, or reported anywhere. <a href="/demo">Scenarios</a></div>' : ''}<div class="frame ${nav ? '' : 'solo'}">${side}<div><main>${flashHtml}${h1 ? `<h1>${e(title)}</h1>` : ''}${body}</main>${nav ? '' : `<footer>backoffice · one SQLite file, no SaaS · <a href="/api">API</a> · <a href="/status">public status</a></footer>`}</div></div></body></html>`;
 }
 
 export function table(rows, cols, { empty = 'Nothing here.' } = {}) {

@@ -77,6 +77,13 @@ arriving, that is itself the alarm.
   on. Health checks it.
 - For the first month, keep comparing Orders with the Stripe dashboard once
   a week. `reconcile` runs daily and raises an exception on any gap.
+- Invite the people who will work in it, from *People* (or `backoffice users
+  invite`), each with the smallest role that does their job: `ops` for whoever
+  packs and ships, `support` for whoever answers mail, `viewer` for the
+  accountant. The invitation is a link; they choose their own password and
+  scan their own authenticator. Nobody shares a login, so the audit log can
+  say who did what. Keep two owners, so losing one phone is an invitation,
+  not an outage.
 
 ## The weekly ten minutes, forever
 

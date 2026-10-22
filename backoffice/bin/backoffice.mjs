@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { loadConfig } from '../src/config.mjs';
 import { openDb } from '../src/db.mjs';
-import { setupOperator, createApiToken, revokeApiToken, totpUri, hasOperator } from '../src/auth.mjs';
+import { setupOperator, createApiToken, revokeApiToken, totpUri, hasOperator, listUsers, inviteUser, userByEmail, setRole, setStatus, removeUser, ROLES, ROLE_TEXT } from '../src/auth.mjs';
 import { createApp } from '../src/server.mjs';
 import { startScheduler, runJob, JOBS } from '../src/jobs.mjs';
 import { loadCatalog } from '../src/modules/catalog.mjs';
@@ -29,7 +29,7 @@ import { snapshot } from '../src/modules/dashboard.mjs';
 import { notifyWaitlist, createCampaign, queueCampaign } from '../src/modules/campaigns.mjs';
 import { sendOutbox } from '../src/modules/mail.mjs';
 import { openExceptions } from '../src/modules/exceptions.mjs';
-import { seedDemo, resetDemo, isEmpty, isDemo, ensureDemo, DEMO_PASSWORD } from '../src/modules/demo.mjs';
+import { seedDemo, resetDemo, isEmpty, isDemo, ensureDemo, DEMO_PASSWORD, DEMO_TOTP_SECRET } from '../src/modules/demo.mjs';
 import { totp } from '../src/auth.mjs';
 import { listPos, poByNumber, createPo, markOrdered, receivePo, cancelPo, draftReorder, buildableAhead } from '../src/modules/purchasing.mjs';
 import { recallQuery, batches as deviceBatches, createRecall, sendRecall, listRecalls, DEFAULT_BODY } from '../src/modules/recall.mjs';
@@ -52,7 +52,8 @@ const app = createApp({ db, cfg });
 
 const HELP = `backoffice — the company in one SQLite file (${cfg.dbPath})
 
-  setup                                    set the operator password + authenticator (first run)
+  setup [--email you@… --name …]           the first owner: password + authenticator (first run; --force resets that owner)
+  users | users invite <email> --name … --role owner|ops|support|viewer | users role|disable|enable|remove <email> | users roles
   demo [--reset|--if-empty]                fill an EMPTY database with a synthetic week to explore (--reset wipes a DEMO db and reseeds; --if-empty is a no-op on a used one)
   code                                     print the current authenticator code (same as your phone shows; for local trying-out)
   serve                                    run the web admin, API, forms, webhook and the scheduler
@@ -131,24 +132,35 @@ const main = async () => {
   switch (cmd) {
     case 'help': return out(HELP);
     case 'setup': {
-      if (hasOperator(db) && !flags.force) return out('operator exists; pass --force to reset the password and authenticator');
-      const pw = flags.password || await ask('New operator password: ', true);
+      if (hasOperator(db) && !flags.force) return out('an owner exists; pass --force to reset that owner\'s password and authenticator, or invite people with `backoffice users invite`');
+      const pw = flags.password || await ask('New owner password: ', true);
       if (String(pw).length < 12) throw new Error('use at least 12 characters');
-      const secret = setupOperator(db, pw);
+      const secret = setupOperator(db, pw, { email: flags.email || cfg.supportAddr || 'owner@localhost', name: flags.name || 'Owner' });
       for (const p of DEFAULT_PROBES(cfg)) upsertProbe(db, p);
       return out(`Operator set. Add this to your authenticator app (TOTP):\n\n  ${totpUri(secret, cfg.supportAddr || 'operator', `${cfg.company} backoffice`)}\n\n(secret: ${secret})\n\nDefault status probes seeded. Now: backoffice serve`);
     }
     case 'demo': {
       if (flags['if-empty'] && (!isEmpty(db) || hasOperator(db))) return out(isDemo(db) ? 'demo database already seeded; serving it as is' : 'database is not empty and not a demo — leaving it alone');
-      if (!hasOperator(db)) { setupOperator(db, DEMO_PASSWORD); out(`Operator set with the demo password: ${DEMO_PASSWORD}`); }
       out(flags.reset ? await resetDemo(db, cfg) : await seedDemo(db, cfg));
       return out(`Demo data loaded (synthetic; nothing leaves this machine). Now: backoffice serve  → http://127.0.0.1:${cfg.port}/  — the login page shows the password and the current code.`);
     }
-    case 'code': { const secret = db.setting('auth:totp'); if (!secret) throw new Error('no operator yet — run setup or demo'); return out(totp(secret)); }
+    case 'code': { const secret = isDemo(db) ? DEMO_TOTP_SECRET : db.get("SELECT totp_secret FROM users WHERE email = ? OR (? = '' AND role = 'owner') ORDER BY id LIMIT 1", flags.email || '', flags.email || '')?.totp_secret; if (!secret) throw new Error('no person yet — run setup or demo'); return out(totp(secret)); }
+    case 'users': {
+      const sub = args[0];
+      if (!sub) return out(listUsers(db).map(u => `${u.email.padEnd(40)} ${u.role.padEnd(8)} ${u.status.padEnd(9)} ${u.name}${u.last_login_at ? `  last login ${u.last_login_at.slice(0, 16)}` : ''}${u.locked_until && u.locked_until > new Date().toISOString() ? '  LOCKED' : ''}`).join('\n') || 'nobody yet');
+      if (sub === 'roles') return out(Object.entries(ROLE_TEXT).map(([r, t]) => `${r.padEnd(8)} ${t}`).join('\n'));
+      if (sub === 'invite') { const u = inviteUser(db, { email: args[1], name: flags.name || args[1], role: flags.role || 'ops', actor: 'cli' }); return out(`Invited ${u.email} as ${u.role}. Send them this link (it works once, for 48 hours):\n\n  ${cfg.baseUrl}/invite/${u.invite_token}\n`); }
+      const u = userByEmail(db, args[1]); if (!u) throw new Error(`no such person: ${args[1]}`);
+      if (sub === 'role') return out(setRole(db, u.id, args[2], { actor: 'cli' }));
+      if (sub === 'disable') return out(setStatus(db, u.id, 'disabled', { actor: 'cli' }));
+      if (sub === 'enable') return out(setStatus(db, u.id, 'active', { actor: 'cli' }));
+      if (sub === 'remove') return out(removeUser(db, u.id, { actor: 'cli' }));
+      throw new Error(`users [invite <email> --name … --role ${ROLES.join('|')}] | role <email> <role> | disable|enable|remove <email> | roles`);
+    }
     case 'serve': {
       // BACKOFFICE_DEMO=1 on an empty database: seed itself, so a container is the whole demo.
       if (cfg.demo) { const r = await ensureDemo(db, cfg); if (r) console.log('[backoffice] demo mode: seeded', JSON.stringify(r)); }
-      if (!hasOperator(db)) console.error('[backoffice] no operator yet — run `backoffice setup` in another shell; serving anyway');
+      if (!hasOperator(db)) console.error('[backoffice] no owner yet — run `backoffice setup` in another shell; serving anyway');
       const addr = await app.listen(); startScheduler(app);
       console.log(`[backoffice] listening on http://${addr.address}:${addr.port}  (public base: ${cfg.baseUrl})`);
       return new Promise(() => {});
