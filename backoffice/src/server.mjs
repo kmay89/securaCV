@@ -2,7 +2,7 @@
 // API for the CLI / an AI operator, and the server-rendered admin.
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { Router, HttpError, parseCookies, cookie, readBody, parseBody, RateLimiter, Lockout, html, json, text, redirect, clientIp, escapeHtml } from './http.mjs';
+import { Router, HttpError, parseCookies, cookie, readBody, parseBody, RateLimiter, Lockout, html, json, text, redirect, clientIp, escapeHtml, safeEqual } from './http.mjs';
 const e = escapeHtml;
 import { layout, setTimezone, dt as fmtDt, day as fmtDay } from './render.mjs';
 import { orderToken, deliveryLine, trackingUrl } from './modules/delivery.mjs';
@@ -63,7 +63,7 @@ export function createApp({ db, cfg }) {
   // The customer's own page: where it is, when it lands, what was in it. A signed token, nothing to log into.
   router.get('/o/:number/:token', (c) => {
     const o = orderByNumber(db, c.params.number);
-    if (!o || orderToken(cfg.secret, o.number) !== c.params.token) throw new HttpError(404, 'no such order');
+    if (!o || !safeEqual(orderToken(cfg.secret, o.number), c.params.token)) throw new HttpError(404, 'no such order');
     html(c.res, orderStatusPage(cfg, o), 200, { 'Cache-Control': 'private, no-store' });
   });
 
