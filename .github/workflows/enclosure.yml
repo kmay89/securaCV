@@ -118,6 +118,17 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq openscad admesh
 
+      # The 1:1 paper drill templates. render.sh rewrites template_*.svg, but
+      # nothing compared them with the committed files, so the doorbell's stayed
+      # the v0.6 drawing (82 x 135 mm) under a 172.7 mm v0.9 plate for three
+      # weeks. This renders each one (OpenSCAD's 2D SVG export is deterministic,
+      # unlike its STL bytes) and compares bytes, and probes the doorbell and the
+      # Vision bracket for every number the template copies from them. It runs
+      # BEFORE the render step on purpose: after render.sh the checkout holds the
+      # fresh drawings and a byte compare would always pass.
+      - name: Paper drill templates match the parts they drill for
+        run: python3 gen_templates.py --check
+
       # The measured assembled envelopes the fleet-figure ledger reads for
       # multi-part devices (gen_figures.mjs cannot run OpenSCAD, so the
       # measurement is committed here where the toolchain lives). Re-measures
@@ -173,6 +184,14 @@ jobs:
           # OpenSCAD exits 0 on geometry warnings — treat them as failures.
           # (Benign CGAL cache statistics lines are not matched by these patterns.)
           ! grep -E 'ERROR|WARNING|Object isn.t a valid 2-manifold' render.log
+
+      # Every part the render just wrote — the committed released STLs and
+      # the gitignored dev_*.stl — against its recorded revision. A part whose
+      # printed shape moved without gen_revisions.py recording the next rev
+      # fails here, dev parts included (--rendered: a missing dev render is an
+      # error, not a skip). lint.yml runs the no-OpenSCAD half on every PR.
+      - name: Every part's revision is recorded (dev renders included)
+        run: python3 gen_revisions.py --check --rendered
 
       # Every released case, assembled and intersected. The mesh checks below
       # cannot see this class of defect at all: the pan-head pad that shipped

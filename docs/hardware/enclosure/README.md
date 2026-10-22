@@ -115,9 +115,10 @@ the `.scad`, no committed STLs; see the [dev gallery](#in-development)):
 | [`canary_color_lib.scad`](./canary_color_lib.scad) | **The colorway registry** — the spool palettes (body / ink / light per colorway, lowercase sRGB hex) every consumer reads from one home: the Customizer previews, the builder manifest carry, the website's AR variant picker and showroom finishes. The self-check enforces the doctrine (ink contrasts its body; the light role is near-white or a printed band reads switched-off). Not a printable part |
 | [`canary_cradle_lib.scad`](./canary_cradle_lib.scad) | **The click-on wall dock** — a plate takes the wall screws and the case snaps onto it, thermostat-style: two rigid T-studs (the catalog's existing stud/keyhole standard) carry the weight, two sprung clips hold the bottom in, and the case pulls off for service without touching the wall. The clip arms are **cut into the plate** so they bend in the print plane — a snap arm standing off a flat-printed plate flexes across its layer bonds and breaks. Shared by the 7″ and the 4.3″; the feature geometry is fixed here so one plate fits any case at the same span. Not a printable part on its own — each case exports its own `part="cradle"` |
 | [`canary_shop_tools.scad`](./canary_shop_tools.scad) | Heat-set **insert press guide** + doorbell button accent ring |
-| [`canary_templates_2d.scad`](./canary_templates_2d.scad) → [studs](./template_studs.svg) · [bracket](./template_bracket.svg) · [doorbell](./template_doorbell.svg) | **1:1 paper drill templates** — print the SVG at 100 % (check the 20 mm square), tape to the wall, drill |
+| [`canary_templates_2d.scad`](./canary_templates_2d.scad) → [studs](./template_studs.svg) · [bracket](./template_bracket.svg) · [doorbell](./template_doorbell.svg) | **1:1 paper drill templates** — print the SVG at 100 % (check the 20 mm square), tape to the wall, drill. Rendered by [`gen_templates.py`](./gen_templates.py), whose `--check` (in CI) fails when a committed SVG is not what the source renders today, or when a number the template copies from the doorbell or the Vision bracket stops equaling the part — the doorbell's sat at its v0.6 size under the v0.9 plate until that gate existed |
 | [`canary_s3_lcd7_fitcheck.scad`](./canary_s3_lcd7_fitcheck.scad) | **Not a printable part** — renders the 7" bezel and tray in their *assembled* positions and intersects them, so CI can catch a case whose parts are each a perfect mesh but don't clamp anything. Collisions must be empty; the lip's bearing patch must not be |
 | [`render.sh`](./render.sh) | Regenerates every STL, preview and SVG from source (CI runs it on every change) |
+| [`gen_revisions.py`](./gen_revisions.py) → [`revisions.json`](../../../canary-local/devices/revisions.json) | **Every part's revision, and what changed** — one entry per printable part (released, in-development and the Lab's previews), its own `r1, r2, …` bumped when its printed shape moved, the digest of the sources that draw it, the mesh's fingerprint, and per rev the knobs that moved, the volume and envelope deltas, the commits, and the **regions** — boxes on the part where the new surface is not where the old one was, which the Lab's enclosure tab and the website showroom tint. The recipes are `render.sh`'s own, recorded off the script. CI refuses a part that moved unrecorded. See [Part revisions](#part-revisions-what-changed-and-where) |
 
 Everything shares one design language, so skills transfer between parts: the
 same three **print-tolerance knobs** (`tol_slide`/`tol_press`/`tol_hole` —
@@ -613,7 +614,7 @@ python3 scripts/regen_cad.py --previews /tmp/previews   # everything, in order; 
                                                         # every part of every changed case into the dir
 python3 scripts/regen_cad.py --check                    # every step's check form; the first stale one named
 python3 scripts/regen_cad.py --from gen_flash           # resume after the emulator dist came back
-python3 scripts/regen_cad.py --list                     # the thirteen steps and their check forms
+python3 scripts/regen_cad.py --list                     # the sixteen steps and their check forms
 ```
 
 It stops on purpose after regenerating the sketch mirror when
@@ -679,6 +680,88 @@ recesses they were cut from — it has rendered every back-plate group in the
 accent color when only the company line is accent, and standing the inlays
 proud does not fix it. It is useful for silhouette and for the bezel band,
 and misleading for anything else. The caveat is written at the module too.
+
+### Part revisions: what changed, and where
+
+Every printable part in this folder has its own revision in
+[`canary-local/devices/revisions.json`](../../../canary-local/devices/revisions.json),
+written by [`gen_revisions.py`](./gen_revisions.py) and never by hand:
+
+```bash
+python3 docs/hardware/enclosure/gen_revisions.py --render-stale   # render only what is older than its sources, then record
+python3 docs/hardware/enclosure/gen_revisions.py                  # record from the meshes on disk (right after render.sh)
+python3 docs/hardware/enclosure/gen_revisions.py --render-stale --note "hood drip edge 1.2 -> 1.6"   # with words
+python3 docs/hardware/enclosure/gen_revisions.py --render canary_hub_din.scad   # one case's parts, then record
+python3 docs/hardware/enclosure/gen_revisions.py --check                        # the gate
+python3 docs/hardware/enclosure/gen_revisions.py --list                         # every part, its rev and recipe
+python3 docs/hardware/enclosure/gen_revisions.py --backfill                     # rebuild the committed parts' revs from git
+```
+
+`--render-stale` is the everyday form after a `.scad` edit: it renders exactly
+the parts whose sources moved since their recorded rev and whose mesh on disk
+predates the edit, writes a dev render into place, and replaces a committed STL
+**only when its shape moved** — a re-render of the same design leaves the
+committed bytes alone, so `git status` lists real changes, not OpenSCAD's byte
+noise. A plain run trusts the meshes on disk (what `scripts/regen_cad.py` does
+right after `render.sh`) but refuses, by name, any mesh older than the sources
+that draw it: recording it would stamp the old shape with the new design's
+digest.
+
+A part is keyed by the file `render.sh` writes for it (`canary_sense_front.stl`,
+`dev_hub_tray.stl`, `preview/canary_combo_front.stl` for the Lab's coarse mesh),
+and the list of parts is **recorded off `render.sh` itself** — the script is run
+with a stand-in OpenSCAD that writes down every `-o … -D …` it is asked for and
+renders nothing — so a part added to the script is a part the ledger knows
+without a second list anywhere. Each entry carries:
+
+- `rev` — `r1`, `r2`, … for *this* part. It bumps when the part's **printed
+  shape** moved, measured off the mesh: triangle count, volume, surface area,
+  bounding box, centroid and second moments, compared within a tolerance that
+  is above OpenSCAD's render noise (two renders of one knob differ by 8e-7 in
+  volume) and below any design move. The moments are what make a post that
+  moved 1 mm *inside* the envelope read as moved — the envelope gates cannot
+  see it, and that is the gap this closes. A comment edit, a neighbor part's
+  edit in the same file, or a re-render of the same design does **not** bump it.
+- `src` — eight hex characters over the comment-free sources that draw the
+  part (the case file, every library it `use`s, transitively, and the `-D`
+  selectors), the same idea as the 7" case's build stamp, per part. It says
+  "something that *could* move this part changed" without OpenSCAD.
+- `geom` — the fingerprint above, so a reader can re-measure the committed
+  bytes and know they are the recorded rev's.
+- `history[].changes` — for every rev after `r1`: the Customizer knobs whose
+  literal moved (`from` → `to`), the volume / surface / envelope deltas, the
+  commits that touched its sources since the previous rev, an optional
+  `--note`, and `regions` — boxes in the STL's own frame (the print pose,
+  millimeters) where the new surface is not within a voxel (0.8 mm) of the old
+  one, each `added`, `removed` or `moved`. The Lab's enclosure tab tints those
+  triangles on the part ("tint what the newest revision moved"), the website
+  showroom does the same behind its *changes* button, and the site's print
+  page shows each file's rev with the change lines on hover. A change below the
+  voxel size (a 0.3 mm wall) has no box and says so; the volume delta carries it.
+
+Where the previous mesh comes from: a released or preview part's is the
+committed STL at the commit whose bytes carry the previous rev's fingerprint
+(`introduced_in`); an in-development part's is its previous sources rendered
+from a temporary worktree at the commit whose digest is the previous `src`. A
+shallow clone that cannot reach that commit records the numbers and says the
+regions are unavailable rather than guessing.
+
+The committed parts' history goes back to their first commit: `--backfill`
+reads every commit of each released STL and Lab preview, keeps each one whose
+**shape** differs from the one before (a re-render of the same design is not a
+revision), dates it by its commit, and works out the knobs, deltas, commits and
+regions against the previous one, so the doorbell face's v0.6 → v0.7 → v0.8 →
+v0.9 steps are tinted on the part today. It needs the full history
+(`git fetch --unshallow`); in-development parts, which were never committed,
+start at `r1` on the day the ledger first saw them.
+
+**The gate.** `lint.yml` runs `--check` on every PR without OpenSCAD: every
+committed STL's fingerprint and every part's `src` must be the recorded rev's.
+`enclosure.yml` runs `--check --rendered` right after `render.sh`, with every
+`dev_*.stl` on disk, so an in-development part cannot move unrecorded either.
+`scripts/regen_cad.py` runs the generator as the step after `render`, and
+`gen_print_files.py` carries each website print file's rev into its manifest.
+A rev proves which design a mesh is — provenance — never who printed it.
 
 ### Where the board numbers come from
 

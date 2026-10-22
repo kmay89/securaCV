@@ -16575,12 +16575,17 @@
     },
     {
      "name": "Doorbell",
-     "note": "mirror canary_vision_doorbell plate defaults",
+     "note": "mirror canary_vision_doorbell plate defaults (gen_templates.py --check probes the doorbell and fails when one of these stops equaling its source)",
      "params": [
       {
        "name": "db_exit_slide",
        "default": "8.0",
        "comment": "the wall plate's pass runs this far up the slide (mount_dt_travel)"
+      },
+      {
+       "name": "db_r",
+       "default": "12.0",
+       "comment": "the plate outline's corner radius (the doorbell's rr)"
       },
       {
        "name": "line",

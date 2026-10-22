@@ -24,14 +24,16 @@ mode = "studs";      // ["studs","bracket","doorbell"]
 /* [Stud/keyhole interface] — the generic studs template */
 stud_gap = 30.0;     // set per case (the fit coupon's POCKET pair prints at 30)
 
-/* [Bracket] — mirror canary_vision_enclosure bracket defaults */
+/* [Bracket] — mirror canary_vision_enclosure bracket defaults (gen_templates.py --check) */
 br_x = 46.0;  br_y = 34.0;  br_screw_d = 4.2;
 
-/* [Doorbell] — mirror canary_vision_doorbell plate defaults */
-db_out_x = 51.5;  db_out_y = 169.2;   // the v0.8 shell/slab outline (its echo prints both)
+/* [Doorbell] — mirror canary_vision_doorbell plate defaults (gen_templates.py --check
+   probes the doorbell and fails when one of these stops equaling its source) */
+db_out_x = 51.5;  db_out_y = 169.2;   // the shell/slab outline (its version echo prints both)
 db_screw_inset_x = 7.5;  db_screw_inset_y = 14.0;  db_screw_d = 4.2;
 db_exit_dx = 2.2;  db_exit_cy = -8.8;   db_exit_w = 14.0;  db_exit_h = 10.0;   // exit_cx (the module's centerline, vm_cx), exit_cy (v0.8: the well sits over the speaker zone)
 db_exit_slide = 8.0;                   // the wall plate's pass runs this far up the slide (mount_dt_travel)
+db_r = 12.0;                           // the plate outline's corner radius (the doorbell's rr)
 
 line = 0.5;          // drawn line weight
 
@@ -69,7 +71,7 @@ module bracket2d() {
 }
 
 module doorbell2d() {
-    outline2d(db_out_x, db_out_y, 12);
+    outline2d(db_out_x, db_out_y, db_r);
     for (sy = [1, -1], sx = [1, -1])
         translate([sx*(db_out_x/2 - db_screw_inset_x), sy*(db_out_y/2 - db_screw_inset_y)])
             { ring(db_screw_d); cross(8); }

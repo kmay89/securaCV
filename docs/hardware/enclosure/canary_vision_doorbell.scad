@@ -1640,6 +1640,14 @@ plate_seat_z = wplate_t - plate_head_h - 0.2;
 assert(plate_seat_z >= head_floor - 1e-9,
        str("plate wall-screw seat leaves ", plate_seat_z, " mm under the head (< head_floor ", head_floor, ") — raise wplate_t or use a lower head"));
 
+// The wall screws' insets from the plate's side and end edges: 7.5 from the
+// side keeps the counterbores clear of the lugs and, at the bottom, of the
+// collar's returns. Named (a function, so it is no Customizer knob) because the
+// paper drill template draws the same four holes: canary_templates_2d.scad
+// carries them as db_screw_inset_x/_y and gen_templates.py --check holds the
+// two to each other.
+function plate_screw_inset() = [7.5, 14.0];
+
 module plate() {
     hmax = plate_z(out_y/2) + 2*plate_zx() + 0.1;   // covers the HIGH side of the x-wedge too
     z_bot = -(wplate_t + plate_zx() + (collar_arm + collar_tb)*sin(abs(plate_wedge)) + 1);   // down past the wall plane
@@ -1676,9 +1684,9 @@ module plate() {
         // (7.5 from the side edge: the counterbores stay clear of the lugs and,
         // at the bottom, of the collar's returns)
         for (sy = [1, -1], sx = [1, -1]) {
-            translate([sx*(out_x/2 - 7.5), sy*(out_y/2 - 14), -0.1])
+            translate([sx*(out_x/2 - plate_screw_inset()[0]), sy*(out_y/2 - plate_screw_inset()[1]), -0.1])
                 cylinder(d = plate_screw_d, h = hmax + 1);
-            translate([sx*(out_x/2 - 7.5), sy*(out_y/2 - 14), plate_seat_z])
+            translate([sx*(out_x/2 - plate_screw_inset()[0]), sy*(out_y/2 - plate_screw_inset()[1]), plate_seat_z])
                 cylinder(d = plate_screw_d + 4.4, h = hmax + 1);
         }
         // cable pass: a roomier match for the back plate's oval exit, run
