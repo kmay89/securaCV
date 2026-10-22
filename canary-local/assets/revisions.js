@@ -153,30 +153,38 @@ export function meshFingerprint(mesh) {
   const n = idx ? idx.length / 3 : pos.length / 9;
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   let vol6 = 0, area = 0;
-  const c = [0, 0, 0], m = [0, 0, 0];
+  const c1 = [0, 0, 0], c3 = [0, 0, 0];
+  const c2 = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
   const v = (i, k) => pos[i * 3 + k];
   for (let t = 0; t < n; t++) {
     const ia = idx ? idx[t * 3] : t * 3, ib = idx ? idx[t * 3 + 1] : t * 3 + 1, ic = idx ? idx[t * 3 + 2] : t * 3 + 2;
-    const a = [v(ia, 0), v(ia, 1), v(ia, 2)], b = [v(ib, 0), v(ib, 1), v(ib, 2)], cc = [v(ic, 0), v(ic, 1), v(ic, 2)];
-    for (const p of [a, b, cc]) for (let k = 0; k < 3; k++) { if (p[k] < lo[k]) lo[k] = p[k]; if (p[k] > hi[k]) hi[k] = p[k]; }
-    const cx = b[1] * cc[2] - b[2] * cc[1], cy = b[2] * cc[0] - b[0] * cc[2], cz = b[0] * cc[1] - b[1] * cc[0];
-    const v6 = a[0] * cx + a[1] * cy + a[2] * cz;
+    const a = [v(ia, 0), v(ia, 1), v(ia, 2)], b = [v(ib, 0), v(ib, 1), v(ib, 2)], c = [v(ic, 0), v(ic, 1), v(ic, 2)];
+    for (const p of [a, b, c]) for (let k = 0; k < 3; k++) { if (p[k] < lo[k]) lo[k] = p[k]; if (p[k] > hi[k]) hi[k] = p[k]; }
+    const v6 = a[0] * (b[1] * c[2] - b[2] * c[1]) + a[1] * (b[2] * c[0] - b[0] * c[2]) + a[2] * (b[0] * c[1] - b[1] * c[0]);
     vol6 += v6;
-    for (let k = 0; k < 3; k++) {
-      c[k] += v6 * (a[k] + b[k] + cc[k]);
-      m[k] += v6 * (a[k] * a[k] + b[k] * b[k] + cc[k] * cc[k] + a[k] * b[k] + a[k] * cc[k] + b[k] * cc[k]);
+    const s = [a[0] + b[0] + c[0], a[1] + b[1] + c[1], a[2] + b[2] + c[2]];
+    for (let i = 0; i < 3; i++) {
+      c1[i] += v6 * s[i];
+      for (let j = i; j < 3; j++) c2[i][j] += v6 * (a[i] * a[j] + b[i] * b[j] + c[i] * c[j] + s[i] * s[j]);
+      const A = a[i], B = b[i], C = c[i];
+      c3[i] += v6 * (A ** 3 + B ** 3 + C ** 3 + A * A * (B + C) + B * B * (A + C) + C * C * (A + B) + A * B * C);
     }
     const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
-    const wx = cc[0] - a[0], wy = cc[1] - a[1], wz = cc[2] - a[2];
+    const wx = c[0] - a[0], wy = c[1] - a[1], wz = c[2] - a[2];
     const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
     area += Math.sqrt(nx * nx + ny * ny + nz * nz) / 2;
   }
   const vol = vol6 / 6;
-  const centroid = Math.abs(vol) < 1e-9 ? [0, 0, 0] : c.map((x) => x / (4 * vol6));
-  const moments = Math.abs(vol) < 1e-9 ? [0, 0, 0] : m.map((x, k) => Math.abs(x / (10 * vol6) - centroid[k] ** 2));
+  const flat = Math.abs(vol) < 1e-9;
+  const cen = flat ? [0, 0, 0] : c1.map((x) => x / (4 * vol6));
+  const e2 = (i, j) => (flat ? 0 : c2[i][j] / (20 * vol6));
+  const e3 = (i) => (flat ? 0 : c3[i] / (20 * vol6));
   return {
     triangles: n, volume_mm3: Math.abs(vol), area_mm2: area,
-    bbox_mm: hi.map((h, k) => h - lo[k]), lo_mm: lo, centroid_mm: centroid, moments_mm2: moments,
+    bbox_mm: hi.map((h, k) => h - lo[k]), lo_mm: lo, centroid_mm: cen,
+    moments_mm2: [0, 1, 2].map((k) => Math.abs(e2(k, k) - cen[k] ** 2)),
+    products_mm2: [[0, 1], [0, 2], [1, 2]].map(([i, j]) => e2(i, j) - cen[i] * cen[j]),
+    third_mm3: [0, 1, 2].map((k) => e3(k) - 3 * cen[k] * e2(k, k) + 2 * cen[k] ** 3),
   };
 }
 
@@ -191,6 +199,20 @@ export function sameShape(a, b, tol) {
   for (let i = 0; i < 3; i++) {
     if (Math.abs(a.centroid_mm[i] - b.centroid_mm[i]) > tol.centroid_mm + 1e-6) return "centroid";
     if (Math.abs(a.moments_mm2[i] - b.moments_mm2[i]) > tol.moment_abs + tol.rel * Math.abs(a.moments_mm2[i]) + 1e-6) return "moments";
+  }
+  // the products of inertia and the third moments, when both sides carry them
+  // (the same scale-relative tolerances as the generator's geom_equal)
+  if (a.products_mm2 && b.products_mm2) {
+    const pairs = [[0, 1], [0, 2], [1, 2]];
+    for (let i = 0; i < 3; i++) {
+      const scale = Math.sqrt(a.moments_mm2[pairs[i][0]] * a.moments_mm2[pairs[i][1]]);
+      if (Math.abs(a.products_mm2[i] - b.products_mm2[i]) > tol.moment_abs + tol.rel * scale + 1e-6) return "products";
+    }
+  }
+  if (a.third_mm3 && b.third_mm3 && tol.third_abs !== undefined) {
+    for (let i = 0; i < 3; i++) {
+      if (Math.abs(a.third_mm3[i] - b.third_mm3[i]) > tol.third_abs + tol.rel * a.moments_mm2[i] ** 1.5 + 1e-6) return "third";
+    }
   }
   return null;
 }

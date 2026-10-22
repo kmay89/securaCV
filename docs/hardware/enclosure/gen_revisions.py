@@ -110,7 +110,8 @@ TOL = {
     "bbox_mm": 0.01,          # gen_assembled_dims.py's TOL
     "abs_mm3": 0.02, "rel": 5e-6,   # volume and area: abs + rel·|value|
     "centroid_mm": 0.005,
-    "moment_abs": 0.002,      # second moments (mm²): abs + rel·|value|
+    "moment_abs": 0.002,      # second moments and products (mm²): abs + rel·scale
+    "third_abs": 0.01,        # third moments (mm³): abs + rel·(diagonal moment)^1.5
 }
 VOXEL_MM = 0.4               # region resolution: the material diff's voxel
 MOVED_GAP = 2                # cells between an added and a removed box that are one moved feature
@@ -363,54 +364,73 @@ def read_stl(data: bytes) -> list[tuple]:
 
 
 def fingerprint(tris: list[tuple]) -> dict:
+    """What the mesh IS, as numbers a re-render of the same design reproduces
+    (measured: two renders of one part agree to ~1e-11 in every moment) and
+    a moved feature does not: triangle count, volume, surface area, bounding
+    box and its low corner, centroid, the central second moments (diagonal
+    and the products of inertia xy/xz/yz) and the central third moments.
+    The products are what tell a pair of holes on one diagonal from the same
+    pair on the other (identical volume, area, box, centroid and diagonal
+    moments); the third moments tell a feature from its mirror image."""
     lo = [math.inf] * 3
     hi = [-math.inf] * 3
     vol6 = 0.0
     area = 0.0
-    c_acc = [0.0, 0.0, 0.0]
-    m_acc = [0.0, 0.0, 0.0]
+    c1 = [0.0, 0.0, 0.0]
+    c2 = [[0.0] * 3 for _ in range(3)]
+    c3 = [0.0, 0.0, 0.0]
     for a, b, c in tris:
-        for p in (a, b, c):
+        for pt in (a, b, c):
             for k in range(3):
-                if p[k] < lo[k]:
-                    lo[k] = p[k]
-                if p[k] > hi[k]:
-                    hi[k] = p[k]
-        # signed tetra volume with the origin, ×6
-        cx = b[1] * c[2] - b[2] * c[1]
-        cy = b[2] * c[0] - b[0] * c[2]
-        cz = b[0] * c[1] - b[1] * c[0]
-        v6 = a[0] * cx + a[1] * cy + a[2] * cz
+                if pt[k] < lo[k]:
+                    lo[k] = pt[k]
+                if pt[k] > hi[k]:
+                    hi[k] = pt[k]
+        # signed tetra volume with the origin, x6
+        v6 = (a[0] * (b[1] * c[2] - b[2] * c[1]) + a[1] * (b[2] * c[0] - b[0] * c[2])
+              + a[2] * (b[0] * c[1] - b[1] * c[0]))
         vol6 += v6
-        for k in range(3):
-            c_acc[k] += v6 * (a[k] + b[k] + c[k])
-            m_acc[k] += v6 * (a[k] * a[k] + b[k] * b[k] + c[k] * c[k]
-                              + a[k] * b[k] + a[k] * c[k] + b[k] * c[k])
+        s = [a[k] + b[k] + c[k] for k in range(3)]
+        for i in range(3):
+            c1[i] += v6 * s[i]
+            for j in range(i, 3):       # integral of x_i x_j over the tetra, x 120/V-free
+                c2[i][j] += v6 * (a[i] * a[j] + b[i] * b[j] + c[i] * c[j] + s[i] * s[j])
+            ai, bi, ci = a[i], b[i], c[i]
+            c3[i] += v6 * (ai ** 3 + bi ** 3 + ci ** 3 + ai * ai * (bi + ci) + bi * bi * (ai + ci)
+                           + ci * ci * (ai + bi) + ai * bi * ci)
         ux, uy, uz = b[0] - a[0], b[1] - a[1], b[2] - a[2]
         vx, vy, vz = c[0] - a[0], c[1] - a[1], c[2] - a[2]
         nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
         area += math.sqrt(nx * nx + ny * ny + nz * nz) / 2
     vol = vol6 / 6
     if abs(vol) < 1e-9:
-        centroid = [0.0, 0.0, 0.0]
-        moments = [0.0, 0.0, 0.0]
+        cen = [0.0, 0.0, 0.0]
+        e2 = [[0.0] * 3 for _ in range(3)]
+        e3 = [0.0, 0.0, 0.0]
     else:
-        centroid = [c_acc[k] / (4 * vol6) for k in range(3)]
-        # ∫x² dV over a tetra with one vertex at the origin, /V, then central
-        moments = [m_acc[k] / (10 * vol6) - centroid[k] ** 2 for k in range(3)]
+        cen = [c1[k] / (4 * vol6) for k in range(3)]
+        e2 = [[c2[i][j] / (20 * vol6) if j >= i else 0.0 for j in range(3)] for i in range(3)]
+        e3 = [c3[i] / (20 * vol6) for i in range(3)]
+    moments = [e2[k][k] - cen[k] ** 2 for k in range(3)]
+    products = [e2[0][1] - cen[0] * cen[1], e2[0][2] - cen[0] * cen[2], e2[1][2] - cen[1] * cen[2]]
+    third = [e3[k] - 3 * cen[k] * e2[k][k] + 2 * cen[k] ** 3 for k in range(3)]
     return {
         "triangles": len(tris),
         "volume_mm3": round(abs(vol), 3),
         "area_mm2": round(area, 3),
         "bbox_mm": [round(hi[k] - lo[k], 3) for k in range(3)],
         "lo_mm": [round(lo[k], 3) for k in range(3)],
-        "centroid_mm": [round(v, 4) for v in centroid],
+        "centroid_mm": [round(v, 4) for v in cen],
         "moments_mm2": [round(abs(v), 4) for v in moments],
+        "products_mm2": [round(v, 4) for v in products],
+        "third_mm3": [round(v, 3) for v in third],
     }
 
 
 def geom_equal(a: dict, b: dict) -> str | None:
-    """None when two fingerprints are the same shape within TOL, else why not."""
+    """None when two fingerprints are the same shape within TOL, else why
+    not. A key one side lacks (a fingerprint recorded before the key
+    existed) is not compared; write() fills it in on the next run."""
     if a["triangles"] != b["triangles"]:
         return f"triangles {a['triangles']} -> {b['triangles']}"
     for k in ("bbox_mm", "lo_mm"):
@@ -425,6 +445,17 @@ def geom_equal(a: dict, b: dict) -> str | None:
             return f"centroid[{'xyz'[i]}] {a['centroid_mm'][i]} -> {b['centroid_mm'][i]}"
         if abs(a["moments_mm2"][i] - b["moments_mm2"][i]) > TOL["moment_abs"] + TOL["rel"] * abs(a["moments_mm2"][i]):
             return f"moments[{'xyz'[i]}] {a['moments_mm2'][i]} -> {b['moments_mm2'][i]}"
+    if "products_mm2" in a and "products_mm2" in b:
+        for i, ax in enumerate(("xy", "xz", "yz")):
+            p, q = ax
+            scale = math.sqrt(a["moments_mm2"]["xyz".index(p)] * a["moments_mm2"]["xyz".index(q)])
+            if abs(a["products_mm2"][i] - b["products_mm2"][i]) > TOL["moment_abs"] + TOL["rel"] * scale:
+                return f"products[{ax}] {a['products_mm2'][i]} -> {b['products_mm2'][i]}"
+    if "third_mm3" in a and "third_mm3" in b:
+        for i in range(3):
+            scale = a["moments_mm2"][i] ** 1.5
+            if abs(a["third_mm3"][i] - b["third_mm3"][i]) > TOL["third_abs"] + TOL["rel"] * scale:
+                return f"third[{'xyz'[i]}] {a['third_mm3'][i]} -> {b['third_mm3'][i]}"
     return None
 
 
@@ -1065,6 +1096,13 @@ def write(note: str | None, want_regions: bool, backfill: bool = False, rerender
             p = dict(prev)
             p.update({"scad": r["scad"], "defines": r["defines"], "home": r["home"], "file": stl_rel(r),
                       "version": version, "src": src})
+            if set(geom) - set(prev["geom"]):
+                # a fingerprint recorded before a key existed: fill it in from
+                # this same shape (never rewritten otherwise — no float churn)
+                p["geom"] = {**geom, **prev["geom"]}
+                hist = [dict(h) for h in prev["history"]]
+                hist[-1]["geom"] = {**geom, **hist[-1]["geom"]}
+                p["history"] = hist
             new_parts[key] = p
             kept += 1
             continue

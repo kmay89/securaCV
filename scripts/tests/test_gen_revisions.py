@@ -54,6 +54,10 @@ class Fingerprint(unittest.TestCase):
             self.assertAlmostEqual(c, 0.5, places=4)
         for m in fp["moments_mm2"]:
             self.assertAlmostEqual(m, 1 / 12, places=4)
+        for p in fp["products_mm2"]:
+            self.assertAlmostEqual(p, 0.0, places=4)
+        for m in fp["third_mm3"]:
+            self.assertAlmostEqual(m, 0.0, places=3)
 
     def test_moments_see_a_hole_that_moved(self):
         # the same volume, area, box and triangle count — a hole shifted
@@ -65,6 +69,39 @@ class Fingerprint(unittest.TestCase):
         why = gr.geom_equal(a, b)
         self.assertIsNotNone(why)
         self.assertTrue(why.startswith(("centroid", "moments")), why)
+
+    def test_a_hole_pair_moved_to_the_other_diagonal_reads_as_moved(self):
+        # the review's example: holes at (-x,-y)/(x,y) moved to (-x,y)/(x,-y)
+        # keep volume, area, box, centroid and every diagonal moment; only the
+        # products of inertia (xy changes sign) tell the two apart
+        def plate(holes):
+            tris = box_tris((-20, -20, 0), (20, 20, 6))
+            for hx, hy in holes:
+                tris += flipped(box_tris((hx - 2, hy - 2, 1), (hx + 2, hy + 2, 5)))
+            return gr.fingerprint(tris)
+        a = plate([(-10, -10), (10, 10)])
+        b = plate([(-10, 10), (10, -10)])
+        self.assertEqual(a["triangles"], b["triangles"])
+        self.assertEqual(a["moments_mm2"], b["moments_mm2"])
+        self.assertEqual(a["centroid_mm"], b["centroid_mm"])
+        why = gr.geom_equal(a, b)
+        self.assertIsNotNone(why)
+        self.assertTrue(why.startswith("products[xy]"), why)
+
+    def test_a_feature_and_its_mirror_image_read_as_different(self):
+        # one boss at +z on one end vs the same boss mirrored: a centroid move
+        # catches most mirrors; the third moments catch the skew that survives
+        base = box_tris((0, 0, 0), (40, 10, 4))
+        a = gr.fingerprint(base + box_tris((2, 2, 4), (6, 8, 10)) + box_tris((30, 2, 4), (38, 8, 6)))
+        b = gr.fingerprint(base + box_tris((34, 2, 4), (38, 8, 10)) + box_tris((2, 2, 4), (10, 8, 6)))
+        self.assertIsNotNone(gr.geom_equal(a, b))
+        self.assertNotEqual(a["third_mm3"][0], b["third_mm3"][0])
+
+    def test_a_fingerprint_recorded_before_a_key_existed_still_compares(self):
+        fp = gr.fingerprint(box_tris((0, 0, 0), (40, 30, 20)))
+        old = {k: v for k, v in fp.items() if k not in ("products_mm2", "third_mm3")}
+        self.assertIsNone(gr.geom_equal(old, fp))
+        self.assertIsNone(gr.geom_equal(fp, old))
 
     def test_render_noise_is_not_a_move(self):
         fp = gr.fingerprint(box_tris((0, 0, 0), (40, 30, 20)))

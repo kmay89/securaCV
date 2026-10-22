@@ -35,6 +35,11 @@ on:
       # sets gen_enclosures.py and gen_builder_manifest.py read; both of
       # those --checks run only here, so a manifest edit must run them
       - "devices/*/device.json"
+      # the part-revision ledger: lint.yml's --check holds the committed
+      # meshes and every part's sources to it, but only this workflow renders
+      # the dev parts, so an edit to the ledger alone must run the rendered
+      # check or a dev part's fingerprint could be hand-edited past the gate
+      - "canary-local/devices/revisions.json"
   pull_request:
     branches: [ "main" ]
     paths:
@@ -47,6 +52,7 @@ on:
       - "canary-local/boards/**"
       - "canary-local/tools/**"
       - "devices/*/device.json"
+      - "canary-local/devices/revisions.json"
 
 permissions:
   contents: read
