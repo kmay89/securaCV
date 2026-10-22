@@ -15,9 +15,10 @@ devices. The provisioning kit provides tools for:
 - Fleet management and device manifests
 - **Future:** Secure Boot v2 and Flash Encryption
 
-**Important:** Secure Boot and Flash Encryption are **Phase 2 features** (not yet enabled).
-The current provisioning workflow prepares devices for future lockdown without bricking
-them during development.
+**Important:** Secure Boot and Flash Encryption are **Phase 2 targets that no step of the
+kit reaches yet**: as tooled, Phase 2 burns fuses but turns neither on, and may leave the
+board unbootable ([Phase 2 Workflow, Step 3](#step-3-provision-device-dry-run-first)).
+Phase 1 burns nothing, so it prepares devices without bricking them during development.
 
 ---
 
@@ -32,6 +33,10 @@ them during development.
 - **Focus:** Functional validation without bricking risk
 
 ### Phase 2: Production Lockdown (Future)
+
+The target. As tooled, `provision_canary.sh --phase 2` reaches only the JTAG line below:
+it burns `SECURE_BOOT_EN` with no key digest and no flash-encryption counter (Step 3 of
+the Phase 2 workflow).
 
 - Secure Boot v2 with RSA-3072 signing
 - XTS-AES-256 Flash Encryption
@@ -150,13 +155,14 @@ cd firmware/provisioning
 
 # This creates:
 #   keys/secure_boot_signing_key.pem  (KEEP SECRET - offline backup required)
-#   keys/secure_boot_signing_key.pub  (embedded in firmware)
+#   keys/secure_boot_signing_key.pub  (not yet used: no step burns its digest)
 #   keys/flash_encryption_key.bin     (KEEP SECRET - one per device batch)
 #   keys/key_inventory.json           (tracking metadata)
 ```
 
-**CRITICAL:** Back up `keys/` directory to offline storage before proceeding.
-Loss of signing key = bricked devices on next OTA.
+**CRITICAL:** Back up `keys/` directory to offline storage before proceeding. The kit
+does not use the signing key yet (no step burns its digest or signs with it, Step 3); it
+is the key a Secure Boot set up from it would need for every later image.
 
 ### Step 2: Build the Secure Env's Firmware
 
@@ -166,8 +172,9 @@ Loss of signing key = bricked devices on next OTA.
 # commented out, and that file is inert under framework = arduino.
 pio run -e secure
 
-# Or with ESP-IDF directly
-idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults.secure" build
+# There is no ESP-IDF project for this tree yet (the arduino-as-IDF-component
+# migration, firmware/ESP32S3_OPTIMIZATION_ROADMAP.md item 9), so no idf.py
+# build reads sdkconfig.defaults.secure either.
 ```
 
 ### Step 3: Provision Device (Dry Run First!)
@@ -192,8 +199,9 @@ idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults.secure" build
 # 6. Add the device to the fleet manifest (reached only with --skip-verify)
 ```
 
-**What that leaves on the board.** Neither Secure Boot nor flash encryption
-is on after it. No step burns `SPI_BOOT_CRYPT_CNT`, so the chip neither
+**What that leaves on the board.** Flash encryption is off after it, and
+Secure Boot is enabled with nothing to verify against: neither protection
+works. No step burns `SPI_BOOT_CRYPT_CNT`, so the chip neither
 encrypts nor decrypts flash and the burned key goes unused; no step burns a
 Secure Boot key digest or flashes a signed bootloader, so `SECURE_BOOT_EN`
 is set with nothing to verify against (what the ROM then does has not been
@@ -239,8 +247,13 @@ counter is `SPI_BOOT_CRYPT_CNT` and JTAG is `DIS_PAD_JTAG` / `DIS_USB_JTAG`.)
 
 ## Bluetooth Disabled by Design
 
-The secure configuration disables Bluetooth at compile time (`CONFIG_BT_ENABLED=n`).
-This is a deliberate security decision:
+The secure env compiles no Bluetooth code: its `-DFEATURE_BLE=0`,
+`-DFEATURE_BLE_SCAN=0` and `-DFEATURE_BLE_STATUS=0` flags (`platformio_secure.ini`),
+with the `lib_ignore` of the Bluetooth libraries in the `[env]` of
+`firmware/canary/platformio.ini`, which it extends.
+The `CONFIG_BT_ENABLED=n` in `sdkconfig.defaults.secure` does nothing under
+`framework = arduino`, like the rest of that file. This is a deliberate
+security decision:
 
 - **No proprietary Bluetooth binary blobs** in firmware
 - **Eliminates CVE-2025-27840** class of attacks (hidden HCI commands)
@@ -296,7 +309,7 @@ Key differences:
 
 ## OTA Updates with Secure Boot
 
-Once Secure Boot is enabled:
+No step of the kit sets Secure Boot up today (Step 3). Once one does:
 
 1. All OTA firmware must be signed with the same RSA-3072 key
 2. Anti-rollback prevents downgrading to older versions
@@ -355,7 +368,8 @@ Wait a few minutes, or use a hardware RNG if available.
 ### "Signature verification failed" (after Secure Boot)
 
 The firmware was not signed with the correct key. Ensure you're using
-the same signing key that was burned to the device's eFuse.
+the same signing key whose digest was burned to the device's eFuse (the kit
+burns no digest today, Step 3).
 
 ### "OTA rejected"
 

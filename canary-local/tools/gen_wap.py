@@ -386,7 +386,7 @@ WIZARD = {
          "api": "GET /api/selftest",
          "checks": ["Wi-Fi", "Camera", "Bluetooth", "SD", "Microphone", "GPIO"],
          "blocks": [
-             {"title": "Save your recovery kit", "detail": "Tap Save my recovery kit, then short-press BOOT (downloads canary-recovery-kit.json)"},
+             {"title": "Save your recovery kit", "detail": "Tap Save my recovery kit, then short-press BOOT when it says to (downloads canary-recovery-kit.json)"},
              {"title": "Use Home Assistant? (optional)",
               "fields": [
                   {"name": "host", "placeholder": "Broker address (like 192.168.1.10)"},

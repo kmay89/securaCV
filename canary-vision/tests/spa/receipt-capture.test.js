@@ -84,7 +84,9 @@ function memStorage(initial) {
 // A device that answers the receipt route from `script`: each entry is one
 // answer, in order — { receipt } resolves, { status, data } rejects the way
 // CanaryAPI.request does (an Error carrying .status and .data), and
-// { network: true } rejects with no status (the device did not answer).
+// { network: true } rejects with no status (the device did not answer), and
+// { held: true } stays in flight until the test settles it through the
+// returned `held` list ({ resolve, reject } per held ask, in order).
 // Past the end of the script every ask gets `fallback`.
 function loadApp(script, fallback) {
   const body = new FakeNode('body');
@@ -92,6 +94,7 @@ function loadApp(script, fallback) {
   const noop = () => {};
   const timers = [];
   const asks = [];
+  const held = [];
   const document = {
     body: {
       contains(node) {
@@ -133,13 +136,22 @@ function loadApp(script, fallback) {
     asks.push({ baseUrl, route });
     const answer = queue.length ? queue.shift() : fallback;
     if (!answer) return new Promise(noop);
+    if (answer.held) return new Promise((resolve, reject) => held.push({ resolve, reject }));
     if (answer.receipt) return Promise.resolve(answer.receipt);
     const err = new Error('device answered ' + (answer.status || 'nothing'));
     if (answer.status) err.status = answer.status;
     if (answer.data) err.data = answer.data;
     return Promise.reject(err);
   };
-  return { app: sandbox, appRoot, timers, asks };
+  return { app: sandbox, appRoot, timers, asks, held };
+}
+
+// The answer a held ask gets, the way CanaryAPI.request rejects.
+function refusal(status, data) {
+  const err = new Error('device answered ' + status);
+  err.status = status;
+  if (data) err.data = data;
+  return err;
 }
 
 // Let the stub's promise and the capture's .then/.catch run.
@@ -156,6 +168,7 @@ async function nextPoll(h) {
 const REFUSED = { status: 403, data: { error: 'physical_confirmation_required', gate_ttl_seconds: 30 } };
 const CONTENDED = { status: 409, data: { error: 'tap_contended' } };
 const UNANSWERED = { network: true };
+const HELD = { held: true };
 
 function recorder() {
   const calls = { ticks: [], timeouts: [], contended: 0, receipts: [], unsupported: 0 };
@@ -261,6 +274,39 @@ describe('startReceiptCapture: the timeout says whether the device ever answered
     assert.equal(h.timers.length, 0);
   });
 
+  it('cancel() with an ask in flight: a receipt that lands after it reaches no handler', async () => {
+    // The Add Canary step cancels the capture when the owner leaves it
+    // (setStep), and an ask can be in flight then: its receipt must not pair
+    // the device the owner just walked away from.
+    const receipt = { device_id: 'canary-ab12', base_url: 'http://192.168.1.50', token: 'cv_x' };
+    const h = loadApp([HELD]);
+    const { calls, handlers } = recorder();
+    const handle = h.app.startReceiptCapture('http://192.168.1.50', handlers);
+    assert.equal(h.held.length, 1, 'the first ask is in flight');
+    handle.cancel();
+    h.held[0].resolve(receipt);
+    await settle();
+    assert.deepEqual(calls.receipts, [], 'a receipt after cancel() must not reach onReceipt');
+    assert.equal(h.timers.length, 0);
+  });
+
+  it('cancel() with an ask in flight: a refusal that lands after it changes nothing', async () => {
+    for (const err of [refusal(403, { gate_ttl_seconds: 12 }), refusal(409), refusal(404), new Error('no answer')]) {
+      const h = loadApp([HELD]);
+      const { calls, handlers } = recorder();
+      const handle = h.app.startReceiptCapture('http://192.168.1.50', handlers);
+      const ticks = calls.ticks.length;
+      handle.cancel();
+      h.held[0].reject(err);
+      await settle();
+      assert.equal(calls.ticks.length, ticks, 'no tick after cancel() (' + err.message + ')');
+      assert.equal(calls.contended, 0, err.message);
+      assert.equal(calls.unsupported, 0, err.message);
+      assert.deepEqual(calls.timeouts, [], err.message);
+      assert.equal(h.timers.length, 0, 'no further poll after cancel() (' + err.message + ')');
+    }
+  });
+
   it('cancel() stops it: the next poll asks nothing', async () => {
     const h = loadApp([REFUSED], REFUSED);
     const { calls, handlers } = recorder();
@@ -295,7 +341,25 @@ describe('the Add Canary capture step', () => {
     await nextPoll(h);
     t = stepTexts(h);
     assert.deepEqual(t.titles, ['Short-tap the BOOT button']);
+    assert.deepEqual(t.subtitles, ['One tap on the small button on your Canary pairs it — no codes to type.'],
+                     "the press line's subtitle must stop saying not to press");
     assert.match(t.status[0], /^Listening for \d+s — the device holds a tap for 30s\.$/);
+  });
+
+  it('Cancel with an ask in flight pairs nothing when the receipt lands after it', async () => {
+    const receipt = { device_id: 'canary-ab12', base_url: 'http://192.168.1.50', token: 'cv_x' };
+    const h = loadApp([HELD]);
+    h.app.renderAddCanaryView();
+    assert.equal(h.held.length, 1, 'the first ask is in flight');
+    const cancel = h.appRoot.byClass('btn-secondary').find((n) => n.textContent === 'Cancel');
+    assert.ok(cancel && cancel.listeners.click, 'the step has a Cancel button');
+    cancel.listeners.click.forEach((fn) => fn({ preventDefault() {} }));
+    h.held[0].resolve(receipt);
+    await settle();
+    await settle();
+    assert.ok(h.asks.every((a) => a.route === '/api/provisioning-receipt'),
+              'a receipt that landed after Cancel started a pairing: ' + JSON.stringify(h.asks));
+    assert.ok(!stepTexts(h).status.includes('Pairing…'));
   });
 
   it('a 409 shows that another device asked, not a missed tap', async () => {
@@ -317,6 +381,10 @@ describe('the Add Canary capture step', () => {
     const t = stepTexts(h);
     assert.ok(t.titles.includes("The Canary didn't answer"), JSON.stringify(t.titles));
     assert.ok(!t.titles.includes("Didn't catch a tap"));
+    assert.ok(t.subtitles.includes('Make sure the Canary is powered and on your network, then try again, and ' +
+                                   'press BOOT only when this screen says to.'), JSON.stringify(t.subtitles));
+    assert.ok(!t.subtitles.some((x) => /short-tap BOOT when this screen says to/.test(x)),
+              'an unanswered window must not give the missed-tap advice');
   });
 
   it("an answered window with no tap ends in \"Didn't catch a tap\"", async () => {
@@ -326,5 +394,7 @@ describe('the Add Canary capture step', () => {
     while (h.timers.length) await nextPoll(h);
     const t = stepTexts(h);
     assert.ok(t.titles.includes("Didn't catch a tap"), JSON.stringify(t.titles));
+    assert.ok(t.subtitles.includes('Make sure the Canary is powered and try again, and short-tap BOOT when ' +
+                                   'this screen says to.'), JSON.stringify(t.subtitles));
   });
 });

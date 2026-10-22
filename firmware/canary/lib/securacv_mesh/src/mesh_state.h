@@ -72,8 +72,8 @@
  * sit in plaintext on the flash chip. They would be ciphertext only under
  * NVS encryption, which is not available under framework = arduino (the
  * Arduino core's sdkconfig does not compile it in; roadmap item 9 is the
- * route). So today the gate keeps the secret off un-fused boards; it does
- * not make it confidential at rest on fused ones.
+ * route). So today the gate keeps the secret off every board without flash
+ * encryption; it does not make it confidential at rest on one with it.
  *
  * The device's OWN identity key is deliberately NOT gated this way at the
  * default tier: Tier 0 of docs/design/hardware_root_of_trust.md (§5.1,

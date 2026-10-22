@@ -1963,7 +1963,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
       }
       // A save that never said to press does not say it missed one.
       say(answered
-        ? "Didn't see a press. Tap Save, then short-press BOOT within 30 seconds."
+        ? "Didn't see a press. Tap Save again, and short-press BOOT when this note says to (within 30 seconds)."
         : "Your Canary didn't answer. Tap Save again, and short-press BOOT only when this note says to. " +
           'You can also save it later from the dashboard.');
     } catch (e) {
@@ -2001,7 +2001,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
         body: JSON.stringify(body),
       });
       if (cfg.status === 401) {
-        err.textContent = 'This needs the recovery-kit step first: go back, tap Save my recovery kit, then short-press BOOT.';
+        err.textContent = 'This needs the recovery-kit step first: go back, tap Save my recovery kit, and short-press BOOT when its note says to.';
         return;
       }
       if (!cfg.ok) {

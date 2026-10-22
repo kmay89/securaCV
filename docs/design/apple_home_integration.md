@@ -315,9 +315,10 @@ firmware rules applied:
   gate is a measured build on a `verified`-tier board.
 - **Pairing keys are secrets.** HomeKit long-term pairing keys persist in
   NVS; they get the `opera_secret` treatment — refuse to persist on
-  flash-encryption-off devices, which keeps them off un-fused boards but does
-  not make them confidential (NVS is plaintext on a fused board too until NVS
-  encryption is in the build; the tiered story from
+  flash-encryption-off devices, which keeps them off every board without
+  flash encryption but does not make them confidential (NVS is plaintext on a
+  board with flash encryption on too until NVS encryption is in the build;
+  the tiered story from
   [`hardware_root_of_trust.md`](hardware_root_of_trust.md)).
 - Pairing UX ships in **both flashers** (browser Lab and desktop Flasher) in
   the same phase — the two-flashers rule is repo law, and the setup QR is a

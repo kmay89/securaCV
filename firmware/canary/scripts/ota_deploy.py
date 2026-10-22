@@ -256,8 +256,9 @@ def check_device(target: Target, token: str) -> bool:
         status, text, location = _request(target, "GET", STATUS_ENDPOINT, token, STATUS_TIMEOUT_S)
     except PinMismatch as err:
         log_error(f"TLS certificate mismatch: presented {err.presented}, pinned {err.pinned}.")
-        log_error("Refusing to send the token. Only the 30 s BOOT wipe or a full flash erase")
-        log_error("makes a new certificate (the 10 s reset keeps it); re-read `tls_cert_fp`")
+        log_error("Refusing to send the token. Only the 30 s BOOT wipe, or an install or a full")
+        log_error("erase in a flasher (its factory image starts NVS over), makes a new")
+        log_error("certificate (an OTA update and the 10 s reset keep it); re-read `tls_cert_fp`")
         log_error("from a new recovery kit only if one of those happened.")
         return False
     except (OSError, ssl.SSLError, http.client.HTTPException) as err:

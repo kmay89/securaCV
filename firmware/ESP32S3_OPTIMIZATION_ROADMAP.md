@@ -187,7 +187,8 @@ What landed instead of a default-build gate:
   canary tree**: `framework = arduino` ships a precompiled core + bootloader, so
   `CONFIG_NVS_ENCRYPTION` / `CONFIG_SECURE_FLASH_ENC_ENABLED` in any `sdkconfig.defaults` are inert
   here (the 2.0.17 core's own sdkconfig leaves `CONFIG_SECURE_FLASH_ENC_ENABLED` unset, and NVS
-  encryption depends on it; only the ESP-IDF project `canary-ota` has NVS encryption on). It needs
+  encryption depends on it; the 3.3.8 core's, which `env:full` and the canary-wap build on, leaves
+  `CONFIG_NVS_ENCRYPTION` unset; only the ESP-IDF project `canary-ota` has NVS encryption on). It needs
   the arduino-as-IDF-component migration (item 9) and is then a Tier-3 concern — and the point
   where `key_at_rest.h`'s NVS-encryption fact learns to read true.
 

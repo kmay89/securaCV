@@ -1714,11 +1714,16 @@ def settings_help_block(vision: dict, sense_default: dict, sense_wellbeing: dict
         "erase_all": {
             "label": "Erase the entire chip first",
             "what": "Wipes every byte of flash — firmware, settings, stored WiFi, the identity "
-                    "key and the chain — then writes fresh, so the board comes up with a new "
-                    "identity. More than a factory reset: the 10-second BOOT reset keeps the key.",
+                    "key and the chain, and the partitions a normal install never writes (the "
+                    "second firmware slot, the file system) — then writes fresh. A normal "
+                    "install already starts the settings region over, the identity key with it, "
+                    "so the board comes up with a new identity either way. More than a factory "
+                    "reset: the 10-second BOOT reset keeps the key.",
             "when": "A board that misbehaves in ways an ordinary reinstall doesn’t fix, "
                     "or one you’re handing to someone else.",
-            "default": "Off — a normal install only touches the regions the new firmware needs.",
+            "default": "Off — a normal install writes only the regions its image covers (the "
+                       "bootloader, the partition table, a fresh settings region and the "
+                       "firmware) and leaves the rest.",
         },
         "skip_backup": {
             "label": "Skip the automatic safety copy",
@@ -1953,7 +1958,9 @@ def settings_help_block(vision: dict, sense_default: dict, sense_wellbeing: dict
         "witness_records": {
             "label": "Witness records",
             "what": "How many entries this Canary's tamper-evident hash chain holds — "
-                    "its sealed diary. The chain rides through reflashes untouched.",
+                    "its sealed diary. The chain rides through over-the-air updates "
+                    "untouched; an install here starts the settings region over, so the "
+                    "board starts a new chain under a new key (export the old one first).",
         },
         "tamper_flag": {
             "label": "Tamper flag",

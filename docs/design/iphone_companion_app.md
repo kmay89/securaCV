@@ -194,8 +194,9 @@ This is the crux, and the honest answer is layered. **The default is no account
 at all**, and we add identity *only* at the exact seams that require it.
 
 **Layer 0 — Local: no identity, no login.** On your own network, the app needs
-nothing but the per-device tokens it earned by the BOOT-button tap, held in
-**Keychain**. This is the whole product for most people, and it keeps the store's
+nothing but the per-device tokens it was handed when it paired (the setup door's
+claim, or a WAP's recovery kit opened in it, §3; the app has no BOOT-tap pairing),
+held in **Keychain**. This is the whole product for most people, and it keeps the store's
 promise literally true: *"no account, no app store, nothing that expires."* You
 can use the app for a decade having never typed an email.
 
@@ -451,7 +452,9 @@ never have to trust us not to do.
 1. **Skeleton + discovery.** SwiftUI shell, four tabs, Network.framework mDNS
    browse for `_securacv._tcp`, render the fleet list from TXT records.
    Reference: `canary-vision/docs/discovery.md`.
-2. **Pairing + local read.** Trust-on-Pair BOOT-button receipt → Keychain token;
+2. **Pairing + local read.** The setup door's claim, or a WAP's recovery kit
+   opened in the app, → Keychain token (as shipped, §3; the Trust-on-Pair
+   BOOT-button receipt this step first planned was never built into the app);
    `GET /info`, `/config`, `/witness` (the one page contract,
    `spec/witness_api_v1.md`, which canary-wap and the reference device-api
    both serve); render Today + Fleet. Mirror the existing

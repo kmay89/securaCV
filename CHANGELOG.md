@@ -146,8 +146,9 @@ hold keeps; and the per-address lockout's ways out.
   the flagship's key, and the saved Wi-Fi passwords and broker login the
   WAP's hold removes from NVS, stay there in plaintext on every tier today,
   since flash encryption does not cover NVS and the NVS encryption that
-  would is not available under `framework = arduino`; on the default tier a
-  full erase in either flasher is what removes them).
+  would is not available under `framework = arduino`; on the default tier an
+  install or a full erase in either flasher, each of which rewrites the
+  settings region, is what removes them).
   The scenario's secure-tier line, which said flash encryption prevents
   data extraction, now says it leaves NVS plaintext on the WAP and the
   flagship. **If you provisioned the secure tier for seizure, read this:**
@@ -230,14 +231,15 @@ hold keeps; and the per-address lockout's ways out.
   "ends that address's backoff" with no exception, and the F341 entry below
   left the flagship out of its way-out amendment. The 10 s BOOT hold keeps
   the identity key, the chain, the token and the HTTPS certificate on every
-  Canary; only the flagship's 30 s wipe or a full erase in a flasher changes
-  them. The getting started guide said a factory reset loses the witness
+  Canary; the flagship's 30 s wipe, and an install or a full erase in either
+  flasher (whose factory image starts NVS over), change them. The getting started guide said a factory reset loses the witness
   chain and makes a new certificate, the flagship's `ota_deploy.py` and
   `ota_deploy.sh` offered a factory reset as the reason for a pin mismatch,
   and the iPhone app's certificate-mismatch error said a reset explains it,
   which could lead an owner to re-pair to whatever is answering; each now
-  names the full erase (or the flagship's 30 s wipe) and says the 10 s
-  reset keeps the certificate. The flagship's serial banner said BOOT
+  names an install or a full erase in a flasher (or the flagship's 30 s
+  wipe; the install since the third pass below) and says the 10 s reset
+  keeps the certificate. The flagship's serial banner said BOOT
   resets at 5 s (it warns at 3, resets at 10 with the key kept and wipes at
   30); either flasher's "Erase the entire chip" help called the erase a
   factory reset; and the Home Assistant integration's comments, the
@@ -325,9 +327,10 @@ hold keeps; and the per-address lockout's ways out.
     gen_wap.py, gen_homeassistant.py and gen_csp.py run).
   - A dated legal audit's recommended "never leaves the secure element"
     carries an amendment (no Canary has one), the readiness list no longer
-    states as current a rule Forget Wi-Fi already breaks (F345), and
-    "re-flashed" no longer stands for "fully erased" (an ordinary re-flash
-    keeps NVS).
+    states as current a rule Forget Wi-Fi already breaks (F345). (This
+    pass also wrote that an ordinary re-flash keeps NVS; it does not, since
+    both flashers' installs write a factory image whose settings region is
+    blank, and the third pass below corrects every copy.)
   `viewer.yml`'s `viewer` job now runs the recorded-reads gate too, and its
   path filter lists the witness dictionary and the break-glass page and test,
   which its steps read and which no PR editing them alone used to run (this
@@ -342,6 +345,47 @@ hold keeps; and the per-address lockout's ways out.
   press line waits for the first `403`, a `409` stops the capture, and the
   timeout says whether the device ever answered. Host-tested; not run on a
   device or in a browser.
+
+- **An install in either flasher gives a Canary a new key, and the kit's own
+  files no longer give a recipe for "full Secure Boot" (#1843's sweep, third
+  pass).** Both flashers write a factory image from offset 0 to the end of
+  the app, and its settings region is blank (`make_factory.py`), so every
+  install starts NVS over and the next boot makes a new identity key, token
+  and certificate; an over-the-air update, a PlatformIO or Arduino IDE
+  upload and the 10 s BOOT reset keep them. The second pass had written the
+  opposite, that an ordinary re-flash keeps the key and only a full erase
+  changes it; every copy now says what the flashers do: the iPhone app's
+  device store and certificate-mismatch message, `auth_backoff.h`, Home
+  Assistant's comments and replay test, the ledger, `LESSONS_LEARNED.md`,
+  this file, `THREAT_MODEL.md`, `PENTEST_SCOPE.md`, `magic_pairing.md`, the
+  getting started guide, the flagship's `ota_deploy` scripts, the Sense,
+  Vision and Sentinel `witness.h`, the WAP's hostname comment, the desktop
+  Flasher's first-contact box (which said unticking it keeps the identity)
+  and the in-browser flasher's erase and chain help. Home Assistant's
+  key-mismatch notification, which named a re-flash as a cause, was right
+  about that; it now lists every cause and says to check the new key on the
+  device before rotating the pin. The provisioning kit's
+  `platformio_secure.ini`, `sdkconfig.defaults.secure` and README said its
+  four steps enable full Secure Boot or full security; they now say
+  uncommenting the sdkconfig changes nothing under `framework = arduino`,
+  and Phase 2 leaves flash encryption off and Secure Boot enabled with
+  nothing to verify against, possibly unbootable. The key generator and
+  `secure_provisioning.md` no longer say losing the signing key bricks
+  devices (the kit never uses it), and `SECURITY_MODEL.md` no longer calls
+  the opt-in key-backup-enforced. Also: the docs index and a lesson's quote
+  of the setup door's rule name a cleared unit; the iPhone companion design
+  doc no longer says the app's tokens come from a BOOT tap; the Fleet
+  Wi-Fi sheet no longer offers the Bluetooth lane the app never reaches on
+  a WAP (ledger A65); the "Firmware corrupt" row scopes the OTA signature
+  check to release images; "un-fused" reads "without flash encryption"
+  where the meaning depends on it; the WAP wizard's recovery-kit line and
+  two companion retry lines say to press BOOT when the note says to.
+  `recovery_kit.test.js` now walks every function the WAP's 10 s hold
+  reaches for the mesh's keys and the scout key, `receipt-capture.test.js`
+  holds the press line's subtitle, the unanswered timeout's advice and the
+  capture's cancel guards, and `test_docs_claims.py` bans each retired
+  sentence where it stood. Host-tested; not run on a device or in a
+  browser.
 
 ### The flagship and the canary-wap halt on a stored identity key they cannot read, instead of running on a zero key or replacing it (sweep F360, #1840)
 
@@ -680,9 +724,9 @@ hold keeps; and the per-address lockout's ways out.
   bearer whenever the backoff was not running held every other caller's right
   token at `429`: the F289 follow-up's replay refused 86 of 86 of the owner's
   polls over ten minutes. The likeliest such host was the owner's own phone,
-  still polling a fully erased unit (a full erase gives it a new key and
-  token; the 10 s hold and an ordinary re-flash keep the token) with its old
-  token (filed as F352). The backoff
+  still polling a re-installed unit (an install or a full erase in either
+  flasher starts NVS over and gives it a new key and token; the 10 s hold and
+  an OTA update keep the token) with its old token (filed as F352). The backoff
   is now one per source address, the request's socket peer and never a
   header, on the new pure `firmware/common/network/auth_backoff.h` (staged
   into the sketch, held by `check_improv_sync.sh`): 8 tracked addresses, each

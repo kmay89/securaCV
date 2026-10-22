@@ -265,7 +265,7 @@
         "blocks": [
           {
             "title": "Save your recovery kit",
-            "detail": "Tap Save my recovery kit, then short-press BOOT (downloads canary-recovery-kit.json)"
+            "detail": "Tap Save my recovery kit, then short-press BOOT when it says to (downloads canary-recovery-kit.json)"
           },
           {
             "title": "Use Home Assistant? (optional)",

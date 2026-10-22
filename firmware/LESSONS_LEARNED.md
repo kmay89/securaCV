@@ -930,8 +930,9 @@
   bearer whenever the backoff was not running held every other host's right
   token at `429` (86 of 86 of the owner's polls over ten simulated minutes),
   and the likeliest such host was the owner's own phone, polling a
-  fully erased unit (a full erase gives it a new key and token; the 10 s hold
-  and an ordinary re-flash keep the token) with its old token. Because a `static` in a header is a separate object in
+  re-installed unit (an install or a full erase in either flasher starts NVS
+  over and gives it a new key and token; the 10 s hold and an OTA update keep
+  the token) with its old token. Because a `static` in a header is a separate object in
   every translation unit that includes it, `canary_wap.ino`,
   `csi_integration.cpp` and `csi_mqtt.cpp` each had their own table, and a
   strike one file's gate recorded never held another file's. Three more
@@ -1798,7 +1799,15 @@
   (`common/io/short_tap.h`) opens it for a minute as the owner's own act. The
   rule is stated once, in the header, in one sentence: *the door is open for
   a device nobody owns yet, and for an owner's own tap — never for a device
-  that has an owner and a bad day.*
+  that has an owner and a bad day.* *(Amended 2026-10-22, #1843: the header's
+  sentence now reads "the door is open for a device with NO NETWORK SAVED (a
+  new one nobody owns yet, or one its owner cleared), and for an owner's own
+  tap". The 10 s hold, and Forget Wi-Fi on a WAP, clear the network but keep
+  the witness identity on a Sense, a Vision and a WAP, and a WAP's token, so
+  a cleared unit still has an owner, and its door goes to whichever client
+  connects first (`docs/design/magic_pairing.md` §2.2). The "no owner yet"
+  above covers that cleared unit too, as does the factory reset it names as
+  re-arming the window.)*
 - **Regression check:** `tests_host/test_improv_core.cpp` — a session begun
   with credentials stays shut while the caller reports the portal up; a
   window that ran out does not reopen without a tap or a power cycle;
@@ -1929,8 +1938,8 @@
   window open.
 - **Root cause:** the session modeled *authorization* (is the door open?)
   and not *occupancy* (who is standing in it, for how long, doing what).
-  A door that is open to whoever has no owner yet must still be a door
-  nobody can wedge.
+  A door that is open to whichever client connects while no network is
+  saved must still be a door nobody can wedge.
 - **Fix:** three bounds in `improv_core.h`'s `Timing`, all host-tested:
   accepted `WIFI_SETTINGS` writes at least `wifi_settings_cooldown_ms`
   (3 s) apart — a faster write is `InvalidRpc`, not counted, nothing

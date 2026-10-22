@@ -109,8 +109,9 @@ or Forget Wi-Fi, or the owner tapped it):
   the claim the door minted for its own link, and the receipt that claim
   buys carries the bearer token and the SoftAP password (ledger F345). The 10 s
   hold and Forget Wi-Fi keep both, since both derive from the identity key
-  the reset keeps, and nothing rotates the token today; only a full erase in
-  a flasher replaces them, with the identity. And either reset reopens the
+  the reset keeps, and nothing rotates the token today; only an install or a
+  full erase in either flasher, whose factory image starts NVS over, replaces
+  them, with the identity. And either reset reopens the
   same first-come door for 30 minutes, which a stranger still in radio range
   can take again.
 - They **cannot** hold the door open or hold the single link against the
@@ -628,8 +629,9 @@ reboot needs the bearer); ARP spoofing; httpd's LRU purge (a host that opens
 enough connections closes the owner's); nine or more striking addresses (the
 overflow, above); and a cross-site `<img src=...?token=x>`, which holds the
 visiting browser's own address. A phone that still holds a pairing for a
-unit that was fully erased and re-flashed (a new key, so a new token and
-device_id; the 10 s hold keeps the token) keeps polling with the old token,
+unit that was installed again or fully erased in a flasher (a new key, so a
+new token and device_id; the 10 s hold and an OTA update keep the token) keeps
+polling with the old token,
 and so holds its own address, its new pairing included (F352). Host-tested
 (`firmware/tests_host/test_auth_backoff.cpp`, `test_receipt_grant.cpp`); not
 run on a device.
@@ -1035,7 +1037,8 @@ a user.
   holds. On a WAP a factory reset is not the whole fix: whoever chose that
   network can spend the claim from it, and with it hold the bearer token and
   the SoftAP password, which the hold and Forget Wi-Fi keep (nothing rotates the token
-  today; a full erase replaces both, with the identity), and either reset
+  today; an install or a full erase in either flasher replaces both, with
+  the identity), and either reset
   reopens the same first-come door for 30 minutes (§2.2, ledger F345). A deployment
   that wants no window at all compiles `IMPROV_FIRST_BOOT_WINDOW_MS` to 0
   (tap-only) — on a WAP, which has no tap door yet, that means no door.

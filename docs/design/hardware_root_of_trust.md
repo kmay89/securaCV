@@ -42,8 +42,9 @@ The decision (§8, now settled) is deliberately conservative: **every Canary get
 the reversible value** (anti-rollback, boot safe-mode, flasher awareness, software
 attestation) — tamper-*evidence* and rollback safety while staying un-brickable;
 the **irreversible** tamper-*resistance* (full Secure Boot + flash encryption +
-JTAG-off) is **opt-in only** — explicit, heavily-warned, key-backup enforced — for
-the deployments that genuinely need it, and is never the default.
+JTAG-off) is **opt-in only** — explicit, heavily-warned, key-backup enforced (the
+§5.2 gating, not built yet) — for the deployments that genuinely need it, and is
+never the default.
 
 ## 2. Current state — what is already built
 
@@ -153,7 +154,7 @@ honest hardware-RoT design must own this, not bury it.
 | **0** (default) | Ed25519 identity in NVS; signed OTA | — | **Yes** | Everyone |
 | **1** | Anti-rollback (A/B + boot self-test/safe-mode) | Yes (software) | Yes | Everyone — should become default |
 | **2** | Software **attestation** (signed challenge-response + firmware self-measurement) | Yes | Yes | Anyone wanting a signed, replay-proof health report |
-| **3** | Flash encryption (**development** mode) + NVS encryption — the identity key is protected at rest only with both, because flash encryption does not cover NVS, where the key lives; NVS encryption is not available under `framework = arduino` (the Arduino 2.0.17 core cannot build it; `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` item 9), so on a fused board the key is still plaintext today — the PIO canary image reports `key_at_rest` = `plaintext-nvs`; DS-bound key optional (§8 #4) | Partly (still reflashable) | Mostly | Physical-theft threat models |
+| **3** | Flash encryption (**development** mode) + NVS encryption — the identity key is protected at rest only with both, because flash encryption does not cover NVS, where the key lives; NVS encryption is not available under `framework = arduino` (neither pinned core's precompiled sdkconfig has it, 2.0.17's nor 3.3.8's; `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` item 9), so on a fused board the key is still plaintext today — the PIO canary image reports `key_at_rest` = `plaintext-nvs`; DS-bound key optional (§8 #4) | Partly (still reflashable) | Mostly | Physical-theft threat models |
 | **4** | Secure Boot v2 + flash encryption (**release**) + JTAG-off | **No — eFuse** | **No** | High-assurance deployments only |
 
 Tiers 1–2 are the "every Canary should have this" band — pure software, no eFuse,
@@ -184,11 +185,14 @@ that shift safe and legible:
   *replaces* "USB reflash — always possible." The recovery matrix gains a new last
   row for locked units: *"bad app → A/B rollback + safe-mode; the USB row is
   intentionally gone."*
-- **The point of no return is a gated ceremony.** `provision_canary.sh --phase 2`
-  stays `--dry-run`-first, refuses to proceed without a verified **offline backup
-  of the signing key** (lost key = un-updatable fleet), and prints the exact
-  guarantees being surrendered. It is operator tooling, never a one-click button
-  and never anything the browser flasher can trigger.
+- **The point of no return must be a gated ceremony.** `provision_canary.sh --phase 2`
+  stays `--dry-run`-first and must refuse to proceed without a verified **offline
+  backup of the signing key** (lost key = un-updatable fleet), and print the exact
+  guarantees being surrendered. Not built yet: today it checks only that the key
+  files exist, and it never uses the signing key, since it burns no Secure Boot
+  key digest ([`secure_provisioning.md`](../secure_provisioning.md), Step 3). It is
+  operator tooling, never a one-click button and never anything the browser
+  flasher can trigger.
 
 ### 5.3 Attestation protocol (offline-verifiable)
 
@@ -381,10 +385,12 @@ choosing the alternative knowingly, per §5.1–5.2.
 **Build order that follows from these decisions** (§7): **Phase 1** — Tier 1
 (anti-rollback + boot safe-mode, pure software, no eFuse) — is underway; the
 anti-rollback floor ships and the A/B rollback engine is written (live in
-`canary-ota`, still gated on `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` in the
-shipping builds), and the crash-loop/safe-mode decision layer (`boot_policy.h`)
-is now host-tested — leaving the hardware-validated boot-path wiring plus turning
-that bootloader config on in the shipping builds. **Phase 2** — Tier 2 (the
+`canary-ota`, and in the shipping builds too: both pinned cores' precompiled
+bootloaders set `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, the §7 re-check of
+2026-09-29), and the crash-loop/safe-mode decision layer (`boot_policy.h`) is
+host-tested and wired into the PlatformIO `canary` — leaving the bench pass of
+the boot path (`V1_BENCH_TEST_RUNBOOK.md` Track E) and a counter on the Display,
+Sense, Vision and Sentinel trees. **Phase 2** — Tier 2 (the
 `securacv.attest/v1` protocol + the flasher's locked-device detection) — follows. Phases 3–4 (the eFuse-burning path) stay
 design-only until a specific deployment requests them.
 

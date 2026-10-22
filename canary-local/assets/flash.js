@@ -585,10 +585,11 @@ function renderTrustCard() {
     "this page's own backup works, and pretending otherwise would be " +
     "theater. The project's Phase-2 provisioning burns eFuses but does not " +
     "yet turn on flash encryption or secure boot, so today it protects " +
-    "nothing on the board. Even turned on, flash encryption would cover the " +
+    "neither the firmware, the identity key nor the saved WiFi (it does " +
+    "turn JTAG off). Even turned on, flash encryption would cover the " +
     "firmware image, not the identity key or the saved WiFi: those live in " +
     "NVS, which it does not cover, so they read back in the clear from a " +
-    "fused board too. " +
+    "board with flash encryption on too. " +
     "Documented — limits included — in docs/security/THREAT_MODEL.md."));
 
   const bp = el("div", "flash-trust-sec");

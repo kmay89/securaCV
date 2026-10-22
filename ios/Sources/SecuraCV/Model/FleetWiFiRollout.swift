@@ -181,14 +181,17 @@ enum FleetWiFiRollout {
     // MARK: - the cleartext disclosure
 
     /// Shown once, above the plan, whenever a push would ride plain http.
-    /// It names the exposure plainly and the two ways out of it.
+    /// It names the exposure plainly and the way out of it. Every rollout
+    /// candidate is a WAP, whose Bluetooth lane this app never reaches
+    /// (ledger A65), so the copy offers only the https re-pair.
     static let cleartextDisclosure =
         "Some of these Canaries can only take the new password over plain "
         + "HTTP right now, which sends it across your Wi-Fi unencrypted — "
         + "anyone already on this network could read it while it's in "
-        + "flight. Their encrypted lanes aren't available: Bluetooth needs "
-        + "you within a room or two, and a secure (https) connection needs "
-        + "a pairing receipt that carried the Canary's certificate."
+        + "flight. The encrypted way is a secure (https) connection, which "
+        + "needs a pairing receipt that carried the Canary's certificate: "
+        + "re-pair it with one. This app has no Bluetooth lane to these "
+        + "Canaries yet."
 
     /// The acknowledgment the user has to switch on before such a push runs.
     static let cleartextAcknowledgment = "Send it over plain HTTP anyway"
@@ -196,8 +199,9 @@ enum FleetWiFiRollout {
     /// The verdict for a cleartext target the user did not approve.
     static let cleartextDeclined =
         "Not sent — sending the password over unencrypted Wi-Fi wasn't "
-        + "approved. Move within Bluetooth range for its encrypted lane, or "
-        + "re-pair it with a secure (https) receipt, then try again."
+        + "approved. Re-pair it with a secure (https) receipt, then try "
+        + "again. Or, once it drops off your Wi-Fi, its own setup network "
+        + "(SecuraCV-wap-XXXX) takes the new password."
 
     /// The per-row note for a cleartext lane, before and during the run.
     static let cleartextNote = "Plain HTTP — the password crosses your Wi-Fi unencrypted"

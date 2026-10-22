@@ -269,10 +269,11 @@ enum DeviceError: Error, LocalizedError {
         case .certificateMismatch:
             return "This Canary's secure certificate doesn't match the one in its pairing "
                 + "receipt, so the connection was refused. Something may be answering in its "
-                + "place — check the device itself. If you fully erased it in a flasher (or "
-                + "held an all-rounder Canary's BOOT to 30 seconds) or replaced it, re-pair it "
-                + "to get its new receipt. A 10-second BOOT reset keeps its certificate, so "
-                + "after one this mismatch means something else is answering."
+                + "place — check the device itself. If you installed it again or fully erased "
+                + "it in a flasher (or held an all-rounder Canary's BOOT to 30 seconds) or "
+                + "replaced it, re-pair it to get its new receipt. An over-the-air update and a "
+                + "10-second BOOT reset keep its certificate, so after one of those this "
+                + "mismatch means something else is answering."
         case .tlsPinMissing:
             return "This Canary uses a secure (https) connection, but its pairing receipt "
                 + "carried no certificate fingerprint, so the connection can't be checked and "

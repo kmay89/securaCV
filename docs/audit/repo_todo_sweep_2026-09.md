@@ -2462,7 +2462,9 @@ so — see D2 below.)
       only marks each entry erased (`Page::eraseEntryAndSpan()` in IDF
       4.4.7 and 5.5.1), so the key's bytes stay in flash until NVS erases
       that page to reuse it; on the default tier a full erase in either
-      flasher is what removes the key. The CHANGELOG says so too.
+      flasher is what removes the key (an install does too, since it
+      rewrites the settings region: the sweep's third pass). The CHANGELOG
+      says so too.
       (Corrected by #1843's third review: the bytes are plaintext on every
       tier today, since flash encryption does not cover NVS and NVS
       encryption is not available under `framework = arduino`; "on the
@@ -2644,7 +2646,8 @@ so — see D2 below.)
       (`wifi_clear_credentials()`, `csi_mqtt::config_clear()`), which only
       marks each entry erased, so on the default tier the home network's
       password and the broker's stay readable in flash until NVS reuses
-      the page, or a full erase; the scenario says so, and that removing
+      the page, or an install or a full erase in a flasher; the scenario
+      says so, and that removing
       the paired phones forgets their bonds the same way. The CHANGELOG's
       F342 section says so too. (Corrected by #1843's third review: they
       stay plaintext in flash on every tier today; its bullet below.)
@@ -2703,8 +2706,8 @@ so — see D2 below.)
       `key_at_rest`). The erased Wi-Fi and broker passwords, the bonds and
       the flagship's cleared key stay plaintext in flash on every tier
       today, and the scenario, the CHANGELOG and the bullets above now say
-      so ("on the default tier" is left qualifying only a full erase in
-      either flasher, the way to remove them there). The
+      so ("on the default tier" is left qualifying only an install or a
+      full erase in either flasher, the ways to remove them there). The
       scenario's older secure-tier line, "flash encryption prevents data
       extraction", now says what flash encryption leaves out, and the
       beacon section's pointer to the scenario ("readable from flash on the
@@ -2823,8 +2826,8 @@ so — see D2 below.)
       builds with `framework = arduino`), and `test_docs_claims.py` bans
       the retired sentences. Scenario 4's list of what the WAP's hold keeps,
       and the CHANGELOG's copy of it, now name the Opera mesh's member list
-      and, on a fused board, the mesh's secret, id and revocations and the
-      Beacon channel's X25519 key, set and audit ring, which
+      and, on a board with flash encryption on, the mesh's secret, id and
+      revocations and the Beacon channel's X25519 key, set and audit ring, which
       `mesh_network.cpp` and `beacon_channel.cpp` write only there.
     - Both `recovery_kit.test.js` harnesses run every timer at once, so a
       page loop that stopped counting its asks (a failed request that did
@@ -2948,13 +2951,96 @@ so — see D2 below.)
     first-come door; no factory reset clears the mesh or scout keys; a served
     tap frees its own slot only, in the flagship's receipt comment too; the
     one-asker tap is scoped to the WAP in the guide, the multi-Canary doc and
-    the Vision SPA's comment; the Fleet Wi-Fi copy names only the WAP's setup
-    network (A65). `test_docs_claims.py` ties each scoped row to its file
+    the Vision SPA's comment; the Fleet Wi-Fi did-not-return copy names only
+    the WAP's setup network (A65; the sheet's other copy still offered the
+    lane, which the third pass below takes out). `test_docs_claims.py` ties
+    each scoped row to its file
     (the review's mutants, a row deleted beside a sibling with its needle or
     pointed at `README.md`, survived before), `viewer.yml`'s `viewer` job runs
     the recorded-reads gate (its filter had missed the witness dictionary and
     the break-glass page and test, on `main` too), and the Vision SPA's
     capture has behavior rows. Host-tested; not run on a device.
+  - The sweep for every remaining copy, third pass (#1843, its review round
+    2). Each finding was reproduced against the code first.
+    - The kit's own files still gave the old recipe for "full Secure Boot" /
+      "full security": `platformio_secure.ini`'s header, the header and both
+      section notes of `sdkconfig.defaults.secure` and the kit README's
+      Phase 2 section, which ran `--phase 2` as "production provisioning".
+      Each now says that uncommenting the sdkconfig changes nothing under
+      `framework = arduino`, that Phase 2 leaves flash encryption off and
+      Secure Boot enabled with nothing to verify against, and that the
+      board may not boot. `generate_keys.sh` and `secure_provisioning.md`
+      said "Loss of signing key = bricked devices on next OTA" of a key the
+      kit never uses; `secure_provisioning.md` also said the public key is
+      embedded in the firmware, offered an `idf.py` build there is no
+      project for, and credited the inert `CONFIG_BT_ENABLED=n` with what
+      the env's `-DFEATURE_BLE=0` flags do. `SECURITY_MODEL.md` called the
+      opt-in "key-backup-enforced" (the design calls for that gate,
+      `hardware_root_of_trust.md` §5.2, and the kit checks only that the
+      key files exist), and said Secure Boot is "off" on a board whose
+      `SECURE_BOOT_EN` is burned; `hardware_root_of_trust.md` §5.2 stated
+      the backup gate in the present tense and §8 said the shipping builds
+      lack the rollback config both pinned cores set.
+    - The round-2 findings that Home Assistant's key-mismatch notification,
+      `device_trust.md`, `FLEET_SEMANTICS.md`, the Lab guide and the mesh
+      comments wrongly name a re-flash as a cause of a new key do not hold:
+      both flashers write a factory image (`make_factory.py`, esptool's
+      `merge_bin` from offset 0 to the app's end) whose settings region is
+      blank (merged here from dummy parts with esptool 4.12: offsets
+      `0x9000`-`0xE000` all `0xFF`), at offset 0 (`flash.js`, the desktop
+      engine's `write-bin 0x0`), so every install starts NVS over and the
+      next boot makes a new key (`browser_flasher.md`, "A factory flash
+      re-initializes NVS"). What the earlier passes wrote, that an ordinary
+      re-flash keeps the key and only a full erase changes it, was the
+      wrong claim. It is corrected where it stood (`DeviceStore.swift`,
+      `auth_backoff.h` in both copies, the replay test's docstring, the
+      Home Assistant comments, F343's amendment and F352 above,
+      `LESSONS_LEARNED.md`, the CHANGELOG), and in every copy that gave a
+      full erase as the only way to a new identity or certificate
+      (`THREAT_MODEL.md`, `PENTEST_SCOPE.md`, `magic_pairing.md`, the
+      getting started guide, `ota_deploy.py` and `.sh`, `DeviceAPI.swift`,
+      `HeadWatch.swift`, `ble_scout_key.h`). The comments that said a
+      keypair survives reflashes (the Sense, Vision and Sentinel
+      `witness.h`, the WAP's hostname suffix) now name the OTA update and
+      the PlatformIO upload, which keep NVS; the desktop Flasher's
+      first-contact box no longer says unticking it keeps the identity, and
+      the in-browser flasher's erase help and chain help no longer imply a
+      normal install keeps the key (`gen_flash.py` run). The notification
+      now lists the causes and says to check the key on the device before
+      rotating.
+    - The door rule's last two copies (`docs/README.md`'s index entry, and
+      `LESSONS_LEARNED.md`'s quote of the header, which carries an
+      amendment), the iPhone companion design doc's tokens "earned by the
+      BOOT-button tap" and its build-path line, and the Fleet Wi-Fi sheet's
+      footer, not-reachable rows and the rollout's cleartext disclosure and
+      declined verdict, which still offered the Bluetooth lane (A65).
+    - Smaller: the "Firmware corrupt" row and the trust diagram scope the
+      OTA signature check to release images (a flagship `dev` or `full`
+      image takes an unsigned `POST /api/ota`); the flasher's trust card
+      says Phase 2 does turn JTAG off; "un-fused" now reads "without flash
+      encryption" where the FE gate's meaning depends on it; the "Arduino
+      2.0.17 core" reason names both pinned cores; the WAP README and
+      `ble_improv.h` qualify the bonded rescue with A65; the wizard's
+      recovery-kit line and the companion's two retry lines say to press
+      BOOT when the note says to (`gen_web_assets_gz.py`, `gen_wap.py`,
+      `gen_csp.py` run: COMPANION_HTML is 48629 B gzip, and no CSP page
+      changed); `.github/CI.md` says why `viewer`'s gate counts five suites.
+    - Tests: `recovery_kit.test.js` walks every function the WAP's hold
+      reaches for the mesh's keys, its namespace and the scout key (the
+      review's mutant, a key-by-key remove in `reset_to_first_boot()`, now
+      fails it), and pins that a saved kit puts Save away (that line's
+      deletion passed before); `test_docs_claims.py` holds the JS walk in
+      place. `receipt-capture.test.js` holds the press line's subtitle, the
+      unanswered timeout's advice and both cancel guards with an ask in
+      flight (each of the review's four mutants fails a row).
+      `test_docs_claims.py` bans 66 more retired sentences where they stood
+      (11 in BANNED, 55 in RETIRED_IN), and a new test holds the install
+      claim to the code (the factory image's `merge_bin` inputs, both
+      flashers' offset-0 writes, `nvs` before the app in every partition
+      table). Totals: 41 BANNED, 275 RETIRED_IN over 109 files, 331 forms,
+      254 replacements, 22 tests; every row's deletion, every RETIRED_IN
+      row pointed at `README.md` and every BANNED deletion fails it (591 of
+      591).
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),
@@ -2987,9 +3073,9 @@ so — see D2 below.)
   so one host's wrong bearers held every other host's right token at `429`.
   The F289 follow-up's replay refused 86 of 86 owner polls. The likeliest
   striker was the owner's own phone, still polling a reset unit with its old
-  token. *(Amended 2026-10-21, #1843: a fully erased unit; the 10 s hold and
-  an ordinary re-flash keep the token, and only a full erase in a flasher
-  changes it, F352.)*
+  token. *(Amended 2026-10-21, #1843: a re-installed unit; the 10 s hold and
+  an OTA update keep the token, and an install or a full erase in either
+  flasher, whose factory image starts NVS over, changes it, F352.)*
   What it is now. The backoff is keyed by the request's socket peer address,
   never a header. It is read by `request_peer_key()` (`getpeername`), the
   sketch's one peer reader, and `auth_request_source()` turns that key into
@@ -3551,12 +3637,17 @@ so — see D2 below.)
   is the shape a per-source budget could take. Decide whether the budget
   stays per device, becomes per source, or both. From code; not probed.
   Found by the F340 decision's security review, 2026-10-19.
-- [ ] **F352 [code] iOS: a pairing for a fully erased Canary keeps polling
-  with its old token.** A full erase in a flasher, which regenerates the WAP's
-  key (the 10 s hold and an ordinary re-flash keep the key and the token),
-  changes both its token and its
-  `device_id`. *(Amended 2026-10-21, #1843: this item had said a factory
-  reset, which keeps both.)* `DeviceStore.add`
+- [ ] **F352 [code] iOS: a pairing for a re-installed Canary keeps polling
+  with its old token.** An install or a full erase in either flasher, whose
+  factory image starts NVS over and so regenerates the WAP's key (an OTA
+  update and the 10 s hold keep the key and the token), changes both its
+  token and its `device_id`. *(Amended 2026-10-21, #1843: this item had said
+  a factory reset, which keeps both. Amended again 2026-10-22, #1843's sweep,
+  third pass: that amendment named a full erase as the only cause and said
+  an ordinary re-flash keeps the key, but both flashers write a factory image
+  that spans offset 0 to the app's end with the settings region blank
+  (`make_factory.py`; `browser_flasher.md`, "A factory flash re-initializes
+  NVS"), so an install without the erase changes them too.)* `DeviceStore.add`
   (`ios/Sources/SecuraCV/Security/DeviceStore.swift`) dedupes by id, so the
   old row stays beside the new one, and `FleetStore`'s 20 s refresh loop
   (`ios/Sources/SecuraCV/App/FleetStore.swift`, `startRefreshLoop()`) keeps
@@ -17198,6 +17289,11 @@ so — see D2 below.)
   once this is settled, lasts only while the new network stays up: the WAP
   keeps the network it left saved and goes back to it when the new one is
   not found twice running (F343's sixth amendment).
+  *(2026-10-22, #1843's sweep, third pass:)* the Fleet Wi-Fi sheet's footer,
+  its not-reachable rows and the rollout's cleartext disclosure and declined
+  verdict no longer offer the lane; they name the https re-pair and the
+  WAP's own setup network. The lane's code (`FleetWiFiRollout.Path.ble`)
+  stays until this is settled.
 - [ ] **A66 [code+human] AccessorySetupKit spike for the nearby card.** On iOS
   18, AccessorySetupKit shows a system picker for a matched accessory and
   grants Bluetooth access to that device alone, in place of the app-wide

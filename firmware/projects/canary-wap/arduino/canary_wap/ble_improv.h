@@ -60,9 +60,10 @@
  *     factory reset), and only for the first-boot window; a saved network
  *     that stopped working raises the SoftAP recovery portal (a door with a
  *     printed key), never this one. A WAP on its own Wi-Fi offers nothing
- *     here: its owner's paths are the dashboard, the bonded rescue, and
- *     the BOOT-tap receipt. Accepted credential writes are rate-limited and
- *     capped per open door, and a client that sends nothing is dropped
+ *     here: its owner's paths are the dashboard, that recovery portal and
+ *     the BOOT-tap receipt (the bonded rescue too, but the iPhone app never
+ *     reaches it on a WAP, ledger A65). Accepted credential writes are
+ *     rate-limited and capped per open door, and a client that sends nothing is dropped
  *     from the single link (improv_core.h Timing).
  *   - THE BEARER TOKEN NEVER RIDES BLUETOOTH. The link is encrypted but not
  *     authenticated, so nothing that lasts belongs on it. Once the join the

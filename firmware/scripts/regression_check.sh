@@ -1033,8 +1033,8 @@ echo ""
 # see firmware/canary/src/main.cpp on_pairing_succeeded). On an FE-ON board the
 # entry is still plaintext at rest: flash encryption does not cover NVS, and NVS
 # encryption is unavailable under framework = arduino (mesh_state.h; roadmap
-# item 9) — the gate keeps the secret off un-fused boards, it does not encrypt
-# it on fused ones. This guard asserts that FE
+# item 9) — the gate keeps the secret off boards without flash encryption, it
+# does not encrypt it on boards with it. This guard asserts that FE
 # check is not silently removed from the mesh persistence/impl files. It does NOT,
 # and cannot statically, prove the *activation* path fails closed — see issue #610
 # C2 / the bench runbook for the on-device check, and the open design question of
@@ -1053,7 +1053,7 @@ else
     if grep -q "esp_flash_encryption_enabled" "$mf"; then
       check_pass "Mesh FE persistence gate present: $rel"
     else
-      check_fail "Mesh impl '$rel' has no esp_flash_encryption_enabled() gate — the opera_secret must never be persisted on a board without flash encryption (#610; the gate keeps it off un-fused boards, it does not encrypt NVS)"
+      check_fail "Mesh impl '$rel' has no esp_flash_encryption_enabled() gate — the opera_secret must never be persisted on a board without flash encryption (#610; the gate keeps it off boards without flash encryption, it does not encrypt NVS)"
     fi
   done <<< "$MESH_IMPL_FILES"
 fi

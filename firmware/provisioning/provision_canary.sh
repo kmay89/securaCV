@@ -22,7 +22,8 @@ set -euo pipefail
 #
 # Phases:
 #   Phase 1 (default): Development mode - no eFuse burning
-#   Phase 2: Production lockdown - burns security eFuses (IRREVERSIBLE)
+#   Phase 2: burns security eFuses (IRREVERSIBLE) toward the production
+#            lockdown, but turns on neither protection yet (above)
 #
 # ═══════════════════════════════════════════════════════════════
 

@@ -188,8 +188,10 @@ for that wizard timer, and the restart waits while the door is open at all
 door's card on their phone has touched nothing yet) — so it cannot land
 mid-provisioning or under the card. A WAP on its own
 Wi-Fi offers nothing here — not even when that Wi-Fi is failing (the
-dashboard, the bonded rescue service and the BOOT-tap receipt are the
-owner's paths). **There is no tap door on the WAP in this version:** the
+dashboard, the SoftAP recovery portal with its printed key, and the BOOT-tap
+receipt are the owner's paths; the bonded rescue service is there too, but
+the iPhone app never reaches it on a WAP, and whether the companion page's
+Bluetooth chooser lists a WAP waits on a bench, ledger A65). **There is no tap door on the WAP in this version:** the
 BOOT button keeps the sketch's own gestures: a short press opens the 30 s
 receipt gate, a 2 s hold prints the identity on serial, and a 10 s hold is
 the factory reset (`factory_reset_by_hold()`). The hold clears the saved

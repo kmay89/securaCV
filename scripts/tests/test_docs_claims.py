@@ -206,13 +206,38 @@ BANNED = (
     ("Secure boot (firmware integrity verified)",
      "the same"),
     ("Refuse to boot **on the opt-in secure-provisioning tier only**",
-     "no tier refuses a corrupt image today; every tier relies on the OTA "
-     "signature check"),
+     "no tier refuses a well-formed unsigned image today; every release "
+     "image relies on the OTA signature check"),
     ("Secure Boot v2 + Flash Encryption env; compile-only in CI",
      "the secure env enables neither and refuses the key on every board"),
     ("Factory reset via BOOT button | ✅ (short/long press) | ❌ | ✅ (5s hold)",
      "the WAP sketch resets at 10 s; the flagship resets at 10 s (key kept) and "
      "wipes at 30 s"),
+    # #1843's sweep, third pass (its review round 2): the kit's Secure Boot called off or on,
+    # the OTA check credited to every tier, a full erase called the only way
+    # to a new identity, and un-fused meaning flash encryption off.
+    ('they are **off on every Canary today**',
+     'neither works: Phase 2 leaves flash encryption off and Secure Boot enabled with nothing to verify against'),
+    ('leaves the irreversible lockdown as an explicit, key-backup-enforced opt-in',
+     'the design calls for the key-backup gate (hardware_root_of_trust.md §5.2); the kit checks only that the key files exist'),
+    ('so neither flash encryption nor Secure Boot is on after it',
+     'flash encryption is off and Secure Boot is enabled with nothing to verify against'),
+    ("so every tier relies on the OTA path's SHA-256 and Ed25519 release-signature check",
+     'every release image does; a flagship image built without SECURACV_BUILD_RELEASE also takes an unsigned image over its bearer-gated POST /api/ota'),
+    ('a full erase in either flasher is what removes',
+     'an install in either flasher rewrites the settings region too'),
+    ('(a clean install, a full erase in either flasher, is its way to a new identity)',
+     'an install in either flasher, with or without the erase, starts NVS over'),
+    ('so a clean install (full erase) in either flasher is its way to a new identity on purpose',
+     'the same'),
+    ('a seizer of a fused board who reads its flash after the hold has the mesh secret',
+     'the FE gate writes the secret only on a board with flash encryption on, which a Phase 2 board is not'),
+    ('keeps the secret off un-fused boards',
+     'off every board without flash encryption, a Phase 2 board included'),
+    ('the FE gate keeps it off un-fused boards',
+     'the same'),
+    ('an un-fused board keeps the ring in RAM only',
+     'the same'),
 )
 
 # Sentences retired from documents the gate above does not scan whole (the
@@ -381,28 +406,31 @@ RETIRED_IN = (
      "and the lane is no way out until A65 is settled"),
     # The same sweep: the 10 s BOOT hold keeps the identity key, the chain,
     # the token and the HTTPS certificate on every Canary
-    # (factory_reset_by_hold(); reset_scope_keys.h kIdentityKept). Only the
-    # flagship's 30 s wipe or a full erase in a flasher changes them, and a
+    # (factory_reset_by_hold(); reset_scope_keys.h kIdentityKept). The
+    # flagship's 30 s wipe, and an install or a full erase in either flasher
+    # (whose factory image starts NVS over), change them, and a
     # WAP's setup network comes up with no button while it is off its
     # Wi-Fi.
     ("docs/getting_started_canary.md",
      "You *can* lose your witness chain by factory-resetting it",
-     "the 10 s hold keeps the key and the chain; a full erase (or the "
-     "flagship's 30 s wipe) loses them"),
+     "the 10 s hold keeps the key and the chain; an install or a full erase "
+     "in a flasher (or the flagship's 30 s wipe) loses them"),
     ("docs/getting_started_canary.md",
      "export the chain before you factory-reset",
-     "export it before a full erase or the flagship's 30 s wipe"),
+     "export it before a reinstall or erase in a flasher, or the flagship's "
+     "30 s wipe"),
     ("docs/getting_started_canary.md",
      "factory reset makes a new certificate, so pair the iPhone app again",
-     "the 10 s reset keeps the certificate; the 30 s wipe or a full erase makes "
-     "a new one"),
+     "the 10 s reset keeps the certificate; the 30 s wipe or an install or a "
+     "full erase in a flasher makes a new one"),
     ("firmware/canary/include/canary_config.h",
      "(factory reset erases both,",
      "reset_scope_keys.h kIdentityKept keeps tls_cert and tls_key on the 10 s "
      "reset"),
     ("firmware/canary/scripts/ota_deploy.py",
      "A factory reset makes a new certificate;",
-     "only the 30 s wipe or a full flash erase makes a new certificate"),
+     "the 30 s wipe, or an install or a full erase in a flasher, makes a new "
+     "certificate"),
     ("firmware/canary/scripts/ota_deploy.sh",
      "A factory reset makes a new certificate;",
      "the same"),
@@ -415,11 +443,12 @@ RETIRED_IN = (
      "something else is answering"),
     ("ios/Sources/SecuraCV/Security/DeviceStore.swift",
      "a factory-reset device with a new key",
-     "a factory reset keeps the key; a full erase gives a new one"),
+     "a factory reset keeps the key; an install or a full erase in a flasher "
+     "gives a new one"),
     ("ios/Sources/SecuraCV/Alerts/HeadWatch.swift",
      "means the chain restarted (a wipe, a reset)",
-     "the 10 s reset keeps the chain; a full erase, the flagship's 30 s wipe or "
-     "a replaced board restarts it"),
+     "the 10 s reset keeps the chain; an install or a full erase in a "
+     "flasher, the flagship's 30 s wipe or a replaced board restarts it"),
     ("ios/Sources/SecuraCV/Model/FleetWiFiRollout.swift",
      "the BOOT-button portal can still rescue",
      "holding a WAP's BOOT is its factory reset; its own setup network comes up "
@@ -432,15 +461,15 @@ RETIRED_IN = (
      "the same"),
     ("custom_components/securacv/__init__.py",
      "identity for this device_id (fresh flash, factory reset, a",
-     "the 10 s reset keeps the key; a full erase, the flagship's 30 s wipe or a "
-     "replacement board gives a new one"),
+     "the 10 s reset keeps the key; an install or a full erase in a flasher, "
+     "the flagship's 30 s wipe or a replacement board gives a new one"),
     ("custom_components/securacv/__init__.py",
      "starts its counters over (fresh flash, factory",
      "the same"),
     ("custom_components/securacv/sensor.py",
      "which is what a factory reset looks like from here",
-     "a re-pin is what a full erase looks like; the 10 s reset keeps the key "
-     "and its counters"),
+     "a re-pin is what an install or a full erase looks like; the 10 s reset "
+     "keeps the key and its counters"),
     ("custom_components/securacv/tests/test_replay_reset_paths.py",
      "a factory-reset or replaced Canary starts them over",
      "an erased or replaced Canary does; the 10 s reset keeps them"),
@@ -449,7 +478,8 @@ RETIRED_IN = (
      "a full erase pins fresh; a factory reset keeps the key"),
     ("firmware/common/network/auth_backoff.h",
      "polling a reset unit with its old token",
-     "the 10 s hold leaves the token as it was; only a full erase changes it"),
+     "the 10 s hold leaves the token as it was; an install or a full erase in "
+     "a flasher changes it"),
     ("firmware/projects/canary-wap/arduino/canary_wap/auth_backoff.h",
      "polling a reset unit with its old token",
      "the same (the staged copy)"),
@@ -461,8 +491,8 @@ RETIRED_IN = (
      "the same"),
     ("docs/design/magic_pairing.md",
      "a pairing for a unit that was reset keeps polling with the old token",
-     "the hold and Forget Wi-Fi keep the token; only a full erase leaves a "
-     "stale pairing striking"),
+     "the hold and Forget Wi-Fi keep the token; only an install or a full "
+     "erase in a flasher leaves a stale pairing striking"),
     ("docs/design/magic_pairing.md",
      "| No credentials stored (first boot, after a factory reset), within **30 "
      "minutes** of power-on | **Open** (`Door::NoCredentials`) | A device "
@@ -478,7 +508,8 @@ RETIRED_IN = (
     ("docs/audit/repo_todo_sweep_2026-09.md",
      "A factory reset that regenerates the WAP's key changes both its token and "
      "its `device_id`.",
-     "no factory reset regenerates the WAP's key; a full erase in a flasher does"),
+     "no factory reset regenerates the WAP's key; an install or a full erase in "
+     "a flasher does"),
     ("docs/audit/repo_todo_sweep_2026-09.md",
      "a pairing for a reset Canary keeps polling",
      "the same"),
@@ -976,10 +1007,12 @@ RETIRED_IN = (
      'the canary-wap PlatformIO lane compiles the same sketch'),
     ('canary-local/tools/hatchery/derive.mjs',
      'a factory reset // that mints a NEW key is honestly a new bird',
-     'no factory reset mints a key; a full erase or the 30 s wipe does'),
+     'no factory reset mints a key; an install or a full erase in a flasher, '
+     'or the 30 s wipe, does'),
     ('ios/Sources/SecuraCV/Security/DeviceStore.swift',
      'a fully erased (re-flashed) device with a new',
-     'an ordinary re-flash keeps the key'),
+     'the comment names the install and the full erase, whose factory image '
+     'starts NVS over; an OTA update and the 10 s hold keep the key'),
     ('custom_components/securacv/tests/test_replay_reset_paths.py',
      'an erased (re-flashed) or replaced Canary starts them over',
      'the same'),
@@ -1007,6 +1040,176 @@ RETIRED_IN = (
     ('firmware/projects/canary-wap/arduino/canary_wap/web_ui.h',
      'Remove every saved Wi-Fi network from this Canary? For half an hour after, its Bluetooth setup goes',
      'a build without the door, or with Bluetooth off, opens none'),
+    # #1843's sweep, third pass (its review round 2): the kit's own recipe for full
+    # Secure Boot, an ordinary re-flash said to keep the key (both flashers
+    # write a factory image whose settings region is blank), the door rule's
+    # last copies, the iPhone design doc's BOOT-tap tokens, the Fleet Wi-Fi
+    # sheet's Bluetooth offers and un-fused meaning flash encryption off.
+    ('firmware/provisioning/platformio_secure.ini',
+     'To enable full Secure Boot:',
+     'no step of the kit turns Secure Boot on: the sdkconfig is inert under framework = arduino, and Phase 2 burns SECURE_BOOT_EN with no Secure Boot key digest'),
+    ('firmware/provisioning/platformio_secure.ini',
+     'Prepares for Secure Boot (not enabled until Phase 2 eFuse burn)',
+     'the Phase 2 burn leaves Secure Boot enabled with nothing to verify against'),
+    ('firmware/provisioning/sdkconfig.defaults.secure',
+     'To enable full security (Phase 2):',
+     'uncommenting changes nothing under framework = arduino, and Phase 2 turns on neither protection'),
+    ('firmware/provisioning/sdkconfig.defaults.secure',
+     'Uncomment these lines for production lockdown:',
+     'the same: no Canary build reads these lines'),
+    ('firmware/provisioning/README.md',
+     'Production lockdown with Secure Boot v2, Flash Encryption, JTAG disabled',
+     'as tooled, Phase 2 reaches only the JTAG fuses'),
+    ('firmware/provisioning/README.md',
+     '# 3. Execute production provisioning',
+     'Phase 2 is not usable yet: the dry run is the only step to run'),
+    ('firmware/provisioning/generate_keys.sh',
+     'Loss of signing key = bricked devices on next OTA',
+     'the kit never uses the signing key: it burns no Secure Boot key digest and signs nothing'),
+    ('docs/secure_provisioning.md',
+     'Loss of signing key = bricked devices on next OTA.',
+     'the same'),
+    ('docs/secure_provisioning.md',
+     'keys/secure_boot_signing_key.pub (embedded in firmware)',
+     'no step embeds it or burns its digest'),
+    ('docs/secure_provisioning.md',
+     'The secure configuration disables Bluetooth at compile time (`CONFIG_BT_ENABLED=n`).',
+     "that sdkconfig is inert under framework = arduino; the env's -DFEATURE_BLE=0 flags keep Bluetooth code out"),
+    ('docs/secure_provisioning.md',
+     '# Or with ESP-IDF directly',
+     'there is no ESP-IDF project for this tree yet'),
+    ('canary-local/assets/flash.js',
+     'so today it protects " + "nothing on the board.',
+     'Phase 2 does burn the JTAG-disable fuses; it protects neither the firmware, the key nor the saved WiFi'),
+    ('ios/Sources/SecuraCV/Security/DeviceStore.swift',
+     '(an ordinary re-flash keeps the key)',
+     'both flashers write a factory image whose settings region is blank, so a re-install gives a new key; an OTA update and the 10 s hold keep it'),
+    ('custom_components/securacv/tests/test_replay_reset_paths.py',
+     '(an ordinary re-flash keeps the key and its counters)',
+     'the same'),
+    ('firmware/common/network/auth_backoff.h',
+     'device_id; an ordinary re-flash and',
+     'the same: an install or a full erase in either flasher gives a new key and token'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/auth_backoff.h',
+     'device_id; an ordinary re-flash and',
+     'the same (the staged copy)'),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     'the 10 s hold and an ordinary re-flash keep the key and the token',
+     'an install in either flasher changes them too: its factory image starts NVS over'),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     'an ordinary re-flash keep the token, and only a full erase in a flasher changes it',
+     'the same'),
+    ('firmware/LESSONS_LEARNED.md',
+     'the 10 s hold and an ordinary re-flash keep the token',
+     'the same'),
+    ('CHANGELOG.md',
+     'the 10 s hold and an ordinary re-flash keep the token',
+     'the same'),
+    ('CHANGELOG.md',
+     '"re-flashed" no longer stands for "fully erased" (an ordinary re-flash keeps NVS)',
+     'an ordinary re-flash in either flasher does not keep NVS: its factory image blanks the settings region'),
+    ('CHANGELOG.md',
+     "only the flagship's 30 s wipe or a full erase in a flasher changes them",
+     'an install in either flasher changes them too'),
+    ('CHANGELOG.md',
+     'full erase in either flasher is what removes them',
+     'an install rewrites the settings region too'),
+    ('firmware/canary/scripts/ota_deploy.py',
+     'Only the 30 s BOOT wipe or a full flash erase',
+     'an install in a flasher makes a new certificate too'),
+    ('firmware/canary/scripts/ota_deploy.sh',
+     'Only the 30 s BOOT wipe or a full flash erase',
+     'the same'),
+    ('docs/security/PENTEST_SCOPE.md',
+     "Only the all-rounder Canary's 30 s wipe or a full erase in a flasher sheds them.",
+     'an install in either flasher sheds them too'),
+    ('docs/design/magic_pairing.md',
+     'only a full erase in a flasher replaces them, with the identity.',
+     'an install in either flasher replaces them too'),
+    ('desktop/src/index.html',
+     'Reflashing a Canary you set up here and want to keep the identity of? Untick it',
+     'every install starts the settings region over, the identity key with it'),
+    ('firmware/projects/canary-sense/include/canary/witness.h',
+     'keypair survives // reflashes and OTA installs',
+     'an install or a full erase in either flasher starts NVS over, so the next boot makes a new key'),
+    ('firmware/projects/canary-vision/include/canary/witness.h',
+     'keypair survives // reflashes and OTA installs',
+     'the same'),
+    ('firmware/projects/canary-sentinel/include/canary/witness.h',
+     'keypair survives reflashes and OTA installs',
+     'the same'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     'it stays stable across reflashes because the keypair persists in NVS.',
+     'an install in either flasher starts NVS over, so the suffix changes with the key'),
+    ('canary-local/tools/gen_flash.py',
+     'The chain rides through reflashes untouched.',
+     'an install in a flasher starts the settings region over, and the board a new chain under a new key'),
+    ('canary-local/devices/flash.json',
+     'The chain rides through reflashes untouched.',
+     'the same (generated by gen_flash.py)'),
+    ('canary-local/tools/gen_flash.py',
+     'then writes fresh, so the board comes up with a new "',
+     "a normal install starts the settings region over too, so a new identity is not the full erase's alone"),
+    ('canary-local/devices/flash.json',
+     'then writes fresh, so the board comes up with a new identity. More than a factory reset',
+     'the same (generated by gen_flash.py)'),
+    ('canary-local/tools/gen_flash.py',
+     'a normal install only touches the regions the new firmware needs.',
+     'a normal install writes the regions its image covers, a blank settings region among them'),
+    ('canary-local/devices/flash.json',
+     'a normal install only touches the regions the new firmware needs.',
+     'the same (generated by gen_flash.py)'),
+    ('docs/README.md',
+     'The door rule (open for a device nobody owns yet,',
+     'the door is for a device with no network saved, which can be one its owner cleared, and goes to whichever client connects first'),
+    ('firmware/LESSONS_LEARNED.md',
+     'that has an owner and a bad day.* - **Regression check:**',
+     "the quote carries its amendment: the header's sentence now names a device with no network saved"),
+    ('firmware/LESSONS_LEARNED.md',
+     'A door that is open to whoever has no owner yet must still be a door nobody can wedge.',
+     'a door open to whichever client connects while no network is saved'),
+    ('docs/design/iphone_companion_app.md',
+     'the per-device tokens it earned by the BOOT-button tap',
+     "the app pairs through the setup door's claim or a WAP's recovery kit; it has no BOOT-tap pairing"),
+    ('docs/design/iphone_companion_app.md',
+     'Trust-on-Pair BOOT-button receipt → Keychain token;',
+     'the same'),
+    ('ios/Sources/SecuraCV/Views/FleetWiFiSheet.swift',
+     "Come back when it's in Bluetooth range",
+     "the app never reaches a WAP's Bluetooth lane (A65); the WAP's own setup network takes the password"),
+    ('ios/Sources/SecuraCV/Views/FleetWiFiSheet.swift',
+     'goes only to your Canaries — over bonded Bluetooth',
+     'the same'),
+    ('ios/Sources/SecuraCV/Model/FleetWiFiRollout.swift',
+     'Move within Bluetooth range for its encrypted lane',
+     'the same'),
+    ('ios/Sources/SecuraCV/Model/FleetWiFiRollout.swift',
+     "Their encrypted lanes aren't available: Bluetooth needs",
+     'the same'),
+    ('docs/GLOSSARY.md',
+     'keeps the household secret off un-fused boards',
+     'off every board without flash encryption, a Phase 2 board included'),
+    ('docs/design/apple_home_integration.md',
+     'keeps them off un-fused boards',
+     'the same'),
+    ('firmware/canary/lib/securacv_mesh/src/mesh_state.h',
+     'keeps the secret off un-fused boards',
+     'the same'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp',
+     'keeps the secret off un-fused boards only',
+     'the same'),
+    ('spec/canary_mesh_network_v0.md',
+     'keeps the secret off un-fused boards',
+     'the same'),
+    ('spec/beacon_channel_v0.md',
+     'an un-fused board keeps the set in RAM only',
+     'the same'),
+    ('firmware/scripts/regression_check.sh',
+     'off un-fused boards',
+     'the same'),
+    ('docs/audit/mesh_and_chirp_audit_v1.md',
+     'off un-fused boards',
+     'the same (the 2026-10-21 amendments)'),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -1076,6 +1279,18 @@ MUST_PASS = [
     "| Firmware corrupt | Every tier's bootloader checks an app image's checksum and appended SHA-256 before it boots it",
     "| `platformio_secure.ini` | ✅ | the secure env: its sdkconfig stages Secure Boot v2 and flash encryption (commented out) and names NVS encryption, all inert under `framework =",
     "| Factory reset via BOOT button | ✅ (short/long press) | ✅ (10 s hold: Wi-Fi, broker, name; identity and token kept) | ✅ (10 s: credentials + settings, identity kept; 30 s: wipe,",
+    # #1843's sweep, third pass (its review round 2):
+    'mitigations, but **neither works on any Canary today**: the provisioning',
+    'lockdown as an explicit opt-in. The design calls for that opt-in to enforce a key backup',
+    'so after it flash encryption is off and Secure Boot is enabled with nothing to verify against',
+    "so every release image relies on the OTA path's SHA-256 and Ed25519 release-signature check",
+    'an install or a full erase in either flasher, each of which rewrites the settings region, is what removes them',
+    '(an install or a full erase in either flasher, whose factory image starts NVS over, is its way to a new identity)',
+    'so an install in either flasher, with or without the full erase (its factory image starts NVS over), is its way',
+    'a seizer of a board with flash encryption on who reads its flash after the hold has the mesh secret',
+    'That keeps the secret off every board without flash encryption',
+    'the FE gate keeps it off boards without flash encryption',
+    'a board without flash encryption keeps the ring in RAM only',
 ]
 # The replacements of the RETIRED_IN sentences, which share most of their
 # words with what they replaced: (file, the replacement as it stands there).
@@ -1166,63 +1381,32 @@ MUST_PASS_IN = [
      "  the way out is the owner's browser, and the iPhone's lane is no way out\n"
      "  until A65 is settled), and spend that lane's ten writes an hour, so the decision"),
     ('docs/getting_started_canary.md',
-     "You can't brick the device through the dashboard. You *can* lose your\n"
-     'witness chain by erasing the board: a full erase in a flasher (or, on the\n'
-     'all-rounder Canary, holding BOOT to 30 seconds) removes the Ed25519 device\n'
-     'key, the next boot makes a new one from a fresh hardware-RNG seed, and the\n'
-     'previous chain is no longer signable. The 10-second BOOT reset keeps the\n'
-     "key and the chain. If you've been using the Canary as a witness device\n"
-     'for evidence, **export the chain before you erase it** —'),
+     "You can't brick the device through the dashboard. You *can* lose your witness chain by erasing the board: installing again in a flasher, with or without its full erase"),
     ('docs/getting_started_canary.md',
-     'witness chain by erasing the board: a full erase in a flasher (or, on the\n'
-     'all-rounder Canary, holding BOOT to 30 seconds) removes the Ed25519 device\n'
-     'key, the next boot makes a new one from a fresh hardware-RNG seed, and the\n'
-     'previous chain is no longer signable. The 10-second BOOT reset keeps the\n'
-     "key and the chain. If you've been using the Canary as a witness device\n"
-     'for evidence, **export the chain before you erase it** —'),
+     'on the all-rounder Canary, holding BOOT to 30 seconds removes the Ed25519 device key'),
     ('docs/getting_started_canary.md',
-     'app checks it against the fingerprint in your recovery kit instead. The\n'
-     '10-second BOOT reset keeps the certificate, so that fingerprint stays\n'
-     'right; holding BOOT to 30 seconds, or a full erase in a flasher, makes a\n'
-     'new one, so pair the iPhone app again after either. The standard release\n'
-     'image does not turn this on yet.'),
+     '10-second BOOT reset and an over-the-air update keep the certificate, so that fingerprint stays right; holding BOOT to 30 seconds, or installing again in a flasher'),
     ('firmware/canary/include/canary_config.h',
      '// generated once on the first TLS-capable boot. The 10 s BOOT reset keeps\n'
      '// both (reset_scope_keys.h kIdentityKept); only the 30 s wipe\n'
      '// (ResetScope::Everything) or a full flash erase removes them, after which\n'
      '// the device re-keys and a pinned iPhone pairing must be redone.'),
     ('firmware/canary/scripts/ota_deploy.py',
-     '        log_error("Refusing to send the token. Only the 30 s BOOT wipe or a full flash erase")\n'
-     '        log_error("makes a new certificate (the 10 s reset keeps it); re-read `tls_cert_fp`")\n'
-     '        log_error("from a new recovery kit only if one of those happened.")'),
+     'log_error("erase in a flasher (its factory image starts NVS over), makes a new")'),
     ('firmware/canary/scripts/ota_deploy.sh',
-     '    log_error "Refusing to send the token. Only the 30 s BOOT wipe or a full flash erase"\n'
-     '    log_error "makes a new certificate (the 10 s reset keeps it); re-read \\`tls_cert_fp\\`"\n'
-     '    log_error "from a new recovery kit only if one of those happened."'),
+     'log_error "erase in a flasher (its factory image starts NVS over), makes a new"'),
     ('firmware/canary/src/main.cpp',
      '  Serial.println("║  BOOT: tap=gate, 2s=info, 10s=reset (key kept), 30s=wipe     ║");'),
     ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
-     '                + "place — check the device itself. If you fully erased it in a flasher (or "\n'
-     '                + "held an all-rounder Canary\'s BOOT to 30 seconds) or replaced it, re-pair it "\n'
-     '                + "to get its new receipt. A 10-second BOOT reset keeps its certificate, so "\n'
-     '                + "after one this mismatch means something else is answering."'),
+     '+ "place — check the device itself. If you installed it again or fully erased "'),
     ('ios/Sources/SecuraCV/Alerts/HeadWatch.swift',
-     "//     means the chain restarted (a full erase, an all-rounder Canary's\n"
-     '//     30 s BOOT wipe, a replaced board; the 10 s BOOT reset keeps the\n'
-     '//     chain) — exactly the kind of'),
+     "// means the chain restarted (an install or a full erase in a // flasher, an all-rounder Canary's 30 s BOOT wipe, a replaced board;"),
     ('ios/Sources/SecuraCV/Transport/BLEConsole.swift',
      '            resolveProvision(.failed("This Canary\'s firmware doesn\'t offer the Bluetooth rescue — use its own setup network (SecuraCV-wap-XXXX, which it raises while it is off'),
     ('custom_components/securacv/__init__.py',
-     '        # identity for this device_id (a full flash erase, an all-rounder\n'
-     "        # Canary's 30 s BOOT wipe, a replacement board; the 10 s BOOT reset\n"
-     '        # keeps the key), whose counters start over — so its replay'),
+     '# identity for this device_id (an install or a full erase in either # flasher, whose factory image starts NVS over;'),
     ('custom_components/securacv/__init__.py',
-     '        # A newly pinned device starts its counters over (a full flash erase,\n'
-     "        # an all-rounder Canary's 30 s BOOT wipe); its replay high-water marks\n"
-     '        # must start over with it. The verifiers do not return this reason\n'
-     '        # today — the health hook and the options flow clear the marks\n'
-     '        # themselves — but a future verifier that pins inline gets the same\n'
-     '        # behavior for free.'),
+     "# A newly pinned device starts its counters over (an install or a full # erase in either flasher, an all-rounder Canary's 30 s BOOT wipe);"),
     ('custom_components/securacv/sensor.py',
      '    device is (re)pinned via TOFU (async_record_verify), which is what a\n'
      "    full flash erase (or an all-rounder Canary's 30 s BOOT wipe) looks like\n"
@@ -1230,10 +1414,7 @@ MUST_PASS_IN = [
     ('custom_components/securacv/tests/test_replay_and_device_id.py',
      '    # A full erase (a new key): the device pins fresh and its chain starts over.'),
     ('docs/design/magic_pairing.md',
-     "visiting browser's own address. A phone that still holds a pairing for a\n"
-     'unit that was fully erased and re-flashed (a new key, so a new token and\n'
-     'device_id; the 10 s hold keeps the token) keeps polling with the old token,\n'
-     'and so holds its own address, its new pairing included (F352). Host-tested'),
+     'A phone that still holds a pairing for a unit that was installed again or fully erased in a flasher (a new key, so a new token and device_id;'),
     ('docs/audit/repo_todo_sweep_2026-09.md',
      '  untouched) and `docs/csi_developer_api.md` say so now; the canary-wap half\n'
      '  is unchanged. No behavior changed; not run on a device.\n'
@@ -1263,11 +1444,9 @@ MUST_PASS_IN = [
      '  keeps the floor), a full flash erase on a canary-wap (whose 10 s hold keeps\n'
      "  it too) without restoring the flasher's pre-erase backup, then a"),
     ('canary-local/tools/gen_flash.py',
-     '            "what": "Wipes every byte of flash — firmware, settings, stored WiFi, the identity "\n'
-     '                    "key and the chain — then writes fresh, so the board comes up with a new "\n'
-     '                    "identity. More than a factory reset: the 10-second BOOT reset keeps the key.",'),
+     '"reset: the 10-second BOOT reset keeps the key.",'),
     ('canary-local/devices/flash.json',
-     '      "what": "Wipes every byte of flash — firmware, settings, stored WiFi, the identity key and the chain — then writes fresh, so the board comes up with a new identity. More'),
+     'so the board comes up with a new identity either way. More than a factory reset: the 10-second BOOT reset keeps the key.'),
     ('firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md',
      '        WAP has no factory-reset route at all (BOOT held 10 s,\n'
      '        `factory_reset_by_hold()`, is the only path; it clears the saved\n'
@@ -1321,13 +1500,7 @@ MUST_PASS_IN = [
      "core's precompiled `sdkconfig` has it), and secure boot is prepared but not\n"
      'enabled on any tier ([`key_at_rest.h`](../../firmware/common/identity/key_at_rest.h)).'),
     ('firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp',
-     '// and opera_id derivation. A physical-access attacker who reads NVS can\n'
-     '// extract it and become a permanent opera member from outside the household,\n'
-     '// on a fused board too: flash encryption does not cover NVS, and NVS\n'
-     '// encryption is not available under framework = arduino\n'
-     '// (spec/canary_mesh_network_v0.md §5.5). Both the save and load paths refuse\n'
-     '// to operate unless flash encryption is enabled (eFuse FLASH_CRYPT_CNT > 0),\n'
-     '// which keeps the secret off un-fused boards only. Devices that do not'),
+     '// extract it and become a permanent opera member from outside the household, // on a board with flash encryption on too: flash encryption does not cover'),
     ('firmware/canary/lib/securacv_ble_scan/src/ble_scan.h',
      ' * (with no flash-encryption gate: Tier 0 like the identity key, plaintext\n'
      ' * in NVS on every tier today; mesh_state.h, common/identity/key_at_rest.h).'),
@@ -1421,10 +1594,7 @@ MUST_PASS_IN = [
     ('docs/design/apple_home_integration.md',
      '| Bridge restarts / Canary reboots | HAP state is **re-derived, never restored**: re-advertise mDNS, republish current signals. Pairings persist (NVS on a Canary — plaintext on'),
     ('docs/design/apple_home_integration.md',
-     '  NVS; they get the `opera_secret` treatment — refuse to persist on\n'
-     '  flash-encryption-off devices, which keeps them off un-fused boards but does\n'
-     '  not make them confidential (NVS is plaintext on a fused board too until NVS\n'
-     '  encryption is in the build; the tiered story from'),
+     'NVS; they get the `opera_secret` treatment — refuse to persist on flash-encryption-off devices, which keeps them off every board without flash encryption but does not make them confidential'),
     ('docs/hardware/tv_display_design.md',
      '  the NVS-stored broker credentials are plaintext at rest on every build: no\n'
      '  display env uses the secure sdkconfig\n'
@@ -1458,7 +1628,7 @@ MUST_PASS_IN = [
      '#\n'
      'CONFIG_NVS_ENCRYPTION=y'),
     ('docs/audit/mesh_and_chirp_audit_v1.md',
-     '| NVS confidentiality | M | No FE gate (O2). *(Amended 2026-10-21: the O2 gate keeps the secret off un-fused boards; it does not give NVS confidentiality, since flash encryption'),
+     '| NVS confidentiality | M | No FE gate (O2). *(Amended 2026-10-21: the O2 gate keeps the secret off boards without flash encryption; it does not give NVS confidentiality, since flash encryption'),
     ('docs/audit/mesh_and_chirp_audit_v1.md',
      '  SD — pure append, never truncated — with the 64-entry flash-encrypted NVS\n'
      '  ring *(amended 2026-10-21: an NVS ring written only on a board with flash\n'
@@ -1540,7 +1710,7 @@ MUST_PASS_IN = [
      '  Secure Boot would refuse unsigned firmware and flash encryption would keep\n'
      '  the app image from being read off the chip, but flash encryption does'),
     ('docs/security/THREAT_MODEL.md',
-     "| Firmware corrupt | Every tier's bootloader checks an app image's checksum and appended SHA-256 before it boots it (neither pinned core's precompiled bootloader sets `CONFIG_BOOTLOADER_SKIP_VALIDATE_ON_POWER_ON`; it does skip the check on a wake from deep sleep), and on a failed check it tries the other app slot instead (ESP-IDF's `bootloader_utility_load_boot_image`; read from the cores' `sdkconfig` and IDF source, not run on a device). What no tier refuses today is a well-formed image that is unsigned or forged: that is Secure Boot's job, which the provisioning kit prepares but does not enable (it is NOT on default builds — see [Scope of this principle](#scope-of-this-principle)), so every tier relies on the OTA path's SHA-256 and Ed25519 release-signature check, which runs on the image written to the spare slot before the device switches its boot slot to it (`firmware/common/ota`) |"),
+     "| Firmware corrupt | Every tier's bootloader checks an app image's checksum and appended SHA-256 before it boots it (neither pinned core's precompiled bootloader sets `CONFIG_BOOTLOADER_SKIP_VALIDATE_ON_POWER_ON`; it does skip the check on a wake from deep sleep), and on a failed check it tries the other app slot instead (ESP-IDF's `bootloader_utility_load_boot_image`; read from the cores' `sdkconfig` and IDF source, not run on a device). What no tier refuses today is a well-formed image that is unsigned or forged: that is Secure Boot's job, which the provisioning kit prepares but does not enable (it is NOT on default builds — see [Scope of this principle](#scope-of-this-principle)), so every release image relies on the OTA path's SHA-256 and Ed25519 release-signature check"),
     ('docs/security/THREAT_MODEL.md',
      '  keys and the saved passwords stay plaintext on every tier today; prepared\n'
      '  in the provisioning kit, not yet enabled on any tier, Scenario 4)'),
@@ -1552,7 +1722,7 @@ MUST_PASS_IN = [
      'takes the device to a bench: the key lives in NVS, which flash encryption\n'
      '(an opt-in tier the provisioning kit does not yet turn on) does not cover,'),
     ('docs/security/SECURITY_MODEL.md',
-     'mitigations, but they are **off on every Canary today**: the provisioning'),
+     'mitigations, but **neither works on any Canary today**: the provisioning kit prepares both and turns on neither'),
     ('docs/security/SECURITY_MODEL.md',
      'tiers buy today before you burn anything: nothing yet. The provisioning'),
     ('canary-local/assets/flash.js',
@@ -1698,28 +1868,24 @@ MUST_PASS_IN = [
     ('canary-local/tools/hatchery/derive.mjs',
      '//   honestly a new bird, and says so. The 10 s factory reset keeps the key,'),
     ('ios/Sources/SecuraCV/Security/DeviceStore.swift',
-     '        // sight then (TOFU) — a device fully erased in a flasher, with a new'),
+     '// sight then (TOFU) — a device installed again or fully erased in a'),
     ('custom_components/securacv/tests/test_replay_reset_paths.py',
-     'to the KEY: a fully erased or replaced Canary starts them over (an ordinary'),
+     'to the KEY: a Canary installed again or fully erased in a flasher (whose'),
     ('firmware/common/network/auth_backoff.h',
-     '// polling a fully erased unit with its old token (a full erase in a flasher'),
+     '// polling a re-installed unit with its old token (an install or a full'),
     ('firmware/projects/canary-wap/arduino/canary_wap/auth_backoff.h',
-     '// polling a fully erased unit with its old token (a full erase in a flasher'),
+     '// polling a re-installed unit with its old token (an install or a full'),
     ('docs/audit/repo_todo_sweep_2026-09.md',
-     '- [ ] **F352 [code] iOS: a pairing for a fully erased Canary keeps polling'),
+     '- [ ] **F352 [code] iOS: a pairing for a re-installed Canary keeps polling with its old token.**'),
     ('docs/audit/repo_todo_sweep_2026-09.md',
-     '  token. *(Amended 2026-10-21, #1843: a fully erased unit; the 10 s hold and\n'
-     '  an ordinary re-flash keep the token, and only a full erase in a flasher'),
+     'token. *(Amended 2026-10-21, #1843: a re-installed unit; the 10 s hold and an OTA update keep the token,'),
     ('docs/audit/repo_todo_sweep_2026-09.md',
      "  (iOS, a reset unit's stale pairing; amended 2026-10-21, #1843: a fully\n"
      "  erased unit's, since the 10 s hold keeps the token)."),
     ('firmware/LESSONS_LEARNED.md',
-     "  and the likeliest such host was the owner's own phone, polling a\n"
-     '  fully erased unit (a full erase gives it a new key and token; the 10 s hold\n'
-     '  and an ordinary re-flash keep the token) with its old token. Because a `static` in a header is a separate object in'),
+     "and the likeliest such host was the owner's own phone, polling a re-installed unit (an install or a full erase in either flasher starts NVS over and gives it a new key and token; the 10 s hold and an OTA update keep the token) with its old token."),
     ('CHANGELOG.md',
-     '  still polling a fully erased unit (a full erase gives it a new key and\n'
-     '  token; the 10 s hold and an ordinary re-flash keep the token) with its old'),
+     'still polling a re-installed unit (an install or a full erase in either flasher starts NVS over and gives it a new key and token; the 10 s hold and an OTA update keep the token) with its old token (filed as F352).'),
     ('firmware/projects/canary-wap/arduino/canary_wap/web_ui.h',
      "      if (!confirm('Remove every saved Wi-Fi network from this Canary? If its build has the Bluetooth setup door and Bluetooth is on, then for half an hour after, that door goes to the first phone or computer nearby that connects, so have yours ready.')) return;"),
     ('docs/unflashed_board_intake.md',
@@ -1727,11 +1893,122 @@ MUST_PASS_IN = [
      'burn is still irreversible, and it sets `SECURE_BOOT_EN` with no Secure Boot\n'
      'key digest, which has not been run on a bench (a board may not boot after'),
     ('docs/audit/mesh_and_chirp_audit_v1.md',
-     "`OperaConfig.opera_secret[32]` is the 32-byte symmetric secret from which `opera_id` is derived and which gates pairing. If the device's flash is not encrypted (ESP32 flash encryption is opt-in, not on by default outside production builds), a physical-access attacker can pull the secret with `esptool.py read_flash` and become a permanent opera member from outside the household. *(Amended 2026-10-21: flash encryption does not stop it either. It does not cover NVS, so on a fused board the secret is still plaintext, and no released build turns flash encryption on. The O2 gate keeps the secret off un-fused boards only; `spec/canary_mesh_network_v0.md` §5.5.)*"),
+     '*(Amended 2026-10-21: flash encryption does not stop it either. It does not cover NVS, so on a board with flash encryption on the secret is still plaintext, and no released build turns flash encryption on. The O2 gate keeps the secret off boards without flash encryption only; `spec/canary_mesh_network_v0.md` §5.5.)*'),
     ('ios/Sources/SecuraCV/Model/FleetWiFiRollout.swift',
      '        + "it raises while it is off your Wi-Fi) will take the correction."'),
     ('ios/Sources/SecuraCV/Transport/BLEConsole.swift',
      '            resolveProvision(.failed("This Canary\'s firmware doesn\'t offer the Bluetooth rescue — use its own setup network (SecuraCV-wap-XXXX, which it raises while it is off your Wi-Fi) instead."))'),
+    # #1843's sweep, third pass (its review round 2):
+    ('firmware/provisioning/platformio_secure.ini',
+     '; - Turns on neither Secure Boot nor flash encryption, and no step of the ; kit does.'),
+    ('firmware/provisioning/platformio_secure.ini',
+     'so a Phase 2 board has flash encryption off and Secure Boot ; enabled with nothing to verify against.'),
+    ('firmware/provisioning/sdkconfig.defaults.secure',
+     '# IMPORTANT: Secure Boot and Flash Encryption are commented out below, # and uncommenting them changes nothing under framework = arduino.'),
+    ('firmware/provisioning/sdkconfig.defaults.secure',
+     '# What an ESP-IDF build would set; no Canary build reads them today:'),
+    ('firmware/provisioning/README.md',
+     '**Phase 2 (target, not reached):** Secure Boot v2, flash encryption and JTAG disabled.'),
+    ('firmware/provisioning/README.md',
+     '## Phase 2 (not usable yet: do not run it on a board you want to keep)'),
+    ('firmware/provisioning/generate_keys.sh',
+     '"The kit does not use the signing key yet: no Secure Boot key digest is burned and nothing is signed with it",'),
+    ('docs/secure_provisioning.md',
+     'The kit does not use the signing key yet (no step burns its digest or signs with it, Step 3)'),
+    ('docs/secure_provisioning.md',
+     '# keys/secure_boot_signing_key.pub (not yet used: no step burns its digest)'),
+    ('docs/secure_provisioning.md',
+     'The secure env compiles no Bluetooth code: its `-DFEATURE_BLE=0`,'),
+    ('docs/secure_provisioning.md',
+     '# There is no ESP-IDF project for this tree yet'),
+    ('canary-local/assets/flash.js',
+     '"neither the firmware, the identity key nor the saved WiFi (it does " +'),
+    ('ios/Sources/SecuraCV/Security/DeviceStore.swift',
+     '// flasher, whose factory image starts NVS over and so gives it a new'),
+    ('custom_components/securacv/tests/test_replay_reset_paths.py',
+     'factory image starts NVS over), or replaced, starts them over (an OTA update'),
+    ('firmware/common/network/auth_backoff.h',
+     '// erase in either flasher starts NVS over and gives it a new key, so a new'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/auth_backoff.h',
+     '// erase in either flasher starts NVS over and gives it a new key, so a new'),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     "factory image starts NVS over and so regenerates the WAP's key (an OTA"),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     'an OTA update keep the token, and an install or a full erase in either'),
+    ('firmware/LESSONS_LEARNED.md',
+     're-installed unit (an install or a full erase in either flasher starts NVS'),
+    ('CHANGELOG.md',
+     'still polling a re-installed unit (an install or a full erase in either'),
+    ('CHANGELOG.md',
+     'pass also wrote that an ordinary re-flash keeps NVS; it does not, since'),
+    ('CHANGELOG.md',
+     "Canary; the flagship's 30 s wipe, and an install or a full erase in either"),
+    ('CHANGELOG.md',
+     'install or a full erase in either flasher, each of which rewrites the'),
+    ('firmware/canary/scripts/ota_deploy.py',
+     'log_error("Refusing to send the token. Only the 30 s BOOT wipe, or an install or a full")'),
+    ('firmware/canary/scripts/ota_deploy.sh',
+     'log_error "Refusing to send the token. Only the 30 s BOOT wipe, or an install or a full"'),
+    ('docs/security/PENTEST_SCOPE.md',
+     'or a full erase in either flasher (whose factory image starts NVS over), sheds them.'),
+    ('docs/design/magic_pairing.md',
+     'full erase in either flasher, whose factory image starts NVS over, replaces'),
+    ('desktop/src/index.html',
+     'not its identity: every install starts the settings region over,'),
+    ('firmware/projects/canary-sense/include/canary/witness.h',
+     '// OTA installs and a PlatformIO upload (which leaves NVS alone); an install'),
+    ('firmware/projects/canary-vision/include/canary/witness.h',
+     '// OTA installs and a PlatformIO upload (which leaves NVS alone); an install'),
+    ('firmware/projects/canary-sentinel/include/canary/witness.h',
+     '// keypair survives OTA installs and a PlatformIO upload (which leaves NVS'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '// it stays stable across OTA updates and the 10 s hold because the keypair'),
+    ('canary-local/tools/gen_flash.py',
+     '"its sealed diary. The chain rides through over-the-air updates "'),
+    ('canary-local/devices/flash.json',
+     'The chain rides through over-the-air updates untouched; an install here starts the settings region over'),
+    ('canary-local/tools/gen_flash.py',
+     '"install already starts the settings region over, the identity key with it, "'),
+    ('canary-local/devices/flash.json',
+     'A normal install already starts the settings region over, the identity key with it, so the board comes up with a new identity either way.'),
+    ('canary-local/tools/gen_flash.py',
+     '"Off — a normal install writes only the regions its image covers (the "'),
+    ('canary-local/devices/flash.json',
+     'Off — a normal install writes only the regions its image covers (the bootloader, the partition table, a fresh settings region and the firmware) and leaves the rest.'),
+    ('docs/README.md',
+     'The door rule (open for a device with no network saved — a new one nobody owns yet, or one its owner cleared, which still has an owner —'),
+    ('firmware/LESSONS_LEARNED.md',
+     "*(Amended 2026-10-22, #1843: the header's sentence now reads"),
+    ('firmware/LESSONS_LEARNED.md',
+     'A door that is open to whichever client connects while no network is saved must still be a door nobody can wedge.'),
+    ('docs/design/iphone_companion_app.md',
+     "nothing but the per-device tokens it was handed when it paired (the setup door's"),
+    ('docs/design/iphone_companion_app.md',
+     'BOOT-button receipt this step first planned was never built into the app);'),
+    ('ios/Sources/SecuraCV/Views/FleetWiFiSheet.swift',
+     'candidateRow(c, note: "Not answering on your network. Off your Wi-Fi, its own "'),
+    ('ios/Sources/SecuraCV/Views/FleetWiFiSheet.swift',
+     '+ "goes only to your Canaries — over a secure connection when "'),
+    ('ios/Sources/SecuraCV/Model/FleetWiFiRollout.swift',
+     '+ "approved. Re-pair it with a secure (https) receipt, then try "'),
+    ('ios/Sources/SecuraCV/Model/FleetWiFiRollout.swift',
+     '+ "re-pair it with one. This app has no Bluetooth lane to these "'),
+    ('docs/GLOSSARY.md',
+     'That keeps the household secret off every board without flash encryption;'),
+    ('docs/design/apple_home_integration.md',
+     'which keeps them off every board without flash encryption'),
+    ('firmware/canary/lib/securacv_mesh/src/mesh_state.h',
+     'So today the gate keeps the secret off every board without flash'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp',
+     '// which keeps the secret off boards without it only.'),
+    ('spec/canary_mesh_network_v0.md',
+     'The FE gate keeps the secret off every board without flash encryption,'),
+    ('spec/beacon_channel_v0.md',
+     'a board without flash encryption keeps the set in RAM only'),
+    ('firmware/scripts/regression_check.sh',
+     'the gate keeps it off boards without flash encryption, it does not encrypt NVS'),
+    ('docs/audit/mesh_and_chirp_audit_v1.md',
+     'The O2 gate keeps the secret off boards without flash encryption only;'),
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -1788,6 +2065,23 @@ MUST_FAIL = [
     "| Firmware corrupt | Refuse to boot **on the opt-in secure-provisioning tier only** (secure boot is NOT",
     "| `platformio_secure.ini` | ✅ | Secure Boot v2 + Flash Encryption env; compile-only in CI (F42), no bench pass |",
     "| Factory reset via BOOT button | ✅ (short/long press) | ❌ | ✅ (5s hold) | ❌ |",
+    # #1843's sweep, third pass (its review round 2):
+    'mitigations, but they are **off on every Canary today**: the provisioning',
+    'reversible protections in the default path and leaves the irreversible\n'
+    'lockdown as an explicit, key-backup-enforced opt-in. The settings are',
+    'so neither flash encryption nor Secure Boot is on after it (what the chip',
+    "| Firmware corrupt | Every tier's bootloader checks an app image's checksum and appended SHA-256 before it boots it (neither pinned core's precompiled bootloader sets `CONFIG_BOOTLOADER_SKIP_VALIDATE_ON_POWER_ON`; it does skip the check on a wake from deep sleep), and on a failed check it tries the other app slot instead (ESP-IDF's `bootloader_utility_load_boot_image`; read from the cores' `sdkconfig` and IDF source, not run on a device). What no tier refuses today is a well-formed image that is unsigned or forged: that is Secure Boot's job, which the provisioning kit prepares but does not enable (it is NOT on default builds — see [Scope of this principle](#scope-of-this-principle)), so every tier relies on the OTA path's SHA-256 and Ed25519 release-signature check, which runs on the image written to the spare slot before the device switches its boot slot to it (`firmware/common/ota`) |",
+    '  is readable on a bench, a full erase in either flasher is what removes',
+    '  bytes stay in flash the same way. No hold sheds its key (a clean install,\n'
+    '  a full erase in either flasher, is its way to a new identity). The',
+    '| NVS corruption | A key NVS does not hold (never stored, or wiped) is a fresh start: a new identity. On the flagship (`firmware/canary`) and the canary-wap, a key IDF reports as stored that cannot be read, is not 32 bytes or is 32 zero bytes, or an NVS that cannot say whether one is stored, halts the boot instead: no key is generated, and nothing is written to the identity key or the chain state (sweep F360). A fault in the read that leaves the entry in place (a session that will not open, a flash read error while IDF copies the data) leaves the key for a later boot that can read it. Corruption is IDF\'s to meet first, and the firmware sees only its answer (read from IDF v4.4.7, v5.5.1 and v5.5.4\'s source). An entry whose data checksum fails IDF erases in the read it refuses, so that boot halts: on IDF 4.4 (every flagship env but `env:full`) the blob\'s index survives and each later boot halts until the 30 s BOOT hold at power-on wipes the identity; on IDF 5.5 (`env:full` and the canary-wap) the next boot\'s NVS init erases the orphaned index, so that boot finds no key and makes a new identity. Some faults make a new identity with no halt, because IDF answers "not found": a data chunk whose header fails IDF\'s check, on IDF 5.5 (on 4.4 it halts every boot, as above); an index entry whose header fails it, which IDF erases before the key is read (when it loads the page, or in the probe\'s own lookup); and a flash read error in IDF\'s own lookup of the key, which sets that page aside for the boot and leaves the old entry on it. All of it is today\'s behavior, not a decision; what holds throughout is that the firmware never writes over a key IDF still reports as stored. The canary-wap\'s BOOT hold keeps the identity (it has no wipe stage), so a clean install (full erase) in either flasher is its way to a new identity on purpose, halted or not. Before F360 a read that failed after the length check, before IDF copied anything into the buffer, ran the boot on the zero key, whose setup-network key is the published `cv-3jByJ6rHdhM2` (on a release canary-wap, the SoftAP came up under it and records were signed with it), and a failed open or length lookup replaced the stored identity. Host-tested; not run on a device. canary-sense, canary-vision and canary-sentinel never sign with the zero key, but still replace a stored key they fail to read with a new one (Home Assistant shows a changed fingerprint; sweep F362) |',
+    '  NVS the same way, so a seizer of a fused board who reads its flash after\n'
+    '  the hold has the mesh secret.',
+    '  and log loudly (v0.2 audit O2). That keeps the secret off un-fused\n'
+    '  boards; it does **not** make it confidential at rest on fused ones.',
+    '| Physical extraction of opera_secret | partial (the FE gate keeps it off un-fused boards; NVS is not encrypted, so a fused board still holds it in plaintext) | n/a | n/a |',
+    '  `beacon_channel.cpp` uses the same gate as O2; an un-fused board keeps\n'
+    '  the ring in RAM only), and it is plaintext NVS there too: flash',
 ]
 # And the RETIRED_IN sentences as they stood, wrapped: (file, the sentence as
 # it stood there). Each form must trip a row of ITS OWN file, and each row
@@ -2366,6 +2660,131 @@ MUST_FAIL_IN = [
      '  still polling a re-flashed unit (a full erase gives it a new key and'),
     ('firmware/projects/canary-wap/arduino/canary_wap/web_ui.h',
      "      if (!confirm('Remove every saved Wi-Fi network from this Canary? For half an hour after, its Bluetooth setup goes to the first phone or computer nearby that connects, so have yours ready.')) return;"),
+    # #1843's sweep, third pass (its review round 2):
+    ('firmware/provisioning/platformio_secure.ini',
+     '; To enable full Secure Boot:'),
+    ('firmware/provisioning/platformio_secure.ini',
+     '; - Prepares for Secure Boot (not enabled until Phase 2 eFuse burn)'),
+    ('firmware/provisioning/sdkconfig.defaults.secure',
+     '# To enable full security (Phase 2):'),
+    ('firmware/provisioning/sdkconfig.defaults.secure',
+     '# Uncomment these lines for production lockdown:'),
+    ('firmware/provisioning/README.md',
+     '- **Phase 2 (Future):** Production lockdown with Secure Boot v2, Flash Encryption, JTAG disabled'),
+    ('firmware/provisioning/README.md',
+     '# 3. Execute production provisioning'),
+    ('firmware/provisioning/generate_keys.sh',
+     '    "Loss of signing key = bricked devices on next OTA",'),
+    ('docs/secure_provisioning.md',
+     'Loss of signing key = bricked devices on next OTA.'),
+    ('docs/secure_provisioning.md',
+     '#   keys/secure_boot_signing_key.pub  (embedded in firmware)'),
+    ('docs/secure_provisioning.md',
+     'The secure configuration disables Bluetooth at compile time (`CONFIG_BT_ENABLED=n`).'),
+    ('docs/secure_provisioning.md',
+     '# Or with ESP-IDF directly'),
+    ('canary-local/assets/flash.js',
+     '    "yet turn on flash encryption or secure boot, so today it protects " +\n'
+     '    "nothing on the board. Even turned on, flash encryption would cover the " +'),
+    ('ios/Sources/SecuraCV/Security/DeviceStore.swift',
+     '        // previous life (an ordinary re-flash keeps the key).'),
+    ('custom_components/securacv/tests/test_replay_reset_paths.py',
+     'to the KEY: a fully erased or replaced Canary starts them over (an ordinary\n'
+     're-flash keeps the key and its counters). So every'),
+    ('firmware/common/network/auth_backoff.h',
+     '// gives it a new key, so a new token and device_id; an ordinary re-flash and'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/auth_backoff.h',
+     '// gives it a new key, so a new token and device_id; an ordinary re-flash and'),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     '  key (the 10 s hold and an ordinary re-flash keep the key and the token),'),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     '  an ordinary re-flash keep the token, and only a full erase in a flasher\n'
+     '  changes it, F352.)*'),
+    ('firmware/LESSONS_LEARNED.md',
+     '  fully erased unit (a full erase gives it a new key and token; the 10 s hold\n'
+     '  and an ordinary re-flash keep the token) with its old token. Because a `static` in a header is a separate object in'),
+    ('CHANGELOG.md',
+     '  token; the 10 s hold and an ordinary re-flash keep the token) with its old'),
+    ('CHANGELOG.md',
+     '    "re-flashed" no longer stands for "fully erased" (an ordinary re-flash\n'
+     '    keeps NVS).'),
+    ('CHANGELOG.md',
+     "  Canary; only the flagship's 30 s wipe or a full erase in a flasher changes\n"
+     '  them. The getting started guide said a factory reset loses the witness'),
+    ('CHANGELOG.md',
+     '  full erase in either flasher is what removes them).'),
+    ('firmware/canary/scripts/ota_deploy.py',
+     '        log_error("Refusing to send the token. Only the 30 s BOOT wipe or a full flash erase")'),
+    ('firmware/canary/scripts/ota_deploy.sh',
+     '    log_error "Refusing to send the token. Only the 30 s BOOT wipe or a full flash erase"'),
+    ('docs/security/PENTEST_SCOPE.md',
+     "  by design, so every hub and display that pinned the key still knows it. Only the all-rounder Canary's 30 s wipe or a full erase\n"
+     "  in a flasher sheds them. So whatever already holds a WAP's token, such as a"),
+    ('docs/design/magic_pairing.md',
+     '  the reset keeps, and nothing rotates the token today; only a full erase in\n'
+     '  a flasher replaces them, with the identity. And either reset reopens the'),
+    ('desktop/src/index.html',
+     '                left in the other partitions would survive. Reflashing a Canary\n'
+     '                you set up here and want to keep the identity of? Untick it —'),
+    ('firmware/projects/canary-sense/include/canary/witness.h',
+     '// same storage contract as the canary-wap tree, so the keypair survives\n'
+     '// reflashes and OTA installs. The fingerprint is the wap formula:'),
+    ('firmware/projects/canary-vision/include/canary/witness.h',
+     '// same storage contract as the canary-wap tree, so the keypair survives\n'
+     '// reflashes and OTA installs. The fingerprint is the wap formula:'),
+    ('firmware/projects/canary-sentinel/include/canary/witness.h',
+     '// keypair survives reflashes and OTA installs. The fingerprint is the wap'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '  // it stays stable across reflashes because the keypair persists in NVS.'),
+    ('canary-local/tools/gen_flash.py',
+     '                    "its sealed diary. The chain rides through reflashes untouched.",'),
+    ('canary-local/devices/flash.json',
+     '      "what": "How many entries this Canary\'s tamper-evident hash chain holds — its sealed diary. The chain rides through reflashes untouched."'),
+    ('canary-local/tools/gen_flash.py',
+     '                    "key and the chain — then writes fresh, so the board comes up with a new "'),
+    ('canary-local/devices/flash.json',
+     '      "what": "Wipes every byte of flash — firmware, settings, stored WiFi, the identity key and the chain — then writes fresh, so the board comes up with a new identity. More than a factory reset: the 10-second BOOT reset keeps the key.",'),
+    ('canary-local/tools/gen_flash.py',
+     '            "default": "Off — a normal install only touches the regions the new firmware needs.",'),
+    ('canary-local/devices/flash.json',
+     '      "default": "Off — a normal install only touches the regions the new firmware needs."'),
+    ('docs/README.md',
+     "- [**Magic pairing — the Bluetooth setup door (design)**](design/magic_pairing.md) — built, host-tested, **not bench-tested**: a new Sense, Vision or WAP takes its Wi-Fi from the iPhone app with one tap over the open Improv Wi-Fi standard. The door rule (open for a device nobody owns yet, for 30 minutes after power-on, or for 60 s after the owner's own BOOT tap — never because a saved network is failing), the bounds a stranger in radio range runs into, the WAP's claim ticket that gets the phone paired without the bearer token ever riding Bluetooth, the UUIDs and byte layouts, the per-family lifecycle, the iOS flow, the residual risks and the bench checklist"),
+    ('firmware/LESSONS_LEARNED.md',
+     '  that has an owner and a bad day.*\n'
+     '- **Regression check:** `tests_host/test_improv_core.cpp` — a session begun'),
+    ('firmware/LESSONS_LEARNED.md',
+     '  A door that is open to whoever has no owner yet must still be a door\n'
+     '  nobody can wedge.'),
+    ('docs/design/iphone_companion_app.md',
+     'nothing but the per-device tokens it earned by the BOOT-button tap, held in'),
+    ('docs/design/iphone_companion_app.md',
+     '2. **Pairing + local read.** Trust-on-Pair BOOT-button receipt → Keychain token;'),
+    ('ios/Sources/SecuraCV/Views/FleetWiFiSheet.swift',
+     '                    candidateRow(c, note: "Come back when it\'s in Bluetooth range")'),
+    ('ios/Sources/SecuraCV/Views/FleetWiFiSheet.swift',
+     '               + "goes only to your Canaries — over bonded Bluetooth, over a "'),
+    ('ios/Sources/SecuraCV/Model/FleetWiFiRollout.swift',
+     '        + "approved. Move within Bluetooth range for its encrypted lane, or "'),
+    ('ios/Sources/SecuraCV/Model/FleetWiFiRollout.swift',
+     '        + "flight. Their encrypted lanes aren\'t available: Bluetooth needs "'),
+    ('docs/GLOSSARY.md',
+     'flash encryption (audit O2). That keeps the household secret off un-fused\n'
+     'boards; it does **not** make it confidential at rest on fused ones, because'),
+    ('docs/design/apple_home_integration.md',
+     '  flash-encryption-off devices, which keeps them off un-fused boards but does'),
+    ('firmware/canary/lib/securacv_mesh/src/mesh_state.h',
+     ' * route). So today the gate keeps the secret off un-fused boards; it does'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/mesh_network.cpp',
+     '// which keeps the secret off un-fused boards only. Devices that do not'),
+    ('spec/canary_mesh_network_v0.md',
+     'opera member. The FE gate keeps the secret off un-fused boards, at the cost'),
+    ('spec/beacon_channel_v0.md',
+     '| Beacon set (pubkeys, names, last_seen) | NVS | No — persisted only with flash encryption on (same gate as the Opera secret; an un-fused board keeps the set in RAM only), and plaintext NVS there too: flash encryption does not cover NVS, and NVS encryption is not available under `framework = arduino` (`docs/security/THREAT_MODEL.md`, the Opera mesh section) |'),
+    ('firmware/scripts/regression_check.sh',
+     '# item 9) — the gate keeps the secret off un-fused boards, it does not encrypt'),
+    ('docs/audit/mesh_and_chirp_audit_v1.md',
+     "`OperaConfig.opera_secret[32]` is the 32-byte symmetric secret from which `opera_id` is derived and which gates pairing. If the device's flash is not encrypted (ESP32 flash encryption is opt-in, not on by default outside production builds), a physical-access attacker can pull the secret with `esptool.py read_flash` and become a permanent opera member from outside the household. *(Amended 2026-10-21: flash encryption does not stop it either. It does not cover NVS, so on a fused board the secret is still plaintext, and no released build turns flash encryption on. The O2 gate keeps the secret off un-fused boards only; `spec/canary_mesh_network_v0.md` §5.5.)*"),
 ]
 
 
@@ -2747,6 +3166,20 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
         for word in ("opera", "scout", "mesh", "nvs->clear", "elected"):
             with self.subTest(hold=word):
                 self.assertNotIn(word, hold)
+        # The hold's own body is not the whole hold: it calls
+        # wifi_clear_credentials(), csi_mqtt::config_clear() and
+        # setup_wizard::reset_to_first_boot(), and a key-by-key remove of
+        # "opera_sec" in one of them passed this test (#1843's sweep, second
+        # review). recovery_kit.test.js walks every free function the hold
+        # reaches for the mesh's keys, its namespace and the scout key; that
+        # row must stay.
+        kit = (WAP / "recovery_kit.test.js").read_text(encoding="utf-8")
+        row = body_after(kit, "it(\"the 10 s hold keeps the WAP's opera membership and its scout key: nothing it reaches names them",
+                         r"\n  it\(")
+        self.assertIn("sketchCallWalk('factory_reset_by_hold')", row)
+        for key in ("'opera_sec'", "'opera_id'", "'peer_cnt'", "scout_key", "NVS_MESH_NS"):
+            with self.subTest(walked=key):
+                self.assertIn(key, row)
         callers = []
         for f in sorted((REPO / "firmware").rglob("*")):
             if f.suffix in (".cpp", ".h", ".ino") and "tests_host" not in f.parts and "test_" not in f.name:
@@ -2764,6 +3197,44 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
             ("securacv_network.cpp", "clear_opera_secret()",
              "bool cleared = mesh_state::clear_opera_secret();"),
         ]), callers)
+
+    def test_a_flasher_install_starts_nvs_over(self):
+        # #1843's sweep, third pass: the docs say an install in either
+        # flasher, with or without the full erase, starts NVS over, so the
+        # next boot makes a new key, token and certificate, and that an OTA
+        # update, a PlatformIO upload and the 10 s hold keep them (the second
+        # pass had said an ordinary re-flash keeps the key). Held to the
+        # code: the factory image is merge_bin of the bootloader, the
+        # partition table and the app alone, so the gap between the table
+        # and the app, where every partition table puts nvs, is blank (0xFF)
+        # in it, and both flashers write it at offset 0. A factory image that
+        # starts to carry NVS, or a flasher that writes past it, fails here
+        # until the docs follow. (The cores' default tables, which the WAP,
+        # the Sense and the Vision build with, put nvs at 0x9000 and app0 at
+        # 0x10000 too: read from both pinned cores, not from this tree.)
+        mf = (REPO / "firmware/scripts/make_factory.py").read_text(encoding="utf-8")
+        self.assertIn("so flashing it re-initializes NVS", normalized(mf))
+        merge = body_after(mf, '"merge_bin",', r"\n    \]\n")
+        self.assertEqual(re.findall(r"str\(([\w.]+)\)", merge), ["args.out", "bootloader", "partitions", "app"])
+        self.assertIn("hex(PARTITION_TABLE_OFFSET), str(partitions),\n        hex(app_off), str(app),", merge)
+        for flag in ("--fill-flash-size", "--pad-to-size", "nvs"):
+            with self.subTest(merge=flag):
+                self.assertNotIn(flag, merge)
+        js = (REPO / "canary-local/assets/flash.js").read_text(encoding="utf-8")
+        self.assertIn("fileArray: wifiFile ? [{ data, address: 0 }, wifiFile] : [{ data, address: 0 }],", js)
+        rescue = (REPO / "desktop/flash-engine/src/rescue.rs").read_text(encoding="utf-8")
+        self.assertIn('pub fn write_bin_args(port: &str, path: &str, baud: u32) -> Vec<String> {\n'
+                      '    vec![\n        "write-bin".into(),\n        "0x0".into(),', rescue)
+        tables = sorted((REPO / "firmware").rglob("partitions*.csv"))
+        self.assertGreaterEqual(len(tables), 4)
+        for table in tables:
+            rows = [[c.strip() for c in ln.split(",")] for ln in table.read_text(encoding="utf-8").splitlines()
+                    if ln.strip() and not ln.lstrip().startswith("#")]
+            nvs = [int(r[3], 16) for r in rows if r[0] == "nvs"]
+            apps = [int(r[3], 16) for r in rows if r[1] == "app"]
+            with self.subTest(table=str(table.relative_to(REPO))):
+                self.assertEqual(len(nvs), 1)
+                self.assertTrue(0x8000 + 0xC00 <= nvs[0] < min(apps), (hex(nvs[0]), [hex(a) for a in apps]))
 
     def test_the_iphone_app_reaches_no_wap_console(self):
         # The same pass: the Fleet Wi-Fi copy no longer offers the Bluetooth

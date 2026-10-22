@@ -213,15 +213,19 @@
                  that attaches — see resetSteps), so it must be seen before every
                  flash, not discovered inside a disclosure aimed at new boards.
                  Review catch on this PR: folding it away meant reflashing a
-                 known Canary would erase its identity key unannounced. -->
+                 known Canary would wipe its whole chip unannounced. (Any
+                 install starts the settings region over, the identity key
+                 included: the factory image spans it, blank.) -->
             <label class="coldstart-ask">
               <input type="checkbox" id="first-contact" checked>
               <span>This board is new to me — wipe the whole chip before writing.
                 Leave this ticked for anything bought unflashed: a normal install
                 only overwrites the parts it needs, so whatever a previous owner
                 left in the other partitions would survive. Reflashing a Canary
-                you set up here and want to keep the identity of? Untick it —
-                it re-ticks itself for the next board.</span>
+                you set up here? Unticking it keeps those other partitions, but
+                not its identity: every install starts the settings region over,
+                so the board comes up with a new identity key either way. It
+                re-ticks itself for the next board.</span>
             </label>
 
             <!-- The board's passport: what it runs, whether your fleet has

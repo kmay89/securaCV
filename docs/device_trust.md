@@ -18,7 +18,9 @@ still update, but they're marked as **unverified** in their attributes.
 If you only care about the upshot: **a hostile MQTT broker cannot forge
 a signed publish for a Canary whose key you have pinned**, and **a
 re-flashed Canary will surface a clear "key changed" notification**
-instead of silently going unverified. What a broker *can* still do is
+instead of silently going unverified (an install in either flasher starts
+the Canary's settings over, its key included; an over-the-air update and
+the 10 s BOOT reset keep the key). What a broker *can* still do is
 narrower and stated in ["What's NOT solved yet"](#whats-not-solved-yet)
 below and in [`FLEET_SEMANTICS.md`](FLEET_SEMANTICS.md) §4: replay a
 captured signed publish (the hub's roll-call bounds that to one window
@@ -84,7 +86,7 @@ The PKI sig outcome is stamped onto each signed entity's
 | `tofu_pin` | First sight; we just auto-pinned this device | First publish from a freshly-added Canary |
 | `unsigned` | Payload missing `sig`/`fp`/`alg` | Older firmware that doesn't sign yet |
 | `no_pubkey` | We have a sig but no pinned pubkey yet | Briefly, before the health topic delivers `public_key` for TOFU |
-| `mismatch` | Sig doesn't match the pin, OR fingerprint changed | Re-flashed Canary, MITM, broker compromise |
+| `mismatch` | Sig doesn't match the pin, OR fingerprint changed | Re-flashed Canary (an install or a full erase in either flasher), the all-rounder Canary's 30 s BOOT wipe, a replacement board, a Sense, Vision or Sentinel that could not read its stored key (ledger F362), MITM, broker compromise; never an over-the-air update or the 10 s BOOT reset, which keep the key |
 
 `verified` is a boolean derived from the above: only `ok` and
 `tofu_pin` count as verified.
@@ -186,17 +188,25 @@ cannot set one.
 
 ## Key rotation
 
-When you legitimately re-flash a Canary (firmware update that wipes
-NVS, or moving an SD card to fresh hardware), the new keypair won't
+When a Canary legitimately gets a new key, the new keypair won't
 match the pin and HA fires a **persistent notification** plus marks
-the entities unverified.
+the entities unverified. A new key comes from an install in either
+flasher, with or without the full erase (the flashers write a factory
+image whose settings region is blank, so the next boot makes a new key),
+the all-rounder Canary's 30 s BOOT wipe, or a replacement board (moving
+an SD card to fresh hardware moves its records, not the key); a Sense,
+Vision or Sentinel also makes one when it cannot read its stored key at
+boot (ledger F362). An over-the-air update, a PlatformIO or Arduino IDE
+upload (which, without its erase option, leaves the settings region
+alone) and the 10 s BOOT reset keep the key, so after one of those a mismatch means something else is
+publishing under that `device_id`: do not rotate to it.
 
 To clear it:
 
 1. **Settings** → **Devices & services** → **SecuraCV** → **Configure**
    → **Rotate a pinned device key**.
-2. Enter the device_id and the new pubkey, read off the re-flashed
-   Canary from its source in
+2. Enter the device_id and the new pubkey, read off the Canary itself
+   from its source in
    [the table above](#where-each-product-shows-its-key). On a
    canary-sense or canary-sentinel, that is the `Ed25519 pubkey` line
    in its boot log. A canary-sense on 2.4.15 or older shows no full
@@ -218,8 +228,14 @@ SecuraCV: device <id> key mismatch
 
 Canary `<id>` published with fingerprint `<new_fp>` but the pinned
 fingerprint is `<old_fp>`. Entities are still updating, marked as
-unverified. If you intentionally re-flashed this device, rotate the
-pin from the integration's options menu.
+unverified. A Canary gets a new key when it is installed again or fully
+erased in either flasher (an install starts its settings over), from the
+all-rounder Canary's 30-second BOOT wipe, or with a replacement board, and
+a Sense, Vision or Sentinel also makes one when it cannot read its stored
+key at boot; an over-the-air update and the 10-second BOOT reset keep it.
+Check the new key on the device itself before you rotate the pin from the
+integration's options menu: if none of those explains it, something else
+may be publishing as this device.
 ```
 
 We dedupe by `(device_id, received_fingerprint)`, so a steady stream
@@ -342,8 +358,10 @@ freshly-installed HA:
    `TOFU-pinning Canary <id> with pubkey <hex>…`.
 3. Open the chain sensor's attributes — `verified: true`, `trust_reason: ok`,
    `pinned_fingerprint` matches `received_fingerprint`.
-4. Flash a different firmware build to the same Canary (or wipe NVS to
-   regenerate the keypair). On the next publish, expect:
+4. Flash a firmware build to the same Canary from either flasher (its
+   factory image starts NVS over, so the next boot makes a new keypair), or
+   wipe NVS another way. An over-the-air update, or a PlatformIO upload,
+   keeps the key, and no mismatch follows. On the next publish, expect:
    - A `SecuraCV: device <id> key mismatch` persistent notification.
    - `verified: false`, `trust_reason: mismatch` on the sensor.
    - Entities continue updating (warn-loudly-accept policy).

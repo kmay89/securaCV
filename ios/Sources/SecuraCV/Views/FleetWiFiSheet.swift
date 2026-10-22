@@ -115,9 +115,9 @@ struct FleetWiFiSheet: View {
             Text("One Canary goes first and has to actually come back on the "
                + "new network before the rest are touched — a mistyped "
                + "password can never strand the whole fleet. The password "
-               + "goes only to your Canaries — over bonded Bluetooth, over a "
-               + "secure connection when the Canary has a certificate, or "
-               + "over plain Wi-Fi only after you say so below. If this "
+               + "goes only to your Canaries — over a secure connection when "
+               + "the Canary has a certificate, or over plain Wi-Fi only "
+               + "after you say so below. If this "
                + "iPhone remembers your Wi-Fi for new Canaries, that copy "
                + "is updated once a Canary proves the new password; "
                + "otherwise nothing is stored.")
@@ -129,7 +129,7 @@ struct FleetWiFiSheet: View {
     /// either way (the runner re-stages around an encrypted pilot), and only
     /// a plan whose every lane is plain http has nothing to do until the
     /// switch is on. The copy says exactly what crosses the network and the
-    /// two ways to avoid it.
+    /// way to avoid it.
     private func cleartextSection(_ plan: FleetWiFiRollout.Plan) -> some View {
         Section {
             Toggle(isOn: $cleartextApproved) {
@@ -201,6 +201,8 @@ struct FleetWiFiSheet: View {
             } header: {
                 Text("Gets the update")
             } footer: {
+                // Shown only when the plan holds a Bluetooth lane, which no
+                // WAP fills today (ledger A65), so no row offers it.
                 if plan.followers.contains(where: { $0.path == .ble }) {
                     Text("A Canary on the Bluetooth lane takes the new password "
                        + "over its bonded link — stand within a room or two of it.")
@@ -230,7 +232,8 @@ struct FleetWiFiSheet: View {
         if !plan.unreachable.isEmpty {
             Section("Not reachable right now") {
                 ForEach(plan.unreachable) { c in
-                    candidateRow(c, note: "Come back when it's in Bluetooth range")
+                    candidateRow(c, note: "Not answering on your network. Off your Wi-Fi, its own "
+                                 + "setup network (SecuraCV-wap-XXXX) takes the new password")
                 }
             }
         }

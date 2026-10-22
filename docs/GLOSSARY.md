@@ -407,9 +407,10 @@ in sync. It runs over ESP-NOW, which needs the radio on a shared channel but
 not an access-point association (the WiFi bridge and BLE fallback in the spec
 are not built, and the BLE control plane in the tandem doc is design only). An
 `opera_secret` is never written to or read back from NVS on a board without
-flash encryption (audit O2). That keeps the household secret off un-fused
-boards; it does **not** make it confidential at rest on fused ones, because
-flash encryption does not cover NVS.
+flash encryption (audit O2). That keeps the household secret off every
+board without flash encryption; it does **not** make it confidential at rest
+on a board with flash encryption on, because flash encryption does not cover
+NVS.
 → [`spec/canary_mesh_network_v0.md`](../spec/canary_mesh_network_v0.md),
 [BLE mesh + Opera tandem](BLE_MESH_OPERA_TANDEM.md),
 [threat model](security/THREAT_MODEL.md#opera-mesh-household-trusted)

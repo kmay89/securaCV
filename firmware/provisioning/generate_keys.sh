@@ -18,7 +18,10 @@ set -euo pipefail
 #   keys/flash_encryption_key.bin       - 256-bit AES key (KEEP SECRET)
 #   keys/key_inventory.json             - Metadata for tracking
 #
-# IMPORTANT: These keys are used for Phase 2 (production lockdown).
+# IMPORTANT: Phase 2 burns the flash encryption key; the signing key is
+# checked for and not yet used (provision_canary.sh burns no Secure Boot
+# key digest and signs nothing). As tooled, Phase 2 turns on neither
+# Secure Boot nor flash encryption (docs/secure_provisioning.md, Step 3).
 # Phase 1 (development) does not require these keys.
 #
 # ═══════════════════════════════════════════════════════════════
@@ -219,7 +222,7 @@ generate_inventory() {
     "file": "secure_boot_signing_key.pem",
     "public_file": "secure_boot_signing_key.pub",
     "fingerprint": "${SIGNING_FINGERPRINT}",
-    "purpose": "Secure Boot v2 firmware signing"
+    "purpose": "Secure Boot v2 firmware signing (not yet used by provision_canary.sh)"
   },
   "flash_encryption_key": {
     "algorithm": "XTS-AES-256",
@@ -229,9 +232,9 @@ generate_inventory() {
   },
   "notes": [
     "KEEP THESE FILES SECRET AND BACKED UP OFFLINE",
-    "Loss of signing key = bricked devices on next OTA",
+    "The kit does not use the signing key yet: no Secure Boot key digest is burned and nothing is signed with it",
     "One flash encryption key can be used for a batch of devices",
-    "Phase 2 (production lockdown) uses these keys",
+    "Phase 2 burns the flash encryption key but no SPI_BOOT_CRYPT_CNT, so flash encryption stays off",
     "Phase 1 (development) does not require these keys"
   ],
   "backup_checklist": {
@@ -262,7 +265,7 @@ print_backup_checklist() {
     echo ""
     echo " Update backup_checklist in key_inventory.json as you complete each."
     echo ""
-    print_warning "Loss of signing key = bricked devices on next OTA update"
+    print_warning "The kit does not use the signing key yet (no Secure Boot key digest is burned); keep this backup for when it does"
     echo ""
 }
 

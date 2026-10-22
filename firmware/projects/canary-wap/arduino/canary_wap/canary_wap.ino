@@ -1519,7 +1519,9 @@ static void generate_device_id(char* out, size_t cap) {
   // Encoded in the unambiguous alphabet (no 0/O/o, 1/I/i/l/L) so the handle a
   // user reads off canary.local / a sticker has no confusable glyphs. base-54
   // of 16 bits is injective, so per-device uniqueness matches the old hex form;
-  // it stays stable across reflashes because the keypair persists in NVS.
+  // it stays stable across OTA updates and the 10 s hold because the keypair
+  // persists in NVS (an install in either flasher starts NVS over, so the
+  // next boot has a new keypair and a new suffix).
   char suffix[5];
   unambiguous_suffix16((uint16_t)((g_device.pubkey_fp[0] << 8) | g_device.pubkey_fp[1]),
                        suffix);

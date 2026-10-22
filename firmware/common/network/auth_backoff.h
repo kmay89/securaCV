@@ -15,9 +15,10 @@
 // Why per address (sweep F343). The WAP's lockout used to be one backoff for
 // every caller, so one host's wrong bearers held every other host's right
 // token at 429. The likeliest such host was the owner's own phone, still
-// polling a fully erased unit with its old token (a full erase in a flasher
-// gives it a new key, so a new token and device_id; an ordinary re-flash and
-// the 10 s BOOT reset leave the token as it was). A Table keeps one Slot per source address instead, so a host's
+// polling a re-installed unit with its old token (an install or a full
+// erase in either flasher starts NVS over and gives it a new key, so a new
+// token and device_id; an OTA update and the 10 s BOOT reset leave the token
+// as it was). A Table keeps one Slot per source address instead, so a host's
 // wrong bearers hold only that host's address.
 //
 // The contract:

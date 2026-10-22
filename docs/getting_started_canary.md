@@ -570,9 +570,11 @@ is done; typing `http://` sends you there. Setup itself stays on plain
 certificate it does not recognize. Your browser will warn that the
 certificate is not trusted: the Canary made it for itself, and the iPhone
 app checks it against the fingerprint in your recovery kit instead. The
-10-second BOOT reset keeps the certificate, so that fingerprint stays
-right; holding BOOT to 30 seconds, or a full erase in a flasher, makes a
-new one, so pair the iPhone app again after either. The standard release
+10-second BOOT reset and an over-the-air update keep the certificate, so
+that fingerprint stays right; holding BOOT to 30 seconds, or installing
+again in a flasher (with or without its full erase: an install starts the
+Canary's settings over), makes a new one, so pair the iPhone app again
+after either. The standard release
 image does not turn this on yet.
 *(New in 2026-09; its first automated build is pending, and it is not yet on a bench
 device.)*
@@ -864,12 +866,14 @@ crosses the privacy barrier just because the chain is involved.
 ## What you can break
 
 You can't brick the device through the dashboard. You *can* lose your
-witness chain by erasing the board: a full erase in a flasher (or, on the
-all-rounder Canary, holding BOOT to 30 seconds) removes the Ed25519 device
-key, the next boot makes a new one from a fresh hardware-RNG seed, and the
-previous chain is no longer signable. The 10-second BOOT reset keeps the
-key and the chain. If you've been using the Canary as a witness device
-for evidence, **export the chain before you erase it** —
+witness chain by erasing the board: installing again in a flasher, with or
+without its full erase (an install starts the Canary's settings over), or,
+on the all-rounder Canary, holding BOOT to 30 seconds removes the Ed25519
+device key, the next boot makes a new one from a fresh hardware-RNG seed,
+and the previous chain is no longer signable. The 10-second BOOT reset and
+an over-the-air update keep the key and the chain. If you've been using the
+Canary as a witness device for evidence, **export the chain before you
+reinstall or erase it** —
 **Settings → Export → Witness chain**.
 
 ---

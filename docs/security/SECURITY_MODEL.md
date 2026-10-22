@@ -806,10 +806,11 @@ them pinned by host tests — so a compromised blob would have to
 originate traffic of its own, on a network whose expected traffic is
 short and known, and a WAP on its own access point gives it no route
 out at all. Secure boot and flash encryption would be additional
-mitigations, but they are **off on every Canary today**: the provisioning
-kit prepares both and turns on neither (its Phase 2 burns fuses but
-writes a plaintext image and burns no flash-encryption counter and no
-Secure Boot key digest) — see
+mitigations, but **neither works on any Canary today**: the provisioning
+kit prepares both and turns on neither (its Phase 2 writes a plaintext
+image and burns no flash-encryption counter, so flash encryption stays
+off, and burns `SECURE_BOOT_EN` with no Secure Boot key digest, so Secure
+Boot is enabled with nothing to verify against) — see
 [Physical extraction and the flash-encryption default](#physical-extraction-and-the-flash-encryption-default).
 
 ### Physical Access
@@ -860,8 +861,11 @@ that can permanently destroy an owner's device is the wrong default for a
 device people are supposed to be able to keep, repair, and re-flash. So
 [the tiered design](../design/hardware_root_of_trust.md) puts the
 reversible protections in the default path and leaves the irreversible
-lockdown as an explicit, key-backup-enforced opt-in. The settings are
-staged and commented in `firmware/provisioning/sdkconfig.defaults.secure`.
+lockdown as an explicit opt-in. The design calls for that opt-in to
+enforce a key backup (its §5.2); the kit does not yet: `provision_canary.sh`
+checks only that the key files exist. The settings are staged and
+commented in `firmware/provisioning/sdkconfig.defaults.secure`, which is
+inert under `framework = arduino` (`platformio_secure.ini`).
 The PIO canary image (`firmware/canary`) does not leave you to assume
 which case yours is: it reports where its identity key sleeps as
 `key_at_rest` (`plaintext-nvs`, `nvs-encrypted` or
@@ -905,8 +909,9 @@ tiers buy today before you burn anything: nothing yet. The provisioning
 kit's Phase 2 (`provision_canary.sh --phase 2`) burns a flash-encryption
 key, `SECURE_BOOT_EN` and the JTAG fuses, but it writes the app in
 plaintext and burns no `SPI_BOOT_CRYPT_CNT` and no Secure Boot key digest,
-so neither flash encryption nor Secure Boot is on after it (what the chip
-does with `SECURE_BOOT_EN` and no key digest has not been run on a bench).
+so after it flash encryption is off and Secure Boot is enabled with nothing
+to verify against: neither protects anything (what the chip does with
+`SECURE_BOOT_EN` and no key digest has not been run on a bench).
 Once the kit turns them on they would buy at most the firmware image's
 protection (flash encryption would keep the app image from being read off
 the chip; Secure Boot would refuse unsigned firmware), not the key's.

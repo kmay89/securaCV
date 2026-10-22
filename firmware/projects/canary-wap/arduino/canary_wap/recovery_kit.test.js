@@ -897,6 +897,70 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.deepEqual(await resume(false), { resumed: false, hidden: false, started: 0 }, 'and nothing else does on load');
   });
 
+  it("the 10 s hold keeps the WAP's opera membership and its scout key: nothing it reaches names them (#1843 sweep, third pass)", () => {
+    // mesh_state.h, the CHANGELOG and test_docs_claims.py's
+    // test_no_boot_hold_clears_the_mesh_or_scout_keys say the WAP's hold
+    // touches none of the mesh's keys or the scout key. That test reads the
+    // hold's own body; this row walks every free function the hold reaches
+    // (sketchCallWalk above, the walk the Bluetooth row runs), so a remove
+    // of "opera_sec" from a "mesh" session opened in reset_to_first_boot(),
+    // or a call into mesh_network's own clears, fails here (the review's
+    // mutant passed every suite before).
+    const code = (f) => cppCode(read(path.join(__dirname, f)));
+    // The WAP keeps its membership in NVS namespace "mesh" (mesh_network.cpp)
+    // and its scout key in "securacv" under "scout_key" (ble_scout_key.cpp),
+    // the namespace the hold's own sessions open.
+    const meshSrc = code('mesh_network.cpp');
+    const meshKeys = new Map([...meshSrc.matchAll(/static const char\* (NVS_\w+) = "([^"]*)";/g)]
+      .map((m) => [m[1], m[2]]));
+    assert.equal(meshKeys.get('NVS_NS'), 'mesh');
+    for (const [name, key] of [['NVS_FLEET_ID', 'opera_id'], ['NVS_FLEET_SECRET', 'opera_sec'],
+                               ['NVS_FLEET_NAME', 'opera_name'], ['NVS_PEER_COUNT', 'peer_cnt'],
+                               ['NVS_PEER_PREFIX', 'peer_'], ['NVS_REVOKED', 'revoked']]) {
+      assert.equal(meshKeys.get(name), key, name);
+    }
+    const scoutSrc = code('ble_scout_key.cpp');
+    assert.match(scoutSrc, /constexpr const char\* NVS_NAMESPACE = "securacv";/);
+    assert.match(scoutSrc, /constexpr const char\* NVS_KEY {7}= "scout_key";/);
+    // Every name the sketch gives the mesh namespace, wherever it is.
+    const meshNsNames = new Set();
+    for (const f of fs.readdirSync(__dirname).filter((n) => /\.(ino|cpp|h)$/.test(n))) {
+      for (const m of code(f).matchAll(/\b(\w+)\s*=\s*"mesh"\s*;/g)) meshNsNames.add(f + ':' + m[1]);
+    }
+    assert.ok(meshNsNames.has('mesh_network.cpp:NVS_NS') && meshNsNames.has('nvs_store.h:NVS_MESH_NS'),
+              [...meshNsNames].join(' '));
+    // A name a .cpp gives a key is that file's; a name a header gives one is
+    // seen wherever the header is included, so it is checked in every body.
+    const namesFor = (file) => {
+      const names = [];
+      if (file === 'mesh_network.cpp') names.push(...meshKeys.keys());
+      if (file === 'ble_scout_key.cpp') names.push('NVS_KEY');
+      for (const fn of meshNsNames) {
+        const [f, n] = fn.split(':');
+        if (f === file || f.endsWith('.h')) names.push(n);
+      }
+      return names;
+    };
+    const literals = ['"mesh"', '"scout_key"', ...[...meshKeys.entries()]
+      .filter(([name]) => name !== 'NVS_NS' && name !== 'NVS_ENABLED').map(([, key]) => '"' + key)];
+    const { bodies } = sketchCallWalk('factory_reset_by_hold');
+    assert.ok(bodies.has('setup_wizard::reset_to_first_boot (setup_wizard.h)'), [...bodies.keys()].join(', '));
+    for (const [fn, body] of bodies) {
+      const file = fn.match(/\(([^)]+)\)$/)[1];
+      for (const lit of literals) {
+        assert.ok(!body.includes(lit), fn + ' names the mesh or scout key ' + lit + '"');
+      }
+      const names = namesFor(file);
+      if (names.length) {
+        assert.doesNotMatch(body, new RegExp('\\b(?:' + names.join('|') + ')\\b'),
+                            fn + ' names a mesh or scout key by its constant');
+      }
+      const calls = body.replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+      assert.doesNotMatch(calls, /\bmesh_network\s*::|\bble_scout_key_\w+\s*\(|\bmesh_\w*(?:leave|clear|reset|forget)\w*\s*\(/,
+                          fn + ' calls into the mesh or the scout key');
+    }
+  });
+
   it("the iPhone's set-it-up-again advice checks Bluetooth before it forgets the Wi-Fi (#1843)", () => {
     // PairView's "No recovery kit?" advice reopens the same setup door
     // through Forget Wi-Fi, which leaves the saved Bluetooth switch as the
@@ -1213,6 +1277,7 @@ describe("the wizard's close-out saves through the same builder", () => {
     }
     win.els['wiz-recovery-block'].style.display = 'block';
     win.els['wiz-recovery-save'].disabled = false;   // a button starts enabled
+    win.els['wiz-recovery-save'].style.display = ''; // and shown: the markup gives it no inline display
     const click = (id) => win.els[id].listeners.map((fn) => fn());
     const ui = () => ({
       els: Object.fromEntries(ids.map((id) => {
@@ -1282,6 +1347,10 @@ describe("the wizard's close-out saves through the same builder", () => {
     assert.deepEqual([...win.URL.made[0].blob.parts], [RECEIPT]);
     assert.equal(win.els['wiz-recovery-done'].style.display, 'block');
     assert.equal(win.els['wiz-ha-block'].style.display, 'block');
+    // The saved kit puts Save away, so Continue is the one way on (a Save
+    // left on screen beside it would start a second ask and a second press).
+    assert.equal(win.els['wiz-recovery-save'].style.display, 'none', 'Save is put away once the kit is saved');
+    assert.equal(win.els['wiz-recovery-skip'].textContent, 'Continue');
   });
   it('Save asks first and keeps asking while the owner presses BOOT: 403, 403, 200 saves (sweep F342)', async () => {
     // Before: the first 403 ended the save with "Press the BOOT button on
@@ -1344,7 +1413,7 @@ describe("the wizard's close-out saves through the same builder", () => {
     assert.equal(win.timers.filter((ms) => ms === 2000).length, 15, 'the last ask goes out 30 s after the first');
     assert.equal(win.saved.length, 0);
     assert.equal(win.els['wiz-recovery-err'].textContent,
-                 "Didn't see a press. Tap Save, then short-press BOOT within 30 seconds.");
+                 "Didn't see a press. Tap Save again, and short-press BOOT when this note says to (within 30 seconds).");
     assert.ok(win.els['wiz-recovery-err'].classList.contains('show'), 'on screen');
     assert.equal(win.els['wiz-recovery-save'].disabled, false);
   });
@@ -1370,7 +1439,9 @@ describe("the wizard's close-out saves through the same builder", () => {
   });
   it("the Home Assistant step's no-session line sends the owner to Save before BOOT", () => {
     const src = read(PWA);
-    assert.match(src, /This needs the recovery-kit step first: go back, tap Save my recovery kit, then short-press BOOT\./);
+    assert.match(src, /This needs the recovery-kit step first: go back, tap Save my recovery kit, and short-press BOOT when its note says to\./);
+    assert.doesNotMatch(src, /Tap Save, then short-press BOOT|tap Save my recovery kit, then short-press BOOT/,
+                        'no retry line names the press without waiting for the note');
     assert.doesNotMatch(src, /press BOOT, and save the kit/);
   });
   it('a 200 that is not a receipt saves nothing and says so', async () => {
@@ -1600,7 +1671,7 @@ describe("the wizard's close-out saves through the same builder", () => {
     assert.equal(asked.length, 16);
     assert.equal(win.saved.length, 0);
     assert.equal(win.els['wiz-recovery-err'].textContent,
-                 "Didn't see a press. Tap Save, then short-press BOOT within 30 seconds.");
+                 "Didn't see a press. Tap Save again, and short-press BOOT when this note says to (within 30 seconds).");
   });
   it('after a blip, a 409 or a refusal still ends the save on that answer', async () => {
     const contended = await wizardSave([BLIP, GATE_403, BLIP, TAP_409, SERVED]);

@@ -37,7 +37,9 @@ break-glass console, whose steps read the witness dictionary and the
 break-glass page) and viewer.yml's `selftest-ui` (the WAP sketch's page
 suites, whose `recovery_kit.test.js` reads two iPhone app files), through
 `scripts/path_filter_reads/`. In each armed test step (five in
-canary-local's job and in `selftest-ui`, seven in `viewer`) every node
+canary-local's job and in `selftest-ui`, seven in `viewer`, whose
+`gen_timeline_parity.mjs --check` and `build.mjs --check` are recorded
+but are not `node --test` suites, so its gate reports five suites) every node
 process records the repo paths it opens, stats, lists or only
 checks for existence, and every python3 process the paths it opens and
 lists: CPython raises no

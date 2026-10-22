@@ -79,7 +79,7 @@ if (timestamp > now_sec + 30 ||
 
 **Where:** `mesh_network.h:170-178` (struct), `mesh_network.cpp` NVS save path
 
-`OperaConfig.opera_secret[32]` is the 32-byte symmetric secret from which `opera_id` is derived and which gates pairing. If the device's flash is not encrypted (ESP32 flash encryption is opt-in, not on by default outside production builds), a physical-access attacker can pull the secret with `esptool.py read_flash` and become a permanent opera member from outside the household. *(Amended 2026-10-21: flash encryption does not stop it either. It does not cover NVS, so on a fused board the secret is still plaintext, and no released build turns flash encryption on. The O2 gate keeps the secret off un-fused boards only; `spec/canary_mesh_network_v0.md` §5.5.)*
+`OperaConfig.opera_secret[32]` is the 32-byte symmetric secret from which `opera_id` is derived and which gates pairing. If the device's flash is not encrypted (ESP32 flash encryption is opt-in, not on by default outside production builds), a physical-access attacker can pull the secret with `esptool.py read_flash` and become a permanent opera member from outside the household. *(Amended 2026-10-21: flash encryption does not stop it either. It does not cover NVS, so on a board with flash encryption on the secret is still plaintext, and no released build turns flash encryption on. The O2 gate keeps the secret off boards without flash encryption only; `spec/canary_mesh_network_v0.md` §5.5.)*
 
 **Fix in this branch:** in `mesh_network::init`, call `esp_efuse_read_field_bit(ESP_EFUSE_FLASH_CRYPT_CNT)` (or the equivalent SDK helper) and refuse to load/save the opera_secret if flash encryption is not active. Log loudly to the health log at `LOG_LEVEL_ALERT, LOG_CAT_SECURITY`. Document the requirement in `spec/canary_mesh_network_v0.md` and `docs/security/SECURITY_MODEL.md`.
 
@@ -323,7 +323,7 @@ For each section of the two specs, a one-line status. C means contradicted by co
 | §3.4 Opera isolation | I | `mesh_network.cpp:493`. |
 | §4.1 CBOR encoding | P | Not actually CBOR — packed-struct binary. Spec should be updated to match reality or code switched to CBOR. |
 | Peer removal | P | Removes locally; no re-keying (O3). |
-| NVS confidentiality | M | No FE gate (O2). *(Amended 2026-10-21: the O2 gate keeps the secret off un-fused boards; it does not give NVS confidentiality, since flash encryption does not cover NVS.)* |
+| NVS confidentiality | M | No FE gate (O2). *(Amended 2026-10-21: the O2 gate keeps the secret off boards without flash encryption; it does not give NVS confidentiality, since flash encryption does not cover NVS.)* |
 
 **`spec/chirp_channel_v0.md`:**
 
