@@ -1,6 +1,656 @@
 # Changelog
 
 ## [Unreleased]
+### The flagship's route check holds every answer that carries a credential to a bearer-only grant, on the grants as #1838 left them (sweep F338, #1852)
+
+- **`firmware/canary/scripts/check_route_security.py` gains the bearer-only
+  answer rule (`check_bearer_only_answers`), canary-wap's F328 rule ported to
+  the flagship's own gates.** No firmware, route or wire change, and no live
+  path was open: every gated route already refuses with `if
+  (!auth_gate(req)) return ESP_OK;`, the receipt takes a real bearer or the
+  BOOT tap, the pages inject the token only through `page_token_decide`, and
+  nothing reads or sets a cookie. The gap was the guard's. Of 51 edits a
+  mutation driver applied to a private copy of the tree, the check as F340
+  left it passed 47 and the new check fails all 51. The classes it now
+  fails:
+  - a route that answers the bearer token, the SoftAP password, the TLS pin
+    or the TLS private key without being a `SECRET_ANSWERS` row with exactly
+    what it carries (a public `/api/fleet` answering the SoftAP password,
+    directly, through a helper or through a function or member pointer;
+    `/api/status` answering it beside the pin), and any function that reads
+    one without being named (a helper printing the SoftAP password), in any
+    file under the tree's `lib/` and `src/`, read as the compiler reads it:
+    an `.inc` or `.hpp` of code is read, a file of any other kind fails but a
+    library manifest by its name (`library.json`, `library.properties`) and
+    a file git ignores (an editor's backup, an OS's `.DS_Store`), a raw
+    string literal is one literal (a reader after the web UI's HTML is
+    code), a backslash-newline is spliced (a name split across two lines by
+    one is that name) and a digraph is the token it spells (`%:define`,
+    `<% %>`); and a file outside the tree that the flagship compiles or
+    `#include`s (each `.cpp` its `build_src_filter` compiles from
+    `firmware/common`, and every file an `#include` reaches from the tree or
+    from those) naming a credential or anything else the check holds under
+    the tree (a helper there returning `auth_get_token()`, opening the BOOT
+    tap on `g_prov_gate`, or raising the SoftAP open with `WiFi.softAP(...,
+    nullptr)`, `WiFi.mode(WIFI_AP_STA)` or an open `esp_wifi_set_config`,
+    called from a route or `loop()`), but the NVS key names where
+    `canary_config.h` defines them and `reset_scope_keys.h` lists them,
+    `ap_password.h`'s deriver and `provisioning_gate.h`'s two decisions, and
+    the held names that are ordinary words in the shared code
+    (`INCLUDE_COMMON_WORDS`: `begin`, `check`, `grant`, `compare`, `setup`,
+    `s_active`, `s_started_ms`, `hmac_sha256`, `from_ap_subnet`), which are
+    not read there.
+    Another product's source there (`setup_portal.cpp`) and a host test are
+    not read, so a correct edit to one no longer fails the flagship's check;
+  - an answer outside its grant: `/api/status` answering before
+    `if (!auth_gate(req)) return ESP_OK;` at its own top level, the receipt
+    handing `receipt_decide` anything but its bearer and tap lambdas or
+    answering outside a `SERVE_*` test, a page answering other than through
+    `send_html_with_token(..., page_token_inject(req))` (the emitter itself
+    named only by the three page handlers, so a function pointer or a
+    reference to it handed `PageToken::INJECT` fails); and a statement of an
+    answering handler's own that reads a credential and is not its row, so
+    the receipt cannot also publish the token over MQTT or print the SoftAP
+    password under its served verdict;
+  - an edit to the glue a grant runs through, pinned whole (40 bodies:
+    `auth_gate`, `bearer_present_and_valid`, `from_ap_subnet` and its
+    helpers `netif_ip4`, `be_word_host_order` and `sockaddr_ip4_host_order`,
+    `page_token_inject` and F341's clear, the tap's take and its hooks,
+    `host_is_foreign`, the lockout's `auth_get_instance`, its source key
+    `request_peer_ipv4`, `AuthManager::check`, `grant`, `compare`,
+    `handedToken`, `constantTimeCompare` and their wrappers, the three
+    accessors, the token's deriver `derive_api_token` and its `hmac_sha256`
+    and `format_api_token_string`, the SoftAP password's way to the radio,
+    `announce_setup_network()` and `apply_ap_security()`,
+    `page_token_inject`'s setup input at its source, the setup lib's
+    `setup_init`, `setup_is_first_boot`, `setup_is_active`,
+    `setup_mark_complete` and `setup_check_timeout`, the BOOT tap at its
+    source, `handle_boot_button()` whole with its press, and the port-80
+    path, `handle_captive_probe` and `handle_https_redirect`, with the two
+    members its hint branch decides on, `isTlsEnabled()` and
+    `getHttpsServer()`), so, against a careless edit (the check's threat
+    model, below), none of `page_token_inject`'s four inputs can be widened
+    in the glue, in the helpers it reads them through, or by a macro of a
+    name they call (a `#define`, or a flag in its `-D` spelling: gcc's
+    `--define-macro` is not read); a
+    sink cannot be added inside an accessor, and the token cannot be keyed
+    on the public key; each is defined exactly once under ROOTS, in its
+    file, so a second `#else` body or a shadow in another lib fails,
+    written with a trailing return type or not;
+  - a gate primitive mentioned, or defined, where its census row does not say
+    (a call, a function pointer or an address taken alike): an `auth_gate`
+    call that is not the whole refusal at its handler's own top level in every
+    body that holds it (`!from_ap_subnet(req) && !auth_gate(req)` on `POST
+    /api/wifi/connect`, the same refusal nested under `if
+    (!from_ap_subnet(req)) {` or `#if`, a head split across `#if` / `#else`,
+    or an early `return`, `goto`, `throw`, `co_return` or ESP-IDF
+    `ESP_RETURN_ON_*` / `ESP_GOTO_ON_*` macro before it);
+    `auth_handed_token` outside a served tap; anything but
+    `auth_get_instance()` reaching the AuthManager's one instance `s_auth`,
+    or anything but the three wrappers reaching that, which a namespace-scope
+    lambda, a `noexcept` or trailing-return helper, a namespace-scope
+    `&auth_get_instance()` or a `this` the constructor saved no longer slips
+    past; the receipt sent from any route but its own; the TLS key's loader
+    or writer, or the private key's loader, called anywhere but where it is
+    today, and the private key's NVS record named outside its three
+    functions; a `WiFi.softAP()` other than `begin()`'s and `raiseAp()`'s,
+    each with its key, and the radio's mode set anywhere but `begin()`,
+    `dropAp()` and `raiseAp()`, each statement where it sits (`WiFi.mode`,
+    `enableAP`, `softAPConfig` or `esp_wifi_set_mode` bring the SoftAP up on
+    the open config `dropAp()` leaves, and so does
+    `WiFiGenericClass::mode()`, a static; `softAPdisconnect()` with its
+    default `false` leaves a running SoftAP up on that config on core 2.0.17
+    and raises one on core 3.x, and `softAPbandwidth()` raises it on 3.x), or
+    a way out between a raise and the `softAP()` that keys it (an STA-first
+    `return true;` in `begin()` leaves the SoftAP up, never keyed, on the
+    config the driver loaded); `begin()` started by anything but
+    `setup()`'s one call with `g_ap_password` (a second start handed `""`
+    through `this->`, `(*this).`, a member's bare call, the unused
+    `network_init()`, the instance `s_network`, a cast, or a reference or
+    pointer to the manager under another name, typed, `auto` or
+    `decltype`, direct-, brace- or copy-initialized, captured by a lambda,
+    returned by a function or handed to one); `WiFi` named other than with a
+    member after it; the driver's config written by anything but
+    `apply_ap_security()` and the STA's PMF request (an
+    `esp_wifi_set_config(WIFI_IF_AP, ...)` set to open), or Arduino 3.x's
+    `WiFi.AP` class named at all; the BOOT tap opened anywhere but
+    `handle_boot_button()`'s short press, where it sits, a press made by
+    anything but the button's GPIO, or `g_prov_gate` (or the peek hook's
+    copy) named, written or initialized anywhere else; `handle_boot_button()`'s
+    every-pass call from `loop()` moved under a block, or behind a way out of
+    `loop()` above it (its sweep is what expires a tap nobody took); a server
+    the core brings (`WebServer`, `HTTPUpdateServer`, `ArduinoOTA`, the raw
+    `WiFiServer` or core 3.x's `NetworkServer`, and `WiFiProv`, whose SoftAP
+    scheme raises an access point of its own, with the ESP-IDF provisioning
+    manager it wraps, `wifi_prov_mgr_*` on core 2.x and `network_prov_mgr_*`
+    on 3.x) or ESPAsyncWebServer's (`AsyncWebServer`) named at all, whose
+    routes, firmware push or access point no rule reads; the setup state, or
+    the stored first-boot flag it is read from (`NVS_KEY_SETUP_OK`), written
+    outside the setup lib's pinned functions, the credentials reset that
+    clears that flag run by anything but the BOOT hold, or the setup
+    timeout's call dropped from `loop()` or put behind a way out above it;
+    the TLS flag or the TLS server's
+    handle written anywhere but the constructor and `startHttpServer()`, each
+    statement where it sits (`m_tls_enabled = false;` once the port-80
+    server is up, or `m_https_server = m_http_server;`, would serve the setup
+    page and its token on plain HTTP beside HTTPS); the token's alphabet
+    narrowed; the
+    boot handing `auth_load_or_derive` anything but `g_device.privkey`; and
+    an `AUTH_MARKERS` name that is no census row, or a `PRE_HOST_STEPS` name
+    that is no row, emitter or `auth_get_token`, such as a stale
+    `auth_check_optional(`;
+  - a device-side or emitter statement that reads a credential and is not
+    in its function's row, in order (a serial, BLE or MQTT sink in
+    `setup()`, `raiseAp()` or the receipt's builder), every pinned statement
+    held where it sits (the blocks and preprocessor conditionals around it,
+    and a goto before it): `begin()`'s parameter reassigned, its copy of the
+    SoftAP key made dead or compiled out (`raiseAp()` would re-raise on an
+    empty key), and each mint pinned as the whole statement: `setup()`'s
+    `derive_ap_password(device.privkey, ...)` call, its refusal and its halt
+    (the F350 review), at `setup()`'s own level with no block or
+    preprocessor conditional around it and no `goto` before it, so a
+    public-key argument, a discarded result, a dropped halt, a deleted call,
+    the call compiled out under `#if 0` or `if (false) {`, or moved below
+    the network's start, fails; and each mint after the statement that
+    establishes the key it reads (`setup()`'s `witness_provision_device()`
+    refusal, `witness_provision_device()`'s `establish_identity_key()`), so
+    a mint moved above it, or a way out before that statement (a degraded
+    boot's `return true;` ahead of `establish_identity_key()`, which hands
+    `setup()` a success), which would key the SoftAP password or the bearer
+    on an all-zero private key, the same on every Canary, fails;
+  - a `#define` under ROOTS or in a file outside it the flagship compiles or
+    `#include`s, or a `-D` flag in
+    `platformio.ini` and the files its `extra_configs` names (on its own line
+    or under it, a missing one named; in the `-D` spelling, as defense in
+    depth: gcc's `--define-macro`, its long form, passes), that names a
+    pinned or census
+    function, a device-side use, an accessor, a mint, an emitter, a
+    comparer, a credential's spelling or the private key, or is named for a
+    function a pinned body or statement calls (`#define auth_gate(r) (true)`
+    after the gate's definition ungated all 62 gated handlers, 63 routes, and
+    left every pin intact; `#define take(s, n, t) is_open(s, n, t)` would turn
+    the take hook into a peek); `canary_config.h`'s NVS key names are the one
+    exception. No macro or flag may be a C++ keyword (`#define false true`
+    makes every `return false;` after it a `return true;`); under the tree, a
+    macro named for anything else a pinned text reads, a value such as
+    `PROVISIONING_GATE_TTL_MS` or `BOOT_SHORT_PRESS_MS` included, is the
+    `ROOTS_DEFINES` row it is today and is never `#undef`'d; and
+    `SETUP_TIMEOUT_MS` is held to its value. A macro or flag that pastes
+    tokens (`##`, `%:%:`) fails too, but GNU's `, ##__VA_ARGS__`: `#define
+    CV_JOIN(a, b) a##b` names nothing held, and `CV_JOIN(auth_get_,
+    token)()` answers the bearer from a public route, or `JOIN(auth_handed_,
+    token)(...)` clears its own lockout, under no spelling a rule reads; and
+    nothing there binds a name to a symbol, in the spellings the rule names,
+    but the empty compiler barrier and the known pragmas (an
+    `__asm__("_Z14auth_get_tokenv")` label or an asm `call8`, a
+    `weakref`/`alias`/`ifunc`/`symver` attribute or `__REDIRECT` macro, a
+    `redefine_extname` or `weak` pragma as `#pragma` or `_Pragma`, a name
+    spelled as the C++ symbol `_Z14auth_get_tokenv`);
+  - a build input the check does not read: an `#include` through a macro, a
+    compiled file that is not C or C++, a `build_src_filter` entry that
+    matches nothing, a file of this repository outside the read folders that
+    the flagship `#include`s or compiles, and, in the flag files, a linker
+    option through `-Wl,`, `-Xlinker`, `--wrap`, `--defsym` or `-T`
+    (`-Wl,--wrap=<auth_check's symbol>` sends every call of it to a function
+    returning `true`, which ungates every route), a forced include
+    (`-include`/`--include`/`-imacros`/`--imacros`, in the space, glued and
+    `=` forms), an include or sysroot path the reach does not read
+    (`-isystem`, `-iquote`, `-idirafter`, `-iprefix`, `--sysroot`; only `-I`
+    is read), a compiler-driver injector (`-specs`, `-fplugin`, `-wrapper`,
+    `-B` before a path, `-Xpreprocessor`/`-Wp,`, `-Xassembler`/`-Wa,`), a
+    response file (`@file`), a build script (`extra_scripts`, or a `!command`
+    dynamic value that runs a command and splices its stdout into the flags),
+    a local library, a moved source folder, an ESP-IDF component
+    (`custom_component_add`, which pioarduino's IDF component manager fetches
+    from Espressif's registry; no library, so the library rule does not hold
+    it) (each of those keys in any case), or a `${sysenv.*}` value the
+    build-time environment sets;
+  - a library the build fetches, as an entry of an env's `lib_deps` or as a
+    dependency a library manifest under the tree declares, that no
+    `REGISTRY_LIBS` row names. The configuration is read with PlatformIO's
+    own reader, not an imitation of it: `ProjectConfig`, at the version the
+    builds that ship the flagship pin (6.1.19, in `firmware-release.yml` and
+    `flasher-release.yml`, held equal to them by
+    `scripts/tests/test_route_check_platformio_pin.py`), run from
+    `firmware/canary` as `pio run` runs it, resolves each env's `lib_deps`
+    (its `extends` and `[env]`, the `extra_configs` files, every
+    interpolation, `${this.option}` included, the older key names `lib_use`,
+    `lib_force` and `lib_install`, a key at any indent and in any case, a
+    one-line list split on `, `); each entry is read by PlatformIO's
+    `PackageSpec` in that folder, and each manifest by its manifest parser.
+    A failing entry names every env that fetches it. A configuration
+    PlatformIO refuses, an env whose `lib_deps` it cannot resolve, an
+    `extends` cycle anywhere in it (which PlatformIO can walk forever, from
+    an env or through an interpolation into a section on it; no env's
+    `lib_deps` is resolved while one stands), a file
+    it reads that the `-D` rule's flag files do not hold, and a `${sysenv.*}`
+    reference anywhere in the flag files (read in their text, so an empty
+    environment at check time hides none) fail too; without the `platformio`
+    module, or at another version of it, the check fails before any rule
+    runs, naming `python3 -m pip install platformio==6.1.19`, which
+    `firmware.yml` runs first (through `setup-platformio`). Each row is an
+    `owner/name` with its reason, and the four rows are the libraries the
+    flag files name today (`rweather/Crypto`, `bblanchon/ArduinoJson`,
+    `knolleary/PubSubClient`, `h2zero/NimBLE-Arduino`); no row admits a bare
+    registry name, a registry id, a URL or a path (a version PlatformIO reads
+    as a URL, `rweather/Crypto @ git@github.com:...`, included), an owner
+    before a tree library's name (`tzapu/securacv_mesh`) is the registry's
+    library, a tree library's name with a version range is that library only
+    where its manifest's version is in the range, and a row
+    vouches for the dependencies its library declares, which are not read
+    (the four declare none).
+    `tzapu/WiFiManager` added to `lib_deps` for a recovery portal passed
+    every rule: its `autoConnect()`, handed no AP password, raises an open
+    SoftAP and serves a firmware upload and `/erase` that no rule reads;
+  - a route guarded by a helper whose name ends in a gate's
+    (`lan_auth_gate(req)` refusing only a foreign Host, or
+    `setup_auth_gate(req)` returning `from_ap_subnet(req)` on `POST
+    /api/wifi/connect`): the route-gate and Host-first rules matched the gate
+    markers as substrings, so the helper passed as the gate while the census,
+    which reads whole names, never saw it. A marker now counts only as a
+    whole name;
+  - a function defined twice (an `#if` body and its `#else` one): every body
+    is read, whatever its head (`static int`, `IRAM_ATTR`, `noexcept`, a
+    trailing return type), so a public route's `#else` body that sends the
+    receipt, or an ungated `#else` body of a gated route, fails, in this
+    rule and in the route-gate and Host-first rules;
+  - a route handler naming the private key, a read of the token's NVS
+    record, the Wi-Fi driver's copy of the SoftAP passphrase (its read-back
+    included) or the TLS key's NVS record outside the functions that hold
+    them, and a string literal under ROOTS that is the token's, the TLS
+    key's, the first-boot flag's or the private key's NVS key (`"api_token"`
+    read or written by a public route), in any file, one that names no key
+    included (`"setup_" "ok"`, `"setup\x5fok"`);
+  - a route registered in a form no rule reads (an `httpd_uri_t` assigned
+    field by field, a cast `.method`, a lambda `.handler`, the registration
+    call taken as a pointer, in a function or at namespace scope), and
+    `register_route()` registering anything but the route it is handed;
+  - the no-session premise: a cookie read, a `Set-Cookie`, a request header
+    other than `Authorization` in the auth lib and `Host`, a header named by
+    a variable, a URL query outside the witness log's paging, and a
+    request's raw path (`->uri`, or `.uri` through any reference to the
+    request, which keeps its query) outside its four readers, each pointing
+    at canary-wap's any-session class (F328), which CONSOLIDATION.md's Phase
+    6 `cv_session` port must bring with it.
+
+  The PR's first review found 31 edits of these kinds that its first version
+  passed. Its second review found more that the second version passed (an open
+  boot-time SoftAP through `begin()`'s parameter, a second start or the
+  driver's config; a function pointer or a trailing-return helper reaching the
+  lockout; a `#define` of a gate; the setup unlock widened at its source; the
+  BOOT tap opened elsewhere; an `#else` body under another head; a split head;
+  ESP-IDF's early-exit macros), 46 edits in all with those this repair added
+  beside them, and one property no plant held (a pinned row's order). Its
+  third review found 55 more that the third version passed (53 passed the
+  check as F340 left it too): a macro of a name the glue calls, or a `#define`
+  in a header outside ROOTS; the receipt sending the token to MQTT or the
+  serial line under its served tap (the two that check refused: the new reader
+  rule had exempted every answering handler); the SoftAP raised open by a mode
+  switch or by a second `begin()` through a spelling the census did not read;
+  a mint moved ahead of its key; an NVS record read or written by its literal
+  key; the first-boot flag cleared or the credentials reset run from a public
+  route; `from_ap_subnet`'s interface helper reading the other interface; code
+  after a raw literal, or in an `.inc` file; the page's emitter or the TLS
+  key's loader reached another way; the BOOT press faked; the AuthManager's
+  `this` saved; the peek hook writing the tap's stamp; `SETUP_TIMEOUT_MS`
+  widened; and five round-2 branches no plant held. Its repair found 21 more
+  of those kinds and fixed them beside the review's: a `take` macro in a
+  `firmware/common` header, `WiFi.softAPConfig()`, `"api_" "token"` (in a
+  file that already named a key: the fourth review found the rule skipped a
+  file that named none), the
+  private key's NVS record, the TLS key's writer, a member returning `*this`,
+  a `decltype` alias, `WiFi` under another name; and a name split by a
+  backslash-newline (a reader, a `#define`), a digraph `%:define` or a `<% ;
+  ... %>` block read at its function's own level (a refusal or a mint inside
+  one), `#define false true`, the tap's TTL or the BOOT press threshold
+  shadowed under the tree, a header outside it returning `auth_get_token()` or
+  opening the tap, `WiFiGenericClass::mode()`, a route registered through a
+  pointer to `register_route`, and the wrapper registering a route of its own.
+  Its fourth review found 12 more that the fourth version passed (each
+  passed the check as F340 left it too): a token-paste macro answering the
+  bearer from `/api/fleet` or clearing its lockout (`a##b`, `auth_get ##
+  _token`, `auth_get##__VA_ARGS__`), a header helper called from `loop()`
+  raising the SoftAP open (`WiFi.softAP(..., nullptr)`, `WiFi.mode`, an open
+  `esp_wifi_set_config`), the port-80 hint's two members or the TLS flag
+  answered wrong (`getHttpsServer()` returning the port-80 server,
+  `isTlsEnabled()` returning `false`, the flag cleared once the port-80 server
+  is up), and a joined or escaped first-boot key in a file naming no key; nine
+  branches no plant held (a raw literal's prefix, a `-D` flag's value, an
+  unreadable NVS key define, six table-hygiene rows); and two false failures
+  (a correct edit to another product's `setup_portal.cpp`, a host test's
+  `#define delay(ms)` shim). Its repair found seven more and fixed them
+  beside these: the paste spelled with the digraph `%:%:`, in a header the
+  flagship includes or as a `-D` flag; an asm label and an asm call; a linker
+  `--wrap` of `auth_check`; and the TLS server's handle pointed at the port-80
+  server. Each passed the fourth version and the check as F340 left it, and
+  the paste, asm and wrap forms build (host g++, and the paste and asm forms
+  with the tree's `xtensa-esp32s3-elf-g++ 14.2.0`).
+  Its fifth review found four more escapes of kinds the fourth repair had
+  closed only for one spelling, each now failed by a planted fixture (each
+  passed the fourth version and the check as F340 left it): a `weakref`,
+  `alias`, `ifunc` or `symver` attribute, a `__REDIRECT` macro, a
+  `redefine_extname` or `weak` pragma (as `#pragma` or `_Pragma`), or a name
+  spelled as the C++ symbol `_Z14auth_get_tokenv` — each reaching a function
+  by its symbol the way the asm label the fourth repair closed does, so a
+  public `/api/fleet` answered the bearer or cleared its own lockout while the
+  check stayed green; the `=`/`--`/glued long forms of the forced include and
+  the `-specs`/`-fplugin`/`-wrapper`/`-B`/`-Xpreprocessor`/`-Xassembler` and
+  `-Wp,`/`-Wa,` driver injectors and a response file (`@file`), which the
+  build-input rule read only in their space form; PlatformIO's `!command`
+  dynamic value, which runs a command at build time and splices its stdout
+  into the flags no rule read; and an include folder added with `-isystem`,
+  `-iquote`, `-idirafter`, `-iprefix` or `--sysroot`, which the reach did not
+  read (only `-I`) and the build-input rule did not refuse. The symbol-binding
+  class is now one rule (`symbol_binding_problems`, the empty compiler barrier
+  and the known pragmas aside), and `build_input_problems` holds the space,
+  glued and `=`/`--` spellings of each of those flags and the `!command` (not
+  gcc's long aliases or a letter-led glued `-B<dir>`: see the sixth review
+  below); the weakref, redefine_extname and `_Z` extern-C forms were compiled
+  on the tree's `xtensa-esp32s3-elf-g++ 14.2.0` and on host g++, which
+  reference the real `_Z14auth_get_tokenv` (a host link resolved it and
+  printed the secret) and, on the xtensa target, `_Z17auth_handed_tokenm`
+  (its `uint32_t` an `unsigned long`; host g++ spells the lockout clear
+  `_Z17auth_handed_tokenj`). It also carried one nit: the rule functions are
+  each self-tested, but main()'s own two wiring lines are not, so a two-file
+  fixture now holds the composition they rely on (build_reach's `includes`,
+  fed to `check_bearer_only_answers`, catches a header reader; `includes={}`
+  hides it) and the docstring states the residual that main()'s two lines are
+  not themselves run by a self-test. Host-tested; not run on a device.
+  Its sixth review held the check to its threat model (a careless or mistaken
+  firmware edit, not a deliberate attempt to evade it) and found nine more
+  edits that passed both the fifth version and the check as F340 left it,
+  each now failed by a planted fixture: a route guarded by a helper whose
+  name ends in a gate's (`lan_auth_gate(req)` on `POST /api/wifi/disconnect`,
+  `setup_auth_gate(req)` returning `from_ap_subnet(req)` on `POST
+  /api/wifi/connect`), which the route-gate and Host-first rules took for the
+  gate by substring while the census, reading whole names, never saw it;
+  `WiFi.softAPdisconnect()` with its default `false` (in a new network
+  member, `loop()` or the setup lib) and `WiFi.softAPbandwidth()`, which leave
+  the SoftAP up on an open config or, on core 3.x, raise it; a `return`
+  between `begin()`'s or `raiseAp()`'s mode raise and the `softAP()` that
+  keys it, which leaves the SoftAP up, never keyed; and a degraded boot's
+  `return true;` ahead of `establish_identity_key()`, after which `setup()`
+  mints the SoftAP key from the all-zero private key. It also carried two
+  nits (`handle_boot_button()` polled only on its GPIO edge, which drops
+  F347's every-pass sweep, and a second HTTP server, `WebServer`,
+  `AsyncWebServer`, `HTTPUpdateServer` or `ArduinoOTA`, whose routes no rule
+  reads), planted five branches no plant held (the SoftAP key re-derived by a
+  helper, beside the bearer's, a second `network.begin(..., "")`,
+  `register_route` named at namespace scope, the carry's fixed point, a gated
+  route answering through another), and corrected the docs: the threat model
+  is stated plainly, the paste, symbol-binding and build-input rules are
+  defense in depth over the spellings they name, and the "every spelling"
+  claims above are narrowed. Of 17 checker mutants that each undo one of
+  these fixes or weaken one of those branches, the self-test refuses all 17
+  (the six that weaken an older branch pass the fifth version's self-test).
+  Its seventh review found a registry library the build fetches unread:
+  `tzapu/WiFiManager` added to `lib_deps` for a recovery portal, whose
+  `autoConnect()`, handed no AP password, raises an open SoftAP and serves a
+  firmware upload and `/erase`, passed the sixth version, as did the core's
+  raw `WiFiServer` (`NetworkServer` on core 3.x) and `WiFiProv`, whose SoftAP
+  scheme raises an access point of its own. Every library `lib_deps` or a
+  manifest under the tree names is now a `REGISTRY_LIBS` row with its reason
+  (or a library under the tree), and the server row names the core's three.
+  It also found the docs stating
+  the macro rule's flag clause as complete, though gcc's `--define-macro`
+  (the long form of `-D`) passes it; that is a deliberate spelling, so the
+  threat paragraphs now name the clause as defense in depth and the other
+  claims are qualified. And it carried four nits: an early `return` in
+  `loop()` above the BOOT sweep or the setup timeout now fails (`lead`), the
+  server row's `AsyncWebServer` has a fixture, a census row that allows a name
+  nowhere says so, and two of the ledger's lists are complete. Of 19 checker
+  mutants that each undo one of these fixes or weaken the new table, the
+  self-test refuses all 19.
+  Its eighth review found the library rule reading the ini more narrowly than
+  PlatformIO does: the same `tzapu/WiFiManager` entry passed under an
+  indented `lib_deps` key (configparser reads an option at any indent, so an
+  env written as an indented block is read), under `Lib_Deps` (it lowercases
+  a key) and under `lib_install`, `lib_use` or `lib_force` (older names
+  PlatformIO still reads as `lib_deps`). The rule now reads the ini as
+  configparser does and takes all four keys, and a version range
+  (`>=7.0.0,<8.0.0`) is one entry rather than an unknown library `<8.0.0`
+  (its split of an interpolated value, which the ninth review found reading
+  two entries as one, below); a version holding an `@`, a `:` or a `/` is a
+  URL, as PlatformIO reads it, and a row is an `owner/name`, which no bare
+  name or URL matches. It also found no self-test driving
+  `library_manifests()`, a row's owner or the URL guard, and the docs saying
+  no server the core brings is named, though the flagship's own captive DNS
+  responder is a `WiFiUDP` and it runs mDNS: they now say which servers the
+  row names, and name the core's UDP classes, its responders and a BLE GATT
+  server as unseen. And it carried the nits: the server row names the ESP-IDF
+  provisioning manager `WiFiProv` wraps, a row vouches for its library's own
+  dependencies (the four declare none), the docs state one rule for a bare
+  name and a URL, and the server row's comment says which `#include`
+  spellings are a mention. Of the 20 checker mutants the ninth round built
+  from its list of these fixes, the eighth version's self-test refuses 18
+  (it passes an interpolated one-line value split on every comma rather
+  than on `, `, and an interpolated value's trailing empty line kept; the
+  ninth version has neither that split nor that line's pop).
+  Its ninth review found that split reading less than PlatformIO does: a
+  one-line `lib_deps` that interpolates another one-line list
+  (`${common.libs}, WiFiManager`) is one line to PlatformIO, which splits
+  all of it on `, `, while the rule split only the list and read
+  `knolleary/PubSubClient @ ^2.8, WiFiManager` as one entry, its version
+  `^2.8, WiFiManager`, so a bare `WiFiManager` passed; and
+  `${sysenv.LIB_DEPS}` passed, skipped as a `lib_deps` value read on its
+  own, though PlatformIO reads it as the environment variable. The rule now
+  splits every line of the expanded value on `, `, which splits wherever
+  PlatformIO does and more where a line of a longer value holds a `, `
+  (on 21 `lib_deps` spellings its entries are PlatformIO 6.2.0's, or the
+  same split wider in the 4 where a PlatformIO entry holds `, `), and a
+  `lib_deps`-keyed reference adds nothing only when it names a section, a
+  `${sysenv.*}` or built-in one failing as unset. It carried the nits:
+  self-test cases for the `/` of a manifest's URL guard, a `WiFiProvClass`
+  of its own, a bare name that is a row's name, `library.json`'s list of
+  names, a library named only by its manifest or only by its folder and an
+  interpolated `lib_ignore` with an empty line after it; the
+  `REGISTRY_LIBS` comment says the census row names some of the core's
+  servers and lists those it does not. Of 28 checker mutants that each undo
+  or alter one of the ninth review's fixes or nits, or one of the eighth's
+  still in the code, the self-test refuses all 28.
+  Its tenth review found `${this.option}` read in the wrong section: with
+  `[env]`'s `lib_deps` refactored to end in `${this.custom_extra_libs}`
+  beside an empty `custom_extra_libs =`, and an `[env:recovery]` setting
+  `custom_extra_libs = tzapu/WiFiManager @ ^2.0.17`, PlatformIO 6.2.0
+  returned WiFiManager among that env's `lib_deps` (it reads `[env]`'s
+  value in each env that inherits it, `this` naming that env), while the
+  rule read `[env]`'s own empty list and passed. A `${this.option}` is now
+  read wherever any section sets it, which reads more than PlatformIO does
+  where the value is an env's own, never less. Of five checker mutants that
+  each undo or narrow that fix, the self-test refuses all five.
+  Its eleventh round stopped imitating PlatformIO's reader. Rounds 7 to 10
+  had built a text reader of its ini (the indent rule, the older key names,
+  case folding, the one-line `, ` split, `${section.option}` and
+  `${this.option}`, `${sysenv.*}`), and each review found another spelling
+  PlatformIO reads that the reader did not. The library rule now reads the
+  configuration with PlatformIO's own `ProjectConfig`, `PackageSpec` and
+  manifest parser, pinned to 6.1.19, the release builds' pin
+  (`firmware.yml`'s PR build jobs pin none and take the newest, 6.2.0 today,
+  whose `ProjectConfig` and `PackageSpec` are the same text and whose
+  manifest parser adds one reading, an owner written into a list
+  dependency's `name`, which 6.1.19 fails as no row). The hand-written
+  reader is gone (`_ini_options`, `LIB_DEPS_KEYS`, `expand()`, the spec and
+  interpolation patterns, and the JSON and `library.properties` reading);
+  `flag_sources` and `build_reach` still read the text for the `-D` and `-I`
+  rules, and a file PlatformIO reads that `flag_sources` does not now fails.
+  A `${sysenv.*}` reference fails anywhere in the flag files (none is in the
+  tree), and so does a build-input key (`extra_scripts`, `lib_extra_dirs`,
+  `src_dir` and the rest) in any case. The self-test's library cases now
+  write a project into a temp dir and run it as main() runs the tree, through
+  `ProjectConfig`: 46 projects (the configuration in small as it is today,
+  passing with each env's resolved list checked; 9 spellings of a row or a
+  library in the tree, passing; 26 spellings of an unreviewed library, each
+  failing and naming its env: 24 of the 26 the seventh to tenth reviews'
+  fail list held, which the round said were all 26, and a registry id and a
+  path; and 10 more: an entry `[env]` lists, named with every env that
+  inherits it, an `extra_configs` file's env, a `library.json` dependency,
+  `${sysenv.LIB_DEPS}` with the variable unset, set to a row and set to
+  WiFiManager, a `${sysenv.*}` in `build_flags`, a configuration PlatformIO
+  refuses, an interpolation it cannot resolve and an `Extra_Configs` whose
+  files `flag_sources` does not read), a missing configuration, and the
+  manifest forms. Of 18 checker mutants that each weaken the new rule (the
+  envs' lists ignored; a URL or a path, a registry id, a bare row name or an
+  unreadable spec admitted; the owner ignored; only the first env named;
+  `${sysenv.*}` dropped from the build-input rule; a key read in one case;
+  the file cross-check dropped; the configuration read from the wrong
+  folder; PlatformIO's refusal, an unresolvable env, a missing configuration
+  or an unreadable manifest swallowed; a manifest's dependencies ignored; an
+  env's list read from its own section's text, split or not), the round said
+  the self-test refused all 18; it refused 17 (a registry id admitted
+  passed, its review found). The planted fixtures stay 293 (268 source, 25
+  table).
+  Its eleventh round's review found that self-test thinner than it said,
+  and two edges of the new reading. No case took an env's `lib_deps` only
+  through `extends` (each env extending another set its own list), so a
+  reader that skipped `extends` passed; none held a registry id or a URL
+  under the name of a library in the tree (`securacv_mesh=1234`, which
+  PlatformIO fetches from the registry by the id), so a rule admitting
+  either passed; and two of the 26 failing spellings (`${common.LIBS}` read
+  from a `Libs` key, and `${env:a.lib_ignore}` with no blank line before the
+  next section), with the ninth review's `${lib_deps}`, had been dropped.
+  Each is a case again. Each entry is now read in the project's folder, as
+  `pio run` reads it: read from the repo root, an owner/name with no version
+  naming a folder of `firmware/canary` (a vendored `rweather/Crypto/`) was
+  the registry row, where PlatformIO copies the folder into the build. An
+  `extends` cycle, which PlatformIO 6.1.19's reader walks forever (`pio run`
+  hangs on it, and so did the check, with no message), fails for every env
+  whose walk reaches it, naming the cycle. A registry id is named as one
+  (the message read `securacv_mesh=1234` as `'securacv_mesh'`). And nothing
+  tied `PLATFORMIO_PIN` to the release workflows' pin the docs call it:
+  with both release pins moved to 6.2.0 every gate passed. Now
+  `platformio_pin_problems` fails when a `platformio-version:` in
+  `firmware-release.yml` or `flasher-release.yml`, or the one
+  `firmware.yml`'s route-check job installs above the check, is not
+  `PLATFORMIO_PIN`, run by `scripts/tests/test_route_check_platformio_pin.py`
+  in `lint.yml`, which no path filter skips (`firmware.yml`'s does not name
+  `flasher-release.yml`); each release pin's comment points at it. The
+  self-test's library cases are now 61 projects: 12 passing (the
+  configuration as it is today; an env holding the list of what it extends,
+  an env or a section that is none; the 9 spellings; and a version-less
+  owner/name, without a folder of its name), 33 failing and naming their env
+  (the 26 spellings the seventh to tenth reviews held, `${lib_deps}`, the
+  eleventh round's registry id and path, and this round's id and URL under
+  a tree library's name, a path ending in one's folder name and a library
+  only an `extends` brings in), and 16 more (the eleventh round's 10,
+  `${sysenv.EXTRA_LIBS}`, the id's message, the vendored folder, and three
+  cycles: two envs, an env extending itself though it sets its own list,
+  and one `[env]` reaches, named for all five envs). Of 24 checker mutants
+  (the eleventh round's 18, and `extends` skipped, entries read outside the
+  project's folder, the cycle check dropped, a cycle reached through `[env]`
+  missed, a cycle skipped where the env sets its own list, and an id named
+  as its name), the self-test refuses all 24 (the dropped cycle check by
+  hanging, as PlatformIO does); of 8 mutants of `platformio_pin_problems`,
+  its test refuses all 8. The planted fixtures stay 293.
+  That round's second review found the self-test thinner again, and three
+  edges. No case put an owner before a tree library's name, so a rule that
+  admitted `tzapu/securacv_mesh @ ^2.0.17` by its name passed, where
+  PlatformIO installs it from the registry (`pio pkg install` skips only an
+  entry with no owner and no URL); it is a case now, in `lib_deps` and in a
+  manifest. A tree library's name with a range its manifest's version is not
+  in (`securacv_mesh @ ^0.2.0` against 0.1.0) passed, where `pio run` reads
+  the whole entry as no library's name, `get_package` refuses the tree's
+  copy and the name is installed from the registry; it is admitted now only
+  where PlatformIO's own comparison puts that version in the range (a
+  manifest that gives no version read as `0.0.0+<time>`, as PlatformIO's
+  `build_metadata` reads it).
+  An `extends` cycle no env's own walk reaches, but an interpolation does
+  (two helper sections extending each other, read through
+  `${portal_libs.libs}`), still hung the check with no message, as did an
+  env interpolating an env on a cycle: the round said the hang was fixed,
+  and it was only for a cycle an env's own walk reaches. Every section's
+  walk is checked now; a cycle is named for each env that reaches it, else
+  once by its section, and no env's `lib_deps` is resolved while one stands.
+  And pioarduino's `custom_component_add` in `[env:full]` (an ESP-IDF
+  component the IDF component manager fetches from Espressif's registry;
+  `espressif/network_provisioning`'s softAP scheme raises its own access
+  point) passed every rule, while the round's docstring said every library
+  an env fetches was held: it fails as a build input now, and the docstring
+  claims what is held (an env's `lib_deps` and the manifests under the
+  tree). The pin test now holds every release pin (a second one in a release
+  workflow), exactly one in the route-check job (a second in either order,
+  or the pin twice), the release list itself (the two workflows that run
+  `pio run -e release_ha`) and `main()`'s refusal of another version, or
+  none, which no test drove; and a two-target `extends` on two lines is a
+  cycle case (edges split on commas missed it and hung). `_extends_cycle`'s
+  docstring no longer says `config.get` never returns on a cycle: it returns
+  when the walk meets the option first. The library cases are 69 projects:
+  13 passing (a range the tree library's version is in), 35 failing and
+  naming their env (an owner before a tree library's name, and a range its
+  version is not in), and 21 more (their messages, the two-line `extends`,
+  the interpolated cycle, an env interpolating an env on one, and the
+  component), with two `custom_component_add` build-input lines and three
+  manifest cases. Of 13 checker mutants (the review's surviving owner mutant
+  among them), the self-test refuses all 13, four by hanging as PlatformIO
+  does; the review's other survivor, the `${sysenv.` pattern narrowed to
+  that one spelling, refuses what PlatformIO reads as the environment (its
+  `VARTPL_RE` takes no space and no other case as `sysenv`), so no case
+  tells it from the wider pattern, which stays. Of 6 mutants of
+  `platformio_pin_problems` and `main()`'s guard, the pin test (14 tests)
+  refuses all 6. The planted fixtures stay 293. The tree passes in 14.6 s on
+  Python 3.11 and 22.0 s on 3.13 (PlatformIO 6.1.19), and under 6.2.0 with
+  the pin lifted.
+  The head parser names a constructor
+  for its class (it named `ScvNetworkManager`'s body after its last
+  initializer, `m_peers_last_browse_ms`), a member as `Class::name`, and a
+  function whose head ends in `noexcept`, `override`, `final`, a member's
+  `const` or a trailing return type. 293 planted fixtures (268 source, 25
+  table), with the self-test's lexer, flag-file, build-input, library, reach,
+  header, file-kind, route-form, symbol-binding and raw-literal cases, each
+  fail for their named reason before the tree is read; they refuse each of
+  the 60 mutants of the check that undo one of the third review's fixes, weaken a
+  branch it found unheld, or undo one of its repair's own, each of 41 more
+  that undo one of the fourth review's fixes or weaken a branch it found
+  unheld (the 11 of those that weaken an older branch pass the fourth
+  version's self-test). The 39 fifth-round mutants, run on a private copy of
+  the head, are the symbol-binding and build-input escapes above (26 GREEN on
+  the round-4 check, RED now), their controls of the spelling the fourth
+  repair already caught (RED both ways), and `--prefix`, GREEN both ways:
+  gcc honors it as `-B` (host g++ 13.3 and the tree's xtensa g++ 14.2.0 both
+  rewrite `--prefix=<dir>` to `-B <dir>`, and an `as` planted in that folder
+  ran), so it is an injector the build-input rule does not read, as are
+  `--for-linker`, `--for-assembler` and `--define-macro`; they stay unread,
+  deliberate spellings outside the threat model (the sixth review).
+  The tree passes with its 83 registrations in 14 to 22 s (Python 3.11 to
+  3.14, PlatformIO 6.1.19). The threat model
+  is a careless or mistaken firmware edit (a refactor, a new route, a new
+  feature, a moved line, a widened helper, a new file), not a deliberate
+  attempt to evade the check (preprocessor tricks aimed at it, token pasting,
+  symbol aliasing, inline assembly, injected build flags) or an edit to the
+  checker itself: the paste, symbol-binding and build-input rules, and the
+  macro rule's flag and C++-keyword clauses, are defense in depth over the
+  spellings they name, not a guarantee (gcc's long aliases `--prefix`,
+  `--for-linker`, `--for-assembler` and `--define-macro`, the long form of
+  `-D`, a letter-led glued `-B<dir>` and `-L`/`-l` pass them). A static text
+  check: names are matched by spelling (the network manager's are the
+  exception: a reference to it under another name fails, however declared),
+  values are not checked but `SETUP_TIMEOUT_MS`'s and a shadow under the tree
+  of a value the glue reads (a `memset` of the private key before a mint
+  passes, and so does a header's own value), the files outside the tree the
+  flagship reaches are read for their `#define` lines, their asm and symbol
+  bindings, and the names the check holds (but `INCLUDE_COMMON_WORDS`), not
+  followed as code, a library the build links is not read (a registry one is
+  held to `REGISTRY_LIBS` by its name, its row vouching for the dependencies
+  it declares, the core only by the spellings the census names, so a server
+  or an access point the core can start under another name is not seen: one
+  on the raw socket API, the core's UDP classes, `WiFiUDP`, `AsyncUDP` and
+  `DNSServer`, of which the flagship's own captive DNS responder is a
+  `WiFiUDP`, its mDNS and NetBIOS responders, of which the flagship runs
+  mDNS, a BLE GATT server, the core's `BLEServer` or NimBLE's, which the
+  flagship's status service runs, or an ESP-IDF component such as
+  `esp_local_ctrl`), the linker is not read (a flag that would
+  bind a symbol fails instead, in the spellings the build-input rule names),
+  an NVS record
+  is not followed under a key built at run time or through a walk of the
+  whole namespace, the private key is not followed through a helper, a
+  statement before a gated route's refusal that does the route's work
+  without leaving is not seen, an early `return` between a mint's
+  `MINT_AFTER` statement and the mint is not refused (the rest of its
+  function goes with it: `setup()`'s start of the network, or the token's
+  mint, which leaves the bearer empty, so every gated route refuses as
+  unprovisioned), and
+  an edit to pinned glue or a pinned statement updates its row in the same
+  review (the failure prints the row as it now is).
+
 ### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (F342, F347)
 
 - **A wrong `?claim=` no longer spends the phone's setup-door claim (sweep
