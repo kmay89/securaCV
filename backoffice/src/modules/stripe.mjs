@@ -41,6 +41,10 @@ export function eventToOrder(event) {
       currency: o.currency || 'usd',
       subtotal_cents: o.amount_subtotal ?? 0, shipping_cents: o.total_details?.amount_shipping ?? o.shipping_cost?.amount_total ?? 0,
       tax_cents: o.total_details?.amount_tax ?? 0, total_cents: o.amount_total ?? 0,
+      discount_cents: o.total_details?.amount_discount ?? 0,
+      // Expanded objects carry the customer-facing code; a plain webhook carries ids (promo_…, a
+      // coupon id) which resolveDiscountCode() turns into the code when an API key is set.
+      discount_code: (() => { const d = o.discounts?.[0]; if (!d) return null; const pc = d.promotion_code; const cp = d.coupon; return (typeof pc === 'object' && pc?.code) || (typeof cp === 'object' && (cp?.name || cp?.id)) || (typeof pc === 'string' ? pc : null) || (typeof cp === 'string' ? cp : null); })(),
       ship: { line1: addr.line1 || '', line2: addr.line2 || '', city: addr.city || '', state: addr.state || '', zip: addr.postal_code || '', country: addr.country || 'US' },
       items, paid_at: new Date((o.created || Date.now() / 1000) * 1000).toISOString(),
     };
@@ -72,6 +76,18 @@ export async function fetchLineItems(cfg, sessionId, { fetchImpl = fetch } = {})
     name: li.description || li.price?.product?.name || 'item', qty: li.quantity || 1,
     unit_cents: li.price?.unit_amount ?? Math.round((li.amount_subtotal || 0) / (li.quantity || 1)),
   }));
+}
+
+// A promotion id (promo_…) or coupon id from the webhook → the code the customer typed, when an
+// API key allows the lookup. Without one the id is kept as the code: still a stable label for
+// the books, and never fed to the local discount rules (recordOrder sees discount_cents set).
+export async function resolveDiscountCode(cfg, code, { fetchImpl = fetch } = {}) {
+  if (!code || !cfg.stripeApiKey) return code;
+  const isPromo = /^promo_[A-Za-z0-9]+$/.test(code);
+  const r = await fetchImpl(`https://api.stripe.com/v1/${isPromo ? 'promotion_codes' : 'coupons'}/${encodeURIComponent(code)}`, { headers: { authorization: `Bearer ${cfg.stripeApiKey}` } });
+  if (!r.ok) return code;
+  const body = await r.json();
+  return (isPromo ? body.code : body.name || body.id) || code;
 }
 
 // --- the CSV path. Stripe's Payments export headers vary by dashboard

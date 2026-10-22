@@ -69,9 +69,23 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         run: |
           if flyctl apps list --json | grep -q "\"Name\": *\"$APP\""; then echo "app $APP exists"; else flyctl apps create "$APP" --org "$ORG"; fi
+      - name: One data volume, one machine
+        if: steps.gate.outputs.run == 'true'
+        # The SQLite file lives on a volume, and exactly one machine mounts it;
+        # two machines would be two databases and a login that only works on
+        # one of them. Machines from before the volume existed hold nothing the
+        # demo cannot reseed, so they are removed and the deploy makes the one.
+        run: |
+          if ! flyctl volumes list --app "$APP" --json | jq -e '.[] | select(.name == "backoffice_demo_data")' >/dev/null; then
+            flyctl volumes create backoffice_demo_data --app "$APP" --region "$REGION" --size 1 --yes
+          fi
+          for id in $(flyctl machines list --app "$APP" --json | jq -r '.[] | select((.config.mounts // []) | length == 0) | .id'); do
+            flyctl machine destroy "$id" --app "$APP" --force
+          done
       - name: Deploy (Fly builds the image on its remote builder)
         if: steps.gate.outputs.run == 'true'
-        run: flyctl deploy --config deploy/fly.toml --app "$APP" --primary-region "$REGION" --remote-only --yes
+        # --dockerfile is cwd-relative (backoffice/), unlike the toml's config-relative path; --ha=false keeps it to one machine
+        run: flyctl deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --app "$APP" --primary-region "$REGION" --remote-only --ha=false --yes
       - name: Where it lives
         if: steps.gate.outputs.run == 'true'
         run: |

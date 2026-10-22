@@ -34,7 +34,7 @@ test('tickets open with a thread token, auto-ack, classify, and replies thread b
   const r2 = ingestEmail(db, { from: 'ada@example.test', subject: 'thanks!!', text: 'ty', messageId: '<m2@x>', inReplyTo: '<ours@errer.test>' }, { cfg });
   assert.equal(r2.ticket.number, 'T-000001');
   // an auto-reply never opens a ticket, and files as a note on an existing one
-  assert.equal(ingestEmail(db, { from: 'MAILER-DAEMON@x', subject: 'Undeliverable: hi', text: 'bounce', messageId: '<b@x>' }, { cfg }).ignored, 'auto-reply');
+  assert.equal(ingestEmail(db, { from: 'MAILER-DAEMON@x', subject: 'Undeliverable: hi', text: 'bounce', messageId: '<b@x>' }, { cfg }).ignored, 'bounce');
   const r3 = ingestEmail(db, { from: 'ada@example.test', subject: `Automatic reply: [T-000001 ${t.thread_token}]`, text: 'OOO', messageId: '<m3@x>' }, { cfg });
   assert.equal(r3.ticket.messages.at(-1).direction, 'note');
   // a brand-new mail opens a new ticket

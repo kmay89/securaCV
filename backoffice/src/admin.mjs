@@ -1,12 +1,24 @@
 // The admin: one page per module, plain forms, no client JavaScript.
 import { html, redirect, text, HttpError, escapeHtml as e } from './http.mjs';
-import { layout, table, money, dt, day, statusPill, field, form, button, cards } from './render.mjs';
+import { layout, table, money, dt, day, statusPill, field, form, button, cards, tags as tagsHtml, tabs } from './render.mjs';
 import { snapshot } from './modules/dashboard.mjs';
-import { listOrders, orderById, transition, refund, recordOrder, fulfillCsv, weekLabel, STATUSES } from './modules/orders.mjs';
+import { listOrders, orderById, transition, refund, recordOrder, fulfillCsv, weekLabel, STATUSES, timeline, addNote, setTags, updateShipping, resendTracking, statusCounts } from './modules/orders.mjs';
+import { customerStats, tagList } from './modules/contacts.mjs';
+import { registerShop } from './admin_shop.mjs';
+import { registerOps } from './admin_ops.mjs';
+import { registerMail } from './admin_mail.mjs';
+import { registerMore, decideCards } from './admin_more.mjs';
+import { attachmentsFor } from './modules/support.mjs';
+import { deliveryLine, trackingUrl, orderStatusUrl } from './modules/delivery.mjs';
+import { onOrder, buildableAhead } from './modules/purchasing.mjs';
+import { trackingConfigured } from './modules/shipping.mjs';
+import { doctor, todayLines } from './modules/health.mjs';
+import { line, tile } from './charts.mjs';
+import { analytics } from './modules/analytics.mjs';
 import { parseCsv, detectColumns, csvRowToOrder } from './modules/stripe.mjs';
 import { listTickets, ticketById, reply, setStatus, update as updateTicket, openTicket, STATUSES as TSTATUS, KINDS } from './modules/support.mjs';
-import { searchContacts, contactById, upsertContact, waitlistSummary, waitlistFor } from './modules/contacts.mjs';
-import { sendConsentRequest, notifyWaitlist, listCampaigns, createCampaign, queueCampaign, campaign } from './modules/campaigns.mjs';
+import { contactById, upsertContact, setContactTags as setContactTagsFn } from './modules/contacts.mjs';
+import { sendConsentRequest, notifyWaitlist } from './modules/campaigns.mjs';
 import { listItems, upsertItem, move, setRecipe, recipes, moves, buildable } from './modules/inventory.mjs';
 import { listDevices, registerDevice, importManifest, assignToOrder } from './modules/devices.mjs';
 import { listClaims, claimById, openClaim, reship, resolveClaim, ANSWERS } from './modules/warranty.mjs';
@@ -24,37 +36,54 @@ import { join } from 'node:path';
 
 export function registerAdmin(app) {
   const { db, cfg, router } = app;
-  const page = (c, title, body) => html(c.res, layout({ title, body, path: c.url.pathname, company: cfg.company, csrf: c.csrf, demo: cfg.demo, demoResetMinutes: cfg.demoResetMinutes, flash: c.query.get('ok') ? { text: c.query.get('ok') } : c.query.get('err') ? { kind: 'err', text: c.query.get('err') } : null }));
-  const back = (c, to, ok) => redirect(c.res, `${to}?ok=${encodeURIComponent(ok)}`);
+  const page = (c, title, body) => html(c.res, layout({ title, body, path: c.url.pathname, company: cfg.company, csrf: c.csrf, demo: cfg.demo, demoResetMinutes: cfg.demoResetMinutes, q: c.url.pathname === '/search' ? c.query.get('q') || '' : '', flash: c.query.get('ok') ? { text: c.query.get('ok') } : c.query.get('err') ? { kind: 'err', text: c.query.get('err') } : null }));
+  const back = (c, to, ok) => redirect(c.res, `${to}${to.includes('?') ? '&' : '?'}ok=${encodeURIComponent(ok)}`);
   const link = (href, label) => `<a href="${e(href)}">${e(label)}</a>`;
   const filters = (c, fields) => `<form method="get" class="row" style="margin:.6rem 0">${fields.map(([n, l, opts]) => opts ? field(n, l, { options: [['', 'any'], ...opts], value: c.query.get(n) || '' }) : field(n, l, { value: c.query.get(n) || '' })).join('')}<div><label>&nbsp;</label><button class="quiet">Filter</button></div></form>`;
 
-  // ---------- dashboard
+  registerShop(app, { page, back, link, filters });
+  registerOps(app, { page, back, link, filters });
+  // A form may say where to go afterwards; only a plain local path is honored.
+  const backTo = (c, fallback, ok) => back(c, /^\/(?!\/)[A-Za-z0-9/._~?=&-]*$/.test(String(c.body._back || '')) ? c.body._back : fallback, ok);
+  registerMore(app, { page, back, link, filters, backTo });
+
+  // ---------- home: today's work as cards, the thirty days at a glance, the health pill, what just happened
   router.get('/', (c) => {
     const s = snapshot(db);
     const m = s.books.months.at(-1) || { income_cents: 0, expenses_cents: 0, net_cents: 0 };
-    const body = cards([
-      ['Orders to pack/ship', s.orders.open, s.orders.open ? 'warn' : ''], ['This batch', `${s.orders.thisBatch} <span class="muted" style="font-size:.8rem">${weekLabel()}</span>`],
-      ['Revenue, 30 days', money(s.orders.revenue30)], ['Units, 30 days', s.orders.units30],
-      ['Support needing an answer', s.support.open, s.support.breached ? 'bad' : ''], ['SLA breaches', s.support.breached, s.support.breached ? 'bad' : 'ok'],
-      ['Warranty open', s.warranty.open], ['Warranty rate, 90 d', `${(s.warranty.rate90 * 100).toFixed(1)}%`],
-      ['Low stock', s.inventory.low.length, s.inventory.low.length ? 'warn' : 'ok'], ['Inventory at cost', money(s.inventory.value_cents)],
-      ['This month net', money(m.net_cents), m.net_cents < 0 ? 'bad' : 'ok'], ['MRR (plans)', money(s.books.mrr_cents)],
+    const a = analytics(db, { days: 30 }); const t = a.totals, pv = a.previous;
+    const h = doctor(db, cfg); const todo = todayLines(db, cfg);
+    const date = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
+    const lead = todo.length ? todo.slice(0, 3).map(l => `${l.n} ${l.what.replace(/:.*$/, '')}`).join(' · ') : 'Nothing is waiting on you.';
+    const hero = `<div class="hero"><div><h1>${e(date)}</h1><p class="lead">${e(lead)}</p></div><a class="hp ${h.ok ? '' : h.failing.some(k => ['integrity', 'books', 'backup'].includes(k)) ? 'bad' : 'warn'}" href="/health">${h.ok ? 'All checks pass' : `${h.failing.length} health check${h.failing.length === 1 ? '' : 's'} need attention`}</a></div>`;
+    const acts = todo.length ? `<div class="actions">${todo.map(l => `<a class="act ${l.urgent ? 'urgent' : ''}" href="${e(l.href)}"><span class="n">${l.n}</span><span class="w">${e(l.what)}</span><span class="go">${e(l.action)} →</span></a>`).join('')}</div>` : '<div class="actions"><div class="act calm"><span class="w">Silence means healthy. The next order, email or probe result will show up here.</span></div></div>';
+    const kpis = `<div class="kpis">${tile('Total sales, 30 days', money(t.total_cents), { prev: pv.total_cents, cur: t.total_cents })}${tile('Orders', t.orders, { prev: pv.orders, cur: t.orders })}${tile('Average order', money(t.aov_cents), { prev: pv.aov_cents, cur: t.aov_cents })}${tile('Returning customers', `${Math.round(t.returning_rate * 100)}%`, { prev: pv.returning_rate, cur: t.returning_rate })}${tile('This month net', money(m.net_cents))}</div>`;
+    const chart = line({ points: a.series.buckets.map(b => ({ label: b.label, value: b.net_cents })), title: 'Net sales per day, 30 days', money: true, height: 150 });
+    const more = `<details class="more"><summary>All the numbers</summary>` + cards([
+      ['This batch', `${s.orders.thisBatch} <span class="muted" style="font-size:.8rem">${weekLabel()}</span>`], ['Units, 30 days', s.orders.units30],
+      ['SLA breaches', s.support.breached, s.support.breached ? 'bad' : 'ok'], ['Warranty rate, 90 d', `${(s.warranty.rate90 * 100).toFixed(1)}%`],
+      ['Inventory at cost', money(s.inventory.value_cents)], ['MRR (plans)', money(s.books.mrr_cents)],
       ['Receivable', money(s.books.receivable_cents)], ['In Stripe, not paid out', money(s.books.stripe_unpaid_out_cents)],
-      ['Open exceptions', s.exceptions.length, s.exceptions.length ? 'bad' : 'ok'], ['Probes down', s.probes.filter(p => p.last_ok === 0).length, s.probes.some(p => p.last_ok === 0) ? 'bad' : 'ok'],
-    ]) +
-    `<h2>Exceptions (what a human must decide)</h2>${table(s.exceptions, [{ label: 'Opened', get: r => dt(r.opened_at) }, { label: 'Title', html: r => link('/exceptions', r.title) }, { label: 'Issue', html: r => r.github_issue ? link(`https://github.com/${cfg.githubRepo}/issues/${r.github_issue}`, '#' + r.github_issue) : '—' }], { empty: 'Silence means healthy.' })}` +
-    `<h2>Waitlist</h2>${table(s.waitlist, [{ label: 'SKU', key: 'sku' }, { label: 'People', key: 'people', num: true }, { label: 'Units', key: 'units', num: true }, { label: 'Not yet notified', key: 'waiting', num: true }], { empty: 'Nobody waiting.' })}` +
-    `<h2>Mail outbox</h2><p>${Object.entries(s.mail).map(([k, v]) => `${e(k)}: <b>${v}</b>`).join(' · ') || 'empty'} · contacts ${s.contacts.n} (${s.contacts.consented || 0} consented)</p>`;
-    page(c, 'Dashboard', body);
+      ['Probes down', s.probes.filter(p => p.last_ok === 0).length, s.probes.some(p => p.last_ok === 0) ? 'bad' : 'ok'], ['Mail queued', s.mail.queued || 0],
+      ['Customers', `${s.contacts.n} <span class="muted" style="font-size:.8rem">${s.contacts.consented || 0} opted in</span>`], ['Waiting for stock', s.waitlist.reduce((n, w) => n + w.waiting, 0)],
+    ]) + `<p class="muted">${link('/analytics', 'Full analytics')} · ${link('/batches', 'Batches')} · ${link('/products', 'Products')} · ${link('/books', 'Books')}</p></details>`;
+    const activity = db.all('SELECT * FROM audit_log WHERE action NOT IN (\'demo.seed\') ORDER BY at DESC, id DESC LIMIT 10').map(describeAudit).filter(Boolean);
+    const decide = decideCards(db, cfg, c.csrf);
+    const body = `${hero}${acts}${decide}${kpis}${chart}${more}<h2>Activity <span class="muted" style="font-weight:400;font-size:13px">· ${link('/audit', 'the whole log')}</span></h2><ul class="feed">${activity.map(x => `<li><span class="meta">${e(dt(x.at))} · ${e(x.actor)}</span><span>${x.html}</span></li>`).join('') || '<li class="muted">Nothing yet.</li>'}</ul>`;
+    html(c.res, layout({ title: 'Home', body, path: '/', company: cfg.company, csrf: c.csrf, demo: cfg.demo, demoResetMinutes: cfg.demoResetMinutes, h1: false, flash: c.query.get('ok') ? { text: c.query.get('ok') } : c.query.get('err') ? { kind: 'err', text: c.query.get('err') } : null }));
   });
 
   // ---------- orders
   router.get('/orders', (c) => {
-    const rows = listOrders(db, { status: c.query.get('status') || '', batch: c.query.get('batch') || '', q: c.query.get('q') || '' });
-    const body = filters(c, [['status', 'Status', STATUSES.map(s => [s, s])], ['batch', 'Batch (e.g. ' + weekLabel() + ')'], ['q', 'Search']]) +
-      `<p>${link(`/orders.csv?batch=${e(c.query.get('batch') || '')}&status=${e(c.query.get('status') || 'paid')}`, 'Download fulfill.mjs CSV for this filter')} · ${link('/orders/import', 'Import a Stripe CSV')} · ${link('/orders/new', 'Manual order')}</p>` +
-      table(rows, [{ label: '#', html: r => link(`/orders/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Paid', get: r => day(r.paid_at) }, { label: 'Batch', key: 'batch' }, { label: 'Customer', get: r => `${r.ship_name || ''} ${r.email ? `<${r.email}>` : ''}` }, { label: 'Items', key: 'items_text' }, { label: 'Total', get: r => money(r.total_cents, r.currency), num: true }, { label: 'Tracking', key: 'tracking' }]);
+    const f = { status: c.query.get('status') || '', batch: c.query.get('batch') || '', q: c.query.get('q') || '', tag: c.query.get('tag') || '', from: c.query.get('from') || '', to: c.query.get('to') || '', discount: c.query.get('discount') || '', sku: c.query.get('sku') || '' };
+    const rows = listOrders(db, f); const n = statusCounts(db);
+    const qs = (o) => '/orders?' + new URLSearchParams({ ...f, ...o }).toString();
+    const body = tabs([[qs({ status: '' }), 'All', n.all, ''], [qs({ status: 'open' }), 'Open', n.open, 'open'], [qs({ status: 'paid' }), 'To pack', n.paid, 'paid'], [qs({ status: 'packed' }), 'To ship', n.packed, 'packed'], [qs({ status: 'shipped' }), 'Shipped', n.shipped, 'shipped'], [qs({ status: 'delivered' }), 'Delivered', n.delivered, 'delivered'], [qs({ status: 'refunded' }), 'Refunded', n.refunded, 'refunded'], [qs({ status: 'canceled' }), 'Canceled', n.canceled, 'canceled']], f.status) +
+      filters(c, [['q', 'Search # / name / email / tracking'], ['batch', 'Batch (e.g. ' + weekLabel() + ')'], ['tag', 'Tag'], ['from', 'Paid from (YYYY-MM-DD)'], ['to', 'Paid to'], ['discount', 'Discount code'], ['sku', 'SKU']]) +
+      `<p>${rows.length} shown · ${link(`/orders.csv?batch=${e(f.batch)}&status=${e(f.status || 'paid')}`, 'fulfill.mjs CSV for this filter')} · ${link('/batches', 'Batches')} · ${link('/orders/import', 'Import a Stripe CSV')} · ${link('/orders/new', 'Manual order')}</p>` +
+      `<form method="post" action="/orders/bulk"><input type="hidden" name="_csrf" value="${e(c.csrf)}">` +
+      table(rows, [{ label: '', html: r => `<input type="checkbox" name="ids[]" value="${r.id}" style="width:auto" aria-label="select ${e(r.number)}">` }, { label: '#', html: r => link(`/orders/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Paid', get: r => day(r.paid_at) }, { label: 'Batch', key: 'batch' }, { label: 'Customer', html: r => `${r.contact_id ? link(`/contacts/${r.contact_id}`, r.ship_name || r.email) : e(r.ship_name || '')}${r.email ? `<br><span class="muted">${e(r.email)}</span>` : ''}` }, { label: 'Items', get: r => `${r.units} · ${r.items_text || ''}` }, { label: 'Total', html: r => `${money(r.total_cents, r.currency)}${r.discount_code ? `<br><span class="muted">${e(r.discount_code)}</span>` : ''}${r.refunded_cents ? `<br><span class="bad">−${money(r.refunded_cents)}</span>` : ''}`, num: true }, { label: 'Tags', html: r => tagsHtml(r.tags) }, { label: 'Tracking', key: 'tracking' }]) +
+      (rows.length ? `<div class="row" style="margin:.6rem 0;align-items:end"><div>${field('action', 'With the selected orders', { options: [['packed', 'mark packed (pulls parts from stock)'], ['delivered', 'mark delivered'], ['slips', 'print packing slips'], ['tag', 'add a tag'], ['canceled', 'cancel (only paid, unpacked orders)']] })}</div><div>${field('tag', 'Tag (for "add a tag")')}</div><div><label>&nbsp;</label><button>Apply</button></div></div>` : '') + '</form>';
     page(c, 'Orders', body);
   });
   router.get('/orders.csv', (c) => text(c.res, fulfillCsv(db, { batch: c.query.get('batch') || '', status: c.query.get('status') || 'paid' }), 200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="orders.csv"' }));
@@ -66,32 +95,55 @@ export function registerAdmin(app) {
     for (const r of rows) { const o = csvRowToOrder(r, map); if (o.status_hint && !/paid|succeeded|complete/i.test(o.status_hint)) { res.skipped++; continue; } try { const { created } = recordOrder(db, o, { catalog, actor: 'web' }); created ? res.created++ : res.existing++; } catch (err) { res.errors.push(`${o.external_id || o.email}: ${err.message}`); } }
     back(c, '/orders', `created ${res.created}, already known ${res.existing}, skipped ${res.skipped}${res.errors.length ? `, errors: ${res.errors.join('; ')}` : ''}`);
   });
-  router.get('/orders/new', (c) => page(c, 'Manual order', form('/orders/new', c.csrf, `<div class="row">${field('email', 'Email', { type: 'email', required: true })}${field('name', 'Ship to name', { required: true })}</div><div class="row">${field('sku', 'SKU', { required: true })}${field('qty', 'Qty', { type: 'number', value: 1 })}${field('cents', 'Total cents (0 for a free reship)', { type: 'number', value: 0 })}</div><div class="row">${field('line1', 'Address line 1', { required: true })}${field('line2', 'Line 2')}</div><div class="row">${field('city', 'City', { required: true })}${field('state', 'State', { required: true })}${field('zip', 'ZIP', { required: true })}</div>${field('notes', 'Notes')}`, { submit: 'Create order' })));
+  router.get('/orders/new', (c) => page(c, 'Manual order', form('/orders/new', c.csrf, `<div class="row">${field('email', 'Email', { type: 'email', required: true })}${field('name', 'Ship to name', { required: true })}</div><div class="row">${field('sku', 'SKU', { required: true })}${field('qty', 'Qty', { type: 'number', value: 1 })}${field('cents', 'Total cents (0 for a free reship)', { type: 'number', value: 0 })}</div><div class="row">${field('line1', 'Address line 1', { required: true })}${field('line2', 'Line 2')}</div><div class="row">${field('city', 'City', { required: true })}${field('state', 'State', { required: true })}${field('zip', 'ZIP', { required: true })}</div><div class="row">${field('discount_code', 'Discount code (optional; priced by its rules)')}${field('tags', 'Tags')}</div>${field('notes', 'Notes')}`, { submit: 'Create order' })));
   router.post('/orders/new', async (c) => {
     const b = c.body; const cents = Number(b.cents || 0); const qty = Number(b.qty || 1);
-    const { order } = recordOrder(db, { source: 'manual', email: b.email, name: b.name, subtotal_cents: cents, total_cents: cents, ship: { line1: b.line1, line2: b.line2, city: b.city, state: b.state, zip: b.zip }, items: [{ sku: b.sku, name: b.sku, qty, unit_cents: Math.round(cents / qty) }], notes: b.notes }, { catalog: await app.catalog().catch(() => null), actor: 'web' });
+    const { order } = recordOrder(db, { source: 'manual', email: b.email, name: b.name, subtotal_cents: cents, total_cents: cents, discount_code: b.discount_code || null, tags: b.tags || '', ship: { line1: b.line1, line2: b.line2, city: b.city, state: b.state, zip: b.zip }, items: [{ sku: b.sku, name: b.sku, qty, unit_cents: Math.round(cents / qty) }], notes: b.notes }, { catalog: await app.catalog().catch(() => null), actor: 'web' });
     back(c, `/orders/${order.id}`, `created ${order.number}`);
   });
   router.get('/orders/:id', (c) => {
     const o = orderById(db, c.params.id); if (!o) throw new HttpError(404, 'no such order');
     const devices = db.all('SELECT * FROM devices WHERE order_id = ?', o.id);
+    const cust = o.contact_id ? customerStats(db, o.contact_id) : null;
+    const events = timeline(db, o.id);
+    const claims = db.all('SELECT * FROM warranty_claims WHERE order_id = ? OR reship_order_id = ?', o.id, o.id);
+    const tickets = o.contact_id ? db.all('SELECT id, number, subject, status FROM tickets WHERE contact_id = ? ORDER BY id DESC LIMIT 5', o.contact_id) : [];
     const next = { paid: 'packed', packed: 'shipped', shipped: 'delivered' }[o.status];
     const act = next === 'shipped' ? form(`/orders/${o.id}/transition`, c.csrf, `<input type="hidden" name="to" value="shipped"><div class="row">${field('carrier', 'Carrier', { value: 'USPS' })}${field('tracking', 'Tracking number')}</div>`, { submit: 'Mark shipped + email tracking' })
       : next ? `<form method="post" action="/orders/${o.id}/transition" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="${next}"><button>Mark ${next}</button></form>` : '';
-    const body = `<p>${statusPill(o.status)} · ${e(o.source)} ${o.external_id ? `· <span class="muted">${e(o.external_id)}</span>` : ''} · batch ${e(o.batch || '')} · paid ${dt(o.paid_at)} · packed ${dt(o.packed_at)} · shipped ${dt(o.shipped_at)} ${o.tracking ? `· ${e(o.carrier)} ${e(o.tracking)}` : ''}</p>
-<div class="row"><div><b>Ship to</b><br>${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)} ${e(o.ship_country)}<br>${o.email ? link(`/contacts?q=${encodeURIComponent(o.email)}`, o.email) : ''}</div>
-<div><b>Money</b><br>subtotal ${money(o.subtotal_cents)} · shipping ${money(o.shipping_cents)} · tax ${money(o.tax_cents)}<br><b>total ${money(o.total_cents)}</b>${o.refunded_cents ? ` · refunded ${money(o.refunded_cents)}` : ''}<br>COGS ${money(o.items.reduce((s, i) => s + i.cogs_cents * i.qty, 0))}</div></div>
-${table(o.items, [{ label: 'SKU', key: 'sku' }, { label: 'Item', key: 'name' }, { label: 'Qty', key: 'qty', num: true }, { label: 'Unit', get: r => money(r.unit_cents), num: true }, { label: 'COGS/unit', get: r => money(r.cogs_cents), num: true }])}
-<p style="margin-top:1rem">${act} ${o.status === 'paid' ? button(`/orders/${o.id}/transition`, c.csrf, 'Cancel', { quiet: true }).replace('<button', '<input type="hidden" name="to" value="canceled"><button') : ''}</p>
-<h2>Devices in this box</h2>${table(devices, [{ label: 'Serial', key: 'serial' }, { label: 'MAC', key: 'mac' }, { label: 'Firmware', key: 'fw_version' }, { label: 'Status', key: 'status' }], { empty: 'No serial scanned yet — the packing-slip QA line.' })}
-${form(`/orders/${o.id}/assign`, c.csrf, field('serial', 'Scan a board serial to tie it to this order'), { submit: 'Assign' })}
-<h2>Refund</h2>${form(`/orders/${o.id}/refund`, c.csrf, `<div class="row">${field('cents', 'Cents', { type: 'number', value: o.total_cents - o.refunded_cents })}${field('reason', 'Reason')}</div><p class="muted">Records the refund in the books. Issue the actual refund in Stripe (money stays a human action).</p>`, { submit: 'Record refund' })}
-<p class="muted">Notes: ${e(o.notes || '')}</p>`;
+    const undo = o.status === 'packed' ? `<form method="post" action="/orders/${o.id}/transition" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="paid"><button class="quiet">Unpack (return parts)</button></form>` : '';
+    const cancel = o.status === 'paid' ? `<form method="post" action="/orders/${o.id}/transition" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="canceled"><button class="quiet">Cancel</button></form>` : '';
+    const resend = ['shipped', 'delivered'].includes(o.status) && o.email ? button(`/orders/${o.id}/resend-tracking`, c.csrf, 'Re-send tracking email', { quiet: true }) : '';
+    const dl = deliveryLine(o, cfg); const turl = trackingUrl(o.carrier, o.tracking);
+    const where = ['shipped', 'delivered'].includes(o.status) ? `<p class="where"><b>${e(dl.text)}</b>${dl.state === 'alert' ? ' <span class="pill bad">carrier alert</span>' : ''}${o.tracking_detail ? ` <span class="muted">· ${e(o.tracking_detail)}</span>` : ''}${o.tracking_checked_at ? ` <span class="muted">· carrier checked ${e(dt(o.tracking_checked_at))}</span>` : trackingConfigured(cfg) ? '' : ' <span class="muted">· an estimate; set USPS_CLIENT_ID to ask the carrier</span>'}${turl ? ` · <a href="${e(turl)}" rel="noopener noreferrer">${e(o.carrier || 'USPS')} tracking</a>` : ''} · <a href="${e(orderStatusUrl(cfg, o))}" rel="noopener noreferrer">the customer's status page</a></p>` : '';
+    const stepper = ['canceled', 'refunded'].includes(o.status) ? `<p>${statusPill(o.status)} <span class="muted">— this order is ${o.status}${o.refunded_cents ? ` (${money(o.refunded_cents)} back to the customer)` : ''}</span></p>` : (() => { const order = ['paid', 'packed', 'shipped', 'delivered']; const at = { paid: o.paid_at, packed: o.packed_at, shipped: o.shipped_at, delivered: o.delivered_at }; const i = order.indexOf(o.status); return `<ol class="steps">${order.map((st, j) => `<li class="${j < i ? 'done' : j === i ? 'now' : ''}">${st[0].toUpperCase() + st.slice(1)}${at[st] && j <= i ? `<span class="when">${e(day(at[st]))}</span>` : ''}</li>`).join('')}</ol>`; })();
+    const body = `${stepper}<p class="muted">${e(o.source)} ${o.external_id ? `· ${e(o.external_id)}` : ''} · batch ${link(`/orders?batch=${e(o.batch || '')}`, o.batch || '')} · paid ${dt(o.paid_at)}${o.tracking ? ` · ${e(o.carrier)} <b>${e(o.tracking)}</b>` : ''} · ${link(`/orders/${o.id}/packing-slip`, 'Packing slip')}</p>
+${where}<p>${act} ${undo} ${cancel} ${resend}</p>
+<div class="two"><div>
+<div class="card"><div class="k">Customer</div>${o.contact_id ? `<b>${link(`/contacts/${o.contact_id}`, o.ship_name || o.email)}</b><br><span class="muted">${e(o.email || '')}</span><br>${cust.orders} order${cust.orders === 1 ? '' : 's'} · ${money(cust.spent_cents)} lifetime${cust.orders > 1 ? ' · <span class="pill ok">repeat</span>' : ' · first order'}${cust.open_tickets ? ` · <span class="warn">${cust.open_tickets} open ticket${cust.open_tickets === 1 ? '' : 's'}</span>` : ''}` : '<span class="muted">no customer record (no email on the order)</span>'}</div>
+<div class="card" style="margin-top:.8rem"><div class="k">Ship to</div>${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)} ${e(o.ship_country)}${mapLinks(o)}${['paid', 'packed'].includes(o.status) ? `<details style="margin-top:.5rem"><summary class="muted">Edit address</summary>${form(`/orders/${o.id}/address`, c.csrf, `<div class="row">${field('name', 'Name', { value: o.ship_name })}${field('line1', 'Line 1', { value: o.ship_line1, required: true })}</div><div class="row">${field('line2', 'Line 2', { value: o.ship_line2 })}${field('city', 'City', { value: o.ship_city, required: true })}${field('state', 'State', { value: o.ship_state })}${field('zip', 'ZIP', { value: o.ship_zip, required: true })}</div>`, { submit: 'Save address' })}</details>` : ''}</div>
+<div class="card" style="margin-top:.8rem"><div class="k">Payment</div><table><tr><td>Subtotal</td><td class="num">${money(o.subtotal_cents)}</td></tr>${o.discount_cents || o.discount_code ? `<tr><td>Discount ${o.discount_code ? link(`/orders?discount=${encodeURIComponent(o.discount_code)}`, o.discount_code) : ''}</td><td class="num">−${money(o.discount_cents)}</td></tr>` : ''}<tr><td>Shipping</td><td class="num">${money(o.shipping_cents)}</td></tr><tr><td>Tax</td><td class="num">${money(o.tax_cents)}</td></tr><tr><td><b>Total charged</b></td><td class="num"><b>${money(o.total_cents)}</b></td></tr>${o.refunded_cents ? `<tr><td class="bad">Refunded</td><td class="num bad">−${money(o.refunded_cents)}</td></tr>` : ''}<tr><td class="muted">Cost of goods</td><td class="num muted">${money(o.items.reduce((s, i) => s + i.cogs_cents * i.qty, 0))}</td></tr><tr><td class="muted">Margin</td><td class="num muted">${o.total_cents ? Math.round(100 * (o.subtotal_cents - o.discount_cents - o.refunded_cents - o.items.reduce((s, i) => s + i.cogs_cents * i.qty, 0)) / Math.max(1, o.subtotal_cents - o.discount_cents)) : 0}%</td></tr></table></div>
+</div><div>
+<h2 style="margin-top:0">Timeline</h2><ul class="tl">${events.map(ev => `<li class="${e(ev.kind)}"><span class="meta">${e(dt(ev.at))} · ${e(ev.actor)}</span><br>${e(ev.text)}</li>`).join('') || '<li class="muted">No events recorded.</li>'}</ul>
+${form(`/orders/${o.id}/note`, c.csrf, field('body', 'Add a note (internal; the customer never sees it)', { type: 'textarea', rows: 2, required: true }), { submit: 'Add note' })}
+</div></div>
+<h2>Items</h2>${table(o.items, [{ label: 'SKU', html: r => link(`/products/${encodeURIComponent(r.sku)}`, r.sku) }, { label: 'Item', key: 'name' }, { label: 'Qty', key: 'qty', num: true }, { label: 'Unit', get: r => money(r.unit_cents), num: true }, { label: 'Line', get: r => money(r.unit_cents * r.qty), num: true }, { label: 'COGS/unit', get: r => money(r.cogs_cents), num: true }], { empty: 'No line items — Stripe did not send them and they could not be fetched. Add them before packing.' })}
+${o.status === 'paid' ? `<details style="margin-top:.5rem"><summary class="muted">Edit the lines (the charge stays what it was)</summary>${form(`/orders/${o.id}/items`, c.csrf, field('lines', 'One per row: sku | qty', { type: 'textarea', rows: 4, value: o.items.map(i => `${i.sku} | ${i.qty}`).join('\n'), required: true }), { submit: 'Save lines' })}</details>` : ''}
+<div class="two"><div><h2>Tags</h2><p>${tagsHtml(o.tags) || '<span class="muted">none</span>'}</p>${form(`/orders/${o.id}/tags`, c.csrf, field('tags', 'Tags, comma-separated (gift, rush, wholesale-interest…)', { value: o.tags }), { submit: 'Save tags' })}</div>
+<div><h2>Devices in this box</h2>${table(devices, [{ label: 'Serial', key: 'serial' }, { label: 'MAC', key: 'mac' }, { label: 'Firmware', key: 'fw_version' }, { label: 'Status', key: 'status' }], { empty: 'No serial scanned yet — the packing-slip QA line.' })}
+${form(`/orders/${o.id}/assign`, c.csrf, field('serial', 'Scan a board serial to tie it to this order'), { submit: 'Assign' })}</div></div>
+${claims.length || tickets.length ? `<div class="two"><div><h2>Warranty</h2>${table(claims, [{ label: '#', html: r => link(`/warranty/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Category', key: 'category' }])}</div><div><h2>Customer's tickets</h2>${table(tickets, [{ label: '#', html: r => link(`/tickets/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Subject', key: 'subject' }])}</div></div>` : ''}
+<h2>Refund</h2>${o.total_cents - o.refunded_cents > 0 ? form(`/orders/${o.id}/refund`, c.csrf, `<div class="row">${field('cents', 'Cents', { type: 'number', value: o.total_cents - o.refunded_cents })}${field('reason', 'Reason')}</div><p class="muted">Records the refund in the books and on the timeline. Issue the actual refund in Stripe (money stays a human action); the webhook then confirms it.</p>`, { submit: 'Record refund' }) : '<p class="muted">Fully refunded.</p>'}
+${o.notes ? `<p class="muted">Order notes: ${e(o.notes)}</p>` : ''}`;
     page(c, `Order ${o.number}`, body);
   });
-  router.post('/orders/:id/transition', (c) => { const o = transition(db, c.params.id, c.body.to, { actor: 'web', carrier: c.body.carrier, tracking: c.body.tracking, cfg }); back(c, `/orders/${o.id}`, `${o.number} is now ${o.status}`); });
+  router.post('/orders/:id/note', (c) => { addNote(db, Number(c.params.id), c.body.body, { actor: 'web' }); back(c, `/orders/${c.params.id}`, 'note added'); });
+  router.post('/orders/:id/tags', (c) => { setTags(db, Number(c.params.id), c.body.tags || '', { actor: 'web' }); back(c, `/orders/${c.params.id}`, 'tags saved'); });
+  router.post('/orders/:id/address', (c) => { updateShipping(db, Number(c.params.id), c.body, { actor: 'web' }); back(c, `/orders/${c.params.id}`, 'address updated'); });
+  router.post('/orders/:id/resend-tracking', (c) => { resendTracking(db, Number(c.params.id), { cfg, actor: 'web' }); back(c, `/orders/${c.params.id}`, 'tracking email queued'); });
+  router.post('/orders/:id/transition', (c) => { const o = transition(db, c.params.id, c.body.to, { actor: 'web', carrier: c.body.carrier, tracking: c.body.tracking, cfg }); backTo(c, `/orders/${o.id}`, `${o.number} is now ${o.status}`); });
   router.post('/orders/:id/refund', (c) => { const o = refund(db, c.params.id, c.body.cents, { actor: 'web', reason: c.body.reason }); back(c, `/orders/${o.id}`, `refund recorded`); });
-  router.post('/orders/:id/assign', (c) => { assignToOrder(db, c.body.serial, Number(c.params.id)); back(c, `/orders/${c.params.id}`, `assigned ${c.body.serial}`); });
+  router.post('/orders/:id/assign', (c) => { assignToOrder(db, c.body.serial, Number(c.params.id)); backTo(c, `/orders/${c.params.id}`, `assigned ${c.body.serial}`); });
 
   // ---------- support
   router.get('/tickets', (c) => {
@@ -105,7 +157,8 @@ ${form(`/orders/${o.id}/assign`, c.csrf, field('serial', 'Scan a board serial to
     const t = ticketById(db, c.params.id); if (!t) throw new HttpError(404, 'no such ticket');
     const canned = db.all('SELECT * FROM canned_replies ORDER BY title');
     const orders = t.email ? db.all('SELECT o.* FROM orders o JOIN contacts c ON c.id = o.contact_id WHERE c.email = ? ORDER BY o.id DESC LIMIT 5', t.email) : [];
-    const msgs = t.messages.map(m => `<div class="msg ${m.direction}"><div class="meta">${m.direction === 'in' ? '← ' + e(m.from_addr || t.email || '') : m.direction === 'out' ? '→ ' + e(m.to_addr || '') : 'note'} · ${e(dt(m.created_at))}</div>${e(m.body)}</div>`).join('');
+    const atts = attachmentsFor(db, t.id); const attHtml = (mid) => { const list = atts.filter(a => a.ticket_message_id === mid); return list.length ? `<div class="atts">${list.map(a => /^image\//.test(a.mime) ? `<a href="/tickets/${t.id}/att/${a.id}" class="att"><img src="/tickets/${t.id}/att/${a.id}" alt="${e(a.filename)}" loading="lazy"><span>${e(a.filename)} · ${Math.round(a.size / 1024)} KB</span></a>` : `<a href="/tickets/${t.id}/att/${a.id}" class="att file">📎 ${e(a.filename)} <span class="muted">${e(a.mime)} · ${Math.round(a.size / 1024)} KB</span></a>`).join('')}</div>` : ''; };
+    const msgs = t.messages.map(m => `<div class="msg ${m.direction}"><div class="meta">${m.direction === 'in' ? '← ' + e(m.from_addr || t.email || '') : m.direction === 'out' ? '→ ' + e(m.to_addr || '') : 'note'} · ${e(dt(m.created_at))}</div>${e(m.body)}${attHtml(m.id)}</div>`).join('');
     const body = `<p>${statusPill(t.status)} ${statusPill(t.priority)} ${statusPill(t.kind)} · ${t.email ? link(`/contacts?q=${encodeURIComponent(t.email)}`, t.email) : 'no email'} · opened ${dt(t.created_at)} · first response ${dt(t.first_response_at)} · thread token <code>[${e(t.number)} ${e(t.thread_token)}]</code></p>
 ${orders.length ? `<p>Orders: ${orders.map(o => link(`/orders/${o.id}`, `${o.number} (${o.status})`)).join(', ')}</p>` : ''}
 ${msgs}
@@ -119,7 +172,7 @@ ${form(`/tickets/${t.id}/note`, c.csrf, field('body', 'Internal note', { type: '
     let body = c.body.body || '';
     if (c.body.canned && !body.trim()) { const t = ticketById(db, c.params.id); body = fill(db.get('SELECT body FROM canned_replies WHERE slug = ?', c.body.canned)?.body || '', { name: t?.contact_name || 'there', number: t?.number || '' }); }
     if (!body.trim()) throw new HttpError(400, 'the reply is empty — write one or pick a canned reply');
-    reply(db, c.params.id, body, { cfg, actor: 'web', close: !!c.body.close }); back(c, `/tickets/${c.params.id}`, 'reply queued');
+    reply(db, c.params.id, body, { cfg, actor: 'web', close: !!c.body.close }); backTo(c, `/tickets/${c.params.id}`, 'reply queued');
   });
   router.post('/tickets/:id/status', (c) => { setStatus(db, c.params.id, c.body.status); back(c, `/tickets/${c.params.id}`, `now ${c.body.status}`); });
   router.post('/tickets/:id/update', (c) => { updateTicket(db, c.params.id, c.body); back(c, `/tickets/${c.params.id}`, 'updated'); });
@@ -128,32 +181,43 @@ ${form(`/tickets/${t.id}/note`, c.csrf, field('body', 'Internal note', { type: '
   router.post('/canned', (c) => { db.run('INSERT INTO canned_replies (slug, title, body) VALUES (?, ?, ?) ON CONFLICT(slug) DO UPDATE SET title = excluded.title, body = excluded.body', c.body.slug, c.body.title, c.body.body); back(c, '/canned', 'saved'); });
 
   // ---------- contacts & waitlist
-  router.get('/contacts', (c) => {
-    const rows = searchContacts(db, c.query.get('q') || '');
-    page(c, 'Contacts', filters(c, [['q', 'Search email / name / org']]) + table(rows, [{ label: 'Email', html: r => link(`/contacts/${r.id}`, r.email) }, { label: 'Name', key: 'name' }, { label: 'Org', key: 'org' }, { label: 'Kind', key: 'kind' }, { label: 'Source', key: 'source' }, { label: 'Marketing', html: r => r.consent_marketing && !r.unsubscribed_at ? '<span class="ok">consented</span>' : r.unsubscribed_at ? '<span class="bad">unsubscribed</span>' : '<span class="muted">no</span>' }, { label: 'Since', get: r => day(r.created_at) }]) +
-      `<h2>Waitlist</h2>${table(waitlistSummary(db), [{ label: 'SKU', key: 'sku' }, { label: 'People', key: 'people', num: true }, { label: 'Units', key: 'units', num: true }, { label: 'Waiting', key: 'waiting', num: true }, { label: '', html: r => `<form method="post" action="/waitlist/notify" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="sku" value="${e(r.sku)}"><button class="quiet">Notify "in stock"</button></form>` }])}` +
-      form('/contacts/new', c.csrf, `<div class="row">${field('email', 'Email', { type: 'email', required: true })}${field('name', 'Name')}${field('org', 'Org')}${field('kind', 'Kind', { options: ['person', 'school', 'business', 'nonprofit', 'press', 'vendor'] })}</div>`, { submit: 'Add contact' }));
-  });
-  router.post('/contacts/new', (c) => { const ct = upsertContact(db, { ...c.body, source: 'manual' }); back(c, `/contacts/${ct.id}`, 'saved'); });
+  router.post('/contacts/new', (c) => { const ct = upsertContact(db, { ...c.body, source: 'manual' }); if (c.body.tags) setContactTagsFn(db, ct.id, c.body.tags); back(c, `/contacts/${ct.id}`, 'saved'); });
   router.get('/contacts/:id', (c) => {
     const ct = contactById(db, c.params.id); if (!ct) throw new HttpError(404, 'no such contact');
-    const orders = db.all('SELECT * FROM orders WHERE contact_id = ? ORDER BY id DESC', ct.id); const tickets = db.all('SELECT * FROM tickets WHERE contact_id = ? ORDER BY id DESC', ct.id);
+    const st = customerStats(db, ct.id);
+    const orders = db.all('SELECT o.*, (SELECT GROUP_CONCAT(qty || \'× \' || sku, \', \') FROM order_items i WHERE i.order_id = o.id) AS items_text FROM orders o WHERE contact_id = ? ORDER BY id DESC', ct.id); const tickets = db.all('SELECT * FROM tickets WHERE contact_id = ? ORDER BY id DESC', ct.id);
     const wl = db.all('SELECT * FROM waitlist WHERE contact_id = ?', ct.id);
-    page(c, ct.email, `<p>${e(ct.name || '')} ${ct.org ? '· ' + e(ct.org) : ''} · ${e(ct.kind)} · via ${e(ct.source || '')} · since ${day(ct.created_at)} · marketing: ${ct.consent_marketing && !ct.unsubscribed_at ? `<span class="ok">consented ${day(ct.consent_at)}</span>` : ct.unsubscribed_at ? `<span class="bad">unsubscribed ${day(ct.unsubscribed_at)}</span>` : 'no'} ${!ct.consent_marketing ? button(`/contacts/${ct.id}/consent`, c.csrf, 'Send double opt-in mail', { quiet: true }) : ''}</p>
-<h2>Orders</h2>${table(orders, [{ label: '#', html: r => link(`/orders/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Total', get: r => money(r.total_cents), num: true }, { label: 'Paid', get: r => day(r.paid_at) }])}
+    const invoices = db.all('SELECT * FROM invoices WHERE contact_id = ? ORDER BY id DESC', ct.id);
+    const events = [
+      ...db.all('SELECT ev.at, ev.text, o.number, o.id AS order_id FROM order_events ev JOIN orders o ON o.id = ev.order_id WHERE o.contact_id = ? AND ev.kind IN (\'placed\',\'shipped\',\'delivered\',\'refund\',\'canceled\')', ct.id).map(x => ({ at: x.at, html: `${link(`/orders/${x.order_id}`, x.number)} — ${e(x.text)}` })),
+      ...db.all('SELECT m.created_at AS at, m.direction, t.number, t.id AS ticket_id, t.subject FROM ticket_messages m JOIN tickets t ON t.id = m.ticket_id WHERE t.contact_id = ?', ct.id).map(x => ({ at: x.at, html: `${link(`/tickets/${x.ticket_id}`, x.number)} — ${x.direction === 'in' ? 'wrote in' : x.direction === 'out' ? 'we replied' : 'note'}: ${e(x.subject)}` })),
+      ...(ct.consent_at ? [{ at: ct.consent_at, html: 'Confirmed marketing opt-in (double opt-in)' }] : []), ...(ct.unsubscribed_at ? [{ at: ct.unsubscribed_at, html: 'Unsubscribed from marketing' }] : []),
+      ...wl.map(w => ({ at: w.created_at, html: `Joined the waitlist for ${e(w.sku)} (${w.qty})` })), { at: ct.created_at, html: `Customer record created via ${e(ct.source || 'manual')}` },
+    ].sort((a, b) => b.at.localeCompare(a.at));
+    page(c, ct.name || ct.email, `<p>${e(ct.email)} ${ct.org ? '· ' + e(ct.org) : ''} · ${e(ct.kind)} · via ${e(ct.source || '')} · since ${day(ct.created_at)} · marketing: ${ct.consent_marketing && !ct.unsubscribed_at ? `<span class="ok">opted in ${day(ct.consent_at)}</span>` : ct.unsubscribed_at ? `<span class="bad">unsubscribed ${day(ct.unsubscribed_at)}</span>` : 'no'} ${!ct.consent_marketing ? button(`/contacts/${ct.id}/consent`, c.csrf, 'Send double opt-in mail', { quiet: true }) : ''}</p>
+<p>${tagsHtml(ct.tags) || '<span class="muted">no tags</span>'}</p>
+${cards([['Orders', st.orders], ['Lifetime spend', money(st.spent_cents)], ['Average order', money(st.aov_cents)], ['Units', st.units], ['First order', st.first_order_at ? day(st.first_order_at) : '—'], ['Last order', st.last_order_at ? day(st.last_order_at) : '—'], ['Tickets', `${st.tickets}${st.open_tickets ? ` (${st.open_tickets} open)` : ''}`, st.open_tickets ? 'warn' : ''], ['Warranty claims', st.claims, st.claims ? 'warn' : '']])}
+<div class="two"><div>
+<h2>Orders</h2>${table(orders, [{ label: '#', html: r => link(`/orders/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Items', key: 'items_text' }, { label: 'Total', get: r => money(r.total_cents), num: true }, { label: 'Paid', get: r => day(r.paid_at) }])}
 <h2>Tickets</h2>${table(tickets, [{ label: '#', html: r => link(`/tickets/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Subject', key: 'subject' }])}
-<h2>Waitlist</h2>${table(wl, [{ label: 'SKU', key: 'sku' }, { label: 'Qty', key: 'qty' }, { label: 'Notified', get: r => dt(r.notified_at) }])}
-${form(`/contacts/${ct.id}/notes`, c.csrf, field('notes', 'Notes', { type: 'textarea', value: ct.notes || '' }), { submit: 'Save notes' })}`);
+${invoices.length ? `<h2>Invoices</h2>${table(invoices, [{ label: '#', html: r => link(`/invoices/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Total', get: r => money(r.total_cents), num: true }])}` : ''}
+<h2>Waitlist</h2>${table(wl, [{ label: 'SKU', html: r => link(`/products/${encodeURIComponent(r.sku)}`, r.sku) }, { label: 'Qty', key: 'qty' }, { label: 'Notified', get: r => dt(r.notified_at) }])}
+</div><div>
+<h2>Timeline</h2><ul class="tl">${events.map(x => `<li><span class="meta">${e(dt(x.at))}</span><br>${x.html}</li>`).join('')}</ul>
+${form(`/contacts/${ct.id}/tags`, c.csrf, field('tags', 'Tags, comma-separated (vip, school, press…)', { value: ct.tags }), { submit: 'Save tags' })}
+${form(`/contacts/${ct.id}/notes`, c.csrf, field('notes', 'Notes', { type: 'textarea', value: ct.notes || '' }), { submit: 'Save notes' })}
+<h2>Their data</h2>${ct.forgotten_at ? `<p class="muted">Forgotten ${e(dt(ct.forgotten_at))}: the name, addresses and messages are gone; order numbers, amounts and dates stay so the books still add up.</p>` : `<p>${link(`/contacts/${ct.id}/export.json`, 'Download everything we hold about them (JSON)')} — for a data-access request.</p><details><summary class="muted">Forget this person (right to erasure)</summary>${form(`/contacts/${ct.id}/forget`, c.csrf, `<p class="muted">Blanks the name, email, addresses, notes, ticket messages, attachments and mail to them, in one transaction, and logs that it happened. Orders keep their numbers, amounts, dates and state so the ledger and the sales-tax table are unchanged. This cannot be undone.</p>${field('sure', 'Type forget to confirm', { required: true })}`, { submit: 'Forget them' })}</details>`}
+</div></div>`);
   });
   router.post('/contacts/:id/consent', (c) => { sendConsentRequest(db, Number(c.params.id), cfg); back(c, `/contacts/${c.params.id}`, 'confirmation mail queued'); });
   router.post('/contacts/:id/notes', (c) => { db.run('UPDATE contacts SET notes = ? WHERE id = ?', c.body.notes, c.params.id); back(c, `/contacts/${c.params.id}`, 'saved'); });
-  router.post('/waitlist/notify', async (c) => { const cat = await app.catalog().catch(() => null); const name = cat?.products.get(c.body.sku)?.name || c.body.sku; const n = notifyWaitlist(db, c.body.sku, cfg, { productName: name }); back(c, '/contacts', `queued ${n} in-stock mails for ${c.body.sku}`); });
+  router.post('/waitlist/notify', async (c) => { const cat = await app.catalog().catch(() => null); const name = cat?.products.get(c.body.sku)?.name || c.body.sku; const n = notifyWaitlist(db, c.body.sku, cfg, { productName: name }); backTo(c, '/contacts', `queued ${n} in-stock mails for ${c.body.sku}`); });
 
   // ---------- inventory
   router.get('/inventory', (c) => {
-    const items = listItems(db);
-    page(c, 'Inventory', table(items, [{ label: '', html: r => r.low ? '<span class="bad">●</span>' : '' }, { label: 'SKU', key: 'sku' }, { label: 'Name', key: 'name' }, { label: 'Kind', key: 'kind' }, { label: 'On hand', key: 'on_hand', num: true }, { label: 'Reorder at', key: 'reorder_point', num: true }, { label: 'Unit cost', get: r => money(r.unit_cost_cents), num: true }, { label: 'Supplier', html: r => r.supplier_url ? link(r.supplier_url, r.supplier || 'link') : e(r.supplier || '') }, { label: 'Where', key: 'location' }]) +
-      `<h2>Recipes (what a packed SKU consumes)</h2>${table(recipes(db), [{ label: 'Finished SKU', key: 'finished_sku' }, { label: 'Parts', key: 'parts' }, { label: 'Buildable now', get: r => buildable(db, r.finished_sku), num: true }])}` +
+    const items = listItems(db); const oo = onOrder(db);
+    page(c, 'Inventory', `<p class="muted">${link('/purchasing', 'Purchase orders')} — what is on order shows beside the shelf count, and "buildable" looks ahead to when it lands.</p>` + table(items, [{ label: '', html: r => r.low ? '<span class="bad">●</span>' : '' }, { label: 'SKU', key: 'sku' }, { label: 'Name', key: 'name' }, { label: 'Kind', key: 'kind' }, { label: 'On hand', key: 'on_hand', num: true }, { label: 'On order', html: r => oo[r.sku] ? `<span class="ok">+${oo[r.sku].qty}</span>${oo[r.sku].expected_at ? `<br><span class="muted">${e(oo[r.sku].expected_at)}</span>` : ''}` : '', num: true }, { label: 'Reorder at', key: 'reorder_point', num: true }, { label: 'Unit cost', get: r => money(r.unit_cost_cents), num: true }, { label: 'Supplier', html: r => r.supplier_url ? link(r.supplier_url, r.supplier || 'link') : e(r.supplier || '') }, { label: 'Where', key: 'location' }]) +
+      `<h2>Recipes (what a packed SKU consumes)</h2>${table(recipes(db), [{ label: 'Finished SKU', key: 'finished_sku' }, { label: 'Parts', key: 'parts' }, { label: 'Buildable now', get: r => buildable(db, r.finished_sku), num: true }, { label: 'After what is on order lands', html: r => { const b = buildableAhead(db, r.finished_sku); return b.later > b.now ? `<span class="ok">${b.later}</span>${b.expected_at ? `<br><span class="muted">by ${e(b.expected_at)}</span>` : ''}` : '<span class="muted">same</span>'; }, num: true }])}` +
       `<div class="row">${form('/inventory/move', c.csrf, `<b>Move stock</b><div class="row">${field('sku', 'SKU', { options: items.map(i => [i.sku, i.sku]) })}${field('delta', 'Δ (negative to remove)', { type: 'number', required: true })}${field('reason', 'Reason', { options: ['receive', 'adjust', 'scrap', 'build', 'warranty'] })}${field('ref', 'Ref')}</div>`, { submit: 'Move' })}
 ${form('/inventory/item', c.csrf, `<b>Add / edit an item</b><div class="row">${field('sku', 'SKU', { required: true })}${field('name', 'Name', { required: true })}${field('kind', 'Kind', { options: ['part', 'printed', 'finished', 'packaging'] })}</div><div class="row">${field('reorder_point', 'Reorder point', { type: 'number', value: 0 })}${field('reorder_qty', 'Reorder qty', { type: 'number', value: 0 })}${field('unit_cost_cents', 'Unit cost (cents)', { type: 'number', value: 0 })}</div><div class="row">${field('supplier', 'Supplier')}${field('supplier_url', 'Supplier URL')}${field('location', 'Location')}</div>`, { submit: 'Save item' })}</div>
 ${form('/inventory/recipe', c.csrf, `<b>Set a recipe</b><div class="row">${field('finished_sku', 'Finished SKU (store.json id)', { required: true })}${field('parts', 'Parts, e.g. xiao-esp32s3=1 wap-shell-petg=1 cable-usbc=1', { required: true })}</div>`, { submit: 'Save recipe' })}
@@ -164,7 +228,7 @@ ${form('/inventory/recipe', c.csrf, `<b>Set a recipe</b><div class="row">${field
   router.post('/inventory/recipe', (c) => { setRecipe(db, c.body.finished_sku, Object.fromEntries(String(c.body.parts).trim().split(/\s+/).map(p => p.split('=')))); back(c, '/inventory', `recipe saved for ${c.body.finished_sku}`); });
 
   // ---------- devices
-  router.get('/devices', (c) => page(c, 'Devices (serial registry)', filters(c, [['q', 'Serial / MAC / batch / order']]) + table(listDevices(db, { q: c.query.get('q') || '' }), [{ label: 'Serial', key: 'serial' }, { label: 'MAC', key: 'mac' }, { label: 'Board', key: 'board' }, { label: 'SKU', key: 'product_sku' }, { label: 'Firmware', get: r => `${r.fw_version || ''} ${r.fw_sha256 ? r.fw_sha256.slice(0, 8) : ''}` }, { label: 'Flashed', get: r => day(r.flashed_at) }, { label: 'Batch', key: 'batch' }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Order', key: 'order_number' }]) +
+  router.get('/devices', (c) => page(c, 'Devices (serial registry)', `<p>${link('/devices/recall', 'Recall / safety notice')} — by batch, firmware or SKU: who has which board.</p>` + filters(c, [['q', 'Serial / MAC / batch / order']]) + table(listDevices(db, { q: c.query.get('q') || '' }), [{ label: 'Serial', key: 'serial' }, { label: 'MAC', key: 'mac' }, { label: 'Board', key: 'board' }, { label: 'SKU', key: 'product_sku' }, { label: 'Firmware', get: r => `${r.fw_version || ''} ${r.fw_sha256 ? r.fw_sha256.slice(0, 8) : ''}` }, { label: 'Flashed', get: r => day(r.flashed_at) }, { label: 'Batch', key: 'batch' }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Order', key: 'order_number' }]) +
     `<div class="row">${form('/devices/register', c.csrf, `<b>Register one</b><div class="row">${field('serial', 'Serial', { required: true })}${field('mac', 'MAC')}${field('board', 'Board')}${field('product_sku', 'SKU')}</div><div class="row">${field('fw_version', 'Firmware version')}${field('fw_sha256', 'Firmware sha256')}${field('batch', 'Batch')}</div>`, { submit: 'Register' })}
 ${form('/devices/import', c.csrf, `<b>Import the jig's manifest</b><p class="muted">create_manifest.py JSON ({ devices: [{ mac, fingerprint, firmware_version… }] }).</p>${field('json', 'JSON', { type: 'textarea', required: true })}<div class="row">${field('batch', 'Batch')}${field('product_sku', 'SKU')}${field('board', 'Board')}</div>`, { submit: 'Import' })}</div>`));
   router.post('/devices/register', (c) => { registerDevice(db, c.body); back(c, '/devices', `registered ${c.body.serial}`); });
@@ -196,14 +260,7 @@ ${cl.status !== 'resolved' ? form(`/warranty/${cl.id}/resolve`, c.csrf, `<div cl
   router.post('/invoices/:id/paid', (c) => { markPaid(db, Number(c.params.id)); back(c, `/invoices/${c.params.id}`, 'paid'); });
   router.post('/invoices/:id/void', (c) => { voidInvoice(db, Number(c.params.id)); back(c, `/invoices/${c.params.id}`, 'voided'); });
 
-  // ---------- mail & campaigns
-  router.get('/campaigns', (c) => page(c, 'Mail', `<p>Outbox: ${Object.entries(outboxStats(db)).map(([k, v]) => `${e(k)} <b>${v}</b>`).join(' · ') || 'empty'} · ${button('/campaigns/flush', c.csrf, 'Send queued now', { quiet: true })} · ${link('/campaigns/outbox', 'recent mail')}</p>` +
-    table(listCampaigns(db), [{ label: 'Slug', key: 'slug' }, { label: 'Subject', key: 'subject' }, { label: 'Segment', key: 'segment' }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Recipients', key: 'recipients', num: true }, { label: '', html: r => r.status === 'draft' ? `<form method="post" action="/campaigns/${e(r.slug)}/send" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><button>Send to segment</button></form>` : day(r.sent_at) }]) +
-    form('/campaigns/new', c.csrf, `<b>New campaign</b><p class="muted">Only double-opt-in contacts receive it; every mail carries one-click unsubscribe. {{name}} and {{unsubscribe}} are filled in.</p><div class="row">${field('slug', 'Slug', { required: true })}${field('subject', 'Subject', { required: true })}${field('segment', 'Segment', { value: 'all', placeholder: 'all | customers | waitlist:<sku> | kind:<kind>' })}</div>${field('body_text', 'Body (plain text)', { type: 'textarea', required: true, rows: 12 })}`, { submit: 'Save draft' })));
-  router.post('/campaigns/new', (c) => { createCampaign(db, c.body); back(c, '/campaigns', 'draft saved'); });
-  router.post('/campaigns/:slug/send', (c) => { const n = queueCampaign(db, c.params.slug, cfg); back(c, '/campaigns', `queued for ${n} people`); });
-  router.post('/campaigns/flush', async (c) => { const r = await runJob(app, 'outbox'); back(c, '/campaigns', JSON.stringify(r.result || r.error)); });
-  router.get('/campaigns/outbox', (c) => page(c, 'Recent mail', table(db.all('SELECT * FROM mail_outbox ORDER BY id DESC LIMIT 200'), [{ label: 'When', get: r => dt(r.created_at) }, { label: 'To', key: 'to_addr' }, { label: 'Subject', key: 'subject' }, { label: 'Kind', key: 'kind' }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Error', key: 'last_error' }])));
+  registerMail(app, { page, back, link, filters });
 
   // ---------- books
   router.get('/books', (c) => {
@@ -239,12 +296,12 @@ ${form('/books/payout', c.csrf, `<b>Record a Stripe payout</b><p class="muted">A
 
   // ---------- settings
   router.get('/settings', (c) => page(c, 'Settings', `<h2>Configuration (from the environment)</h2><pre>${e(Object.entries(cfg).filter(([k]) => !/secret|token|url$/i.test(k) || /baseUrl|siteOrigin/.test(k)).map(([k, v]) => `${k} = ${v}`).join('\n'))}\nsmtp: ${cfg.smtpUrl ? 'configured' : 'NOT SET — mail is queued, not sent'}\nimap: ${cfg.imapUrl ? 'configured' : 'NOT SET — inbound mail not read'}\nstripe webhook: ${cfg.stripeWebhookSecret ? 'configured' : 'NOT SET'}\ngithub: ${cfg.githubToken ? 'configured' : 'NOT SET — exceptions stay local'}</pre>
-<h2>API tokens</h2>${table(db.all('SELECT name, created_at, last_used_at FROM api_tokens'), [{ label: 'Name', key: 'name' }, { label: 'Created', get: r => dt(r.created_at) }, { label: 'Last used', get: r => dt(r.last_used_at) }, { label: '', html: r => `<form method="post" action="/settings/token/revoke" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="name" value="${e(r.name)}"><button class="quiet">revoke</button></form>` }])}
-${form('/settings/token', c.csrf, field('name', 'New token name', { required: true }), { submit: 'Create token' })}
+<h2>API tokens</h2>${table(db.all('SELECT name, scope, created_at, last_used_at FROM api_tokens'), [{ label: 'Name', key: 'name' }, { label: 'Scope', html: r => r.scope === 'ro' ? '<span class="pill">read-only</span>' : '<span class="pill warn">read + write</span>' }, { label: 'Created', get: r => dt(r.created_at) }, { label: 'Last used', get: r => dt(r.last_used_at) }, { label: '', html: r => `<form method="post" action="/settings/token/revoke" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="name" value="${e(r.name)}"><button class="quiet">revoke</button></form>` }])}
+${form('/settings/token', c.csrf, `<div class="row">${field('name', 'New token name', { required: true })}${field('scope', 'Scope', { options: [['rw', 'read + write (the CLI, an AI operator)'], ['ro', 'read-only (a dashboard, a monitor)']] })}</div>`, { submit: 'Create token' })}
 <h2>Jobs</h2>${table(Object.keys(JOBS).map(n => ({ name: n, every: JOBS[n][0], ...(jobRuns(db).find(r => r.name === n) || {}) })), [{ label: 'Job', key: 'name' }, { label: 'Every', get: r => r.every + ' s' }, { label: 'Last run', get: r => dt(r.last_run_at) }, { label: 'OK', html: r => r.last_ok == null ? '—' : r.last_ok ? '<span class="ok">yes</span>' : '<span class="bad">no</span>' }, { label: 'Detail', key: 'last_detail' }, { label: '', html: r => `<form method="post" action="/settings/jobs/run" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="name" value="${e(r.name)}"><button class="quiet">run</button></form>` }])}
 <h2>Backups</h2>${table(listBackups(join(cfg.dataDir, 'backups')), [{ label: 'File', key: 'name' }, { label: 'Bytes', key: 'bytes', num: true }])}${button('/settings/backup', c.csrf, 'Back up now', { quiet: true })}
 <h2>Audit log (last 100)</h2>${table(db.all('SELECT * FROM audit_log ORDER BY id DESC LIMIT 100'), [{ label: 'When', get: r => dt(r.at) }, { label: 'Actor', key: 'actor' }, { label: 'Action', key: 'action' }, { label: 'Entity', get: r => `${r.entity || ''} ${r.entity_id || ''}` }, { label: 'Detail', key: 'detail' }])}`));
-  router.post('/settings/token', (c) => { const t = createApiToken(db, c.body.name); html(c.res, layout({ title: 'Token created', path: '/settings', company: cfg.company, csrf: c.csrf, demo: cfg.demo, body: `<p>Copy it now; it is not shown again.</p><pre>${e(t)}</pre><p>Use: <code>Authorization: Bearer …</code> against ${e(cfg.baseUrl)}/api</p><p>${link('/settings', 'Back')}</p>` })); });
+  router.post('/settings/token', (c) => { const t = createApiToken(db, c.body.name, { scope: c.body.scope === 'ro' ? 'ro' : 'rw' }); html(c.res, layout({ title: 'Token created', path: '/settings', company: cfg.company, csrf: c.csrf, demo: cfg.demo, body: `<p>Copy it now; it is not shown again.</p><pre>${e(t)}</pre><p>Use: <code>Authorization: Bearer …</code> against ${e(cfg.baseUrl)}/api</p><p>${link('/settings', 'Back')}</p>` })); });
   router.post('/settings/token/revoke', (c) => { revokeApiToken(db, c.body.name); back(c, '/settings', 'revoked'); });
   router.post('/settings/jobs/run', async (c) => { const r = await runJob(app, c.body.name); back(c, '/settings', `${r.job}: ${r.ok ? JSON.stringify(r.result) : r.error}`); });
   router.post('/settings/backup', (c) => { const r = backup(db, join(cfg.dataDir, 'backups'), { keep: cfg.backupKeep }); back(c, '/settings', `wrote ${r.path}`); });
@@ -273,4 +330,34 @@ curl -H "Authorization: Bearer <token>" ${cfg.baseUrl}/api/demo/scenarios`)}</pr
     const r = await sc.run(app);
     redirect(c.res, `/demo?ok=${encodeURIComponent(sc.label)}&result=${encodeURIComponent(JSON.stringify(r, null, 1).slice(0, 1500))}`);
   });
+}
+
+// Open the ship-to address in a maps app — a link the operator clicks, never a tile fetched by the page.
+function mapLinks(o) {
+  if (!o.ship_line1 || o.ship_line1 === '(forgotten)') return '';
+  const q = encodeURIComponent([o.ship_line1, o.ship_line2, o.ship_city, o.ship_state, o.ship_zip].filter(Boolean).join(', '));
+  return `<div class="muted" style="margin-top:.3rem;font-size:12.5px">Open in <a href="https://maps.apple.com/?q=${q}" rel="noopener noreferrer">Apple Maps</a> · <a href="https://www.google.com/maps/search/?api=1&query=${q}" rel="noopener noreferrer">Google Maps</a></div>`;
+}
+
+// The activity feed: an audit row as one readable line.
+function describeAudit(r) {
+  const d = (() => { try { return JSON.parse(r.detail || '{}'); } catch { return {}; } })();
+  const ent = r.entity_id ? `<b>${e(r.entity_id)}</b>` : '';
+  const text = {
+    'order.create': `Order ${ent} placed${d.total_cents != null ? ` · $${(d.total_cents / 100).toFixed(2)}` : ''}${d.discount_code ? ` · code ${e(d.discount_code)}` : ''}`,
+    'order.packed': `Order ${ent} packed`, 'order.shipped': `Order ${ent} shipped${d.tracking ? ` · ${e(d.carrier || '')} ${e(d.tracking)}` : ''}`, 'order.delivered': `Order ${ent} delivered`, 'order.canceled': `Order ${ent} canceled`,
+    'order.refund': `Refund of $${((d.cents || 0) / 100).toFixed(2)} on ${ent}`, 'order.note': `Note added to ${ent}`, 'order.tags': `Tags on ${ent}: ${e(d.tags || '')}`, 'order.address': `Address changed on ${ent}`, 'order.resend_tracking': `Tracking re-sent for ${ent}`,
+    'ticket.open': `Ticket ${ent} opened (${e(d.kind || '')} via ${e(d.channel || '')})`, 'ticket.reply': `Replied on ${ent}`, 'ticket.closed': 'Ticket closed', 'device.assign': `Board ${ent} scanned into an order`,
+    'contact.consent': 'A customer confirmed marketing opt-in', 'contact.unsubscribe': 'A customer unsubscribed', 'contact.tags': `Customer tags: ${e(d.tags || '')}`,
+    'campaign.queue': `Campaign ${ent} sent to ${d.recipients ?? '?'} people`, 'campaign.schedule': `Campaign ${ent} scheduled`, 'campaign.test': `Test of ${ent} sent`, 'automation.run': `Automations ran: ${d.enrolled || 0} enrolled, ${d.sent || 0} sent`, 'automation.save': `Automation ${ent} saved`, 'contact.bounce': `<span class="warn">A mail bounced: ${e(d.email || '')} — suppressed</span>`, 'contact.bounce.clear': 'A bounce was cleared',
+    'discount.create': `Discount ${ent} created`, 'discount.disabled': `Discount ${ent} disabled`, 'discount.active': `Discount ${ent} enabled`,
+    'auth.login': `Operator logged in${d.ip ? ` from ${e(d.ip)}` : ''}`, 'auth.login.failed': `<span class="bad">A login attempt failed${d.ip ? ` from ${e(d.ip)}` : ''}</span>`, 'auth.login.locked': `<span class="bad">An address was locked out after repeated failures${d.ip ? `: ${e(d.ip)}` : ''}</span>`, 'auth.token.create': `API token ${ent} created`,
+    'warranty.open': `Warranty claim ${ent} opened`, 'warranty.reship': `Reship order created for claim ${ent}`, 'warranty.resolve': `Warranty claim ${ent} resolved`,
+    'invoice.create': `Invoice ${ent} drafted`, 'invoice.issue': `Invoice ${ent} issued`, 'invoice.paid': `Invoice ${ent} paid`, 'invoice.void': `Invoice ${ent} voided`,
+    'exception.raise': `<span class="warn">Exception raised: ${ent}</span>`, 'exception.resolve': `Exception resolved: ${ent}`, 'ticket.waiting_on_customer': 'Ticket waiting on the customer', 'ticket.open': `Ticket ${ent} opened (${e(d.kind || '')} via ${e(d.channel || '')})`,
+    'po.create': `Purchase order ${ent} drafted`, 'po.order': `Purchase order ${ent} placed with the supplier`, 'po.receive': `Purchase order ${ent} received into stock`, 'po.cancel': `Purchase order ${ent} canceled`,
+    'recall.create': `Safety notice ${ent} drafted`, 'recall.send': `<span class="warn">Safety notice ${ent} sent to ${d.customers ?? '?'} customers</span>`, 'contact.forget': 'A customer was forgotten at their request', 'invoice.remind': `Reminder sent for ${ent}`, 'order.items': `Lines changed on ${ent}`, 'order.tracking': `Carrier update on ${ent}`,
+    'inventory.move': `Stock moved: ${ent}`, 'campaign.queue': `Campaign ${ent} queued`, 'waitlist.notify': `In-stock mail sent for ${ent}`, 'contact.consent.request': 'Opt-in mail sent',
+  }[r.action];
+  return { at: r.at, actor: r.actor, html: text || `${e(r.action)} ${ent}` };
 }

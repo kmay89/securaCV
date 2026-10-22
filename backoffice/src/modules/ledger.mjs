@@ -16,6 +16,7 @@ export const ACCOUNTS = {
   'income:shipping': 'Shipping charged',
   'income:services': 'Support plans, attestation, services',
   'income:refunds': 'Refunds (contra-income)',
+  'income:discounts': 'Discounts given (contra-income)',
   'expenses:cogs': 'Cost of goods sold',
   'expenses:fees': 'Payment processing fees',
   'expenses:postage': 'Postage and labels',
@@ -46,10 +47,11 @@ export function postSale(db, order) {
   const legs = [];
   if (order.total_cents) legs.push({ account: order.source === 'invoice' ? 'assets:receivable' : 'assets:stripe', debit: order.total_cents },
     { account: 'income:sales', credit: order.subtotal_cents }, { account: 'income:shipping', credit: order.shipping_cents }, { account: 'liabilities:sales_tax', credit: order.tax_cents });
+  if (order.total_cents && order.discount_cents) legs.push({ account: 'income:discounts', debit: order.discount_cents });
   if (cogs) legs.push({ account: 'expenses:cogs', debit: cogs }, { account: 'assets:inventory', credit: cogs });
   return post(db, { date, legs, memo: `sale ${order.number}`, ref: `order:${order.number}`, source: order.source });
 }
-export const postRefund = (db, order, cents, reason = '') => post(db, { legs: [{ account: 'income:refunds', debit: cents }, { account: 'assets:stripe', credit: cents }], memo: `refund ${order.number} ${reason}`.trim(), ref: `order:${order.number}`, source: 'refund' });
+export const postRefund = (db, order, cents, reason = '', date = today()) => post(db, { date, legs: [{ account: 'income:refunds', debit: cents }, { account: 'assets:stripe', credit: cents }], memo: `refund ${order.number} ${reason}`.trim(), ref: `order:${order.number}`, source: 'refund' });
 
 // A payout moves money Stripe → bank; the fee is what Stripe kept.
 export function postPayout(db, { id, date = today(), amount_cents, fee_cents = 0 }) {
@@ -65,7 +67,7 @@ export const postInvoicePaid = (db, inv, date = today()) => post(db, { date, leg
 export function trialBalance(db, { from = '0000-00-00', to = '9999-99-99' } = {}) {
   const rows = db.all('SELECT account, SUM(debit_cents) AS d, SUM(credit_cents) AS c FROM ledger WHERE date BETWEEN ? AND ? GROUP BY account ORDER BY account', from, to);
   const total = rows.reduce((s, r) => s + r.d - r.c, 0);
-  return { rows: rows.map(r => ({ account: r.account, label: ACCOUNTS[r.account], balance_cents: r.account.startsWith('assets') || r.account.startsWith('expenses') || r.account === 'income:refunds' ? r.d - r.c : r.c - r.d })), balanced: total === 0 };
+  return { rows: rows.map(r => ({ account: r.account, label: ACCOUNTS[r.account], balance_cents: r.account.startsWith('assets') || r.account.startsWith('expenses') || r.account === 'income:refunds' || r.account === 'income:discounts' ? r.d - r.c : r.c - r.d })), balanced: total === 0 };
 }
 
 export function profitAndLoss(db, { from, to }) {

@@ -27,8 +27,8 @@ test('end to end: login + CSRF, public forms, signed Stripe webhook, bearer API,
     const cookie = r.headers.get('set-cookie').split(';')[0];
     assert.match(r.headers.get('set-cookie'), /HttpOnly; SameSite=Strict/);
     const csrf = db.get('SELECT csrf FROM sessions').csrf;
-    r = await fetch(base + '/', { headers: { cookie } }); assert.equal(r.status, 200); const dash = await r.text(); assert.ok(dash.includes('Dashboard'));
-    assert.ok(dash.includes(`action="/logout" class="inline" style="margin-left:auto"><input type="hidden" name="_csrf" value="${csrf}"`), 'the visible Log out button carries the CSRF token');
+    r = await fetch(base + '/', { headers: { cookie } }); assert.equal(r.status, 200); const dash = await r.text(); assert.ok(dash.includes('class="hero"'));
+    assert.ok(dash.includes(`action="/logout" class="inline"><input type="hidden" name="_csrf" value="${csrf}"`), 'the visible Log out button carries the CSRF token');
     // a POST without the CSRF token is refused; with it, it works
     r = await fetch(base + '/inventory/item', { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', accept: 'text/html' }, body: form({ sku: 'cable', name: 'cable', kind: 'part', reorder_point: 1, reorder_qty: 1, unit_cost_cents: 100 }) });
     assert.equal(r.status, 403);
@@ -109,7 +109,7 @@ test('end to end: login + CSRF, public forms, signed Stripe webhook, bearer API,
     r = await fetch(`${base}/i/${inv.number}/${invoiceToken('sekret', inv.number)}`); assert.equal(r.status, 200); assert.ok((await r.text()).includes(inv.number));
 
     // admin pages all render for a logged-in operator
-    for (const p of ['/orders', '/orders/1', '/tickets', '/tickets/1', '/contacts', '/contacts/1', '/inventory', '/devices', '/warranty', '/invoices', '/invoices/1', '/campaigns', '/campaigns/outbox', '/books', '/status-admin', '/exceptions', '/settings', '/canned', '/orders/new', '/orders/import', '/tickets/new', '/orders.csv', '/books.csv']) {
+    for (const p of ['/orders', '/orders?status=open&tag=rush&from=2020-01-01&to=2030-01-01', '/orders/1', '/orders/1/packing-slip', '/orders/packing-slips', '/batches', '/tickets', '/tickets/1', '/contacts', '/contacts?segment=repeat&sort=spent', '/contacts/1', '/products', '/products/wap-kit', '/discounts', '/discounts?try=launch10&subtotal=6900', '/analytics', '/analytics?days=90', '/search?q=EL-', '/inventory', '/devices', '/warranty', '/invoices', '/invoices/1', '/campaigns', '/campaigns/outbox', '/books', '/status-admin', '/exceptions', '/settings', '/canned', '/orders/new', '/orders/import', '/tickets/new', '/orders.csv', '/books.csv', '/products.csv', '/contacts.csv', '/analytics.csv']) {
       r = await fetch(base + p, { headers: { cookie } }); assert.equal(r.status, 200, p);
     }
     assert.equal((await fetch(base + '/orders/999', { headers: { cookie, accept: 'text/html' } })).status, 404);
