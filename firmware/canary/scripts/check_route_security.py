@@ -20,10 +20,11 @@ a deliberate attempt to evade this checker (preprocessor tricks aimed at
 it, token pasting, symbol aliasing, inline assembly, injected build flags),
 and a committer who edits the checker itself, which could `return 0`. The
 rules below that refuse those classes (the paste, symbol-binding and
-build-input rules, and the macro rule's C++-keyword clause) are defense in
-depth over the spellings they name, not a claim that every spelling is held:
-gcc's long aliases (`--prefix`, which the driver rewrites to `-B`,
-`--for-linker`, `--for-assembler`, `--define-macro`), a letter-led glued
+build-input rules, and the macro rule's flag and C++-keyword clauses) are
+defense in depth over the spellings they name, not a claim that every
+spelling is held: gcc's long aliases (`--prefix`, which the driver rewrites
+to `-B`, `--for-linker`, `--for-assembler`, and `--define-macro`, the long
+form of `-D`, which the flag clause does not read), a letter-led glued
 `-B<dir>`, and the `-L`/`-l` library options pass them.
 
 The canary registers every route in ONE place,
@@ -108,8 +109,9 @@ every other gate), and the premise the last one stands on:
     decoded), so a record is reached only by the name the reads follow.
     Every file under ROOTS is read (tree_sources: an `.inc`, `.hpp` or `.ino`
     of code is code, and any other kind fails, but a library manifest by its
-    name, library.json or library.properties, and a file git ignores, an
-    editor's backup or an OS's .DS_Store, which is never committed), and read
+    name, library.json or library.properties, which is read for the
+    libraries it fetches instead, and a file git ignores, an editor's backup
+    or an OS's .DS_Store, which is never committed), and read
     as the compiler reads it (strip_comments): a raw string literal is one
     literal, so code after the web UI's HTML is code; a backslash-newline is
     spliced away, so the accessor's name split across two lines by one is the
@@ -144,7 +146,15 @@ every other gate), and the premise the last one stands on:
     path, `-Xpreprocessor`/`-Wp,`, `-Xassembler`/`-Wa,`), a response file
     (`@file`), a build script, a local library, a moved source folder or
     PlatformIO's `!command` dynamic value (a command run at build time whose
-    stdout becomes flags).
+    stdout becomes flags). Every library the build fetches is a REGISTRY_LIBS
+    row with its reason, or a library under ROOTS by its name
+    (library_problems: each lib_deps entry in the flag files, an
+    interpolated `${section.option}` read where they set it, and each
+    dependency a library manifest under ROOTS declares), so a library that
+    raises its own access point or serves its own routes (WiFiManager's
+    autoConnect(), handed no AP password, raises an open SoftAP and serves a
+    firmware upload), a bare registry name or a URL fails until a reviewer
+    adds its row.
     Every reader is named: an accessor in its home (SECRET_ACCESSORS), an
     emitter in its home carrying exactly what TOKEN_EMITTERS says, its
     reading statements pinned (EMITTER_STATEMENTS), a comparer reading only
@@ -245,15 +255,21 @@ every other gate), and the premise the last one stands on:
     and that handler (the peek hook's copy, s_gate_is_open, only by the hook
     setter and /api/status), its declaration holding its initial value, and
     that handler, whose sweep expires a tap nobody took, runs on every pass
-    of loop(), its call there the bare statement at loop()'s own level; no
-    HTTP server but esp_http_server's is named (Arduino's WebServer,
-    AsyncWebServer, HTTPUpdateServer, ArduinoOTA: routes or a firmware push
-    no rule reads); the setup state (s_active, s_first_boot, s_started_ms)
+    of loop(), its call there the bare statement at loop()'s own level with
+    nothing before it in loop() able to leave (outside a lambda); no server
+    the core brings is named, nor ESPAsyncWebServer's (Arduino's WebServer,
+    HTTPUpdateServer and ArduinoOTA, the raw WiFiServer, NetworkServer on
+    core 3.x, WiFiProv, whose SoftAP scheme raises an access point of its
+    own, and AsyncWebServer: routes, a firmware push or an access point no
+    rule reads), and a registry library is held where the build fetches it
+    (REGISTRY_LIBS, above); the setup state (s_active, s_first_boot,
+    s_started_ms)
     and the stored flag first boot is read from (NVS_KEY_SETUP_OK) are named
     only by the setup lib's pinned functions, the credentials reset that also
     clears that flag (factory_reset) runs only from the BOOT hold's dispatch
     and that only from the boot-time hold and handle_boot_button, and the
-    setup timeout runs from loop() while setup is active; the TLS flag and
+    setup timeout runs from loop() while setup is active, with nothing before
+    its call there able to leave; the TLS flag and
     the TLS server's handle the port-80 hint reads (m_tls_enabled,
     m_https_server) are written only by the constructor and startHttpServer(),
     each statement where it sits; and the token's alphabet is its
@@ -262,7 +278,9 @@ every other gate), and the premise the last one stands on:
     auth_get_token, so a deleted gate's name cannot linger in either list.
     No `#define` under ROOTS or in a file outside it the flagship compiles or
     #includes (build_reach), and no `-D` flag in platformio.ini or the files
-    its extra_configs names, may name a pinned
+    its extra_configs names (in the `-D` spelling: the flag clause is defense
+    in depth, and gcc's `--define-macro` passes it; see the threat model),
+    may name a pinned
     or census function, a device-side use, an accessor, a mint, an emitter,
     a comparer, a credential's spelling or the private key, or be named for
     a function a pinned body or statement calls (`#define auth_gate(r)
@@ -331,10 +349,14 @@ read only for their #define lines, their asm and symbol bindings, and the
 names above, so their
 code is otherwise not followed, and a held name that is also an ordinary
 word there (INCLUDE_COMMON_WORDS: begin, check, s_active and the like) is
-not read in them; the linker is not read (a library the build links, the
-registry ones lib_deps names and the core, is outside the check, and a flag
-that would bind a symbol fails instead, in the spellings _BUILD_INPUT names:
-`-L`/`-l` and the driver's long aliases are not among them); a value is not
+not read in them; a library the build links is not read: the registry ones
+are held to REGISTRY_LIBS by name, each row with its reason, and the core is
+held only by the spellings the census names, so a server or an access point
+the core can start under another name (a server written on the raw socket
+API, an ESP-IDF component such as esp_local_ctrl that starts one of its own)
+is not seen; the linker is not read (a flag that would bind a symbol fails
+instead, in the spellings _BUILD_INPUT names: `-L`/`-l` and the driver's long
+aliases are not among them); a value is not
 checked, only its spelling, but SETUP_TIMEOUT_MS's (a `memset` of the private key just before
 a mint passes, and both credentials would become HMACs of a zero key over
 public inputs; the values
@@ -388,6 +410,7 @@ step "Check canary (PIO) route security", beside the WAP's audit):
 
 import functools
 import glob
+import json
 import os
 import re
 import subprocess
@@ -402,8 +425,9 @@ ROOTS = (Path("firmware/canary/lib"), Path("firmware/canary/src"))
 # What the check reads under ROOTS: every C and C++ source and header spelling,
 # so an `.inc`, `.hpp` or `.ino` #included from a .cpp is code like any other.
 # Any other file under ROOTS fails (tree_sources), but a library manifest by
-# its name (PlatformIO's library.json, Arduino's library.properties) and a file
-# git ignores (an editor's backup, an OS's .DS_Store: never committed).
+# its name (PlatformIO's library.json, Arduino's library.properties; read for
+# the libraries it fetches, library_problems) and a file git ignores (an
+# editor's backup, an OS's .DS_Store: never committed).
 SOURCE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".c++", ".h", ".hh", ".hpp", ".hxx", ".h++",
                    ".inc", ".inl", ".ipp", ".tpp", ".ino")
 NON_SOURCE_NAMES = ("library.json", "library.properties")
@@ -1903,6 +1927,9 @@ GLUE_DEFS = {
 #             function can leave (a `return`, `goto`, `throw`, `co_return`, or
 #             an ESP_RETURN_* / ESP_GOTO_* macro, _LEAVE) but a
 #             RATE_LIMIT_REFUSAL;
+#   lead    — nothing before a call in its function can leave (_LEAVE, outside
+#             a lambda): the BOOT sweep and the setup timeout in loop(), with
+#             `whole` holding where each call sits;
 #   keyed   — {caller: (raise statement, keying row)}: in that caller, the
 #             raise statement (folded where it sits) is followed by the keying
 #             row's `whole` statement for it, with nothing able to leave
@@ -1912,7 +1939,7 @@ GLUE_DEFS = {
 #   served  — callers whose every call sits under a SERVE_* test of the
 #             receipt_decide verdict (check_receipt_dispatch's _under_serve_test);
 #   ident   — a variable: every mention counts, and outside a function only
-#             the declarations in "decl" may name it;
+#             the declarations in "decl" may name it (none, without "decl");
 #   none    — the name must have no mention at all (callers is empty).
 # A row whose name has no mention fails (but a `none` row), and so does a
 # listed caller that no longer mentions it. Every AUTH_MARKERS entry names a
@@ -2151,15 +2178,18 @@ GATE_CALL_SITES = {
         "decl": ("static canary::net::provisioning_gate::State g_prov_gate = {0};",),
         "stmts": {(_MAIN, "handle_boot_button"): _BOOT_GATE_STMTS}},
     # ...and the sweep in that handler runs on every pass of loop(): its call
-    # there is the bare statement at loop()'s own level. Polled only on a GPIO
-    # edge, a tap nobody took would not be swept, and its 32-bit stamp would
-    # read fresh again once millis() wrapped (about 49.7 days; F347).
-    "handle_boot_button": {"callers": {(_MAIN, "loop")}, "once": True,
+    # there is the bare statement at loop()'s own level, with nothing before
+    # it in loop() able to leave ("lead", a lambda's return aside). Polled
+    # only on a GPIO edge, or skipped by an early `return` above it, a tap
+    # nobody took would not be swept, and its 32-bit stamp would read fresh
+    # again once millis() wrapped (about 49.7 days; F347).
+    "handle_boot_button": {"callers": {(_MAIN, "loop")}, "once": True, "lead": True,
                            "whole": {(_MAIN, "loop"): "handle_boot_button();"},
                            "home": (_MAIN, "handle_boot_button")},
     # The page grant's first-boot unlock at its source: the setup state is
     # written only by the setup lib's pinned functions (GLUE_DEFS), and the
-    # timeout that ends it runs from loop() while setup is active.
+    # timeout that ends it runs from loop() while setup is active, with
+    # nothing before its call in loop() able to leave.
     "s_active": dict(_SETUP_STATE, decl=("static bool s_active = false;",),
                      callers=_SETUP_WRITERS | {(_SETUP, "setup_is_active")}),
     "s_first_boot": dict(_SETUP_STATE, decl=("static bool s_first_boot = false;",),
@@ -2167,7 +2197,8 @@ GATE_CALL_SITES = {
     "s_started_ms": dict(_SETUP_STATE, decl=("static uint32_t s_started_ms = 0;",),
                          callers={(_SETUP, "setup_init"), (_SETUP, "setup_check_timeout")}),
     "setup_check_timeout": {
-        "callers": {(_MAIN, "loop")}, "once": True, "whole": {(_MAIN, "loop"): _SETUP_TIMEOUT},
+        "callers": {(_MAIN, "loop")}, "once": True, "lead": True,
+        "whole": {(_MAIN, "loop"): _SETUP_TIMEOUT},
         "home": (_SETUP, "setup_check_timeout")},
     # ...and the stored flag first boot is read from (setup_init): written or
     # removed only by those functions, so a route that clears it cannot reboot
@@ -2186,14 +2217,21 @@ GATE_CALL_SITES = {
                      "file": _MAIN, "ident": True,
                      "decl": ("static canary::io::ResetHold g_reset_hold;",)},
     # Every route is an esp_http_server registration, which the route rules
-    # read wherever it is written. A server of another library (Arduino's
-    # WebServer, ESPAsyncWebServer, the HTTPUpdateServer firmware push,
-    # ArduinoOTA) would serve routes, or a firmware upload, that no rule reads:
-    # none is named, in a function or outside one (an object of one declared at
-    # namespace scope is a mention, so the row reads every mention, as a
-    # variable's does).
+    # read wherever it is written. A server the core brings (Arduino's
+    # WebServer, the HTTPUpdateServer firmware push, ArduinoOTA, the raw
+    # WiFiServer of the SimpleWiFiServer idiom, which core 3.x calls
+    # NetworkServer, and WiFiProv, whose SoftAP scheme raises an access point
+    # of its own and serves its provisioning over HTTP), or ESPAsyncWebServer's,
+    # would serve routes, a firmware upload or an access point that no rule
+    # reads: none is named, in a function or outside one (an object of one
+    # declared at namespace scope, or its #include, is a mention, so the row
+    # reads every mention, as a variable's does). A registry library is held
+    # where the build fetches it instead (REGISTRY_LIBS); a server written on
+    # the raw socket API, or an ESP-IDF component that starts one of its own
+    # (esp_local_ctrl), is not named here.
     "another HTTP server": {
-        "pattern": r"\b(?:WebServer|AsyncWebServer|HTTPUpdateServer|ArduinoOTA)\b",
+        "pattern": r"\b(?:WebServer|AsyncWebServer|HTTPUpdateServer|ArduinoOTA|WiFiServer"
+                   r"|NetworkServer|WiFiProv(?:Class)?)\b",
         "callers": set(), "ident": True, "none": True, "home": None},
     # The token's alphabet, which format_api_token_string renders the HMAC
     # through (its declaration is the row's, so a narrowed alphabet fails).
@@ -3601,7 +3639,11 @@ def gate_census_problems(sources: dict, census: dict, markers, steps, emitters) 
                     ostart, _oend, stmt = _outside_statement(text, blanked, m.start())
                     before = blanked[max(0, m.start() - 40):m.start()]
                     if row.get("ident"):
-                        if stmt not in row.get("decl", ()):
+                        if not row.get("decl"):
+                            problems.append(f"{fname}:{line}: {name} named outside every "
+                                            f"function: {stmt!r} — its GATE_CALL_SITES row "
+                                            f"allows it nowhere")
+                        elif stmt not in row["decl"]:
                             problems.append(f"{fname}:{line}: {name} named outside every "
                                             f"function other than in its declaration: {stmt!r}")
                     elif (not re.search(r"[\w*&>]\s*$", before)
@@ -3614,9 +3656,12 @@ def gate_census_problems(sources: dict, census: dict, markers, steps, emitters) 
                 key = next(((f, q) for f, q in (callers or ())
                             if _in_file(fname, f) and q == d[0]), None)
                 if callers is not None and key is None:
-                    problems.append(f"{fname}:{line}: {name} called from {d[0]}, which its "
-                                    f"GATE_CALL_SITES row does not name — a gate primitive is "
-                                    f"called only where the census says")
+                    problems.append(
+                        f"{fname}:{line}: {name} named in {d[0]}: its GATE_CALL_SITES row "
+                        f"allows it in no function" if not callers else
+                        f"{fname}:{line}: {name} called from {d[0]}, which its "
+                        f"GATE_CALL_SITES row does not name — a gate primitive is "
+                        f"called only where the census says")
                     continue
                 seen.add(key)
                 per[key] = per.get(key, 0) + 1
@@ -3640,6 +3685,11 @@ def gate_census_problems(sources: dict, census: dict, markers, steps, emitters) 
                             s2, _e2, lv2 = _statement_at(blanked, dd[3], dd[4], m.start())
                             problems.extend(_top_problems(text, blanked, dd, s2, lv2,
                                                           f"{fname}:{line}", name))
+                if row.get("lead"):
+                    for _s, stmt in _leaves(text, blanked, d, d[3], start):
+                        problems.append(f"{fname}:{line}: {d[0]} can leave before its {name} "
+                                        f"call: {stmt!r} — nothing above the call may leave "
+                                        f"{d[0]}, or a pass that leaves there skips it")
                 if key in row.get("served", ()):
                     code = blanked[d[3]:d[4]]
                     bind = _RECEIPT_BIND.search(code)
@@ -4366,6 +4416,170 @@ def build_input_problems(flags: dict) -> list:
     return problems
 
 
+# The registry libraries the build may fetch, each with why it is safe to link
+# unread. A library is code no rule reads, so one that brings its own server or
+# access point serves past every rule here: tzapu/WiFiManager's autoConnect(),
+# handed no AP password, raises an OPEN SoftAP and serves a firmware upload
+# (`/update`, which posts to `/u`) and `/erase` to anyone who joins it (v2.0.17:
+# WiFi.softAP(name, "") and its WebServer's routes), and ESPAsyncWebServer,
+# PsychicHttp or ESPUI serve routes no route rule reads. So every library the
+# flag files' lib_deps fetch, and every dependency a library manifest under
+# ROOTS declares (library.json's "dependencies", library.properties'
+# `depends=`), is a row here, matched by `owner/name` whatever version it
+# names, or a library under ROOTS by its name; a library no row names, a bare
+# registry name or one fetched by URL fails until a reviewer adds its row with a
+# reason, as PUBLIC_ALLOWLIST's routes are added (library_problems). A core
+# library is not fetched; the core's servers are the "another HTTP server"
+# census row's.
+REGISTRY_LIBS = {
+    "rweather/Crypto": "Ed25519, Curve25519 and ChaChaPoly, with the hashes they use: no "
+                       "network and no server",
+    "bblanchon/ArduinoJson": "JSON encoding and decoding: no network and no server",
+    "knolleary/PubSubClient": "the MQTT client: one outbound connection to the configured "
+                              "broker, no server and no access point",
+    "h2zero/NimBLE-Arduino": "the BLE stack ([env:full]'s Scout and status service): no "
+                             "Wi-Fi, no HTTP server and no access point",
+}
+# An ini section header and an option line, as configparser reads them.
+_INI_SECTION = re.compile(r"^\[([^\]\n]+)\][ \t]*$")
+_INI_OPTION = re.compile(r"^([A-Za-z_][\w.:-]*)[ \t]*[=:](.*)$")
+# A registry library's id (`owner/name`, or a bare name) and its version spec.
+_LIB_SPEC = re.compile(r"([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_. -]+)?)\s*(?:@\s*\S.*)?")
+_INTERPOLATION = re.compile(r"\$\{([^}]*)\}")
+
+
+def _ini_options(text: str) -> list:
+    """[(section, key, [(line number, value line)])] of an ini text as
+    configparser reads it: a value runs on through the indented and empty
+    lines after its key (comment lines arrive blanked, flag_sources)."""
+    out, section, cur = [], "", None
+    for i, line in enumerate(text.split("\n"), 1):
+        m = _INI_SECTION.match(line)
+        if m:
+            section, cur = m.group(1).strip(), None
+            continue
+        if cur is not None and (not line.strip() or line[:1] in " \t"):
+            cur[2].append((i, line))
+            continue
+        m = _INI_OPTION.match(line)
+        cur = (section, m.group(1), [(i, m.group(2))]) if m else None
+        if cur:
+            out.append(cur)
+    return out
+
+
+def _manifest_deps(fname: str, text: str) -> tuple:
+    """([(line, spec)], [declared library name], problems) of a library
+    manifest: library.json's "dependencies" (an object of name to version, or a
+    list of names or of {owner, name, version}), library.properties'
+    `depends=`."""
+    if fname.rsplit("/", 1)[-1] == "library.properties":
+        specs, names = [], []
+        for n, line in enumerate(text.split("\n"), 1):
+            key, eq, value = line.partition("=")
+            if eq and key.strip() == "depends":
+                specs.extend((n, s.strip()) for s in value.split(",") if s.strip())
+            elif eq and key.strip() == "name":
+                names.append(value.strip())
+        return specs, names, []
+    unread = f"{fname}: %s, so the libraries it fetches are not held to REGISTRY_LIBS"
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        return [], [], [unread % f"a library manifest the check cannot read as JSON ({e})"]
+    if not isinstance(data, dict):
+        return [], [], [unread % "a library manifest that is not a JSON object"]
+    names = [data["name"]] if isinstance(data.get("name"), str) else []
+    deps = data.get("dependencies", {})
+    if isinstance(deps, dict):
+        deps = [{"name": k, "version": v} for k, v in deps.items()]
+    if not isinstance(deps, list):
+        return [], names, [unread % f"its \"dependencies\" is no object or list ({deps!r})"]
+    items, problems = [], []
+    for dep in deps:
+        if isinstance(dep, str):
+            dep = {"name": dep}
+        if not (isinstance(dep, dict) and isinstance(dep.get("name"), str)):
+            problems.append(unread % f"a dependency the check cannot read ({dep!r})")
+            continue
+        ident = "/".join(x for x in (dep.get("owner"), dep["name"]) if isinstance(x, str))
+        version = str(dep.get("version", ""))
+        at = text.find(dep["name"])
+        items.append((_line_of(text, at) if at >= 0 else 1,
+                      f"{ident}={version}" if "://" in version else ident))
+    return items, names, problems
+
+
+def library_problems(sources: dict, flags: dict, manifests: dict, registry: dict) -> list:
+    """Every library the build fetches is a REGISTRY_LIBS row, or a library
+    under ROOTS by its name: each lib_deps entry in the flag files (one a line,
+    or comma-separated, an interpolated `${section.option}` read where the
+    flag files set it), and each dependency a library manifest under ROOTS
+    declares (`manifests`, library_manifests())."""
+    problems, specs = [], []
+    known = {k.casefold() for k in registry}
+    local = set()
+    for path in list(sources) + list(manifests):
+        parts = path.split("/")
+        local |= {parts[i + 1] for i, part in enumerate(parts[:-2]) if part == "lib"}
+    options = [(fname, o) for fname, text in sorted(flags.items()) for o in _ini_options(text)]
+
+    def lib_values(fname, section, lines, via, seen):
+        for n, line in lines:
+            for item in line.split(","):
+                item = item.split(";")[0].strip()
+                for ref in _INTERPOLATION.findall(item):
+                    sec, _dot, opt = ref.rpartition(".")
+                    sec = section if sec == "this" else sec
+                    if opt == "lib_deps" or (sec, opt) in seen:
+                        continue  # every lib_deps value is read on its own
+                    hits = [(f, o) for f, o in options if o[0] == sec and o[1] == opt]
+                    if not hits:
+                        problems.append(f"{fname}:{n}: lib_deps interpolates ${{{ref}}}, which "
+                                        f"no flag file sets, so the libraries it names are "
+                                        f"not held to REGISTRY_LIBS")
+                    for f, o in hits:
+                        lib_values(f, o[0], o[2], f"{via} through ${{{ref}}}",
+                                   seen | {(sec, opt)})
+                item = _INTERPOLATION.sub("", item).strip()
+                if item:
+                    specs.append((f"{fname}:{n}", via, item, True))
+
+    for fname, (section, key, lines) in options:
+        if key == "lib_deps":
+            lib_values(fname, section, lines, f"[{section}] lib_deps", set())
+    for fname, text in sorted(manifests.items()):
+        items, names, bad = _manifest_deps(fname, text)
+        local |= set(names)
+        problems.extend(bad)
+        specs.extend((f"{fname}:{n}", "its dependency list", spec, False)
+                     for n, spec in items)
+    for where, via, spec, in_flags in specs:
+        if in_flags and re.search(r"(?:symlink|file)://", spec):
+            continue  # a local library in a flag file: build_input_problems names it
+        m = _LIB_SPEC.fullmatch(spec)
+        ident = m.group(1).strip() if m and "://" not in spec else None
+        if ident is not None and (ident.casefold() in known or ("/" not in ident
+                                                                and ident in local)):
+            continue
+        problems.append(f"{where}: {via} fetches {spec!r}, a library no REGISTRY_LIBS row "
+                        f"names (matched by owner/name; a bare registry name or a URL is "
+                        f"none) — its code is read by no rule, so one that raises its own "
+                        f"access point or serves its own routes (WiFiManager's autoConnect() "
+                        f"raises an open SoftAP and serves a firmware upload) ships past every "
+                        f"rule here; add its row with why it raises no access point and serves "
+                        f"no route, or drop it")
+    return problems
+
+
+def library_manifests(roots=ROOTS) -> dict:
+    """{path: text} of every library manifest under `roots` (NON_SOURCE_NAMES),
+    whose dependencies library_problems holds to REGISTRY_LIBS."""
+    return {p.as_posix(): p.read_text(errors="replace")
+            for root in roots for p in sorted(root.rglob("*"))
+            if p.is_file() and p.name in NON_SOURCE_NAMES}
+
+
 def include_mention_problems(T: dict, includes: dict) -> list:
     """The files outside ROOTS the flagship reaches (`includes`, build_reach)
     name nothing the check holds under ROOTS but INCLUDE_MENTIONS: no
@@ -4404,13 +4618,15 @@ def include_mention_problems(T: dict, includes: dict) -> list:
     return problems
 
 
-def check_bearer_only_answers(sources: dict, tables=None, flags=None, includes=None) -> list:
+def check_bearer_only_answers(sources: dict, tables=None, flags=None, includes=None,
+                              manifests=None) -> list:
     """Every answer that carries a credential holds to its grant, on the
     flagship's own gates (see the module docstring). `tables` overrides the
     module tables by name (the self-test's fixtures pass their own; main()
     passes "nvs_keys", the NVS_LITERAL_KEYS values canary_config.h holds);
     `flags` is the build's flag files (flag_sources()); `includes` the
-    files outside ROOTS the flagship compiles or #includes (build_reach())."""
+    files outside ROOTS the flagship compiles or #includes (build_reach());
+    `manifests` the library manifests under ROOTS (library_manifests())."""
     T = {"reads": SECRET_READS, "accessors": SECRET_ACCESSORS, "mints": SECRET_MINTS,
          "emitters": TOKEN_EMITTERS, "emitter_stmts": EMITTER_STATEMENTS,
          "comparers": TOKEN_COMPARERS, "local": SECRET_LOCAL_USES, "answers": SECRET_ANSWERS,
@@ -4419,7 +4635,7 @@ def check_bearer_only_answers(sources: dict, tables=None, flags=None, includes=N
          "pinned_defines": PINNED_DEFINES, "roots_defines": ROOTS_DEFINES, "nvs_keys": {},
          "receipt": RECEIPT_GRANTS, "headers": REQUEST_HEADERS, "queries": URL_QUERY_READERS,
          "uri": URI_READERS, "public": PUBLIC_ALLOWLIST, "markers": AUTH_MARKERS,
-         "steps": PRE_HOST_STEPS}
+         "steps": PRE_HOST_STEPS, "registry": REGISTRY_LIBS}
     T.update(tables or {})
     routes = []
     for fname, text in sorted(sources.items()):
@@ -4445,6 +4661,7 @@ def check_bearer_only_answers(sources: dict, tables=None, flags=None, includes=N
             + no_session_problems(sources, T["headers"], T["queries"], T["uri"])
             + macro_problems(sources, T, flags or {}, includes or {})
             + build_input_problems(flags or {})
+            + library_problems(sources, flags or {}, manifests or {}, T["registry"])
             + symbol_binding_problems(sources, includes or {})
             + include_mention_problems(T, includes or {})
             + manager_alias_problems(sources))
@@ -6182,7 +6399,8 @@ _FIX_PLANTS = (
     ("network_init called with no key", _FIX_MAIN, "",
      "static void restart_setup() {\n  network_init(witness_get_device().ap_ssid, nullptr, "
      "nullptr);\n}\n",
-     ("network_init called from restart_setup",)),
+     ("network_init named in restart_setup: its GATE_CALL_SITES row allows it in no "
+      "function",)),
     ("the network started through another name", _FIX_MAIN, "",
      "static void restart_setup() {\n  ScvNetworkManager& mgr = network_get_instance();\n"
      "  mgr.begin(\"x\", \"\");\n}\n",
@@ -6212,7 +6430,7 @@ _FIX_PLANTS = (
      ("apply_ap_security changed",)),
     ("core 3's AP class raises a SoftAP", _FIX_NET, "  if (!ap_ok) return;\n",
      "  if (!ap_ok) return;\n  WiFi.AP.create(m_ap_ssid, nullptr);\n",
-     ("WiFi.AP called from ScvNetworkManager::raiseAp",)),
+     ("WiFi.AP named in ScvNetworkManager::raiseAp",)),
     # Taking an address is a mention: an accessor's, a census primitive's.
     ("the token's accessor through a function pointer", _FIX_NET,
      "static esp_err_t handle_fleet(httpd_req_t* req) {\n",
@@ -6474,10 +6692,41 @@ _FIX_PLANTS = (
      "static WebServer g_diag(8080);\nstatic void diag_begin() {\n"
      "  g_diag.on(\"/diag/restart\", HTTP_POST, []() { ESP.restart(); });\n"
      "  g_diag.begin();\n}\n",
-     ("another HTTP server named outside every function other than in its declaration",)),
+     ("another HTTP server named outside every function: 'static WebServer g_diag(8080);' "
+      "— its GATE_CALL_SITES row allows it nowhere",)),
     ("an unauthenticated OTA push started from setup()", _FIX_MAIN,
      _FIX_SETUP_PRINT, _FIX_SETUP_PRINT + "  ArduinoOTA.begin();\n",
-     ("another HTTP server called from setup",)),
+     ("another HTTP server named in setup",)),
+    ("an ESPAsyncWebServer beside the routes", _FIX_MAIN, "",
+     "#include <ESPAsyncWebServer.h>\nstatic AsyncWebServer g_diag(8080);\n"
+     "static void diag_begin() {\n  g_diag.on(\"/diag/restart\", HTTP_POST, "
+     "[](AsyncWebServerRequest* r) { r->send(200); ESP.restart(); });\n  g_diag.begin();\n}\n",
+     ("another HTTP server named outside every function: 'static AsyncWebServer "
+      "g_diag(8080);'",)),
+    ("a raw WiFiServer log console", _FIX_MAIN, "",
+     "static WiFiServer g_console(23);\nstatic void console_poll() {\n"
+     "  WiFiClient c = g_console.available();\n  if (c) c.println(\"canary log\");\n}\n",
+     ("another HTTP server named outside every function: 'static WiFiServer g_console(23);'",)),
+    ("core 3.x's NetworkServer started in a helper", _FIX_MAIN, "",
+     "static void console_begin() {\n  static NetworkServer s(23);\n  s.begin();\n}\n",
+     ("another HTTP server named in console_begin",)),
+    ("the core's WiFiProv raising its own SoftAP from setup()", _FIX_MAIN,
+     _FIX_SETUP_PRINT, _FIX_SETUP_PRINT + "  WiFiProv.beginProvision(WIFI_PROV_SCHEME_SOFTAP, "
+     "WIFI_PROV_SCHEME_HANDLER_NONE, WIFI_PROV_SECURITY_0, NULL, \"SecuraCV-Recovery\");\n",
+     ("another HTTP server named in setup",)),
+    # A way out of loop() above the BOOT sweep, or above the setup timeout,
+    # skips it on every pass that takes it.
+    ("loop() returns early above the BOOT sweep", _FIX_MAIN,
+     "void loop() {\n  handle_boot_button();\n",
+     "void loop() {\n  if (g_console_attached) return;\n  handle_boot_button();\n",
+     ("loop can leave before its handle_boot_button call: 'if (g_console_attached) return;'",
+      "loop can leave before its setup_check_timeout call: 'if (g_console_attached) "
+      "return;'")),
+    ("loop() returns early above the setup timeout", _FIX_MAIN,
+     "  handle_boot_button();\n#if FEATURE_SETUP_WIZARD\n",
+     "  handle_boot_button();\n  if (g_ota_writing) { delay(10); return; }\n"
+     "#if FEATURE_SETUP_WIZARD\n",
+     ("loop can leave before its setup_check_timeout call: 'return;'",)),
     # A second begin() through `network`, the binding setup() itself uses on the
     # tree (its banner block): handed "", it raises the SoftAP open.
     ("a second start through setup()'s own `network` binding", _FIX_MAIN, _FIX_SETUP_PRINT,
@@ -6541,7 +6790,7 @@ _FIX_PLANTS = (
      ("hands the network manager on as a value",)),
     ("core 3's AP class through a reference", _FIX_NET, "  if (!ap_ok) return;\n",
      "  if (!ap_ok) return;\n  { auto& apc = WiFi.AP; apc.create(m_ap_ssid, nullptr); }\n",
-     ("WiFi.AP called from ScvNetworkManager::raiseAp",)),
+     ("WiFi.AP named in ScvNetworkManager::raiseAp",)),
     ("the radio under another name", _FIX_MAIN, "",
      "static void keep_setup_ap_up() {\n  auto& w = WiFi;\n  w.mode(WIFI_AP_STA);\n}\n",
      ("names WiFi other than with a member after it",)),
@@ -6684,7 +6933,7 @@ _FIX_PLANTS = (
      "static AuthManager* s_self = nullptr;\n"
      "AuthManager::AuthManager() : m_table{} { s_self = this; }\n"
      "void auth_fleet_seen(uint32_t s) {\n  if (s_self) s_self->handedToken(s);\n}\n",
-     ("this (the auth lib) called from AuthManager::AuthManager",)),
+     ("this (the auth lib) named in AuthManager::AuthManager",)),
     # The first-boot unlock's length.
     ("the setup timeout widened", _FIX_SETUP_H, "(15UL * 60UL * 1000UL)", "(0xFFFFFFFFUL)",
      ("PINNED_DEFINES: SETUP_TIMEOUT_MS is defined once",)),
@@ -7020,6 +7269,15 @@ def _assert_answer_gate_rule() -> None:
     got = check_bearer_only_answers(calm, tables)
     assert got == [], "a callback's return between begin()'s raise and softAP() fails: " + (
         "; ".join(got))
+    # ...nor in loop(), above the BOOT sweep and the setup timeout ("lead").
+    calm = _fixture_sources()
+    sweep = "void loop() {\n  handle_boot_button();\n"
+    assert sweep in calm[_FIX_MAIN]
+    calm[_FIX_MAIN] = calm[_FIX_MAIN].replace(
+        sweep, "void loop() {\n  auto due = [](uint32_t now) { if (now == 0) return false; "
+               "return true; };\n  (void)due(millis());\n  handle_boot_button();\n", 1)
+    got = check_bearer_only_answers(calm, tables)
+    assert got == [], "a lambda's return above loop()'s BOOT sweep fails: " + "; ".join(got)
     # A -D build flag is a #define too; the flags the build sets name none.
     ini = "build_flags =\n    -DFEATURE_WIFI_AP=1\n    -DCORE_DEBUG_LEVEL=0\n"
     assert check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": ini}) == []
@@ -7033,7 +7291,7 @@ def _assert_answer_gate_rule() -> None:
         assert any("the build flag" in p and "names '" in p for p in got), (flag, got)
     # ...a flag that pastes tokens, and a build input the check does not read (a
     # linker option, a forced include, a build script, a local library, a moved
-    # folder), fail; a registry library does not.
+    # folder), fail; a registry library REGISTRY_LIBS names does not.
     got = check_bearer_only_answers(clean, tables, flags={
         "fx/platformio.ini": ini + "    -D'CV_JOIN(a,b)=a##b'\n"})
     assert any("the build flag" in p and "pastes tokens with ##" in p for p in got), got
@@ -7063,6 +7321,71 @@ def _assert_answer_gate_rule() -> None:
         assert any("is a build input the check does not read" in p for p in got), (line, got)
     registry = ini + "lib_deps =\n    rweather/Crypto @ ^0.4.0\n    ${env.lib_deps}\n"
     assert check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": registry}) == []
+    # Every library the build fetches is a REGISTRY_LIBS row, or a library
+    # under ROOTS by its name: one of the four the flag files name today, in
+    # each spelling PlatformIO takes, passes...
+    mesh = {"fx/lib/securacv_mesh/library.json": '{"name": "securacv_mesh"}'}
+    for libs in ("lib_deps =\n    ${env.lib_deps}\n    ; Must be 2.x\n"
+                 "    h2zero/NimBLE-Arduino@^2.3.8\n",
+                 "lib_deps = Rweather/crypto @ ^0.4.0, knolleary/PubSubClient @ ^2.8\n",
+                 "lib_deps =\n    securacv_mesh\n",
+                 "[common]\nlibs = bblanchon/ArduinoJson @ ^7.0.0\n[env:x]\n"
+                 "more = rweather/Crypto\nlib_deps =\n    ${common.libs}\n    ${this.more}\n"):
+        got = check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": ini + libs},
+                                        manifests=mesh)
+        assert got == [], (libs, got)
+    # ...and any other fails: WiFiManager's autoConnect() raises an open SoftAP
+    # and serves a firmware upload no rule reads (the round-7 review), however
+    # the build is told to fetch it.
+    for libs, spec in (
+            ("lib_deps =\n    rweather/Crypto @ ^0.4.0\n    tzapu/WiFiManager @ ^2.0.17\n",
+             "tzapu/WiFiManager @ ^2.0.17"),
+            ("lib_deps = bblanchon/ArduinoJson @ ^7.0.0, tzapu/WiFiManager\n",
+             "tzapu/WiFiManager"),
+            ("lib_deps =\n    WiFiManager\n", "WiFiManager"),
+            ("lib_deps =\n    me-no-dev/ESP Async WebServer @ ^1.2.3\n",
+             "me-no-dev/ESP Async WebServer @ ^1.2.3"),
+            ("lib_deps =\n    https://github.com/tzapu/WiFiManager.git#v2.0.17\n",
+             "https://github.com/tzapu/WiFiManager.git#v2.0.17"),
+            ("lib_deps =\n    WiFiManager=https://github.com/tzapu/WiFiManager.git\n",
+             "WiFiManager=https://github.com/tzapu/WiFiManager.git"),
+            ("[common]\nlibs_external =\n    tzapu/WiFiManager\n[env:x]\n"
+             "lib_deps =\n    ${env.lib_deps}\n    ${common.libs_external}\n",
+             "tzapu/WiFiManager")):
+        got = check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": ini + libs})
+        assert any("a library no REGISTRY_LIBS row names" in p and repr(spec) in p
+                   for p in got), (libs, got)
+    got = check_bearer_only_answers(clean, tables, flags={
+        "fx/platformio.ini": ini + "lib_deps =\n    ${sysenv.EXTRA_LIBS}\n"})
+    assert any("interpolates ${sysenv.EXTRA_LIBS}, which no flag file sets" in p
+               for p in got), got
+    # A library manifest's dependencies are held the same way: a registry row
+    # or a library under ROOTS passes, anything else fails.
+    manifests = dict(mesh, **{
+        "fx/lib/securacv_network/library.json":
+            '{"name": "securacv_network", "dependencies": {"bblanchon/ArduinoJson": "^7.0.0"}}',
+        "fx/lib/securacv_ble_scan/library.json":
+            '{"name": "securacv_ble_scan", "dependencies": {"securacv_mesh": "*"}}'})
+    assert check_bearer_only_answers(clean, tables, manifests=manifests) == []
+    for path, text, word in (
+            ("fx/lib/securacv_network/library.json",
+             '{"name": "securacv_network", "dependencies": {"tzapu/WiFiManager": "^2.0.17"}}',
+             "its dependency list fetches 'tzapu/WiFiManager'"),
+            ("fx/lib/securacv_network/library.json",
+             '{"dependencies": [{"owner": "tzapu", "name": "WiFiManager"}]}',
+             "its dependency list fetches 'tzapu/WiFiManager'"),
+            ("fx/lib/securacv_network/library.json",
+             '{"dependencies": {"WiFiManager": "https://github.com/tzapu/WiFiManager.git"}}',
+             "'WiFiManager=https://github.com/tzapu/WiFiManager.git'"),
+            ("fx/lib/securacv_network/library.json",
+             '{"dependencies": {"diag": "symlink://../../../common/diag"}}',
+             "'diag=symlink://../../../common/diag'"),
+            ("fx/lib/diag/library.properties", "name=diag\ndepends=WiFiManager\n",
+             "its dependency list fetches 'WiFiManager'"),
+            ("fx/lib/securacv_network/library.json", '{"name": "x", "dependencies": {',
+             "a library manifest the check cannot read as JSON")):
+        got = check_bearer_only_answers(clean, tables, manifests=dict(manifests, **{path: text}))
+        assert any(word in p for p in got), (text, got)
     # ...and the ` @ ` of a lib version spec, and a bare `-DBOARD` / `-B` inside
     # another flag's name, are not a response file or a prefix flag.
     benign_flags = (ini + "    -DBOARD_HAS_PSRAM\n    -mfix-esp32-psram-cache-issue\n"
@@ -7441,7 +7764,8 @@ def main() -> int:
     includes, reach_failures = build_reach(sources, flags)
     failures.extend(flag_failures + key_failures + reach_failures)
     failures.extend(check_bearer_only_answers(sources, tables={"nvs_keys": keys}, flags=flags,
-                                              includes=includes))
+                                              includes=includes,
+                                              manifests=library_manifests()))
     failures.extend(check_registration_sites(sources))
     failures.extend(check_registration_count(sources))
     failures.extend(check_route_budgets(sources))

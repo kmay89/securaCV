@@ -68,9 +68,11 @@
     source, `handle_boot_button()` whole with its press, and the port-80
     path, `handle_captive_probe` and `handle_https_redirect`, with the two
     members its hint branch decides on, `isTlsEnabled()` and
-    `getHttpsServer()`), so none of
-    `page_token_inject`'s four inputs can be widened in the glue, in the
-    helpers it reads them through, or by a macro of a name they call; a
+    `getHttpsServer()`), so, against a careless edit (the check's threat
+    model, below), none of `page_token_inject`'s four inputs can be widened
+    in the glue, in the helpers it reads them through, or by a macro of a
+    name they call (a `#define`, or a flag in its `-D` spelling: gcc's
+    `--define-macro` is not read); a
     sink cannot be added inside an accessor, and the token cannot be keyed
     on the public key; each is defined exactly once under ROOTS, in its
     file, so a second `#else` body or a shadow in another lib fails,
@@ -115,14 +117,18 @@
     `handle_boot_button()`'s short press, where it sits, a press made by
     anything but the button's GPIO, or `g_prov_gate` (or the peek hook's
     copy) named, written or initialized anywhere else; `handle_boot_button()`'s
-    every-pass call from `loop()` moved under a block (its sweep is what
-    expires a tap nobody took); a server of another library (`WebServer`,
-    `AsyncWebServer`, `HTTPUpdateServer`, `ArduinoOTA`) named at all, whose
-    routes or firmware push no rule reads; the setup state, or
+    every-pass call from `loop()` moved under a block, or behind a way out of
+    `loop()` above it (its sweep is what expires a tap nobody took); a server
+    the core brings (`WebServer`, `HTTPUpdateServer`, `ArduinoOTA`, the raw
+    `WiFiServer` or core 3.x's `NetworkServer`, and `WiFiProv`, whose SoftAP
+    scheme raises an access point of its own) or ESPAsyncWebServer's
+    (`AsyncWebServer`) named at all, whose routes, firmware push or access
+    point no rule reads; the setup state, or
     the stored first-boot flag it is read from (`NVS_KEY_SETUP_OK`), written
     outside the setup lib's pinned functions, the credentials reset that
     clears that flag run by anything but the BOOT hold, or the setup
-    timeout's call dropped from `loop()`; the TLS flag or the TLS server's
+    timeout's call dropped from `loop()` or put behind a way out above it;
+    the TLS flag or the TLS server's
     handle written anywhere but the constructor and `startHttpServer()`, each
     statement where it sits (`m_tls_enabled = false;` once the port-80
     server is up, or `m_https_server = m_http_server;`, would serve the setup
@@ -154,7 +160,9 @@
   - a `#define` under ROOTS or in a file outside it the flagship compiles or
     `#include`s, or a `-D` flag in
     `platformio.ini` and the files its `extra_configs` names (on its own line
-    or under it, a missing one named), that names a pinned or census
+    or under it, a missing one named; in the `-D` spelling, as defense in
+    depth: gcc's `--define-macro`, its long form, passes), that names a
+    pinned or census
     function, a device-side use, an accessor, a mint, an emitter, a
     comparer, a credential's spelling or the private key, or is named for a
     function a pinned body or statement calls (`#define auth_gate(r) (true)`
@@ -192,6 +200,16 @@
     response file (`@file`), a build script (`extra_scripts`, or a `!command`
     dynamic value that runs a command and splices its stdout into the flags),
     a local library or a moved source folder;
+  - a library the build fetches, in a `lib_deps` entry of the flag files (one
+    a line or comma-separated, or interpolated from another option) or as a
+    dependency a library manifest under the tree declares, that no
+    `REGISTRY_LIBS` row names. Each row gives its reason, and the four rows
+    are the libraries the flag files name today (`rweather/Crypto`,
+    `bblanchon/ArduinoJson`, `knolleary/PubSubClient`,
+    `h2zero/NimBLE-Arduino`); a bare registry name or a URL is no row.
+    `tzapu/WiFiManager` added to `lib_deps` for a recovery portal passed
+    every rule: its `autoConnect()`, handed no AP password, raises an open
+    SoftAP and serves a firmware upload and `/erase` that no rule reads;
   - a route guarded by a helper whose name ends in a gate's
     (`lan_auth_gate(req)` refusing only a foreign Host, or
     `setup_auth_gate(req)` returning `from_ap_subnet(req)` on `POST
@@ -333,15 +351,32 @@
   claims above are narrowed. Of 17 checker mutants that each undo one of
   these fixes or weaken one of those branches, the self-test refuses all 17
   (the six that weaken an older branch pass the fifth version's self-test).
+  Its seventh review found a registry library the build fetches unread:
+  `tzapu/WiFiManager` added to `lib_deps` for a recovery portal, whose
+  `autoConnect()`, handed no AP password, raises an open SoftAP and serves a
+  firmware upload and `/erase`, passed the sixth version, as did the core's
+  raw `WiFiServer` (`NetworkServer` on core 3.x) and `WiFiProv`, whose SoftAP
+  scheme raises an access point of its own. Every library the build fetches
+  is now a `REGISTRY_LIBS` row with its reason (or a library under the tree),
+  and the server row names the core's three. It also found the docs stating
+  the macro rule's flag clause as complete, though gcc's `--define-macro`
+  (the long form of `-D`) passes it; that is a deliberate spelling, so the
+  threat paragraphs now name the clause as defense in depth and the other
+  claims are qualified. And it carried four nits: an early `return` in
+  `loop()` above the BOOT sweep or the setup timeout now fails (`lead`), the
+  server row's `AsyncWebServer` has a fixture, a census row that allows a name
+  nowhere says so, and two of the ledger's lists are complete. Of 19 checker
+  mutants that each undo one of these fixes or weaken the new table, the
+  self-test refuses all 19.
   The head parser names a constructor
   for its class (it named `ScvNetworkManager`'s body after its last
   initializer, `m_peers_last_browse_ms`), a member as `Class::name`, and a
   function whose head ends in `noexcept`, `override`, `final`, a member's
-  `const` or a trailing return type. 284 planted fixtures (259 source, 25
-  table), with the self-test's lexer, flag-file, build-input, reach, header,
-  file-kind, route-form, symbol-binding and raw-literal cases, each fail for
-  their named reason before the tree is read; they refuse each of the 60
-  mutants of the check that undo one of the third review's fixes, weaken a
+  `const` or a trailing return type. 290 planted fixtures (265 source, 25
+  table), with the self-test's lexer, flag-file, build-input, library, reach,
+  header, file-kind, route-form, symbol-binding and raw-literal cases, each
+  fail for their named reason before the tree is read; they refuse each of
+  the 60 mutants of the check that undo one of the third review's fixes, weaken a
   branch it found unheld, or undo one of its repair's own, each of 41 more
   that undo one of the fourth review's fixes or weaken a branch it found
   unheld (the 11 of those that weaken an older branch pass the fourth
@@ -354,15 +389,16 @@
   ran), so it is an injector the build-input rule does not read, as are
   `--for-linker`, `--for-assembler` and `--define-macro`; they stay unread,
   deliberate spellings outside the threat model (the sixth review).
-  The tree passes with its 83 registrations in about 18 s. The threat model
+  The tree passes with its 83 registrations in about 19 s. The threat model
   is a careless or mistaken firmware edit (a refactor, a new route, a new
   feature, a moved line, a widened helper, a new file), not a deliberate
   attempt to evade the check (preprocessor tricks aimed at it, token pasting,
   symbol aliasing, inline assembly, injected build flags) or an edit to the
-  checker itself: the paste, symbol-binding and build-input rules are defense
-  in depth over the spellings they name, not a guarantee (gcc's long aliases
-  `--prefix`, `--for-linker`, `--for-assembler` and `--define-macro`, a
-  letter-led glued `-B<dir>` and `-L`/`-l` pass them). A static text
+  checker itself: the paste, symbol-binding and build-input rules, and the
+  macro rule's flag and C++-keyword clauses, are defense in depth over the
+  spellings they name, not a guarantee (gcc's long aliases `--prefix`,
+  `--for-linker`, `--for-assembler` and `--define-macro`, the long form of
+  `-D`, a letter-led glued `-B<dir>` and `-L`/`-l` pass them). A static text
   check: names are matched by spelling (the network manager's are the
   exception: a reference to it under another name fails, however declared),
   values are not checked but `SETUP_TIMEOUT_MS`'s and a shadow under the tree
@@ -370,8 +406,13 @@
   passes, and so does a header's own value), the files outside the tree the
   flagship reaches are read for their `#define` lines, their asm and symbol
   bindings, and the names the check holds (but `INCLUDE_COMMON_WORDS`), not
-  followed as code, the linker is not read (a flag that would bind a symbol
-  fails instead, in the spellings the build-input rule names), an NVS record
+  followed as code, a library the build links is not read (a registry one is
+  held to `REGISTRY_LIBS` by its name, the core only by the spellings the
+  census names, so a server or an access point the core can start under
+  another name, on the raw socket API or through an ESP-IDF component such as
+  `esp_local_ctrl`, is not seen), the linker is not read (a flag that would
+  bind a symbol fails instead, in the spellings the build-input rule names),
+  an NVS record
   is not followed under a key built at run time or through a walk of the
   whole namespace, the private key is not followed through a helper, a
   statement before a gated route's refusal that does the route's work

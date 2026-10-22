@@ -1774,7 +1774,8 @@ so — see D2 below.)
     from those; another product's source or a host test there is not read)
     name no credential, nothing else the check holds under the tree and no
     census row's spelling (`WiFi.softAP`, the radio's mode, the driver's
-    config, the AP class, the tap's open), but the NVS key names where
+    config, the AP class, the tap's open, another HTTP server), but the NVS
+    key names where
     `canary_config.h` defines them and `reset_scope_keys.h` lists them,
     `ap_password.h`'s deriver and `provisioning_gate.h`'s two decisions
     (`INCLUDE_MENTIONS`). Every reader is named. Each device-side use is
@@ -1869,13 +1870,18 @@ so — see D2 below.)
     `s_gate_is_open`, only by the hook setter and `/api/status`; its
     declaration holds its initial value), and that handler, whose sweep
     expires a tap nobody took, runs on every pass of `loop()`, its call the
-    bare statement there; no server of another library (`WebServer`,
-    `AsyncWebServer`, `HTTPUpdateServer`, `ArduinoOTA`) is named; the setup
+    bare statement there with nothing before it in `loop()` able to leave
+    (outside a lambda); no server the core brings is named, nor
+    ESPAsyncWebServer's (`WebServer`, `HTTPUpdateServer`, `ArduinoOTA`, the
+    raw `WiFiServer`, core 3.x's `NetworkServer`, `WiFiProv`, whose SoftAP
+    scheme raises an access point of its own, and `AsyncWebServer`), and a
+    registry library is held where the build fetches it (below); the setup
     state and the stored
     first-boot flag (`NVS_KEY_SETUP_OK`) are named only by the setup lib's
     pinned functions, the credentials reset that also clears that flag runs
     only from the BOOT hold's dispatch, and the setup timeout runs from
-    `loop()` while setup is active; the TLS flag and the TLS server's handle
+    `loop()` while setup is active, with nothing before its call there able
+    to leave; the TLS flag and the TLS server's handle
     the port-80 hint reads (`m_tls_enabled`, `m_https_server`) are written
     only by the constructor and `startHttpServer()`, each statement where it
     sits; and the token's alphabet is its declaration. Every `AUTH_MARKERS`
@@ -1888,7 +1894,9 @@ so — see D2 below.)
   - **Macros.** No `#define` under ROOTS or in a file outside it the
     flagship compiles or `#include`s, and no `-D`
     flag in `platformio.ini` or the files its `extra_configs` names (on the
-    key's own line or under it; a missing one is named), may name a pinned
+    key's own line or under it; a missing one is named; in the `-D`
+    spelling, as defense in depth: gcc's `--define-macro`, the long form of
+    `-D`, passes, see the threat model below), may name a pinned
     or census function, a device-side use, an accessor, a mint, an emitter, a
     comparer, a credential's spelling or the private key, or be named for a
     function a pinned body or statement calls (`take`,
@@ -1921,7 +1929,17 @@ so — see D2 below.)
     response file (`@file`), a build script (`extra_scripts`, or PlatformIO's
     `!command` dynamic value that runs a command and splices its stdout into
     the flags), a local library or a moved source folder fail: each is code,
-    or a binding of a name, that no rule would read.
+    or a binding of a name, that no rule would read. Every library the build
+    fetches is a `REGISTRY_LIBS` row with its reason (the four the flag files
+    name today: `rweather/Crypto`, `bblanchon/ArduinoJson`,
+    `knolleary/PubSubClient`, `h2zero/NimBLE-Arduino`), or a library under
+    the tree by its name: each `lib_deps` entry in the flag files (one a line
+    or comma-separated, an interpolated `${section.option}` read where the
+    flag files set it) and each dependency a library manifest under the tree
+    declares (`library.json`'s `"dependencies"`, `library.properties`'
+    `depends=`). A library no row names, a bare registry name or one fetched
+    by URL fails until a reviewer adds its row (`library_problems`), as
+    `PUBLIC_ALLOWLIST`'s routes are added.
   - **Registrations.** Every registration call, or the call taken as a
     pointer, hands over an `httpd_uri_t` initializer the parser reads, so a
     route assigned field by field, or with a cast `.method` or a lambda
@@ -1945,12 +1963,12 @@ so — see D2 below.)
   rule, which replaces the old `auth_get_token` loop (rule 5 keeps its
   emitter-behind-the-Host half). A function defined twice (an `#if` body
   and its `#else` one) is every one of its bodies, whatever its head, in
-  this rule, the route-gate rule and the Host-first rule. 284 planted
-  fixtures (259 source edits, 25 table edits), with the self-test's lexer,
-  flag-file, build-input, reach, header, file-kind, route-form,
+  this rule, the route-gate rule and the Host-first rule. 290 planted
+  fixtures (265 source edits, 25 table edits), with the self-test's lexer,
+  flag-file, build-input, library, reach, header, file-kind, route-form,
   symbol-binding and raw-literal cases, each fail for their named reason
   before the tree is read; the tree passes with its 83 registrations, in
-  about 18 s. The `/*`
+  about 19 s. The `/*`
   allowlist reasons now say what the
   port-80 redirect does (a probe path gets the probe's plain answer or the
   TLS hint, else 307, or 500 on an oversize target).
@@ -1969,11 +1987,12 @@ so — see D2 below.)
   injected build flags) and a committer who edits the checker, which could
   `return 0`. The rules the second to fifth rounds added against those
   classes (the paste, symbol-binding and build-input rules, and the macro
-  rule's C++-keyword clause) stay, tested, as defense in depth over the
-  spellings they name, not as a claim that every spelling is held: gcc's long
-  aliases (`--prefix`, which the driver rewrites to `-B`, `--for-linker`,
-  `--for-assembler`, `--define-macro`), a letter-led glued `-B<dir>` and the
-  `-L`/`-l` library options pass them.
+  rule's flag and C++-keyword clauses) stay, tested, as defense in depth over
+  the spellings they name, not as a claim that every spelling is held: gcc's
+  long aliases (`--prefix`, which the driver rewrites to `-B`,
+  `--for-linker`, `--for-assembler`, and `--define-macro`, the long form of
+  `-D`, which the flag clause does not read), a letter-led glued `-B<dir>`
+  and the `-L`/`-l` library options pass them.
   This is a static text check: names are matched by spelling, a copy under
   another name or a value passed as a parameter is not followed (the body that
   handles `announce_setup_network()`'s `pass` is pinned instead; the network
@@ -1982,9 +2001,13 @@ so — see D2 below.)
   symbol bindings, and the names they may not name, so their code is not
   otherwise followed, and a
   held name that is an ordinary word in the shared code (`begin`, `check`,
-  `s_active`) is not read there, the linker is not read (a library the build
-  links is outside the check; a flag that would bind a symbol fails, in the
-  spellings the build-input rule names), a
+  `s_active`) is not read there, a library the build links is not read (a
+  registry one is held to `REGISTRY_LIBS` by its name, and the core only by
+  the spellings the census names, so a server or an access point the core
+  can start under another name, a server written on the raw socket API or an
+  ESP-IDF component such as `esp_local_ctrl`, is not seen), the linker is not
+  read (a flag that would bind a symbol fails, in the spellings the
+  build-input rule names), a
   value is not checked but `SETUP_TIMEOUT_MS`'s (a `memset` of the private key
   just before a mint passes; the values `include/canary_config.h` and the
   shared headers define, `PROVISIONING_GATE_TTL_MS` among them, are read only
@@ -2321,8 +2344,10 @@ so — see D2 below.)
     so the reader scan and the census missed them. `symbol_binding_problems`
     now refuses the whole class under ROOTS and in the files outside it the
     flagship reaches, the empty compiler barrier and the known pragmas
-    (`#pragma once`, `#pragma pack`, the two `#pragma GCC poison` lines the
-    flagship writes) aside; a mangled-name `_Z...` identifier is refused too. The
+    (`KNOWN_PRAGMAS`' eleven: `once`, `pack`, `message` and eight in GCC's
+    namespace, `poison` among them, which the flagship writes on two lines
+    beside two `#pragma once`) aside; a mangled-name `_Z...` identifier is
+    refused too. The
     weakref, redefine_extname and `_Z` extern-C forms were compiled on the
     tree's `xtensa-esp32s3-elf-g++ 14.2.0` and on host g++ (both emit an
     undefined or weak reference to `_Z14auth_get_tokenv`, which a host link
@@ -2446,6 +2471,67 @@ so — see D2 below.)
   mutants that each undo one of these fixes or weaken one of those branches,
   the self-test refuses all 17 (the six that weaken an older branch pass the
   round-5 self-test). Host-tested; not run on a device. No new number.
+  *Review (2026-10-22, the PR's seventh round):* held to the same threat
+  model, it found one edit and three of its neighbors that passed the sixth
+  version, one overclaim in the docs and four nits. Each edit now fails, with
+  a planted fixture or a self-test case:
+  - a registry library added for a recovery portal: `tzapu/WiFiManager @
+    ^2.0.17` in `[env]`'s `lib_deps` and, in `setup()`, `{ WiFiManager wm;
+    wm.setConfigPortalTimeout(180); wm.autoConnect("SecuraCV-Recovery"); }`.
+    Handed no AP password, `autoConnect()` raises an open SoftAP, and the
+    library's own `WebServer` serves a firmware upload (`/update`, which
+    posts to `/u`) and `/erase` to anyone who joins it (v2.0.17's
+    `WiFi.softAP(name, "")` and its routes). The census holds the core's spellings
+    under the tree, the library's code is read by no rule, and the
+    build-input rule refused a local library but not a registry one.
+    `library_problems` now holds every library the build fetches to a
+    `REGISTRY_LIBS` row with its reason, or to a library under the tree by
+    its name: each `lib_deps` entry in the flag files and each dependency a
+    library manifest under the tree declares (above). The same rule fails
+    ESPAsyncWebServer, PsychicHttp, ESPUI or any other registry library that
+    brings its own server or access point;
+  - the core's own neighbors of that edit, each passing the sixth version: a
+    raw `WiFiServer` (the SimpleWiFiServer idiom; `NetworkServer` on core
+    3.x) and `WiFiProv`, whose SoftAP scheme raises an access point of its
+    own. The census row that names another server now names them; a server
+    written on the raw socket API, or an ESP-IDF component that starts one of
+    its own (`esp_local_ctrl`), is stated as unseen;
+  - the docs stated the macro rule's flag clause as complete in five places
+    (the docstring, this entry's Macros bullet, the CHANGELOG's "by a macro
+    of a name they call", `firmware.yml`'s step comment and
+    `CONSOLIDATION.md`'s Phase 6 paragraph), while
+    `--define-macro='take(s,n,t)=is_open(s,n,t)'`, gcc's long form of `-D`,
+    passes it and turns the take hook into a peek (host g++ 13.3 and the
+    tree's xtensa g++ 14.2.0 both expand `take(1,2,3)` to `is_open(1,2,3)`
+    under it). That is a deliberate spelling, outside the threat model, so
+    the fix is text: each threat paragraph names the flag clause as defense
+    in depth with `--define-macro` passing it, the CHANGELOG's list of those
+    rules now matches the docstring's and this entry's (with the C++-keyword
+    clause), and each of the five sentences is qualified, as is the
+    CHANGELOG's own Macros bullet;
+  - the nits: an early `return` in `loop()` above `handle_boot_button()`
+    (`if (g_console_attached) return;`) skipped F347's every-pass sweep while
+    the docs said it ran on every pass, and skipped the setup timeout too; a
+    census row's `lead` key now holds that nothing above the call can leave
+    `loop()` (a lambda's `return` aside), on both rows. The server row's
+    `AsyncWebServer` had no fixture and has one. The list above of the
+    census spellings the files outside the tree may not name left out the
+    server row, and round 5's note named three of `KNOWN_PRAGMAS`' eleven.
+    And a census row that allows a name nowhere now says so (`another HTTP
+    server named in setup: its GATE_CALL_SITES row allows it in no function`,
+    `named outside every function: ... allows it nowhere`), where it named a
+    declaration or a call site the row does not have.
+  Six plants and the self-test's library cases (every `lib_deps` spelling
+  and manifest form above, passing and failing) were added: 290 planted
+  fixtures (265 source, 25 table). Of 19 checker mutants that each undo one
+  of these fixes or weaken the new table (the library rule unwired, its
+  interpolation, its comma split, its manifests, a manifest's list form,
+  its URL version or its local path, `library.properties`, an unset
+  interpolation or a bare name passing, `lead` dropped from either row,
+  unimplemented or blind to lambdas, `AsyncWebServer`, `WiFiServer`,
+  `NetworkServer` or `WiFiProv` dropped from the server row, and a
+  `REGISTRY_LIBS` row added for WiFiManager), the self-test refuses all 19.
+  Host-tested; not run on a device. No new number.
 - [x] **F339 [code] canary-wap: other bearer compares stay silent beside the
   lockout.** `csi_integration.cpp`'s `CSI_AUTH_OR_RETURN`
   (`api_auth_check_optional`, every CSI dashboard route), `csi_mqtt.cpp`'s

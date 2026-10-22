@@ -243,8 +243,13 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
   source: the setup lib's state, the stored flag first boot is read from and
   the functions that set and clear them; the SoftAP input with the interface
   helpers it reads through; the tap with the handler whose press opens it),
-  so a session cannot be added by widening one of them in that glue or by a
-  macro of a name it calls.
+  so a careless edit cannot add a session by widening one of them in that
+  glue or by a macro of a name it calls. The check's threat model is a
+  careless or mistaken firmware edit, not a deliberate evasion of it: its
+  rules against the deliberate spellings (token pasting, a symbol binding, an
+  unread build input, a held name defined by a `-D` flag, a macro named for a
+  C++ keyword) are defense in depth, and gcc's `--define-macro`, the long
+  form of `-D`, passes the flag rule.
 - Gap #10 turns ✅ when the per-peripheral state and the degraded safe mode land; gap #11 is flipped.
 
 ### Phase 4 — Mesh + CSI mesh sensing v1 ✅
