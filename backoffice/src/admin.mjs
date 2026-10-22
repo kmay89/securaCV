@@ -19,11 +19,12 @@ import { createApiToken, revokeApiToken } from './auth.mjs';
 import { backup, listBackups } from './modules/backup.mjs';
 import { outboxStats, fill } from './modules/mail.mjs';
 import { jobRuns, runJob, JOBS } from './jobs.mjs';
+import { SCENARIOS, resetDemo, PEOPLE } from './modules/demo.mjs';
 import { join } from 'node:path';
 
 export function registerAdmin(app) {
   const { db, cfg, router } = app;
-  const page = (c, title, body) => html(c.res, layout({ title, body, path: c.url.pathname, company: cfg.company, csrf: c.csrf, flash: c.query.get('ok') ? { text: c.query.get('ok') } : c.query.get('err') ? { kind: 'err', text: c.query.get('err') } : null }));
+  const page = (c, title, body) => html(c.res, layout({ title, body, path: c.url.pathname, company: cfg.company, csrf: c.csrf, demo: cfg.demo, demoResetMinutes: cfg.demoResetMinutes, flash: c.query.get('ok') ? { text: c.query.get('ok') } : c.query.get('err') ? { kind: 'err', text: c.query.get('err') } : null }));
   const back = (c, to, ok) => redirect(c.res, `${to}?ok=${encodeURIComponent(ok)}`);
   const link = (href, label) => `<a href="${e(href)}">${e(label)}</a>`;
   const filters = (c, fields) => `<form method="get" class="row" style="margin:.6rem 0">${fields.map(([n, l, opts]) => opts ? field(n, l, { options: [['', 'any'], ...opts], value: c.query.get(n) || '' }) : field(n, l, { value: c.query.get(n) || '' })).join('')}<div><label>&nbsp;</label><button class="quiet">Filter</button></div></form>`;
@@ -243,8 +244,33 @@ ${form('/settings/token', c.csrf, field('name', 'New token name', { required: tr
 <h2>Jobs</h2>${table(Object.keys(JOBS).map(n => ({ name: n, every: JOBS[n][0], ...(jobRuns(db).find(r => r.name === n) || {}) })), [{ label: 'Job', key: 'name' }, { label: 'Every', get: r => r.every + ' s' }, { label: 'Last run', get: r => dt(r.last_run_at) }, { label: 'OK', html: r => r.last_ok == null ? '—' : r.last_ok ? '<span class="ok">yes</span>' : '<span class="bad">no</span>' }, { label: 'Detail', key: 'last_detail' }, { label: '', html: r => `<form method="post" action="/settings/jobs/run" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="name" value="${e(r.name)}"><button class="quiet">run</button></form>` }])}
 <h2>Backups</h2>${table(listBackups(join(cfg.dataDir, 'backups')), [{ label: 'File', key: 'name' }, { label: 'Bytes', key: 'bytes', num: true }])}${button('/settings/backup', c.csrf, 'Back up now', { quiet: true })}
 <h2>Audit log (last 100)</h2>${table(db.all('SELECT * FROM audit_log ORDER BY id DESC LIMIT 100'), [{ label: 'When', get: r => dt(r.at) }, { label: 'Actor', key: 'actor' }, { label: 'Action', key: 'action' }, { label: 'Entity', get: r => `${r.entity || ''} ${r.entity_id || ''}` }, { label: 'Detail', key: 'detail' }])}`));
-  router.post('/settings/token', (c) => { const t = createApiToken(db, c.body.name); html(c.res, layout({ title: 'Token created', path: '/settings', company: cfg.company, csrf: c.csrf, body: `<p>Copy it now; it is not shown again.</p><pre>${e(t)}</pre><p>Use: <code>Authorization: Bearer …</code> against ${e(cfg.baseUrl)}/api</p><p>${link('/settings', 'Back')}</p>` })); });
+  router.post('/settings/token', (c) => { const t = createApiToken(db, c.body.name); html(c.res, layout({ title: 'Token created', path: '/settings', company: cfg.company, csrf: c.csrf, demo: cfg.demo, body: `<p>Copy it now; it is not shown again.</p><pre>${e(t)}</pre><p>Use: <code>Authorization: Bearer …</code> against ${e(cfg.baseUrl)}/api</p><p>${link('/settings', 'Back')}</p>` })); });
   router.post('/settings/token/revoke', (c) => { revokeApiToken(db, c.body.name); back(c, '/settings', 'revoked'); });
   router.post('/settings/jobs/run', async (c) => { const r = await runJob(app, c.body.name); back(c, '/settings', `${r.job}: ${r.ok ? JSON.stringify(r.result) : r.error}`); });
   router.post('/settings/backup', (c) => { const r = backup(db, join(cfg.dataDir, 'backups'), { keep: cfg.backupKeep }); back(c, '/settings', `wrote ${r.path}`); });
+
+  // ---------- demo scenarios (only when the database is a demo)
+  router.get('/demo', (c) => {
+    if (!cfg.demo) throw new HttpError(404, 'not in demo mode');
+    const last = c.query.get('result');
+    const body = `<p>Every button below pushes a synthetic event through the <b>real</b> code path — the signed Stripe webhook, the mail parser, the form endpoint, the probe runner — so each feature can be watched reacting. Names are placeholders, domains are <code>.example.test</code> (reserved, can never resolve), money is play money. Nothing here can reach a real service: SMTP, IMAP, GitHub and Stripe are disabled by the demo flag in the database.</p>
+${last ? `<pre>${e(last)}</pre>` : ''}
+<div class="scen">${Object.entries(SCENARIOS).map(([k, v]) => `<form method="post" action="/demo/${e(k)}"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><button>${e(v.label)}</button></form>`).join('')}</div>
+<h2>Try the website forms</h2><p class="muted">The same markup the real site will carry (<code>deploy/website-forms.html</code>), posting to this instance.</p>
+<div class="row">
+<form method="post" action="/forms/waitlist" class="box"><input type="hidden" name="sku" value="vision-kit"><input type="hidden" name="_redirect" value=""><b>Notify me when it's in stock</b>${field('email', 'Email', { type: 'email', value: PEOPLE[6][0] })}<label><input type="checkbox" name="newsletter" value="1" style="width:auto"> also send occasional news (double opt-in)</label><div style="margin-top:.6rem"><button>Join the waitlist</button></div></form>
+<form method="post" action="/forms/contact" class="box"><b>Contact</b>${field('name', 'Name', { value: 'Visitor Example' })}${field('email', 'Email', { type: 'email', value: 'visitor@customer.example.test' })}${field('subject', 'Subject', { value: 'A question from the demo page' })}${field('message', 'Message', { type: 'textarea', rows: 3, value: 'Hello from the demo.' })}<div style="margin-top:.6rem"><button>Send</button></div></form>
+</div>
+<h2>The API side</h2><pre>${e(`curl -X POST -H "Authorization: Bearer <token from Settings>" ${cfg.baseUrl}/api/demo/order
+curl -H "Authorization: Bearer <token>" ${cfg.baseUrl}/api/demo/scenarios`)}</pre>
+<h2>Start over</h2>${button('/demo/reset', c.csrf, 'Wipe and reseed the demo data', { quiet: true })} <span class="muted">keeps the operator login; everything else is regenerated</span>`;
+    page(c, 'Demo scenarios', body);
+  });
+  router.post('/demo/reset', async (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); const r = await resetDemo(db, cfg); back(c, '/demo', `reseeded: ${JSON.stringify(r)}`); });
+  router.post('/demo/:scenario', async (c) => {
+    if (!cfg.demo) throw new HttpError(404, 'not in demo mode');
+    const sc = SCENARIOS[c.params.scenario]; if (!sc) throw new HttpError(404, 'unknown scenario');
+    const r = await sc.run(app);
+    redirect(c.res, `/demo?ok=${encodeURIComponent(sc.label)}&result=${encodeURIComponent(JSON.stringify(r, null, 1).slice(0, 1500))}`);
+  });
 }

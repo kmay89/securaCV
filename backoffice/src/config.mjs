@@ -28,6 +28,8 @@ export function loadConfig(overrides = {}) {
     sessionHours: Number(env('SESSION_HOURS', '12')),
     backupKeep: Number(env('BACKUP_KEEP', '14')),
     secure: env('BACKOFFICE_BASE_URL', '').startsWith('https://'),
+    demo: env('BACKOFFICE_DEMO', '') === '1',                       // also set by a database the demo seeded
+    demoResetMinutes: Number(env('BACKOFFICE_DEMO_RESET_MINUTES', '0')), // a public demo wipes and reseeds itself on this cadence; 0 = never
     ...overrides,
   };
   return cfg;

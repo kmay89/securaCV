@@ -11,6 +11,7 @@ import { overdue } from './modules/invoices.mjs';
 import { raise, resolve } from './modules/exceptions.mjs';
 import { backup } from './modules/backup.mjs';
 import { unreconciledStripeCents } from './modules/ledger.mjs';
+import { resetDemo, isDemo } from './modules/demo.mjs';
 import { join } from 'node:path';
 
 export const JOBS = {
@@ -56,6 +57,14 @@ export const JOBS = {
     return { stripe_unpaid_out_cents: c };
   }],
   backup:   [86400, async ({ db, cfg }) => backup(db, join(cfg.dataDir, 'backups'), { keep: cfg.backupKeep })],
+  // A public demo starts over on a cadence so visitors always find the seeded week. Never runs outside demo mode.
+  demo_reset: [60, async ({ db, cfg }) => {
+    if (!cfg.demo || !isDemo(db) || !cfg.demoResetMinutes) return { skipped: 'not a timed public demo' };
+    const last = db.setting('demo:last_reset', db.setting('demo:seeded_at', ''));
+    if (last && Date.now() - Date.parse(last) < cfg.demoResetMinutes * 60_000) return { next_in_s: Math.round((cfg.demoResetMinutes * 60_000 - (Date.now() - Date.parse(last))) / 1000) };
+    const r = await resetDemo(db, cfg); db.setSetting('demo:last_reset', nowIso());
+    return { reset: true, ...r };
+  }],
 };
 
 export async function runJob(app, name) {

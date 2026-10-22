@@ -1,0 +1,80 @@
+name: Backoffice demo → Fly.io
+
+# Deploys the public demo to Fly.io without a terminal: create a Fly token in
+# the dashboard (Account → Tokens), add it to this repo as the secret
+# FLY_API_TOKEN, then Actions → this workflow → "Run workflow". It creates
+# the app if it does not exist and deploys backoffice/ with
+# deploy/fly.toml. On later merges to main that touch backoffice/ it
+# redeploys automatically — and does nothing at all while the secret is
+# absent, so forks and checkouts without a Fly account are unaffected.
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: "Fly app name (global across Fly; pick your own)"
+        default: "securacv-backoffice-demo"
+        required: true
+      org:
+        description: "Fly organization slug (personal for a personal account)"
+        default: "personal"
+        required: true
+      region:
+        description: "Fly region code (iad, lhr, sjc, …)"
+        default: "iad"
+        required: true
+  push:
+    branches: [main]
+    paths:
+      - "backoffice/**"
+      - ".github/workflows/backoffice-fly.yml"
+
+permissions:
+  contents: read
+
+# A deploy (CI.md R3, publisher half — main_queue_ok): never canceled on
+# main, queued in order so the live demo always ends on the newest commit.
+concurrency:
+  group: backoffice-fly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: fly deploy (remote build)
+    runs-on: ubuntu-24.04  # the image the job was written against (CI.md R11)
+    timeout-minutes: 15
+    defaults:
+      run: { working-directory: backoffice }
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      APP: ${{ github.event.inputs.app || vars.FLY_DEMO_APP || 'securacv-backoffice-demo' }}
+      ORG: ${{ github.event.inputs.org || vars.FLY_DEMO_ORG || 'personal' }}
+      REGION: ${{ github.event.inputs.region || vars.FLY_DEMO_REGION || 'iad' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Is a Fly token configured?
+        id: gate
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "No FLY_API_TOKEN secret — nothing to deploy to. Add one (Fly dashboard → Account → Tokens) to enable this workflow."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install flyctl
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          curl -fsSL https://fly.io/install.sh | sh
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+      - name: Create the app if it does not exist
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          if flyctl apps list --json | grep -q "\"Name\": *\"$APP\""; then echo "app $APP exists"; else flyctl apps create "$APP" --org "$ORG"; fi
+      - name: Deploy (Fly builds the image on its remote builder)
+        if: steps.gate.outputs.run == 'true'
+        # --dockerfile is cwd-relative (backoffice/), unlike the toml's config-relative path
+        run: flyctl deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --app "$APP" --primary-region "$REGION" --remote-only --yes
+      - name: Where it lives
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          echo "## Demo deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "https://$APP.fly.dev — the login page shows the demo credentials." >> "$GITHUB_STEP_SUMMARY"
