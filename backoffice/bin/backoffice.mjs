@@ -9,7 +9,12 @@ import { setupOperator, createApiToken, revokeApiToken, totpUri, hasOperator } f
 import { createApp } from '../src/server.mjs';
 import { startScheduler, runJob, JOBS } from '../src/jobs.mjs';
 import { loadCatalog } from '../src/modules/catalog.mjs';
-import { recordOrder, transition, listOrders, orderByNumber, fulfillCsv } from '../src/modules/orders.mjs';
+import { recordOrder, transition, listOrders, orderByNumber, fulfillCsv, timeline, addNote, setTags, batches } from '../src/modules/orders.mjs';
+import { listCustomers, customerStats, contactById, setContactTags } from '../src/modules/contacts.mjs';
+import { listDiscounts, createDiscount, setDiscountStatus, evaluate as evaluateDiscount, describe as describeDiscount } from '../src/modules/discounts.mjs';
+import { analytics } from '../src/modules/analytics.mjs';
+import { listProducts } from '../src/modules/products.mjs';
+import { search } from '../src/modules/search.mjs';
 import { parseCsv, detectColumns, csvRowToOrder, signStripePayload } from '../src/modules/stripe.mjs';
 import { listTickets, ticketByNumber, reply, queue } from '../src/modules/support.mjs';
 import { upsertItem, move, setRecipe, listItems, buildable } from '../src/modules/inventory.mjs';
@@ -51,7 +56,16 @@ orders
   orders import <stripe-export.csv>        catch-up from the Stripe Payments export
   orders fulfill-csv [--batch W] > orders.csv   the CSV the website's fulfill.mjs eats
   order pack|ship|deliver <EL-…> [--carrier USPS --tracking 9400…]
-  order new --email a@b.c --name "…" --sku wap-kit [--qty 1] --line1 … --city … --state XX --zip 12345 [--cents 6900]
+  order new --email a@b.c --name "…" --sku wap-kit [--qty 1] --line1 … --city … --state XX --zip 12345 [--cents 6900] [--discount CODE] [--tags a,b]
+  order timeline <number> | order note <number> <text> | order tag <number> <a,b>
+  batches                                  the weekly batches: what each holds, what is still to pack or ship
+  customers [--segment repeat|consented|waitlist|orgs|never] [--tag …] [--sort spent|orders|name] [--q …]
+  customer <email|id> [tag <a,b>]          lifetime orders, spend, tickets, claims
+  products [--days 30]                     the catalog joined to stock, sales and the waitlist
+  discounts | discounts create CODE --kind percent|fixed|free_shipping --value N [--min cents] [--max-uses N] [--starts d] [--ends d] [--note …]
+  discounts try CODE --subtotal cents | discounts disable|enable CODE
+  analytics [--days 7|30|90|365]           sales, orders, margin, returning rate, top products, the series
+  search <text>                            orders, customers, tickets, serials, invoices, claims, codes by number or name
 
 support
   tickets [--status open] [--kind support]   |  ticket <T-000045>  |  queue (what needs an answer, oldest first)
@@ -130,12 +144,31 @@ const main = async () => {
     case 'order': {
       if (args[0] === 'new') {
         const catalog = await loadCatalog(cfg).catch(() => null);
-        const { order } = recordOrder(db, { source: 'manual', email: flags.email, name: flags.name, total_cents: Number(flags.cents || 0), subtotal_cents: Number(flags.cents || 0), ship: { line1: flags.line1, line2: flags.line2, city: flags.city, state: flags.state, zip: flags.zip, country: flags.country || 'US' }, items: [{ sku: flags.sku, name: flags.sku, qty: Number(flags.qty || 1), unit_cents: Number(flags.cents || 0) / Number(flags.qty || 1) }] }, { catalog, actor: 'cli' });
+        const { order } = recordOrder(db, { source: 'manual', email: flags.email, name: flags.name, total_cents: Number(flags.cents || 0), subtotal_cents: Number(flags.cents || 0), discount_code: flags.discount || null, tags: flags.tags || '', ship: { line1: flags.line1, line2: flags.line2, city: flags.city, state: flags.state, zip: flags.zip, country: flags.country || 'US' }, items: [{ sku: flags.sku, name: flags.sku, qty: Number(flags.qty || 1), unit_cents: Number(flags.cents || 0) / Number(flags.qty || 1) }] }, { catalog, actor: 'cli' });
         return out(order);
       }
+      if (args[0] === 'note') { const o = orderByNumber(db, args[1]); if (!o) throw new Error('no such order'); return out(addNote(db, o.id, args.slice(2).join(' '), { actor: 'cli' })); }
+      if (args[0] === 'tag') { const o = orderByNumber(db, args[1]); if (!o) throw new Error('no such order'); return out(setTags(db, o.id, args[2] || '', { actor: 'cli' }).tags || '(no tags)'); }
+      if (args[0] === 'timeline') { const o = orderByNumber(db, args[1]); if (!o) throw new Error('no such order'); return out(timeline(db, o.id).map(ev => `${ev.at}  ${ev.actor.padEnd(7)} ${ev.text}`).join('\n')); }
       if (['pack', 'ship', 'deliver'].includes(args[0])) { const o = orderByNumber(db, args[1]); if (!o) throw new Error('no such order'); return out(transition(db, o.id, { pack: 'packed', ship: 'shipped', deliver: 'delivered' }[args[0]], { actor: 'cli', carrier: flags.carrier, tracking: flags.tracking, cfg })); }
       return out(orderByNumber(db, args[0]) || 'no such order');
     }
+    case 'batches': return out(batches(db).map(b => `${b.batch}  orders ${String(b.orders).padStart(3)}  units ${String(b.units).padStart(3)}  to pack ${b.to_pack}  to ship ${b.to_ship}  shipped ${b.shipped}  ${(b.sales_cents / 100).toFixed(2).padStart(9)}`).join('\n') || 'no orders');
+    case 'customers': return out(listCustomers(db, { q: flags.q || '', tag: flags.tag || '', segment: flags.segment || '', sort: flags.sort || 'recent' }).map(c => `${c.email.padEnd(40)} ${String(c.orders).padStart(3)} orders  ${(c.spent_cents / 100).toFixed(2).padStart(9)}  ${c.tags ? `[${c.tags}] ` : ''}${c.name || ''}`).join('\n') || 'no customers');
+    case 'customer': {
+      const ct = /^\d+$/.test(args[0] || '') ? contactById(db, Number(args[0])) : db.get('SELECT * FROM contacts WHERE email = ?', String(args[0] || '').toLowerCase()); if (!ct) throw new Error('no such customer');
+      if (args[1] === 'tag') return out(setContactTags(db, ct.id, args[2] || '').tags || '(no tags)');
+      return out({ ...ct, stats: customerStats(db, ct.id) });
+    }
+    case 'products': { const catalog = await app.catalog(); return out(listProducts(db, catalog, { days: Number(flags.days || 30) }).map(p => `${p.sku.padEnd(18)} ${(p.price_cents / 100).toFixed(2).padStart(7)}  ${p.stock.padEnd(9)} ${p.buildable == null ? '  —' : String(p.buildable).padStart(3)} buildable  ${String(p.units_recent).padStart(3)} sold/${flags.days || 30}d  ${String(p.waitlist_people).padStart(2)} waiting  ${p.name}`).join('\n')); }
+    case 'discounts': {
+      if (args[0] === 'create') return out(createDiscount(db, { code: args[1], kind: flags.kind || 'percent', value: Number(flags.value || 0), min_subtotal_cents: Number(flags.min || 0), max_uses: flags['max-uses'] ? Number(flags['max-uses']) : null, starts_at: flags.starts ? flags.starts + 'T00:00:00.000Z' : null, ends_at: flags.ends ? flags.ends + 'T23:59:59.999Z' : null, note: flags.note || null }));
+      if (args[0] === 'disable' || args[0] === 'enable') return out(setDiscountStatus(db, args[1], args[0] === 'enable' ? 'active' : 'disabled'));
+      if (args[0] === 'try') return out(evaluateDiscount(db, args[1], { subtotal_cents: Number(flags.subtotal || 0), shipping_cents: Number(flags.shipping || 800) }));
+      return out(listDiscounts(db).map(d => `${d.code.padEnd(14)} ${d.status.padEnd(9)} ${describeDiscount(d).padEnd(16)} uses ${String(d.uses).padStart(3)}${d.max_uses ? `/${d.max_uses}` : ''}  given ${(d.given_cents / 100).toFixed(2).padStart(8)}  ${d.note || ''}`).join('\n') || 'no codes');
+    }
+    case 'analytics': { const a = analytics(db, { days: Number(flags.days || 30) }); const t = a.totals, p = a.previous; const m = (c) => (c / 100).toFixed(2); return out(`${a.days} days to ${a.to.slice(0, 10)} (previous period in brackets)\n  total sales   ${m(t.total_cents).padStart(10)}  [${m(p.total_cents)}]\n  net sales     ${m(t.net_cents).padStart(10)}  [${m(p.net_cents)}]\n  orders        ${String(t.orders).padStart(10)}  [${p.orders}]\n  average order ${m(t.aov_cents).padStart(10)}  [${m(p.aov_cents)}]\n  units         ${String(t.units).padStart(10)}  [${p.units}]\n  gross margin  ${(Math.round(t.gross_margin * 100) + '%').padStart(10)}\n  returning     ${(Math.round(t.returning_rate * 100) + '%').padStart(10)}\n  refunds       ${m(t.refunds_cents).padStart(10)}   discounts ${m(t.discounts_cents)}\n\ntop products\n${a.topProducts.map(x => `  ${x.sku.padEnd(18)} ${String(x.units).padStart(4)} u  ${m(x.gross_cents).padStart(9)}  ${Math.round(x.share * 100)}%`).join('\n')}\n\nby ${a.series.step}\n${a.series.buckets.map(b => `  ${b.label}  ${String(b.orders).padStart(3)} orders  ${m(b.net_cents).padStart(9)}`).join('\n')}`); }
+    case 'search': { const r = search(db, args.join(' ')); return out(r.groups.map(g => `${g.kind}\n${g.rows.map(x => '  ' + JSON.stringify(x)).join('\n')}`).join('\n') || 'nothing matches'); }
     case 'tickets': return out(listTickets(db, { status: flags.status || '', kind: flags.kind || '' }).map(t => `${t.number}  ${t.status.padEnd(19)} ${t.priority.padEnd(6)} ${t.kind.padEnd(13)} ${t.email || ''}  ${t.subject}`).join('\n') || 'no tickets');
     case 'queue': return out(queue(db).map(t => `${t.number}  due ${t.sla_due_at}  ${t.email || ''}  ${t.subject}`).join('\n') || 'inbox zero');
     case 'ticket': {

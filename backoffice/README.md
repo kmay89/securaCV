@@ -18,6 +18,10 @@ already chose it. Everything *around* Stripe is here.
 | A helpdesk (Zendesk, Help Scout) | **Support** | a shared inbox read over IMAP, numbered tickets with a thread token, auto-acknowledgment, canned replies, SLA timer that raises an exception, kinds (security goes urgent) |
 | A CRM + newsletter audience (HubSpot, Mailchimp) | **Contacts, Campaigns** | double opt-in, one-click unsubscribe (RFC 8058), segments, per-SKU waitlist with a single "in stock" mail |
 | A transactional sender (Postmark, SendGrid) | **Mail** | an outbox queue, its own SMTP client (STARTTLS/SMTPS, AUTH), retries, consent re-checked at send time |
+| A storefront's products page | **Products** | the catalog (`store.json`) joined to what the business knows: buildable stock, open units, sold per period, margin, who is waiting, what came back; a weekly sales chart per SKU |
+| A CRM with lifetime value | **Customers** | orders, lifetime spend, average order, first/last order, tags, segments (repeat buyers, opt-in, waitlist, schools & orgs), a per-customer timeline |
+| A discounts engine | **Discounts** | percent / fixed / free-shipping codes with minimums, windows and use caps; Stripe's code captured from the webhook; a manual order priced by the same rules; cost booked to a contra account |
+| Sales analytics (Shopify reports) | **Analytics** | total / net / gross sales, orders, average order, units, margin, returning rate, refunds, discounts — each against the previous period; sales and orders over time, top products, by state, by channel, fulfillment speed, support volume, warranty rate; CSV. No visitor numbers — the site keeps none |
 | An inventory app | **Inventory** | parts/printed/finished stock, every change a logged move, recipes (what a packed SKU consumes), buildable count, reorder exceptions |
 | A returns / RMA tool | **Warranty** | the six defined fix-not-return answers from terms-of-sale §7, a $0 reship order, cost tracking, warranty rate |
 | Serial / asset tracking | **Devices** | the jig's `create_manifest.py` output imported; serial ↔ order ↔ firmware hash; the packing-slip QA scan |
@@ -26,7 +30,8 @@ already chose it. Everything *around* Stripe is here.
 | Bookkeeping (QuickBooks) | **Books** | double-entry in cents, every sale/refund/payout/expense posted, monthly P&L, trial balance, sales tax by state, year-end CSV for an accountant |
 | A status page + uptime monitor (Statuspage, UptimeRobot) | **Status** | HTTP probes, 90-day uptime, incidents, public `/status` and `/status.json` |
 | Form backends (Formspree) | **Forms** | `/forms/contact`, `/waitlist`, `/request`, `/feedback`, `/press`, `/wholesale` — honeypot + rate limit, straight into tickets and the waitlist |
-| An ops dashboard (Metabase, Baremetrics) | **Dashboard** | the numbers a company of one steers by. **Not** visitor analytics — the site has none and never will |
+| An ops dashboard (Metabase, Baremetrics) | **Home** | what needs doing today, the last 30 days against the 30 before, a sales chart, the activity feed. **Not** visitor analytics — the site has none and never will |
+| Order management (Shopify's order admin) | **Orders** | status tabs with counts, filters by batch / tag / date / code / SKU, a timeline per order (placed, packed, shipped, refund, notes, tags, address changes, boards scanned), bulk pack / tag / print, packing slips, re-send tracking, the weekly **Batches** page, one search box over everything |
 | Alerting (PagerDuty) | **Exceptions** | doc 20, principle 4: thresholds open one deduplicated GitHub issue and close it themselves. Silence means healthy |
 | Backups | **Backups** | nightly `VACUUM INTO`, kept N deep; off-site is one rsync line |
 | An admin login | **Auth** | one operator, password + authenticator code, strict cookies, CSRF, bearer tokens for the CLI and an AI operator |
@@ -45,7 +50,10 @@ git clone https://github.com/kmay89/securaCV && cd securaCV/backoffice
 npm run demo            # wipes ./data-demo, seeds a synthetic week, serves http://127.0.0.1:8787
 ```
 
-The login page shows the demo password and the current authenticator code.
+The login form comes filled in (password `demo1234`, the current
+authenticator code) — press **Log in**. Sixty days of a small company are
+waiting: ~45 orders across nine weekly batches, repeat buyers, five discount
+codes, a refund and a cancellation, answered tickets, the books balanced.
 Every page carries a yellow **DEMO MODE** banner, and **Demo scenarios** in
 the nav is a page of buttons that push synthetic events through the real
 code paths: a signed Stripe webhook that creates an order, a refund, a
@@ -77,7 +85,7 @@ to main. Pick one:
 | Where | Cost | How |
 |---|---|---|
 | Fly.io | free allowance | from `backoffice/`: `fly apps create <name>` then `fly deploy --config deploy/fly.toml --app <name>` (builds on Fly's remote builder; no local Docker) → `https://<name>.fly.dev` |
-| Fly.io, no terminal | free allowance | Fly dashboard → Account → Tokens → create one; add it to this repo as the secret `FLY_API_TOKEN`; Actions → "Backoffice demo → Fly.io" → Run workflow. It creates the app, deploys, and redeploys on every merge that touches `backoffice/` |
+| Fly.io, no terminal | free allowance | Fly dashboard → Account → Tokens → create one; add it to this repo as the secret `FLY_API_TOKEN`; Actions → "Backoffice demo → Fly.io" → Run workflow. It creates the app and a 1 GB data volume, deploys **one** machine on it, and redeploys on every merge that touches `backoffice/`. (One machine matters: two would be two databases, and a login on one is unknown to the other — the "every other page bounces to the login screen" symptom.) |
 | Render | free tier (sleeps when idle, ~30 s to wake) | New → Blueprint → this repo; `backoffice/deploy/render.yaml` is read automatically |
 | Any VPS with Docker | ~$4–6/month | point a DNS name at it, then `DEMO_HOST=demo.example.com docker compose -f backoffice/deploy/docker-compose.demo.yml up -d` (Caddy gets the certificate) |
 | A laptop, for a meeting | — | `docker run --rm -e BACKOFFICE_DEMO=1 -p 8787:8787 ghcr.io/kmay89/securacv-backoffice` |
@@ -180,10 +188,11 @@ src/http.mjs            router, body parsing, cookies, CSRF, rate limiter, escap
 src/render.mjs          server-rendered HTML; no client JavaScript
 src/auth.mjs            scrypt password, TOTP (RFC 6238), sessions, API tokens
 src/server.mjs          public endpoints, the JSON API, the request pipeline
-src/admin.mjs           one page per module
-src/jobs.mjs            outbox · inbox · probes · sla · stock · invoices · books · backup
-src/modules/            catalog contacts mail imap stripe orders inventory devices warranty support
-                        campaigns ledger invoices subscriptions status exceptions dashboard backup
+src/admin.mjs           one page per module; src/admin_shop.mjs the storefront half (products, customers, discounts, analytics, batches, search, packing slips)
+src/charts.mjs          inline-SVG charts: columns, line, ranked bars, sparklines, stat tiles — CSS hover tooltips, a table view under each
+src/jobs.mjs            outbox · inbox · probes · sla · stock · invoices · books · backup · demo_reset
+src/modules/            catalog contacts mail imap stripe orders discounts analytics products search inventory devices
+                        warranty support campaigns ledger invoices subscriptions status exceptions dashboard backup demo
 tests/                  node --test; fakes for SMTP, IMAP, Stripe signatures, probes, GitHub
 deploy/                 Dockerfile, docker-compose.yml, Caddyfile, systemd unit, website-forms.html
 ```
@@ -198,7 +207,7 @@ the business logic, the HTTP surface or a form cannot merge.
 |---|---|---|
 | Unit + module tests | every rule in every module: books balance, SKUs resolve, consent is enforced, TOTP matches RFC 6238, mail threads, probes raise and resolve. Fakes stand in for SMTP, IMAP, Stripe and GitHub, so no network, no credentials | `npm test` (under a second) |
 | End-to-end over HTTP | the server as a client sees it: login + CSRF, public forms, a signed Stripe webhook creating an order, the bearer API driving it to shipped, unsubscribe, invoice links | part of `npm test` (`tests/server.test.mjs`) |
-| The admin in a real browser | the forms as a person submits them — log in, ship an order, answer a ticket from a canned reply, receive stock, post an expense, log out — with zero page or console errors. This is the layer that catches a button whose form is missing a field | `npm i --no-save playwright && npx playwright install chromium`, then `npm test`; it skips (and says so) when Playwright is absent, and CI makes a skip a failure |
+| The admin in a real browser | the forms as a person submits them — log in, ship an order, answer a ticket from a canned reply, receive stock, post an expense, note and tag an order, create and try a discount code, tag a customer, read a product, the analytics charts, the header search, bulk-pack a batch, log out — with zero page or console errors. This is the layer that catches a button whose form is missing a field | `npm i --no-save playwright && npx playwright install chromium`, then `npm test`; it skips (and says so) when Playwright is absent, and CI makes a skip a failure |
 | You, on the demo | anything the tests did not think of | `backoffice demo` → `serve` → click around |
 
 The pattern for adding coverage: a bug found by hand becomes an assertion

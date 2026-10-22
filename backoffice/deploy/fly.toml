@@ -13,6 +13,13 @@ primary_region = "iad"
   # context is the directory you run from (backoffice/).
   dockerfile = "Dockerfile"
 
+# One volume, one machine. Without this Fly runs two machines with two
+# separate SQLite files: a login on one is unknown to the other, so every
+# other page bounces to the login screen. The workflow creates the volume.
+[mounts]
+  source = "backoffice_demo_data"
+  destination = "/data"
+
 [env]
   BACKOFFICE_DEMO = "1"
   BACKOFFICE_DEMO_RESET_MINUTES = "60"

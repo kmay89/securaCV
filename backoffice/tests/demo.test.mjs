@@ -11,11 +11,14 @@ import { testDb, testCfg } from './helpers.mjs';
 test('the demo seed fills an empty database consistently, refuses a used one, and reset starts over', async () => {
   const db = testDb(); const cfg = testCfg();
   const r = await seedDemo(db, cfg);
-  assert.ok(r.orders >= 7 && r.tickets >= 4 && r.contacts >= 8 && r.items === 10);
+  assert.ok(r.orders >= 40 && r.tickets >= 14 && r.contacts >= 20 && r.items === 10 && r.discounts === 5, JSON.stringify(r));
   assert.ok(trialBalance(db).balanced, 'the demo books balance');
   const s = snapshot(db);
   assert.ok(s.orders.open >= 2); assert.equal(s.support.breached, 1, 'one ticket is past its SLA on purpose'); assert.equal(s.exceptions.length, 1);
-  assert.equal(db.get('SELECT COUNT(*) AS n FROM mail_outbox WHERE status = \'sent\'').n, 0, 'nothing is sent by a seed');
+  assert.equal(db.get('SELECT COUNT(*) AS n FROM mail_outbox WHERE status = \'sent\' AND created_at >= ?', new Date(Date.now() - 2 * 86400000).toISOString()).n, 0, 'nothing is sent by a seed — old history is marked sent, this week\'s mail waits in the outbox');
+  assert.ok(db.get('SELECT COUNT(*) AS n FROM mail_outbox WHERE status = \'queued\'').n > 0, 'this week\'s mail is queued');
+  assert.equal(db.get('SELECT COUNT(*) AS n FROM orders WHERE id NOT IN (SELECT order_id FROM order_events)').n, 0, 'every order has a timeline');
+  assert.ok(db.get('SELECT COUNT(DISTINCT batch) AS n FROM orders').n >= 8, 'orders span the weekly batches');
   assert.equal(db.setting('demo'), '1');
   await assert.rejects(seedDemo(db, cfg), /already has orders/);
   // every synthetic identity is unmistakably synthetic
@@ -67,7 +70,7 @@ test('a demo app on an empty database seeds itself; a timed public demo resets o
   const app = createApp({ db, cfg }); await app.listen();
   try {
     const seeded = await ensureDemo(db, cfg);
-    assert.ok(seeded && seeded.orders >= 7, 'seeded on first boot');
+    assert.ok(seeded && seeded.orders >= 40, 'seeded on first boot');
     assert.equal(await ensureDemo(db, cfg), null, 'a used database is left alone');
     let r = await runJob(app, 'demo_reset'); assert.ok(r.ok); assert.ok(r.result.next_in_s > 3000, 'just seeded: not due');
     db.setSetting('demo:seeded_at', new Date(Date.now() - 61 * 60_000).toISOString());

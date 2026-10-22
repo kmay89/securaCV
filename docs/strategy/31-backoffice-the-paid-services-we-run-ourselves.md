@@ -23,7 +23,11 @@ inbox).
 
 | Function | Copied from | Kept | Dropped | Bound to |
 |---|---|---|---|---|
-| Orders | Shopify's order admin | the state machine, batches, tracking mail, refunds ledger, idempotent webhook | variants, discounts engine, multi-channel, themes | `store.json` SKUs + `cogs`; the website's `fulfill.mjs` CSV |
+| Orders | Shopify's order admin | the state machine, status tabs, batches, a timeline per order, notes and tags, bulk actions, packing slips, tracking mail, refunds ledger, idempotent webhook | variants, multi-channel, themes | `store.json` SKUs + `cogs`; the website's `fulfill.mjs` CSV |
+| Products | Shopify's products page | the catalog joined to buildable stock, sales per period, margin, waitlist, claims | the editor (price and copy live in `store.json`, in git) | `store.json`; the inventory recipes |
+| Customers | Shopify's customers page | lifetime spend, order count, segments, tags, a timeline | customer accounts, logins | the contacts table; every order and ticket |
+| Discounts | Shopify's discounts | percent / fixed / free-shipping codes, minimums, windows, use caps, cost in the books | automatic discounts, buy-X-get-Y | Stripe promotion codes (captured from the webhook) |
+| Analytics | Shopify's reports | sales / orders / AOV / margin / returning rate against the previous period, series, top products, by state, fulfillment speed, support volume | sessions, conversion, any visitor number (the site keeps none) | the orders table, on every request |
 | Support | Help Scout | shared inbox, numbered threads, canned replies, first-response SLA, kinds | agents, assignment, macros, satisfaction surveys | the support mailbox over IMAP/SMTP; GitHub issues for the public front door |
 | Contacts & campaigns | Mailchimp | double opt-in, one-click unsubscribe, segments, plain-text campaigns | open/click tracking, A/B, templates gallery, automation builders | the per-SKU waitlist on the store |
 | Mail | Postmark | a queue, retries, consent enforced at send time | deliverability dashboards, webhooks, streams | any SMTP relay, including self-hosted |

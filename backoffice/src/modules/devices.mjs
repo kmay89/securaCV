@@ -3,6 +3,7 @@
 // (firmware/provisioning/create_manifest.py) or by hand at the bench. A
 // warranty claim resolves against this, and a recall would start here.
 import { nowIso } from '../db.mjs';
+import { addEvent } from './orders.mjs';
 
 export const normSerial = (s) => String(s || '').trim().toUpperCase();
 export const normMac = (s) => s ? String(s).trim().toUpperCase().replace(/[^0-9A-F]/g, '').replace(/(..)(?=.)/g, '$1:') : null;
@@ -28,6 +29,7 @@ export function assignToOrder(db, serial, orderId, { actor = 'web' } = {}) {
   const d = deviceBySerial(db, serial); if (!d) throw new Error(`unknown serial ${serial}`);
   if (d.order_id && d.order_id !== orderId) throw new Error(`${d.serial} is already on order ${d.order_number}`);
   db.run('UPDATE devices SET order_id = ? WHERE id = ?', orderId, d.id);
+  addEvent(db, orderId, { kind: 'device', actor, text: `Board ${d.serial} (${d.board || 'board'}, firmware ${d.fw_version || '?'}) scanned into this box` });
   db.audit(actor, 'device.assign', 'device', d.serial, { order_id: orderId });
   return deviceBySerial(db, serial);
 }
