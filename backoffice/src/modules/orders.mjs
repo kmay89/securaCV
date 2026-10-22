@@ -34,12 +34,13 @@ export function recordOrder(db, o, { catalog = null, bomTotals = {}, actor = 'sy
     const contact = o.email ? upsertContact(db, { email: o.email, name: o.name || null, source: 'store' }) : null;
     const number = db.nextNumber('EL');
     const paidAt = o.paid_at || nowIso();
-    // A discount: Stripe already took it off the total (code + cents arrive together); a manual
-    // order names a code and the rules in discounts.mjs price it, then the total follows.
+    // A discount: Stripe already took it off the total (it says what it took, even when that is
+    // $0 for free shipping, so `discount_cents` arrives set); a manual order names a code with no
+    // amount, and the rules in discounts.mjs price it, then the total follows.
     let subtotal = o.subtotal_cents || 0, shipping = o.shipping_cents || 0, tax = o.tax_cents || 0, total = o.total_cents || 0;
     let discountCode = o.discount_code ? String(o.discount_code).trim().toUpperCase() : null, discountCents = Number(o.discount_cents) || 0;
     let discountNote = '';
-    if (discountCode && !o.discount_cents) {
+    if (discountCode && o.discount_cents == null) {
       const ev = evaluateDiscount(db, discountCode, { subtotal_cents: subtotal, shipping_cents: shipping, at: paidAt });
       if (!ev.ok) throw new Error(`discount ${discountCode}: ${ev.reason}`);
       discountCents = ev.discount_cents; if (ev.free_shipping) shipping = 0; discountNote = ev.reason;

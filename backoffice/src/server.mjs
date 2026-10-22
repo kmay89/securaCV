@@ -7,7 +7,7 @@ const e = escapeHtml;
 import { layout } from './render.mjs';
 import { sessionFor, login, logout, apiTokenFor, hasOperator } from './auth.mjs';
 import { loadCatalog } from './modules/catalog.mjs';
-import { verifyStripeSignature, eventToOrder, fetchLineItems } from './modules/stripe.mjs';
+import { verifyStripeSignature, eventToOrder, fetchLineItems, resolveDiscountCode } from './modules/stripe.mjs';
 import { recordOrder, refund, orderByNumber, transition, listOrders, timeline, addNote, setTags, batches, statusCounts } from './modules/orders.mjs';
 import { listCustomers, contactById, customerStats, setContactTags } from './modules/contacts.mjs';
 import { listDiscounts, createDiscount, setDiscountStatus, evaluate as evaluateDiscount } from './modules/discounts.mjs';
@@ -109,7 +109,7 @@ export function createApp({ db, cfg }) {
   // ---------- JSON API (bearer token or a logged-in session)
   router.get('/api', (c) => json(c.res, { name: 'securacv-backoffice', endpoints: API_INDEX }));
   router.get('/api/snapshot', (c) => json(c.res, snapshot(db)));
-  router.get('/api/orders', (c) => json(c.res, listOrders(db, { status: c.query.get('status') || '', batch: c.query.get('batch') || '', q: c.query.get('q') || '' })));
+  router.get('/api/orders', (c) => json(c.res, listOrders(db, Object.fromEntries(['status', 'batch', 'q', 'tag', 'from', 'to', 'discount', 'sku'].map(k => [k, c.query.get(k) || ''])))));
   router.get('/api/orders/:number', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, o); });
   router.post('/api/orders', async (c) => json(c.res, recordOrder(db, c.body, { catalog: await app.catalog().catch(() => null), actor: c.actor }), 201));
   router.post('/api/orders/:number/transition', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, transition(db, o.id, c.body.to, { actor: c.actor, carrier: c.body.carrier, tracking: c.body.tracking, cfg })); });
@@ -198,6 +198,7 @@ export async function applyStripeEvent(app, m, event = null) {
   if (m.kind === 'order') {
     const catalog = await app.catalog().catch(() => null);
     if (!m.line_items_present) { try { const items = await fetchLineItems(cfg, m.external_id, { fetchImpl: app.fetchImpl || fetch }); if (items) m.items = items; } catch (e) { db.audit('stripe', 'order.line_items.failed', 'order', m.external_id, { error: String(e.message || e) }); } }
+    if (m.discount_code && /^promo_|^[A-Za-z0-9]{8,}$/.test(m.discount_code) && !db.get('SELECT code FROM discounts WHERE code = ?', m.discount_code)) { try { m.discount_code = await resolveDiscountCode(cfg, m.discount_code, { fetchImpl: app.fetchImpl || fetch }); } catch { /* the id stays */ } }
     const { order, created } = recordOrder(db, m, { catalog, actor: 'stripe' });
     if (created && !order.items.length) await raiseException(db, cfg, `stripe:line-items:${order.number}`, `orders [no line items]: ${order.number}`, `Stripe's webhook carried no line_items for ${m.external_id} and they could not be fetched${cfg.stripeApiKey ? '' : ' (STRIPE_API_KEY is not set)'}. The order is recorded with no items and cannot be packed until they are added — see ${cfg.baseUrl}/orders/${order.id}.`);
     return { order: order.number, created, items: order.items.length };

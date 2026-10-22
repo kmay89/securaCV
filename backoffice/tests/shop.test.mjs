@@ -4,7 +4,11 @@ import { testDb, testCfg, catalog, sampleOrder } from './helpers.mjs';
 import { recordOrder, transition, refund, timeline, addNote, setTags, updateShipping, resendTracking, statusCounts, batches, bulkTransition, listOrders } from '../src/modules/orders.mjs';
 import { createDiscount, evaluate, listDiscounts, setDiscountStatus } from '../src/modules/discounts.mjs';
 import { trialBalance, profitAndLoss } from '../src/modules/ledger.mjs';
-import { eventToOrder } from '../src/modules/stripe.mjs';
+import { eventToOrder, resolveDiscountCode } from '../src/modules/stripe.mjs';
+import { createApp } from '../src/server.mjs';
+import { createApiToken } from '../src/auth.mjs';
+import { DatabaseSync } from 'node:sqlite';
+import { readFileSync } from 'node:fs';
 import { listCustomers, customerStats, setContactTags, normalizeTags, customerCounts } from '../src/modules/contacts.mjs';
 import { analytics, analyticsCsv } from '../src/modules/analytics.mjs';
 import { listProducts, productDetail } from '../src/modules/products.mjs';
@@ -12,7 +16,7 @@ import { search } from '../src/modules/search.mjs';
 import { seedDemo, DEMO_CATALOG } from '../src/modules/demo.mjs';
 import { columns, line, hbars, tile } from '../src/charts.mjs';
 
-test('discount codes: rules, pricing on a manual order, the contra account, the books still balance', () => {
+test('discount codes: rules, pricing on a manual order, the contra account, the books still balance', async () => {
   const db = testDb(); const cat = catalog();
   createDiscount(db, { code: 'launch10', kind: 'percent', value: 10, max_uses: 2, note: 'launch' });
   createDiscount(db, { code: 'BIG15', kind: 'percent', value: 15, min_subtotal_cents: 12000 });
@@ -44,9 +48,17 @@ test('discount codes: rules, pricing on a manual order, the contra account, the 
   const m = eventToOrder({ type: 'checkout.session.completed', data: { object: { id: 'cs_1', payment_status: 'paid', amount_subtotal: 6900, amount_total: 7010, total_details: { amount_discount: 690, amount_shipping: 800, amount_tax: 0 }, discounts: [{ promotion_code: { code: 'LAUNCH10' } }], customer_details: { email: 'f@example.test' }, line_items: { data: [{ description: 'Canary WAP Kit', quantity: 1, price: { unit_amount: 6900, product: { metadata: { sku: 'wap-kit' } } } }] } } } });
   assert.equal(m.discount_cents, 690); assert.equal(m.discount_code, 'LAUNCH10');
   const so = recordOrder(db, m, { catalog: cat }).order; assert.equal(so.total_cents, 7010); assert.equal(so.discount_cents, 690); assert.ok(trialBalance(db).balanced);
+  // a plain webhook carries a promotion id, and a free-shipping promotion takes $0 off: the order still records, and the local rules are never run on Stripe's id
+  const fs2 = eventToOrder({ type: 'checkout.session.completed', data: { object: { id: 'cs_2', payment_status: 'paid', amount_subtotal: 6900, amount_total: 6900, total_details: { amount_discount: 0, amount_shipping: 0, amount_tax: 0 }, discounts: [{ promotion_code: 'promo_1AbC' }], customer_details: { email: 'g@example.test' }, line_items: { data: [{ description: 'Canary WAP Kit', quantity: 1, price: { unit_amount: 6900, product: { metadata: { sku: 'wap-kit' } } } }] } } } });
+  assert.equal(fs2.discount_code, 'promo_1AbC'); assert.equal(fs2.discount_cents, 0);
+  const po = recordOrder(db, fs2, { catalog: cat }).order; assert.equal(po.discount_code, 'PROMO_1ABC'); assert.equal(po.total_cents, 6900);
+  assert.equal(await resolveDiscountCode({ stripeApiKey: '' }, 'promo_1AbC'), 'promo_1AbC', 'no key: the id stays');
+  assert.equal(await resolveDiscountCode({ stripeApiKey: 'sk_test' }, 'promo_1AbC', { fetchImpl: async (url) => ({ ok: true, json: async () => url.includes('/promotion_codes/promo_1AbC') ? { code: 'SHIPFREE' } : {} }) }), 'SHIPFREE');
+  assert.equal(await resolveDiscountCode({ stripeApiKey: 'sk_test' }, 'Z4y6abcd', { fetchImpl: async (url) => ({ ok: true, json: async () => url.includes('/coupons/Z4y6abcd') ? { id: 'Z4y6abcd', name: 'LAUNCH10' } : {} }) }), 'LAUNCH10');
+  assert.equal(await resolveDiscountCode({ stripeApiKey: 'sk_test' }, 'promo_gone', { fetchImpl: async () => ({ ok: false }) }), 'promo_gone');
 });
 
-test('an order has a timeline, notes, tags, an editable address and a re-sendable tracking mail', () => {
+test('an order has a timeline, notes, tags, an editable address and a re-sendable tracking mail', async () => {
   const db = testDb(); const cat = catalog(); const cfg = testCfg();
   const { order } = recordOrder(db, sampleOrder({ tags: 'Gift, gift , RUSH' }), { catalog: cat });
   assert.equal(order.tags, 'gift,rush');
@@ -71,6 +83,32 @@ test('an order has a timeline, notes, tags, an editable address and a re-sendabl
   const b = batches(db); assert.equal(b.length, 1); assert.equal(b[0].to_pack, 2); assert.equal(b[0].shipped, 1);
   const r = bulkTransition(db, [o2.id, o3.id, order.id], 'packed'); assert.equal(r.filter(x => !x.error).length, 2); assert.match(r[2].error, /cannot move/);
   assert.equal(statusCounts(db).packed, 2);
+  // every filter the API advertises reaches the query
+  const app = createApp({ db, cfg }); const addr = await app.listen(); const h = { authorization: `Bearer ${createApiToken(db, 't')}` };
+  try {
+    const get = async (qs) => (await fetch(`http://127.0.0.1:${addr.port}/api/orders?${qs}`, { headers: h })).json();
+    assert.equal((await get('tag=porch')).length, 1); assert.equal((await get('tag=nope')).length, 0); assert.equal((await get('sku=wap-kit')).length, 3); assert.equal((await get('status=packed')).length, 2);
+    assert.equal((await get('from=2026-10-19&to=2026-10-19')).length, 3); assert.equal((await get('from=2026-10-20')).length, 0); assert.equal((await get('discount=none')).length, 0);
+  } finally { await app.close(); }
+});
+
+test('the v4 migration gives orders from before the timeline the events their timestamps prove', () => {
+  const raw = new DatabaseSync(':memory:');
+  for (const f of ['001_init.sql', '002_stripe_idempotency.sql', '003_api_token_ids.sql']) raw.exec(readFileSync(new URL(`../src/migrations/${f}`, import.meta.url), 'utf8'));
+  raw.exec(`INSERT INTO orders (id, number, source, status, total_cents, refunded_cents, created_at, paid_at, packed_at, shipped_at, delivered_at, carrier, tracking) VALUES
+    (1, 'EL-000001', 'stripe', 'delivered', 7700, 0, '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z', '2026-09-02T10:00:00Z', '2026-09-03T10:00:00Z', '2026-09-06T10:00:00Z', 'USPS', '9400'),
+    (2, 'EL-000002', 'manual', 'paid', 0, 0, '2026-09-10T10:00:00Z', '2026-09-10T10:00:00Z', NULL, NULL, NULL, NULL, NULL),
+    (3, 'EL-000003', 'stripe', 'refunded', 7700, 7700, '2026-09-11T10:00:00Z', '2026-09-11T10:00:00Z', NULL, NULL, NULL, NULL, NULL),
+    (4, 'EL-000004', 'stripe', 'canceled', 7700, 0, '2026-09-12T10:00:00Z', '2026-09-12T10:00:00Z', NULL, NULL, NULL, NULL, NULL)`);
+  raw.exec(readFileSync(new URL('../src/migrations/004_shop.sql', import.meta.url), 'utf8'));
+  const ev = (id) => raw.prepare('SELECT kind, at, text FROM order_events WHERE order_id = ? ORDER BY at, id').all(id);
+  assert.deepEqual(ev(1).map(e => e.kind), ['placed', 'packed', 'shipped', 'delivered']); assert.match(ev(1)[2].text, /USPS · 9400/);
+  assert.deepEqual(ev(2).map(e => e.kind), ['placed']);
+  assert.deepEqual(ev(3).map(e => e.kind), ['placed', 'refund']); assert.match(ev(3)[1].text, /Full refund of \$77\.00/);
+  assert.deepEqual(ev(4).map(e => e.kind), ['placed', 'canceled']);
+  assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM order_events WHERE actor = \'migration\'').get().n, 9);
+  // a fresh database gets no phantom events
+  const fresh = testDb(); assert.equal(fresh.get('SELECT COUNT(*) AS n FROM order_events').n, 0);
 });
 
 test('customers: aggregates, segments, tags; products: catalog joined to stock and sales; search finds everything by its number', async () => {
@@ -112,6 +150,11 @@ test('analytics: the storefront definitions, every bucket present, the previous 
   assert.equal(a.series.buckets.reduce((s, b) => s + b.net_cents, 0), t.net_cents);
   assert.ok(a.previous.orders > 0, 'the 30 days before have orders too'); assert.ok(a.topProducts.length >= 4 && Math.abs(a.topProducts.reduce((s, p) => s + p.share, 0) - 1) < 1e-9);
   assert.ok(a.byState.length >= 5 && a.discounts.length >= 1 && a.fulfillment.median_hours > 0 && a.support.opened >= 3);
+  // a refund counts in the period it was issued, not the period the order was paid
+  const old = db.get('SELECT id, paid_at FROM orders WHERE status = \'delivered\' AND refunded_cents = 0 AND paid_at < ? ORDER BY paid_at LIMIT 1', new Date(Date.now() - 40 * 86400000).toISOString());
+  const w7 = analytics(db, { days: 7 }); refund(db, old.id, 1234, { reason: 'late refund' }); const w7b = analytics(db, { days: 7 });
+  assert.equal(w7b.totals.refunds_cents, w7.totals.refunds_cents + 1234, 'today\'s refund of a six-week-old order is in this week'); assert.equal(w7b.totals.net_cents, w7.totals.net_cents - 1234); assert.equal(w7b.totals.orders, w7.totals.orders, 'the old order itself is not');
+  assert.equal(w7b.series.buckets.reduce((s, b) => s + b.net_cents, 0), w7b.totals.net_cents, 'the buckets still sum to the totals');
   const y = analytics(db, { days: 365 }); assert.equal(y.series.step, 'week'); assert.equal(y.series.buckets.length, 53); assert.equal(y.series.buckets.reduce((s, b) => s + b.orders, 0), y.totals.orders);
   assert.equal(y.totals.orders, db.get('SELECT COUNT(*) AS n FROM orders WHERE status != \'canceled\' AND total_cents > 0').n, 'a year holds every real order');
   const csv = analyticsCsv(db, { days: 7 }); assert.equal(csv.split('\n').length, 9); assert.match(csv, /^day,orders,units,net_sales_usd/);

@@ -28,3 +28,15 @@ CREATE TABLE IF NOT EXISTS discounts (
   note TEXT,
   created_at TEXT NOT NULL
 );
+
+-- Orders from before the timeline existed get the events their timestamps
+-- prove, so a historical order is not blank and a customer's timeline shows
+-- every purchase. Refunds are dated at the last known step (the ledger has
+-- the exact date).
+INSERT INTO order_events (order_id, at, actor, kind, text)
+  SELECT id, COALESCE(paid_at, created_at), 'migration', 'placed', 'Order placed via ' || source || ' (before the timeline; from the order record)' FROM orders;
+INSERT INTO order_events (order_id, at, actor, kind, text) SELECT id, packed_at, 'migration', 'packed', 'Packed' FROM orders WHERE packed_at IS NOT NULL;
+INSERT INTO order_events (order_id, at, actor, kind, text) SELECT id, shipped_at, 'migration', 'shipped', 'Shipped via ' || COALESCE(carrier, 'USPS') || COALESCE(' · ' || tracking, '') FROM orders WHERE shipped_at IS NOT NULL;
+INSERT INTO order_events (order_id, at, actor, kind, text) SELECT id, delivered_at, 'migration', 'delivered', 'Delivered' FROM orders WHERE delivered_at IS NOT NULL;
+INSERT INTO order_events (order_id, at, actor, kind, text) SELECT id, COALESCE(delivered_at, shipped_at, packed_at, paid_at, created_at), 'migration', 'canceled', 'Canceled' FROM orders WHERE status = 'canceled';
+INSERT INTO order_events (order_id, at, actor, kind, text) SELECT id, COALESCE(delivered_at, shipped_at, packed_at, paid_at, created_at), 'migration', 'refund', CASE WHEN refunded_cents >= total_cents THEN 'Full' ELSE 'Partial' END || ' refund of $' || printf('%.2f', refunded_cents / 100.0) || ' (before the timeline; the ledger has the date)' FROM orders WHERE refunded_cents > 0;

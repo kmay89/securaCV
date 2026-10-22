@@ -14,10 +14,16 @@ export function window_(days, now = Date.now()) {
   return { from: iso(from), to: iso(to), prev_from: iso(from - days * DAY), prev_to: iso(from), days };
 }
 
+// Refunds count in the period they were issued (the ledger's income:refunds legs carry that
+// date), not the period the order was paid — so a refund today shows today, and last month's
+// numbers do not move.
+const refundsBetween = (db, from, to) => db.get('SELECT COALESCE(SUM(debit_cents),0) AS c FROM ledger WHERE account = \'income:refunds\' AND date >= ? AND date <= ?', from.slice(0, 10), to.slice(0, 10)).c;
+
 function totals(db, from, to) {
-  const r = db.get(`SELECT COUNT(*) AS orders, COALESCE(SUM(subtotal_cents),0) AS gross_cents, COALESCE(SUM(discount_cents),0) AS discounts_cents, COALESCE(SUM(refunded_cents),0) AS refunds_cents,
+  const r = db.get(`SELECT COUNT(*) AS orders, COALESCE(SUM(subtotal_cents),0) AS gross_cents, COALESCE(SUM(discount_cents),0) AS discounts_cents,
       COALESCE(SUM(shipping_cents),0) AS shipping_cents, COALESCE(SUM(tax_cents),0) AS tax_cents, COALESCE(SUM(total_cents),0) AS charged_cents, COUNT(DISTINCT contact_id) AS customers
     FROM orders WHERE paid_at >= ? AND paid_at < ? AND status != 'canceled' AND total_cents > 0`, from, to);
+  r.refunds_cents = refundsBetween(db, from, to);
   const u = db.get('SELECT COALESCE(SUM(i.qty),0) AS units, COALESCE(SUM(i.qty * i.cogs_cents),0) AS cogs_cents FROM order_items i JOIN orders o ON o.id = i.order_id WHERE o.paid_at >= ? AND o.paid_at < ? AND o.status != \'canceled\' AND o.total_cents > 0', from, to);
   const returning = db.get(`SELECT COUNT(DISTINCT o.contact_id) AS n FROM orders o WHERE o.paid_at >= ? AND o.paid_at < ? AND o.status != 'canceled' AND o.total_cents > 0
     AND EXISTS (SELECT 1 FROM orders p WHERE p.contact_id = o.contact_id AND p.status != 'canceled' AND p.total_cents > 0 AND p.paid_at < o.paid_at)`, from, to).n;
@@ -32,8 +38,11 @@ export function series(db, { from, to, days }) {
   const step = days > 35 ? 7 * DAY : DAY; const start = Date.parse(from), end = Date.parse(to);
   const buckets = []; for (let t = start; t < end; t += step) buckets.push({ at: t, label: iso(t).slice(0, 10), orders: 0, units: 0, net_cents: 0, total_cents: 0, tickets: 0 });
   const idx = (ts) => Math.min(buckets.length - 1, Math.floor((Date.parse(ts) - start) / step));
-  for (const o of db.all('SELECT paid_at, subtotal_cents - discount_cents - refunded_cents AS net, total_cents - refunded_cents AS total, (SELECT COALESCE(SUM(qty),0) FROM order_items i WHERE i.order_id = o.id) AS units FROM orders o WHERE paid_at >= ? AND paid_at < ? AND status != \'canceled\' AND total_cents > 0', from, to)) {
+  for (const o of db.all('SELECT paid_at, subtotal_cents - discount_cents AS net, total_cents AS total, (SELECT COALESCE(SUM(qty),0) FROM order_items i WHERE i.order_id = o.id) AS units FROM orders o WHERE paid_at >= ? AND paid_at < ? AND status != \'canceled\' AND total_cents > 0', from, to)) {
     const b = buckets[idx(o.paid_at)]; if (!b) continue; b.orders++; b.units += o.units; b.net_cents += o.net; b.total_cents += o.total;
+  }
+  for (const r of db.all('SELECT date, debit_cents FROM ledger WHERE account = \'income:refunds\' AND date >= ? AND date <= ?', from.slice(0, 10), to.slice(0, 10))) {
+    const b = buckets[Math.max(0, idx(r.date + 'T12:00:00.000Z'))]; if (!b) continue; b.net_cents -= r.debit_cents; b.total_cents -= r.debit_cents;
   }
   for (const t of db.all('SELECT created_at FROM tickets WHERE created_at >= ? AND created_at < ?', from, to)) { const b = buckets[idx(t.created_at)]; if (b) b.tickets++; }
   return { step: step === DAY ? 'day' : 'week', buckets };
