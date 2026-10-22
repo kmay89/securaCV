@@ -395,7 +395,8 @@ Edit `secrets/secrets.h` with your credentials. The `.gitignore` prevents commit
 - Time coarsening (ten-minute buckets)
 - No MAC address logging
 - Local-first data storage
-- Session token rotation
+- RF-presence session tokens rotate (the API token does not: an OTA update
+  and a WAP's 10 s hold keep it)
 
 ---
 

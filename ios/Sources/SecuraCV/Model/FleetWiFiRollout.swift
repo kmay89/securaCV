@@ -233,6 +233,13 @@ enum FleetWiFiRollout {
         + "was wrong, this Canary's own setup network (SecuraCV-wap-XXXX, which "
         + "it raises while it is off your Wi-Fi) will take the correction."
 
+    /// The verdict for a Canary that answers on no lane. Every rollout
+    /// candidate is a WAP, whose Bluetooth lane this app never reaches
+    /// (ledger A65), so it names the setup network, never Bluetooth.
+    static let unreachableReason =
+        "Not answering on your network. Off your Wi-Fi, its own setup network "
+        + "(SecuraCV-wap-XXXX) takes the new password."
+
     /// Why the fleet is still waiting, said plainly on every follower row.
     static let waitingReason = "Waiting for the first Canary to prove the password."
 

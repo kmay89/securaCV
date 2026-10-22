@@ -504,8 +504,8 @@ function renderReassurance({ nativeShell = false } = {}) {
       "A Canary keeps a read-only Bluetooth console alive even when Wi-Fi is down — " +
       "reading its live snapshot proves it’s on, healthy and reachable, and writes " +
       "nothing. This app’s window has no Bluetooth of its own, so the check runs in " +
-      "the SecuraCV iPhone app (its App Store release is still pending), or in the " +
-      "browser Lab in Chrome or Edge on this computer."));
+      "the browser Lab in Chrome or Edge on this computer (the iPhone app does not " +
+      "read a WAP’s console today)."));
     // The way there, not just its name (the desktop Flasher's button, the same
     // address): this page on the Lab's Pages site, named from the catalog's
     // own repo. lab-nav.js hands an off-origin link to the OS browser.
@@ -5048,9 +5048,9 @@ function phaseBluetoothCheck(back) {
     status.classList.remove("muted");
     box.append(errorBox("This browser can’t do Bluetooth here", support.reason));
     const native = el("p", "fineprint",
-      "On iPhone or iPad, the SecuraCV app talks to a Canary over Bluetooth " +
-      "natively — Safari has no Web Bluetooth. On a computer, use a Chromium " +
-      "browser (Chrome, Edge, Brave).");
+      "On iPhone or iPad there is no way to run this check today: Safari has no " +
+      "Web Bluetooth, and the SecuraCV app does not read a WAP’s Bluetooth " +
+      "console. On a computer, use a Chromium browser (Chrome, Edge, Brave).");
     box.append(native);
     const backBtn = el("button", "ghost", "← back");
     backBtn.addEventListener("click", () => stopBle().then(goBack));
@@ -5167,7 +5167,7 @@ function phaseBluetoothCheck(back) {
         result.innerHTML = "";
         result.append(errorBox("The console is bonded-only",
           "The board answered but its snapshot is readable by paired devices " +
-          "only (that’s deliberate — same trust as the WiFi token). Pair this " +
+          "only. Pair this " +
           "device with the Canary in your OS Bluetooth settings, then try again."));
       } else {
         result.innerHTML = "";
@@ -5514,7 +5514,9 @@ function renderReport(r) {
       r.witness.provisioned ? "ok" : null));
     sec.append(reportRow("WiFi settings", r.witness.wifiConfigured ? "stored on the board" : "none stored"));
     sec.append(el("p", "fineprint",
-      "Counters and fingerprints only — keys, passwords and tokens are never read out of the board, here or anywhere."));
+      "Counters and fingerprints only: this report shows no key, password or token. (The check reads the " +
+      "settings region off the board to find them, and the safety copy taken before an install saves the " +
+      "whole flash, key included, to your downloads.)"));
     box.append(sec);
   } else if (!r.blank) {
     const sec = el("div", "flash-report-sec");

@@ -1677,6 +1677,432 @@ RETIRED_IN = (
     ("docs/review/02-roadmap.md",
      "`nvs_keys` for this (but fix its 4 MB assumption — F-06). 6. **Always keep big buffers in PSRAM**",
      "the same"),
+    # #1843's sweep, sixth pass: the remaining copies of the corrected
+    # positions, each where it stood (the forms are the text as the pass
+    # found it; the replacements are what stands there now).
+    ('docs/unflashed_board_intake.md',
+     'Phase 2 lockdown, if you want to close the door behind you',
+     'as tooled Phase 2 turns on neither Secure Boot nor flash encryption, and protects neither the key nor the Wi-Fi in NVS'),
+    ('docs/security/SECURITY_MODEL.md',
+     'domestic abuser who does not take the device to a lab',
+     'no lab is needed: a laptop and a USB cable read the key through the ROM download mode'),
+    ('firmware/PARTITIONS.md',
+     '**Secure / flash‑encrypted**',
+     "the kit's reference table; Phase 2 turns on neither Secure Boot nor flash encryption"),
+    ('firmware/PARTITIONS.md',
+     'The `encrypted` flag is enforced only after the Phase‑2 eFuse burn',
+     'the burn sets no SPI_BOOT_CRYPT_CNT, so the flag takes effect on no board any tool here makes'),
+    ('firmware/PARTITIONS.md',
+     '(Phase‑2 secure/encrypted)',
+     "the Phase 2 kit's compile-only env, which turns on neither protection"),
+    ('docs/sd_card_health.md',
+     'or reflash with a full chip erase',
+     'any install in either flasher starts NVS over, the identity key and chain state with it'),
+    ('docs/canary_settings_access_validation.md',
+     '| API token fallback | Paste the `cv_...` API token into the auth modal',
+     "in a browser with no session: on a session page the box takes the cookie's word for any token"),
+    ('docs/design/usb_onboard.md',
+     'Re-seat the card, reboot, done.',
+     'only a head left behind by a power cut is rebuilt; a new key never adopts the old tail'),
+    ('docs/browser_flasher.md',
+     '— installing keeps it, updated in place.',
+     'an install starts the settings over with a new key; an over-the-air update keeps them'),
+    ('docs/browser_flasher.md',
+     "the iOS app's `BLEConsole.swift` speaks the same UUIDs",
+     "it knows them but never dials a WAP's console (A65)"),
+    ('docs/design/magic_pairing.md',
+     "the window is re-armed from now — the owner's own act",
+     "the re-armed door is first-come, and a WAP's Forget Wi-Fi is reachable by any landing session (F345)"),
+    ('docs/design/magic_pairing.md',
+     "The WAP's bearer token lasts for the life of the device.",
+     'until an install or a full erase in a flasher; nothing rotates it'),
+    ('docs/design/magic_pairing.md',
+     'or, after a reset, one whose owner chose to reopen it',
+     'a cleared unit that still has an owner, and on a WAP any landing session can send Forget Wi-Fi'),
+    ('docs/design/iphone_companion_app.md',
+     'a native app erases that footnote',
+     "the app reaches the setup door and the beacons, not a WAP's console or bonded lane (A65)"),
+    ('docs/design/iphone_companion_app.md',
+     'bonded) + chirp/beacon scan — off-grid status.',
+     'the step carries its as-shipped amendment: the console reaches no WAP (A65)'),
+    ('docs/firmware_ota.md',
+     '— a USB reflash always works too',
+     'an install works but starts the settings over under a new key'),
+    ('docs/FAQ.md',
+     "So a Canary on your network offers nothing to a stranger's phone",
+     "the setup door does not; a WAP's Forget Wi-Fi and bonded lane are the caveats (F345, F346)"),
+    ('docs/security/THREAT_MODEL.md',
+     'Private keys are not "access-controlled" — there is no read interface',
+     'the firmware has none; a whole-flash read still recovers the key'),
+    ('docs/security/THREAT_MODEL.md',
+     'Ed25519 private key has no read/export interface of any kind',
+     'the firmware offers none; a full flash read recovers it on every tier'),
+    ('docs/design/flasher_experience.md',
+     'no secret ever leaves the device — same rule as the trust card',
+     "the firmware exports no key, and the trust card says a flasher's safety copy carries it"),
+    ('docs/strategy/08-product-strategy.md',
+     'and your proof is unforgeable.',
+     "tamper-evident: forging takes the device's key, which a seized device gives up"),
+    ('canary-vision/docs/firmware-integration.md',
+     'The private key never leaves NVS',
+     'no firmware path exports it; a full flash read carries it'),
+    ('canary-vision/docs/discovery.md',
+     '# stable device identifier',
+     'kept across OTA updates and the 10 s hold, not promised across an install'),
+    ('spec/beacon_channel_v0.md',
+     'All endpoints Bearer-token-gated identically to',
+     'they take api_auth_check(), the bearer or a landing session (F346)'),
+    ('spec/canary_mesh_network_v0.md',
+     'at the cost of refusing to work on dev boards without FE',
+     'every released board is FE-off, so nothing persists on any of them'),
+    ('docs/V1_LAUNCH_REVIEW.md',
+     'still runs for the current boot on an FE-off dev board;',
+     'the note carries its amendment: every released board is FE-off'),
+    ('firmware/LESSONS_LEARNED.md',
+     'credentials vanishing at runtime (factory reset) re-arm the window',
+     "the lesson carries its amendment: a WAP's Forget Wi-Fi does too, from any landing session"),
+    ('firmware/LESSONS_LEARNED.md',
+     'The bearer token lasts for the life of the device. Nothing that lasts',
+     'the lesson carries its amendment: until an install or a full erase in a flasher'),
+    ('firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md',
+     'one BOOT tap releases the provisioning receipt',
+     'the tap goes only to the one address already asking (F342)'),
+    ('firmware/projects/canary-wap/README.md',
+     "which are the owner's ways to re-arm the window",
+     'any landing session can send Forget Wi-Fi (F345)'),
+    ('firmware/projects/canary-wap/README.md',
+     'a short press opens the 30 s receipt gate, a 2 s hold',
+     'the gate serves the one page already asking: ask first, press second'),
+    ('firmware/projects/canary-wap/README.md',
+     '**Session Rotation:** Tokens rotate every 4 hours',
+     'the RF presence session tokens rotate; the API token never does'),
+    ('firmware/README.md',
+     '- Local-first data storage - Session token rotation',
+     'RF-presence session tokens rotate; the API token does not'),
+    ('ios/README.md',
+     "the device's own PWA has to send people to Bluefy; native erases that",
+     "the app reaches no WAP's console or bonded lane (A65)"),
+    ('ios/README.md',
+     'Tamper heard over a BLE console NOTIFY re-evaluates immediately',
+     "no WAP's console connects (A65); the chirp and the sentinel carry tamper"),
+    ('firmware/canary/lib/securacv_witness/src/securacv_witness.cpp',
+     '(or an NVS wipe/reflash while the card kept its',
+     'a wipe or an install gives a new key, so the old tail never verifies'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '(or an NVS wipe/reflash while the card kept its',
+     'an erase or an install gives a new key, so the old tail never verifies'),
+    ('firmware/canary/lib/securacv_usb_onboard/src/securacv_usb_onboard.cpp',
+     'To recover a device that lost its NVS head, just re-seat the',
+     'only a head a power cut left behind is rebuilt; a new key keeps the old card unadopted'),
+    ('firmware/common/network/auth_backoff.h',
+     'an OTA update and the 10 s BOOT reset leave the token',
+     "a WAP's hold keeps it; the flagship's 10 s reset re-derives it, dropping a seeded one"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/auth_backoff.h',
+     'an OTA update and the 10 s BOOT reset leave the token',
+     'the same, in the staged copy'),
+    ('firmware/common/network/improv_core.h',
+     '(and again after a factory reset wipes them at runtime)',
+     "a WAP's Forget Wi-Fi, or the hold before its restart"),
+    ('firmware/common/network/improv_core.h',
+     '(a factory reset) re-arms the window from now — that is the',
+     "any landing session can send a WAP's Forget Wi-Fi (F345): not proof of the owner"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/improv_core.h',
+     '(and again after a factory reset wipes them at runtime)',
+     'the same, in the staged copy'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/improv_core.h',
+     '(a factory reset) re-arms the window from now — that is the',
+     'the same, in the staged copy'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     "(wifi_clear_credentials: the owner's own act re-arms the",
+     'the hold, or Forget Wi-Fi from any landing session (F345)'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     "The owner's own act re-arms the Bluetooth setup door's first-boot",
+     "a credential wipe does, and Forget Wi-Fi is any landing session's (F345)"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     'LAN-local curl could hit /api/wifi/forget and force a re-provisioning',
+     'the routes take the cookie any LAN host can mint, so any host still can (F345)'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/bluetooth_api.h',
+     'secureFetch already attaches `Authorization: Bearer <api_token>` on',
+     'the gate takes the cookie any landing session holds (F346)'),
+    ('firmware/canary/lib/securacv_mesh/src/mesh_state.h',
+     'IS sensitive metadata (an attacker who reads the',
+     'the gate keeps it off FE-off boards only; FE does not cover NVS'),
+    ('firmware/canary/lib/securacv_mesh/src/mesh_state.h',
+     'reboot of an FE-off dev board',
+     'every released board is FE-off'),
+    ('firmware/canary/src/csi_modules_integration.cpp',
+     'flash encryption disabled on a dev board',
+     'every released board: no tier turns flash encryption on'),
+    ('firmware/canary/lib/securacv_network/src/securacv_network.cpp',
+     'pubkeys needed flash encryption, so a dev board answered 500',
+     'every released board answered it'),
+    ('firmware/canary/src/main.cpp',
+     'typical on FE-disabled dev hardware where save refuses',
+     'on every Canary today'),
+    ('firmware/scripts/check_canary_mesh_status.py',
+     'so a dev board answered 500 `load_failed`',
+     'every board answered it: no Canary has flash encryption on'),
+    ('scripts/tests/test_canary_mesh_status_wiring.py',
+     'the dev-board 500 F199 removed',
+     'the 500 every board answered'),
+    ('firmware/scripts/regression_check.sh',
+     'NVS is not compatible with flash encryption: ESP-IDF protects it with NVS',
+     'no Canary build has NVS encryption; NVS is plaintext on every tier'),
+    ('firmware/scripts/regression_check.sh',
+     'NVS is protected by NVS encryption (nvs_keys), not by flash encryption',
+     'only NVS encryption could, and it is unavailable under framework = arduino'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h',
+     'Replaces (well — augments) the captive-AP setup flow with a phone-pairs-',
+     'the iPhone app never reaches this service on a WAP (A65)'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h',
+     'capped at 5 attempts per hour to',
+     'ten an hour, one budget for every bonded peer (F346)'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h',
+     'so 10/hour is a comfortable security ceiling',
+     "a hostile bonded peer keeps the owner's write refused (F346)"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/ble_console.h',
+     'so a peer holding the bond has the same trust level as one holding',
+     'any landing session can bond a peer of its own (F346)'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/household_api.h',
+     'All endpoints require bearer-token auth via api_auth_check',
+     'api_auth_check takes the landing session too (F346)'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/beacon_channel.h',
+     'every route behind the Bearer-token trampoline',
+     'the trampoline is api_auth_check, the bearer or a landing session (F346)'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/beacon_api.h',
+     '<api_token> header is required for any successful response',
+     'a landing session gets one too (F346)'),
+    ('firmware/projects/canary-wap/tests_host/test_bluetooth_commands_wap.cpp',
+     "passkey reaches the channel and waits for the owner, only the owner's",
+     'any landing session can send the confirm (F346)'),
+    ('firmware/tests_host/test_provisioning_gate.cpp',
+     'click Use BOOT Tap Once again, and only then',
+     'the press comes after the device answers the new ask with 403'),
+    ('firmware/tests_host/test_improv_core.cpp',
+     'The owner wiped the credentials (a factory reset that did not reboot).',
+     "a WAP's Forget Wi-Fi, from any landing session (F345)"),
+    ('firmware/tests_host/test_improv_core.cpp',
+     "Only the owner's tap reopens it.",
+     'the credentials vanishing reopens it too, first-come'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/ble_improv.cpp',
+     '(a factory reset re-armed the window) is a new',
+     'a runtime wipe: Forget Wi-Fi, or the hold before its restart'),
+    ('firmware/projects/canary-wap/tests_host/test_provisioning_logic.cpp',
+     '(the dashboard that issued the reset)',
+     'the dashboard sends Forget Wi-Fi; the reset is the physical hold'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     'Provisioning gate stays open for this long after a BOOT press, so a',
+     'the tap goes to the one page already asking (F342): ask first'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     'Forget Wi-Fi on the dashboard resets the network only',
+     'it clears the saved Wi-Fi and reopens the first-come setup door'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '(receipt available for %lu seconds)',
+     'the receipt goes only to the one address already asking'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     'receipt gate open 30s; hold 2-3s',
+     'the receipt goes to the one page already asking'),
+    ('canary-local/tools/gen_wap.py',
+     'receipt gate open 30s; hold 2-3s',
+     "the same, the banner's literal"),
+    ('canary-local/devices/wap.json',
+     'receipt gate open 30s; hold 2-3s',
+     'the same, regenerated'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/wap_server.h',
+     '// + last 4 chars of MAC',
+     "unused; the SSID's suffix is the key fingerprint's, never the MAC"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/familiar.cpp',
+     'flash dump alone cannot replay which fingerprints were recorded',
+     'the salt sits in plaintext NVS beside the filters'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/familiar.cpp',
+     'Why salt? Prevents flash-dump recovery of fingerprints',
+     'per-device hashing only; a dump holds the salt'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/familiar.h',
+     'Hashes are salted with a per-device secret kept in NVS; flash',
+     'plaintext NVS: a dump holds the salt with the filters'),
+    ('firmware/common/color/plumage.h',
+     'Derived from the device id; stable for',
+     'the id is kept across OTA updates, not always across an install'),
+    ('src/bridge/hap/pairing.rs',
+     'a long-term pairing key is exactly the kind of',
+     'the gate keeps it off FE-off boards but does not make it confidential'),
+    ('src/bridge/hap/store.rs',
+     'get the `opera_secret` treatment and are refused',
+     'the same, with the plaintext-NVS caveat'),
+    ('canary-local/assets/flash.js',
+     'the SecuraCV iPhone app (its App Store release is still pending)',
+     "the iPhone app does not read a WAP's console (A65)"),
+    ('canary-local/assets/flash.js',
+     'the SecuraCV app talks to a Canary over Bluetooth',
+     "it does not read a WAP's Bluetooth console (A65)"),
+    ('canary-local/assets/flash.js',
+     '(that’s deliberate — same trust as the WiFi token)',
+     'any landing session can bond a peer (F346)'),
+    ('canary-local/assets/flash.js',
+     'keys, passwords and tokens are never read out of the board, here or anywhere.',
+     'the check reads the settings region and the safety copy saves the whole flash'),
+    ('canary-local/assets/flash-core.js',
+     '// identity key exists (never read)',
+     'the NVS read carries it; it is never shown'),
+    ('canary-local/assets/flash-core.js',
+     'BLEConsole.swift speaks the same UUIDs',
+     'the app never dials a WAP for them (A65)'),
+    ('canary-local/assets/flash-core.js',
+     'runs ${cur.name} — installing keeps it,',
+     'an install starts the settings over under a new key'),
+    ('canary-local/assets/flash-core.js',
+     'the saved WiFi is cleared, so the board comes up with its setup network again',
+     'a new witness key too, where the board keeps one'),
+    ('desktop/src/app.js',
+     'installing keeps it, updated in place.',
+     'an install starts the settings over under a new key'),
+    ('desktop/src/app.js',
+     'so the check is a pointer — to the iPhone app, or to',
+     'the browser Lab only (A65)'),
+    ('desktop/src/app.js',
+     'the SecuraCV iPhone app (on TestFlight by invite; App Store release pending), or in the',
+     "the iPhone app does not read a WAP's console (A65)"),
+    ('desktop/src/app.js',
+     'stays the stable slug written during provisioning',
+     'an install in either flasher can change it'),
+    ('desktop/src/index.html',
+     'so the check runs in the SecuraCV iPhone app',
+     'the browser Lab only (A65)'),
+    ('canary-local/tests/desktop_parity.test.js',
+     'SecuraCV iPhone app[\\s\\S]',
+     'the pin now requires the browser Lab'),
+    ('canary-local/tests/desktop_parity.test.js',
+     'flat.includes("the SecuraCV iPhone app") && flat.includes',
+     'the pin forbids naming the iPhone app as where the check runs'),
+    ('desktop/flash-engine/src/changemap.rs',
+     '(its own tuning, witness-chain counters) starts fresh.',
+     'the witness key starts fresh too, where the board keeps one'),
+    ('desktop/flash-engine/src/changemap.rs',
+     'the saved Wi-Fi is cleared, so the board',
+     'a new witness key too, where the board keeps one'),
+    ('canary-local/tools/gen_flash.py',
+     'secrets ever touch the browser.',
+     'the pre-install safety copy reads the whole flash, key and saved passwords included'),
+    ('canary-local/devices/flash.json',
+     'No secrets ever touch the browser.',
+     'the same, regenerated'),
+    ('canary-local/assets/hatchery.js',
+     'functional id stays its stable provisioned slug',
+     'kept across OTA updates and the hold; an install can change it'),
+    ('canary-local/devices/hatch.json',
+     'functional id stays a stable slug',
+     'the same'),
+    ('canary-local/assets/wap-ui.js',
+     'app running — BOOT does nothing until the next reset',
+     'the running WAP reads BOOT: a tap opens the gate, 10 s is a factory reset'),
+    ('canary-local/assets/wap-ui.js',
+     "(BOOT held — nothing happens: it's only sampled at reset)",
+     'held 10 s it resets and reopens the first-come setup door'),
+    ('ios/Sources/SecuraCV/App/FleetStore.swift',
+     'Tamper heard over a BLE NOTIFY is the fastest signal the fleet',
+     "no WAP's console connects (A65)"),
+    ('ios/Sources/SecuraCV/App/FleetStore.swift',
+     'Tier 1a: the WAP-class GATT console snapshot',
+     'none for a WAP today (A65)'),
+    ('ios/Sources/SecuraCV/Transport/BLEConsole.swift',
+     'GATT CONSOLE (WAP-class enrichment). canary-wap additionally serves a',
+     'a WAP does not advertise the console, so the layer never fills (A65)'),
+    ('ios/Sources/SecuraCV/Transport/BLEConsole.swift',
+     'A compact snapshot pushed by a WAP-class device over BLE NOTIFY.',
+     'the app never dials a WAP for it (A65)'),
+    ('ios/Sources/SecuraCV/Transport/BLEConsole.swift',
+     'BLE NOTIFY is sub-second, so the alert loop gets',
+     'no console connects today, so it never fires (A65)'),
+    ('ios/Sources/SecuraCV/Transport/BLEConsole.swift',
+     'Tamper over BLE NOTIFY is the fastest signal the fleet has',
+     'the chirp and the sentinel carry tamper (A65)'),
+    ('ios/Sources/SecuraCV/Transport/FleetWiFiRunner.swift',
+     'Not reachable right now — over Wi-Fi or Bluetooth.',
+     'every candidate is a WAP, whose Bluetooth lane the app never reaches (A65)'),
+    ('ios/Tests/SecuraCVTests/FleetWiFiRolloutTests.swift',
+     'func testADarkWAPInRangeRidesTheBLERescue()',
+     'policy only: no WAP fills bleReachable (A65)'),
+    ('ios/Tests/SecuraCVTests/FleetWiFiRolloutTests.swift',
+     'func testADarkOutOfRangeWAPIsUnreachable()',
+     'every dark WAP is unreachable, in range or not (A65)'),
+    ('ios/Sources/SecuraCV/Model/CanaryVoiceStage.swift',
+     'from then on, nothing else speaks for it.',
+     'a different key is flagged; a flash read can copy the key'),
+    ('ios/Sources/SecuraCV/Model/Witness.swift',
+     '// stable device_id, e.g.',
+     'kept across OTA updates and the hold; an install can change it'),
+    ('ios/Support/Info.plist',
+     'so you still get status if the network drops',
+     "the app hears beacons and the setup door; it reaches no WAP's console (A65)"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/web_ui.h',
+     'Paste the API token, or use BOOT Tap Once.',
+     "on a session page the token box takes the cookie's word"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/web_ui.h',
+     'Paste the token from the device receipt or Serial output.',
+     "a signed-in page can't check a typed token"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/web_ui.h',
+     'so a press anywhere in the 60 s window lands',
+     'a press lands while the page alone asks (F342)'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js',
+     'Paste the API token, or use BOOT Tap Once.',
+     'the pin holds the line that names no token box'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js',
+     'the old order still works: pressed first, the first ask is served',
+     'a press before Save is served only when no other address asks first'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     'iOS: requires the Bluefy browser (App Store)',
+     'unverified for a WAP (A65); the page points iPhone owners at the dashboard'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     'iOS: install <a href="https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055"',
+     'the same, in the footer'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     'On iOS, install Bluefy from the App Store to use the Bluetooth console.',
+     'the same, in the capability notice'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     'Web Bluetooth not supported by this browser. On iOS, install Bluefy.',
+     'the same, in the connect error'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     'the old order (press first, then Save) is served on the',
+     'only if this page is the first asker after the press'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/wizard_logic.test.js',
+     'missing Web Bluetooth points at Bluefy',
+     'the pin forbids Bluefy (A65)'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     'tell iOS users to install Bluefy',
+     'the notice names the browsers that have Web Bluetooth (A65)'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     'hide the Bluefy footer along with the banner',
+     'the footer names no Bluefy now'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     'Every endpoint Bearer-token-gated via the chirp_api template trampoline.',
+     'the trampoline is api_auth_check: the bearer or a landing session (F346)'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     'Bearer-gated from day one (see spec/beacon_channel_v0.md §10).',
+     'auth-gated by api_auth_check, which takes a landing session (F346)'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/beacon_api.h',
+     'paged audit log (Bearer-gated).',
+     'behind bcn_auth_gated, which takes a landing session'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/beacon_channel.cpp',
+     '(beacon_api.h, Bearer-gated, from canary_wap.ino)',
+     'behind api_auth_check, which a landing session passes'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/chirp_api.h',
+     'Register all chirp API routes with the HTTP server, Bearer-gated.',
+     'chirp_auth_gated is api_auth_check, the bearer or a landing session (F346)'),
+    ('docs/security/THREAT_MODEL.md',
+     'REST API (`/api/chirp/*`) Bearer-token-gated when wired into',
+     'behind api_auth_check(), the bearer or a landing session (F346)'),
+    ('docs/security/THREAT_MODEL.md',
+     '(behind `FEATURE_BEACON_CHANNEL`, Bearer-gated)',
+     'behind api_auth_check(), which a landing session passes'),
+    ('spec/chirp_channel_v0.md',
+     'REST API Bearer-gated (C12)',
+     'the revision note carries its amendment: api_auth_check() takes a landing session (F346)'),
+    ('CHANGELOG.md',
+     'installing keeps it, updated in place"); else the chip',
+     'the entry carries its amendment: an install starts the settings over under a new key'),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     'on a dev board without flash encryption every peers read fails',
+     'the F199 note carries its amendment: every released board is without it'),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -2237,7 +2663,7 @@ MUST_PASS_IN = [
      'A unit its owner cleared (the 10 s hold, or Forget Wi-Fi on a WAP) still has\n'
      'an owner, and its door goes to whichever client connects first (§2.2).'),
     ('docs/design/magic_pairing.md',
-     "| No credentials stored (first boot, or after a factory reset or Forget Wi-Fi), within **30 minutes** of power-on (after Forget Wi-Fi, of the credentials vanishing; after a WAP's hold, of the restart on release) | **Open** (`Door::NoCredentials`) | A device nobody owns yet — or, after a reset, one whose owner chose to reopen it: the hold keeps the witness identity on a Sense, a Vision and a WAP, a WAP's hold and Forget Wi-Fi keep its token too, and the door goes to whichever client connects first (§2.2). The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, and so does the credentials vanishing (Forget Wi-Fi re-arms it at that moment; a WAP's hold zeroes the carried record and restarts on release, so its fresh window runs from the restart); compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on, a brownout, a power glitch or a reset a host asserted from the USB / JTAG port — the Flasher's, so a re-flashed unit never inherits the old image's spent window (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |"),
+     "| No credentials stored (first boot, or after a factory reset or Forget Wi-Fi), within **30 minutes** of power-on (after Forget Wi-Fi, of the credentials vanishing; after a WAP's hold, of the restart on release) | **Open** (`Door::NoCredentials`) | A device nobody owns yet — or, after a reset or a Forget Wi-Fi, a cleared unit that still has an owner (on a WAP any landing session can send Forget Wi-Fi, ledger F345, so the owner may not have chosen it): the hold keeps the witness identity on a Sense, a Vision and a WAP, a WAP's hold and Forget Wi-Fi keep its token too, and the door goes to whichever client connects first (§2.2). The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, and so does the credentials vanishing (Forget Wi-Fi re-arms it at that moment; a WAP's hold zeroes the carried record and restarts on release, so its fresh window runs from the restart); compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on, a brownout, a power glitch or a reset a host asserted from the USB / JTAG port — the Flasher's, so a re-flashed unit never inherits the old image's spent window (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |"),
     ('docs/design/onboarding_shared_module.md',
      "- **No credentials stored** (first boot, or a factory reset: the owner's\n"
      '  act, which keeps the witness identity, so the unit still has an owner):'),
@@ -2825,6 +3251,592 @@ MUST_PASS_IN = [
      "  *(Amended 2026-10-22, #1843: `nvs_keys` is where an ESP-IDF build's NVS encryption would keep its"),
     ('docs/review/02-roadmap.md',
      '   `nvs_keys` for this (but fix its 4 MB assumption — F-06). *(Amended 2026-10-22, #1843: no'),
+    # #1843's sweep, sixth pass: the remaining copies of the corrected
+    # positions, each where it stood (the forms are the text as the pass
+    # found it; the replacements are what stands there now).
+    ('docs/unflashed_board_intake.md',
+     "- [secure_provisioning.md](secure_provisioning.md) — the Phase 2 lockdown's\n"
+     '  staging, which as tooled turns on neither Secure Boot nor flash encryption\n'
+     '  (read "After the flash" above before you burn anything)'),
+    ('docs/security/SECURITY_MODEL.md',
+     '**If your threat model is an intruder, a landlord, or a domestic abuser**,\n'
+     'the default is still the right one for you (no tier protects the key today),\n'
+     'and the tamper-evidence properties are unaffected. But anyone who can take\n'
+     'the device, even for a few minutes with a laptop and a USB cable, can read\n'
+     'its key, so keep it out of their reach.'),
+    ('firmware/PARTITIONS.md',
+     '| **Secure-kit reference table** (Phase‑2 provisioning, which as tooled turns on neither Secure Boot nor flash encryption) | 8 MB |'),
+    ('firmware/PARTITIONS.md',
+     '- The `encrypted` flag takes effect only on a board with flash encryption on (`SPI_BOOT_CRYPT_CNT`\n'
+     '  burned), which no tool here does today: the Phase‑2 burn leaves flash encryption off. `nvs` is\n'
+     '  never flagged: NVS encryption, not flash encryption, would protect it, and no Canary build has it\n'
+     '  (every one is `framework = arduino`), so NVS is plaintext on every tier.'),
+    ('firmware/PARTITIONS.md',
+     "| `provisioning/platformio_secure.ini` (the Phase‑2 kit's compile-only env; Phase 2 turns on neither flash encryption nor Secure Boot) |"),
+    ('docs/sd_card_health.md',
+     'card, erase the `diag` NVS namespace. (An install in either flasher re-zeroes\n'
+     'them too, with or without its full erase, but it starts all of NVS over, the\n'
+     'identity key and the chain state with it, so the device comes back as a new\n'
+     'witness.)'),
+    ('docs/canary_settings_access_validation.md',
+     "| API token fallback | In a browser with no session for the device (as in the WiFi-only row), open `/settings`, paste the `cv_...` API token into the auth modal and click Connect. | Modal closes and Settings data loads. Invalid token shows a clear error. (On a page a session already signed in, the box takes the session's word for any token: do not test or advise pasting there.) |"),
+    ('docs/design/usb_onboard.md',
+     "- **Recovery** is the witness chain's existing *SD-wins* reconciliation\n"
+     '  (`witness_recover_from_sd()`): a factory reset erases NVS settings but never\n'
+     '  the SD evidence, and when the NVS head cache fell behind the card (a power\n'
+     '  cut between persists) the next boot adopts the SD tail, but only when it is\n'
+     "  strictly ahead and its signature verifies under this device's key. The 10 s\n"
+     '  reset keeps the key and the head. The 30 s wipe, or an install in either\n'
+     "  flasher, gives a new key, so the old card's chain stays verifiable\n"
+     '  off-device and the device starts a new one.'),
+    ('docs/browser_flasher.md',
+     '   names the product: "This board already runs X, so it is preselected. An\n'
+     '   install starts its settings over (a new witness key, where it keeps one);\n'
+     '   an over-the-air update keeps them."'),
+    ('docs/browser_flasher.md',
+     "the iOS app's `BLEConsole.swift` knows the same UUIDs but never reaches a WAP's\n"
+     'console: it dials only a peripheral advertising the console service, which a\n'
+     "WAP does not, ledger A65). The flasher's"),
+    ('docs/design/magic_pairing.md',
+     "| credentials vanish at runtime (the 10 s hold before its restart, or a WAP's Forget Wi-Fi, which any landing session can send, F345) | the window is re-armed from now, and the door goes to whichever client connects first (§2.2) |"),
+    ('docs/design/magic_pairing.md',
+     "*lasts* belongs on such a link. The WAP's bearer token lasts until the board\n"
+     'is installed again or fully erased in a flasher: OTA updates, the 10 s hold\n'
+     'and Forget Wi-Fi keep it, and nothing rotates it.'),
+    ('docs/design/magic_pairing.md',
+     'A device nobody owns yet — or, after a reset or a Forget Wi-Fi, a cleared unit that still has an owner (on a WAP any landing session can send Forget Wi-Fi, ledger F345, so the owner may not have chosen it):'),
+    ('docs/design/iphone_companion_app.md',
+     '> Bluefy; a native app could erase that footnote, but today it reaches only the\n'
+     "> Bluetooth setup door and the beacons, not a WAP's console or bonded lane,\n"
+     '> ledger A65), **Secure Enclave key custody**,'),
+    ('docs/design/iphone_companion_app.md',
+     '   Snapshot char `8fc1cee1-…`, bonded) + chirp/beacon scan — off-grid status\n'
+     '   (as shipped, the console reaches no WAP: `BLEConsole` dials only a\n'
+     '   peripheral advertising the console service, which a WAP does not, ledger\n'
+     '   A65; the connectionless beacon and chirp scan are what work off-grid).'),
+    ('docs/firmware_ota.md',
+     "Reconnect via dashboard (canary/WAP), or join the setup network from a phone and enter the new password (vision/sense). A USB install also works, but either flasher's install starts the board's settings over: a new witness key and, on most boards, a new device id and new Home Assistant entities (the canary-vision section above), so keep it for when neither path can be reached |"),
+    ('docs/FAQ.md',
+     '`SecuraCV-XXXX` recovery network instead, which needs the key printed for\n'
+     "it. So the setup door offers nothing to a stranger's phone while a Canary\n"
+     'stays on your network, on a good day or a bad one. Two caveats on a WAP: any\n'
+     'device on your network can open its dashboard and send Forget Wi-Fi, which\n'
+     'reopens the door for half an hour; and a device on your network that is also\n'
+     "in Bluetooth range can bond a phone of its own to the WAP's other Bluetooth\n"
+     'lane, which takes a new Wi-Fi network (the\n'
+     '[security model](security/SECURITY_MODEL.md) has the details).'),
+    ('docs/security/THREAT_MODEL.md',
+     '- Private keys are not "access-controlled" — the firmware has no read\n'
+     '  interface for them (a whole-flash read, over USB through the ROM download\n'
+     '  mode or on a bench, still recovers the key: NVS is plaintext on every\n'
+     "  tier, Principle 1's scope)"),
+    ('docs/security/THREAT_MODEL.md',
+     '3. The firmware offers no read or export path for the Ed25519 private key (a\n'
+     '   full flash read over USB or on a bench still recovers it on every tier:\n'
+     '   SECURITY_MODEL.md, "Physical extraction and the flash-encryption default")'),
+    ('docs/design/flasher_experience.md',
+     '  self-manifest carries no secret (the firmware has no path that exports the key;\n'
+     "  a full flash read, which is what either flasher's safety copy is, does carry it,\n"
+     '  as the trust card says), so reading it is safe.'),
+    ('docs/strategy/08-product-strategy.md',
+     'evidently true. SecuraCV is built for the world after both realizations: **your\n'
+     "footage is nobody's business, and your proof shows any edit.** (Forging a record\n"
+     "takes the device's own key, which a seized device gives up: tamper-evident, not\n"
+     'unforgeable.)'),
+    ('canary-vision/docs/firmware-integration.md',
+     "The witness chain signing key pair is generated once during provisioning and stored in NVS. No firmware path exports the private key: it is read into a stack buffer, used to sign a hash, and immediately zeroed. It still sits in plaintext NVS, so a full flash read (a flasher's pre-install safety copy among them) carries it."),
+    ('canary-vision/docs/discovery.md',
+     '  device_id=canary-a3f7      # device identifier (kept across OTA updates and the 10 s hold; an install in either flasher can change it)'),
+    ('spec/beacon_channel_v0.md',
+     'All endpoints take `api_auth_check()`, like `/api/mesh/*` and `/api/bluetooth/*`: a bearer, or the dashboard session cookie, which the landing page mints for any host on the network (F346).'),
+    ('spec/canary_mesh_network_v0.md',
+     'encryption, at the cost of persisting nothing on any released board: no tier\n'
+     "turns flash encryption on today, a Phase 2 board included, so a household's\n"
+     'pairing lasts only until the next reboot.'),
+    ('docs/V1_LAUNCH_REVIEW.md',
+     '   **#610**. (Note: by design the live in-RAM session still runs for the current boot on an FE-off\n'
+     "   dev board *(amended 2026-10-22, #1843's sweep: every released board is FE-off, since no tier and\n"
+     '   no kit phase turns flash encryption on)*;'),
+    ('firmware/LESSONS_LEARNED.md',
+     '  credentials vanishing at runtime (factory reset) *(amended 2026-10-22,\n'
+     "  #1843's sweep: on a WAP also Forget Wi-Fi, which any landing session can\n"
+     "  send, F345, so the re-arm is not the owner's act alone)* re-arm the window,"),
+    ('firmware/LESSONS_LEARNED.md',
+     '  listener, not an active one who paired first. The bearer token lasts for\n'
+     "  the life of the device *(amended 2026-10-22, #1843's sweep: until an install\n"
+     '  or a full erase in a flasher; OTA updates, the 10 s hold and Forget Wi-Fi\n'
+     '  keep it, and nothing rotates it)*. Nothing that lasts belongs on a link like\n'
+     '  that.'),
+    ('firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md',
+     '  - [x] Credential reset path without the serial monitor: one BOOT tap,\n'
+     "        pressed while the owner's page or the wizard's Save is already\n"
+     '        asking, releases the provisioning receipt to that one asker\n'
+     '        (`GET /api/provisioning-receipt`; a second address asking in the\n'
+     '        window closes the tap, 409 `tap_contended`, sweep F342), which\n'
+     '        re-reveals the API token and the AP password; the wizard\'s "Save\n'
+     '        your recovery kit" block walks it.'),
+    ('firmware/projects/canary-wap/README.md',
+     'and by **Forget Wi-Fi** or the 10 s BOOT hold on a unit that had\n'
+     'credentials, each of which re-arms the window; any landing session can send\n'
+     'Forget Wi-Fi, ledger F345, so a re-armed window is no proof of the owner), a phone at the door is a sign of life'),
+    ('firmware/projects/canary-wap/README.md',
+     "BOOT button keeps the sketch's own gestures: a short press opens the 30 s\n"
+     'receipt gate for the one page already asking for it (click Use BOOT Tap Once\n'
+     'first and press when the page says to; a second address asking closes the\n'
+     'tap, sweep F342), a 2 s hold prints the identity on serial,'),
+    ('firmware/projects/canary-wap/README.md',
+     "- **Session Rotation:** the RF presence detector's ephemeral session tokens rotate every 4 hours. The API token does not rotate: the 10 s hold and Forget Wi-Fi keep it, and only an install or a full erase in a flasher replaces it"),
+    ('firmware/README.md',
+     '- Local-first data storage\n'
+     '- RF-presence session tokens rotate (the API token does not: an OTA update\n'
+     "  and a WAP's 10 s hold keep it)"),
+    ('ios/README.md',
+     '**Dynamic Island / Live Activities**, **CoreBluetooth** (iOS Safari has no Web\n'
+     'Bluetooth; the app uses it for the fleet beacons and the setup door, and does\n'
+     "not yet reach a WAP's console or bonded lane, ledger A65), **HomeKit**,"),
+    ('ios/README.md',
+     '  waiting out the 20-second cycle. A console NOTIFY would re-evaluate tamper\n'
+     "  at once, sub-second, but the app reaches no WAP's console today (ledger\n"
+     '  A65), so tamper arrives by the chirp and the 5-second sentinel. And the\n'
+     '  Test Alert'),
+    ('firmware/canary/lib/securacv_witness/src/securacv_witness.cpp',
+     '  // The NVS cache persists only every SD_PERSIST_INTERVAL records, so\n'
+     '  // after a power cut the cached head can be BEHIND the last record\n'
+     '  // actually signed — resuming from it would fork the supposedly\n'
+     '  // append-only chain. (An NVS wipe or a flasher install gives a new key,\n'
+     "  // so the old card's tail does not verify below and the chain starts\n"
+     '  // over at genesis.)'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '// The NVS cache persists only every SD_PERSIST_INTERVAL records, so after\n'
+     '// a power cut the cached head can be BEHIND the last record actually signed\n'
+     '// — resuming from it would fork the supposedly append-only chain. (An NVS\n'
+     "// erase or a flasher install gives a new key, so the old card's tail does\n"
+     '// not verify below and the chain starts over.)'),
+    ('firmware/canary/lib/securacv_usb_onboard/src/securacv_usb_onboard.cpp',
+     '  Serial.println("  3. If the cached head fell behind the card (a power cut between");\n'
+     '  Serial.println("     persists), re-seat the SD and reboot; the head is rebuilt from");\n'
+     '  Serial.println("     the SD tail. After the 30 s wipe or an install in a flasher the");\n'
+     '  Serial.println("     device has a new key: the old card is kept, not adopted.");'),
+    ('firmware/common/network/auth_backoff.h',
+     "// token and device_id; an OTA update and a WAP's 10 s hold leave the token\n"
+     "// as it was, while the all-rounder Canary's 10 s reset re-derives it from the\n"
+     '// kept key, so a flasher-seeded token is gone). A Table keeps'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/auth_backoff.h',
+     "// token and device_id; an OTA update and a WAP's 10 s hold leave the token\n"
+     "// as it was, while the all-rounder Canary's 10 s reset re-derives it from the\n"
+     '// kept key, so a flasher-seeded token is gone). A Table keeps'),
+    ('firmware/common/network/improv_core.h',
+     '  /// A device with no stored credentials opens the door for this long after\n'
+     "  /// power-on (and again when they vanish at runtime: a WAP's Forget Wi-Fi,\n"
+     '  /// or the 10 s hold before the restart its release brings, after which the\n'
+     '  /// window runs from that boot).'),
+    ('firmware/common/network/improv_core.h',
+     '/// Provisioned or Provisioning for the phone to read. Credentials vanishing\n'
+     "/// at runtime (the 10 s hold before its restart, or a WAP's Forget Wi-Fi,\n"
+     '/// which any landing session can send, ledger F345) re-arms the window from\n'
+     '/// now, and the door goes to whichever client connects first: not proof of\n'
+     '/// the owner. A recovery portal'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/improv_core.h',
+     '  /// A device with no stored credentials opens the door for this long after\n'
+     "  /// power-on (and again when they vanish at runtime: a WAP's Forget Wi-Fi,\n"
+     '  /// or the 10 s hold before the restart its release brings, after which the\n'
+     '  /// window runs from that boot).'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/improv_core.h',
+     '/// Provisioned or Provisioning for the phone to read. Credentials vanishing\n'
+     "/// at runtime (the 10 s hold before its restart, or a WAP's Forget Wi-Fi,\n"
+     '/// which any landing session can send, ledger F345) re-arms the window from\n'
+     '/// now, and the door goes to whichever client connects first: not proof of\n'
+     '/// the owner. A recovery portal'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     "// once at the door's init (ble_improv_window_used_ms), zeroed by a\n"
+     '// credential wipe (wifi_clear_credentials: the 10 s hold, or Forget Wi-Fi,\n'
+     '// which any landing session can send, ledger F345, re-arms the window, as\n'
+     "// improv_core.h's session does in RAM). Loop task only after setup()."),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '  // A credential wipe (the 10 s hold, or Forget Wi-Fi, which any landing\n'
+     "  // session can send, ledger F345) re-arms the Bluetooth setup door's\n"
+     "  // first-boot window: improv_core.h's session"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '// meaningful AFTER first-setup. The handlers were originally registered\n'
+     '// without an _auth wrapper, so a LAN-local curl could hit /api/wifi/forget\n'
+     '// with no credential at all. They now take api_auth_check(): the cookie or\n'
+     '// the bearer, and the landing page mints that cookie for any host on the\n'
+     '// network, so any LAN host can still forget the Wi-Fi, which reopens the\n'
+     "// first-come setup door (ledger F345). That session is also the owner's\n"
+     '// way out under the lockout (F343). (/api/wifi'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/bluetooth_api.h',
+     "// initializes after WiFi is up, so there's no captive-portal flow that\n"
+     '// needs to hit these routes before setup. Wrapping handlers in\n'
+     '// api_auth_check is a plumbing-only fix (mirrors #435/#436 for the\n'
+     '// wifi-mgmt + mesh families), and it takes the cookie or the bearer: the\n'
+     '// landing page mints that cookie for any host on the network, so any\n'
+     '// landing session can turn Bluetooth off, delete every bond and read the\n'
+     "// passkey (ledger F346, SECURITY_MODEL.md's lockout paragraph)."),
+    ('firmware/canary/lib/securacv_mesh/src/mesh_state.h',
+     ' * trusted peers IS household-graph metadata. The gate keeps it off a\n'
+     ' * board without flash encryption only: on a board with FE on it is\n'
+     ' * still plaintext NVS (FE does not cover NVS), so anyone who reads the\n'
+     " * flash learns the household graph either way. canary-wap's\n"
+     ' * opera_config persistence applies the same posture.'),
+    ('firmware/canary/lib/securacv_mesh/src/mesh_state.h',
+     ' * household-identifying, and gating it would make "off" silently revert\n'
+     ' * to "on" at every reboot of a board without flash encryption, which is\n'
+     ' * every released board today, a Phase 2 board included.'),
+    ('firmware/canary/src/csi_modules_integration.cpp',
+     "     * we just won't have the hint cached across the next reboot (on\n"
+     '     * every released board: the gate needs flash encryption, which no\n'
+     '     * tier turns on today, a Phase 2 board included). Leave the cache'),
+    ('firmware/canary/lib/securacv_network/src/securacv_network.cpp',
+     "  // /api/mesh's peers_total, and no NVS is read here (F199: the persisted\n"
+     '  // pubkeys needed flash encryption, so every board without it answered 500\n'
+     '  // load_failed, which is every released board, since no tier turns flash\n'
+     '  // encryption on; and an NVS write'),
+    ('firmware/canary/src/main.cpp',
+     '   * fails — on every Canary today, since no released image or\n'
+     '   * provisioning step turns flash encryption on and save refuses\n'
+     '   * without it by design.'),
+    ('firmware/scripts/check_canary_mesh_status.py',
+     '   (`mesh_state::load_trusted_peers`, refused without flash encryption,\n'
+     '   which no Canary has on today, so every board answered 500\n'
+     '   `load_failed`) and joined them'),
+    ('scripts/tests/test_canary_mesh_status_wiring.py',
+     "        # F199's review: the 500 every board without flash encryption (all\n"
+     '        # of them today) answered, which F199 removed, back without a\n'
+     '        # mesh_state call.'),
+    ('firmware/scripts/regression_check.sh',
+     "# NVS is not compatible with flash encryption: ESP-IDF's protection for NVS is\n"
+     '# NVS encryption (CONFIG_NVS_ENCRYPTION, keys in an nvs_keys partition), which\n'
+     '# no Canary build has (every one is framework = arduino, so NVS is plaintext on\n'
+     '# every tier); and with flash encryption on,'),
+    ('firmware/scripts/regression_check.sh',
+     '  blue "  Fix: drop the flag; only NVS encryption (nvs_keys) could protect NVS, and it is unavailable under framework = arduino, so NVS stays plaintext either way"'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h',
+     " * A bonded peer can write the WAP's Wi-Fi over BLE (CREDS). The iPhone\n"
+     ' * app never reaches this service on a WAP (ledger A65): a phone sets a WAP\n'
+     ' * up through the Improv setup door (ble_improv.h), and the SoftAP page\n'
+     ' * stays the fallback.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h',
+     ' * - Write rate-limited to 1 / 5 s and capped at 10 per hour, one budget\n'
+     ' *   shared by every bonded peer. A refused write costs the writer nothing,\n'
+     " *   so a hostile bonded peer can keep the owner's write refused\n"
+     ' *   (SECURITY_MODEL.md, the WAP lockout paragraph; ledger F346).'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h',
+     '// 10 an hour leaves a fumbling user room to retype a password. The\n'
+     '// cooldown and the cap are one budget for every bonded peer together, so a\n'
+     "// bonded peer that keeps writing keeps the owner's write refused for the\n"
+     '// hour (SECURITY_MODEL.md, ledger F346): they slow a guesser and do not\n'
+     '// keep a host out, since any landing session can read the passkey and\n'
+     '// bond a peer of its own.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/ble_console.h',
+     ' *   The bond is established via Numeric Comparison (MITM-safe after PR A),\n'
+     " *   but a bond is not the bearer's trust: any landing session can bond a\n"
+     ' *   peer of its own (it reads the passkey from GET /api/bluetooth and\n'
+     ' *   confirms it, ledger F346), so the console exposes nothing a landing\n'
+     ' *   session cannot already read over WiFi.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/household_api.h',
+     ' * Every endpoint passes api_auth_check (same as the rest of the API),\n'
+     ' * which takes the bearer or a dashboard session cookie, and the landing\n'
+     ' * page mints that cookie for any host on the network (ledger F346).\n'
+     ' * Mutations (POST role, override) are scoped to slots that are ALREADY in\n'
+     " * the household store — the API can't create new paired devices, only\n"
+     ' * adjust roles on devices that completed the BLE pairing ceremony, which a\n'
+     ' * host on the network that is also in radio range can complete for a peer\n'
+     " * of its own (SECURITY_MODEL.md's lockout paragraph). Default role for any\n"
+     ' * new pairing is ROLE_GUEST.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/beacon_channel.h',
+     ' * from canary_wap.ino, every route behind the api_auth_check trampoline\n'
+     ' * (bcn_auth_gated) the /api/mesh and /api/bluetooth routes use, which\n'
+     ' * takes the bearer or a landing session any host on the network can mint\n'
+     ' * (ledger F346).'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/beacon_api.h',
+     ' * Auth-gated from day one (see spec/beacon_channel_v0.md §10 and\n'
+     ' * docs/audit/mesh_and_chirp_audit_v1.md C12 closure for Chirp). Every route\n'
+     ' * is wrapped in the bcn_auth_gated trampoline, which runs api_auth_check:\n'
+     ' * the bearer, or a landing-page session any host on the network can mint\n'
+     ' * (ledger F346), gets a successful response. Mirrors the pattern\n'
+     ' * established in bluetooth_api.h (#437) and household_api.h (#438).'),
+    ('firmware/projects/canary-wap/tests_host/test_bluetooth_commands_wap.cpp',
+     '// never saw the link or the bond. Now both go through the dispatcher: the\n'
+     '// passkey reaches the channel and waits for a confirm over REST (any session\n'
+     "// the landing page minted can send it, ledger F346; the dashboard's own is\n"
+     "// the owner's), which answers it once, yes, on the loop task; the bond\n"
+     '// reaches the paired list, and Opera still counts the link up and down.'),
+    ('firmware/tests_host/test_provisioning_gate.cpp',
+     '// pages\' "wait 10 seconds, then click Use BOOT Tap Once again" prescribes,\n'
+     '// with the press after the device has answered the new ask with 403 (the\n'
+     '// line says when).'),
+    ('firmware/tests_host/test_improv_core.cpp',
+     "  // The credentials were wiped at runtime (a WAP's Forget Wi-Fi, which any\n"
+     '  // landing session can send, ledger F345, or the 10 s hold before its\n'
+     '  // restart): the door reopens, first-come, for the window.'),
+    ('firmware/tests_host/test_improv_core.cpp',
+     '  // A tap reopens it here (on a board whose firmware reads one; the WAP has\n'
+     '  // none). The credentials vanishing would reopen it too (the 10 s hold, or a\n'
+     "  // WAP's Forget Wi-Fi), as the first-come NoCredentials door."),
+    ('firmware/projects/canary-wap/arduino/canary_wap/ble_improv.cpp',
+     '      // A door that reopens (the credentials were wiped at runtime, by\n'
+     '      // Forget Wi-Fi or by the 10 s hold before its restart, re-arming the\n'
+     '      // window) is a new provisioning: a claim from the last one is void.'),
+    ('firmware/projects/canary-wap/tests_host/test_provisioning_logic.cpp',
+     '  // Credentials wiped at runtime (Forget Wi-Fi, or the 10 s hold before its\n'
+     '  // restart): the door opens, but a bonded phone is still connected. Held:\n'
+     '  // the bonded session keeps the strict profile.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '// The BOOT tap stays open this long for the one page already asking:\n'
+     '// provisioning_gate.h tap_arbitrate() serves it only to the sole address\n'
+     '// seen asking from TAP_LOOKBACK_MS before the tap onward (sweep F342), so\n'
+     "// the owner's page asks first and says when to press. A second address\n"
+     '// asking in that window closes the tap (409 tap_contended), and a tap no\n'
+     '// page was asking for goes to the first asker after it. A served receipt\n'
+     '// closes it at once. (BLE OTA break-glass is press-first and takes the\n'
+     '// gate directly.)'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '      Serial.println("[BOOT] Released before 10 s: nothing reset (hold 10 s for a factory reset; Forget Wi-Fi on the dashboard clears only the saved Wi-Fi; on a unit that had Wi-Fi, either reopens the Bluetooth setup door for half an hour, to the first client that connects)");'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '      Serial.printf("[AUTH] Provisioning gate OPENED for %lu seconds: the receipt goes only to the one address already asking (ask first, then tap)\\n",'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '  boot_line("    Press BOOT (<2s)   = receipt to the one page already asking (30s); hold 2-3s = print identity");'),
+    ('canary-local/tools/gen_wap.py',
+     '    "    Press BOOT (<2s)   = receipt to the one page already asking (30s); hold 2-3s = print identity",'),
+    ('canary-local/devices/wap.json',
+     '      "    Press BOOT (<2s)   = receipt to the one page already asking (30s); hold 2-3s = print identity",'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/wap_server.h',
+     'static const char* AP_SSID_PREFIX    = "SecuraCV-";      // unused: the SSID is SecuraCV-wap-<4 chars of the key fingerprint> (generate_ap_ssid), never the MAC, so a flasher install changes it'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/familiar.cpp',
+     ' * it in; we hash it into Bloom filters with a device-specific salt, so one\n'
+     " * device's filter bits mean nothing on another's. The salt is no defense\n"
+     ' * against a flash dump: it sits in plaintext NVS (fm_salt) beside the\n'
+     ' * persisted filters (fm_yest, fm_ignore), so a dump can test all 2,048\n'
+     ' * fingerprints against them (household_presence_and_posture.md §4.1).'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/familiar.cpp',
+     '// Why salt? Per-device hashing: a filter means nothing without its own\n'
+     "// device's salt. It does not stop a flash dump, which holds the salt too\n"
+     '// (plaintext NVS on every tier today).'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/familiar.h',
+     ' *   • Hashes are salted with a per-device value kept in NVS. NVS is\n'
+     ' *     plaintext on every tier today (key_at_rest.h), so a flash dump holds\n'
+     ' *     the salt with the filters and can test every fingerprint; the salt\n'
+     " *     only keeps one device's filter from meaning anything on another."),
+    ('firmware/common/color/plumage.h',
+     "// A device's personality, all 0..255. Derived from the device id, which is\n"
+     '// kept across reboots and OTA updates, not always across a flasher install.'),
+    ('src/bridge/hap/pairing.rs',
+     '//! Canary the answer is "NVS, and only if flash encryption is on" while on a\n'
+     '//! hub it is a file. That gate keeps a long-term pairing key off every board\n'
+     '//! without flash encryption; it does not make the key confidential on one\n'
+     '//! with it, since flash encryption does not cover NVS and no released build\n'
+     '//! has NVS encryption (`docs/design/apple_home_integration.md`).'),
+    ('src/bridge/hap/store.rs',
+     '//! On a Canary the equivalent store is NVS, and the same rule applies one\n'
+     '//! layer down: pairing keys get the `opera_secret` treatment, refused on a\n'
+     '//! device without flash encryption, which keeps them off such a device but\n'
+     '//! does not make them confidential on one with it (NVS is plaintext there\n'
+     '//! too until NVS encryption is in the build).'),
+    ('canary-local/assets/flash.js',
+     '      "nothing. This app’s window has no Bluetooth of its own, so the check runs in " +\n'
+     '      "the browser Lab in Chrome or Edge on this computer (the iPhone app does not " +\n'
+     '      "read a WAP’s console today)."));'),
+    ('canary-local/assets/flash.js',
+     '      "On iPhone or iPad there is no way to run this check today: Safari has no " +\n'
+     '      "Web Bluetooth, and the SecuraCV app does not read a WAP’s Bluetooth " +\n'
+     '      "console. On a computer, use a Chromium browser (Chrome, Edge, Brave).");'),
+    ('canary-local/assets/flash.js',
+     '          "only. Pair this " +'),
+    ('canary-local/assets/flash.js',
+     '      "Counters and fingerprints only: this report shows no key, password or token. (The check reads the " +\n'
+     '      "settings region off the board to find them, and the safety copy taken before an install saves the " +\n'
+     '      "whole flash, key included, to your downloads.)"));'),
+    ('canary-local/assets/flash-core.js',
+     '    provisioned: !!get("privkey"),           // identity key exists (presence only; its bytes are never shown)'),
+    ('canary-local/assets/flash-core.js',
+     "// firmware/projects/canary-wap/arduino/canary_wap/ble_console.h (the iOS app's\n"
+     '// BLEConsole.swift knows the same UUIDs, but never dials a WAP for them:\n'
+     '// ledger A65).'),
+    ('canary-local/assets/flash-core.js',
+     '        why: `This board already runs ${cur.name}, so it is preselected. An install starts its ` +\n'
+     '             `settings over (a new witness key, where it keeps one); an over-the-air update keeps them.` };'),
+    ('canary-local/assets/flash-core.js',
+     '    ? "Your settings are reset — the saved WiFi is cleared and, where the board keeps a witness key, it makes a new one, so it comes up with its setup network again, like the first day."'),
+    ('desktop/src/app.js',
+     '        why: `This board already runs ${cur.name}, so it is preselected. An install starts its settings over (a new witness key, where it keeps one); an over-the-air update keeps them.` };'),
+    ('desktop/src/app.js',
+     '// WAP (the browser offers its check for exactly these). This window has no\n'
+     '// Bluetooth of its own, so the check is a pointer to the browser Lab in a\n'
+     "// Chromium browser (the iPhone app does not reach a WAP's console, ledger\n"
+     '// A65), never a dead end.'),
+    ('desktop/src/app.js',
+     '  "nothing. This app’s window has no Bluetooth of its own, so the check runs in " +\n'
+     '  "the browser Lab in Chrome or Edge on this computer (the iPhone app does not " +\n'
+     '  "read a WAP’s console today).";'),
+    ('desktop/src/app.js',
+     '// stays the slug written during provisioning (kept across OTA updates and the\n'
+     '// 10 s hold; an install in either flasher can change it); here it just becomes the'),
+    ('desktop/src/index.html',
+     '                reachable, and writes nothing. This app’s window has no Bluetooth of its\n'
+     '                own, so the check runs in the browser Lab in Chrome or Edge on this computer\n'
+     '                (the iPhone app does not read a WAP’s console today).</p>'),
+    ('canary-local/tests/desktop_parity.test.js',
+     '  assert.match(reassure, /if \\(nativeShell\\) \\{[\\s\\S]*?in Chrome or Edge on this computer[\\s\\S]*?\\} else \\{[\\s\\S]*?phaseBluetoothCheck/,\n'
+     '    "the Lab app\'s Bluetooth entry must point to where the check runs, and only the browser opens it in-page");'),
+    ('canary-local/tests/desktop_parity.test.js',
+     '    assert.ok(flat.includes("the check runs in the browser Lab in Chrome or Edge on this computer"),\n'
+     '      `${label} must name where the Bluetooth check runs`);\n'
+     "    // The check reads a WAP's console, and the iPhone app dials only a\n"
+     '    // peripheral that advertises the console service, which a WAP does not\n'
+     '    // (ledger A65): naming the app as a place the check runs sends an iPhone\n'
+     '    // owner into Bluetooth range for nothing.\n'
+     '    assert.ok(!/runs in the SecuraCV iPhone app|runs in the iPhone app/.test(flat),\n'
+     '      `${label} must not name the iPhone app as where the Bluetooth check runs`);'),
+    ('desktop/flash-engine/src/changemap.rs',
+     '            "Your settings are replaced with the ones you entered here — the board \\\n'
+     '             comes up already on that network. Anything it had stored itself \\\n'
+     '             starts fresh: its witness key, where it keeps one, its own tuning and \\\n'
+     '             the witness chain, so it comes up under a new key."'),
+    ('desktop/flash-engine/src/changemap.rs',
+     '            "Your settings are reset — the saved Wi-Fi is cleared and, where the \\\n'
+     '             board keeps a witness key, it makes a new one, so it comes up with its \\\n'
+     '             setup network again, like the first day."'),
+    ('canary-local/tools/gen_flash.py',
+     '          "opens automatically.",'),
+    ('canary-local/tools/gen_flash.py',
+     '               "console at boot — join it and a setup page opens automatically.",'),
+    ('canary-local/devices/flash.json',
+     '      "provisioning_note": "Power it on near the SecuraCV iPhone app and tap the card that appears — it hands over your WiFi in one tap. No iPhone? It also raises a WiFi network of its own (SecuraCV-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically.",'),
+    ('canary-local/devices/flash.json',
+     '      "provisioning_note": "When it boots it raises a WiFi network of its own (SecuraCV-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically.",'),
+    ('canary-local/assets/hatchery.js',
+     "// hatches (first successful flash). The name is WHIMSY ONLY: the device's\n"
+     '// functional id stays its provisioned slug (kept across OTA updates and the\n'
+     '// 10 s hold; an install in either flasher can change it); this is a\n'
+     '// display/certificate layer, the same one the native app mints.'),
+    ('canary-local/devices/hatch.json',
+     '  "$doc": "The Hatchery — the single source of truth for how a Canary is named and certified when it hatches. Shared verbatim by the website Lab (fetched from GitHub Pages) and the desktop flasher (embedded at build time), so the birthing moment is identical on both and stays in sync when this file changes. Pure data: the tiny assembly logic (pick a title with title_chance, first + house, Nth-of-its-name ordinal) is mirrored in both clients. Names are whimsy only — the device\'s functional id stays its provisioned slug (kept across OTA updates and the 10 s hold; an install in either flasher can change it); this is a display/certificate layer.",'),
+    ('canary-local/assets/wap-ui.js',
+     '        : "app running — the ROM ignores BOOT until the next reset, but the firmware reads it (a tap opens the receipt gate, 10 s held is a factory reset)";'),
+    ('canary-local/assets/wap-ui.js',
+     '    if (held && plugged && mode === "run") say("(BOOT held — the ROM only samples it at reset, but the running WAP counts it: kept 10 s, it clears Wi-Fi, broker and name and reopens its first-come Bluetooth setup door for half an hour)");'),
+    ('ios/Sources/SecuraCV/App/FleetStore.swift',
+     "        // A console's tamper NOTIFY would be the fastest signal (sub-second,\n"
+     "        // no polling in the path), but no WAP's console connects today: the\n"
+     '        // app dials only a peripheral advertising the console service, which\n'
+     '        // a WAP does not (ledger A65). Kept wired, so the path re-folds and\n'
+     '        // re-evaluates at once when a console does connect.'),
+    ('ios/Sources/SecuraCV/App/FleetStore.swift',
+     '        // ── Tier 1a: a GATT console snapshot (none for a WAP today: the app\n'
+     '        // dials only a peripheral advertising the console service, which a\n'
+     '        // WAP does not, ledger A65) ──'),
+    ('ios/Sources/SecuraCV/Transport/BLEConsole.swift',
+     '//   2. GATT CONSOLE. canary-wap serves a connectable console with a richer\n'
+     '//      JSON snapshot, but we connect only when a peripheral advertises that\n'
+     '//      service, and a WAP does not (the service is in its GATT table only),\n'
+     '//      so this layer never fills for a WAP today (ledger A65).'),
+    ('ios/Sources/SecuraCV/Transport/BLEConsole.swift',
+     '/// A compact console snapshot over BLE NOTIFY (a WAP serves this console\n'
+     '/// but does not advertise it, so the app never dials a WAP for it, A65).'),
+    ('ios/Sources/SecuraCV/Transport/BLEConsole.swift',
+     "    /// Would fire when a connected console reports tamper that wasn't there\n"
+     "    /// a beat ago (NOTIFY is sub-second). No Canary's console connects today\n"
+     '    /// (a WAP does not advertise it, ledger A65), so in practice this never\n'
+     '    /// fires. Wired by FleetStore.'),
+    ('ios/Sources/SecuraCV/Transport/BLEConsole.swift',
+     "            // A connected console's tamper NOTIFY goes to the alert loop at\n"
+     "            // once. No Canary's console connects today (ledger A65), so the\n"
+     '            // chirp and the 5-second sentinel carry tamper.'),
+    ('ios/Sources/SecuraCV/Transport/FleetWiFiRunner.swift',
+     '        for c in plan.unreachable {\n'
+     '            steps[c.id] = .failed(FleetWiFiRollout.unreachableReason)\n'
+     '        }'),
+    ('ios/Sources/SecuraCV/Transport/FleetWiFiRunner.swift',
+     '            steps[candidate.id] = .failed(FleetWiFiRollout.unreachableReason)'),
+    ('ios/Tests/SecuraCVTests/FleetWiFiRolloutTests.swift',
+     '    // Policy only: no WAP fills bleReachable today, since the app dials only\n'
+     '    // a peripheral advertising the console service (ledger A65).\n'
+     '    func testADarkCanaryOnTheBondedLaneRidesBLE() {'),
+    ('ios/Tests/SecuraCVTests/FleetWiFiRolloutTests.swift',
+     '    func testADarkCanaryOffTheBondedLaneIsUnreachable() {'),
+    ('ios/Sources/SecuraCV/Model/CanaryVoiceStage.swift',
+     '            line = "A Canary’s signing key is pinned the first time you meet it — from then on, a different key is flagged. Anyone who reads its flash can copy the key, so keep it out of reach."'),
+    ('ios/Sources/SecuraCV/Model/Witness.swift',
+     '    var id: String                       // device_id, e.g. "canary-a3f7" (kept across OTA updates and the 10 s hold; a flasher install can change it)'),
+    ('ios/Support/Info.plist',
+     "  <string>SecuraCV listens for your Canaries' Bluetooth beacons, and hands a brand-new Canary your Wi-Fi over its Bluetooth setup door when you set it up.</string>"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/web_ui.h',
+     "            : 'Your session does not cover this, or has ended. Use BOOT Tap Once.');"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/web_ui.h',
+     "From your recovery kit or the USB console. A signed-in page can't check it: use /settings in a browser with no session.</p>"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/web_ui.h',
+     '      // than this budget; a press lands while the page alone asks.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js',
+     '// It names no token box: on a page a session signed in, that box takes the\n'
+     "// cookie's word for any token, so a mistyped one looks accepted.\n"
+     "const NO_TOKEN_REFUSAL = 'Your session does not cover this, or has ended. Use BOOT Tap Once.';"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js',
+     "  it('a press made before Save is served to the first ask only when no other address asks first (the residual, not a supported order)', async () => {"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     ' * - iOS: no supported path. Safari and iOS Chrome omit Web Bluetooth, and\n'
+     ' *   whether a WKWebView wrapper such as Bluefy lists or bonds a WAP is\n'
+     ' *   unverified (ledger A65), so the page does not send iPhone owners into\n'
+     ' *   Bluetooth range: it points them at the dashboard instead.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     '  Bluetooth here needs Chrome or Edge on Android or a computer.<br>\n'
+     "  On an iPhone, use this Canary's dashboard instead."),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     "      return { show: true, text: 'This browser has no Web Bluetooth: the Bluetooth console needs Chrome or Edge on Android or a computer. On an iPhone, use the dashboard instead.' };"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     "    showErr('Web Bluetooth is not supported by this browser. Use Chrome or Edge on Android or a computer; on an iPhone, use the dashboard instead.');"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     '  // out nothing. The old order (press first, then Save) is served only if\n'
+     '  // this page is the first asker after the press: a tap no page of the\n'
+     "  // owner's was asking for goes to whichever address asks first, a poller\n"
+     '  // included. The banner says'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/wizard_logic.test.js',
+     "  it('missing Web Bluetooth names a browser that has it, and sends no iPhone owner to Bluefy (ledger A65)', () => {\n"
+     '    const n = L.capabilityNotice(false, true, false);\n'
+     '    assert.equal(n.show, true);\n'
+     '    assert.match(n.text, /Chrome or Edge on Android or a computer/);\n'
+     '    assert.doesNotMatch(n.text, /Bluefy/);\n'
+     '  });'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     '// (1) insecure context → tell them to use HTTPS; (2) no Web Bluetooth\n'
+     '// API → name the browsers that have it and send an iPhone owner to the\n'
+     "// dashboard (no iPhone path reaches a WAP's console, ledger A65)."),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     '    // BLE-console chrome — hide the browser footer along with the banner.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '  // Every endpoint behind the chirp_api template trampoline, api_auth_check:\n'
+     '  // the bearer or a landing session any host on the network can mint (F346).'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '  // Auth-gated from day one (see spec/beacon_channel_v0.md §10): api_auth_check,\n'
+     '  // the bearer or a landing session any host on the network can mint (F346).'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/beacon_api.h',
+     '// GET /api/beacon/audit — paged audit log (behind bcn_auth_gated).'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/beacon_channel.cpp',
+     ' * (beacon_api.h, behind api_auth_check, which a landing session passes,\n'
+     ' * from canary_wap.ino); the runtime loop is'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/chirp_api.h',
+     '// Register all chirp API routes with the HTTP server, each behind\n'
+     '// chirp_auth_gated (api_auth_check: the bearer, or a landing session any host\n'
+     '// on the network can mint, ledger F346).'),
+    ('docs/security/THREAT_MODEL.md',
+     '  - REST API (`/api/chirp/*`) behind `api_auth_check()` when wired into\n'
+     '    `canary_wap.ino` (audit C12): the bearer, or a landing session any host\n'
+     '    on the network can mint (F346).'),
+    ('docs/security/THREAT_MODEL.md',
+     '  routes are registered (behind `FEATURE_BEACON_CHANNEL` and\n'
+     '  `api_auth_check()`, which a landing session passes), but'),
+    ('spec/chirp_channel_v0.md',
+     "  (C11); REST API Bearer-gated *(amended 2026-10-22, #1843's sweep: behind\n"
+     '  `api_auth_check()`, which also takes the landing session any host on the\n'
+     '  network can mint, F346)* (C12); presence requirement on ACK origination'),
+    ('CHANGELOG.md',
+     '  app descriptor already on the board ("This board already runs X —\n'
+     '  installing keeps it, updated in place" *(amended 2026-10-22, #1843\'s sweep:\n'
+     '  an install starts the settings over under a new key, and the card now says\n'
+     '  so)*); else the chip **plus the'),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     "  table; on a dev board *(amended 2026-10-22, #1843's sweep: on every\n"
+     '  released board, since no tier turns flash encryption on)* without flash\n'
+     '  encryption every peers read fails, and'),
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -3992,6 +5004,438 @@ MUST_FAIL_IN = [
      '   encryption + secure boot v2**; the `provisioning/partitions_secure.csv` already reserves\n'
      '   `nvs_keys` for this (but fix its 4 MB assumption — F-06).\n'
      '6. **Always keep big buffers in PSRAM** (CSI rings, web scratch).'),
+    # #1843's sweep, sixth pass: the remaining copies of the corrected
+    # positions, each where it stood (the forms are the text as the pass
+    # found it; the replacements are what stands there now).
+    ('docs/unflashed_board_intake.md',
+     '- [secure_provisioning.md](secure_provisioning.md) — Phase 2 lockdown, if you\n'
+     '  want to close the door behind you'),
+    ('docs/security/SECURITY_MODEL.md',
+     '**If your threat model is an intruder, a landlord, or a domestic abuser\n'
+     'who does not take the device to a lab**, the default is the right one for\n'
+     'you, and the tamper-evidence properties are unaffected.'),
+    ('firmware/PARTITIONS.md',
+     '| **Secure / flash‑encrypted** (Phase‑2 provisioning) | 8 MB |'),
+    ('firmware/PARTITIONS.md',
+     '- The `encrypted` flag is enforced only after the Phase‑2 eFuse burn; in development it is ignored.'),
+    ('firmware/PARTITIONS.md',
+     '| `provisioning/platformio_secure.ini` (Phase‑2 secure/encrypted) |'),
+    ('docs/sd_card_health.md',
+     'card, erase the `diag` NVS namespace or reflash with a full chip erase.'),
+    ('docs/canary_settings_access_validation.md',
+     '| API token fallback | Paste the `cv_...` API token into the auth modal and click Connect. | Modal closes and Settings data loads. Invalid token shows a clear error. |'),
+    ('docs/design/usb_onboard.md',
+     "- **Recovery** is the witness chain's existing *SD-wins* reconciliation\n"
+     '  (`witness_recover_from_sd()`): a factory reset erases NVS settings but never\n'
+     '  the SD evidence; on boot the device adopts the SD tail only when it is\n'
+     '  strictly ahead and its signature verifies. Re-seat the card, reboot, done.'),
+    ('docs/browser_flasher.md',
+     '   names the product: "This board already runs X — installing keeps it,\n'
+     '   updated in place."'),
+    ('docs/browser_flasher.md',
+     "the iOS app's `BLEConsole.swift` speaks the same UUIDs). The flasher's"),
+    ('docs/design/magic_pairing.md',
+     "| credentials vanish at runtime (factory reset) | the window is re-armed from now — the owner's own act |"),
+    ('docs/design/magic_pairing.md',
+     "*lasts* belongs on such a link. The WAP's bearer token lasts for the life of\n"
+     'the device.'),
+    ('docs/design/magic_pairing.md',
+     'A device nobody owns yet — or, after a reset, one whose owner chose to reopen it:'),
+    ('docs/design/iphone_companion_app.md',
+     '> Bluefy; a native app erases that footnote), **Secure Enclave key custody**,'),
+    ('docs/design/iphone_companion_app.md',
+     '   Snapshot char `8fc1cee1-…`, bonded) + chirp/beacon scan — off-grid status.'),
+    ('docs/firmware_ota.md',
+     'Reconnect via dashboard (canary/WAP), or join the setup network from a phone and enter the new password (vision/sense) — a USB reflash always works too |'),
+    ('docs/FAQ.md',
+     '`SecuraCV-XXXX` recovery network instead, which needs the key printed for\n'
+     "it. So a Canary on your network offers nothing to a stranger's phone, on a\n"
+     'good day or a bad one.'),
+    ('docs/security/THREAT_MODEL.md',
+     '- Private keys are not "access-controlled" — there is no read interface'),
+    ('docs/security/THREAT_MODEL.md',
+     '3. Ed25519 private key has no read/export interface of any kind'),
+    ('docs/design/flasher_experience.md',
+     '  self-manifest leaks nothing (no secret ever leaves the device — same rule as the\n'
+     '  trust card), so reading it is safe.'),
+    ('docs/strategy/08-product-strategy.md',
+     'evidently true. SecuraCV is built for the world after both realizations: **your\n'
+     "footage is nobody's business, and your proof is unforgeable.**"),
+    ('canary-vision/docs/firmware-integration.md',
+     'The witness chain signing key pair is generated once during provisioning and stored in NVS. The private key never leaves NVS -- it is read into a stack buffer, used to sign a hash, and immediately zeroed.'),
+    ('canary-vision/docs/discovery.md',
+     '  device_id=canary-a3f7      # stable device identifier'),
+    ('spec/beacon_channel_v0.md',
+     'All endpoints Bearer-token-gated identically to `/api/mesh/*` and `/api/bluetooth/*`.'),
+    ('spec/canary_mesh_network_v0.md',
+     'encryption, at the cost of refusing to work on dev boards without FE — which\n'
+     'is the correct trade-off for a production safety system.'),
+    ('docs/V1_LAUNCH_REVIEW.md',
+     '   **#610**. (Note: by design the live in-RAM session still runs for the current boot on an FE-off\n'
+     '   dev board;'),
+    ('firmware/LESSONS_LEARNED.md',
+     '  credentials vanishing at runtime (factory reset) re-arm the window,'),
+    ('firmware/LESSONS_LEARNED.md',
+     '  listener, not an active one who paired first. The bearer token lasts for\n'
+     '  the life of the device. Nothing that lasts belongs on a link like that.'),
+    ('firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md',
+     '  - [x] Credential reset path without the serial monitor: one BOOT tap\n'
+     '        releases the provisioning receipt (`GET /api/provisioning-receipt`,\n'
+     '        one tap = one fetch), which re-reveals the API token and the AP\n'
+     '        password; the wizard\'s "Save your recovery kit" block walks it.'),
+    ('firmware/projects/canary-wap/README.md',
+     'and by **Forget Wi-Fi** or the 10 s BOOT hold on a unit that had\n'
+     "credentials, which are the owner's ways to re-arm the window), a phone at the door is a sign of life"),
+    ('firmware/projects/canary-wap/README.md',
+     "BOOT button keeps the sketch's own gestures: a short press opens the 30 s\n"
+     'receipt gate, a 2 s hold prints the identity on serial,'),
+    ('firmware/projects/canary-wap/README.md',
+     '- **Session Rotation:** Tokens rotate every 4 hours'),
+    ('firmware/README.md',
+     '- Local-first data storage\n'
+     '- Session token rotation'),
+    ('ios/README.md',
+     '**Dynamic Island / Live Activities**, **CoreBluetooth** (iOS Safari has no Web\n'
+     "Bluetooth — the device's own PWA has to send people to Bluefy; native erases\n"
+     'that), **HomeKit**,'),
+    ('ios/README.md',
+     '  waiting out the 20-second cycle. Tamper heard over a BLE console NOTIFY\n'
+     '  re-evaluates immediately — sub-second, the fastest transport the fleet\n'
+     '  has. And the Test Alert'),
+    ('firmware/canary/lib/securacv_witness/src/securacv_witness.cpp',
+     '  // The NVS cache persists only every SD_PERSIST_INTERVAL records, so\n'
+     '  // after a power cut (or an NVS wipe/reflash while the card kept its\n'
+     '  // history) the cached head can be BEHIND the last record actually\n'
+     '  // signed — resuming from it would fork the supposedly append-only\n'
+     '  // chain.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '// The NVS cache persists only every SD_PERSIST_INTERVAL records, so after\n'
+     '// a power cut (or an NVS wipe/reflash while the card kept its history) the\n'
+     '// cached head can be BEHIND the last record actually signed — resuming\n'
+     '// from it would fork the supposedly append-only chain.'),
+    ('firmware/canary/lib/securacv_usb_onboard/src/securacv_usb_onboard.cpp',
+     '  Serial.println("  3. To recover a device that lost its NVS head, just re-seat the");\n'
+     '  Serial.println("     SD and reboot; the chain head is rebuilt from the SD tail.");'),
+    ('firmware/common/network/auth_backoff.h',
+     '// token and device_id; an OTA update and the 10 s BOOT reset leave the token\n'
+     '// as it was). A Table keeps'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/auth_backoff.h',
+     '// token and device_id; an OTA update and the 10 s BOOT reset leave the token\n'
+     '// as it was). A Table keeps'),
+    ('firmware/common/network/improv_core.h',
+     '  /// A device with no stored credentials opens the door for this long after\n'
+     '  /// power-on (and again after a factory reset wipes them at runtime).'),
+    ('firmware/common/network/improv_core.h',
+     '/// Provisioned or Provisioning for the phone to read. Credentials vanishing\n'
+     '/// at runtime (a factory reset) re-arms the window from now — that is the\n'
+     "/// owner's own act. A recovery portal"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/improv_core.h',
+     '  /// A device with no stored credentials opens the door for this long after\n'
+     '  /// power-on (and again after a factory reset wipes them at runtime).'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/improv_core.h',
+     '/// Provisioned or Provisioning for the phone to read. Credentials vanishing\n'
+     '/// at runtime (a factory reset) re-arms the window from now — that is the\n'
+     "/// owner's own act. A recovery portal"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     "// once at the door's init (ble_improv_window_used_ms), zeroed by a\n"
+     "// credential wipe (wifi_clear_credentials: the owner's own act re-arms the\n"
+     "// window, as improv_core.h's session does in RAM). Loop task only after\n"
+     '// setup().'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     "  // The owner's own act re-arms the Bluetooth setup door's first-boot\n"
+     "  // window: improv_core.h's session"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     "// meaningful AFTER first-setup. The dashboard's secureFetch already sends\n"
+     '// `Authorization: Bearer <api_token>` on all three, but the handlers\n'
+     '// themselves were originally registered without an _auth wrapper, so a\n'
+     '// LAN-local curl could hit /api/wifi/forget and force a re-provisioning\n'
+     '// without authenticating. (/api/wifi'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/bluetooth_api.h',
+     "// initializes after WiFi is up, so there's no captive-portal flow that\n"
+     "// needs to hit these routes without an API token. The dashboard's\n"
+     '// secureFetch already attaches `Authorization: Bearer <api_token>` on\n'
+     '// every call, so wrapping handlers in api_auth_check is a plumbing-only\n'
+     '// fix (mirrors #435/#436 for the wifi-mgmt + mesh families).'),
+    ('firmware/canary/lib/securacv_mesh/src/mesh_state.h',
+     ' * trusted peers IS sensitive metadata (an attacker who reads the\n'
+     " * unencrypted partition learns the household graph). canary-wap's\n"
+     ' * opera_config persistence applies the same posture.'),
+    ('firmware/canary/lib/securacv_mesh/src/mesh_state.h',
+     ' * household-identifying, and gating it would make "off" silently revert\n'
+     ' * to "on" at every reboot of an FE-off dev board.'),
+    ('firmware/canary/src/csi_modules_integration.cpp',
+     "     * we just won't have the hint cached across the next reboot (e.g.\n"
+     '     * flash encryption disabled on a dev board). Leave the cache'),
+    ('firmware/canary/lib/securacv_network/src/securacv_network.cpp',
+     "  // /api/mesh's peers_total, and no NVS is read here (F199: the persisted\n"
+     '  // pubkeys needed flash encryption, so a dev board answered 500\n'
+     '  // load_failed, and an NVS write'),
+    ('firmware/canary/src/main.cpp',
+     '   * fails — typical on FE-disabled dev hardware where save refuses\n'
+     '   * by design.'),
+    ('firmware/scripts/check_canary_mesh_status.py',
+     '   (`mesh_state::load_trusted_peers`, refused without flash encryption, so\n'
+     '   a dev board answered 500 `load_failed`) and joined them'),
+    ('scripts/tests/test_canary_mesh_status_wiring.py',
+     "        # F199's review: the dev-board 500 F199 removed, back without a\n"
+     '        # mesh_state call.'),
+    ('firmware/scripts/regression_check.sh',
+     '# NVS is not compatible with flash encryption: ESP-IDF protects it with NVS\n'
+     '# encryption (CONFIG_NVS_ENCRYPTION, keys in an nvs_keys partition), and with\n'
+     '# flash encryption on,'),
+    ('firmware/scripts/regression_check.sh',
+     '  blue "  Fix: drop the flag; NVS is protected by NVS encryption (nvs_keys), not by flash encryption"'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h',
+     ' * Replaces (well — augments) the captive-AP setup flow with a phone-pairs-\n'
+     ' * Canary, write-credentials-over-BLE ceremony. AP mode is preserved as a\n'
+     " * fallback for users who can't / won't use BLE."),
+    ('firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h',
+     ' * - Write rate-limited to 1 / 5 s and capped at 5 attempts per hour to\n'
+     ' *   mitigate brute-force from a stolen-bonded-phone scenario.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h',
+     '// 10 attempts/hour gives a fumbling user room to retype a password a\n'
+     '// few times without locking the BLE channel out for an hour. The 5 s\n'
+     '// per-write cooldown still rate-limits brute-force, and BLE requires\n'
+     '// physical proximity, so 10/hour is a comfortable security ceiling.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/ble_console.h',
+     ' *   The bond is established via Numeric Comparison (MITM-safe after PR A),\n'
+     ' *   so a peer holding the bond has the same trust level as one holding\n'
+     ' *   the bearer token over WiFi — exposing the same fields is consistent.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/household_api.h',
+     ' * All endpoints require bearer-token auth via api_auth_check (same as the\n'
+     ' * rest of the API). Mutations (POST role, override) are scoped to slots\n'
+     " * that are ALREADY in the household store — the API can't create new\n"
+     ' * paired devices, only adjust roles on devices that completed the BLE\n'
+     ' * pairing ceremony. Default role for any new pairing is ROLE_GUEST.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/beacon_channel.h',
+     ' * from canary_wap.ino, every route behind the Bearer-token trampoline\n'
+     ' * (bcn_auth_gated) the /api/mesh and /api/bluetooth routes use.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/beacon_api.h',
+     ' * Bearer-gated from day one (see spec/beacon_channel_v0.md §10 and\n'
+     ' * docs/audit/mesh_and_chirp_audit_v1.md C12 closure for Chirp). Every route\n'
+     ' * is wrapped in the bcn_auth_gated trampoline; an Authorization: Bearer\n'
+     ' * <api_token> header is required for any successful response. Mirrors the\n'
+     ' * pattern established in bluetooth_api.h (#437) and household_api.h (#438).'),
+    ('firmware/projects/canary-wap/tests_host/test_bluetooth_commands_wap.cpp',
+     '// never saw the link or the bond. Now both go through the dispatcher: the\n'
+     "// passkey reaches the channel and waits for the owner, only the owner's\n"
+     '// confirm answers it (once, yes, on the loop task), the bond reaches the\n'
+     '// paired list, and Opera still counts the link up and down.'),
+    ('firmware/tests_host/test_provisioning_gate.cpp',
+     '// pages\' "wait 10 seconds, then click Use BOOT Tap Once again, and only then\n'
+     '// short-tap BOOT" prescribes.'),
+    ('firmware/tests_host/test_improv_core.cpp',
+     '  // The owner wiped the credentials (a factory reset that did not reboot).'),
+    ('firmware/tests_host/test_improv_core.cpp',
+     "  // Only the owner's tap reopens it."),
+    ('firmware/projects/canary-wap/arduino/canary_wap/ble_improv.cpp',
+     '      // A door that reopens (a factory reset re-armed the window) is a new\n'
+     '      // provisioning: a claim from the last one is void.'),
+    ('firmware/projects/canary-wap/tests_host/test_provisioning_logic.cpp',
+     "  // Factory reset at runtime: the door opens, but the owner's bonded phone\n"
+     '  // is still connected (the dashboard that issued the reset). Held: the\n'
+     '  // bonded session keeps the strict profile.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '// Provisioning gate stays open for this long after a BOOT press, so a\n'
+     '// browser tab that polls every 2 s reliably catches it and a captive\n'
+     "// portal interstitial can't time the user out. The gate is still\n"
+     '// single-use: the first successful receipt fetch closes it immediately.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '      Serial.println("[BOOT] Released before 10 s: nothing reset (hold 10 s for a factory reset; Forget Wi-Fi on the dashboard resets the network only)");'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '      Serial.printf("[AUTH] Provisioning gate OPENED (receipt available for %lu seconds)\\n",'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '  boot_line("    Press BOOT (<2s)   = receipt gate open 30s; hold 2-3s = print identity");'),
+    ('canary-local/tools/gen_wap.py',
+     '    "    Press BOOT (<2s)   = receipt gate open 30s; hold 2-3s = print identity",'),
+    ('canary-local/devices/wap.json',
+     '      "    Press BOOT (<2s)   = receipt gate open 30s; hold 2-3s = print identity",'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/wap_server.h',
+     'static const char* AP_SSID_PREFIX    = "SecuraCV-";      // + last 4 chars of MAC'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/familiar.cpp',
+     ' * it in; we hash it into Bloom filters with a device-specific salt so a\n'
+     ' * flash dump alone cannot replay which fingerprints were recorded.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/familiar.cpp',
+     '// Why salt? Prevents flash-dump recovery of fingerprints across the 2048-\n'
+     '// entry search space.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/familiar.h',
+     ' *   • Hashes are salted with a per-device secret kept in NVS; flash\n'
+     ' *     dumps alone do not reveal which fingerprints were recorded.'),
+    ('firmware/common/color/plumage.h',
+     "// A device's personality, all 0..255. Derived from the device id; stable for\n"
+     '// the life of the device.'),
+    ('src/bridge/hap/pairing.rs',
+     '//! Canary the answer is "NVS, and only if flash encryption is on" while on a\n'
+     '//! hub it is a file — and a long-term pairing key is exactly the kind of\n'
+     '//! secret the hardware-root-of-trust tiering exists to govern.'),
+    ('src/bridge/hap/store.rs',
+     '//! On a Canary the equivalent store is NVS, and the same rule applies one\n'
+     '//! layer down: pairing keys get the `opera_secret` treatment and are refused\n'
+     '//! on a device without flash encryption.'),
+    ('canary-local/assets/flash.js',
+     '      "nothing. This app’s window has no Bluetooth of its own, so the check runs in " +\n'
+     '      "the SecuraCV iPhone app (its App Store release is still pending), or in the " +\n'
+     '      "browser Lab in Chrome or Edge on this computer."));'),
+    ('canary-local/assets/flash.js',
+     '      "On iPhone or iPad, the SecuraCV app talks to a Canary over Bluetooth " +\n'
+     '      "natively — Safari has no Web Bluetooth. On a computer, use a Chromium " +\n'
+     '      "browser (Chrome, Edge, Brave).");'),
+    ('canary-local/assets/flash.js',
+     '          "only (that’s deliberate — same trust as the WiFi token). Pair this " +'),
+    ('canary-local/assets/flash.js',
+     '      "Counters and fingerprints only — keys, passwords and tokens are never read out of the board, here or anywhere."));'),
+    ('canary-local/assets/flash-core.js',
+     '    provisioned: !!get("privkey"),           // identity key exists (never read)'),
+    ('canary-local/assets/flash-core.js',
+     "// firmware/projects/canary-wap/arduino/canary_wap/ble_console.h (the iOS app's\n"
+     '// BLEConsole.swift speaks the same UUIDs).'),
+    ('canary-local/assets/flash-core.js',
+     '        why: `This board already runs ${cur.name} — installing keeps it, ` +\n'
+     '             `updated in place.` };'),
+    ('canary-local/assets/flash-core.js',
+     '    ? "Your settings are reset — the saved WiFi is cleared, so the board comes up with its setup network again, like the first day."'),
+    ('desktop/src/app.js',
+     '        why: `This board already runs ${cur.name} — installing keeps it, updated in place.` };'),
+    ('desktop/src/app.js',
+     '// WAP (the browser offers its check for exactly these). This window has no\n'
+     '// Bluetooth of its own, so the check is a pointer — to the iPhone app, or to\n'
+     '// the browser Lab in a Chromium browser — never a dead end.'),
+    ('desktop/src/app.js',
+     '  "nothing. This app’s window has no Bluetooth of its own, so the check runs in " +\n'
+     '  "the SecuraCV iPhone app (on TestFlight by invite; App Store release pending), or in the " +\n'
+     '  "browser Lab in Chrome or Edge on this computer.";'),
+    ('desktop/src/app.js',
+     '// stays the stable slug written during provisioning; here it just becomes the'),
+    ('desktop/src/index.html',
+     '                reachable, and writes nothing. This app’s window has no Bluetooth of its\n'
+     '                own, so the check runs in the SecuraCV iPhone app (its App Store release is\n'
+     '                still pending), or in the browser Lab in Chrome or Edge on this computer.</p>'),
+    ('canary-local/tests/desktop_parity.test.js',
+     '  assert.match(reassure, /if \\(nativeShell\\) \\{[\\s\\S]*?SecuraCV iPhone app[\\s\\S]*?\\} else \\{[\\s\\S]*?phaseBluetoothCheck/,\n'
+     '    "the Lab app\'s Bluetooth entry must point to where the check runs, and only the browser opens it in-page");'),
+    ('canary-local/tests/desktop_parity.test.js',
+     '    assert.ok(flat.includes("the SecuraCV iPhone app") && flat.includes("in Chrome or Edge on this computer"),\n'
+     '      `${label} must name both places the Bluetooth check runs`);'),
+    ('desktop/flash-engine/src/changemap.rs',
+     '            "Your settings are replaced with the ones you entered here — the board \\\n'
+     '             comes up already on that network. Anything it had stored itself \\\n'
+     '             (its own tuning, witness-chain counters) starts fresh."'),
+    ('desktop/flash-engine/src/changemap.rs',
+     '            "Your settings are reset — the saved Wi-Fi is cleared, so the board \\\n'
+     '             comes up with its setup network again, like the first day."'),
+    ('canary-local/tools/gen_flash.py',
+     '          "opens automatically. No secrets ever touch the browser.",'),
+    ('canary-local/tools/gen_flash.py',
+     '               "console at boot — join it and a setup page opens automatically. No "\n'
+     '               "secrets ever touch the browser.",'),
+    ('canary-local/devices/flash.json',
+     '      "provisioning_note": "Power it on near the SecuraCV iPhone app and tap the card that appears — it hands over your WiFi in one tap. No iPhone? It also raises a WiFi network of its own (SecuraCV-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically. No secrets ever touch the browser.",'),
+    ('canary-local/devices/flash.json',
+     '      "provisioning_note": "When it boots it raises a WiFi network of its own (SecuraCV-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically. No secrets ever touch the browser.",'),
+    ('canary-local/assets/hatchery.js',
+     "// hatches (first successful flash). The name is WHIMSY ONLY: the device's\n"
+     '// functional id stays its stable provisioned slug; this is a display/certificate\n'
+     '// layer, the same one the native app mints.'),
+    ('canary-local/devices/hatch.json',
+     '  "$doc": "The Hatchery — the single source of truth for how a Canary is named and certified when it hatches. Shared verbatim by the website Lab (fetched from GitHub Pages) and the desktop flasher (embedded at build time), so the birthing moment is identical on both and stays in sync when this file changes. Pure data: the tiny assembly logic (pick a title with title_chance, first + house, Nth-of-its-name ordinal) is mirrored in both clients. Names are whimsy only — the device\'s functional id stays a stable slug; this is a display/certificate layer.",'),
+    ('canary-local/assets/wap-ui.js',
+     '        : "app running — BOOT does nothing until the next reset";'),
+    ('canary-local/assets/wap-ui.js',
+     '    if (held && plugged && mode === "run") say("(BOOT held — nothing happens: it\'s only sampled at reset)");'),
+    ('ios/Sources/SecuraCV/App/FleetStore.swift',
+     '        // Tamper heard over a BLE NOTIFY is the fastest signal the fleet\n'
+     '        // has — sub-second, no polling anywhere in the path. Re-fold and\n'
+     '        // re-evaluate NOW; waiting out the 20-second cycle would squander\n'
+     '        // the one transport that pushes.'),
+    ('ios/Sources/SecuraCV/App/FleetStore.swift',
+     '        // ── Tier 1a: the WAP-class GATT console snapshot ──'),
+    ('ios/Sources/SecuraCV/Transport/BLEConsole.swift',
+     '//   2. GATT CONSOLE (WAP-class enrichment). canary-wap additionally serves a\n'
+     '//      connectable console with a richer JSON snapshot. We connect only when a\n'
+     '//      peripheral actually advertises that service.'),
+    ('ios/Sources/SecuraCV/Transport/BLEConsole.swift',
+     '/// A compact snapshot pushed by a WAP-class device over BLE NOTIFY.'),
+    ('ios/Sources/SecuraCV/Transport/BLEConsole.swift',
+     "    /// Fires the moment a connected console reports tamper that wasn't\n"
+     '    /// there a beat ago — BLE NOTIFY is sub-second, so the alert loop gets\n'
+     '    /// to run NOW instead of at the next poll. Wired by FleetStore.'),
+    ('ios/Sources/SecuraCV/Transport/BLEConsole.swift',
+     '            // Tamper over BLE NOTIFY is the fastest signal the fleet has —\n'
+     '            // hand it to the alert loop now, not at the next poll.'),
+    ('ios/Sources/SecuraCV/Transport/FleetWiFiRunner.swift',
+     '        for c in plan.unreachable {\n'
+     '            steps[c.id] = .failed("Not reachable right now — over Wi-Fi or Bluetooth.")\n'
+     '        }'),
+    ('ios/Sources/SecuraCV/Transport/FleetWiFiRunner.swift',
+     '            steps[candidate.id] = .failed("Not reachable right now — over Wi-Fi or Bluetooth.")'),
+    ('ios/Tests/SecuraCVTests/FleetWiFiRolloutTests.swift',
+     '    func testADarkWAPInRangeRidesTheBLERescue() {'),
+    ('ios/Tests/SecuraCVTests/FleetWiFiRolloutTests.swift',
+     '    func testADarkOutOfRangeWAPIsUnreachable() {'),
+    ('ios/Sources/SecuraCV/Model/CanaryVoiceStage.swift',
+     '            line = "A Canary’s signing key is pinned the first time you meet it — from then on, nothing else speaks for it."'),
+    ('ios/Sources/SecuraCV/Model/Witness.swift',
+     '    var id: String                       // stable device_id, e.g. "canary-a3f7"'),
+    ('ios/Support/Info.plist',
+     '  <string>SecuraCV connects to your Canaries over Bluetooth so you still get status if the network drops, and hands a brand-new Canary your Wi-Fi when you set it up.</string>'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/web_ui.h',
+     "            : 'Your session does not cover this, or has ended. Paste the API token, or use BOOT Tap Once.');"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/web_ui.h',
+     'Paste the token from the device receipt or Serial output. It starts with <code>cv_</code>. Type it exactly as shown.</p>'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/web_ui.h',
+     '      // than this budget, so a press anywhere in the 60 s window lands.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js',
+     "const NO_TOKEN_REFUSAL = 'Your session does not cover this, or has ended. Paste the API token, or use BOOT Tap Once.';"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js',
+     "  it('the old order still works: pressed first, the first ask is served', async () => {"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     ' * - iOS: requires the Bluefy browser (App Store) — Safari and iOS Chrome\n'
+     ' *   deliberately omit Web Bluetooth from WebKit. Bluefy wraps WKWebView\n'
+     ' *   and exposes the same JS API; the user pairs the Canary in iOS\n'
+     ' *   Settings > Bluetooth first, then opens this page in Bluefy.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     '  iOS: install <a href="https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055" target="_blank" rel="noopener">Bluefy</a> for Web Bluetooth support.<br>\n'
+     '  Android &amp; desktop Chrome work natively.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     "      return { show: true, text: 'This browser has no Web Bluetooth. On iOS, install Bluefy from the App Store to use the Bluetooth console.' };"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     "    showErr('Web Bluetooth not supported by this browser. On iOS, install Bluefy.');"),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     '  // out nothing; the old order (press first, then Save) is served on the\n'
+     '  // first ask. The banner says'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/wizard_logic.test.js',
+     "  it('missing Web Bluetooth points at Bluefy', () => {\n"
+     '    const n = L.capabilityNotice(false, true, false);\n'
+     '    assert.equal(n.show, true);\n'
+     '    assert.match(n.text, /Bluefy/);\n'
+     '  });'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     '// (1) insecure context → tell them to use HTTPS; (2) no Web Bluetooth\n'
+     '// API → tell iOS users to install Bluefy.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h',
+     '    // BLE-console chrome — hide the Bluefy footer along with the banner.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '  // Every endpoint Bearer-token-gated via the chirp_api template trampoline.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     '  // Bearer-gated from day one (see spec/beacon_channel_v0.md §10).'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/beacon_api.h',
+     '// GET /api/beacon/audit — paged audit log (Bearer-gated).'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/beacon_channel.cpp',
+     ' * (beacon_api.h, Bearer-gated, from canary_wap.ino); the runtime loop is'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/chirp_api.h',
+     '// Register all chirp API routes with the HTTP server, Bearer-gated.'),
+    ('docs/security/THREAT_MODEL.md',
+     '  - REST API (`/api/chirp/*`) Bearer-token-gated when wired into\n'
+     '    `canary_wap.ino` (audit C12).'),
+    ('docs/security/THREAT_MODEL.md',
+     '  routes are registered (behind `FEATURE_BEACON_CHANNEL`, Bearer-gated), but'),
+    ('spec/chirp_channel_v0.md',
+     '  (C11); REST API Bearer-gated (C12); presence requirement on ACK origination'),
+    ('CHANGELOG.md',
+     '  app descriptor already on the board ("This board already runs X —\n'
+     '  installing keeps it, updated in place"); else the chip **plus the'),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     '  table; on a dev board without flash encryption every peers read fails, and'),
 ]
 
 

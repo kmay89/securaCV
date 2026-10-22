@@ -161,8 +161,10 @@ bool clear_opera_secret();
  *
  * Same flash-encryption gate as opera_secret: the pubkeys themselves
  * aren't secret, but the bond between this device and its set of
- * trusted peers IS sensitive metadata (an attacker who reads the
- * unencrypted partition learns the household graph). canary-wap's
+ * trusted peers IS household-graph metadata. The gate keeps it off a
+ * board without flash encryption only: on a board with FE on it is
+ * still plaintext NVS (FE does not cover NVS), so anyone who reads the
+ * flash learns the household graph either way. canary-wap's
  * opera_config persistence applies the same posture.
  * ────────────────────────────────────────────────────────────────────────── */
 
@@ -372,7 +374,8 @@ bool remove_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
  * NVS key "mesh_enabled", one byte (1 = on, 0 = off). NOT flash-
  * encryption gated: it is a user preference, not a secret and not
  * household-identifying, and gating it would make "off" silently revert
- * to "on" at every reboot of an FE-off dev board.
+ * to "on" at every reboot of a board without flash encryption, which is
+ * every released board today, a Phase 2 board included.
  *
  * load_mesh_enabled() returns true and writes *out only when the key is
  * present; false (with *out untouched) when absent, on a null pointer,

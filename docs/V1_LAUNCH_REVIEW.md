@@ -43,7 +43,8 @@ are **resolved**. This capstone does not re-litigate them.
    `opera_secret` is never persisted on a board without flash encryption (on an FE board it is,
    in NVS that flash encryption leaves plaintext) — the static half of issue
    **#610**. (Note: by design the live in-RAM session still runs for the current boot on an FE-off
-   dev board; whether activation should also refuse is an open #610 decision — see the bench
+   dev board *(amended 2026-10-22, #1843's sweep: every released board is FE-off, since no tier and
+   no kit phase turns flash encryption on)*; whether activation should also refuse is an open #610 decision — see the bench
    runbook Track C.)
 3. **Status corrections to the firmware picture** (verified against code, via PR #737 review):
    - Mesh **is wired** in the ACTIVE tree (`firmware/canary/src/main.cpp` inits

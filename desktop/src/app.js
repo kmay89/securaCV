@@ -3176,7 +3176,7 @@ function smartPick(catalog, opts = {}) {
     const cur = matchProjectToProduct(catalog, currentProject);
     if (cur && byChip.some((x) => x.id === cur.id)) {
       return { product: cur, kind: "current", shortlist: [cur],
-        why: `This board already runs ${cur.name} — installing keeps it, updated in place.` };
+        why: `This board already runs ${cur.name}, so it is preselected. An install starts its settings over (a new witness key, where it keeps one); an over-the-air update keeps them.` };
     }
   }
   const mb = flashBytes ? Math.round(flashBytes / (1024 * 1024)) : null;
@@ -5310,8 +5310,9 @@ function proveSpecFor(product) {
 
 // The read-only Bluetooth console runs on the AP-provisioned Canaries and the
 // WAP (the browser offers its check for exactly these). This window has no
-// Bluetooth of its own, so the check is a pointer — to the iPhone app, or to
-// the browser Lab in a Chromium browser — never a dead end.
+// Bluetooth of its own, so the check is a pointer to the browser Lab in a
+// Chromium browser (the iPhone app does not reach a WAP's console, ledger
+// A65), never a dead end.
 function bleCheckable(product) {
   return !!product && (product.role === "wap" || product.provisioning === "ap");
 }
@@ -5319,8 +5320,8 @@ const BLE_CHECK_NOTE =
   "A Canary keeps a read-only Bluetooth console alive even when Wi-Fi is down — " +
   "reading its live snapshot proves it’s on, healthy and reachable, and writes " +
   "nothing. This app’s window has no Bluetooth of its own, so the check runs in " +
-  "the SecuraCV iPhone app (on TestFlight by invite; App Store release pending), or in the " +
-  "browser Lab in Chrome or Edge on this computer.";
+  "the browser Lab in Chrome or Edge on this computer (the iPhone app does not " +
+  "read a WAP’s console today).";
 function openBleCheck() {
   const url = labUrl("flash.html");
   if (url) openExternal(url);
@@ -6309,7 +6310,8 @@ function showHatchCard(product) {
 
 // ── the Hatchery: name + birth certificate (shared spec with the web Lab) ────
 // The whimsical name is a display layer only — the device's functional id
-// stays the stable slug written during provisioning; here it just becomes the
+// stays the slug written during provisioning (kept across OTA updates and the
+// 10 s hold; an install in either flasher can change it); here it just becomes the
 // certificate's Ring ID. The same name parts, mottoes and copy come from the
 // embedded hatch.json the website also ships, so both surfaces hatch alike.
 let lastCert = null;

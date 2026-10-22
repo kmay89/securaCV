@@ -862,8 +862,9 @@ Rationale: `opera_secret` is the symmetric secret that gates pairing and
 opera_id derivation. On an unencrypted flash, a physical-access attacker
 can extract the secret with `esptool.py read_flash` and become a permanent
 opera member. The FE gate keeps the secret off every board without flash
-encryption, at the cost of refusing to work on dev boards without FE — which
-is the correct trade-off for a production safety system. It does not
+encryption, at the cost of persisting nothing on any released board: no tier
+turns flash encryption on today, a Phase 2 board included, so a household's
+pairing lasts only until the next reboot. It does not
 eliminate the attack on a board with flash encryption on: flash encryption
 does not cover NVS (ESP-IDF encrypts
 only the app, OTA-data and NVS-key partitions), so a stored `opera_secret`

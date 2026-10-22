@@ -499,8 +499,13 @@ Vision that already has Wi-Fi opens it for 60 seconds when you tap its BOOT
 button. A Canary whose saved Wi-Fi has merely *stopped working* (the router
 rebooted, you changed the password) does **not** open it — it raises its
 `SecuraCV-XXXX` recovery network instead, which needs the key printed for
-it. So a Canary on your network offers nothing to a stranger's phone, on a
-good day or a bad one.
+it. So the setup door offers nothing to a stranger's phone while a Canary
+stays on your network, on a good day or a bad one. Two caveats on a WAP: any
+device on your network can open its dashboard and send Forget Wi-Fi, which
+reopens the door for half an hour; and a device on your network that is also
+in Bluetooth range can bond a phone of its own to the WAP's other Bluetooth
+lane, which takes a new Wi-Fi network (the
+[security model](security/SECURITY_MODEL.md) has the details).
 
 The older paths stay as the fallback: the `SecuraCV-XXXX` setup network with
 its printed key, a display's glass QR (a display shows a QR instead of

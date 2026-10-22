@@ -340,7 +340,8 @@ are:
   mask-ROM property everything here leans on
 - [supply_chain_transparency.md](supply_chain_transparency.md) — the same
   posture applied to *our* binaries: signed provenance you can verify
-- [secure_provisioning.md](secure_provisioning.md) — Phase 2 lockdown, if you
-  want to close the door behind you
+- [secure_provisioning.md](secure_provisioning.md) — the Phase 2 lockdown's
+  staging, which as tooled turns on neither Secure Boot nor flash encryption
+  (read "After the flash" above before you burn anything)
 - `canary-local/assets/intake.js` — the decision logic
 - `canary-local/tests/intake.test.mjs` — the eFuse offsets, re-asserted

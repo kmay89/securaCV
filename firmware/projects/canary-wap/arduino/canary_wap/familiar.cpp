@@ -5,8 +5,11 @@
  *
  * This module never sees a MAC, a token, or a raw RSSI sample. rf_presence
  * computes a coarse 11-bit fingerprint from its aggregate state and passes
- * it in; we hash it into Bloom filters with a device-specific salt so a
- * flash dump alone cannot replay which fingerprints were recorded.
+ * it in; we hash it into Bloom filters with a device-specific salt, so one
+ * device's filter bits mean nothing on another's. The salt is no defense
+ * against a flash dump: it sits in plaintext NVS (fm_salt) beside the
+ * persisted filters (fm_yest, fm_ignore), so a dump can test all 2,048
+ * fingerprints against them (household_presence_and_posture.md §4.1).
  */
 
 #include "familiar.h"
@@ -74,8 +77,9 @@ static uint32_t s_total_always_ignored_matches = 0;
 // enough 11-bit indices to feed all the k hashes a filter needs.
 //
 // Why SHA? Tamper-resistant and salt-mixed; same ~30 µs regardless of k.
-// Why salt? Prevents flash-dump recovery of fingerprints across the 2048-
-// entry search space.
+// Why salt? Per-device hashing: a filter means nothing without its own
+// device's salt. It does not stop a flash dump, which holds the salt too
+// (plaintext NVS on every tier today).
 // ────────────────────────────────────────────────────────────────────────────
 
 // Generate k indices in [0, bit_width) from (fp, hash_index_base).

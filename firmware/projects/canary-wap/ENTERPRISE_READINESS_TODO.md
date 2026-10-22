@@ -140,10 +140,13 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
         any session passes, the landing page's included, and Forget Wi-Fi
         reopens the same first-come door (ledger F345, the open decision on
         that route; F346 for what a landing session reaches).
-  - [x] Credential reset path without the serial monitor: one BOOT tap
-        releases the provisioning receipt (`GET /api/provisioning-receipt`,
-        one tap = one fetch), which re-reveals the API token and the AP
-        password; the wizard's "Save your recovery kit" block walks it.
+  - [x] Credential reset path without the serial monitor: one BOOT tap,
+        pressed while the owner's page or the wizard's Save is already
+        asking, releases the provisioning receipt to that one asker
+        (`GET /api/provisioning-receipt`; a second address asking in the
+        window closes the tap, 409 `tap_contended`, sweep F342), which
+        re-reveals the API token and the AP password; the wizard's "Save
+        your recovery kit" block walks it.
 
 - [x] **Provisioning confirmation artifacts**
   - [x] Downloadable setup receipt — `/api/provisioning-receipt` (BOOT-tap gated),

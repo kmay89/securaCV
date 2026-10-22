@@ -485,7 +485,7 @@ for step in BOOT:
 READY_TAIL = [
     "    Commands: h=help i=id s=stat t=time g=gps c=cam m=sys r=data b=bat",
     "    Token + WiFi credentials are printed above on every boot",
-    "    Press BOOT (<2s)   = receipt gate open 30s; hold 2-3s = print identity",
+    "    Press BOOT (<2s)   = receipt to the one page already asking (30s); hold 2-3s = print identity",
     "    Hold BOOT 10s      = factory reset (Wi-Fi, broker, name; identity kept)",
 ]
 for line in READY_TAIL:
@@ -1172,7 +1172,7 @@ RESET_HOLD_MS = int(grab(ONBOARDING_FSM_H, r"factory_reset_hold_ms\s*=\s*(\d+);"
 # so a banner that drifts from the handler fails here rather than on the page.
 for want, label in ((f"Press BOOT (<{BOOT_HOLD_MS // 1000}s)", "the short press"),
                     (f"hold {BOOT_HOLD_MS // 1000}-{BOOT_LONG_MS // 1000}s = print identity", "the identity hold"),
-                    (f"receipt gate open {GATE_TTL_MS // 1000}s", "the gate's window"),
+                    (f"receipt to the one page already asking ({GATE_TTL_MS // 1000}s)", "the gate's window"),
                     (f"Hold BOOT {RESET_HOLD_MS // 1000}s      = factory reset", "the factory reset")):
     if not any(want in line for line in READY_TAIL):
         die(f"ready banner: {label} should read {want!r} (BOOT handler, onboarding_fsm.h) — "

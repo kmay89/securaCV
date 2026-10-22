@@ -535,7 +535,7 @@ export function witnessSummary(items) {
     tamper: get("tamper")?.value ?? null,    // firmware's own tamper flag
     logSeq: get("logseq")?.value ?? null,
     chainHeadFp: chain?.bytes ? hex(chain.bytes.subarray(0, 8)) : null,
-    provisioned: !!get("privkey"),           // identity key exists (never read)
+    provisioned: !!get("privkey"),           // identity key exists (presence only; its bytes are never shown)
     wifiConfigured: !!get("wifi_ssid"),      // presence only, never the value
   };
 }
@@ -776,7 +776,7 @@ export function settingsVerdict(diff, hadWifi) {
       : "The settings area is untouched." };
   }
   return { kept: false, text: hadWifi
-    ? "Your settings are reset — the saved WiFi is cleared, so the board comes up with its setup network again, like the first day."
+    ? "Your settings are reset — the saved WiFi is cleared and, where the board keeps a witness key, it makes a new one, so it comes up with its setup network again, like the first day."
     : "The settings area is reset to factory-fresh." };
 }
 
@@ -1388,8 +1388,8 @@ export function smartPick(catalog, opts = {}) {
     const cur = matchProjectToProduct(catalog, currentProject);
     if (cur && byChip.some((x) => x.id === cur.id)) {
       return { product: cur, kind: "current", shortlist: [cur],
-        why: `This board already runs ${cur.name} — installing keeps it, ` +
-             `updated in place.` };
+        why: `This board already runs ${cur.name}, so it is preselected. An install starts its ` +
+             `settings over (a new witness key, where it keeps one); an over-the-air update keeps them.` };
     }
   }
   // The size filter is productsForBoard's — the tested function IS the
@@ -1806,7 +1806,8 @@ export function formatFingerprint(hex, maxBytes = 8) {
 // blob of live device state — the same fields the SPA shows over WiFi, but on a
 // path that keeps working when WiFi is down. Contract + payload are pinned by
 // firmware/projects/canary-wap/arduino/canary_wap/ble_console.h (the iOS app's
-// BLEConsole.swift speaks the same UUIDs). Web Serial owns *flashing*; this is
+// BLEConsole.swift knows the same UUIDs, but never dials a WAP for them:
+// ledger A65). Web Serial owns *flashing*; this is
 // the after-the-fact "prove it's alive over the air" test — is Bluetooth on,
 // can the browser reach the board, and what is it reporting. Pure + host-tested
 // here; flash.js owns navigator.bluetooth and the GATT dance.

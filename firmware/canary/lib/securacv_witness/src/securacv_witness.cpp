@@ -614,10 +614,11 @@ static bool sd_append_record(const WitnessRecord* rec) {
 bool witness_recover_from_sd() {
 #if FEATURE_SD_STORAGE
   // The NVS cache persists only every SD_PERSIST_INTERVAL records, so
-  // after a power cut (or an NVS wipe/reflash while the card kept its
-  // history) the cached head can be BEHIND the last record actually
-  // signed — resuming from it would fork the supposedly append-only
-  // chain. SD wins when its tail is strictly ahead AND the tail record's
+  // after a power cut the cached head can be BEHIND the last record
+  // actually signed — resuming from it would fork the supposedly
+  // append-only chain. (An NVS wipe or a flasher install gives a new key,
+  // so the old card's tail does not verify below and the chain starts
+  // over at genesis.) SD wins when its tail is strictly ahead AND the tail record's
   // signature verifies under THIS device's public key: a foreign card
   // (another device's history) or a tampered tail must never move our
   // chain head. Call once, right after the SD card mounts and BEFORE the

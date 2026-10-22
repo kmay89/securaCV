@@ -10,10 +10,10 @@
  * ───────────────
  * - Android Chrome / Edge: native Web Bluetooth.
  * - Desktop Chrome / Edge: native Web Bluetooth.
- * - iOS: requires the Bluefy browser (App Store) — Safari and iOS Chrome
- *   deliberately omit Web Bluetooth from WebKit. Bluefy wraps WKWebView
- *   and exposes the same JS API; the user pairs the Canary in iOS
- *   Settings > Bluetooth first, then opens this page in Bluefy.
+ * - iOS: no supported path. Safari and iOS Chrome omit Web Bluetooth, and
+ *   whether a WKWebView wrapper such as Bluefy lists or bonds a WAP is
+ *   unverified (ledger A65), so the page does not send iPhone owners into
+ *   Bluetooth range: it points them at the dashboard instead.
  *
  * DEPLOYMENT PATHS (all serve the same characteristic surface)
  * ─────────────────────────────────────────────────────────────
@@ -723,8 +723,8 @@ footer a{color:var(--accent);text-decoration:none}
 </div>
 
 <footer>
-  iOS: install <a href="https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055" target="_blank" rel="noopener">Bluefy</a> for Web Bluetooth support.<br>
-  Android &amp; desktop Chrome work natively.
+  Bluetooth here needs Chrome or Edge on Android or a computer.<br>
+  On an iPhone, use this Canary's dashboard instead.
 </footer>
 
 <script>
@@ -756,7 +756,7 @@ const WizardLogic = (function () {
       return { show: true, text: 'Bluetooth features are off on this connection: Web Bluetooth needs HTTPS, and this page is served over plain http:// from the Canary itself. WiFi setup and the dashboard work fine without it.' };
     }
     if (!hasWebBluetooth) {
-      return { show: true, text: 'This browser has no Web Bluetooth. On iOS, install Bluefy from the App Store to use the Bluetooth console.' };
+      return { show: true, text: 'This browser has no Web Bluetooth: the Bluetooth console needs Chrome or Edge on Android or a computer. On an iPhone, use the dashboard instead.' };
     }
     return { show: false, text: '' };
   }
@@ -1841,8 +1841,10 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
   // 10 s before it onward, so the page must already be asking). 403 means
   // the gate is still closed (no press yet), so the page asks again; 409
   // means another device asked during the same press and the device gave
-  // out nothing; the old order (press first, then Save) is served on the
-  // first ask. The banner says to press only once the device has answered
+  // out nothing. The old order (press first, then Save) is served only if
+  // this page is the first asker after the press: a tap no page of the
+  // owner's was asking for goes to whichever address asks first, a poller
+  // included. The banner says to press only once the device has answered
   // an ask with 403 (sweep F342's fourth review): a press the first ask has not
   // reached yet is one no page of the owner's is asking for. A successful
   // fetch downloads the receipt JSON and issues the session cookie that the
@@ -3007,7 +3009,7 @@ async function connect(){
     return;
   }
   if(!navigator.bluetooth){
-    showErr('Web Bluetooth not supported by this browser. On iOS, install Bluefy.');
+    showErr('Web Bluetooth is not supported by this browser. Use Chrome or Edge on Android or a computer; on an iPhone, use the dashboard instead.');
     return;
   }
   try {
@@ -3219,13 +3221,14 @@ document.querySelectorAll('.tab-btn').forEach(b => {
 // Up-front capability check so the user sees the real blocker before
 // they tap Connect. Two distinct failure modes get distinct messages:
 // (1) insecure context → tell them to use HTTPS; (2) no Web Bluetooth
-// API → tell iOS users to install Bluefy.
+// API → name the browsers that have it and send an iPhone owner to the
+// dashboard (no iPhone path reaches a WAP's console, ledger A65).
 (function checkCapabilities(){
   const wizardMode = WizardLogic.isPairToken(
     new URLSearchParams(window.location.search).get('token'));
   if (wizardMode) {
     // The WiFi wizard neither needs Web Bluetooth nor should it show
-    // BLE-console chrome — hide the Bluefy footer along with the banner.
+    // BLE-console chrome — hide the browser footer along with the banner.
     const f = document.querySelector('footer');
     if (f) f.classList.add('hidden');
     return;

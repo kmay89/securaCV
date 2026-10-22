@@ -1171,7 +1171,9 @@ describe('Settings → Device → Recovery kit saves it again for a signed-in pa
 
 // secureFetch's sign-in line for a refusal, by what the page sent.
 const TOKEN_REFUSAL = 'Invalid or expired token. Please re-enter.';
-const NO_TOKEN_REFUSAL = 'Your session does not cover this, or has ended. Paste the API token, or use BOOT Tap Once.';
+// It names no token box: on a page a session signed in, that box takes the
+// cookie's word for any token, so a mistyped one looks accepted.
+const NO_TOKEN_REFUSAL = 'Your session does not cover this, or has ended. Use BOOT Tap Once.';
 const QR_401 = { status: 401, body: '{"error":"unauthorized","hint":"Include \'Authorization: Bearer cv_...\' header"}' };
 
 describe("secureFetch's sign-in names what the page sent (sweep F289's follow-up)", () => {
@@ -1431,7 +1433,7 @@ describe("the wizard's close-out saves through the same builder", () => {
     assert.equal(win.els['wiz-recovery-err'].classList.contains('show'), false, 'the banner is put away');
     assert.equal(win.els['wiz-recovery-save'].disabled, false);
   });
-  it('the old order still works: pressed first, the first ask is served', async () => {
+  it('a press made before Save is served to the first ask only when no other address asks first (the residual, not a supported order)', async () => {
     const { win, asked } = await wizardSave({ status: 200, body: RECEIPT });
     assert.equal(asked.length, 1);
     assert.equal(win.saved.length, 1);

@@ -705,8 +705,9 @@ static void on_pairing_succeeded(const uint8_t* secret, uint32_t code) {
   /* Joiner side: persist FIRST so a power cut between save and set
    * leaves the right NVS state on next boot. THEN set in-memory
    * UNCONDITIONALLY so the active session works even when persistence
-   * fails — typical on FE-disabled dev hardware where save refuses
-   * by design. Persistence failure should degrade reboot survivability
+   * fails — on every Canary today, since no released image or
+   * provisioning step turns flash encryption on and save refuses
+   * without it by design. Persistence failure should degrade reboot survivability
    * (user has to re-pair after reboot), not disable the current
    * session that just successfully paired. */
   const bool save_ok = mesh_state::save_opera_secret(secret);

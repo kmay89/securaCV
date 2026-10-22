@@ -116,7 +116,9 @@ you *raise slowly* beats chasing every new API.
 > for *reusing the Lab* on a tablet. But the living-with-it app wants three
 > things a WebView fights you on: **CoreBluetooth** (iOS Safari has no Web
 > Bluetooth — the device's own `/companion` PWA has to tell people to install
-> Bluefy; a native app erases that footnote), **Secure Enclave key custody**,
+> Bluefy; a native app could erase that footnote, but today it reaches only the
+> Bluetooth setup door and the beacons, not a WAP's console or bonded lane,
+> ledger A65), **Secure Enclave key custody**,
 > and **reliable background notifications**. Those are exactly the native
 > capabilities the `desktop-lab` `native_capabilities()` seam marks as "Phase
 > 2." This app *is* Phase 2.
@@ -462,7 +464,10 @@ never have to trust us not to do.
 3. **Live + verify.** SSE witness stream; Ed25519 chain verify on-device with
    CryptoKit (mirror `lib/witness-chain.js`); local notifications on Wi-Fi.
 4. **BLE.** CoreBluetooth against the GATT console (Service `8fc1cee0-…`,
-   Snapshot char `8fc1cee1-…`, bonded) + chirp/beacon scan — off-grid status.
+   Snapshot char `8fc1cee1-…`, bonded) + chirp/beacon scan — off-grid status
+   (as shipped, the console reaches no WAP: `BLEConsole` dials only a
+   peripheral advertising the console service, which a WAP does not, ledger
+   A65; the connectionless beacon and chirp scan are what work off-grid).
 5. **Keys.** On-phone unseal of `.svlt` (key unwrapped through the Secure
    Enclave); trustee approve/deny flow (see
    `docs/design/vault_operator_ux_v1_1.md`).

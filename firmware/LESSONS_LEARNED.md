@@ -1822,7 +1822,9 @@
 - **Regression check:** `tests_host/test_improv_core.cpp` — a session begun
   with credentials stays shut while the caller reports the portal up; a
   window that ran out does not reopen without a tap or a power cycle;
-  credentials vanishing at runtime (factory reset) re-arm the window,
+  credentials vanishing at runtime (factory reset) *(amended 2026-10-22,
+  #1843's sweep: on a WAP also Forget Wi-Fi, which any landing session can
+  send, F345, so the re-arm is not the owner's act alone)* re-arm the window,
   credentials appearing (the join persisted) shut the no-credentials door.
   `test_short_tap.cpp` pins what counts as a tap (≥40 ms, <700 ms; a hold
   is somebody else's gesture). Design: `docs/design/magic_pairing.md`.
@@ -1843,7 +1845,10 @@
   **Just Works** — the only pairing a phone with no prior bond can open in
   one tap — which is encrypted but *unauthenticated*: it resists a passive
   listener, not an active one who paired first. The bearer token lasts for
-  the life of the device. Nothing that lasts belongs on a link like that.
+  the life of the device *(amended 2026-10-22, #1843's sweep: until an install
+  or a full erase in a flasher; OTA updates, the 10 s hold and Forget Wi-Fi
+  keep it, and nothing rotates it)*. Nothing that lasts belongs on a link like
+  that.
 - **Root cause:** "the link is encrypted" was read as "the link is
   trusted". Encryption answers who can *read*; authentication answers who
   is *there*; a Just Works link has the first and not the second, and the

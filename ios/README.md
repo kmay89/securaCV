@@ -17,8 +17,8 @@ build of the design in [`docs/design/iphone_companion_app.md`](../docs/design/ip
 The desktop apps wrap the web Lab in a WebView, which is right for *reusing* the
 Lab. This app instead goes native because it needs things a WebView fights:
 **Dynamic Island / Live Activities**, **CoreBluetooth** (iOS Safari has no Web
-Bluetooth — the device's own PWA has to send people to Bluefy; native erases
-that), **HomeKit**, **Keychain** key custody, **AirPlay** + mic/speaker,
+Bluetooth; the app uses it for the fleet beacons and the setup door, and does
+not yet reach a WAP's console or bonded lane, ledger A65), **HomeKit**, **Keychain** key custody, **AirPlay** + mic/speaker,
 and reliable **background notifications**. These are the exact capabilities the
 `desktop-lab` `native_capabilities()` seam marks as "Phase 2." This is Phase 2.
 
@@ -132,9 +132,10 @@ Four rules keep "beautiful" from decaying into "busy":
   sentinel also watches each Canary's witness-chain head (`HeadWatch`,
   host-tested — first sight is a baseline, any movement including backwards
   is news): the moment a head moves, the full refresh runs NOW instead of
-  waiting out the 20-second cycle. Tamper heard over a BLE console NOTIFY
-  re-evaluates immediately — sub-second, the fastest transport the fleet
-  has. And the Test Alert now runs a stopwatch: the provably-alive card
+  waiting out the 20-second cycle. A console NOTIFY would re-evaluate tamper
+  at once, sub-second, but the app reaches no WAP's console today (ledger
+  A65), so tamper arrives by the chirp and the 5-second sentinel. And the
+  Test Alert now runs a stopwatch: the provably-alive card
   shows "posted and accepted in _n_ ms", a number it measured, never a vibe
   (non-negotiable #4).
 - **Find this Canary — hot/cold over its own beacon, and it answers back.**

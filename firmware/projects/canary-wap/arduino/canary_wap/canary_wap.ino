@@ -536,10 +536,14 @@ static const uint32_t BOOT_SHORT_PRESS_MS  = 50;
 static const uint32_t BOOT_LONG_PRESS_MS   = 3000;
 static_assert(BOOT_LONG_PRESS_MS == canary::io::ResetHold{}.warn_ms,
               "the 3 s diagnostic hold and ResetHold's Warn stage share one threshold");
-// Provisioning gate stays open for this long after a BOOT press, so a
-// browser tab that polls every 2 s reliably catches it and a captive
-// portal interstitial can't time the user out. The gate is still
-// single-use: the first successful receipt fetch closes it immediately.
+// The BOOT tap stays open this long for the one page already asking:
+// provisioning_gate.h tap_arbitrate() serves it only to the sole address
+// seen asking from TAP_LOOKBACK_MS before the tap onward (sweep F342), so
+// the owner's page asks first and says when to press. A second address
+// asking in that window closes the tap (409 tap_contended), and a tap no
+// page was asking for goes to the first asker after it. A served receipt
+// closes it at once. (BLE OTA break-glass is press-first and takes the
+// gate directly.)
 static const uint32_t PROVISIONING_GATE_TTL_MS = 30000;
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -975,9 +979,9 @@ static uint32_t g_claim_refusal_logged_ms = 0;
 // never shortens or extends the window. Written every ~2 s by the door
 // while its no-credentials window runs (ble_improv_note_window_used), read
 // once at the door's init (ble_improv_window_used_ms), zeroed by a
-// credential wipe (wifi_clear_credentials: the owner's own act re-arms the
-// window, as improv_core.h's session does in RAM). Loop task only after
-// setup().
+// credential wipe (wifi_clear_credentials: the 10 s hold, or Forget Wi-Fi,
+// which any landing session can send, ledger F345, re-arms the window, as
+// improv_core.h's session does in RAM). Loop task only after setup().
 RTC_NOINIT_ATTR uint32_t g_improv_window_magic;
 RTC_NOINIT_ATTR uint32_t g_improv_window_used_ms;
 static constexpr uint32_t IMPROV_WINDOW_MAGIC = 0x444F4F52;  // "DOOR"
@@ -2489,9 +2493,10 @@ static bool sd_append_witness_record(const WitnessRecord* rec) {
 
 // Recover the chain head from the SD log of record at boot / hot-mount.
 // The NVS cache persists only every SD_PERSIST_INTERVAL records, so after
-// a power cut (or an NVS wipe/reflash while the card kept its history) the
-// cached head can be BEHIND the last record actually signed — resuming
-// from it would fork the supposedly append-only chain. SD wins when its
+// a power cut the cached head can be BEHIND the last record actually signed
+// — resuming from it would fork the supposedly append-only chain. (An NVS
+// erase or a flasher install gives a new key, so the old card's tail does
+// not verify below and the chain starts over.) SD wins when its
 // tail is strictly ahead AND the tail record's signature verifies under
 // THIS device's public key: a foreign card (another device's history) or
 // a tampered tail must never move our chain head.
@@ -9458,11 +9463,13 @@ static esp_err_t handle_safe_mode_retry_auth(httpd_req_t* req) {
 
 // WiFi-management auth wrappers. These three endpoints mutate provisioning
 // state (disable WiFi, wipe NVS-stored credentials, re-enable) and are only
-// meaningful AFTER first-setup. The dashboard's secureFetch already sends
-// `Authorization: Bearer <api_token>` on all three, but the handlers
-// themselves were originally registered without an _auth wrapper, so a
-// LAN-local curl could hit /api/wifi/forget and force a re-provisioning
-// without authenticating. (/api/wifi and /api/wifi/scan stay
+// meaningful AFTER first-setup. The handlers were originally registered
+// without an _auth wrapper, so a LAN-local curl could hit /api/wifi/forget
+// with no credential at all. They now take api_auth_check(): the cookie or
+// the bearer, and the landing page mints that cookie for any host on the
+// network, so any LAN host can still forget the Wi-Fi, which reopens the
+// first-come setup door (ledger F345). That session is also the owner's
+// way out under the lockout (F343). (/api/wifi and /api/wifi/scan stay
 // unauthenticated by design — both are read-only and need to work during
 // captive-portal setup before any API token exists. /api/wifi/connect
 // gets its own pre-credential gate from pair_token_valid as of #434.)
@@ -10541,13 +10548,15 @@ register_extra_routes:
 
 #if FEATURE_MESH_NETWORK
   // Chirp Channel v0.2 — anonymous community witness mesh (audit C12).
-  // Every endpoint Bearer-token-gated via the chirp_api template trampoline.
+  // Every endpoint behind the chirp_api template trampoline, api_auth_check:
+  // the bearer or a landing session any host on the network can mint (F346).
   chirp_api::register_routes(active_server, g_device.api_token_str);
 #endif
 
 #if FEATURE_BEACON_CHANNEL
   // Beacon Channel — harm-reduction broadcast with two-pubkey co-signing.
-  // Bearer-gated from day one (see spec/beacon_channel_v0.md §10).
+  // Auth-gated from day one (see spec/beacon_channel_v0.md §10): api_auth_check,
+  // the bearer or a landing session any host on the network can mint (F346).
   beacon_api::register_routes(active_server, g_device.api_token_str);
 #endif
 
@@ -10780,8 +10789,9 @@ static bool wifi_clear_credentials() {
   g_improv_join_pending = false;   // a door join in flight has nothing left to prove
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
   g_wifi_status.last_fail_reason[0] = '\0';
-  // The owner's own act re-arms the Bluetooth setup door's first-boot
-  // window: improv_core.h's session does so in RAM the moment the door reads
+  // A credential wipe (the 10 s hold, or Forget Wi-Fi, which any landing
+  // session can send, ledger F345) re-arms the Bluetooth setup door's
+  // first-boot window: improv_core.h's session does so in RAM the moment the door reads
   // "no credentials" where it read credentials before (its wiped
   // transition), and the carried record must agree, or a software restart
   // right after a Forget would start the door on the spent time instead of
@@ -13167,7 +13177,7 @@ void setup() {
   boot_blank();
   boot_line("    Commands: h=help i=id s=stat t=time g=gps c=cam m=sys r=data b=bat");
   boot_line("    Token + WiFi credentials are printed above on every boot");
-  boot_line("    Press BOOT (<2s)   = receipt gate open 30s; hold 2-3s = print identity");
+  boot_line("    Press BOOT (<2s)   = receipt to the one page already asking (30s); hold 2-3s = print identity");
   boot_line("    Hold BOOT 10s      = factory reset (Wi-Fi, broker, name; identity kept)");
   boot_separator();
   Serial.println();
@@ -13781,7 +13791,7 @@ void loop() {
       // (ResetHold above); Forget Wi-Fi on the dashboard
       // (wifi_clear_credentials) stays the network-only reset, and still
       // re-arms the Bluetooth setup door's first-boot window.
-      Serial.println("[BOOT] Released before 10 s: nothing reset (hold 10 s for a factory reset; Forget Wi-Fi on the dashboard resets the network only)");
+      Serial.println("[BOOT] Released before 10 s: nothing reset (hold 10 s for a factory reset; Forget Wi-Fi on the dashboard clears only the saved Wi-Fi; on a unit that had Wi-Fi, either reopens the Bluetooth setup door for half an hour, to the first client that connects)");
     } else if (duration >= BOOT_BUTTON_HOLD_MS) {
       // Medium hold: print device info (existing behavior)
       if (g_device.initialized) {
@@ -13798,7 +13808,7 @@ void loop() {
       // open() stores a millis() of 0 as 1 (0 is "closed"), with a release
       // store.
       canary::net::provisioning_gate::open(g_provisioning_gate, millis());
-      Serial.printf("[AUTH] Provisioning gate OPENED (receipt available for %lu seconds)\n",
+      Serial.printf("[AUTH] Provisioning gate OPENED for %lu seconds: the receipt goes only to the one address already asking (ask first, then tap)\n",
                     (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000));
       log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning gate opened", "BOOT button");
       // Blink LED 3x to confirm. Skipped while an SD mount attempt is in

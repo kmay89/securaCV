@@ -331,8 +331,10 @@ void print_recovery_guide() {
   Serial.println("  2. On boot the device reconciles its cached chain head with the");
   Serial.println("     SD tail: the SD wins only if it is strictly ahead AND its");
   Serial.println("     signature verifies under this device's key (SD-wins recovery).");
-  Serial.println("  3. To recover a device that lost its NVS head, just re-seat the");
-  Serial.println("     SD and reboot; the chain head is rebuilt from the SD tail.");
+  Serial.println("  3. If the cached head fell behind the card (a power cut between");
+  Serial.println("     persists), re-seat the SD and reboot; the head is rebuilt from");
+  Serial.println("     the SD tail. After the 30 s wipe or an install in a flasher the");
+  Serial.println("     device has a new key: the old card is kept, not adopted.");
   Serial.println("  4. To verify off-device, browse the read-only drive (console 'v'");
   Serial.println("     exposes it) and run tools/verify_witness_log.py on records.jsonl.");
   Serial.println("  Full walkthrough: https://securacv.com/canary\n");

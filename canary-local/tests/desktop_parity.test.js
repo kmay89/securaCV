@@ -5179,14 +5179,20 @@ test("rule 7: the desktop offers the browser's Bluetooth 'is it on?' check — a
   // "use a Chromium browser" error.
   assert.match(flashJs, /mount\.append\(renderReassurance\(\{ nativeShell: true \}\)\)/);
   const reassure = fnSource(flashJs, "renderReassurance");
-  assert.match(reassure, /if \(nativeShell\) \{[\s\S]*?SecuraCV iPhone app[\s\S]*?\} else \{[\s\S]*?phaseBluetoothCheck/,
+  assert.match(reassure, /if \(nativeShell\) \{[\s\S]*?in Chrome or Edge on this computer[\s\S]*?\} else \{[\s\S]*?phaseBluetoothCheck/,
     "the Lab app's Bluetooth entry must point to where the check runs, and only the browser opens it in-page");
   for (const [label, src] of [["desktop app.js", appJs], ["desktop index.html", html], ["browser flash.js (Lab app)", reassure]]) {
     // String concatenations and line wraps folded, so a sentence split
     // across source lines still reads as one.
     const flat = src.replace(/"\s*\+\s*"/g, "").replace(/\s+/g, " ");
-    assert.ok(flat.includes("the SecuraCV iPhone app") && flat.includes("in Chrome or Edge on this computer"),
-      `${label} must name both places the Bluetooth check runs`);
+    assert.ok(flat.includes("the check runs in the browser Lab in Chrome or Edge on this computer"),
+      `${label} must name where the Bluetooth check runs`);
+    // The check reads a WAP's console, and the iPhone app dials only a
+    // peripheral that advertises the console service, which a WAP does not
+    // (ledger A65): naming the app as a place the check runs sends an iPhone
+    // owner into Bluetooth range for nothing.
+    assert.ok(!/runs in the SecuraCV iPhone app|runs in the iPhone app/.test(flat),
+      `${label} must not name the iPhone app as where the Bluetooth check runs`);
   }
 });
 

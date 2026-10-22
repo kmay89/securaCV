@@ -1204,8 +1204,9 @@ static void a_clean_next_tap_serves_and_a_retap_inside_the_lookback_does_not() {
 // (6b) The 409 ends when its cause ends: once the other address has been
 // quiet for the lookback, an ask inside the closed tap's 30 s is NO_TAP (the
 // page keeps asking) and the owner's next tap serves it. This is the flow the
-// pages' "wait 10 seconds, then click Use BOOT Tap Once again, and only then
-// short-tap BOOT" prescribes. Before, every ask was
+// pages' "wait 10 seconds, then click Use BOOT Tap Once again" prescribes,
+// with the press after the device has answered the new ask with 403 (the
+// line says when). Before, every ask was
 // CONTENDED until the closed tap's TTL had run, so a retry 10 to 30 s after
 // the tap stopped on its first answer, before the press.
 static void the_409_ends_when_the_other_address_goes_quiet() {

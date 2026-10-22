@@ -464,7 +464,8 @@ class MeshStatusWiring(unittest.TestCase):
                      "    return http_send_error(req, 500, \"encode_failed\");\n  }\n")
 
     def test_a_flash_encryption_gate_on_the_peers_route_fails(self) -> None:
-        # F199's review: the dev-board 500 F199 removed, back without a
+        # F199's review: the 500 every board without flash encryption (all
+        # of them today) answered, which F199 removed, back without a
         # mesh_state call.
         src = self.mutate(self.PEERS_VIEW,
                           "  if (!esp_flash_encryption_enabled()) return http_send_error(req, 500, "

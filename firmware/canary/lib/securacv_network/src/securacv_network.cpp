@@ -5819,8 +5819,9 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
   // The rows are the members the session holds, from the view the main
   // loop published (F161): what the device enforces, so they equal GET
   // /api/mesh's peers_total, and no NVS is read here (F199: the persisted
-  // pubkeys needed flash encryption, so a dev board answered 500
-  // load_failed, and an NVS write that failed left the two disagreeing
+  // pubkeys needed flash encryption, so every board without it answered 500
+  // load_failed, which is every released board, since no tier turns flash
+  // encryption on; and an NVS write that failed left the two disagreeing
   // until a reboot). Each member's row carries its alerts and, once heard
   // from its binding and while that binding is in the transport table, the
   // state, RSSI and arrival time of its last fully verified frame as that

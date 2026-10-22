@@ -180,7 +180,10 @@ Fork detection: divergent chains from same device are detectable
   connect; there is no fallback to plain to be talked into
 - Raw MACs are not "deleted after use" — they are hashed before storage
 - GPS is not "anonymized in post-processing" — it is coarsened at capture
-- Private keys are not "access-controlled" — there is no read interface
+- Private keys are not "access-controlled" — the firmware has no read
+  interface for them (a whole-flash read, over USB through the ROM download
+  mode or on a bench, still recovers the key: NVS is plaintext on every
+  tier, Principle 1's scope)
 - Telemetry is not "opt-out" — the code to send it does not exist
 
 Preference order: (1) Don't build it, (2) Build it so it can't leak,
@@ -706,7 +709,9 @@ To change any security-hardened default, a developer must:
 2. Every outbound path is one of the disclosed set in Principle 2, each
    named with its host test or its lack of one; `regression_check.sh`
    greps for a new client socket
-3. Ed25519 private key has no read/export interface of any kind
+3. The firmware offers no read or export path for the Ed25519 private key (a
+   full flash read over USB or on a bench still recovers it on every tier:
+   SECURITY_MODEL.md, "Physical extraction and the flash-encryption default")
 4. All cryptographic operations use vetted libraries (no custom crypto)
 5. All security-sensitive defaults are hardened where they are set:
    `firmware/canary/include/secure_defaults.h` maps each default to the
@@ -1432,8 +1437,9 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   - Wall-clock-anchored timestamps; origination refused when SNTP
     unsynced (audit C10, C15).
   - Per-pubkey rate-limit on incoming witnesses (audit C14).
-  - REST API (`/api/chirp/*`) Bearer-token-gated when wired into
-    `canary_wap.ino` (audit C12).
+  - REST API (`/api/chirp/*`) behind `api_auth_check()` when wired into
+    `canary_wap.ino` (audit C12): the bearer, or a landing session any host
+    on the network can mint (F346).
 - Templates only, no free text. No "suspicious person", no "unfamiliar
   vehicle", no individual descriptions. `TPL_AUTH_FEDERAL_PRESENCE` removed
   in v0.2 (audit C17).
@@ -1518,7 +1524,8 @@ firmware or UI source.
 ### Outstanding work (tracked)
 
 - Beacon channel runtime not wired into the `canary_wap` loop: the REST
-  routes are registered (behind `FEATURE_BEACON_CHANNEL`, Bearer-gated), but
+  routes are registered (behind `FEATURE_BEACON_CHANNEL` and
+  `api_auth_check()`, which a landing session passes), but
   nothing calls `beacon_channel::init()`, `set_enabled()`, `update()` or
   `dispatch_espnow_message()`, and the shared ESP-NOW receive path forwards
   to Chirp only. Wiring it needs an explicit user opt-in and a `COSIGN_REQ`

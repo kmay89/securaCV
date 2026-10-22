@@ -17,8 +17,9 @@
 // token at 429. The likeliest such host was the owner's own phone, still
 // polling a re-installed unit with its old token (an install or a full
 // erase in either flasher starts NVS over and gives it a new key, so a new
-// token and device_id; an OTA update and the 10 s BOOT reset leave the token
-// as it was). A Table keeps one Slot per source address instead, so a host's
+// token and device_id; an OTA update and a WAP's 10 s hold leave the token
+// as it was, while the all-rounder Canary's 10 s reset re-derives it from the
+// kept key, so a flasher-seeded token is gone). A Table keeps one Slot per source address instead, so a host's
 // wrong bearers hold only that host's address.
 //
 // The contract:

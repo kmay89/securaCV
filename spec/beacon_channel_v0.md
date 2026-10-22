@@ -536,7 +536,7 @@ BEACON_PAIR_CONFIRM    — awaiting user code confirmation
 
 ## 10. REST API
 
-All endpoints Bearer-token-gated identically to `/api/mesh/*` and `/api/bluetooth/*`. Hold-to-send actions also require the UI's hold timestamp.
+All endpoints take `api_auth_check()`, like `/api/mesh/*` and `/api/bluetooth/*`: a bearer, or the dashboard session cookie, which the landing page mints for any host on the network (F346). Hold-to-send actions also require the UI's hold timestamp.
 
 | Endpoint | Method | Purpose |
 |---|---|---|

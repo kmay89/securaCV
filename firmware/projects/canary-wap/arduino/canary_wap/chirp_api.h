@@ -799,7 +799,9 @@ static inline void register_api_handler(httpd_handle_t server, const char* uri,
   httpd_register_uri_handler(server, &route);
 }
 
-// Register all chirp API routes with the HTTP server, Bearer-gated.
+// Register all chirp API routes with the HTTP server, each behind
+// chirp_auth_gated (api_auth_check: the bearer, or a landing session any host
+// on the network can mint, ledger F346).
 // api_token: device's persistent api_token_str (must outlive the server).
 // nullptr keeps legacy open behavior for non-production callers; production
 // callers MUST supply a real token.

@@ -242,7 +242,9 @@ console** running — one GATT service, one snapshot characteristic (READ +
 NOTIFY) carrying a ≤220-byte UTF-8 JSON blob of live state — the same fields the
 SPA shows over WiFi, on the path that keeps working when WiFi is down
 ([`firmware/.../ble_console.h`](../firmware/projects/canary-wap/arduino/canary_wap/ble_console.h);
-the iOS app's `BLEConsole.swift` speaks the same UUIDs). The flasher's
+the iOS app's `BLEConsole.swift` knows the same UUIDs but never reaches a WAP's
+console: it dials only a peripheral advertising the console service, which a
+WAP does not, ledger A65). The flasher's
 **Bluetooth check** (reachable any time from the reassurance strip, and offered
 after flashing an AP/WAP board) answers three plain questions with **Web
 Bluetooth** — is Bluetooth on (`navigator.bluetooth.getAvailability()`), can this
@@ -394,8 +396,9 @@ evidence in plain words on the page:
 1. **What you asked for** — `?product=…` (arriving from /checkup or a doc
    link) wins outright: "Showing X — the firmware you picked."
 2. **What the board already runs** — the app descriptor read off the wire
-   names the product: "This board already runs X — installing keeps it,
-   updated in place."
+   names the product: "This board already runs X, so it is preselected. An
+   install starts its settings over (a new witness key, where it keeps one);
+   an over-the-air update keeps them."
 3. **What the silicon says** — the chip guard plus the *measured flash
    size* (catalog `flash_mb`, derived from the firmware's own board
    settings). An ESP32-S3 with 16 MB flash can only be the Waveshare panel

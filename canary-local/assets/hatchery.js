@@ -1,7 +1,8 @@
 // The Hatchery — the whimsical name + birth certificate a Canary earns when it
 // hatches (first successful flash). The name is WHIMSY ONLY: the device's
-// functional id stays its stable provisioned slug; this is a display/certificate
-// layer, the same one the native app mints.
+// functional id stays its provisioned slug (kept across OTA updates and the
+// 10 s hold; an install in either flasher can change it); this is a
+// display/certificate layer, the same one the native app mints.
 //
 // Both the browser Lab and the native app draw from ONE committed spec
 // (canary-local/devices/hatch.json — the native app embeds the very same file at

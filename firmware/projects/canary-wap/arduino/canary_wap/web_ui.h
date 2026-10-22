@@ -875,7 +875,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <div class="form-group">
         <label class="form-label">API Token</label>
         <input type="text" class="form-input" id="tokenInput" placeholder="cv_..." autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" style="font-family:var(--mono);letter-spacing:0.02em;">
-        <p style="font-size:0.7rem;color:var(--muted);margin-top:0.3rem;">Paste the token from the device receipt or Serial output. It starts with <code>cv_</code>. Type it exactly as shown.</p>
+        <p style="font-size:0.7rem;color:var(--muted);margin-top:0.3rem;">From your recovery kit or the USB console. A signed-in page can't check it: use /settings in a browser with no session.</p>
       </div>
       <button class="btn btn-primary" style="width:100%" onclick="connectWithToken()">Connect</button>
       <div class="auth-divider">or</div>
@@ -2859,7 +2859,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           apiToken = null;
           showAuthModal(sentToken
             ? 'Invalid or expired token. Please re-enter.'
-            : 'Your session does not cover this, or has ended. Paste the API token, or use BOOT Tap Once.');
+            : 'Your session does not cover this, or has ended. Use BOOT Tap Once.');
           throw new Error('auth_required');
         }
         if (resp.status === 429) {
@@ -3047,7 +3047,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       s.className = 'auth-status info';
       // Polling budget: 30 ticks × 2 s = 60 s. The device's gate TTL
       // (advertised in the 403 body's gate_ttl_seconds) is much shorter
-      // than this budget, so a press anywhere in the 60 s window lands.
+      // than this budget; a press lands while the page alone asks.
       // The poll starts at the click, before the tap: the device hands a
       // tap only to the one address that asked from 10 s before it onward
       // (sweep F342), so this page is on record when the press lands. The

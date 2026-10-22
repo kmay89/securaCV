@@ -176,10 +176,11 @@ final class FleetStore: ObservableObject {
             self?.considerBackgroundDoorSighting(heard)
         }
 
-        // Tamper heard over a BLE NOTIFY is the fastest signal the fleet
-        // has — sub-second, no polling anywhere in the path. Re-fold and
-        // re-evaluate NOW; waiting out the 20-second cycle would squander
-        // the one transport that pushes.
+        // A console's tamper NOTIFY would be the fastest signal (sub-second,
+        // no polling in the path), but no WAP's console connects today: the
+        // app dials only a peripheral advertising the console service, which
+        // a WAP does not (ledger A65). Kept wired, so the path re-folds and
+        // re-evaluates at once when a console does connect.
         ble.onUrgentSnapshot = { [weak self] _ in
             Task { await self?.refreshOnce() }
         }
@@ -638,7 +639,9 @@ final class FleetStore: ObservableObject {
             }
         }
 
-        // ── Tier 1a: the WAP-class GATT console snapshot ──
+        // ── Tier 1a: a GATT console snapshot (none for a WAP today: the app
+        // dials only a peripheral advertising the console service, which a
+        // WAP does not, ledger A65) ──
         for (id, snap) in ble.snapshotsByDevice where !next.contains(where: { $0.id == id }) {
             var w = Witness(id: id)
             w.seenViaBLE = true

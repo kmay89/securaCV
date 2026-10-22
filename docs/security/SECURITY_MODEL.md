@@ -936,9 +936,11 @@ for a verifier to find, and keeping the device out of reach. Read that
 design note before you burn a fuse — that decision cannot be walked back,
 and today it does not buy key secrecy.
 
-**If your threat model is an intruder, a landlord, or a domestic abuser
-who does not take the device to a lab**, the default is the right one for
-you, and the tamper-evidence properties are unaffected.
+**If your threat model is an intruder, a landlord, or a domestic abuser**,
+the default is still the right one for you (no tier protects the key today),
+and the tamper-evidence properties are unaffected. But anyone who can take
+the device, even for a few minutes with a laptop and a USB cable, can read
+its key, so keep it out of their reach.
 
 ---
 

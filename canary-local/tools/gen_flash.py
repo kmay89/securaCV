@@ -657,15 +657,14 @@ PROVISIONING = {
     # cv-… one its boot banner prints; "nothing to type" was false.
     "ap": "When it boots it raises a WiFi network of its own (SecuraCV-XXXX) with a "
           "key it prints on its serial console at boot — join it and a setup page "
-          "opens automatically. No secrets ever touch the browser.",
+          "opens automatically.",
     # The WAP: the same setup network, plus the Bluetooth setup door (Improv
     # Wi-Fi, FULL profile — every shipped WAP image) the iPhone app walks
     # through. Lead with the door; the network stays as the fallback.
     "ap-door": "Power it on near the SecuraCV iPhone app and tap the card that appears — "
                "it hands over your WiFi in one tap. No iPhone? It also raises a WiFi "
                "network of its own (SecuraCV-XXXX) with a key it prints on its serial "
-               "console at boot — join it and a setup page opens automatically. No "
-               "secrets ever touch the browser.",
+               "console at boot — join it and a setup page opens automatically.",
     "usb-secrets": "Fill in WiFi during the install and it’s written straight into the "
                    "chip’s settings region — the signed generic release then joins YOUR "
                    "network on first boot, no custom build needed. (Leave it empty and "

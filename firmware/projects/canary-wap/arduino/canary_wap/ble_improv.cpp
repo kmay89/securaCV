@@ -613,8 +613,9 @@ void follow_door() {
   if (bluetooth_channel::set_setup_door(open)) {
     s_door_applied = open;
     if (open) {
-      // A door that reopens (a factory reset re-armed the window) is a new
-      // provisioning: a claim from the last one is void.
+      // A door that reopens (the credentials were wiped at runtime, by
+      // Forget Wi-Fi or by the 10 s hold before its restart, re-arming the
+      // window) is a new provisioning: a claim from the last one is void.
       disarm_claim(true);
     } else if (s_session.state != State::Provisioned) {
       // Shut for any reason but the join that minted the claim (the window

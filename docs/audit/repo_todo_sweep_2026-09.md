@@ -11924,7 +11924,9 @@ so — see D2 below.)
   list can disagree with `GET /api/mesh`'s `peers_total`.** The rows are the
   persisted pubkeys (`mesh_state::load_trusted_peers`, flash-encryption
   gated), while `peers_total` and `peers_online` count the session's trusted
-  table; on a dev board without flash encryption every peers read fails, and
+  table; on a dev board *(amended 2026-10-22, #1843's sweep: on every
+  released board, since no tier turns flash encryption on)* without flash
+  encryption every peers read fails, and
   after an NVS save or removal that failed the two disagree until a reboot.
   F161 kept the NVS membership so the response would not change; the published
   view holds every member the session trusts, so the rows could come from it.

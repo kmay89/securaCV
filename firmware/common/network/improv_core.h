@@ -359,7 +359,9 @@ struct Timing {
   /// the setup portal's own wizard timeout, so both doors agree.
   uint32_t provisioning_timeout_ms = 30000;
   /// A device with no stored credentials opens the door for this long after
-  /// power-on (and again after a factory reset wipes them at runtime).
+  /// power-on (and again when they vanish at runtime: a WAP's Forget Wi-Fi,
+  /// or the 10 s hold before the restart its release brings, after which the
+  /// window runs from that boot).
   /// 0 = never on its own: tap-only.
   uint32_t first_boot_window_ms = 30u * 60u * 1000u;
   /// Two accepted WIFI_SETTINGS writes are at least this far apart; a
@@ -471,8 +473,10 @@ inline uint32_t session_window_used_ms(const Session& s, uint32_t now_ms, const 
 /// The glue's word on credentials, every pass. Credentials appearing (the
 /// join persisted them) shuts the NoCredentials door; the state stays
 /// Provisioned or Provisioning for the phone to read. Credentials vanishing
-/// at runtime (a factory reset) re-arms the window from now — that is the
-/// owner's own act. A recovery portal is NOT "no credentials": the caller
+/// at runtime (the 10 s hold before its restart, or a WAP's Forget Wi-Fi,
+/// which any landing session can send, ledger F345) re-arms the window from
+/// now, and the door goes to whichever client connects first: not proof of
+/// the owner. A recovery portal is NOT "no credentials": the caller
 /// must pass the stored-credentials fact, never the portal's.
 inline void session_set_no_credentials(Session& s, bool no_credentials, uint32_t now_ms,
                                        const Timing& t = Timing{}) {

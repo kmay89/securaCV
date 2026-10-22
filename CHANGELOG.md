@@ -8700,7 +8700,9 @@ someone went looking.
   New pure selection ladder `smartPick` (`flash-core.js`, 13 tests in
   `tests/flash_select.test.js`): a `?product=` ask wins outright; else the
   app descriptor already on the board ("This board already runs X —
-  installing keeps it, updated in place"); else the chip **plus the
+  installing keeps it, updated in place" *(amended 2026-10-22, #1843's sweep:
+  an install starts the settings over under a new key, and the card now says
+  so)*); else the chip **plus the
   measured flash size** — an ESP32-S3 with 16 MB flash can only be the
   Waveshare panel module, with 8 MB it's the XIAO class — with the evidence
   stated on the page; else the authored per-chip default. Where size

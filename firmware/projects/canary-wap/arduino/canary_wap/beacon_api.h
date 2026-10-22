@@ -3,11 +3,12 @@
  *
  * HTTP handlers for the harm-reduction Beacon channel.
  *
- * Bearer-gated from day one (see spec/beacon_channel_v0.md §10 and
+ * Auth-gated from day one (see spec/beacon_channel_v0.md §10 and
  * docs/audit/mesh_and_chirp_audit_v1.md C12 closure for Chirp). Every route
- * is wrapped in the bcn_auth_gated trampoline; an Authorization: Bearer
- * <api_token> header is required for any successful response. Mirrors the
- * pattern established in bluetooth_api.h (#437) and household_api.h (#438).
+ * is wrapped in the bcn_auth_gated trampoline, which runs api_auth_check:
+ * the bearer, or a landing-page session any host on the network can mint
+ * (ledger F346), gets a successful response. Mirrors the pattern
+ * established in bluetooth_api.h (#437) and household_api.h (#438).
  *
  * The handlers themselves are thin JSON wrappers around beacon_channel::*
  * public functions. The cryptographic origination, NFPA-72 state machine,
@@ -548,7 +549,7 @@ inline esp_err_t handle_active(httpd_req_t* req) {
   return send_json(req, buf);
 }
 
-// GET /api/beacon/audit — paged audit log (Bearer-gated).
+// GET /api/beacon/audit — paged audit log (behind bcn_auth_gated).
 //
 // Pagination query params:
 //   ?offset=N  (default 0)  — oldest-first index into the audit log

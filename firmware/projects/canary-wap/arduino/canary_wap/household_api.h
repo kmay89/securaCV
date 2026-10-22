@@ -13,11 +13,15 @@
  *
  * AUTH MODEL
  * ──────────
- * All endpoints require bearer-token auth via api_auth_check (same as the
- * rest of the API). Mutations (POST role, override) are scoped to slots
- * that are ALREADY in the household store — the API can't create new
- * paired devices, only adjust roles on devices that completed the BLE
- * pairing ceremony. Default role for any new pairing is ROLE_GUEST.
+ * Every endpoint passes api_auth_check (same as the rest of the API),
+ * which takes the bearer or a dashboard session cookie, and the landing
+ * page mints that cookie for any host on the network (ledger F346).
+ * Mutations (POST role, override) are scoped to slots that are ALREADY in
+ * the household store — the API can't create new paired devices, only
+ * adjust roles on devices that completed the BLE pairing ceremony, which a
+ * host on the network that is also in radio range can complete for a peer
+ * of its own (SECURITY_MODEL.md's lockout paragraph). Default role for any
+ * new pairing is ROLE_GUEST.
  */
 
 #ifndef SECURACV_HOUSEHOLD_API_H
