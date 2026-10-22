@@ -296,7 +296,7 @@
   the round-4 check, RED now), their controls of the spelling the fourth
   repair already caught (RED both ways), and `--prefix` (GREEN both ways: gcc
   does not honor it as an injecting flag, so it is correctly not refused).
-  The tree passes with its 83 registrations in about 14 s. A static text
+  The tree passes with its 83 registrations in about 17 s. A static text
   check: names are matched by spelling (the network manager's are the
   exception: a reference to it under another name fails, however declared),
   values are not checked but `SETUP_TIMEOUT_MS`'s and a shadow under the tree

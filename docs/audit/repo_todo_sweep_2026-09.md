@@ -1934,11 +1934,12 @@ so — see D2 below.)
   rule, which replaces the old `auth_get_token` loop (rule 5 keeps its
   emitter-behind-the-Host half). A function defined twice (an `#if` body
   and its `#else` one) is every one of its bodies, whatever its head, in
-  this rule, the route-gate rule and the Host-first rule. 260 planted
-  fixtures (235 source edits, 25 table edits), with the self-test's lexer,
-  flag-file, build-input, reach, header, file-kind, route-form and
-  raw-literal cases, each fail for their named reason before the tree is
-  read; the tree passes with its 83 registrations, in about 14 s. The `/*`
+  this rule, the route-gate rule and the Host-first rule. 267 planted
+  fixtures (242 source edits, 25 table edits), with the self-test's lexer,
+  flag-file, build-input, reach, header, file-kind, route-form,
+  symbol-binding and raw-literal cases, each fail for their named reason
+  before the tree is read; the tree passes with its 83 registrations, in
+  about 17 s. The `/*`
   allowlist reasons now say what the
   port-80 redirect does (a probe path gets the probe's plain answer or the
   TLS hint, else 307, or 500 on an oversize target).
