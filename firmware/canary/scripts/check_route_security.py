@@ -12,6 +12,20 @@ string-aware brace matcher, same allowlist-cannot-rot rule), and it closes
 the standing ESP32S3_OPTIMIZATION_ROADMAP.md §3.8 P2 sweep "no new handler
 is added without auth_gate".
 
+Threat model, fixed and narrow. In scope: a careless or mistaken firmware
+edit (a refactor, a new route, a new feature, a moved line, a widened
+helper, a new file) that would ship a credential on a public route, ungate
+a route, open the SoftAP or open the BOOT tap without a press. Out of scope:
+a deliberate attempt to evade this checker (preprocessor tricks aimed at
+it, token pasting, symbol aliasing, inline assembly, injected build flags),
+and a committer who edits the checker itself, which could `return 0`. The
+rules below that refuse those classes (the paste, symbol-binding and
+build-input rules, and the macro rule's C++-keyword clause) are defense in
+depth over the spellings they name, not a claim that every spelling is held:
+gcc's long aliases (`--prefix`, which the driver rewrites to `-B`,
+`--for-linker`, `--for-assembler`, `--define-macro`), a letter-led glued
+`-B<dir>`, and the `-L`/`-l` library options pass them.
+
 The canary registers every route in ONE place,
 lib/securacv_network/src/securacv_network.cpp's registerHttpHandlers(),
 as `httpd_uri_t x = {...}; register_route(...)`. The captive-portal probes
@@ -23,7 +37,11 @@ Beyond "every route reaches a gate", six wiring rules the marker scan alone
 cannot see (each added after a review mutation, or a review finding, passed
 every other gate), and the premise the last one stands on:
 
-  * a gate marker counts only where its RESULT decides something — inside an
+  * a gate marker counts only as a whole name, as the census spells its rows
+    (a helper whose name ends in one, `lan_auth_gate(req)` or
+    `setup_auth_gate(req)`, is no gate, so the route it guards fails as
+    ungated rather than passing a gate the census never sees), and only
+    where its RESULT decides something — inside an
     `if (...)` / `while (...)` / `switch (...)` condition or a `return`
     expression, or initializing a `const` local that one of those later
     reads. A bare `auth_gate(req);`, `(void)bearer_present_and_valid(req);`
@@ -107,23 +125,26 @@ every other gate), and the premise the last one stands on:
     provisioning_gate.h's two Host-first decisions): no credential's
     spelling, no pinned, census, accessor, emitter or comparer name, and no
     census row's spelling (WiFi.softAP, the radio's mode, the driver's
-    config, the AP class, the tap's open), so a function there that reads a
-    credential, opens the tap, starts the network or raises the SoftAP open,
-    called from under ROOTS, fails. A build input the check cannot read fails
-    too: an #include through a macro, a file the build compiles that is not C
+    config, the AP class, the tap's open, another HTTP server), so a
+    function there that reads a credential, opens the tap, starts the
+    network or raises the SoftAP open, called from under ROOTS, fails. A
+    build input the check cannot read fails too: an #include through a
+    macro, a file the build compiles that is not C
     or C++, a build_src_filter entry that matches nothing, a file of this
     repository outside ROOTS and the include roots that the flagship
-    #includes or compiles, and in the flag files a linker option
-    (`-Wl,--wrap=<symbol>` sends every call of a function to a name no rule
-    reads), a forced include (`-include`/`--include`/`-imacros`/`--imacros`,
-    in every spelling the driver honors), an include or sysroot path the
-    reach does not read (`-isystem`, `-iquote`, `-idirafter`, `-iprefix`,
-    `--sysroot`; only `-I` is read), a compiler-driver injector (`-specs`,
-    `-fplugin`, `-wrapper`, `-B<prefix>`, `-Xpreprocessor`/`-Wp,`,
-    `-Xassembler`/`-Wa,`), a response file (`@file`), a build script, a local
-    library, a moved source folder or PlatformIO's `!command` dynamic value
-    (a command run at build time whose stdout becomes flags)
-    (build_input_problems).
+    #includes or compiles, and in the flag files the build inputs
+    _BUILD_INPUT spells (build_input_problems; defense in depth, see the
+    threat model): a linker option through `-Wl,`, `-Xlinker`, `--wrap`,
+    `--defsym` or `-T` (`-Wl,--wrap=<symbol>` sends every call of a function
+    to a name no rule reads), a forced include (`-include`/`--include`/
+    `-imacros`/`--imacros`, in the space, glued and `=` forms), an include or
+    sysroot path the reach does not read (`-isystem`, `-iquote`,
+    `-idirafter`, `-iprefix`, `--sysroot`; only `-I` is read), a
+    compiler-driver injector (`-specs`, `-fplugin`, `-wrapper`, `-B` before a
+    path, `-Xpreprocessor`/`-Wp,`, `-Xassembler`/`-Wa,`), a response file
+    (`@file`), a build script, a local library, a moved source folder or
+    PlatformIO's `!command` dynamic value (a command run at build time whose
+    stdout becomes flags).
     Every reader is named: an accessor in its home (SECRET_ACCESSORS), an
     emitter in its home carrying exactly what TOKEN_EMITTERS says, its
     reading statements pinned (EMITTER_STATEMENTS), a comparer reading only
@@ -148,8 +169,10 @@ every other gate), and the premise the last one stands on:
     Every call of a mint follows, in its function and at its own level, the
     statement that establishes the key it reads (MINT_AFTER: setup()'s
     witness_provision_device() refusal, witness_provision_device()'s
-    establish_identity_key()); the key is all zeros before, and neither
-    deriver refuses a zero key.
+    establish_identity_key()), with nothing before that statement in its
+    function able to leave (outside a lambda): the key is all zeros before,
+    neither deriver refuses a zero key, and an early `return true;` in
+    witness_provision_device() would hand setup() a success over that key.
     Every registered handler that carries one is a SECRET_ANSWERS row with
     exactly what it carries and its grant: 'bearer' (`if (!auth_gate(req))
     return ESP_OK;` at its own top level, before every answer site),
@@ -201,9 +224,12 @@ every other gate), and the premise the last one stands on:
     with its refusal; every WiFi.softAP() is begin()'s or raiseAp()'s
     statement, with its key, and the radio's mode (WiFi.mode, enableAP,
     softAPConfig, WiFiGenericClass::mode, esp_wifi_set_mode, any of which
-    brings the SoftAP up on the open config dropAp() leaves) is set only by
-    begin(), dropAp() and
-    raiseAp(), each statement where it sits; begin() is started once, by
+    brings the SoftAP up on the open config dropAp() leaves, and
+    softAPdisconnect and softAPbandwidth, which leave it up or raise it on
+    such a config) is set only by begin(), dropAp() and raiseAp(), each
+    statement where it sits (dropAp's softAPdisconnect with its `true`), and
+    each raise is followed by the softAP() that keys it with nothing able to
+    leave between them (outside a lambda); begin() is started once, by
     setup() with g_ap_password (network_init, which hands it on, is called
     by nothing; the manager's instance is named only by its accessor, the
     accessor only in a binding named net or network or with a member after
@@ -215,12 +241,16 @@ every other gate), and the premise the last one stands on:
     by apply_ap_security (the SoftAP's) and ensure_sta_pmf_capable (the
     STA's), each its statement where it sits, and Arduino-ESP32 3.x's AP
     class is not named; the BOOT tap is opened only by handle_boot_button's
-    short press, where it sits, and g_prov_gate is named only by the two
-    hooks and that handler (the peek hook's copy, s_gate_is_open, only by
-    the hook setter and /api/status), its declaration holding its initial
-    value; the setup state (s_active, s_first_boot, s_started_ms) and the
-    stored flag first boot is read from (NVS_KEY_SETUP_OK) are named only
-    by the setup lib's pinned functions, the credentials reset that also
+    short press, where it sits, g_prov_gate is named only by the two hooks
+    and that handler (the peek hook's copy, s_gate_is_open, only by the hook
+    setter and /api/status), its declaration holding its initial value, and
+    that handler, whose sweep expires a tap nobody took, runs on every pass
+    of loop(), its call there the bare statement at loop()'s own level; no
+    HTTP server but esp_http_server's is named (Arduino's WebServer,
+    AsyncWebServer, HTTPUpdateServer, ArduinoOTA: routes or a firmware push
+    no rule reads); the setup state (s_active, s_first_boot, s_started_ms)
+    and the stored flag first boot is read from (NVS_KEY_SETUP_OK) are named
+    only by the setup lib's pinned functions, the credentials reset that also
     clears that flag (factory_reset) runs only from the BOOT hold's dispatch
     and that only from the boot-time hold and handle_boot_button, and the
     setup timeout runs from loop() while setup is active; the TLS flag and
@@ -250,7 +280,9 @@ every other gate), and the premise the last one stands on:
     `CV_JOIN(auth_get_, token)()` calls the token's accessor, or
     `JOIN(auth_handed_, token)(...)` clears a lockout, under no spelling a rule
     reads (a `#` stringize makes a string, never a call, and is not refused).
-    Nothing there binds a name to a symbol (symbol_binding_problems), the
+    Nothing there binds a name to a symbol in the spellings
+    symbol_binding_problems names (defense in depth, as the paste rule is:
+    see the threat model), the
     class the empty compiler barrier aside: no asm (`__asm__("_Z14auth_get_tokenv")`
     a label, an asm call) but `asm volatile("" ::: "memory")`, no weakref,
     alias, ifunc or symver attribute and no __REDIRECT macro
@@ -301,8 +333,9 @@ code is otherwise not followed, and a held name that is also an ordinary
 word there (INCLUDE_COMMON_WORDS: begin, check, s_active and the like) is
 not read in them; the linker is not read (a library the build links, the
 registry ones lib_deps names and the core, is outside the check, and a flag
-that would bind a symbol fails instead); a value is not checked, only its
-spelling, but SETUP_TIMEOUT_MS's (a `memset` of the private key just before
+that would bind a symbol fails instead, in the spellings _BUILD_INPUT names:
+`-L`/`-l` and the driver's long aliases are not among them); a value is not
+checked, only its spelling, but SETUP_TIMEOUT_MS's (a `memset` of the private key just before
 a mint passes, and both credentials would become HMACs of a zero key over
 public inputs; the values
 include/canary_config.h and the shared headers define,
@@ -318,10 +351,13 @@ ScvNetworkManager::begin), which errs toward failing; the private key is not
 carried (it is read across the tree to sign and derive): only a handler's
 own body naming it fails, not a helper that answers it; a statement before
 a gated route's refusal that does the route's work itself, without leaving,
-is not seen; an early `return` before a mint is not refused (the rest of its
-function goes with it, setup()'s start of the network among it), though a
-goto before one is; macros are read only as `#define` lines and `-D` flags
-(a PlatformIO extra_script, which could add one, fails the flag rule); of
+is not seen; an early `return` between a mint's MINT_AFTER statement and the
+mint is not refused (the rest of its function goes with it: setup()'s start
+of the network, or, in witness_provision_device(), the token's mint, which
+leaves the bearer empty, so auth_gate refuses every gated route as
+unprovisioned), though a goto before a mint is, and so is any way out before
+its MINT_AFTER statement; macros are read only as `#define` lines and `-D`
+flags (a PlatformIO extra_script, which could add one, fails the flag rule); of
 the members the pinned glue calls, the hint's isTlsEnabled and
 getHttpsServer are pinned and the AuthManager's are glue, but getStatus
 (which picks the setup page or Apple's success body, not the token, and
@@ -372,8 +408,11 @@ SOURCE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".c++", ".h", ".hh", ".hpp", ".h
                    ".inc", ".inl", ".ipp", ".tpp", ".ino")
 NON_SOURCE_NAMES = ("library.json", "library.properties")
 
-# Substrings whose presence in a handler body counts as a credential gate.
-# Each is a real call that enforces access:
+# The calls whose presence in a handler body counts as a credential gate, each
+# matched as a whole name (marker_at), as the census spells its rows: a helper
+# whose name ends in one (`lan_auth_gate(`) is not that gate, and the census,
+# which would never see the helper, cannot then be bypassed by it. Each is a
+# real call that enforces access:
 AUTH_MARKERS = (
     "auth_gate(",               # bearer, fail-closed 503 when unprovisioned
     "auth_check(",              # AuthManager bearer check (401/403/429), per source address
@@ -940,6 +979,19 @@ def _says_yes(blanked: str, marker: str, i: int) -> bool:
     return close >= 0 and yes.match(blanked, close + 1) is not None
 
 
+@functools.lru_cache(maxsize=None)
+def _marker_rx(marker: str):
+    return re.compile(r"(?<![\w$])" + re.escape(marker))
+
+
+def marker_at(text: str, marker: str, start: int = 0) -> int:
+    """Offset of the first `marker` in `text` from `start` that is a whole
+    name (no identifier character before it), or -1: `auth_gate(` is not the
+    tail of `lan_auth_gate(`."""
+    m = _marker_rx(marker).search(text, start)
+    return m.start() if m else -1
+
+
 def first_deciding_marker(body: str, marker: str) -> int:
     """Offset of the first occurrence of `marker` whose result decides
     something, or -1. It decides when the statement's text before it (back
@@ -949,11 +1001,12 @@ def first_deciding_marker(body: str, marker: str) -> int:
     reads. A bare call, a `(void)` cast, a non-const or unread local, and a
     `return` inside a lambda body (the lambda deciding, not the function)
     discard the answer and do not count, and neither does a marker whose
-    answer is not a yes or no outside the comparison _MARKER_YES names."""
+    answer is not a yes or no outside the comparison _MARKER_YES names, or
+    one that is the tail of a longer name (marker_at)."""
     blanked = blank_string_contents(body)
     start = 0
     while True:
-        i = blanked.find(marker, start)
+        i = marker_at(blanked, marker, start)
         if i < 0:
             return -1
         start = i + 1
@@ -1850,6 +1903,11 @@ GLUE_DEFS = {
 #             function can leave (a `return`, `goto`, `throw`, `co_return`, or
 #             an ESP_RETURN_* / ESP_GOTO_* macro, _LEAVE) but a
 #             RATE_LIMIT_REFUSAL;
+#   keyed   — {caller: (raise statement, keying row)}: in that caller, the
+#             raise statement (folded where it sits) is followed by the keying
+#             row's `whole` statement for it, with nothing able to leave
+#             between them (_LEAVE, outside a lambda): a mode raise and the
+#             softAP() that keys it;
 #   once    — exactly one call (per caller, when it has callers);
 #   served  — callers whose every call sits under a SERVE_* test of the
 #             receipt_decide verdict (check_receipt_dispatch's _under_serve_test);
@@ -1877,8 +1935,8 @@ _SETUP_WRITERS = {(_SETUP, "setup_init"), (_SETUP, "setup_mark_complete"),
                   (_SETUP, "setup_check_timeout")}
 _BOOT_HOLD_AT_BOOT = ("[within if (digitalRead(BOOT_BUTTON_GPIO) == LOW) { > for (;;) {] "
                       "reset_hold_dispatch(g_reset_hold.step(pressed, millis()));")
-_WIFI_MODE = (r"\bWiFi\w*\s*(?:\.|::)\s*(?:mode|enableAP|softAPConfig)\b"
-              r"|\besp_wifi_set_mode\b")
+_WIFI_MODE = (r"\bWiFi\w*\s*(?:\.|::)\s*(?:mode|enableAP|softAPConfig|softAPdisconnect"
+              r"|softAPbandwidth)\b|\besp_wifi_set_mode\b")
 _SETUP_STATE = {"file": _SETUP, "ident": True}
 # The TLS state's writers, and the two blocks startHttpServer() writes it in.
 _TLS_WRITERS = {(_NET, "ScvNetworkManager::ScvNetworkManager"),
@@ -2030,17 +2088,29 @@ GATE_CALL_SITES = {
     # WiFi.enableAP, WiFi.softAPConfig (which enables the AP first) and
     # esp_wifi_set_mode set the mode without writing one (and mode() is a
     # static of WiFiGenericClass, so `WiFiGenericClass::mode(...)` is one
-    # too, with no `WiFi` in it). So the mode is
-    # set only by begin(), dropAp() and raiseAp(), each statement where it
-    # sits, a raise always followed by the softAP() its row holds.
+    # too, with no `WiFi` in it). softAPdisconnect() itself is one: its
+    # default argument is `false`, so on 2.0.17 it writes that open config
+    # and leaves a running SoftAP up on it, and on core 3.x (AP.cpp's
+    # APClass::clear()) it raises the AP first, even from STA-only mode, and
+    # leaves it up on a zeroed, open config; softAPbandwidth() raises it on
+    # 3.x the same way (APClass::bandwidth()). So the mode is set only by
+    # begin(), dropAp() and raiseAp(), each statement where it sits (dropAp's
+    # disconnect with its `true`), each raise followed by the softAP() its
+    # row holds with nothing able to leave between them ("keyed": a return
+    # there leaves the SoftAP up, unkeyed, on whatever config the driver
+    # loaded, and raiseAp() would never re-key it, since it returns while the
+    # AP is up).
     "WiFi.mode": {
         "pattern": _WIFI_MODE,
         "callers": {(_NET, "ScvNetworkManager::begin"), (_NET, "ScvNetworkManager::dropAp"),
                     (_NET, "ScvNetworkManager::raiseAp")},
         "stmts": {(_NET, "ScvNetworkManager::begin"): ("WiFi.mode(WIFI_AP_STA);",),
-                  (_NET, "ScvNetworkManager::dropAp"): ("WiFi.mode(WIFI_STA);",),
+                  (_NET, "ScvNetworkManager::dropAp"): ("WiFi.softAPdisconnect(true);",
+                                                         "WiFi.mode(WIFI_STA);"),
                   (_NET, "ScvNetworkManager::raiseAp"): (
                       "WiFi.mode(WIFI_AP_STA);", "[within if (!ap_ok) {] WiFi.mode(WIFI_STA);")},
+        "keyed": {(_NET, "ScvNetworkManager::begin"): ("WiFi.mode(WIFI_AP_STA);", "softAP"),
+                  (_NET, "ScvNetworkManager::raiseAp"): ("WiFi.mode(WIFI_AP_STA);", "softAP")},
         "home": None},
     # The TLS state the port-80 hint reads (GLUE_DEFS' isTlsEnabled and
     # getHttpsServer): the flag and the TLS server's handle are written by the
@@ -2080,6 +2150,13 @@ GATE_CALL_SITES = {
         "file": _MAIN, "ident": True,
         "decl": ("static canary::net::provisioning_gate::State g_prov_gate = {0};",),
         "stmts": {(_MAIN, "handle_boot_button"): _BOOT_GATE_STMTS}},
+    # ...and the sweep in that handler runs on every pass of loop(): its call
+    # there is the bare statement at loop()'s own level. Polled only on a GPIO
+    # edge, a tap nobody took would not be swept, and its 32-bit stamp would
+    # read fresh again once millis() wrapped (about 49.7 days; F347).
+    "handle_boot_button": {"callers": {(_MAIN, "loop")}, "once": True,
+                           "whole": {(_MAIN, "loop"): "handle_boot_button();"},
+                           "home": (_MAIN, "handle_boot_button")},
     # The page grant's first-boot unlock at its source: the setup state is
     # written only by the setup lib's pinned functions (GLUE_DEFS), and the
     # timeout that ends it runs from loop() while setup is active.
@@ -2108,6 +2185,16 @@ GATE_CALL_SITES = {
                                  (_MAIN, "handle_boot_button")},
                      "file": _MAIN, "ident": True,
                      "decl": ("static canary::io::ResetHold g_reset_hold;",)},
+    # Every route is an esp_http_server registration, which the route rules
+    # read wherever it is written. A server of another library (Arduino's
+    # WebServer, ESPAsyncWebServer, the HTTPUpdateServer firmware push,
+    # ArduinoOTA) would serve routes, or a firmware upload, that no rule reads:
+    # none is named, in a function or outside one (an object of one declared at
+    # namespace scope is a mention, so the row reads every mention, as a
+    # variable's does).
+    "another HTTP server": {
+        "pattern": r"\b(?:WebServer|AsyncWebServer|HTTPUpdateServer|ArduinoOTA)\b",
+        "callers": set(), "ident": True, "none": True, "home": None},
     # The token's alphabet, which format_api_token_string renders the HMAC
     # through (its declaration is the row's, so a narrowed alphabet fails).
     "UNAMBIGUOUS_ALPHABET": dict(_ALPHABET, decl=(
@@ -2902,6 +2989,67 @@ def _placed(text: str, blanked: str, d, start: int, end: int) -> str:
     return "[within " + " > ".join(around) + "] " + folded if around else folded
 
 
+def _leaves(text: str, blanked: str, d, lo: int, hi: int) -> list:
+    """[(start, folded statement)] for each way out of function body `d`
+    between offsets `lo` and `hi` (_LEAVE: a return, goto, throw, co_return or
+    an ESP_RETURN_* / ESP_GOTO_* macro), at any depth but inside a lambda,
+    whose `return` leaves the lambda, not the function."""
+    code = blanked[d[3]:d[4]]
+    out = []
+    for x in _LEAVE.finditer(blanked, max(lo, d[3]), min(hi, d[4])):
+        if in_lambda(code, x.start() - d[3]):
+            continue
+        s, e, _lv = _statement_at(blanked, d[3], d[4], x.start())
+        out.append((s, _fold(text[s:e])))
+    return out
+
+
+def _first_placed(text: str, blanked: str, d, rx, want: str):
+    """(start, end) of the first statement of body `d` holding a match of `rx`
+    that is `want`, folded where it sits (_placed), or None."""
+    for m in rx.finditer(blanked, d[3], d[4]):
+        a, b, _lv = _statement_at(blanked, d[3], d[4], m.start())
+        if _placed(text, blanked, d, a, b) == want:
+            return a, b
+    return None
+
+
+def _keyed_problems(sources: dict, census: dict, defs_of: dict) -> list:
+    """Each census row's `keyed` raise is followed, in its function, by the
+    statement that keys it, with nothing able to leave between them."""
+    problems = []
+    for name, row in sorted(census.items()):
+        for (suffix, qual), (raise_stmt, key_row) in sorted(row.get("keyed", {}).items()):
+            whole = census.get(key_row, {}).get("whole")
+            key_stmt = whole.get((suffix, qual)) if isinstance(whole, dict) else whole
+            rx_raise, rx_key = _census_rx(name, row), _census_rx(key_row, census.get(key_row, {}))
+            for fname, text in sorted(sources.items()):
+                if not _in_file(fname, suffix):
+                    continue
+                blanked = blank_string_contents(text)
+                for d in defs_of[fname]:
+                    if d[0] != qual:
+                        continue
+                    raised = _first_placed(text, blanked, d, rx_raise, raise_stmt)
+                    if raised is None:
+                        continue  # no raise: the row's `stmts` pin names the change
+                    keyed = _first_placed(text, blanked, d, rx_key, key_stmt) if key_stmt else None
+                    if keyed is None or keyed[0] < raised[1]:
+                        problems.append(f"{fname}:{_line_of(text, raised[0])}: {qual}'s SoftAP "
+                                        f"raise `{raise_stmt}` is not followed by the softAP() "
+                                        f"that keys it (`{key_stmt}`), so the SoftAP comes up on "
+                                        f"whatever config the driver holds")
+                        continue
+                    for at, stmt in _leaves(text, blanked, d, raised[1], keyed[0]):
+                        problems.append(f"{fname}:{_line_of(text, at)}: {qual} can leave between "
+                                        f"its SoftAP raise `{raise_stmt}` and the softAP() that "
+                                        f"keys it: {stmt!r} — the SoftAP stays up, never keyed, "
+                                        f"on whatever config the driver loaded (raiseAp() returns "
+                                        f"while the AP is up), and every SoftAP peer is handed the "
+                                        f"page token")
+    return problems
+
+
 def _statements(sources, key, d, positions, T) -> list:
     """[(start, end, folded, kinds)] for the statements of function body `d`
     holding the reads at `positions`, in order, one per statement, each
@@ -3224,7 +3372,8 @@ def mint_order_problems(sources: dict, rows) -> list:
     """MINT_AFTER: every call of a mint follows, in its function, the anchor
     statement that establishes the key it reads, at the function's own level
     (whole, through its refusal, with nothing around it and no goto before
-    it)."""
+    it), and nothing before the anchor in its function can leave (_leaves: an
+    early `return true;` skips the key and still answers success)."""
     problems = []
     defs, _by_name = _function_index(sources)
     for suffix, qual, mint, anchor in rows:
@@ -3238,12 +3387,13 @@ def mint_order_problems(sources: dict, rows) -> list:
             text = sources[key[0]]
             blanked = blank_string_contents(text)
             for d in defs[key]:
-                ends = []
+                ends, starts = [], []
                 for m in re.finditer(r"\b" + re.escape(call) + r"\s*\(", blanked[d[3]:d[4]]):
                     s, e, _lv = _statement_at(blanked, d[3], d[4], d[3] + m.start(),
                                               whole_if=True)
                     if _placed(text, blanked, d, s, e) == anchor:
                         ends.append(e)
+                        starts.append(s)
                 mints = [d[3] + m.start() for m in
                          re.finditer(r"\b" + re.escape(mint) + r"\s*\(", blanked[d[3]:d[4]])]
                 if not mints:
@@ -3254,6 +3404,12 @@ def mint_order_problems(sources: dict, rows) -> list:
                                     f"`{anchor}` at its own level (MINT_AFTER): {mint}() would "
                                     f"read a key nothing established, all zeros")
                     continue
+                for at, stmt in _leaves(text, blanked, d, d[3], min(starts)):
+                    problems.append(f"{key[0]}:{_line_of(text, at)}: {qual}() can leave before "
+                                    f"`{anchor}` (MINT_AFTER): {stmt!r} — a way out there skips "
+                                    f"the statement that establishes the key, and a caller "
+                                    f"that reads success mints from an all-zero private key, "
+                                    f"the same credential on every Canary")
                 for pos in mints:
                     if pos < min(ends):
                         problems.append(f"{key[0]}:{_line_of(text, pos)}: {qual}() calls {mint}() "
@@ -3510,7 +3666,7 @@ def gate_census_problems(sources: dict, census: dict, markers, steps, emitters) 
         for f, q in sorted((callers or set()) - seen):
             problems.append(f"GATE_CALL_SITES row {name} names {q} ({f}), which no longer "
                             f"calls it — remove it")
-    return problems
+    return problems + _keyed_problems(sources, census, defs_of)
 
 
 def _census_rx(name: str, row: dict):
@@ -3717,7 +3873,7 @@ INCLUDE_DEFINES = {name: "include/canary_config.h" for name in NVS_LITERAL_KEYS}
 # followed by no rule), so a file naming anything else the check holds fails:
 # a credential's spelling (SECRET_READS), a name the tables hold under ROOTS,
 # or a census row's spelling (WiFi.softAP, the radio's mode, the driver's
-# config, the AP class, the tap's open).
+# config, the AP class, the tap's open, another HTTP server).
 INCLUDE_MENTIONS = (
     {("include/canary_config.h", n) for n in NVS_LITERAL_KEYS}
     | {("include/reset_scope_keys.h", n) for n in NVS_LITERAL_KEYS}
@@ -4143,8 +4299,13 @@ def symbol_binding_problems(sources: dict, includes: dict) -> list:
 
 # What the flag files may not hold, because each is code or a binding the
 # check does not read. A driver or compiler flag token (anchored at a token
-# start, so `-DBOARD` is not `-B`), in EVERY spelling the driver honors — the
-# space form, the glued one and the `=`/`--` long one alike:
+# start, so `-DBOARD` is not `-B`), in its space form, its glued one and its
+# `=`/`--` long one alike. This is defense in depth over the spellings below,
+# outside the docstring's threat model (a deliberate flag aimed at the
+# check), not every spelling the driver honors: gcc's long aliases
+# (`--prefix`, rewritten to `-B`; `--for-linker`, `--for-assembler`,
+# `--define-macro`), a letter-led glued `-B<dir>` and the `-L`/`-l` library
+# options are not read.
 #   - a linker option (`-Wl,`, `-Xlinker`, `--wrap`, `--defsym`, a `-T` linker
 #     script): `-Wl,--wrap=<symbol>` sends every call of a function to
 #     `__wrap_<symbol>`, a name no rule reads;
@@ -4518,6 +4679,12 @@ def _assert_parser_robust() -> None:
                             "  httpd_uri_t w;\n  w.uri = \"/w\";\n  reg(server, &w);\n")
     got = check_registration_count({"fx": pointer})
     assert any("registers 2 times but writes 1" in f for f in got), got
+    # ...and one named outside every function (a pointer to the wrapper kept at
+    # namespace scope, called with a route assigned field by field) fails too.
+    kept = table + ("static void (*const s_register)(httpd_handle_t, const httpd_uri_t*) = "
+                    "register_route;\n")
+    got = check_registration_count({"fx": kept})
+    assert any("register_route() called outside every function" in f for f in got), got
     extra = table.replace("  httpd_register_uri_handler(server, uri);\n",
                           "  httpd_register_uri_handler(server, uri);\n"
                           "  httpd_register_uri_handler(server, &s_extra);\n")
@@ -4595,6 +4762,22 @@ def _assert_parser_robust() -> None:
                        "  if (!auth_gate(req)) return ESP_OK;\n  return send(req);\n}")
     assert gate_guards("{\n  if (x) {\n    return a;\n  }\n"
                        "  if (bearer_present_and_valid(req)) {\n    return b;\n  }\n}")
+    # ...and a marker is a whole name, as the census spells its rows: a helper
+    # whose name ends in one (`lan_auth_gate`, `setup_auth_gate`, canary-wap's
+    # `api_auth_check`) is no gate, so a route it guards fails as ungated and
+    # as never asking the Host, where the census would never see the helper.
+    for helper in ("lan_auth_gate(", "setup_auth_gate(", "api_auth_check(",
+                   "peer_bearer_present_and_valid(", "my_provisioning_gate_take("):
+        body = "{\n  if (!" + helper + "req)) return ESP_OK;\n  return apply(req);\n}"
+        assert not any(marker_decides(body, m) for m in AUTH_MARKERS), helper
+        assert not gate_guards(body), helper
+        weak = ('httpd_uri_t w = { .uri = "/api/w", .method = HTTP_POST, .handler = handle_w };\n'
+                "static bool " + helper + "httpd_req_t* req) { return from_ap_subnet(req); }\n"
+                "static esp_err_t handle_w(httpd_req_t* req) " + body + "\n")
+        got = check_route_gates({"fx": weak}, parse_routes("fx", weak))[0]
+        assert any("handler handle_w (fx) has NO credential gate" in f for f in got), (helper, got)
+        got = check_host_first({"fx": weak}, require_defs=False)
+        assert any("handle_w (fx) never asks the Host" in f for f in got), (helper, got)
 
     # 4. Argument splitting survives nested calls and a comma in a string.
     calls = call_args('x(); send_html_with_token(req, pick("a,b", 2), true);\n'
@@ -5344,7 +5527,8 @@ _FIX_CENSUS = {
                                  callers={(_NET, "handle_ui")}),
     "WiFi.mode": dict(GATE_CALL_SITES["WiFi.mode"], stmts={
         (_NET, "ScvNetworkManager::begin"): ("WiFi.mode(WIFI_AP_STA);",),
-        (_NET, "ScvNetworkManager::dropAp"): ("WiFi.mode(WIFI_STA);",),
+        (_NET, "ScvNetworkManager::dropAp"): ("WiFi.softAPdisconnect(true);",
+                                               "WiFi.mode(WIFI_STA);"),
         (_NET, "ScvNetworkManager::raiseAp"): ("WiFi.mode(WIFI_AP_STA);",)}),
 }
 # The NVS keys' values main() reads from include/canary_config.h.
@@ -5459,6 +5643,37 @@ _FIX_PLANTS = (
      "static esp_err_t handle_fleet(httpd_req_t* req) {\n  char buf[16];\n"
      "  fill_ap(buf, sizeof(buf));\n",
      (_PUBLIC_AP, "fill_ap() reads the SoftAP password and is no")),
+    # A helper that re-derives a credential from the private key reads it by
+    # its deriver alone, naming no buffer the credential is kept in.
+    ("the roll-call answers the SoftAP key re-derived by a helper", _FIX_NET, _FIX_FLEET,
+     "static bool fleet_setup_key(char* out, size_t cap) {\n"
+     "  return canary::net::derive_ap_password(witness_get_device().privkey, out, cap);\n}\n"
+     + _FIX_FLEET + "  char key[16];\n"
+     "  if (fleet_setup_key(key, sizeof(key))) httpd_resp_set_hdr(req, \"X-Setup-Key\", key);\n",
+     (_PUBLIC_AP, "fleet_setup_key() reads the SoftAP password and is no")),
+    ("the roll-call answers the bearer re-derived by a helper", _FIX_NET, _FIX_FLEET,
+     "static bool fleet_bearer(char* out, size_t cap) {\n"
+     "  const DeviceIdentity& dev = witness_get_device();\n"
+     "  return derive_api_token(dev.privkey, out, cap);\n}\n"
+     + _FIX_FLEET + "  char t[40];\n"
+     "  if (fleet_bearer(t, sizeof(t))) httpd_resp_set_hdr(req, \"X-T\", t);\n",
+     ("public route handler handle_fleet() answers the bearer token",
+      "fleet_bearer() reads the bearer token and is no")),
+    # The carry runs to a fixed point: a two-hop chain whose helper is defined
+    # after its caller carries what the far end answers.
+    ("the roll-call answers the pin through a helper defined after it", _FIX_NET,
+     "  return httpd_resp_sendstr(req, fleet_body());\n}\n",
+     "  if (s_fleet_polled_ms == 0) return fleet_extra(req);\n"
+     "  return httpd_resp_sendstr(req, fleet_body());\n}\n"
+     "static esp_err_t fleet_extra(httpd_req_t* req) {\n  return handle_status(req);\n}\n",
+     ("public route handler handle_fleet() answers the TLS pin",)),
+    ("a gated route answers the pin through a gated one, unnamed", _FIX_NET,
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n",
+     "static esp_err_t handle_wifi_connect(httpd_req_t* req) {\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n"
+     "  if (s_fleet_polled_ms == 0) return handle_status(req);\n",
+     ("route handler handle_wifi_connect() answers the TLS pin and is not in SECRET_ANSWERS",)),
     ("M7: /api/status answers the SoftAP password behind its refusal", _FIX_NET,
      "  doc[\"tls_cert_fp\"] = net.getTlsCertFp();\n  return send_doc(req, doc);\n}\n"
      "static esp_err_t handle_wifi_connect",
@@ -6208,6 +6423,69 @@ _FIX_PLANTS = (
     ("a helper configures the AP's address (which enables it)", _FIX_MAIN, "",
      "static void keep_setup_ap_up() {\n  WiFi.softAPConfig(ip, ip, mask);\n}\n",
      ("WiFi.mode called from keep_setup_ap_up",)),
+    # softAPdisconnect()'s default argument is `false`: on core 2.0.17 it writes
+    # the open, empty-SSID config and leaves a running SoftAP up on it, and on
+    # core 3.x it raises the AP first (AP.clear() runs AP.begin()), even from
+    # STA-only mode. softAPbandwidth() raises it on 3.x the same way.
+    ("a new member quiets the SoftAP with softAPdisconnect's default", _FIX_NET, "",
+     "void ScvNetworkManager::quietAp() {\n  WiFi.softAPdisconnect();\n"
+     "  m_status.ap_active = false;\n}\n",
+     ("WiFi.mode called from ScvNetworkManager::quietAp",)),
+    ("the setup lib quiets the SoftAP with softAPdisconnect's default", _FIX_SETUP, "",
+     "void setup_stop_captive_portal(void) {\n  WiFi.softAPdisconnect();\n}\n",
+     ("WiFi.mode called from setup_stop_captive_portal",)),
+    ("dropAp's softAPdisconnect loses its wifioff", _FIX_NET,
+     "  WiFi.softAPdisconnect(true);\n  WiFi.mode(WIFI_STA);\n",
+     "  WiFi.softAPdisconnect();\n  WiFi.mode(WIFI_STA);\n",
+     ("GATE_CALL_SITES row WiFi.mode: ScvNetworkManager::dropAp's statements that name it are "
+      "not its row",)),
+    ("a helper sets the AP's bandwidth (which raises it on core 3.x)", _FIX_MAIN, "",
+     "static void keep_setup_ap_up() {\n  WiFi.softAPbandwidth(WIFI_BW_HT20);\n}\n",
+     ("WiFi.mode called from keep_setup_ap_up",)),
+    # A way out between a mode raise and the softAP() that keys it leaves the
+    # SoftAP up on whatever config the driver loaded, never keyed (raiseAp()
+    # returns while the AP is up): an STA-first boot, or an empty-SSID guard.
+    ("begin() returns between its mode raise and its softAP()", _FIX_NET,
+     "  WiFi.mode(WIFI_AP_STA);\n  bool ap_ok = WiFi.softAP(ap_ssid,",
+     "  WiFi.mode(WIFI_AP_STA);\n  if (has_creds && m_creds.enabled) {\n    connectToHome();\n"
+     "    return true;\n  }\n  bool ap_ok = WiFi.softAP(ap_ssid,",
+     ("ScvNetworkManager::begin can leave between its SoftAP raise `WiFi.mode(WIFI_AP_STA);` "
+      "and the softAP() that keys it: 'return true;'",)),
+    ("raiseAp() returns between its mode raise and its softAP()", _FIX_NET,
+     "  WiFi.mode(WIFI_AP_STA);\n  bool ap_ok = WiFi.softAP(m_ap_ssid,",
+     "  WiFi.mode(WIFI_AP_STA);\n  if (m_ap_ssid[0] == '\\0') return;\n"
+     "  bool ap_ok = WiFi.softAP(m_ap_ssid,",
+     ("ScvNetworkManager::raiseAp can leave between its SoftAP raise",)),
+    ("begin() keys the SoftAP before it raises the mode", _FIX_NET,
+     "  WiFi.mode(WIFI_AP_STA);\n  bool ap_ok = WiFi.softAP(ap_ssid, ap_password, AP_CHANNEL, "
+     "false, AP_MAX_CONNECTIONS);\n",
+     "  bool ap_ok = WiFi.softAP(ap_ssid, ap_password, AP_CHANNEL, false, "
+     "AP_MAX_CONNECTIONS);\n  WiFi.mode(WIFI_AP_STA);\n",
+     ("ScvNetworkManager::begin's SoftAP raise `WiFi.mode(WIFI_AP_STA);` is not followed by the "
+      "softAP() that keys it",)),
+    # The BOOT sweep's every-pass call, and a server no route rule reads.
+    ("loop() polls the BOOT button only on its edge", _FIX_MAIN,
+     "void loop() {\n  handle_boot_button();\n",
+     "void loop() {\n  if (g_boot_edge) {\n    g_boot_edge = false;\n"
+     "    handle_boot_button();\n  }\n",
+     ("loop calls handle_boot_button other than as the whole statement "
+      "`handle_boot_button();`",)),
+    ("a diagnostics WebServer beside the routes", _FIX_MAIN, "",
+     "static WebServer g_diag(8080);\nstatic void diag_begin() {\n"
+     "  g_diag.on(\"/diag/restart\", HTTP_POST, []() { ESP.restart(); });\n"
+     "  g_diag.begin();\n}\n",
+     ("another HTTP server named outside every function other than in its declaration",)),
+    ("an unauthenticated OTA push started from setup()", _FIX_MAIN,
+     _FIX_SETUP_PRINT, _FIX_SETUP_PRINT + "  ArduinoOTA.begin();\n",
+     ("another HTTP server called from setup",)),
+    # A second begin() through `network`, the binding setup() itself uses on the
+    # tree (its banner block): handed "", it raises the SoftAP open.
+    ("a second start through setup()'s own `network` binding", _FIX_MAIN, _FIX_SETUP_PRINT,
+     _FIX_SETUP_PRINT + "  ScvNetworkManager& network = network_get_instance();\n"
+     "  if (!network.isTlsEnabled()) network.begin(device.ap_ssid, \"\", device.device_id);\n",
+     ("setup calls ScvNetworkManager::begin other than as the whole statement",
+      "ScvNetworkManager::begin is called 2 times by setup; its GATE_CALL_SITES row says "
+      "exactly once")),
     # A second begin() through a spelling the census did not read.
     ("begin through the accessor's address", _FIX_MAIN, "",
      "static void network_restart_setup() {\n  (&network_get_instance())->begin(\"x\", \"\");\n}\n",
@@ -6291,6 +6569,20 @@ _FIX_PLANTS = (
      "  if (!establish_identity_key()) return false;\n", "  (void)establish_identity_key();\n",
      ("witness_provision_device() no longer holds `if (!establish_identity_key()) return "
       "false;`",)),
+    # A way out before the anchor skips the key's establishment and still
+    # answers: a degraded boot's `return true;` hands setup() a success over an
+    # all-zero private key, and setup() mints the SoftAP key from it.
+    ("mint: a degraded boot returns before the key is established", _FIX_WITNESS,
+     "  if (!establish_identity_key()) return false;\n",
+     "  if (!nvs_identity_readable()) {\n"
+     "    Serial.println(\"[!] NVS unreadable: booting degraded, no stored identity\");\n"
+     "    return true;\n  }\n"
+     "  if (!establish_identity_key()) return false;\n",
+     ("witness_provision_device() can leave before `if (!establish_identity_key()) return "
+      "false;` (MINT_AFTER): 'return true;'",)),
+    ("mint: setup() returns before the key is established", _FIX_MAIN, _FIX_PROVISION,
+     "  if (recovery_console_requested()) return;\n" + _FIX_PROVISION,
+     ("setup() can leave before `if (!witness_provision_device())",)),
     # An NVS record by its literal key, and the private key's record.
     ("the roll-call answers the token's record by its literal key", _FIX_NET,
      "  prefs.begin(\"fleet\", true);\n",
@@ -6715,6 +7007,19 @@ def _assert_answer_gate_rule() -> None:
         missing = [w for w in words if not any(w in p for p in got)]
         assert not missing, (f"the bearer-only answer rule passed a table plant ({what}): "
                              f"expected problems naming {missing!r}, got {got!r}")
+    # A lambda's `return` leaves the lambda, not the function: a callback
+    # registered between begin()'s mode raise and its softAP() is no way out.
+    calm = _fixture_sources()
+    raise_then_key = "  WiFi.mode(WIFI_AP_STA);\n  bool ap_ok = WiFi.softAP(ap_ssid,"
+    assert raise_then_key in calm[_FIX_NET]
+    calm[_FIX_NET] = calm[_FIX_NET].replace(
+        raise_then_key,
+        "  WiFi.mode(WIFI_AP_STA);\n  WiFi.onEvent([](arduino_event_id_t event) {\n"
+        "    if (event != ARDUINO_EVENT_WIFI_STA_GOT_IP) return;\n    start_mdns();\n  });\n"
+        "  bool ap_ok = WiFi.softAP(ap_ssid,", 1)
+    got = check_bearer_only_answers(calm, tables)
+    assert got == [], "a callback's return between begin()'s raise and softAP() fails: " + (
+        "; ".join(got))
     # A -D build flag is a #define too; the flags the build sets name none.
     ini = "build_flags =\n    -DFEATURE_WIFI_AP=1\n    -DCORE_DEBUG_LEVEL=0\n"
     assert check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": ini}) == []
@@ -6820,6 +7125,8 @@ def _assert_answer_gate_rule() -> None:
     for name, header in (("softAP", 'inline void ap_keepalive() { if (!(WiFi.getMode() & '
                                     'WIFI_AP)) WiFi.softAP("Canary-Setup", nullptr); }\n'),
                          ("WiFi.mode", "inline void ap_keepalive() { WiFi.mode(WIFI_AP_STA); }\n"),
+                         ("WiFi.softAPdisconnect", "inline void ap_quiet() { "
+                                                   "WiFi.softAPdisconnect(); }\n"),
                          ("esp_wifi_set_mode", "inline void ap_up() { "
                                                "esp_wifi_set_mode(WIFI_MODE_APSTA); }\n"),
                          ("esp_wifi_set_config", "inline void ap_open() { wifi_config_t c = {}; "
@@ -7034,7 +7341,8 @@ def check_route_gates(sources: dict, routes: list) -> tuple:
             failures.append(f"{method} {uri}: handler {handler} not found "
                             f"(registered in {fname})")
             continue
-        present = all(any(marker in body for marker in AUTH_MARKERS) for body in bodies)
+        present = all(any(marker_at(body, marker) >= 0 for marker in AUTH_MARKERS)
+                      for body in bodies)
         decides = all(any(marker_decides(body, marker) for marker in AUTH_MARKERS)
                       for body in bodies)
         guarded = all(gate_guards(body) for body in bodies)

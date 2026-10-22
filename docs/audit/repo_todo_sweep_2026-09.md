@@ -1796,8 +1796,8 @@ so — see D2 below.)
     (pinned). Each mint follows, at its function's own level, the statement
     that establishes the key it reads (`MINT_AFTER`: `setup()`'s
     `witness_provision_device()` refusal, `witness_provision_device()`'s
-    `establish_identity_key()`). No route handler's own body names the
-    private key.
+    `establish_identity_key()`), with nothing able to leave before that
+    statement. No route handler's own body names the private key.
   - **Each answer, with what it carries and its grant.** The receipt (token,
     AP password, pin) hands `receipt_decide` exactly its bearer and tap
     lambdas, and answers only under a `SERVE_*` test. `/api/status` (pin)
@@ -1832,7 +1832,7 @@ so — see D2 below.)
     SECURITY_MODEL.md's four unlocks and Phase 6.
   - **The gate primitives** are mentioned (a call, a function pointer or an
     address taken alike) and defined only where the census (`GATE_CALL_SITES`,
-    44 rows) names them. Every `auth_gate` call is the whole refusal, at its
+    46 rows) names them. Every `auth_gate` call is the whole refusal, at its
     handler's own top level in every body that holds it, under no block or
     preprocessor conditional, with nothing before it able to leave (a
     `return`, `goto`, `throw`, `co_return` or an ESP-IDF `ESP_RETURN_*` /
@@ -1849,8 +1849,11 @@ so — see D2 below.)
     only its three functions name); every `WiFi.softAP()` is `begin()`'s or
     `raiseAp()`'s statement, with its key, and the radio's mode (`WiFi.mode`,
     `enableAP`, `softAPConfig`, the static `WiFiGenericClass::mode`,
-    `esp_wifi_set_mode`) is set only by
-    `begin()`, `dropAp()` and `raiseAp()`, each statement where it sits;
+    `esp_wifi_set_mode`, and `softAPdisconnect` and `softAPbandwidth`, which
+    leave the SoftAP up on an open config or raise it) is set only by
+    `begin()`, `dropAp()` and `raiseAp()`, each statement where it sits, each
+    raise followed by the `softAP()` that keys it with nothing able to leave
+    between them;
     `begin()` is started once, by `setup()` with `g_ap_password`
     (`network_init()`, which hands it on, is called by nothing; the instance
     `s_network` is named only by its accessor, the accessor only in a binding
@@ -1864,7 +1867,11 @@ so — see D2 below.)
     by `handle_boot_button()`'s short press, where it sits, and `g_prov_gate`
     is named only by the two hooks and that handler (the peek hook's copy,
     `s_gate_is_open`, only by the hook setter and `/api/status`; its
-    declaration holds its initial value); the setup state and the stored
+    declaration holds its initial value), and that handler, whose sweep
+    expires a tap nobody took, runs on every pass of `loop()`, its call the
+    bare statement there; no server of another library (`WebServer`,
+    `AsyncWebServer`, `HTTPUpdateServer`, `ArduinoOTA`) is named; the setup
+    state and the stored
     first-boot flag (`NVS_KEY_SETUP_OK`) are named only by the setup lib's
     pinned functions, the credentials reset that also clears that flag runs
     only from the BOOT hold's dispatch, and the setup timeout runs from
@@ -1875,7 +1882,9 @@ so — see D2 below.)
     name is
     a census row, and every `PRE_HOST_STEPS` name a row, a `TOKEN_EMITTERS`
     key or `auth_get_token`: F340 had already taken `auth_check_optional` out
-    of both lists and rule 1, and it cannot come back silently.
+    of both lists and rule 1, and it cannot come back silently. The route-gate
+    and Host-first rules count a marker only as a whole name, as the census
+    spells its rows, so a helper named `lan_auth_gate` is no gate.
   - **Macros.** No `#define` under ROOTS or in a file outside it the
     flagship compiles or `#include`s, and no `-D`
     flag in `platformio.ini` or the files its `extra_configs` names (on the
@@ -1892,7 +1901,8 @@ so — see D2 below.)
     `#undef`'d. `SETUP_TIMEOUT_MS` is defined once, as 15 minutes
     (`PINNED_DEFINES`). No macro or flag pastes tokens (`##`, `%:%:`) but
     GNU's `, ##__VA_ARGS__` comma elision, and nothing binds a name to a
-    symbol but the empty compiler barrier and the known pragmas: a pasted name
+    symbol, in the spellings the rule names, but the empty compiler barrier
+    and the known pragmas: a pasted name
     (`CV_JOIN(auth_get_, token)()`), an asm label
     (`__asm__("_Z14auth_get_tokenv")`) or call, a `weakref`/`alias`/`ifunc`/
     `symver` attribute or `__REDIRECT` macro, a `redefine_extname` or `weak`
@@ -1901,12 +1911,13 @@ so — see D2 below.)
   - **Build inputs.** An `#include` through a macro, a compiled file that is
     not C or C++, a `build_src_filter` entry that matches nothing, a file of
     this repository outside the read folders that the flagship `#include`s or
-    compiles, and, in the flag files, a linker option (`-Wl,--wrap=`), a
-    forced include (`-include`/`--include`/`-imacros`/`--imacros`, every
-    spelling the driver honors), an include or sysroot path the reach does not
-    read (`-isystem`, `-iquote`, `-idirafter`, `-iprefix`, `--sysroot`; only
-    `-I` is read), a compiler-driver injector (`-specs`, `-fplugin`,
-    `-wrapper`, `-B<prefix>`, `-Xpreprocessor`/`-Wp,`, `-Xassembler`/`-Wa,`), a
+    compiles, and, in the flag files, a linker option through `-Wl,`,
+    `-Xlinker`, `--wrap`, `--defsym` or `-T`, a forced include
+    (`-include`/`--include`/`-imacros`/`--imacros`, in the space, glued and
+    `=` forms), an include or sysroot path the reach does not read
+    (`-isystem`, `-iquote`, `-idirafter`, `-iprefix`, `--sysroot`; only `-I`
+    is read), a compiler-driver injector (`-specs`, `-fplugin`, `-wrapper`,
+    `-B` before a path, `-Xpreprocessor`/`-Wp,`, `-Xassembler`/`-Wa,`), a
     response file (`@file`), a build script (`extra_scripts`, or PlatformIO's
     `!command` dynamic value that runs a command and splices its stdout into
     the flags), a local library or a moved source folder fail: each is code,
@@ -1934,12 +1945,12 @@ so — see D2 below.)
   rule, which replaces the old `auth_get_token` loop (rule 5 keeps its
   emitter-behind-the-Host half). A function defined twice (an `#if` body
   and its `#else` one) is every one of its bodies, whatever its head, in
-  this rule, the route-gate rule and the Host-first rule. 267 planted
-  fixtures (242 source edits, 25 table edits), with the self-test's lexer,
+  this rule, the route-gate rule and the Host-first rule. 284 planted
+  fixtures (259 source edits, 25 table edits), with the self-test's lexer,
   flag-file, build-input, reach, header, file-kind, route-form,
   symbol-binding and raw-literal cases, each fail for their named reason
   before the tree is read; the tree passes with its 83 registrations, in
-  about 17 s. The `/*`
+  about 18 s. The `/*`
   allowlist reasons now say what the
   port-80 redirect does (a probe path gets the probe's plain answer or the
   TLS hint, else 307, or 500 on an oversize target).
@@ -1949,6 +1960,20 @@ so — see D2 below.)
   password. `request_peer_ipv4` was left unpinned at first (F340's suite pins
   its text); the PR's third round pinned it beside `from_ap_subnet`'s
   helpers.
+  The threat model is fixed and narrow. In scope: a careless or mistaken
+  firmware edit (a refactor, a new route, a new feature, a moved line, a
+  widened helper, a new file) that would ship a credential on a public
+  route, ungate a route, open the SoftAP or open the BOOT tap without a
+  press. Out of scope: a deliberate attempt to evade the check (preprocessor
+  tricks aimed at it, token pasting, symbol aliasing, inline assembly,
+  injected build flags) and a committer who edits the checker, which could
+  `return 0`. The rules the second to fifth rounds added against those
+  classes (the paste, symbol-binding and build-input rules, and the macro
+  rule's C++-keyword clause) stay, tested, as defense in depth over the
+  spellings they name, not as a claim that every spelling is held: gcc's long
+  aliases (`--prefix`, which the driver rewrites to `-B`, `--for-linker`,
+  `--for-assembler`, `--define-macro`), a letter-led glued `-B<dir>` and the
+  `-L`/`-l` library options pass them.
   This is a static text check: names are matched by spelling, a copy under
   another name or a value passed as a parameter is not followed (the body that
   handles `announce_setup_network()`'s `pass` is pinned instead; the network
@@ -1958,7 +1983,8 @@ so — see D2 below.)
   otherwise followed, and a
   held name that is an ordinary word in the shared code (`begin`, `check`,
   `s_active`) is not read there, the linker is not read (a library the build
-  links is outside the check; a flag that would bind a symbol fails), a
+  links is outside the check; a flag that would bind a symbol fails, in the
+  spellings the build-input rule names), a
   value is not checked but `SETUP_TIMEOUT_MS`'s (a `memset` of the private key
   just before a mint passes; the values `include/canary_config.h` and the
   shared headers define, `PROVISIONING_GATE_TTL_MS` among them, are read only
@@ -1971,7 +1997,11 @@ so — see D2 below.)
   definition of that name (which errs toward failing), the private key is not
   carried (a helper that answers it passes; only a handler's own body is
   read), a statement before a gated route's refusal that does the route's work
-  without leaving is not seen, of the members the pinned glue calls the
+  without leaving is not seen, an early `return` between a mint's `MINT_AFTER`
+  statement and the mint is not refused (the rest of its function goes with
+  it: `setup()`'s start of the network, or the token's mint, which leaves the
+  bearer empty and every gated route refused as unprovisioned), of the
+  members the pinned glue calls the
   hint's `isTlsEnabled()` and `getHttpsServer()` are pinned but `getStatus()`
   (which picks the setup page or Apple's success body, not the token),
   `WiFi.getMode()`, Preferences' reads and `ResetHold::step()` are not held,
@@ -2055,7 +2085,8 @@ so — see D2 below.)
     `auth_gate` or `host_is_foreign` in another lib);
   - `#define auth_gate(r) (true)`, `#define bearer_present_and_valid(r)
     (true)` or `#define host_is_foreign(r) (false)` after the function:
-    every refusal's text and every pin intact, all 62 routes ungated, or
+    every refusal's text and every pin intact, all 62 gated handlers (63
+    routes) ungated, or
     the receipt and the page token handed to any LAN asker that names the
     device. Macros and `-D` flags are now read;
   - the page grant's setup input widened at its source
@@ -2257,11 +2288,13 @@ so — see D2 below.)
   `-D` flag; an asm label (`extern const char* t()
   __asm__("_Z14auth_get_tokenv");`) or an asm `call8` of the lockout's clear,
   which reach a function by its symbol (no asm may be written now but the
-  empty compiler barrier `csi_hal.cpp` holds); a linker
+  empty compiler barrier, `asm volatile("" ::: "memory")`, which the tree
+  writes ten times in nine files and `csi_hal.cpp` once); a linker
   `-Wl,--wrap=<auth_check's symbol>` in `platformio.ini`, which sends every
   call of `auth_check` to a function returning `true` (the flag files may now
-  hold no linker option, forced include, build script, local library or
-  moved source folder); and `m_https_server = m_http_server;` beside the
+  hold none of the linker, forced-include, build-script, local-library or
+  moved-folder spellings the rule names, which `-L`/`-l` and the driver's long
+  aliases are not among); and `m_https_server = m_http_server;` beside the
   port-80 server. The paste and asm forms were compiled with host g++ and the
   tree's `xtensa-esp32s3-elf-g++ 14.2.0`, and the wrap linked with host g++
   and GNU ld. Of 41 checker mutants that each undo one of these fixes or
@@ -2288,12 +2321,14 @@ so — see D2 below.)
     so the reader scan and the census missed them. `symbol_binding_problems`
     now refuses the whole class under ROOTS and in the files outside it the
     flagship reaches, the empty compiler barrier and the known pragmas
-    (`#pragma once`, `#pragma pack`, the one `#pragma GCC poison` the flagship
-    writes) aside; a mangled-name `_Z...` identifier is refused too. The
+    (`#pragma once`, `#pragma pack`, the two `#pragma GCC poison` lines the
+    flagship writes) aside; a mangled-name `_Z...` identifier is refused too. The
     weakref, redefine_extname and `_Z` extern-C forms were compiled on the
     tree's `xtensa-esp32s3-elf-g++ 14.2.0` and on host g++ (both emit an
-    undefined or weak reference to `_Z14auth_get_tokenv` / `_Z17auth_handed_tokenm`,
-    which a host link resolved to the real secret);
+    undefined or weak reference to `_Z14auth_get_tokenv`, which a host link
+    resolved to the real secret; `_Z17auth_handed_tokenm` is the lockout
+    clear's symbol on the xtensa target, where `uint32_t` is an `unsigned
+    long`, and host g++ spells it `_Z17auth_handed_tokenj`);
   - `build_input_problems` caught the space form of the forced include
     (`-include`) but not the `=`/`--`/glued long forms the driver honors
     equally (`--include=`, `--imacros=`, `-include<path>`), nor `-specs`,
@@ -2304,7 +2339,10 @@ so — see D2 below.)
     `build_reach` never adds it and `macro_problems` never scans it; a
     `#define false true` in that header then flips every `return false;`,
     `from_ap_subnet`'s SoftAP-exemption fall-through among them. `_BUILD_INPUT`
-    now holds every spelling of each class;
+    now holds the space, glued and `=`/`--` spellings of each of those flags
+    (not gcc's long aliases `--prefix`, `--for-linker`, `--for-assembler` and
+    `--define-macro`, nor a letter-led glued `-B<dir>`: deliberate spellings,
+    outside the threat model the sixth round states);
   - PlatformIO's own `!command` dynamic value (`build_flags = !python3 gen.py`
     runs the command at build time and splices its stdout into the flags) was
     read by no rule, so whatever it emitted — a `-Dauth_gate(r)=true` that
@@ -2335,6 +2373,79 @@ so — see D2 below.)
   stated in the check's docstring, as the other main()-wiring residual already
   is (the threat model is a careless firmware edit, not a malicious edit to
   the checker). Host-tested; not run on a device. No new number.
+  *Review (2026-10-22, the PR's sixth round):* held to the threat model
+  stated above (a careless or mistaken firmware edit, not a deliberate
+  evasion), nine edits to the same tree passed the round-5 check and the check
+  as F340 left it, and so did two nits. Each now fails, with a planted
+  fixture:
+  - a route guarded by a helper whose name ends in a gate's: `if
+    (!lan_auth_gate(req)) return ESP_OK;` on `POST /api/wifi/disconnect` (a
+    helper that refuses only a foreign Host), and `setup_auth_gate(req)`
+    returning `from_ap_subnet(req)` on `POST /api/wifi/connect`, round 1's
+    class written as a helper. The route-gate and Host-first rules matched
+    `AUTH_MARKERS` as substrings while the census matches whole words, so the
+    helper counted as the gate and the census never saw it. A marker is now a
+    whole name in both rules;
+  - `WiFi.softAPdisconnect()` with its default argument, `false`, in a new
+    network member, in `loop()` or in the setup lib's
+    `setup_stop_captive_portal()`, and `WiFi.softAPbandwidth()` in a new
+    member. On Arduino-ESP32 2.0.17 the first writes the open, empty-SSID
+    config and leaves a running SoftAP up on it; on core 3.3.8, which
+    `[env:full]` builds, `APClass::clear()` and `APClass::bandwidth()` run
+    `APClass::begin()`, which raises the AP with `WiFi.enableAP(true)` even
+    from STA-only mode. Both are in the mode row now, and `dropAp()`'s
+    `WiFi.softAPdisconnect(true);` is one of its pinned statements;
+  - a way out between a mode raise and the `softAP()` that keys it: an
+    STA-first `if (has_creds && m_creds.enabled) { connectToHome(); return
+    true; }` after `begin()`'s `WiFi.mode(WIFI_AP_STA);`, or `if
+    (m_ap_ssid[0] == '\0') return;` in `raiseAp()`. The mode switch starts
+    the AP on whatever config the driver holds and writes none, so
+    `apply_ap_security()` never runs, and `raiseAp()`, which returns while the
+    AP is up, never keys it. The census comment said a raise was always
+    followed by its `softAP()`; the mode row's `keyed` entries now hold that,
+    in order, with nothing able to leave between them (a lambda's `return`
+    aside);
+  - a degraded boot's `if (!nvs_identity_readable()) { ...; return true; }`
+    ahead of `witness_provision_device()`'s `establish_identity_key()`:
+    `setup()`'s refusal then reads success and mints the SoftAP key from the
+    zero-initialized `g_device` (`cv-3jByJ6rHdhM2`, the same on every such
+    unit). The docstring had said an early `return` before a mint takes the
+    rest of its function with it, which holds for `setup()`'s start of the
+    network but not for a `return true;` before an anchor. `MINT_AFTER` now
+    holds that nothing able to leave comes before each anchor;
+  - and the two nits: `handle_boot_button()` polled in `loop()` only on a GPIO
+    edge, which drops F347's every-pass sweep (a census row now holds its
+    call where it sits), and an Arduino `WebServer` on another port, whose
+    routes no rule reads (a census row now names none of `WebServer`,
+    `AsyncWebServer`, `HTTPUpdateServer` and `ArduinoOTA`, in a function or
+    outside one).
+  It also found five branches no plant held, each red on the tree but passed
+  by a checker mutant whose self-test stayed green, now each planted:
+  `derive_ap_password` as a SoftAP-password read (a helper re-deriving the key
+  into a local buffer for public `/api/fleet`), a second
+  `network.begin(..., "")` through the binding `setup()` itself uses,
+  `register_route` named at namespace scope, the carry's fixed point (a
+  two-hop chain whose helper is defined after its caller), and a gated route
+  answering the pin through another gated one with no `SECRET_ANSWERS` row.
+  This repair planted the same re-derivation for the bearer
+  (`derive_api_token`), whose read no plant held either. And the docs: the
+  threat model has its own paragraph now, in the docstring, this entry and
+  the CHANGELOG, and the paste, symbol-binding and build-input rules are named
+  as defense in depth over the spellings they hold. Their completeness claims
+  were false and are narrowed: `--prefix`, which the round-5 CHANGELOG said gcc
+  does not honor, is rewritten to `-B <dir>` by host g++ 13.3 and by the
+  tree's xtensa g++ 14.2.0, and runs an `as` planted there; `--for-linker`,
+  `--for-assembler`, `--define-macro`, a letter-led glued `-Bxbin/` and
+  `-L`/`-l` pass the build-input rule too, and stay unread as deliberate
+  spellings. The CHANGELOG now also names `INCLUDE_COMMON_WORDS` and the
+  early-return limit; round 2's "all 62 routes" is 62 gated handlers serving
+  63 routes; round 4's barrier is `asm volatile("" ::: "memory")`, written ten
+  times in nine files under the tree and once in `csi_hal.cpp`; round 5's
+  `#pragma GCC poison` is two lines; and `_Z17auth_handed_tokenm` is the
+  xtensa spelling (host g++ emits `_Z17auth_handed_tokenj`). Of 17 checker
+  mutants that each undo one of these fixes or weaken one of those branches,
+  the self-test refuses all 17 (the six that weaken an older branch pass the
+  round-5 self-test). Host-tested; not run on a device. No new number.
 - [x] **F339 [code] canary-wap: other bearer compares stay silent beside the
   lockout.** `csi_integration.cpp`'s `CSI_AUTH_OR_RETURN`
   (`api_auth_check_optional`, every CSI dashboard route), `csi_mqtt.cpp`'s
