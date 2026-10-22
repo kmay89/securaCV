@@ -200,23 +200,34 @@
     `-B` before a path, `-Xpreprocessor`/`-Wp,`, `-Xassembler`/`-Wa,`), a
     response file (`@file`), a build script (`extra_scripts`, or a `!command`
     dynamic value that runs a command and splices its stdout into the flags),
-    a local library or a moved source folder;
-  - a library the build fetches, as an entry of a `lib_deps` value in the
-    flag files (under that key or `lib_use`, `lib_force` or `lib_install`,
-    the older names PlatformIO still reads as it, in any case and at any
-    indent, as configparser reads the ini; split by line and on `, ` in
-    every line, which splits more than PlatformIO does, never less, as it
-    splits a one-line value on `, ` and a longer one only by line; or
-    interpolated from another option, `${this.option}` read wherever any
-    section sets it, a `${sysenv.*}` or built-in one failing) or as a
-    dependency a library manifest under the tree declares,
-    that no `REGISTRY_LIBS` row names. Each row is an `owner/name` with its
-    reason, and the four rows are the libraries the flag files name today
-    (`rweather/Crypto`, `bblanchon/ArduinoJson`, `knolleary/PubSubClient`,
-    `h2zero/NimBLE-Arduino`); no row admits a bare registry name or a URL (a
-    version holding an `@`, a `:` or a `/`, which PlatformIO reads as one),
-    and a row vouches for the dependencies its library declares, which are
-    not read (the four declare none).
+    a local library, a moved source folder (each of those keys in any case),
+    or a `${sysenv.*}` value the build-time environment sets;
+  - a library the build fetches, as an entry of an env's `lib_deps` or as a
+    dependency a library manifest under the tree declares, that no
+    `REGISTRY_LIBS` row names. The configuration is read with PlatformIO's
+    own reader, not an imitation of it: `ProjectConfig`, at the version the
+    builds that ship the flagship pin (6.1.19, in `firmware-release.yml` and
+    `flasher-release.yml`), run from `firmware/canary` as `pio run` runs it,
+    resolves each env's `lib_deps` (its `extends` and `[env]`, the
+    `extra_configs` files, every interpolation, `${this.option}` included,
+    the older key names `lib_use`, `lib_force` and `lib_install`, a key at
+    any indent and in any case, a one-line list split on `, `); each entry
+    is read by PlatformIO's `PackageSpec`, and each manifest by its manifest
+    parser. A failing entry names every env that fetches it. A configuration
+    PlatformIO refuses, an env whose `lib_deps` it cannot resolve, a file it
+    reads that the `-D` rule's flag files do not hold, and a `${sysenv.*}`
+    reference anywhere in the flag files (read in their text, so an empty
+    environment at check time hides none) fail too; without the `platformio`
+    module, or at another version of it, the check fails before any rule
+    runs, naming `python3 -m pip install platformio==6.1.19`, which
+    `firmware.yml` runs first (through `setup-platformio`). Each row is an
+    `owner/name` with its reason, and the four rows are the libraries the
+    flag files name today (`rweather/Crypto`, `bblanchon/ArduinoJson`,
+    `knolleary/PubSubClient`, `h2zero/NimBLE-Arduino`); no row admits a bare
+    registry name, a registry id, a URL or a path (a version PlatformIO reads
+    as a URL, `rweather/Crypto @ git@github.com:...`, included), and a row
+    vouches for the dependencies its library declares, which are not read
+    (the four declare none).
     `tzapu/WiFiManager` added to `lib_deps` for a recovery portal passed
     every rule: its `autoConnect()`, handed no AP password, raises an open
     SoftAP and serves a firmware upload and `/erase` that no rule reads;
@@ -436,6 +447,44 @@
   read wherever any section sets it, which reads more than PlatformIO does
   where the value is an env's own, never less. Of five checker mutants that
   each undo or narrow that fix, the self-test refuses all five.
+  Its eleventh round stopped imitating PlatformIO's reader. Rounds 7 to 10
+  had built a text reader of its ini (the indent rule, the older key names,
+  case folding, the one-line `, ` split, `${section.option}` and
+  `${this.option}`, `${sysenv.*}`), and each review found another spelling
+  PlatformIO reads that the reader did not. The library rule now reads the
+  configuration with PlatformIO's own `ProjectConfig`, `PackageSpec` and
+  manifest parser, pinned to 6.1.19, the release builds' pin
+  (`firmware.yml`'s PR build jobs pin none and take the newest, 6.2.0 today,
+  whose `ProjectConfig` and `PackageSpec` are the same text and whose
+  manifest parser adds one reading, an owner written into a list
+  dependency's `name`, which 6.1.19 fails as no row). The hand-written
+  reader is gone (`_ini_options`, `LIB_DEPS_KEYS`, `expand()`, the spec and
+  interpolation patterns, and the JSON and `library.properties` reading);
+  `flag_sources` and `build_reach` still read the text for the `-D` and `-I`
+  rules, and a file PlatformIO reads that `flag_sources` does not now fails.
+  A `${sysenv.*}` reference fails anywhere in the flag files (none is in the
+  tree), and so does a build-input key (`extra_scripts`, `lib_extra_dirs`,
+  `src_dir` and the rest) in any case. The self-test's library cases now
+  write a project into a temp dir and run it as main() runs the tree, through
+  `ProjectConfig`: 46 projects (the configuration in small as it is today,
+  passing with each env's resolved list checked; 9 spellings of a row or a
+  library in the tree, passing; the 26 spellings of an unreviewed library the
+  seventh to tenth reviews found or held, each failing and naming its env;
+  and 10 more: an entry `[env]` lists, named with every env that inherits it,
+  an `extra_configs` file's env, a `library.json` dependency,
+  `${sysenv.LIB_DEPS}` with the variable unset, set to a row and set to
+  WiFiManager, a `${sysenv.*}` in `build_flags`, a configuration PlatformIO
+  refuses, an interpolation it cannot resolve and an `Extra_Configs` whose
+  files `flag_sources` does not read), a missing configuration, and the
+  manifest forms. Of 18 checker mutants that each weaken the new rule (the
+  envs' lists ignored; a URL or a path, a registry id, a bare row name or an
+  unreadable spec admitted; the owner ignored; only the first env named;
+  `${sysenv.*}` dropped from the build-input rule; a key read in one case;
+  the file cross-check dropped; the configuration read from the wrong
+  folder; PlatformIO's refusal, an unresolvable env, a missing configuration
+  or an unreadable manifest swallowed; a manifest's dependencies ignored; an
+  env's list read from its own section's text, split or not), the self-test
+  refuses all 18. The planted fixtures stay 293 (268 source, 25 table).
   The head parser names a constructor
   for its class (it named `ScvNetworkManager`'s body after its last
   initializer, `m_peers_last_browse_ms`), a member as `Class::name`, and a
@@ -457,7 +506,8 @@
   ran), so it is an injector the build-input rule does not read, as are
   `--for-linker`, `--for-assembler` and `--define-macro`; they stay unread,
   deliberate spellings outside the threat model (the sixth review).
-  The tree passes with its 83 registrations in about 20 s. The threat model
+  The tree passes with its 83 registrations in 14 to 21 s (Python 3.11 to
+  3.14, PlatformIO 6.1.19). The threat model
   is a careless or mistaken firmware edit (a refactor, a new route, a new
   feature, a moved line, a widened helper, a new file), not a deliberate
   attempt to evade the check (preprocessor tricks aimed at it, token pasting,

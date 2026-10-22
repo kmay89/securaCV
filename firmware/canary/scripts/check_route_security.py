@@ -146,23 +146,35 @@ every other gate), and the premise the last one stands on:
     path, `-Xpreprocessor`/`-Wp,`, `-Xassembler`/`-Wa,`), a response file
     (`@file`), a build script, a local library, a moved source folder or
     PlatformIO's `!command` dynamic value (a command run at build time whose
-    stdout becomes flags). Every library lib_deps or a library manifest
-    under ROOTS names is a REGISTRY_LIBS row with its reason, or a library
-    under ROOTS by its name (library_problems: each entry of a lib_deps value
-    in the flag files, under that key or an older name PlatformIO reads as it
-    (`lib_use`, `lib_force`, `lib_install`), in any case and at any indent,
-    as configparser reads the ini, an interpolated `${section.option}` read
-    where they set it (`${this.option}` wherever any section sets it, as
-    PlatformIO reads [env]'s value in each env that inherits it, `this`
-    naming that env; a `${sysenv.*}` or built-in one fails), split by line
-    and on ", " in every line, which splits more than PlatformIO does, never
-    less; and each dependency a library manifest under ROOTS declares), so a
+    stdout becomes flags), a key of those in any case (configparser
+    lowercases it), or a `${sysenv.*}` reference anywhere in the flag files
+    (a value the build-time environment sets, which can name a library or a
+    flag the check cannot read; their text is read, so an empty environment
+    at check time hides none). Every library an env of the flagship's
+    configuration fetches, or a library manifest under ROOTS declares, is a
+    REGISTRY_LIBS row with its reason, or a library under ROOTS by its name
+    (library_problems). The configuration is read with PlatformIO's own
+    reader, never by imitating it, at the version the builds that ship the
+    flagship pin (PLATFORMIO_PIN, 6.1.19): platformio_lib_deps hands
+    platformio.ini to ProjectConfig from the project's folder, as `pio run`
+    does, and takes each env's lib_deps as it resolves them ([env] and each
+    `extends`, the extra_configs files, every interpolation, `${this.option}`
+    included, the older key names `lib_use`, `lib_force` and `lib_install`,
+    a key at any indent and in any case, a one-line list split on ", "); each
+    entry is read by PlatformIO's PackageSpec, and each manifest by its
+    manifest parser, each dependency the PackageSpec PlatformIO builds from
+    it. A configuration PlatformIO refuses, an env whose lib_deps it cannot
+    resolve and a file it reads that the flag files (flag_sources) do not
+    hold fail, and without the module, or with another version of it, the
+    check fails before any rule runs, naming `python3 -m pip install
+    platformio==6.1.19`; it never falls back to a reading of its own. So a
     library that raises its own access point or serves its own routes
     (WiFiManager's autoConnect(), handed no AP password, raises an open
-    SoftAP and serves a firmware upload) fails until a reviewer adds its
-    row. A row is an `owner/name` and vouches for the dependencies its
-    library declares, which are not read (the four rows' libraries declare
-    none); no row admits a bare registry name or a URL.
+    SoftAP and serves a firmware upload) fails, naming every env that
+    fetches it, until a reviewer adds its row. A row is an `owner/name` and
+    vouches for the dependencies its library declares, which are not read
+    (the four rows' libraries declare none); no row admits a bare registry
+    name, a registry id, a URL or a path.
     Every reader is named: an accessor in its home (SECRET_ACCESSORS), an
     emitter in its home carrying exactly what TOKEN_EMITTERS says, its
     reading statements pinned (EMITTER_STATEMENTS), a comparer reading only
@@ -360,7 +372,10 @@ code is otherwise not followed, and a held name that is also an ordinary
 word there (INCLUDE_COMMON_WORDS: begin, check, s_active and the like) is
 not read in them; a library the build links is not read: the registry ones
 are held to REGISTRY_LIBS by name, each row with its reason (and vouching for
-its library's own dependencies), and the core is held only by the spellings
+its library's own dependencies), as PlatformIO 6.1.19 resolves the
+configuration (a reading a newer PlatformIO adds, which the unpinned PR
+builds would take, is held only once PLATFORMIO_PIN moves with the builds
+that ship the flagship), and the core is held only by the spellings
 the census names, so a server or an access point the core can start under
 another name is not seen (a server written on the raw socket API, the core's
 UDP classes, WiFiUDP, AsyncUDP and DNSServer, of which the flagship's own
@@ -407,32 +422,49 @@ arithmetic is test_auth_backoff.cpp's; and a pinned body or statement means
 an edit to that glue updates its row in the same review (the failure prints
 the row as it now is, so the update is mechanical). Each rule function is
 self-tested with its own fixtures, but main()'s own plumbing is not run by a
-self-test: a one-token edit to main() that dropped `+ reach_failures` from
-the failure list, or passed `includes={}` (or `manifests={}`) to
-check_bearer_only_answers rather than build_reach's (or library_manifests')
-output, would leave the self-test green (the real tree has no reach failure,
-clean headers and no manifest dependency that fails). The
-compositions those mutations would hide — build_reach's `includes` fed to
-check_bearer_only_answers, where a header reader is caught, and
-library_manifests' output fed to it, where a manifest's dependency is held —
-are each held by a temp-dir fixture in the self-test; main()'s three wiring
-lines themselves are not, as the threat model here is a careless firmware
-edit, not a malicious edit to this checker (which could `return 0`).
+self-test: a one-token edit to main() that dropped `+ reach_failures` (or
+`+ pio_failures`) from the failure list, or passed `includes={}` (or
+`manifests={}`, or `lib_deps={}`) to check_bearer_only_answers rather than
+build_reach's (or library_manifests', or platformio_lib_deps') output, would
+leave the self-test green (the real tree has no reach failure, clean
+headers, no file PlatformIO reads that flag_sources does not, and no library
+that fails). The compositions those mutations would hide — build_reach's
+`includes` fed to check_bearer_only_answers, where a header reader is
+caught, and flag_sources', platformio_lib_deps' and library_manifests'
+output fed to it, where an env's library, a `${sysenv.*}` and a manifest's
+dependency are held — are each held by a temp-dir fixture in the self-test;
+main()'s four wiring lines themselves are not, as the threat model here is a
+careless firmware edit, not a malicious edit to this checker (which could
+`return 0`).
 
-Run from the repo root (CI: firmware.yml job "Mesh + Scout Host Tests",
+Run from the repo root, with PlatformIO 6.1.19 installed (CI: firmware.yml
+job "Mesh + Scout Host Tests", its "Set up PlatformIO 6.1.19" step, then
 step "Check canary (PIO) route security", beside the WAP's audit):
+    python3 -m pip install platformio==6.1.19
     python3 firmware/canary/scripts/check_route_security.py
 """
 
+import contextlib
 import functools
 import glob
-import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# PlatformIO's own readers, which the library rule reads the flagship's
+# configuration and its libraries' manifests with, at PLATFORMIO_PIN (below).
+# Without the module, main() fails naming the install command; nothing
+# guesses in its place.
+try:
+    import platformio
+    from platformio.package.manifest.parser import ManifestFileType, ManifestParserFactory
+    from platformio.package.meta import PackageSpec
+    from platformio.project.config import ProjectConfig
+except ImportError:
+    platformio = None
 
 # Every .cpp/.h under the canary tree's libs and src. Only the network lib
 # registers routes today; scanning the whole tree means a second lib that
@@ -3921,7 +3953,8 @@ def no_session_problems(sources: dict, headers: dict, queries: set, uri_readers)
 
 
 # The build's flag files (platformio.ini and the files its extra_configs
-# names): a `-D` flag is a `#define` too.
+# names): a `-D` flag is a `#define` too. PlatformIO's own reader
+# (platformio_lib_deps) fails a file it reads that flag_sources does not.
 FLAG_FILES = (Path("firmware/canary/platformio.ini"),)
 # The folders outside ROOTS the flagship builds from (platformio.ini's
 # -I${PROJECT_DIR}/include, -I${PROJECT_DIR}/../common and its subfolders, and
@@ -4396,20 +4429,25 @@ def symbol_binding_problems(sources: dict, includes: dict) -> list:
 #   - a response file (`@file`), which splices in flags from a file no rule reads.
 # A PlatformIO section key that moves a source/library/include folder or runs
 # code (extra_scripts, lib_extra_dirs, a lib_deps path, src_dir, lib_dir,
-# include_dir, a linker script), and PlatformIO's own `!command` dynamic value
-# (a command run at build time whose stdout becomes flags), are refused the
-# same way. (The `=`/`--` long forms, the include-path flags, `@file` and
-# `!command` were added in F338's fifth review, which found each slipped the
-# first version of this rule.)
+# include_dir, a linker script; a key in any case, as configparser lowercases
+# it), PlatformIO's own `!command` dynamic value (a command run at build time
+# whose stdout becomes flags) and a `${sysenv.*}` reference (the build-time
+# environment's value, which can bring a library or a flag the check cannot
+# read: the file text is read, so an empty environment at check time hides
+# none) are refused the same way. (The `=`/`--` long forms, the include-path
+# flags, `@file` and `!command` were added in F338's fifth review, which found
+# each slipped the first version of this rule; `${sysenv.*}` anywhere, and a
+# key in any case, in its eleventh round.)
 _BUILD_INPUT = re.compile(
     r"(?<![\w-])(?:-Wl,|-Xlinker\b|--wrap\b|--defsym\b|-T(?=\s*[\w$./])"
     r"|--?include\b|--?imacros\b"
     r"|-i(?:system|quote|dirafter|prefix|withprefix(?:before)?|sysroot|plugindir|multilib)\b"
     r"|--sysroot\b|--?specs\b|-fplugin\b|-wrapper\b|-Xpreprocessor\b|-Xassembler\b"
     r"|-Wp,|-Wa,|-B(?=[\s/$.=~]))"
-    r"|^[ \t]*(?:extra_scripts?|lib_extra_dirs|src_dir|lib_dir|include_dir|"
+    r"|^[ \t]*(?i:extra_scripts?|lib_extra_dirs|src_dir|lib_dir|include_dir|"
     r"board_build\.ldscript)[ \t]*[=:]"
     r"|(?:symlink|file)://"
+    r"|\$\{\s*(?i:sysenv)\s*\."
     r"|(?:^[ \t]*|[=:,][ \t]*)![ \t]*(?=\S)"
     r"|(?:^[ \t]*|[=:,][ \t]*)@(?=[\w/$.~])", re.M)
 
@@ -4418,8 +4456,8 @@ def build_input_problems(flags: dict) -> list:
     """No flag file holds a build input the check does not read
     (_BUILD_INPUT): a linker option, a forced include, an include-path or
     sysroot flag, a compiler-driver injector, a response file, a build
-    script, a local library, a moved source folder or a `!command` dynamic
-    value. One problem per line."""
+    script, a local library, a moved source folder, a `!command` dynamic
+    value or a `${sysenv.*}` reference. One problem per line."""
     problems, seen = [], set()
     for fname, text in sorted(flags.items()):
         for m in _BUILD_INPUT.finditer(text):
@@ -4427,16 +4465,19 @@ def build_input_problems(flags: dict) -> list:
             if (fname, line_no) in seen:
                 continue
             seen.add((fname, line_no))
-            line = text[text.rfind("\n", 0, m.start()) + 1:text.find("\n", m.start())]
+            end = text.find("\n", m.start())
+            line = text[text.rfind("\n", 0, m.start()) + 1:end if end >= 0 else len(text)]
             problems.append(f"{fname}:{line_no}: {line.strip()!r} is a build "
                             f"input the check does not read (a linker option, a forced "
                             f"include, an include-path or sysroot flag, a compiler-driver "
                             f"injector, a response file, a build script, a local library, a "
-                            f"moved folder or a `!command` run at build time) — a symbol bound "
-                            f"there (`-Wl,--wrap=...`), a header force-included "
-                            f"(`--include=...`) or a flag a command emits (`!python3 gen.py`) is "
-                            f"reached by no spelling the rules read; teach the check before the "
-                            f"build takes one")
+                            f"moved folder, a `!command` run at build time or a `${{sysenv.*}}` "
+                            f"value the build-time environment sets) — a symbol bound there "
+                            f"(`-Wl,--wrap=...`), a header force-included (`--include=...`), a "
+                            f"flag a command emits (`!python3 gen.py`) or a library an "
+                            f"environment variable names (`${{sysenv.LIB_DEPS}}`) is reached by "
+                            f"no spelling the rules read; teach the check before the build "
+                            f"takes one")
     return problems
 
 
@@ -4446,22 +4487,23 @@ def build_input_problems(flags: dict) -> list:
 # handed no AP password, raises an OPEN SoftAP and serves a firmware upload
 # (`/update`, which posts to `/u`) and `/erase` to anyone who joins it (v2.0.17:
 # WiFi.softAP(name, "") and its WebServer's routes), and ESPAsyncWebServer,
-# PsychicHttp or ESPUI serve routes no route rule reads. So every library the
-# flag files' lib_deps fetch (under that key or an older name PlatformIO still
-# reads as it, LIB_DEPS_KEYS), and every dependency a library manifest under
-# ROOTS declares (library.json's "dependencies", library.properties'
-# `depends=`), is a row here, matched by `owner/name` whatever version range it
-# names, or a library under ROOTS by its name. A row is an `owner/name` and
-# admits only that: a library no row names fails until a reviewer adds its row
-# with a reason, as PUBLIC_ALLOWLIST's routes are added, and a bare registry
-# name (which the registry resolves by search) or a URL fails whatever the rows
-# say (library_problems). A row vouches for its library's own dependencies too,
-# which PlatformIO fetches and the check does not read: the four rows' libraries
-# declare none (no dependency in the manifests of Crypto 0.4.0, ArduinoJson
-# 7.4.3, PubSubClient 2.8 and NimBLE-Arduino 2.5.1, versions within the ranges
-# the flag files name). A core library is not fetched; the core's servers are
-# the "another HTTP server" census row's to name (it names some and lists those
-# it does not).
+# PsychicHttp or ESPUI serve routes no route rule reads. So every library an
+# env of the flagship's configuration fetches (its lib_deps as PlatformIO's own
+# reader resolves it, platformio_lib_deps), and every dependency a library
+# manifest under ROOTS declares (library.json's "dependencies",
+# library.properties' `depends=`, read by PlatformIO's own manifest parser), is
+# a row here, matched by `owner/name` whatever version range it names, or a
+# library under ROOTS by its name. A row is an `owner/name` and admits only
+# that: a library no row names fails until a reviewer adds its row with a
+# reason, as PUBLIC_ALLOWLIST's routes are added, and a bare registry name
+# (which the registry resolves by search), a registry id, a URL or a path fails
+# whatever the rows say (library_problems). A row vouches for its library's own
+# dependencies too, which PlatformIO fetches and the check does not read: the
+# four rows' libraries declare none (no dependency in the manifests of Crypto
+# 0.4.0, ArduinoJson 7.4.3, PubSubClient 2.8 and NimBLE-Arduino 2.5.1, versions
+# within the ranges the flag files name). A core library is not fetched; the
+# core's servers are the "another HTTP server" census row's to name (it names
+# some and lists those it does not).
 REGISTRY_LIBS = {
     "rweather/Crypto": "Ed25519, Curve25519 and ChaChaPoly, with the hashes they use: no "
                        "network and no server",
@@ -4471,120 +4513,130 @@ REGISTRY_LIBS = {
     "h2zero/NimBLE-Arduino": "the BLE stack ([env:full]'s Scout and status service): no "
                              "Wi-Fi, no HTTP server and no access point",
 }
-# The keys PlatformIO reads as lib_deps: the name, and the older names its
-# ProjectOptions still map onto it (`oldnames`, read with only a deprecation
-# warning). An option's key is lowercased before it is compared (configparser's
-# optionxform), so `Lib_Deps` is lib_deps too.
-LIB_DEPS_KEYS = ("lib_deps", "lib_use", "lib_force", "lib_install")
-# An ini line as configparser reads it for PlatformIO (ProjectConfig): an
-# inline comment is a `;` or `#` at the line's start or after whitespace, and
-# the rest, stripped, is a section header `[...]` or an option whose key runs
-# to the first `=` or `:`, at any indent.
-_INI_INLINE_COMMENT = re.compile(r"(?:^|\s)[;#]")
-_INI_SECTION = re.compile(r"\[(.+)\]")
-_INI_OPTION = re.compile(r"([^=:]*?)\s*[=:]\s*(.*)")
-# A registry library's id (`owner/name`, or a bare name) and its version spec:
-# PlatformIO's PackageSpec reads a spec whose text after an `@` holds an `@`, a
-# `:` or a `/` as a URL (`owner/name @ https://...`, `@ git@host:...`), which
-# fetches what the URL names, so the version may hold none of them.
-_LIB_SPEC = re.compile(r"([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_. -]+)?)\s*(?:@\s*[^\s@:/][^@:/]*)?")
-_LIB_URL_CHARS = re.compile(r"[@:/]")
-_INTERPOLATION = re.compile(r"\$\{([^}]*)\}")
-# PlatformIO's own reading of `${section.option}` (ProjectConfigBase.VARTPL_RE):
-# the section runs to the first dot, and with no dot it is a built-in variable.
-_INTERPOLATION_REF = re.compile(r"(?:([^.}()]+)\.)?([^}]+)")
+# The PlatformIO whose own readers the library rule reads with (ProjectConfig
+# for the configuration, PackageSpec for each lib_deps entry and manifest
+# dependency, its manifest parser for library.json and library.properties):
+# the version the builds that ship the flagship pin (firmware-release.yml and
+# flasher-release.yml hand .github/actions/setup-platformio
+# `platformio-version: "6.1.19"` and build release_ha with it). firmware.yml's
+# PlatformIO Build jobs pin none and take the newest release, 6.2.0 on
+# 2026-10-22, whose ProjectConfig and PackageSpec are this version's text and
+# whose manifest parser adds one reading (an owner written into a list
+# dependency's "name", which this version reads as a bare name and so fails as
+# no row). firmware.yml's route-check job installs this version; main()
+# refuses any other, and a missing module, with the install command.
+PLATFORMIO_PIN = "6.1.19"
+PLATFORMIO_INSTALL = f"python3 -m pip install platformio=={PLATFORMIO_PIN}"
 
 
-def _ini_options(text: str) -> list:
-    """[(section, key, [(line number, value line)])] of an ini text as
-    configparser reads it for PlatformIO: a line indented deeper than the
-    open option's key continues its value, and an empty line (a comment line
-    arrives blanked, flag_sources, or is stripped to nothing here) stays in
-    it; any other line, at any indent, is a section header or a new option,
-    its key lowercased. The first value line is the text after the key's
-    `=` or `:`, and every value line has its inline comment and outer
-    whitespace stripped, as configparser joins them."""
-    out, section, cur, indent = [], "", None, 0
-    for i, raw in enumerate(text.split("\n"), 1):
-        comment = _INI_INLINE_COMMENT.search(raw)
-        line = (raw[:comment.start()] if comment else raw).strip()
-        if not line:
-            if cur is not None:
-                cur[2].append((i, ""))
-            continue
-        depth = len(raw) - len(raw.lstrip())
-        if cur is not None and depth > indent:
-            cur[2].append((i, line))
-            continue
-        indent = depth
-        m = _INI_SECTION.match(line)
-        if m:
-            section, cur = m.group(1), None
-            continue
-        m = _INI_OPTION.fullmatch(line)
-        cur = (section, m.group(1).lower(), [(i, m.group(2))]) if m and m.group(1) else None
-        if cur:
-            out.append(cur)
-    return out
+def _shown(path: Path) -> str:
+    """A path as the problems name it: relative to the working directory (the
+    repo root, as main() runs) when it is inside it, else absolute."""
+    rel = os.path.relpath(path)
+    return Path(rel).as_posix() if not rel.startswith("..") else path.as_posix()
+
+
+def platformio_lib_deps(flags: dict, ini=FLAG_FILES[0], project=PROJECT_DIR) -> tuple:
+    """({env: [lib_deps entry]}, problems): every env of the configuration at
+    `ini` and the libraries it fetches, as PlatformIO's own reader resolves
+    them (ProjectConfig at PLATFORMIO_PIN, read from the project's folder as
+    `pio run` reads it: the extra_configs files, [env] and each `extends`,
+    every interpolation, the older key names lib_use, lib_force and
+    lib_install, a key at any indent and in any case, a one-line list split
+    on ", "). Nothing here reads the ini text. A configuration PlatformIO
+    refuses and an env whose lib_deps it cannot resolve are problems, and so
+    is a file it reads that the flag files (`flags`, flag_sources()) do not
+    hold: the -D flags and build inputs there would be read by no rule."""
+    ini, project = Path(ini), Path(project)
+    where = _shown(ini)
+    if not ini.is_file():
+        return {}, [f"{where}: the configuration PlatformIO reads is missing, so the libraries "
+                    f"its envs fetch are not held to REGISTRY_LIBS — fix the path or the "
+                    f"check's FLAG_FILES"]
+    base, path, deps, problems, read = project.resolve(), ini.resolve(), {}, [], []
+    # PlatformIO reads a project from its folder: extra_configs' globs and
+    # ${PROJECT_DIR} are the working directory's. (Nothing in the block names a
+    # path for a problem: those are the caller's working directory's.)
+    with contextlib.chdir(base):
+        try:
+            config = ProjectConfig(str(path))
+        except Exception as e:  # PlatformIO's own refusal (a parse error, a duplicate key)
+            config, refused = None, e
+        if config is not None:
+            read = [Path(os.path.normpath(base / p)) for p in config._parsed]
+            for env in config.envs():
+                try:
+                    deps[env] = [str(entry) for entry in config.get(f"env:{env}", "lib_deps")]
+                except Exception as e:  # an interpolation PlatformIO cannot resolve
+                    problems.append(f"{where}: PlatformIO {PLATFORMIO_PIN}'s reader cannot "
+                                    f"resolve env:{env}'s lib_deps ({type(e).__name__}: {e}), "
+                                    f"so the libraries it fetches are not held to REGISTRY_LIBS")
+    if config is None:
+        return {}, [f"{where}: PlatformIO {PLATFORMIO_PIN}'s reader refuses the configuration "
+                    f"({refused}), so the libraries its envs fetch are not held to "
+                    f"REGISTRY_LIBS"]
+    held = {Path(f).resolve() for f in flags}
+    problems.extend(f"{_shown(p)}: PlatformIO reads it as part of {where}'s configuration "
+                    f"(extra_configs), but the flag files (flag_sources) do not hold it, so its "
+                    f"-D flags and build inputs are read by no rule — name it in extra_configs "
+                    f"as flag_sources reads it, or teach flag_sources PlatformIO's spelling"
+                    for p in read if p.resolve() not in held)
+    return deps, problems
 
 
 def _manifest_deps(fname: str, text: str) -> tuple:
-    """([(line, spec)], [declared library name], problems) of a library
-    manifest: library.json's "dependencies" (an object of name to version, or a
-    list of names or of {owner, name, version}), library.properties'
-    `depends=`."""
-    if fname.rsplit("/", 1)[-1] == "library.properties":
-        specs, names = [], []
-        for n, line in enumerate(text.split("\n"), 1):
-            key, eq, value = line.partition("=")
-            if eq and key.strip() == "depends":
-                specs.extend((n, s.strip()) for s in value.split(",") if s.strip())
-            elif eq and key.strip() == "name":
-                names.append(value.strip())
-        return specs, names, []
-    unread = f"{fname}: %s, so the libraries it fetches are not held to REGISTRY_LIBS"
+    """([(line, shown, spec or None, why)], [declared library name], problems)
+    of a library manifest, read by PlatformIO's own manifest parser (library.json's
+    "dependencies" in any form it takes, library.properties' `depends=`), each
+    dependency the PackageSpec PlatformIO builds from it (dependency_to_spec:
+    its owner, its name and its version as the requirement, a version that is
+    no semantic version range read as `name=version`, a URL or a path)."""
     try:
-        data = json.loads(text)
-    except ValueError as e:
-        return [], [], [unread % f"a library manifest the check cannot read as JSON ({e})"]
-    if not isinstance(data, dict):
-        return [], [], [unread % "a library manifest that is not a JSON object"]
+        data = ManifestParserFactory.new(text, ManifestFileType.from_uri(fname)).as_dict()
+    except Exception as e:  # PlatformIO's own refusal (bad JSON, a malformed list)
+        return [], [], [f"{fname}: a library manifest PlatformIO {PLATFORMIO_PIN} cannot read "
+                        f"({type(e).__name__}: {e}), so the libraries it fetches are not held "
+                        f"to REGISTRY_LIBS"]
     names = [data["name"]] if isinstance(data.get("name"), str) else []
-    deps = data.get("dependencies", {})
-    if isinstance(deps, dict):
-        deps = [{"name": k, "version": v} for k, v in deps.items()]
-    if not isinstance(deps, list):
-        return [], names, [unread % f"its \"dependencies\" is no object or list ({deps!r})"]
-    items, problems = [], []
-    for dep in deps:
-        if isinstance(dep, str):
-            dep = {"name": dep}
-        if not (isinstance(dep, dict) and isinstance(dep.get("name"), str)):
-            problems.append(unread % f"a dependency the check cannot read ({dep!r})")
+    items = []
+    for dep in data.get("dependencies") or []:
+        dep = dep if isinstance(dep, dict) else {"name": dep}
+        ident = "/".join(str(x) for x in (dep.get("owner"), dep.get("name")) if x)
+        at = text.find(str(dep.get("name")))
+        line = _line_of(text, at) if at >= 0 else 1
+        try:
+            spec = PackageSpec(owner=dep.get("owner"), name=dep.get("name"),
+                               requirements=dep.get("version"))
+        except Exception as e:  # a version PlatformIO reads as neither a range nor a URL
+            items.append((line, ident or repr(dep), None, f"{type(e).__name__}: {e}"))
             continue
-        ident = "/".join(x for x in (dep.get("owner"), dep["name"]) if isinstance(x, str))
-        version = str(dep.get("version", ""))
-        at = text.find(dep["name"])
-        items.append((_line_of(text, at) if at >= 0 else 1,
-                      f"{ident}={version}" if _LIB_URL_CHARS.search(version) else ident))
-    return items, names, problems
+        shown = f"{ident}={dep.get('version')}" if spec.raw else ident
+        items.append((line, shown, spec, None))
+    return items, names, []
 
 
-def library_problems(sources: dict, flags: dict, manifests: dict, registry: dict) -> list:
-    """Every library lib_deps or a library manifest under ROOTS names is a
-    REGISTRY_LIBS row, or a library under ROOTS by its name (a row vouching
-    for its library's own dependencies): each entry of a lib_deps value in
-    the flag files (under any of LIB_DEPS_KEYS, read as _ini_options reads
-    the ini, an interpolated `${section.option}` read where the flag files
-    set it and `${this.option}` wherever any section sets it, a
-    `${sysenv.*}` or built-in one failing, split by line and on
-    ", " in every line: PlatformIO splits a one-line value on ", " and a
-    longer one only by line, so this splits wherever it does, and more
-    where a line of a longer value holds a ", "), and each dependency a
-    library manifest under ROOTS declares (`manifests`,
-    library_manifests()). A row is an `owner/name`; no row admits a bare
-    registry name or a URL."""
-    problems, specs = [], []
+def _spec_admitted(spec, known: set, local: set) -> bool:
+    """A PackageSpec names a REGISTRY_LIBS row (`known`, each owner/name
+    casefolded) or a library under ROOTS by its name (`local`): no URL or
+    path (PlatformIO fetches or copies what it names), no registry id, and a
+    bare name only for a library under ROOTS."""
+    if spec.external or spec.id is not None or not isinstance(spec.name, str):
+        return False
+    if spec.owner:
+        return f"{spec.owner}/{spec.name}".casefold() in known
+    return spec.name in local
+
+
+def library_problems(sources: dict, lib_deps: dict, manifests: dict, registry: dict) -> list:
+    """Every library the flagship's envs fetch (`lib_deps`, {env: [entry]},
+    platformio_lib_deps(): each entry as PlatformIO's ProjectConfig resolves
+    it, read by its PackageSpec) and every dependency a library manifest under
+    ROOTS declares (`manifests`, library_manifests(), read by PlatformIO's
+    manifest parser) is a REGISTRY_LIBS row, or a library under ROOTS by its
+    name (a row vouching for its library's own dependencies). A row is an
+    `owner/name`; no row admits a bare registry name, a registry id, a URL or
+    a path. An entry that fails names every env that fetches it."""
+    problems = []
     known = {k.casefold() for k in registry if k.count("/") == 1}
     problems.extend(f"REGISTRY_LIBS: {k!r} is no owner/name row — a row admits the one "
                     f"library its owner/name names (a bare registry name is resolved by "
@@ -4594,88 +4646,37 @@ def library_problems(sources: dict, flags: dict, manifests: dict, registry: dict
     for path in list(sources) + list(manifests):
         parts = path.split("/")
         local |= {parts[i + 1] for i, part in enumerate(parts[:-2]) if part == "lib"}
-    options = [(fname, o) for fname, text in sorted(flags.items()) for o in _ini_options(text)]
-
-    def expand(fname, lines, via, seen):
-        """[[where, via, text]]: a value's lines with each `${section.option}`
-        replaced by the lines of the value it names. PlatformIO inserts a
-        value it names with that value's own line breaks, or, for a list
-        option, with a break between its entries (split by line, or on ", "
-        when it is one line), so every line break of its expanded value is a
-        piece's end here or a ", " inside one, and the caller splits every
-        piece on ", ". A `${this.option}` is every section's value of the
-        option: PlatformIO reads [env]'s value, or that of a section an env
-        extends, in each env that inherits it, `this` naming that env, so
-        `[env]`'s `${this.custom_libs}` is each env's own `custom_libs`; the
-        option is read wherever the flag files set it, which reads more than
-        PlatformIO does where the value is an env's own, never less. A
-        lib_deps one of a section adds nothing: PlatformIO reads it as a
-        lib_deps value the flag files set, each read on its own, as nothing
-        or as a build error; a `${sysenv.*}` or built-in one is the
-        environment's, which no flag file sets."""
-        out = []
-        for n, line in lines:
-            out.append([f"{fname}:{n}", via, ""])
-            for k, part in enumerate(_INTERPOLATION.split(line)):
-                if k % 2 == 0:
-                    out[-1][2] += part
-                    continue
-                m = _INTERPOLATION_REF.fullmatch(part)
-                sec, opt = (m.group(1), m.group(2).lower()) if m else (None, part)
-                if (sec, opt) in seen or (opt in LIB_DEPS_KEYS
-                                          and sec not in (None, "sysenv")):
-                    continue  # a section's lib_deps value is read on its own
-                hits = [(f, o) for f, o in options
-                        if sec not in (None, "sysenv") and o[1] == opt
-                        and sec in ("this", o[0])]
-                if not hits:
-                    problems.append(f"{fname}:{n}: lib_deps interpolates ${{{part}}}, which "
-                                    f"no flag file sets, so the libraries it names are not "
-                                    f"held to REGISTRY_LIBS")
-                got = []
-                for f, o in hits:
-                    got += expand(f, o[2], f"{via} through ${{{part}}}", seen | {(sec, opt)})
-                for j, g in enumerate(got):
-                    if j:
-                        out.append(list(g))
-                    elif out[-1][2].strip():
-                        out[-1][2] += g[2]
-                    else:
-                        out[-1] = [g[0], g[1], out[-1][2] + g[2]]
-        return out
-
-    for fname, (section, key, lines) in options:
-        if key in LIB_DEPS_KEYS:
-            # PlatformIO splits the expanded value by line, or on ", " when it
-            # is one line (parse_multi_values); every piece is split on ", "
-            # here, which splits more than it does where a line of a longer
-            # value holds a ", " (one entry to PlatformIO), never less.
-            for where, via, piece in expand(fname, lines, f"[{section}] {key}", set()):
-                for item in piece.split(", "):
-                    item = re.sub(r"\s+;.*$", "", item.strip()).strip()
-                    if item and not item.startswith((";", "#")):
-                        specs.append((where, via, item, True))
+    specs = []
     for fname, text in sorted(manifests.items()):
         items, names, bad = _manifest_deps(fname, text)
         local |= set(names)
         problems.extend(bad)
-        specs.extend((f"{fname}:{n}", "its dependency list", spec, False)
-                     for n, spec in items)
-    for where, via, spec, in_flags in specs:
-        if in_flags and re.search(r"(?:symlink|file)://", spec):
-            continue  # a local library in a flag file: build_input_problems names it
-        m = _LIB_SPEC.fullmatch(spec)
-        ident = m.group(1).strip() if m else None
-        if ident is not None and (ident.casefold() in known if "/" in ident
-                                  else ident in local):
+        specs.extend((f"{fname}:{n}: its dependency list fetches {shown!r}", spec, why)
+                     for n, shown, spec, why in items)
+    fetched = {}
+    for env, entries in sorted(lib_deps.items()):
+        for entry in entries:
+            fetched.setdefault(entry, []).append(f"env:{env}")
+    for entry, envs in fetched.items():
+        try:
+            spec, why = PackageSpec(entry), None
+        except Exception as e:  # a spec PlatformIO cannot read as a library
+            spec, why = None, f"{type(e).__name__}: {e}"
+        specs.append((f"{', '.join(envs)}: lib_deps, as PlatformIO resolves it, fetches "
+                      f"{entry!r}", spec, why))
+    for where, spec, why in specs:
+        if spec is not None and _spec_admitted(spec, known, local):
             continue
-        problems.append(f"{where}: {via} fetches {spec!r}, a library no REGISTRY_LIBS row "
-                        f"names (a row is an owner/name; no row admits a bare registry name "
-                        f"or a URL) — its code is read by no rule, so one that raises its own "
-                        f"access point or serves its own routes (WiFiManager's autoConnect() "
-                        f"raises an open SoftAP and serves a firmware upload) ships past every "
-                        f"rule here; add its row with why it raises no access point and serves "
-                        f"no route, or drop it")
+        read = (f"PlatformIO cannot read it as a library spec ({why})" if spec is None
+                else "a URL or a path" if spec.external
+                else f"PlatformIO reads it as {spec.humanize()!r}")
+        problems.append(f"{where}, a library no REGISTRY_LIBS row names ({read}; a row is "
+                        f"an owner/name, and no row admits a bare registry name, a registry "
+                        f"id, a URL or a path) — its code is read by no rule, so one that "
+                        f"raises its own access point or serves its own routes "
+                        f"(WiFiManager's autoConnect() raises an open SoftAP and serves a "
+                        f"firmware upload) ships past every rule here; add its row with why it "
+                        f"raises no access point and serves no route, or drop it")
     return problems
 
 
@@ -4726,14 +4727,16 @@ def include_mention_problems(T: dict, includes: dict) -> list:
 
 
 def check_bearer_only_answers(sources: dict, tables=None, flags=None, includes=None,
-                              manifests=None) -> list:
+                              manifests=None, lib_deps=None) -> list:
     """Every answer that carries a credential holds to its grant, on the
     flagship's own gates (see the module docstring). `tables` overrides the
     module tables by name (the self-test's fixtures pass their own; main()
     passes "nvs_keys", the NVS_LITERAL_KEYS values canary_config.h holds);
     `flags` is the build's flag files (flag_sources()); `includes` the
     files outside ROOTS the flagship compiles or #includes (build_reach());
-    `manifests` the library manifests under ROOTS (library_manifests())."""
+    `manifests` the library manifests under ROOTS (library_manifests());
+    `lib_deps` each env's libraries as PlatformIO resolves them
+    (platformio_lib_deps())."""
     T = {"reads": SECRET_READS, "accessors": SECRET_ACCESSORS, "mints": SECRET_MINTS,
          "emitters": TOKEN_EMITTERS, "emitter_stmts": EMITTER_STATEMENTS,
          "comparers": TOKEN_COMPARERS, "local": SECRET_LOCAL_USES, "answers": SECRET_ANSWERS,
@@ -4768,7 +4771,7 @@ def check_bearer_only_answers(sources: dict, tables=None, flags=None, includes=N
             + no_session_problems(sources, T["headers"], T["queries"], T["uri"])
             + macro_problems(sources, T, flags or {}, includes or {})
             + build_input_problems(flags or {})
-            + library_problems(sources, flags or {}, manifests or {}, T["registry"])
+            + library_problems(sources, lib_deps or {}, manifests or {}, T["registry"])
             + symbol_binding_problems(sources, includes or {})
             + include_mention_problems(T, includes or {})
             + manager_alias_problems(sources))
@@ -7326,6 +7329,48 @@ _FIX_TABLE_PLANTS = (
 )
 
 
+# The flagship's configuration in small, as the library rule's self-test writes
+# it into a temp dir (relative paths under it): platformio.ini with [env]'s
+# library list, envs that extend [env:dev], and extra_configs files, one with
+# the platform section [env]'s `platform` interpolates and one with two envs of
+# its own (as firmware/envs/platformio/platforms.ini and
+# firmware/provisioning/platformio_secure.ini are today), and a library under
+# lib/ with the tree's manifest form.
+_PIO_TODAY = {
+    "canary/platformio.ini": (
+        "; the flagship's configuration, in small\n[platformio]\ndefault_envs = dev\n"
+        "extra_configs =\n    ../envs/platforms.ini\n    ../provisioning/secure.ini\n\n"
+        "[env]\nplatform = ${platform_s3c3.platform}\nframework = arduino\n"
+        "; Core libraries (always included)\nlib_deps =\n    rweather/Crypto @ ^0.4.0\n"
+        "    bblanchon/ArduinoJson @ ^7.0.0\nbuild_flags =\n    -DBOARD_HAS_PSRAM\n"
+        "    -I${PROJECT_DIR}/include\n\n[env:dev]\nbuild_flags =\n    ${env.build_flags}\n"
+        "    -DFEATURE_WIFI_AP=1\n\n[env:dev_ha]\nextends = env:dev\nlib_deps =\n"
+        "    ${env.lib_deps}\n    knolleary/PubSubClient @ ^2.8\n\n[env:full]\n"
+        "extends = env:dev\nlib_deps =\n    ${env.lib_deps}\n    ; Must be 2.x\n"
+        "    h2zero/NimBLE-Arduino@^2.3.8\nlib_ignore =\n"),
+    "envs/platforms.ini": "[platform_s3c3]\nplatform = espressif32@6.9.0\n",
+    "provisioning/secure.ini": (
+        "[env:secure]\nplatform = ${platform_s3c3.platform}\nlib_deps =\n"
+        "    rweather/Crypto @ ^0.4.0\n    bblanchon/ArduinoJson @ ^7.0.0\n\n"
+        "[env:secure_ha]\nextends = env:secure\nlib_deps =\n    ${env:secure.lib_deps}\n"
+        "    knolleary/PubSubClient @ ^2.8\n"),
+    "canary/lib/securacv_mesh/library.json": (
+        '{\n    "name": "securacv_mesh",\n    "version": "0.1.0",\n'
+        '    "repository": {"type": "git", "url": "https://github.com/kmay89/securaCV.git"},\n'
+        '    "license": "Apache-2.0",\n    "frameworks": "arduino",\n'
+        '    "platforms": "espressif32"\n}\n'),
+}
+
+
+def _set_environ(values: dict) -> None:
+    """Set each environment variable to its value, or unset it for None."""
+    for key, value in values.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
 def _assert_answer_gate_rule() -> None:
     """The bearer-only answer rule: the head parser names what it reads, the
     clean fixture passes, and every plant fails for its named reason. Runs
@@ -7439,142 +7484,214 @@ def _assert_answer_gate_rule() -> None:
                  # a response file and PlatformIO's `!command` dynamic value
                  "    @${PROJECT_DIR}/flags.rsp", "    !python3 ${PROJECT_DIR}/gen.py",
                  "build_src_flags = !python3 gen.py", "build_unflags =!echo -DX",
-                 "extra_script = pre:add_flags.py"):
+                 "extra_script = pre:add_flags.py",
+                 # a key in any case (configparser lowercases it) and a value the
+                 # build-time environment sets (the eleventh round)
+                 "Extra_Scripts = pre:add_flags.py", "  LIB_EXTRA_DIRS = ../common",
+                 "    ${sysenv.EXTRA_FLAGS}", "lib_deps = ${sysenv.LIB_DEPS}"):
         got = check_bearer_only_answers(clean, tables,
                                         flags={"fx/platformio.ini": ini + line + "\n"})
         assert any("is a build input the check does not read" in p for p in got), (line, got)
     registry = ini + "lib_deps =\n    rweather/Crypto @ ^0.4.0\n    ${env.lib_deps}\n"
     assert check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": registry}) == []
-    # Every library lib_deps or a manifest names is a REGISTRY_LIBS row, or a
-    # library under ROOTS by its name: one of the four the flag files name
-    # today, in each spelling PlatformIO takes, passes...
-    mesh = {"fx/lib/securacv_mesh/library.json": '{"name": "securacv_mesh"}'}
-    for libs in ("lib_deps =\n    ${env.lib_deps}\n    ; Must be 2.x\n"
-                 "    h2zero/NimBLE-Arduino@^2.3.8\n",
-                 "lib_deps = Rweather/crypto @ ^0.4.0, knolleary/PubSubClient @ ^2.8\n",
-                 "lib_deps =\n    securacv_mesh\n",
-                 "[common]\nlibs = bblanchon/ArduinoJson @ ^7.0.0\n[env:x]\n"
-                 "more = rweather/Crypto\nlib_deps =\n    ${common.libs}\n    ${this.more}\n",
-                 # (a one-line list interpolated into a one-line value, which
-                 # PlatformIO splits whole on ", ")
-                 "[common]\nlibs = bblanchon/ArduinoJson @ ^7.0.0, knolleary/PubSubClient @ ^2.8\n"
-                 "[env:x]\nlib_deps = ${common.libs}, rweather/Crypto\n",
-                 # a version range is one entry (it holds no ", ", which
-                 # PlatformIO splits a one-line value on)...
-                 "lib_deps = bblanchon/ArduinoJson @ >=7.0.0,<8.0.0\n",
-                 "lib_deps =\n    bblanchon/ArduinoJson @ >=7.0.0,<8.0.0\n",
-                 # ...and an indented block, an inline comment and an older key
-                 # name holding a row pass as the plain spelling does.
-                 "[env:recovery]\n\textends = env:release\n\tlib_deps =\n\t\t${env.lib_deps}\n"
-                 "\t\trweather/Crypto @ ^0.4.0 # pinned, not tzapu/WiFiManager\n",
-                 "[env:old]\nlib_install = knolleary/PubSubClient @ ^2.8\n",
-                 # ...as does [env]'s `${this.option}`, read in each section
-                 # that sets it, when each holds a row.
-                 "[env]\ncustom_extra_libs =\nlib_deps =\n    rweather/Crypto @ ^0.4.0\n"
-                 "    ${this.custom_extra_libs}\n[env:dev_ha]\n"
-                 "custom_extra_libs = knolleary/PubSubClient @ ^2.8\n"):
-        got = check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": ini + libs},
-                                        manifests=mesh)
-        assert got == [], (libs, got)
-    # ...and any other fails: WiFiManager's autoConnect() raises an open SoftAP
-    # and serves a firmware upload no rule reads (the round-7 review), however
-    # the build is told to fetch it.
-    for libs, spec in (
-            ("lib_deps =\n    rweather/Crypto @ ^0.4.0\n    tzapu/WiFiManager @ ^2.0.17\n",
-             "tzapu/WiFiManager @ ^2.0.17"),
-            ("lib_deps = bblanchon/ArduinoJson @ ^7.0.0, tzapu/WiFiManager\n",
-             "tzapu/WiFiManager"),
-            ("lib_deps =\n    WiFiManager\n", "WiFiManager"),
-            ("lib_deps =\n    me-no-dev/ESP Async WebServer @ ^1.2.3\n",
-             "me-no-dev/ESP Async WebServer @ ^1.2.3"),
-            ("lib_deps =\n    https://github.com/tzapu/WiFiManager.git#v2.0.17\n",
-             "https://github.com/tzapu/WiFiManager.git#v2.0.17"),
-            ("lib_deps =\n    WiFiManager=https://github.com/tzapu/WiFiManager.git\n",
-             "WiFiManager=https://github.com/tzapu/WiFiManager.git"),
-            ("[common]\nlibs_external =\n    tzapu/WiFiManager\n[env:x]\n"
-             "lib_deps =\n    ${env.lib_deps}\n    ${common.libs_external}\n",
-             "tzapu/WiFiManager"),
-            # a one-line value interpolated is split on ", " (PlatformIO joins a
-            # list option's entries by line), its key and the reference read
-            # lowercased as PlatformIO looks it up, and an empty line inside a
-            # value stays in it
-            ("[common]\nLibs = bblanchon/ArduinoJson @ ^7.0.0, tzapu/WiFiManager\n[env:x]\n"
-             "lib_deps = ${common.LIBS}\n", "tzapu/WiFiManager"),
-            ("[env:a]\nlib_ignore = rweather/Crypto @ ^0.4.0, WiFiManager\n[env:x]\n"
-             "lib_deps =\n    ${env:a.lib_ignore}\n", "WiFiManager"),
-            ("[env:a]\nlib_ignore = rweather/Crypto @ ^0.4.0, WiFiManager\n\n[env:x]\n"
-             "lib_deps =\n    ${env:a.lib_ignore}\n    knolleary/PubSubClient\n", "WiFiManager"),
-            ("lib_deps =\n    rweather/Crypto\n\n    tzapu/WiFiManager\n", "tzapu/WiFiManager"),
-            # The round-9 review: a one-line value that interpolates another
-            # one-line value is one line to PlatformIO, which splits all of it
-            # on ", " (the eighth version split only the value it names, then
-            # read the line's last two entries as one, `@ ^2.8, WiFiManager` a
-            # version)...
+    # Every library an env fetches, its lib_deps as PlatformIO's own reader
+    # resolves it, or a manifest names is a REGISTRY_LIBS row, or a library
+    # under ROOTS by its name. Each case writes a project into a temp dir
+    # (_PIO_TODAY, the flagship's configuration in small, with the case's
+    # edit) and runs it as main() runs the tree: flag_sources, then
+    # platformio_lib_deps (ProjectConfig, from the project's folder) and
+    # library_manifests over its lib/, all fed to check_bearer_only_answers.
+    # No case reads the ini's text for its libraries.
+
+    def project(edit="", swap=None, files=None, env=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            texts = dict(_PIO_TODAY, **(files or {}))
+            if swap:
+                fname, old, new = swap
+                assert texts[fname].count(old) == 1, (fname, old)
+                texts[fname] = texts[fname].replace(old, new)
+            texts["canary/platformio.ini"] += edit
+            for rel, text in texts.items():
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text(text)
+            ini = root / "canary" / "platformio.ini"
+            flags, flag_problems = flag_sources((ini,))
+            saved = {k: os.environ.get(k) for k in env or {}}
+            try:
+                _set_environ(env or {})
+                lib_deps, pio_problems = platformio_lib_deps(flags, ini, ini.parent)
+            finally:
+                _set_environ(saved)
+            return lib_deps, flag_problems + pio_problems + check_bearer_only_answers(
+                clean, tables, flags=flags, lib_deps=lib_deps,
+                manifests=library_manifests((root / "canary" / "lib",)))
+
+    # The configuration as the flagship's is today passes, each env holding
+    # what PlatformIO resolves for it ([env]'s list, an env extending another,
+    # the envs an extra_configs file adds)...
+    core = ["rweather/Crypto @ ^0.4.0", "bblanchon/ArduinoJson @ ^7.0.0"]
+    deps, got = project()
+    assert got == [] and deps == {
+        "dev": core, "dev_ha": core + ["knolleary/PubSubClient @ ^2.8"],
+        "full": core + ["h2zero/NimBLE-Arduino@^2.3.8"], "secure": core,
+        "secure_ha": core + ["knolleary/PubSubClient @ ^2.8"]}, (deps, got)
+    # ...as does a row or a library under ROOTS in each spelling PlatformIO
+    # takes: a version range (one entry: PlatformIO splits a one-line value
+    # on ", " only), a row in another case, a one-line list, an interpolated
+    # list with an entry after it, `${this.option}`, an indented env, an
+    # inline comment and an older key name.
+    this_libs = ("canary/platformio.ini", "lib_deps =\n" + "".join(
+        f"    {e}\n" for e in core) + "build_flags", "custom_extra_libs =\nlib_deps =\n" + "".join(
+        f"    {e}\n" for e in core) + "    ${this.custom_extra_libs}\nbuild_flags")
+    for edit, swap in (
+            ("[env:range]\nlib_deps = bblanchon/ArduinoJson @ >=7.0.0,<8.0.0\n", None),
+            ("[env:range]\nlib_deps =\n    bblanchon/ArduinoJson @ >=7.0.0,<8.0.0\n", None),
+            ("[env:ha]\nlib_deps = Rweather/crypto @ ^0.4.0, knolleary/PubSubClient @ ^2.8\n",
+             None),
+            ("[env:mesh]\nlib_deps =\n    ${env.lib_deps}\n    securacv_mesh\n", None),
+            ("[common]\nlibs = bblanchon/ArduinoJson @ ^7.0.0\n[env:x]\nmore = rweather/Crypto\n"
+             "lib_deps =\n    ${common.libs}\n    ${this.more}\n", None),
             ("[common]\nlibs = bblanchon/ArduinoJson @ ^7.0.0, knolleary/PubSubClient @ ^2.8\n"
-             "[env:recovery]\nlib_deps = ${common.libs}, WiFiManager\n", "WiFiManager"),
+             "[env:x]\nlib_deps = ${common.libs}, rweather/Crypto\n", None),
+            ("[env:recovery]\n\textends = env:dev\n\tlib_deps =\n\t\t${env.lib_deps}\n"
+             "\t\trweather/Crypto @ ^0.4.0 # pinned, not tzapu/WiFiManager\n", None),
+            ("[env:old]\nlib_install = knolleary/PubSubClient @ ^2.8\n", None),
+            ("[env:dev_ha2]\nextends = env:dev\ncustom_extra_libs = knolleary/PubSubClient @ ^2.8\n",
+             this_libs)):
+        _deps, got = project("\n" + edit, swap=swap)
+        assert got == [], (edit, got)
+    # ...and any other library fails, naming each env that fetches it:
+    # WiFiManager's autoConnect() raises an open SoftAP and serves a firmware
+    # upload no rule reads (the round-7 review), however the configuration
+    # tells PlatformIO to fetch it. Every spelling the seventh to tenth
+    # reviews found the old text reader missing is here.
+    recovery = "[env:recovery]\nextends = env:dev\nlib_deps =\n    ${env.lib_deps}\n    "
+    for edit, spec, swap in (
+            (recovery + "tzapu/WiFiManager @ ^2.0.17\n", "tzapu/WiFiManager @ ^2.0.17", None),
+            ("[env:recovery]\nlib_deps = bblanchon/ArduinoJson @ ^7.0.0, tzapu/WiFiManager\n",
+             "tzapu/WiFiManager", None),
+            (recovery + "me-no-dev/ESP Async WebServer @ ^1.2.3\n",
+             "me-no-dev/ESP Async WebServer @ ^1.2.3", None),
+            ("[common]\nlibs_external =\n    tzapu/WiFiManager\n[env:recovery]\n"
+             "lib_deps =\n    ${env.lib_deps}\n    ${common.libs_external}\n",
+             "tzapu/WiFiManager", None),
+            ("[env:a]\nlib_ignore = rweather/Crypto @ ^0.4.0, WiFiManager\n\n[env:recovery]\n"
+             "lib_deps =\n    ${env:a.lib_ignore}\n    knolleary/PubSubClient\n", "WiFiManager", None),
+            ("[env:recovery]\nlib_deps =\n    rweather/Crypto\n\n    tzapu/WiFiManager\n",
+             "tzapu/WiFiManager", None),
+            # the round-8 review: an indented env (a tab, two spaces), the key
+            # in another case, and the older names PlatformIO reads as lib_deps
+            ("[env:recovery]\n\textends = env:dev\n\tbuild_flags =\n\t\t${env:dev.build_flags}\n"
+             "\t\t-DSECURACV_RECOVERY_PORTAL=1\n\tlib_deps =\n\t\t${env.lib_deps}\n"
+             "\t\ttzapu/WiFiManager @ ^2.0.17\n", "tzapu/WiFiManager @ ^2.0.17", None),
+            ("[env:recovery]\n  extends = env:dev\n  lib_deps =\n    ${env.lib_deps}\n"
+             "    tzapu/WiFiManager @ ^2.0.17\n", "tzapu/WiFiManager @ ^2.0.17", None),
+            ("[env:recovery]\nLib_Deps = tzapu/WiFiManager\n", "tzapu/WiFiManager", None),
+            ("[env:recovery]\nlib_install =\n    tzapu/WiFiManager @ ^2.0.17\n",
+             "tzapu/WiFiManager @ ^2.0.17", None),
+            ("[env:recovery]\nlib_use = tzapu/WiFiManager\n", "tzapu/WiFiManager", None),
+            ("[env:recovery]\nlib_force: tzapu/WiFiManager\n", "tzapu/WiFiManager", None),
+            # the round-9 review: a one-line ", " list after an interpolated
+            # list, which PlatformIO splits whole
+            ("[common]\nlibs = bblanchon/ArduinoJson @ ^7.0.0, knolleary/PubSubClient @ ^2.8\n"
+             "[env:recovery]\nlib_deps = ${common.libs}, WiFiManager\n", "WiFiManager", None),
             ("[common]\nlibs_core = bblanchon/ArduinoJson @ ^7.0.0\n"
              "libs_portal = WiFiManager, knolleary/PubSubClient @ ^2.8\n[env:recovery]\n"
-             "lib_deps = ${common.libs_core}, ${common.libs_portal}\n", "WiFiManager"),
-            # The round-10 review: [env]'s `${this.option}` is each env's own
-            # option (PlatformIO reads [env]'s value in every env that
-            # inherits it, `this` naming that env), so a per-env list [env]
-            # sets empty is read wherever a section sets it, not only in [env].
-            ("[env]\ncustom_extra_libs =\nlib_deps =\n    rweather/Crypto @ ^0.4.0\n"
-             "    ${this.custom_extra_libs}\n[env:recovery]\nextends = env:dev\n"
-             "custom_extra_libs = tzapu/WiFiManager @ ^2.0.17\n",
-             "tzapu/WiFiManager @ ^2.0.17"),
-            # ...and a bare name is no row though a row's name is the same.
-            ("lib_deps =\n    ArduinoJson\n", "ArduinoJson"),
-            # The round-8 review: configparser reads an option at any indent (a
-            # tab- or space-indented block, each key a new option, each deeper
-            # line its value), lowercases its key, and PlatformIO reads lib_deps'
-            # older names as lib_deps...
-            ("[env:recovery]\n\textends = env:release\n\tbuild_flags =\n"
-             "\t\t${env:release.build_flags}\n\t\t-DSECURACV_RECOVERY_PORTAL=1\n"
-             "\tlib_deps =\n\t\t${env.lib_deps}\n\t\ttzapu/WiFiManager @ ^2.0.17\n",
-             "tzapu/WiFiManager @ ^2.0.17"),
-            ("[env:recovery]\n  extends = env:dev\n  lib_deps =\n    ${env.lib_deps}\n"
-             "    tzapu/WiFiManager @ ^2.0.17\n", "tzapu/WiFiManager @ ^2.0.17"),
-            ("[env:recovery]\nlib_install =\n    tzapu/WiFiManager @ ^2.0.17\n",
-             "tzapu/WiFiManager @ ^2.0.17"),
-            ("[env:recovery]\nlib_use = tzapu/WiFiManager\n", "tzapu/WiFiManager"),
-            ("[env:recovery]\nlib_force: tzapu/WiFiManager\n", "tzapu/WiFiManager"),
-            ("[env:recovery]\nLib_Deps = tzapu/WiFiManager\n", "tzapu/WiFiManager"),
-            # ...a row is matched by its owner as well as its name (a fork)...
-            ("lib_deps =\n    thingsboard/PubSubClient @ ^2.8\n",
-             "thingsboard/PubSubClient @ ^2.8"),
-            # ...and a version holding an `@`, `:` or `/` is a URL to PlatformIO,
-            # which fetches what it names, so a row's owner/name before it is
-            # no row (a line of a multi-line value that holds two entries,
-            # which PlatformIO reads as one URL, is split on ", " here, and its
-            # second entry is no row).
-            ("lib_deps =\n    rweather/Crypto @ https://github.com/rweather/arduinolibs.git\n",
-             "rweather/Crypto @ https://github.com/rweather/arduinolibs.git"),
-            ("lib_deps =\n    rweather/Crypto @ git@github.com:tzapu/WiFiManager.git\n",
-             "rweather/Crypto @ git@github.com:tzapu/WiFiManager.git"),
-            ("lib_deps = rweather/Crypto @ ^0.4.0,tzapu/WiFiManager\n",
-             "rweather/Crypto @ ^0.4.0,tzapu/WiFiManager"),
-            ("lib_deps =\n    rweather/Crypto @ ^0.4.0, tzapu/WiFiManager\n",
-             "tzapu/WiFiManager")):
-        got = check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": ini + libs})
-        assert any("a library no REGISTRY_LIBS row names" in p and repr(spec) in p
-                   for p in got), (libs, got)
-    # A row is an owner/name: a bare-name row admits nothing and is named.
+             "lib_deps = ${common.libs_core}, ${common.libs_portal}\n", "WiFiManager", None),
+            # the round-10 review: [env]'s `${this.option}`, each env's own
+            ("[env:recovery]\nextends = env:dev\ncustom_extra_libs = tzapu/WiFiManager @ ^2.0.17\n",
+             "tzapu/WiFiManager @ ^2.0.17", this_libs),
+            # a bare name, though a row's name is the same, and a registry id
+            ("[env:recovery]\nlib_deps =\n    WiFiManager\n", "WiFiManager", None),
+            ("[env:recovery]\nlib_deps =\n    ArduinoJson\n", "ArduinoJson", None),
+            ("[env:recovery]\nlib_deps = 1234\n", "1234", None),
+            # a row is matched by its owner as well as its name (a fork)...
+            (recovery + "thingsboard/PubSubClient @ ^2.8\n", "thingsboard/PubSubClient @ ^2.8",
+             None),
+            # ...and a URL, a git URL in the version slot (under a row's
+            # owner/name) or a path is what PlatformIO fetches or copies,
+            # whatever the rows say, as is a line holding two entries, which
+            # PlatformIO reads as one URL
+            (recovery + "rweather/Crypto @ git@github.com:tzapu/WiFiManager.git\n",
+             "rweather/Crypto @ git@github.com:tzapu/WiFiManager.git", None),
+            (recovery + "rweather/Crypto @ https://github.com/rweather/arduinolibs.git\n",
+             "rweather/Crypto @ https://github.com/rweather/arduinolibs.git", None),
+            (recovery + "https://github.com/tzapu/WiFiManager.git#v2.0.17\n",
+             "https://github.com/tzapu/WiFiManager.git#v2.0.17", None),
+            (recovery + "WiFiManager=https://github.com/tzapu/WiFiManager.git\n",
+             "WiFiManager=https://github.com/tzapu/WiFiManager.git", None),
+            (recovery + "../../outside/diag\n", "../../outside/diag", None),
+            ("[env:recovery]\nlib_deps = rweather/Crypto @ ^0.4.0,tzapu/WiFiManager\n",
+             "rweather/Crypto @ ^0.4.0,tzapu/WiFiManager", None),
+            (recovery + "rweather/Crypto @ ^0.4.0, tzapu/WiFiManager\n",
+             "rweather/Crypto @ ^0.4.0, tzapu/WiFiManager", None)):
+        _deps, got = project("\n" + edit, swap=swap)
+        assert any(p.startswith("env:recovery: lib_deps, as PlatformIO resolves it, fetches "
+                                f"{spec!r}, a library no REGISTRY_LIBS row names") for p in got), (
+            edit, got)
+    # An entry [env] lists is fetched by every env that inherits it, and one an
+    # extra_configs file's env lists is held as one in platformio.ini is.
+    _deps, got = project(swap=("canary/platformio.ini", "    bblanchon/ArduinoJson @ ^7.0.0\nbuild",
+                               "    bblanchon/ArduinoJson @ ^7.0.0\n    tzapu/WiFiManager\nbuild"))
+    assert any(p.startswith("env:dev, env:dev_ha, env:full: lib_deps, as PlatformIO resolves it, "
+                            "fetches 'tzapu/WiFiManager'") for p in got), got
+    _deps, got = project(swap=("provisioning/secure.ini", "[env:secure_ha]",
+                               "[env:recovery]\nextends = env:secure\nlib_deps =\n"
+                               "    ${env:secure.lib_deps}\n    tzapu/WiFiManager @ ^2.0.17\n\n"
+                               "[env:secure_ha]"))
+    assert any(p.startswith("env:recovery: lib_deps, as PlatformIO resolves it, fetches "
+                            "'tzapu/WiFiManager @ ^2.0.17'") for p in got), got
+    # A dependency a library under the tree declares in its library.json
+    # (read by PlatformIO's manifest parser, found by library_manifests).
+    _deps, got = project(files={"canary/lib/recovery/library.json":
+                                '{"name": "recovery", "dependencies": '
+                                '{"tzapu/WiFiManager": "^2.0.17"}}'})
+    assert any("recovery/library.json:1: its dependency list fetches 'tzapu/WiFiManager', a "
+               "library no REGISTRY_LIBS row names" in p for p in got), got
+    # A `${sysenv.*}` reference fails wherever it is, read in the file's text,
+    # so the environment at check time (unset, a row, or WiFiManager) changes
+    # nothing (the round-9 review's `${sysenv.LIB_DEPS}`).
+    for value in (None, "knolleary/PubSubClient @ ^2.8", "tzapu/WiFiManager"):
+        _deps, got = project("\n" + recovery + "${sysenv.LIB_DEPS}\n", env={"LIB_DEPS": value})
+        assert any("'${sysenv.LIB_DEPS}' is a build input the check does not read" in p
+                   for p in got), (value, got)
+    _deps, got = project("\n[env:recovery]\nextends = env:dev\nbuild_flags =\n"
+                         "    ${env:dev.build_flags}\n    ${sysenv.EXTRA_FLAGS}\n",
+                         env={"EXTRA_FLAGS": None})
+    assert any("'${sysenv.EXTRA_FLAGS}' is a build input the check does not read" in p
+               for p in got), got
+    # A configuration PlatformIO refuses fails, and so does a file it reads that
+    # flag_sources does not (`Extra_Configs`, which configparser lowercases),
+    # whose -D flags and build inputs no rule would read.
+    _deps, got = project("\n[env:recovery]\nlib_deps = rweather/Crypto\nlib_deps = WiFiManager\n")
+    assert any(f"PlatformIO {PLATFORMIO_PIN}'s reader refuses the configuration" in p
+               for p in got), got
+    _deps, got = project("\n" + recovery + "${common.portal_libs}\n")
+    assert any(f"PlatformIO {PLATFORMIO_PIN}'s reader cannot resolve env:recovery's lib_deps"
+               in p for p in got), got
+    _deps, got = project(swap=("canary/platformio.ini", "extra_configs =", "Extra_Configs ="))
+    assert sorted(p.split(":")[0].rsplit("/", 2)[-2] for p in got
+                  if "PlatformIO reads it as part of" in p and "(flag_sources)" in p) == [
+        "envs", "provisioning"], got
+    with tempfile.TemporaryDirectory() as tmp:
+        _deps, got = platformio_lib_deps({}, Path(tmp) / "platformio.ini", Path(tmp))
+        assert any("the configuration PlatformIO reads is missing" in p for p in got), got
+    # A row is an owner/name: a bare-name row admits nothing and is named; and
+    # an entry PlatformIO cannot read as a library spec fails.
     got = check_bearer_only_answers(
         clean, dict(tables, registry=dict(REGISTRY_LIBS, WiFiManager="the recovery portal")),
-        flags={"fx/platformio.ini": ini + "lib_deps =\n    WiFiManager\n"})
+        lib_deps={"recovery": ["WiFiManager"]})
     assert any("REGISTRY_LIBS: 'WiFiManager' is no owner/name row" in p for p in got) and any(
         "fetches 'WiFiManager'" in p for p in got), got
-    # A `${sysenv.*}` or built-in reference is no flag file's, whatever its name
-    # (a `${section.lib_deps}` adds nothing, its value read where it is set, but
-    # `${sysenv.LIB_DEPS}` is the environment variable, the round-9 review).
-    for ref in ("sysenv.EXTRA_LIBS", "sysenv.LIB_DEPS", "lib_deps"):
-        got = check_bearer_only_answers(clean, tables, flags={
-            "fx/platformio.ini": ini + f"lib_deps =\n    ${{env.lib_deps}}\n    ${{{ref}}}\n"})
-        assert any(f"interpolates ${{{ref}}}, which no flag file sets" in p
-                   for p in got), (ref, got)
-    # A library manifest's dependencies are held the same way: a registry row
-    # or a library under ROOTS passes, anything else fails.
+    got = check_bearer_only_answers(clean, tables,
+                                    lib_deps={"recovery": ["rweather/Crypto @ ^0.4.0 junk"]})
+    assert any("fetches 'rweather/Crypto @ ^0.4.0 junk'" in p
+               and "PlatformIO cannot read it as a library spec" in p for p in got), got
+    # A library manifest's dependencies are held the same way, each read by
+    # PlatformIO's manifest parser in every form it takes: a registry row or a
+    # library under ROOTS passes, anything else fails.
+    mesh = {"fx/lib/securacv_mesh/library.json": '{"name": "securacv_mesh"}'}
     manifests = dict(mesh, **{
         "fx/lib/securacv_network/library.json":
             '{"name": "securacv_network", "dependencies": {"bblanchon/ArduinoJson": "^7.0.0"}}',
@@ -7614,7 +7731,7 @@ def _assert_answer_gate_rule() -> None:
             ("fx/lib/diag/library.properties", "name=diag\ndepends=WiFiManager\n",
              "its dependency list fetches 'WiFiManager'"),
             ("fx/lib/securacv_network/library.json", '{"name": "x", "dependencies": {',
-             "a library manifest the check cannot read as JSON")):
+             f"a library manifest PlatformIO {PLATFORMIO_PIN} cannot read")):
         got = check_bearer_only_answers(clean, tables, manifests=dict(manifests, **{path: text}))
         assert any(word in p for p in got), (text, got)
     # ...and library_manifests() finds each manifest under a root by either
@@ -7994,6 +8111,12 @@ def nvs_key_values(path=NVS_KEY_HOME) -> tuple:
 
 
 def main() -> int:
+    if platformio is None or platformio.__version__ != PLATFORMIO_PIN:
+        found = ("no platformio module imports" if platformio is None
+                 else f"platformio {platformio.__version__} is installed")
+        print(f"FAIL: the library rule reads firmware/canary/platformio.ini with PlatformIO "
+              f"{PLATFORMIO_PIN}'s own reader and {found} — run: {PLATFORMIO_INSTALL}")
+        return 1
     _assert_parser_robust()
     _assert_answer_gate_rule()
     sources, failures = tree_sources()
@@ -8015,10 +8138,12 @@ def main() -> int:
     flags, flag_failures = flag_sources()
     keys, key_failures = nvs_key_values()
     includes, reach_failures = build_reach(sources, flags)
-    failures.extend(flag_failures + key_failures + reach_failures)
+    lib_deps, pio_failures = platformio_lib_deps(flags)
+    failures.extend(flag_failures + key_failures + reach_failures + pio_failures)
     failures.extend(check_bearer_only_answers(sources, tables={"nvs_keys": keys}, flags=flags,
                                               includes=includes,
-                                              manifests=library_manifests()))
+                                              manifests=library_manifests(),
+                                              lib_deps=lib_deps))
     failures.extend(check_registration_sites(sources))
     failures.extend(check_registration_count(sources))
     failures.extend(check_route_budgets(sources))
