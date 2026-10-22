@@ -1945,19 +1945,26 @@ so — see D2 below.)
     flagship pin (`PLATFORMIO_PIN`, 6.1.19: `firmware-release.yml` and
     `flasher-release.yml` hand it to `setup-platformio`; `firmware.yml`'s PR
     build jobs pin none and take the newest, 6.2.0 on 2026-10-22, whose
-    `ProjectConfig` and `PackageSpec` are the same text).
+    `ProjectConfig` and `PackageSpec` are the same text;
+    `platformio_pin_problems` fails when either release pin, or the one
+    `firmware.yml`'s route-check job installs, is not `PLATFORMIO_PIN`, run
+    by `scripts/tests/test_route_check_platformio_pin.py` in `lint.yml`).
     `platformio_lib_deps` hands `platformio.ini` to `ProjectConfig` from
     `firmware/canary`, as `pio run` does, and takes each env's `lib_deps` as
     it resolves them (its `extends` and `[env]`, the `extra_configs` files,
     every interpolation, `${this.option}` included, the older key names
     `lib_use`, `lib_force` and `lib_install`, a key at any indent and in any
     case, a one-line list split on `, `); each entry is read by PlatformIO's
-    `PackageSpec`, and each manifest (`library.json`'s `"dependencies"`,
+    `PackageSpec` in that folder, as `pio run` reads it (there a version-less
+    owner/name naming a folder of the project is a copy of that folder), and
+    each manifest (`library.json`'s `"dependencies"`,
     `library.properties`' `depends=`) by its manifest parser, each
     dependency the `PackageSpec` PlatformIO builds from it. A configuration
-    PlatformIO refuses, an env whose `lib_deps` it cannot resolve and a file
-    it reads that `flag_sources` (the `-D` rule's flag files) does not hold
-    fail; without the `platformio` module, or at another version of it, the
+    PlatformIO refuses, an env whose `lib_deps` it cannot resolve, an env
+    whose `extends` reaches a cycle (which PlatformIO's reader walks forever,
+    so `pio run` hangs on it; the check names the cycle) and a file it reads
+    that `flag_sources` (the `-D` rule's flag files) does not hold fail;
+    without the `platformio` module, or at another version of it, the
     check fails before any rule runs, naming `python3 -m pip install
     platformio==6.1.19`, and never reads the ini itself instead.
     `firmware.yml` installs that version first, through `setup-platformio`.
@@ -1997,7 +2004,7 @@ so — see D2 below.)
   fixtures (268 source edits, 25 table edits), with the self-test's lexer,
   flag-file, build-input, library, reach, header, file-kind, route-form,
   symbol-binding and raw-literal cases, each fail for their named reason
-  before the tree is read (the library cases run 46 projects written into a
+  before the tree is read (the library cases run 61 projects written into a
   temp dir through PlatformIO 6.1.19's `ProjectConfig`); the tree passes
   with its 83 registrations, in 14 to 21 s (Python 3.11 to 3.14). The `/*`
   allowlist reasons now say what the
@@ -2751,22 +2758,64 @@ so — see D2 below.)
   The self-test's library cases now write a project into a temp dir and run
   it as main() runs the tree, through `ProjectConfig`: 46 projects (the
   configuration in small as it is today, passing with each env's resolved
-  list checked; 9 spellings of a row or a library in the tree, passing; the
-  26 spellings of an unreviewed library the seventh to tenth reviews found
-  or held, each failing and naming its env, among them an indented env,
-  `Lib_Deps`, `lib_install`, `lib_use` and `lib_force`, a one-line `, `
-  list after an interpolated list, `${this.option}`, the owner fork
-  `thingsboard/PubSubClient` and a git URL in a row's version slot; and 10
+  list checked; 9 spellings of a row or a library in the tree, passing; 26
+  spellings of an unreviewed library, each failing and naming its env: 24
+  of the 26 the seventh to tenth reviews' fail list held (the round said
+  all 26; its review found `${common.LIBS}` from a `Libs` key and the
+  `${env:a.lib_ignore}` with no blank line dropped), and a registry id and
+  a path, among them an indented env, `Lib_Deps`, `lib_install`, `lib_use`
+  and `lib_force`, a one-line `, ` list after an interpolated list,
+  `${this.option}`, the owner fork `thingsboard/PubSubClient` and a git URL
+  in a row's version slot; and 10
   more: an entry `[env]` lists, named with every env that inherits it, an
   `extra_configs` file's env, a `library.json` dependency,
   `${sysenv.LIB_DEPS}` with the variable unset, set to a row and set to
   WiFiManager, a `${sysenv.*}` in `build_flags`, a configuration PlatformIO
   refuses, an interpolation it cannot resolve and an `Extra_Configs`), a
   missing configuration, and the manifest forms. Of 18 checker mutants that
-  each weaken the new rule, the self-test refuses all 18. The planted
+  each weaken the new rule, the round said the self-test refused all 18; it
+  refused 17 (a registry id admitted passed, its review found). The planted
   fixtures stay 293 (268 source, 25 table). The tree passes with its 83
   registrations in 14 to 21 s (Python 3.11 to 3.14, PlatformIO 6.1.19).
   Host-tested; not run on a device. No new number.
+  *Change (2026-10-22, the eleventh round's review):* the review found the
+  self-test thinner than the round said, and two edges of the new reading.
+  - No case took an env's `lib_deps` only through `extends` (every env that
+    extends another set its own list), so a reader that skipped `extends`
+    passed; none held a registry id or a URL under the name of a library in
+    the tree (`securacv_mesh=1234`, which PlatformIO fetches from the
+    registry by the id), so a rule admitting either passed; and the two
+    dropped spellings, with the ninth review's `${lib_deps}`, were missing.
+    Each is a case again, failing for its reason.
+  - Each entry is read in the project's folder, as `pio run` reads it
+    (`PackageSpec` reads a version-less owner/name naming a folder of the
+    working directory as that folder: from the repo root a vendored
+    `firmware/canary/rweather/Crypto/` read as the registry row, where
+    PlatformIO copies the folder into the build).
+  - An `extends` cycle fails for every env whose walk reaches it, naming the
+    cycle (`_extends_cycle`): PlatformIO 6.1.19's reader walks one forever,
+    so `pio run` hangs on it, and so did the check, with no message.
+  - A registry id is named as one (the message read `securacv_mesh=1234` as
+    `'securacv_mesh'`).
+  - Nothing tied `PLATFORMIO_PIN` to the release pin it is documented as:
+    with both release workflows moved to 6.2.0, every gate passed.
+    `platformio_pin_problems` now fails when a `platformio-version:` in
+    `firmware-release.yml` or `flasher-release.yml`, or the one
+    `firmware.yml`'s route-check job installs above the check, is not
+    `PLATFORMIO_PIN`; `scripts/tests/test_route_check_platformio_pin.py`
+    runs it in `lint.yml` (no path filter: `firmware.yml`'s does not name
+    `flasher-release.yml`), and each release pin's comment points at it.
+  The self-test's library cases are 61 projects: 12 passing, 33 failing and
+  naming their env (the 26 spellings the seventh to tenth reviews held,
+  `${lib_deps}`, the eleventh round's id and path, and this round's id and
+  URL under a tree library's name, a path ending in one's folder name and a
+  library only an `extends` brings in) and 16 more (the eleventh round's
+  10, `${sysenv.EXTRA_LIBS}`, the id's message, the vendored folder and
+  three cycles). Of 24 checker mutants (the eleventh round's 18 and six of
+  this round's), the self-test refuses all 24, the dropped cycle check by
+  hanging as PlatformIO does; of 8 mutants of `platformio_pin_problems`, its
+  test refuses all 8. The planted fixtures stay 293. Host-tested; not run
+  on a device. No new number.
 - [x] **F339 [code] canary-wap: other bearer compares stay silent beside the
   lockout.** `csi_integration.cpp`'s `CSI_AUTH_OR_RETURN`
   (`api_auth_check_optional`, every CSI dashboard route), `csi_mqtt.cpp`'s

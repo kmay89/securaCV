@@ -207,6 +207,13 @@ jobs:
         # pins, same as firmware-release.yml: this job can hold the OTA release
         # key, and a PyPI install runs package code on the runner. Bump
         # deliberately; Dependabot does not watch these lines.
+        #   platformio   — also the PlatformIO whose own reader the flagship
+        #                  route check reads platformio.ini with
+        #                  (check_route_security.py's PLATFORMIO_PIN, which
+        #                  firmware.yml's route-check job installs): bump them
+        #                  together, with firmware-release.yml's;
+        #                  scripts/tests/test_route_check_platformio_pin.py
+        #                  fails on any one moved alone
         #   cryptography — what build_flash_manifest.py --signing-key needs
         #                  (via ota_release.py). Installed unconditionally:
         #                  whether this run signs depends on a secret, and

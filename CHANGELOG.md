@@ -207,15 +207,18 @@
     `REGISTRY_LIBS` row names. The configuration is read with PlatformIO's
     own reader, not an imitation of it: `ProjectConfig`, at the version the
     builds that ship the flagship pin (6.1.19, in `firmware-release.yml` and
-    `flasher-release.yml`), run from `firmware/canary` as `pio run` runs it,
-    resolves each env's `lib_deps` (its `extends` and `[env]`, the
-    `extra_configs` files, every interpolation, `${this.option}` included,
-    the older key names `lib_use`, `lib_force` and `lib_install`, a key at
-    any indent and in any case, a one-line list split on `, `); each entry
-    is read by PlatformIO's `PackageSpec`, and each manifest by its manifest
-    parser. A failing entry names every env that fetches it. A configuration
-    PlatformIO refuses, an env whose `lib_deps` it cannot resolve, a file it
-    reads that the `-D` rule's flag files do not hold, and a `${sysenv.*}`
+    `flasher-release.yml`, held equal to them by
+    `scripts/tests/test_route_check_platformio_pin.py`), run from
+    `firmware/canary` as `pio run` runs it, resolves each env's `lib_deps`
+    (its `extends` and `[env]`, the `extra_configs` files, every
+    interpolation, `${this.option}` included, the older key names `lib_use`,
+    `lib_force` and `lib_install`, a key at any indent and in any case, a
+    one-line list split on `, `); each entry is read by PlatformIO's
+    `PackageSpec` in that folder, and each manifest by its manifest parser.
+    A failing entry names every env that fetches it. A configuration
+    PlatformIO refuses, an env whose `lib_deps` it cannot resolve, an env
+    whose `extends` reaches a cycle (which PlatformIO walks forever), a file
+    it reads that the `-D` rule's flag files do not hold, and a `${sysenv.*}`
     reference anywhere in the flag files (read in their text, so an empty
     environment at check time hides none) fail too; without the `platformio`
     module, or at another version of it, the check fails before any rule
@@ -468,10 +471,11 @@
   write a project into a temp dir and run it as main() runs the tree, through
   `ProjectConfig`: 46 projects (the configuration in small as it is today,
   passing with each env's resolved list checked; 9 spellings of a row or a
-  library in the tree, passing; the 26 spellings of an unreviewed library the
-  seventh to tenth reviews found or held, each failing and naming its env;
-  and 10 more: an entry `[env]` lists, named with every env that inherits it,
-  an `extra_configs` file's env, a `library.json` dependency,
+  library in the tree, passing; 26 spellings of an unreviewed library, each
+  failing and naming its env: 24 of the 26 the seventh to tenth reviews'
+  fail list held, which the round said were all 26, and a registry id and a
+  path; and 10 more: an entry `[env]` lists, named with every env that
+  inherits it, an `extra_configs` file's env, a `library.json` dependency,
   `${sysenv.LIB_DEPS}` with the variable unset, set to a row and set to
   WiFiManager, a `${sysenv.*}` in `build_flags`, a configuration PlatformIO
   refuses, an interpolation it cannot resolve and an `Extra_Configs` whose
@@ -483,8 +487,52 @@
   the file cross-check dropped; the configuration read from the wrong
   folder; PlatformIO's refusal, an unresolvable env, a missing configuration
   or an unreadable manifest swallowed; a manifest's dependencies ignored; an
-  env's list read from its own section's text, split or not), the self-test
-  refuses all 18. The planted fixtures stay 293 (268 source, 25 table).
+  env's list read from its own section's text, split or not), the round said
+  the self-test refused all 18; it refused 17 (a registry id admitted
+  passed, its review found). The planted fixtures stay 293 (268 source, 25
+  table).
+  Its eleventh round's review found that self-test thinner than it said,
+  and two edges of the new reading. No case took an env's `lib_deps` only
+  through `extends` (each env extending another set its own list), so a
+  reader that skipped `extends` passed; none held a registry id or a URL
+  under the name of a library in the tree (`securacv_mesh=1234`, which
+  PlatformIO fetches from the registry by the id), so a rule admitting
+  either passed; and two of the 26 failing spellings (`${common.LIBS}` read
+  from a `Libs` key, and `${env:a.lib_ignore}` with no blank line before the
+  next section), with the ninth review's `${lib_deps}`, had been dropped.
+  Each is a case again. Each entry is now read in the project's folder, as
+  `pio run` reads it: read from the repo root, an owner/name with no version
+  naming a folder of `firmware/canary` (a vendored `rweather/Crypto/`) was
+  the registry row, where PlatformIO copies the folder into the build. An
+  `extends` cycle, which PlatformIO 6.1.19's reader walks forever (`pio run`
+  hangs on it, and so did the check, with no message), fails for every env
+  whose walk reaches it, naming the cycle. A registry id is named as one
+  (the message read `securacv_mesh=1234` as `'securacv_mesh'`). And nothing
+  tied `PLATFORMIO_PIN` to the release workflows' pin the docs call it:
+  with both release pins moved to 6.2.0 every gate passed. Now
+  `platformio_pin_problems` fails when a `platformio-version:` in
+  `firmware-release.yml` or `flasher-release.yml`, or the one
+  `firmware.yml`'s route-check job installs above the check, is not
+  `PLATFORMIO_PIN`, run by `scripts/tests/test_route_check_platformio_pin.py`
+  in `lint.yml`, which no path filter skips (`firmware.yml`'s does not name
+  `flasher-release.yml`); each release pin's comment points at it. The
+  self-test's library cases are now 61 projects: 12 passing (the
+  configuration as it is today; an env holding the list of what it extends,
+  an env or a section that is none; the 9 spellings; and a version-less
+  owner/name, without a folder of its name), 33 failing and naming their env
+  (the 26 spellings the seventh to tenth reviews held, `${lib_deps}`, the
+  eleventh round's registry id and path, and this round's id and URL under
+  a tree library's name, a path ending in one's folder name and a library
+  only an `extends` brings in), and 16 more (the eleventh round's 10,
+  `${sysenv.EXTRA_LIBS}`, the id's message, the vendored folder, and three
+  cycles: two envs, an env extending itself though it sets its own list,
+  and one `[env]` reaches, named for all five envs). Of 24 checker mutants
+  (the eleventh round's 18, and `extends` skipped, entries read outside the
+  project's folder, the cycle check dropped, a cycle reached through `[env]`
+  missed, a cycle skipped where the env sets its own list, and an id named
+  as its name), the self-test refuses all 24 (the dropped cycle check by
+  hanging, as PlatformIO does); of 8 mutants of `platformio_pin_problems`,
+  its test refuses all 8. The planted fixtures stay 293.
   The head parser names a constructor
   for its class (it named `ScvNetworkManager`'s body after its last
   initializer, `m_peers_last_browse_ms`), a member as `Class::name`, and a

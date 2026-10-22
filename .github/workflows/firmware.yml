@@ -1495,12 +1495,16 @@ jobs:
         # PlatformIO's own reader (ProjectConfig, its PackageSpec and its
         # manifest parser), at the version the builds that ship the flagship pin
         # (firmware-release.yml and flasher-release.yml, "6.1.19"); it refuses
-        # any other version, and a missing module, naming the pip command. The
-        # shared composite action (CI.md R10), on this job's own interpreter,
-        # with no cache: the check downloads nothing, it only reads.
+        # any other version, and a missing module, naming the pip command.
+        # scripts/tests/test_route_check_platformio_pin.py (lint.yml, no path
+        # filter) fails when this pin, those two or the check's PLATFORMIO_PIN
+        # moves alone. The shared composite action (CI.md R10), on this job's
+        # own interpreter, with no cache: the check downloads nothing, it only
+        # reads.
         uses: ./.github/actions/setup-platformio
         with:
-          python-version: ""  # pyproject.toml's, the interpreter this job's first step set up
+          # "": pyproject.toml's, the interpreter this job's setup-python step set up
+          python-version: ""
           platformio-version: "6.1.19"
 
       - name: Check canary (PIO) route security (every route gated or allowlisted)
