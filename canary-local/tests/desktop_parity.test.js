@@ -4745,6 +4745,77 @@ test("wave 5: the Vision-module proof is patient, and says the burn survived, on
     "desktop we2.rs still returns the fix-less inference error");
 });
 
+test("Vision module proof: the desktop reads module_ok and the firmware's own boot lines (F384)", () => {
+  // The Vision host's `Grove Vision AI ID=%d` used to print the address of the
+  // SSCMA library's id buffer, non-zero with no module at all, and the desktop's
+  // boot-line proof turned any positive value into "the module answered". The
+  // firmware now prints 1 or 0 and its `j` proof adds module_ok; the desktop
+  // engine reads module_ok when present and, for an older image, the ERROR line
+  // that image printed above its id. The browser flasher has no such path to
+  // keep in step: it proves a Vision through the camera bench, never the boot
+  // log, which the last check below holds.
+  const mgr = read(join(ROOT, "firmware/projects/canary-vision/src/vision/vision_mgr.cpp"));
+  const mainCpp = read(join(ROOT, "firmware/projects/canary-vision/src/main.cpp"));
+  const monitorRs = engineRs("monitor");
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+
+  // The lines the engine parses are the lines the firmware prints.
+  const constant = (name) => {
+    const m = monitorRs.match(new RegExp(`const ${name}: &str = "([^"]+)";`));
+    assert.ok(m, `flash-engine monitor.rs lost ${name}`);
+    return m[1];
+  };
+  const idLine = constant("VISION_ID_LINE");
+  const deadLine = constant("VISION_DEAD_LINE");
+  assert.ok(mgr.includes(`printf("${idLine}%d\\n", `),
+    `vision_mgr.cpp no longer prints the \`${idLine}%d\` line monitor.rs parses`);
+  assert.ok(mgr.includes(`println("${deadLine}`),
+    `vision_mgr.cpp no longer prints the \`${deadLine}\` line monitor.rs reads`);
+  assert.ok(mgr.includes(`printf("${idLine}%d\\n", g_module_ok ? 1 : 0)`),
+    "the boot line's value is the 1-or-0 module verdict, nothing else");
+  // ...and never the module's own id, which this design treats as a per-unit
+  // identifier: no AI.ID() call in any form.
+  assert.ok(!/\bAI\.ID\s*\(/.test(mgr), "vision_mgr.cpp calls AI.ID() again");
+  // The `j` proof record carries module_ok beside the legacy module_id.
+  assert.ok(mainCpp.includes('\\"module_id\\":%d,\\"module_ok\\":%s,'),
+    "canary-vision's `j` proof record lost module_ok");
+
+  // The engine: the receipt reads module_ok, and the boot-line proof carries one.
+  assert.match(nativeFnBody(monitorRs, "vision_module_ok"), /vision\.get\("module_ok"\)/,
+    "monitor.rs receipt_ready no longer reads module_ok");
+  assert.match(nativeFnBody(monitorRs, "receipt_ready"), /vision_module_ok\(vision\)/,
+    "monitor.rs receipt_ready no longer goes through vision_module_ok");
+  const inspect = nativeFnBody(monitorRs, "inspect_line");
+  assert.match(inspect, /"module_ok": module_ok,/, "the boot-line proof no longer carries module_ok");
+  assert.match(inspect, /boot_line_module_ok\(module_id, dead_line_before\)/,
+    "the boot-line proof no longer weighs the ERROR line just above it");
+  assert.match(inspect, /starts_with\(VISION_DEAD_LINE\)/,
+    "the engine no longer recognizes the ERROR line");
+
+  // The frontend: module_ok decides when present; `> 0` only without it.
+  const start = appJs.indexOf('await listen("serial:vision"');
+  assert.ok(start >= 0, "desktop app.js no longer listens for serial:vision");
+  const handler = appJs.slice(start, appJs.indexOf("\n  });", start));
+  const expr = handler.match(/const moduleOk = ([\s\S]*?);\n/);
+  assert.ok(expr, "the serial:vision handler no longer derives moduleOk");
+  const moduleOk = new Function("proof", `return ${expr[1]};`);
+  assert.strictEqual(moduleOk({ module_id: 1070379020, module_ok: false }), false,
+    "a proof that says module_ok: false passes on an address");
+  assert.strictEqual(moduleOk({ module_id: 0, module_ok: false }), false);
+  assert.strictEqual(moduleOk({ module_id: 1, module_ok: true }), true);
+  assert.strictEqual(moduleOk({ module_id: 0 }), false, "the fallback for a proof without module_ok");
+  assert.strictEqual(moduleOk({ module_id: 7 }), true, "the fallback for a proof without module_ok");
+  assert.match(handler, /\|\| !moduleOk\) return;/, "the handler no longer refuses on moduleOk");
+
+  // No browser counterpart: the browser flasher never reads the Vision boot
+  // line or a proof record, so there is nothing for it to keep in step with.
+  for (const f of ["flash.js", "flash-core.js", "flash-native.js"]) {
+    const src = read(join(CANARY, "assets", f));
+    assert.ok(!src.includes(idLine) && !src.includes("securacv.vision.proof"),
+      `assets/${f} now reads the Vision boot proof: give it the desktop's module_ok rule too`);
+  }
+});
+
 test("wave 5: an unreachable manifest is not a missing release, on both flashers", () => {
   // A fetch that never got an ANSWER proves nothing about whether the release
   // exists. The desktop has drawn this line since it grew the pinned-tag

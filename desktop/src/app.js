@@ -1126,8 +1126,16 @@ async function boot() {
   });
   await listen("serial:vision", (ev) => {
     const host = state.vision.hostFlash;
-    if (!host || !host.product_id.includes("vision") ||
-        Number(ev.payload && ev.payload.module_id) <= 0) return;
+    const proof = ev.payload || {};
+    // module_ok, when the proof carries it, is the verdict: the engine reads
+    // the boot line's 1 or 0, and the ERROR line an older image printed above
+    // its id when the module did not answer (monitor.rs). An older image's
+    // module_id was a RAM address, non-zero with no module at all (sweep
+    // F384), so `> 0` alone is only the fallback for a proof without it.
+    const moduleOk = typeof proof.module_ok === "boolean"
+      ? proof.module_ok
+      : Number(proof.module_id) > 0;
+    if (!host || !host.product_id.includes("vision") || !moduleOk) return;
     // Compatibility with the already-published 2.2.0 image: it prints the
     // live Grove ID but predates the `j` manifest command. The release hash is
     // already in hostFlash; this boot line proves that exact image reached its
