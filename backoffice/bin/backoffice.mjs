@@ -22,7 +22,9 @@ import { registerDevice, importManifest, listDevices } from '../src/modules/devi
 import { openClaim, ANSWERS, listClaims } from '../src/modules/warranty.mjs';
 import { profitAndLoss, trialBalance, monthly, postExpense, postPayout, salesTaxByState, ledgerCsv, ACCOUNTS } from '../src/modules/ledger.mjs';
 import { upsertProbe, DEFAULT_PROBES, runDueProbes, publicStatus } from '../src/modules/status.mjs';
-import { backup, listBackups } from '../src/modules/backup.mjs';
+import { backup, listBackups, verifyBackup, liveCounts, restore, restoreDrill, uploadOffsite, offsiteConfigured } from '../src/modules/backup.mjs';
+import { doctor, digestText } from '../src/modules/health.mjs';
+import { reconcile } from '../src/modules/reconcile.mjs';
 import { snapshot } from '../src/modules/dashboard.mjs';
 import { notifyWaitlist, createCampaign, queueCampaign } from '../src/modules/campaigns.mjs';
 import { sendOutbox } from '../src/modules/mail.mjs';
@@ -47,6 +49,13 @@ const HELP = `backoffice — the company in one SQLite file (${cfg.dbPath})
   serve                                    run the web admin, API, forms, webhook and the scheduler
   token create <name> | token revoke <name>  API bearer tokens for the CLI/remote/an AI operator
   snapshot                                 the dashboard numbers as JSON
+  doctor                                   the health checklist (exit 1 when a check fails) — same list as /health and the digest
+  backup [--no-offsite]                    a verified copy (opened, integrity, books balanced), then off-site when BACKUP_S3_* is set
+  backup verify <file> [--live]            prove a copy boots; --live also compares row counts with the running database
+  backup drill                             pull the latest copy back (off-site when configured) and prove it
+  restore <file> [--to <db path>]          put a verified copy in place (stop serve first; the old file is kept beside it)
+  reconcile                                Stripe payouts → the books, charges → orders (needs STRIPE_API_KEY)
+  digest                                   print the morning digest (what the job emails to OPERATOR_EMAIL)
   job <name> | job list                    run one scheduled job now (outbox inbox probes sla stock invoices books backup)
   backup | backups                         take a backup now / list them
 
@@ -124,11 +133,28 @@ const main = async () => {
       console.log(`[backoffice] listening on http://${addr.address}:${addr.port}  (public base: ${cfg.baseUrl})`);
       return new Promise(() => {});
     }
-    case 'token': return args[0] === 'revoke' ? out(`revoked ${revokeApiToken(db, args[1])}`) : out(`${createApiToken(db, args[1] || 'cli')}\n(shown once — store it in the client's environment)`);
+    case 'token': return args[0] === 'revoke' ? out(`revoked ${revokeApiToken(db, args[1])}`) : out(`${createApiToken(db, args[1] || 'cli', { scope: flags['read-only'] ? 'ro' : 'rw' })}\n(shown once — store it in the client's environment${flags['read-only'] ? '; read-only: GET only' : ''})`);
     case 'snapshot': return out(snapshot(db));
     case 'job': return args[0] === 'list' ? out(Object.keys(JOBS)) : out(await runJob(app, args[0]));
-    case 'backup': return out(backup(db, join(cfg.dataDir, 'backups'), { keep: cfg.backupKeep }));
+    case 'backup': {
+      if (args[0] === 'verify') { const v = verifyBackup(args[1], { expect: flags.live ? liveCounts(db) : null }); out(v); if (!v.ok) process.exitCode = 1; return; }
+      if (args[0] === 'drill') { const r = await restoreDrill(cfg, { localDir: join(cfg.dataDir, 'backups') }); out(r); if (!r.ok) process.exitCode = 1; return; }
+      const b = backup(db, join(cfg.dataDir, 'backups'), { keep: cfg.backupKeep }); const verified = verifyBackup(b.path, { expect: liveCounts(db) });
+      const offsite = flags.offsite === false ? { skipped: '--no-offsite' } : offsiteConfigured(cfg) ? await uploadOffsite(cfg, b.path) : { skipped: 'BACKUP_S3_URL / KEY / SECRET not set' };
+      out({ ...b, verified, offsite }); if (!verified.ok) process.exitCode = 1; return;
+    }
     case 'backups': return out(listBackups(join(cfg.dataDir, 'backups')));
+    case 'restore': {
+      if (!args[0]) throw new Error('restore <backup file> [--to <db path>] — stop `serve` first');
+      const r = restore(args[0], flags.to || cfg.dbPath); return out({ ...r, note: 'start `backoffice serve` again; the replaced file is kept beside the database until you delete it' });
+    }
+    case 'doctor': {
+      const h = doctor(db, cfg); const ic = (ok) => ok === true ? 'ok ' : ok === false ? '!! ' : '-- ';
+      out(`${h.ok ? 'every check passes' : `${h.failing.length} failing`}\n` + h.checks.map(c => `  ${ic(c.ok)} ${c.label.padEnd(44)} ${c.detail}${c.ok === false && c.fix ? `\n        → ${c.fix}` : ''}`).join('\n'));
+      if (!h.ok) process.exitCode = 1; return;
+    }
+    case 'reconcile': return out(await reconcile(db, cfg));
+    case 'digest': return out(digestText(db, cfg));
 
     case 'orders': {
       if (args[0] === 'import') {

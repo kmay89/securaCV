@@ -39,7 +39,7 @@ test('a person can log in, ship an order, answer a ticket, move stock, post an e
 
     await page.goto(base + '/orders'); assert.match(page.url(), /\/login$/, 'the admin redirects to login');
     await page.fill('#pw', 'browser-test-password-1'); await page.fill('#code', totp(totpSecret)); await page.click('button:has-text("Log in")');
-    await page.waitForURL(base + '/'); assert.ok(await page.textContent('h1') === 'Home');
+    await page.waitForURL(base + '/'); assert.ok(await page.$('.hero'), 'the home page shows the hero');
 
     // ship the packed order through its form
     const packed = db.get('SELECT id, number FROM orders WHERE status = \'packed\' ORDER BY id LIMIT 1');

@@ -16,7 +16,7 @@ already chose it. Everything *around* Stripe is here.
 |---|---|---|
 | A storefront's order admin (Shopify) | **Orders** | paid → packed → shipped → delivered, batches by ISO week, tracking mail, refunds, the fulfill.mjs CSV, Stripe webhook + CSV catch-up |
 | A helpdesk (Zendesk, Help Scout) | **Support** | a shared inbox read over IMAP, numbered tickets with a thread token, auto-acknowledgment, canned replies, SLA timer that raises an exception, kinds (security goes urgent) |
-| A CRM + newsletter audience (HubSpot, Mailchimp) | **Contacts, Campaigns** | double opt-in, one-click unsubscribe (RFC 8058), segments, per-SKU waitlist with a single "in stock" mail |
+| A newsletter tool (Mailchimp) | **Mail** | the paid features, free: an audience with segments and live counts (customers, never-bought, recent, idle, bought a SKU, waitlist, tag, kind, state), a designed HTML mail rendered from the plain text you write (no pixels, no remote images), preview, test send, scheduling, automations (welcome after opt-in, settled-in after delivery, a quiet-half-year nudge — once per event, consent re-checked at send time), bounce suppression, and a report that counts replies and orders in the week after by address instead of opens |
 | A transactional sender (Postmark, SendGrid) | **Mail** | an outbox queue, its own SMTP client (STARTTLS/SMTPS, AUTH), retries, consent re-checked at send time |
 | A storefront's products page | **Products** | the catalog (`store.json`) joined to what the business knows: buildable stock, open units, sold per period, margin, who is waiting, what came back; a weekly sales chart per SKU |
 | A CRM with lifetime value | **Customers** | orders, lifetime spend, average order, first/last order, tags, segments (repeat buyers, opt-in, waitlist, schools & orgs), a per-customer timeline |
@@ -33,8 +33,12 @@ already chose it. Everything *around* Stripe is here.
 | An ops dashboard (Metabase, Baremetrics) | **Home** | what needs doing today, the last 30 days against the 30 before, a sales chart, the activity feed. **Not** visitor analytics — the site has none and never will |
 | Order management (Shopify's order admin) | **Orders** | status tabs with counts, filters by batch / tag / date / code / SKU, a timeline per order (placed, packed, shipped, refund, notes, tags, address changes, boards scanned), bulk pack / tag / print, packing slips, re-send tracking, the weekly **Batches** page, one search box over everything |
 | Alerting (PagerDuty) | **Exceptions** | doc 20, principle 4: thresholds open one deduplicated GitHub issue and close it themselves. Silence means healthy |
-| Backups | **Backups** | nightly `VACUUM INTO`, kept N deep; off-site is one rsync line |
-| An admin login | **Auth** | one operator, password + authenticator code, strict cookies, CSRF, bearer tokens for the CLI and an AI operator |
+| Backups you can trust | **Backups** | every copy is opened and proven (integrity, row counts, the books balanced); an off-site copy to any S3-compatible bucket, sealed with AES-256-GCM before it leaves, read back with a HEAD; a weekly drill pulls the latest copy down and proves it boots; `backoffice restore` is one command |
+| Reconciliation | **Reconcile** | daily, with a restricted Stripe key: every paid payout is in the books (posted automatically), every successful charge has an order — a gap is an exception with the ids |
+| An uptime dashboard, a runbook, a morning report | **Health** | the doctor's checklist (configuration, backups and their proofs, books, probes, jobs, logins, disk) with what to do about each; the same list is `backoffice doctor`, `/api/health` (503 when anything fails, for an outside monitor) and the morning digest email |
+| An audit trail | **Audit log** | every action by anyone or anything, append-only, filterable, CSV |
+| A fulfillment app's pick-and-pack flow | **Pack bench / Ship bench** | one order at a time through the weekly batch: pick list, serial scan, one button; then tracking in, one button, the customer mailed |
+| An admin login | **Auth** | one operator, password + authenticator code, lockout after eight failures, strict cookies, CSRF plus a cross-site refusal, read-only or read-write bearer tokens. The whole model is in [`SECURITY.md`](SECURITY.md) |
 
 What is deliberately **not** here: the attestation service (LICENSING.md §2b
 is a product service with a timestamping authority behind it, not back-office
@@ -94,6 +98,15 @@ The login page shows the demo credentials, so anyone with the link can
 walk in and press every button — that is the point, and the hourly reset
 is what makes it safe to leave up. Once a URL exists, the website's Engine
 Room page can carry a "try the demo" link to it.
+
+## Going live, and staying reliable
+
+[`GO_LIVE.md`](GO_LIVE.md) is the order: a shadow fortnight in Stripe test
+mode, backups proven in two places (sealed off-site, a weekly restore
+drill), an outside monitor on `/api/health`, the morning digest, then the
+live keys. The Health page and `backoffice doctor` show the same checklist,
+green when each is done. [`SECURITY.md`](SECURITY.md) says what is defended
+and what is not.
 
 ## Fifteen minutes to running
 
@@ -188,11 +201,12 @@ src/http.mjs            router, body parsing, cookies, CSRF, rate limiter, escap
 src/render.mjs          server-rendered HTML; no client JavaScript
 src/auth.mjs            scrypt password, TOTP (RFC 6238), sessions, API tokens
 src/server.mjs          public endpoints, the JSON API, the request pipeline
-src/admin.mjs           one page per module; src/admin_shop.mjs the storefront half (products, customers, discounts, analytics, batches, search, packing slips)
+src/admin.mjs           one page per module; src/admin_shop.mjs the storefront half (products, customers, discounts, analytics, batches, search, packing slips);
+                        src/admin_ops.mjs the pack and ship benches, Health, the audit log; src/admin_mail.mjs campaigns, automations, the audience
 src/charts.mjs          inline-SVG charts: columns, line, ranked bars, sparklines, stat tiles — CSS hover tooltips, a table view under each
-src/jobs.mjs            outbox · inbox · probes · sla · stock · invoices · books · backup · demo_reset
-src/modules/            catalog contacts mail imap stripe orders discounts analytics products search inventory devices
-                        warranty support campaigns ledger invoices subscriptions status exceptions dashboard backup demo
+src/jobs.mjs            outbox (+ scheduled campaigns) · inbox · probes · sla · stock · invoices · books · backup (verified, off-site) · restore_drill · reconcile · digest · automations · demo_reset
+src/modules/            catalog contacts mail imap stripe orders discounts analytics products search inventory devices warranty support
+                        campaigns automations ledger invoices subscriptions status exceptions dashboard backup reconcile health demo
 tests/                  node --test; fakes for SMTP, IMAP, Stripe signatures, probes, GitHub
 deploy/                 Dockerfile, docker-compose.yml, Caddyfile, systemd unit, website-forms.html
 ```

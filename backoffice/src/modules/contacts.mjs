@@ -82,7 +82,10 @@ export function customerStats(db, id) {
 }
 export const customerCounts = (db) => ({ all: db.get('SELECT COUNT(*) AS n FROM contacts').n, repeat: listCustomers(db, { segment: 'repeat', limit: 100000 }).length, consented: db.get('SELECT COUNT(*) AS n FROM contacts WHERE consent_marketing = 1 AND unsubscribed_at IS NULL').n, waitlist: db.get('SELECT COUNT(DISTINCT contact_id) AS n FROM waitlist WHERE notified_at IS NULL').n, orgs: db.get("SELECT COUNT(*) AS n FROM contacts WHERE kind IN ('school','business','nonprofit')").n });
 
-export const canMarket = (c) => !!c && c.consent_marketing === 1 && !c.unsubscribed_at;
+export const canMarket = (c) => !!c && c.consent_marketing === 1 && !c.unsubscribed_at && !c.bounced_at;
+// A delivery failure for this address: no more campaign or automation mail until a human clears it.
+export function markBounced(db, email, { reason = '' } = {}) { const c = contactByEmail(db, email); if (!c) return null; db.run('UPDATE contacts SET bounced_at = ? WHERE id = ?', nowIso(), c.id); db.audit('system', 'contact.bounce', 'contact', c.id, { email: c.email, reason: reason.slice(0, 200) }); return contactById(db, c.id); }
+export function clearBounce(db, id) { db.run('UPDATE contacts SET bounced_at = NULL WHERE id = ?', id); db.audit('web', 'contact.bounce.clear', 'contact', id); return contactById(db, id); }
 
 export function joinWaitlist(db, contactId, sku, qty = 1) {
   db.run('INSERT INTO waitlist (contact_id, sku, qty, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(contact_id, sku) DO UPDATE SET qty = excluded.qty',
@@ -97,13 +100,46 @@ export function searchContacts(db, q = '', limit = 200) {
   return db.all('SELECT * FROM contacts WHERE (? = \'\' OR email LIKE ? OR name LIKE ? OR org LIKE ?) ORDER BY created_at DESC LIMIT ?', q, like, like, like, limit);
 }
 
-export function segment(db, seg = 'all') {
-  // Only contacts who may be marketed to, by segment. Transactional mail never uses this.
-  const base = 'SELECT c.* FROM contacts c WHERE c.consent_marketing = 1 AND c.unsubscribed_at IS NULL';
-  if (seg === 'all') return db.all(base + ' ORDER BY c.id');
-  const [k, v] = seg.split(':');
-  if (k === 'waitlist') return db.all(base + ' AND c.id IN (SELECT contact_id FROM waitlist WHERE sku = ?) ORDER BY c.id', v);
-  if (k === 'kind') return db.all(base + ' AND c.kind = ? ORDER BY c.id', v);
-  if (k === 'customers') return db.all(base + ' AND c.id IN (SELECT contact_id FROM orders WHERE status NOT IN (\'canceled\',\'refunded\')) ORDER BY c.id');
-  throw new Error(`unknown segment: ${seg}`);
+// Segments: who a campaign goes to. Every one starts from "may be marketed
+// to" (double opt-in, not unsubscribed, not bounced) and narrows from there.
+// The same words work in the campaign form, the API and the CLI, and
+// segmentCount() answers "how many" before anything is sent.
+export const SEGMENTS = [
+  ['all', 'everyone who opted in'], ['customers', 'opted in and has bought'], ['never-bought', 'opted in, never bought'],
+  ['recent:<days>', 'ordered in the last N days'], ['idle:<days>', 'has bought, nothing in N days'], ['bought:<sku>', 'bought a SKU'],
+  ['waitlist:<sku>', 'waiting for a SKU'], ['tag:<tag>', 'carries a tag'], ['kind:<kind>', 'person | school | business | nonprofit | press | vendor'], ['state:<XX>', 'last shipped to a state'],
+];
+function segmentSql(seg = 'all') {
+  const base = "SELECT c.* FROM contacts c WHERE c.consent_marketing = 1 AND c.unsubscribed_at IS NULL AND c.bounced_at IS NULL";
+  const s = String(seg || 'all').trim(); const [k, v = ''] = s.split(':');
+  const bought = "c.id IN (SELECT contact_id FROM orders WHERE status NOT IN ('canceled','refunded') AND total_cents > 0)";
+  const since = (days) => new Date(Date.now() - (Number(days) || 0) * 86400000).toISOString();
+  if (s === 'all') return [base + ' ORDER BY c.id', []];
+  if (s === 'customers') return [`${base} AND ${bought} ORDER BY c.id`, []];
+  if (s === 'never-bought') return [`${base} AND NOT ${bought} ORDER BY c.id`, []];
+  if (k === 'recent') return [`${base} AND c.id IN (SELECT contact_id FROM orders WHERE status != 'canceled' AND total_cents > 0 AND paid_at >= ?) ORDER BY c.id`, [since(v)]];
+  if (k === 'idle') return [`${base} AND ${bought} AND c.id NOT IN (SELECT contact_id FROM orders WHERE status != 'canceled' AND total_cents > 0 AND paid_at >= ?) ORDER BY c.id`, [since(v)]];
+  if (k === 'bought') return [`${base} AND c.id IN (SELECT o.contact_id FROM orders o JOIN order_items i ON i.order_id = o.id WHERE o.status != 'canceled' AND i.sku = ?) ORDER BY c.id`, [v]];
+  if (k === 'waitlist') return [`${base} AND c.id IN (SELECT contact_id FROM waitlist WHERE sku = ?) ORDER BY c.id`, [v]];
+  if (k === 'tag') return [`${base} AND (',' || c.tags || ',') LIKE ? ORDER BY c.id`, [`%,${v.toLowerCase()},%`]];
+  if (k === 'kind') return [`${base} AND c.kind = ? ORDER BY c.id`, [v]];
+  if (k === 'state') return [`${base} AND c.id IN (SELECT contact_id FROM orders WHERE ship_state = ?) ORDER BY c.id`, [v.toUpperCase()]];
+  throw new Error(`unknown segment: ${seg} — one of ${SEGMENTS.map(x => x[0]).join(', ')}`);
+}
+export function segment(db, seg = 'all') { const [sql, params] = segmentSql(seg); return db.all(sql, ...params); }
+export function segmentCount(db, seg = 'all') { const [sql, params] = segmentSql(seg); return db.get(`SELECT COUNT(*) AS n FROM (${sql.replace(/ ORDER BY c\.id$/, '')})`, ...params).n; }
+// The audience at a glance, and its growth: who may be mailed, who joined, who left, who bounced.
+export function audienceStats(db, { days = 30 } = {}) {
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const r = db.get(`SELECT SUM(CASE WHEN consent_marketing = 1 AND unsubscribed_at IS NULL AND bounced_at IS NULL THEN 1 ELSE 0 END) AS subscribers,
+    SUM(CASE WHEN consent_at >= ? THEN 1 ELSE 0 END) AS joined, SUM(CASE WHEN unsubscribed_at >= ? THEN 1 ELSE 0 END) AS left_, SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) AS bounced,
+    SUM(CASE WHEN consent_token IS NOT NULL AND consent_marketing = 0 THEN 1 ELSE 0 END) AS pending, COUNT(*) AS contacts FROM contacts`, since, since);
+  const weeks = 12; const start = Date.now() - weeks * 7 * 86400000;
+  const growth = Array.from({ length: weeks }, (_, i) => ({ label: new Date(start + i * 7 * 86400000).toISOString().slice(0, 10), joined: 0, left: 0 }));
+  for (const c of db.all('SELECT consent_at, unsubscribed_at FROM contacts WHERE consent_at >= ? OR unsubscribed_at >= ?', new Date(start).toISOString(), new Date(start).toISOString())) {
+    const idx = (t) => Math.min(weeks - 1, Math.max(0, Math.floor((Date.parse(t) - start) / (7 * 86400000))));
+    if (c.consent_at && Date.parse(c.consent_at) >= start) growth[idx(c.consent_at)].joined++;
+    if (c.unsubscribed_at && Date.parse(c.unsubscribed_at) >= start) growth[idx(c.unsubscribed_at)].left++;
+  }
+  return { subscribers: r.subscribers || 0, joined: r.joined || 0, left: r.left_ || 0, bounced: r.bounced || 0, pending: r.pending || 0, contacts: r.contacts, days, growth };
 }

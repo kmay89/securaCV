@@ -51,21 +51,22 @@ export function setupOperator(db, password) {
   const secret = base32Encode(randomBytes(20));
   db.setSetting('auth:password', hashPassword(password));
   db.setSetting('auth:totp', secret);
+  db.setSetting('auth:password_set_at', nowIso());
   db.audit('cli', 'auth.setup');
   return secret;
 }
 export const hasOperator = (db) => !!db.setting('auth:password');
 
-export function login(db, password, code, { sessionHours = 12 } = {}) {
+export function login(db, password, code, { sessionHours = 12, ip = null } = {}) {
   const ok = verifyPassword(password, db.setting('auth:password'));
   const secret = db.setting('auth:totp');
   const codeOk = secret ? verifyTotp(secret, code) : true;
-  if (!ok || !codeOk) { db.audit('web', 'auth.login.failed'); return null; }
+  if (!ok || !codeOk) { db.audit('web', 'auth.login.failed', 'session', null, { ip }); return null; }
   const id = token(32); const csrf = token(24);
   const exp = new Date(Date.now() + sessionHours * 3600_000).toISOString();
   db.run('INSERT INTO sessions (id, created_at, expires_at, csrf) VALUES (?, ?, ?, ?)', id, nowIso(), exp, csrf);
   db.run('DELETE FROM sessions WHERE expires_at < ?', nowIso());
-  db.audit('web', 'auth.login');
+  db.audit('web', 'auth.login', 'session', null, { ip });
   return { id, csrf, expires_at: exp };
 }
 export const sessionFor = (db, id) => id ? db.get('SELECT * FROM sessions WHERE id = ? AND expires_at > ?', id, nowIso()) : null;
@@ -81,10 +82,12 @@ function tokenVerify(secret, stored) {
   const got = scryptSync(String(secret), Buffer.from(salt, 'base64'), 32, TOKEN_SCRYPT); const want = Buffer.from(key, 'base64');
   return got.length === want.length && timingSafeEqual(got, want);
 }
-export function createApiToken(db, name) {
+// scope 'ro' is read-only: GET only, for a dashboard or a monitor that must never change anything.
+export function createApiToken(db, name, { scope = 'rw' } = {}) {
+  if (!['rw', 'ro'].includes(scope)) throw new Error('scope is rw or ro');
   const id = token(9); const secret = token(32);
-  db.run('INSERT INTO api_tokens (name, token_id, token_hash, created_at) VALUES (?, ?, ?, ?)', name, id, tokenHash(secret), nowIso());
-  db.audit('cli', 'auth.token.create', 'api_token', name);
+  db.run('INSERT INTO api_tokens (name, token_id, token_hash, scope, created_at) VALUES (?, ?, ?, ?, ?)', name, id, tokenHash(secret), scope, nowIso());
+  db.audit('cli', 'auth.token.create', 'api_token', name, { scope });
   return `bo_${id}.${secret}`;
 }
 export function apiTokenFor(db, bearer) {

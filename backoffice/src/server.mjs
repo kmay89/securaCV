@@ -2,7 +2,7 @@
 // API for the CLI / an AI operator, and the server-rendered admin.
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { Router, HttpError, parseCookies, cookie, readBody, parseBody, RateLimiter, html, json, text, redirect, clientIp, escapeHtml } from './http.mjs';
+import { Router, HttpError, parseCookies, cookie, readBody, parseBody, RateLimiter, Lockout, html, json, text, redirect, clientIp, escapeHtml } from './http.mjs';
 const e = escapeHtml;
 import { layout } from './render.mjs';
 import { sessionFor, login, logout, apiTokenFor, hasOperator } from './auth.mjs';
@@ -41,7 +41,7 @@ export function createApp({ db, cfg }) {
     cfg.baseUrl = localBase(cfg); cfg.siteOrigin = cfg.baseUrl;   // every link, probe and scenario stays on this machine
   }
   // In demo mode the catalog is the demo's own, never fetched from the live site.
-  const app = { db, cfg, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o) };
+  const app = { db, cfg, json, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o) };
   const { router } = app;
 
   // ---------- public
@@ -83,6 +83,10 @@ export function createApp({ db, cfg }) {
       joinWaitlist(db, contact.id, sku, b.qty);
       if (b.newsletter && !contact.consent_marketing) sendConsentRequest(db, contact.id, cfg);
       out = { ok: true, waitlist: sku };
+    } else if (kind === 'newsletter') {
+      const contact = upsertContact(db, { email, name: b.name || null, source: 'newsletter' });
+      if (!contact.consent_marketing) sendConsentRequest(db, contact.id, cfg);
+      out = { ok: true, newsletter: contact.consent_marketing ? 'already confirmed' : 'confirmation mail sent' };
     } else if (['contact', 'request', 'feedback', 'support', 'press', 'wholesale'].includes(kind)) {
       const msg = String(b.message || b.body || '').trim().slice(0, 20_000); if (!msg) throw new HttpError(400, 'message required');
       const subject = String(b.subject || ({ request: 'Build request', feedback: 'Feedback from the site', contact: 'Contact form', press: 'Press inquiry', wholesale: 'Wholesale / distribution' }[kind]) || 'Contact form').slice(0, 200);
@@ -91,7 +95,7 @@ export function createApp({ db, cfg }) {
     } else throw new HttpError(404, 'unknown form');
     const back = sameOriginUrl(String(b._redirect || ''), cfg.siteOrigin);
     if (back) return redirect(c.res, back);
-    if ((c.req.headers.accept || '').includes('text/html')) return html(c.res, plain(cfg, 'Thanks', out.ticket ? `Got it — ticket ${e(out.ticket)}. A person reads every one; keep an eye on ${e(email)}.` : `You're on the list for ${e(out.waitlist)}. One mail when it's in stock, nothing else.`));
+    if ((c.req.headers.accept || '').includes('text/html')) return html(c.res, plain(cfg, 'Thanks', out.ticket ? `Got it — ticket ${e(out.ticket)}. A person reads every one; keep an eye on ${e(email)}.` : out.newsletter ? `Check ${e(email)} for a confirmation link — nothing is sent without the click.` : `You're on the list for ${e(out.waitlist)}. One mail when it's in stock, nothing else.`));
     json(c.res, out, 200, corsHeaders(cfg));
   }, { public: true });
   router.add('OPTIONS', '/forms/:kind', (c) => { c.res.writeHead(204, corsHeaders(cfg)); c.res.end(); }, { public: true });
@@ -99,9 +103,13 @@ export function createApp({ db, cfg }) {
   // ---------- auth
   router.get('/login', (c) => html(c.res, loginPage(cfg, c.query.get('err'), hasOperator(db), cfg.demo ? { password: DEMO_PASSWORD, code: totp(db.setting('auth:totp') || 'AAAAAAAAAAAAAAAA') } : null)));
   router.post('/login', (c) => {
-    if (!app.limiter.allow(`login:${clientIp(c.req)}`)) throw new HttpError(429, 'slow down');
-    const s = login(db, c.body.password, c.body.code, { sessionHours: cfg.sessionHours });
-    if (!s) return redirect(c.res, '/login?err=1');
+    const ip = clientIp(c.req);
+    if (!app.limiter.allow(`login:${ip}`)) throw new HttpError(429, 'slow down');
+    // Eight wrong attempts in fifteen minutes and this address waits the window out; the audit log keeps every attempt.
+    if (app.lockout.locked(ip)) { db.audit('web', 'auth.login.locked', 'session', null, { ip }); throw new HttpError(429, 'too many failed logins from this address — try again in fifteen minutes'); }
+    const s = login(db, c.body.password, c.body.code, { sessionHours: cfg.sessionHours, ip });
+    if (!s) { app.lockout.fail(ip); return redirect(c.res, '/login?err=1'); }
+    app.lockout.clear(ip);
     redirect(c.res, '/', { 'Set-Cookie': cookie('bo_session', s.id, { maxAge: cfg.sessionHours * 3600, secure: cfg.secure }) });
   }, { public: true, csrf: false });
   router.post('/logout', (c) => { if (c.session) logout(db, c.session.id); redirect(c.res, '/login', { 'Set-Cookie': cookie('bo_session', '', { maxAge: -1, secure: cfg.secure }) }); });
@@ -156,6 +164,10 @@ export function createApp({ db, cfg }) {
     const route = router.match(req.method, url.pathname);
     try {
       if (!route) throw new HttpError(404, 'not found');
+      if (cfg.secure) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+      // A browser says where a request came from; a state change from another site is refused before the body is read.
+      const site = req.headers['sec-fetch-site'];
+      if (site && !['same-origin', 'same-site', 'none'].includes(site) && req.method !== 'GET' && req.method !== 'HEAD' && !route.opts.public) throw new HttpError(403, 'cross-site request refused');
       const cookies = parseCookies(req);
       const session = sessionFor(db, cookies.bo_session);
       const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
@@ -163,7 +175,7 @@ export function createApp({ db, cfg }) {
       const c = { req, res, url, params: route.params, query: url.searchParams, session, csrf: session?.csrf, actor: tokenRow ? `token:${tokenRow.name}` : session ? 'web' : 'public', app, db, cfg, body: {}, raw: null };
       if (req.method === 'POST' || req.method === 'PUT') { c.raw = await readBody(req); if (!route.opts.raw) c.body = parseBody(c.raw, req.headers['content-type'] || ''); }
       if (!route.opts.public && !url.pathname.startsWith('/login') && !['/healthz', '/status', '/status.json'].includes(url.pathname) && !url.pathname.startsWith('/confirm/') && !url.pathname.startsWith('/u/') && !url.pathname.startsWith('/i/')) {
-        if (url.pathname.startsWith('/api')) { if (!tokenRow && !session) throw new HttpError(401, 'bearer token or session required'); }
+        if (url.pathname.startsWith('/api')) { if (!tokenRow && !session) throw new HttpError(401, 'bearer token or session required'); if (tokenRow?.scope === 'ro' && !['GET', 'HEAD'].includes(req.method)) throw new HttpError(403, 'this token is read-only'); }
         else if (!session) return redirect(res, '/login');
         if (session && !tokenRow && req.method === 'POST' && route.opts.csrf !== false && !url.pathname.startsWith('/api')) {
           if (c.body._csrf !== session.csrf) throw new HttpError(403, 'bad CSRF token');

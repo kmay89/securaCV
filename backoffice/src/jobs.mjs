@@ -9,14 +9,17 @@ import { runDueProbes } from './modules/status.mjs';
 import { lowStock } from './modules/inventory.mjs';
 import { overdue } from './modules/invoices.mjs';
 import { raise, resolve } from './modules/exceptions.mjs';
-import { backup } from './modules/backup.mjs';
+import { backup, verifyBackup, liveCounts, uploadOffsite, restoreDrill, offsiteConfigured } from './modules/backup.mjs';
+import { reconcile } from './modules/reconcile.mjs';
+import { enqueue } from './modules/mail.mjs';
 import { unreconciledStripeCents } from './modules/ledger.mjs';
 import { resetDemo, isDemo } from './modules/demo.mjs';
 import { join } from 'node:path';
 
 export const JOBS = {
   // name: [interval seconds, fn(app)]
-  outbox:   [30, async ({ db, cfg }) => sendOutbox(db, cfg)],
+  outbox:   [30, async ({ db, cfg }) => { const { sendDueCampaigns } = await import('./modules/campaigns.mjs'); const due = sendDueCampaigns(db, cfg); const r = await sendOutbox(db, cfg); return due.length ? { ...r, campaigns: due } : r; }],
+  automations: [3600, async ({ db, cfg }) => { const { runAutomations } = await import('./modules/automations.mjs'); return runAutomations(db, cfg); }],
   inbox:    [120, async ({ db, cfg }) => {
     if (!cfg.imapUrl) return { skipped: 'IMAP_URL not set' };
     const msgs = await imapFetchUnseen(cfg.imapUrl);
@@ -56,7 +59,40 @@ export const JOBS = {
     else await resolve(db, cfg, 'books:stripe-balance', 'Reconciled.');
     return { stripe_unpaid_out_cents: c };
   }],
-  backup:   [86400, async ({ db, cfg }) => backup(db, join(cfg.dataDir, 'backups'), { keep: cfg.backupKeep })],
+  // A backup is taken, then opened and proven, then (when configured) sent off-site and read back.
+  backup:   [86400, async (app) => {
+    const { db, cfg } = app;
+    const b = backup(db, join(cfg.dataDir, 'backups'), { keep: cfg.backupKeep });
+    const verified = verifyBackup(b.path, { expect: liveCounts(db) });
+    if (!verified.ok) { await raise(db, cfg, 'backup:verify', 'backup [unverified]: the nightly copy failed its checks', verified.errors.join('\n')); throw new Error(`backup verification failed: ${verified.errors.join('; ')}`); }
+    await resolve(db, cfg, 'backup:verify', 'A verified backup exists again.');
+    let offsite = { skipped: 'BACKUP_S3_URL / KEY / SECRET not set' };
+    if (offsiteConfigured(cfg)) {
+      try { offsite = await uploadOffsite(cfg, b.path, { fetchImpl: app.fetchImpl || fetch }); await resolve(db, cfg, 'backup:offsite', 'The off-site copy is current again.'); }
+      catch (e) { offsite = { error: String(e.message || e) }; await raise(db, cfg, 'backup:offsite', 'backup [off-site failed]: the copy did not reach the bucket', `${e.message}\n\nThe local backup is verified; only the off-site copy is missing. Check BACKUP_S3_URL / KEY / SECRET and the bucket's permissions.`); }
+    }
+    db.audit('system', 'backup.taken', 'backup', b.path, { bytes: b.bytes, verified: verified.ok, offsite: offsite.verified || false });
+    return { ...b, verified, offsite };
+  }],
+  // Weekly: the latest copy (off-site when configured) is pulled back and proven to boot.
+  restore_drill: [7 * 86400, async (app) => {
+    const { db, cfg } = app;
+    try { const r = await restoreDrill(cfg, { fetchImpl: app.fetchImpl || fetch, localDir: join(cfg.dataDir, 'backups') }); if (!r.ok) throw new Error(r.errors.join('; ')); await resolve(db, cfg, 'backup:drill', 'The restore drill passed.'); db.audit('system', 'backup.drill', 'backup', r.source, { ok: true, orders: r.counts.orders }); return r; }
+    catch (e) { await raise(db, cfg, 'backup:drill', 'backup [restore drill failed]: the latest copy could not be proven', String(e.message || e)); throw e; }
+  }],
+  // Daily: payouts and charges in Stripe against the books and the orders (needs STRIPE_API_KEY).
+  reconcile: [86400, async (app) => reconcile(app.db, app.cfg, { fetchImpl: app.fetchImpl || fetch })],
+  // Once a day at DIGEST_HOUR (UTC): today's list, the numbers, the health checklist, to the operator.
+  digest:   [600, async ({ db, cfg }) => {
+    if (!cfg.operatorEmail) return { skipped: 'OPERATOR_EMAIL not set' };
+    const today = new Date().toISOString().slice(0, 10);
+    if (new Date().getUTCHours() < cfg.digestHour) return { waiting: `until ${String(cfg.digestHour).padStart(2, '0')}:00 UTC` };
+    if (db.setting('digest:last') === today) return { sent: 'already today' };
+    const { digestText } = await import('./modules/health.mjs');
+    const m = enqueue(db, { to: cfg.operatorEmail, subject: `${cfg.company}: the morning digest for ${today}`, kind: 'transactional', ref: `digest:${today}`, text: digestText(db, cfg) });
+    db.setSetting('digest:last', today); db.audit('system', 'digest.sent', 'mail', m.id);
+    return { queued: m.id, to: cfg.operatorEmail };
+  }],
   // A public demo starts over on a cadence so visitors always find the seeded week. Never runs outside demo mode.
   demo_reset: [60, async ({ db, cfg }) => {
     if (!cfg.demo || !isDemo(db) || !cfg.demoResetMinutes) return { skipped: 'not a timed public demo' };

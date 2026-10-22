@@ -1,6 +1,6 @@
 // One SQLite file is the company. node:sqlite (Node ≥ 22.13), no driver.
 import { DatabaseSync } from 'node:sqlite';
-import { readdirSync, readFileSync, mkdirSync } from 'node:fs';
+import { readdirSync, readFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +12,7 @@ export function today() { return new Date().toISOString().slice(0, 10); }
 export function openDb(path = ':memory:') {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
+  if (path !== ':memory:') { try { chmodSync(path, 0o600); } catch { /* not every filesystem */ } }   // the company's data is the operator's alone
   db.exec('PRAGMA busy_timeout = 5000');
   migrate(db);
   return wrap(db);
