@@ -314,6 +314,13 @@ class Notes(unittest.TestCase):
             gr.write(None, False, notes={"no_such_part.stl": "typo"})
         self.assertIn("no_such_part.stl", str(cm.exception))
 
+    def test_a_note_for_a_first_recorded_part_is_refused(self):
+        gr.load_ledger = lambda: {"parts": {}}
+        with self.assertRaises(SystemExit) as cm:
+            gr.write(None, False, notes={"dev_x.stl": "new part"})
+        self.assertIn("first time", str(cm.exception))
+        self.assertFalse(gr.OUT.exists())
+
     def test_no_notes_writes(self):
         self.assertEqual(gr.write(None, False), 0)
         self.assertTrue(gr.OUT.exists())

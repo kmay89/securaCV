@@ -54,6 +54,27 @@
 //              sense_hinge_reach()/_face()/_back()/_axis_stl() (what the bedside
 //              stand sweeps the case by) are derived here and read through
 //              `use <>`. No geometry moved.
+//  2026-10-22: the released front moves, for cause. The hinge fins' teardrop
+//              point stood at fin_r*(1+√2) = 18.11 from the back, 3.39 short of
+//              the face plane (21.5) — so in the face-down print each fin began
+//              in mid-air at z 3.39 and stood as an island until its root met the
+//              wall at z ~15.5 (a z ≤ 15.4 slab of the committed STL is 3 parts:
+//              the shell and two fins). The crown now lands ON the bed (fin_pt,
+//              the Vision's #1728 fix, which this hinge had not taken) on a 3 x
+//              1.2 foot; fin_root, the root web and the axis do not move. The
+//              hinge bore's teardrop crown pointed at the face — the bed, in that
+//              print — leaving the bore's roof a plain arc over an M5 with 0.2
+//              a side; it now points at the back. The bracket and knob, which the
+//              builder serves as "the same part the Vision case uses", were
+//              stale forks of it: hinge_clear (0.15) on the bracket's outer fins,
+//              the tripod nut pocket 5.9 deep (was 5.1: a 1/4-20 nut, 5.56, stood
+//              0.46 proud of the wall face), the knob's M5 pocket 4.9 deep (was
+//              4.2: an ISO 4032 nut, 4.7, stood 0.5 proud) and the corner holes
+//              Ø4.8 for the #8 they are countersunk for (the Vision's v0.7) —
+//              now mesh-identical to the Vision's. kh_lock is off by default,
+//              as on the Vision (its v0.7): the knockouts' screws go in from
+//              the cavity and the plate screws from the back face, so the
+//              documented anti-lift install could not be done.
 // ============================================================================
 
 use <canary_core_lib.scad>    // rrect/rrect2d, soft-edge front, foot chamfer, screw seats, tearbore
@@ -183,7 +204,9 @@ lid_ribs     = true;   // rib ring auto-clears the radome window
 lid_rib_w    = 2.5;     // rib ring width
 lid_rib_h    = 1.0;     // rib depth below the front — must stay within cav_extra (asserted)
 foot_cham    = 0.5;     // 45° chamfer on the back's bottom edge: elephant-foot + delamination guard (0 = off)
-kh_lock      = true;    // (keyhole mounts) anti-lift knockouts, as on the Vision: a 0.6 mm web at the back face, pierced with #4/M3 on install
+kh_lock      = false;   // (keyhole mounts) anti-lift knockouts (a 0.6 mm web at the back face), OFF as on the Vision since its v0.7: their screws go in
+                        // from the cavity and the plate screws enter from the back face, so a case hung on its keyholes can be
+                        // neither opened to drive them nor closed after them — and a pierced knockout is an unsealed hole inside the gasket line
 
 /* [Screw posts] */
 post_d       = 5.0;   // corner screw post Ø — the front screws thread into these (auto-fattened for inserts and larger screws)
@@ -205,6 +228,7 @@ prong_pitch = 6.35;  // fin center spacing (GoPro standard)
 fin_r       = 7.5;   // fin end radius
 hinge_off   = 13.0;  // hinge axis stand-off from the top wall face
 hinge_bolt_d = 5.0;  // hinge bolt Ø (M5 at the default); its hole is cut 0.4 over
+hinge_clear = 0.15;  // extra slot width on the bracket for printed fins that run +0.1 oversize (the Vision's)  // [0:0.05:0.4]
 hinge_teeth = true;  // radial detent teeth on the hinge's mating faces (the bracket carries the pockets); false = smooth faces
 teeth_n     = 24;    // castellation steps around the hinge, a tooth on every other one: it detents every 720 / teeth_n degrees (24 -> 12 positions, 30 degrees apart); keep it even
 teeth_h     = 0.6;   // tooth height
@@ -213,7 +237,8 @@ teeth_h     = 0.6;   // tooth height
 br_x        = 46.0;  // bracket plate width (along the hinge axis)
 br_y        = 34.0;  // bracket plate height
 br_t        = 4.0;   // bracket plate thickness
-br_screw_d  = 4.2;   // wall-screw clearance at the plate's four corners, 90° countersunk for a #8 flat head (Ø8.3)
+br_screw_d  = 4.8;   // wall-screw clearance at the plate's four corners, 90° countersunk for a #8 flat head (Ø8.3):
+                     // the #8's 4.17 major + 2 x tol_hole, the Vision's v0.7 (4.2 let the screw thread the bracket)
 bracket_tripod = true; // captive hex-nut pocket under the center fin, for a tripod screw
 
 /* [Stud/keyhole interface] — blind keyhole pockets, seal-safe (flush ceiling/wall mount) */
@@ -431,7 +456,7 @@ hw_echo("Sense", [
     e_lux && lux_disc_d > 0 ? hw_item(1, str("Ø", lux_disc_d, " x 1 clear disc (lux aperture; bond)")) : "",
     e_tamper     ? hw_item(1, str("Ø", mag_d, " x ", mag_h, " disc magnet (press + glue)")) : "",
     e_mount && (m_style == "hinge" || m_style == "both") ? hw_item(1, str("M", hinge_bolt_d, " x 25 bolt + nut (hinge; Vision knob/bracket parts)")) : "",
-    e_mount && (m_style == "hinge" || m_style == "both") ? hw_item(4, "#6 pan wall screw (bracket)") : "",
+    e_mount && (m_style == "hinge" || m_style == "both") ? hw_item(4, "#8 / M4 countersunk wall screw (bracket)") : "",   // the bracket's holes and 90° cones are cut for these (br_screw_d)
     e_mount && (m_style == "keyhole" || m_style == "both") ? hw_item(2, "#6 pan wall screw (keyholes)") : "",
 ]);
 echo(str("Canary Sense RADOME enclosure v0.2 — MR60", radar == "fda2" ? "FDA2" : "BHA2",
@@ -481,21 +506,32 @@ module teeth2d() {
 }
 // The fin prints on the shell, face-down: whatever faces the face is a
 // bed-facing overhang. A round lug's crown and a flat top edge both were, so
-// the fin is a teardrop knuckle — the crown comes to a 45° point toward the
-// face, and the root stays low enough (fin_root) that the edge from root to
-// point climbs at 45°. The root is what carries the case: a 3 x fin_root
-// PETG section sees under 1 MPa from the case's weight on the bolt's lever.
-fin_root = fin_r*(1 + sqrt(2)) - hinge_off;   // the 45° line from the point back to the wall
+// the fin is a teardrop knuckle whose crown lands ON the bed — the face's show
+// plane (fin_pt) — on a 3 x 1.2 foot, and the root stays low enough (fin_root)
+// that the edge from root to crown climbs at 45° or steeper (53° here); the far
+// flank, crown to knuckle, is steeper still. The root is what carries the case:
+// a 3 x fin_root PETG section sees under 1 MPa from the case's weight on the
+// bolt's lever. (2026-10-22: the point stood at fin_r*(1+√2), 3.39 short of the
+// face plane, so each fin started in mid-air in the print — an island until its
+// root met the wall at z ~15.5. A crown on the bed reaches base_d + lid_t - fin_r
+// = sense_hinge_face() from the axis, so a fitment the case swings by must leave
+// it that much room — the bedside stand asserts it.)
+fin_root = fin_r*(1 + sqrt(2)) - hinge_off;   // the root's height on the wall: unchanged by the crown below
+fin_pt   = base_d + lid_t;                    // the crown, ON the bed (the face's show plane)
 module case_fin(xc) {
     hull() {   // the root reaches the back face even under a keyhole slab
         translate([xc - prong_t/2, out_y/2 - 1, -mount_extra]) cube([prong_t, 1, fin_root + mount_extra]);
         translate([xc - prong_t/2, out_y/2 + hinge_off, fin_r])
             rotate([0, 90, 0]) cylinder(r = fin_r, h = prong_t);
-        translate([xc - prong_t/2, out_y/2 + hinge_off - 0.01, fin_r*(1 + sqrt(2)) - 0.01]) cube([prong_t, 0.02, 0.02]);
+        translate([xc - prong_t/2, out_y/2 + hinge_off - 0.6, fin_pt - 0.01]) cube([prong_t, 1.2, 0.01]);
     }
 }
 assert(fin_root >= 2.0, "the hinge fin's root is too low for its stand-off — raise fin_r or lower hinge_off");
-assert(fin_r*(1 + sqrt(2)) <= base_d + 0.01, "the hinge fin's point reaches past the face");
+// the crown's far flank stays at 45° or steeper only while the face plane is a 45°
+// point's reach past the knuckle (the root flank is then steeper by construction)
+assert(fin_pt - fin_r >= fin_r*sqrt(2) - 1e-9,
+       str("the body is too shallow (", fin_pt, " mm) for the hinge fin's 45° crown over a ", fin_r,
+           " mm knuckle — lower fin_r"));
 module case_hinge() {
     ax = [0, out_y/2 + hinge_off, fin_r];
     difference() {
@@ -510,7 +546,11 @@ module case_hinge() {
                 translate([-xo, ax[1], ax[2]]) rotate([0, -90, 0]) linear_extrude(teeth_h) teeth2d();
             }
         }
-        tearbore_x(-out_x/2, ax[1], ax[2], out_x, hinge_hole);
+        // the bore's teardrop crown points at the BACK (-z here): the shell prints
+        // face-down, so that is up. tearbore_x draws its crown toward +z, which
+        // in this frame is the face — the bed — and left the hole's roof a plain
+        // arc over the M5 (2026-10-22). Mirrored about the axis, the same cut.
+        translate([0, 0, 2*ax[2]]) mirror([0, 0, 1]) tearbore_x(-out_x/2, ax[1], ax[2], out_x, hinge_hole);
         // the Vision's lesson, same hinge: with the keyhole slab under the
         // back the slab-level root web hits the bracket's tripod boss hanging
         // straight (0°) — a 45° relief from the wall's foot clears it
@@ -739,10 +779,12 @@ module bracket_fin(xc) {
 }
 module bracket() {
     az = br_t + hinge_off;
+    xo = prong_pitch + hinge_clear;   // outer fins stand hinge_clear wider than the GoPro pitch (the Vision's;
+                                      // at the bare pitch a printed fin's +0.1 left 0.075 of the 0.175 gap)
     difference() {
         union() {
             rrect(br_x, br_y, 3, br_t);
-            bracket_fin(0);  bracket_fin(-prong_pitch);  bracket_fin(prong_pitch);
+            bracket_fin(0);  bracket_fin(-xo);  bracket_fin(xo);
             if (bracket_tripod) translate([0, 0, br_t - 0.1]) rrect(18, 18, 2, 5.0);   // 5.0: a 2.9 web over the nut, not 0.6
         }
         tearbore_x(-br_x/2, 0, az, br_x, hinge_hole);
@@ -752,7 +794,7 @@ module bracket() {
         // permanently spring the fins apart (creep -> detents loosen). The
         // Vision bracket's fix, mirrored.
         if (hinge_teeth) {
-            xi = prong_pitch - prong_t/2;   // outer fins' inner faces
+            xi = xo - prong_t/2;            // outer fins' inner faces
             translate([ xi - 0.05, 0, az]) rotate([0,  90, 0])
                 linear_extrude(teeth_h + 0.15) offset(delta = 0.12) teeth2d();
             translate([-xi + 0.05, 0, az]) rotate([0, -90, 0])
@@ -766,7 +808,7 @@ module bracket() {
             translate([0, 6, -0.1]) cylinder(d = 4.2, h = br_t + 0.2);
         }
         if (bracket_tripod) {
-            translate([0, 0, -0.1]) rotate([0, 0, 30]) cylinder(d = 11.4/cos(30), h = 5.2, $fn = 6);
+            translate([0, 0, -0.1]) rotate([0, 0, 30]) cylinder(d = 11.4/cos(30), h = 6.0, $fn = 6);  // full-height 1/4-20 nut (5.56) sits sub-flush (was 5.1 deep: 0.46 proud of the wall face)
             translate([0, 0, -0.1]) cylinder(d = 6.8, h = br_t + 3);
         }
     }
@@ -775,7 +817,7 @@ module knob() {
     difference() {
         cylinder(d = 22, h = 8);
         for (i = [0 : 11]) rotate([0, 0, i*30]) translate([12.6, 0, -1]) cylinder(d = 5, h = 10);
-        translate([0, 0, -0.1]) rotate([0, 0, 30]) cylinder(d = 8.4/cos(30), h = 4.3, $fn = 6);   // 8.4 AF: printed hexes run ~0.2 small
+        translate([0, 0, -0.1]) rotate([0, 0, 30]) cylinder(d = 8.4/cos(30), h = 5.0, $fn = 6);   // 8.4 AF: printed hexes run ~0.2 small (ISO 4032 m=4.7 fits; 4.2 deep left it 0.5 proud)
         translate([0, 0, -0.1]) cylinder(d = hinge_bolt_d + 0.4, h = 10);
     }
 }

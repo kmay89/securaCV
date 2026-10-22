@@ -79,7 +79,9 @@ sstl() { local out=$1; shift; echo "Rendering $out ..."
   "$OPENSCAD" --export-format binstl -o "$out" "$@" "$SSRC"; }
 sstl "canary_sense_back.stl"  -D 'part="back"'
 sstl "canary_sense_front.stl" -D 'part="front"'
-# (bracket/knob are identical to the Vision case parts — reuse those STLs)
+# (bracket/knob are mesh-identical to the Vision case parts — print those STLs; the
+#  builder serves this file's own copies, so they render below as dev parts, with the
+#  sealed build's TPU gasket, and CI mesh-checks what it serves)
 
 # --- Thermal / outdoor kit (WAP): solar shield + desiccant tray -------------
 stl "canary_wap_enclosure_weather_shield.stl" -D 'preset="battery_weather"' -D 'part="shield"'
@@ -87,13 +89,18 @@ stl "canary_wap_enclosure_tray.stl" -D 'part="tray"'
 
 # --- IN DEVELOPMENT designs: rendered + mesh-checked in CI, STLs NOT committed
 # (dev_*.stl is gitignored; print from the .scad while these mature)
-devstl() { local out=$1 src=$2; shift 2; echo "Rendering $out (dev) ..."
+NDEV=0
+devstl() { local out=$1 src=$2; shift 2; echo "Rendering $out (dev) ..."; NDEV=$((NDEV + 1))
   "$OPENSCAD" --export-format binstl -o "$out" "$@" "$src"; }
 devstl dev_watch_drum.stl    canary_watch_station.scad -D 'part="drum"'
 devstl dev_watch_bezel.stl   canary_watch_station.scad -D 'part="bezel"'
 devstl dev_watch_stand.stl   canary_watch_station.scad -D 'part="stand"'
 devstl dev_sense_stand.stl   canary_sense_stand.scad   -D 'part="base"'
+devstl dev_sense_ballast_lid.stl canary_sense_stand.scad -D 'part="ballast_lid"'
 devstl dev_sense_gang.stl    canary_sense_gang.scad    -D 'part="plate"'
+devstl dev_sense_gasket.stl  canary_sense_enclosure.scad -D 'opt_seal=true' -D 'opt_vent=true' -D 'part="gasket"'
+devstl dev_sense_bracket.stl canary_sense_enclosure.scad -D 'part="bracket"'
+devstl dev_sense_knob.stl    canary_sense_enclosure.scad -D 'part="knob"'
 devstl dev_outlet_cradle.stl canary_outlet_cradle.scad -D 'part="cradle"'
 devstl dev_relay_body.stl    canary_relay_solar.scad   -D 'part="body"'
 devstl dev_relay_lid.stl     canary_relay_solar.scad   -D 'part="lid"'
@@ -261,4 +268,6 @@ if [[ "${1:-}" != "--no-png" ]]; then
   (SRC="canary_dock.scad";          png "preview_dev_dock.png")
 fi
 
-echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 6 / Sense 2) + 59 dev renders + 3 SVG templates + previews."
+# counted, not typed: the typed line said 59 dev renders long after there were 87
+nrel() { ls "$@" 2>/dev/null | wc -l | tr -d ' '; }
+echo "Done: released STLs (WAP $(nrel canary_wap_enclosure_*.stl) / Vision $(nrel canary_vision_enclosure_*.stl) / Doorbell $(nrel canary_vision_doorbell_*.stl) / Sense $(nrel canary_sense_*.stl)) + $NDEV dev renders + 3 SVG templates + previews."

@@ -244,6 +244,39 @@
 //      and with the face on the headroom caps it even unscrewed. The
 //      cavity's width reads the wall's band exactly as it read the clip's,
 //      so the envelope does not move.
+//  v0.9 follow-up (2026-10-22): THE SEAL REVIEW — the sealed build's seal line
+//  had a hole in it and its one pressure path was shut. The face, the body
+//  and both wall plates move; the envelope does not:
+//    * THE KEY NOTCH WAS A WINDOW INTO THE CAVITY. It was cut ledge_w + 0.4
+//      either side of the plate's edge: 6.0 into the plate, through its whole
+//      thickness, across a ledge band 4.6 wide — a 3.4 mm wide hole from the
+//      back face straight into the cavity (a 1 x 0.5 column through the
+//      assembled pair at y 77.5 met nothing), and the +Y gasket unbacked over
+//      3.4 mm (a 5 mm length of the band's top 0.3 of plate, at the key, held
+//      0.77 of its 2.40 mm³). It is the Sense's PL-3 form now, core_key_d() +
+//      0.3 in from the bore wall (asserted in seal mode): the column meets the
+//      plate's full 5.0, the band is backed (2.40 mm³, one piece), and turned
+//      180° the plate still lands on the rib.
+//    * THE WEEP WAS SHUT. Its 30° dive from the ledge corner crossed the
+//      gasket groove into the plate's edge: assembled, the seated ring and
+//      the plate cut its bore into two dead ends (y -89.1..-81.7 open to the
+//      outside, -80.8..-77.4 to the cavity), so the case v0.9 said breathes
+//      and drains through it did neither. It leaves STRAIGHT out now (tilt 0:
+//      straight down when hung) on weep_z, core_min_web() above the groove's
+//      top, the Vision, combo and relay rule: one open channel, cavity to
+//      outside, 23.9 mm³. The collar's drain slot follows it (its top circle
+//      concentric with the weep, 0.8 clear all round; on the old slot the new
+//      bore's crown would have grazed its top).
+//    * the compound wedge: with plate_wedge >= 10 and |plate_wedge_x| = 15
+//      the wall plate exported as TWO bodies — a 30 mm³ sliver of the
+//      collar's root left 10-11 mm under a plate that would float on it. The
+//      flatten box reaches as deep as the root is drawn (2*z_bot).
+//    * the service plungers are NOT sealed by the slab, whatever v0.9 said:
+//      its cable slot lies under half of the two rims (22.0 of 44.2 mm²; 29.2
+//      on the 15° wedge) and the body floats on its lugs (lifted 0.28 off the
+//      slab nothing touches; 0.30 meets the lips), past the heads' 0.2. Each
+//      rim seats on a film of neutral-cure silicone and the TPU web is the
+//      seal (svc_proud); no mesh moves for this one.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft_edge_plate, foot_chamfer_ring, the
@@ -274,7 +307,7 @@ opt_vent   = false;  // GORE vent cluster on the face — OFF since v0.9: the ca
                      // open hole): then an adhesive GORE patch over the cluster is REQUIRED
 opt_led    = false;  // separate light-pipe port (the 12 mm button usually has its own LED ring)
 opt_tamper = false;  // reed/Hall magnet pocket on the face underside
-opt_weep   = true;   // Ø2 weep through the bottom wall just above the plate's face (mounted button-down):
+opt_weep   = true;   // Ø2 weep straight out through the bottom wall, over the gasket groove (straight down when hung):
                      // condensate leaves through a drain slot in the wall plate's collar
 weep_d     = 2.0;    // weep bore  // [1.5:0.5:3]
 seal_mid_posts = true; // (seal mode) mid posts along each long wall, as many as keep every gasket
@@ -384,8 +417,11 @@ svc_bead    = 0.4;    // the retaining bead's stand past the stem: a flat-ish sh
 svc_bead_clear = 0.6; // the shoulder rests this far past the guide boss's top (TPU prints long or short by a layer or two)
 svc_boss_wall = 1.0;  // the guide boss's wall on the plate's inner face
 svc_tol     = 0.25;   // TPU prints fat: the seat and the bore clear the part by this a side
-svc_proud   = 0.2;    // the head's face stands this far PROUD of the back face: the wall plate's slab presses the rim onto its
-                      // floor, and that squeeze is the seal of the bore behind it (the plate screws have O-rings for the same reason)
+svc_proud   = 0.2;    // the head's face stands this far PROUD of the back face, so mounted the wall plate's slab caps the heads.
+                      // It is NOT the bore's seal (the v0.9 follow-up): the slab's cable slot lies under half of each rim (more
+                      // on a wedge) and the lugs' 0.28 of play lets the body float off the heads, so nothing squeezes them. Each
+                      // rim is seated on a thin film of neutral-cure silicone (the clear disc's sealant; keep it off the web),
+                      // and the continuous TPU web is the seal
 svc_pip_d   = 2.0;    // the dimples in the head's face that say which is which: one = R, two = B
 svc_pip_depth = 0.4;
 svc_sprue_t = 0.4;    // the sprue between the pair's rims: two layers, cut with scissors (TPU does not snap)
@@ -827,6 +863,8 @@ assert(!lid_ribs || lid_rib_h <= lid_headroom,
        str("lid_rib_h ", lid_rib_h, " reaches past the ", lid_headroom, " mm headroom over the stack — the ribs land on a component"));
 assert(!lid_ribs || lid_rib_w >= core_min_wall(), "lid_rib_w is under the structural wall floor");
 assert(!e_seal || gasket_groove + 0.5 <= cav_d, "gasket_groove runs out of the ledge");
+assert(!e_seal || !lid_key || core_key_d() + 0.3 <= core_min_wall() + 1e-9,
+       "the plate's key notch would reach the gasket groove's outer cheek");
 assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= core_gasket_fill_max(),
        str("the printed TPU ring would fill ", round(100*core_gasket_fill(gasket_w, gasket_groove, gasket_proud)),
            " % of its groove - past ", round(100*core_gasket_fill_max()),
@@ -932,7 +970,7 @@ svc_cy         = xiao_usb_end_y + xiao_btn_dy + svc_dy;         // the plunger a
 function svc_xy() = opt_svc ? [for (sx = [1, -1]) [vm_cx + sx*xiao_btn_dx, svc_cy]] : [];
 svc_bore_d     = svc_stem_d + 2*svc_tol;                        // the stem slides
 svc_seat_d     = svc_head_d + 2*svc_tol;                        // the head's seat on the back face
-svc_seat_depth = svc_rim_t - svc_proud;                         // the rim's floor: the head stands svc_proud of the back face, for the slab to squeeze
+svc_seat_depth = svc_rim_t - svc_proud;                         // the rim's floor: the head stands svc_proud of the back face (the slab caps it, the film under the rim seals it)
 svc_rim_id     = svc_flex_d + 1.0;                              // the rim overlaps the recess's edge by 0.5 a side
 svc_web_span   = (svc_flex_d - svc_stem_d)/2 - svc_root_r;      // the web's free width, recess edge to the stem's fillet
 svc_boss_od    = svc_bore_d + 2*svc_boss_wall;
@@ -965,7 +1003,7 @@ assert(!opt_svc || (svc_head_d - svc_rim_id)/2 >= 0.8 - 1e-9, "the plunger's rim
 assert(!opt_svc || svc_travel_max >= svc_stroke_hi + 0.2 - 1e-9,
        str("the overtravel stop (", svc_travel_max, " mm) comes before the click at the far end of the stack band (", svc_stroke_hi, " mm) — deepen svc_flex_depth"));
 assert(!opt_svc || floor_t - svc_recess_z >= 1.2 - 1e-9, "the flex recess leaves under 1.2 mm of plate before the inner face");
-assert(!opt_svc || svc_proud >= 0.1 && svc_proud <= 0.3 + 1e-9, "svc_proud: 0.1-0.3 — enough squeeze to seal, not enough to hold the body off its slab");
+assert(!opt_svc || svc_proud >= 0.1 && svc_proud <= 0.3 + 1e-9, "svc_proud: 0.1-0.3 — enough for the slab to cap the heads, not enough to hold the body off its slab");
 assert(!opt_svc || svc_guide_len >= 3.0 - 1e-9, "the stem's guide (recess floor to boss top) is too short to keep it straight");
 assert(!opt_svc || svc_stem_d + 2*svc_root_r + 0.4 <= svc_flex_d - 1e-9, "the stem's root fillet lands on the recess's wall");
 assert(!opt_svc || svc_bead_z + svc_bead + 0.6 <= svc_web_t + svc_stem_len - 1e-9, "the bead runs into the tip");
@@ -1362,8 +1400,11 @@ module body() {
         // the screws: seats through the plate, pan heads over their glands in seal mode
         for (p = post_xy())
             pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, screw_head, pl_r, scr_c, tol_hole, e_gland);
-        // the key slot in the plate's +Y edge (the rib is on the shell's bore wall)
-        if (lid_key) translate([0, 0, floor_t]) lid_key_slot(0, bore_y/2 - tol_slide, 270, plate_t + 0.2, ledge_w + 0.4);
+        // the key notch in the plate's +Y edge (the rib is on the shell's bore wall):
+        // core_key_d() + 0.3 into the plate from the bore wall — never through the
+        // ledge band, so the gasket stays backed (asserted in seal mode; the v0.9
+        // follow-up: the old ledge_w + 0.4 cut ran 6.0 in, through the plate)
+        if (lid_key) translate([0, 0, floor_t]) lid_key_slot(0, bore_y/2, 270, plate_t + 0.2, core_key_d() - 0.7);
     }
 }
 
@@ -1496,12 +1537,15 @@ module shell_solid() {
             }
             if (foot_cham > 0) foot_chamfer_ring(out_x, out_y, rr, foot_cham, -mount_extra);
             // weep at the cavity's lowest point (mounted button-down): through the
-            // BOTTOM wall just above the plate's face, angled down, beside the
-            // security screw, in front of the collar's drain slot and inboard of the
-            // bottom posts' gussets. Too
-            // small to matter for ingress; the pressure path is the vent membrane.
+            // BOTTOM wall, STRAIGHT out (tilt 0 — straight down when hung) on weep_z,
+            // a web above the gasket groove, beside the security screw, in front of
+            // the collar's drain slot and inboard of the bottom posts' gussets. Too
+            // small to matter for ingress; with opt_vent off it is the case's
+            // pressure path as well as its drain (the v0.9 follow-up: the old 30°
+            // dive crossed the groove into the plate's edge, and the seated ring
+            // and the plate shut it)
             if (e_weep)
-                weep_cut(weep_x, -inner_y/2, floor_t + weep_d/2 + 0.2, "-y", wall_eff, weep_d);
+                weep_cut(weep_x, -inner_y/2, weep_z, "-y", wall_eff, weep_d, tilt = 0);
         }
         // screw posts from the face's underside to the relief over the ledge,
         // gusseted to their walls (a mid-span post only to its own) — the
@@ -1625,6 +1669,10 @@ module collar_out2d()   hull() { offset(r = collar_t) collar_in2d();
 module collar_clip2d()  translate([-out_x, -collar_tb - 1]) square([2*out_x, collar_arm + collar_tb + 1]);
 collar_h = mount_extra + sec_z + max(sec_bore_max, sec_screw_d + 0.4)/2 + 2.4;   // 2.4 of collar over the bore
 weep_x   = 7.0;   // the shell's weep exits its bottom wall here (beside the security screw)
+// ...on this axis: straight out, its bore a web ABOVE the gasket groove's top all
+// the way through the ledge band (a dive from the ledge plane crosses the groove,
+// where the seated ring and the plate close it — the Vision, combo and relay rule)
+weep_z   = floor_t + (e_seal ? gasket_groove + core_min_web() : 0.2) + weep_d/2;
 assert(collar_arm > rr, "the collar's returns must climb past the pill's corner radius, or they wrap nothing");
 assert(collar_tb >= 3.0, "the collar's bottom wall carries the security screw's head — keep it >= 3.0");
 // top-surface height of the (possibly wedged) plate at a given y —
@@ -1701,12 +1749,15 @@ module plate() {
                 cylinder(d = sec_screw_d + 0.4, h = collar_tb + 0.3);
             // the weep's drain: a slot through the collar's bottom wall in front
             // of the shell's weep, open down to the slab — the collar's band over
-            // it keeps the U closed
-            translate([weep_x, -collar_tb - 0.1, 0]) hull() for (z = [(weep_d + 1.6)/2, mount_extra + floor_t + weep_d + 0.2])
+            // it keeps the U closed. Its top circle is concentric with the weep
+            // (mount_extra + weep_z: z = 0 here is the body's back face), 0.8 clear all round
+            translate([weep_x, -collar_tb - 0.1, 0]) hull() for (z = [(weep_d + 1.6)/2, mount_extra + weep_z])
                 translate([0, 0, z]) rotate([-90, 0, 0]) cylinder(d = weep_d + 1.6, h = collar_tb + 0.3);
         }
-        // flatten anything the compound wedge tips below the wall plane (z < 0)
-        translate([-out_x, -out_y/2 - 12, -10]) cube([2*out_x, out_y + 24, 10]);
+        // flatten anything the compound wedge tips below the wall plane (z < 0) —
+        // as deep as the collar's root is drawn (2*z_bot): a fixed 10 left a 30 mm³
+        // sliver of that root floating under a 15° x 15° corner plate (the v0.9 follow-up)
+        translate([-out_x, -out_y/2 - 12, 2*z_bot]) cube([2*out_x, out_y + 24, -2*z_bot]);
     }
 }
 

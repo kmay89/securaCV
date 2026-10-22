@@ -1941,10 +1941,10 @@
     {
      "id": "kh_lock",
      "type": "bool",
-     "label": "(keyhole mounts) anti-lift knockouts, as on the Vision: a 0.6 mm web at the back face, pierced with #4/M3 on install",
+     "label": "(keyhole mounts) anti-lift knockouts (a 0.6 mm web at the back face), OFF as on the Vision since its v0.7: their screws go in",
      "consequence": "",
      "audience": "engineering",
-     "default": true
+     "default": false
     },
     {
      "id": "hinge_teeth",
@@ -1979,7 +1979,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 149,
+   "engineering_param_count": 151,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2067,7 +2067,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 23,
+   "engineering_param_count": 24,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2372,7 +2372,7 @@
     {
      "id": "opt_weep",
      "type": "bool",
-     "label": "Ø2 weep through the bottom wall just above the plate's face (mounted button-down):",
+     "label": "Ø2 weep straight out through the bottom wall, over the gasket groove (straight down when hung):",
      "consequence": "",
      "audience": "user",
      "default": true
@@ -2458,7 +2458,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 320,
+   "engineering_param_count": 321,
    "alternatives": [],
    "remix_of": null,
    "counts": {

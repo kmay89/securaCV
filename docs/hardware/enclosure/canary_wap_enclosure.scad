@@ -116,6 +116,11 @@
 //              cavity, and the shell is screwed on from the back face, so the
 //              documented anti-lift install could not be done — and a pierced
 //              knockout is an unsealed hole inside the gasket line.
+//              The plate's key notch ran ledge_w + 1.4 in from its edge,
+//              through the plate and past the ledge band: a 3.4 mm hole from
+//              the back face into the cavity, inside the gasket line on the
+//              weather build. It is the Sense's PL-3 form now (core_key_d() +
+//              0.3 in from the bore wall, asserted in seal mode).
 // ============================================================================
 
 use <canary_core_lib.scad>    // rrect/rrect2d, soft-edge face, foot chamfer, the piston plate (pl_*)
@@ -553,6 +558,8 @@ assert(!(usb_hood && e_seal && usb_cover),
 assert(!batt_hold || !e_battery || cav_h - batt_h >= 1.5,
        "batt_hold ribs would be shorter than 1.5 mm — the bay is already nearly full-height");
 assert(!e_seal || gasket_groove + 0.5 <= cav_h, "gasket_groove runs out of the ledge");
+assert(!e_seal || !lid_key || core_key_d() + 0.3 <= core_min_wall() + 1e-9,
+       "the plate's key notch would reach the gasket groove's outer cheek");
 assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= core_gasket_fill_max(),
        str("the printed TPU ring would fill ", round(100*core_gasket_fill(gasket_w, gasket_groove, gasket_proud)),
            " % of its groove - past ", round(100*core_gasket_fill_max()),
@@ -900,8 +907,12 @@ module base() {
         // the screws: seats through the plate, pan heads over their glands in seal mode
         for (p = post_xy())
             pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, e_head, pl_r, scr_c, tol_hole, e_gland);
-        // the key slot in the plate's edge (the rib is on the shell's bore wall)
-        if (lid_key) translate([0, 0, floor_t]) lid_key_slot(key_x, bore_y/2 - tol_slide, 270, plate_t + 0.2, ledge_w + 0.4);
+        // the key notch in the plate's edge (the rib is on the shell's bore wall):
+        // core_key_d() + 0.3 into the plate from the bore wall — never through the
+        // ledge band (v0.9.1: the old ledge_w + 0.4 cut ran ledge_w + 1.4 in from the
+        // plate's edge, past the ledge into the cavity — a 3.4 mm hole from the back
+        // face, inside the gasket line on the sealed build; the Sense's PL-3 form)
+        if (lid_key) translate([0, 0, floor_t]) lid_key_slot(key_x, bore_y/2, 270, plate_t + 0.2, core_key_d() - 0.7);
         // blind keyhole pockets (never reach the plate's front — seal-safe)
         if (mount_extra0 > 0)
             for (xc = kh_xs) keyhole_pocket(xc);

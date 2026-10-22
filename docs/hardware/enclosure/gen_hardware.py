@@ -151,7 +151,7 @@ JOIN = {
 # not edited. A new one fails --check; so does one that stops happening.
 KNOWN_DRIFT = {
     "doorbell+inserts|short INS1",
-    "sense|unbilled #6 pan wall screw (bracket)",
+    "sense|unbilled #8 / M4 countersunk wall screw (bracket)",
     "sense|unbilled M5 x 25 bolt + nut (hinge; Vision knob/bracket parts)",
     "vision.xiao_weather|unbilled #6 pan wall screw (keyholes)",
 }

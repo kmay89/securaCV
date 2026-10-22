@@ -319,8 +319,8 @@
     {
      "qty": 4,
      "kind": "wall-screw",
-     "spec": "#6 pan wall screw (bracket)",
-     "text": "#6 pan wall screw (bracket)"
+     "spec": "#8 / M4 countersunk wall screw (bracket)",
+     "text": "#8 / M4 countersunk wall screw (bracket)"
     }
    ],
    "lid_rib": {
@@ -375,8 +375,8 @@
     {
      "qty": 4,
      "kind": "wall-screw",
-     "spec": "#6 pan wall screw (bracket)",
-     "text": "#6 pan wall screw (bracket)"
+     "spec": "#8 / M4 countersunk wall screw (bracket)",
+     "text": "#8 / M4 countersunk wall screw (bracket)"
     }
    ],
    "bom": {
@@ -977,8 +977,8 @@
   {
    "set": "sense",
    "csv": "bom_canary_sense.csv",
-   "what": "unbilled #6 pan wall screw (bracket)",
-   "detail": "4x #6 pan wall screw (bracket) — no row in bom_canary_sense.csv bills it"
+   "what": "unbilled #8 / M4 countersunk wall screw (bracket)",
+   "detail": "4x #8 / M4 countersunk wall screw (bracket) — no row in bom_canary_sense.csv bills it"
   },
   {
    "set": "sense",

@@ -1165,11 +1165,13 @@ def write(note: str | None, want_regions: bool, backfill: bool = False, rerender
         new_parts[key] = part_record(r, prev, src, geom, version, head, ch)
         bumped.append(key)
     # a note for a part this run did not bump would be dropped without a word:
-    # refuse it instead, by name (a typo, or a part whose shape did not move)
-    unused = sorted(set(notes) - set(bumped) - set(recorded))
+    # refuse it instead, by name (a typo, a part whose shape did not move, or a
+    # part recorded for the first time — r1 has nothing to compare, so no note)
+    unused = sorted(set(notes) - set(bumped))
     if unused:
-        sys.exit(f"gen_revisions: --notes names {len(unused)} part(s) this run records no revision for: "
-                 f"{', '.join(unused)} — not a part key (see --list), or its shape did not move")
+        sys.exit(f"gen_revisions: --notes names {len(unused)} part(s) this run bumps no revision for: "
+                 f"{', '.join(unused)} — not a part key (see --list), its shape did not move, or it is "
+                 f"recorded for the first time (r1 carries no note)")
     if missing:
         devs = [k for k in missing if st[k][0]["home"] == "dev"]
         others = [k for k in missing if st[k][0]["home"] != "dev"]

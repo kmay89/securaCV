@@ -326,7 +326,7 @@ protocols that earn each level — see
 - **Anti-lift security.** Keyhole mounts can be defeated by lifting the unit
   off the wall screws. `kh_lock` adds two blind **knockout bosses** (0.6 mm
   web — the seal stays intact until used), driven from *inside* the case into
-  the wall. **Off by default since 2026-10-22** on the Vision and the WAP:
+  the wall. **Off by default since 2026-10-22** on the Vision, WAP and Sense:
   their plate screws enter from the back face, so a case hung on its keyholes
   can be neither opened to drive the knockout screws nor closed after them,
   and a pierced knockout is an unsealed hole inside the gasket line. For a
@@ -715,8 +715,9 @@ right after `render.sh`) but refuses, by name, any mesh older than the sources
 that draw it: recording it would stamp the old shape with the new design's
 digest. `--notes` takes a JSON object of part key → words, so a change that
 moves several parts says what it did to each (it wins over `--note` for the
-parts it names); a key that names no part, or a part whose shape did not move,
-is refused by name rather than dropped.
+parts it names); a key that names no part, a part whose shape did not move,
+or a part recorded for the first time (its r1 has nothing to compare) is
+refused by name rather than dropped.
 
 A part is keyed by the file `render.sh` writes for it (`canary_sense_front.stl`,
 `dev_hub_tray.stl`, `preview/canary_combo_front.stl` for the Lab's coarse mesh),
@@ -1403,9 +1404,12 @@ Three things a look at the v0.8 asked for; the envelope does not move:
   A press bends the web into the recess — a few newtons — the tip clicks
   the switch, and the web springs it back; the recess floor is the
   **overtravel stop**, so no finger can drive the switch past its body.
-  The head stands **0.2 proud** of the back face: the wall plate's slab
-  squeezes the rim onto its floor, and that squeeze seals the bore behind
-  it (the plate screws carry O-rings for the same reason). **Lift the body
+  The head stands **0.2 proud** of the back face, so mounted the wall plate's
+  slab caps it — but the slab is **not** the bore's seal: its cable slot lies
+  under half of the two rims (two-thirds on the 15° wedge) and the body floats
+  0.28 on its lugs, so nothing squeezes them. Each rim is seated on a thin
+  film of neutral-cure silicone (the clear disc's sealant; keep it off the
+  web), and the continuous TPU web is the seal. **Lift the body
   off its wall plate and press**: a reset, or B held through a power-up
   for a boot-mode flash, without a plate screw coming out. The tip rests 0.3
   off the cap at the *nearest* the stack can sit — `stack_sock_h` is a
@@ -1425,8 +1429,11 @@ Three things a look at the v0.8 asked for; the envelope does not move:
   rule), still over the cone, still with the membrane seat behind.
 - **The GORE vent is off** (`opt_vent = false`). The ring of ten Ø1
   holes above the grille is gone from the face; the sealed body breathes
-  through its **weep** — the open Ø2 drain through the bottom wall,
-  angled down under the collar's slot — which the seal-path assert has
+  through its **weep** — the open Ø2 drain straight out through the bottom
+  wall (straight down when hung), a web above the gasket groove, into the
+  collar's slot (the first v0.9 cut dived 30° through the groove into the
+  plate's edge, where the ring and the plate shut it; fixed 2026-10-22) —
+  which the seal-path assert has
   always accepted as a pressure path. What that trades: the day/night air
   exchange happens at the drain, not through a membrane. The grille's
   membrane (MESH1) does **not** do that job: the driver's back is sealed
@@ -1649,7 +1656,9 @@ rectifier/buck module — out of scope here; USB is the supported path.)
 
 **Weather:** sealed **by default** (`opt_seal = true`): TPU gasket + drip-edge
 face, no side openings at all — the only penetrations are the sealed lens
-disc, the IP65 button, and the rear exit against the wall. Same honest ~IP54
+disc, the IP65 button, the rear cable exit against the wall, the two service
+plungers (each rim seated on silicone) and the open Ø2 weep in the bottom wall
+— its drain and pressure path. Same honest ~IP54
 rating; a porch or doorway soffit is its natural habitat.
 
 **Assembly (v0.9):** a bead of neutral-cure silicone round the lip's ledge
@@ -1667,8 +1676,10 @@ nut on, and wire it and the **amplifier** per the
 the well, not the bottom wall; the amplifier stands on edge beside the
 button between the posts, taped to the wall) → on the plate: stick the **foam pad** on the
 cradle's top; cut the two **TPU plungers** off their sprue (scissors —
-TPU does not snap; trim the nub flush) and push them in from the back face,
-stem first, until the rim seats on its floor and the head stands 0.2 proud
+TPU does not snap; trim the nub flush) run a thin film of neutral-cure
+silicone round each seat's floor (under the rim, never on the web) and push
+them in from the back face, stem first, until the rim seats on its floor and
+the head stands 0.2 proud
 (the bead pops past the guide boss — one dimple over R, two over B, as
 `xiao_rst_side` says once you have checked it against the board) → if you
 are fitting the

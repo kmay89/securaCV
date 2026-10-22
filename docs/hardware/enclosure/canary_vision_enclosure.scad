@@ -183,6 +183,13 @@
 //      4.2 comes out nearer 4.0 and the screw threads the bracket instead
 //      of clamping it. br_screw_d 4.8 = the #8 + 2 x tol_hole; the 90° cone
 //      still tops out at the #8 head's Ø8.3.
+//    * THE KEY NOTCH WAS A HOLE INTO THE CAVITY. It was cut ledge_w + 1.4 in
+//      from the plate's edge, through the plate, so it ran past the ledge
+//      band: three 1 x 0.5 columns through the weather plate just inside the
+//      band held 0.75 mm³ of a solid 7.5 — open from the back face to the cavity,
+//      inside the gasket line. The Sense's PL-3 form now (core_key_d() + 0.3
+//      in from the bore wall, asserted in seal mode); the doorbell's seal
+//      review found the same cut there.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, tearbore_x, soft_edge_plate,
@@ -653,6 +660,8 @@ assert(!lid_ribs || lid_rib_w >= core_min_wall(), "lid_rib_w is under the struct
 assert(!e_seal || e_vent || e_buzzer || e_weep,
        "seal mode with no pressure path — enable opt_vent (GORE seat) or opt_weep");
 assert(!e_seal || gasket_groove + 0.5 <= cav_d, "gasket_groove runs out of the ledge");
+assert(!e_seal || !lid_key || core_key_d() + 0.3 <= core_min_wall() + 1e-9,
+       "the plate's key notch would reach the gasket groove's outer cheek");
 assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= core_gasket_fill_max(),
        str("the printed TPU ring would fill ", round(100*core_gasket_fill(gasket_w, gasket_groove, gasket_proud)),
            " % of its groove - past ", round(100*core_gasket_fill_max()),
@@ -920,8 +929,12 @@ module back() {
         // the screws: seats through the plate, pan heads over their glands in seal mode
         for (p = post_xy())
             pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, screw_head, pl_r, scr_c, tol_hole, e_gland);
-        // the key slot in the plate's edge (the rib is on the shell's bore wall)
-        if (lid_key) translate([0, 0, floor_t]) lid_key_slot(key_x, bore_y/2 - tol_slide, 270, plate_t + 0.2, ledge_w + 0.4);
+        // the key notch in the plate's edge (the rib is on the shell's bore wall):
+        // core_key_d() + 0.3 into the plate from the bore wall — never through the
+        // ledge band (v0.7: the old ledge_w + 0.4 cut ran ledge_w + 1.4 in from the
+        // plate's edge, past the ledge into the cavity — a 3.4 mm hole from the back
+        // face, inside the gasket line on the sealed build; the Sense's PL-3 form)
+        if (lid_key) translate([0, 0, floor_t]) lid_key_slot(key_x, bore_y/2, 270, plate_t + 0.2, core_key_d() - 0.7);
         // blind keyhole pockets (never reach the cavity — seal-safe); the
         // vision hangs by its back with +Y up, so the slot runs native-Y —
         // canary_mount_lib draws it without a rotate

@@ -3265,7 +3265,7 @@
       {
        "name": "opt_weep",
        "default": "true",
-       "comment": "Ø2 weep through the bottom wall just above the plate's face (mounted button-down):"
+       "comment": "Ø2 weep straight out through the bottom wall, over the gasket groove (straight down when hung):"
       },
       {
        "name": "weep_d",
@@ -3680,7 +3680,7 @@
       {
        "name": "svc_proud",
        "default": "0.2",
-       "comment": "the head's face stands this far PROUD of the back face: the wall plate's slab presses the rim onto its"
+       "comment": "the head's face stands this far PROUD of the back face, so mounted the wall plate's slab caps the heads."
       },
       {
        "name": "svc_pip_d",
@@ -4830,7 +4830,7 @@
       {
        "name": "svc_seat_depth",
        "default": "svc_rim_t - svc_proud",
-       "comment": "the rim's floor: the head stands svc_proud of the back face, for the slab to squeeze"
+       "comment": "the rim's floor: the head stands svc_proud of the back face (the slab caps it, the film under the rim seals it)"
       },
       {
        "name": "svc_rim_id",
@@ -5020,6 +5020,10 @@
        "name": "weep_x",
        "default": "7.0",
        "comment": "the shell's weep exits its bottom wall here (beside the security screw)"
+      },
+      {
+       "name": "weep_z",
+       "default": "floor_t + (e_seal ? gasket_groove + core_min_web() : 0.2) + weep_d/2"
       },
       {
        "name": "plate_seat_z",
@@ -5477,8 +5481,8 @@
       },
       {
        "name": "kh_lock",
-       "default": "true",
-       "comment": "(keyhole mounts) anti-lift knockouts, as on the Vision: a 0.6 mm web at the back face, pierced with #4/M3 on install"
+       "default": "false",
+       "comment": "(keyhole mounts) anti-lift knockouts (a 0.6 mm web at the back face), OFF as on the Vision since its v0.7: their screws go in"
       }
      ]
     },
@@ -5588,6 +5592,16 @@
        "comment": "hinge bolt Ø (M5 at the default); its hole is cut 0.4 over"
       },
       {
+       "name": "hinge_clear",
+       "default": "0.15",
+       "range": [
+        0.0,
+        0.05,
+        0.4
+       ],
+       "comment": "extra slot width on the bracket for printed fins that run +0.1 oversize (the Vision's)"
+      },
+      {
        "name": "hinge_teeth",
        "default": "true",
        "comment": "radial detent teeth on the hinge's mating faces (the bracket carries the pockets); false = smooth faces"
@@ -5625,8 +5639,8 @@
       },
       {
        "name": "br_screw_d",
-       "default": "4.2",
-       "comment": "wall-screw clearance at the plate's four corners, 90° countersunk for a #8 flat head (Ø8.3)"
+       "default": "4.8",
+       "comment": "wall-screw clearance at the plate's four corners, 90° countersunk for a #8 flat head (Ø8.3):"
       },
       {
        "name": "bracket_tripod",
@@ -6007,7 +6021,12 @@
       {
        "name": "fin_root",
        "default": "fin_r*(1 + sqrt(2)) - hinge_off",
-       "comment": "the 45° line from the point back to the wall"
+       "comment": "the root's height on the wall: unchanged by the crown below"
+      },
+      {
+       "name": "fin_pt",
+       "default": "base_d + lid_t",
+       "comment": "the crown, ON the bed (the face's show plane)"
       }
      ]
     }
@@ -6765,13 +6784,13 @@
       },
       {
        "name": "stalk_h",
-       "default": "70.0",
+       "default": "65.0",
        "comment": "stalk height to the hinge axis region — puts the standing radome ~130 mm over the nightstand"
       },
       {
        "name": "pose_low",
        "default": "15",
-       "comment": "the forward tip limit below horizontal — where the case root meets the center fin (header)"
+       "comment": "the forward tip limit below horizontal the base clearance is asserted at (header: free to 30°)"
       },
       {
        "name": "stalk_d",
@@ -6884,12 +6903,16 @@
       },
       {
        "name": "head_off",
-       "default": "10.0",
-       "comment": "bolt axis above the head's base plate"
+       "default": "15.0",
+       "comment": "bolt axis above the head's base plate: the stalk top (head_off - 0.2 out)"
       },
       {
        "name": "axis_z",
        "default": "base_t - 2 + (stalk_h - 0.2 + head_off)*cos(stalk_tilt)"
+      },
+      {
+       "name": "stalk_foot_r",
+       "default": "base_d*0.05 + 2*tan(stalk_tilt) + (stalk_d/2)/cos(stalk_tilt)"
       }
      ]
     }
