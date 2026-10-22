@@ -1,12 +1,15 @@
-# Fly.io: the public demo on their free allowance.
-#   fly launch --config backoffice/deploy/fly.toml --copy-config --no-deploy   (pick a name + region)
-#   fly deploy --config backoffice/deploy/fly.toml --dockerfile backoffice/deploy/Dockerfile
-# Then open https://<name>.fly.dev — the login page shows the demo credentials.
+# Fly.io: the public demo on their free allowance. Run from backoffice/ (the
+# Dockerfile copies package.json, bin/ and src/ relative to it); the build
+# happens on Fly's remote builder, so no local Docker is needed.
+#   cd backoffice
+#   fly apps create <your-app-name>            # names are global on Fly; pick your own
+#   fly deploy --config deploy/fly.toml --app <your-app-name>
+# Then open https://<your-app-name>.fly.dev — the login page shows the demo credentials.
 app = "securacv-backoffice-demo"
 primary_region = "iad"
 
 [build]
-  dockerfile = "backoffice/deploy/Dockerfile"
+  dockerfile = "deploy/Dockerfile"
 
 [env]
   BACKOFFICE_DEMO = "1"
