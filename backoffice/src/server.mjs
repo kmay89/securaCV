@@ -22,10 +22,19 @@ import { openExceptions, resolve as resolveException, raise as raiseException } 
 import { snapshot } from './modules/dashboard.mjs';
 import { registerAdmin } from './admin.mjs';
 import { runJob, JOBS } from './jobs.mjs';
+import { isDemo, DEMO_PASSWORD, DEMO_WEBHOOK_SECRET, DEMO_CATALOG, SCENARIOS } from './modules/demo.mjs';
+import { totp } from './auth.mjs';
 
 export function createApp({ db, cfg }) {
   cfg.secret = cfg.secret || db.setting('app:secret') || (() => { const s = randomBytes(32).toString('base64url'); db.setSetting('app:secret', s); return s; })();
-  const app = { db, cfg, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), catalog: (o) => loadCatalog(cfg, o) };
+  // Demo mode: synthetic data, and a hard rule that nothing reaches a real service.
+  if (cfg.demo || isDemo(db)) {
+    cfg.demo = true; cfg.githubToken = ''; cfg.imapUrl = ''; cfg.smtpUrl = ''; cfg.stripeApiKey = '';
+    cfg.stripeWebhookSecret = DEMO_WEBHOOK_SECRET;
+    cfg.mailFrom = cfg.mailFrom || 'Errer Labs (demo) <demo@backoffice.example.test>';
+  }
+  // In demo mode the catalog is the demo's own, never fetched from the live site.
+  const app = { db, cfg, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o) };
   const { router } = app;
 
   // ---------- public
@@ -81,7 +90,7 @@ export function createApp({ db, cfg }) {
   router.add('OPTIONS', '/forms/:kind', (c) => { c.res.writeHead(204, corsHeaders(cfg)); c.res.end(); }, { public: true });
 
   // ---------- auth
-  router.get('/login', (c) => html(c.res, loginPage(cfg, c.query.get('err'), hasOperator(db))));
+  router.get('/login', (c) => html(c.res, loginPage(cfg, c.query.get('err'), hasOperator(db), cfg.demo ? { password: DEMO_PASSWORD, code: totp(db.setting('auth:totp') || 'AAAAAAAAAAAAAAAA') } : null)));
   router.post('/login', (c) => {
     if (!app.limiter.allow(`login:${clientIp(c.req)}`)) throw new HttpError(429, 'slow down');
     const s = login(db, c.body.password, c.body.code, { sessionHours: cfg.sessionHours });
@@ -114,6 +123,8 @@ export function createApp({ db, cfg }) {
   router.post('/api/exceptions/:key/resolve', async (c) => json(c.res, await resolveException(db, cfg, c.params.key, c.body.note || 'Resolved by operator.')));
   router.get('/api/jobs', (c) => json(c.res, Object.keys(JOBS)));
   router.post('/api/jobs/:name', async (c) => json(c.res, await runJob(app, c.params.name)));
+  router.get('/api/demo/scenarios', (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); json(c.res, Object.fromEntries(Object.entries(SCENARIOS).map(([k, v]) => [k, v.label]))); });
+  router.post('/api/demo/:scenario', async (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); const sc = SCENARIOS[c.params.scenario]; if (!sc) throw new HttpError(404, 'unknown scenario'); json(c.res, await sc.run(app)); });
 
   registerAdmin(app);
 
@@ -207,19 +218,20 @@ const API_INDEX = ['GET /api/snapshot', 'GET /api/orders?status=&batch=&q=', 'GE
   'GET /api/contacts?q=', 'GET /api/inventory', 'POST /api/inventory/move {sku, delta, reason, ref}', 'GET /api/devices?q=', 'POST /api/devices {serial, mac, board, product_sku, fw_version, fw_sha256, batch}',
   'GET /api/books/pnl?from=&to=', 'POST /api/books/expense {date, account, cents, memo}', 'GET /api/exceptions', 'POST /api/exceptions/:key/resolve', 'GET /api/jobs', 'POST /api/jobs/:name'];
 
-export const plain = (cfg, title, bodyHtml) => layout({ title, body: `<p>${bodyHtml}</p><p><a href="${e(cfg.siteOrigin)}">← back to ${e(cfg.product || 'the site')}</a></p>`, company: cfg.company, nav: false });
+export const plain = (cfg, title, bodyHtml) => layout({ title, body: `<p>${bodyHtml}</p><p><a href="${e(cfg.siteOrigin)}">← back to ${e(cfg.product || 'the site')}</a></p>`, company: cfg.company, nav: false, demo: cfg.demo });
 
-function loginPage(cfg, err, ready) {
-  return layout({ title: 'Log in', company: cfg.company, nav: false, body: ready
+function loginPage(cfg, err, ready, demo = null) {
+  const hint = demo ? `<div class="flash"><b>Demo mode — synthetic data, nothing leaves this machine.</b><br>Password: <code>${e(demo.password)}</code> · authenticator code right now: <code>${e(demo.code)}</code> (it changes every 30 s; <code>backoffice code</code> prints it too)</div>` : '';
+  return layout({ title: 'Log in', company: cfg.company, nav: false, demo: !!demo, body: hint + (ready
     ? `${err ? '<div class="flash err">Wrong password or code.</div>' : ''}<form method="post" action="/login" class="box"><label for="pw">Password</label><input id="pw" type="password" name="password" required autocomplete="current-password"><label for="code">Authenticator code</label><input id="code" name="code" inputmode="numeric" pattern="[0-9]{6}" required autocomplete="one-time-code"><div style="margin-top:.8rem"><button>Log in</button></div></form>`
-    : '<p>No operator yet. On the server, run <code>backoffice setup</code> to set the password and get the authenticator QR.</p>' });
+    : '<p>No operator yet. On the server, run <code>backoffice setup</code> to set the password and get the authenticator QR.</p>') });
 }
 
 function statusPage(db, cfg) {
   const s = publicStatus(db);
   const rows = s.probes.map(p => `<tr><td>${e(p.name)}</td><td class="${p.ok === false ? 'bad' : p.ok ? 'ok' : 'muted'}">${p.ok == null ? 'not checked yet' : p.ok ? '● operational' : '● down'}</td><td class="num">${p.uptime_90d == null ? '—' : p.uptime_90d + '%'}</td><td class="muted">${e(p.checked_at || '')}</td></tr>`).join('');
   const inc = s.incidents.map(i => `<div class="msg"><div class="meta">${e(i.started_at)} · ${e(i.status)}${i.resolved_at ? ` · resolved ${e(i.resolved_at)}` : ''}</div><b>${e(i.title)}</b>\n${e(i.body || '')}</div>`).join('') || '<p class="muted">No incidents on record.</p>';
-  return layout({ title: `${cfg.product || 'SecuraCV'} status — ${s.overall}`, company: cfg.company, nav: false, body: `<p class="${s.overall === 'operational' ? 'ok' : 'bad'}"><b>${s.overall === 'operational' ? 'All systems operational' : 'Something is degraded'}</b> · checked from one probe, every few minutes · <a href="/status.json">JSON</a></p>
+  return layout({ title: `${cfg.product || 'SecuraCV'} status — ${s.overall}`, company: cfg.company, nav: false, demo: cfg.demo, body: `<p class="${s.overall === 'operational' ? 'ok' : 'bad'}"><b>${s.overall === 'operational' ? 'All systems operational' : 'Something is degraded'}</b> · checked from one probe, every few minutes · <a href="/status.json">JSON</a></p>
 <table><thead><tr><th>Service</th><th>Now</th><th class="num">90-day uptime</th><th>Last check (UTC)</th></tr></thead><tbody>${rows}</tbody></table><h2>Incidents</h2>${inc}
 <p class="muted">Nothing on this page phones home: a Canary on your wall talks to your hub, not to us, so an outage here never touches a device.</p>` });
 }
@@ -227,7 +239,7 @@ function statusPage(db, cfg) {
 function invoicePage(cfg, inv) {
   const rows = inv.items.map(i => `<tr><td>${e(i.description)}${i.sku ? ` <span class="muted">(${e(i.sku)})</span>` : ''}</td><td class="num">${i.qty}</td><td class="num">${(i.unit_cents / 100).toFixed(2)}</td><td class="num">${(i.qty * i.unit_cents / 100).toFixed(2)}</td></tr>`).join('');
   const money = (c) => `$${(c / 100).toFixed(2)}`;
-  return layout({ title: `Invoice ${inv.number}`, company: cfg.company, nav: false, body: `<p><b>${e(cfg.company)}</b> · ${e(cfg.supportAddr || '')}</p>
+  return layout({ title: `Invoice ${inv.number}`, company: cfg.company, nav: false, demo: cfg.demo, body: `<p><b>${e(cfg.company)}</b> · ${e(cfg.supportAddr || '')}</p>
 <div class="row"><div><b>Bill to</b><br>${e(inv.bill_to || inv.contact_name || inv.email || '').replace(/\n/g, '<br>')}</div><div><b>Invoice</b> ${e(inv.number)}<br>${inv.po_number ? `<b>PO</b> ${e(inv.po_number)}<br>` : ''}<b>Issued</b> ${e(inv.issued_at || '—')}<br><b>Due</b> ${e(inv.due_at || '—')} (net ${inv.terms_days})<br><b>Status</b> ${e(inv.status)}</div></div>
 <table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody>
 <tfoot><tr><td colspan="3" class="num">Subtotal</td><td class="num">${money(inv.subtotal_cents)}</td></tr><tr><td colspan="3" class="num">Shipping</td><td class="num">${money(inv.shipping_cents)}</td></tr><tr><td colspan="3" class="num">Tax</td><td class="num">${money(inv.tax_cents)}</td></tr><tr><td colspan="3" class="num"><b>Total (USD)</b></td><td class="num"><b>${money(inv.total_cents)}</b></td></tr></tfoot></table>

@@ -22,7 +22,7 @@ import { snapshot } from '../src/modules/dashboard.mjs';
 import { notifyWaitlist, createCampaign, queueCampaign } from '../src/modules/campaigns.mjs';
 import { sendOutbox } from '../src/modules/mail.mjs';
 import { openExceptions } from '../src/modules/exceptions.mjs';
-import { seedDemo } from '../src/modules/demo.mjs';
+import { seedDemo, resetDemo, DEMO_PASSWORD } from '../src/modules/demo.mjs';
 import { totp } from '../src/auth.mjs';
 import { join } from 'node:path';
 
@@ -37,7 +37,7 @@ const app = createApp({ db, cfg });
 const HELP = `backoffice — the company in one SQLite file (${cfg.dbPath})
 
   setup                                    set the operator password + authenticator (first run)
-  demo                                     fill an EMPTY database with a realistic week (orders, tickets, stock, books…) to explore
+  demo [--reset]                           fill an EMPTY database with a synthetic week to explore (--reset wipes and reseeds)
   code                                     print the current authenticator code (same as your phone shows; for local trying-out)
   serve                                    run the web admin, API, forms, webhook and the scheduler
   token create <name> | token revoke <name>  API bearer tokens for the CLI/remote/an AI operator
@@ -96,15 +96,9 @@ const main = async () => {
       return out(`Operator set. Add this to your authenticator app (TOTP):\n\n  ${totpUri(secret, cfg.supportAddr || 'operator', `${cfg.company} backoffice`)}\n\n(secret: ${secret})\n\nDefault status probes seeded. Now: backoffice serve`);
     }
     case 'demo': {
-      if (!hasOperator(db)) {
-        // The password is never echoed: either it is the one you just typed, or the documented demo default.
-        const usingDefault = !flags.password;
-        setupOperator(db, usingDefault ? 'demo-password-change-me' : flags.password);
-        for (const p of DEFAULT_PROBES(cfg)) upsertProbe(db, p);
-        out(`Operator set with ${usingDefault ? 'the demo password: demo-password-change-me' : 'the password you passed'}. Run \`backoffice code\` for the authenticator code.`);
-      }
-      out(await seedDemo(db, cfg));
-      return out('Demo data loaded. Now: backoffice serve  → http://127.0.0.1:' + cfg.port + '/  (log in with the password above and `backoffice code`)');
+      if (!hasOperator(db)) { setupOperator(db, DEMO_PASSWORD); out(`Operator set with the demo password: ${DEMO_PASSWORD}`); }
+      out(flags.reset ? await resetDemo(db, cfg) : await seedDemo(db, cfg));
+      return out(`Demo data loaded (synthetic; nothing leaves this machine). Now: backoffice serve  → http://127.0.0.1:${cfg.port}/  — the login page shows the password and the current code.`);
     }
     case 'code': { const secret = db.setting('auth:totp'); if (!secret) throw new Error('no operator yet — run setup or demo'); return out(totp(secret)); }
     case 'serve': {
