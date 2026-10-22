@@ -24,6 +24,11 @@ export const invoiceByNumber = (db, n) => { const i = db.get('SELECT id FROM inv
 export const listInvoices = (db) => db.all('SELECT i.*, c.email FROM invoices i LEFT JOIN contacts c ON c.id = i.contact_id ORDER BY i.id DESC');
 
 // The public link is unguessable: HMAC of the number under the app secret.
+export function remindInvoice(db, id, cfg, { actor = 'web' } = {}) {
+  const inv = invoiceById(db, id); if (!inv) throw new Error('no such invoice'); if (!['sent', 'overdue'].includes(inv.status)) throw new Error(`${inv.number} is ${inv.status}`); if (!inv.email) throw new Error('no email on the invoice');
+  const m = enqueue(db, { to: inv.email, subject: `Reminder: invoice ${inv.number} (${inv.po_number ? 'PO ' + inv.po_number + ', ' : ''}due ${inv.due_at})`, kind: 'transactional', ref: `invoice-reminder:${inv.number}`, contactId: inv.contact_id, text: `Hi ${inv.contact_name || 'there'},\n\nA gentle reminder that invoice ${inv.number} for $${(inv.total_cents / 100).toFixed(2)} was due ${inv.due_at}.\n\nThe invoice, printable: ${invoiceUrl(cfg, inv)}\n\nIf it is already on its way, thank you — reply and we will note it. If something on it is wrong, reply and we will fix it.\n\n— ${cfg.company || 'Errer Labs'}\n` });
+  db.audit(actor, 'invoice.remind', 'invoice', inv.number); return m;
+}
 export const invoiceToken = (secret, number) => createHmac('sha256', String(secret)).update(String(number)).digest('base64url').slice(0, 24);
 export const invoiceUrl = (cfg, inv) => `${cfg.baseUrl}/i/${inv.number}/${invoiceToken(cfg.secret, inv.number)}`;
 

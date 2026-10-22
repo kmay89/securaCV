@@ -8,8 +8,20 @@ export const money = (cents, cur = 'usd') => {
   const n = (Number(cents) || 0) / 100;
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: cur.toUpperCase() }).format(n);
 };
-export const dt = (iso) => iso ? String(iso).replace('T', ' ').replace(/\.\d+Z$/, 'Z').replace(/:\d\dZ$/, ' UTC') : '—';
-export const day = (iso) => iso ? String(iso).slice(0, 10) : '—';
+// Times show in the operator's zone (OPERATOR_TZ); storage stays UTC ISO.
+let TZ = 'UTC';
+export function setTimezone(tz) { try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); TZ = tz || 'UTC'; } catch { TZ = 'UTC'; } return TZ; }
+export const timezone = () => TZ;
+const parts = (d, tz = TZ) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: 'short' }).formatToParts(d).map(p => [p.type, p.value]));
+export const dt = (iso) => { if (!iso) return '—'; const d = new Date(iso); if (Number.isNaN(d.getTime())) return String(iso); const p = parts(d); return `${p.year}-${p.month}-${p.day} ${p.hour === '24' ? '00' : p.hour}:${p.minute} ${p.timeZoneName}`; };
+export const day = (iso) => { if (!iso) return '—'; const d = new Date(iso); if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10); const p = parts(d); return `${p.year}-${p.month}-${p.day}`; };
+// A wall-clock time typed in the operator's zone → the UTC instant.
+export function zonedToUtc(local, tz = TZ) {
+  const guess = Date.parse(local.endsWith('Z') ? local : local + 'Z'); if (Number.isNaN(guess)) return null;
+  const offset = (t) => { const p = parts(new Date(t), tz); return Date.UTC(+p.year, +p.month - 1, +p.day, p.hour === '24' ? 0 : +p.hour, +p.minute) - t; };
+  let t = guess - offset(guess); t = guess - offset(t); return new Date(t).toISOString();
+}
+export const hourIn = (tz = TZ, d = new Date()) => { const h = parts(d, tz).hour; return h === '24' ? 0 : Number(h); };
 
 const CSS = `
 :root{--bg:#f6f5f1;--fg:#1b1b1b;--muted:#6b6b6b;--line:#e3dfd6;--accent:#b4820b;--accent-ink:#1a1300;--ok:#2d7d46;--bad:#b23a3a;--warn:#b7791f;--card:#fff;--side:#fcfbf8;--shadow:0 1px 2px rgba(20,16,0,.04),0 4px 14px -6px rgba(20,16,0,.08);--s1:#b4820b;--s2:#2f6fb3;--s3:#2d7d46;--s4:#8a4fb0;--s5:#b23a3a}
@@ -61,6 +73,11 @@ footer{color:var(--muted);font-size:12px;padding:2rem 1rem;text-align:center}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.8rem;margin:0 0 .9rem}
 details.more{margin:1rem 0}details.more summary{cursor:pointer;color:var(--muted);font-size:13px}details.more[open] summary{margin-bottom:.4rem}
 .feed{list-style:none;margin:0;padding:0;background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}.feed li{display:grid;grid-template-columns:150px 1fr;gap:.8rem;padding:.5rem .9rem;border-bottom:1px solid var(--line);font-size:14px}.feed li:last-child{border-bottom:0}.feed .meta{color:var(--muted);font-size:12.5px;white-space:nowrap}@media(max-width:600px){.feed li{grid-template-columns:1fr}}
+/* the Decide queue */
+.decide{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:.8rem;margin:0 0 1.2rem}.dc{display:flex;flex-direction:column;gap:.25rem;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:12px;padding:.85rem 1rem;box-shadow:var(--shadow)}
+.dc .dk{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}.dc .dt{font-weight:650;font-size:15px}.dc .dd{font-size:13.5px}.dc .dw{font-size:12.5px;color:var(--muted);font-style:italic}.dc .da{margin-top:auto;padding-top:.5rem;display:flex;gap:.5rem;align-items:center}.dc .da button,.dc .da .btn{padding:.35rem .8rem;font-size:13px}
+.where{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:.55rem .9rem;font-size:14px}
+.atts{display:flex;flex-wrap:wrap;gap:.6rem;margin-top:.5rem}.att{display:inline-flex;flex-direction:column;gap:.2rem;font-size:12px;color:var(--fg);text-decoration:none}.att img{max-width:220px;max-height:160px;border-radius:8px;border:1px solid var(--line);display:block}.att.file{padding:.3rem .6rem;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
 /* order status stepper */
 .steps{display:flex;list-style:none;padding:0;margin:.6rem 0 1rem;gap:0;counter-reset:s;max-width:720px}.steps li{flex:1;position:relative;text-align:center;font-size:13px;color:var(--muted);padding-top:1.4rem}.steps li::before{counter-increment:s;content:counter(s);position:absolute;left:50%;top:0;transform:translateX(-50%);width:22px;height:22px;border-radius:50%;background:var(--card);border:2px solid var(--line);font-size:11px;line-height:18px;color:var(--muted);z-index:1}
 .steps li::after{content:"";position:absolute;top:10px;left:50%;width:100%;height:2px;background:var(--line)}.steps li:last-child::after{display:none}.steps li.done{color:var(--fg)}.steps li.done::before{background:var(--ok);border-color:var(--ok);color:#fff;content:"✓"}.steps li.done::after{background:var(--ok)}.steps li.now{color:var(--fg);font-weight:650}.steps li.now::before{border-color:var(--accent);background:var(--accent);color:var(--accent-ink)}.steps li .when{display:block;font-size:11px;color:var(--muted);font-weight:400}
@@ -77,8 +94,8 @@ details.more{margin:1rem 0}details.more summary{cursor:pointer;color:var(--muted
 
 export const NAV_GROUPS = [
   ['', [['/', 'Home'], ['/pack', 'Pack bench'], ['/ship', 'Ship bench']]],
-  ['Sell', [['/orders', 'Orders'], ['/products', 'Products'], ['/contacts', 'Customers'], ['/discounts', 'Discounts'], ['/analytics', 'Analytics']]],
-  ['Run', [['/tickets', 'Support'], ['/inventory', 'Inventory'], ['/devices', 'Devices'], ['/warranty', 'Warranty'], ['/invoices', 'Invoices'], ['/campaigns', 'Mail']]],
+  ['Sell', [['/orders', 'Orders'], ['/products', 'Products'], ['/contacts', 'Customers'], ['/discounts', 'Discounts'], ['/marketing', 'Marketing'], ['/analytics', 'Analytics']]],
+  ['Run', [['/tickets', 'Support'], ['/inventory', 'Inventory'], ['/purchasing', 'Purchasing'], ['/devices', 'Devices'], ['/warranty', 'Warranty'], ['/invoices', 'Invoices'], ['/campaigns', 'Mail']]],
   ['Trust', [['/books', 'Books'], ['/status-admin', 'Status'], ['/exceptions', 'Exceptions'], ['/health', 'Health'], ['/audit', 'Audit log'], ['/settings', 'Settings']]],
 ];
 export const NAV = NAV_GROUPS.flatMap(([, items]) => items);
