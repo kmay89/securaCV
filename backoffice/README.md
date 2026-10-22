@@ -77,6 +77,7 @@ to main. Pick one:
 | Where | Cost | How |
 |---|---|---|
 | Fly.io | free allowance | from `backoffice/`: `fly apps create <name>` then `fly deploy --config deploy/fly.toml --app <name>` (builds on Fly's remote builder; no local Docker) → `https://<name>.fly.dev` |
+| Fly.io, no terminal | free allowance | Fly dashboard → Account → Tokens → create one; add it to this repo as the secret `FLY_API_TOKEN`; Actions → "Backoffice demo → Fly.io" → Run workflow. It creates the app, deploys, and redeploys on every merge that touches `backoffice/` |
 | Render | free tier (sleeps when idle, ~30 s to wake) | New → Blueprint → this repo; `backoffice/deploy/render.yaml` is read automatically |
 | Any VPS with Docker | ~$4–6/month | point a DNS name at it, then `DEMO_HOST=demo.example.com docker compose -f backoffice/deploy/docker-compose.demo.yml up -d` (Caddy gets the certificate) |
 | A laptop, for a meeting | — | `docker run --rm -e BACKOFFICE_DEMO=1 -p 8787:8787 ghcr.io/kmay89/securacv-backoffice` |
