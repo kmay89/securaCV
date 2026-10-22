@@ -1,6 +1,93 @@
 # Changelog
 
 ## [Unreleased]
+### Vision and Sentinel tell the truth about their modules: the Grove module's 1 or 0, never its id, a sample from every good invoke and none from a failed one; the Sentinel's radar link reaches Home Assistant, and a missing light sensor is absent, not blinded (F384; device-details PR 7, #<PR>)
+
+- **Vision's `module_id` is 1 or 0 (sweep F384).** It was the SSCMA
+  library's cached id accessor cast to `int`: the address of the library's
+  id buffer, non-zero whether or not the Grove Vision AI module had answered.
+  The boot line printed it and the desktop Flasher's boot-line proof read any
+  positive value as "the module answered", so a Vision whose module never
+  answered passed. `init()` now keeps one verdict, the library's `begin()`
+  and then a fresh NAME? round trip (`name(false)`, never the cache; skipped
+  when `begin()` failed, so a dead module costs no 3 s timeout), and the boot
+  line keeps its exact format, `Grove Vision AI ID=%d`, with 1 or 0 in it and
+  the ERROR line above it exactly with 0. A number, not `true`, so an older
+  Flasher's `> 0` gate still reads it right. The `j` proof record gains
+  `module_ok`, the same verdict as a bool.
+- **No code of the firmware's own asks the module for its id.** The
+  device-details design treats it as a per-unit identifier, and nothing in
+  the firmware calls the library's id accessor. One thing this library does not let the firmware
+  avoid: Seeed_Arduino_SSCMA 1.0.3's I2C `begin()` is `ID(false) &&
+  name(false)`, so the library itself asks once at boot and keeps the answer
+  in its private buffer, which nothing reads, prints or stores.
+- **`invoke()` is read as the status code it is.** Its `int` result
+  (`CMD_OK` is 0) was stored in a `bool`, so it read backwards: a successful
+  invoke that found no box gave no sample, so with a working module and an
+  empty room the presence FSM was never ticked and could not time a person
+  out, and the Aim card's empty-frame cadence did not run; a failed invoke
+  gave a sample built from the boxes the library still held from the last
+  good frame. A successful invoke now always gives a sample, empty or not,
+  and a failed one gives none. (Read from the code and the library source;
+  not run on a device.)
+- **The desktop Flasher reads `module_ok`.** The flash engine's receipt
+  (`monitor.rs`, shared with the Lab app's native bench) requires `module_ok`
+  to be `true` when a proof carries it, beside `i2c_ready` and a positive
+  `module_id`, which an older image's proof still passes or fails on as
+  before. The live boot line's proof now carries `module_ok` too: false on
+  `ID=0`, and false after the ERROR line an older image printed just above its
+  address, so a dead module is refused from either image. The Flasher's
+  `serial:vision` handler reads `module_ok` when present. No browser change:
+  the browser flasher proves a Vision through the camera bench, never the boot
+  log, and `desktop_parity.test.js` now holds it to having no such path.
+- **canary-sentinel's health carries its radar link.** The health publish it
+  carries from canary-sense takes a `radar` object (`link_ok`,
+  `last_frame_age_ms`, `frame_errors`, the contract Home Assistant's
+  radar-link diagnostic reads), and the Sentinel passed none, though it judged
+  the link for its fusion vote. It now passes it, judged by the same stall
+  rule (`include/canary/sentinel_links.h`): no object before a frame or a
+  whole stall window, and none on a build with no radar (Lite). The
+  integration gives a Canary the Radar link sensor when its health reports
+  the object, so a Sentinel with the radar gets one and a Lite never grows a
+  sensor that could only say "unknown"; a canary-sense still gets it from its
+  status. The object's frame age and error count are what the device-details
+  design classes as activity; like canary-sense's, they go only to the
+  owner's broker.
+- **A missing light sensor is absent, not blinded.** The Sentinel ignored
+  the BH1750's `begin()`, so on a unit with no working light sensor every read
+  failed and voted `Denied`: a blinded channel for good, and on a preset with
+  the radar an `Anomaly` whenever the radar saw a body. A sensor that did not
+  answer at boot is now absent: the light channel never votes, and the boot
+  console prints `BH1750 not found`. One that answered and then fails a read
+  is blinded, `Denied`, as before. A sensor removed while the unit is off
+  therefore boots as absent, and until the device-details record carries the
+  part's status, the boot console is the only place that says so.
+- **Docs.** The Vision README and both Grove guides say what `ID=1` and
+  `ID=0` mean, and that any other number is an older image whose ERROR line is
+  the only answer; `gen_vision.py` stages `ID=1`, `must()`s the 1-or-0
+  `printf`, and `vision.json` is regenerated. The Sentinel README, the Home
+  Assistant setup guide and `FAULT_MODEL.md` (which still said no firmware
+  published the radar object) describe the radar link and the light sensor as
+  they are now.
+- **Tests.** `test_vision_module_link.cpp` (new) compiles `vision_mgr.cpp`
+  against a scripted module and pins all of the Vision side in 55 checks; the
+  old file does not compile there (a pointer cast to `int`), and the old logic
+  shimmed in, or the inversion alone restored, fails it.
+  `test_sentinel_links.cpp` (new, 27 checks) runs the radar and light rules
+  alone and through the real fusion engine under the `door` preset; the old
+  light rule fails it. Six new flash-engine tests cover old and new proof
+  records and both images' boot lines (three fail on the old rules); a
+  `desktop_parity.test.js` case holds the firmware's boot lines to the
+  engine, and two Home Assistant tests hold the radar-link gate (both fail on
+  the old one). Built with PlatformIO here: the four Vision envs and all five
+  Sentinel presets compile. Against the same envs built at the base commit,
+  the Vision images grow by 32 to 96 bytes and the Sentinel door and Lite
+  images by 224 and 128 bytes, and the guarded images stay inside their
+  slots: `canary-vision-default` 1,438,528 of 1,966,080 bytes,
+  `canary-sentinel-door` 1,450,416 of 1,966,080, `canary-sentinel-lite`
+  1,159,776 of 1,310,720. Neither change is compiled into the emulator, so
+  its dist does not move. Host-tested; not run on a device.
+
 ### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (F342, F347)
 
 - **A wrong `?claim=` no longer spends the phone's setup-door claim (sweep

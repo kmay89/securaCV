@@ -3346,6 +3346,71 @@ so — see D2 below.)
   refusal fails provisioning with the stored token untouched. It should land
   with or before any rotation. A host case beside `test_wap_hmac_fail.cpp`'s
   provisioning runs. Found by F359's review (#1840).
+- [ ] **F384 [code] canary-vision's `module_id` is a RAM address, so the
+  desktop's live-boot-line proof passes a dead module, and the obvious fix
+  would publish a per-unit module id.** `vision_mgr.cpp` sets `g_module_id =
+  (int)AI.ID()` (`:31`). Seeed_Arduino_SSCMA 1.0.3, the version the Vision
+  envs pin (`firmware/envs/platformio/canary-vision.ini:57`), declares `char*
+  ID(bool cache = true)` and returns its `_ID` buffer whenever `cache && _ID`,
+  which is always true for a `char _ID[32]` member
+  (`Seeed_Arduino_SSCMA.h:240`, `:290`; `Seeed_Arduino_SSCMA.cpp:739-758`). So
+  the call asks the module nothing, and the value is the buffer's address,
+  nonzero whether or not the module answered. The firmware's own `g_ready`
+  also needs `begin()`'s result (`:32`), but the boot line prints the address
+  (`Grove Vision AI ID=%d`, `:33`), and the desktop's monitor turns any
+  positive id into `i2c_ready: true`
+  (`desktop/flash-engine/src/monitor.rs:185-193`), so a Vision whose module
+  never answered passes that proof. In the same file `sample()` stores
+  `AI.invoke()`'s `int` result, where `CMD_OK` is 0, in a `bool` (`:45`), so a
+  successful invoke reads false and a failed one true. Asking the module for
+  its real id (`ID?`) would publish a per-unit identifier. Fix: `module_id`
+  becomes 1 or 0 from `begin()` and a fresh `name(false)` round trip, which
+  keeps older Flashers' `> 0` gate; the boot line keeps its format
+  (`canary-local/tools/gen_vision.py:470` `must()`s it); the proof record
+  gains `module_ok`, which the desktop reads when present (`monitor.rs`,
+  `desktop/src/app.js:1127-1130`); `ID?` is never sent; and the inversion is
+  fixed (device-details PR 7); the identifier lint denies `AI.ID(`
+  (device-details PR 4). From code and the library source; not run on a
+  device. Found by the device-details design's privacy review
+  (`docs/design/device_details.md` §11, P11); filed by #<PR>, 2026-10-22.
+  *Partly done (#<PR>), device-details PR 7; the item stays open for the
+  identifier lint (device-details PR 4):* `vision_mgr.cpp`'s `init()` keeps
+  one verdict, `g_module_ok = began && AI.name(false) != nullptr`: a fresh
+  NAME? round trip after the library's `begin()`, skipped when `begin()`
+  failed, so a dead module costs no 3 s timeout. The boot line prints it as
+  `Grove Vision AI ID=%d` with 1 or 0, the ERROR line exactly with 0;
+  `module_id()` returns 1 or 0; the `j` proof record gains `module_ok`
+  (`main.cpp`). `gen_vision.py` also `must()`s the 1-or-0 `printf` and
+  stages `ID=1` (`vision.json` regenerated). `sample()` compares
+  `invoke()`'s result to `CMD_OK`: a successful invoke always yields a
+  sample, empty or not (before, one that found no box yielded none, so with a
+  working module and an empty room the presence FSM was never ticked to time
+  a person out), and a failed one yields none, never a sample from the boxes
+  the library still holds from the last good frame. Nothing in the
+  firmware calls the library's id accessor. One part of "`ID?` is never
+  sent" this library does not allow: SSCMA 1.0.3's I2C `begin()` is
+  `ID(false) && name(false)` (`Seeed_Arduino_SSCMA.cpp:117`), so the library
+  itself sends `ID?` once at boot and keeps the answer in its private `_ID`
+  buffer, which nothing reads, prints or stores; not sending it at all would
+  take a patched or vendored library. The desktop: `monitor.rs`'s
+  `receipt_ready()` goes through `vision_module_ok()` (`i2c_ready`, a
+  positive `module_id`, and `module_ok` true when it is present), and the
+  live boot line's proof carries `module_ok`, false on `ID=0` and after the
+  ERROR line an older image prints above its address
+  (`boot_line_module_ok()`), so a dead module is refused from either image;
+  `desktop/src/app.js`'s `serial:vision` handler reads `module_ok` when
+  present and falls back to `> 0` without it. No browser change: the browser
+  flasher proves a Vision through the camera bench, never the boot log.
+  `firmware/tests_host/test_vision_module_link.cpp` (new) compiles
+  `vision_mgr.cpp` against a scripted module (`stubs/vision_mgr/`) and pins
+  all of it in 55 checks; the old file does not compile there (a pointer
+  cast to `int`), and the old logic shimmed in, or the inversion alone
+  restored, fails it. Six new `monitor.rs` tests cover old and new proof
+  records and both images' boot lines (three fail on the old rules), and a
+  `desktop_parity.test.js` case holds the firmware's two boot lines to the
+  engine's constants, the proof record's `module_ok` and the frontend's rule
+  to the engine's, denies `AI.ID(` in `vision_mgr.cpp`, and holds the
+  browser flasher to having no such path. Host-tested; not run on a device.
 
 ### Parity & sub-projects
 
@@ -3452,6 +3517,27 @@ so — see D2 below.)
   WiFi-RF / CSI / BLE channels and the fleet-link beacon on the C6 radio) is
   bench-bound and not built, and the README's bench checklist — 10 boxes
   now, with Phase 1a's three — is U1.
+  *Note (2026-10-22, device-details PR 7, #<PR>):* two Phase 1a defects in
+  what the Sentinel says about its own sensors, fixed. Its retained health
+  never carried the `radar` object: `publish_health_retained()` takes one
+  (carried from canary-sense), and `main.cpp` passed none, so a Standard
+  build's radar link reached Home Assistant nowhere. It now passes
+  `radar_link_health()`, judged by the stall rule the radar's fusion vote
+  uses (`include/canary/sentinel_links.h`): no object before a frame or a
+  whole stall window, and none on Lite. The integration gives a Canary the
+  radar-link sensor when its health reports the object
+  (`sensor.py` `_wants_radar_link()`). And the BH1750's `begin()` result was
+  ignored, so a unit with no light sensor voted `Denied` on every read: a
+  blinded channel for good, and on a preset with the radar an `Anomaly`
+  whenever the radar saw a body. A sensor that did not answer at boot is now
+  absent (the channel never votes; the boot console prints `BH1750 not
+  found`), and one that answered and then fails a read is blinded
+  (`Denied`). `firmware/tests_host/test_sentinel_links.cpp` (new, 27 checks,
+  the door preset through the real engine; the old light rule fails it) and
+  two new Home Assistant tests (both fail on the old gate). Host-tested; not
+  run on hardware. Left: a sensor removed while the unit is off boots as
+  absent, which only the boot console says until the device-details record
+  carries the part's status (device-details PR 15).
 - [x] **F23 [code] canary-ota reference project lags the main trees** — done
   via the label option (its README already declared the engine promoted to
   `common/ota/`; lifting a frozen demo to parity would duplicate the
