@@ -10,6 +10,7 @@ import { enqueue, fill } from './mail.mjs';
 import { postSale, postRefund } from './ledger.mjs';
 import { evaluate as evaluateDiscount } from './discounts.mjs';
 import { normalizeTags } from './contacts.mjs';
+import { estimateDelivery, orderStatusUrl } from './delivery.mjs';
 
 export const STATUSES = ['pending', 'paid', 'packed', 'shipped', 'delivered', 'refunded', 'canceled'];
 
@@ -99,9 +100,26 @@ export function updateShipping(db, orderId, ship, { actor = 'web' } = {}) {
 export function resendTracking(db, orderId, { cfg = null, actor = 'web' } = {}) {
   const o = orderById(db, orderId); if (!o) throw new Error('no such order');
   if (!['shipped', 'delivered'].includes(o.status)) throw new Error(`${o.number} has not shipped`); if (!o.email) throw new Error('no email on the order');
-  enqueue(db, { to: o.email, subject: `Your ${cfg?.product || 'SecuraCV'} order ${o.number} is on its way`, kind: 'transactional', ref: `order:${o.number}`, text: fill(SHIPPED_TPL, { name: o.ship_name || 'there', number: o.number, carrier: o.carrier || 'USPS', tracking: o.tracking || '(no tracking)', company: cfg?.company || 'Errer Labs', support: cfg?.supportAddr || '' }) });
+  const est = estimateDelivery(o.shipped_at, o.ship_state, { fromState: cfg?.shipFromState, carrier: o.carrier || 'USPS' });
+  enqueue(db, { to: o.email, subject: `Your ${cfg?.product || 'SecuraCV'} order ${o.number} is on its way`, kind: 'transactional', ref: `order:${o.number}`, contactId: o.contact_id, text: fill(SHIPPED_TPL, { name: o.ship_name || 'there', number: o.number, carrier: o.carrier || 'USPS', tracking: o.tracking || '(no tracking)', company: cfg?.company || 'Errer Labs', support: cfg?.supportAddr || '', estimate: est ? `Expect it ${est.label}.` : '', status_url: cfg?.secret ? orderStatusUrl(cfg, o) : '' }) });
   addEvent(db, o.id, { kind: 'mail', actor, text: `Tracking email re-sent to ${o.email}` }); db.audit(actor, 'order.resend_tracking', 'order', o.number);
   return o;
+}
+
+// The line items can change until the order is packed (a customer adds a parts pack, Stripe sent none):
+// the money stays what was charged; COGS and the pick list follow the new lines.
+export function editItems(db, orderId, items, { catalog = null, bomTotals = {}, actor = 'web' } = {}) {
+  const o = orderById(db, orderId); if (!o) throw new Error('no such order');
+  if (o.status !== 'paid') throw new Error(`${o.number} is ${o.status} — items change only before packing (unpack it first)`);
+  const unknown = []; const next = (items || []).filter(it => it && (it.sku || it.name)).map(it => { const p = catalog ? resolveSku(catalog, it.sku) || resolveSku(catalog, it.name) : null; if (catalog && !p) unknown.push(it.sku || it.name); const qty = Math.max(1, Number(it.qty) || 1); return { sku: p?.sku || it.sku || it.name, name: p?.name || it.name || it.sku, qty, unit_cents: it.unit_cents != null ? Number(it.unit_cents) : (p?.price_cents ?? 0), cogs_cents: p ? cogsCents(p, bomTotals) : Number(it.cogs_cents) || 0 }; });
+  if (unknown.length) throw new Error(`unknown SKU(s): ${unknown.join(', ')}`); if (!next.length) throw new Error('an order needs at least one line');
+  return db.tx(() => {
+    db.run('DELETE FROM order_items WHERE order_id = ?', o.id);
+    for (const it of next) db.run('INSERT INTO order_items (order_id, sku, name, qty, unit_cents, cogs_cents) VALUES (?, ?, ?, ?, ?, ?)', o.id, it.sku, it.name, it.qty, it.unit_cents, it.cogs_cents);
+    addEvent(db, o.id, { kind: 'items', actor, text: `Items changed: ${o.items.map(i => `${i.qty}× ${i.sku}`).join(', ') || 'none'} → ${next.map(i => `${i.qty}× ${i.sku}`).join(', ')} (the charge is unchanged)` });
+    db.audit(actor, 'order.items', 'order', o.number, { items: next.map(i => `${i.qty}× ${i.sku}`) });
+    return orderById(db, o.id);
+  });
 }
 
 // Shopify's status tabs: how many orders sit in each state right now.
@@ -143,8 +161,8 @@ export function transition(db, id, to, { actor = 'web', carrier = null, tracking
     if (to === 'shipped') {
       db.run('UPDATE orders SET carrier = ?, tracking = ? WHERE id = ?', carrier, tracking, id);
       db.run('UPDATE devices SET status = \'shipped\' WHERE order_id = ?', id);
-      if (o.email) enqueue(db, { to: o.email, subject: `Your ${cfg?.product || 'SecuraCV'} order ${o.number} is on its way`, kind: 'transactional', ref: `order:${o.number}`,
-        text: fill(SHIPPED_TPL, { name: o.ship_name || 'there', number: o.number, carrier: carrier || 'USPS', tracking: tracking || '(no tracking)', company: cfg?.company || 'Errer Labs', support: cfg?.supportAddr || '' }) });
+      if (o.email) { const est = estimateDelivery(now, o.ship_state, { fromState: cfg?.shipFromState, carrier: carrier || 'USPS' }); enqueue(db, { to: o.email, subject: `Your ${cfg?.product || 'SecuraCV'} order ${o.number} is on its way`, kind: 'transactional', ref: `order:${o.number}`, contactId: o.contact_id,
+        text: fill(SHIPPED_TPL, { name: o.ship_name || 'there', number: o.number, carrier: carrier || 'USPS', tracking: tracking || '(no tracking)', company: cfg?.company || 'Errer Labs', support: cfg?.supportAddr || '', estimate: est ? `Expect it ${est.label} (${est.min_days}–${est.max_days} business days — an estimate, not a promise).` : '', status_url: cfg?.secret ? orderStatusUrl(cfg, o) : '' }) }); }
     }
     const line = { packed: `Packed${o.items.length ? ` · ${o.items.map(i => `${i.qty}× ${i.sku}`).join(', ')} pulled from stock` : ''}`, shipped: `Shipped via ${carrier || 'USPS'}${tracking ? ` · ${tracking}` : ''}${o.email ? ` · tracking emailed to ${o.email}` : ''}`, delivered: 'Delivered', canceled: 'Canceled', refunded: 'Refunded in full', paid: o.status === 'packed' ? 'Unpacked — parts returned to stock' : 'Marked paid' }[to] || `Now ${to}`;
     addEvent(db, id, { kind: to === 'paid' && o.status === 'packed' ? 'unpacked' : to, actor, at: now, text: line });
@@ -183,6 +201,8 @@ export const SHIPPED_TPL = `Hi {{name}},
 
 Order {{number}} shipped today via {{carrier}}.
 Tracking: {{tracking}}
+{{estimate}}
+Where it is, any time: {{status_url}}
 
 Your Canary provisions itself at home — power it on and point your phone's camera at the QR card in the box. No account, no app store, no cloud.
 

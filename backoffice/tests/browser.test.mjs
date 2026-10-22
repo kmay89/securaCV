@@ -101,12 +101,35 @@ test('a person can log in, ship an order, answer a ticket, move stock, post an e
     await page.selectOption('#f_action', 'packed'); await page.click('button:has-text("Apply")'); await page.waitForURL(/\/orders\?ok=/);
     assert.equal(db.get('SELECT COUNT(*) AS n FROM orders WHERE status = \'paid\'').n, 0, 'every paid order is packed');
 
+    // the loop closes: a Decide card approves a drafted purchase order in one click and lands back on Home
+    await page.goto(base + '/'); assert.ok(await page.$('.decide'), 'Home shows the Decide queue');
+    const draft = db.get("SELECT id, number FROM purchase_orders WHERE status = 'draft'"); assert.ok(draft, 'the seed drafts a print run');
+    await page.click(`form[action="/purchasing/${draft.id}/order"] button`); await page.waitForURL(/\/\?ok=/);
+    assert.equal(db.get('SELECT status FROM purchase_orders WHERE id = ?', draft.id).status, 'ordered', 'approved from the card');
+    assert.ok(!(await page.textContent('body')).includes(`Approve ${draft.number}`), 'and the card is gone');
+    // receive it on its page; stock moves, the books book it
+    await page.goto(`${base}/purchasing/${draft.id}`); await page.click('button:has-text("Receive into stock")'); await page.waitForURL(/\/purchasing\/\d+\?ok=/);
+    assert.equal(db.get('SELECT status FROM purchase_orders WHERE id = ?', draft.id).status, 'received');
+    // Marketing: the funnel, the two tile maps and the sends
+    await page.goto(base + '/marketing'); const mk = await page.textContent('body'); assert.ok(mk.includes('Bought again') && mk.includes('Customers by state') && mk.includes('What each campaign did'), 'the marketing view renders'); assert.ok((await page.$$('svg.chart')).length >= 2, 'the maps are drawn');
+    // a recall by firmware: look it up, write it, see who gets it; sending stays a separate step
+    await page.goto(base + '/devices/recall?fw=2.4.1'); assert.ok((await page.textContent('body')).includes('Customers to notify'));
+    await page.click('button:has-text("Create the notice")'); await page.waitForURL(/\/devices\/recall\/\d+\?ok=/); assert.ok((await page.textContent('body')).includes('not sent'), 'nothing is sent by creating it');
+    assert.equal(db.get('SELECT COUNT(*) AS n FROM mail_outbox WHERE ref LIKE \'recall:%\'').n, 0);
+    // an order on its way shows the carrier's word and the customer's status page, which opens without a login
+    const otw = db.get("SELECT id, number FROM orders WHERE tracking_status = 'out_for_delivery'"); await page.goto(`${base}/orders/${otw.id}`);
+    assert.ok((await page.textContent('.where')).includes('Out for delivery'), 'the delivery line'); const statusHref = await page.getAttribute('a:has-text("status page")', 'href');
+    // the ticket with the photo shows it inline
+    const withPhoto = db.get('SELECT m.ticket_id FROM attachments a JOIN ticket_messages m ON m.id = a.ticket_message_id'); await page.goto(`${base}/tickets/${withPhoto.ticket_id}`);
+    assert.ok(await page.$('.atts img'), 'the attachment renders'); assert.equal(await page.$eval('.atts img', (i) => i.naturalWidth), 96, 'as a real image');
+
     // the real Log out button works (it carries the CSRF token)
     await page.click('button:has-text("Log out")'); await page.waitForURL(base + '/login');
     await page.goto(base + '/orders'); assert.match(page.url(), /\/login$/);
 
     // the public pages need no login and set no cookie
     const res = await page.goto(base + '/status'); assert.equal(res.status(), 200); assert.ok((await page.textContent('body')).includes('operational'));
+    const sp = await page.goto(statusHref); assert.equal(sp.status(), 200); assert.ok((await page.textContent('body')).includes('Out for delivery'), 'the customer sees the same line');
     assert.deepEqual(errors, [], 'no page or console errors anywhere');
   } finally { await browser.close(); await app.close(); db.close(); }
 });

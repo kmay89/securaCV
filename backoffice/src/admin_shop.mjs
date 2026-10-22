@@ -8,6 +8,7 @@ import { listOrders, orderById, bulkTransition, batches, setTags, weekLabel } fr
 import { listCustomers, contactById, customerStats, customerCounts, setContactTags } from './modules/contacts.mjs';
 import { listDiscounts, createDiscount, setDiscountStatus, evaluate, describe, KINDS } from './modules/discounts.mjs';
 import { analytics, analyticsCsv } from './modules/analytics.mjs';
+import { buildableAhead } from './modules/purchasing.mjs';
 import { listProducts, productDetail } from './modules/products.mjs';
 import { search } from './modules/search.mjs';
 
@@ -30,7 +31,7 @@ export function registerShop(app, { page, back, link, filters }) {
     const catalog = await app.catalog().catch(() => null); if (!catalog) throw new HttpError(503, 'catalog unavailable');
     const p = productDetail(db, catalog, c.params.sku); if (!p) throw new HttpError(404, 'no such product');
     page(c, p.name, `<p>${e(p.sku)} · ${e(p.group)} · ${money(p.price_cents)}${p.radio ? ' · <span class="pill">radio</span>' : ''} · ${link(`/orders?sku=${encodeURIComponent(p.sku)}`, 'orders with it')}</p>` +
-      cards([['Buildable now', p.buildable ?? '—', p.stock === 'out' ? 'bad' : p.stock === 'low' ? 'warn' : ''], ['Open orders (units)', p.open_units], ['Sold, 30 days', p.units_recent], ['Gross, 30 days', money(p.gross_recent)], ['Sold, all time', p.units_all], ['Margin', pct(p.margin), p.margin < 0.3 ? 'warn' : 'ok'], ['Waiting', p.waitlist_people], ['Warranty claims', p.claims, p.claims ? 'warn' : 'ok']]) +
+      cards([['Buildable now', p.buildable ?? '—', p.stock === 'out' ? 'bad' : p.stock === 'low' ? 'warn' : ''], ...(() => { const b = buildableAhead(db, p.sku); return b.later > (b.now ?? 0) ? [['After parts on order land', `${b.later} <span class="muted" style="font-size:.8rem">${b.expected_at ? 'by ' + e(b.expected_at) : ''}</span>`, 'ok']] : []; })(), ['Open orders (units)', p.open_units], ['Sold, 30 days', p.units_recent], ['Gross, 30 days', money(p.gross_recent)], ['Sold, all time', p.units_all], ['Margin', pct(p.margin), p.margin < 0.3 ? 'warn' : 'ok'], ['Waiting', p.waitlist_people], ['Warranty claims', p.claims, p.claims ? 'warn' : 'ok']]) +
       columns({ points: p.weekly.map(w => ({ label: w.label, value: w.units })), title: 'Units sold per week, 12 weeks', color: 'var(--s2)' }) +
       `<h2>What one unit consumes</h2>${table(p.parts, [{ label: 'Part', html: r => `${e(r.name)} <span class="muted">${e(r.part_sku)}</span>` }, { label: 'Per unit', key: 'qty', num: true }, { label: 'On hand', key: 'on_hand', num: true }, { label: 'Builds', html: r => `<span class="${r.builds === 0 ? 'bad' : r.builds <= 3 ? 'warn' : ''}">${r.builds}</span>`, num: true }], { empty: 'No recipe — set one on the Inventory page so packing pulls parts.' })}
 <h2>Recent orders</h2>${table(p.orders, [{ label: '#', html: r => link(`/orders/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Paid', get: r => day(r.paid_at) }, { label: 'Customer', html: customerLink }, { label: 'Qty', key: 'qty', num: true }, { label: 'Total', get: r => money(r.total_cents), num: true }])}

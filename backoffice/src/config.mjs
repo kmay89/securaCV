@@ -30,7 +30,10 @@ export function loadConfig(overrides = {}) {
     backupS3Url: env('BACKUP_S3_URL', '').replace(/\/$/, ''),          // https://<endpoint>/<bucket>/<prefix> — any S3-compatible store (B2, R2, Tigris, S3)
     backupEncryptionKey: env('BACKUP_ENCRYPTION_KEY', ''),             // a passphrase; off-site copies are sealed (AES-256-GCM) under it
     backupS3Key: env('BACKUP_S3_KEY', ''), backupS3Secret: env('BACKUP_S3_SECRET', ''), backupS3Region: env('BACKUP_S3_REGION', 'us-east-1'),
-    operatorEmail: env('OPERATOR_EMAIL', env('SUPPORT_ADDR', '')),       // the morning digest goes here
+    operatorEmail: env('OPERATOR_EMAIL', env('SUPPORT_ADDR', '')),
+    tz: env('OPERATOR_TZ', 'UTC'),                                     // every time the admin shows, the digest hour, campaign scheduling
+    shipFromState: env('SHIP_FROM_STATE', 'MA'),                        // the delivery estimate counts from here
+    uspsClientId: env('USPS_CLIENT_ID', ''), uspsClientSecret: env('USPS_CLIENT_SECRET', ''), uspsApiBase: env('USPS_API_BASE', 'https://apis.usps.com'),       // the morning digest goes here
     digestHour: Number(env('DIGEST_HOUR', '7')),                       // UTC hour the digest is sent
     secure: env('BACKOFFICE_BASE_URL', '').startsWith('https://'),
     demo: env('BACKOFFICE_DEMO', '') === '1',                       // also set by a database the demo seeded

@@ -31,6 +31,15 @@ import { sendOutbox } from '../src/modules/mail.mjs';
 import { openExceptions } from '../src/modules/exceptions.mjs';
 import { seedDemo, resetDemo, isEmpty, isDemo, ensureDemo, DEMO_PASSWORD } from '../src/modules/demo.mjs';
 import { totp } from '../src/auth.mjs';
+import { listPos, poByNumber, createPo, markOrdered, receivePo, cancelPo, draftReorder, buildableAhead } from '../src/modules/purchasing.mjs';
+import { recallQuery, batches as deviceBatches, createRecall, sendRecall, listRecalls, DEFAULT_BODY } from '../src/modules/recall.mjs';
+import { forgetContact, exportContact } from '../src/modules/privacy.mjs';
+import { suggestions } from '../src/modules/suggestions.mjs';
+import { marketing } from '../src/modules/marketing.mjs';
+import { pollTracking } from '../src/modules/shipping.mjs';
+import { editItems } from '../src/modules/orders.mjs';
+import { remindInvoice } from '../src/modules/invoices.mjs';
+import { orderStatusUrl } from '../src/modules/delivery.mjs';
 import { join } from 'node:path';
 
 const [cmd = 'help', ...rest] = process.argv.slice(2);
@@ -67,14 +76,22 @@ orders
   order pack|ship|deliver <EL-…> [--carrier USPS --tracking 9400…]
   order new --email a@b.c --name "…" --sku wap-kit [--qty 1] --line1 … --city … --state XX --zip 12345 [--cents 6900] [--discount CODE] [--tags a,b]
   order timeline <number> | order note <number> <text> | order tag <number> <a,b>
+  order items <number> sku=qty sku=qty         change the lines before packing (the charge stays)
+  order status-url <number>                the customer's signed status page link
+  track                                    ask the carrier about every open parcel now (USPS_CLIENT_ID/SECRET)
   batches                                  the weekly batches: what each holds, what is still to pack or ship
   customers [--segment repeat|consented|waitlist|orgs|never] [--tag …] [--sort spent|orders|name] [--q …]
   customer <email|id> [tag <a,b>]          lifetime orders, spend, tickets, claims
+  forget <email|id>                        the right to erasure: blank the person, keep the books (logged)
+  export <email|id> > their-data.json      the right to a copy: everything we hold, as JSON
+  invoice remind <INV-…>                   queue a payment reminder
   products [--days 30]                     the catalog joined to stock, sales and the waitlist
   discounts | discounts create CODE --kind percent|fixed|free_shipping --value N [--min cents] [--max-uses N] [--starts d] [--ends d] [--note …]
   discounts try CODE --subtotal cents | discounts disable|enable CODE
   analytics [--days 7|30|90|365]           sales, orders, margin, returning rate, top products, the series
   search <text>                            orders, customers, tickets, serials, invoices, claims, codes by number or name
+  marketing [--days 30]                    the funnel, sources, what every send did, sales by state
+  suggestions                              the Decide queue: what the system would do next, and why (approve it in the admin or via the API)
 
 support
   tickets [--status open] [--kind support]   |  ticket <T-000045>  |  queue (what needs an answer, oldest first)
@@ -83,7 +100,10 @@ support
 inventory & devices
   inv | inv set <sku> --name … [--kind part|printed|finished|packaging] [--reorder 10 --reorder-qty 50 --cost-cents 450 --supplier …]
   inv move <sku> <±n> [--reason receive|adjust|scrap] [--ref …]   |   inv recipe <finished-sku> part=qty part=qty
-  inv buildable <sku>
+  inv buildable <sku>                      now, and after what is on order lands
+  po | po <PO-000001> | po draft           purchase orders; draft = one per supplier from the reorder points
+  po new --supplier … [--expected YYYY-MM-DD] sku=qty[@cents] …  |  po order <PO-…> [--expected d]  |  po receive <PO-…> [sku=qty …]  |  po cancel <PO-…>
+  recall [--batch B] [--fw 2.4.1] [--sku s]  who has which board; recall new --title … [--file body.txt] <same filters>; recall send <RC-…>
   devices [--q …]  |  device add <serial> [--mac … --board … --sku … --fw 2.5.0 --sha …]  |  devices import <manifest.json> [--batch W --sku …]
 
 warranty
@@ -168,6 +188,8 @@ const main = async () => {
       return out(listOrders(db, { status: flags.status || '', batch: flags.batch || '', q: flags.q || '' }).map(o => `${o.number}  ${o.status.padEnd(9)} ${String((o.total_cents / 100).toFixed(2)).padStart(8)}  ${o.batch}  ${o.ship_name}  ${o.items_text || ''}`).join('\n') || 'no orders');
     }
     case 'order': {
+      if (args[0] === 'items') { const o = orderByNumber(db, args[1]); if (!o) throw new Error('no such order'); return out(editItems(db, o.id, args.slice(2).map(a => { const [sku, q] = a.split('='); return { sku, qty: Number(q || 1) }; }), { catalog: await loadCatalog(cfg).catch(() => null), actor: 'cli' })); }
+      if (args[0] === 'status-url') { const o = orderByNumber(db, args[1]); if (!o) throw new Error('no such order'); return out(orderStatusUrl(cfg, o)); }
       if (args[0] === 'new') {
         const catalog = await loadCatalog(cfg).catch(() => null);
         const { order } = recordOrder(db, { source: 'manual', email: flags.email, name: flags.name, total_cents: Number(flags.cents || 0), subtotal_cents: Number(flags.cents || 0), discount_code: flags.discount || null, tags: flags.tags || '', ship: { line1: flags.line1, line2: flags.line2, city: flags.city, state: flags.state, zip: flags.zip, country: flags.country || 'US' }, items: [{ sku: flags.sku, name: flags.sku, qty: Number(flags.qty || 1), unit_cents: Number(flags.cents || 0) / Number(flags.qty || 1) }] }, { catalog, actor: 'cli' });
@@ -194,6 +216,31 @@ const main = async () => {
       return out(listDiscounts(db).map(d => `${d.code.padEnd(14)} ${d.status.padEnd(9)} ${describeDiscount(d).padEnd(16)} uses ${String(d.uses).padStart(3)}${d.max_uses ? `/${d.max_uses}` : ''}  given ${(d.given_cents / 100).toFixed(2).padStart(8)}  ${d.note || ''}`).join('\n') || 'no codes');
     }
     case 'analytics': { const a = analytics(db, { days: Number(flags.days || 30) }); const t = a.totals, p = a.previous; const m = (c) => (c / 100).toFixed(2); return out(`${a.days} days to ${a.to.slice(0, 10)} (previous period in brackets)\n  total sales   ${m(t.total_cents).padStart(10)}  [${m(p.total_cents)}]\n  net sales     ${m(t.net_cents).padStart(10)}  [${m(p.net_cents)}]\n  orders        ${String(t.orders).padStart(10)}  [${p.orders}]\n  average order ${m(t.aov_cents).padStart(10)}  [${m(p.aov_cents)}]\n  units         ${String(t.units).padStart(10)}  [${p.units}]\n  gross margin  ${(Math.round(t.gross_margin * 100) + '%').padStart(10)}\n  returning     ${(Math.round(t.returning_rate * 100) + '%').padStart(10)}\n  refunds       ${m(t.refunds_cents).padStart(10)}   discounts ${m(t.discounts_cents)}\n\ntop products\n${a.topProducts.map(x => `  ${x.sku.padEnd(18)} ${String(x.units).padStart(4)} u  ${m(x.gross_cents).padStart(9)}  ${Math.round(x.share * 100)}%`).join('\n')}\n\nby ${a.series.step}\n${a.series.buckets.map(b => `  ${b.label}  ${String(b.orders).padStart(3)} orders  ${m(b.net_cents).padStart(9)}`).join('\n')}`); }
+    case 'marketing': { const m = marketing(db, { days: Number(flags.days || 30) }); const f = m.funnel; const $ = (c) => (c / 100).toFixed(2); return out(`${m.days} days\n  people ${f.contacts}  opted in ${f.opted_in}  bought ${f.customers}  bought again ${f.repeat}  attributed ${$(m.attributed_cents)}\n  this period: ${f.period.contacts} new, ${f.period.opted_in} opt-ins, ${f.period.first_orders} first orders, ${f.period.repeat_orders} repeat orders\n\nsources\n${m.sources.map(s => `  ${s.source.padEnd(12)} ${String(s.contacts).padStart(4)} people  ${String(s.opted_in).padStart(3)} opted in  ${String(s.customers).padStart(3)} bought`).join('\n')}\n\ncampaigns (7 days after each send)\n${m.campaigns.map(c => `  ${c.slug.padEnd(28)} to ${String(c.report.sent || 0).padStart(3)}  ${String(c.report.replies).padStart(2)} replies  ${String(c.report.orders).padStart(2)} orders  ${$(c.report.revenue_cents).padStart(8)}`).join('\n') || '  none sent'}\n\nautomations\n${m.automations.map(a => `  ${a.slug.padEnd(28)} sent ${String(a.report.sent).padStart(3)}  ${String(a.report.replies).padStart(2)} replies  ${String(a.report.orders).padStart(2)} orders  ${$(a.report.revenue_cents).padStart(8)}`).join('\n')}\n\nby state\n${Object.entries(m.salesByState).sort((a, b) => b[1] - a[1]).map(([st, c]) => `  ${st}  ${String(m.byState[st]).padStart(3)} customers  ${$(c).padStart(9)}`).join('\n')}`); }
+    case 'suggestions': { const s = suggestions(db, cfg); return out(s.map(x => `[${x.kind}] ${x.title}\n    ${x.detail}\n    why: ${x.why}${x.action ? `\n    do: POST ${x.action.href} ${JSON.stringify(x.action.fields || {})}` : ''}`).join('\n') || 'nothing to decide — the system has no move to suggest'); }
+    case 'track': return out(await pollTracking(db, cfg, { minAgeH: 0 }));
+    case 'forget': return out(forgetContact(db, args[0], { actor: 'cli' }));
+    case 'export': return out(exportContact(db, args[0]));
+    case 'invoice': { if (args[0] !== 'remind') throw new Error('invoice remind <INV-…>'); const inv = db.get('SELECT id FROM invoices WHERE number = ?', args[1]); if (!inv) throw new Error('no such invoice'); return out(remindInvoice(db, inv.id, cfg, { actor: 'cli' })); }
+    case 'po': {
+      const kv = (list) => list.filter(a => a.includes('=')).map(a => { const [sku, rest] = a.split('='); const [qty, cents] = rest.split('@'); return { sku, qty: Number(qty), unit_cost_cents: cents === undefined ? undefined : Number(cents) }; });
+      const byNum = (n) => { const p = poByNumber(db, n); if (!p) throw new Error(`no such purchase order ${n}`); return p; };
+      if (!args[0]) return out(listPos(db, { status: flags.status || '' }).map(p => `${p.number}  ${p.status.padEnd(9)} ${p.supplier.padEnd(22)} ${(p.total_cents / 100).toFixed(2).padStart(9)}  ${p.items_text || ''}  ${p.expected_at ? 'expected ' + p.expected_at : ''}`).join('\n') || 'no purchase orders');
+      if (args[0] === 'draft') return out(draftReorder(db, { actor: 'cli' }).map(p => `${p.number} to ${p.supplier}: ${p.items.map(i => `${i.qty}× ${i.sku}`).join(', ')}`).join('\n') || 'nothing to draft');
+      if (args[0] === 'new') return out(createPo(db, { supplier: flags.supplier, supplier_url: flags.url || null, expected_at: flags.expected || null, notes: flags.notes || null, items: kv(args.slice(1)), actor: 'cli' }));
+      if (args[0] === 'order') return out(markOrdered(db, byNum(args[1]).id, { expected_at: flags.expected || null, actor: 'cli' }));
+      if (args[0] === 'receive') { const got = kv(args.slice(2)); return out(receivePo(db, byNum(args[1]).id, { received: got.length ? Object.fromEntries(got.map(g => [g.sku, g.qty])) : null, actor: 'cli' })); }
+      if (args[0] === 'cancel') return out(cancelPo(db, byNum(args[1]).id, { actor: 'cli' }));
+      return out(byNum(args[0]));
+    }
+    case 'recall': {
+      const filter = { batch: flags.batch || '', fw: flags.fw || '', sku: flags.sku || '' };
+      if (args[0] === 'new') return out(createRecall(db, { title: flags.title, body: flags.file ? readFileSync(flags.file, 'utf8') : DEFAULT_BODY, filter, actor: 'cli' }));
+      if (args[0] === 'send') { const r = db.get('SELECT id FROM recalls WHERE number = ?', args[1]); if (!r) throw new Error('no such notice'); return out(sendRecall(db, r.id, cfg, { actor: 'cli' })); }
+      if (args[0] === 'list') return out(listRecalls(db));
+      if (!filter.batch && !filter.fw && !filter.sku) return out(deviceBatches(db).map(b => `${String(b.batch || '(none)').padEnd(16)} fw ${String(b.fw_version || '—').padEnd(8)} ${String(b.product_sku || '').padEnd(14)} ${String(b.n).padStart(3)} boards, ${b.shipped} shipped`).join('\n') || 'no devices');
+      const q = recallQuery(db, filter); return out(`${q.devices.length} boards, ${q.shipped} shipped, ${q.in_stock} on the shelf, ${q.customers.length} customers\n${q.customers.map(c => `  ${c.email.padEnd(40)} ${c.serials.join(', ')}  (${c.orders.join(', ')})`).join('\n')}`);
+    }
     case 'search': { const r = search(db, args.join(' ')); return out(r.groups.map(g => `${g.kind}\n${g.rows.map(x => '  ' + JSON.stringify(x)).join('\n')}`).join('\n') || 'nothing matches'); }
     case 'tickets': return out(listTickets(db, { status: flags.status || '', kind: flags.kind || '' }).map(t => `${t.number}  ${t.status.padEnd(19)} ${t.priority.padEnd(6)} ${t.kind.padEnd(13)} ${t.email || ''}  ${t.subject}`).join('\n') || 'no tickets');
     case 'queue': return out(queue(db).map(t => `${t.number}  due ${t.sla_due_at}  ${t.email || ''}  ${t.subject}`).join('\n') || 'inbox zero');
@@ -205,7 +252,7 @@ const main = async () => {
       if (args[0] === 'set') return out(upsertItem(db, { sku: args[1], name: flags.name || args[1], kind: flags.kind, reorder_point: Number(flags.reorder || 0), reorder_qty: Number(flags['reorder-qty'] || 0), unit_cost_cents: Number(flags['cost-cents'] || 0), supplier: flags.supplier, supplier_url: flags.url, location: flags.location }));
       if (args[0] === 'move') return out(move(db, args[1], Number(args[2]), flags.reason || 'adjust', flags.ref || null));
       if (args[0] === 'recipe') { setRecipe(db, args[1], Object.fromEntries(args.slice(2).map(p => p.split('=')))); return out(`recipe set for ${args[1]}`); }
-      if (args[0] === 'buildable') return out(`${args[1]}: ${buildable(db, args[1])}`);
+      if (args[0] === 'buildable') { const b = buildableAhead(db, args[1]); return out(`${args[1]}: ${buildable(db, args[1])} now${b.later > b.now ? `, ${b.later} after what is on order lands${b.expected_at ? ` (expected ${b.expected_at})` : ''}` : ''}`); }
       return out(listItems(db).map(i => `${i.low ? '!' : ' '} ${i.sku.padEnd(24)} ${String(i.on_hand).padStart(5)}  (reorder at ${i.reorder_point})  ${i.kind.padEnd(9)} ${i.name}`).join('\n') || 'no inventory items');
     }
     case 'devices': {

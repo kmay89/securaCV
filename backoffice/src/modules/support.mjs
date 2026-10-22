@@ -51,7 +51,7 @@ export function addMessage(db, ticketId, { direction, body, from_addr = null, to
   if (direction === 'out') db.run('UPDATE tickets SET updated_at = ?, first_response_at = COALESCE(first_response_at, ?), status = CASE WHEN status = \'closed\' THEN \'closed\' ELSE \'waiting_on_customer\' END WHERE id = ?', now, now, ticketId);
   else if (direction === 'in') db.run('UPDATE tickets SET updated_at = ?, status = CASE WHEN status = \'closed\' THEN \'open\' ELSE \'waiting_on_us\' END, sla_due_at = CASE WHEN status IN (\'closed\',\'waiting_on_customer\') THEN ? ELSE sla_due_at END WHERE id = ?', now, new Date(Date.now() + 24 * 3600_000).toISOString(), ticketId);
   else db.run('UPDATE tickets SET updated_at = ? WHERE id = ?', now, ticketId);
-  return db.get('SELECT * FROM ticket_messages WHERE id = ?', r.lastInsertRowid) && t;
+  return { ...db.get('SELECT * FROM ticket_messages WHERE id = ?', r.lastInsertRowid), ticket: t };
 }
 
 export const ticketById = (db, id) => { const t = db.get('SELECT t.*, c.email, c.name AS contact_name FROM tickets t LEFT JOIN contacts c ON c.id = t.contact_id WHERE t.id = ?', id); if (t) t.messages = db.all('SELECT * FROM ticket_messages WHERE ticket_id = ? ORDER BY id', id); return t; };
@@ -106,12 +106,14 @@ export function ingestEmail(db, mail, { cfg = {} } = {}) {
   }
   if (t) {
     const added = addMessage(db, t.id, { direction: isAuto ? 'note' : 'in', from_addr: email, body: (isAuto ? '[auto-reply] ' : '') + (mail.text || ''), message_id: mail.messageId || null, in_reply_to: mail.inReplyTo || null });
-    return { ticket: ticketById(db, t.id), created: false, duplicate: !added };
+    if (added && !isAuto && mail.attachments?.length) saveAttachments(db, added.id, mail.attachments);
+    return { ticket: ticketById(db, t.id), created: false, duplicate: !added, attachments: added && mail.attachments ? mail.attachments.length : 0 };
   }
   if (isAuto) return { ticket: null, created: false, ignored: isBounce ? 'bounce' : 'auto-reply', bounced };
   if (mail.messageId && db.get('SELECT id FROM ticket_messages WHERE message_id = ?', mail.messageId)) return { ticket: null, created: false, duplicate: true };
   const ticket = openTicket(db, { email, name, subject: mail.subject || '(no subject)', body: mail.text || '', channel: 'email', cfg, messageId: mail.messageId || null, inReplyTo: mail.inReplyTo || null, fromAddr: email });
-  return { ticket, created: true };
+  if (mail.attachments?.length) saveAttachments(db, ticket.messages[0].id, mail.attachments);
+  return { ticket, created: true, attachments: mail.attachments?.length || 0 };
 }
 
 // --- a minimal RFC 5322 / MIME reader: enough for the plain-text part of
@@ -125,8 +127,32 @@ export function parseEmail(raw) {
   const text = extractText(body, ct, headers['content-transfer-encoding'] || '7bit');
   const refs = (headers.references || '').match(/<[^>]+>/g) || [];
   return { headers, from: decodeWords(headers.from || ''), to: decodeWords(headers.to || ''), subject: decodeWords(headers.subject || ''), messageId: (headers['message-id'] || '').trim() || null,
-    inReplyTo: ((headers['in-reply-to'] || '').match(/<[^>]+>/) || [])[0] || null, references: refs, date: headers.date || null, text: text.trim() };
+    inReplyTo: ((headers['in-reply-to'] || '').match(/<[^>]+>/) || [])[0] || null, references: refs, date: headers.date || null, text: text.trim(), attachments: extractAttachments(body, ct) };
 }
+// Photos of a warped lid, a PDF of a purchase order: the parts a person attached, kept with the message.
+// Images, PDFs and text only; 5 MB each, five per mail; anything else is named in the text and dropped.
+export const ATTACHMENT_TYPES = /^(image\/(png|jpeg|gif|webp|heic)|application\/pdf|text\/plain|text\/csv)$/i;
+export function extractAttachments(body, ct, { max = 5, maxBytes = 5 * 1024 * 1024, out = [] } = {}) {
+  const type = ct.split(';')[0].trim().toLowerCase(); if (!type.startsWith('multipart/') || out.length >= max) return out;
+  const boundary = (ct.match(/boundary="?([^";]+)"?/i) || [])[1]; if (!boundary) return out;
+  const parts = body.split(new RegExp(`(?:\\r?\\n)?--${boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:--)?(?:\\r?\\n|$)`)).slice(1).filter(p => p.trim());
+  for (const p of parts) {
+    if (out.length >= max) break;
+    const sep = p.indexOf('\r\n\r\n') >= 0 ? '\r\n\r\n' : '\n\n'; const i = p.indexOf(sep); const h = parseHeaders(i < 0 ? p : p.slice(0, i)); const b = i < 0 ? '' : p.slice(i + sep.length);
+    const pct = h['content-type'] || 'text/plain'; const ptype = pct.split(';')[0].trim().toLowerCase();
+    if (ptype.startsWith('multipart/')) { extractAttachments(b, pct, { max, maxBytes, out }); continue; }
+    const disp = h['content-disposition'] || ''; const filename = decodeWords(((disp.match(/filename\*?="?([^";]+)"?/i) || pct.match(/name="?([^";]+)"?/i) || [])[1] || '').replace(/^UTF-8''/i, '')).trim();
+    if (!/attachment/i.test(disp) && !filename) continue; if (!ATTACHMENT_TYPES.test(ptype)) continue;
+    const cte = (h['content-transfer-encoding'] || '7bit').toLowerCase().trim();
+    const bytes = cte === 'base64' ? Buffer.from(b.replace(/\s+/g, ''), 'base64') : cte === 'quoted-printable' ? Buffer.from(b.replace(/=\r?\n/g, '').replace(/=([0-9A-Fa-f]{2})/g, (_, x) => String.fromCharCode(parseInt(x, 16))), 'latin1') : Buffer.from(b, 'latin1');
+    if (!bytes.length || bytes.length > maxBytes) continue;
+    out.push({ filename: (filename || `attachment-${out.length + 1}`).replace(/[\\/\u0000-\u001f]/g, '_').slice(0, 120), mime: ptype, bytes });
+  }
+  return out;
+}
+export function saveAttachments(db, messageId, attachments = []) { let n = 0; for (const a of attachments) { db.run('INSERT INTO attachments (ticket_message_id, filename, mime, size, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)', messageId, a.filename, a.mime, a.bytes.length, a.bytes, nowIso()); n++; } return n; }
+export const attachmentsFor = (db, ticketId) => db.all('SELECT a.id, a.ticket_message_id, a.filename, a.mime, a.size FROM attachments a JOIN ticket_messages m ON m.id = a.ticket_message_id WHERE m.ticket_id = ? ORDER BY a.id', ticketId);
+export const attachment = (db, id) => { const a = db.get('SELECT a.*, m.ticket_id FROM attachments a JOIN ticket_messages m ON m.id = a.ticket_message_id WHERE a.id = ?', id); if (a) a.bytes = Buffer.from(a.bytes); return a; };
 function parseHeaders(head) {
   const out = {}; let last = null;
   for (const line of head.split(/\r?\n/)) {

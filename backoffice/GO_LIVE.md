@@ -21,6 +21,15 @@ Run it for real with nothing at stake.
   test dashboard. They must agree to the order. `backoffice reconcile`
   says so in one line.
 
+- Set `OPERATOR_TZ` and `SHIP_FROM_STATE` so the times you read and the
+  delivery estimates customers read are yours. If you want the carrier's
+  word rather than the estimate, make a USPS Developer Portal app with the
+  Tracking API and set `USPS_CLIENT_ID` / `USPS_CLIENT_SECRET`; `backoffice
+  track` asks about every open parcel once, so you can watch an order go
+  "out for delivery" → "delivered" on the carrier's day.
+- Open a test order's status page (the link is in its tracking mail and on
+  the order page). That is what a customer sees; it needs no login.
+
 **Check:** Health shows *Reconciled with Stripe · 0 missing* every day.
 
 ## 2. Backups that are proven, in two places

@@ -11,6 +11,8 @@ import { overdue } from './modules/invoices.mjs';
 import { raise, resolve } from './modules/exceptions.mjs';
 import { backup, checkBackup, liveCounts, uploadOffsite, restoreDrill, offsiteConfigured } from './modules/backup.mjs';
 import { reconcile } from './modules/reconcile.mjs';
+import { pollTracking } from './modules/shipping.mjs';
+import { hourIn } from './render.mjs';
 import { enqueue } from './modules/mail.mjs';
 import { unreconciledStripeCents } from './modules/ledger.mjs';
 import { resetDemo, isDemo } from './modules/demo.mjs';
@@ -43,9 +45,11 @@ export const JOBS = {
   }],
   stock:    [3600, async ({ db, cfg }) => {
     const low = lowStock(db);
-    for (const i of low) await raise(db, cfg, `stock:${i.sku}`, `inventory [reorder]: ${i.sku}`, `${i.name}: ${i.on_hand} on hand, reorder point ${i.reorder_point}, reorder qty ${i.reorder_qty}.\n${i.supplier ? `Supplier: ${i.supplier} ${i.supplier_url || ''}` : ''}`);
-    const lowKeys = new Set(low.map(i => `stock:${i.sku}`));
-    for (const ex of db.all('SELECT key FROM exceptions WHERE key LIKE \'stock:%\' AND resolved_at IS NULL')) if (!lowKeys.has(ex.key)) await resolve(db, cfg, ex.key, 'Restocked.');
+    // A part a purchase order already covers (drafted on Home, or ordered) is a decision made, not an alarm.
+    const { onOrder, draftedFor } = await import('./modules/purchasing.mjs'); const oo = onOrder(db); const covered = new Set(low.filter(i => oo[i.sku] || draftedFor(db, i.sku)).map(i => i.sku));
+    for (const i of low) if (!covered.has(i.sku)) await raise(db, cfg, `stock:${i.sku}`, `inventory [reorder]: ${i.sku}`, `${i.name}: ${i.on_hand} on hand, reorder point ${i.reorder_point}, reorder qty ${i.reorder_qty}.\n${i.supplier ? `Supplier: ${i.supplier} ${i.supplier_url || ''}` : ''}`);
+    const lowKeys = new Set(low.filter(i => !covered.has(i.sku)).map(i => `stock:${i.sku}`));
+    for (const ex of db.all('SELECT key FROM exceptions WHERE key LIKE \'stock:%\' AND resolved_at IS NULL')) if (!lowKeys.has(ex.key)) await resolve(db, cfg, ex.key, covered.has(ex.key.slice(6)) ? 'A purchase order covers it.' : 'Restocked.');
     return { low: low.length };
   }],
   invoices: [3600, async ({ db, cfg }) => {
@@ -84,11 +88,13 @@ export const JOBS = {
   }],
   // Daily: payouts and charges in Stripe against the books and the orders (needs STRIPE_API_KEY).
   reconcile: [86400, async (app) => reconcile(app.db, app.cfg, { fetchImpl: app.fetchImpl || fetch })],
+  // Hourly, with USPS credentials: where every open shipment is; delivered when the carrier says so.
+  tracking: [3600, async (app) => pollTracking(app.db, app.cfg, { fetchImpl: app.fetchImpl || fetch })],
   // Once a day at DIGEST_HOUR (UTC): today's list, the numbers, the health checklist, to the operator.
   digest:   [600, async ({ db, cfg }) => {
     if (!cfg.operatorEmail) return { skipped: 'OPERATOR_EMAIL not set' };
     const today = new Date().toISOString().slice(0, 10);
-    if (new Date().getUTCHours() < cfg.digestHour) return { waiting: `until ${String(cfg.digestHour).padStart(2, '0')}:00 UTC` };
+    if (hourIn(cfg.tz) < cfg.digestHour) return { waiting: `until ${String(cfg.digestHour).padStart(2, '0')}:00 ${cfg.tz}` };
     if (db.setting('digest:last') === today) return { sent: 'already today' };
     const { digestText } = await import('./modules/health.mjs');
     const m = enqueue(db, { to: cfg.operatorEmail, subject: `${cfg.company}: the morning digest for ${today}`, kind: 'transactional', ref: `digest:${today}`, text: digestText(db, cfg) });
