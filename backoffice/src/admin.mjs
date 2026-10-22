@@ -5,12 +5,15 @@ import { snapshot } from './modules/dashboard.mjs';
 import { listOrders, orderById, transition, refund, recordOrder, fulfillCsv, weekLabel, STATUSES, timeline, addNote, setTags, updateShipping, resendTracking, statusCounts } from './modules/orders.mjs';
 import { customerStats, tagList } from './modules/contacts.mjs';
 import { registerShop } from './admin_shop.mjs';
+import { registerOps } from './admin_ops.mjs';
+import { registerMail } from './admin_mail.mjs';
+import { doctor, todayLines } from './modules/health.mjs';
 import { line, tile } from './charts.mjs';
 import { analytics } from './modules/analytics.mjs';
 import { parseCsv, detectColumns, csvRowToOrder } from './modules/stripe.mjs';
 import { listTickets, ticketById, reply, setStatus, update as updateTicket, openTicket, STATUSES as TSTATUS, KINDS } from './modules/support.mjs';
 import { contactById, upsertContact, setContactTags as setContactTagsFn } from './modules/contacts.mjs';
-import { sendConsentRequest, notifyWaitlist, listCampaigns, createCampaign, queueCampaign, campaign } from './modules/campaigns.mjs';
+import { sendConsentRequest, notifyWaitlist } from './modules/campaigns.mjs';
 import { listItems, upsertItem, move, setRecipe, recipes, moves, buildable } from './modules/inventory.mjs';
 import { listDevices, registerDevice, importManifest, assignToOrder } from './modules/devices.mjs';
 import { listClaims, claimById, openClaim, reship, resolveClaim, ANSWERS } from './modules/warranty.mjs';
@@ -29,46 +32,38 @@ import { join } from 'node:path';
 export function registerAdmin(app) {
   const { db, cfg, router } = app;
   const page = (c, title, body) => html(c.res, layout({ title, body, path: c.url.pathname, company: cfg.company, csrf: c.csrf, demo: cfg.demo, demoResetMinutes: cfg.demoResetMinutes, q: c.url.pathname === '/search' ? c.query.get('q') || '' : '', flash: c.query.get('ok') ? { text: c.query.get('ok') } : c.query.get('err') ? { kind: 'err', text: c.query.get('err') } : null }));
-  const back = (c, to, ok) => redirect(c.res, `${to}?ok=${encodeURIComponent(ok)}`);
+  const back = (c, to, ok) => redirect(c.res, `${to}${to.includes('?') ? '&' : '?'}ok=${encodeURIComponent(ok)}`);
   const link = (href, label) => `<a href="${e(href)}">${e(label)}</a>`;
   const filters = (c, fields) => `<form method="get" class="row" style="margin:.6rem 0">${fields.map(([n, l, opts]) => opts ? field(n, l, { options: [['', 'any'], ...opts], value: c.query.get(n) || '' }) : field(n, l, { value: c.query.get(n) || '' })).join('')}<div><label>&nbsp;</label><button class="quiet">Filter</button></div></form>`;
 
   registerShop(app, { page, back, link, filters });
+  registerOps(app, { page, back, link, filters });
+  // A form may say where to go afterwards; only a plain local path is honored.
+  const backTo = (c, fallback, ok) => back(c, /^\/(?!\/)[A-Za-z0-9/._~?=&-]*$/.test(String(c.body._back || '')) ? c.body._back : fallback, ok);
 
-  // ---------- home: what needs doing today, the last 30 days at a glance, what just happened
+  // ---------- home: today's work as cards, the thirty days at a glance, the health pill, what just happened
   router.get('/', (c) => {
     const s = snapshot(db);
     const m = s.books.months.at(-1) || { income_cents: 0, expenses_cents: 0, net_cents: 0 };
     const a = analytics(db, { days: 30 }); const t = a.totals, pv = a.previous;
-    const todo = [
-      s.orders.open ? `${link('/orders?status=open', `${s.orders.open} order${s.orders.open === 1 ? '' : 's'} to pack or ship`)} · batch ${e(weekLabel())}` : null,
-      s.support.open ? link('/tickets?status=open', `${s.support.open} support ticket${s.support.open === 1 ? '' : 's'} waiting on us`) + (s.support.breached ? ` <span class="bad">(${s.support.breached} past SLA)</span>` : '') : null,
-      s.inventory.low.length ? link('/inventory', `${s.inventory.low.length} part${s.inventory.low.length === 1 ? '' : 's'} at or under the reorder point: ${s.inventory.low.map(i => i.sku).join(', ')}`) : null,
-      s.warranty.open ? link('/warranty', `${s.warranty.open} warranty claim${s.warranty.open === 1 ? '' : 's'} open`) : null,
-      s.books.receivable_cents ? link('/invoices', `${money(s.books.receivable_cents)} in invoices outstanding`) : null,
-      s.exceptions.length ? link('/exceptions', `${s.exceptions.length} exception${s.exceptions.length === 1 ? '' : 's'} need a decision`) : null,
-      s.waitlist.some(w => w.waiting) ? link('/contacts?segment=waitlist', `${s.waitlist.reduce((n, w) => n + w.waiting, 0)} people waiting for stock`) : null,
-      s.probes.some(p => p.last_ok === 0) ? `<span class="bad">${link('/status-admin', 'a probe is down')}</span>` : null,
-    ].filter(Boolean);
-    const activity = db.all('SELECT * FROM audit_log WHERE action NOT IN (\'demo.seed\') ORDER BY at DESC, id DESC LIMIT 16').map(describeAudit).filter(Boolean);
-    const body = `<div class="two"><div><h2>Today</h2>${todo.length ? `<ul class="todo">${todo.map(x => `<li>${x}</li>`).join('')}</ul>` : '<p class="ok">Nothing waiting. Silence means healthy.</p>'}</div>
-<div><h2>Last 30 days</h2><div class="cards">${tile('Total sales', money(t.total_cents), { prev: pv.total_cents, cur: t.total_cents })}${tile('Orders', t.orders, { prev: pv.orders, cur: t.orders })}${tile('Average order', money(t.aov_cents), { prev: pv.aov_cents, cur: t.aov_cents })}${tile('Returning', `${Math.round(t.returning_rate * 100)}%`, { prev: pv.returning_rate, cur: t.returning_rate })}</div></div></div>
-${line({ points: a.series.buckets.map(b => ({ label: b.label, value: b.net_cents })), title: 'Net sales per day, 30 days', money: true, height: 170 })}
-<p class="muted">${link('/analytics', 'Full analytics')} · ${link('/batches', 'Batches')} · ${link('/products', 'Products')}</p>` + cards([
-      ['Orders to pack/ship', s.orders.open, s.orders.open ? 'warn' : ''], ['This batch', `${s.orders.thisBatch} <span class="muted" style="font-size:.8rem">${weekLabel()}</span>`],
-      ['Revenue, 30 days', money(s.orders.revenue30)], ['Units, 30 days', s.orders.units30],
-      ['Support needing an answer', s.support.open, s.support.breached ? 'bad' : ''], ['SLA breaches', s.support.breached, s.support.breached ? 'bad' : 'ok'],
-      ['Warranty open', s.warranty.open], ['Warranty rate, 90 d', `${(s.warranty.rate90 * 100).toFixed(1)}%`],
-      ['Low stock', s.inventory.low.length, s.inventory.low.length ? 'warn' : 'ok'], ['Inventory at cost', money(s.inventory.value_cents)],
-      ['This month net', money(m.net_cents), m.net_cents < 0 ? 'bad' : 'ok'], ['MRR (plans)', money(s.books.mrr_cents)],
+    const h = doctor(db, cfg); const todo = todayLines(db, cfg);
+    const date = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
+    const lead = todo.length ? todo.slice(0, 3).map(l => `${l.n} ${l.what.replace(/:.*$/, '')}`).join(' · ') : 'Nothing is waiting on you.';
+    const hero = `<div class="hero"><div><h1>${e(date)}</h1><p class="lead">${e(lead)}</p></div><a class="hp ${h.ok ? '' : h.failing.some(k => ['integrity', 'books', 'backup'].includes(k)) ? 'bad' : 'warn'}" href="/health">${h.ok ? 'All checks pass' : `${h.failing.length} health check${h.failing.length === 1 ? '' : 's'} need attention`}</a></div>`;
+    const acts = todo.length ? `<div class="actions">${todo.map(l => `<a class="act ${l.urgent ? 'urgent' : ''}" href="${e(l.href)}"><span class="n">${l.n}</span><span class="w">${e(l.what)}</span><span class="go">${e(l.action)} →</span></a>`).join('')}</div>` : '<div class="actions"><div class="act calm"><span class="w">Silence means healthy. The next order, email or probe result will show up here.</span></div></div>';
+    const kpis = `<div class="kpis">${tile('Total sales, 30 days', money(t.total_cents), { prev: pv.total_cents, cur: t.total_cents })}${tile('Orders', t.orders, { prev: pv.orders, cur: t.orders })}${tile('Average order', money(t.aov_cents), { prev: pv.aov_cents, cur: t.aov_cents })}${tile('Returning customers', `${Math.round(t.returning_rate * 100)}%`, { prev: pv.returning_rate, cur: t.returning_rate })}${tile('This month net', money(m.net_cents))}</div>`;
+    const chart = line({ points: a.series.buckets.map(b => ({ label: b.label, value: b.net_cents })), title: 'Net sales per day, 30 days', money: true, height: 150 });
+    const more = `<details class="more"><summary>All the numbers</summary>` + cards([
+      ['This batch', `${s.orders.thisBatch} <span class="muted" style="font-size:.8rem">${weekLabel()}</span>`], ['Units, 30 days', s.orders.units30],
+      ['SLA breaches', s.support.breached, s.support.breached ? 'bad' : 'ok'], ['Warranty rate, 90 d', `${(s.warranty.rate90 * 100).toFixed(1)}%`],
+      ['Inventory at cost', money(s.inventory.value_cents)], ['MRR (plans)', money(s.books.mrr_cents)],
       ['Receivable', money(s.books.receivable_cents)], ['In Stripe, not paid out', money(s.books.stripe_unpaid_out_cents)],
-      ['Open exceptions', s.exceptions.length, s.exceptions.length ? 'bad' : 'ok'], ['Probes down', s.probes.filter(p => p.last_ok === 0).length, s.probes.some(p => p.last_ok === 0) ? 'bad' : 'ok'],
-    ]) +
-    `<h2>Exceptions (what a human must decide)</h2>${table(s.exceptions, [{ label: 'Opened', get: r => dt(r.opened_at) }, { label: 'Title', html: r => link('/exceptions', r.title) }, { label: 'Issue', html: r => r.github_issue ? link(`https://github.com/${cfg.githubRepo}/issues/${r.github_issue}`, '#' + r.github_issue) : '—' }], { empty: 'Silence means healthy.' })}` +
-    `<h2>Waitlist</h2>${table(s.waitlist, [{ label: 'SKU', key: 'sku' }, { label: 'People', key: 'people', num: true }, { label: 'Units', key: 'units', num: true }, { label: 'Not yet notified', key: 'waiting', num: true }], { empty: 'Nobody waiting.' })}` +
-    `<h2>Mail outbox</h2><p>${Object.entries(s.mail).map(([k, v]) => `${e(k)}: <b>${v}</b>`).join(' · ') || 'empty'} · customers ${s.contacts.n} (${s.contacts.consented || 0} opted in)</p>` +
-    `<h2>Activity</h2><ul class="tl">${activity.map(x => `<li><span class="meta">${e(dt(x.at))} · ${e(x.actor)}</span><br>${x.html}</li>`).join('') || '<li class="muted">Nothing yet.</li>'}</ul>`;
-    page(c, 'Home', body);
+      ['Probes down', s.probes.filter(p => p.last_ok === 0).length, s.probes.some(p => p.last_ok === 0) ? 'bad' : 'ok'], ['Mail queued', s.mail.queued || 0],
+      ['Customers', `${s.contacts.n} <span class="muted" style="font-size:.8rem">${s.contacts.consented || 0} opted in</span>`], ['Waiting for stock', s.waitlist.reduce((n, w) => n + w.waiting, 0)],
+    ]) + `<p class="muted">${link('/analytics', 'Full analytics')} · ${link('/batches', 'Batches')} · ${link('/products', 'Products')} · ${link('/books', 'Books')}</p></details>`;
+    const activity = db.all('SELECT * FROM audit_log WHERE action NOT IN (\'demo.seed\') ORDER BY at DESC, id DESC LIMIT 10').map(describeAudit).filter(Boolean);
+    const body = `${hero}${acts}${kpis}${chart}${more}<h2>Activity <span class="muted" style="font-weight:400;font-size:13px">· ${link('/audit', 'the whole log')}</span></h2><ul class="feed">${activity.map(x => `<li><span class="meta">${e(dt(x.at))} · ${e(x.actor)}</span><span>${x.html}</span></li>`).join('') || '<li class="muted">Nothing yet.</li>'}</ul>`;
+    html(c.res, layout({ title: 'Home', body, path: '/', company: cfg.company, csrf: c.csrf, demo: cfg.demo, demoResetMinutes: cfg.demoResetMinutes, h1: false, flash: c.query.get('ok') ? { text: c.query.get('ok') } : c.query.get('err') ? { kind: 'err', text: c.query.get('err') } : null }));
   });
 
   // ---------- orders
@@ -112,7 +107,8 @@ ${line({ points: a.series.buckets.map(b => ({ label: b.label, value: b.net_cents
     const undo = o.status === 'packed' ? `<form method="post" action="/orders/${o.id}/transition" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="paid"><button class="quiet">Unpack (return parts)</button></form>` : '';
     const cancel = o.status === 'paid' ? `<form method="post" action="/orders/${o.id}/transition" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="canceled"><button class="quiet">Cancel</button></form>` : '';
     const resend = ['shipped', 'delivered'].includes(o.status) && o.email ? button(`/orders/${o.id}/resend-tracking`, c.csrf, 'Re-send tracking email', { quiet: true }) : '';
-    const body = `<p>${statusPill(o.status)} · ${e(o.source)} ${o.external_id ? `· <span class="muted">${e(o.external_id)}</span>` : ''} · batch ${link(`/orders?batch=${e(o.batch || '')}`, o.batch || '')} · paid ${dt(o.paid_at)}${o.tracking ? ` · ${e(o.carrier)} <b>${e(o.tracking)}</b>` : ''} · ${link(`/orders/${o.id}/packing-slip`, 'Packing slip')}</p>
+    const stepper = ['canceled', 'refunded'].includes(o.status) ? `<p>${statusPill(o.status)} <span class="muted">— this order is ${o.status}${o.refunded_cents ? ` (${money(o.refunded_cents)} back to the customer)` : ''}</span></p>` : (() => { const order = ['paid', 'packed', 'shipped', 'delivered']; const at = { paid: o.paid_at, packed: o.packed_at, shipped: o.shipped_at, delivered: o.delivered_at }; const i = order.indexOf(o.status); return `<ol class="steps">${order.map((st, j) => `<li class="${j < i ? 'done' : j === i ? 'now' : ''}">${st[0].toUpperCase() + st.slice(1)}${at[st] && j <= i ? `<span class="when">${e(day(at[st]))}</span>` : ''}</li>`).join('')}</ol>`; })();
+    const body = `${stepper}<p class="muted">${e(o.source)} ${o.external_id ? `· ${e(o.external_id)}` : ''} · batch ${link(`/orders?batch=${e(o.batch || '')}`, o.batch || '')} · paid ${dt(o.paid_at)}${o.tracking ? ` · ${e(o.carrier)} <b>${e(o.tracking)}</b>` : ''} · ${link(`/orders/${o.id}/packing-slip`, 'Packing slip')}</p>
 <p>${act} ${undo} ${cancel} ${resend}</p>
 <div class="two"><div>
 <div class="card"><div class="k">Customer</div>${o.contact_id ? `<b>${link(`/contacts/${o.contact_id}`, o.ship_name || o.email)}</b><br><span class="muted">${e(o.email || '')}</span><br>${cust.orders} order${cust.orders === 1 ? '' : 's'} · ${money(cust.spent_cents)} lifetime${cust.orders > 1 ? ' · <span class="pill ok">repeat</span>' : ' · first order'}${cust.open_tickets ? ` · <span class="warn">${cust.open_tickets} open ticket${cust.open_tickets === 1 ? '' : 's'}</span>` : ''}` : '<span class="muted">no customer record (no email on the order)</span>'}</div>
@@ -135,9 +131,9 @@ ${o.notes ? `<p class="muted">Order notes: ${e(o.notes)}</p>` : ''}`;
   router.post('/orders/:id/tags', (c) => { setTags(db, Number(c.params.id), c.body.tags || '', { actor: 'web' }); back(c, `/orders/${c.params.id}`, 'tags saved'); });
   router.post('/orders/:id/address', (c) => { updateShipping(db, Number(c.params.id), c.body, { actor: 'web' }); back(c, `/orders/${c.params.id}`, 'address updated'); });
   router.post('/orders/:id/resend-tracking', (c) => { resendTracking(db, Number(c.params.id), { cfg, actor: 'web' }); back(c, `/orders/${c.params.id}`, 'tracking email queued'); });
-  router.post('/orders/:id/transition', (c) => { const o = transition(db, c.params.id, c.body.to, { actor: 'web', carrier: c.body.carrier, tracking: c.body.tracking, cfg }); back(c, `/orders/${o.id}`, `${o.number} is now ${o.status}`); });
+  router.post('/orders/:id/transition', (c) => { const o = transition(db, c.params.id, c.body.to, { actor: 'web', carrier: c.body.carrier, tracking: c.body.tracking, cfg }); backTo(c, `/orders/${o.id}`, `${o.number} is now ${o.status}`); });
   router.post('/orders/:id/refund', (c) => { const o = refund(db, c.params.id, c.body.cents, { actor: 'web', reason: c.body.reason }); back(c, `/orders/${o.id}`, `refund recorded`); });
-  router.post('/orders/:id/assign', (c) => { assignToOrder(db, c.body.serial, Number(c.params.id)); back(c, `/orders/${c.params.id}`, `assigned ${c.body.serial}`); });
+  router.post('/orders/:id/assign', (c) => { assignToOrder(db, c.body.serial, Number(c.params.id)); backTo(c, `/orders/${c.params.id}`, `assigned ${c.body.serial}`); });
 
   // ---------- support
   router.get('/tickets', (c) => {
@@ -252,14 +248,7 @@ ${cl.status !== 'resolved' ? form(`/warranty/${cl.id}/resolve`, c.csrf, `<div cl
   router.post('/invoices/:id/paid', (c) => { markPaid(db, Number(c.params.id)); back(c, `/invoices/${c.params.id}`, 'paid'); });
   router.post('/invoices/:id/void', (c) => { voidInvoice(db, Number(c.params.id)); back(c, `/invoices/${c.params.id}`, 'voided'); });
 
-  // ---------- mail & campaigns
-  router.get('/campaigns', (c) => page(c, 'Mail', `<p>Outbox: ${Object.entries(outboxStats(db)).map(([k, v]) => `${e(k)} <b>${v}</b>`).join(' · ') || 'empty'} · ${button('/campaigns/flush', c.csrf, 'Send queued now', { quiet: true })} · ${link('/campaigns/outbox', 'recent mail')}</p>` +
-    table(listCampaigns(db), [{ label: 'Slug', key: 'slug' }, { label: 'Subject', key: 'subject' }, { label: 'Segment', key: 'segment' }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Recipients', key: 'recipients', num: true }, { label: '', html: r => r.status === 'draft' ? `<form method="post" action="/campaigns/${e(r.slug)}/send" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><button>Send to segment</button></form>` : day(r.sent_at) }]) +
-    form('/campaigns/new', c.csrf, `<b>New campaign</b><p class="muted">Only double-opt-in contacts receive it; every mail carries one-click unsubscribe. {{name}} and {{unsubscribe}} are filled in.</p><div class="row">${field('slug', 'Slug', { required: true })}${field('subject', 'Subject', { required: true })}${field('segment', 'Segment', { value: 'all', placeholder: 'all | customers | waitlist:<sku> | kind:<kind>' })}</div>${field('body_text', 'Body (plain text)', { type: 'textarea', required: true, rows: 12 })}`, { submit: 'Save draft' })));
-  router.post('/campaigns/new', (c) => { createCampaign(db, c.body); back(c, '/campaigns', 'draft saved'); });
-  router.post('/campaigns/:slug/send', (c) => { const n = queueCampaign(db, c.params.slug, cfg); back(c, '/campaigns', `queued for ${n} people`); });
-  router.post('/campaigns/flush', async (c) => { const r = await runJob(app, 'outbox'); back(c, '/campaigns', JSON.stringify(r.result || r.error)); });
-  router.get('/campaigns/outbox', (c) => page(c, 'Recent mail', table(db.all('SELECT * FROM mail_outbox ORDER BY id DESC LIMIT 200'), [{ label: 'When', get: r => dt(r.created_at) }, { label: 'To', key: 'to_addr' }, { label: 'Subject', key: 'subject' }, { label: 'Kind', key: 'kind' }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Error', key: 'last_error' }])));
+  registerMail(app, { page, back, link, filters });
 
   // ---------- books
   router.get('/books', (c) => {
@@ -295,12 +284,12 @@ ${form('/books/payout', c.csrf, `<b>Record a Stripe payout</b><p class="muted">A
 
   // ---------- settings
   router.get('/settings', (c) => page(c, 'Settings', `<h2>Configuration (from the environment)</h2><pre>${e(Object.entries(cfg).filter(([k]) => !/secret|token|url$/i.test(k) || /baseUrl|siteOrigin/.test(k)).map(([k, v]) => `${k} = ${v}`).join('\n'))}\nsmtp: ${cfg.smtpUrl ? 'configured' : 'NOT SET — mail is queued, not sent'}\nimap: ${cfg.imapUrl ? 'configured' : 'NOT SET — inbound mail not read'}\nstripe webhook: ${cfg.stripeWebhookSecret ? 'configured' : 'NOT SET'}\ngithub: ${cfg.githubToken ? 'configured' : 'NOT SET — exceptions stay local'}</pre>
-<h2>API tokens</h2>${table(db.all('SELECT name, created_at, last_used_at FROM api_tokens'), [{ label: 'Name', key: 'name' }, { label: 'Created', get: r => dt(r.created_at) }, { label: 'Last used', get: r => dt(r.last_used_at) }, { label: '', html: r => `<form method="post" action="/settings/token/revoke" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="name" value="${e(r.name)}"><button class="quiet">revoke</button></form>` }])}
-${form('/settings/token', c.csrf, field('name', 'New token name', { required: true }), { submit: 'Create token' })}
+<h2>API tokens</h2>${table(db.all('SELECT name, scope, created_at, last_used_at FROM api_tokens'), [{ label: 'Name', key: 'name' }, { label: 'Scope', html: r => r.scope === 'ro' ? '<span class="pill">read-only</span>' : '<span class="pill warn">read + write</span>' }, { label: 'Created', get: r => dt(r.created_at) }, { label: 'Last used', get: r => dt(r.last_used_at) }, { label: '', html: r => `<form method="post" action="/settings/token/revoke" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="name" value="${e(r.name)}"><button class="quiet">revoke</button></form>` }])}
+${form('/settings/token', c.csrf, `<div class="row">${field('name', 'New token name', { required: true })}${field('scope', 'Scope', { options: [['rw', 'read + write (the CLI, an AI operator)'], ['ro', 'read-only (a dashboard, a monitor)']] })}</div>`, { submit: 'Create token' })}
 <h2>Jobs</h2>${table(Object.keys(JOBS).map(n => ({ name: n, every: JOBS[n][0], ...(jobRuns(db).find(r => r.name === n) || {}) })), [{ label: 'Job', key: 'name' }, { label: 'Every', get: r => r.every + ' s' }, { label: 'Last run', get: r => dt(r.last_run_at) }, { label: 'OK', html: r => r.last_ok == null ? '—' : r.last_ok ? '<span class="ok">yes</span>' : '<span class="bad">no</span>' }, { label: 'Detail', key: 'last_detail' }, { label: '', html: r => `<form method="post" action="/settings/jobs/run" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="name" value="${e(r.name)}"><button class="quiet">run</button></form>` }])}
 <h2>Backups</h2>${table(listBackups(join(cfg.dataDir, 'backups')), [{ label: 'File', key: 'name' }, { label: 'Bytes', key: 'bytes', num: true }])}${button('/settings/backup', c.csrf, 'Back up now', { quiet: true })}
 <h2>Audit log (last 100)</h2>${table(db.all('SELECT * FROM audit_log ORDER BY id DESC LIMIT 100'), [{ label: 'When', get: r => dt(r.at) }, { label: 'Actor', key: 'actor' }, { label: 'Action', key: 'action' }, { label: 'Entity', get: r => `${r.entity || ''} ${r.entity_id || ''}` }, { label: 'Detail', key: 'detail' }])}`));
-  router.post('/settings/token', (c) => { const t = createApiToken(db, c.body.name); html(c.res, layout({ title: 'Token created', path: '/settings', company: cfg.company, csrf: c.csrf, demo: cfg.demo, body: `<p>Copy it now; it is not shown again.</p><pre>${e(t)}</pre><p>Use: <code>Authorization: Bearer …</code> against ${e(cfg.baseUrl)}/api</p><p>${link('/settings', 'Back')}</p>` })); });
+  router.post('/settings/token', (c) => { const t = createApiToken(db, c.body.name, { scope: c.body.scope === 'ro' ? 'ro' : 'rw' }); html(c.res, layout({ title: 'Token created', path: '/settings', company: cfg.company, csrf: c.csrf, demo: cfg.demo, body: `<p>Copy it now; it is not shown again.</p><pre>${e(t)}</pre><p>Use: <code>Authorization: Bearer …</code> against ${e(cfg.baseUrl)}/api</p><p>${link('/settings', 'Back')}</p>` })); });
   router.post('/settings/token/revoke', (c) => { revokeApiToken(db, c.body.name); back(c, '/settings', 'revoked'); });
   router.post('/settings/jobs/run', async (c) => { const r = await runJob(app, c.body.name); back(c, '/settings', `${r.job}: ${r.ok ? JSON.stringify(r.result) : r.error}`); });
   router.post('/settings/backup', (c) => { const r = backup(db, join(cfg.dataDir, 'backups'), { keep: cfg.backupKeep }); back(c, '/settings', `wrote ${r.path}`); });
@@ -341,8 +330,9 @@ function describeAudit(r) {
     'order.refund': `Refund of $${((d.cents || 0) / 100).toFixed(2)} on ${ent}`, 'order.note': `Note added to ${ent}`, 'order.tags': `Tags on ${ent}: ${e(d.tags || '')}`, 'order.address': `Address changed on ${ent}`, 'order.resend_tracking': `Tracking re-sent for ${ent}`,
     'ticket.open': `Ticket ${ent} opened (${e(d.kind || '')} via ${e(d.channel || '')})`, 'ticket.reply': `Replied on ${ent}`, 'ticket.closed': 'Ticket closed', 'device.assign': `Board ${ent} scanned into an order`,
     'contact.consent': 'A customer confirmed marketing opt-in', 'contact.unsubscribe': 'A customer unsubscribed', 'contact.tags': `Customer tags: ${e(d.tags || '')}`,
+    'campaign.queue': `Campaign ${ent} sent to ${d.recipients ?? '?'} people`, 'campaign.schedule': `Campaign ${ent} scheduled`, 'campaign.test': `Test of ${ent} sent`, 'automation.run': `Automations ran: ${d.enrolled || 0} enrolled, ${d.sent || 0} sent`, 'automation.save': `Automation ${ent} saved`, 'contact.bounce': `<span class="warn">A mail bounced: ${e(d.email || '')} — suppressed</span>`, 'contact.bounce.clear': 'A bounce was cleared',
     'discount.create': `Discount ${ent} created`, 'discount.disabled': `Discount ${ent} disabled`, 'discount.active': `Discount ${ent} enabled`,
-    'auth.login': 'Operator logged in', 'auth.login.failed': '<span class="bad">A login attempt failed</span>', 'auth.token.create': `API token ${ent} created`,
+    'auth.login': `Operator logged in${d.ip ? ` from ${e(d.ip)}` : ''}`, 'auth.login.failed': `<span class="bad">A login attempt failed${d.ip ? ` from ${e(d.ip)}` : ''}</span>`, 'auth.login.locked': `<span class="bad">An address was locked out after repeated failures${d.ip ? `: ${e(d.ip)}` : ''}</span>`, 'auth.token.create': `API token ${ent} created`,
     'warranty.open': `Warranty claim ${ent} opened`, 'warranty.reship': `Reship order created for claim ${ent}`, 'warranty.resolve': `Warranty claim ${ent} resolved`,
     'invoice.create': `Invoice ${ent} drafted`, 'invoice.issue': `Invoice ${ent} issued`, 'invoice.paid': `Invoice ${ent} paid`, 'invoice.void': `Invoice ${ent} voided`,
     'exception.raise': `<span class="warn">Exception raised: ${ent}</span>`, 'exception.resolve': `Exception resolved: ${ent}`, 'ticket.waiting_on_customer': 'Ticket waiting on the customer', 'ticket.open': `Ticket ${ent} opened (${e(d.kind || '')} via ${e(d.channel || '')})`,

@@ -52,6 +52,14 @@ export function parseBody(raw, contentType = '') {
   return { _raw: raw.toString('utf8') };
 }
 
+// --- a lockout: after N failures in the window the key is refused until it clears (login).
+export class Lockout {
+  constructor({ limit = 8, windowMs = 15 * 60_000 } = {}) { this.limit = limit; this.windowMs = windowMs; this.fails = new Map(); }
+  locked(key, now = Date.now()) { const arr = (this.fails.get(key) || []).filter(t => now - t < this.windowMs); this.fails.set(key, arr); return arr.length >= this.limit; }
+  fail(key, now = Date.now()) { const arr = (this.fails.get(key) || []).filter(t => now - t < this.windowMs); arr.push(now); this.fails.set(key, arr); if (this.fails.size > 10_000) this.fails.clear(); return arr.length; }
+  clear(key) { this.fails.delete(key); }
+}
+
 // --- rate limiter: a sliding window per key, in memory. Public endpoints only.
 export class RateLimiter {
   constructor({ limit = 20, windowMs = 60_000 } = {}) { this.limit = limit; this.windowMs = windowMs; this.hits = new Map(); }
@@ -93,10 +101,11 @@ export function send(res, status, body, headers = {}) {
   const buf = typeof body === 'string' ? Buffer.from(body) : body;
   const { 'Content-Type': contentType = 'text/plain; charset=utf-8', ...rest } = headers;
   res.setHeader('Content-Type', contentType);
-  res.writeHead(status, { 'Content-Length': buf.length, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', ...rest });
+  res.writeHead(status, { 'Content-Length': buf.length, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()', 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Resource-Policy': 'same-origin', ...rest });
   res.end(buf);
 }
-export const html = (res, body, status = 200, headers = {}) => send(res, status, body, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'", ...headers });
+// Admin pages are never cached by a browser or a proxy; a public page passes its own Cache-Control.
+export const html = (res, body, status = 200, headers = {}) => send(res, status, body, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'", ...headers });
 export const json = (res, obj, status = 200, headers = {}) => send(res, status, JSON.stringify(obj, null, 2), { 'Content-Type': 'application/json; charset=utf-8', ...headers });
 export const text = (res, body, status = 200, headers = {}) => send(res, status, body, { 'Content-Type': 'text/plain; charset=utf-8', ...headers });
 export const redirect = (res, to, headers = {}) => { res.writeHead(303, { Location: to, ...headers }); res.end(); };

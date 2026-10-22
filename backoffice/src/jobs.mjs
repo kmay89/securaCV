@@ -9,14 +9,17 @@ import { runDueProbes } from './modules/status.mjs';
 import { lowStock } from './modules/inventory.mjs';
 import { overdue } from './modules/invoices.mjs';
 import { raise, resolve } from './modules/exceptions.mjs';
-import { backup } from './modules/backup.mjs';
+import { backup, checkBackup, liveCounts, uploadOffsite, restoreDrill, offsiteConfigured } from './modules/backup.mjs';
+import { reconcile } from './modules/reconcile.mjs';
+import { enqueue } from './modules/mail.mjs';
 import { unreconciledStripeCents } from './modules/ledger.mjs';
 import { resetDemo, isDemo } from './modules/demo.mjs';
 import { join } from 'node:path';
 
 export const JOBS = {
   // name: [interval seconds, fn(app)]
-  outbox:   [30, async ({ db, cfg }) => sendOutbox(db, cfg)],
+  outbox:   [30, async ({ db, cfg }) => { const { sendDueCampaigns } = await import('./modules/campaigns.mjs'); const due = sendDueCampaigns(db, cfg); const r = await sendOutbox(db, cfg); return due.length ? { ...r, campaigns: due } : r; }],
+  automations: [3600, async ({ db, cfg }) => { const { runAutomations } = await import('./modules/automations.mjs'); return runAutomations(db, cfg); }],
   inbox:    [120, async ({ db, cfg }) => {
     if (!cfg.imapUrl) return { skipped: 'IMAP_URL not set' };
     const msgs = await imapFetchUnseen(cfg.imapUrl);
@@ -56,7 +59,42 @@ export const JOBS = {
     else await resolve(db, cfg, 'books:stripe-balance', 'Reconciled.');
     return { stripe_unpaid_out_cents: c };
   }],
-  backup:   [86400, async ({ db, cfg }) => backup(db, join(cfg.dataDir, 'backups'), { keep: cfg.backupKeep })],
+  // A backup is taken, then opened and proven, then (when configured) sent off-site and read back.
+  backup:   [86400, async (app) => {
+    const { db, cfg } = app;
+    const b = backup(db, join(cfg.dataDir, 'backups'), { keep: cfg.backupKeep });
+    const checked = checkBackup(b.path, { expect: liveCounts(db) });
+    if (!checked.ok) { await raise(db, cfg, 'backup:check', 'backup [unchecked]: the nightly copy failed its checks', checked.errors.join('\n')); throw new Error(`backup check failed: ${checked.errors.join('; ')}`); }
+    await resolve(db, cfg, 'backup:check', 'A checked backup exists again.');
+    let offsite = { skipped: 'BACKUP_S3_URL / KEY / SECRET not set' };
+    if (offsiteConfigured(cfg)) {
+      try { offsite = await uploadOffsite(cfg, b.path, { fetchImpl: app.fetchImpl || fetch }); await resolve(db, cfg, 'backup:offsite', 'The off-site copy is current again.'); }
+      catch (e) { offsite = { error: String(e.message || e) }; await raise(db, cfg, 'backup:offsite', 'backup [off-site failed]: the copy did not reach the bucket', `${e.message}\n\nThe local backup is checked; only the off-site copy is missing. Check BACKUP_S3_URL / KEY / SECRET and the bucket's permissions.`); }
+    }
+    db.audit('system', 'backup.taken', 'backup', b.path, { bytes: b.bytes, checked: checked.ok, offsite: offsite.read_back || false });
+    // the doctor reads this compact record, never the page's truncated detail
+    db.setSetting('backup:last', JSON.stringify({ at: nowIso(), path: b.path, bytes: b.bytes, kept: b.kept, checked: { ok: checked.ok, errors: checked.errors.slice(0, 5), orders: checked.counts.orders }, offsite: { read_back: !!offsite.read_back, name: offsite.name || null, bytes: offsite.bytes || null, encrypted: !!offsite.encrypted, error: offsite.error || null, skipped: offsite.skipped || null } }));
+    return { ...b, checked, offsite };
+  }],
+  // Weekly: the latest copy (off-site when configured) is pulled back and proven to boot.
+  restore_drill: [7 * 86400, async (app) => {
+    const { db, cfg } = app;
+    try { const r = await restoreDrill(cfg, { fetchImpl: app.fetchImpl || fetch, localDir: join(cfg.dataDir, 'backups') }); db.setSetting('drill:last', JSON.stringify({ at: r.at, ok: r.ok, offsite: r.offsite, encrypted: !!r.encrypted, age_h: r.age_h, orders: r.counts?.orders ?? null, errors: (r.errors || []).slice(0, 5) })); if (!r.ok) throw new Error(r.errors.join('; ')); await resolve(db, cfg, 'backup:drill', 'The restore drill passed.'); db.audit('system', 'backup.drill', 'backup', r.source, { ok: true, orders: r.counts.orders }); return r; }
+    catch (e) { db.setSetting('drill:last', JSON.stringify({ at: nowIso(), ok: false, errors: [String(e.message || e).slice(0, 300)] })); await raise(db, cfg, 'backup:drill', 'backup [restore drill failed]: the latest copy could not be proven', String(e.message || e)); throw e; }
+  }],
+  // Daily: payouts and charges in Stripe against the books and the orders (needs STRIPE_API_KEY).
+  reconcile: [86400, async (app) => reconcile(app.db, app.cfg, { fetchImpl: app.fetchImpl || fetch })],
+  // Once a day at DIGEST_HOUR (UTC): today's list, the numbers, the health checklist, to the operator.
+  digest:   [600, async ({ db, cfg }) => {
+    if (!cfg.operatorEmail) return { skipped: 'OPERATOR_EMAIL not set' };
+    const today = new Date().toISOString().slice(0, 10);
+    if (new Date().getUTCHours() < cfg.digestHour) return { waiting: `until ${String(cfg.digestHour).padStart(2, '0')}:00 UTC` };
+    if (db.setting('digest:last') === today) return { sent: 'already today' };
+    const { digestText } = await import('./modules/health.mjs');
+    const m = enqueue(db, { to: cfg.operatorEmail, subject: `${cfg.company}: the morning digest for ${today}`, kind: 'transactional', ref: `digest:${today}`, text: digestText(db, cfg) });
+    db.setSetting('digest:last', today); db.audit('system', 'digest.sent', 'mail', m.id);
+    return { queued: m.id, to: cfg.operatorEmail };
+  }],
   // A public demo starts over on a cadence so visitors always find the seeded week. Never runs outside demo mode.
   demo_reset: [60, async ({ db, cfg }) => {
     if (!cfg.demo || !isDemo(db) || !cfg.demoResetMinutes) return { skipped: 'not a timed public demo' };
@@ -72,7 +110,7 @@ export async function runJob(app, name) {
   const t0 = Date.now();
   try {
     const result = await job[1](app);
-    app.db.run('INSERT INTO job_runs (name, last_run_at, last_ok, last_detail) VALUES (?, ?, 1, ?) ON CONFLICT(name) DO UPDATE SET last_run_at = excluded.last_run_at, last_ok = 1, last_detail = excluded.last_detail', name, nowIso(), JSON.stringify(result).slice(0, 500));
+    app.db.run('INSERT INTO job_runs (name, last_run_at, last_ok, last_detail) VALUES (?, ?, 1, ?) ON CONFLICT(name) DO UPDATE SET last_run_at = excluded.last_run_at, last_ok = 1, last_detail = excluded.last_detail', name, nowIso(), JSON.stringify(result).slice(0, 2000));
     return { job: name, ok: true, ms: Date.now() - t0, result };
   } catch (e) {
     app.db.run('INSERT INTO job_runs (name, last_run_at, last_ok, last_detail) VALUES (?, ?, 0, ?) ON CONFLICT(name) DO UPDATE SET last_run_at = excluded.last_run_at, last_ok = 0, last_detail = excluded.last_detail', name, nowIso(), String(e.message || e).slice(0, 500));

@@ -285,7 +285,24 @@ export async function seedDemo(db, cfg) {
   const inc = openIncident(db, { title: 'Status JSON slow for a few hours (demo incident)', body: 'A synthetic incident so the public page has history. No device is affected — a Canary never talks to this service.' });
   db.run('UPDATE incidents SET started_at = ?, updated_at = ? WHERE id = ?', daysAgo(3, 8), daysAgo(3, 11), inc.id); updateIncident(db, inc.id, { status: 'resolved' });
 
-  createCampaign(db, { slug: 'demo-batch-note', subject: 'This month from the bench (demo newsletter)', segment: 'all', body_text: 'Hi {{name}},\n\nTwo things from the bench this month:\n\n1. Vision kits are back in stock.\n2. The Outdoor shell moved to ASA.\n\nIf you joined the waitlist, you\'ll get the one in-stock mail you asked for and nothing else.\n\n— Errer Labs\n\nUnsubscribe in one click: {{unsubscribe}}\n' });
+  // Mail: a newsletter that went out three weeks ago (so its report has a week of orders and replies to count), one scheduled, one draft; the three default automations with their history.
+  const { queueCampaign, scheduleCampaign } = await import('./campaigns.mjs'); const { seedAutomations, runAutomations } = await import('./automations.mjs');
+  createCampaign(db, { slug: 'october-from-the-bench', subject: 'October from the bench', preheader: 'Vision kits are back, the Outdoor shell moved to ASA', segment: 'all', body_text: 'Hi {{first_name}},\n\nTwo things from the bench this month.\n\n# Vision kits are back\n\nThe camera boards landed, the shells are printed, and the kit is in stock for this batch: {{site}}/store\n\n# The Outdoor shell moved to ASA\n\nPETG was fine under eaves and faded in direct sun. ASA does not. Every Outdoor kit from this batch ships in it, and the old shell\'s STL stays in the Lab for anyone printing their own.\n\n- Firmware 2.5 adds the two-blink "no hub found" pattern\n- The Witness Wall shows the verified chain in green\n\nIf you joined the waitlist, you\'ll get the one in-stock mail you asked for and nothing else.\n\n— {{company}}' });
+  queueCampaign(db, 'october-from-the-bench', q, { actor: 'web' });
+  // it went out on the day, two to six weeks back, after which the most recipients ordered — so the report has something honest to count
+  let bestDay = 21, best = -1;
+  for (let d = 14; d <= 42; d++) { const n = db.get("SELECT COUNT(*) AS n FROM orders o JOIN contacts c ON c.id = o.contact_id WHERE c.email IN (SELECT to_addr FROM mail_outbox WHERE ref = 'campaign:october-from-the-bench') AND o.paid_at >= ? AND o.paid_at < ?", daysAgo(d, 9), daysAgo(d - 7, 9)).n; if (n > best) { best = n; bestDay = d; } }
+  db.run("UPDATE campaigns SET sent_at = ? WHERE slug = 'october-from-the-bench'", daysAgo(bestDay, 9));
+  db.run("UPDATE mail_outbox SET created_at = ?, status = 'sent', sent_at = ? WHERE ref = 'campaign:october-from-the-bench'", daysAgo(bestDay, 9), daysAgo(bestDay, 9));
+  createCampaign(db, { slug: 'november-batch-note', subject: 'November: the Witness Pair, and a question', preheader: 'One question for everyone who runs two', segment: 'customers', body_text: 'Hi {{first_name}},\n\nThe November batch ships next week. Two things:\n\n# The Witness Pair now provisions as a pair\n\nTwo QR cards, one scan each, both on the Wall in under a minute.\n\n# A question\n\nIf you run two or more Canaries: what would you want the Wall to show about them together? Reply to this mail — one line is plenty.\n\n— {{company}}' });
+  scheduleCampaign(db, 'november-batch-note', new Date(Date.now() + 3 * 86400000).toISOString(), { actor: 'web' });
+  createCampaign(db, { slug: 'vision-restock-waitlist', subject: 'Draft: the Vision kit is back', segment: 'waitlist:vision-kit', body_text: 'Hi {{first_name}},\n\nYou asked to hear when the Vision kit came back. It is back: {{site}}/store\n\n— {{company}}' });
+  seedAutomations(db);
+  runAutomations(db, q, { now: Date.now() });
+  db.run('UPDATE automation_runs SET sent_at = due_at WHERE sent_at IS NOT NULL');
+  db.run("UPDATE mail_outbox SET created_at = COALESCE((SELECT r.due_at FROM automation_runs r WHERE 'automation:' || r.automation_slug || ':' || r.ref = mail_outbox.ref), created_at) WHERE kind = 'automation'");
+  db.run("UPDATE mail_outbox SET status = 'sent', sent_at = created_at WHERE kind = 'automation' AND created_at < ?", daysAgo(2));
+  db.run("UPDATE audit_log SET at = ? WHERE action = 'campaign.queue'", daysAgo(bestDay, 9));
   move(db, 'xiao-esp32s3-sense', -1, 'scrap', 'bench: bad USB-C port');
   await raise(db, q, 'stock:xiao-esp32s3-sense', 'inventory [reorder]: xiao-esp32s3-sense', 'XIAO ESP32S3 Sense (camera): 2 on hand, reorder point 4, reorder qty 12.\nSupplier: Example Distributor');
   // The audit log says when each thing happened, not when the seed ran.

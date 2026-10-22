@@ -27,7 +27,7 @@ test('end to end: login + CSRF, public forms, signed Stripe webhook, bearer API,
     const cookie = r.headers.get('set-cookie').split(';')[0];
     assert.match(r.headers.get('set-cookie'), /HttpOnly; SameSite=Strict/);
     const csrf = db.get('SELECT csrf FROM sessions').csrf;
-    r = await fetch(base + '/', { headers: { cookie } }); assert.equal(r.status, 200); const dash = await r.text(); assert.ok(dash.includes('<h1>Home</h1>'));
+    r = await fetch(base + '/', { headers: { cookie } }); assert.equal(r.status, 200); const dash = await r.text(); assert.ok(dash.includes('class="hero"'));
     assert.ok(dash.includes(`action="/logout" class="inline"><input type="hidden" name="_csrf" value="${csrf}"`), 'the visible Log out button carries the CSRF token');
     // a POST without the CSRF token is refused; with it, it works
     r = await fetch(base + '/inventory/item', { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', accept: 'text/html' }, body: form({ sku: 'cable', name: 'cable', kind: 'part', reorder_point: 1, reorder_qty: 1, unit_cost_cents: 100 }) });

@@ -4,7 +4,7 @@
 // hosted helpdesk; GitHub issues stay the public front door (doc 20).
 import { nowIso } from '../db.mjs';
 import { token } from '../http.mjs';
-import { upsertContact, validEmail } from './contacts.mjs';
+import { upsertContact, validEmail, markBounced } from './contacts.mjs';
 import { enqueue, fill } from './mail.mjs';
 
 export const STATUSES = ['open', 'waiting_on_customer', 'waiting_on_us', 'closed'];
@@ -94,6 +94,10 @@ export function ingestEmail(db, mail, { cfg = {} } = {}) {
   const from = mail.from || ''; const email = (from.match(/<([^>]+)>/) || [, from])[1].trim();
   const name = (from.match(/^\s*"?([^"<]+?)"?\s*</) || [])[1] || null;
   const isAuto = /auto-?reply|automatic reply|out of office|mailer-daemon|postmaster|delivery status|undeliverable/i.test(`${mail.subject} ${from} ${mail.headers?.['auto-submitted'] || ''}`) || /^(auto-generated|auto-replied)/i.test(mail.headers?.['auto-submitted'] || '');
+  // A bounce (a delivery status notification) names the address that failed: it is suppressed from marketing mail from here on.
+  const isBounce = /mailer-daemon|postmaster|delivery status|undeliverable|delivery has failed|could not be delivered/i.test(`${mail.subject} ${from}`);
+  const bounced = [];
+  if (isBounce) { const seen = new Set(); for (const [, addr] of String(mail.text || '').matchAll(/([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g)) { const a = addr.toLowerCase(); if (seen.has(a) || a === email.toLowerCase() || /mailer-daemon|postmaster/.test(a)) continue; seen.add(a); if (markBounced(db, a, { reason: mail.subject || 'bounce' })) bounced.push(a); } }
   const tok = (mail.subject || '').match(TOKEN_RE);
   let t = tok ? db.get('SELECT * FROM tickets WHERE number = ? AND thread_token = ?', tok[1].toUpperCase(), tok[2].toLowerCase()) : null;
   if (!t) {
@@ -104,7 +108,7 @@ export function ingestEmail(db, mail, { cfg = {} } = {}) {
     const added = addMessage(db, t.id, { direction: isAuto ? 'note' : 'in', from_addr: email, body: (isAuto ? '[auto-reply] ' : '') + (mail.text || ''), message_id: mail.messageId || null, in_reply_to: mail.inReplyTo || null });
     return { ticket: ticketById(db, t.id), created: false, duplicate: !added };
   }
-  if (isAuto) return { ticket: null, created: false, ignored: 'auto-reply' };
+  if (isAuto) return { ticket: null, created: false, ignored: isBounce ? 'bounce' : 'auto-reply', bounced };
   if (mail.messageId && db.get('SELECT id FROM ticket_messages WHERE message_id = ?', mail.messageId)) return { ticket: null, created: false, duplicate: true };
   const ticket = openTicket(db, { email, name, subject: mail.subject || '(no subject)', body: mail.text || '', channel: 'email', cfg, messageId: mail.messageId || null, inReplyTo: mail.inReplyTo || null, fromAddr: email });
   return { ticket, created: true };
