@@ -26,8 +26,9 @@ exercise.
 - **Transport**: plain **HTTP on port 80**. First-boot setup is HTTP-only by
   design (a captive sheet shows a blank page for a certificate it does not
   recognize). After setup the WAP serves **HTTPS on port 443** (self-signed)
-  and port 80 answers a **301 redirect to HTTPS** for everything *except* the
-  OS connectivity-probe paths below, but only once a certificate is stored,
+  and port 80 answers a **301 redirect to HTTPS** for every GET and POST
+  *except* the OS connectivity-probe paths below and `GET /api/fleet` (fleet
+  discovery stays on plain HTTP), but only once a certificate is stored,
   and no stock build stores one today (F15: the on-device generator compiles
   out on every pinned core). So on a stock unit every step below is plain
   `http://`, with no redirect and no certificate warning; the serial log

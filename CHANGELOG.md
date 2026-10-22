@@ -76,7 +76,13 @@
   bring HTTPS with a self-signed certificate, whose warning the owner
   accepts, and only a client that pins the certificate checks it (the iPhone
   app pins the receipt's `tls_cert_fp`; F256 asks whether it may learn one
-  over mDNS). Host-tested
+  over mDNS). F15 would still help: once a unit serves HTTPS after setup,
+  port 80 answers only the captive probes, `/api/fleet` and a redirect, so a
+  page planted over plain HTTP is cross-origin to the device and takes none
+  of these; a page served over https at that name whose certificate warning
+  the owner accepted still does, and so does any page during the first-boot
+  setup or on a unit whose HTTPS start failed, which serve plain HTTP.
+  Host-tested
   (`test_session_cookie.cpp`, `test_receipt_grant.cpp`); not run against a
   browser or on a device.
 - **The first-boot wizard answers exactly `canary.local` or `192.168.4.1`
@@ -117,12 +123,18 @@
   `https://canary.local` never blocked `http://192.168.4.1`. The two names
   never meet. The device reads `__Host-cv_session` first and a malformed one
   reads nothing; plain `cv_session` is still read. In current browsers only an
-  https answer at that host name can set the `__Host-` name (this device,
-  another unit answering the same name, or any server whose certificate the
-  browser accepted there, whose cookie then matches no session here, so the
-  landing mints one again), so a cookie planted over http cannot shadow it
-  (integrity, not availability: an on-path host can still sign a browser out
-  by overflowing its Cookie header). No
+  https answer at that host name can set the `__Host-` name (this device;
+  another unit answering the same name, whose session matches none here and
+  whose cookie the landing's next one replaces; or any server whose
+  certificate the browser accepted there), so a cookie planted over http
+  cannot shadow it (integrity, not availability: an on-path host can still
+  sign a browser out by overflowing its Cookie header). A server of the last
+  kind can: it can set the name to a session it took at the landing, which
+  then validates and buys no more than the landing gives any LAN host while
+  sessions are interchangeable, or set it `Partitioned`, which the landing's
+  cookie does not replace, and while the planted one is the older the browser
+  sends it first, so every sign-in falls back to the landing until it expires
+  or is cleared (seen in headless Chromium 141 against a stand-in server). No
   `Strict-Transport-Security`: browsers ignore it from a self-signed
   certificate and for an IP address, and it would shut a browser out of a unit
   that falls back to HTTP. Sessions live in RAM, so the update's reboot ends

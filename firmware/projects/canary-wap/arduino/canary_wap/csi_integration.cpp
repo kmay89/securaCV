@@ -1734,13 +1734,22 @@ bool find_valid_session(const uint8_t* token) {
  * an http page could have planted). Two
  * units sharing canary.local or 192.168.4.1 can leave another unit's stale
  * __Host- cookie in front of a good plain one: it is read, it validates
- * against no slot here, and the landing mints a session again.
+ * against no slot here, and the landing mints a session again. A server
+ * whose certificate the browser accepted at this name can do more: set the
+ * __Host- name to a session it took at the landing, which validates here
+ * (fixation), or set it Partitioned, which the landing's cookie does not
+ * replace, so while the planted one is the older the browser sends it
+ * first and every sign-in falls back to the landing (seen in headless
+ * Chromium 141 against a stand-in server; docs/security/THREAT_MODEL.md).
  *
  * Reading plain cv_session on an HTTPS request too is safe only while
  * sessions carry no per-session state: session_issue() stamps a fresh,
  * interchangeable slot, so either cookie buys the same thing. Any change
  * that elevates one session over another must first bind the name to the
- * transport, so that HTTPS reads only __Host-cv_session.
+ * transport, so that HTTPS reads only __Host-cv_session, and must mint a
+ * fresh session at the elevation, as the receipt's grant already does:
+ * binding the name does not stop fixation, since a server at this name can
+ * set the __Host- name to a session it holds.
  *
  * The Cookie header is a single string of "name=value; name=value; ..."
  * pairs. For each name we find the first cookie NAMED it and copy out

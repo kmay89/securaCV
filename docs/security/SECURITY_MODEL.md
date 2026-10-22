@@ -441,7 +441,13 @@ identity the browser can check closes it, and neither F15 nor F256 gives a
 browser one: F15 would bring HTTPS with a self-signed certificate, whose
 warning the owner accepts, and only a client that pins the certificate checks
 it (the iPhone app pins the receipt's `tls_cert_fp`; F256 asks whether it may
-learn one over mDNS). And a cross-site page
+learn one over mDNS). F15 would still help: once a unit serves HTTPS after
+setup, port 80 answers only the captive probes, `/api/fleet` and a redirect,
+so a page planted over plain HTTP is cross-origin to the device and takes
+none of these; a page served over https at that name whose certificate
+warning the owner accepted still does, and so does any page during the
+first-boot setup or on a unit whose HTTPS start failed, which serve plain
+HTTP. And a cross-site page
 can still send requests at the IP address (an IP literal passes). It cannot
 read what the landing, the exchange, the pages, the wizard token's re-issue
 (`/api/wifi/pair-token`) or the receipt serve, since none sends a CORS

@@ -3737,7 +3737,12 @@ static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_l
 // closes that, and neither F15 nor F256 gives a browser one: F15 would bring
 // HTTPS with a self-signed certificate, whose warning the owner accepts, and
 // only a client that pins the certificate checks it (the iPhone app pins the
-// receipt's tls_cert_fp; F256 asks whether it may learn one over mDNS).
+// receipt's tls_cert_fp; F256 asks whether it may learn one over mDNS). F15
+// would still shut out a page planted over plain HTTP once HTTPS runs after
+// setup (port 80 then keeps only the captive probes, /api/fleet and the
+// redirect, so such a page is cross-origin here), but not one served over
+// https at that name whose certificate warning the owner accepted, nor any
+// page during the first-boot setup or on a unit whose HTTPS start failed.
 //
 // No SoftAP or interface exemption, unlike the flagship's: the WAP's captive
 // DNS answers every name with the device (setup_wizard.h), so an exemption
@@ -3839,12 +3844,14 @@ static bool request_host_is_setup_name(httpd_req_t* req) {
 //     after a boot until the home link has held 120 s, or after the link
 //     drops): a cookie follows the host name, so one from
 //     https://canary.local never blocks http://192.168.4.1. With two names
-//     the two never meet. And in current browsers only an https answer from
-//     this host, Secure, Path=/ and with no Domain, can set the __Host- name,
-//     so a cv_session planted over http cannot shadow the HTTPS cookie.
-//     That is integrity, not availability: an on-path host can still push
-//     the Cookie header past the reader's 512-byte ceiling and sign the
-//     browser out. csi_integration.cpp's read_session_cookie_hex() reads
+//     the two never meet. And in current browsers only an https answer at
+//     this host name, Secure, Path=/ and with no Domain, can set the __Host-
+//     name, so a cv_session planted over http cannot shadow the HTTPS
+//     cookie. That is integrity, not availability: an on-path host can still
+//     push the Cookie header past the reader's 512-byte ceiling and sign the
+//     browser out. A server whose certificate the browser accepted at this
+//     name can set the __Host- name itself (csi_integration.cpp's
+//     read_session_cookie_hex() says what that buys), and that reader reads
 //     both names, the __Host- one first.
 //   - Header budget: a browser that met both transports at one host sends
 //     both cookies over HTTPS (about 77 more bytes), against

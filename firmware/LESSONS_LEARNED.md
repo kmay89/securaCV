@@ -729,7 +729,10 @@
   request is safe only while every session buys the same thing.
 - **Rule:** When one origin name serves both schemes, give the HTTPS cookie
   a `__Host-` name of its own. And before one session can do more than
-  another, read only the `__Host-` name over HTTPS.
+  another, read only the `__Host-` name over HTTPS and mint a fresh session
+  at the elevation: the prefix binds a secure scheme and the host name, not
+  a certificate, so a server whose certificate the browser accepted at that
+  name can set the `__Host-` name to a session it holds.
 - **Regression check:** `projects/canary-wap/tests_host/test_session_cookie.cpp`
   (the HTTPS exchange's name and its round trip, the reader's two names),
   `test_receipt_grant.cpp` (the receipt's HTTPS cookie) and

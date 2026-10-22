@@ -108,7 +108,8 @@ make monitor
    The first-boot setup wizard opens only at those two names; under any
    other name, the device's unique one included, `/` shows the static page
    that says to type `canary.local` (sweep F344). After setup, on your home
-   network, the dashboard is also at the device's unique mDNS hostname,
+   network, the dashboard is at `canary.local` (when this unit holds that
+   name) and at the device's unique mDNS hostname,
    **http://canary-\<name\>.local** once you name it (e.g.
    `canary-kitchen.local`). Until then it is `canary-` plus four lowercase
    hex digits, the first two bytes of its key fingerprint (e.g.

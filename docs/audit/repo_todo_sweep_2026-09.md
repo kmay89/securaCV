@@ -588,7 +588,16 @@ so — see D2 below.)
   and `MBEDTLS_X509_CRT_WRITE_C` (or take option (c)). It turns HTTPS on for
   every such unit, changes the pin the apps trust and the mDNS `tls` advert,
   and needs Track D, so it is not done here. F337's cookie name and F344's
-  Host rule are written for both transports.
+  Host rule are written for both transports. When it is done, the HTTPS
+  mint can also clear a `Partitioned` `__Host-cv_session` that a server at
+  the device's name planted in front of the device's own (THREAT_MODEL's
+  HTTP row; F344's ninth review): send
+  `__Host-cv_session=x; Secure; Path=/; Partitioned; Max-Age=0` before the
+  session's `Set-Cookie` in the same answer. In headless Chromium 141,
+  against a stand-in server, that answer left only the new cookie. The
+  deletion goes first so that a browser that ignores `Partitioned`, and so
+  deletes the device's own cookie, then takes the new one (reasoned, not
+  run).
 - [ ] **F62 [code+decision] Consume the mDNS TLS advert in the desktop
   clients.** Found by the #1757 review: the canary now advertises `tls` /
   `secure_port` over mDNS (F15), but no in-repo discovery client reads them
@@ -894,6 +903,12 @@ so — see D2 below.)
   self-signed certificate, whose warning the owner accepts, and only a
   client that pins the certificate checks it (the iPhone app pins the
   receipt's `tls_cert_fp`; F256 asks whether it may learn one over mDNS).
+  F15 would still help: once a WAP serves HTTPS after setup, port 80
+  answers only the captive probes, `/api/fleet` and a redirect, so a page
+  planted over plain HTTP is cross-origin to the device and takes none of
+  these; a page served over https at that name whose certificate warning
+  the owner accepted still does, and so does any page during the first-boot
+  setup or on a unit whose HTTPS start failed, which serve plain HTTP.
   From code; the cache half seen in headless Chromium against
   a stand-in server (F344's sixth review), not against a device. No new
   number.
@@ -3160,9 +3175,9 @@ so — see D2 below.)
     `__Host-cv_session`. The prefix binds the cookie to a secure scheme, the
     host name, `Path=/` and no `Domain`, not to a certificate: another unit
     answering the same name, or any server whose certificate the browser
-    accepted there, can set it too (such a cookie matches no session, and
-    the landing mints one again). The three now say so. Comment and docs
-    only.
+    accepted there, can set it too (another unit's matches no session here;
+    what a server of the last kind can do is Review 9's first bullet). The
+    three now say so. Comment and docs only.
   - Every residual closed with "Only HTTPS with an identity the browser can
     check closes it (F15, F256)", which reads as if F15 and F256 close it
     for a browser. F15 would bring a self-signed certificate, whose warning
@@ -3185,7 +3200,9 @@ so — see D2 below.)
     longest Hosts a browser sends for the two names, are now accepted on
     `/`, by the setup-name question and by the re-issue: `host[17]` fails 16
     of 1148 checks, `host[18]` 8. A buffer of 19 to 95 bytes differs from
-    96 only for a port of six or more digits, which no browser sends.
+    96 only for a Host of 19 bytes or more that still reads as a setup name
+    (a port of six or more digits, padding, other characters after the
+    colon, the name in brackets), which no browser sends.
   - The test file's header said either setup name in a Host of 96 or 113
     bytes gets the captive page on `/`, and eedb5ef8's message said both
     96-byte Hosts get it on `/` and `404` from the re-issue; only the 96-byte
@@ -3203,9 +3220,88 @@ so — see D2 below.)
     a `host_guard.h` consumer, `firmware.yml`'s canary-wap route-check
     comment names the mint rule, and `onboarding_multiple_canaries.md` says
     the captive page tells the owner to type `canary.local` rather than
-    linking to it. Of these only the docstring's sentence, and the
-    route-check comment's gap (the rule is this PR's), came from this PR.
+    linking to it. Of these, the docstring's sentence (this PR rewrote it
+    around the older "opt-in" clause), the runbook's D1 correction (Review
+    6's) and the route-check comment's gap (the rule is this PR's) came from
+    this PR.
   Host-tested; not run against a browser or on a device.
+  *Review 9 (2026-10-22, #<PR>):*
+  - Review 8 said a `__Host-cv_session` set by any server whose certificate
+    the browser accepted at the device's name "matches no session here, so
+    the landing mints one again", in THREAT_MODEL's HTTP row, the CHANGELOG
+    and its own bullet above. That holds for another unit's cookie, whose
+    session is random. A hostile server at that name chooses the value and
+    the attributes. It can set a session it took at the landing (any LAN
+    host can), which validates: `session_validate_cookie()` asks the Host
+    and `find_valid_session()` the value, as
+    `test_every_cookie_gate_asks_the_host` already shows for a live value
+    under `canary.local`. That fixes the browser on a session its setter
+    holds and buys no more than the landing gives any LAN host while
+    sessions are interchangeable. Or it can set the cookie `Partitioned`:
+    in headless Chromium 141 against a stand-in https server at
+    `canary.local` (certificate errors ignored, as an accepted warning
+    does), a planted `__Host-cv_session=…; Secure; Path=/; Partitioned` was
+    kept beside a device-style cookie set after it and sent first
+    (`__Host-cv_session=<planted>; __Host-cv_session=<device>`); planted
+    after the device's cookie it was sent second until the device set its
+    cookie again, expired or not, then first (a cookie set again with a new
+    value was sent as the newer; with the same value it kept its place). An
+    unpartitioned plant was replaced. `read_session_cookie_hex()` reads the
+    first `__Host-` cookie, so while the planted one is the older every
+    sign-in falls back to the landing until it expires or is cleared. The
+    three places, the comment above `read_session_cookie_hex()` and the
+    writer's comment above `session_cookie_header()` (which said "from this
+    host") now say so. The device's cookie carries a new value every time
+    it is set: each `?cv_pair` exchange and each receipt grant calls
+    `session_issue()`, and sessions live in RAM, so every reboot sends the
+    browser through the exchange again. So a plant set after the device's
+    cookie moves in front at the next sign-in or receipt, not when that
+    cookie's 24 h run out, and THREAT_MODEL's row says that too. Once a
+    unit serves HTTPS the device could clear such a plant: in the same
+    setup, `__Host-cv_session=x; Secure; Path=/; Partitioned; Max-Age=0`
+    removed one and kept the device-style cookie, and sent before a
+    device-style `Set-Cookie` in one answer it left only the new cookie.
+    F15's correction records that as the remedy on the code side; not done,
+    since no unit serves HTTPS.
+    The reader's guidance for a change that elevates one session over
+    another, and LESSONS_LEARNED's rule, now say to mint a fresh session at
+    the elevation as well as to bind the name to the transport, since the
+    binding does not stop fixation; the receipt's grant already mints one.
+    Reach is small: no stock unit serves HTTPS (F15). Docs and comments
+    only.
+  - The residual's "neither F15 nor F256 gives a browser one" left out what
+    F15 would give: once a WAP serves HTTPS after setup, port 80 keeps only
+    the captive probes, `/api/fleet` and the redirect
+    (`handle_https_redirect`), so a page planted over plain HTTP is
+    cross-origin to the device. SECURITY_MODEL, THREAT_MODEL's
+    DNS-rebinding row, the CHANGELOG, the sketch README, F57's note and the
+    comment above `request_host_names_device()` now say so, and that a page
+    served over https at that name whose warning the owner accepted, the
+    first-boot setup and a unit whose HTTPS start failed are not shut out.
+    From code; not run.
+  - `test_setup_name_is_exact()`'s comment said a 17- or 18-byte Host
+    buffer refuses both `:65535` rows; `char host[18]` holds
+    `192.168.4.1:65535` and refuses only `canary.local:65535` (measured: 8
+    of 1148 checks fail, all on that row; `host[17]` fails 16, on both).
+    The comment now says which refuses which. The WAP README's after-setup
+    sentence no longer says the dashboard is "also" at the unique name,
+    since `192.168.4.1` is the SoftAP's and a joined unit drops its SoftAP
+    once the home link has held 120 s; it names `canary.local` and the
+    unique name. The Home Assistant guide's step 2 now tells a WAP owner
+    where its first-boot wizard opens before it offers the unique hostname.
+    Docs and a test comment only.
+  - Review 8's buffer bullet said a 19- to 95-byte buffer differs from 96
+    only for a port of six or more digits; `host_authority_name()` trims
+    padding, drops everything after a single colon and takes a bracketed
+    name, so padding, other characters after the colon and brackets reach
+    19 bytes too (`host[19]` refuses `canary.local:65535` with a space on
+    each side, `canary.local:abcdef` and `[canary.local]:65535`, which
+    `host[96]` accepts). Its last bullet said only the docstring's
+    sentence and the route-check comment's gap came from this PR; the
+    runbook's D1 correction is Review 6's. Both now say so. The captive-portal test
+    plan's transport bullet, which this PR rewrote, said port 80 redirects
+    everything but the probes; it keeps `GET /api/fleet` too, and the
+    redirect takes GET and POST. Docs only.
 - [ ] **F345 [decision] canary-wap: Forget Wi-Fi from any session re-arms the
   Bluetooth setup door, whose claim buys the receipt.** `POST
   /api/wifi/forget` takes `api_auth_check` (any session, the landing page's

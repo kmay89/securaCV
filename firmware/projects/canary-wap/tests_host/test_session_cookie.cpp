@@ -603,8 +603,9 @@ bool setup_name(const char* host) {
 void test_setup_name_is_exact() {
   // The two names with the longest valid port (review 8 of F344): 18 and 17
   // bytes, the longest Hosts a browser sends for them. Before, the longest
-  // accepted row was canary.local:443 (16 bytes), so a Host buffer of 17 or
-  // 18 bytes, which refuses them, passed every row.
+  // accepted row was canary.local:443 (16 bytes), so a Host buffer of 17
+  // bytes, which refuses both, or of 18, which refuses canary.local:65535,
+  // passed every row.
   for (const char* host : {"canary.local", "CANARY.LOCAL:80", "Canary.Local", "192.168.4.1", "192.168.4.1:80",
                            " canary.local ", "canary.local:443", "canary.local:65535", "192.168.4.1:65535"}) {
     CHECK_MSG(setup_name(host), std::string("not a setup name: ") + host);
