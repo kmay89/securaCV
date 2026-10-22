@@ -1928,10 +1928,12 @@ def settings_help_block(vision: dict, sense_default: dict, sense_wellbeing: dict
                     "ever offered.",
         },
         "mac": {
-            "label": "ID (MAC)",
-            "what": "The chip's factory hardware address — how the Nursery tells boards "
-                    "apart on a bench. It stays on this page; the firmware itself never "
-                    "broadcasts it (devices go by salted pseudonyms on the network).",
+            "label": "Hardware address",
+            "what": "The chip's factory network address. Every Wi-Fi frame this board "
+                    "sends carries it, so it names this one board to anything in radio "
+                    "range — which is why the flasher hides it until you tap Show, never "
+                    "copies it, and never writes it into a saved report or a file name. "
+                    "It stays on this computer.",
         },
         "flash_size": {
             "label": "Flash",

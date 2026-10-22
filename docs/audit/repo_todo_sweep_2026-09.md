@@ -16946,6 +16946,66 @@ so — see D2 below.)
   (`{"docs/hardware/enclosure": [".py", ".sh"]}`); `lab_bundle.test.js`
   already parses every `find` line there and will demand the pair. A
   maintainer's call.
+- [x] **A111 [code] The flashers show the full hardware address, save it, and
+  name files with half of it (device-details design §11, P12).** The browser
+  drew "ID (MAC)" on the hello card and the Board report and saved it in the
+  health report; the desktop drew it on the health card and the health
+  note, saved the whole report object with it, and both nursery strips drew
+  its last two bytes. Both named reports and backups with its last six hex
+  digits (`macStamp()`, `rescue::backup_filename`), and the help copy said the
+  firmware never broadcasts it. The base MAC is the station address in every
+  Wi-Fi frame the board sends, so any slice of it matches the board in radio
+  range. *Done (#<PR>):* no address bytes on screen until asked — a
+  "Hardware address · Show" row reveals it on that page only, with no copy,
+  in both flashers; the Lab's native bench keeps the address `detect_chip`
+  returns and shows none. The ROM tools' own lines (esptool-js's "MAC: …",
+  espflash's "MAC address: …" before every flash, write-bin and read-flash)
+  are masked in every console that draws them (`maskHardwareAddress`). No
+  saved file, diagnostic report or file name carries it: `health_check` takes and returns no MAC, the diagnostic builders
+  have no MAC field, and reports and backups are named
+  `canary-<local day>-<n>-…` (`fileStamp`, `rescue::backup_filename(day, n)`,
+  `rescue::next_backup_filename` for the desktop's shared backups folder).
+  `settings_help.mac` is corrected. Pinned in `desktop_parity.test.js` (both
+  frontends and the Lab bench) and `flash.test.js`. The fleet book and the
+  keychain item are still keyed by the MAC; re-keying them by device id is
+  the design's PR 18. Host-tested; not run on a device.
+- [x] **A112 [code] Both flashers send `ID?` to the Grove Vision module, and
+  the browser shows the module's own model text (device-details design §11,
+  P13).** The module's id is treated as a per-unit identifier, and its model
+  card is the module's say-so: its stock catalog includes models that would
+  name a capability this project refuses
+  (`docs/hardware/grove_vision_ai_v2_guide.md`). *Done (#<PR>):* neither
+  flasher sends `ID?` (`we2-flash.js`, `we2.rs`), the desktop's
+  `ModuleReceipt` drops `module_id`, neither bench shows the card's text
+  (`we2_bench.rs` `model_card` returns two booleans), and a model is named
+  only right after a flasher wrote one whose SHA-256 matched the pinned
+  release ("SecuraCV person detection, installed and checked"). Pinned in
+  `desktop_parity.test.js`; `we2_bench.rs` tests the card reader. Host-tested;
+  not run on a device.
+- [ ] **A113 [code] The shareable report's tail scrubber misses identity lines
+  (device-details design §11, P14).** `TAIL_REDACT` matched credential words
+  only, so the boot banner's Hardware ID (the WAP's `sys_monitor.h` line and
+  `boot_kv` on the display, Sense, Vision and Sentinel) and the
+  self-manifest line (key fingerprint, device id, boot count) rode into the
+  last 12 lines of a pasted report. *Partly done (#<PR>):* both flashers'
+  `TAIL_IDENTITY` replaces both kinds of line with a visible marker
+  (`flash.test.js` renders the lines from the firmware's own format strings;
+  `desktop_parity.test.js` holds the two lists equal). Open: once the
+  firmware answers `q` (the design's PR 10), `sanitizeLogTail()` replaces each
+  `securacv.canary.details/v1` line with its share projection.
+- [x] **A114 [code] Both flashers' saved health reports carry this board's
+  life (device-details design §11, P24).** The saved report, which reads as
+  shareable, carried the lifetime boot counter, the witness record count, a
+  chain-head prefix, crash-record and OTA pending-verify state and a
+  millisecond timestamp (the desktop's also its verdict). *Done (#<PR>):*
+  "Save report" writes the share projection (`reportShareProjection`: chip,
+  image and partition facts, the About rows and the day; it lists what it
+  keeps, so a new report field stays out until someone decides it is
+  shareable), and "Save full report for your own records" keeps the rest,
+  labeled as describing this one board, still with no hardware address. The
+  eFuse security scan stays out of both. The desktop carries a copy of the
+  browser's projections, held equal by `desktop_parity.test.js`. Host-tested;
+  not run on a device.
 
 ---
 

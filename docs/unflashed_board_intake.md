@@ -1,7 +1,7 @@
 # Unflashed boards — what protects you, and what can't
 
 Status: Normative
-Last Updated: 2026-07-26
+Last Updated: 2026-10-22
 
 We tell people to buy a bare ESP32 board and flash it themselves. That is a
 real advantage — you can see the silicon, there's no vendor cloud, and the
@@ -168,6 +168,35 @@ honest boards. A clone that slips past those three is caught instead by the
 duplicate check against the session roster: two "new" boards sharing one
 address is a far louder signal than any vendor list.
 
+The checks read the address; neither flasher shows it unless asked. The base
+MAC is the station address in every Wi-Fi frame the board sends, and the
+Bluetooth address and the setup network's BSSID are derived from it, so even
+its last two bytes match the board in radio range. Both flashers draw a
+"Hardware address · Show" row that reveals the whole address on that page
+only, never copy it, and never write it into a saved report, a diagnostic
+report or a file name (saved files are named by the local date and a counter).
+The Lab's native bench keeps the address detect_chip returns and shows none of
+it. `canary-local/tests/desktop_parity.test.js` holds all three to that.
+
+### 3b. What the chip is
+
+Beside the block-0 security fields, both flashers read a few factory fields
+from eFuse blocks 1 and 2 for the About-this-board rows: the package, the wafer
+revision, the flash and PSRAM inside the package, and the block version that
+says whether factory calibration was written. Those fields share 32-bit words
+with per-chip trims (LDO and bias trims, ADC init codes, the temperature
+calibration), and the ROM's `READ_REG` returns whole words, so the allowlist is
+per **field**: block, word, bit and width from espefuse 5.6.0's
+`efuse_defs/<chip>.yaml`, the same table in `intake.js` (`CHIP_FUSE_FIELDS`)
+and `efuse.rs` (`ALLOWED_S3`, `ALLOWED_C3`, `ALLOWED_C6`). Each word is reduced
+to its allowed fields the moment it is read and kept nowhere: block 1 words
+0–2 (the MAC and the pad config), block 2 words 0–3 (the optional unique id)
+and 5–7 (the rest of the ADC calibration) and block 3 are never read, and on
+the C6 nothing in block 2 is. "Factory calibration: present" is decided from
+the block-version fields alone, as IDF's `esp_efuse_rtc_calib_get_ver` does.
+`intake.test.mjs` proves a word with every trim bit set decodes exactly like
+one with none. The classic ESP32 has no table and says "Not checked".
+
 ### 4. What it arrived running
 
 Matched on the `esp_app_desc_t` project name — a real string read off the
@@ -245,11 +274,14 @@ So the app speaks the read-only sliver of the ROM serial protocol itself
 over the same `serialport` link the WE2 flasher and the monitor use: reset
 into the bootloader with the sequences the vendored esptool-js uses (the
 classic bridge sequence first, the USB-Serial/JTAG sequence if that finds
-nothing), `SYNC`, six `READ_REG`s at eFuse block 0, then a hard reset back
-into the firmware. Those are the only two commands the module can send —
-nothing in it writes, burns or uploads a stub — and a probe that cannot
-reach the ROM reports "not checked", never "clean". The flash engine stays
-espflash-the-CLI; this is six register reads, not a second flasher.
+nothing), `SYNC`, six `READ_REG`s at eFuse block 0, then the three or four
+block-1/2 words the field allowlist above names (each reduced to its allowed
+fields as it arrives), then a hard reset back into the firmware. Those are
+the only two commands the module can send — nothing in it writes, burns or
+uploads a stub — and a probe that cannot reach the ROM reports "not checked",
+never "clean"; a block-1/2 word that does not answer leaves the About rows at
+"Not checked" without touching the security verdict. The flash engine stays
+espflash-the-CLI; this is ten register reads at most, not a second flasher.
 
 The decode is a port of the browser's `intake.js`: the same fields, bit
 offsets and widths, the same parity rule for `SPI_BOOT_CRYPT_CNT`, the same
@@ -276,9 +308,10 @@ implementation, not proven on a physical board. A protocol mistake fails as
 "not checked", not as a wrong verdict.
 
 The desktop app **can** now read what firmware is resident: `board_passport`
-reads the partition table, otadata and the booted slot's `esp_app_desc_t` over
-the same serial link, so the connect step names the firmware, its version and
-the slot it boots from. (Superseded claim: this section used to say it could
+reads the bootloader's image header, the partition table, otadata and the
+booted slot's `esp_app_desc_t` over the same serial link, so the connect step
+names the firmware, its version and the slot it boots from, and the This Board
+card shows what flash the image was built for beside the chip's own reading. (Superseded claim: this section used to say it could
 not, because `espflash board-info` reports only chip, revision, crystal and
 MAC.) The first-contact decision remains a **checkbox that defaults to on**
 rather than an inference — the safe default for a board of unknown provenance

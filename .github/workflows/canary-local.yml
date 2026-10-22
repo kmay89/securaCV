@@ -213,6 +213,10 @@ on:
       # (sweep A86); the flagship's lives here (the WAP's, Vision's, Sense's
       # and the display's are under globs above)
       - "firmware/canary/src/main.cpp"
+      # flash.test.js renders each family's Hardware ID boot line from the
+      # firmware's own format to prove the report scrubber drops it; the
+      # Sentinel's is the one outside the globs above
+      - "firmware/projects/canary-sentinel/src/main.cpp"
       - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
       # vision_wasm32.test.js crosses the host suite's extreme-box values,
       # read from the suite itself so the two grids cannot drift (sweep A49)
@@ -443,6 +447,10 @@ on:
       # (sweep A86); the flagship's lives here (the WAP's, Vision's, Sense's
       # and the display's are under globs above)
       - "firmware/canary/src/main.cpp"
+      # flash.test.js renders each family's Hardware ID boot line from the
+      # firmware's own format to prove the report scrubber drops it; the
+      # Sentinel's is the one outside the globs above
+      - "firmware/projects/canary-sentinel/src/main.cpp"
       - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
       # vision_wasm32.test.js crosses the host suite's extreme-box values,
       # read from the suite itself so the two grids cannot drift (sweep A49)

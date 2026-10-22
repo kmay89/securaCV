@@ -595,10 +595,15 @@ test("roster: add, find, and the progression lines", async () => {
   assert.strictEqual(found.wifi, true);
   assert.strictEqual(c.rosterFind(r, "no:pe"), null);
   assert.strictEqual(c.rosterFind(r, null), null);
-  assert.strictEqual(c.macTail("a4:cf:12:00:a4:3b"), "…a4:3b");
+  // The progression lines carry no hardware-address bytes, not even a tail:
+  // the base MAC is the station address in every Wi-Fi frame the board
+  // sends, so its last two octets match the board in radio range. The entry
+  // keeps the address only to recognize the board again this session.
+  assert.strictEqual(c.macTail, undefined, "the tail helper is gone");
   const lines = c.rosterLines(r, 1300000 + 120000);
   assert.strictEqual(lines[0].label, "Canary Sense v2.2.0");
-  assert.strictEqual(lines[0].mac, "…a4:3b");
+  assert.ok(!("mac" in lines[0]));
+  assert.ok(!/a4:3b|a4:cf|ff:01/i.test(JSON.stringify(lines)), "a progression line draws MAC bytes");
   assert.ok(lines[0].extras.includes("Bedside"));
   assert.ok(lines[0].extras.includes("WiFi baked"));
   assert.strictEqual(lines[0].ago, "7 min ago");

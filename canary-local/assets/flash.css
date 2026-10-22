@@ -77,6 +77,18 @@
 }
 .flash-fact-label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
 .flash-fact-val { display: block; font-size: 14px; margin-top: 2px; word-break: break-word; }
+/* About this board: the hardware-address reveal, and the folded L2/L4 rows. */
+.flash-mono { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; }
+.flash-nocopy { user-select: none; -webkit-user-select: none; }
+.flash-reveal-note { display: block; color: var(--muted); }
+.flash-about { margin: 12px 0 4px; }
+.flash-about summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.flash-about-tech { display: block; margin: 8px 0 4px; }
+.flash-about-group { margin: 12px 0 0; }
+.flash-about-group h4 { margin: 0; font-size: 13px; }
+.flash-about-source { margin: 2px 0 4px; color: var(--muted); }
+.flash-about-term { color: var(--muted); font-size: 12px; white-space: normal; }
+.flash-about-raw { display: block; color: var(--muted); }
 .flash-current { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 0; color: #cfcfcf; font-size: 14.5px; }
 .flash-current-dot { font-size: 11px; }
 .flash-dot-ok { color: var(--ok); }

@@ -160,9 +160,26 @@ The flasher tries to fix the common failures before asking the user to:
   reads the port's USB VID/PID and links the exact driver (CP210x / CH340 /
   FTDI) *only* when the board actually uses that bridge. (`usbBridgeInfo`.)
 - **"Copy a diagnostic report"** — every stuck screen offers one click to copy
-  a paste-able report (browser, OS, chip, MAC, baud, error, log tail) for
-  Discussions. Public-only by construction — never WiFi credentials or keys.
-  (`buildDiagnosticReport`.)
+  a paste-able report (browser, OS, chip, baud, error, log tail) for
+  Discussions. Public-only by construction — never Wi-Fi credentials or keys,
+  no hardware address (not even a tail of it), and the log tail's Hardware ID,
+  self-manifest and MAC-bearing lines replaced by a visible marker
+  (`buildDiagnosticReport`). esptool's own "MAC: …" connect line is masked in
+  the technical log too (`maskHardwareAddress`).
+- **About this board** — the hello card shows the chip and its revision, the
+  flash it carries and a "Hardware address · Show" row; "More about this
+  board" lists the package, the flash and PSRAM in the package and factory
+  calibration ("Read from the chip", from allowlisted eFuse fields), what the
+  installed image declares (built with, anti-rollback number, image
+  fingerprint, the flash it was built for beside the chip's own size), and
+  what the chip can do ("From the maker’s datasheet"). The desktop Flasher
+  draws the same rows from a copy of the same model (`aboutBoardGroups`;
+  `desktop_parity.test.js` holds them equal).
+- **Saved reports** — "Save report" writes chip, image and partition facts and
+  the day: no counters, crash or update state, chain head or hardware address.
+  "Save full report for your own records" keeps the rest, says it describes
+  this one board, and still carries no hardware address. Reports and backups
+  are named by the local date and a counter (`canary-2026-10-22-1-backup.bin`).
 
 These sit on top of what was already there: automatic pre-flash backup,
 auto-reconnect across native-USB re-enumeration, chunked reads with per-chunk

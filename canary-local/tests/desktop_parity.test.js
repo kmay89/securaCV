@@ -357,10 +357,12 @@ test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnost
   assert.match(flashJs, /qrClear/, "browser no longer invalidates a stale Wi-Fi QR");
 
   // 12. Review hardening (Codex on #1549). The diagnostic report enforces
-  //     public-only IN THE BUILDER, both frontends: the MAC is truncated to
-  //     a non-stable tail, and the serial tail is scrubbed of credential
-  //     lines (the WAP prints its AP password to serial at boot — a report
-  //     someone is ASKED to paste must not carry it).
+  //     public-only IN THE BUILDER, both frontends: no hardware address at
+  //     all (the tail it once kept matches the board in radio range — the
+  //     base MAC is the station address in every Wi-Fi frame), and the serial
+  //     tail is scrubbed of credential lines (the WAP prints its AP password
+  //     to serial at boot — a report someone is ASKED to paste must not carry
+  //     it) and of identity lines (the Hardware ID, the self-manifest).
   for (const [name, src] of [["desktop app.js", appJs], ["browser flash-core.js", flashCore]]) {
     assert.match(src, /function sanitizeLogTail|export function sanitizeLogTail/,
       `${name} lost the serial-tail credential scrub`);
@@ -370,14 +372,13 @@ test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnost
     assert.match(src, /TAIL_REDACT[\s\S]{0,800}WIFI:/,
       `${name} scrub no longer covers the "[SETUP] QR WIFI:…;P:<key>;;" line every setup ` +
       "network prints, which carries the flagship's SoftAP key (sweep F350 review)");
-    assert.match(src, /function macTail|export function macTail/,
-      `${name} lost the MAC truncation`);
-    assert.match(src, /add\("MAC tail", macTail\(info\.mac\)/,
-      `${name} report no longer truncates the MAC in the builder`);
+    assert.ok(!/function macTail|export function macTail/.test(src),
+      `${name} has a MAC-tail helper again — no slice of the MAC is safe to paste`);
+    const builder = fnSource(src, "buildDiagnosticReport");
+    assert.ok(!/MAC/.test(builder) && !/info\.mac\b/.test(builder),
+      `${name} report prints a MAC line again — a stable identifier in a pastebin`);
     assert.match(src, /sanitizeLogTail\(String\(info\.logTail\)/,
       `${name} report no longer scrubs the tail in the builder`);
-    assert.ok(!/add\("MAC", info\.mac\)/.test(src),
-      `${name} report prints the full MAC again — a stable identifier in a pastebin`);
   }
   // ...and the two lists are the same list: a pattern added to one frontend
   // and not the other leaves half the users pasting the line it covers.
@@ -389,6 +390,15 @@ test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnost
   };
   assert.deepStrictEqual(redactList(appJs), redactList(flashCore),
     "desktop app.js and browser flash-core.js scrub different serial lines");
+  const identityList = (src) => {
+    const m = src.match(/const TAIL_IDENTITY = \[\n([\s\S]*?)\n\];/);
+    assert.ok(m, "TAIL_IDENTITY array not found");
+    return m[1].split("\n").map((ln) => ln.trim()).filter(Boolean)
+      .map((ln) => ln.match(/^(\/.+?\/[a-z]*),/)?.[1] ?? `<not a pattern: ${ln}>`);
+  };
+  assert.deepStrictEqual(identityList(appJs), identityList(flashCore),
+    "desktop app.js and browser flash-core.js mark different identity lines");
+  assert.ok(identityList(flashCore).length >= 2, "the identity list lost the Hardware ID or the manifest line");
 });
 
 test("parity wave 2: the board passport, the install verdict, and 'we've met this board'", () => {
@@ -5261,20 +5271,38 @@ test("rule 7: the desktop's self-check chips use the browser's verdict, threshol
     "every write starts from resetOutcome, which must let the next manifest be that write's receipt");
 });
 
-test("both flashers name a full-flash backup canary-<mac6>…-backup.bin, and the engine's helper is the one in use", () => {
+test("both flashers name a saved file by the day and a counter, and the engine's helper is the one in use", async () => {
+  // No file either flasher saves is named after the board: the MAC's last six
+  // hex digits used to name backups and reports, and the base MAC is the
+  // station address in every Wi-Fi frame the board sends.
   const appJs = read(join(ROOT, "desktop/src/app.js"));
   const flashJs = read(join(CANARY, "assets/flash.js"));
-  assert.match(flashJs, /const name = `canary-\$\{macStamp\(\)\}-backup\.bin`;/, "the browser's backup name moved");
-  assert.match(appJs, /defaultPath: `canary-\$\{macStamp\(mac \|\| ""\)\}-backup\.bin`,/, "the desktop's backup name must be the browser's");
-  const browserStamp = (mac) => new Function("state", fnSource(flashJs, "macStamp") + "\nreturn macStamp;")({ mac })();
-  const deskStamp = new Function("state", fnSource(appJs, "macStamp") + "\nreturn macStamp;")({ mac: null });
-  for (const mac of ["AA:BB:CC:DD:EE:FF", "aa-bb-cc-dd-ee-ff", "0:1", "", null, "zz"]) {
-    assert.strictEqual(deskStamp(mac || ""), browserStamp(mac), `macStamp disagrees on ${String(mac)}`);
+  for (const [label, src] of [["browser flash.js", flashJs], ["desktop app.js", appJs]]) {
+    assert.ok(!/macStamp/.test(src), `${label} names files after the MAC again`);
   }
-  // The automatic safety copy is named by the engine's helper, whose own
-  // test pins the browser's scheme.
-  assert.match(libRs, /\.join\(rescue::backup_filename\(&mac, &stamp\.to_string\(\)\)\)/);
-  assert.ok(engineRs("rescue").includes('"canary-ddeeff-backup.bin"'), "rescue.rs no longer pins the browser's scheme");
+  assert.match(flashJs, /const name = core\.backupFileName\(nextFileStamp\(\)\);/, "the browser's backup name moved");
+  assert.match(appJs, /defaultPath: backupFileName\(nextFileStamp\(\)\),/, "the desktop's backup name must be the browser's");
+  assert.match(appJs, /defaultPath: reportFileName\(nextFileStamp\(\), full\),/, "the desktop's report name must be the browser's");
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const desk = aboutBlock();
+  for (const when of [new Date(2026, 0, 5, 0, 1), new Date(2026, 9, 22, 23, 59)]) {
+    for (const n of [1, 2, 17]) {
+      const stamp = core.fileStamp(when, n);
+      assert.strictEqual(desk.fileStamp(when, n), stamp);
+      assert.strictEqual(desk.backupFileName(stamp), core.backupFileName(stamp));
+      assert.strictEqual(desk.reportFileName(stamp, true), core.reportFileName(stamp, true));
+      assert.strictEqual(desk.reportFileName(stamp, false), core.reportFileName(stamp, false));
+    }
+  }
+  // The automatic safety copy is named by the engine's helper — the same
+  // `canary-<day>-<n>-backup.bin`, its counter the next one free in the
+  // backups folder — from the day the frontend computes in the local zone.
+  assert.match(libRs, /fn auto_backup_path\(app: AppHandle, day: String\)/);
+  assert.match(libRs, /rescue::next_backup_filename\(&day, &taken\)/);
+  assert.match(appJs, /invoke\("auto_backup_path", \{ day: localDay\(new Date\(\)\) \}\)/);
+  assert.ok(engineRs("rescue").includes(`"${core.backupFileName("2026-10-22-1")}"`),
+    "rescue.rs no longer pins the browser's scheme");
+  assert.ok(!/fn backup_filename\(mac/.test(engineRs("rescue")), "rescue::backup_filename takes a MAC again");
 });
 
 // ── The setup network's key, off the board's own first-boot line ───────────
@@ -5424,4 +5452,265 @@ test("setup door: catalog-derived, both flashers say it, neither prefills past i
     "browser credentials() no longer runs the shared verdict");
   assert.match(appJs, /if \(\$\("wifi-ssid"\)\.value && !wifiPass && !\(\$\("wifi-open"\) && \$\("wifi-open"\)\.checked\)\) \{\s*\n\s*setStatus\("flash-result", WIFI_PASS_REQUIRED, "err"\)/,
     "desktop readProvisioning no longer refuses a name with no password");
+});
+
+// ── About this board (device details, PR 1) ────────────────────────────────
+// The desktop carries the browser's About model as an inlined block (its
+// bundle cannot import canary-local). Cut it out and run it beside the
+// browser's: same facts in, same rows, words, order, names and projections out.
+function aboutBlock() {
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const m = appJs.match(/\/\/ BEGIN ABOUT-BOARD\n([\s\S]*?)\/\/ END ABOUT-BOARD/);
+  assert.ok(m, "desktop/src/app.js lost its ABOUT-BOARD block markers");
+  return new Function(`${m[1]}; return { ABOUT_CANNOT, sizeWords, chipRevisionFromDesc, CHIP_FUSE_KEYS,
+    decodeChipFuses, aboutBoardGroups, aboutBoardSummary, aboutBoardText, localDay, fileStamp, backupFileName,
+    reportFileName, SHARE_REPORT_NOTE, FULL_REPORT_NOTE, reportShareProjection, reportFullProjection,
+    maskHardwareAddress };`)();
+}
+
+const ABOUT_FUSE_VECTORS = {
+  "ESP32-S3": [
+    {},
+    { WAFER_VERSION_MINOR_LO: 2, PKG_VERSION: 0, BLK_VERSION_MINOR: 3, BLK_VERSION_MAJOR: 1, PSRAM_CAP: 1,
+      PSRAM_VENDOR: 1, PSRAM_TEMP: 1 },
+    { WAFER_VERSION_MINOR_LO: 0, WAFER_VERSION_MAJOR: 1, BLK_VERSION_MAJOR: 1, BLK_VERSION_MINOR: 1, PKG_VERSION: 1,
+      FLASH_CAP: 1, FLASH_VENDOR: 2, FLASH_TEMP: 2, PSRAM_CAP: 0, PSRAM_CAP_3: 1, PSRAM_VENDOR: 2 },
+    { PKG_VERSION: 7, FLASH_CAP: 7, FLASH_VENDOR: 7, PSRAM_CAP: 3, PSRAM_CAP_3: 1 },
+  ],
+  "ESP32-C3": [
+    { PKG_VERSION: 0, FLASH_CAP: 1, FLASH_VENDOR: 2, FLASH_TEMP: 2, WAFER_VERSION_MINOR_LO: 4, BLK_VERSION_MAJOR: 1 },
+    { PKG_VERSION: 3, FLASH_CAP: 4, FLASH_VENDOR: 5, BLK_VERSION_MAJOR: 0 },
+  ],
+  "ESP32-C6": [
+    { PKG_VERSION: 1, FLASH_CAP: 2, BLK_VERSION_MINOR: 1, WAFER_VERSION_MINOR: 9 },
+    { PKG_VERSION: 0, FLASH_CAP: 0, BLK_VERSION_MAJOR: 0, BLK_VERSION_MINOR: 0 },
+  ],
+};
+
+test("About this board: the desktop's rows are the browser's, fact for fact", async () => {
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const intake = await import(pathToFileURL(join(CANARY, "assets/intake.js")).href);
+  const desk = aboutBlock();
+
+  // The desktop decodes efuse.rs's field values with the browser's decode.
+  for (const [chip, table] of Object.entries(intake.CHIP_FUSE_FIELDS)) {
+    assert.deepStrictEqual(desk.CHIP_FUSE_KEYS[chip], table.map((f) => f.key), `${chip} key lists drifted`);
+    for (const f of ABOUT_FUSE_VECTORS[chip]) {
+      assert.deepStrictEqual(desk.decodeChipFuses(chip, f), intake.decodeChipFuses(chip, f), `${chip} decode drifted`);
+    }
+  }
+  assert.deepStrictEqual(desk.decodeChipFuses("ESP32", {}), intake.decodeChipFuses("ESP32", {}));
+  assert.deepStrictEqual(desk.ABOUT_CANNOT, core.ABOUT_CANNOT, "the cannot-say phrases drifted");
+
+  // Every combination of what a flasher can know about a board.
+  const header = core.parseBootloaderHeader(Uint8Array.from([0xe9, 3, 2, 0x2f]), "ESP32-S3");
+  const images = [undefined, false, null,
+    { projectName: "canary_wap", version: "2.4.16", idf: "v5.5.1", secureVersion: 2, elfSha256Prefix: "a0a1a2a3a4a5a6a7" },
+    { projectName: "", version: "", idf: "", secureVersion: undefined, elfSha256Prefix: null }];
+  const boots = [undefined, false, null, header, { ...header, flashBytes: 8 << 20 },
+    core.parseBootloaderHeader(Uint8Array.from([0xe9, 3, 2, 0x20]), "ESP32-C6")];
+  let n = 0;
+  for (const chip of ["ESP32-S3", "ESP32-C3", "ESP32-C6", "ESP32", null]) {
+    const fuseStates = [undefined, null, { supported: false, chip },
+      ...((ABOUT_FUSE_VECTORS[chip] || []).map((f) => intake.decodeChipFuses(chip, f)))];
+    for (const chipDesc of [null, "esp32s3 (revision v0.2)", "ESP32-S3 (QFN56) (revision v0.2)"]) {
+      for (const fuses of fuseStates) {
+        for (const image of images) {
+          for (const bootloader of boots) {
+            for (const bench of [false, true]) {
+              const facts = { chip, chipDesc, flashBytes: chip ? 8 << 20 : null, fuses, image, bootloader, bench };
+              const want = core.aboutBoardGroups(facts);
+              assert.deepStrictEqual(desk.aboutBoardGroups(facts), want, `rows drifted for ${JSON.stringify(facts)}`);
+              assert.strictEqual(desk.aboutBoardText(want, "X"), core.aboutBoardText(want, "X"));
+              assert.strictEqual(desk.aboutBoardSummary(facts), core.aboutBoardSummary(facts));
+              n++;
+            }
+          }
+        }
+      }
+    }
+  }
+  assert.ok(n > 1000, `only ${n} fact sets compared`);
+
+  // The saved report: the same projections, the same notes.
+  const report = {
+    generatedAt: "2026-10-22T21:14:09.123Z", chip: "ESP32-S3", mac: "dc:54:75:c1:22:30", flashBytes: 8 << 20,
+    partitions: [{ label: "nvs", kind: "data · nvs", offset: 0x9000, size: 0x5000 }],
+    slots: [{ label: "app0", subtype: 0x10, empty: false, project: "canary", version: "2.4.16", built: "x", idf: "v5", active: true }],
+    ota: { updatesSeen: 3, pendingVerify: true }, coredump: { present: true, size: 1 },
+    witness: { boots: 9, seq: 4, chainHeadFp: "abcd" }, witnessLog: { label: "witness_log", size: 4096 },
+    verdict: { level: "attn", headline: "a crash is stored", findings: [] },
+    about: core.aboutBoardGroups({ chip: "ESP32-S3", flashBytes: 8 << 20 }),
+  };
+  const when = new Date(2026, 9, 22, 9);
+  assert.deepStrictEqual(desk.reportShareProjection(report, when), core.reportShareProjection(report, when));
+  assert.deepStrictEqual(desk.reportFullProjection(report), core.reportFullProjection(report));
+  assert.ok(!JSON.stringify(desk.reportShareProjection(report, when)).includes("verdict"),
+    "the desktop's verdict (a crash, a pending update) is posture and stays out of the shared save");
+  assert.strictEqual(desk.SHARE_REPORT_NOTE, core.SHARE_REPORT_NOTE);
+  assert.strictEqual(desk.FULL_REPORT_NOTE, core.FULL_REPORT_NOTE);
+
+  // The ROM tools' MAC lines are masked the same way where each draws them.
+  for (const line of ["MAC: dc:54:75:c1:22:30", "MAC address:       DC-54-75-C1-22-30", "Chip type: esp32s3", "12:34:56"]) {
+    assert.strictEqual(desk.maskHardwareAddress(line), core.maskHardwareAddress(line));
+  }
+});
+
+test("About this board: the eFuse field allowlist is one table, read the same way, on both flashers", () => {
+  const intakeJs = read(join(CANARY, "assets/intake.js"));
+  const efuseRs = read(join(ROOT, "desktop/src-tauri/src/efuse.rs"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  // (chip, key, block, word, bit, width), per chip, both sides.
+  const jsTable = (chip) => {
+    const m = intakeJs.match(new RegExp(`CHIP_FUSE_FIELDS = \\{[\\s\\S]*?"${chip}": \\[([^\\]]*)\\]`));
+    assert.ok(m, `couldn't find intake.js's ${chip} field allowlist`);
+    return [...m[1].matchAll(/key: "([A-Z0-9_]+)", block: (\d), word: (\d), bit: (\d+), width: (\d+)/g)]
+      .map((x) => x.slice(1).join("@")).sort();
+  };
+  const rsTable = (constName) => {
+    const m = efuseRs.match(new RegExp(`const ${constName}: &\\[AllowedField\\] = &\\[([^\\]]*)\\];`));
+    assert.ok(m, `couldn't find efuse.rs ${constName}`);
+    return [...m[1].matchAll(/allowed\("([A-Z0-9_]+)", (\d), (\d), (\d+), (\d+)\)/g)]
+      .map((x) => x.slice(1).join("@")).sort();
+  };
+  for (const [chip, c] of [["ESP32-S3", "ALLOWED_S3"], ["ESP32-C3", "ALLOWED_C3"], ["ESP32-C6", "ALLOWED_C6"]]) {
+    assert.ok(jsTable(chip).length >= 8, `intake.js ${chip} table didn't parse`);
+    assert.deepStrictEqual(rsTable(c), jsTable(chip), `${chip}: the eFuse field allowlist drifted between intake.js and efuse.rs`);
+    assert.match(efuseRs, new RegExp(`"${chip}" => Some\\(${c}\\)`), `efuse.rs no longer maps ${chip} to ${c}`);
+  }
+  // Same read offsets for blocks 1 and 2.
+  const js = intakeJs.match(/EFUSE_BLOCK_RD_OFFSETS = \{ 1: (0x[0-9a-f]+), 2: (0x[0-9a-f]+) \}/);
+  const r1 = efuseRs.match(/EFUSE_BLOCK1_RD_OFFSET: u32 = (0x[0-9a-f_]+);/);
+  const r2 = efuseRs.match(/EFUSE_BLOCK2_RD_OFFSET: u32 = (0x[0-9a-f_]+);/);
+  assert.ok(js && r1 && r2, "couldn't read the block 1/2 offsets from both sides");
+  assert.strictEqual(parseInt(r1[1], 16), parseInt(js[1], 16));
+  assert.strictEqual(parseInt(r2[1], 16), parseInt(js[2], 16));
+  // Masked in the reader: each word goes straight into its allowed fields,
+  // and the serialized scan keeps block 0's words only.
+  assert.match(efuseRs, /Some\(value\) => got\.extend\(fields_of_word\(chip, block, word, value\)\)/,
+    "efuse.rs must reduce each block-1/2 word to its fields on the line it is read");
+  assert.match(efuseRs, /words: words\[\.\.EFUSE_BLOCK0_WORDS\.min\(words\.len\(\)\)\]\.to_vec\(\)/);
+  assert.match(intakeJs, /Object\.assign\(fields, fieldsOfWord\(chip, block, word, await readReg\(chipFuseAddr\(efuseBase, block, word\)\)\)\)/,
+    "intake.js must reduce each block-1/2 word to its fields as it is read");
+  // The frontends decode field values, never words.
+  assert.match(appJs, /decodeChipFuses\(chip, scan\.chip_fields\)/);
+  assert.match(read(join(CANARY, "assets/flash.js")), /intake\.readChipFuses\(state\.chip, esploader\.chip && esploader\.chip\.EFUSE_BASE,/);
+});
+
+test("the hardware address: no bytes on screen until asked, none copied, saved or in a file name — both flashers and the Lab bench", async () => {
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  for (const [label, src] of [["browser flash.js", flashJs], ["desktop app.js", appJs]]) {
+    assert.ok(!/ID \(MAC\)/.test(src), `${label} shows "ID (MAC)" again`);
+    assert.ok(!/macTail/.test(src), `${label} draws a MAC tail again`);
+  }
+  // The desktop: the connect lines carry the chip, never the address; the
+  // nursery strip carries no tail; the reveal is the one place it is drawn.
+  assert.ok(!/state\.mac \? ` · \$\{state\.mac\}`/.test(appJs), "the health note prints the MAC again");
+  assert.ok(!/e\.mac\.split/.test(appJs), "the nursery strip prints a MAC tail again");
+  assert.match(appJs, /setConn\("connected", `Connected · \$\{aboutBoardSummary\(aboutFacts\(\)\)\} on \$\{port\}`\)/);
+  const drawn = [...appJs.matchAll(/String\(mac\)\.toUpperCase\(\)/g)];
+  assert.strictEqual(drawn.length, 1, "the desktop draws the address somewhere other than its reveal");
+  assert.match(fnSource(appJs, "macRevealRow"), /show\.addEventListener\("click", \(\) => \{/);
+  assert.match(html, /id="this-board"/, "the desktop lost its This Board card");
+  // health_check takes no MAC and returns none; the saves are projections.
+  assert.ok(!/fn health_check\([^)]*\bmac\b/.test(libRs), "health_check takes the MAC again");
+  assert.ok(!/"mac": mac/.test(libRs), "health_check returns the MAC again");
+  assert.match(appJs, /invoke\("health_check", \{ port, chip, flashBytes, baud: flashBaud\(\) \}\)/);
+  assert.match(fnSource(appJs, "onSaveHealthReport"),
+    /const body = full \? reportFullProjection\(r\) : reportShareProjection\(r, Date\.now\(\)\);/);
+  assert.ok(!/contents: JSON\.stringify\(r, null, 2\)/.test(appJs), "a desktop save writes the raw report again");
+  for (const [label, src] of [["browser flash.js", flashJs], ["desktop app.js", appJs]]) {
+    assert.ok(src.includes("Save full report for your own records"), `${label} lost the labeled full save`);
+  }
+  // The diagnostic gatherers hand the builders no MAC, and espflash's own
+  // board-info line ("MAC address: …", printed before every flash) is masked
+  // where the desktop and the Lab bench draw it.
+  assert.ok(!/mac: state\.mac \|\| undefined/.test(appJs));
+  assert.match(fnSource(appJs, "appendFlashLog"), /const line = maskHardwareAddress\(String\(text\)\);/);
+
+  // The Lab's native bench: it keeps the address detect_chip returns and
+  // shows none of it, and its About rows are the Flasher's for the same read.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const desk = aboutBlock();
+  const receipt = { target: "esp32-host", product_id: "securacv-canary", version: "9.9.9", release_sha256: "a".repeat(64),
+    installed_sha256: "b".repeat(64), bytes_written: 1, release_verification: "ed25519+sha256", channel: "stable",
+    chip_write_verified: true, provisioned: true };
+  const run = await runNativeBench({
+    detectAnswer: { chip_desc: "esp32s3 (revision v0.2)", revision: "v0.2", crystal_mhz: 40, features: ["WiFi", "BLE"] },
+    flashAnswers: [receipt],
+    // espflash prints its board info, MAC included, before the write — the
+    // line arrives while the flash's log listener is up.
+    onListen: (evt, emit) => { if (evt === "flash:progress") emit("flash:log", "MAC address:       dc:54:75:c1:22:30"); },
+  });
+  try {
+    const text = run.text();
+    assert.ok(!/dc:54|DC:54|c1:22:30|C1:22:30/.test(text), "the Lab bench draws the hardware address");
+    assert.match(text, /Connected · ESP32-S3 v0\.2 · 8 MB flash on \/dev\/ttyACM0/);
+    const facts = { chip: "ESP32-S3", chipDesc: "esp32s3 (revision v0.2)", flashBytes: 8 * 1024 * 1024, bench: true };
+    const want = core.aboutBoardGroups(facts);
+    assert.deepStrictEqual(desk.aboutBoardGroups(facts), want, "flash-native.js and app.js disagree on the bench's rows");
+    const rows = run.mount.find((n) => n.tagName === "details" && n.textContent.startsWith("About this board"));
+    assert.ok(rows, "the Lab bench lost its About this board rows");
+    for (const r of want.flatMap((g) => g.rows).filter((x) => !x.reveal)) {
+      assert.ok(rows.textContent.includes(r.label + r.value), `the Lab bench lost the row ${r.label}: ${r.value}`);
+    }
+    assert.ok(rows.textContent.includes(core.ABOUT_CANNOT.flasherOnly),
+      "the bench must say the eFuse and image rows are read with the Flasher");
+    // The bench's technical log masks the board-info line's address.
+    await run.pick("securacv-canary");
+    assert.ok(!/c1:22:30/i.test(run.text()), "the Lab bench's flash log draws the MAC");
+    assert.ok(run.text().includes(core.HW_ADDRESS_MASK));
+  } finally {
+    run.close();
+  }
+});
+
+test("About this board reaches every frontend: ChipInfo's chip line, the passport's image header, the rows drawn", () => {
+  const flashRs = engineRs("flash");
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const nativeJs = read(join(CANARY, "assets/flash-native.js"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  // detect_chip keeps espflash's chip line, revision, crystal and features
+  // (both apps' detect_chip is this one function) …
+  const chipInfo = flashRs.match(/pub struct ChipInfo \{([\s\S]*?)\n\}/)[1];
+  for (const f of ["chip_desc", "revision", "crystal_mhz", "features"]) {
+    assert.match(chipInfo, new RegExp(`\\b${f}:`), `ChipInfo lost ${f}`);
+  }
+  // … and every frontend reads it.
+  assert.match(appJs, /state\.chipDesc = info\.chip_desc \|\| null;/);
+  assert.match(nativeJs, /st\.chipDesc = info\.chip_desc \|\| null;/);
+  // The passport reads the bootloader's header where the chip puts it, and
+  // the descriptor's anti-rollback number and ELF fingerprint.
+  assert.match(libRs, /async fn board_passport\(\s*app: AppHandle,\s*port: String,\s*chip: Option<String>,\s*baud: u32,\s*\)/);
+  assert.match(libRs, /health::bootloader_offset\(&chip_name\)/);
+  assert.match(libRs, /health::parse_bootloader_header\(&hb, &chip_name\)/);
+  assert.match(libRs, /"secureVersion": d\.secure_version,\s*"elfSha256Prefix": d\.elf_sha256_prefix,/);
+  assert.match(appJs, /invoke\("board_passport", \{\s*port,\s*chip: state\.chip,/);
+  assert.match(flashJs, /core\.parseBootloaderHeader\(hb, state\.chip\)/);
+  // The rows are drawn from the shared model on all three.
+  assert.match(flashJs, /core\.aboutBoardGroups\(aboutFacts\(\)\)/);
+  assert.match(nativeJs, /core\.aboutBoardGroups\(aboutFacts\(\)\)/);
+  assert.match(appJs, /aboutBoardGroups\(aboutFacts\(\)\)/);
+});
+
+test("the Grove module: neither flasher asks for its id, and neither shows its own model text", () => {
+  const we2Flash = read(join(CANARY, "assets/we2-flash.js"));
+  const benchRs = read(join(ROOT, "desktop/src-tauri/src/we2_bench.rs"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  // ID? is treated as a per-unit identifier: never sent, on either flasher.
+  assert.ok(!/cmd\("ID\?"/.test(we2Flash), "the browser's Grove bench sends ID? again");
+  assert.ok(!/at_command\("ID\?"/.test(we2Rs), "the desktop's Grove proof sends ID? again");
+  assert.ok(!/pub module_id/.test(we2Rs), "the desktop's module receipt carries an id field again");
+  // The module's model card text never reaches a screen …
+  assert.ok(!/model: " \+/.test(we2Flash), "the browser shows the module's model name again");
+  assert.ok(!/decoded\.name/.test(we2Flash), "the browser reads the card's name again");
+  assert.match(benchRs, /fn model_card\(reply: &Value\) -> \(bool, bool\)/, "the bench's card reader returns text again");
+  assert.match(benchRs, /"kind": "id", "software": software, "has_card": has_card, "pinned": pinned/);
+  assert.ok(!/p\.model\b/.test(appJs), "the desktop draws the module's model text again");
+  // … and a model is named only where the flasher just wrote one whose
+  // SHA-256 matched the pinned release.
+  assert.match(we2Flash, /job\.pinned \? "SecuraCV person detection, installed and checked\. "/);
+  assert.match(appJs, /SecuraCV person detection, installed and checked/);
 });

@@ -1315,20 +1315,19 @@ test("buildDiagnosticReport: formats safe facts, omits empties, no secrets", asy
   assert.ok(!/password|ssid|pubkey/i.test(r));
 });
 
-test("buildDiagnosticReport: the MAC is a tail, never the stable identifier", async () => {
-  // A report is made to be pasted somewhere public; a full MAC is a stable
-  // identifier (invariants.md III) and has no business riding along. The tail
-  // (last two octets) still tells two bench boards apart.
-  const { buildDiagnosticReport, macTail } = await core();
-  const r = buildDiagnosticReport({ mac: "94:B9:7E:5A:7F:A3" });
-  assert.ok(r.includes("MAC tail: …7f:a3"), "the non-stable tail is shown");
-  assert.ok(!r.includes("94:B9") && !/94:b9/i.test(r), "the full MAC never appears");
-  assert.strictEqual(macTail("94:B9:7E:5A:7F:A3"), "…7f:a3");
-  assert.strictEqual(macTail("94b97e5a7fa3"), "…7f:a3");     // separator-free input can't leak whole
-  assert.strictEqual(macTail(""), "");
-  assert.strictEqual(macTail("a3"), "", "too short to be a MAC → omit");
-  // no MAC → the line is omitted entirely, not rendered blank
-  assert.ok(!/MAC/.test(buildDiagnosticReport({ chip: "ESP32-S3" })));
+test("buildDiagnosticReport: no hardware address at all — not even a tail", async () => {
+  // A report is made to be pasted somewhere public. The base MAC is the
+  // station address in every Wi-Fi frame the board sends, so even its last two
+  // octets match the board in radio range (on an S3 the setup network's BSSID
+  // ends in the same bytes). The builder has no field for it: a MAC handed in
+  // is dropped whole.
+  const mod = await core();
+  const r = mod.buildDiagnosticReport({ mac: "94:B9:7E:5A:7F:A3", chip: "ESP32-S3" });
+  for (const piece of ["94:b9", "7f:a3", "5a7fa3", "94b97e", "7e:5a"]) {
+    assert.ok(!r.toLowerCase().includes(piece), `the report carries MAC bytes (${piece})`);
+  }
+  assert.ok(!/MAC|hardware address/i.test(r), "no MAC line, not even an empty one");
+  assert.strictEqual(mod.macTail, undefined, "the tail helper is gone: nothing should want it");
 });
 
 test("buildDiagnosticReport: the serial tail is scrubbed of credential lines", async () => {
@@ -1377,6 +1376,262 @@ test("buildDiagnosticReport: the serial tail is scrubbed of credential lines", a
   assert.strictEqual(sanitizeLogTail("nothing sensitive here"), "nothing sensitive here");
   assert.ok(!sanitizeLogTail("psk=hunter2").includes("hunter2"));
 });
+
+// printf's %s and %-Ns, enough to render a firmware format string the way
+// the board prints it.
+function printf(fmt, ...args) {
+  let i = 0;
+  return fmt.replace(/%(-?)(\d*)s/g, (_, left, width) => {
+    const v = String(args[i++]);
+    const w = Number(width || 0);
+    return left ? v.padEnd(w) : v.padStart(w);
+  });
+}
+
+test("sanitizeLogTail: the boot banner's Hardware ID and the self-manifest never reach a report", async () => {
+  // The lines are rendered from the firmware's own format strings, so a
+  // reworded banner fails here instead of slipping past the scrubber.
+  // Five families print a Hardware ID: the WAP (sys_monitor.h, its own
+  // printf) and the display, Sense, Vision and Sentinel (boot_kv, the shared
+  // banner). The flagship prints none.
+  const { buildDiagnosticReport, sanitizeLogTail } = await core();
+  const fw = (p) => readFileSync(join(ROOT, "..", p), "utf8");
+  const kv = /void boot_kv\(const char\* key, const char\* value\) \{\s*out\("([^"]+)\\n"/.exec(
+    fw("firmware/common/boot/boot_banner.cpp"));
+  assert.ok(kv, "boot_kv's format string moved — re-point this test");
+  for (const main of ["firmware/projects/canary-display/src/main.cpp", "firmware/projects/canary-sense/src/main.cpp",
+                      "firmware/projects/canary-vision/src/main.cpp", "firmware/projects/canary-sentinel/src/main.cpp"]) {
+    assert.match(fw(main), /boot_kv\("Hardware ID", devid_hex\)/, `${main} no longer prints the Hardware ID through boot_kv`);
+  }
+  const wap = /Serial\.printf\("(  Hardware ID[^"]*)\\n", hw_token\)/.exec(
+    fw("firmware/projects/canary-wap/arduino/canary_wap/sys_monitor.h"));
+  assert.ok(wap, "the WAP's Hardware ID line moved — re-point this test");
+  const token = "3f7a9e21b4c5d6e8";
+  const manifest = JSON.stringify({ schema: "securacv.canary.manifest/v1", board: "xiao-esp32s3",
+    firmware: "2.3.0-wap", pubkey_fp: "aabbccddeeff0011", device_id: "canary-4dc2", boots: 412 });
+  const tail = [
+    printf(kv[1], "Hardware ID", token),
+    printf(wap[1], token),
+    manifest,
+    "Brownout detector was triggered",
+  ].join("\n");
+  const r = buildDiagnosticReport({ logTail: tail });
+  for (const leak of [token, "aabbccddeeff0011", "canary-4dc2", "412"]) {
+    assert.ok(!r.includes(leak), `"${leak}" survived into the report`);
+  }
+  assert.strictEqual((r.match(/\[identity line: shown in the flasher, not in reports\]/g) || []).length, 3,
+    "each identity line is replaced by a visible marker, not dropped");
+  assert.ok(r.includes("Brownout detector was triggered"), "diagnosis survives");
+  // A line that only mentions hardware is not collateral damage.
+  assert.strictEqual(sanitizeLogTail("[HW] hardware revision 2"), "[HW] hardware revision 2");
+});
+
+test("the ROM tools' own MAC lines are masked where drawn, and never reach a report", async () => {
+  // esptool-js's connect logs "MAC: …" unasked (the vendored bundle's main()),
+  // and espflash prints "MAC address: …" in its board info before every
+  // flash, write-bin and read-flash (espflash 3.3.0 cli/mod.rs).
+  const { maskHardwareAddress, HW_ADDRESS_MASK, buildDiagnosticReport } = await core();
+  const bundle = readFileSync(join(ROOT, "assets/vendor/esptool-js/bundle.js"), "utf8");
+  assert.ok(bundle.includes('this.info("MAC: "+await this.chip.readMac(this))'),
+    "esptool-js no longer logs the MAC at connect — revisit the mask's reason");
+  const esptool = "MAC: dc:54:75:c1:22:30";
+  const espflash = "MAC address:       DC-54-75-C1-22-30";
+  for (const line of [esptool, espflash]) {
+    const masked = maskHardwareAddress(line);
+    assert.ok(masked.includes(HW_ADDRESS_MASK) && !/c1.22.30/i.test(masked), masked);
+  }
+  // Nothing else is collateral damage.
+  for (const keep of ["Chip is ESP32-S3 (QFN56) (revision v0.2)", "Uptime 12:34:56", "fe80::1",
+                      "sha256 a1b2c3d4e5f60718", "Crystal is 40MHz"]) {
+    assert.strictEqual(maskHardwareAddress(keep), keep);
+  }
+  // A board-info block in the tail: no MAC bytes survive into the report.
+  const tail = ["Chip type:         esp32s3 (revision v0.2)", "Crystal frequency: 40 MHz",
+    "Flash size:        8MB", "Features:          WiFi, BLE", "MAC address:       dc:54:75:c1:22:30",
+    "Error: write failed"].join("\n");
+  const r = buildDiagnosticReport({ logTail: tail });
+  assert.ok(!/dc:54|c1:22:30/i.test(r));
+  assert.ok(r.includes("Error: write failed") && r.includes("Chip type:"));
+  // flash.js draws esptool's log through the mask.
+  const flashJs = readFileSync(join(ROOT, "assets/flash.js"), "utf8");
+  assert.match(flashJs, /writeLine\(data\) \{ if \(logSink\) \{ logSink\.textContent \+= core\.maskHardwareAddress\(data\)/);
+  assert.match(flashJs, /write\(data\) \{ if \(logSink\) \{ logSink\.textContent \+= core\.maskHardwareAddress\(data\)/);
+});
+
+test("parseAppDescriptor reads the image's anti-rollback number and its ELF fingerprint", async () => {
+  const { parseAppDescriptor } = await core();
+  const d = appDesc({ version: "2.4.16", project: "canary_wap" });
+  d.writeUInt32LE(3, 4); // secure_version
+  for (let i = 0; i < 32; i++) d[144 + i] = 0xa0 + i; // app_elf_sha256
+  const got = parseAppDescriptor(new Uint8Array(d));
+  assert.strictEqual(got.secureVersion, 3);
+  // The first 8 bytes only — the vector health.rs pins for the desktop.
+  assert.strictEqual(got.elfSha256Prefix, "a0a1a2a3a4a5a6a7");
+  assert.strictEqual(parseAppDescriptor(new Uint8Array(d.subarray(0, 140))).elfSha256Prefix, null);
+});
+
+test("parseBootloaderHeader reads what flash the installed image was built for", async () => {
+  const { parseBootloaderHeader, bootloaderOffset, chipRevisionFromDesc } = await core();
+  // The vectors health.rs feeds the desktop's parser.
+  const s3 = parseBootloaderHeader(Uint8Array.from([0xe9, 0x03, 0x02, 0x2f]), "ESP32-S3");
+  assert.strictEqual(s3.flashMode, "DIO");
+  assert.strictEqual(s3.flashMhz, 80);
+  assert.strictEqual(s3.flashBytes, 4 * 1024 * 1024);
+  assert.strictEqual(s3.flashMhzEither, null);
+  const c3 = parseBootloaderHeader(Uint8Array.from([0xe9, 0x04, 0x00, 0x30]), "ESP32-C3");
+  assert.deepStrictEqual([c3.flashMode, c3.flashMhz, c3.flashBytes], ["QIO", 40, 8 * 1024 * 1024]);
+  // The C6's 0x0 means 40 OR 80 MHz to esptool; the header cannot say which.
+  const c6 = parseBootloaderHeader(Uint8Array.from([0xe9, 0x03, 0x02, 0x20]), "ESP32-C6");
+  assert.strictEqual(c6.flashMhz, null);
+  assert.deepStrictEqual(c6.flashMhzEither, [40, 80]);
+  // No image there (erased, or ciphertext) → null, never a guess.
+  assert.strictEqual(parseBootloaderHeader(new Uint8Array(32).fill(0xff), "ESP32-S3"), null);
+  assert.strictEqual(parseBootloaderHeader(Uint8Array.from([0xe9, 1]), "ESP32-S3"), null);
+  assert.strictEqual(bootloaderOffset("ESP32"), 0x1000);
+  assert.strictEqual(bootloaderOffset("ESP32-S3"), 0);
+  // The revision off a ROM tool's chip line, both tools' spellings.
+  assert.strictEqual(chipRevisionFromDesc("ESP32-S3 (QFN56) (revision v0.2)"), "v0.2");
+  assert.strictEqual(chipRevisionFromDesc("esp32s3 (revision v0.2)"), "v0.2");
+  assert.strictEqual(chipRevisionFromDesc("ESP32-C6"), null);
+});
+
+// ── About this board ───────────────────────────────────────────────────────
+const S3_FUSES = {
+  WAFER_VERSION_MINOR_LO: 2, WAFER_VERSION_MINOR_HI: 0, WAFER_VERSION_MAJOR: 0, PKG_VERSION: 0,
+  BLK_VERSION_MINOR: 3, BLK_VERSION_MAJOR: 1, FLASH_CAP: 0, FLASH_TEMP: 0, FLASH_VENDOR: 0,
+  PSRAM_CAP: 1, PSRAM_CAP_3: 0, PSRAM_VENDOR: 1, PSRAM_TEMP: 1,
+};
+
+test("aboutBoardGroups: every row says where it came from, and a gap is a phrase, never a zero", async () => {
+  const c = await core();
+  const intake = await import("../assets/intake.js");
+  const MAC = "dc:54:75:c1:22:30";
+  const groups = c.aboutBoardGroups({
+    chip: "ESP32-S3", chipDesc: "ESP32-S3 (QFN56) (revision v0.2)", flashBytes: 8 * 1024 * 1024,
+    fuses: intake.decodeChipFuses("ESP32-S3", S3_FUSES),
+    image: { projectName: "canary_wap", version: "2.4.16", idf: "v5.5.1", secureVersion: 0, elfSha256Prefix: "a0a1a2a3a4a5a6a7" },
+    bootloader: c.parseBootloaderHeader(Uint8Array.from([0xe9, 3, 2, 0x2f]), "ESP32-S3"),
+  });
+  assert.deepStrictEqual(groups.map((g) => g.source),
+    ["Read from the chip", "From the installed image", "From the maker’s datasheet"]);
+  assert.deepStrictEqual(groups.map((g) => g.rows.map((r) => r.id)), [
+    ["chip", "flash", "mac", "package", "flash_in_package", "psram_in_package", "calibration"],
+    ["firmware", "idf", "secure_version", "image_fingerprint", "built_for_flash", "flash_mode"],
+    ["radios", "cores", "crystal"],
+  ]);
+  const v = Object.fromEntries(groups.flatMap((g) => g.rows).map((r) => [r.id, r.value]));
+  assert.strictEqual(v.chip, "ESP32-S3 · v0.2");
+  assert.strictEqual(v.flash, "8 MB");
+  assert.strictEqual(v.package, "ESP32-S3 (QFN56)");
+  assert.strictEqual(v.psram_in_package, "8 MB · AP Memory, 3.3 V · rated to 105 °C");
+  assert.strictEqual(v.calibration, "Present");
+  assert.strictEqual(v.idf, "ESP-IDF v5.5.1");
+  // The image's claim beside the chip's own reading.
+  assert.strictEqual(v.built_for_flash, "4 MB · the chip has 8 MB");
+  assert.strictEqual(v.flash_mode, "DIO · 80 MHz");
+  // The hardware address is a row with nothing in it to show or copy.
+  const mac = groups[0].rows.find((r) => r.id === "mac");
+  assert.strictEqual(mac.reveal, true);
+  assert.ok(!("value" in mac));
+  const text = c.aboutBoardText(groups, "test");
+  assert.ok(!text.includes("Hardware address") && !/dc:54|c1:22:30/i.test(JSON.stringify(groups) + text));
+  assert.ok(!text.toLowerCase().includes(MAC));
+  assert.strictEqual(c.aboutBoardSummary({ chip: "ESP32-S3", chipDesc: "esp32s3 (revision v0.2)", flashBytes: 8 << 20 }),
+    "ESP32-S3 v0.2 · 8 MB flash");
+
+  // Cannot-say: not read yet, could not read, not on this chip, the Lab bench.
+  const C = c.ABOUT_CANNOT;
+  const row = (facts, id) => c.aboutBoardGroups(facts).flatMap((g) => g.rows).find((r) => r.id === id).value;
+  assert.strictEqual(row({ chip: "ESP32-S3" }, "package"), C.notCheckedYet);
+  assert.strictEqual(row({ chip: "ESP32-S3", fuses: null }, "package"), C.notChecked);
+  assert.strictEqual(row({ chip: "ESP32", fuses: { supported: false, chip: "ESP32" } }, "package"), C.notChecked);
+  assert.strictEqual(row({ chip: "ESP32-C3", fuses: intake.decodeChipFuses("ESP32-C3", {}) }, "psram_in_package"), C.notOnChip);
+  assert.strictEqual(row({ chip: "ESP32-C6" }, "psram_in_package"), C.notOnChip);
+  assert.strictEqual(row({ chip: "ESP32-S3", bench: true }, "package"), C.flasherOnly);
+  assert.strictEqual(row({ chip: "ESP32-S3", bench: true }, "installed"), C.flasherOnly);
+  assert.strictEqual(row({ chip: "ESP32-S3" }, "installed"), C.notCheckedYet);
+  assert.strictEqual(row({ chip: "ESP32-S3", image: false, bootloader: false }, "installed"), C.notChecked,
+    "a read that failed is never an empty board");
+  assert.strictEqual(row({ chip: "ESP32-S3", image: null, bootloader: null }, "installed"), "None found");
+  assert.strictEqual(row({ chip: "ESP32-S3", image: { projectName: "x" }, bootloader: false }, "built_for_flash"), C.notChecked);
+  assert.strictEqual(row({}, "chip"), C.notReported);
+  assert.strictEqual(row({ chip: "ESP32-S3" }, "flash"), C.notReported);
+  // Never a number standing in for a missing fact.
+  for (const g of c.aboutBoardGroups({ chip: "ESP32-S3" })) {
+    for (const r of g.rows) if (!r.reveal) assert.ok(r.value && !/^0+$/.test(r.value), `${r.id}: ${r.value}`);
+  }
+});
+
+test("saved files are named by the day and a counter, never by the board", async () => {
+  const c = await core();
+  const when = new Date(2026, 9, 22, 23, 59); // local time
+  assert.strictEqual(c.fileStamp(when, 1), "2026-10-22-1");
+  assert.strictEqual(c.backupFileName(c.fileStamp(when, 2)), "canary-2026-10-22-2-backup.bin");
+  assert.strictEqual(c.reportFileName(c.fileStamp(when, 3), false), "canary-2026-10-22-3-report.json");
+  assert.strictEqual(c.reportFileName(c.fileStamp(when, 4), true), "canary-2026-10-22-4-full-report.json");
+  // Still the pattern both restore panels describe.
+  assert.match(c.backupFileName(c.fileStamp(when, 9)), /^canary-.+-backup\.bin$/);
+  // flash.js never builds a name from the board's address any more.
+  const flashJs = readFileSync(join(ROOT, "assets/flash.js"), "utf8");
+  assert.ok(!/macStamp/.test(flashJs), "flash.js still names files after the MAC");
+  assert.match(flashJs, /core\.backupFileName\(nextFileStamp\(\)\)/);
+  assert.match(flashJs, /core\.reportFileName\(nextFileStamp\(\), false\)/);
+  assert.match(flashJs, /core\.reportFileName\(nextFileStamp\(\), true\)/);
+});
+
+test("a saved report is a share projection unless the full local save is asked for", async () => {
+  const c = await core();
+  // A health report the way runHealthCheck builds one (a stray `mac` too, to
+  // prove the projections drop it whatever the caller put in).
+  const r = {
+    generatedAt: "2026-10-22T21:14:09.123Z",
+    chip: "ESP32-S3 (QFN56) (revision v0.2)", mac: "DC:54:75:C1:22:30", flashBytes: 8 << 20,
+    partitions: [{ label: "nvs", kind: "data · nvs", offset: 0x9000, size: 0x5000 }],
+    slots: [{ label: "app0", subtype: 0x10, empty: false, project: "canary_wap", version: "2.4.16",
+      built: "Oct 20 2026 10:00:00", idf: "v5.5.1", active: true }],
+    ota: { fresh: false, activeOta: 0, updatesSeen: 7, stateText: "pending verify", pendingVerify: true },
+    coredump: { present: true, size: 61440 },
+    witness: { seq: 1234, boots: 412, tamper: 1, chainHeadFp: "deadbeefcafe", provisioned: true, wifiConfigured: true },
+    witnessLog: { label: "witness_log", size: 0x10000 },
+    about: c.aboutBoardGroups({ chip: "ESP32-S3", flashBytes: 8 << 20 }),
+  };
+  const share = c.reportShareProjection(r, new Date(2026, 9, 22, 12));
+  const sj = JSON.stringify(share);
+  for (const leak of ["DC:54", "dc:54", "412", "1234", "deadbeef", "pendingVerify", "pending verify", "coredump",
+                      "61440", "tamper", "provisioned", "wifiConfigured", "updatesSeen", "21:14", "generatedAt"]) {
+    assert.ok(!sj.includes(leak), `the share projection carries "${leak}"`);
+  }
+  assert.strictEqual(share.scope, "share");
+  assert.strictEqual(share.day, "2026-10-22");
+  assert.strictEqual(share.slots[0].version, "2.4.16");
+  assert.strictEqual(share.partitions[0].label, "nvs");
+  assert.ok(share.about.every((g) => g.rows.every((x) => x.label !== "Hardware address")));
+  const full = c.reportFullProjection(r);
+  assert.strictEqual(full.scope, "full");
+  assert.match(full.note, /not for posting/);
+  assert.ok(!("mac" in full) && !JSON.stringify(full).includes("DC:54"), "the full save carries no MAC bytes either");
+  assert.strictEqual(full.witness.boots, 412, "the full save keeps the rest");
+  // flash.js saves the projections, never the raw report.
+  const flashJs = readFileSync(join(ROOT, "assets/flash.js"), "utf8");
+  assert.match(flashJs, /JSON\.stringify\(core\.reportShareProjection\(r, Date\.now\(\)\)/);
+  assert.match(flashJs, /JSON\.stringify\(core\.reportFullProjection\(r\)/);
+  assert.match(flashJs, /"Save full report for your own records"/);
+  assert.ok(!/JSON\.stringify\(r, null, 2\)/.test(flashJs), "a save path writes the raw report again");
+});
+
+test("flash.js puts no hardware-address bytes on screen until asked, and never copies them", () => {
+  const flashJs = readFileSync(join(ROOT, "assets/flash.js"), "utf8");
+  assert.ok(!/ID \(MAC\)/.test(flashJs), "the old ID (MAC) fact is back");
+  assert.ok(!/l\.mac/.test(flashJs), "the nursery strip prints a MAC tail again");
+  // The only place formatMac(…) is drawn is inside the reveal's click handler.
+  const draws = [...flashJs.matchAll(/core\.formatMac\(/g)].map((m) => flashJs.slice(Math.max(0, m.index - 400), m.index));
+  const shown = draws.filter((before) => /el\("span", "flash-mono flash-nocopy", mac \? $/.test(before.slice(-60)));
+  assert.strictEqual(shown.length, 1, "the address is drawn somewhere other than its reveal");
+  assert.match(flashJs, /show\.addEventListener\("click", \(\) => \{\s*val\.textContent = "";/);
+  // The diagnostic report is gathered without it.
+  assert.ok(!/mac: state\.mac \? core\.formatMac\(state\.mac\) : undefined/.test(flashJs));
+});
+
 
 // ── the setup network: its name's grammar, and the two lines a boot prints ──
 test("isSetupNetworkSsid: the twin of onboarding_fsm.h is_setup_ssid, on the host test's vectors", async () => {

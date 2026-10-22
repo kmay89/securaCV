@@ -771,28 +771,31 @@ async fn run_sidecar_streaming(
 }
 
 /// Where the automatic pre-flash safety copy lands: a per-app backups folder,
-/// named by the board's MAC + moment, created on demand. The frontend can't
-/// know the app-data dir, and the browser flasher's equivalent (an unasked
-/// download before every write) is the parity bar this path exists to meet —
-/// the reflash-with-no-undo gap was desktop-only. The name is the engine's
-/// `rescue::backup_filename` — the browser's `canary-…-backup.bin` scheme,
-/// with the moment in it because every safety copy shares this one folder.
+/// created on demand, named by the local date and a counter — never by
+/// anything of the board's (the MAC's tail used to name it, and the base MAC
+/// is the station address in every Wi-Fi frame). The frontend can't know the
+/// app-data dir, and the browser flasher's equivalent (an unasked download
+/// before every write) is the parity bar this path exists to meet — the
+/// reflash-with-no-undo gap was desktop-only. `day` is the frontend's local
+/// `YYYY-MM-DD` (Rust std has no local zone); the name is the engine's
+/// `rescue::next_backup_filename` — the browser's `canary-…-backup.bin`
+/// scheme, with the next free counter because every copy shares this folder.
 #[tauri::command]
-fn auto_backup_path(app: AppHandle, mac: String) -> Result<String, String> {
+fn auto_backup_path(app: AppHandle, day: String) -> Result<String, String> {
     let dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("no app data dir: {e}"))?
         .join("backups");
     std::fs::create_dir_all(&dir).map_err(|e| format!("couldn't create backups dir: {e}"))?;
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    Ok(dir
-        .join(rescue::backup_filename(&mac, &stamp.to_string()))
-        .to_string_lossy()
-        .to_string())
+    let taken: Vec<String> = std::fs::read_dir(&dir)
+        .map_err(|e| format!("couldn't read the backups dir: {e}"))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    let name = rescue::next_backup_filename(&day, &taken)
+        .ok_or_else(|| format!("not a date the backup can be named by: {day:?}"))?;
+    Ok(dir.join(name).to_string_lossy().to_string())
 }
 
 /// Back up the whole chip to `out_path` — a full-flash read the operator keeps
@@ -1039,12 +1042,14 @@ fn verdict_json(v: &health::Verdict) -> Value {
 /// Read the connected board's health: partition map, the firmware in each slot,
 /// update history, crash dump, and the witness chain — read-only. Returns the
 /// same report shape the browser renders, plus a self-heal verdict.
+///
+/// The report carries no hardware address: the frontend shows the board's
+/// behind a reveal on screen and saves none of it (app.js onSaveHealthReport).
 #[tauri::command]
 async fn health_check(
     app: AppHandle,
     port: String,
     chip: String,
-    mac: Option<String>,
     flash_bytes: Option<u64>,
     baud: u32,
 ) -> Result<Value, String> {
@@ -1062,7 +1067,7 @@ async fn health_check(
         });
         emit("✓ read complete — the chip looks blank.");
         return Ok(json!({
-            "chip": chip, "mac": mac, "flashBytes": flash_bytes,
+            "chip": chip, "flashBytes": flash_bytes,
             "blank": true, "partitions": [], "verdict": verdict_json(&verdict),
         }));
     }
@@ -1223,7 +1228,7 @@ async fn health_check(
 
     emit("✓ health check complete.");
     Ok(json!({
-        "chip": chip, "mac": mac, "flashBytes": flash_bytes,
+        "chip": chip, "flashBytes": flash_bytes,
         "partitions": partitions,
         "slots": slots.into_iter().map(Value::Object).collect::<Vec<_>>(),
         "ota": ota_json, "coredump": coredump_json,
@@ -1248,8 +1253,18 @@ async fn health_check(
 /// layout with no coredump region, or a flaky cable degrades a field to null
 /// rather than failing the connect. A passport that cannot be read must never
 /// be reported as a blank board — missing evidence is its own answer.
+///
+/// `chip` (detect_chip's canonical name) places the bootloader's image
+/// header for the About-this-board rows: 32 bytes at 0x0, or 0x1000 on the
+/// classic ESP32. `bootloader` is null when no image is there and `false`
+/// when the read itself failed — two answers the rows keep apart.
 #[tauri::command]
-async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value, String> {
+async fn board_passport(
+    app: AppHandle,
+    port: String,
+    chip: Option<String>,
+    baud: u32,
+) -> Result<Value, String> {
     // Each region is its own espflash spawn (bootloader re-sync included), so
     // the whole read runs 8–25 s — long enough that a silent label reads as a
     // hang. `passport:log` narrates each step; the frontend shows the line in
@@ -1257,12 +1272,33 @@ async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value
     let narrate = |line: &str| {
         let _ = app.emit("passport:log", line.to_string());
     };
+    narrate("reading the bootloader's image header…");
+    let chip_name = chip.unwrap_or_default();
+    let bootloader = match read_region(
+        &app,
+        &port,
+        health::bootloader_offset(&chip_name),
+        0x20,
+        baud,
+    )
+    .await
+    {
+        Ok(hb) => match health::parse_bootloader_header(&hb, &chip_name) {
+            Some(h) => json!({
+                "flashMode": h.flash_mode, "flashMhz": h.flash_mhz,
+                "flashMhzEither": h.flash_mhz_either, "flashBytes": h.flash_bytes,
+                "codes": { "mode": h.mode_code, "size": h.size_code, "freq": h.freq_code },
+            }),
+            None => Value::Null,
+        },
+        Err(_) => json!(false),
+    };
     narrate("reading the partition table…");
     let pt = read_region(&app, &port, 0x8000, 0xc00, baud).await?;
     let entries = health::parse_partition_table(&pt);
     if entries.is_empty() {
         // Read fine, found no table: a genuinely blank (or fully erased) chip.
-        return Ok(json!({ "blank": true, "resident": Value::Null }));
+        return Ok(json!({ "blank": true, "resident": Value::Null, "bootloader": bootloader }));
     }
 
     let apps = health::app_partitions(&entries);
@@ -1306,6 +1342,8 @@ async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value
                     "projectName": d.project_name,
                     "built": if built.is_empty() { Value::Null } else { json!(built) },
                     "idf": d.idf_ver,
+                    "secureVersion": d.secure_version,
+                    "elfSha256Prefix": d.elf_sha256_prefix,
                     "slot": booted.label,
                 });
             }
@@ -1342,6 +1380,7 @@ async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value
     Ok(json!({
         "blank": false,
         "resident": resident,
+        "bootloader": bootloader,
         "ota": ota_json,
         "coredump": coredump_json,
         "witness": witness_json,

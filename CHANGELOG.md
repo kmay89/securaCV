@@ -1,6 +1,74 @@
 # Changelog
 
 ## [Unreleased]
+### Flashers: About this board, read from the chip and the installed image; no hardware address on screen, in a report or in a file name
+
+- **About this board, in both flashers and the Lab's native bench.** The
+  browser flasher's hello card and the desktop Flasher's new This Board card
+  show the chip and its revision, the flash it carries and a "Hardware
+  address · Show" row; "More about this board" lists the package, the flash
+  and PSRAM inside the package and whether factory calibration was written
+  ("Read from the chip"), what the installed image declares — the ESP-IDF it
+  was built with, its anti-rollback number, the first 8 bytes of its ELF
+  SHA-256, and the flash it was built for beside the chip's own JEDEC size
+  ("From the installed image") — and the chip's radios, cores and crystal
+  ("From the maker’s datasheet": for the S3, C3 and C6 both ROM tools print
+  fixed strings there rather than reading anything). "Show technical names"
+  adds each row's technical name and the raw allowlisted field values; "Copy
+  these details" copies every row but the hardware address. A fact a flasher
+  cannot give says "Not checked yet", "Not checked", "Not on this chip", "Not
+  reported" or, on the Lab's bench (which has no fuse or image read), "Read
+  with the Flasher" — never a zero or a guess. The desktop carries a copy of
+  the browser's row model; `desktop_parity.test.js` runs both over 4,140 fact
+  sets and fails on any difference. The desktop's `detect_chip` now keeps
+  espflash's chip line, revision, crystal and features (`ChipInfo`), and its
+  passport reads the bootloader's image header and the descriptor's
+  `secure_version` and ELF hash.
+- **eFuse fields, never words.** Both flashers read the package, wafer,
+  in-package flash and PSRAM and block-version fields from eFuse blocks 1
+  and 2 by a per-chip FIELD allowlist (espefuse 5.6.0's tables, the same in
+  `intake.js` and `efuse.rs`), reducing each word to its allowed fields as it
+  is read. The per-chip trims and calibration values that share those words,
+  the factory MAC, the optional unique id and block 3 are never kept, shown
+  or saved; a word with every trim bit set decodes exactly like one with
+  none, on each chip. "Factory calibration" comes from the block version
+  alone, as IDF decides it.
+- **No hardware address on screen until asked, and none in anything saved
+  (device-details findings P12 and P24).** The browser's hello card and Board
+  report and the desktop's health card and connect line drew the full MAC,
+  and both nursery strips drew its last two bytes; the base MAC is the
+  station address in every Wi-Fi frame, so even that tail matches the board
+  in radio range. The address now sits behind "Show", on that page only, with
+  no copy. The ROM tools print it unasked — esptool-js's connect logs "MAC:
+  …" and espflash prints "MAC address: …" before every flash, write-bin and
+  read-flash — so every console that draws their output (the browser's
+  technical log, the desktop's consoles, the Lab bench's log) masks a
+  MAC-shaped token. The diagnostic report carries none of it (it kept a
+  two-byte tail), and its log-tail scrubber drops any line still holding one. "Save report" writes the share projection — chip, image and
+  partition facts and the day, no counters, crash or update state, chain head
+  or hardware address — and a second button, "Save full report for your own
+  records", keeps the rest and says it describes this one board; the
+  desktop's `health_check` no longer takes or returns the MAC. Reports and
+  backups are named by the local date and a counter
+  (`canary-2026-10-22-1-backup.bin`), never by the MAC's last six digits; the
+  desktop's automatic safety copies take the next free counter in their
+  folder. The help copy that said the firmware never broadcasts the address
+  is corrected.
+- **The diagnostic report's log tail drops identity lines too (P14).** The
+  boot banner's Hardware ID (the WAP's line and `boot_kv` on the display,
+  Sense, Vision and Sentinel) and the self-manifest line (key fingerprint,
+  device id, boot count) are replaced by a visible marker, in both flashers;
+  the test renders the lines from the firmware's own format strings.
+- **The Grove Vision module's id and text stay off screen (P13).** Neither
+  flasher sends `ID?` any more, and the desktop's module receipt drops the id
+  it carried. Neither bench shows the module's own model-card text; a model
+  is named only right after a flasher wrote one whose SHA-256 matched the
+  pinned release: "SecuraCV person detection, installed and checked".
+- Host-tested (`flash.test.js`, `intake.test.mjs`, `desktop_parity.test.js`,
+  `cargo test` in `desktop/flash-engine`; the `efuse.rs`, `we2.rs` and
+  `we2_bench.rs` tests through a stub harness); not run on a device. No
+  firmware change.
+
 ### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (F342, F347)
 
 - **A wrong `?claim=` no longer spends the phone's setup-door claim (sweep

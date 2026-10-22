@@ -268,12 +268,14 @@ function phaseModuleConnected(ctx, s) {
   (async () => {
     const at = probe;
     at.start();
+    // VER? only. The module's ID? answer is treated as a per-unit identifier
+    // (device details design §2.2, the never-read "sscma_module_id" row), so
+    // this bench never asks for it, on either flasher.
     const ver = await at.cmd("VER?", { timeoutMs: 1600 });
-    const id = ver ? await at.cmd("ID?", { timeoutMs: 1200 }) : null;
     at.stop();
     if (ver && ver.data) {
       idLine.textContent = "It answered: SSCMA firmware " + (ver.data.software || "?") +
-        (id && id.data ? " · id " + id.data : "") + ". Ready to (re)load the model.";
+        ". Ready to (re)load the model.";
     } else {
       idLine.textContent = "No AT answer — fine: a model-less or mid-state module still " +
         "flashes through its ROM bootloader. If this is actually the XIAO’s port, the next " +
@@ -693,20 +695,27 @@ function phaseModuleBench(ctx, s) {
         "refusing, burn the model first (one click back).";
       return;
     }
-    // What model is on it? Our stored model card answers — honesty decides the
-    // label map: only a card naming the person class earns "person" labels.
+    // What model is on it? The stored model card decides the label map: only a
+    // card naming the person class earns "person" labels. Its text is never
+    // shown — the module's own catalog includes models that would name a
+    // capability this project refuses (grove_vision_ai_v2_guide.md), and a
+    // card is the module's say-so, not a check. A model is NAMED only by
+    // this flasher, right after it wrote one whose SHA-256 matched the
+    // pinned release (phaseModuleDone).
     const info = await at.cmd("INFO?", { timeoutMs: 2000 });
-    let pinned = false, modelName = "";
+    let pinned = false, hasCard = false;
     try {
       // the reply's data is the base64 card — bare, or nested as data.info
       const raw = info && (typeof info.data === "string" ? info.data
         : info.data && typeof info.data.info === "string" ? info.data.info : null);
       const decoded = raw ? JSON.parse(atob(raw)) : null;
-      modelName = (decoded && decoded.name) || "";
+      hasCard = !!decoded;
       pinned = !!(decoded && Array.isArray(decoded.classes) && decoded.classes.includes("person"));
     } catch { /* no card or not ours — generic labels */ }
     idLine.textContent = "SSCMA firmware " + ((ver.data && ver.data.software) || "?") +
-      (modelName ? " · model: " + modelName : " · no model card — labels will read “object”") +
+      (pinned ? " · a model card for person detection (its text isn’t shown)"
+        : hasCard ? " · a model card for something else — labels will read “object”"
+          : " · no model card — labels will read “object”") +
       ". Start the preview below.";
     bench = mountBench(ctx, at, { pinned });
     box.insertBefore(bench.node, backBtn);
@@ -771,8 +780,13 @@ function phaseModuleDone(ctx, s, job) {
       const info = btoa(JSON.stringify(modelInfoJson({ version: job.version, sha256: job.sha256 })));
       await at.cmd('INFO="' + info + '"', { timeoutMs: 3000 });
       const inv = await at.cmd("INVOKE=1,0,1", { timeoutMs: 8000 });
+      // The one place a model is named: this flasher just wrote it, and its
+      // SHA-256 (and, once a release key is pinned, its signature) matched
+      // manifest-vision-model.json before a byte went out. A local file is
+      // the person's own, so it is never named for them.
+      const named = job.pinned ? "SecuraCV person detection, installed and checked. " : "Your model file, installed. ";
       proof.textContent = inv && inv.code === 0
-        ? "✓ The module answered, carries our model card, and ran one inference. Done — the " +
+        ? "✓ " + named + "The module answered, carries our model card, and ran one inference. Done — the " +
           "model persists across power cycles and every host reflash."
         : "The module answers AT but the test inference didn’t reply — power-cycle it once. " +
           "If it keeps refusing: the module may be running non-SSCMA firmware; see the device guide §4.";

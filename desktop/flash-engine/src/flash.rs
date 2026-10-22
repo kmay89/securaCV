@@ -62,11 +62,24 @@ pub struct BrokerTlsReceipt {
 /// What `detect_chip` reports: the canonical chip name — the "you can't pick the
 /// wrong image" guard, since the UI only offers products whose `chip` matches —
 /// plus the flash size in bytes when board-info named it, which the rescue
-/// bench's full-chip backup needs. Both come from the one board-info call.
+/// bench's full-chip backup needs. All of it comes from the one board-info call.
 #[derive(Serialize)]
 pub struct ChipInfo {
     chip: String,
+    /// espflash's own chip line ("esp32s3 (revision v0.2)") and the silicon
+    /// revision off it ("v0.2") — the About-this-board Chip row, "Read from
+    /// the chip". `canonical_chip` above keeps the guard role.
+    chip_desc: Option<String>,
+    revision: Option<String>,
+    /// espflash's crystal and features lines. For the S3, C3 and C6 these are
+    /// fixed strings in espflash 3.3.0, not readings, so the frontends draw
+    /// the crystal and radios from the datasheet and show these only at the
+    /// technical level.
+    crystal_mhz: Option<u32>,
+    features: Vec<String>,
     flash_bytes: Option<u64>,
+    /// Kept for the intake check below and to know the board again; the
+    /// frontends draw none of it unless asked, and save none of it.
     mac: Option<String>,
     /// The read-only MAC sanity check (blank / multicast / locally
     /// administered). Reported here rather than kept to ourselves: a board
@@ -127,6 +140,10 @@ pub async fn detect_chip<H: FlashHost>(
             });
             Ok(ChipInfo {
                 chip,
+                chip_desc: rescue::parse_chip_desc(&out),
+                revision: rescue::parse_revision(&out),
+                crystal_mhz: rescue::parse_crystal_mhz(&out),
+                features: rescue::parse_features(&out),
                 flash_bytes: rescue::parse_flash_size(&out),
                 mac,
                 mac_check,
@@ -1201,7 +1218,7 @@ mod tests {
         let mut host = Recorder::new(&fx);
         host.espflash = vec![(
             0,
-            "Chip type:         esp32s3 (revision v0.2)\nFlash size:        8MB\nMAC address:       dc:54:75:c1:22:30\n",
+            "Chip type:         esp32s3 (revision v0.2)\nCrystal frequency: 40 MHz\nFlash size:        8MB\nFeatures:          WiFi, BLE\nMAC address:       dc:54:75:c1:22:30\n",
         )];
         let info = block_on(detect_chip(&host, fx.catalog, "/dev/ttyACM0".into())).unwrap();
         assert_eq!(
@@ -1210,6 +1227,12 @@ mod tests {
         );
         let info = serde_json::to_value(info).unwrap();
         assert_eq!(info["chip"], "ESP32-S3");
+        // The chip line survives the fold to the canonical name: the revision
+        // the old ChipInfo dropped is the About rows' Chip value.
+        assert_eq!(info["chip_desc"], "esp32s3 (revision v0.2)");
+        assert_eq!(info["revision"], "v0.2");
+        assert_eq!(info["crystal_mhz"], 40);
+        assert_eq!(info["features"], json!(["WiFi", "BLE"]));
         assert_eq!(info["flash_bytes"], 8 * 1024 * 1024);
         assert_eq!(info["mac"], "dc:54:75:c1:22:30");
         assert!(info["mac_check"]["level"].is_string());

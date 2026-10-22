@@ -230,6 +230,12 @@
                  stays hidden until a board is actually read. -->
             <div id="passport" class="passport hidden"></div>
 
+            <!-- This Board: About this board, read from the chip and from the
+                 installed image (renderThisBoard). The same rows, words and
+                 order as the browser flasher's hello card; the hardware
+                 address sits behind a reveal and is never copied or saved. -->
+            <section id="this-board" class="this-board hidden" aria-live="polite"></section>
+
             <!-- Boards whose flashing port isn't the one you can see. Filled
                  from the embedded catalog (products[].access) — see
                  renderAccessNotes(); hidden when no such board ships. -->

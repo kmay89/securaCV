@@ -182,6 +182,195 @@ export function readSecurityEfuses(chip, words) {
            fields, burned, virgin: burned.length === 0 };
 }
 
+// ── eFuse blocks 1 and 2: what this chip is, by FIELD, never by word ────────
+// The About-this-board rows want a few facts the factory burns into blocks 1
+// and 2: the package, the wafer revision, the in-package flash and PSRAM part,
+// and the block version that says whether factory calibration was written.
+// Those fields share 32-bit words with per-chip trims (LDO and bias trims,
+// ADC init codes, the temperature calibration) whose values differ from chip
+// to chip and would fingerprint it, and the ROM's READ_REG hands back whole
+// words. So the allowlist below is per FIELD — block, word, bit and width,
+// from espefuse 5.6.0's efuse_defs/<chip>.yaml — and the reader keeps only
+// those fields from each word the moment it arrives (fieldsOfWord). No block
+// 1 or 2 word is stored, returned, shown or saved; the trims never leave the
+// loop that read them, and a decode of a word with every trim bit set is
+// byte-identical to one with them clear (intake.test.mjs flips them).
+//
+// What is never read at all: block 1 words 0-2 (the factory MAC and the pad
+// config), block 2 words 0-3 (OPTIONAL_UNIQUE_ID) and 5-7 (the rest of the ADC
+// calibration), and block 3. On the C6 nothing in block 2 is read: its block
+// version lives in block 1.
+//
+// desktop/src-tauri/src/efuse.rs carries the same tables (ALLOWED_* there);
+// desktop_parity.test.js pins every (chip, key, block, word, bit, width).
+export const EFUSE_BLOCK_RD_OFFSETS = { 1: 0x044, 2: 0x05c };
+
+export const CHIP_FUSE_FIELDS = {
+  "ESP32-S3": [
+    { key: "WAFER_VERSION_MINOR_LO", block: 1, word: 3, bit: 18, width: 3 },
+    { key: "PKG_VERSION", block: 1, word: 3, bit: 21, width: 3 },
+    { key: "BLK_VERSION_MINOR", block: 1, word: 3, bit: 24, width: 3 },
+    { key: "FLASH_CAP", block: 1, word: 3, bit: 27, width: 3 },
+    { key: "FLASH_TEMP", block: 1, word: 3, bit: 30, width: 2 },
+    { key: "FLASH_VENDOR", block: 1, word: 4, bit: 0, width: 3 },
+    { key: "PSRAM_CAP", block: 1, word: 4, bit: 3, width: 2 },
+    { key: "PSRAM_TEMP", block: 1, word: 4, bit: 5, width: 2 },
+    { key: "PSRAM_VENDOR", block: 1, word: 4, bit: 7, width: 2 },
+    { key: "PSRAM_CAP_3", block: 1, word: 5, bit: 19, width: 1 },
+    { key: "WAFER_VERSION_MINOR_HI", block: 1, word: 5, bit: 23, width: 1 },
+    { key: "WAFER_VERSION_MAJOR", block: 1, word: 5, bit: 24, width: 2 },
+    { key: "BLK_VERSION_MAJOR", block: 2, word: 4, bit: 0, width: 2 },
+  ],
+  "ESP32-C3": [
+    { key: "WAFER_VERSION_MINOR_LO", block: 1, word: 3, bit: 18, width: 3 },
+    { key: "PKG_VERSION", block: 1, word: 3, bit: 21, width: 3 },
+    { key: "BLK_VERSION_MINOR", block: 1, word: 3, bit: 24, width: 3 },
+    { key: "FLASH_CAP", block: 1, word: 3, bit: 27, width: 3 },
+    { key: "FLASH_TEMP", block: 1, word: 3, bit: 30, width: 2 },
+    { key: "FLASH_VENDOR", block: 1, word: 4, bit: 0, width: 3 },
+    { key: "WAFER_VERSION_MINOR_HI", block: 1, word: 5, bit: 23, width: 1 },
+    { key: "WAFER_VERSION_MAJOR", block: 1, word: 5, bit: 24, width: 2 },
+    { key: "BLK_VERSION_MAJOR", block: 2, word: 4, bit: 0, width: 2 },
+  ],
+  "ESP32-C6": [
+    { key: "WAFER_VERSION_MINOR", block: 1, word: 3, bit: 18, width: 4 },
+    { key: "WAFER_VERSION_MAJOR", block: 1, word: 3, bit: 22, width: 2 },
+    { key: "PKG_VERSION", block: 1, word: 3, bit: 24, width: 3 },
+    { key: "BLK_VERSION_MINOR", block: 1, word: 3, bit: 27, width: 3 },
+    { key: "BLK_VERSION_MAJOR", block: 1, word: 3, bit: 30, width: 2 },
+    { key: "FLASH_CAP", block: 1, word: 4, bit: 0, width: 3 },
+    { key: "FLASH_TEMP", block: 1, word: 4, bit: 3, width: 2 },
+    { key: "FLASH_VENDOR", block: 1, word: 4, bit: 5, width: 3 },
+  ],
+};
+
+// The (block, word) pairs a chip's allowlist touches, in read order — the
+// only words the reader ever asks the ROM for.
+export function chipFuseWords(chip) {
+  const table = CHIP_FUSE_FIELDS[chip];
+  if (!table) return [];
+  const seen = new Map();
+  for (const f of table) seen.set(`${f.block}:${f.word}`, { block: f.block, word: f.word });
+  return [...seen.values()].sort((a, b) => a.block - b.block || a.word - b.word);
+}
+
+export function chipFuseAddr(efuseBase, block, word) {
+  return efuseBase + EFUSE_BLOCK_RD_OFFSETS[block] + 4 * word;
+}
+
+// The allowlisted fields of ONE word, and nothing else from it. The caller
+// passes the word straight in and keeps only what comes back.
+export function fieldsOfWord(chip, block, word, value) {
+  const out = {};
+  for (const f of CHIP_FUSE_FIELDS[chip] || []) {
+    if (f.block !== block || f.word !== word) continue;
+    out[f.key] = ((value >>> f.bit) & ((1 << f.width) - 1)) >>> 0;
+  }
+  return out;
+}
+
+// Read the allowlisted fields off a live chip. `readReg(addr)` is esptool's
+// READ_REG (esploader.readReg). Each word is reduced to its allowed fields the
+// moment it is read; the loop variable is the only place a word ever lives.
+// A chip without a table answers `supported: false` and touches nothing.
+export async function readChipFuses(chip, efuseBase, readReg) {
+  if (!CHIP_FUSE_FIELDS[chip] || !Number.isFinite(efuseBase)) return { supported: false, chip };
+  const fields = {};
+  for (const { block, word } of chipFuseWords(chip)) {
+    Object.assign(fields, fieldsOfWord(chip, block, word, await readReg(chipFuseAddr(efuseBase, block, word))));
+  }
+  return decodeChipFuses(chip, fields);
+}
+
+// The words a decode turns into. Package names are esptool 5.6.0's own
+// (targets/<chip>.py get_chip_description); the flash, PSRAM and temperature
+// codes are espefuse's dictionaries for the same fields. A code with no name
+// stays a number at the technical level and reads "Not reported" in plain
+// words — never a guess.
+const PACKAGES = {
+  "ESP32-S3": { 0: "ESP32-S3 (QFN56)", 1: "ESP32-S3-PICO-1 (LGA56)" },
+  "ESP32-C3": { 0: "ESP32-C3 (QFN32)", 1: "ESP8685 (QFN28)", 2: "ESP32-C3 AZ (QFN32)", 3: "ESP8686 (QFN24)" },
+  "ESP32-C6": { 0: "ESP32-C6 (QFN40)" },
+};
+const MB = 1024 * 1024;
+const FLASH_CAPS = {
+  "ESP32-S3": { 1: 8 * MB, 2: 4 * MB },
+  "ESP32-C3": { 1: 4 * MB, 2: 2 * MB, 3: 1 * MB, 4: 8 * MB },
+  "ESP32-C6": { 1: 4 * MB, 2: 8 * MB },
+};
+const FLASH_VENDORS = {
+  "ESP32-S3": { 1: "XMC", 2: "GD", 3: "FM", 4: "TT", 5: "BY" },
+  "ESP32-C3": { 1: "XMC", 2: "GD", 3: "FM", 4: "TT", 5: "ZBIT" },
+};
+const TEMP_GRADES = { 1: "105 °C", 2: "85 °C" };
+const PSRAM_CAPS = { 1: 8 * MB, 2: 2 * MB, 3: 16 * MB, 4: 4 * MB };
+const PSRAM_VENDORS = { 1: "AP Memory, 3.3 V", 2: "AP Memory, 1.8 V" };
+
+// One in-package part (flash or PSRAM): its size, maker and temperature grade
+// where the codes name them. `cap` 0 means the package carries none.
+function packagePart(cap, capBytes, vendor, vendors, temp, tempNames) {
+  if (cap === 0) return { present: false };
+  return {
+    present: true,
+    bytes: capBytes[cap] || null,
+    vendor: (vendors && vendors[vendor]) || null,
+    temp: (tempNames && tempNames[temp]) || null,
+  };
+}
+
+// Turn the allowlisted field values into what the rows say. Pure; `fields`
+// holds field values only (never a word), so this is also what a test feeds.
+export function decodeChipFuses(chip, fields) {
+  const f = fields || {};
+  if (!CHIP_FUSE_FIELDS[chip]) return { supported: false, chip };
+  const raw = {};
+  for (const d of CHIP_FUSE_FIELDS[chip]) if (Number.isInteger(f[d.key])) raw[d.key] = f[d.key];
+  const blkMajor = raw.BLK_VERSION_MAJOR || 0;
+  const blkMinor = raw.BLK_VERSION_MINOR || 0;
+  let waferMajor, waferMinor;
+  if (chip === "ESP32-C6") {
+    waferMajor = raw.WAFER_VERSION_MAJOR || 0;
+    waferMinor = raw.WAFER_VERSION_MINOR || 0;
+  } else {
+    const minorRaw = ((raw.WAFER_VERSION_MINOR_HI || 0) << 3) | (raw.WAFER_VERSION_MINOR_LO || 0);
+    waferMajor = raw.WAFER_VERSION_MAJOR || 0;
+    waferMinor = minorRaw;
+    // esptool's S3 "eco0" rule: on a v0.0 chip whose block version is v1.1,
+    // the major field was spent on something else, so it reads as 0.
+    if (chip === "ESP32-S3" && (minorRaw & 0x7) === 0 && blkMajor === 1 && blkMinor === 1) {
+      waferMajor = 0; waferMinor = 0;
+    }
+  }
+  const flashCap = raw.FLASH_CAP || 0;
+  let pkg = (PACKAGES[chip] || {})[raw.PKG_VERSION];
+  // esptool tells the C6's two in-package-flash parts apart by their flash cap.
+  if (chip === "ESP32-C6" && raw.PKG_VERSION === 1) {
+    pkg = { 1: "ESP32-C6FH4 (QFN32)", 2: "ESP32-C6FH8 (QFN32)" }[flashCap];
+  }
+  const out = {
+    supported: true,
+    chip,
+    fields: raw,
+    wafer: `v${waferMajor}.${waferMinor}`,
+    package: pkg || null,
+    flash: packagePart(flashCap, FLASH_CAPS[chip] || {}, raw.FLASH_VENDOR,
+      FLASH_VENDORS[chip], raw.FLASH_TEMP, chip === "ESP32-C6" ? null : TEMP_GRADES),
+    // Only the S3 carries PSRAM fields; elsewhere the row says so.
+    psram: chip === "ESP32-S3"
+      ? packagePart(((raw.PSRAM_CAP_3 || 0) << 2) | (raw.PSRAM_CAP || 0), PSRAM_CAPS,
+        raw.PSRAM_VENDOR, PSRAM_VENDORS, raw.PSRAM_TEMP, TEMP_GRADES)
+      : null,
+    blockVersion: `v${blkMajor}.${blkMinor}`,
+    // IDF's own test (components/efuse/<chip>/esp_efuse_rtc_calib.c,
+    // esp_efuse_rtc_calib_get_ver): the S3 and C3 hold calibration when the
+    // block-2 major version is 1; the C6 when its block version (major * 100
+    // + minor) is 1 or more. Decided from the version fields alone — no trim
+    // value is read to answer it.
+    calibration: chip === "ESP32-C6" ? blkMajor * 100 + blkMinor >= 1 : blkMajor === 1,
+  };
+  return out;
+}
+
 // Turn an eFuse scan into findings the verdict understands. A burned field's
 // `severity` IS its level — the two vocabularies are deliberately the same —
 // but the mapping lives here so every caller renders the same sentence.

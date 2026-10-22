@@ -27,6 +27,14 @@
 // drawer, so the firmware derives its own token as always), the rescue
 // bench, the local-file install and the Vision module burn. Those stay in the
 // Flasher; the card says so, and says where.
+//
+// About this board: the Flasher's This Board rows, drawn from the same model
+// (flash-core.js aboutBoardGroups, the desktop's copy held to it by
+// desktop_parity.test.js) and fed the same detect_chip answer. The Lab app
+// has no fuse read and no passport read (desktop-lab exposes neither
+// command), so the eFuse and installed-image rows say "Read with the
+// Flasher" instead of guessing. The hardware address detect_chip returns is
+// kept to know the board again and never drawn — this bench shows none.
 
 import * as core from "./flash-core.js";
 
@@ -206,7 +214,7 @@ const requiresLiveReceipt = (product) => !product || product.serial_receipt !== 
     gen_flash.py. */
 export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
   const st = {
-    ports: [], port: null, portInfo: null, chip: null, flashBytes: null, mac: null,
+    ports: [], port: null, portInfo: null, chip: null, chipDesc: null, flashBytes: null, mac: null,
     macCheck: null, detecting: false, failedPort: null, busy: false,
     devChannel: false, manifest: null, manifestError: null, product: null,
     baudCeiling: null, monitoring: false, pollTimer: null,
@@ -250,7 +258,8 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
   portRow.append(portSel);
   const recheck = el("button", "ghost flash-hidden", "Read the board again");
   const note = el("p", "flash-note flash-note-soft flash-hidden");
-  head.append(conn, portRow, recheck, note);
+  const about = el("div", "flash-hidden");
+  head.append(conn, portRow, recheck, note, about);
   head.append(el("p", "fineprint",
     "The automatic safety copy, room presets, the fleet book, the rescue bench, " +
     "local-file installs and the Vision camera module live in the SecuraCV Flasher " +
@@ -262,6 +271,29 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
   mount.append(head, pick, flashCard, result);
 
   const setConn = (text) => { conn.textContent = text; };
+
+  // ── About this board: the Flasher's rows, from detect_chip alone ─────────
+  const aboutFacts = () => ({ chip: st.chip, chipDesc: st.chipDesc, flashBytes: st.flashBytes, bench: true });
+  const renderAbout = () => {
+    about.innerHTML = "";
+    if (!st.chip) { about.classList.add("flash-hidden"); return; }
+    about.classList.remove("flash-hidden");
+    const det = el("details", "flash-about");
+    det.append(el("summary", null, "About this board"));
+    for (const g of core.aboutBoardGroups(aboutFacts())) {
+      det.append(el("h4", null, g.title));
+      det.append(el("p", "fineprint", g.source));
+      for (const r of g.rows) {
+        // The hardware address: this bench keeps it to know the board again
+        // and shows none of it — the Flasher reveals it on request.
+        if (r.reveal) continue;
+        const row = el("div", "flash-report-row");
+        row.append(el("span", "flash-report-label", r.label), el("span", "flash-report-val", r.value));
+        det.append(row);
+      }
+    }
+    about.append(det);
+  };
   const showNote = (text) => {
     note.textContent = text || "";
     note.classList.toggle("flash-hidden", !text);
@@ -284,8 +316,9 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
   };
 
   const resetBoard = () => {
-    st.chip = null; st.flashBytes = null; st.mac = null; st.macCheck = null;
+    st.chip = null; st.chipDesc = null; st.flashBytes = null; st.mac = null; st.macCheck = null;
     st.product = null; st.failedPort = null;
+    renderAbout();
     pick.classList.add("flash-hidden");
     flashCard.classList.add("flash-hidden");
     recheck.classList.add("flash-hidden");
@@ -341,11 +374,12 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       const info = await invoke("detect_chip", { port });
       if (port !== st.port) return; // unplugged or switched while reading
       st.chip = info.chip;
+      st.chipDesc = info.chip_desc || null;
       st.flashBytes = info.flash_bytes;
       st.mac = info.mac;
       st.macCheck = info.mac_check || null;
-      const size = st.flashBytes ? ` · ${Math.round(st.flashBytes / (1024 * 1024))} MB flash` : "";
-      setConn(`Connected · ${info.chip}${size} on ${port}`);
+      setConn(`Connected · ${core.aboutBoardSummary(aboutFacts())} on ${port}`);
+      renderAbout();
       if (st.macCheck && st.macCheck.level && st.macCheck.level !== "clear") {
         showNote(`${st.macCheck.label}${st.macCheck.detail ? " — " + st.macCheck.detail : ""}`);
       }
@@ -512,7 +546,9 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     const pre = el("pre");
     log.append(pre);
     flashCard.append(stage, bar, log);
-    const line = (t) => { pre.textContent += t + "\n"; pre.scrollTop = pre.scrollHeight; };
+    // espflash prints its board info, MAC included, before every flash; the
+    // bench masks the address where it draws the line (core.maskHardwareAddress).
+    const line = (t) => { pre.textContent += core.maskHardwareAddress(t) + "\n"; pre.scrollTop = pre.scrollHeight; };
     go.addEventListener("click", () => onFlash({ product, form, redrawForm, erase, go, stage, bar, fill, line }));
   };
 

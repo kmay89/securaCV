@@ -99,7 +99,6 @@ pub struct ModuleReceipt {
     pub bytes_written: usize,
     pub flash_address: String,
     pub at_version: Option<Value>,
-    pub module_id: Option<Value>,
     pub inference_ok: bool,
     pub boxes: Vec<Value>,
     pub preview_image: Option<String>,
@@ -467,15 +466,14 @@ where
         Ok(None)
     }
 
-    fn prove(
-        &mut self,
-        version: &str,
-        sha256: &str,
-    ) -> Result<(Option<Value>, Option<Value>, Value), String> {
-        // The proof runs up to ~25 s (VER?/ID?/INFO plus one real inference)
-        // with nothing else printing — say so before going quiet.
+    fn prove(&mut self, version: &str, sha256: &str) -> Result<(Option<Value>, Value), String> {
+        // The proof runs up to ~25 s (VER?/INFO plus one real inference)
+        // with nothing else printing — say so before going quiet. No ID?:
+        // the module's id is treated as a per-unit identifier and never
+        // asked for (device details design §2.2, the "sscma_module_id" row),
+        // on this flasher or the browser's (we2-flash.js).
         (self.log)(
-            "asking the module to prove itself — VER/ID/INFO + one live inference (up to ~25 s)…"
+            "asking the module to prove itself — VER/INFO + one live inference (up to ~25 s)…"
                 .into(),
         );
         let version_reply = self.wake_module()?;
@@ -490,9 +488,6 @@ where
                     .into(),
             );
         }
-        let id_reply = self
-            .at_command("ID?", Duration::from_secs(4))?
-            .filter(at_ok);
         let info = json!({
             "name": "Person Detection",
             "version": version,
@@ -519,7 +514,7 @@ where
         // an ack is never consumed and discarded while waiting for one: an ok
         // ack means keep reading, an error ack fails fast, the event wins.
         let inference = self.invoke_event(Instant::now() + Duration::from_secs(8))?;
-        Ok((version_reply, id_reply, inference))
+        Ok((version_reply, inference))
     }
 }
 
@@ -541,7 +536,7 @@ where
 {
     let mut flasher = Flasher::new(port_name, log, progress)?;
     flasher.flash_model(model)?;
-    let (at_version, module_id, inference) = flasher.prove(&version, &sha256)?;
+    let (at_version, inference) = flasher.prove(&version, &sha256)?;
     let data = inference.get("data").cloned().unwrap_or(Value::Null);
     let boxes = data
         .get("boxes")
@@ -559,7 +554,6 @@ where
         bytes_written: model.len(),
         flash_address: format!("0x{MODEL_ADDR:08x}"),
         at_version,
-        module_id,
         inference_ok: true,
         boxes,
         preview_image,
