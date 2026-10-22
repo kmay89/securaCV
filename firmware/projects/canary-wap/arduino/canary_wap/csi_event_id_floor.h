@@ -157,9 +157,10 @@ inline bool ceiling_ignored(uint32_t persisted_floor, uint32_t delivered_ceiling
 // with them, so every hub and display that pinned the device sees a
 // stranger. A canary-wap's 10 s BOOT hold (factory_reset_by_hold()) clears
 // neither (it removes the saved Wi-Fi, the broker row and the name, and
-// keeps the identity), so its owner flashes it with the flasher's full
-// erase, which clears all of NVS, the floor `ev.next` and `csi.evsent`
-// included. Either way the allocator starts again at kIdSpaceBase,
+// keeps the identity), so its owner installs it again in a flasher (with
+// or without the full erase: the factory image starts NVS over either way),
+// which clears all of NVS, the identity key, the floor `ev.next` and
+// `csi.evsent` included. Either way the allocator starts again at kIdSpaceBase,
 // below the mark Home Assistant holds, so the owner then re-pins the device
 // in Home Assistant, which resets that mark. (Amended 2026-10-19: this note
 // had said a factory reset clears the namespace, which only the 30 s stage

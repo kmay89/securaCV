@@ -198,8 +198,11 @@ an SD card to fresh hardware moves its records, not the key); a Sense,
 Vision or Sentinel also makes one when it cannot read its stored key at
 boot (ledger F362). An over-the-air update, a PlatformIO or Arduino IDE
 upload (which, without its erase option, leaves the settings region
-alone) and the 10 s BOOT reset keep the key, so after one of those a mismatch means something else is
-publishing under that `device_id`: do not rotate to it.
+alone) and the 10 s BOOT reset keep the key. So after one of those a
+mismatch means either a Sense, Vision or Sentinel that could not read its
+stored key on that boot (F362, above), or something else publishing under
+that `device_id`: read the key off the device itself (the table above) and
+rotate only to that one.
 
 To clear it:
 

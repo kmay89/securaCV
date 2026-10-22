@@ -196,8 +196,9 @@ BOOT button keeps the sketch's own gestures: a short press opens the 30 s
 receipt gate, a 2 s hold prints the identity on serial, and a 10 s hold is
 the factory reset (`factory_reset_by_hold()`). The hold clears the saved
 Wi-Fi networks, the broker row, the device name and the first-boot flag,
-keeps the identity key and the API token derived from it, and restarts
-into first-boot setup when BOOT is released. It clears the Wi-Fi through
+keeps the identity key and the API token (derived from the key, or the
+one a flasher seeded), and restarts into first-boot setup when BOOT is
+released. It clears the Wi-Fi through
 the same `wifi_clear_credentials()` as Forget Wi-Fi, so on a unit that had
 credentials it re-arms the door's first-boot window the same way. A join over the door
 is held in RAM until WiFi proves it (`ble_improv_submit_join` /

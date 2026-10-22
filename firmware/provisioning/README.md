@@ -64,6 +64,6 @@ See `docs/secure_provisioning.md` for full documentation.
 ## Important Notes
 
 - Keys in `keys/` are gitignored - back them up securely!
-- Always use `--dry-run` before production provisioning
+- Run Phase 2 only with `--dry-run` today (Phase 2 above); Phase 1 burns nothing
 - The secure env compiles no Bluetooth code (its `-DFEATURE_BLE=0` flags; eliminates CVE-2025-27840)
 - This kit does NOT affect Arduino WAP test files

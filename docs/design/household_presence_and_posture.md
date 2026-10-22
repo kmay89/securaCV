@@ -72,8 +72,9 @@ All paths below are under `firmware/projects/canary-wap/arduino/canary_wap/`.
   with secure boot". That was false, and the comment now says so (2026-10-21):
   flash encryption does not cover NVS, NVS encryption cannot be built under
   `framework = arduino` (neither pinned core's precompiled `sdkconfig` has
-  it), and secure boot is prepared but not enabled on any tier
-  ([`key_at_rest.h`](../../firmware/common/identity/key_at_rest.h)).
+  it), and secure boot works on no tier: the provisioning kit prepares it,
+  and its Phase 2 sets `SECURE_BOOT_EN` with no key digest, so nothing is
+  verified ([`key_at_rest.h`](../../firmware/common/identity/key_at_rest.h)).
 - The resolve step sits in the hot path. `rf_presence.cpp`'s `feed_ble_scan`
   returns early on a household match, before the privacy token is derived, so
   a household phone would never count toward the device total, the presence

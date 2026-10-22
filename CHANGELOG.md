@@ -48,9 +48,9 @@ hold keeps; and the per-address lockout's ways out.
   `409` ends once an ask finds no address other than the asker asking in
   the last 10 s (and at the closed tap's 30 s at the latest). That is 10 s
   after the other device stops, so the pages' retry works: "wait 10
-  seconds, then click Use BOOT Tap Once again, and only then short-tap
-  BOOT" (the companion: tap Save again, and press when its note says to)
-  asks first, and the next tap serves it. If the
+  seconds, then click Use BOOT Tap Once again, and short-tap BOOT when this
+  line says to" (the companion: tap Save again, and press when its note
+  says to) asks first, and the next tap serves it. If the
   other device keeps polling, its own asks end the `409` 10 s after the
   owner's page stopped: the owner's retry hears `403` and keeps asking, and
   the next tap is closed with `409` again (the poller residual below). The
@@ -62,8 +62,9 @@ hold keeps; and the per-address lockout's ways out.
   the BOOT button on the device to reveal the provisioning receipt."), both
   pages' new `409` text (it names the click, or the tap on Save, before the
   press), the dashboard's timeout line ("Didn't see a tap. Click Use BOOT
-  Tap Once again, then short-tap BOOT."; it said "Press BOOT and click
-  above"), and the text of the companion's Home Assistant step (that step's
+  Tap Once again, and short-tap BOOT when this line says to."; it said
+  "Press BOOT and click above"), and the text of the companion's Home
+  Assistant step (that step's
   banner is not shown yet; the ledger's F342 entry notes it). The
   companion's BLE OTA line for a v1 manifest ("short-tap BOOT within 30 s
   before Start") stays press-first: that tap is the break-glass, which no
@@ -230,9 +231,12 @@ hold keeps; and the per-address lockout's ways out.
   comment, `CONSOLIDATION.md` and the flagship's page-token comment said
   "ends that address's backoff" with no exception, and the F341 entry below
   left the flagship out of its way-out amendment. The 10 s BOOT hold keeps
-  the identity key, the chain, the token and the HTTPS certificate on every
-  Canary; the flagship's 30 s wipe, and an install or a full erase in either
-  flasher (whose factory image starts NVS over), change them. The getting started guide said a factory reset loses the witness
+  the identity key, the chain and the HTTPS certificate on every Canary, and
+  the token on a WAP (the flagship's hold removes its stored token and the
+  next boot derives one from the key, so a token a flasher seeded does not
+  come back: the fourth pass below); the flagship's 30 s wipe, and an install
+  or a full erase in either flasher (whose factory image starts NVS over),
+  change them. The getting started guide said a factory reset loses the witness
   chain and makes a new certificate, the flagship's `ota_deploy.py` and
   `ota_deploy.sh` offered a factory reset as the reason for a pin mismatch,
   and the iPhone app's certificate-mismatch error said a reset explains it,
@@ -293,8 +297,8 @@ hold keeps; and the per-address lockout's ways out.
   doc's evidence-grade SKU, the vault and root-of-trust design notes, the
   intake guide and `PENTEST_SCOPE.md` said or implied otherwise; each now
   says what the kit does (and `PENTEST_SCOPE.md`'s known-and-accepted list
-  now says the 10 s reset keeps the identity, the token and the certificate
-  by design). The `THREAT_MODEL.md`
+  now says the 10 s reset keeps the identity and the certificate by design,
+  and a WAP's token; the fourth pass below scopes the token). The `THREAT_MODEL.md`
   "Firmware corrupt" row also said no tier refuses a corrupt image: every
   tier's bootloader checks the image's checksum and SHA-256 and tries the
   other slot (read from the pinned cores' `sdkconfig`), and what no tier
@@ -330,7 +334,7 @@ hold keeps; and the per-address lockout's ways out.
     states as current a rule Forget Wi-Fi already breaks (F345). (This
     pass also wrote that an ordinary re-flash keeps NVS; it does not, since
     both flashers' installs write a factory image whose settings region is
-    blank, and the third pass below corrects every copy.)
+    blank, and the third and fourth passes below correct the copies.)
   `viewer.yml`'s `viewer` job now runs the recorded-reads gate too, and its
   path filter lists the witness dictionary and the break-glass page and test,
   which its steps read and which no PR editing them alone used to run (this
@@ -352,9 +356,12 @@ hold keeps; and the per-address lockout's ways out.
   the app, and its settings region is blank (`make_factory.py`), so every
   install starts NVS over and the next boot makes a new identity key, token
   and certificate; an over-the-air update, a PlatformIO or Arduino IDE
-  upload and the 10 s BOOT reset keep them. The second pass had written the
+  upload and the 10 s BOOT reset keep the key and the certificate (the
+  token too, except a flasher-seeded one on the flagship: the fourth pass
+  below). The second pass had written the
   opposite, that an ordinary re-flash keeps the key and only a full erase
-  changes it; every copy now says what the flashers do: the iPhone app's
+  changes it; these copies now say what the flashers do (the fourth pass
+  below corrects the ones this pass missed): the iPhone app's
   device store and certificate-mismatch message, `auth_backoff.h`, Home
   Assistant's comments and replay test, the ledger, `LESSONS_LEARNED.md`,
   this file, `THREAT_MODEL.md`, `PENTEST_SCOPE.md`, `magic_pairing.md`, the
@@ -385,6 +392,45 @@ hold keeps; and the per-address lockout's ways out.
   holds the press line's subtitle, the unanswered timeout's advice and the
   capture's cancel guards, and `test_docs_claims.py` bans each retired
   sentence where it stood. Host-tested; not run on a device or in a
+  browser.
+
+- **Neither flasher promises that an install keeps a board's settings or
+  key, and the flagship's 10 s hold is no longer said to keep a token a
+  flasher seeded (#1843's sweep, fourth pass).** Both flashers' Update
+  verdict said the settings region is left alone, their Reinstall verdict
+  that installing again is harmless, and the in-browser flasher's
+  first-contact button read "it's mine — keep its data"; every install
+  writes a factory image whose settings region is blank, so a board that
+  keeps a witness key comes up with a new one either way. Every verdict for
+  a board already set up now ends on the same sentence in both flashers,
+  and the button
+  reads "it's mine — skip the full erase" and says what it keeps (the
+  partitions the install does not write). The browser's trust card said the
+  key never leaves the board and the page never reads it; its own safety
+  copy, saved to your downloads, is a full read of the flash, key included,
+  and the card now says so. Other copies corrected: the five
+  `runtime_config.h` and `firmware_ota.md` ("sticky across reflashes", "HA
+  entities survive reflashes"), the Lab Sense page's NVS policy, the
+  flagship's handle and certificate comments, `device_pseudonym.h`, the
+  WAP's SSID comment, and the key-change lists in Home Assistant's
+  `sensor.py`, `csi_event_log.h`, the hatchery and the CSI id-floor notes,
+  which left out an install. The flagship's 10 s hold removes its stored
+  token and the next boot derives one from the key, so a token either
+  flasher seeded at install does not come back; the first sweep bullet
+  above and `PENTEST_SCOPE.md` had said the hold keeps the token on every
+  Canary, and
+  a WAP's "token derived from the key" now names a seeded one too. The WAP
+  dashboard's timeout line and `409` lines say to press BOOT when the line
+  says to, the kit's `partitions_secure.csv`, `secure_provisioning.md`
+  Step 3 and the scripts' help give Phase 2 as a dry run only, a phone that
+  missed the setup-door claim is sent to the recovery kit rather than a
+  BOOT tap the iPhone app does not have, and Secure Boot on a Phase 2
+  board is described as enabled with nothing to verify against.
+  `desktop_parity.test.js` holds both flashers' verdicts to the shared
+  sentence, `recovery_kit.test.js` walks the WAP's hold for the identity
+  key, the token, the certificate and the Beacon keys, and
+  `test_docs_claims.py` holds the token claim to the code and bans each
+  retired sentence where it stood. Host-tested; not run on a device or in a
   browser.
 
 ### The flagship and the canary-wap halt on a stored identity key they cannot read, instead of running on a zero key or replacing it (sweep F360, #1840)
@@ -2657,6 +2703,12 @@ that was still running when it merged. Design: `docs/design/magic_pairing.md`.
 - **The door rule — the one that matters, and the one the first commit got
   wrong.** The door is open *for a device nobody owns yet, and for an
   owner's own tap — never for a device that has an owner and a bad day*.
+  *(Amended 2026-10-22, #1843's sweep: `improv_core.h` now reads "a device
+  with NO NETWORK SAVED (a new one nobody owns yet, or one its owner
+  cleared)". The 10 s hold, and Forget Wi-Fi on a WAP, clear the network
+  and keep the witness identity, so a cleared unit still has an owner, and
+  its door goes to whichever client connects first;
+  `docs/design/magic_pairing.md` §2.2.)*
   With **no stored credentials** it opens on its own for a first-boot
   window of **30 minutes after power-on** (`IMPROV_FIRST_BOOT_WINDOW_MS`;
   a power cycle or a factory reset re-arms it; compile-time 0 = tap-only)

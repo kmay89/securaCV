@@ -1856,6 +1856,17 @@ function compareVersions(a, b) {
   return 0;
 }
 
+// What every USB install does to a board already set up, whichever way the
+// version moved: this app writes a factory image at 0x0 (flash-engine's
+// write-bin), and its settings region (NVS) is blank, so the saved settings
+// go and the next boot makes a new witness key. Only an over-the-air update
+// keeps them. The browser flasher's USB_INSTALL_STARTS_OVER (flash-core.js)
+// is the same sentence, and desktop_parity.test.js holds the two equal.
+const USB_INSTALL_STARTS_OVER =
+  "A USB install starts the settings region over, so the board comes up with no saved " +
+  "settings beyond what you type in before installing and, where it keeps a witness key, " +
+  "a new one; an over-the-air update keeps both.";
+
 // The one-line verdict for a candidate install, given what the board runs now.
 // A downgrade is allowed — that's what the safety copy is for — but never
 // silent, which is the whole reason this exists.
@@ -1867,26 +1878,27 @@ function installVerdict({ current, currentProduct, product, version }) {
   if (currentProduct && product && currentProduct.id !== product.id) {
     return { kind: "switch", icon: "⇄", label: `Switch from ${currentProduct.name}`,
       detail: `The board runs ${currentProduct.name} ${current.version || ""}`.replace(/\s+$/, "") +
-        ` today. Installing ${product.name} changes what this Canary is — settings from the old role don't carry over.` };
+        ` today. Installing ${product.name} changes what this Canary is — settings from the old role don't carry over. ` +
+        USB_INSTALL_STARTS_OVER };
   }
   const cmp = compareVersions(current.version, version);
   if (cmp === null) {
     return { kind: "unknown", icon: "•", label: "Version unknown",
-      detail: "The board's current version couldn't be compared — the install itself is unaffected." };
+      detail: "The board's current version couldn't be compared — the install itself is unaffected. " +
+        USB_INSTALL_STARTS_OVER };
   }
   if (cmp < 0) {
     return { kind: "update", icon: "↑", label: `Update · ${current.version} → ${version}`,
-      detail: "A newer build of the same firmware. Your settings region is left alone." };
+      detail: "A newer build of the same firmware. " + USB_INSTALL_STARTS_OVER };
   }
   if (cmp > 0) {
     return { kind: "downgrade", icon: "↓", label: `Downgrade · ${current.version} → ${version}`,
       detail: "This is OLDER than what the board runs now. That's allowed — useful when a release " +
-        "misbehaves — but newer settings may not be understood by older firmware. The automatic " +
-        "safety copy is your way back." };
+        "misbehaves — and the automatic safety copy is your way back. " + USB_INSTALL_STARTS_OVER };
   }
   return { kind: "same", icon: "=", label: `Reinstall · already on ${version}`,
-    detail: "The board already runs this exact version. Installing again rewrites it byte-for-byte — " +
-      "harmless, and occasionally exactly what a misbehaving board needs." };
+    detail: "The board already runs this exact version. Installing again is a clean start, " +
+      "occasionally exactly what a misbehaving board needs. " + USB_INSTALL_STARTS_OVER };
 }
 
 // The passport's lived-history rows, from the read-only probes.

@@ -76,8 +76,8 @@ sketch's own gestures. A short press opens the 30 s receipt gate, a 2 s hold
 prints the identity on serial, and a **10 s hold factory-resets the WAP**
 (`factory_reset_by_hold()`): it clears the saved Wi-Fi networks, the broker
 row, the device name and the first-boot flag, keeps the identity key and the
-API token derived from it, and restarts into first-boot setup when BOOT is
-released. A WAP's door is the first-boot window alone. The owner re-arms it
+API token (the one the WAP derived from the key, or the one a flasher
+seeded), and restarts into first-boot setup when BOOT is released. A WAP's door is the first-boot window alone. The owner re-arms it
 with **Forget Wi-Fi** on the dashboard (`POST /api/wifi/forget`) or with the
 10 s hold: both clear the credentials through `wifi_clear_credentials()`,
 which on a unit that had credentials also zeroes the carried window record,
@@ -108,8 +108,9 @@ or Forget Wi-Fi, or the owner tapped it):
   joined is one the stranger chose, so the stranger is on it and can spend
   the claim the door minted for its own link, and the receipt that claim
   buys carries the bearer token and the SoftAP password (ledger F345). The 10 s
-  hold and Forget Wi-Fi keep both, since both derive from the identity key
-  the reset keeps, and nothing rotates the token today; only an install or a
+  hold and Forget Wi-Fi keep both: the SoftAP password derives from the
+  identity key the reset keeps, the token stays as stored (derived from that
+  key, or seeded by a flasher), and nothing rotates the token today; only an install or a
   full erase in either flasher, whose factory image starts NVS over, replaces
   them, with the identity. And either reset reopens the
   same first-come door for 30 minutes, which a stranger still in radio range
@@ -630,8 +631,9 @@ enough connections closes the owner's); nine or more striking addresses (the
 overflow, above); and a cross-site `<img src=...?token=x>`, which holds the
 visiting browser's own address. A phone that still holds a pairing for a
 unit that was installed again or fully erased in a flasher (a new key, so a
-new token and device_id; the 10 s hold and an OTA update keep the token) keeps
-polling with the old token,
+new token and device_id; an OTA update and a WAP's 10 s hold keep the token,
+while the flagship's hold replaces a token a flasher seeded with one derived
+from the key, to the same effect) keeps polling with the old token,
 and so holds its own address, its new pairing included (F352). Host-tested
 (`firmware/tests_host/test_auth_backoff.cpp`, `test_receipt_grant.cpp`); not
 run on a device.

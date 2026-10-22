@@ -446,11 +446,13 @@ const BLIP = { blip: true };
 // dashboard's thirty per sign-in): from here the harnesses answer 409.
 const ASK_CAP = 64;
 // The retry each page's 409 names (sweep F342's fourth review): the click
-// that asks first, then the press. The sign-in's own button, and the
-// Settings save, whose next 403 opens the sign-in.
-const SIGN_IN_RETRY = 'wait 10 seconds, then click Use BOOT Tap Once again, and only then short-tap BOOT.';
+// that asks first, then the press, once the sign-in's line says to (it says
+// so after the device's first 403: #1843's sweep, fourth pass). The
+// sign-in's own button, and the Settings save, whose next 403 opens the
+// sign-in.
+const SIGN_IN_RETRY = 'wait 10 seconds, then click Use BOOT Tap Once again, and short-tap BOOT when this line says to.';
 const SETTINGS_RETRY = 'wait 10 seconds, then click Save my recovery kit again; when the sign-in opens, ' +
-                       'click Use BOOT Tap Once there, and only then short-tap BOOT.';
+                       'click Use BOOT Tap Once there, and short-tap BOOT when the sign-in says to.';
 // The click comes before the press in `text`, and no line in it re-tries
 // without naming the click.
 function clickBeforePress(text, click) {
@@ -628,11 +630,17 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     const { win, asked } = await dashboardTap([GATE_403]);
     assert.equal(asked.filter((q) => q.url === '/api/provisioning-receipt').length, 30, 'the 60 s budget');
     const text = win.els.authStatus.textContent;
-    assert.equal(text, "Didn't see a tap. Click Use BOOT Tap Once again, then short-tap BOOT.");
+    assert.equal(text, "Didn't see a tap. Click Use BOOT Tap Once again, and short-tap BOOT when this line says to.");
     assert.equal(win.els.authStatus.className, 'auth-status error');
     assert.ok(text.indexOf('Click') >= 0 && text.indexOf('Click') < text.indexOf('short-tap BOOT'),
               'the click comes before the press');
     assert.doesNotMatch(read(UI), /Press BOOT and click/);
+    // And the press waits for the line, as the companion's retry waits for
+    // its note: the line says to press only once the device has answered
+    // with 403 (#1843's sweep, fourth pass; "then short-tap BOOT" and "and
+    // only then short-tap BOOT" read as press-at-once).
+    assert.doesNotMatch(read(UI), /Tap Once again, then short-tap BOOT|and only then short-tap BOOT/,
+                        'no retry line names the press without waiting for the line');
   });
 
   it('the sign-in card and the listening line put the click before BOOT too', async () => {
@@ -727,8 +735,8 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
   it('after a 409, a second click asks first and is served on the next tap (the bench retry)', async () => {
     // The device's 409 ends ten seconds after the other device's last ask
     // (sweep F342's review), so the click the copy prescribes ("wait 10
-    // seconds, then click Use BOOT Tap Once again, and only then short-tap
-    // BOOT") hears 403 first and keeps listening.
+    // seconds, then click Use BOOT Tap Once again, and short-tap BOOT when
+    // this line says to") hears 403 first and keeps listening.
     const d = dashboard([GATE_403, TAP_409]);
     await d.api.requestFromDevice();
     assert.match(d.win.els.authStatus.textContent, CONTENDED);
@@ -766,7 +774,7 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
   it("the contention copy names ways out that do not go through the token box", () => {
     const d = dashboard([GATE_403]);
     const fn = uiFunction(read(UI), 'tapContendedText');
-    const text = vm.runInNewContext(fn + '\n;tapContendedText("click Use BOOT Tap Once again, and only then short-tap BOOT.")', {});
+    const text = vm.runInNewContext(fn + '\n;tapContendedText("click Use BOOT Tap Once again, and short-tap BOOT when this line says to.")', {});
     assert.match(text, CONTENDED);
     assert.match(text, /recovery kit/);
     assert.match(text, /USB console/);
@@ -798,7 +806,7 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     // first in time as in words (#1843's fourth review: the check used to
     // follow the hold's sentence, so it was read after the step it guards).
     const fn = uiFunction(read(UI), 'tapContendedText');
-    const text = vm.runInNewContext(fn + '\n;tapContendedText("click Use BOOT Tap Once again, and only then short-tap BOOT.")', {});
+    const text = vm.runInNewContext(fn + '\n;tapContendedText("click Use BOOT Tap Once again, and short-tap BOOT when this line says to.")', {});
     const check = text.indexOf('Last, check that Bluetooth Enabled is on under Settings → Bluetooth (');
     const reach = text.indexOf("(if this page is asking you to sign in, first open the Canary's main page, " +
                                'choose Open dashboard, then Settings there): ');
@@ -958,6 +966,59 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
       const calls = body.replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
       assert.doesNotMatch(calls, /\bmesh_network\s*::|\bble_scout_key_\w+\s*\(|\bmesh_\w*(?:leave|clear|reset|forget)\w*\s*\(/,
                           fn + ' calls into the mesh or the scout key');
+    }
+  });
+
+  it("the 10 s hold keeps the WAP's identity key, chain, token, HTTPS certificate and Beacon keys: nothing it reaches names them (#1843 sweep, fourth pass)", () => {
+    // The CHANGELOG, THREAT_MODEL.md's Scenario 4 and PENTEST_SCOPE.md say
+    // the WAP's hold keeps the identity key, the chain, the API token, the
+    // HTTPS certificate and its key, and the Beacon channel's X25519 key,
+    // member set and audit ring. The rows above walk the hold for the
+    // Bluetooth bonds and the mesh and scout keys; a key-by-key remove of
+    // "privkey" and "api_tkn", or of "tls_cert" and "tls_key", or of the
+    // "beacon" namespace's "x25519_priv", in reset_to_first_boot() passed
+    // every suite (#1843's sweep, third review). This row walks the same
+    // bodies (sketchCallWalk) for each of those keys, by literal and by the
+    // constant the sketch spells it with, and for a call into the Beacon
+    // channel.
+    const code = (f) => cppCode(read(path.join(__dirname, f)));
+    const constants = (src) => new Map([...src.matchAll(/static const char\* (NVS_\w+)\s*=\s*"([^"]*)";/g)]
+      .map((m) => [m[1], m[2]]));
+    // canary_wap.ino's own names: one translation unit with every header it
+    // includes, so a header's body can name them too.
+    const inoKeys = constants(code('canary_wap.ino'));
+    const kept = [['NVS_KEY_PRIV', 'privkey'], ['NVS_KEY_SEQ', 'seq'], ['NVS_KEY_BOOTS', 'boots'],
+                  ['NVS_KEY_CHAIN', 'chain'], ['NVS_KEY_CHAINST', 'chain_st'], ['NVS_KEY_TAMPER', 'tamper'],
+                  ['NVS_KEY_LOGSEQ', 'logseq'], ['NVS_KEY_BORN', 'born_day'], ['NVS_KEY_BORN_EX', 'born_exact'],
+                  ['NVS_KEY_API_TKN', 'api_tkn'], ['NVS_KEY_TLS_CERT', 'tls_cert'], ['NVS_KEY_TLS_KEY', 'tls_key']];
+    for (const [name, key] of kept) assert.equal(inoKeys.get(name), key, name);
+    // beacon_channel.cpp's, its own translation unit.
+    const beaconKeys = constants(code('beacon_channel.cpp'));
+    const beacon = [['NVS_NS', 'beacon'], ['NVS_SET_COUNT', 'set_count'], ['NVS_SET_PREFIX', 'set_'],
+                    ['NVS_AUDIT_COUNT', 'audit_cnt'], ['NVS_AUDIT_PREFIX', 'aud_'], ['NVS_AUDIT_HEAD', 'aud_head'],
+                    ['NVS_X25519_PRIV', 'x25519_priv'], ['NVS_X25519_PUB', 'x25519_pub']];
+    for (const [name, key] of beacon) assert.equal(beaconKeys.get(name), key, name);
+    // A whole key is matched with both quotes, a prefix with the opening one.
+    const literals = kept.map(([, key]) => '"' + key + '"')
+      .concat(beacon.map(([, key]) => (key.endsWith('_') ? '"' + key : '"' + key + '"')));
+    const { bodies } = sketchCallWalk('factory_reset_by_hold');
+    assert.ok(bodies.has('setup_wizard::reset_to_first_boot (setup_wizard.h)'), [...bodies.keys()].join(', '));
+    assert.ok(bodies.has('wifi_clear_credentials (canary_wap.ino)'), [...bodies.keys()].join(', '));
+    for (const [fn, body] of bodies) {
+      const file = fn.match(/\(([^)]+)\)$/)[1];
+      for (const lit of literals) {
+        assert.ok(!body.includes(lit), fn + ' names the kept key ' + lit);
+      }
+      const names = [];
+      if (file === 'canary_wap.ino' || file.endsWith('.h')) names.push(...kept.map(([name]) => name));
+      if (file === 'beacon_channel.cpp') names.push(...beacon.map(([name]) => name));
+      if (names.length) {
+        assert.doesNotMatch(body, new RegExp('\\b(?:' + names.join('|') + ')\\b'),
+                            fn + ' names a kept key by its constant');
+      }
+      const calls = body.replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+      assert.doesNotMatch(calls, /\bbeacon_channel\s*::|\bbeacon_\w*(?:leave|clear|reset|forget|wipe|erase|unpair|revoke)\w*\s*\(/,
+                          fn + ' calls into the Beacon channel');
     }
   });
 

@@ -1335,6 +1335,50 @@ test("the board's own firmware claim never waives the first-contact erase", () =
   assert.match(body[1], /ownerClaimed/, "an explicit human claim must still waive it");
 });
 
+test("no install promises to keep the settings region: both flashers' verdicts and first-contact copy", async () => {
+  // Both flashers write a factory image from offset 0 whose settings region
+  // (NVS) is blank (make_factory.py; flash.js writes { data, address: 0 },
+  // the engine runs write-bin 0x0), so every install, update and reinstall
+  // included, starts the settings over and the next boot makes a new witness
+  // key. The Update verdict said "Your settings region is left alone", the
+  // Reinstall verdict "rewrites it byte-for-byte — harmless", and the
+  // browser's first-contact button "it's mine — keep its data" (#1843's
+  // sweep, fourth pass). Every verdict a board already set up can get (all
+  // but "fresh") now ends on the same sentence, in both frontends.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const said = /^const USB_INSTALL_STARTS_OVER =\n((?:  "[^"\n]*"(?: \+|;)\n)+)/m.exec(appJs);
+  assert.ok(said, "desktop/src/app.js lost USB_INSTALL_STARTS_OVER");
+  const desktopSentence = new Function(`return ${said[1].trim().replace(/;$/, "")};`)();
+  const desktop = new Function(said[0] +
+    jsFnText(appJs, "compareVersions", "desktop/src/app.js") + "\n" +
+    jsFnText(appJs, "installVerdict", "desktop/src/app.js") + "\nreturn installVerdict;")();
+  assert.equal(desktopSentence, core.USB_INSTALL_STARTS_OVER, "the two flashers say it in the same words");
+  assert.match(core.USB_INSTALL_STARTS_OVER, /starts the settings region over/);
+  assert.match(core.USB_INSTALL_STARTS_OVER, /a new one; an over-the-air update keeps both\.$/);
+  const vision = { id: "securacv-canary-vision", name: "Canary Vision" };
+  const wap = { id: "securacv-canary-wap", name: "Canary WAP" };
+  const cases = { update: ["2.1.0", vision], downgrade: ["2.3.0", vision], same: ["2.2.0", vision],
+                  switch: ["2.2.0", wap], unknown: ["??", vision] };
+  for (const [kind, [ver, was]] of Object.entries(cases)) {
+    for (const [who, fn] of [["browser", core.installVerdict], ["desktop", desktop]]) {
+      const v = fn({ current: { version: ver }, currentProduct: was, product: vision, version: "2.2.0" });
+      assert.equal(v.kind, kind, `${who} ${kind}`);
+      assert.ok(v.detail.endsWith(core.USB_INSTALL_STARTS_OVER), `${who} ${kind}: ${v.detail}`);
+      assert.doesNotMatch(v.detail, /left alone|harmless|byte-for-byte/, `${who} ${kind}: ${v.detail}`);
+    }
+  }
+  // The browser's first-contact claim waives the full erase and nothing
+  // more: the install still writes the settings region.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  assert.match(flashJs, /el\("button", "ghost small", "it's mine — skip the full erase"\)/);
+  assert.doesNotMatch(flashJs, /keep its data|keep its\s*" \+\s*"identity key|keep its identity key/);
+  assert.match(flashJs, /Its identity key and settings start over " \+\s*"either way/);
+  // The desktop's box says the same of unticking it.
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  assert.match(html, /so the board comes up with a new identity key either way/);
+});
+
 test("security fuses: both flashers read them, off ONE field table", () => {
   // This used to assert the desktop app disclosed the check as browser-only
   // (espflash has no fuse-read command — still true of v3.3.0 and v4.3.0).

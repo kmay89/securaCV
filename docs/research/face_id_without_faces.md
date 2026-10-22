@@ -519,8 +519,9 @@ Until then, the IRKs sit in plaintext: `household.h`'s old claim that they
 were "flash-encrypted at rest on ESP32 with secure boot" was wrong, and its
 comment now says so (2026-10-21), since flash encryption does not cover NVS,
 NVS encryption cannot be built under `framework = arduino` (neither pinned
-core's precompiled `sdkconfig` has it), and secure boot is prepared but not
-enabled on any tier ([`key_at_rest.h`](../../firmware/common/identity/key_at_rest.h)).
+core's precompiled `sdkconfig` has it), and secure boot works on no tier: the
+provisioning kit prepares it, and its Phase 2 sets `SECURE_BOOT_EN` with no
+key digest, so nothing is verified ([`key_at_rest.h`](../../firmware/common/identity/key_at_rest.h)).
 
 ### 6.9 Bill of materials (October 2026 snapshots)
 

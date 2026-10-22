@@ -2142,7 +2142,10 @@ so — see D2 below.)
     `/api/logs` (any session reads it) asks once, is the sole asker and is
     handed the token, the SoftAP password and the pin; the owner's click a
     few seconds later hears `403`. Now the timeout says "Didn't see a tap.
-    Click Use BOOT Tap Once again, then short-tap BOOT."; the `403`'s
+    Click Use BOOT Tap Once again, then short-tap BOOT." *(Amended
+    2026-10-22, #1843's sweep, fourth pass: it now says "…, and short-tap
+    BOOT when this line says to.", so the press waits for the line, which
+    says to press only once the device has answered with `403`.)*; the `403`'s
     `hint` says "Start asking for the receipt first, then short-tap BOOT on
     the device: the tap goes to the one address asking." and its `button`
     "BOOT (ask first, then a short tap; the tap is held 30 seconds)" (same
@@ -2151,7 +2154,8 @@ so — see D2 below.)
     `check_wap_json_answers.py`'s two buffer mutations follow); the
     companion's Home Assistant step's no-session line says
     to tap Save, then short-press BOOT (it said "press BOOT, and save the
-    kit"; its banner is still the `#wiz-ha-err` one never shown, noted
+    kit"; it now says to short-press BOOT when its note says to, since the
+    sweep's third pass; its banner is still the `#wiz-ha-err` one never shown, noted
     above). The flagship's shared `build_gate_refusal_json()` keeps its
     text until F354, as its tap still goes to the first asker. The
     companion's save made 15 asks, the last at 28 s, under copy that says
@@ -2225,7 +2229,8 @@ so — see D2 below.)
       Use BOOT Tap Once again, and only then short-tap BOOT."; its Settings
       save says to click Save my recovery kit again and, when the sign-in
       opens (its next `403` opens it), click Use BOOT Tap Once there and
-      only then tap; the companion says to tap Save again and press only
+      only then tap *(amended 2026-10-22, #1843's sweep, fourth pass: both
+      now say to short-tap BOOT when the sign-in's line says to)*; the companion says to tap Save again and press only
       when its note says to; `docs/FAQ.md` says the same. The page still
       stops on the `409` (the review's other option, asking on through it,
       was not taken: the copy is what the owner follows either way).
@@ -2875,7 +2880,10 @@ so — see D2 below.)
       network the WAP joined, so it can spend the claim from that network,
       and the receipt carries the token and the SoftAP password, both
       derived from the identity key the hold and Forget Wi-Fi keep; and
-      either reset reopens the same first-come door. Both now say so, and
+      either reset reopens the same first-come door. *(Amended 2026-10-22,
+      #1843's sweep, fourth pass: the token is derived from the key only
+      when no flasher seeded one; a seeded token is kept by both all the
+      same, since neither clears `api_tkn`.)* Both now say so, and
       §2.2's "cannot get the WAP's bearer token" is scoped to Bluetooth,
       with the claim's route from the stranger's network beside it;
       `test_docs_claims.py` bans the two retired sentences there. F345,
@@ -2995,11 +3003,12 @@ so — see D2 below.)
       wrong claim. It is corrected where it stood (`DeviceStore.swift`,
       `auth_backoff.h` in both copies, the replay test's docstring, the
       Home Assistant comments, F343's amendment and F352 above,
-      `LESSONS_LEARNED.md`, the CHANGELOG), and in every copy that gave a
-      full erase as the only way to a new identity or certificate
-      (`THREAT_MODEL.md`, `PENTEST_SCOPE.md`, `magic_pairing.md`, the
-      getting started guide, `ota_deploy.py` and `.sh`, `DeviceAPI.swift`,
-      `HeadWatch.swift`, `ble_scout_key.h`). The comments that said a
+      `LESSONS_LEARNED.md`, the CHANGELOG), and in every copy this pass
+      found that gave a full erase as the only way to a new identity or
+      certificate (`THREAT_MODEL.md`, `PENTEST_SCOPE.md`, `magic_pairing.md`,
+      the getting started guide, `ota_deploy.py` and `.sh`,
+      `DeviceAPI.swift`, `HeadWatch.swift`, `ble_scout_key.h`; the fourth
+      pass below found `canary_config.h`'s and the rest). The comments that said a
       keypair survives reflashes (the Sense, Vision and Sentinel
       `witness.h`, the WAP's hostname suffix) now name the OTA update and
       the PlatformIO upload, which keep NVS; the desktop Flasher's
@@ -3037,10 +3046,112 @@ so — see D2 below.)
       (11 in BANNED, 55 in RETIRED_IN), and a new test holds the install
       claim to the code (the factory image's `merge_bin` inputs, both
       flashers' offset-0 writes, `nvs` before the app in every partition
-      table). Totals: 41 BANNED, 275 RETIRED_IN over 109 files, 331 forms,
-      254 replacements, 22 tests; every row's deletion, every RETIRED_IN
-      row pointed at `README.md` and every BANNED deletion fails it (591 of
-      591).
+      table). Totals: 41 BANNED, 275 RETIRED_IN over 109 files, 331 forms
+      (MUST_FAIL's 41 and MUST_FAIL_IN's 290; the second pass's "235 forms"
+      counted MUST_FAIL_IN alone), 254 replacements, 22 tests; every row's
+      deletion, every RETIRED_IN row pointed at `README.md` and every BANNED
+      deletion fails it (591 of 591). (The pass's commit message also said
+      `scripts/tests` ran 870; it ran 871, the new install test among them.)
+  - The sweep for every remaining copy, fourth pass (#1843, its review round
+    3). Each finding was reproduced against the code first.
+    - Both flashers' confirm cards still promised that an install keeps the
+      settings region: the Update verdict ("Your settings region is left
+      alone"), the Reinstall verdict ("rewrites it byte-for-byte —
+      harmless") and the Downgrade's "newer settings may not be understood
+      by older firmware", in `flash-core.js` and `desktop/src/app.js`, and
+      the browser's first-contact button ("it's mine — keep its data"),
+      which waives the full erase and nothing else. Every verdict for a
+      board already set up (all but "First install") now ends on one
+      sentence, the same in both flashers (`USB_INSTALL_STARTS_OVER`): a
+      USB install starts the settings region over, and a board that keeps
+      a witness key comes up with a new one.
+      The button reads "it's mine — skip the full erase" and says the key
+      and settings start over either way; the intake guide, both comments
+      and the flasher tour's chain lesson (`gen_flash.py`, which said "on
+      some boards") follow.
+    - The browser trust card said the private key "never leaves" and "this
+      page never reads it". The safety copy it saves to the downloads
+      folder is a full read of the flash, the key's plaintext NVS included;
+      the card now says so, and that nothing it reads goes to the network.
+    - "Sticky across reflashes" and "stable for the device's lifetime":
+      the five `runtime_config.h` (the display's mirror by `setup.sh
+      regen`), `firmware_ota.md`'s HA entities, the Lab Sense page's NVS
+      policy (`gen_sense.py` run), the flagship's handle comment
+      (`securacv_crypto.cpp` and `.h`), `device_pseudonym.h` (three copies),
+      the WAP's SSID comment, a lesson's "reflash-stability" and the
+      flasher's "dev_id is sticky forever". Each now names the OTA update
+      and the PlatformIO or Arduino IDE upload as what keeps NVS, and says
+      an install in either flasher starts it over.
+    - The flagship's certificate comment (`canary_config.h`) said only the
+      30 s wipe or a full erase removes the certificate, and
+      `test_docs_claims.py` held that sentence as its replacement. It now
+      names the install, and so do `sensor.py`, `csi_event_log.h`,
+      `derive.mjs`, the HA replay test, `TRUST_MODEL.md`,
+      `csi_developer_api.md` and `csi_event_id_floor.h` (both copies),
+      which gave the full erase as the way.
+    - The 10 s hold does not keep the token on every Canary. The flagship's
+      removes `api_token` (`reset_scope_keys.h`), and the next boot derives
+      one from the key and the MAC (`auth_load_or_derive()`), so a token a
+      flasher seeded at install (both flashers do when Wi-Fi is typed in
+      for a blob-scheme board) does not come back. The CHANGELOG,
+      `PENTEST_SCOPE.md`, `magic_pairing.md`'s F352 sentence and the test's
+      comments say so now. The WAP's hold keeps `api_tkn` whatever its
+      origin; its "token derived from the key" now names the seeded one too
+      (`magic_pairing.md`, the WAP README, the hold's comment, an amendment
+      to the F345 note above), and the sketch README no longer says the
+      token is "never stored in plaintext".
+    - `ble_improv.cpp` sent a phone that missed the claim to "the BOOT-tap
+      route", which the iPhone app does not have; it names the recovery kit
+      the WAP's pages save and the app opens.
+    - The dashboard's timeout line and both `409` lines said to press at
+      once ("then short-tap BOOT", "and only then short-tap BOOT"); they say
+      to press when the line says to, as the companion's do
+      (`gen_web_assets_gz.py`, `gen_wap.py`, `gen_csp.py` run:
+      CANARY_UI_HTML is 65360 B gzip, and no CSP page changed). The FAQ,
+      the bench checklist's quote and the CHANGELOG follow, and F342's
+      quotes above carry amendments.
+    - The kit: `partitions_secure.csv` said Phase 2 enforces the encrypted
+      flags and that `nvs_keys` holds an eFuse-derived key;
+      `secure_provisioning.md`'s Step 3 said to run Phase 2 for real; and
+      `provision_canary.sh`'s banner, help and examples and
+      `generate_keys.sh`'s help called it production provisioning. Each now
+      gives Phase 2 as a dry run only, as the kit README does.
+    - A dated CHANGELOG entry's door rule carries an amendment.
+    - Nits carried: Secure Boot is described one way, enabled with nothing
+      to verify against, in the flasher's trust card, `THREAT_MODEL.md`
+      (the "Firmware corrupt" row, the supply-chain list and the
+      limitation), the household note and the research doc; the OTA row
+      scopes "every install" to the pull path; `device_trust.md`'s "do not
+      rotate" names F362; `SetupGuide.swift` names `SecuraCV-wap-XXXX`;
+      `boot_policy.h`, the boot guard test and the bench runbook's E6 say a
+      PlatformIO or Arduino IDE upload keeps the boot count and a flasher
+      install starts it over; a WAP comment that said its records counter
+      rises for the device's lifetime says it starts at 0 every boot (it
+      lives in RAM); the third pass's counts are corrected above.
+    - Tests: `desktop_parity.test.js` evaluates both flashers'
+      `installVerdict()` and holds every verdict for a board already set up
+      to the shared sentence, the two sentences equal, and the
+      first-contact button and copy to the settings region starting over
+      (the old copy fails it). `recovery_kit.test.js` walks every function
+      the WAP's hold reaches for the identity key, the chain keys, `api_tkn`,
+      `tls_cert` and `tls_key`, and the Beacon namespace and its keys, by
+      literal and by constant, and for a call into the Beacon channel: the
+      review's three mutants (removes of `privkey` and `api_tkn`, of
+      `tls_cert` and `tls_key`, and of the Beacon `x25519_priv`, in
+      `reset_to_first_boot()`) fail it, as do a remove through
+      `NVS_KEY_PRIV` in a header, through `NVS_KEY_API_TKN` in the hold and
+      through `NVS_KEY_TLS_CERT` in `wifi_clear_credentials()`; its timeout
+      row now fails a retry line that names the press without waiting.
+      `test_docs_claims.py` holds the token claim to the code (the
+      flagship's 10 s list, the load's order, both flashers' seeding) and
+      the new walk row in place, and bans 85 more retired sentences where
+      they stood. `SetupGuideTests.swift` holds the WAP's network name.
+      Totals: 41 BANNED, 360 RETIRED_IN over 134 files, 416 forms
+      (MUST_FAIL's 41 and MUST_FAIL_IN's 375), 344 replacements, 23 tests.
+    - Not done: the per-row anchor (each replacement tied to one row). Every
+      row is still held one by one: its deletion, its file swapped for
+      `README.md` or for another scoped file, an emptied reason and a dead
+      needle each fail the suite.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),

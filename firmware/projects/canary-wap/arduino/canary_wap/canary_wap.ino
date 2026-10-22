@@ -7230,7 +7230,8 @@ bool ble_log_get_by_index(size_t newest_first_index, BleLogSnapshot* out) {
 
 // Cheap getter so the BLE module can detect chain advancement without
 // rebuilding HEAD just to throw it away. Mirrors `g_health.records_created`
-// 1:1; the value monotonically increases for the device's lifetime.
+// 1:1; the value only increases within a boot (it lives in RAM and starts
+// at 0 on every boot).
 uint32_t ble_witness_get_total_records() {
   return (uint32_t)g_health.records_created;
 }
@@ -11391,8 +11392,9 @@ static void wifi_init_provisioning() {
   if (!resolve_ap_password(ap_pass, sizeof(ap_pass))) {
     return;
   }
-  // One stable SSID for the lifetime of the device — the same name during
-  // first-boot setup and in steady state. The SoftAP is broadcast while the
+  // One SSID for as long as the key lasts — the same name during first-boot
+  // setup and in steady state (an install in either flasher starts NVS over,
+  // so the next boot has a new key and a new name). The SoftAP is broadcast while the
   // device is unprovisioned or its STA link is down; once the STA holds the
   // home network past AP_DROP_GRACE_MS the AP is torn down for radio stability
   // and automatically re-raised on STA loss (wifi_raise_ap / wifi_drop_ap).
@@ -13481,8 +13483,9 @@ static void ble_scanners_release_if_due() {
 // standalone choice, the MQTT bridge's broker row and CA (csi_mqtt's own
 // keys only), the device name and the first-boot flag (the wizard runs again).
 // Kept: the Ed25519 identity key, the chain state and its NVS records, the
-// witness records and health log on SD, the API token (derived from the
-// key), the OTA settings, the CSI module's tuning. Runs on the loop task
+// witness records and health log on SD, the API token (the one derived from
+// the key, or the one a flasher seeded: api_tkn is not cleared either way),
+// the OTA settings, the CSI module's tuning. Runs on the loop task
 // (the BOOT poll) and RETURNS: the restart is the release edge's
 // (HoldEvent::Released, released_stage >= 2) because GPIO0 is the strapping pin.
 static void factory_reset_by_hold() {

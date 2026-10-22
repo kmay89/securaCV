@@ -571,9 +571,9 @@ network's password, so only a BOOT tap or the token itself fetches it, never
 the dashboard's own session. The tap goes to the one device asking for it:
 if another device on your network asks during the same tap, the Canary
 hands out nothing and the page says so; close other Canary pages, wait 10
-seconds, then click **Use BOOT Tap Once** again and only then short-tap
-BOOT (a press with no page of yours asking goes to whichever device asks
-first). The setup page's close-out
+seconds, then click **Use BOOT Tap Once** again and short-tap BOOT when
+the page says to (a press with no page of yours asking goes to whichever
+device asks first). The setup page's close-out
 saves the same file (tap **Save my recovery kit**, then short-press BOOT when it says to). Both dashboard paths are new, checked by automated
 tests and not yet on a bench device). Home Assistant's own "Improv via BLE" integration needs a Bluetooth
 radio on the Home Assistant machine itself; through an ESPHome Bluetooth

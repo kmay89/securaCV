@@ -443,7 +443,9 @@ export function coldBootVerdict({ heldBoot, hadResidentFirmware } = {}) {
 //
 // Two things can waive it, and both originate outside the board:
 //   - `rosterHit`    — this exact MAC was onboarded by US, earlier this session
-//   - `ownerClaimed` — the human said "this is my board, keep its data"
+//   - `ownerClaimed` — the human said "this is my board, skip the full erase"
+//     (its identity key and settings start over anyway: every install starts
+//     the settings region over)
 // Everything else, including a board confidently announcing itself as one of
 // ours, is first contact.
 export function isFirstContact({ rosterHit, ownerClaimed } = {}) {

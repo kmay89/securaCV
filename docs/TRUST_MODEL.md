@@ -25,8 +25,10 @@ unsigned ("I am here"). **Paired** is defined in §3 below and nowhere else.
 The identity key is the device's birth certificate. That is why the 10-second
 factory reset (`common/io/reset_hold.h`, `onboarding_fsm.h`) clears credentials
 and settings and **keeps the key**: a reset node rejoins as the same device
-every pin knows; shedding the key is the opt-in 30-second stage the PIO canary
-alone enables, with a serial warning first.
+every pin knows; the hold sheds the key only at the opt-in 30-second stage the
+PIO canary alone enables, with a serial warning first. An install in either
+flasher sheds it too, on every Canary that keeps one: its factory image starts
+the settings region over, so the next boot makes a new key.
 
 ## 2. What is signed, what is not
 

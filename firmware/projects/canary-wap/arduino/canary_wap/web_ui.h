@@ -2983,7 +2983,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           // Save the device answers 403 opens it (secureFetch above).
           err.textContent = tapContendedText(
             'click Save my recovery kit again; when the sign-in opens, click Use BOOT Tap Once there, ' +
-            'and only then short-tap BOOT.');
+            'and short-tap BOOT when the sign-in says to.');
           err.style.display = 'block';
           return;
         }
@@ -3075,7 +3075,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           if (resp.status === 409) {
             // Another device asked during the same tap (sweep F342): the
             // device closed the tap and gave out nothing, so stop here.
-            s.textContent = tapContendedText('click Use BOOT Tap Once again, and only then short-tap BOOT.');
+            s.textContent = tapContendedText('click Use BOOT Tap Once again, and short-tap BOOT when this line says to.');
             s.className = 'auth-status error';
             return;
           }
@@ -3105,7 +3105,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       // page the device never answered never said to press, so it does not
       // say it missed a tap.
       s.textContent = gotFirst403
-        ? "Didn't see a tap. Click Use BOOT Tap Once again, then short-tap BOOT."
+        ? "Didn't see a tap. Click Use BOOT Tap Once again, and short-tap BOOT when this line says to."
         : "The Canary didn't answer. Click Use BOOT Tap Once again, and press BOOT only when this line says to.";
       s.className = 'auth-status error';
     }

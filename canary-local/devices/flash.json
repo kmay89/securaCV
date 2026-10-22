@@ -3049,7 +3049,7 @@
       "id": "write-witness",
       "stage": "writ",
       "title": "The diary and the deep install",
-      "body": "This Canary keeps a tamper-evident hash diary. Over-the-air updates never touch it — they swap firmware slots and nothing else. A USB factory install like this one is deeper: on some boards the diary’s chain state rides the settings region and starts fresh here. Visible by design — a new chain reads as a new chain, never as silently missing evidence."
+      "body": "This Canary keeps a tamper-evident hash diary. Over-the-air updates never touch it — they swap firmware slots and nothing else. A USB factory install like this one is deeper: it starts the settings region over, where the identity key and the diary’s chain state live, so the board starts a new chain under a new key. Visible by design — a new chain reads as a new chain, never as silently missing evidence."
     },
     {
       "id": "any-chip-board",

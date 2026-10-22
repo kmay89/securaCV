@@ -727,8 +727,10 @@ static void unambiguous_suffix16(uint16_t v, char out[5]) {
 // The suffix is derived from the Ed25519 public-key fingerprint, never the
 // hardware MAC (event_contract §10 / privacy Invariant III: no raw MAC in any
 // API payload, log, or advertised identifier). The keypair persists in NVS, so
-// the handle is stable for the device's lifetime — a *device* handle, not a
-// per-boot token — and matches the canary-wap tree's derivation.
+// the handle lasts as long as the key — a *device* handle, not a per-boot
+// token: an OTA update and the 10 s BOOT reset keep it, and an install in
+// either flasher (its factory image starts NVS over) or the 30 s wipe gives a
+// new keypair and so a new suffix. It matches the canary-wap tree's derivation.
 static uint16_t fingerprint16(const uint8_t fp[2]) {
   return (uint16_t)((fp[0] << 8) | fp[1]);
 }

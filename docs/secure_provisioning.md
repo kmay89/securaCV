@@ -17,7 +17,7 @@ devices. The provisioning kit provides tools for:
 
 **Important:** Secure Boot and Flash Encryption are **Phase 2 targets that no step of the
 kit reaches yet**: as tooled, Phase 2 burns fuses but turns neither on, and may leave the
-board unbootable ([Phase 2 Workflow, Step 3](#step-3-provision-device-dry-run-first)).
+board unbootable ([Phase 2 Workflow, Step 3](#step-3-preview-the-provisioning-dry-run-only)).
 Phase 1 burns nothing, so it prepares devices without bricking them during development.
 
 ---
@@ -143,7 +143,9 @@ python create_manifest.py add \
 ## Phase 2 Workflow (Future - Production)
 
 **WARNING:** Phase 2 operations are IRREVERSIBLE. Once security eFuses are burned,
-the device cannot be returned to development mode.
+the device cannot be returned to development mode. As tooled, Phase 2 is not usable
+yet: run Step 3 as a dry run only, never on a board you want to keep
+(`firmware/provisioning/README.md`, "Phase 2 (not usable yet)").
 
 ### Step 1: Generate Signing Keys (One-Time)
 
@@ -177,16 +179,19 @@ pio run -e secure
 # build reads sdkconfig.defaults.secure either.
 ```
 
-### Step 3: Provision Device (Dry Run First!)
+### Step 3: Preview the Provisioning (Dry Run Only)
 
 ```bash
-# ALWAYS dry-run first to preview what will happen
+# The dry run is the only Phase 2 step to run today: it previews what the
+# burn would do and burns nothing.
 ./provision_canary.sh --port /dev/ttyACM0 --phase 2 --dry-run
 
-# Review output carefully, then execute for real:
-./provision_canary.sh --port /dev/ttyACM0 --phase 2
+# Do not run it without --dry-run on a board you want to keep: as tooled it
+# turns on neither protection, its own lockdown check then fails, and what
+# the chip does with SECURE_BOOT_EN and no key digest has not been run on a
+# bench (the board may not boot).
 
-# What the script does today, in order (provision_canary.sh):
+# What the script would do without --dry-run, in order (provision_canary.sh):
 # 1. Verify device is virgin
 # 2. Flash the secure env's app image (or --firmware PATH) at 0x10000, in
 #    plaintext: no bootloader, no Secure Boot signature, no --encrypt

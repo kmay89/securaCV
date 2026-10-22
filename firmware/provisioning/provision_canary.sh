@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 # ═══════════════════════════════════════════════════════════════
-# SecuraCV Canary — Production Provisioning Script
+# SecuraCV Canary — Provisioning Script (Phase 2 not usable yet)
 # ═══════════════════════════════════════════════════════════════
 #
-# Full orchestration for production device provisioning:
+# Full orchestration toward a production lockdown it does not reach yet:
 #   1. Virgin verify → 2. Flash firmware (plaintext, unsigned) → 3. Burn keys →
 #   4. Burn security eFuses → 5. Post-verify → 6. Generate manifest
 # As tooled it turns on neither Secure Boot nor flash encryption: step 4
@@ -17,7 +17,7 @@ set -euo pipefail
 # Usage:
 #   ./provision_canary.sh --port /dev/ttyACM0 --dry-run
 #   ./provision_canary.sh --port /dev/ttyACM0 --phase 1
-#   ./provision_canary.sh --port /dev/ttyACM0 --phase 2
+#   ./provision_canary.sh --port /dev/ttyACM0 --phase 2 --dry-run   (Phase 2: dry run only today)
 #   ./provision_canary.sh --help
 #
 # Phases:
@@ -50,7 +50,7 @@ NC='\033[0m'
 print_header() {
     echo ""
     echo "═══════════════════════════════════════════════════════════════"
-    echo " SecuraCV Canary — Production Provisioning"
+    echo " SecuraCV Canary — Provisioning (Phase 2: dry run only today)"
     echo "═══════════════════════════════════════════════════════════════"
     echo ""
 }
@@ -81,11 +81,12 @@ show_help() {
     cat << EOF
 Usage: $0 [OPTIONS]
 
-Provision a SecuraCV Canary device for production deployment.
+Provision a SecuraCV Canary device. Phase 2, the production lockdown's
+target, is not usable yet: run it only with --dry-run (see Phase 2 below).
 
 Options:
   --port, -p PORT       Serial port (required, e.g., /dev/ttyACM0)
-  --phase PHASE         Provisioning phase: 1 (dev) or 2 (production)
+  --phase PHASE         Provisioning phase: 1 (dev) or 2 (lockdown target; dry run only)
   --dry-run             Preview operations without executing
   --firmware PATH       Path to firmware binary (optional)
   --skip-verify         Skip pre/post verification
@@ -98,8 +99,9 @@ Phases:
     - Record device identity
     - NO eFuse burning (safe for development)
 
-  Phase 2 (production; it does NOT yet turn on Secure Boot or flash
-  encryption, see docs/secure_provisioning.md Step 3):
+  Phase 2 (the production lockdown's target; it does NOT yet turn on Secure
+  Boot or flash encryption and may leave the board unbootable, so run it
+  only with --dry-run; see docs/secure_provisioning.md Step 3):
     - Verify device is virgin
     - Flash the secure env's app image, in plaintext and unsigned
     - Burn the flash encryption key (unused: SPI_BOOT_CRYPT_CNT is not burned)
@@ -115,11 +117,12 @@ Examples:
   # Execute Phase 1 provisioning (development)
   $0 --port /dev/ttyACM0 --phase 1
 
-  # Preview Phase 2 provisioning (REVIEW CAREFULLY)
+  # Preview Phase 2 provisioning: the only Phase 2 run to make today
   $0 --port /dev/ttyACM0 --phase 2 --dry-run
 
-  # Execute Phase 2 provisioning (IRREVERSIBLE)
-  $0 --port /dev/ttyACM0 --phase 2
+  # Phase 2 without --dry-run is IRREVERSIBLE and not usable yet: it turns
+  # on neither protection, and the board may not boot afterward. Do not run
+  # it on a board you want to keep.
 
 EOF
 }

@@ -193,7 +193,7 @@ same way; no sketch change is needed.)
 - Tamper-evident hash chain with domain separation
 - Time coarsened to ten-minute buckets (privacy)
 - No frame storage — camera peek is positioning only
-- API token derived via HKDF (never stored in plaintext)
+- API token derived via HKDF from the private key (or seeded random by a flasher at install), stored in NVS, which is plaintext on every tier today (NVS encryption is in no released build)
 - Device-unique AP password derived from the device private key (HMAC, domain-separated)
 - Over the network, the API token and the AP password leave the device only in the provisioning receipt (a bearer, a setup-door claim or a BOOT tap) and the pairing QR (a bearer); the dashboard's session cookie buys neither. The serial console prints the same receipt at every boot, which takes physical access to the USB port
 - A wrong bearer on the provisioning receipt counts toward the same lockout as every admin route; the lockout never holds back the setup-door claim or the BOOT tap

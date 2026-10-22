@@ -627,7 +627,9 @@
   shared `UNAMBIGUOUS_ALPHABET` to **54 chars** — dropping every case variant
   of the confusion classes: `0/O/o` and `1/I/i/l/L` — and routed the device_id
   / AP-SSID suffix through it via a base-54 re-encoding of the same 16 identity
-  bits (injective, so per-board uniqueness and reflash-stability are preserved).
+  bits (injective, so per-board uniqueness is preserved, and the suffix still
+  changes only with the key: an OTA update keeps it, and an install in either
+  flasher, whose factory image starts NVS over, gives a new one).
   Rejection-sampling threshold moves `228` (`57*4`) → `216` (`54*4`) so the
   result stays unbiased. Entropy across 32 chars is ~184 bits — still a UX win.
   Applied identically in both firmware trees (`firmware/canary` PlatformIO and

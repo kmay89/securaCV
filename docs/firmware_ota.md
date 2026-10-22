@@ -93,8 +93,15 @@ Vision historically compiled its WiFi/MQTT credentials and device id into
 the binary — which would make an OTA-installed generic image forget the
 unit's setup. `canary/runtime_config` fixes this:
 
-- **Identity is sticky:** `device_id` lives in NVS; the compiled value only
-  seeds the very first boot. HA entities survive OTA updates and reflashes.
+- **Identity lives in NVS:** `device_id` is stored there, and the compiled
+  value seeds only a boot that finds none. An OTA update and a PlatformIO
+  upload leave NVS alone, so the `device_id`, and with it the HA entities,
+  survive them. An install in either flasher does not: its factory image
+  starts NVS over, so the next boot takes the id the flasher seeds (both
+  suggest a new random one for every install) or, with none seeded, the
+  compiled `DEVICE_ID` (`canary_vision_001` in `config.h`). A new id is a
+  new device to Home Assistant, and the old id typed in again comes back
+  under a new key, which it reports as a key mismatch.
 - **Credentials follow the most recent real configuration:** a user-compiled
   USB flash (real `secrets/secrets.h`) wins and is persisted to NVS; the
   placeholder secrets baked into generic release builds defer to NVS.

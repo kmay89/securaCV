@@ -84,8 +84,8 @@ const state = {
   heldBoot: false,
   intake: null,            // the read-only intake scan, once connected
   ptRead: null,            // "ok" | "failed" — did the partition sector read at all
-  // The user's explicit "this board is already mine, keep its data". The ONLY
-  // thing besides our own session roster that waives the first-contact erase;
+  // The user's explicit "this board is already mine, skip the full erase". The
+  // ONLY thing besides our own session roster that waives the first-contact erase;
   // the board's own claim about what firmware it runs never does, because on
   // an untrusted board that claim is attacker-controlled.
   ownerClaimed: false,
@@ -565,26 +565,31 @@ function renderTrustCard() {
 
   card.append(sec("The board's crypto, in one breath.",
     "On first boot, the Canary mints its own Ed25519 identity keypair on the " +
-    "chip. The private key is born there and never leaves — there is no " +
-    "export function, and this page never reads it (the health check shows " +
-    "presence only). Every witness record is hash-chained to the previous " +
+    "chip. The firmware has no export function for the private key, and " +
+    "nothing this page shows reads it out (the health check shows presence " +
+    "only). It is not out of reach, though: it sits unencrypted in the " +
+    "board's settings region, so a full read of the flash carries it, and " +
+    "the safety copy this page saves to your downloads before an install is " +
+    "exactly that read. Every witness record is hash-chained to the previous " +
     "one and signed with that key, so an edited or deleted record leaves a " +
     "visible seam. What you see here — counters, fingerprints, the chain " +
     "head — is the public half. Verifying evidence needs no one's " +
-    "permission; forging it needs the key that never left the board."));
+    "permission; forging it needs that key: the board's flash, or a copy of it."));
 
   card.append(sec("What's not at risk from this page.",
     "Bricking — the first-stage bootloader is mask ROM, physically read-only. " +
-    "Key theft through the browser — the identity key is never transmitted, " +
-    "here or anywhere. Phoning home — the page works offline; the only " +
+    "Key theft over the network — this page sends nothing it reads off the " +
+    "board anywhere: the safety copy, key included, goes only to your " +
+    "downloads. Phoning home — the page works offline; the only " +
     "network call fetches the signed image you chose."));
 
   card.append(sec("What is at risk, honestly.",
     "Physical possession. A standard dev board answers USB: anyone holding " +
     "it with a cable can read or rewrite its flash — that is exactly how " +
     "this page's own backup works, and pretending otherwise would be " +
-    "theater. The project's Phase-2 provisioning burns eFuses but does not " +
-    "yet turn on flash encryption or secure boot, so today it protects " +
+    "theater. The project's Phase-2 provisioning burns eFuses, but it " +
+    "leaves flash encryption off and enables secure boot with nothing to " +
+    "verify against (a board may not boot afterward), so today it protects " +
     "neither the firmware, the identity key nor the saved WiFi (it does " +
     "turn JTAG off). Even turned on, flash encryption would cover the " +
     "firmware image, not the identity key or the saved WiFi: those live in " +
@@ -3444,9 +3449,11 @@ function phaseConfirm(product, entry) {
         "It reports itself as " +
         (state.current.productName || state.current.projectName || "SecuraCV firmware") +
         ", but that text sits in flash the board controls, so it can't be the thing " +
-        "that decides. If this is genuinely your own Canary and you want to keep its " +
-        "identity key and settings, say so: "));
-      const mine = el("button", "ghost small", "it's mine — keep its data");
+        "that decides. If this is genuinely your own Canary, say so, and the install " +
+        "writes only what its image covers and leaves the rest of the flash (the second " +
+        "firmware slot, any file system) as it is. Its identity key and settings start over " +
+        "either way: they live in the settings region, which every install starts over. "));
+      const mine = el("button", "ghost small", "it's mine — skip the full erase");
       mine.addEventListener("click", () => {
         state.ownerClaimed = true;
         if (state.intake) state.intake.firstContact = false;
@@ -3987,8 +3994,9 @@ function renderWifiFields(box, product) {
     const devId = mk("device id (e.g. canary_vision_ab12)");
     // Auto-suggest a UNIQUE per-device id for every board whose firmware
     // derives its MQTT topics from dev_id (broker_nvs) — displays included.
-    // A display's glass setup only ever asks for Wi-Fi, and dev_id is sticky
-    // forever once written — so with nothing seeded, first boot persists the
+    // A display's glass setup only ever asks for Wi-Fi, and dev_id is kept
+    // once written (until the next install here starts NVS over) — so with
+    // nothing seeded, first boot persists the
     // flavor's SHARED compiled id (canary_dash_001) and two of the same
     // display collide on the same topics, acting on each other's traffic.
     // The suggestion is visible and editable; clearing it writes nothing.

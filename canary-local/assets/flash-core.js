@@ -2262,6 +2262,17 @@ export function compareVersions(a, b) {
   return 0;
 }
 
+// What every USB install does to a board already set up, whichever way the
+// version moved: both flashers write a factory image from offset 0, and its
+// settings region (NVS) is blank (firmware/scripts/make_factory.py), so the
+// saved settings go and the next boot makes a new witness key. Only an
+// over-the-air update, which writes the spare app slot alone, keeps them.
+// desktop/src/app.js carries the same sentence (desktop_parity.test.js).
+export const USB_INSTALL_STARTS_OVER =
+  "A USB install starts the settings region over, so the board comes up with no saved " +
+  "settings beyond what you type in before installing and, where it keeps a witness key, " +
+  "a new one; an over-the-air update keeps both.";
+
 // The one-line verdict for a candidate install, given what the board runs now.
 //   current       state.current ({version, projectName, productName} | {unknown} | null)
 //   currentProduct the catalog product matched off the board (may be null)
@@ -2282,33 +2293,35 @@ export function installVerdict({ current, currentProduct, product, version }) {
     return {
       kind: "switch", icon: "⇄", label: `Switch from ${currentProduct.name}`,
       detail: `The board runs ${currentProduct.name} ${current.version || ""} today. `.replace("  ", " ") +
-              `Installing ${product.name} changes what this Canary is — settings from the old role don’t carry over.`,
+              `Installing ${product.name} changes what this Canary is — settings from the old role don’t carry over. ` +
+              USB_INSTALL_STARTS_OVER,
     };
   }
   const cmp = compareVersions(current.version, version);
   if (cmp === null) {
     return {
       kind: "unknown", icon: "•", label: "Version unknown",
-      detail: "The board’s current version couldn’t be compared — the install itself is unaffected.",
+      detail: "The board’s current version couldn’t be compared — the install itself is unaffected. " +
+              USB_INSTALL_STARTS_OVER,
     };
   }
   if (cmp < 0) {
     return {
       kind: "update", icon: "↑", label: `Update · ${current.version} → ${version}`,
-      detail: "A newer build of the same firmware. Your settings region is left alone unless the map below says otherwise.",
+      detail: "A newer build of the same firmware. " + USB_INSTALL_STARTS_OVER,
     };
   }
   if (cmp > 0) {
     return {
       kind: "downgrade", icon: "↓", label: `Downgrade · ${current.version} → ${version}`,
       detail: "This is OLDER than what the board runs now. That’s allowed — useful when a release misbehaves — " +
-              "but newer settings may not be understood by older firmware. The automatic safety copy is your way back.",
+              "and the automatic safety copy is your way back. " + USB_INSTALL_STARTS_OVER,
     };
   }
   return {
     kind: "same", icon: "=", label: `Reinstall · already on ${version}`,
-    detail: "The board already runs this exact version. Installing again rewrites it byte-for-byte — " +
-            "harmless, and occasionally exactly what a misbehaving board needs.",
+    detail: "The board already runs this exact version. Installing again is a clean start, " +
+            "occasionally exactly what a misbehaving board needs. " + USB_INSTALL_STARTS_OVER,
   };
 }
 
