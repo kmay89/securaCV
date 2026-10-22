@@ -204,7 +204,7 @@ src/server.mjs          public endpoints, the JSON API, the request pipeline
 src/admin.mjs           one page per module; src/admin_shop.mjs the storefront half (products, customers, discounts, analytics, batches, search, packing slips);
                         src/admin_ops.mjs the pack and ship benches, Health, the audit log; src/admin_mail.mjs campaigns, automations, the audience
 src/charts.mjs          inline-SVG charts: columns, line, ranked bars, sparklines, stat tiles — CSS hover tooltips, a table view under each
-src/jobs.mjs            outbox (+ scheduled campaigns) · inbox · probes · sla · stock · invoices · books · backup (verified, off-site) · restore_drill · reconcile · digest · automations · demo_reset
+src/jobs.mjs            outbox (+ scheduled campaigns) · inbox · probes · sla · stock · invoices · books · backup (checked, off-site) · restore_drill · reconcile · digest · automations · demo_reset
 src/modules/            catalog contacts mail imap stripe orders discounts analytics products search inventory devices warranty support
                         campaigns automations ledger invoices subscriptions status exceptions dashboard backup reconcile health demo
 tests/                  node --test; fakes for SMTP, IMAP, Stripe signatures, probes, GitHub

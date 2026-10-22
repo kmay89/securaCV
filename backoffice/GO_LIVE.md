@@ -29,16 +29,16 @@ Run it for real with nothing at stake.
   R2 are free at this size). Set `BACKUP_S3_URL`, `_KEY`, `_SECRET`,
   `_REGION`, and a long `BACKUP_ENCRYPTION_KEY` that you also keep
   somewhere the server is not (a password manager).
-- Press **Back up now** on Health. Read the line: *taken and verified ·
+- Press **Back up now** on Health. Read the line: *taken and checked ·
   off-site copy read back*.
 - Press **Run the restore drill**. Read the line: *the off-site copy boots,
   N orders, 0.1 h old*.
 - Once, on a laptop: download the latest `.db.enc`, run
-  `backoffice backup verify <file>` after decrypting with the key (the drill
+  `backoffice backup check <file>` after decrypting with the key (the drill
   does exactly this), and open it with `BACKOFFICE_DB=<file> backoffice
   serve`. Now you know restore works *away from the server*.
 
-**Check:** Health shows *Last backup verified*, *Off-site copy*, *Off-site
+**Check:** Health shows *Last backup checked*, *Off-site copy*, *Off-site
 copy sealed* and *Restore drill* all green. The drill repeats weekly on its
 own; a failure opens an exception.
 

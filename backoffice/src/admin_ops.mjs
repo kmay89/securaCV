@@ -6,7 +6,7 @@ import { text, HttpError, escapeHtml as e } from './http.mjs';
 import { table, money, dt, day, statusPill, field, form, button } from './render.mjs';
 import { listOrders, orderById, weekLabel, statusCounts } from './modules/orders.mjs';
 import { doctor } from './modules/health.mjs';
-import { backup, verifyBackup, liveCounts, listBackups } from './modules/backup.mjs';
+import { backup, checkBackup, liveCounts, listBackups } from './modules/backup.mjs';
 import { runJob, jobRuns } from './jobs.mjs';
 import { join } from 'node:path';
 
@@ -64,16 +64,16 @@ ${o.notes || o.tags ? `<p class="warn"><b>Note:</b> ${e(o.notes || '')} ${o.tags
     const ic = (ok) => ok === true ? '<span class="ic ok">✓</span>' : ok === false ? '<span class="ic bad">✗</span>' : '<span class="ic muted">–</span>';
     const body = `<p><span class="hp ${h.ok ? '' : 'bad'}">${h.ok ? 'Every check passes' : `${h.failing.length} check${h.failing.length === 1 ? '' : 's'} failing`}</span> <span class="muted">checked ${dt(h.at)} · the same list is <code>backoffice doctor</code> and the top of the morning digest</span></p>
 <ul class="checks">${h.checks.map(x => `<li>${ic(x.ok)}<b>${e(x.label)}</b><span>${e(x.detail)}${x.ok === false && x.fix ? `<br><span class="fix">→ ${e(x.fix)}</span>` : ''}</span></li>`).join('')}</ul>
-<h2>Prove it now</h2><p>${button('/health/backup', c.csrf, 'Back up now (and verify)')} ${button('/health/job/restore_drill', c.csrf, 'Run the restore drill', { quiet: true })} ${button('/health/job/reconcile', c.csrf, 'Reconcile with Stripe', { quiet: true })} ${button('/health/job/digest', c.csrf, 'Queue the digest now', { quiet: true })} ${button('/health/job/probes', c.csrf, 'Run the probes', { quiet: true })}</p>
-<div class="two"><div><h2>Backups on disk</h2>${table(listBackups(join(cfg.dataDir, 'backups')).slice(0, 10), [{ label: 'File', key: 'name' }, { label: 'Bytes', key: 'bytes', num: true }, { label: '', html: r => `<form method="post" action="/health/verify" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="name" value="${e(r.name)}"><button class="quiet">verify</button></form>` }], { empty: 'No backup yet — press the button above.' })}
-<p class="muted">Restore is one command on the server: <code>backoffice restore &lt;file&gt;</code> (it verifies the copy first and keeps the old file beside it).</p></div>
+<h2>Prove it now</h2><p>${button('/health/backup', c.csrf, 'Back up now (and check it)')} ${button('/health/job/restore_drill', c.csrf, 'Run the restore drill', { quiet: true })} ${button('/health/job/reconcile', c.csrf, 'Reconcile with Stripe', { quiet: true })} ${button('/health/job/digest', c.csrf, 'Queue the digest now', { quiet: true })} ${button('/health/job/probes', c.csrf, 'Run the probes', { quiet: true })}</p>
+<div class="two"><div><h2>Backups on disk</h2>${table(listBackups(join(cfg.dataDir, 'backups')).slice(0, 10), [{ label: 'File', key: 'name' }, { label: 'Bytes', key: 'bytes', num: true }, { label: '', html: r => `<form method="post" action="/health/check" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="name" value="${e(r.name)}"><button class="quiet">check</button></form>` }], { empty: 'No backup yet — press the button above.' })}
+<p class="muted">Restore is one command on the server: <code>backoffice restore &lt;file&gt;</code> (it checks the copy first and keeps the old file beside it).</p></div>
 <div><h2>Watched from outside</h2>${form('/health/external', c.csrf, `<p class="muted">This app cannot report its own death. Point any uptime checker at <code>${e(cfg.baseUrl)}/healthz</code> (it answers <code>ok</code>) and record where, so the checklist knows a human set it up.</p>${field('url', 'The monitor (its dashboard URL or a note)', { value: db.setting('health:external_monitor', '') })}`, { submit: 'Record' })}
 </div></div>
 <h2>Jobs</h2>${table(Object.values(runs), [{ label: 'Job', key: 'name' }, { label: 'Last run', get: r => dt(r.last_run_at) }, { label: 'OK', html: r => r.last_ok ? '<span class="ok">yes</span>' : '<span class="bad">no</span>' }, { label: 'Detail', html: r => `<span class="muted" style="font-size:12px">${e(String(r.last_detail || '').slice(0, 220))}</span>` }], { empty: 'Nothing has run yet.' })}`;
     page(c, 'Health', body);
   });
-  router.post('/health/backup', async (c) => { const r = await runJob(app, 'backup'); back(c, '/health', r.ok ? `backup ${r.result.verified.ok ? 'taken and verified' : 'taken but NOT verified'}: ${r.result.path}${r.result.offsite?.verified ? ' · off-site copy read back' : r.result.offsite?.error ? ` · off-site FAILED: ${r.result.offsite.error}` : ''}` : `backup failed: ${r.error}`); });
-  router.post('/health/verify', (c) => { const name = String(c.body.name || ''); if (!/^backoffice-[0-9T-]+\.db$/.test(name)) throw new HttpError(400, 'bad file name'); const v = verifyBackup(join(cfg.dataDir, 'backups', name), { expect: null }); back(c, '/health', v.ok ? `${name}: integrity ok, ${v.counts.orders} orders, books balanced` : `${name}: ${v.errors.join('; ')}`); });
+  router.post('/health/backup', async (c) => { const r = await runJob(app, 'backup'); back(c, '/health', r.ok ? `backup ${r.result.checked.ok ? 'taken and checked' : 'taken but NOT checked'}: ${r.result.path}${r.result.offsite?.read_back ? ' · off-site copy read back' : r.result.offsite?.error ? ` · off-site FAILED: ${r.result.offsite.error}` : ''}` : `backup failed: ${r.error}`); });
+  router.post('/health/check', (c) => { const name = String(c.body.name || ''); if (!/^backoffice-[0-9T-]+\.db$/.test(name)) throw new HttpError(400, 'bad file name'); const v = checkBackup(join(cfg.dataDir, 'backups', name), { expect: null }); back(c, '/health', v.ok ? `${name}: integrity ok, ${v.counts.orders} orders, books balanced` : `${name}: ${v.errors.join('; ')}`); });
   router.post('/health/job/:name', async (c) => { if (!['restore_drill', 'reconcile', 'digest', 'probes', 'backup'].includes(c.params.name)) throw new HttpError(400, 'not a health job'); const r = await runJob(app, c.params.name); back(c, '/health', `${r.job}: ${r.ok ? JSON.stringify(r.result).slice(0, 300) : r.error}`); });
   router.post('/health/external', (c) => { db.setSetting('health:external_monitor', String(c.body.url || '').slice(0, 300)); db.audit('web', 'health.external_monitor', 'health', null, { url: c.body.url }); back(c, '/health', 'recorded'); });
 
@@ -90,7 +90,7 @@ ${o.notes || o.tags ? `<p class="warn"><b>Note:</b> ${e(o.notes || '')} ${o.tags
   });
   router.get('/audit.csv', (c) => { const { rows } = auditQuery(c, 100000); const esc = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }; text(c.res, ['id,at,actor,action,entity,entity_id,detail', ...rows.map(r => [r.id, r.at, r.actor, r.action, r.entity, r.entity_id, r.detail].map(esc).join(','))].join('\n') + '\n', 200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="audit.csv"' }); });
 
-  // ---------- a verified backup from the CLI's point of view is also an API call
+  // ---------- a checked backup from the CLI's point of view is also an API call
   router.get('/api/health', (c) => { const h = doctor(db, cfg); c.res.statusCode = h.ok ? 200 : 503; c.res.setHeader('Content-Type', 'application/json; charset=utf-8'); c.res.end(JSON.stringify(h, null, 2)); });
   router.get('/api/backups', (c) => c.app.json(c.res, { backups: listBackups(join(cfg.dataDir, 'backups')), live: liveCounts(db) }));
   router.post('/api/backups', async (c) => { const r = await runJob(app, 'backup'); c.app.json(c.res, r, r.ok ? 201 : 500); });

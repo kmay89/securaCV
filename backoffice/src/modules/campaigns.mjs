@@ -56,7 +56,9 @@ export function sendDueCampaigns(db, cfg) { const due = db.all('SELECT slug FROM
 // A test send: the operator sees exactly what a subscriber will, filled in for a sample person.
 export function sendTest(db, slug, to, cfg, { actor = 'web' } = {}) {
   const c = campaign(db, slug); if (!c) throw new Error('no such campaign'); if (!to) throw new Error('set OPERATOR_EMAIL, or type an address');
-  const sample = segment(db, c.segment)[0] || { name: 'Test Reader', email: to, unsubscribe_token: 'test' };
+  // Filled in with a real subscriber's name so the merge tags read true — but the unsubscribe link is inert:
+  // a token nobody holds, so clicking it in the test can never unsubscribe a customer.
+  const first = segment(db, c.segment)[0]; const sample = { name: first?.name || 'Test Reader', email: first?.email || to, unsubscribe_token: 'test-send-inert' };
   const m = enqueue(db, { to, subject: `[TEST] ${fill(c.subject, MERGE(sample, cfg))}`, kind: 'campaign-test', ref: `campaign-test:${slug}`, headers: { 'List-Unsubscribe': `<${unsubscribeUrl(cfg, sample)}>`, ...(c.preheader ? { 'X-Preheader': c.preheader } : {}) }, text: fill(c.body_text, MERGE(sample, cfg)) + FOOT(cfg, unsubscribeUrl(cfg, sample)) });
   db.audit(actor, 'campaign.test', 'campaign', slug, { to }); return m;
 }

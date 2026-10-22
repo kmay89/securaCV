@@ -25,7 +25,7 @@ export function backup(db, dir, { keep = 14, now = new Date() } = {}) {
 export const listBackups = (dir) => { try { return readdirSync(dir).filter(f => /^backoffice-.*\.db$/.test(f)).sort().reverse().map(f => ({ name: f, bytes: statSync(join(dir, f)).size })); } catch { return []; } };
 
 // Open a copy and prove it: a backup that cannot pass this is not a backup.
-export function verifyBackup(path, { expect = null } = {}) {
+export function checkBackup(path, { expect = null } = {}) {
   const out = { path, bytes: 0, ok: false, integrity: null, migrations: 0, counts: {}, balanced: null, latest_at: null, errors: [] };
   try { out.bytes = statSync(path).size; } catch (e) { out.errors.push(`missing: ${e.message}`); return out; }
   let raw;
@@ -45,15 +45,15 @@ export function verifyBackup(path, { expect = null } = {}) {
 }
 export const liveCounts = (db) => Object.fromEntries(['orders', 'contacts', 'tickets', 'ledger', 'inventory_items', 'devices', 'audit_log'].map(t => [t, db.get(`SELECT COUNT(*) AS n FROM ${t}`).n]));
 
-// Restore: verify the file first, then put it in place (the old file is kept beside it).
+// Restore: check the file first, then put it in place (the old file is kept beside it).
 export function restore(src, destDbPath, { now = new Date() } = {}) {
-  const v = verifyBackup(src); if (!v.ok) throw new Error(`refusing to restore an unverified copy: ${v.errors.join('; ')}`);
+  const v = checkBackup(src); if (!v.ok) throw new Error(`refusing to restore an unchecked copy: ${v.errors.join('; ')}`);
   mkdirSync(dirname(destDbPath), { recursive: true });
   let previous = null;
   try { statSync(destDbPath); previous = `${destDbPath}.replaced-${now.toISOString().replace(/[:.]/g, '-').slice(0, 19)}`; copyFileSync(destDbPath, previous); } catch { /* nothing to keep */ }
   for (const suffix of ['-wal', '-shm']) { try { unlinkSync(destDbPath + suffix); } catch { /* none */ } }
   copyFileSync(src, destDbPath);
-  return { restored: destDbPath, from: src, previous, verification: v };
+  return { restored: destDbPath, from: src, previous, check: v };
 }
 
 // ---------- off-site: S3-compatible, AWS Signature V4, no SDK
@@ -114,7 +114,7 @@ export async function uploadOffsite(cfg, path, { fetchImpl = fetch } = {}) {
   if (!head.ok || len !== body.length) throw new Error(`off-site HEAD ${head.status}: size ${len} ≠ ${body.length}`);
   const ptr = await s3(cfg, 'PUT', 'latest.txt', { body: Buffer.from(name), fetchImpl, extra: { 'content-type': 'text/plain' } });
   if (!ptr.ok) throw new Error(`off-site pointer PUT ${ptr.status}`);
-  return { url: objectUrl(cfg, name), name, bytes: body.length, etag: head.headers.get('etag'), verified: true, encrypted: sealed };
+  return { url: objectUrl(cfg, name), name, bytes: body.length, etag: head.headers.get('etag'), read_back: true, encrypted: sealed };
 }
 // The drill: pull the latest copy back, open it, prove it. Nothing in the live database is touched.
 export async function restoreDrill(cfg, { fetchImpl = fetch, now = new Date(), localDir = null } = {}) {
@@ -131,7 +131,7 @@ export async function restoreDrill(cfg, { fetchImpl = fetch, now = new Date(), l
     path = join(localDir, latest.name); source = path;
   }
   try {
-    const v = verifyBackup(path);
+    const v = checkBackup(path);
     const stamp = basename(path).match(/backoffice-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})/);
     const taken = stamp ? Date.parse(`${stamp[1]}T${stamp[2]}:${stamp[3]}:${stamp[4]}Z`) : NaN;
     const ageH = Number.isFinite(taken) ? (now - taken) / 3600000 : null;

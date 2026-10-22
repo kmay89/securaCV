@@ -52,7 +52,7 @@ test('campaigns: counts before sending, a test send, a schedule the outbox honor
   const cp = createCampaign(db, { slug: 'nov', subject: 'Hello {{first_name}}', preheader: 'pre', segment: 'all', body_text: 'Hi {{first_name}},\n\n# News\n\nFrom {{company}} at {{site}}.' });
   assert.throws(() => createCampaign(db, { slug: 'Bad Slug', subject: 's', body_text: 'b' }), /slug/); assert.throws(() => createCampaign(db, { slug: 'xx', subject: 's', body_text: 'b', segment: 'nope' }), /unknown segment/);
   assert.equal(segmentCount(db, cp.segment), 3);
-  const t = sendTest(db, 'nov', 'owner@errer.test', cfg); assert.equal(t.to_addr, 'owner@errer.test'); assert.match(t.subject, /^\[TEST\] Hello Ada$/); assert.ok(t.body_text.includes('Hi Ada,') && t.body_text.includes('Unsubscribe in one click'));
+  const t = sendTest(db, 'nov', 'owner@errer.test', cfg); assert.equal(t.to_addr, 'owner@errer.test'); assert.match(t.subject, /^\[TEST\] Hello Ada$/); assert.ok(t.body_text.includes('Hi Ada,') && t.body_text.includes('Unsubscribe in one click')); assert.ok(t.body_text.includes('/u/test-send-inert') && !t.body_text.includes(db.get('SELECT unsubscribe_token FROM contacts WHERE email = \'a@example.test\'').unsubscribe_token), 'the test mail never carries a real unsubscribe token');
   assert.ok(previewHtml(db, 'nov', cfg).includes('Hi Sample,') && previewHtml(db, 'nov', cfg).includes('pre'));
   updateCampaign(db, 'nov', { segment: 'customers' }); assert.equal(segmentCount(db, 'customers'), 0);
   updateCampaign(db, 'nov', { segment: 'all' });

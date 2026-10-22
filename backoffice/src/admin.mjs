@@ -32,7 +32,7 @@ import { join } from 'node:path';
 export function registerAdmin(app) {
   const { db, cfg, router } = app;
   const page = (c, title, body) => html(c.res, layout({ title, body, path: c.url.pathname, company: cfg.company, csrf: c.csrf, demo: cfg.demo, demoResetMinutes: cfg.demoResetMinutes, q: c.url.pathname === '/search' ? c.query.get('q') || '' : '', flash: c.query.get('ok') ? { text: c.query.get('ok') } : c.query.get('err') ? { kind: 'err', text: c.query.get('err') } : null }));
-  const back = (c, to, ok) => redirect(c.res, `${to}?ok=${encodeURIComponent(ok)}`);
+  const back = (c, to, ok) => redirect(c.res, `${to}${to.includes('?') ? '&' : '?'}ok=${encodeURIComponent(ok)}`);
   const link = (href, label) => `<a href="${e(href)}">${e(label)}</a>`;
   const filters = (c, fields) => `<form method="get" class="row" style="margin:.6rem 0">${fields.map(([n, l, opts]) => opts ? field(n, l, { options: [['', 'any'], ...opts], value: c.query.get(n) || '' }) : field(n, l, { value: c.query.get(n) || '' })).join('')}<div><label>&nbsp;</label><button class="quiet">Filter</button></div></form>`;
 

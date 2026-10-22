@@ -22,7 +22,7 @@ import { registerDevice, importManifest, listDevices } from '../src/modules/devi
 import { openClaim, ANSWERS, listClaims } from '../src/modules/warranty.mjs';
 import { profitAndLoss, trialBalance, monthly, postExpense, postPayout, salesTaxByState, ledgerCsv, ACCOUNTS } from '../src/modules/ledger.mjs';
 import { upsertProbe, DEFAULT_PROBES, runDueProbes, publicStatus } from '../src/modules/status.mjs';
-import { backup, listBackups, verifyBackup, liveCounts, restore, restoreDrill, uploadOffsite, offsiteConfigured } from '../src/modules/backup.mjs';
+import { backup, listBackups, checkBackup, liveCounts, restore, restoreDrill, uploadOffsite, offsiteConfigured } from '../src/modules/backup.mjs';
 import { doctor, digestText } from '../src/modules/health.mjs';
 import { reconcile } from '../src/modules/reconcile.mjs';
 import { snapshot } from '../src/modules/dashboard.mjs';
@@ -50,10 +50,10 @@ const HELP = `backoffice — the company in one SQLite file (${cfg.dbPath})
   token create <name> | token revoke <name>  API bearer tokens for the CLI/remote/an AI operator
   snapshot                                 the dashboard numbers as JSON
   doctor                                   the health checklist (exit 1 when a check fails) — same list as /health and the digest
-  backup [--no-offsite]                    a verified copy (opened, integrity, books balanced), then off-site when BACKUP_S3_* is set
-  backup verify <file> [--live]            prove a copy boots; --live also compares row counts with the running database
+  backup [--no-offsite]                    a checked copy (opened, integrity, books balanced), then off-site when BACKUP_S3_* is set
+  backup check <file> [--live]            prove a copy boots; --live also compares row counts with the running database
   backup drill                             pull the latest copy back (off-site when configured) and prove it
-  restore <file> [--to <db path>]          put a verified copy in place (stop serve first; the old file is kept beside it)
+  restore <file> [--to <db path>]          put a checked copy in place (stop serve first; the old file is kept beside it)
   reconcile                                Stripe payouts → the books, charges → orders (needs STRIPE_API_KEY)
   digest                                   print the morning digest (what the job emails to OPERATOR_EMAIL)
   job <name> | job list                    run one scheduled job now (outbox inbox probes sla stock invoices books backup)
@@ -137,11 +137,11 @@ const main = async () => {
     case 'snapshot': return out(snapshot(db));
     case 'job': return args[0] === 'list' ? out(Object.keys(JOBS)) : out(await runJob(app, args[0]));
     case 'backup': {
-      if (args[0] === 'verify') { const v = verifyBackup(args[1], { expect: flags.live ? liveCounts(db) : null }); out(v); if (!v.ok) process.exitCode = 1; return; }
+      if (args[0] === 'check') { const v = checkBackup(args[1], { expect: flags.live ? liveCounts(db) : null }); out(v); if (!v.ok) process.exitCode = 1; return; }
       if (args[0] === 'drill') { const r = await restoreDrill(cfg, { localDir: join(cfg.dataDir, 'backups') }); out(r); if (!r.ok) process.exitCode = 1; return; }
-      const b = backup(db, join(cfg.dataDir, 'backups'), { keep: cfg.backupKeep }); const verified = verifyBackup(b.path, { expect: liveCounts(db) });
+      const b = backup(db, join(cfg.dataDir, 'backups'), { keep: cfg.backupKeep }); const checked = checkBackup(b.path, { expect: liveCounts(db) });
       const offsite = flags.offsite === false ? { skipped: '--no-offsite' } : offsiteConfigured(cfg) ? await uploadOffsite(cfg, b.path) : { skipped: 'BACKUP_S3_URL / KEY / SECRET not set' };
-      out({ ...b, verified, offsite }); if (!verified.ok) process.exitCode = 1; return;
+      out({ ...b, checked, offsite }); if (!checked.ok) process.exitCode = 1; return;
     }
     case 'backups': return out(listBackups(join(cfg.dataDir, 'backups')));
     case 'restore': {

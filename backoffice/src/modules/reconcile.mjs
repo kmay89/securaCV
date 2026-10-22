@@ -24,7 +24,14 @@ export async function reconcile(db, cfg, { fetchImpl = fetch, now = Date.now(), 
   // payouts: Stripe's paid payouts of the last 30 days, each in the books exactly once
   const payouts = await stripeList(cfg, `payouts?status=paid&arrival_date[gte]=${since}`, { fetchImpl });
   let posted = 0;
-  for (const p of payouts) if (!db.get('SELECT id FROM ledger WHERE ref = ?', `payout:${p.id}`)) { postPayout(db, { id: p.id, date: new Date(p.arrival_date * 1000).toISOString().slice(0, 10), amount_cents: p.amount }); db.audit('reconcile', 'payout.posted', 'payout', p.id, { amount_cents: p.amount }); posted++; }
+  for (const p of payouts) {
+    if (db.get('SELECT id FROM ledger WHERE ref = ?', `payout:${p.id}`)) continue;
+    // p.amount is the net that reached the bank; the fees Stripe kept sit on the charges' balance transactions inside this payout
+    const txns = await stripeList(cfg, `balance_transactions?payout=${encodeURIComponent(p.id)}`, { fetchImpl });
+    const fee = txns.filter(t => t.type !== 'payout').reduce((s, t) => s + (t.fee || 0), 0);
+    postPayout(db, { id: p.id, date: new Date(p.arrival_date * 1000).toISOString().slice(0, 10), amount_cents: p.amount, fee_cents: fee });
+    db.audit('reconcile', 'payout.posted', 'payout', p.id, { amount_cents: p.amount, fee_cents: fee, transactions: txns.length }); posted++;
+  }
   // charges: every successful charge of the last `days` has an order with its PaymentIntent
   const charges = (await stripeList(cfg, `charges?created[gte]=${Math.floor((now - days * 86400000) / 1000)}`, { fetchImpl })).filter(c => c.status === 'succeeded' && c.paid && !c.refunded);
   const missing = charges.filter(c => c.payment_intent && !db.get('SELECT id FROM orders WHERE payment_intent = ? OR external_id = ?', c.payment_intent, c.payment_intent)).map(c => ({ payment_intent: c.payment_intent, amount_cents: c.amount, email: c.billing_details?.email || c.receipt_email || null, created: new Date(c.created * 1000).toISOString() }));
