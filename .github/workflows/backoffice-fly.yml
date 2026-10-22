@@ -71,7 +71,8 @@ jobs:
           if flyctl apps list --json | grep -q "\"Name\": *\"$APP\""; then echo "app $APP exists"; else flyctl apps create "$APP" --org "$ORG"; fi
       - name: Deploy (Fly builds the image on its remote builder)
         if: steps.gate.outputs.run == 'true'
-        run: flyctl deploy --config deploy/fly.toml --app "$APP" --primary-region "$REGION" --remote-only --yes
+        # --dockerfile is cwd-relative (backoffice/), unlike the toml's config-relative path
+        run: flyctl deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --app "$APP" --primary-region "$REGION" --remote-only --yes
       - name: Where it lives
         if: steps.gate.outputs.run == 'true'
         run: |
