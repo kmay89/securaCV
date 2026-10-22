@@ -22,7 +22,7 @@ import { openExceptions, resolve as resolveException, raise as raiseException } 
 import { snapshot } from './modules/dashboard.mjs';
 import { registerAdmin } from './admin.mjs';
 import { runJob, JOBS } from './jobs.mjs';
-import { isDemo, DEMO_PASSWORD, DEMO_WEBHOOK_SECRET, DEMO_CATALOG, SCENARIOS } from './modules/demo.mjs';
+import { isDemo, DEMO_PASSWORD, DEMO_WEBHOOK_SECRET, DEMO_CATALOG, SCENARIOS, localBase } from './modules/demo.mjs';
 import { totp } from './auth.mjs';
 
 export function createApp({ db, cfg }) {
@@ -32,6 +32,7 @@ export function createApp({ db, cfg }) {
     cfg.demo = true; cfg.githubToken = ''; cfg.imapUrl = ''; cfg.smtpUrl = ''; cfg.stripeApiKey = '';
     cfg.stripeWebhookSecret = DEMO_WEBHOOK_SECRET;
     cfg.mailFrom = cfg.mailFrom || 'Errer Labs (demo) <demo@backoffice.example.test>';
+    cfg.baseUrl = localBase(cfg); cfg.siteOrigin = cfg.baseUrl;   // every link, probe and scenario stays on this machine
   }
   // In demo mode the catalog is the demo's own, never fetched from the live site.
   const app = { db, cfg, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o) };
@@ -166,7 +167,7 @@ export function createApp({ db, cfg }) {
     }
   });
   app.server = server;
-  app.listen = () => new Promise(r => server.listen(cfg.port, cfg.host, () => r(server.address())));
+  app.listen = () => new Promise(r => server.listen(cfg.port, cfg.host, () => { const a = server.address(); if (cfg.demo) { cfg.port = a.port; cfg.baseUrl = `http://127.0.0.1:${a.port}`; cfg.siteOrigin = cfg.baseUrl; } r(a); }));
   app.close = () => new Promise(r => server.close(r));
   return app;
 }

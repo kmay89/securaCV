@@ -11,7 +11,7 @@
     "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.mjs",
     "cli": "node --disable-warning=ExperimentalWarning bin/backoffice.mjs",
     "demo": "BACKOFFICE_DATA_DIR=./data-demo node --disable-warning=ExperimentalWarning bin/backoffice.mjs demo --reset && BACKOFFICE_DATA_DIR=./data-demo node --disable-warning=ExperimentalWarning bin/backoffice.mjs serve",
-    "dev": "BACKOFFICE_DATA_DIR=./data-demo node --watch --disable-warning=ExperimentalWarning bin/backoffice.mjs serve"
+    "dev": "BACKOFFICE_DATA_DIR=./data-demo node --disable-warning=ExperimentalWarning bin/backoffice.mjs demo --if-empty && BACKOFFICE_DATA_DIR=./data-demo node --watch --disable-warning=ExperimentalWarning bin/backoffice.mjs serve"
   },
   "dependencies": {}
 }

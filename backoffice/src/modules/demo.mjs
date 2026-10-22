@@ -28,6 +28,14 @@ import { signStripePayload } from './stripe.mjs';
 export const DEMO_PASSWORD = 'demo-password-change-me';
 export const DEMO_WEBHOOK_SECRET = 'whsec_demo_not_a_real_secret';
 export const isDemo = (db) => db.setting('demo') === '1';
+export const isEmpty = (db) => db.get('SELECT COUNT(*) AS n FROM orders').n === 0 && db.get('SELECT COUNT(*) AS n FROM contacts').n === 0 && db.get('SELECT COUNT(*) AS n FROM tickets').n === 0;
+
+// Demo traffic goes to this process's own loopback listener and nowhere
+// else — never to BACKOFFICE_BASE_URL, which may name a real deployment.
+export const localBase = (cfg) => {
+  try { const u = new URL(cfg.baseUrl || ''); if ((u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]') && u.port) return u.origin; } catch { /* fall through */ }
+  return `http://127.0.0.1:${cfg.port}`;
+};
 
 export const DEMO_STORE = { mode: 'live', shipping_flat: 8, groups: [
   { id: 'Kits', products: [
@@ -58,10 +66,10 @@ const silent = (cfg) => ({ ...cfg, supportAddr: '', githubToken: '' });
 
 // Probes in demo mode point at the app itself — never at the live site.
 export const demoProbes = (cfg) => [
-  { name: 'Backoffice (this app)', url: cfg.baseUrl + '/healthz', expect_text: 'ok' },
-  { name: 'Public status page', url: cfg.baseUrl + '/status', expect_text: 'status' },
-  { name: 'Status JSON', url: cfg.baseUrl + '/status.json', expect_text: '"probes"' },
-  { name: 'Login page', url: cfg.baseUrl + '/login', expect_status: 200 },
+  { name: 'Backoffice (this app)', url: localBase(cfg) + '/healthz', expect_text: 'ok' },
+  { name: 'Public status page', url: localBase(cfg) + '/status', expect_text: 'status' },
+  { name: 'Status JSON', url: localBase(cfg) + '/status.json', expect_text: '"probes"' },
+  { name: 'Login page', url: localBase(cfg) + '/login', expect_status: 200 },
 ];
 
 export function makeOrderInput(i, items, { days = 0, external = `cs_demo_${Date.now().toString(36)}_${i}` } = {}) {
@@ -168,6 +176,8 @@ export async function seedDemo(db, cfg) {
 
 // Wipe every business table (the operator login and settings survive) and seed again.
 export async function resetDemo(db, cfg) {
+  // A stale BACKOFFICE_DATA_DIR must never turn this into a wipe of real data.
+  if (!isDemo(db) && !isEmpty(db)) throw new Error('refusing to reset: this database is not flagged as a demo and is not empty — point BACKOFFICE_DATA_DIR at the demo directory (npm run demo uses ./data-demo)');
   const tables = ['ticket_messages', 'tickets', 'warranty_claims', 'order_items', 'orders', 'invoice_items', 'invoices', 'subscriptions', 'inventory_moves', 'recipes', 'inventory_items', 'devices', 'waitlist', 'contacts', 'mail_outbox', 'mail_seen', 'campaigns', 'probe_results', 'probes', 'incidents', 'ledger', 'exceptions', 'canned_replies', 'stripe_events', 'job_runs', 'audit_log'];
   db.exec('PRAGMA foreign_keys = OFF');
   try { db.tx(() => { for (const t of tables) db.run(`DELETE FROM ${t}`); db.run('DELETE FROM settings WHERE key LIKE \'seq:%\''); }); }
@@ -212,11 +222,11 @@ export const SCENARIOS = {
   } },
   waitlist: { label: 'Someone joins the waitlist through the website form (+ asks for news → opt-in mail)', run: async (app) => {
     const p = PEOPLE[Math.floor(Math.random() * PEOPLE.length)];
-    const r = await fetch(`${app.cfg.baseUrl}/forms/waitlist`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: p[0], name: p[1], sku: 'vision-kit', qty: 1, newsletter: true }) });
+    const r = await fetch(`${localBase(app.cfg)}/forms/waitlist`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: p[0], name: p[1], sku: 'vision-kit', qty: 1, newsletter: true }) });
     return { status: r.status, ...(await r.json().catch(() => ({}))) };
   } },
   contact: { label: 'Someone sends the website contact form', run: async (app) => {
-    const r = await fetch(`${app.cfg.baseUrl}/forms/contact`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'visitor@customer.example.test', name: 'Visitor Example', subject: 'Which kit for a small apartment?', message: 'One room, one door. WAP or Vision?\n\n(synthetic demo form)' }) });
+    const r = await fetch(`${localBase(app.cfg)}/forms/contact`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'visitor@customer.example.test', name: 'Visitor Example', subject: 'Which kit for a small apartment?', message: 'One room, one door. WAP or Vision?\n\n(synthetic demo form)' }) });
     return { status: r.status, ...(await r.json().catch(() => ({}))) };
   } },
   probe_down: { label: 'A probe target goes down three times in a row (raises an exception)', run: async ({ db, cfg }) => {
@@ -234,6 +244,6 @@ export const SCENARIOS = {
 
 async function postWebhook(app, event) {
   const body = JSON.stringify(event);
-  const r = await fetch(`${app.cfg.baseUrl}/webhooks/stripe`, { method: 'POST', headers: { 'content-type': 'application/json', 'stripe-signature': signStripePayload(body, app.cfg.stripeWebhookSecret) }, body });
+  const r = await fetch(`${localBase(app.cfg)}/webhooks/stripe`, { method: 'POST', headers: { 'content-type': 'application/json', 'stripe-signature': signStripePayload(body, app.cfg.stripeWebhookSecret) }, body });
   return { status: r.status, ...(await r.json().catch(() => ({}))) };
 }
