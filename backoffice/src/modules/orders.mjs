@@ -2,7 +2,7 @@
 // resolved against the catalog (an unknown SKU is a loud error), COGS frozen
 // at the time of sale so the books do not move when the BOM does. Packing an
 // order consumes inventory through the recipes; shipping mails the tracking.
-import { nowIso } from '../db.mjs';
+import { nowIso, currentActor } from '../db.mjs';
 import { upsertContact } from './contacts.mjs';
 import { resolveSku, cogsCents } from './catalog.mjs';
 import { consumeForOrder, releaseForOrder } from './inventory.mjs';
@@ -72,7 +72,7 @@ export const usd = (c) => `$${((Number(c) || 0) / 100).toFixed(2)}`;
 
 // ---------- the timeline: one line per thing that happened to the order
 export function addEvent(db, orderId, { kind, text, actor = 'system', at = nowIso() }) {
-  db.run('INSERT INTO order_events (order_id, at, actor, kind, text) VALUES (?, ?, ?, ?, ?)', orderId, at, actor, kind, String(text || '').slice(0, 4000));
+  db.run('INSERT INTO order_events (order_id, at, actor, kind, text) VALUES (?, ?, ?, ?, ?)', orderId, at, actor === 'web' ? currentActor('web') : actor, kind, String(text || '').slice(0, 4000));
   return db.get('SELECT * FROM order_events WHERE id = last_insert_rowid()');
 }
 export const timeline = (db, orderId) => db.all('SELECT * FROM order_events WHERE order_id = ? ORDER BY at DESC, id DESC', orderId);

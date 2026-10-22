@@ -38,7 +38,7 @@ test('a person can log in, ship an order, answer a ticket, move stock, post an e
     page.on('console', m => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
 
     await page.goto(base + '/orders'); assert.match(page.url(), /\/login$/, 'the admin redirects to login');
-    await page.fill('#pw', 'browser-test-password-1'); await page.fill('#code', totp(totpSecret)); await page.click('button:has-text("Log in")');
+    await page.fill('#email', 'owner@localhost'); await page.fill('#pw', 'browser-test-password-1'); await page.fill('#code', totp(totpSecret)); await page.click('button:has-text("Log in")');
     await page.waitForURL(base + '/'); assert.ok(await page.$('.hero'), 'the home page shows the hero');
 
     // ship the packed order through its form

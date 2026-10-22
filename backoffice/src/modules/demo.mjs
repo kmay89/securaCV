@@ -26,6 +26,7 @@ import { raise } from './exceptions.mjs';
 import { signStripePayload } from './stripe.mjs';
 import { createPo, markOrdered, receivePo, draftReorder } from './purchasing.mjs';
 import { saveAttachments } from './support.mjs';
+import { hashPassword } from '../auth.mjs';
 import { deflateSync } from 'node:zlib';
 
 // A real, tiny PNG (a flat color with a darker band), so an attachment renders in the browser without any file on disk.
@@ -39,6 +40,9 @@ export function tinyPng(w = 64, h = 48, rgb = [214, 196, 150]) {
 }
 
 export const DEMO_PASSWORD = 'demo1234';
+// Every demo person shares one authenticator secret, so the login page can show one code for all of them. Demo only.
+export const DEMO_TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+export const DEMO_USERS = [{ email: 'demo@errer.example.test', name: 'Demo Owner', role: 'owner' }, { email: 'ops@errer.example.test', name: 'Ops Placeholder', role: 'ops' }, { email: 'support@errer.example.test', name: 'Support Fixture', role: 'support' }, { email: 'viewer@errer.example.test', name: 'Viewer Stub', role: 'viewer' }];
 export const DEMO_WEBHOOK_SECRET = 'whsec_demo_not_a_real_secret';
 export const isDemo = (db) => db.setting('demo') === '1';
 export const isEmpty = (db) => db.get('SELECT COUNT(*) AS n FROM orders').n === 0 && db.get('SELECT COUNT(*) AS n FROM contacts').n === 0 && db.get('SELECT COUNT(*) AS n FROM tickets').n === 0;
@@ -167,6 +171,7 @@ function planOrders() {
 export async function seedDemo(db, cfg) {
   if (db.get('SELECT COUNT(*) AS n FROM orders').n) throw new Error('the database already has orders — demo data only goes into an empty one (`backoffice demo --reset` wipes it, or point BACKOFFICE_DATA_DIR somewhere fresh)');
   db.setSetting('demo', '1'); db.setSetting('demo:seeded_at', nowIso());
+  seedDemoUsers(db);
   const q = silent(cfg);
   const { createDiscount, setDiscountStatus } = await import('./discounts.mjs');
   const { setContactTags } = await import('./contacts.mjs');
@@ -351,12 +356,19 @@ export async function seedDemo(db, cfg) {
   return n;
 }
 
+// The demo people: the owner from the login page, one of each other role, and one invitation still open. Same password, same authenticator, by design; ids survive a reseed so sessions do.
+export function seedDemoUsers(db) {
+  const hash = hashPassword(DEMO_PASSWORD); const now = nowIso();
+  for (const u of DEMO_USERS) db.run(`INSERT INTO users (email, name, role, status, password_hash, totp_secret, password_set_at, created_at, invited_by) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)
+    ON CONFLICT(email) DO UPDATE SET name = excluded.name, role = excluded.role, status = 'active', password_hash = excluded.password_hash, totp_secret = excluded.totp_secret, totp_pending = NULL, invite_token = NULL, failed_logins = 0, locked_until = NULL`, u.email, u.name, u.role, hash, DEMO_TOTP_SECRET, daysAgo(40), daysAgo(40), u.role === 'owner' ? null : 'demo@errer.example.test');
+  db.run("INSERT INTO users (email, name, role, status, invite_token, invite_expires_at, invited_by, created_at) VALUES ('auditor@example-accounting.example.test', 'Auditor Stub', 'viewer', 'invited', ?, ?, 'demo@errer.example.test', ?) ON CONFLICT(email) DO UPDATE SET invite_token = excluded.invite_token, invite_expires_at = excluded.invite_expires_at, status = 'invited'", 'demo-invite-' + Math.random().toString(36).slice(2, 12), new Date(Date.now() + 40 * 3600000).toISOString(), daysAgo(0, 8));
+  db.setSetting('auth:password', 'users');
+}
 // A demo app that finds an empty database makes itself the demo: operator,
 // flag, data. A used database is left exactly as it is.
 export async function ensureDemo(db, cfg) {
-  const { hasOperator, setupOperator } = await import('../auth.mjs');
+  const { hasOperator } = await import('../auth.mjs');
   if (!isEmpty(db) || hasOperator(db)) return null;
-  setupOperator(db, DEMO_PASSWORD);
   return seedDemo(db, cfg);
 }
 
