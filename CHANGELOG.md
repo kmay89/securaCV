@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### The flagship's route check holds every answer that carries a credential to a bearer-only grant, on the grants as #1838 left them (sweep F338)
+### The flagship's route check holds every answer that carries a credential to a bearer-only grant, on the grants as #1838 left them (sweep F338, #<PR>)
 
 - **`firmware/canary/scripts/check_route_security.py` gains the bearer-only
   answer rule (`check_bearer_only_answers`), canary-wap's F328 rule ported to
@@ -20,16 +20,24 @@
     `/api/status` answering it beside the pin), and any function that reads
     one without being named (a helper printing the SoftAP password), in any
     file under the tree's `lib/` and `src/`, read as the compiler reads it:
-    an `.inc` or `.hpp` of code is read, a file of any other kind but a
-    library manifest fails, a raw string literal is one literal (a reader
-    after the web UI's HTML is code), a backslash-newline is spliced (a name
-    split across two lines by one is that name) and a digraph is the token it
-    spells (`%:define`, `<% %>`); and a header in `firmware/canary/include`
-    or `firmware/common` naming a credential or anything else the check
-    holds under the tree (a helper there returning `auth_get_token()`, or
-    opening the BOOT tap on `g_prov_gate`, called from a route), but the NVS
-    key names where `canary_config.h` defines them and `reset_scope_keys.h`
-    lists them, and `ap_password.h`'s deriver;
+    an `.inc` or `.hpp` of code is read, a file of any other kind fails but a
+    library manifest by its name (`library.json`, `library.properties`) and
+    a file git ignores (an editor's backup, an OS's `.DS_Store`), a raw
+    string literal is one literal (a reader after the web UI's HTML is
+    code), a backslash-newline is spliced (a name split across two lines by
+    one is that name) and a digraph is the token it spells (`%:define`,
+    `<% %>`); and a file outside the tree that the flagship compiles or
+    `#include`s (each `.cpp` its `build_src_filter` compiles from
+    `firmware/common`, and every file an `#include` reaches from the tree or
+    from those) naming a credential or anything else the check holds under
+    the tree (a helper there returning `auth_get_token()`, opening the BOOT
+    tap on `g_prov_gate`, or raising the SoftAP open with `WiFi.softAP(...,
+    nullptr)`, `WiFi.mode(WIFI_AP_STA)` or an open `esp_wifi_set_config`,
+    called from a route or `loop()`), but the NVS key names where
+    `canary_config.h` defines them and `reset_scope_keys.h` lists them,
+    `ap_password.h`'s deriver and `provisioning_gate.h`'s two decisions.
+    Another product's source there (`setup_portal.cpp`) and a host test are
+    not read, so a correct edit to one no longer fails the flagship's check;
   - an answer outside its grant: `/api/status` answering before
     `if (!auth_gate(req)) return ESP_OK;` at its own top level, the receipt
     handing `receipt_decide` anything but its bearer and tap lambdas or
@@ -40,7 +48,7 @@
     answering handler's own that reads a credential and is not its row, so
     the receipt cannot also publish the token over MQTT or print the SoftAP
     password under its served verdict;
-  - an edit to the glue a grant runs through, pinned whole (38 bodies:
+  - an edit to the glue a grant runs through, pinned whole (40 bodies:
     `auth_gate`, `bearer_present_and_valid`, `from_ap_subnet` and its
     helpers `netif_ip4`, `be_word_host_order` and `sockaddr_ip4_host_order`,
     `page_token_inject` and F341's clear, the tap's take and its hooks,
@@ -54,7 +62,9 @@
     `setup_init`, `setup_is_first_boot`, `setup_is_active`,
     `setup_mark_complete` and `setup_check_timeout`, the BOOT tap at its
     source, `handle_boot_button()` whole with its press, and the port-80
-    path, `handle_captive_probe` and `handle_https_redirect`), so none of
+    path, `handle_captive_probe` and `handle_https_redirect`, with the two
+    members its hint branch decides on, `isTlsEnabled()` and
+    `getHttpsServer()`), so none of
     `page_token_inject`'s four inputs can be widened in the glue, in the
     helpers it reads them through, or by a macro of a name they call; a
     sink cannot be added inside an accessor, and the token cannot be keyed
@@ -99,7 +109,12 @@
     the stored first-boot flag it is read from (`NVS_KEY_SETUP_OK`), written
     outside the setup lib's pinned functions, the credentials reset that
     clears that flag run by anything but the BOOT hold, or the setup
-    timeout's call dropped from `loop()`; the token's alphabet narrowed; the
+    timeout's call dropped from `loop()`; the TLS flag or the TLS server's
+    handle written anywhere but the constructor and `startHttpServer()`, each
+    statement where it sits (`m_tls_enabled = false;` once the port-80
+    server is up, or `m_https_server = m_http_server;`, would serve the setup
+    page and its token on plain HTTP beside HTTPS); the token's alphabet
+    narrowed; the
     boot handing `auth_load_or_derive` anything but `g_device.privkey`; and
     an `AUTH_MARKERS` name that is no census row, or a `PRE_HOST_STEPS` name
     that is no row, emitter or `auth_get_token`, such as a stale
@@ -121,8 +136,8 @@
     refusal, `witness_provision_device()`'s `establish_identity_key()`), so
     a mint moved above it, which would key the SoftAP password or the bearer
     on an all-zero private key, the same on every Canary, fails;
-  - a `#define` under ROOTS or in the headers it includes from outside it
-    (`firmware/canary/include`, `firmware/common`), or a `-D` flag in
+  - a `#define` under ROOTS or in a file outside it the flagship compiles or
+    `#include`s, or a `-D` flag in
     `platformio.ini` and the files its `extra_configs` names (on its own line
     or under it, a missing one named), that names a pinned or census
     function, a device-side use, an accessor, a mint, an emitter, a
@@ -136,7 +151,21 @@
     macro named for anything else a pinned text reads, a value such as
     `PROVISIONING_GATE_TTL_MS` or `BOOT_SHORT_PRESS_MS` included, is the
     `ROOTS_DEFINES` row it is today and is never `#undef`'d; and
-    `SETUP_TIMEOUT_MS` is held to its value;
+    `SETUP_TIMEOUT_MS` is held to its value. A macro or flag that pastes
+    tokens (`##`, `%:%:`) fails too, but GNU's `, ##__VA_ARGS__`: `#define
+    CV_JOIN(a, b) a##b` names nothing held, and `CV_JOIN(auth_get_,
+    token)()` answers the bearer from a public route, or `JOIN(auth_handed_,
+    token)(...)` clears its own lockout, under no spelling a rule reads; and
+    so does assembly there but the empty compiler barrier (an
+    `__asm__("_Z14auth_get_tokenv")` label, or an asm `call8` of the
+    lockout's clear);
+  - a build input the check does not read: an `#include` through a macro, a
+    compiled file that is not C or C++, a `build_src_filter` entry that
+    matches nothing, a file of this repository outside the read folders that
+    the flagship `#include`s or compiles, and, in the flag files, a linker
+    option (`-Wl,--wrap=<auth_check's symbol>` sends every call of it to a
+    function returning `true`, which ungates every route), a forced include,
+    a build script, a local library or a moved source folder;
   - a function defined twice (an `#if` body and its `#else` one): every body
     is read, whatever its head (`static int`, `IRAM_ATTR`, `noexcept`, a
     trailing return type), so a public route's `#else` body that sends the
@@ -147,7 +176,8 @@
     included) or the TLS key's NVS record outside the functions that hold
     them, and a string literal under ROOTS that is the token's, the TLS
     key's, the first-boot flag's or the private key's NVS key (`"api_token"`
-    read or written by a public route);
+    read or written by a public route), in any file, one that names no key
+    included (`"setup_" "ok"`, `"setup\x5fok"`);
   - a route registered in a form no rule reads (an `httpd_uri_t` assigned
     field by field, a cast `.method`, a lambda `.handler`, the registration
     call taken as a pointer), and `register_route()` registering anything but
@@ -182,7 +212,9 @@
   `this` saved; the peek hook writing the tap's stamp; `SETUP_TIMEOUT_MS`
   widened; and five round-2 branches no plant held. Its repair found 21 more
   of those kinds and fixed them beside the review's: a `take` macro in a
-  `firmware/common` header, `WiFi.softAPConfig()`, `"api_" "token"`, the
+  `firmware/common` header, `WiFi.softAPConfig()`, `"api_" "token"` (in a
+  file that already named a key: the fourth review found the rule skipped a
+  file that named none), the
   private key's NVS record, the TLS key's writer, a member returning `*this`,
   a `decltype` alias, `WiFi` under another name; and a name split by a
   backslash-newline (a reader, a `#define`), a digraph `%:define` or a `<% ;
@@ -191,28 +223,51 @@
   shadowed under the tree, a header outside it returning `auth_get_token()` or
   opening the tap, `WiFiGenericClass::mode()`, a route registered through a
   pointer to `register_route`, and the wrapper registering a route of its own.
+  Its fourth review found 12 more that the fourth version passed (each
+  passed the check as F340 left it too): a token-paste macro answering the
+  bearer from `/api/fleet` or clearing its lockout (`a##b`, `auth_get ##
+  _token`, `auth_get##__VA_ARGS__`), a header helper called from `loop()`
+  raising the SoftAP open (`WiFi.softAP(..., nullptr)`, `WiFi.mode`, an open
+  `esp_wifi_set_config`), the port-80 hint's two members or the TLS flag
+  answered wrong (`getHttpsServer()` returning the port-80 server,
+  `isTlsEnabled()` returning `false`, the flag cleared once the port-80 server
+  is up), and a joined or escaped first-boot key in a file naming no key; nine
+  branches no plant held (a raw literal's prefix, a `-D` flag's value, an
+  unreadable NVS key define, six table-hygiene rows); and two false failures
+  (a correct edit to another product's `setup_portal.cpp`, a host test's
+  `#define delay(ms)` shim). Its repair found seven more and fixed them
+  beside these: the paste spelled with the digraph `%:%:`, in a header the
+  flagship includes or as a `-D` flag; an asm label and an asm call; a linker
+  `--wrap` of `auth_check`; and the TLS server's handle pointed at the port-80
+  server. Each passed the fourth version and the check as F340 left it, and
+  the paste, asm and wrap forms build (host g++, and the paste and asm forms
+  with the tree's `xtensa-esp32s3-elf-g++ 14.2.0`).
   Each now fails, with a planted fixture. The head parser names a constructor
   for its class (it named `ScvNetworkManager`'s body after its last
   initializer, `m_peers_last_browse_ms`), a member as `Class::name`, and a
   function whose head ends in `noexcept`, `override`, `final`, a member's
-  `const` or a trailing return type. 241 planted fixtures (221 source, 20
-  table), with the self-test's lexer, flag-file, header, file-kind, route-form
-  and raw-literal cases, each fail for their named reason before the tree is
-  read; they refuse each of the 60 mutants of the check that undo one of the
-  third review's fixes, weaken a branch it found unheld, or undo one of its
-  repair's own. The tree passes with its 83 registrations in about 12 s. A
-  static text check: names are matched by spelling (the network manager's are
-  the exception: a reference to it under another name fails, however
-  declared), values are not checked but `SETUP_TIMEOUT_MS`'s and a shadow
-  under the tree of a value the glue reads (a `memset` of the private key
-  before a mint passes, and so does a header's own value), the headers outside
-  the tree are read for their `#define` lines and the names the check holds,
-  not followed as code, an NVS record is not followed under a key built at run
-  time or through a walk of the whole namespace, the private key is not
-  followed through a helper, a statement before a gated route's refusal that
-  does the route's work without leaving is not seen, and an edit to pinned
-  glue or a pinned statement updates its row in the same review (the failure
-  prints the row as it now is).
+  `const` or a trailing return type. 260 planted fixtures (235 source, 25
+  table), with the self-test's lexer, flag-file, build-input, reach, header,
+  file-kind, route-form and raw-literal cases, each fail for their named
+  reason before the tree is read; they refuse each of the 60 mutants of the
+  check that undo one of the third review's fixes, weaken a branch it found
+  unheld, or undo one of its repair's own, and each of 41 more that undo one
+  of the fourth review's fixes or weaken a branch it found unheld (the 11 of
+  those that weaken an older branch pass the fourth version's self-test).
+  The tree passes with its 83 registrations in about 14 s. A static text
+  check: names are matched by spelling (the network manager's are the
+  exception: a reference to it under another name fails, however declared),
+  values are not checked but `SETUP_TIMEOUT_MS`'s and a shadow under the tree
+  of a value the glue reads (a `memset` of the private key before a mint
+  passes, and so does a header's own value), the files outside the tree the
+  flagship reaches are read for their `#define` lines, their asm and the
+  names the check holds, not followed as code, the linker is not read (a flag
+  that would bind a symbol fails instead), an NVS record is not followed under
+  a key built at run time or through a walk of the whole namespace, the
+  private key is not followed through a helper, a statement before a gated
+  route's refusal that does the route's work without leaving is not seen, and
+  an edit to pinned glue or a pinned statement updates its row in the same
+  review (the failure prints the row as it now is).
 
 ### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (F342, F347)
 

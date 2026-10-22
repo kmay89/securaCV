@@ -89,18 +89,34 @@ every other gate), and the premise the last one stands on:
     read from include/canary_config.h; adjacent literals joined, escapes
     decoded), so a record is reached only by the name the reads follow.
     Every file under ROOTS is read (tree_sources: an `.inc`, `.hpp` or `.ino`
-    of code is code, any other kind but a library manifest fails), and read as
-    the compiler reads it (strip_comments): a raw string literal is one
+    of code is code, and any other kind fails, but a library manifest by its
+    name, library.json or library.properties, and a file git ignores, an
+    editor's backup or an OS's .DS_Store, which is never committed), and read
+    as the compiler reads it (strip_comments): a raw string literal is one
     literal, so code after the web UI's HTML is code; a backslash-newline is
     spliced away, so the accessor's name split across two lines by one is the
     accessor; and a digraph is the token it spells, so `%:define` is a #define
-    and `<% %>` a block. The headers outside ROOTS (firmware/canary/include,
-    firmware/common) name nothing the check holds under ROOTS but
-    INCLUDE_MENTIONS (the NVS keys where canary_config.h defines them and
-    reset_scope_keys.h lists them, and ap_password.h's deriver): no
-    credential's spelling, and no pinned, census, accessor, emitter or
-    comparer name, so a function there that reads a credential, opens the tap
-    or starts the network, called from under ROOTS, fails.
+    and `<% %>` a block. Outside ROOTS the check reads what the flagship
+    reaches (build_reach): each .c/.cpp build_src_filter compiles from
+    firmware/common, and each file an #include reaches from ROOTS or from
+    those, beside the including file or in include/ and the -I folders the
+    flag files name (another product's source, setup_portal.cpp, or a host
+    test there is not read). Those files name nothing the check holds under
+    ROOTS but INCLUDE_MENTIONS (the NVS keys where canary_config.h defines
+    them and reset_scope_keys.h lists them, ap_password.h's deriver and
+    provisioning_gate.h's two Host-first decisions): no credential's
+    spelling, no pinned, census, accessor, emitter or comparer name, and no
+    census row's spelling (WiFi.softAP, the radio's mode, the driver's
+    config, the AP class, the tap's open), so a function there that reads a
+    credential, opens the tap, starts the network or raises the SoftAP open,
+    called from under ROOTS, fails. A build input the check cannot read fails
+    too: an #include through a macro, a file the build compiles that is not C
+    or C++, a build_src_filter entry that matches nothing, a file of this
+    repository outside ROOTS and the include roots that the flagship
+    #includes or compiles, and in the flag files a linker option
+    (`-Wl,--wrap=<symbol>` sends every call of a function to a name no rule
+    reads), a forced include, a build script, a local library or a moved
+    source folder (build_input_problems).
     Every reader is named: an accessor in its home (SECRET_ACCESSORS), an
     emitter in its home carrying exactly what TOKEN_EMITTERS says, its
     reading statements pinned (EMITTER_STATEMENTS), a comparer reading only
@@ -154,8 +170,10 @@ every other gate), and the premise the last one stands on:
     GPIO, and the peek hook), the three accessors, the token's deriver and
     its two helpers (hmac_sha256, format_api_token_string), the SoftAP
     password's way to the radio (announce_setup_network, apply_ap_security),
-    and the port-80 path (handle_captive_probe and handle_https_redirect, so
-    the setup page is never served beside HTTPS on plain HTTP).
+    and the port-80 path (handle_captive_probe and handle_https_redirect, with
+    the two members the probe's hint branch decides on, isTlsEnabled and
+    getHttpsServer, whose stores the census holds to their writers: in that
+    text, the setup page is not served on plain HTTP beside HTTPS).
     The gate primitives are mentioned only where the census says, a call or
     an address taken alike, and defined only where it says
     (GATE_CALL_SITES): every auth_gate call is the whole refusal statement,
@@ -198,13 +216,16 @@ every other gate), and the premise the last one stands on:
     by the setup lib's pinned functions, the credentials reset that also
     clears that flag (factory_reset) runs only from the BOOT hold's dispatch
     and that only from the boot-time hold and handle_boot_button, and the
-    setup timeout runs from loop() while setup is active; and the token's
-    alphabet is its declaration. Every AUTH_MARKERS name is a census row,
+    setup timeout runs from loop() while setup is active; the TLS flag and
+    the TLS server's handle the port-80 hint reads (m_tls_enabled,
+    m_https_server) are written only by the constructor and startHttpServer(),
+    each statement where it sits; and the token's alphabet is its
+    declaration. Every AUTH_MARKERS name is a census row,
     and every PRE_HOST_STEPS name a row, a TOKEN_EMITTERS key or
     auth_get_token, so a deleted gate's name cannot linger in either list.
-    No `#define` under ROOTS or in the headers it includes from outside it
-    (firmware/canary/include, firmware/common), and no `-D` flag in
-    platformio.ini or the files its extra_configs names, may name a pinned
+    No `#define` under ROOTS or in a file outside it the flagship compiles or
+    #includes (build_reach), and no `-D` flag in platformio.ini or the files
+    its extra_configs names, may name a pinned
     or census function, a device-side use, an accessor, a mint, an emitter,
     a comparer, a credential's spelling or the private key, or be named for
     a function a pinned body or statement calls (`#define auth_gate(r)
@@ -216,7 +237,15 @@ every other gate), and the premise the last one stands on:
     a pinned text names (a value's name too: PROVISIONING_GATE_TTL_MS,
     BOOT_SHORT_PRESS_MS) is a ROOTS_DEFINES row, in its file as often as it
     says, and none is #undef'd; and PINNED_DEFINES' SETUP_TIMEOUT_MS is
-    defined once, as its row says;
+    defined once, as its row says. No macro or flag pastes tokens (`##`, or
+    the digraph `%:%:`) but GNU's `, ##__VA_ARGS__` comma elision, which
+    pastes nothing: `#define CV_JOIN(a, b) a##b` names nothing held, and
+    `CV_JOIN(auth_get_, token)()` calls the token's accessor, or
+    `JOIN(auth_handed_, token)(...)` clears a lockout, under no spelling a rule
+    reads (a `#` stringize makes a string, never a call, and is not refused).
+    No asm is written there either but the empty compiler barrier (`asm
+    volatile("" ::: "memory")`): an asm label (`__asm__("_Z14auth_get_tokenv")`)
+    or an asm call reaches a function by its symbol;
   * the premise the last rule stands on, checked (no_session_problems): the
     flagship has no session. No cookie is read or set, the request headers
     read are `Authorization` (the auth lib) and `Host` (the network lib)
@@ -250,13 +279,16 @@ matched by spelling, so a copy of a credential under another name is not
 followed, and neither is a value passed on as a parameter
 (announce_setup_network()'s pass is held by the pins on the statements and
 the body that handle it instead); the network manager's own spellings are
-the exception above; the headers outside ROOTS are read only for their
-#define lines and for the names above, so their code is otherwise not
-followed, and a held name that is also an ordinary word there
-(INCLUDE_COMMON_WORDS: begin, check, s_active and the like) is not read in
-them; a value is not checked, only its spelling, but SETUP_TIMEOUT_MS's (a
-`memset` of the private key just before a mint passes, and both credentials
-would become HMACs of a zero key over public inputs; the values
+the exception above; the files outside ROOTS the flagship reaches are
+read only for their #define lines, their asm and the names above, so their
+code is otherwise not followed, and a held name that is also an ordinary
+word there (INCLUDE_COMMON_WORDS: begin, check, s_active and the like) is
+not read in them; the linker is not read (a library the build links, the
+registry ones lib_deps names and the core, is outside the check, and a flag
+that would bind a symbol fails instead); a value is not checked, only its
+spelling, but SETUP_TIMEOUT_MS's (a `memset` of the private key just before
+a mint passes, and both credentials would become HMACs of a zero key over
+public inputs; the values
 include/canary_config.h and the shared headers define,
 PROVISIONING_GATE_TTL_MS among them, are read only for the four NVS keys'
 strings and for a macro's name, never as numbers, so a header's own value is
@@ -273,10 +305,14 @@ a gated route's refusal that does the route's work itself, without leaving,
 is not seen; an early `return` before a mint is not refused (the rest of its
 function goes with it, setup()'s start of the network among it), though a
 goto before one is; macros are read only as `#define` lines and `-D` flags
-(a PlatformIO extra_script that adds a flag is not read: the canary has
-none); the members the pinned glue calls on the manager or the gate
-(isTlsEnabled, getHttpsServer, getStatus, WiFi.getMode) and the decisions
-in firmware/common are held by their own tests, not by this check; the
+(a PlatformIO extra_script, which could add one, fails the flag rule); of
+the members the pinned glue calls, the hint's isTlsEnabled and
+getHttpsServer are pinned and the AuthManager's are glue, but getStatus
+(which picks the setup page or Apple's success body, not the token, and
+which two classes define), WiFi.getMode, Preferences' reads and ResetHold's
+step are not held, and the decisions in firmware/common (provisioning_gate.h,
+tls_policy.h, host_guard.h, ap_security_policy.h, reset_hold.h,
+auth_backoff.h) are their host tests', not this check's; the
 flagship's derive_api_token and its two helpers are held by their text, not
 run (no host test compiles them; test_securacv_auth stubs derive_api_token);
 the shared firmware/common/network/auth_backoff.h is outside ROOTS and its
@@ -290,8 +326,10 @@ step "Check canary (PIO) route security", beside the WAP's audit):
 """
 
 import functools
+import glob
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -302,10 +340,12 @@ from pathlib import Path
 ROOTS = (Path("firmware/canary/lib"), Path("firmware/canary/src"))
 # What the check reads under ROOTS: every C and C++ source and header spelling,
 # so an `.inc`, `.hpp` or `.ino` #included from a .cpp is code like any other.
-# Any other file under ROOTS fails (tree_sources), but a library manifest.
+# Any other file under ROOTS fails (tree_sources), but a library manifest by
+# its name (PlatformIO's library.json, Arduino's library.properties) and a file
+# git ignores (an editor's backup, an OS's .DS_Store: never committed).
 SOURCE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".c++", ".h", ".hh", ".hpp", ".hxx", ".h++",
                    ".inc", ".inl", ".ipp", ".tpp", ".ino")
-NON_SOURCE_SUFFIXES = (".json",)
+NON_SOURCE_NAMES = ("library.json", "library.properties")
 
 # Substrings whose presence in a handler body counts as a credential gate.
 # Each is a real call that enforces access:
@@ -366,8 +406,10 @@ PUBLIC_ALLOWLIST = {
     # off the TLS server, the TLS hint (send_tls_captive_hint), never the
     # page token. Everything else is a 307 to https:// (F15), or a 500 when
     # the target would not fit. Both handlers are pinned whole (GLUE_DEFS),
-    # which is what holds that: the hint branch, and a redirect that hands
-    # nothing but a probe path to a page. Its SECRET_ANSWERS row ('page')
+    # and so are the two members the hint branch decides on (isTlsEnabled,
+    # getHttpsServer), whose stores the census holds to their writers: that
+    # text is what holds it (the hint branch, and a redirect that hands
+    # nothing but a probe path to a page). Its SECRET_ANSWERS row ('page')
     # holds it to the page grant because its text reaches send_html_with_token
     # through the probe.
     ("GET", "/*"): "captive wildcard fallback (302/404) / port-80 https redirect: "
@@ -1700,7 +1742,9 @@ GLUE_DEFS = {
     # The port-80 path (PUBLIC_ALLOWLIST's /* reasons): the probe answers its
     # plain bodies, the setup page only off the port-80 server (the TLS hint
     # there), and the redirect hands a probe path to the probe and everything
-    # else a 307, so the page token never rides plain HTTP on an HTTPS build.
+    # else a 307: in this text, and in the two members below and their
+    # stores' writers, the page token does not ride plain HTTP on an HTTPS
+    # build.
     (_NET, "handle_captive_probe"): (
         "a probe's plain answer, the setup page through the page grant only while setup is "
         "active or the home link is down and never on the port-80 server beside HTTPS (the "
@@ -1733,6 +1777,18 @@ GLUE_DEFS = {
         'httpd_resp_set_status(req, "307 Temporary Redirect"); httpd_resp_set_hdr(req, '
         '"Location", location); httpd_resp_set_hdr(req, "Cache-Control", "no-store"); return '
         'httpd_resp_sendstr(req, "Redirecting to https"); }'),
+    # ...and the two members the probe's hint branch decides on (`isTlsEnabled()
+    # && req->handle != getHttpsServer()`): each returns its store and nothing
+    # else, and GATE_CALL_SITES holds every write of the two stores, so "HTTPS is
+    # up" and "this request came off the TLS server" cannot be answered wrong
+    # with both handlers' text intact (the page, and its token, on port 80).
+    (_NET_H, "isTlsEnabled"): (
+        "the TLS flag the port-80 hint decides on: its store returned, nothing else",
+        "isTlsEnabled() const { return m_tls_enabled; }"),
+    (_NET_H, "getHttpsServer"): (
+        "the TLS server's handle the port-80 hint compares the request's with: its store "
+        "returned, nothing else",
+        "getHttpsServer() const { return m_https_server; }"),
 }
 
 # ── The bearer-only answers: the gate primitives' call sites ─────────────────
@@ -1799,6 +1855,12 @@ _BOOT_HOLD_AT_BOOT = ("[within if (digitalRead(BOOT_BUTTON_GPIO) == LOW) { > for
 _WIFI_MODE = (r"\bWiFi\w*\s*(?:\.|::)\s*(?:mode|enableAP|softAPConfig)\b"
               r"|\besp_wifi_set_mode\b")
 _SETUP_STATE = {"file": _SETUP, "ident": True}
+# The TLS state's writers, and the two blocks startHttpServer() writes it in.
+_TLS_WRITERS = {(_NET, "ScvNetworkManager::ScvNetworkManager"),
+                (_NET, "ScvNetworkManager::startHttpServer")}
+_TLS_FAILED = "[within if (mode == Mode::HTTPS_REDIRECT) { > #if SECURACV_HAS_HTTPS_SERVER] "
+_TLS_UP = ("[within if (mode == Mode::HTTPS_REDIRECT) { > if (httpd_ssl_start(&m_https_server, "
+           "&ssl) == ESP_OK) { > #if SECURACV_HAS_HTTPS_SERVER] ")
 _ALPHABET = {"callers": {(_CRYPTO, "format_api_token_string"), (_CRYPTO, "unambiguous_suffix16")},
              "file": _CRYPTO, "ident": True}
 GATE_CALL_SITES = {
@@ -1955,6 +2017,28 @@ GATE_CALL_SITES = {
                   (_NET, "ScvNetworkManager::raiseAp"): (
                       "WiFi.mode(WIFI_AP_STA);", "[within if (!ap_ok) {] WiFi.mode(WIFI_STA);")},
         "home": None},
+    # The TLS state the port-80 hint reads (GLUE_DEFS' isTlsEnabled and
+    # getHttpsServer): the flag and the TLS server's handle are written by the
+    # constructor and by startHttpServer() alone, each statement where it sits
+    # (the flag set only once httpd_ssl_start() has filled the handle, both
+    # cleared when it fails), and read only by their getters and the TLS
+    # registration. A write anywhere else (`m_tls_enabled = false;` once the
+    # port-80 server is up, `m_https_server = m_http_server;`) would serve the
+    # setup page, with its token, on plain HTTP beside HTTPS.
+    "m_tls_enabled": {
+        "callers": _TLS_WRITERS | {(_NET_H, "isTlsEnabled")}, "ident": True,
+        "decl": ("bool m_tls_enabled;",),
+        "stmts": {(_NET, "ScvNetworkManager::ScvNetworkManager"): ("m_tls_enabled = false;",),
+                  (_NET, "ScvNetworkManager::startHttpServer"): (
+                      _TLS_UP + "m_tls_enabled = true;", _TLS_FAILED + "m_tls_enabled = false;")}},
+    "m_https_server": {
+        "callers": _TLS_WRITERS | {(_NET_H, "getHttpsServer"), (_NET_H, "getHttpServer")},
+        "ident": True, "decl": ("httpd_handle_t m_https_server;",),
+        "stmts": {(_NET, "ScvNetworkManager::ScvNetworkManager"): ("m_https_server = nullptr;",),
+                  (_NET, "ScvNetworkManager::startHttpServer"): (
+                      _TLS_FAILED + "if (httpd_ssl_start(&m_https_server, &ssl) == ESP_OK) {",
+                      _TLS_UP + "registerHttpHandlers(m_https_server);",
+                      _TLS_FAILED + "m_https_server = nullptr;")}},
     # The network manager's one instance, reached only by its accessor (whose
     # every use manager_alias_problems holds to a member access or a binding
     # named net or network).
@@ -3196,11 +3280,13 @@ def _string_literals(text: str) -> list:
 
 def nvs_literal_problems(sources: dict, keys: dict) -> list:
     """No string literal under ROOTS is the value of an NVS_LITERAL_KEYS
-    record (`keys`: name → its include/canary_config.h value)."""
+    record (`keys`: name → its include/canary_config.h value). Every file's
+    literals are read: a joined or escaped one (`"setup_" "ok"`,
+    `"setup\\x5fok"`) holds no copy of the value in a file that names none."""
     problems = []
     names = {v: k for k, v in keys.items()}
     for fname, text in sorted(sources.items()):
-        if not any(v in text for v in names):
+        if not names or '"' not in text:
             continue
         for start, _end, value in _string_literals(text):
             if value in names:
@@ -3582,25 +3668,36 @@ def no_session_problems(sources: dict, headers: dict, queries: set, uri_readers)
 # The build's flag files (platformio.ini and the files its extra_configs
 # names): a `-D` flag is a `#define` too.
 FLAG_FILES = (Path("firmware/canary/platformio.ini"),)
-# The headers outside ROOTS the canary's sources include (platformio.ini's
-# -I${PROJECT_DIR}/include and -I${PROJECT_DIR}/../common): a `#define` there,
-# #included after a pinned function, shadows it as one under ROOTS does.
+# The folders outside ROOTS the flagship builds from (platformio.ini's
+# -I${PROJECT_DIR}/include, -I${PROJECT_DIR}/../common and its subfolders, and
+# build_src_filter's ../../common entries). What the check reads of them is what
+# the flagship reaches (build_reach): each .c/.cpp build_src_filter compiles, and
+# each file an #include reaches from ROOTS or from those, resolved as the
+# compiler resolves it. A `#define` there, in a header #included after a pinned
+# function, shadows it as one under ROOTS does; a file there no flagship source
+# reaches (another product's source, a host test) is not read.
+PROJECT_DIR = Path("firmware/canary")
 INCLUDE_ROOTS = (Path("firmware/canary/include"), Path("firmware/common"))
 # The defines those headers hold on purpose that name what the check holds:
 # the NVS records' names (NVS_LITERAL_KEYS), each in canary_config.h.
 INCLUDE_DEFINES = {name: "include/canary_config.h" for name in NVS_LITERAL_KEYS}
-# What the headers outside ROOTS may name of what the check holds under ROOTS
-# (INCLUDE_MENTIONS), as (file suffix, name): the NVS records' names where
-# canary_config.h defines them and reset_scope_keys.h lists them for the reset,
-# and the SoftAP key's deriver where ap_password.h defines it. Code in those
-# headers is not read as code (a function there that read the bearer, opened the
-# tap or started the network, #included and called from under ROOTS, would be
-# followed by no rule), so a header naming anything else the check holds fails:
-# a credential's spelling (SECRET_READS) or a name the tables hold under ROOTS.
+# What the files outside ROOTS the flagship reaches (build_reach) may name of
+# what the check holds under ROOTS (INCLUDE_MENTIONS), as (file suffix, name):
+# the NVS records' names where canary_config.h defines them and
+# reset_scope_keys.h lists them for the reset, the SoftAP key's deriver where
+# ap_password.h defines it, and the two Host-first decisions where
+# provisioning_gate.h defines them. Code in those files is not read as code (a
+# function there that read the bearer, opened the tap, started the network or
+# raised the SoftAP, #included or linked and called from under ROOTS, would be
+# followed by no rule), so a file naming anything else the check holds fails:
+# a credential's spelling (SECRET_READS), a name the tables hold under ROOTS,
+# or a census row's spelling (WiFi.softAP, the radio's mode, the driver's
+# config, the AP class, the tap's open).
 INCLUDE_MENTIONS = (
     {("include/canary_config.h", n) for n in NVS_LITERAL_KEYS}
     | {("include/reset_scope_keys.h", n) for n in NVS_LITERAL_KEYS}
-    | {("network/ap_password.h", "derive_ap_password")})
+    | {("network/ap_password.h", "derive_ap_password")}
+    | {("network/provisioning_gate.h", n) for n in HOST_DECISIONS})
 # ...but the held names that are ordinary words in the shared code (a BLE
 # server's begin(), an Improv state's s_active, a policy's check()): the
 # spelling of a held name that the shared code also uses for its own.
@@ -3633,6 +3730,11 @@ ROOTS_DEFINES = {
     "SECURACV_AUTH_HEADER_BUF": ("securacv_auth.h", 1),
 }
 _DEFINE = re.compile(r"^[ \t]*#[ \t]*define\b(?:[^\n]*\\\n)*[^\n]*", re.M)
+# GNU's comma elision (`, ##__VA_ARGS__`, the CSI logging macros' form): the
+# one `##` that pastes nothing. Every other `##` builds a token from pieces, so
+# a name pasted together (`a##b` handed `auth_get_` and `token`) is a call no
+# rule reads by its spelling.
+_COMMA_ELISION = re.compile(r",\s*##\s*__VA_ARGS__\b")
 _DEFINE_NAME = re.compile(r"\s*#\s*define\s+([A-Za-z_]\w*)")
 _UNDEF = re.compile(r"^[ \t]*#[ \t]*undef\s+([A-Za-z_]\w*)", re.M)
 _FLAG = re.compile(r"(?<![\w-])-D\s*(?:'([^']*)'|\"([^\"]*)\"|(\S+))")
@@ -3676,15 +3778,106 @@ def flag_sources(files=FLAG_FILES) -> tuple:
     return out, problems
 
 
-def include_sources(roots=INCLUDE_ROOTS) -> dict:
-    """{path: comment-stripped text} of every header and source under the
-    include roots outside ROOTS (macro_problems reads their #define lines)."""
-    out = {}
-    for root in roots:
-        for path in sorted(p for p in root.rglob("*") if p.is_file()):
-            if path.suffix.lower() in SOURCE_SUFFIXES:
-                out[path.as_posix()] = strip_comments(path.read_text(errors="replace"))
-    return out
+# An #include as the compiler reads it: a quoted name, an angled one, or
+# anything else (a macro, which names a file the check cannot follow).
+_INCLUDE = re.compile(r'^[ \t]*#[ \t]*(include|include_next|import)\b[ \t]*'
+                      r'(?:"([^"\n]*)"|<([^>\n]*)>|([^\n]*))', re.M)
+_INCLUDE_DIR = re.compile(r"(?<![\w-])-I\s*(?:'([^']*)'|\"([^\"]*)\"|(\S+))")
+_SRC_FILTER = re.compile(r"\+<([^>\n]*)>")
+
+
+def _under(path: Path, roots) -> bool:
+    return any(path == r or r in path.parents for r in roots)
+
+
+def _inside(path: Path, repo: Path) -> bool:
+    """True when `path` is in the repository at `repo` (not a toolchain's or a
+    package's header)."""
+    try:
+        return ".." not in Path(os.path.relpath(path, repo)).parts
+    except ValueError:
+        return False
+
+
+def build_reach(sources: dict, flags: dict, project=PROJECT_DIR, roots=INCLUDE_ROOTS,
+                tree=ROOTS, repo=Path(".")) -> tuple:
+    """({path: comment-stripped text}, problems): every file outside ROOTS
+    the flagship compiles or #includes. Compiled: each build_src_filter
+    `+<...>` entry in the flag files (`flags`, flag_sources()), relative to
+    src/ (a folder is every file in it, a glob as PlatformIO expands it);
+    reached: each file an #include names from ROOTS (`sources`) or from a
+    reached file, looked up beside the including file (a quoted name) and in
+    include/ and every -I folder the flag files name, every candidate that
+    exists, so a name two folders hold is both. Only the files under the
+    include roots are returned; a compiled file that is not C or C++, a
+    filter that matches nothing, an #include the check cannot follow (a
+    macro) and one that reaches a file of this repository outside ROOTS
+    (`tree`) and the include roots are problems: code the build reads that
+    no rule would."""
+    problems, dirs = [], [project / "include"]
+    for fname, text in sorted(flags.items()):
+        for m in _INCLUDE_DIR.finditer(text):
+            raw = next(g for g in m.groups() if g is not None)
+            if raw.startswith("${PROJECT_DIR}"):
+                d = project / raw[len("${PROJECT_DIR}"):].lstrip("/")
+            elif "${" in raw or os.path.isabs(raw):
+                continue  # a package's folder (the core, a library): not this repository
+            else:
+                d = project / raw
+            d = Path(os.path.normpath(d))
+            if d not in dirs:
+                dirs.append(d)
+    reached, queue = {}, list(sources)
+
+    def take(path: Path, why: str):
+        key = path.as_posix()
+        if _under(path, tree) or key in reached:
+            return
+        if not _under(path, roots):
+            problems.append(f"{why} {key}, outside ROOTS and the include roots, which the "
+                            f"check does not read — keep the flagship's code where the check "
+                            f"reads it, or teach the check the new folder")
+            return
+        reached[key] = strip_comments(path.read_text(errors="replace"))
+        queue.append(key)
+    for fname, text in sorted(flags.items()):
+        for m in _SRC_FILTER.finditer(text):
+            entry = m.group(1).strip()
+            target = Path(os.path.normpath(project / "src" / entry))
+            hits = (sorted(p for p in target.rglob("*") if p.is_file()) if target.is_dir()
+                    else sorted(Path(h) for h in glob.glob(target.as_posix(), recursive=True)
+                                if Path(h).is_file()))
+            if not hits:
+                problems.append(f"{fname}:{_line_of(text, m.start())}: build_src_filter's "
+                                f"+<{entry}> matches no file — fix the entry (the check reads "
+                                f"what the build compiles from it)")
+            for h in hits:
+                if _under(h, tree):
+                    continue
+                if h.suffix.lower() not in SOURCE_SUFFIXES:
+                    problems.append(f"{fname}:{_line_of(text, m.start())}: build_src_filter "
+                                    f"compiles {h.as_posix()}, which is not C or C++ the check "
+                                    f"reads (an assembly file reaches a function by its symbol, "
+                                    f"a spelling no rule reads)")
+                    continue
+                take(h, f"{fname}:{_line_of(text, m.start())}: build_src_filter compiles")
+    while queue:
+        fname = queue.pop(0)
+        text = sources.get(fname, reached.get(fname, ""))
+        for m in _INCLUDE.finditer(text):
+            quoted, angled, other = m.group(2), m.group(3), m.group(4)
+            if quoted is None and angled is None:
+                problems.append(f"{fname}:{_line_of(text, m.start())}: #{m.group(1)} "
+                                f"{other.strip()!r} names its file through a macro, which the "
+                                f"check cannot follow — #include a quoted or angled name")
+                continue
+            name = quoted if quoted is not None else angled
+            here = [Path(fname).parent] if quoted is not None else []
+            for d in here + dirs:
+                cand = Path(os.path.normpath(d / name))
+                if cand.is_file() and _inside(cand, repo):
+                    take(cand, f"{fname}:{_line_of(text, m.start())}: #includes")
+    return reached, problems
 
 
 def _pinned_texts(T: dict) -> list:
@@ -3717,6 +3910,12 @@ def _pinned_ids(T: dict) -> set:
     return {n for x in _pinned_texts(T) for n in re.findall(r"[A-Za-z_]\w*", x)}
 
 
+def pastes(text: str) -> bool:
+    """True when a macro's text (strings blanked) pastes tokens: a `##` that
+    is not GNU's `, ##__VA_ARGS__` comma elision."""
+    return "##" in _COMMA_ELISION.sub(",", text)
+
+
 def macro_problems(sources: dict, T: dict, flags: dict, includes: dict) -> list:
     """No `#define` under ROOTS, and no `-D` build flag, names a pinned or
     census function, a device-side use, an accessor, a mint, an emitter, a
@@ -3732,7 +3931,11 @@ def macro_problems(sources: dict, T: dict, flags: dict, includes: dict) -> list:
     (`#define false true`). Under ROOTS, a macro named for anything else a
     pinned text names is ROOTS_DEFINES' row, in its file as often as it says,
     and none is #undef'd. PINNED_DEFINES' macros are each defined once, in
-    their file, as their row says, never #undef'd and never set by a flag."""
+    their file, as their row says, never #undef'd and never set by a flag.
+    No macro or flag pastes tokens (`##`, `%:%:`) but GNU's `, ##__VA_ARGS__`:
+    `#define CV_JOIN(a, b) a##b` names nothing held, and
+    `CV_JOIN(auth_get_, token)()` calls the token's accessor under no spelling
+    a rule reads."""
     names = ({q.split("::")[-1] for _f, q in T["glue"]}
              | {q.split("::")[-1] for _f, q in T["local"]}
              | set(T["accessors"]) | set(T["mints"]) | set(T["emitters"]) | set(T["comparers"]))
@@ -3772,13 +3975,19 @@ def macro_problems(sources: dict, T: dict, flags: dict, includes: dict) -> list:
             if not hit and not outside and name in ids:
                 rooted.setdefault(name, []).append(fname)
                 hit = None if name in roots_defs else name
+            where = (" (outside ROOTS, in a file the flagship compiles or #includes: a "
+                     "header #included after the function shadows it the same way)"
+                     if outside else "")
             if hit:
-                where = (" (a header outside ROOTS, #included after the function, shadows it "
-                         "the same way)" if outside else "")
                 problems.append(f"{fname}:{_line_of(text, m.start())}: a macro names {hit!r} "
                                 f"({folded[:90]!r}): no #define may stand in for, or wrap, the "
                                 f"glue, the gates, what they call or a credential the check "
                                 f"holds{where}")
+            if pastes(m.group(0)):
+                problems.append(f"{fname}:{_line_of(text, m.start())}: a macro pastes tokens "
+                                f"with ## ({folded[:90]!r}): a name pasted together "
+                                f"(`CV_JOIN(auth_get_, token)()`) is a call no rule reads by its "
+                                f"spelling; only GNU's `, ##__VA_ARGS__` may be written{where}")
         for m in _UNDEF.finditer(blanked):
             if m.group(1) in pinned or m.group(1) in _CXX_KEYWORDS or (
                     not outside and m.group(1) in ids):
@@ -3809,15 +4018,81 @@ def macro_problems(sources: dict, T: dict, flags: dict, includes: dict) -> list:
                                 f"{m.group(0)!r} names {hit!r}: no -D may stand in for the "
                                 f"glue, the gates, what they call or a credential the check "
                                 f"holds")
+            if pastes(flag):
+                problems.append(f"{fname}:{_line_of(text, m.start())}: the build flag "
+                                f"{m.group(0)!r} pastes tokens with ##: a name pasted together "
+                                f"is a call no rule reads by its spelling")
+    return problems
+
+
+# Assembly reaches a function by its symbol, not its name: an asm label
+# (`extern const char* t() __asm__("_Z14auth_get_tokenv");`) or an asm
+# statement's call is the token's accessor under no spelling a rule reads. The
+# one asm the flagship writes is the compiler barrier, an empty template.
+_ASM = re.compile(r"\b(?:asm|__asm__|__asm)\b")
+_EMPTY_ASM = re.compile(r"(?:asm|__asm__|__asm)\s*(?:\b(?:volatile|__volatile__|inline|goto)\b\s*)*"
+                        r"\(\s*\"\"\s*[:)]")
+
+
+def asm_problems(sources: dict, includes: dict) -> list:
+    """No asm under ROOTS or in a file outside it the flagship reaches, but
+    the empty-template compiler barrier (`asm volatile("" ::: "memory")`)."""
+    problems = []
+    for fname, text in sorted(sources.items()) + sorted(includes.items()):
+        blanked = blank_string_contents(text)
+        for m in _ASM.finditer(blanked):
+            if _EMPTY_ASM.match(text, m.start()):
+                continue
+            end = blanked.find(";", m.start())
+            problems.append(f"{fname}:{_line_of(text, m.start())}: assembly "
+                            f"({_fold(text[m.start():end + 1 if end >= 0 else None])[:90]!r}): "
+                            f"an asm label or statement reaches a function by its symbol "
+                            f"(`__asm__(\"_Z14auth_get_tokenv\")`), a spelling no rule reads; "
+                            f"only the empty compiler barrier `asm volatile(\"\" ::: \"memory\")` "
+                            f"may be written")
+    return problems
+
+
+# What the flag files may not hold, because each is code or a binding the
+# check does not read: a linker option (`-Wl,--wrap=<symbol>` sends every call
+# of a function to `__wrap_<symbol>`, a name no rule reads; a linker script, a
+# --defsym), a forced include (`-include`, `-imacros`: a file no #include
+# names), a build script (extra_scripts, which can add any flag), a library
+# folder or a local library (lib_extra_dirs, a lib_deps path: code outside
+# ROOTS no rule reads) and a moved source, library or include folder (src_dir,
+# lib_dir, include_dir: ROOTS would no longer be what the build compiles).
+_BUILD_INPUT = re.compile(
+    r"(?<![\w-])(?:-Wl,|-Xlinker\b|-include\b|-imacros\b|-T(?=\s*[\w$./])|--wrap\b|--defsym\b)"
+    r"|^[ \t]*(?:extra_scripts|lib_extra_dirs|src_dir|lib_dir|include_dir|"
+    r"board_build\.ldscript)[ \t]*="
+    r"|(?:symlink|file)://", re.M)
+
+
+def build_input_problems(flags: dict) -> list:
+    """No flag file holds a build input the check does not read
+    (_BUILD_INPUT): a linker option, a forced include, a build script, a
+    local library or a moved source folder."""
+    problems = []
+    for fname, text in sorted(flags.items()):
+        for m in _BUILD_INPUT.finditer(text):
+            line = text[text.rfind("\n", 0, m.start()) + 1:text.find("\n", m.start())]
+            problems.append(f"{fname}:{_line_of(text, m.start())}: {line.strip()!r} is a build "
+                            f"input the check does not read (a linker option, a forced "
+                            f"include, a build script, a local library or a moved folder) — a "
+                            f"symbol bound there (`-Wl,--wrap=...`) is reached by no spelling "
+                            f"the rules read; teach the check before the build takes one")
     return problems
 
 
 def include_mention_problems(T: dict, includes: dict) -> list:
-    """The headers outside ROOTS (`includes`) name nothing the check holds
-    under ROOTS but INCLUDE_MENTIONS: no credential's spelling, and no pinned,
-    census, accessor, emitter or comparer name, the network manager's type and
-    accessor and the setup lib's namespace included (INCLUDE_COMMON_WORDS
-    aside)."""
+    """The files outside ROOTS the flagship reaches (`includes`, build_reach)
+    name nothing the check holds under ROOTS but INCLUDE_MENTIONS: no
+    credential's spelling, no pinned, census, accessor, emitter or comparer
+    name, the network manager's type and accessor and the setup lib's
+    namespace included (INCLUDE_COMMON_WORDS aside), and no census row's
+    spelling for a primitive defined outside ROOTS (a header's `WiFi.softAP(`,
+    `WiFi.mode(` or `esp_wifi_set_config(` raises the SoftAP open as one under
+    ROOTS would), but a row confined to its own files."""
     held = ({q.split("::")[-1] for _f, q in T["glue"]}
             | {q.split("::")[-1] for _f, q in T["local"]}
             | set(T["accessors"]) | set(T["emitters"]) | set(T["comparers"])
@@ -3827,6 +4102,8 @@ def include_mention_problems(T: dict, includes: dict) -> list:
     held -= INCLUDE_COMMON_WORDS
     rxs = [re.compile(r"\b(?:" + "|".join(map(re.escape, sorted(held))) + r")\b")]
     rxs += list(T["reads"].values())
+    rxs += [_census_rx(n, row) for n, row in sorted(T["census"].items())
+            if row.get("home", "") is None and not row.get("file")]
     problems = []
     for fname, text in sorted(includes.items()):
         blanked = blank_string_contents(text)
@@ -3836,11 +4113,12 @@ def include_mention_problems(T: dict, includes: dict) -> list:
                     r"[A-Za-z_]", m.group(0)) else m.group(0)
                 if any(_in_file(fname, f) and word == n for f, n in INCLUDE_MENTIONS):
                     continue
-                problems.append(f"{fname}:{_line_of(text, m.start())}: a header outside ROOTS "
-                                f"names {m.group(0)!r}, which the check holds under ROOTS — "
-                                f"its code is not read, so a function there that reads a "
-                                f"credential, opens the tap or starts the network is followed "
-                                f"by no rule (INCLUDE_MENTIONS)")
+                problems.append(f"{fname}:{_line_of(text, m.start())}: a file outside ROOTS "
+                                f"the flagship compiles or #includes names {m.group(0)!r}, "
+                                f"which the check holds under ROOTS — its code is not read, so "
+                                f"a function there that reads a credential, opens the tap, "
+                                f"starts the network or raises the SoftAP is followed by no "
+                                f"rule (INCLUDE_MENTIONS)")
     return problems
 
 
@@ -3850,7 +4128,7 @@ def check_bearer_only_answers(sources: dict, tables=None, flags=None, includes=N
     module tables by name (the self-test's fixtures pass their own; main()
     passes "nvs_keys", the NVS_LITERAL_KEYS values canary_config.h holds);
     `flags` is the build's flag files (flag_sources()); `includes` the
-    headers outside ROOTS (include_sources())."""
+    files outside ROOTS the flagship compiles or #includes (build_reach())."""
     T = {"reads": SECRET_READS, "accessors": SECRET_ACCESSORS, "mints": SECRET_MINTS,
          "emitters": TOKEN_EMITTERS, "emitter_stmts": EMITTER_STATEMENTS,
          "comparers": TOKEN_COMPARERS, "local": SECRET_LOCAL_USES, "answers": SECRET_ANSWERS,
@@ -3884,6 +4162,8 @@ def check_bearer_only_answers(sources: dict, tables=None, flags=None, includes=N
             + nvs_literal_problems(sources, T["nvs_keys"])
             + no_session_problems(sources, T["headers"], T["queries"], T["uri"])
             + macro_problems(sources, T, flags or {}, includes or {})
+            + build_input_problems(flags or {})
+            + asm_problems(sources, includes or {})
             + include_mention_problems(T, includes or {})
             + manager_alias_problems(sources))
 
@@ -4126,15 +4406,25 @@ def _assert_parser_robust() -> None:
     # 2b. A raw string literal is one literal: its `"`, `//`, `/*` and braces
     #     are text, and the code after it is code (a reader after the web UI's
     #     HTML would otherwise be read inside a string, to the end of its file).
+    #     Each prefixed literal holds one `"`, so a reading that missed its prefix
+    #     would end it there and read every function after it inside a string.
     raw = ('static const char kUi[] = R"html(<a href="//x">{"/*"}</a>)html";\n'
-           'static const char kJs[] = u8R"(if (a) { b(); })";\n'
+           'static const char kJs[] = u8R"(if (a) { b("); })";\n'
            "const char* after() { return auth_get_token(); }\n"
+           'static const wchar_t kW[] = LR"(a " b)";\n'
+           "const char* after_l() { return auth_get_token(); }\n"
+           'static const char16_t kU[] = uR"(a " b)";\n'
+           "const char* after_u() { return auth_get_token(); }\n"
+           'static const char32_t kU32[] = UR"(a " b)";\n'
+           "const char* after_u32() { return auth_get_token(); }\n"
            'static const char kNot[] = FOOR"x";\n')
     stripped = strip_comments(raw)
     assert stripped == raw, stripped
     blanked = blank_string_contents(stripped)
-    assert len(blanked) == len(stripped) and "auth_get_token" in blanked and "href" not in blanked
-    assert [n for n, _s, _e in function_spans(stripped)] == ["after"], function_spans(stripped)
+    assert len(blanked) == len(stripped) and blanked.count("auth_get_token") == 4 and (
+        "href" not in blanked)
+    assert [n for n, _s, _e in function_spans(stripped)] == [
+        "after", "after_l", "after_u", "after_u32"], function_spans(stripped)
     # 2c. A backslash-newline is spliced away and a digraph read as its token,
     #     every later line keeping its number; `<::x`, `<<%`, `%=` and a
     #     literal's text are not digraphs.
@@ -4632,14 +4922,35 @@ _FIX_FILES = {
         "  ScvNetworkManager();\n"
         "  const char* getTlsCertFp() const { return m_tls_cert_fp_hex; }\n"
         "  const char* getApPassword() const { return m_ap_password; }\n"
+        "  bool isTlsEnabled() const { return m_tls_enabled; }\n"
+        "  httpd_handle_t getHttpsServer() const { return m_https_server; }\n"
+        "  httpd_handle_t getHttpServer() const {\n"
+        "    return m_https_server ? m_https_server : m_http_server;\n  }\n"
         "  char m_ap_password[65];\n"
         "  char m_tls_cert_fp_hex[65];\n"
+        "  httpd_handle_t m_http_server;\n"
+        "  httpd_handle_t m_https_server;\n"
+        "  bool m_tls_enabled;\n"
         "};\n"),
     _FIX_NET: (
         "#if FEATURE_HTTPS && \\\n    defined(CONFIG_ESP_HTTPS_SERVER_ENABLE)\n"
         "#define SECURACV_HAS_HTTPS_SERVER 1\n#endif\n"
         "static ScvNetworkManager s_network;\n"
         "ScvNetworkManager& network_get_instance() {\n  return s_network;\n}\n"
+        "ScvNetworkManager::ScvNetworkManager() : m_http_server(nullptr) {\n"
+        "  m_https_server = nullptr;\n  m_tls_enabled = false;\n}\n"
+        "bool ScvNetworkManager::startHttpServer() {\n"
+        "  const Mode mode = canary::net::tls_policy::decide(FEATURE_HTTPS != 0);\n"
+        "#if SECURACV_HAS_HTTPS_SERVER\n"
+        "  if (mode == Mode::HTTPS_REDIRECT) {\n"
+        "    httpd_ssl_config_t ssl = HTTPD_SSL_CONFIG_DEFAULT();\n"
+        "    if (httpd_ssl_start(&m_https_server, &ssl) == ESP_OK) {\n"
+        "      m_tls_enabled = true;\n"
+        "      registerHttpHandlers(m_https_server);\n"
+        "      return true;\n    }\n"
+        "    m_https_server = nullptr;\n    m_tls_enabled = false;\n  }\n"
+        "#endif\n"
+        "  return httpd_start(&m_http_server, nullptr) == ESP_OK;\n}\n"
         "static void netif_ip4(const char* ifkey, uint32_t* ip, uint32_t* mask) {\n"
         "  esp_netif_t* nif = esp_netif_get_handle_from_ifkey(ifkey);\n"
         "  *ip = nif ? ip_of(nif) : 0;\n  *mask = nif ? mask_of(nif) : 0;\n}\n"
@@ -4902,7 +5213,8 @@ _FIX_GLUE = ((_NET, "host_is_foreign"), (_NET, "auth_gate"), (_NET, "bearer_pres
              (_SETUP, "setup_init"), (_SETUP, "setup_is_first_boot"),
              (_SETUP, "setup_is_active"), (_SETUP, "setup_mark_complete"),
              (_SETUP, "setup_check_timeout"), (_NET, "netif_ip4"), (_NET, "request_peer_ipv4"),
-             (_MAIN, "prov_gate_is_open_hook"), (_MAIN, "handle_boot_button"))
+             (_MAIN, "prov_gate_is_open_hook"), (_MAIN, "handle_boot_button"),
+             (_NET_H, "isTlsEnabled"), (_NET_H, "getHttpsServer"))
 # The census rows whose callers or statements the fixture tree spells its own
 # way (every other row is the tree's): one page handler, and raiseAp()'s one
 # mode switch.
@@ -4967,7 +5279,7 @@ _FIX_TABLES = {
                      (_NET, "handle_ui"): ()},
     "census": dict(GATE_CALL_SITES, **_FIX_CENSUS),
     "nvs_keys": _FIX_NVS_KEYS,
-    "roots_defines": {},
+    "roots_defines": {"SECURACV_HAS_HTTPS_SERVER": (_NET, 1)},
     "outside": (("securacv_network.h", "char m_ap_password[65];"),
                 ("securacv_network.h", "char m_tls_cert_fp_hex[65];"),
                 (_AUTH, "static char s_bearer[36];"),
@@ -5007,6 +5319,10 @@ _FIX_BOOT_SWEEP = ("  canary::net::provisioning_gate::expire(g_prov_gate, millis
 _FIX_BOOT_BODY = _FIX_FILES[_FIX_MAIN][_FIX_FILES[_FIX_MAIN].index(_FIX_BOOT_SWEEP):
                                        _FIX_FILES[_FIX_MAIN].index("}\nvoid loop() {\n")]
 _STATUS_REFUSAL = "handle_status calls auth_gate other than as the whole statement"
+# The roll-call handler's head (a site to plant a reader or a macro before).
+_FIX_FLEET = "static esp_err_t handle_fleet(httpd_req_t* req) {\n"
+_PASTE = "a macro pastes tokens with ##"
+_ASM_WORDS = "an asm label or statement reaches a function by its symbol"
 # (what, file, old text, new text, words every one of which a problem names).
 # An empty old text appends the new text to the file (a new file when absent).
 _FIX_PLANTS = (
@@ -6036,6 +6352,60 @@ _FIX_PLANTS = (
     ("mint: compiled out under a digraph block", _FIX_MAIN, _FIX_MINT_SRC,
      "  if (false) <% ;\n" + _FIX_MINT_SRC + "  %>;\n",
      ("setup()'s SECRET_LOCAL_USES row holds",)),
+    # Round-4 review: a name built at its use site, which no rule reads by its
+    # spelling. A token paste names nothing held in its #define, and its call
+    # never spells the name it pastes.
+    ("a token-paste macro answers the token", _FIX_NET, _FIX_FLEET,
+     "#define CV_JOIN(a, b) a##b\n" + _FIX_FLEET
+     + "  httpd_resp_set_hdr(req, \"X-D\", CV_JOIN(auth_get_, token)());\n",
+     (_PASTE,)),
+    ("a token paste with spaces answers the token", _FIX_NET, _FIX_FLEET,
+     "#define TOK auth_get ## _token\n" + _FIX_FLEET
+     + "  httpd_resp_set_hdr(req, \"X-D\", TOK());\n", (_PASTE,)),
+    ("a token paste onto __VA_ARGS__ answers the token", _FIX_NET, _FIX_FLEET,
+     "#define X(...) auth_get##__VA_ARGS__\n" + _FIX_FLEET
+     + "  httpd_resp_set_hdr(req, \"X-D\", X(_token)());\n", (_PASTE,)),
+    ("a token paste clears the roll-call's own lockout", _FIX_NET, _FIX_FLEET,
+     "#define JOIN(a, b) a##b\n" + _FIX_FLEET
+     + "  JOIN(auth_handed_, token)(request_peer_ipv4(req));\n", (_PASTE,)),
+    ("a token paste spelled with a digraph", _FIX_NET, _FIX_FLEET,
+     "#define JOIN(a, b) a %:%: b\n" + _FIX_FLEET
+     + "  JOIN(auth_handed_, token)(request_peer_ipv4(req));\n", (_PASTE,)),
+    ("a token paste spends the tap", _FIX_MAIN, "static char g_ap_password[16];\n",
+     "#define GATE g_prov##_gate\nstatic char g_ap_password[16];\n", (_PASTE,)),
+    # ...and assembly, which reaches a function by its symbol.
+    ("an asm label answers the token", _FIX_NET, _FIX_FLEET,
+     "extern const char* cv_t() __asm__(\"_Z14auth_get_tokenv\");\n" + _FIX_FLEET
+     + "  httpd_resp_set_hdr(req, \"X-D\", cv_t());\n", (_ASM_WORDS,)),
+    ("an asm statement clears the roll-call's own lockout", _FIX_NET, _FIX_FLEET,
+     _FIX_FLEET + "  asm volatile(\"call8 _Z17auth_handed_tokenm\" ::: \"memory\");\n",
+     (_ASM_WORDS,)),
+    # The NVS literal rule reads every file's literals, a file that holds no
+    # copy of a key's value included.
+    ("the first-boot flag's key joined, in a file that names no key", _FIX_SETUP, "",
+     'static const char* const kFlagName = "setup_" "ok";\n',
+     ("the string literal 'setup_ok' is NVS_KEY_SETUP_OK's value",)),
+    ("the token's key escaped, in a file that names no key", _FIX_SETUP, "",
+     'static const char* const kTokName = "api\\x5ftoken";\n',
+     ("the string literal 'api_token' is NVS_KEY_TOKEN's value",)),
+    # The port-80 hint's two members and the TLS state they read.
+    ("the hint's TLS server handle answers the port-80 server's", _FIX_NET_H,
+     "httpd_handle_t getHttpsServer() const { return m_https_server; }",
+     "httpd_handle_t getHttpsServer() const { return m_http_server; }",
+     ("getHttpsServer changed",)),
+    ("the hint's TLS flag answers false", _FIX_NET_H,
+     "bool isTlsEnabled() const { return m_tls_enabled; }",
+     "bool isTlsEnabled() const { return false; }", ("isTlsEnabled changed",)),
+    ("the TLS flag cleared once HTTPS is up", _FIX_NET,
+     "      registerHttpHandlers(m_https_server);\n",
+     "      registerHttpHandlers(m_https_server);\n      m_tls_enabled = false;\n",
+     ("GATE_CALL_SITES row m_tls_enabled: ScvNetworkManager::startHttpServer's statements",)),
+    ("the TLS server's handle pointed at the port-80 server", _FIX_NET, "",
+     "bool ScvNetworkManager::startRedirectServer() {\n"
+     "  if (httpd_start(&m_http_server, nullptr) != ESP_OK) return false;\n"
+     "  m_https_server = m_http_server;\n  return true;\n}\n",
+     ("m_https_server called from ScvNetworkManager::startRedirectServer, which its "
+      "GATE_CALL_SITES row does not name",)),
 )
 
 
@@ -6122,6 +6492,27 @@ _FIX_TABLE_PLANTS = (
     ("a URL_QUERY_READERS row naming no reader",
      _with("queries", lambda q: set(q or URL_QUERY_READERS) | {(_NET, "handle_ui")}),
      ("URL_QUERY_READERS names handle_ui (securacv_network.cpp), which no longer reads it",)),
+    # Round-4 review: the table-hygiene branches, each a plant.
+    ("two ANSWER_STATEMENTS rows for one handler",
+     _with("answer_stmts", lambda a: dict(a) | {(_AUTH, "handle_ui"): ()}),
+     ("SECRET_ANSWERS names handle_ui(), which has 2 ANSWER_STATEMENTS rows",)),
+    ("an ANSWER_STATEMENTS row naming no answer",
+     _with("answer_stmts", lambda a: dict(a) | {(_NET, "handle_gone"): ()}),
+     ("ANSWER_STATEMENTS names handle_gone() (securacv_network.cpp), which is no SECRET_ANSWERS "
+      "key",)),
+    ("an ANSWER_STATEMENTS row keyed to another file than its handler's",
+     _with("answer_stmts", lambda a: {(_AUTH if q == "handle_ui" else f, q): v
+                                      for (f, q), v in a.items()}),
+     ("ANSWER_STATEMENTS: handle_ui() is defined in fx/lib/securacv_network.cpp; its row says "
+      "securacv_auth.cpp",)),
+    ("a MINT_AFTER row naming no function",
+     _with("mint_after", lambda m: tuple(m or MINT_AFTER) + (
+         (_MAIN, "gone_setup", "derive_ap_password", MINT_AFTER[0][3]),)),
+     ("MINT_AFTER names gone_setup() in src/main.cpp, which does not define it",)),
+    ("a MINT_AFTER row whose function no longer calls its mint",
+     _with("mint_after", lambda m: tuple(m or MINT_AFTER) + (
+         (_MAIN, "setup", "derive_api_token", MINT_AFTER[0][3]),)),
+     ("MINT_AFTER: setup() (fx/src/main.cpp) no longer calls derive_api_token()",)),
 )
 
 
@@ -6184,10 +6575,29 @@ def _assert_answer_gate_rule() -> None:
     assert check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": ini}) == []
     for flag in ("-D'auth_gate(r)=true'", '-D"host_is_foreign(r)=false"',
                  "-Dbearer_present_and_valid(r)=1", "-D'take(s,n,t)=is_open(s,n,t)'",
-                 "-DSETUP_TIMEOUT_MS=0xFFFFFFFFUL", "-Dfalse=true"):
+                 "-DSETUP_TIMEOUT_MS=0xFFFFFFFFUL", "-Dfalse=true",
+                 # a held name in the flag's value only, never its name:
+                 "-DDIAG_VALUE=auth_get_token()", "-D'DIAG_GATE(r)=auth_gate(r)'"):
         got = check_bearer_only_answers(clean, tables,
                                         flags={"fx/platformio.ini": ini + "    " + flag + "\n"})
         assert any("the build flag" in p and "names '" in p for p in got), (flag, got)
+    # ...a flag that pastes tokens, and a build input the check does not read (a
+    # linker option, a forced include, a build script, a local library, a moved
+    # folder), fail; a registry library does not.
+    got = check_bearer_only_answers(clean, tables, flags={
+        "fx/platformio.ini": ini + "    -D'CV_JOIN(a,b)=a##b'\n"})
+    assert any("the build flag" in p and "pastes tokens with ##" in p for p in got), got
+    for line in ("    -Wl,--wrap=_Z10auth_checkP9httpd_reqPKcm", "    -Xlinker --defsym=x=y",
+                 "    -include ../common/diag.h", "    -imacros ../common/diag.h",
+                 "    -T custom.ld", "extra_scripts = pre:add_flags.py",
+                 "lib_extra_dirs = ../common", "lib_deps =\n    symlink://../common/diag",
+                 "lib_deps = file://../common/diag", "src_dir = other",
+                 "board_build.ldscript = custom.ld"):
+        got = check_bearer_only_answers(clean, tables,
+                                        flags={"fx/platformio.ini": ini + line + "\n"})
+        assert any("is a build input the check does not read" in p for p in got), (line, got)
+    registry = ini + "lib_deps =\n    rweather/Crypto @ ^0.4.0\n    ${env.lib_deps}\n"
+    assert check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": registry}) == []
     # ...and the files extra_configs names are read on the key's own line or
     # indented under it, comma-separated, a missing one named, and a flag's
     # line number is its file's (comment lines blanked, never dropped).
@@ -6237,20 +6647,159 @@ def _assert_answer_gate_rule() -> None:
                                            "p.remove(NVS_KEY_TOKEN); }\n")):
         got = check_bearer_only_answers(clean, tables,
                                         includes={"fx/common/network/helper.h": header})
-        assert any(f"a header outside ROOTS names {name!r}" in p for p in got), (name, got)
+        assert any(f"the flagship compiles or #includes names {name!r}" in p for p in got), (
+            name, got)
+    # ...a census row's spelling for a primitive defined outside ROOTS included
+    # (a header helper, called from loop(), raising the SoftAP open), but the two
+    # Host-first decisions where provisioning_gate.h defines them.
+    for name, header in (("softAP", 'inline void ap_keepalive() { if (!(WiFi.getMode() & '
+                                    'WIFI_AP)) WiFi.softAP("Canary-Setup", nullptr); }\n'),
+                         ("WiFi.mode", "inline void ap_keepalive() { WiFi.mode(WIFI_AP_STA); }\n"),
+                         ("esp_wifi_set_mode", "inline void ap_up() { "
+                                               "esp_wifi_set_mode(WIFI_MODE_APSTA); }\n"),
+                         ("esp_wifi_set_config", "inline void ap_open() { wifi_config_t c = {}; "
+                                                 "c.ap.authmode = WIFI_AUTH_OPEN; "
+                                                 "esp_wifi_set_config(WIFI_IF_AP, &c); }\n"),
+                         ("WiFi.AP", "inline void ap2() { WiFi.AP.create(\"x\"); }\n"),
+                         ("provisioning_gate::open", "inline void tap(State& s) { "
+                                                     "provisioning_gate::open(s, 0); }\n"),
+                         ("receipt_decide", "inline int r() { return receipt_decide(true); }\n")):
+        got = check_bearer_only_answers(clean, tables,
+                                        includes={"fx/include/ap_keepalive.h": header})
+        assert any(f"the flagship compiles or #includes names {name!r}" in p for p in got), (
+            name, got)
+    gate_h = ("inline Verdict receipt_decide(bool foreign) { return foreign ? A : B; }\n"
+              "inline Verdict page_token_decide(bool foreign) { return foreign ? A : B; }\n")
+    assert check_bearer_only_answers(clean, tables, includes={
+        "fx/common/network/provisioning_gate.h": gate_h}) == []
+    # ...and a token paste or assembly in a file outside ROOTS the flagship
+    # reaches is held as one under ROOTS is; GNU's comma elision and the empty
+    # compiler barrier are not pastes or calls, there or under ROOTS.
+    for words, text in ((_PASTE, "#define CV_JOIN(a, b) a##b\n"),
+                        (_PASTE, "#define LOGF(fmt, ...) printf(fmt, a##__VA_ARGS__)\n"),
+                        (_ASM_WORDS, 'extern const char* t() __asm__("_Z14auth_get_tokenv");\n'),
+                        (_ASM_WORDS, 'inline void f() { asm("call8 x"); }\n')):
+        got = check_bearer_only_answers(clean, tables, includes={"fx/common/csi/x.cpp": text})
+        assert any(words in p and "outside ROOTS" in p for p in got) or (
+            words == _ASM_WORDS and any(words in p for p in got)), (text, got)
+    benign = ('#define LOGF(fmt, ...) do { Serial.printf("[x] " fmt "\\n", ##__VA_ARGS__); } '
+              'while (0)\n#define LOGW(fmt, ...) printf(fmt , ## __VA_ARGS__)\n'
+              'inline void fence() { asm volatile("" ::: "memory"); __asm__ __volatile__("");'
+              ' }\n')
+    assert check_bearer_only_answers(clean, tables, includes={"fx/common/csi/x.cpp": benign}) == []
+    planted = dict(clean)
+    planted[_FIX_OTHER] = strip_comments(benign)
+    assert check_bearer_only_answers(planted, tables) == []
     # Every file under ROOTS is read or named: an .inc or .hpp of code is code,
-    # a library manifest is not, and anything else is a problem.
+    # a library manifest (by its name) is not, a file git ignores is excused, and
+    # anything else is a problem (a .json that is no manifest among them).
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "lib" / "x" / "src"
         src.mkdir(parents=True)
         (src / "a.cpp").write_text('#include "b.inc"\n')
         (src / "b.inc").write_text("static const char* dbg() { return auth_get_token(); }\n")
         (src / "c.hpp").write_text("inline int k() { return 1; }\n")
-        (src / "library.json").write_text("{}\n")
+        (src.parent / "library.json").write_text("{}\n")
+        (src.parent / "library.properties").write_text("name=x\n")
         (src / "d.xyz").write_text("int z;\n")
-        texts, unread = tree_sources((Path(tmp) / "lib",))
+        (src / "notes.json").write_text("{}\n")
+        (src / ".DS_Store").write_text("x")
+        texts, unread = tree_sources((Path(tmp) / "lib",), ignored=lambda paths: set())
         assert sorted(Path(f).name for f in texts) == ["a.cpp", "b.inc", "c.hpp"], texts
-        assert len(unread) == 1 and "d.xyz" in unread[0], unread
+        assert sorted(Path(u.split(":")[0]).name for u in unread) == [
+            ".DS_Store", "d.xyz", "notes.json"], unread
+        texts, unread = tree_sources((Path(tmp) / "lib",), ignored=lambda paths: {
+            p for p in paths if p.endswith(".DS_Store")})
+        assert sorted(Path(u.split(":")[0]).name for u in unread) == ["d.xyz", "notes.json"], unread
+        # ...and git's answer: an ignored, untracked file is excused; a tracked
+        # one of the same pattern never is (when git can answer at all).
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        try:
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, capture_output=True,
+                           timeout=60)
+            (repo / ".gitignore").write_text("*~\n.DS_Store\n")
+            for name in ("a.cpp~", ".DS_Store", "b.h~", "c.xyz"):
+                (repo / name).write_text("x")
+            subprocess.run(["git", "add", "-f", "b.h~"], cwd=repo, check=True,
+                           capture_output=True, timeout=60)
+            have_git = True
+        except (OSError, subprocess.SubprocessError):
+            have_git = False
+        if have_git:
+            got = git_ignored(["a.cpp~", ".DS_Store", "b.h~", "c.xyz"], cwd=repo)
+            assert got == {"a.cpp~", ".DS_Store"}, got
+        assert git_ignored(["x~"], cwd=tmp) == set()  # no work tree: nothing excused
+    # What the flagship reaches outside ROOTS (build_reach): the files
+    # build_src_filter compiles and each file an #include reaches, from ROOTS or
+    # from those, beside the including file or in include/ and the -I folders;
+    # not a file only another product or a host test builds. An #include the
+    # check cannot follow, a filter that matches nothing, a compiled file that is
+    # not C or C++ and a file of this tree outside the read folders are problems.
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        proj, common = base / "fw" / "canary", base / "fw" / "common"
+        for d in (proj / "src", proj / "include", proj / "lib" / "a" / "src", common / "net",
+                  common / "csi" / "src", common / "power", base / "fw" / "other"):
+            d.mkdir(parents=True)
+        (proj / "src" / "main.cpp").write_text(
+            '#include "conf.h"\n#include <net/gate.h>\n#include "csi_hal.h"\n'
+            "#include <WiFi.h>\n")
+        (proj / "include" / "conf.h").write_text('#include "net/keys.h"\n')
+        (common / "net" / "gate.h").write_text('#include "gate_impl.h"\n')
+        (common / "net" / "gate_impl.h").write_text("int g;\n")
+        (common / "net" / "keys.h").write_text("int k;\n")
+        (common / "net" / "portal.cpp").write_text('#include "keys.h"\n')  # another product's
+        (common / "csi" / "src" / "csi_hal.h").write_text("int h;\n")
+        (common / "csi" / "src" / "csi_hal.cpp").write_text('#include "csi_util.h"\n')
+        (common / "csi" / "src" / "csi_util.h").write_text("int u;\n")
+        (common / "csi" / "src" / "csi_fast.S").write_text("call8 x\n")
+        (common / "power" / "test_power.cpp").write_text("#define millis() 0\n")  # a host test
+        (base / "fw" / "other" / "x.h").write_text("int x;\n")
+        ini = ("build_flags =\n    -I${PROJECT_DIR}/../common\n"
+               "    -I${PROJECT_DIR}/../common/csi/src\n    -I${platformio.packages_dir}/core\n"
+               "build_src_filter =\n    +<*>\n    +<../../common/csi/src/csi_hal.cpp>\n")
+        roots = (proj / "include", common)
+        lib = {(proj / "src" / "main.cpp").as_posix():
+               strip_comments((proj / "src" / "main.cpp").read_text())}
+        tree = (proj / "lib", proj / "src")
+        got, problems = build_reach(lib, {"ini": ini}, project=proj, roots=roots, tree=tree,
+                                    repo=base)
+        names = sorted(Path(f).relative_to(base).as_posix() for f in got)
+        assert names == ["fw/canary/include/conf.h", "fw/common/csi/src/csi_hal.cpp",
+                         "fw/common/csi/src/csi_hal.h", "fw/common/csi/src/csi_util.h",
+                         "fw/common/net/gate.h", "fw/common/net/gate_impl.h",
+                         "fw/common/net/keys.h"], names
+        assert problems == [], problems
+        lib[(proj / "src" / "main.cpp").as_posix()] += (
+            "#include CSI_HEADER\n#include \"../../other/x.h\"\n")
+        bad = ini + "    +<../../common/csi/src/csi_fast.S>\n    +<../../common/gone/*.cpp>\n"
+        _got, problems = build_reach(lib, {"ini": bad}, project=proj, roots=roots, tree=tree,
+                                     repo=base)
+        for words in ("names its file through a macro", "x.h, outside ROOTS and the include roots",
+                      "csi_fast.S, which is not C or C++", "+<../../common/gone/*.cpp> matches no"):
+            assert any(words in p for p in problems), (words, problems)
+    # The NVS keys' values are read from canary_config.h as `#define NAME "..."`;
+    # a key spelled any other way is named, so its literal rule never goes quiet.
+    with tempfile.TemporaryDirectory() as tmp:
+        config = Path(tmp) / "canary_config.h"
+        config.write_text("".join(f'#define {k} "{v}"\n' for k, v in _FIX_NVS_KEYS.items()))
+        assert nvs_key_values(config) == (_FIX_NVS_KEYS, [])
+        config.write_text(config.read_text().replace(
+            '#define NVS_KEY_TOKEN "api_token"', '#define NVS_KEY_TOKEN NVS_PREFIX "token"'))
+        values, problems = nvs_key_values(config)
+        assert "NVS_KEY_TOKEN" not in values and len(problems) == 1 and (
+            "NVS_KEY_TOKEN is not a `#define NVS_KEY_TOKEN" in problems[0]), problems
+    # A ROOTS_DEFINES name defined as often as its row says, in another file.
+    planted = dict(clean)
+    planted[_FIX_AUTH] += "#define CANARY_SOFTAP_SAE_IN_BUILD 1\n"
+    row = dict(tables["roots_defines"], CANARY_SOFTAP_SAE_IN_BUILD=(_NET, 1))
+    got = check_bearer_only_answers(planted, dict(tables, roots_defines=row))
+    assert any("ROOTS_DEFINES: CANARY_SOFTAP_SAE_IN_BUILD is defined once under ROOTS "
+               "(fx/lib/securacv_auth.cpp); its row says once, in securacv_network.cpp" in p
+               for p in got), got
+    row = dict(tables["roots_defines"], CANARY_SOFTAP_SAE_IN_BUILD=(_AUTH, 1))
+    assert check_bearer_only_answers(planted, dict(tables, roots_defines=row)) == []
 
 
 def check_route_gates(sources: dict, routes: list) -> tuple:
@@ -6303,21 +6852,43 @@ def check_route_gates(sources: dict, routes: list) -> tuple:
     return failures, matched_allowlist
 
 
-def tree_sources(roots=ROOTS) -> tuple:
+def git_ignored(paths, cwd=None) -> set:
+    """The paths among `paths` (relative to `cwd`, the working directory by
+    default) that git ignores: untracked and matched by a .gitignore, so never
+    committed (an editor's backup, an OS's .DS_Store). A tracked file is never
+    one. None when git cannot say (no git, no work tree), so nothing is
+    excused."""
+    paths = sorted(paths)
+    if not paths:
+        return set()
+    try:
+        done = subprocess.run(["git", "check-ignore", "-z", "--stdin"], cwd=cwd,
+                              input="\0".join(paths) + "\0", capture_output=True, text=True,
+                              timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if done.returncode not in (0, 1):  # 1: none ignored; anything else: no answer
+        return set()
+    return {p for p in done.stdout.split("\0") if p}
+
+
+def tree_sources(roots=ROOTS, ignored=git_ignored) -> tuple:
     """({path: comment-stripped text}, problems) for every file under
-    `roots`: a SOURCE_SUFFIXES file is read, a NON_SOURCE_SUFFIXES one is
-    not, and any other is a problem (a file of code the check would not
-    read)."""
-    sources, problems = {}, []
+    `roots`: a SOURCE_SUFFIXES file is read (whatever git says of it), a
+    NON_SOURCE_NAMES manifest is not, and any other is a problem (a file of
+    code the check would not read) unless git ignores it."""
+    sources, unread = {}, []
     for root in roots:
         for path in sorted(p for p in root.rglob("*") if p.is_file()):
-            suffix = path.suffix.lower()
-            if suffix in SOURCE_SUFFIXES:
+            if path.suffix.lower() in SOURCE_SUFFIXES:
                 sources[path.as_posix()] = strip_comments(path.read_text(errors="replace"))
-            elif suffix not in NON_SOURCE_SUFFIXES:
-                problems.append(f"{path.as_posix()}: a file under ROOTS the check does not read "
-                                f"({suffix or 'no suffix'}) — give C or C++ code one of "
-                                f"{', '.join(SOURCE_SUFFIXES)}, or teach the check the new kind")
+            elif path.name not in NON_SOURCE_NAMES:
+                unread.append(path)
+    skipped = ignored(p.as_posix() for p in unread)
+    problems = [f"{p.as_posix()}: a file under ROOTS the check does not read "
+                f"({p.suffix.lower() or 'no suffix'}) — give C or C++ code one of "
+                f"{', '.join(SOURCE_SUFFIXES)}, or teach the check the new kind"
+                for p in unread if p.as_posix() not in skipped]
     return sources, problems
 
 
@@ -6358,9 +6929,10 @@ def main() -> int:
     failures.extend(check_host_first(sources))
     flags, flag_failures = flag_sources()
     keys, key_failures = nvs_key_values()
-    failures.extend(flag_failures + key_failures)
+    includes, reach_failures = build_reach(sources, flags)
+    failures.extend(flag_failures + key_failures + reach_failures)
     failures.extend(check_bearer_only_answers(sources, tables={"nvs_keys": keys}, flags=flags,
-                                              includes=include_sources()))
+                                              includes=includes))
     failures.extend(check_registration_sites(sources))
     failures.extend(check_registration_count(sources))
     failures.extend(check_route_budgets(sources))

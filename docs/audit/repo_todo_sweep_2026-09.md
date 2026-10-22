@@ -1761,15 +1761,22 @@ so — see D2 below.)
     literal under ROOTS is the token's, the TLS key's, the first-boot flag's
     or the private key's NVS key (read from `include/canary_config.h`), so a
     record is reached only by the name the reads follow. Every file under
-    `lib/` and `src/` is read (an `.inc` or `.hpp` of code is code, a file of
-    any other kind but a library manifest fails), as the compiler reads it: a
+    `lib/` and `src/` is read (an `.inc` or `.hpp` of code is code; a file of
+    any other kind fails, but a library manifest by its name, `library.json`
+    or `library.properties`, and a file git ignores), as the compiler reads
+    it: a
     raw string literal is one literal, so code after the web UI's HTML is
     code, a backslash-newline is spliced, so a name split across two lines
     is that name, and a digraph is the token it spells (`%:define`, `<% %>`).
-    The headers outside the tree (`firmware/canary/include`,
-    `firmware/common`) name no credential and nothing else the check holds
-    under the tree, but the NVS key names where `canary_config.h` defines
-    them and `reset_scope_keys.h` lists them, and `ap_password.h`'s deriver
+    The files outside the tree that the flagship compiles or `#include`s
+    (`build_reach`: each `.cpp` its `build_src_filter` compiles from
+    `firmware/common`, and every file an `#include` reaches from the tree or
+    from those; another product's source or a host test there is not read)
+    name no credential, nothing else the check holds under the tree and no
+    census row's spelling (`WiFi.softAP`, the radio's mode, the driver's
+    config, the AP class, the tap's open), but the NVS key names where
+    `canary_config.h` defines them and `reset_scope_keys.h` lists them,
+    `ap_password.h`'s deriver and `provisioning_gate.h`'s two decisions
     (`INCLUDE_MENTIONS`). Every reader is named. Each device-side use is
     pinned by its reading statements, in order (`SECRET_LOCAL_USES`, 11
     functions, 36 statements, keyed by file and qualified function), and so
@@ -1799,7 +1806,7 @@ so — see D2 below.)
     (token) answer only through `send_html_with_token(...,
     page_token_inject(req))`, which only those three handlers name; a public
     route may carry a credential only that way.
-  - **The grant glue, pinned whole in one table** (`GLUE_DEFS`, 38 rows;
+  - **The grant glue, pinned whole in one table** (`GLUE_DEFS`, 40 rows;
     `host_is_foreign` moved in): `auth_gate`, `bearer_present_and_valid`,
     `from_ap_subnet` and its helpers (`netif_ip4`, `be_word_host_order`,
     `sockaddr_ip4_host_order`), the lockout's source key
@@ -1815,14 +1822,17 @@ so — see D2 below.)
     button's GPIO, and the peek hook); with them the three accessors, the
     token's deriver and its `hmac_sha256` and `format_api_token_string`,
     `announce_setup_network()`, `apply_ap_security()`, and the port-80 path
-    (`handle_captive_probe`, `handle_https_redirect`, which is what holds the
-    `/*` reasons' "never the page token"). Each is defined exactly once under
+    (`handle_captive_probe`, `handle_https_redirect`, and the two members the
+    probe's hint branch decides on, `isTlsEnabled()` and `getHttpsServer()`,
+    whose stores the census holds to their writers: that text is what holds
+    the `/*` reasons' "never the page token"). Each is defined exactly once
+    under
     ROOTS, in its file, so a second body or a shadow in another lib fails.
     The failure prints the body as it now is, and `page_token_inject`'s names
     SECURITY_MODEL.md's four unlocks and Phase 6.
   - **The gate primitives** are mentioned (a call, a function pointer or an
     address taken alike) and defined only where the census (`GATE_CALL_SITES`,
-    42 rows) names them. Every `auth_gate` call is the whole refusal, at its
+    44 rows) names them. Every `auth_gate` call is the whole refusal, at its
     handler's own top level in every body that holds it, under no block or
     preprocessor conditional, with nothing before it able to leave (a
     `return`, `goto`, `throw`, `co_return` or an ESP-IDF `ESP_RETURN_*` /
@@ -1858,13 +1868,16 @@ so — see D2 below.)
     first-boot flag (`NVS_KEY_SETUP_OK`) are named only by the setup lib's
     pinned functions, the credentials reset that also clears that flag runs
     only from the BOOT hold's dispatch, and the setup timeout runs from
-    `loop()` while setup is active; and the token's alphabet is its
-    declaration. Every `AUTH_MARKERS` name is
+    `loop()` while setup is active; the TLS flag and the TLS server's handle
+    the port-80 hint reads (`m_tls_enabled`, `m_https_server`) are written
+    only by the constructor and `startHttpServer()`, each statement where it
+    sits; and the token's alphabet is its declaration. Every `AUTH_MARKERS`
+    name is
     a census row, and every `PRE_HOST_STEPS` name a row, a `TOKEN_EMITTERS`
     key or `auth_get_token`: F340 had already taken `auth_check_optional` out
     of both lists and rule 1, and it cannot come back silently.
-  - **Macros.** No `#define` under ROOTS or in the headers it includes from
-    outside it (`firmware/canary/include`, `firmware/common`), and no `-D`
+  - **Macros.** No `#define` under ROOTS or in a file outside it the
+    flagship compiles or `#include`s, and no `-D`
     flag in `platformio.ini` or the files its `extra_configs` names (on the
     key's own line or under it; a missing one is named), may name a pinned
     or census function, a device-side use, an accessor, a mint, an emitter, a
@@ -1877,7 +1890,17 @@ so — see D2 below.)
     `BOOT_SHORT_PRESS_MS`), is the `ROOTS_DEFINES` row it is today (two
     feature probes and the auth header's buffer size) and is never
     `#undef`'d. `SETUP_TIMEOUT_MS` is defined once, as 15 minutes
-    (`PINNED_DEFINES`).
+    (`PINNED_DEFINES`). No macro or flag pastes tokens (`##`, `%:%:`) but
+    GNU's `, ##__VA_ARGS__` comma elision, and no asm is written but the
+    empty compiler barrier: a pasted name (`CV_JOIN(auth_get_, token)()`), an
+    asm label (`__asm__("_Z14auth_get_tokenv")`) or an asm call reaches a
+    function under no spelling a rule reads.
+  - **Build inputs.** An `#include` through a macro, a compiled file that is
+    not C or C++, a `build_src_filter` entry that matches nothing, a file of
+    this repository outside the read folders that the flagship `#include`s or
+    compiles, and, in the flag files, a linker option (`-Wl,--wrap=`), a
+    forced include, a build script, a local library or a moved source folder
+    fail: each is code, or a binding of a name, that no rule would read.
   - **Registrations.** Every registration call, or the call taken as a
     pointer, hands over an `httpd_uri_t` initializer the parser reads, so a
     route assigned field by field, or with a cast `.method` or a lambda
@@ -1901,11 +1924,12 @@ so — see D2 below.)
   rule, which replaces the old `auth_get_token` loop (rule 5 keeps its
   emitter-behind-the-Host half). A function defined twice (an `#if` body
   and its `#else` one) is every one of its bodies, whatever its head, in
-  this rule, the route-gate rule and the Host-first rule. 241 planted
-  fixtures (221 source edits, 20 table edits), with the self-test's lexer,
-  flag-file, header, file-kind, route-form and raw-literal cases, each fail
-  for their named reason before the tree is read; the tree passes with its
-  83 registrations, in about 12 s. The `/*` allowlist reasons now say what the
+  this rule, the route-gate rule and the Host-first rule. 260 planted
+  fixtures (235 source edits, 25 table edits), with the self-test's lexer,
+  flag-file, build-input, reach, header, file-kind, route-form and
+  raw-literal cases, each fail for their named reason before the tree is
+  read; the tree passes with its 83 registrations, in about 14 s. The `/*`
+  allowlist reasons now say what the
   port-80 redirect does (a probe path gets the probe's plain answer or the
   TLS hint, else 307, or 500 on an oversize target).
   Not ported, because nothing on the flagship corresponds: the any-session
@@ -1917,10 +1941,12 @@ so — see D2 below.)
   This is a static text check: names are matched by spelling, a copy under
   another name or a value passed as a parameter is not followed (the body that
   handles `announce_setup_network()`'s `pass` is pinned instead; the network
-  manager's spellings are the exception), the headers outside the tree are
-  read only for their `#define` lines and the names `INCLUDE_MENTIONS` holds,
-  so their code is not otherwise followed, and a held name that is an ordinary
-  word in the shared code (`begin`, `check`, `s_active`) is not read there, a
+  manager's spellings are the exception), the files outside the tree the
+  flagship reaches are read only for their `#define` lines, their asm and the
+  names they may not name, so their code is not otherwise followed, and a
+  held name that is an ordinary word in the shared code (`begin`, `check`,
+  `s_active`) is not read there, the linker is not read (a library the build
+  links is outside the check; a flag that would bind a symbol fails), a
   value is not checked but `SETUP_TIMEOUT_MS`'s (a `memset` of the private key
   just before a mint passes; the values `include/canary_config.h` and the
   shared headers define, `PROVISIONING_GATE_TTL_MS` among them, are read only
@@ -1933,9 +1959,14 @@ so — see D2 below.)
   definition of that name (which errs toward failing), the private key is not
   carried (a helper that answers it passes; only a handler's own body is
   read), a statement before a gated route's refusal that does the route's work
-  without leaving is not seen, the members the pinned glue calls on the
-  manager (`isTlsEnabled`, `getHttpsServer`, `getStatus`) and the decisions in
-  `firmware/common` are their own tests', not this check's, the flagship's
+  without leaving is not seen, of the members the pinned glue calls the
+  hint's `isTlsEnabled()` and `getHttpsServer()` are pinned but `getStatus()`
+  (which picks the setup page or Apple's success body, not the token),
+  `WiFi.getMode()`, Preferences' reads and `ResetHold::step()` are not held,
+  and the decisions in `firmware/common` are their host tests'
+  (`test_provisioning_gate.cpp`, `test_tls_policy.cpp`, `test_host_guard.cpp`,
+  `test_ap_security_policy.cpp`, `test_reset_hold.cpp`), not this check's,
+  the flagship's
   `derive_api_token` and its helpers are held by their text, not run (no host
   test compiles them; `test_securacv_auth` stubs `derive_api_token`), and the
   shared `auth_backoff.h` arithmetic is `test_auth_backoff.cpp`'s. An edit to
@@ -2161,6 +2192,71 @@ so — see D2 below.)
   firmware hardenings are reported to the session lead (`begin()` and
   `raiseAp()` refusing a null or empty key, and both derivers refusing an
   all-zero private key).
+  *Review (2026-10-21, the PR's fourth round):* 12 edits to the same tree
+  passed the round-3 repair and the check as F340 left it. Each now fails,
+  with a planted fixture:
+  - a token-paste macro, which names nothing held in its `#define` and
+    never spells the name it builds at its call: `#define CV_JOIN(a, b)
+    a##b` with `CV_JOIN(auth_get_, token)()` answering the bearer from
+    public `/api/fleet`, `auth_get ## _token`, `auth_get##__VA_ARGS__`, and
+    `JOIN(auth_handed_, token)(request_peer_ipv4(req))` clearing the
+    roll-call's own lockout between bearer guesses (the direct form is the
+    census's). No macro or flag may paste tokens now, but GNU's `,
+    ##__VA_ARGS__` comma elision, the one `##` in what the flagship builds
+    (the CSI logging macros);
+  - a header helper the flagship includes, called from `loop()`, raising the
+    SoftAP open (`WiFi.softAP("Canary-Setup", nullptr)`,
+    `WiFi.mode(WIFI_AP_STA)` on the open config `dropAp()` leaves, an open
+    `esp_wifi_set_config`):
+    the header rule held only the census rows defined under the tree. It now
+    holds every census row's spelling in the files outside the tree the
+    flagship reaches, but `provisioning_gate.h`'s two decisions where it
+    defines them;
+  - the port-80 hint answered wrong with both handlers' text intact
+    (`getHttpsServer()` returning the port-80 server, `isTlsEnabled()`
+    returning `false`, `m_tls_enabled = false;` once the port-80 server is
+    up), each of which would serve the setup page, with its token, over
+    plain HTTP beside HTTPS on the `FEATURE_HTTPS` envs. The round-3 limits
+    said "their own tests" held those members; no test did. Both are pinned
+    now, and the census holds every write of the TLS flag and the TLS
+    server's handle;
+  - a joined or escaped first-boot key (`"setup_" "ok"`, `"setup\x5fok"`)
+    in a file that names no key: the literal rule skipped every file without
+    a verbatim copy of a key's value (109 of the tree's 129 files, comment
+    stripped), and now reads every file's literals.
+  It also found nine branches no plant held (a prefixed raw literal with a
+  `"` in its body, a `-D` flag's value naming a held thing, an unreadable NVS
+  key define, duplicate, stale and misfiled `ANSWER_STATEMENTS` rows,
+  `MINT_AFTER` rows naming no function or no mint, and a `ROOTS_DEFINES` name
+  in the wrong file), each now planted, and two false failures that are gone:
+  the header rule read every file under `firmware/common`, so a correct edit
+  to `setup_portal.cpp` (built by canary-sense, -vision and -sentinel, never
+  the flagship) or a host test's `#define delay(ms)` shim failed the
+  flagship's check. The check now reads, outside the tree, only what the
+  flagship compiles (`build_src_filter`) or `#include`s, followed from the
+  tree with the folders `platformio.ini` names (99 files today). And the
+  nits: a library manifest is excused by its name (`library.json`,
+  `library.properties`), not by a `.json` suffix; a file git ignores (an
+  editor's backup, an OS's `.DS_Store`) no longer fails a local run, while a
+  tracked one still does; and the CHANGELOG heading carries `#<PR>`.
+  This repair found seven more of the same kinds and fixed them beside these
+  (each passed the round-3 repair and the check as F340 left it): the paste
+  spelled with the digraph `%:%:`, in a header the flagship includes, or as a
+  `-D` flag; an asm label (`extern const char* t()
+  __asm__("_Z14auth_get_tokenv");`) or an asm `call8` of the lockout's clear,
+  which reach a function by its symbol (no asm may be written now but the
+  empty compiler barrier `csi_hal.cpp` holds); a linker
+  `-Wl,--wrap=<auth_check's symbol>` in `platformio.ini`, which sends every
+  call of `auth_check` to a function returning `true` (the flag files may now
+  hold no linker option, forced include, build script, local library or
+  moved source folder); and `m_https_server = m_http_server;` beside the
+  port-80 server. The paste and asm forms were compiled with host g++ and the
+  tree's `xtensa-esp32s3-elf-g++ 14.2.0`, and the wrap linked with host g++
+  and GNU ld. Of 41 checker mutants that each undo one of these fixes or
+  weaken one of the nine branches, the self-test refuses all 41 (the 11 that
+  weaken an older branch pass the round-3 self-test). `getStatus()` is not
+  pinned: two classes define one, and it picks the setup page or Apple's
+  success body, not the token. No new number.
 - [x] **F339 [code] canary-wap: other bearer compares stay silent beside the
   lockout.** `csi_integration.cpp`'s `CSI_AUTH_OR_RETURN`
   (`api_auth_check_optional`, every CSI dashboard route), `csi_mqtt.cpp`'s
