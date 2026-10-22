@@ -115,8 +115,15 @@ every other gate), and the premise the last one stands on:
     repository outside ROOTS and the include roots that the flagship
     #includes or compiles, and in the flag files a linker option
     (`-Wl,--wrap=<symbol>` sends every call of a function to a name no rule
-    reads), a forced include, a build script, a local library or a moved
-    source folder (build_input_problems).
+    reads), a forced include (`-include`/`--include`/`-imacros`/`--imacros`,
+    in every spelling the driver honors), an include or sysroot path the
+    reach does not read (`-isystem`, `-iquote`, `-idirafter`, `-iprefix`,
+    `--sysroot`; only `-I` is read), a compiler-driver injector (`-specs`,
+    `-fplugin`, `-wrapper`, `-B<prefix>`, `-Xpreprocessor`/`-Wp,`,
+    `-Xassembler`/`-Wa,`), a response file (`@file`), a build script, a local
+    library, a moved source folder or PlatformIO's `!command` dynamic value
+    (a command run at build time whose stdout becomes flags)
+    (build_input_problems).
     Every reader is named: an accessor in its home (SECRET_ACCESSORS), an
     emitter in its home carrying exactly what TOKEN_EMITTERS says, its
     reading statements pinned (EMITTER_STATEMENTS), a comparer reading only
@@ -243,9 +250,17 @@ every other gate), and the premise the last one stands on:
     `CV_JOIN(auth_get_, token)()` calls the token's accessor, or
     `JOIN(auth_handed_, token)(...)` clears a lockout, under no spelling a rule
     reads (a `#` stringize makes a string, never a call, and is not refused).
-    No asm is written there either but the empty compiler barrier (`asm
-    volatile("" ::: "memory")`): an asm label (`__asm__("_Z14auth_get_tokenv")`)
-    or an asm call reaches a function by its symbol;
+    Nothing there binds a name to a symbol (symbol_binding_problems), the
+    class the empty compiler barrier aside: no asm (`__asm__("_Z14auth_get_tokenv")`
+    a label, an asm call) but `asm volatile("" ::: "memory")`, no weakref,
+    alias, ifunc or symver attribute and no __REDIRECT macro
+    (`__attribute__((weakref("_Z14auth_get_tokenv")))` is the same binding an
+    asm label is), no pragma but KNOWN_PRAGMAS' (`#pragma redefine_extname`,
+    `#pragma weak t = ...`, as `#pragma` or `_Pragma("...")`), and no identifier
+    spelled as a C++ symbol (`_Z...`, `extern "C" const char*
+    _Z14auth_get_tokenv();` declaring the accessor by its mangled name) — each
+    reaches a function by its symbol, a spelling SECRET_READS and the census do
+    not read;
   * the premise the last rule stands on, checked (no_session_problems): the
     flagship has no session. No cookie is read or set, the request headers
     read are `Authorization` (the auth lib) and `Host` (the network lib)
@@ -280,7 +295,8 @@ followed, and neither is a value passed on as a parameter
 (announce_setup_network()'s pass is held by the pins on the statements and
 the body that handle it instead); the network manager's own spellings are
 the exception above; the files outside ROOTS the flagship reaches are
-read only for their #define lines, their asm and the names above, so their
+read only for their #define lines, their asm and symbol bindings, and the
+names above, so their
 code is otherwise not followed, and a held name that is also an ordinary
 word there (INCLUDE_COMMON_WORDS: begin, check, s_active and the like) is
 not read in them; the linker is not read (a library the build links, the
@@ -318,7 +334,16 @@ run (no host test compiles them; test_securacv_auth stubs derive_api_token);
 the shared firmware/common/network/auth_backoff.h is outside ROOTS and its
 arithmetic is test_auth_backoff.cpp's; and a pinned body or statement means
 an edit to that glue updates its row in the same review (the failure prints
-the row as it now is, so the update is mechanical).
+the row as it now is, so the update is mechanical). Each rule function is
+self-tested with its own fixtures, but main()'s own plumbing is not run by a
+self-test: a one-token edit to main() that dropped `+ reach_failures` from
+the failure list, or passed `includes={}` to check_bearer_only_answers rather
+than build_reach's output, would leave the self-test green (the real tree has
+no reach failure and clean headers). The composition that mutation would hide
+— build_reach's `includes` fed to check_bearer_only_answers, where a header
+reader is caught — is held by a two-file fixture in the self-test; main()'s
+two wiring lines themselves are not, as the threat model here is a careless
+firmware edit, not a malicious edit to this checker (which could `return 0`).
 
 Run from the repo root (CI: firmware.yml job "Mesh + Scout Host Tests",
 step "Check canary (PIO) route security", beside the WAP's audit):
@@ -4025,62 +4050,158 @@ def macro_problems(sources: dict, T: dict, flags: dict, includes: dict) -> list:
     return problems
 
 
-# Assembly reaches a function by its symbol, not its name: an asm label
-# (`extern const char* t() __asm__("_Z14auth_get_tokenv");`) or an asm
-# statement's call is the token's accessor under no spelling a rule reads. The
-# one asm the flagship writes is the compiler barrier, an empty template.
+# What binds a name to a symbol, so that a call reaches a function by its
+# symbol, not its name (`_Z14auth_get_tokenv` is auth_get_token's, and holds no
+# `auth_get_token` on a word boundary): assembly (an asm label, an asm
+# statement's call); an attribute that names a symbol (weakref, alias, ifunc,
+# symver, in the GNU or the C++11 spelling, its underscores or not); glibc's
+# __REDIRECT macros (an asm label by another name); a pragma that binds one
+# (redefine_extname, weak), as `#pragma` or `_Pragma("...")`; and a name
+# spelled as a C++ symbol (`extern "C" const char* _Z14auth_get_tokenv();`
+# declares the accessor by its symbol: an identifier beginning `_Z`, which the
+# implementation reserves). The one asm the flagship writes is the compiler
+# barrier, an empty template; its pragmas are KNOWN_PRAGMAS'.
 _ASM = re.compile(r"\b(?:asm|__asm__|__asm)\b")
 _EMPTY_ASM = re.compile(r"(?:asm|__asm__|__asm)\s*(?:\b(?:volatile|__volatile__|inline|goto)\b\s*)*"
                         r"\(\s*\"\"\s*[:)]")
+_SYMBOL_ATTRIBUTE = re.compile(r"\b(?:__)?(?:weakref|alias|ifunc|symver)(?:__)?\b|\b__REDIRECT\w*")
+_MANGLED_NAME = re.compile(r"(?<![\w$])_Z\w*")
+_PRAGMA_LINE = re.compile(r"^[ \t]*#[ \t]*pragma\b([^\n]*)", re.M)
+_PRAGMA_OP = re.compile(r"\b_Pragma\s*\(\s*(?:L|u8|u|U)?")
+# The pragmas the check knows bind no name to a symbol (a namespace's pragma
+# by its first two words): what the flagship writes (once, GCC poison) and
+# the diagnostics, packing and messages it may.
+KNOWN_PRAGMAS = frozenset({"once", "pack", "message", "GCC poison", "GCC diagnostic",
+                           "GCC warning", "GCC error", "GCC system_header", "GCC push_options",
+                           "GCC pop_options", "GCC optimize"})
+_BIND_WORDS = "binds a name to a symbol"
 
 
-def asm_problems(sources: dict, includes: dict) -> list:
-    """No asm under ROOTS or in a file outside it the flagship reaches, but
-    the empty-template compiler barrier (`asm volatile("" ::: "memory")`)."""
-    problems = []
+def _pragma_head(text: str) -> str:
+    """A pragma's name as KNOWN_PRAGMAS spells it: its first word, or its
+    namespace's two (`GCC diagnostic`)."""
+    words = re.findall(r"[A-Za-z_]\w*", text)[:2]
+    return " ".join(words) if words[:1] == ["GCC"] else "".join(words[:1])
+
+
+def symbol_binding_problems(sources: dict, includes: dict) -> list:
+    """Nothing under ROOTS, or in a file outside it the flagship reaches,
+    binds a name to a symbol: no asm but the empty-template compiler barrier
+    (`asm volatile("" ::: "memory")`), no weakref, alias, ifunc or symver
+    attribute, no __REDIRECT macro, no pragma but KNOWN_PRAGMAS' (a
+    `_Pragma` read from its string literal, and one handed anything else
+    refused), and no identifier spelled as a C++ symbol (`_Z...`). One
+    problem per line."""
+    problems, seen = [], set()
+
+    def add(fname, text, pos, what):
+        line = _line_of(text, pos)
+        if (fname, line) not in seen:
+            seen.add((fname, line))
+            problems.append(f"{fname}:{line}: {what}")
     for fname, text in sorted(sources.items()) + sorted(includes.items()):
         blanked = blank_string_contents(text)
         for m in _ASM.finditer(blanked):
             if _EMPTY_ASM.match(text, m.start()):
                 continue
             end = blanked.find(";", m.start())
-            problems.append(f"{fname}:{_line_of(text, m.start())}: assembly "
-                            f"({_fold(text[m.start():end + 1 if end >= 0 else None])[:90]!r}): "
-                            f"an asm label or statement reaches a function by its symbol "
-                            f"(`__asm__(\"_Z14auth_get_tokenv\")`), a spelling no rule reads; "
-                            f"only the empty compiler barrier `asm volatile(\"\" ::: \"memory\")` "
-                            f"may be written")
+            add(fname, text, m.start(),
+                f"assembly ({_fold(text[m.start():end + 1 if end >= 0 else None])[:90]!r}): "
+                f"an asm label or statement reaches a function by its symbol "
+                f"(`__asm__(\"_Z14auth_get_tokenv\")`), a spelling no rule reads; only the "
+                f"empty compiler barrier `asm volatile(\"\" ::: \"memory\")` may be written")
+        pragmas = [(m.start(), m.group(1)) for m in _PRAGMA_LINE.finditer(blanked)]
+        literals = {start: value for start, _end, value in _string_literals(text)}
+        for m in _PRAGMA_OP.finditer(blanked):
+            if m.end() in literals:
+                pragmas.append((m.start(), literals[m.end()]))
+            else:
+                add(fname, text, m.start(),
+                    f"a _Pragma handed no string literal ({_fold(text[m.start():m.end() + 40])!r}) "
+                    f"is a pragma the check cannot read, and a pragma {_BIND_WORDS} "
+                    f"(redefine_extname, weak) — write `_Pragma(\"...\")` or `#pragma`")
+        for pos, body in pragmas:
+            head = _pragma_head(body)
+            if head not in KNOWN_PRAGMAS:
+                add(fname, text, pos,
+                    f"the pragma {head or body.strip()!r} is not one the check knows binds "
+                    f"nothing (KNOWN_PRAGMAS): `#pragma redefine_extname t "
+                    f"_Z14auth_get_tokenv` or `#pragma weak t = ...` {_BIND_WORDS}, a "
+                    f"spelling no rule reads")
+        for m in _SYMBOL_ATTRIBUTE.finditer(blanked):
+            add(fname, text, m.start(),
+                f"{m.group(0)!r} {_BIND_WORDS} (`__attribute__((weakref(\"_Z14auth_get_tokenv\")))` "
+                f"is the token's accessor under no spelling a rule reads); no weakref, alias, "
+                f"ifunc or symver attribute, and no __REDIRECT macro, may be written")
+        for m in _MANGLED_NAME.finditer(blanked):
+            add(fname, text, m.start(),
+                f"{m.group(0)!r} is spelled as a C++ symbol (a name beginning `_Z`, which the "
+                f"implementation reserves): `extern \"C\" const char* _Z14auth_get_tokenv();` "
+                f"{_BIND_WORDS}, the token's accessor under no spelling a rule reads")
     return problems
 
 
 # What the flag files may not hold, because each is code or a binding the
-# check does not read: a linker option (`-Wl,--wrap=<symbol>` sends every call
-# of a function to `__wrap_<symbol>`, a name no rule reads; a linker script, a
-# --defsym), a forced include (`-include`, `-imacros`: a file no #include
-# names), a build script (extra_scripts, which can add any flag), a library
-# folder or a local library (lib_extra_dirs, a lib_deps path: code outside
-# ROOTS no rule reads) and a moved source, library or include folder (src_dir,
-# lib_dir, include_dir: ROOTS would no longer be what the build compiles).
+# check does not read. A driver or compiler flag token (anchored at a token
+# start, so `-DBOARD` is not `-B`), in EVERY spelling the driver honors — the
+# space form, the glued one and the `=`/`--` long one alike:
+#   - a linker option (`-Wl,`, `-Xlinker`, `--wrap`, `--defsym`, a `-T` linker
+#     script): `-Wl,--wrap=<symbol>` sends every call of a function to
+#     `__wrap_<symbol>`, a name no rule reads;
+#   - a forced include (`-include`, `--include`, `-imacros`, `--imacros`): a
+#     file no `#include` names, so macro_problems never scans it;
+#   - an include or sysroot path the check does not read as a reach root
+#     (`-isystem`, `-iquote`, `-idirafter`, `-iprefix`, `-iwithprefix`,
+#     `-isysroot`, `--sysroot`; only `-I` is read, by build_reach): a header
+#     reached through one is read by no rule;
+#   - a compiler driver that injects code or changes the toolchain
+#     (`-specs`/`--specs`, `-fplugin`, `-wrapper`, `-B<prefix>`,
+#     `-Xpreprocessor`/`-Wp,` and `-Xassembler`/`-Wa,`, each a way to smuggle a
+#     forced include or a `--defsym` past the tokens above);
+#   - a response file (`@file`), which splices in flags from a file no rule reads.
+# A PlatformIO section key that moves a source/library/include folder or runs
+# code (extra_scripts, lib_extra_dirs, a lib_deps path, src_dir, lib_dir,
+# include_dir, a linker script), and PlatformIO's own `!command` dynamic value
+# (a command run at build time whose stdout becomes flags), are refused the
+# same way. (The `=`/`--` long forms, the include-path flags, `@file` and
+# `!command` were added in F338's fifth review, which found each slipped the
+# first version of this rule.)
 _BUILD_INPUT = re.compile(
-    r"(?<![\w-])(?:-Wl,|-Xlinker\b|-include\b|-imacros\b|-T(?=\s*[\w$./])|--wrap\b|--defsym\b)"
-    r"|^[ \t]*(?:extra_scripts|lib_extra_dirs|src_dir|lib_dir|include_dir|"
-    r"board_build\.ldscript)[ \t]*="
-    r"|(?:symlink|file)://", re.M)
+    r"(?<![\w-])(?:-Wl,|-Xlinker\b|--wrap\b|--defsym\b|-T(?=\s*[\w$./])"
+    r"|--?include\b|--?imacros\b"
+    r"|-i(?:system|quote|dirafter|prefix|withprefix(?:before)?|sysroot|plugindir|multilib)\b"
+    r"|--sysroot\b|--?specs\b|-fplugin\b|-wrapper\b|-Xpreprocessor\b|-Xassembler\b"
+    r"|-Wp,|-Wa,|-B(?=[\s/$.=~]))"
+    r"|^[ \t]*(?:extra_scripts?|lib_extra_dirs|src_dir|lib_dir|include_dir|"
+    r"board_build\.ldscript)[ \t]*[=:]"
+    r"|(?:symlink|file)://"
+    r"|(?:^[ \t]*|[=:,][ \t]*)![ \t]*(?=\S)"
+    r"|(?:^[ \t]*|[=:,][ \t]*)@(?=[\w/$.~])", re.M)
 
 
 def build_input_problems(flags: dict) -> list:
     """No flag file holds a build input the check does not read
-    (_BUILD_INPUT): a linker option, a forced include, a build script, a
-    local library or a moved source folder."""
-    problems = []
+    (_BUILD_INPUT): a linker option, a forced include, an include-path or
+    sysroot flag, a compiler-driver injector, a response file, a build
+    script, a local library, a moved source folder or a `!command` dynamic
+    value. One problem per line."""
+    problems, seen = [], set()
     for fname, text in sorted(flags.items()):
         for m in _BUILD_INPUT.finditer(text):
+            line_no = _line_of(text, m.start())
+            if (fname, line_no) in seen:
+                continue
+            seen.add((fname, line_no))
             line = text[text.rfind("\n", 0, m.start()) + 1:text.find("\n", m.start())]
-            problems.append(f"{fname}:{_line_of(text, m.start())}: {line.strip()!r} is a build "
+            problems.append(f"{fname}:{line_no}: {line.strip()!r} is a build "
                             f"input the check does not read (a linker option, a forced "
-                            f"include, a build script, a local library or a moved folder) — a "
-                            f"symbol bound there (`-Wl,--wrap=...`) is reached by no spelling "
-                            f"the rules read; teach the check before the build takes one")
+                            f"include, an include-path or sysroot flag, a compiler-driver "
+                            f"injector, a response file, a build script, a local library, a "
+                            f"moved folder or a `!command` run at build time) — a symbol bound "
+                            f"there (`-Wl,--wrap=...`), a header force-included "
+                            f"(`--include=...`) or a flag a command emits (`!python3 gen.py`) is "
+                            f"reached by no spelling the rules read; teach the check before the "
+                            f"build takes one")
     return problems
 
 
@@ -4163,7 +4284,7 @@ def check_bearer_only_answers(sources: dict, tables=None, flags=None, includes=N
             + no_session_problems(sources, T["headers"], T["queries"], T["uri"])
             + macro_problems(sources, T, flags or {}, includes or {})
             + build_input_problems(flags or {})
-            + asm_problems(sources, includes or {})
+            + symbol_binding_problems(sources, includes or {})
             + include_mention_problems(T, includes or {})
             + manager_alias_problems(sources))
 
@@ -6380,6 +6501,30 @@ _FIX_PLANTS = (
     ("an asm statement clears the roll-call's own lockout", _FIX_NET, _FIX_FLEET,
      _FIX_FLEET + "  asm volatile(\"call8 _Z17auth_handed_tokenm\" ::: \"memory\");\n",
      (_ASM_WORDS,)),
+    # ...and the asm siblings, which bind a name to a symbol the same way: a
+    # weakref / alias attribute, a __REDIRECT macro, a redefine_extname pragma
+    # (as #pragma or _Pragma), and a name spelled as a C++ symbol.
+    ("a weakref attribute answers the token", _FIX_NET, _FIX_FLEET,
+     'static const char* cv_t() __attribute__((weakref("_Z14auth_get_tokenv")));\n' + _FIX_FLEET
+     + "  httpd_resp_set_hdr(req, \"X-D\", cv_t());\n", (_BIND_WORDS,)),
+    ("a weakref attribute clears the roll-call's own lockout", _FIX_NET, _FIX_FLEET,
+     'static void cv_seen(uint32_t) __attribute__((__weakref__("_Z17auth_handed_tokenm")));\n'
+     + _FIX_FLEET + "  cv_seen(request_peer_ipv4(req));\n", (_BIND_WORDS,)),
+    ("an alias attribute answers the token", _FIX_NET, _FIX_FLEET,
+     'extern "C" const char* cv_t() __attribute__((alias("_Z14auth_get_tokenv")));\n' + _FIX_FLEET
+     + "  httpd_resp_set_hdr(req, \"X-D\", cv_t());\n", (_BIND_WORDS,)),
+    ("a __REDIRECT macro answers the token", _FIX_NET, _FIX_FLEET,
+     'extern const char* __REDIRECT(cv_t, (), _Z14auth_get_tokenv);\n' + _FIX_FLEET
+     + "  httpd_resp_set_hdr(req, \"X-D\", cv_t());\n", (_BIND_WORDS,)),
+    ("a redefine_extname pragma answers the token", _FIX_NET, _FIX_FLEET,
+     'extern "C" const char* cv_t();\n#pragma redefine_extname cv_t _Z14auth_get_tokenv\n'
+     + _FIX_FLEET + "  httpd_resp_set_hdr(req, \"X-D\", cv_t());\n", (_BIND_WORDS,)),
+    ("a _Pragma redefine_extname answers the token", _FIX_NET, _FIX_FLEET,
+     'extern "C" const char* cv_t();\n_Pragma("redefine_extname cv_t _Z14auth_get_tokenv")\n'
+     + _FIX_FLEET + "  httpd_resp_set_hdr(req, \"X-D\", cv_t());\n", (_BIND_WORDS,)),
+    ("a name spelled as a C++ symbol answers the token", _FIX_NET, _FIX_FLEET,
+     'extern "C" const char* _Z14auth_get_tokenv();\n' + _FIX_FLEET
+     + "  httpd_resp_set_hdr(req, \"X-D\", _Z14auth_get_tokenv());\n", (_BIND_WORDS,)),
     # The NVS literal rule reads every file's literals, a file that holds no
     # copy of a key's value included.
     ("the first-boot flag's key joined, in a file that names no key", _FIX_SETUP, "",
@@ -6592,12 +6737,32 @@ def _assert_answer_gate_rule() -> None:
                  "    -T custom.ld", "extra_scripts = pre:add_flags.py",
                  "lib_extra_dirs = ../common", "lib_deps =\n    symlink://../common/diag",
                  "lib_deps = file://../common/diag", "src_dir = other",
-                 "board_build.ldscript = custom.ld"):
+                 "board_build.ldscript = custom.ld",
+                 # the `=` / `--` / glued long forms the first version missed
+                 "    --include=../common/diag.h", "    --imacros=../common/diag.h",
+                 "    -include../common/diag.h", "    -specs=nano.specs",
+                 "    --specs=nano.specs", "    -fplugin=./p.so", "    -wrapper gdb,--args",
+                 "    -B${PROJECT_DIR}/tools", "    -B/opt/x", "    -Xpreprocessor -include "
+                 "../common/diag.h", "    -Wp,-include,../common/diag.h",
+                 "    -Xassembler --defsym=x=y", "    -Wa,--defsym,x=y",
+                 # an include / sysroot path the check does not read as a reach root
+                 "    -isystem ../common/diag", "    -iquote ../common/diag",
+                 "    -idirafter ../common/diag", "    -isystem../common/diag",
+                 "    --sysroot=/opt/x", "    -iprefix ../common/ -iwithprefix diag",
+                 # a response file and PlatformIO's `!command` dynamic value
+                 "    @${PROJECT_DIR}/flags.rsp", "    !python3 ${PROJECT_DIR}/gen.py",
+                 "build_src_flags = !python3 gen.py", "build_unflags =!echo -DX",
+                 "extra_script = pre:add_flags.py"):
         got = check_bearer_only_answers(clean, tables,
                                         flags={"fx/platformio.ini": ini + line + "\n"})
         assert any("is a build input the check does not read" in p for p in got), (line, got)
     registry = ini + "lib_deps =\n    rweather/Crypto @ ^0.4.0\n    ${env.lib_deps}\n"
     assert check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": registry}) == []
+    # ...and the ` @ ` of a lib version spec, and a bare `-DBOARD` / `-B` inside
+    # another flag's name, are not a response file or a prefix flag.
+    benign_flags = (ini + "    -DBOARD_HAS_PSRAM\n    -mfix-esp32-psram-cache-issue\n"
+                    "lib_deps =\n    bblanchon/ArduinoJson @ ^7.0.0\n")
+    assert check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": benign_flags}) == []
     # ...and the files extra_configs names are read on the key's own line or
     # indented under it, comma-separated, a missing one named, and a flag's
     # line number is its file's (comment lines blanked, never dropped).
@@ -6678,10 +6843,19 @@ def _assert_answer_gate_rule() -> None:
     for words, text in ((_PASTE, "#define CV_JOIN(a, b) a##b\n"),
                         (_PASTE, "#define LOGF(fmt, ...) printf(fmt, a##__VA_ARGS__)\n"),
                         (_ASM_WORDS, 'extern const char* t() __asm__("_Z14auth_get_tokenv");\n'),
-                        (_ASM_WORDS, 'inline void f() { asm("call8 x"); }\n')):
+                        (_ASM_WORDS, 'inline void f() { asm("call8 x"); }\n'),
+                        # the asm siblings, in a file outside ROOTS the flagship reaches
+                        (_BIND_WORDS,
+                         'static const char* t() __attribute__((weakref("_Z14auth_get_tokenv")));\n'),
+                        (_BIND_WORDS,
+                         'extern "C" const char* a() __attribute__((alias("_Z14auth_get_tokenv")));\n'),
+                        (_BIND_WORDS,
+                         'extern "C" const char* t();\n#pragma redefine_extname t _Z14auth_get_tokenv\n'),
+                        (_BIND_WORDS, 'extern const char* __REDIRECT(t, (), _Z14auth_get_tokenv);\n'),
+                        (_BIND_WORDS, 'extern "C" const char* _Z14auth_get_tokenv();\n')):
         got = check_bearer_only_answers(clean, tables, includes={"fx/common/csi/x.cpp": text})
-        assert any(words in p and "outside ROOTS" in p for p in got) or (
-            words == _ASM_WORDS and any(words in p for p in got)), (text, got)
+        assert (any(words in p for p in got) if words in (_ASM_WORDS, _BIND_WORDS)
+                else any(words in p and "outside ROOTS" in p for p in got)), (text, got)
     benign = ('#define LOGF(fmt, ...) do { Serial.printf("[x] " fmt "\\n", ##__VA_ARGS__); } '
               'while (0)\n#define LOGW(fmt, ...) printf(fmt , ## __VA_ARGS__)\n'
               'inline void fence() { asm volatile("" ::: "memory"); __asm__ __volatile__("");'
@@ -6779,6 +6953,33 @@ def _assert_answer_gate_rule() -> None:
         for words in ("names its file through a macro", "x.h, outside ROOTS and the include roots",
                       "csi_fast.S, which is not C or C++", "+<../../common/gone/*.cpp> matches no"):
             assert any(words in p for p in problems), (words, problems)
+    # ...and build_reach's output, fed as `includes=` to check_bearer_only_answers
+    # the way main() feeds it, is scanned: a header reached only through build_reach
+    # that names a credential is caught, so passing `includes={}` (the round-5 nit's
+    # one-token main() mutation) would show here. (main()'s own `includes=includes`
+    # and its `+ reach_failures` extend are not themselves run by a self-test — see
+    # the limits in the docstring.)
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        proj, common = base / "fw" / "canary", base / "fw" / "common"
+        (proj / "src").mkdir(parents=True)
+        (proj / "include").mkdir()
+        (common / "diag").mkdir(parents=True)
+        (proj / "src" / "app.cpp").write_text('#include "dnote.h"\n')
+        (common / "diag" / "dnote.h").write_text(
+            "static const char* dbg() { return auth_get_token(); }\n")
+        ini2 = ("build_flags =\n    -I${PROJECT_DIR}/../common/diag\n"
+                "build_src_filter =\n    +<*>\n")
+        appsrc = {(proj / "src" / "app.cpp").as_posix():
+                  strip_comments((proj / "src" / "app.cpp").read_text())}
+        includes, reach_failures = build_reach(
+            appsrc, {"ini": ini2}, project=proj, roots=(proj / "include", common),
+            tree=(proj / "lib", proj / "src"), repo=base)
+        assert any(p.endswith("diag/dnote.h") for p in includes) and reach_failures == [], (
+            includes, reach_failures)
+        got = check_bearer_only_answers(clean, tables, includes=includes)
+        assert any("names 'auth_get_token'" in p and "dnote.h" in p for p in got), got
+        assert check_bearer_only_answers(clean, tables, includes={}) == []  # the mutation hides it
     # The NVS keys' values are read from canary_config.h as `#define NAME "..."`;
     # a key spelled any other way is named, so its literal rule never goes quiet.
     with tempfile.TemporaryDirectory() as tmp:

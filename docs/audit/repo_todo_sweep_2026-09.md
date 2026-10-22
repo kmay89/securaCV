@@ -1891,16 +1891,26 @@ so — see D2 below.)
     feature probes and the auth header's buffer size) and is never
     `#undef`'d. `SETUP_TIMEOUT_MS` is defined once, as 15 minutes
     (`PINNED_DEFINES`). No macro or flag pastes tokens (`##`, `%:%:`) but
-    GNU's `, ##__VA_ARGS__` comma elision, and no asm is written but the
-    empty compiler barrier: a pasted name (`CV_JOIN(auth_get_, token)()`), an
-    asm label (`__asm__("_Z14auth_get_tokenv")`) or an asm call reaches a
-    function under no spelling a rule reads.
+    GNU's `, ##__VA_ARGS__` comma elision, and nothing binds a name to a
+    symbol but the empty compiler barrier and the known pragmas: a pasted name
+    (`CV_JOIN(auth_get_, token)()`), an asm label
+    (`__asm__("_Z14auth_get_tokenv")`) or call, a `weakref`/`alias`/`ifunc`/
+    `symver` attribute or `__REDIRECT` macro, a `redefine_extname` or `weak`
+    pragma (as `#pragma` or `_Pragma`), and a name spelled as a C++ symbol
+    (`_Z...`) each reach a function under no spelling a rule reads.
   - **Build inputs.** An `#include` through a macro, a compiled file that is
     not C or C++, a `build_src_filter` entry that matches nothing, a file of
     this repository outside the read folders that the flagship `#include`s or
     compiles, and, in the flag files, a linker option (`-Wl,--wrap=`), a
-    forced include, a build script, a local library or a moved source folder
-    fail: each is code, or a binding of a name, that no rule would read.
+    forced include (`-include`/`--include`/`-imacros`/`--imacros`, every
+    spelling the driver honors), an include or sysroot path the reach does not
+    read (`-isystem`, `-iquote`, `-idirafter`, `-iprefix`, `--sysroot`; only
+    `-I` is read), a compiler-driver injector (`-specs`, `-fplugin`,
+    `-wrapper`, `-B<prefix>`, `-Xpreprocessor`/`-Wp,`, `-Xassembler`/`-Wa,`), a
+    response file (`@file`), a build script (`extra_scripts`, or PlatformIO's
+    `!command` dynamic value that runs a command and splices its stdout into
+    the flags), a local library or a moved source folder fail: each is code,
+    or a binding of a name, that no rule would read.
   - **Registrations.** Every registration call, or the call taken as a
     pointer, hands over an `httpd_uri_t` initializer the parser reads, so a
     route assigned field by field, or with a cast `.method` or a lambda
@@ -1942,8 +1952,9 @@ so — see D2 below.)
   another name or a value passed as a parameter is not followed (the body that
   handles `announce_setup_network()`'s `pass` is pinned instead; the network
   manager's spellings are the exception), the files outside the tree the
-  flagship reaches are read only for their `#define` lines, their asm and the
-  names they may not name, so their code is not otherwise followed, and a
+  flagship reaches are read only for their `#define` lines, their asm and
+  symbol bindings, and the names they may not name, so their code is not
+  otherwise followed, and a
   held name that is an ordinary word in the shared code (`begin`, `check`,
   `s_active`) is not read there, the linker is not read (a library the build
   links is outside the check; a flag that would bind a symbol fails), a
@@ -2257,6 +2268,72 @@ so — see D2 below.)
   weaken an older branch pass the round-3 self-test). `getStatus()` is not
   pinned: two classes define one, and it picks the setup page or Apple's
   success body, not the token. No new number.
+
+  *Review (2026-10-21, the PR's fifth round):* four more escapes of kinds the
+  round-4 repair had closed only for one spelling, each now failed by a
+  planted fixture (each passed the round-4 check and the check as F340 left
+  it), and one nit carried:
+  - the asm rule the round-4 repair added closed only `asm`/`__asm__`, but an
+    asm label is one of several ways to reach a function by its SYMBOL rather
+    than its name. The siblings — a `weakref`, `alias`, `ifunc` or `symver`
+    attribute (`static const char* fleet_diag()
+    __attribute__((weakref("_Z14auth_get_tokenv")))` answering the bearer from
+    public `/api/fleet`; a `weakref` to `_Z17auth_handed_tokenm` clearing the
+    per-address lockout between guesses), the glibc `__REDIRECT` macro, a
+    `redefine_extname` or `weak` pragma (as `#pragma` or `_Pragma("...")`),
+    and a name spelled as the C++ symbol itself (`extern "C" const char*
+    _Z14auth_get_tokenv();`) — are none of them `asm`, none a `#define` or
+    `-D`, and the mangled symbol holds no `auth_get_token` on a word boundary,
+    so the reader scan and the census missed them. `symbol_binding_problems`
+    now refuses the whole class under ROOTS and in the files outside it the
+    flagship reaches, the empty compiler barrier and the known pragmas
+    (`#pragma once`, `#pragma pack`, the one `#pragma GCC poison` the flagship
+    writes) aside; a mangled-name `_Z...` identifier is refused too. The
+    weakref, redefine_extname and `_Z` extern-C forms were compiled on the
+    tree's `xtensa-esp32s3-elf-g++ 14.2.0` and on host g++ (both emit an
+    undefined or weak reference to `_Z14auth_get_tokenv` / `_Z17auth_handed_tokenm`,
+    which a host link resolved to the real secret);
+  - `build_input_problems` caught the space form of the forced include
+    (`-include`) but not the `=`/`--`/glued long forms the driver honors
+    equally (`--include=`, `--imacros=`, `-include<path>`), nor `-specs`,
+    `-fplugin`, `-wrapper`, `-B<prefix>`, `-Xpreprocessor`/`-Wp,` and
+    `-Xassembler`/`-Wa,` (each a way to smuggle a forced include or a
+    `--defsym` past the earlier tokens), nor a response file (`@file`). A
+    `--include=` of a header no source `#include`s force-includes it, so
+    `build_reach` never adds it and `macro_problems` never scans it; a
+    `#define false true` in that header then flips every `return false;`,
+    `from_ap_subnet`'s SoftAP-exemption fall-through among them. `_BUILD_INPUT`
+    now holds every spelling of each class;
+  - PlatformIO's own `!command` dynamic value (`build_flags = !python3 gen.py`
+    runs the command at build time and splices its stdout into the flags) was
+    read by no rule, so whatever it emitted — a `-Dauth_gate(r)=true` that
+    ungates every route, a `-Wl,--wrap=...` — was invisible. `_BUILD_INPUT`
+    now refuses a `!command` on any flag or option line, so the ledger's and
+    the CHANGELOG's "a build script ... fail" holds for the `!` spelling too;
+  - an include folder added with `-isystem`, `-iquote`, `-idirafter`,
+    `-iprefix` or `--sysroot` was neither read as a reach root (only `-I` is,
+    by `build_reach`) nor refused, so a header reached only through one of
+    them — naming a credential, opening the tap, raising the SoftAP open — was
+    followed by no rule. `_BUILD_INPUT` now refuses those flags (teach the
+    check the new include root before the build takes one), the class round 4
+    closed for `-I` headers.
+  Each escape was reproduced on a private copy of the head and confirmed GREEN
+  before the fix and RED after, beside a control of the spelling round 4
+  already caught. Fixtures were planted for each: the weakref, alias,
+  `__REDIRECT`, redefine_extname (`#pragma` and `_Pragma`) and `_Z` forms, in
+  a source and in a reached header; the `=`/`--`/glued forced includes, the
+  driver injectors, the response file, the `!command` and the include-path
+  flags in the build-input loop. And one nit carried: the self-tests exercise
+  each rule function directly, but main()'s own two wiring lines (its `+
+  reach_failures` and its `includes=includes` into `check_bearer_only_answers`)
+  are not themselves run by a self-test, so a one-token main() edit dropping
+  either would stay green on the clean tree. A two-file fixture now holds the
+  composition those lines rely on (build_reach's `includes` fed to
+  `check_bearer_only_answers` catches a header reader, and `includes={}` hides
+  it); the limit that main()'s two lines are not themselves self-tested is
+  stated in the check's docstring, as the other main()-wiring residual already
+  is (the threat model is a careless firmware edit, not a malicious edit to
+  the checker). Host-tested; not run on a device. No new number.
 - [x] **F339 [code] canary-wap: other bearer compares stay silent beside the
   lockout.** `csi_integration.cpp`'s `CSI_AUTH_OR_RETURN`
   (`api_auth_check_optional`, every CSI dashboard route), `csi_mqtt.cpp`'s
