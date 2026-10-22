@@ -152,7 +152,9 @@ every other gate), and the premise the last one stands on:
     in the flag files, under that key or an older name PlatformIO reads as it
     (`lib_use`, `lib_force`, `lib_install`), in any case and at any indent,
     as configparser reads the ini, an interpolated `${section.option}` read
-    where they set it (a `${sysenv.*}` or built-in one fails), split by line
+    where they set it (`${this.option}` wherever any section sets it, as
+    PlatformIO reads [env]'s value in each env that inherits it, `this`
+    naming that env; a `${sysenv.*}` or built-in one fails), split by line
     and on ", " in every line, which splits more than PlatformIO does, never
     less; and each dependency a library manifest under ROOTS declares), so a
     library that raises its own access point or serves its own routes
@@ -4574,7 +4576,8 @@ def library_problems(sources: dict, flags: dict, manifests: dict, registry: dict
     for its library's own dependencies): each entry of a lib_deps value in
     the flag files (under any of LIB_DEPS_KEYS, read as _ini_options reads
     the ini, an interpolated `${section.option}` read where the flag files
-    set it, a `${sysenv.*}` or built-in one failing, split by line and on
+    set it and `${this.option}` wherever any section sets it, a
+    `${sysenv.*}` or built-in one failing, split by line and on
     ", " in every line: PlatformIO splits a one-line value on ", " and a
     longer one only by line, so this splits wherever it does, and more
     where a line of a longer value holds a ", "), and each dependency a
@@ -4593,17 +4596,23 @@ def library_problems(sources: dict, flags: dict, manifests: dict, registry: dict
         local |= {parts[i + 1] for i, part in enumerate(parts[:-2]) if part == "lib"}
     options = [(fname, o) for fname, text in sorted(flags.items()) for o in _ini_options(text)]
 
-    def expand(fname, section, lines, via, seen):
+    def expand(fname, lines, via, seen):
         """[[where, via, text]]: a value's lines with each `${section.option}`
         replaced by the lines of the value it names. PlatformIO inserts a
         value it names with that value's own line breaks, or, for a list
         option, with a break between its entries (split by line, or on ", "
         when it is one line), so every line break of its expanded value is a
         piece's end here or a ", " inside one, and the caller splits every
-        piece on ", ". A lib_deps one of a section adds nothing: PlatformIO
-        reads it as a lib_deps value the flag files set, each read on its
-        own, as nothing or as a build error; a `${sysenv.*}` or built-in one
-        is the environment's, which no flag file sets."""
+        piece on ", ". A `${this.option}` is every section's value of the
+        option: PlatformIO reads [env]'s value, or that of a section an env
+        extends, in each env that inherits it, `this` naming that env, so
+        `[env]`'s `${this.custom_libs}` is each env's own `custom_libs`; the
+        option is read wherever the flag files set it, which reads more than
+        PlatformIO does where the value is an env's own, never less. A
+        lib_deps one of a section adds nothing: PlatformIO reads it as a
+        lib_deps value the flag files set, each read on its own, as nothing
+        or as a build error; a `${sysenv.*}` or built-in one is the
+        environment's, which no flag file sets."""
         out = []
         for n, line in lines:
             out.append([f"{fname}:{n}", via, ""])
@@ -4613,20 +4622,19 @@ def library_problems(sources: dict, flags: dict, manifests: dict, registry: dict
                     continue
                 m = _INTERPOLATION_REF.fullmatch(part)
                 sec, opt = (m.group(1), m.group(2).lower()) if m else (None, part)
-                sec = section if sec == "this" else sec
                 if (sec, opt) in seen or (opt in LIB_DEPS_KEYS
                                           and sec not in (None, "sysenv")):
                     continue  # a section's lib_deps value is read on its own
                 hits = [(f, o) for f, o in options
-                        if sec not in (None, "sysenv") and o[:2] == (sec, opt)]
+                        if sec not in (None, "sysenv") and o[1] == opt
+                        and sec in ("this", o[0])]
                 if not hits:
                     problems.append(f"{fname}:{n}: lib_deps interpolates ${{{part}}}, which "
                                     f"no flag file sets, so the libraries it names are not "
                                     f"held to REGISTRY_LIBS")
                 got = []
                 for f, o in hits:
-                    got += expand(f, o[0], o[2], f"{via} through ${{{part}}}",
-                                  seen | {(sec, opt)})
+                    got += expand(f, o[2], f"{via} through ${{{part}}}", seen | {(sec, opt)})
                 for j, g in enumerate(got):
                     if j:
                         out.append(list(g))
@@ -4642,8 +4650,7 @@ def library_problems(sources: dict, flags: dict, manifests: dict, registry: dict
             # is one line (parse_multi_values); every piece is split on ", "
             # here, which splits more than it does where a line of a longer
             # value holds a ", " (one entry to PlatformIO), never less.
-            for where, via, piece in expand(fname, section, lines, f"[{section}] {key}",
-                                            set()):
+            for where, via, piece in expand(fname, lines, f"[{section}] {key}", set()):
                 for item in piece.split(", "):
                     item = re.sub(r"\s+;.*$", "", item.strip()).strip()
                     if item and not item.startswith((";", "#")):
@@ -7460,7 +7467,12 @@ def _assert_answer_gate_rule() -> None:
                  # name holding a row pass as the plain spelling does.
                  "[env:recovery]\n\textends = env:release\n\tlib_deps =\n\t\t${env.lib_deps}\n"
                  "\t\trweather/Crypto @ ^0.4.0 # pinned, not tzapu/WiFiManager\n",
-                 "[env:old]\nlib_install = knolleary/PubSubClient @ ^2.8\n"):
+                 "[env:old]\nlib_install = knolleary/PubSubClient @ ^2.8\n",
+                 # ...as does [env]'s `${this.option}`, read in each section
+                 # that sets it, when each holds a row.
+                 "[env]\ncustom_extra_libs =\nlib_deps =\n    rweather/Crypto @ ^0.4.0\n"
+                 "    ${this.custom_extra_libs}\n[env:dev_ha]\n"
+                 "custom_extra_libs = knolleary/PubSubClient @ ^2.8\n"):
         got = check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": ini + libs},
                                         manifests=mesh)
         assert got == [], (libs, got)
@@ -7503,6 +7515,14 @@ def _assert_answer_gate_rule() -> None:
             ("[common]\nlibs_core = bblanchon/ArduinoJson @ ^7.0.0\n"
              "libs_portal = WiFiManager, knolleary/PubSubClient @ ^2.8\n[env:recovery]\n"
              "lib_deps = ${common.libs_core}, ${common.libs_portal}\n", "WiFiManager"),
+            # The round-10 review: [env]'s `${this.option}` is each env's own
+            # option (PlatformIO reads [env]'s value in every env that
+            # inherits it, `this` naming that env), so a per-env list [env]
+            # sets empty is read wherever a section sets it, not only in [env].
+            ("[env]\ncustom_extra_libs =\nlib_deps =\n    rweather/Crypto @ ^0.4.0\n"
+             "    ${this.custom_extra_libs}\n[env:recovery]\nextends = env:dev\n"
+             "custom_extra_libs = tzapu/WiFiManager @ ^2.0.17\n",
+             "tzapu/WiFiManager @ ^2.0.17"),
             # ...and a bare name is no row though a row's name is the same.
             ("lib_deps =\n    ArduinoJson\n", "ArduinoJson"),
             # The round-8 review: configparser reads an option at any indent (a

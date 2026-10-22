@@ -1942,7 +1942,8 @@ so — see D2 below.)
     ini; split by line and on `, ` in every line, which splits more than
     PlatformIO does, never less, as it splits a one-line value on `, ` and a
     longer one only by line; an interpolated `${section.option}` read where
-    the flag files set it, a `${sysenv.*}` or built-in one failing) and each
+    the flag files set it, `${this.option}` wherever any section sets it, a
+    `${sysenv.*}` or built-in one failing) and each
     dependency a library manifest under the tree declares
     (`library.json`'s `"dependencies"`, `library.properties`' `depends=`).
     A row is an `owner/name`: a library no row names fails until a reviewer
@@ -2675,6 +2676,28 @@ so — see D2 below.)
   round's fixes still in the code (16), the self-test refuses all 28. The
   tree passes with its 83 registrations, in about 20 s. Host-tested; not
   run on a device. No new number.
+  *Review (2026-10-22, the PR's tenth round):* held to the same threat
+  model, it found one edit that passed the ninth version, in the library
+  rule the seventh round added, which read `${this.option}` in the section
+  its value is written in. With `[env]`'s `lib_deps` refactored to read a
+  per-env list (`custom_extra_libs =`, empty, and
+  `${this.custom_extra_libs}` as the value's last line) and an
+  `[env:recovery]` (`extends = env:dev`) that sets `custom_extra_libs =
+  tzapu/WiFiManager @ ^2.0.17`, PlatformIO 6.2.0's `ProjectConfig`
+  returned WiFiManager among `env:recovery`'s `lib_deps` (it reads
+  `[env]`'s value in each env that inherits it, `this` naming that env),
+  while the rule read `[env]`'s own empty list and printed "83
+  registrations checked". A `${this.option}` is now read wherever the flag
+  files set the option, which reads more than PlatformIO does where the
+  value is an env's own, never less; the same refactor holding only a row
+  (`knolleary/PubSubClient @ ^2.8`) passes. Two self-test cases were added
+  (that edit failing, its row-only twin passing), so the planted fixtures
+  stay 293 (268 source, 25 table). Of five checker mutants that each undo or
+  narrow the fix (`this` read in the value's own section, as the ninth
+  version did; as a section named `this`; in `[env]` only; in the first
+  section that sets the option only; or skipped), the self-test refuses all
+  five. The tree passes with its 83 registrations, in about 20 s.
+  Host-tested; not run on a device. No new number.
 - [x] **F339 [code] canary-wap: other bearer compares stay silent beside the
   lockout.** `csi_integration.cpp`'s `CSI_AUTH_OR_RETURN`
   (`api_auth_check_optional`, every CSI dashboard route), `csi_mqtt.cpp`'s

@@ -207,8 +207,9 @@
     indent, as configparser reads the ini; split by line and on `, ` in
     every line, which splits more than PlatformIO does, never less, as it
     splits a one-line value on `, ` and a longer one only by line; or
-    interpolated from another option, a `${sysenv.*}` or built-in one
-    failing) or as a dependency a library manifest under the tree declares,
+    interpolated from another option, `${this.option}` read wherever any
+    section sets it, a `${sysenv.*}` or built-in one failing) or as a
+    dependency a library manifest under the tree declares,
     that no `REGISTRY_LIBS` row names. Each row is an `owner/name` with its
     reason, and the four rows are the libraries the flag files name today
     (`rweather/Crypto`, `bblanchon/ArduinoJson`, `knolleary/PubSubClient`,
@@ -425,6 +426,16 @@
   servers and lists those it does not. Of 28 checker mutants that each undo
   or alter one of the ninth review's fixes or nits, or one of the eighth's
   still in the code, the self-test refuses all 28.
+  Its tenth review found `${this.option}` read in the wrong section: with
+  `[env]`'s `lib_deps` refactored to end in `${this.custom_extra_libs}`
+  beside an empty `custom_extra_libs =`, and an `[env:recovery]` setting
+  `custom_extra_libs = tzapu/WiFiManager @ ^2.0.17`, PlatformIO 6.2.0
+  returned WiFiManager among that env's `lib_deps` (it reads `[env]`'s
+  value in each env that inherits it, `this` naming that env), while the
+  rule read `[env]`'s own empty list and passed. A `${this.option}` is now
+  read wherever any section sets it, which reads more than PlatformIO does
+  where the value is an env's own, never less. Of five checker mutants that
+  each undo or narrow that fix, the self-test refuses all five.
   The head parser names a constructor
   for its class (it named `ScvNetworkManager`'s body after its last
   initializer, `m_peers_last_browse_ms`), a member as `Class::name`, and a
