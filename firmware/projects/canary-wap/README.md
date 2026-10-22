@@ -100,16 +100,21 @@ make monitor
    > from the device's private key) and is printed on the serial console at
    > first boot. There is no shared default password; release builds fail
    > closed if provisioning is incomplete.
-2. Open a browser at any of:
+2. Open a browser at either of:
    - **http://canary.local** — single-device catch-all (first Canary on the
      network claims it)
-   - **http://canary-\<name\>.local** — each device's unique mDNS hostname
-     once you name it (e.g. `canary-kitchen.local`). Until then it is
-     `canary-` plus four lowercase hex digits, the first two bytes of its key
-     fingerprint (e.g. `canary-7916.local`), not its device id's suffix; at
-     the default log level the serial log names it on the
-     `[INFO/NETWORK] mDNS started | canary-7916` line
    - **http://192.168.4.1** — numeric fallback that always works
+
+   The first-boot setup wizard opens only at those two names; under any
+   other name, the device's unique one included, `/` shows the static page
+   that says to type `canary.local` (sweep F344). After setup, on your home
+   network, the dashboard is also at the device's unique mDNS hostname,
+   **http://canary-\<name\>.local** once you name it (e.g.
+   `canary-kitchen.local`). Until then it is `canary-` plus four lowercase
+   hex digits, the first two bytes of its key fingerprint (e.g.
+   `canary-7916.local`), not its device id's suffix; at the default log
+   level the serial log names it on the
+   `[INFO/NETWORK] mDNS started | canary-7916` line.
    > When a TLS certificate is available the dashboard is served over
    > **HTTPS (port 443)** and plain-HTTP requests are redirected; without a
    > cert the device runs HTTP-only, which is every stock build today (the

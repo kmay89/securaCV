@@ -8,7 +8,8 @@ and SNTP), TLS on every hop (the flagship's release images serve plain HTTP on
 port 80, and since F15's correction of 2026-10-19 no stock unit of either tree
 serves HTTPS at all: the certificate generator's guard names a header no
 pinned core ships, so the flagship's dev and full builds and the WAP, whose
-HTTPS is an after-setup opt-in, serve plain HTTP), Bluetooth compiled out
+HTTPS turns on by itself after setup once a certificate is stored, serve
+plain HTTP), Bluetooth compiled out
 (the shipped WAP profile compiles NimBLE), an API access code released only
 by a button press (the flagship hands its token with no press to the
 first-boot wizard, and after setup to a bearer caller and a request over its

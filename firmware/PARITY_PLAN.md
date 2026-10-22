@@ -106,7 +106,7 @@ is already at parity ✅) are omitted.
 ### Shared gap (neither tree, not a parity item but on the v1 path)
 - **TLS (HTTPS self-signed): ⚠️ / ⚠️ in the dashboard** (canary (PIO) since #1704, the F15
   paragraph below; canary-wap since #1691). The `canary-wap` sketch's `httpd_ssl_start`-on-443
-  path is a runtime opt-in, not the build's posture: compile-gated on `esp_https_server.h`
+  path is a runtime state, not the build's posture: compile-gated on `esp_https_server.h`
   (`SECURACV_HAS_HTTPS_SERVER`), served after first-boot setup once `init_tls_cert()` loads or
   generates the device certificate (no stock core can generate one: the correction below), and
   plain HTTP during setup and again when the HTTPS server

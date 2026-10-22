@@ -889,8 +889,12 @@ so — see D2 below.)
   setup the wizard's pair token (from `/`'s redirect to the wizard or from
   the re-issue), and, around a BOOT tap pressed from that browser, a
   receipt it can read. The flagship and the display share
-  the rule. Only HTTPS with an identity the browser can check closes it
-  (F15, F256). From code; the cache half seen in headless Chromium against
+  the rule. Only HTTPS with an identity the browser can check closes it,
+  and neither F15 nor F256 gives a browser one: F15 would bring HTTPS with a
+  self-signed certificate, whose warning the owner accepts, and only a
+  client that pins the certificate checks it (the iPhone app pins the
+  receipt's `tls_cert_fp`; F256 asks whether it may learn one over mDNS).
+  From code; the cache half seen in headless Chromium against
   a stand-in server (F344's sixth review), not against a device. No new
   number.
 - [ ] **F58 [decision] The canary's identity-key store still reports success
@@ -3140,6 +3144,68 @@ so — see D2 below.)
     `MUST_PASS` row only grew at its end).
   Host-tested; the cache clears tried in headless Chromium against a
   stand-in server, not against a device.
+  *Review 8 (2026-10-22, #<PR>):*
+  - The WAP README's first-boot step (`firmware/projects/canary-wap/README.md`,
+    "Connect to Your Device") still offered the unique `.local` name beside
+    `canary.local` and `192.168.4.1`, which the setup branch answers with the
+    static page (Review 5 fixed the same sentence in the sketch README only),
+    and `docs/homeassistant_setup.md` offered the unique hostname for a
+    wizard that did not appear and said `/setup` reopens it, a route the WAP
+    does not register. The README now lists the two setup names for first
+    boot and the unique name for after setup; the guide scopes `/setup` to a
+    `firmware/canary` unit and says where a WAP's wizard opens. Both were
+    wrong before this PR. Docs only.
+  - THREAT_MODEL's HTTP row, the CHANGELOG and the cookie reader's comment
+    in `csi_integration.cpp` said only this device can set
+    `__Host-cv_session`. The prefix binds the cookie to a secure scheme, the
+    host name, `Path=/` and no `Domain`, not to a certificate: another unit
+    answering the same name, or any server whose certificate the browser
+    accepted there, can set it too (such a cookie matches no session, and
+    the landing mints one again). The three now say so. Comment and docs
+    only.
+  - Every residual closed with "Only HTTPS with an identity the browser can
+    check closes it (F15, F256)", which reads as if F15 and F256 close it
+    for a browser. F15 would bring a self-signed certificate, whose warning
+    the owner accepts (the FAQ says to), and F256 asks whether the iPhone app
+    may learn a fingerprint over mDNS; only a client that pins the
+    certificate checks it, as the app pins the receipt's `tls_cert_fp`.
+    SECURITY_MODEL, THREAT_MODEL's row, the CHANGELOG, the sketch README,
+    `magic_pairing.md`, LESSONS_LEARNED (which said "HTTPS with a pin"),
+    F57's note, the comment above `request_host_names_device()` and
+    `check_route_security.py`'s docstring now say neither gives a browser
+    one. Reviews 5 to 7 above keep their wording as written.
+  - The CHANGELOG's heading said the pages answer only a Host that names the
+    device; during setup `/admin`, `/settings` and `/companion` serve under
+    any Host. It now scopes the pages to after setup.
+  - `request_host_is_setup_name()`'s Host buffer had no accepted row longer
+    than `canary.local:443` (16 bytes), so `char host[17]` there (which
+    refuses `canary.local:8080`) and `char host[18]` (which refuses
+    `canary.local:65535`) passed all 1100 checks and the route check.
+    `canary.local:65535` and `192.168.4.1:65535`, 18 and 17 bytes, the
+    longest Hosts a browser sends for the two names, are now accepted on
+    `/`, by the setup-name question and by the re-issue: `host[17]` fails 16
+    of 1148 checks, `host[18]` 8. A buffer of 19 to 95 bytes differs from
+    96 only for a port of six or more digits, which no browser sends.
+  - The test file's header said either setup name in a Host of 96 or 113
+    bytes gets the captive page on `/`, and eedb5ef8's message said both
+    96-byte Hosts get it on `/` and `404` from the re-issue; only the 96-byte
+    `canary.local:<port>` was sent to either. `/` now gets all four (both
+    names, 96 and 113 bytes), the re-issue both 96-byte ones, and the
+    setup-name question a 113-byte `192.168.4.1:<port>` beside the
+    `canary.local` one. `host[97]` and `host[113]` there now fail 14 of 1148,
+    and `host[114]` and `host[128]` 20 (8 and 9 of 1100 before).
+  - Smaller: FEATURES.md's TLS row label, `PARITY_PLAN.md`'s shared TLS line
+    and `test_docs_claims.py`'s docstring called the WAP's HTTPS an opt-in;
+    it turns on by itself after setup once a certificate is stored. The
+    bench runbook's D1 says D2 to D4 are blocked by F15 while D1 records
+    HTTP-only, and `feature_gaps_2026-09.md`'s FW8 carries the F15
+    correction. `FIRMWARE_MAP.md`'s shared-header row names the display as
+    a `host_guard.h` consumer, `firmware.yml`'s canary-wap route-check
+    comment names the mint rule, and `onboarding_multiple_canaries.md` says
+    the captive page tells the owner to type `canary.local` rather than
+    linking to it. Of these only the docstring's sentence, and the
+    route-check comment's gap (the rule is this PR's), came from this PR.
+  Host-tested; not run against a browser or on a device.
 - [ ] **F345 [decision] canary-wap: Forget Wi-Fi from any session re-arms the
   Bluetooth setup door, whose claim buys the receipt.** `POST
   /api/wifi/forget` takes `api_auth_check` (any session, the landing page's

@@ -3734,7 +3734,10 @@ static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_l
 // is same-origin with this device once the browser comes home (every WAP
 // claims canary.local) or joins the SoftAP (the captive DNS answers every
 // name), and its Host passes. Only HTTPS with an identity the browser checks
-// closes that (F15, F256).
+// closes that, and neither F15 nor F256 gives a browser one: F15 would bring
+// HTTPS with a self-signed certificate, whose warning the owner accepts, and
+// only a client that pins the certificate checks it (the iPhone app pins the
+// receipt's tls_cert_fp; F256 asks whether it may learn one over mDNS).
 //
 // No SoftAP or interface exemption, unlike the flagship's: the WAP's captive
 // DNS answers every name with the device (setup_wizard.h), so an exemption

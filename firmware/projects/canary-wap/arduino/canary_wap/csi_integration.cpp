@@ -1728,8 +1728,10 @@ bool find_valid_session(const uint8_t* token) {
  * a plain-HTTP answer sets. A browser that met both transports at one host
  * sends both over HTTPS, so __Host-cv_session is taken FIRST, and when it is
  * present but malformed the read fails rather than falling back to the plain
- * one (in current browsers only this device over https can set that name,
- * so the plain one is the cookie an http page could have planted). Two
+ * one (in current browsers only an https answer at this host name can set
+ * that name: this device, another unit answering the same name, or a server
+ * whose certificate the browser accepted there; the plain one is the cookie
+ * an http page could have planted). Two
  * units sharing canary.local or 192.168.4.1 can leave another unit's stale
  * __Host- cookie in front of a good plain one: it is read, it validates
  * against no slot here, and the landing mints a session again.

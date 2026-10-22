@@ -72,8 +72,9 @@ to a fixed point, every function that calls one). What it reads:
     gates also refuse a session's value under such a name:
     session_validate_cookie() asks the Host itself, test_session_cookie; a
     page another network served under one of the device's own names passes
-    every Host test, and only HTTPS with a checked identity tells it apart,
-    F15, F256). Each call stands in a MINT_SITES
+    every Host test, and only HTTPS with an identity the browser checks
+    tells it apart, which neither F15's self-signed certificate nor F256
+    gives a browser). Each call stands in a MINT_SITES
     function, after that function's gate for it (handle_ui's and the
     receipt's Host row, the
     setup branch's exact setup names, /api/pair/token's cookie-or-bearer

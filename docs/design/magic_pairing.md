@@ -470,7 +470,8 @@ address, any `.local` name, a single label, or a `.lan`, `.internal` or
 serves it again with no request to the device) until the browser comes home
 or joins the SoftAP, is not told apart from the device, and around a BOOT tap pressed
 from that browser it can read the receipt; only HTTPS with an identity the
-browser checks closes that (F15, F256; `SECURITY_MODEL.md`). During setup `/` sends to the
+browser checks closes that, which neither F15's self-signed certificate nor F256 gives a
+browser (`SECURITY_MODEL.md`). During setup `/` sends to the
 wizard only a request for exactly `canary.local` or `192.168.4.1`. Its
 row 2 is the `Authorization: Bearer` header alone, never the dashboard's
 session cookie (`cv_session`, or `__Host-cv_session` over HTTPS; sweep F289): the landing page at `/` mints that session

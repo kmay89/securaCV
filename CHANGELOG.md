@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### canary-wap answers its pages, the receipt and the setup mints only to a Host that names it, and its HTTPS session cookie has a name of its own (sweep F344, F337)
+### canary-wap answers the receipt, the setup mints and, after setup, its pages only to a Host that names it, and its HTTPS session cookie has a name of its own (sweep F344, F337)
 
 - **A DNS-rebinding page under a public name gets no session, no pair token
   and no receipt from a WAP (sweep F344).** After setup the WAP read no `Host`
@@ -72,7 +72,11 @@
   `?cv_pair=`, during setup the wizard's pair token (from `/`'s redirect to
   the wizard or from the re-issue), and, around a BOOT tap the owner presses
   from that browser, the receipt. Only HTTPS with an identity the browser can
-  check closes that (F15, F256). Host-tested
+  check closes that, and neither F15 nor F256 gives a browser one: F15 would
+  bring HTTPS with a self-signed certificate, whose warning the owner
+  accepts, and only a client that pins the certificate checks it (the iPhone
+  app pins the receipt's `tls_cert_fp`; F256 asks whether it may learn one
+  over mDNS). Host-tested
   (`test_session_cookie.cpp`, `test_receipt_grant.cpp`); not run against a
   browser or on a device.
 - **The first-boot wizard answers exactly `canary.local` or `192.168.4.1`
@@ -92,8 +96,11 @@
   `/api/wifi/connect` (join the device to a network the page names) or
   `/api/wifi/ap-only` (end setup in standalone mode). The wizard reads the
   token from the same origin, so it works as before, and the route check now
-  refuses a place that mints and answers through that sender. Host-tested; not
-  run on a device.
+  refuses a place that mints and answers through that sender. The WAP's two
+  READMEs offer the device's unique `.local` name for after setup only, since
+  during setup `/` under it gets the static page, and the Home Assistant guide
+  says so and no longer offers the WAP a `/setup` page it does not have.
+  Host-tested; not run on a device.
 - **canary-wap's session cookie is `__Host-cv_session` over HTTPS and stays
   `cv_session` over plain HTTP (sweep F337).** A browser that holds a `Secure`
   cookie refuses a same-name cookie that an http page at the same host name
@@ -110,9 +117,12 @@
   `https://canary.local` never blocked `http://192.168.4.1`. The two names
   never meet. The device reads `__Host-cv_session` first and a malformed one
   reads nothing; plain `cv_session` is still read. In current browsers only an
-  https answer from the device can set the `__Host-` name, so a cookie planted
-  over http cannot shadow it (integrity, not availability: an on-path host can
-  still sign a browser out by overflowing its Cookie header). No
+  https answer at that host name can set the `__Host-` name (this device,
+  another unit answering the same name, or any server whose certificate the
+  browser accepted there, whose cookie then matches no session here, so the
+  landing mints one again), so a cookie planted over http cannot shadow it
+  (integrity, not availability: an on-path host can still sign a browser out
+  by overflowing its Cookie header). No
   `Strict-Transport-Security`: browsers ignore it from a self-signed
   certificate and for an IP address, and it would shut a browser out of a unit
   that falls back to HTTP. Sessions live in RAM, so the update's reboot ends

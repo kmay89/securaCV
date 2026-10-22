@@ -434,8 +434,12 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
    `[INFO/NETWORK] mDNS started | canary-7916` line. If you only have one
    Canary, plain `http://canary.local` may also resolve, but each Canary
    always advertises its unique hostname so multiple devices on the same
-   network don't collide. `/setup` on any of
-   those addresses reopens the wizard. On a `firmware/canary` unit that is
+   network don't collide. On a `firmware/canary` unit, `/setup` on any of
+   those addresses reopens the wizard. A Canary WAP has no `/setup` page,
+   and its first-boot wizard opens only at `http://canary.local` or
+   `http://192.168.4.1`: under its unique hostname, `/` during first boot
+   shows the static page that says to type `canary.local`, and once the WAP
+   is set up its unique hostname reaches the dashboard. On a `firmware/canary` unit that is
    already set up, a page loaded over your home WiFi arrives without its API
    token, so its saves are refused. The page carries the token only for the
    first-boot wizard, a request that already sends it, a device on the

@@ -437,7 +437,11 @@ redirect to the wizard or from the re-issue, at either setup name), and,
 around a BOOT tap the owner presses from that browser, the
 receipt: one browser is one address to the tap rule (F342), and here the
 answer is readable. Only HTTPS with an
-identity the browser can check closes it (F15, F256). And a cross-site page
+identity the browser can check closes it, and neither F15 nor F256 gives a
+browser one: F15 would bring HTTPS with a self-signed certificate, whose
+warning the owner accepts, and only a client that pins the certificate checks
+it (the iPhone app pins the receipt's `tls_cert_fp`; F256 asks whether it may
+learn one over mDNS). And a cross-site page
 can still send requests at the IP address (an IP literal passes). It cannot
 read what the landing, the exchange, the pages, the wizard token's re-issue
 (`/api/wifi/pair-token`) or the receipt serve, since none sends a CORS

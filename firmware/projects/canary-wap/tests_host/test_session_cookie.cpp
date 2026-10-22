@@ -65,17 +65,18 @@
 //     bare router name, .lan, .internal, .home.arpa; a 39-character label, a
 //     full IPv6 literal, the longest Host the buffer holds) still lands and
 //     exchanges. With setup active, the wizard redirect and its token answer
-//     exactly canary.local or 192.168.4.1, any port, any case (before: any
-//     Host that contained one of them, and not CANARY.LOCAL); every other
-//     name, and either setup name with a port in a Host of 96 or 113 bytes
-//     that the buffer cannot hold, gets the captive page and no token, and
-//     /companion serves under any Host as before. The wizard token's re-issue
-//     (handle_wifi_pair_token(), cut with http_send_json()) answers its token
-//     at those names with no Access-Control-Allow-Origin and
-//     Cache-Control: no-store (review of F344; before: through
-//     http_send_json(), `*` and no-cache, so a page on another site in the
-//     owner's browser on the SoftAP read it), and 404 with no token after
-//     setup, under any other name, or under a 96-byte canary.local:<port>;
+//     exactly canary.local or 192.168.4.1, any port (the longest, :65535,
+//     included), any case (before: any Host that contained one of them, and
+//     not CANARY.LOCAL); every other name, and either setup name with a port
+//     in a Host of 96 or 113 bytes that the buffer cannot hold, gets the
+//     captive page and no token, and /companion serves under any Host as
+//     before. The wizard token's re-issue (handle_wifi_pair_token(), cut
+//     with http_send_json()) answers its token at those names with no
+//     Access-Control-Allow-Origin and Cache-Control: no-store (review of
+//     F344; before: through http_send_json(), `*` and no-cache, so a page on
+//     another site in the owner's browser on the SoftAP read it), and 404
+//     with no token after setup, under any other name, or under either setup
+//     name's 96-byte <name>:<port>;
 //   - the two token stores' clock (sweep F347): the slot functions cut
 //     verbatim out of csi_integration.cpp (pick_slot_for_issuance(),
 //     find_slot(), pick_session_slot_for_issuance(), find_valid_session(),
@@ -528,8 +529,10 @@ void test_first_boot_setup_flow_unchanged() {
   // browser to the wizard with a pair token: no cookie, as before. The two
   // setup names match exactly, with any port and in any case (sweep F344;
   // before, CANARY.LOCAL:80 got the captive page: the substring test was
-  // case-sensitive).
-  for (const char* host : {"canary.local", "CANARY.LOCAL:80", "192.168.4.1", "192.168.4.1:80"}) {
+  // case-sensitive). The longest valid port, 65535, makes the longest Hosts a
+  // browser sends for them: 18 and 17 bytes, which the Host buffer must hold.
+  for (const char* host : {"canary.local", "CANARY.LOCAL:80", "192.168.4.1", "192.168.4.1:80",
+                           "canary.local:65535", "192.168.4.1:65535"}) {
     reset();
     setup_wizard::g_active = true;
     httpd_req_t r;
@@ -569,17 +572,25 @@ void test_first_boot_setup_flow_unchanged() {
   CHECK(handle_ui(&bare) == ESP_OK);
   CHECK(bare.resp == CAPTIVE_PORTAL_HTML);
   CHECK(csi_integration::g_pair_tokens_issued == 0);
-  // A 96-byte canary.local:<port>, too long for the Host buffer: the
-  // captive page and no token, never a wizard link read off the cut header
-  // (review 7 of F344).
-  reset();
-  setup_wizard::g_active = true;
-  httpd_req_t cut;
-  cut.handle = g_http_server;
-  cut.req_hdrs["Host"] = "canary.local:" + std::string(83, '8');
-  CHECK(handle_ui(&cut) == ESP_OK);
-  CHECK_MSG(cut.resp == CAPTIVE_PORTAL_HTML, "a cut 96-byte canary.local:<port> Host was not given the captive page");
-  CHECK(csi_integration::g_pair_tokens_issued == 0);
+  // Either setup name and a port, in a Host of 96 or 113 bytes, too long for
+  // the Host buffer: the captive page and no token, never a wizard link read
+  // off the cut header (review 7 of F344; review 8 added the 192.168.4.1 rows
+  // and the 113-byte canary.local one here, which only the setup-name
+  // question below had been sent).
+  for (const std::string& host : {"canary.local:" + std::string(83, '8'), "192.168.4.1:" + std::string(84, '8'),
+                                  "canary.local:" + std::string(100, '8'), "192.168.4.1:" + std::string(101, '8')}) {
+    CHECK(host.size() == 96 || host.size() == 113);
+    reset();
+    setup_wizard::g_active = true;
+    httpd_req_t cut;
+    cut.handle = g_http_server;
+    cut.req_hdrs["Host"] = host;
+    const std::string why = "a cut " + std::to_string(host.size()) + "-byte " + host.substr(0, host.find(':')) +
+                            ":<port> Host";
+    CHECK(handle_ui(&cut) == ESP_OK);
+    CHECK_MSG(cut.resp == CAPTIVE_PORTAL_HTML, why + " was not given the captive page");
+    CHECK_MSG(csi_integration::g_pair_tokens_issued == 0, why + " was minted a pair token");
+  }
 }
 
 // The setup branch's question on its own (request_host_is_setup_name()):
@@ -590,8 +601,12 @@ bool setup_name(const char* host) {
   return request_host_is_setup_name(&r);
 }
 void test_setup_name_is_exact() {
+  // The two names with the longest valid port (review 8 of F344): 18 and 17
+  // bytes, the longest Hosts a browser sends for them. Before, the longest
+  // accepted row was canary.local:443 (16 bytes), so a Host buffer of 17 or
+  // 18 bytes, which refuses them, passed every row.
   for (const char* host : {"canary.local", "CANARY.LOCAL:80", "Canary.Local", "192.168.4.1", "192.168.4.1:80",
-                           " canary.local ", "canary.local:443"}) {
+                           " canary.local ", "canary.local:443", "canary.local:65535", "192.168.4.1:65535"}) {
     CHECK_MSG(setup_name(host), std::string("not a setup name: ") + host);
   }
   for (const char* host : {"captive.apple.com", "connectivitycheck.gstatic.com", "10.0.0.5", "canary-7916.local",
@@ -606,6 +621,8 @@ void test_setup_name_is_exact() {
   // header passed every other row, since a cut all-'a' name names nothing).
   CHECK_MSG(!setup_name(("canary.local:" + std::string(100, '8')).c_str()),
             "a truncated canary.local:<port> Host was read as the setup name");
+  CHECK_MSG(!setup_name(("192.168.4.1:" + std::string(101, '8')).c_str()),
+            "a truncated 192.168.4.1:<port> Host was read as the setup name");
   // The shortest such Host the buffer cannot hold: 96 bytes, either setup
   // name and a port, which host_authority_name() reads as that name when it
   // gets the whole header. Refused, because the header is cut (review 7 of
@@ -635,7 +652,8 @@ void test_setup_name_is_exact() {
 // such a fetch sends; the handler reads none, and must not need to.
 void test_wizard_token_reissue_is_same_origin_only() {
   const std::string token_body = "{\"ok\":true,\"token\":\"" + std::string(64, 'c') + "\"}";
-  for (const char* host : {"192.168.4.1", "canary.local", "CANARY.LOCAL:80", "192.168.4.1:80"}) {
+  for (const char* host : {"192.168.4.1", "canary.local", "CANARY.LOCAL:80", "192.168.4.1:80",
+                           "canary.local:65535", "192.168.4.1:65535"}) {
     reset();
     setup_wizard::g_active = true;
     httpd_req_t r;
@@ -657,13 +675,15 @@ void test_wizard_token_reissue_is_same_origin_only() {
   }
   // Setup over, or a name that is not one of the two: 404, no token, and
   // still no wildcard.
-  // And during setup a 96-byte canary.local:<port>, which the Host buffer
-  // cannot hold (review 7 of F344).
+  // And during setup either setup name's 96-byte <name>:<port>, which the
+  // Host buffer cannot hold (review 7 of F344; review 8 added 192.168.4.1's).
   const std::string cut_setup_name = "canary.local:" + std::string(83, '8');
+  const std::string cut_setup_ip = "192.168.4.1:" + std::string(84, '8');
   struct Refused { bool setup; const char* host; };
   for (const Refused& row : {Refused{false, "192.168.4.1"}, Refused{false, "canary.local"},
                              Refused{true, "canary.local.evil.example"}, Refused{true, "canary-7916.local"},
-                             Refused{true, cut_setup_name.c_str()}, Refused{true, nullptr}}) {
+                             Refused{true, cut_setup_name.c_str()}, Refused{true, cut_setup_ip.c_str()},
+                             Refused{true, nullptr}}) {
     reset();
     setup_wizard::g_active = row.setup;
     httpd_req_t r;

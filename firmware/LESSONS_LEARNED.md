@@ -683,7 +683,9 @@
   device from another server that answered that name on a network the
   browser used before (`canary.local` from a hostile hotspot, a page left
   open, or kept in the HTTP cache, until the browser comes home): only an
-  identity the browser checks, HTTPS with a pin, tells those apart, so a doc
+  identity the browser checks tells those apart, and a self-signed
+  certificate gives a browser none (only a client that pins it, as the
+  iPhone app pins the receipt's `tls_cert_fp`, checks one), so a doc
   that says "a rebinding page gets nothing" scopes it to a public name (the
   PR's fifth review). And a residual that names how long the planted page
   must live is checked against the browser's cache, not only its tabs: a
