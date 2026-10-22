@@ -354,22 +354,30 @@ tick();setInterval(tick,2000);look();
 // the receipt
 function fmtUp(s){var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),
 m=Math.floor(s%3600/60);return(d?d+"d ":"")+h+"h "+m+"m"}
+// the kind of glass, from the device type /api/status names (the mDNS dt):
+// a type with no word here shows as itself, no answer shows "--"
+var KINDS={"canary-watch":"round watch glass","canary-dash":"wall panel",
+"canary-nightstand":"nightstand glass","canary-nightstand7":"nightstand glass",
+"canary-nightlight":"nightlight"},KIND="";
+// the signal in a word, in the glass's own bands (theme.cpp signal_word)
+function sigWord(d){return d>-60?"strong signal":d>-72?"ok signal":"weak signal"}
 function device(){fetch("/api/device").then(function(r){return r.json()})
 .then(function(d){
-var rows=[["Firmware",d.fw],["Kind",d.flavor==="watch"?
-"round watch glass":"wall panel"],["Brain",d.chip+" • "+d.cores+
+var rows=[["Firmware",d.fw],["Kind",KIND||"--"],["Brain",d.chip+" • "+d.cores+
 " cores @ "+d.mhz+" MHz"],["Storage",d.flash_mb+" MB flash • "+
 Math.round(d.psram_kb/1024)+" MB extra memory"],["Memory free",
 d.heap_kb+" KB now (low point "+d.heap_min_kb+" KB)"],["Awake for",
 fmtUp(d.up_s)],["Name",d.id],["Network",d.ssid?d.ssid+" • "+d.ip+
-" • signal "+d.signal+" dB":"not connected"]];
+" • "+sigWord(d.signal):"not connected"]];
 var g=$("receipt");g.innerHTML="";
 rows.forEach(function(r){var k=document.createElement("span");
 k.style.color="var(--mut)";k.textContent=r[0];
 var v=document.createElement("span");v.textContent=r[1];
 g.appendChild(k);g.appendChild(v)});
 $("caps").textContent=d.caps.join(" • ")})}
-device();setInterval(device,10000);
+fetch("/api/status").then(function(r){return r.json()})
+.then(function(s){KIND=KINDS[s.node]||s.node||""}).catch(function(){})
+.then(function(){device();setInterval(device,10000)});
 // serial monitor
 function logs(){if($("logpause").checked)return;
 fetch("/api/log").then(function(r){return r.text()}).then(function(t){

@@ -639,6 +639,16 @@ DASHROUTES_JS = test_canary_dashboard_routes.test.js
 # Export saves the bundle POST /api/export answers inline (it named no file).
 DASHGATES_JS = test_canary_dashboard_gates.test.js
 
+# The names three on-device pages show (device-details §1.4): the display
+# mirror page's Kind (from the device type GET /api/status names, not "wall
+# panel" for every glass but the watch) and its signal (the glass's word, in
+# theme.cpp's bands, where it said "dB" of a dBm reading), run by the same
+# lift-and-stub approach against a fetch that answers per URL; and the
+# Firmware rows of the canary and canary-wap dashboards, which showed version
+# numbers no build has ("2.0.1", "3.1.0", "3.0.0") until an answer came, and
+# the WAP's footer version and "ESP32" chip fallback.
+HONESTNAMES_JS = test_honest_names.test.js
+
 # POST /api/logs/<seq>/ack on both trees (repo sweep F214). Both registered
 # "/api/logs/*/ack", which esp_http_server's httpd_uri_match_wildcard never
 # matches (a `*` counts only at a template's end), so the per-entry
@@ -1542,6 +1552,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	$(NODE) --test $(CHIRPPANEL_JS)
 	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) $(NODE) --test $(DASHROUTES_JS)
 	$(NODE) --test $(DASHGATES_JS)
+	$(NODE) --test $(HONESTNAMES_JS)
 	./$(LOGACK_BIN)
 	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) LOG_ACK_ROUTE_BIN=$(abspath $(LOGACK_BIN)) $(NODE) --test $(ROUTEMATCH_JS)
 

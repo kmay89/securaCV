@@ -1140,7 +1140,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
           <div class="identity-row">
             <span class="identity-label">Firmware</span>
-            <span class="identity-value" id="firmware">2.0.1</span>
+            <span class="identity-value" id="firmware">--</span>
           </div>
         </div>
       </div>
@@ -4707,7 +4707,7 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('freeHeap').textContent = Math.round(data.free_heap / 1024);
       document.getElementById('fingerprint').textContent = data.fingerprint || '--';
       document.getElementById('pubkey').textContent = truncateHash(data.pubkey, 16);
-      document.getElementById('firmware').textContent = data.firmware || '2.0.1';
+      document.getElementById('firmware').textContent = data.firmware || '--';
       
       if (data.gps) updateGps(data.gps);
       updateBadges(data);
