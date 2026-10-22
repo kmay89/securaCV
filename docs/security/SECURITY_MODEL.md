@@ -404,12 +404,13 @@ a rebinding page that holds the bearer token itself is F57's open question,
 and a pair token's value carried off the LAN is read with no Host on
 `/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` (start,
 status and stop; a started scan acts only on a code held to the camera) for
-its ten minutes. F334's decision, still open (no owner-authority PR has
-landed), would take connect and ap-only from it after setup and answer the
-scan's start `404` then; it leaves the scan's status and stop taking it, and
-a standalone unit with a camera keeps scanning for a Wi-Fi QR code after
-setup, so even then a carried token could read that scan's status (the
-network name the code held, the error text) and stop it. Refused after
+its ten minutes. F334, still open, asks whether Wi-Fi changes after setup
+take a bearer, so that the pair token serves only the first-boot wizard; its
+ledger entry names connect and ap-only, not the scan. And a standalone unit
+with a camera keeps scanning for a Wi-Fi QR code after setup
+(`qr_auto_scan_tick()` runs whenever no Wi-Fi is saved), so a carried token
+reads that scan's status (the network name the code held, the error text)
+and stops it. Refused after
 setup: a router name under another suffix (`.fritz.box`, `.localdomain`,
 `.home`), a name with a trailing dot, a public split-horizon name, and a
 reverse proxy that forwards a public Host; use the `.local` name, the IP or
@@ -423,11 +424,17 @@ the device when the browser comes home (every WAP claims `canary.local`) or
 joins the SoftAP (whose captive DNS answers every name with the device),
 whether it was left open or kept in the browser's HTTP cache: a cached
 answer is served again, with no request to the device, for as long as the
-server that sent it said, even after the browser has quit. Clearing the
-browser's stored data for `canary.local` and the device's addresses removes
-such a copy. It can take the landing's pair token, a 24-hour session
-through `?cv_pair=`, during setup the wizard token's re-issue (at either
-setup name), and, around a BOOT tap the owner presses from that browser, the
+server that sent it said, even after the browser has quit. In headless
+Chromium 141, clearing that name's cookies and stored data did not remove
+such a copy: the site's own "Delete data" for `canary.local`, and "Delete
+browsing data" over "All time" with "Cookies and other site data" but not
+"Cached images and files", each cleared that name's storage and left the
+cached page to be served again, while "Delete browsing data" with "Cached
+images and files" over "All time", which empties every site's cache,
+removed it. Other browsers were not tried. It can take the landing's pair token, a 24-hour session
+through `?cv_pair=`, during setup the wizard's pair token (from `/`'s
+redirect to the wizard or from the re-issue, at either setup name), and,
+around a BOOT tap the owner presses from that browser, the
 receipt: one browser is one address to the tap rule (F342), and here the
 answer is readable. Only HTTPS with an
 identity the browser can check closes it (F15, F256). And a cross-site page

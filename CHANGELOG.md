@@ -17,11 +17,11 @@
   pair token only to a Host that names the device, but a live one's value,
   wherever it is carried, still works for its ten minutes on
   `/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` with no
-  Host question. F334's decision, still open, would take connect and ap-only
-  from it after setup and answer the scan's start `404` then; it leaves the
-  scan's status and stop taking it, and a standalone unit with a camera keeps
-  scanning for a Wi-Fi QR code after setup, so even then a carried token could
-  read that scan's status and stop it.) The WAP now stages the shared
+  Host question. F334, still open, asks whether Wi-Fi changes after setup take
+  a bearer, so that the pair token serves only the first-boot wizard; its
+  ledger entry names connect and ap-only, not the scan. And a standalone unit
+  with a camera keeps scanning for a Wi-Fi QR code after setup, so a carried
+  token reads that scan's status and stops it.) The WAP now stages the shared
   `firmware/common/network/host_guard.h` that the flagship and the display
   already use (byte-identical, held by `check_improv_sync.sh`). After setup,
   `/`, `/?cv_pair=`, `/admin`, `/settings` and `/companion` answer a Host that
@@ -64,11 +64,15 @@
   answers every name with the device), whether it was left open or kept in
   the browser's HTTP cache, which serves it again with no request to the
   device for as long as its server said, even after the browser has quit
-  (clearing the browser's stored data for `canary.local` and the device's
-  addresses removes it): it can take the landing's pair token, a session
-  through `?cv_pair=`, during setup the wizard token's re-issue, and, around a
-  BOOT tap the owner presses from that browser, the receipt. Only HTTPS with
-  an identity the browser can check closes that (F15, F256). Host-tested
+  (in headless Chromium 141, clearing that name's cookies and stored data did
+  not remove it: the site's own "Delete data" for `canary.local` left the
+  cached page to be served again, while "Delete browsing data" with "Cached
+  images and files" over "All time", which empties every site's cache, did;
+  other browsers were not tried): it can take the landing's pair token, a session through
+  `?cv_pair=`, during setup the wizard's pair token (from `/`'s redirect to
+  the wizard or from the re-issue), and, around a BOOT tap the owner presses
+  from that browser, the receipt. Only HTTPS with an identity the browser can
+  check closes that (F15, F256). Host-tested
   (`test_session_cookie.cpp`, `test_receipt_grant.cpp`); not run against a
   browser or on a device.
 - **The first-boot wizard answers exactly `canary.local` or `192.168.4.1`

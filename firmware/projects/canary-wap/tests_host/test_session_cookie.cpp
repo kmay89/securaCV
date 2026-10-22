@@ -52,9 +52,11 @@
 //     handle_companion_html() (/companion), over the sketch's staged
 //     host_guard.h. After setup, a Host that cannot name this device (a
 //     rebinding page's evil.example, a name that only contains canary.local,
-//     a router name under another suffix, a trailing dot, no Host, and a
-//     108-byte rebinding name too long for the 96-byte Host buffer whose
-//     first 95 bytes end in ".local") gets the
+//     a router name under another suffix, a trailing dot, an empty or a
+//     blank Host, no Host, a 108-byte rebinding name too long for the
+//     96-byte Host buffer whose first 95 bytes end in ".local", and a
+//     96-byte Host, a 92-byte .local name and a port, that host_guard.h
+//     passes read whole but the buffer cannot hold) gets the
 //     fixed text/plain 403 on '/', '/?cv_pair=', /admin, /settings and
 //     /companion: no landing, no pair token, no session, the owner's token
 //     left unspent, and a live cookie under that name refused too (before:
@@ -65,14 +67,15 @@
 //     exchanges. With setup active, the wizard redirect and its token answer
 //     exactly canary.local or 192.168.4.1, any port, any case (before: any
 //     Host that contained one of them, and not CANARY.LOCAL); every other
-//     name gets the captive page and no token, and /companion serves under
-//     any Host as before. The wizard token's re-issue
+//     name, and either setup name with a port in a Host of 96 or 113 bytes
+//     that the buffer cannot hold, gets the captive page and no token, and
+//     /companion serves under any Host as before. The wizard token's re-issue
 //     (handle_wifi_pair_token(), cut with http_send_json()) answers its token
 //     at those names with no Access-Control-Allow-Origin and
 //     Cache-Control: no-store (review of F344; before: through
 //     http_send_json(), `*` and no-cache, so a page on another site in the
 //     owner's browser on the SoftAP read it), and 404 with no token after
-//     setup or under any other name;
+//     setup, under any other name, or under a 96-byte canary.local:<port>;
 //   - the two token stores' clock (sweep F347): the slot functions cut
 //     verbatim out of csi_integration.cpp (pick_slot_for_issuance(),
 //     find_slot(), pick_session_slot_for_issuance(), find_valid_session(),
@@ -92,8 +95,9 @@
 //     validator, session_validate_cookie(), cut with hex_decode_to(),
 //     session_issue() and hex_encode() into that namespace. A session the
 //     real store minted validates under the device's names and is refused
-//     under a rebinding page's, none, the oversize one and the router names
-//     the rule leaves out (before: it validated under all of them, so a
+//     under a rebinding page's, an empty or a blank one, none, the two the
+//     buffer cannot hold (108 and 96 bytes) and the router names the rule
+//     leaves out (before: it validated under all of them, so a
 //     value a page set for its own name with document.cookie passed every
 //     cookie gate); and csi_integration.cpp's text: the cv_session_validate()
 //     bridge forwards to it, and it is the cookie reader's one caller;
@@ -565,6 +569,17 @@ void test_first_boot_setup_flow_unchanged() {
   CHECK(handle_ui(&bare) == ESP_OK);
   CHECK(bare.resp == CAPTIVE_PORTAL_HTML);
   CHECK(csi_integration::g_pair_tokens_issued == 0);
+  // A 96-byte canary.local:<port>, too long for the Host buffer: the
+  // captive page and no token, never a wizard link read off the cut header
+  // (review 7 of F344).
+  reset();
+  setup_wizard::g_active = true;
+  httpd_req_t cut;
+  cut.handle = g_http_server;
+  cut.req_hdrs["Host"] = "canary.local:" + std::string(83, '8');
+  CHECK(handle_ui(&cut) == ESP_OK);
+  CHECK_MSG(cut.resp == CAPTIVE_PORTAL_HTML, "a cut 96-byte canary.local:<port> Host was not given the captive page");
+  CHECK(csi_integration::g_pair_tokens_issued == 0);
 }
 
 // The setup branch's question on its own (request_host_is_setup_name()):
@@ -591,6 +606,19 @@ void test_setup_name_is_exact() {
   // header passed every other row, since a cut all-'a' name names nothing).
   CHECK_MSG(!setup_name(("canary.local:" + std::string(100, '8')).c_str()),
             "a truncated canary.local:<port> Host was read as the setup name");
+  // The shortest such Host the buffer cannot hold: 96 bytes, either setup
+  // name and a port, which host_authority_name() reads as that name when it
+  // gets the whole header. Refused, because the header is cut (review 7 of
+  // F344: the 113-byte row above was the only one, so a Host buffer of 97 to
+  // 113 bytes passed every row).
+  for (const std::string& cut : {"canary.local:" + std::string(83, '8'), "192.168.4.1:" + std::string(84, '8')}) {
+    CHECK(cut.size() == 96);
+    char whole[96];
+    CHECK(canary::net::host_authority_name(cut.c_str(), whole, sizeof(whole)) != 0);
+    CHECK(std::strcmp(whole, "canary.local") == 0 || std::strcmp(whole, "192.168.4.1") == 0);
+    CHECK_MSG(!setup_name(cut.c_str()), "a 96-byte " + cut.substr(0, cut.find(':')) +
+                                            ":<port> Host, cut by the buffer, was read as the setup name");
+  }
 }
 
 // The wizard token's re-issue, GET /api/wifi/pair-token (review of F344):
@@ -629,10 +657,13 @@ void test_wizard_token_reissue_is_same_origin_only() {
   }
   // Setup over, or a name that is not one of the two: 404, no token, and
   // still no wildcard.
+  // And during setup a 96-byte canary.local:<port>, which the Host buffer
+  // cannot hold (review 7 of F344).
+  const std::string cut_setup_name = "canary.local:" + std::string(83, '8');
   struct Refused { bool setup; const char* host; };
   for (const Refused& row : {Refused{false, "192.168.4.1"}, Refused{false, "canary.local"},
                              Refused{true, "canary.local.evil.example"}, Refused{true, "canary-7916.local"},
-                             Refused{true, nullptr}}) {
+                             Refused{true, cut_setup_name.c_str()}, Refused{true, nullptr}}) {
     reset();
     setup_wizard::g_active = row.setup;
     httpd_req_t r;

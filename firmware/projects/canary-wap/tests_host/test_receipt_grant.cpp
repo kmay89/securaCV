@@ -81,7 +81,9 @@
 //     first statement. A Host that cannot name this device (evil.example, a
 //     name that only contains canary.local, a 108-byte rebinding name too
 //     long for the 96-byte Host buffer whose first 95 bytes end in ".local",
-//     no Host at all) gets 403
+//     a 96-byte Host, a 92-byte .local name and a port, that host_guard.h
+//     passes read whole but the buffer cannot hold, an empty or a blank
+//     Host, no Host at all) gets 403
 //     {"error":"host"}, no cookie, no secret: the tap stays open, a claim
 //     presented right or wrong stays pending, no bearer is compared and no
 //     strike recorded, a held address hears the Host refusal and keeps its

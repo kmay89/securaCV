@@ -465,9 +465,10 @@ session's value that such a page sets for its own name with
 `document.cookie` is refused too (F344's third review; before, the
 validator read no Host). A page another network served under one of the
 names the rule accepts (`canary.local`, `192.168.4.1`, the device's own LAN
-address), left open or kept in the browser's HTTP cache (which serves it
-again with no request to the device) until the browser comes home or joins
-the SoftAP, is not told apart from the device, and around a BOOT tap pressed
+address, any `.local` name, a single label, or a `.lan`, `.internal` or
+`.home.arpa` name), left open or kept in the browser's HTTP cache (which
+serves it again with no request to the device) until the browser comes home
+or joins the SoftAP, is not told apart from the device, and around a BOOT tap pressed
 from that browser it can read the receipt; only HTTPS with an identity the
 browser checks closes that (F15, F256; `SECURITY_MODEL.md`). During setup `/` sends to the
 wizard only a request for exactly `canary.local` or `192.168.4.1`. Its

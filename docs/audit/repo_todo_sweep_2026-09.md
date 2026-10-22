@@ -870,13 +870,13 @@ so — see D2 below.)
   *Note (2026-10-21, F344's fifth review):* two corrections to the note
   above, and one thing no Host question closes. A carried pair token works
   with no Host on `/api/wifi/ap-only` and `/api/wifi/qr-scan` (start, status
-  and stop) as well as `/api/wifi/connect`. F334's decision, still open,
-  would take connect and ap-only from it after setup and answer the scan's
-  start `404` then; the scan's status and stop keep
-  `qr_scan_request_allowed()`, which takes the pair token, and
-  `qr_auto_scan_tick()` runs whenever no Wi-Fi is configured, so a
-  standalone unit with a camera keeps scanning after setup and even then a
-  carried token could read that scan's status and stop it. And
+  and stop) as well as `/api/wifi/connect`. F334, still open, asks whether
+  Wi-Fi changes after setup take a bearer (its entry names connect and
+  ap-only, not the scan); the scan's status and stop take the pair token
+  through `qr_scan_request_allowed()`, and `qr_auto_scan_tick()` runs
+  whenever no Wi-Fi is configured, so a standalone unit with a camera keeps
+  scanning after setup and a carried token reads that scan's status and
+  stops it. And
   `host_guard.h` accepts a name because public DNS cannot mint it, which is
   not the same as only this device answering to it: every WAP claims
   `canary.local` over mDNS, and the SoftAP's captive DNS answers every name
@@ -886,8 +886,9 @@ so — see D2 below.)
   in the browser's HTTP cache until the browser comes home or joins the
   SoftAP, is same-origin with the device and passes every Host check: it
   can take the landing's pair token, a session through `?cv_pair=`, during
-  setup the wizard token's re-issue, and, around a BOOT tap pressed from
-  that browser, a receipt it can read. The flagship and the display share
+  setup the wizard's pair token (from `/`'s redirect to the wizard or from
+  the re-issue), and, around a BOOT tap pressed from that browser, a
+  receipt it can read. The flagship and the display share
   the rule. Only HTTPS with an identity the browser can check closes it
   (F15, F256). From code; the cache half seen in headless Chromium against
   a stand-in server (F344's sixth review), not against a device. No new
@@ -3029,7 +3030,8 @@ so — see D2 below.)
     only the setup names) adds the device's own LAN address (it passes as an
     IP literal), and SECURITY_MODEL, THREAT_MODEL, the CHANGELOG and the
     README say clearing the browser's stored data for `canary.local` and
-    the device's addresses drops a cached copy. The close is unchanged:
+    the device's addresses drops a cached copy (in Chromium it does not:
+    review 7). The close is unchanged:
     HTTPS with a checked identity (F15, F256).
   - Review 5 put F334 in the present tense ("F334 takes connect and
     ap-only from it after setup") in SECURITY_MODEL, THREAT_MODEL's row and
@@ -3057,9 +3059,10 @@ so — see D2 below.)
     older than F344 and outside it; SECURITY_MODEL and THREAT_MODEL now list
     it among a cross-site page's requests. Not numbered here: left for the
     session lead to file.
-  - No row sent a Host of 96 to 127 bytes that names the device (the
-    108-byte row is foreign read whole, and `host_guard.h` itself refuses a
-    name of 96 bytes or more), so a 128-byte Host buffer in
+  - No row sent `request_host_names_device()` or `session_validate_cookie()`
+    a Host of 96 to 127 bytes that names the device (the 108-byte row is
+    foreign read whole, and `host_guard.h` itself refuses a name of 96 bytes
+    or more), so a 128-byte Host buffer in
     `request_host_names_device()` or in `session_validate_cookie()` passed
     both suites (1035 and 4098 checks). A 96-byte row, a 92-byte `.local`
     name and a port, which `host_guard.h` passes read whole, is now refused
@@ -3074,6 +3077,68 @@ so — see D2 below.)
   - No F358 is filed: F337's decision takes no number (its certgen fact is
     F15's dated correction). This PR files F356 and F357 only.
   Host-tested; the cache residual seen in headless Chromium against a
+  stand-in server, not against a device.
+  *Review 7 (2026-10-22, #<PR>):*
+  - Review 6's remedy, "clearing the browser's stored data for
+    `canary.local` and the device's addresses removes such a copy", is
+    wrong in Chromium. In headless Chromium 141 (Playwright's build 1194)
+    with a persistent profile and `canary.local` mapped to a local server,
+    a planted `/settings` sent with `Cache-Control: public,
+    max-age=31536000` was served again from the cache after a restart, with
+    no `GET /settings` reaching the server, and it still was after each of:
+    the site's own "Delete data" for the origin (its `localStorage` went
+    from `1` to empty, so the delete ran), the DevTools protocol's
+    `Storage.clearDataForOrigin` with every storage type, and "Delete
+    browsing data" over "All time" with "Browsing history" and "Cookies and
+    other site data" but not "Cached images and files". "Delete browsing
+    data" with "Cached images and files" alone over "All time", which
+    empties every site's cache, removed it: the next visit reached the
+    server. When the name held only the cached page, the site's page
+    offered no "Delete data" to press. SECURITY_MODEL, THREAT_MODEL's row,
+    the CHANGELOG and the WAP README now say that, scoped to that Chromium,
+    and that other browsers were not tried. The close is unchanged: HTTPS
+    with a checked identity (F15, F256).
+  - The planted page's list named the wizard token's re-issue as its
+    setup-time road to the pair token. During setup `/` at either setup
+    name answers `302` to `/companion?token=<hex>` with a freshly minted
+    token, and a same-origin `fetch('/')` follows it and reads the token in
+    `response.url`. SECURITY_MODEL, THREAT_MODEL's row, the CHANGELOG,
+    F57's note and the comment above `handle_wifi_pair_token()` now name
+    both.
+  - The docs said "F334's decision, still open, would take connect and
+    ap-only ... and answer the scan's start `404` then". The tree records
+    no F334 decision: its entry above lists the questions, names connect
+    and ap-only, and does not name the scan. SECURITY_MODEL, THREAT_MODEL's
+    row, the CHANGELOG and F57's note now say what the entry asks and that
+    it does not name the scan, and state the scan's exposure in the present
+    tense: `qr_auto_scan_tick()` runs whenever no Wi-Fi is saved, so a
+    standalone unit with a camera keeps scanning after setup, and a carried
+    pair token reads that scan's status and stops it.
+  - `request_host_is_setup_name()`'s 96-byte Host buffer was pinned only by
+    the 113-byte `canary.local:<port>` row, so `char host[97]` and
+    `char host[113]` there passed both suites and the route check. Rows of
+    exactly 96 bytes,
+    `canary.local:` with an 83-digit port and `192.168.4.1:` with an
+    84-digit port (each read whole as its setup name by
+    `host_authority_name()`), are now refused by the setup-name question,
+    and the first gets the captive page and no token on `/` and `404` from
+    the re-issue during setup. The two mutants passed all 1083 checks
+    before; each now fails 8 of 1100, and `host[114]` and `host[128]` 9. The suites' file-top lists name the
+    96-byte rows and the empty and blank Host rows. Review 6's "No row sent
+    a Host of 96 to 127 bytes that names the device" now names the two
+    questions it was true of.
+  - The README's, `magic_pairing.md`'s and the comment above
+    `request_host_names_device()`'s lists of the names a page can be
+    planted under now carry the whole list the security docs give.
+  - `scripts/tests/test_docs_claims.py` held up "the WAP serves HTTPS on
+    port 443 once setup has completed" as true prose, and two of its bans'
+    reasons said the WAP and the flagship's dev and full builds serve HTTPS
+    after setup. Each now says once a certificate is stored, and that since
+    F15's correction no stock unit stores or can generate one; the
+    docstring says no stock unit serves HTTPS.
+    The gate's needles, `MUST_PASS` and `MUST_FAIL` behave as before (the
+    `MUST_PASS` row only grew at its end).
+  Host-tested; the cache clears tried in headless Chromium against a
   stand-in server, not against a device.
 - [ ] **F345 [decision] canary-wap: Forget Wi-Fi from any session re-arms the
   Bluetooth setup door, whose claim buys the receipt.** `POST
