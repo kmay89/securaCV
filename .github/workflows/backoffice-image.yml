@@ -70,7 +70,7 @@ jobs:
         run: |
           docker build -q -t backoffice-smoke -f backoffice/deploy/Dockerfile backoffice
           docker run -d --rm --name bo -e BACKOFFICE_DEMO=1 -p 8787:8787 backoffice-smoke
-          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1 && break; sleep 1; done
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1 && break; sleep 1; done
           curl -fsS http://127.0.0.1:8787/login | grep -q "DEMO MODE"
           docker logs bo | grep -q "demo mode: seeded"
           docker stop bo
