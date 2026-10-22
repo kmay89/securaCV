@@ -280,7 +280,7 @@ class LedgerShape(unittest.TestCase):
         self.assertEqual(figs["device.canary-vision"]["knobs"]["stack_sock_h"], 6.5)
         # one case file, two figures: the DevKit's knobs are its own, not the union
         devkit = figs["device.canary-vision-devkit"]["knobs"]
-        self.assertEqual(devkit, {"dk_l": 39.0, "dk_w": 25.4, "stack_h": 9.0})
+        self.assertEqual(devkit, {"dk_l": 39.0, "dk_w": 25.4, "stack_h": 9.0, "vm_back_h": 5.0})
         vision = figs["device.canary-vision"]["knobs"]
         self.assertEqual(set(vision), {"vm_l", "vm_w", "xiao_l", "xiao_w", "stack_sock_h",
                                        "xiao_below", "vm_front_h", "cam_w", "cam_h", "pcb_t",
@@ -330,7 +330,7 @@ class LedgerShape(unittest.TestCase):
         for rid, row in reg.items():
             self.assertIn(row["evidence"], {"measured", "drawing", "spec", "unmeasured"}, rid)
         facts = self.dims["board_facts"]
-        self.assertEqual(len(facts), 26)   # + the OV5647-62's nine camera facts (v0.6) + the XIAO's four switch facts (v0.9 doorbell) + the Round Display's socket offset and active area (watch v0.3)
+        self.assertEqual(len(facts), 27)   # + the OV5647-62's nine camera facts (v0.6) + the XIAO's four switch facts (v0.9 doorbell) + the Round Display's socket offset and active area (watch v0.3) + the Grove Vision AI V2's back-side height (Vision v0.7)
         self.assertEqual(facts["brd_ov5647_lens_dy"], -1.7)
         self.assertEqual(facts["brd_xiao_w_measured"], 17.8)
         self.assertEqual(facts["brd_xiao_sense_cam_h"], 12.7)

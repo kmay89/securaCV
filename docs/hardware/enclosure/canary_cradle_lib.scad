@@ -410,24 +410,44 @@ module _cr_clip_slot() {
 // The barb's mating pocket, drawn in the CLIP'S OWN local frame so it is
 // placed by the same _cr_clip_at() transform the barb is — see there.
 // Measuring up from the pad's tip (which rests on the plate):
-//   · a NARROW throat, only the tongue's own width — the barb is wider by
-//     cr_eng, so getting past this is what deflects the arm
+//   · a NARROW throat, only the tongue's own width on the outboard side —
+//     the barb is wider by cr_eng, so getting past this is what deflects
+//     the arm — with cr_eng of room on the inboard side to deflect into
 //   · then it opens OUT by cr_eng, and the barb springs into that relief
 // The ledge where narrow becomes wide is what the barb's catch face bears on
 // when the case is pulled. Printed back-face-down that ledge is a 0.5 mm
 // bridge over the throat — the shortest kind there is.
+//
+// THE THROAT IS OPEN ON THE INBOARD SIDE — and the first cut closed it on
+// both. It was the arm's width plus cr_fit a side (-1.7..+1.7 in this
+// frame) against a hook cr_arm_w + cr_eng = 3.8 wide at its land
+// (-1.4..+2.4). Deflecting the arm MOVES the hook; it does not narrow it, so
+// 3.8 met 3.4 at every deflection: 0.4 mm of hard interference on the way in
+// and again on the way out. Sections of the dash's pad and of the docked
+// barb measured exactly those widths, and an insertion sweep (the barb held
+// 1.2 / 1.9 / 2.6 off the pad tip, deflected 0..1.3 in 0.1 steps) found no
+// clear path at all. The dock gate passed throughout, because it tests the
+// SEATED state, where the bare column sits in the throat with room. So the
+// throat's OUTBOARD wall stays put — it is what squeezes the hook cr_eng −
+// cr_fit inboard — and its INBOARD wall steps back cr_eng: the hook now
+// passes at any deflection from cr_eng − cr_fit (0.7) to cr_eng + cr_fit
+// (1.3), which is the deflection cr_strain() already budgets and inside the
+// U-slot. The relief steps back with it, since the apex is already in the
+// relief, still deflected, while the land is in the throat. The ledge the
+// catch face bears on does not move; neither does anything on the plate.
 module _cr_clip_pocket() {
-    // the THROAT: only the arm's own width, nearest the pad's tip. The hook
-    // is cr_eng wider, so passing through here is what deflects the arm.
-    translate([-cr_arm_w()/2 - cr_fit(), -cr_barb_w()/2 - cr_fit(), -0.02])
-        cube([cr_arm_w() + 2*cr_fit(),
+    // the THROAT: the arm's own width on the outboard side, nearest the pad's
+    // tip — the hook is cr_eng wider, so passing here is what deflects the
+    // arm — and cr_eng more on the inboard side, the room it deflects into
+    translate([-cr_arm_w()/2 - cr_eng() - cr_fit(), -cr_barb_w()/2 - cr_fit(), -0.02])
+        cube([cr_arm_w() + cr_eng() + 2*cr_fit(),
               cr_barb_w() + 2*cr_fit(),
               cr_barb_throat() + cr_fit() + 0.02]);
     // the RELIEF beyond it, where the hook springs back out. The step
     // between the two is the shoulder the hook's catch face pulls against.
-    translate([-cr_arm_w()/2 - cr_fit(), -cr_barb_w()/2 - cr_fit(),
+    translate([-cr_arm_w()/2 - cr_eng() - cr_fit(), -cr_barb_w()/2 - cr_fit(),
                cr_barb_throat() + cr_fit()])
-        cube([cr_arm_w() + cr_eng() + 2*cr_fit(),
+        cube([cr_arm_w() + 2*cr_eng() + 2*cr_fit(),
               cr_barb_w() + 2*cr_fit(),
               cr_barb_h() - cr_barb_throat() + cr_fit() + 0.6]);
 }

@@ -25,7 +25,7 @@ mode = "studs";      // ["studs","bracket","doorbell"]
 stud_gap = 30.0;     // set per case (the fit coupon's POCKET pair prints at 30)
 
 /* [Bracket] — mirror canary_vision_enclosure bracket defaults (gen_templates.py --check) */
-br_x = 46.0;  br_y = 34.0;  br_screw_d = 4.2;
+br_x = 46.0;  br_y = 34.0;  br_screw_d = 4.8;
 
 /* [Doorbell] — mirror canary_vision_doorbell plate defaults (gen_templates.py --check
    probes the doorbell and fails when one of these stops equaling its source) */

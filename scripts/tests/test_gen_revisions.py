@@ -280,5 +280,44 @@ class Recipes(unittest.TestCase):
             self.assertRegex(d, r"^[0-9a-f]{8}$")
 
 
+class Notes(unittest.TestCase):
+    """--notes gives each part its own words; a note no revision takes is refused."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp())
+        self.saved = {k: getattr(gr, k) for k in ("load_ledger", "all_recipes", "tree_state", "git_head", "is_stale", "OUT")}
+        tris = box_tris((0, 0, 0), (10, 10, 10))
+        geom = gr.fingerprint(tris)
+        r = {"key": "dev_x.stl", "scad": "x.scad", "defines": {"part": "x"}, "home": "dev"}
+        prev = {"rev": "r1", "geom": geom, "src": "00000000", "history": [{"rev": "r1", "geom": geom}],
+                "scad": "x.scad", "defines": {"part": "x"}, "home": "dev", "file": "x"}
+        gr.load_ledger = lambda: {"parts": {"dev_x.stl": prev}}
+        gr.all_recipes = lambda: [r]
+        gr.tree_state = lambda recipes: {"dev_x.stl": (r, "00000000", geom, "v1")}
+        gr.git_head = lambda: "0" * 40
+        gr.is_stale = lambda r, old_parts: False
+        gr.OUT = self.tmp / "revisions.json"
+
+    def tearDown(self):
+        for k, v in self.saved.items():
+            setattr(gr, k, v)
+
+    def test_a_note_for_an_unmoved_part_is_refused_and_nothing_is_written(self):
+        with self.assertRaises(SystemExit) as cm:
+            gr.write(None, False, notes={"dev_x.stl": "moved the post"})
+        self.assertIn("dev_x.stl", str(cm.exception))
+        self.assertFalse(gr.OUT.exists())
+
+    def test_an_unknown_key_is_refused(self):
+        with self.assertRaises(SystemExit) as cm:
+            gr.write(None, False, notes={"no_such_part.stl": "typo"})
+        self.assertIn("no_such_part.stl", str(cm.exception))
+
+    def test_no_notes_writes(self):
+        self.assertEqual(gr.write(None, False), 0)
+        self.assertTrue(gr.OUT.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

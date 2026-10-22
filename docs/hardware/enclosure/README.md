@@ -224,9 +224,11 @@ real stack stood 4 mm proud.
    0.2 mm to spare, which the file asserts). Measure your tag (`ant_l`,
    `ant_w`) if it is not the kit's 2.4G A-02.
 4. Lower the stack into the **bore**, display face up, USB-C aligned to the
-   side slot. The Ø43.0 disc passes the Ø45.9 rim counterbore, funnels into
-   the Ø44.4 bore and lands on the **three seat pads** — the PCB's back face
-   rests on them, so nothing floats; the XIAO's USB shell hovers 0.4 mm over
+   side slot. The Ø43.0 disc passes the Ø45.9 rim counterbore, its back
+   parts funnel into the Ø44.4 bore, and it lands on the **three seat pads**
+   with its rim in the funnel (0.85 mm clear a side until the bezel's glass
+   pocket takes it to 0.5) — the PCB's back face rests on them, so nothing
+   floats; the XIAO's USB shell hovers 0.4 mm over
    its end-stop boss, which is what keeps its pins in the socket in a drop.
    The USB-C receptacle looks out through the stadium slot. *(battery
    build, opt_batt)* Before you lower it, tape the protected LiPo between
@@ -322,10 +324,13 @@ protocols that earn each level — see
   Plastic creeps under gasket preload — **re-torque sealed builds after 24 h**,
   or fit inserts and be done with it.
 - **Anti-lift security.** Keyhole mounts can be defeated by lifting the unit
-  off the wall screws. `kh_lock` (default on with keyholes) adds two blind
-  **knockout bosses** (0.6 mm web — the seal stays intact until used): after
-  hanging, drive #4/M3 screws through them into the wall from *inside* the
-  case, so removal requires opening the lid first. Pair with the tamper
+  off the wall screws. `kh_lock` adds two blind **knockout bosses** (0.6 mm
+  web — the seal stays intact until used), driven from *inside* the case into
+  the wall. **Off by default since 2026-10-22** on the Vision and the WAP:
+  their plate screws enter from the back face, so a case hung on its keyholes
+  can be neither opened to drive the knockout screws nor closed after them,
+  and a pierced knockout is an unsealed hole inside the gasket line. For a
+  screwed install use the tabs or the bracket. Pair with the tamper
   magnet/reed option and, if you want tool-only access, security-drive (Torx
   pin) M2 screws. On the Vision hinge, swap the thumbscrew for an **M5 button
   head + nyloc** to make the angle tool-only and vibration-proof.
@@ -530,9 +535,11 @@ To finish the seal you also need to:
 1. **Camera window**: glue a **12 × 1 mm clear PMMA or polycarbonate disc** into
    the recessed seat on the lid face with **neutral-cure silicone** (acid-cure
    attacks polycarbonate). Run the bead full-circle.
-2. **Buzzer vent**: stick an **adhesive GORE-type membrane vent** over the
-   recessed seat on the *outside* of the lid — it passes sound and equalizes
-   pressure while blocking water.
+2. **Buzzer vent**: stick an **adhesive GORE-type membrane vent** into the
+   recessed seat on the shell face's **inner** side, over the ring of Ø1
+   holes — it passes sound and equalizes pressure while blocking water.
+   (v0.9.1 moved the seat inside: the shell prints face-down, and an outer
+   seat's floor bridged a circle full of holes.)
 3. **Light pipe**: bed the pipe in a drop of the same silicone.
 4. **Antenna** (if fitted): use a gasketed bulkhead or seal the hole with silicone.
 5. **Mount it USB-down** (see below) so the lid is vertical, the vent faces
@@ -691,6 +698,7 @@ written by [`gen_revisions.py`](./gen_revisions.py) and never by hand:
 python3 docs/hardware/enclosure/gen_revisions.py --render-stale   # render only what is older than its sources, then record
 python3 docs/hardware/enclosure/gen_revisions.py                  # record from the meshes on disk (right after render.sh)
 python3 docs/hardware/enclosure/gen_revisions.py --render-stale --note "hood drip edge 1.2 -> 1.6"   # with words
+python3 docs/hardware/enclosure/gen_revisions.py --notes why.json   # each part its own words: {"dev_hub_tray.stl": "..."}
 python3 docs/hardware/enclosure/gen_revisions.py --render canary_hub_din.scad   # one case's parts, then record
 python3 docs/hardware/enclosure/gen_revisions.py --check                        # the gate
 python3 docs/hardware/enclosure/gen_revisions.py --list                         # every part, its rev and recipe
@@ -705,7 +713,10 @@ committed bytes alone, so `git status` lists real changes, not OpenSCAD's byte
 noise. A plain run trusts the meshes on disk (what `scripts/regen_cad.py` does
 right after `render.sh`) but refuses, by name, any mesh older than the sources
 that draw it: recording it would stamp the old shape with the new design's
-digest.
+digest. `--notes` takes a JSON object of part key → words, so a change that
+moves several parts says what it did to each (it wins over `--note` for the
+parts it names); a key that names no part, or a part whose shape did not move,
+is refused by name rather than dropped.
 
 A part is keyed by the file `render.sh` writes for it (`canary_sense_front.stl`,
 `dev_hub_tray.stl`, `preview/canary_combo_front.stl` for the Lab's coarse mesh),
@@ -1033,6 +1044,7 @@ strip carrying its own rib notches, so it goes in as a single piece.
 | `batt_l/w/h`, `gps_l/w/h` | — | Match **your** cell / GPS module. Keep `batt_h` ≥ 1 mm over the nominal cell — LiPos swell; **scrap any swollen cell** (build plan §6.5) |
 | `cam_dx/dy`, `lp_dx/dy`, `vent_dx/dy`, `mag_dx/dy`, `touch_dx/dy` | — | Feature positions **from board center** — set from a real measurement |
 | `cam_disc_d/t` | 12.0 / 1.0 | Clear-disc seat on the lid face (0 = bare hole) |
+| `bridge_layer` | 0.2 | Your slicer's layer height: the disc seat's bridge steps are this thick (the seat depth, `cam_disc_t` + 0.2, must be whole layers — asserted) |
 | `usb_w/h/z` | 12/6.5/−1.65 | Align to your USB-C cable boot (z centers the opening on the plug axis) |
 | `clip_t` / `clip_hook` / `clip_clear` | 1.0 / 0.5 / 0.25 | Tab flex vs. grip — tune on the **coupon** first |
 | `lid_edge`, `label_text` | 0.8 / `""` | Lid edge chamfer; debossed label text |
@@ -1055,12 +1067,14 @@ strip carrying its own rib notches, so it goes in as a single piece.
 1. (battery variant) Drop the LiPo in the bay; route the leads through the
    **wire channel** notched in the bay ribs along the +Y wall to the XIAO BAT
    pads. **Read the battery safety notice in build plan §6.5 first.**
-2. **Press the PCB straight down** until the four edge clips snap over it,
-   USB-C aligned to the wall cutout — no screws needed for the board. (To remove,
-   gently splay the clips outward and lift.)
+2. **Press the PCB straight down** between the four end stops at its short
+   ends until the four edge clips snap over it, USB-C toward the wall cutout —
+   no screws needed for the board (the stops locate it along the case, so a
+   plug cannot push it into the camera window). (To remove, gently splay the
+   clips outward and lift.)
 3. Press a 6 mm magnet into the lid pocket (press fit — a drop of CA glue makes
-   it permanent); add a GORE vent over the seat if sealing; press the light pipe
-   into the LED port.
+   it permanent); add a GORE vent into the seat on the face's inner side if
+   sealing; press the light pipe into the LED port.
 4. (weather mode) Seat the TPU gasket in the rim groove; glue the clear disc
    into the camera seat.
 5. Lower the **shell** over the plate (its walls swallow the plate's edge —
@@ -1195,8 +1209,13 @@ pitch, M5 axis):
   GoPro-style knurled screw, or print the included `knob` over an M5 × 25
   bolt + nut).
 - **Typical mounting scenarios** out of the box:
-  - **wall / eave** — print the `bracket` (three prongs + 4 countersunk #8/M4
-    screws *or* two keyhole slots), click the case in, set the pitch, tighten;
+  - **eave / soffit** — screw the `bracket` (three prongs + 4 countersunk #8/M4
+    screws *or* two keyhole slots) to a horizontal underside, click the case
+    in, set the pitch (level, 30°, 60° or 90° down), tighten;
+  - **wall** — on a vertical wall the same bracket hangs the case level or
+    tilted up: its bottom edge meets the wall at ~4° (weather) to ~5.5°
+    (indoor, devkit) down, so it cannot look down from a wall without a GoPro
+    extension arm (`hinge_teeth = false`);
   - **tripod / clamp** — the bracket has a captive **1/4-20 nut pocket**
     (`bracket_tripod`) behind the center fin;
   - **flush wall** — `mount_style = "keyhole"` puts blind, seal-safe keyhole
@@ -1316,7 +1335,8 @@ applied here, and every front STL is re-cut:
 | `xiao_usb_z` / `usb_z` | 0 / 0 | measured corrections to the two derived port heights (both echoed at render) |
 | `usb_dx` / `xiao_usb_dx` | 0 / 0 | Port offsets along the bottom wall — measure if either port is off-center |
 | `dk_l/dk_w`, `vm_l/vm_w`, `cam_w/cam_h` | 39×25.4 / 40×20 / 25×24 | **Measure your boards** — DevKit revisions differ |
-| `standoff_h` | 3.5 | *(devkit)* **raise to ~10 if your DevKit has soldered pin headers** (3.5 keeps the clip beam under the strain budget) |
+| `standoff_h` | 3.5 | *(devkit)* the DevKit's pads — **raise to ~10 if your DevKit has soldered pin headers** (3.5 keeps the clip beam under the strain budget); the module rides the rails at max(`standoff_h`, `vm_back_h` + 0.5) = 5.5, clear of its XIAO socket rows |
+| `vm_back_h` | 5.0 | *(devkit)* the module's back-side parts — the XIAO socket rows and Body1 (vendor CAD, `brd_grove_v2_back_h()`); the devkit module stands this + 0.5 off the plate |
 | `cam_lens_h` / `cam_holder_h` / `cam_lens_sq` / `cam_barrel_d` | 5.0 / 3.65 / 8.8 / 7.0 | the OV5647-62 as the vendor CAD draws it: barrel top, holder top, holder square, barrel Ø (re-measure a different carrier) |
 | `cam_barrel_in` | 0.4 | how far the barrel stands into the front's bore; the rest under the disc is focus travel |
 | `cam_fov` / `cam_fov_margin` | 62 / 4 | the lens's diagonal FOV (datasheet) and the margin the hole's cone keeps around it |

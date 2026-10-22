@@ -1240,6 +1240,16 @@
        "name": "tol_hole",
        "default": "0.30",
        "comment": "clearance holes: plate screws — core_tol_hole()"
+      },
+      {
+       "name": "bridge_layer",
+       "default": "0.2",
+       "range": [
+        0.08,
+        0.04,
+        0.32
+       ],
+       "comment": "your slicer's layer height: the face's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)"
       }
      ]
     },
@@ -1284,8 +1294,8 @@
       },
       {
        "name": "kh_lock",
-       "default": "true",
-       "comment": "(keyhole mounts) two anti-lift knockout bosses: 0.6 mm web, pierce with"
+       "default": "false",
+       "comment": "(keyhole mounts) two anti-lift knockout bosses (0.6 mm web), OFF by default since v0.9.1:"
       }
      ]
     },
@@ -1490,12 +1500,12 @@
       {
        "name": "vent_pad_d",
        "default": "12.0",
-       "comment": "GORE-vent recess Ø (the buzzer + pressure vent: the recess seats an adhesive vent)"
+       "comment": "GORE-vent recess Ø, on the face's INNER side (the buzzer + pressure vent: the recess seats an adhesive vent; it prints face-down, and an outer seat cannot bridge)"
       },
       {
        "name": "vent_pad_depth",
        "default": "0.8",
-       "comment": "GORE-vent recess depth into the face's outer surface — core_vent_pad_depth()"
+       "comment": "GORE-vent recess depth into the face's inner surface — core_vent_pad_depth()"
       },
       {
        "name": "vent_hole_d",
@@ -1743,8 +1753,7 @@
       },
       {
        "name": "board_cx",
-       "default": "-inner_l/2 + board_clear + board_l/2 + 0.5",
-       "comment": "USB-biased (0.5 = positioning margin, not a fit)"
+       "default": "-inner_l/2 + max(board_clear + 0.5, floor_cove + tol_slide + brd_xiao_usb_overhang()) + board_l/2"
       },
       {
        "name": "board_cy",
@@ -1858,6 +1867,10 @@
        "default": "2*cam_throw*tan(cam_fov/2) + 2.0"
       },
       {
+       "name": "face_inset",
+       "default": "lid_edge + 0.45*lid_edge2"
+      },
+      {
        "name": "cam_r",
        "default": "e_camera ? max(cam_win_d/2, cam_disc_d > 0 ? cam_disc_d/2 + tol_slide : 0) : 0"
       },
@@ -1898,13 +1911,18 @@
       {
        "name": "_seal_span",
        "default": "max(span_l/(n_mid + 1), 2*post_cy)"
+      },
+      {
+       "name": "stop_y0",
+       "default": "port_usbc_overmold_w()/2 + 0.2",
+       "comment": "a stop's inboard edge across the board"
       }
      ]
     }
    ]
   },
   "canary_vision_enclosure.scad": {
-   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.6",
+   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.7",
    "groups": [
     {
      "name": "What to render",
@@ -2099,6 +2117,11 @@
        "comment": "module front-side component height (CSI connector etc.)"
       },
       {
+       "name": "vm_back_h",
+       "default": "5.0",
+       "comment": "module BACK-side component height: the XIAO's socket rows and Body1 at the USB edge — brd_grove_v2_back_h(), the vendor CAD."
+      },
+      {
        "name": "cam_w",
        "default": "25.0",
        "comment": "OV5647 carrier width (X) — brd_w(\"ov5647\")"
@@ -2258,7 +2281,7 @@
       {
        "name": "standoff_h",
        "default": "3.5",
-       "comment": "PCBs sit this high off the plate (RAISE if DevKit has soldered pin headers!)"
+       "comment": "the DevKit sits this high off the plate, the module at least this (RAISE if DevKit has soldered pin headers!)"
       },
       {
        "name": "cav_extra",
@@ -2329,8 +2352,8 @@
       },
       {
        "name": "kh_lock",
-       "default": "true",
-       "comment": "(keyhole mounts) anti-lift knockouts: 0.6 mm web, pierce with #4/M3 on install"
+       "default": "false",
+       "comment": "(keyhole mounts) anti-lift knockouts (0.6 mm web), OFF: the plate screws enter from the back face, so a case hung on"
       }
      ]
     },
@@ -2502,8 +2525,8 @@
       },
       {
        "name": "br_screw_d",
-       "default": "4.2",
-       "comment": "countersunk wall screws (#8 / M4)"
+       "default": "4.8",
+       "comment": "countersunk wall screws (#8 / M4): the #8's 4.17 major + 2 x tol_hole (4.2 let the screw thread the bracket)"
       },
       {
        "name": "bracket_tripod",
@@ -2890,7 +2913,7 @@
       },
       {
        "name": "vm_standoff",
-       "default": "has_dk ? standoff_h : stack_sock_h + xiao_below_eff"
+       "default": "has_dk ? max(standoff_h, vm_back_h + 0.5) : stack_sock_h + xiao_below_eff"
       },
       {
        "name": "bot_margin",
@@ -2947,6 +2970,14 @@
       {
        "name": "cam_post_eff",
        "default": "cam_lens_h - cam_barrel_in"
+      },
+      {
+       "name": "cam_pil",
+       "default": "cam_post_eff - 0.8 - 0.1"
+      },
+      {
+       "name": "cam_scr_len",
+       "default": "max([for (l = hw_std_lens()) if (l - pcb_t <= cam_pil - 0.2) l])"
       },
       {
        "name": "cam_ap_d",
@@ -6237,18 +6268,18 @@
       },
       {
        "name": "snap_depth",
-       "default": "3.3",
+       "default": "4.2",
        "comment": "slot center below the drum rim: low on the finger, where its lever is longest"
       },
       {
        "name": "snap_proud",
-       "default": "0.25",
-       "comment": "nub stand-proud of the skirt: 0.1 of working interference over the counterbore"
+       "default": "0.35",
+       "comment": "nub stand-proud of the skirt: 0.2 of working interference over the counterbore"
       },
       {
        "name": "skirt_dep",
-       "default": "4.0",
-       "comment": "bezel skirt reach into the counterbore (the counterbore is cut 0.3 deeper so the tip floats)"
+       "default": "4.9",
+       "comment": "bezel skirt reach into the counterbore (the counterbore is cut 0.3 deeper so the tip floats);"
       },
       {
        "name": "finger_t",
@@ -10323,6 +10354,11 @@
        "name": "lob_o",
        "default": "2.2",
        "comment": "lobe diagonal offset outboard of the cavity corner"
+      },
+      {
+       "name": "cb_h",
+       "default": "2.0",
+       "comment": "pan-head counterbore depth in the back: the registry's M2 pan seat (head k 1.6 + 0.4 sink)"
       },
       {
        "name": "screw_l",
@@ -15404,6 +15440,10 @@
       {
        "name": "vent_z1",
        "default": "bez_h - snap_depth - snap_h/2 - 0.8"
+      },
+      {
+       "name": "btn_notch",
+       "default": "opt_btn && z_btn + btn_d/2 > bez_h - skirt_dep"
       },
       {
        "name": "cable_w",

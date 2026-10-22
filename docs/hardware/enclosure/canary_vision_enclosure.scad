@@ -1,5 +1,5 @@
 // ============================================================================
-//  SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.6
+//  SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.7
 // @env cer=2 ip="~IP54" basis="weather preset"
 //  Stack: OV5647 camera (Pi-cam v1.3 form) + Grove Vision AI V2 (40 x 20)
 //         + a selectable HOST:
@@ -25,7 +25,12 @@
 //  thumbscrew) plus a printable wall BRACKET (three prongs, screw/keyhole/
 //  tripod-nut fixing) — an upgrade over friction-only fold-out stands:
 //  optional radial DETENT TEETH on the mating faces make the set angle
-//  sag-proof. Weather mode seals the plate on a printed TPU gasket in the
+//  sag-proof. The case hangs BELOW the hinge axis, so it looks DOWN only
+//  from an eave or soffit (the bracket on a horizontal underside: level,
+//  30°, 60° or 90° down). On a vertical wall it hangs level or tilts up —
+//  the axis stands 17 mm off the wall and the case's bottom edge 89-95 mm
+//  below it, so that edge meets the wall at ~4° down (weather) to ~5.5°
+//  (indoor, devkit). Weather mode seals the plate on a printed TPU gasket in the
 //  ledge, glands an O-ring under every plate screw head, and frames the USB
 //  openings for a silicone plug.
 //
@@ -142,6 +147,42 @@
 //    * the vent/buzzer membrane seat moves to the INNER face (core_vent_
 //      cluster seat_inner): an outer seat is a Ø12 pocket on the bed whose
 //      roof is a circle full of holes; inside, it prints on top.
+//  v0.7 (2026-10-22): audit — the devkit plate, the weather plate and front,
+//  every front's hinge bore and the bracket move; the xiao plates do not:
+//    * THE DEVKIT MODULE COULD NOT SIT IN ITS CLIPS. The Grove Vision AI V2's
+//      back carries the XIAO's two socket rows and Body1 at its USB edge, all
+//      5.0 proud (vendor STEP; brd_grove_v2_back_h()), stacked XIAO or not.
+//      The devkit plate stood the module on a 3.5 ring pedestal whose long
+//      sides (6.25..9.25 off its centerline) ran right under the rows
+//      (6.5..9.0): 743 mm³ of rows and Body1 inside the plate, so the module
+//      rode its rows on the ring with its PCB 5 mm over the clip hooks. Both
+//      hosts now share the xiao host's cradle — top-half rails, clips and
+//      corner pins, all clear of the rows (they end 20 mm from the USB edge,
+//      the rails start at 22; the pins clear them by 0.28) — and a devkit
+//      module stands vm_back_h + 0.5 = 5.5 high; the cavity takes the module
+//      into account (the same 14.5 deep at the defaults). ringped() is gone;
+//    * the camera screws were billed M2 x 6: through the 1.0 carrier that is
+//      5.0 of thread in a post piloted 3.7 deep — 1.3 mm of unpiloted
+//      self-tapping toward the show face (the doorbell's v0.6 lesson). The
+//      echo now derives cam_scr_len from the drawn pilot (M2 x 4);
+//    * kh_lock is OFF by default: the plate screws enter from the BACK face,
+//      so a case hung on its keyholes can be neither opened to drive the
+//      knockout screws from inside nor closed after them, and a pierced
+//      knockout is an unsealed hole inside the gasket line (DESIGN_RULES §6);
+//    * the weep moves to the FACE end of the bottom wall, under the lid rib:
+//      the case looks down only from an eave (see the header), and pitched
+//      down the face end is the low point — at 30° the old weep at the plate
+//      end sat 8.9 mm above the corner where condensate gathers (WTR-1);
+//    * the case fins' M5 bore is a teardrop whose roof points at the back
+//      face: tearbore_x roofs +Z of its frame, and the shell prints face-
+//      DOWN, so the roof sat on the bed and the printed crown was a bare
+//      Ø5.4 arc (23.7 mm² of bore flatter than 45° per front). Mirrored,
+//      none is left but the roof's 0.74 cap, as on the bracket's bore;
+//    * the bracket's corner holes clear the #8 / M4 they are countersunk
+//      for: Ø4.2 left a #8 (4.17) 0.015 a side and an M4 0.10 — a printed
+//      4.2 comes out nearer 4.0 and the screw threads the bracket instead
+//      of clamping it. br_screw_d 4.8 = the #8 + 2 x tol_hole; the 90° cone
+//      still tops out at the #8 head's Ø8.3.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, tearbore_x, soft_edge_plate,
@@ -209,6 +250,8 @@ xiao_below   = 5.5;  // air under the XIAO's outward face: its USB-C shell (3.3)
                      // overmold (6.5/2) below the shell axis plus clearance. The 1.5 it had could
                      // not pass a plug. Seal mode raises it as far as the gasket groove needs (echoed)
 vm_front_h   = 5.0;  // module front-side component height (CSI connector etc.)
+vm_back_h    = 5.0;  // module BACK-side component height: the XIAO's socket rows and Body1 at the USB edge — brd_grove_v2_back_h(), the vendor CAD.
+                     // A devkit module stands this + 0.5 off the plate on the xiao host's rails (its rows ride the plate, not a ring)
 cam_w    = 25.0;   // OV5647 carrier width (X) — brd_w("ov5647")
 cam_h    = 24.0;   // OV5647 carrier height (Y) — brd_l("ov5647")
 pcb_t    = 1.0;    // PCB thickness (clips hook over this) — brd_t("grove_v2")
@@ -248,7 +291,7 @@ floor_cove = 0.8;  // 45° cove where the walls meet the face inside, and where 
                    // hinges the floor about it along one layer boundary.
 lid_key    = true; // poka-yoke: a rib on the +Y bore wall and a slot in the plate's edge — four corner posts fit
                    // a plate two ways and every plate feature lines up one way; turned round it stands proud on the rib
-standoff_h = 3.5;  // PCBs sit this high off the plate (RAISE if DevKit has soldered pin headers!)
+standoff_h = 3.5;  // the DevKit sits this high off the plate, the module at least this (RAISE if DevKit has soldered pin headers!)
                    // 3.5, not 3.0: the devkit clip beam is standoff + PCB, and at 4.5 mm it
                    // inserts at 3.7 % strain — 4.0 ran 4.7 % against the 4.5 % budget
 cav_extra  = 1.0;  // headroom above the tallest component
@@ -268,7 +311,9 @@ lid_ribs     = true;    // perimeter rib ring under the front face (t³ stiffeni
 lid_rib_w    = 2.5;     // rib ring width
 lid_rib_h    = 1.0;     // rib depth — keep <= cav_extra (the component headroom) or raise it
 foot_cham    = 0.5;     // 45° chamfer on the shell's back edge: elephant-foot + delamination guard (0 = off)
-kh_lock      = true;    // (keyhole mounts) anti-lift knockouts: 0.6 mm web, pierce with #4/M3 on install
+kh_lock      = false;   // (keyhole mounts) anti-lift knockouts (0.6 mm web), OFF: the plate screws enter from the back face, so a case hung on
+                        // its keyholes can be neither opened to drive them from inside nor closed after them — and a pierced
+                        // knockout is an unsealed hole inside the gasket line
 
 /* [Screw posts] (the plate screws into the posts hanging from the face) */
 post_d       = 5.0;   // corner screw post Ø — the plate screws thread into the post ends (auto-fattened for inserts and larger screws)
@@ -309,7 +354,7 @@ teeth_h     = 0.6;   // tooth height
 br_x        = 46.0;  // plate width (along the hinge axis)
 br_y        = 34.0;  // plate height
 br_t        = 4.0;   // plate thickness
-br_screw_d  = 4.2;   // countersunk wall screws (#8 / M4)
+br_screw_d  = 4.8;   // countersunk wall screws (#8 / M4): the #8's 4.17 major + 2 x tol_hole (4.2 let the screw thread the bracket)
 bracket_tripod = true; // captive 1/4-20 nut pocket behind the center fin (tripod mount)
 
 /* [Stud/keyhole interface] — blind keyhole pockets in a thickened plate (seal-safe) */
@@ -421,7 +466,9 @@ has_dk = (host == "devkit");
 // xiao_below grows to what the groove needs (echoed below when it does)
 xiao_port_web  = e_seal ? gasket_groove + core_min_web() : 0.6;
 xiao_below_eff = max(xiao_below, port_usbc_shell_h()/2 + usb_h/2 + xiao_port_web - xiao_usb_z);
-vm_standoff = has_dk ? standoff_h : stack_sock_h + xiao_below_eff;
+// devkit host: no XIAO, but its socket rows and Body1 stay on the module's
+// back (vm_back_h), so the module rides the same rails 0.5 clear of them
+vm_standoff = has_dk ? max(standoff_h, vm_back_h + 0.5) : stack_sock_h + xiao_below_eff;
 // the bottom margin: the ledge's cove must not land on the board's edge strip
 bot_margin  = max(board_clear, floor_cove + 0.4);
 
@@ -448,8 +495,8 @@ function vision_inner_y(h = host) =
 inner_y = vision_inner_y(host);
 
 // cavity depth: xiao host is driven by the rail height + module front parts;
-// devkit host by the tallest top-side component
-cav_d_min = has_dk ? standoff_h + pcb_t + stack_h + cav_extra
+// devkit host by the tallest top-side component over either board
+cav_d_min = has_dk ? max(standoff_h + pcb_t + stack_h, vm_standoff + pcb_t + vm_front_h) + cav_extra
                    : vm_standoff + pcb_t + vm_front_h + cav_extra;
 usb_soff  = has_dk ? standoff_h : vm_standoff;            // standoff of the board that owns the USB wall
 usb_axis = usb_soff + pcb_t + port_usbc_shell_h()/2 + usb_z;         // connector axis above the plate's front face
@@ -460,6 +507,13 @@ cav_d   = max(cav_d_min, usb_axis + usb_h/2 + usb_over);
 // front's bore: the post length is the barrel's height less that entry, and
 // the bore is the barrel plus the catalog's slide fit (it registers the lens)
 cam_post_eff = cam_lens_h - cam_barrel_in;
+// the camera's own screws: the longest standard length whose thread, through
+// the carrier (pcb_t, = brd_t("ov5647")), stops 0.2 short of the pilot drawn
+// in each post — cam_post_eff - 0.8 long from 0.1 outside its end, so 3.7
+// deep. The echo billed M2 x 6 (5.0 of thread, 1.3 past it) — the doorbell's
+// v0.6 lesson, here derived the same way
+cam_pil      = cam_post_eff - 0.8 - 0.1;
+cam_scr_len  = max([for (l = hw_std_lens()) if (l - pcb_t <= cam_pil - 0.2) l]);
 cam_ap_d     = cam_barrel_d + 2*tol_slide;
 cam_half     = cam_fov/2 + cam_fov_margin;            // the cone the hole must clear, per side
 cam_bore_top = lid_t - ((cam_disc_t > 0 && cam_disc_d > 0) ? cam_disc_t + 0.2 : 0);   // bore floor -> disc seat
@@ -611,6 +665,7 @@ assert(cam_holder_h + 0.5 <= cam_post_eff - 1e-9,
        str("the lens holder stands ", cam_post_eff - cam_holder_h, " mm under the front (< 0.5) — lower cam_barrel_in"));
 assert(cam_barrel_in >= 0.3 && cam_bore_top - cam_barrel_in >= 0.3 - 1e-9,
        "the lens barrel needs >= 0.3 in its bore and >= 0.3 of focus travel under the disc — adjust cam_barrel_in");
+assert(cam_scr_len >= 4, "no standard screw length fits the camera posts' pilot");
 // the disc must sit on a ledge round the cone actually cut (the cone starts at
 // cam_ap_d, the bore), at least 1.0 a side under the disc seat's own cut; and
 // the field leaving the barrel's mouth (its OD bounds it from above), spread
@@ -667,7 +722,7 @@ assert((label_text == "" && !opt_mark) || (label_depth > 0 && label_depth < lid_
 hw_thread = screw_insert ? "machine (into the inserts)" : "self-tap";
 hw_echo(str("Vision ", host), [
     hw_item(len(post_xy()), str(hw_screw(screw_size, screw_head, pl_L, hw_thread), " (plate to the post ends)")),
-    hw_item(4, "M2 pan x 6 self-tap (OV5647 to the front posts)"),
+    hw_item(4, str("M2 pan x ", cam_scr_len, " self-tap (OV5647 to the front posts)")),
     screw_insert ? hw_item(len(post_xy()), str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h)) : "",
     e_gland      ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
     e_seal       ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
@@ -677,10 +732,10 @@ hw_echo(str("Vision ", host), [
     e_hood       ? hw_item(1, "hood (print part=\"hood\"; bond into the front's groove)") : "",
     e_tamper     ? hw_item(1, str("Ø", mag_d, " x ", mag_h, " disc magnet (press + glue)")) : "",
     e_mount && (m_style == "hinge" || m_style == "both") ? hw_item(1, str("M", hinge_bolt_d, " x 25 bolt + nut (hinge; knob part=\"knob\")")) : "",
-    e_mount && (m_style == "hinge" || m_style == "both") ? hw_item(4, "#6 pan wall screw (bracket)") : "",
+    e_mount && (m_style == "hinge" || m_style == "both") ? hw_item(4, "#8 / M4 countersunk wall screw (bracket)") : "",   // the bracket's holes and 90° cones are cut for these (br_screw_d)
     e_mount && (m_style == "keyhole" || m_style == "both") ? hw_item(2, "#6 pan wall screw (keyholes)") : "",
 ]);
-echo(str("Canary Vision enclosure v0.6 — outer ", out_x, " x ", out_y, " x ",
+echo(str("Canary Vision enclosure v0.7 — outer ", out_x, " x ", out_y, " x ",
          base_d + lid_t + mount_extra, " mm (+", hinge_off + fin_r,
          " mm prongs)  (host=", host, ", preset=", preset, ", seal=", e_seal, ", mount=", m_style, ")"));
 echo(str("piston plate: ", plate_t, " mm plate in a ", bore_x, " x ", bore_y, " bore, ledge ", ledge_w,
@@ -712,13 +767,8 @@ module rim_ring2d(w) {
     }
 }
 
-// ring pedestal that supports a PCB's underside along its perimeter
-module ringped(cx, cy, l, w) {
-    translate([cx, cy, floor_t - 0.01]) difference() {
-        rrect(l - 1.5, w - 1.5, 1.5, standoff_h + 0.01);
-        translate([0, 0, -0.5]) rrect(l - 7.5, w - 7.5, 1.0, standoff_h + 1);
-    }
-}
+// (the devkit module's ring pedestal, ringped(), is gone in v0.7: its long
+// sides ran under the module's socket rows — both hosts take the rails)
 
 // Cantilever snap clip at edge point (px,py); `ang` = outward normal (degrees,
 // pointing AWAY from the board); `soff` = board standoff (the rail/pedestal
@@ -799,7 +849,12 @@ module case_hinge() {
                 translate([-xo, ax[1], ax[2]]) rotate([0, -90, 0]) linear_extrude(teeth_h) teeth2d();
             }
         }
-        tearbore_x(-out_x/2, ax[1], ax[2], out_x, hinge_hole);
+        // tearbore_x roofs +Z of its frame, and this is the ASSEMBLED frame:
+        // the shell prints face-DOWN, so the print's "up" is -Z here. The bore
+        // is mirrored about its own axis so the roof points at the back face
+        // (v0.7: it pointed at the bed, and the printed crown was a bare arc)
+        translate([0, 0, 2*ax[2]]) mirror([0, 0, 1])
+            tearbore_x(-out_x/2, ax[1], ax[2], out_x, hinge_hole);
         // With the keyhole slab under the plate (mount_style "both", the
         // weather preset) the root web reached down to z = -mount_extra, and
         // hanging straight under the bracket (0°, lens level) that slab-level
@@ -825,9 +880,9 @@ module back() {
         union() {
             translate([0, 0, floor_t]) pl_plate(plate_x, plate_y, plate_r, plate_t);
             // board cradles + snap clips on the X edges.
-            // devkit host: pads for the DevKit, a perimeter pedestal for the module.
-            // xiao host: two tall side rails under the module's X edges — the rail
-            // gap clears the stacked XIAO hanging beneath it.
+            // devkit host: pads for the DevKit; both hosts: two side rails under
+            // the module's X edges — the rail gap clears the stacked XIAO hanging
+            // beneath it, or (devkit) the socket rows it would have plugged into.
             if (has_dk) {
                 // DevKit: four corner pads, not a perimeter ring — the DevKitM-1's
                 // header rows run along its long edges and a ring there sat under
@@ -835,32 +890,31 @@ module back() {
                 for (sx = [1, -1], sy = [1, -1])
                     translate([dk_cx + sx*(dk_w/2 - 3.5), dk_cy + sy*(dk_l/2 - 3.5), floor_t - 0.01])
                         cylinder(d = 5.0, h = standoff_h + 0.01);
-                ringped(vm_cx, vm_cy, vm_w, vm_l);
-                for (s = [1, -1]) {
+                for (s = [1, -1])
                     for (dy = [-(dk_l/2 - 4.5), dk_l/2 - 4.5])
                         edgeclip(dk_cx + s*dk_w/2, dk_cy + dy, s > 0 ? 0 : 180);
-                    edgeclip(vm_cx + s*vm_w/2, vm_cy, s > 0 ? 0 : 180);
+            }
+            // module rails + clips, TOP HALF ONLY — the stacked XIAO (17.5 wide
+            // on the 20 mm module) hangs beneath the LOWER half, so full-length
+            // side rails would collide with it (same fix as the doorbell). Two
+            // bottom-corner pins catch the module's lower edge outboard of the
+            // XIAO and the down-facing USB ports. Rails are NOTCHED at the clip
+            // so the clip can flex. The devkit module rides the same cradle at
+            // its own vm_standoff: its socket rows run 2..20 mm from the USB
+            // edge (the rails start at 22) and inboard of the pins, and Body1
+            // sits between the pins — the old devkit ring stood under the rows
+            for (s = [1, -1]) {
+                rail_l = vm_l/2 - 4;
+                difference() {
+                    translate([vm_cx + s*(vm_w/2 - 1.5) - 1.5, vm_cy + 2, floor_t - 0.01])
+                        cube([3, rail_l, vm_standoff + 0.01]);
+                    translate([vm_cx + s*(vm_w/2 - 1.5), vm_cy + 2 + rail_l/2, floor_t + vm_standoff/2])
+                        cube([5, clip_w + 2, vm_standoff + 1], center = true);
                 }
-            } else {
-                // module rails + clips, TOP HALF ONLY — the stacked XIAO (17.5 wide
-                // on the 20 mm module) hangs beneath the LOWER half, so full-length
-                // side rails would collide with it (same fix as the doorbell). Two
-                // bottom-corner pins catch the module's lower edge outboard of the
-                // XIAO and the down-facing USB ports. Rails are NOTCHED at the clip
-                // so the clip can flex.
-                for (s = [1, -1]) {
-                    rail_l = vm_l/2 - 4;
-                    difference() {
-                        translate([vm_cx + s*(vm_w/2 - 1.5) - 1.5, vm_cy + 2, floor_t - 0.01])
-                            cube([3, rail_l, vm_standoff + 0.01]);
-                        translate([vm_cx + s*(vm_w/2 - 1.5), vm_cy + 2 + rail_l/2, floor_t + vm_standoff/2])
-                            cube([5, clip_w + 2, vm_standoff + 1], center = true);
-                    }
-                    edgeclip(vm_cx + s*vm_w/2, vm_cy + 2 + rail_l/2, s > 0 ? 0 : 180, vm_standoff);
-                    // corner pin: its inner edge clears the measured XIAO, still catches the module
-                    translate([vm_cx + s*(xiao_w/2 + 1.0 + 0.1), vm_cy - vm_l/2 + 1.2, floor_t - 0.01])
-                        cylinder(d = 2.0, h = vm_standoff + 0.01);
-                }
+                edgeclip(vm_cx + s*vm_w/2, vm_cy + 2 + rail_l/2, s > 0 ? 0 : 180, vm_standoff);
+                // corner pin: its inner edge clears the measured XIAO, still catches the module
+                translate([vm_cx + s*(xiao_w/2 + 1.0 + 0.1), vm_cy - vm_l/2 + 1.2, floor_t - 0.01])
+                    cylinder(d = 2.0, h = vm_standoff + 0.01);
             }
         }
         // the screws: seats through the plate, pan heads over their glands in seal mode
@@ -877,9 +931,10 @@ module back() {
                                      head_d = kh_head_d, shank_d = kh_shank_d,
                                      slot_l = kh_slot_l, head_h = kh_head_h,
                                      face = kh_face);
-        // anti-lift knockouts (0.6 mm web at the back face): after hanging, pierce
-        // with #4/M3 screws into the wall so the case can't be lifted off the
-        // keyholes. Placed in the empty top region, clear of pockets and cradles.
+        // anti-lift knockouts (0.6 mm web at the back face), drawn only when
+        // kh_lock is set — OFF by default since v0.7: their screws go in from
+        // the cavity, and a hung case cannot be opened (its plate screws enter
+        // from the back face). Placed in the empty top region, clear of pockets and cradles.
         if (mount_extra0 > 0 && kh_lock)
             for (sx = [1, -1]) translate([sx*10, inner_y/2 - 5, 0]) {
                 translate([0, 0, -mount_extra + 0.6]) cylinder(d = 3.2, h = mount_extra + floor_t);
@@ -1001,12 +1056,15 @@ module shell_solid() {
                 foot_chamfer_ring(out_x, out_y, corner_r, foot_cham, -mount_extra);
             // weep at the low point (bottom wall, hung +Y up), beside the USB
             // opening and outside its plug recess — canary_core_lib weep_cut.
-            // It leaves the wall STRAIGHT (tilt 0 — straight down when hung),
-            // a web above the gasket groove in the ledge: the old 30° dive
-            // from the floor corner would bore through the seal line now
+            // It leaves the wall STRAIGHT (tilt 0 — straight down when hung).
+            // It sits at the FACE end, its bore 0.1 into the lid rib's
+            // underside: the case looks down only from an eave, and pitched
+            // down, the corner of the bottom wall and the rib is the cavity's
+            // low point (v0.7: it sat at the plate end, just over the gasket
+            // groove — 8.9 mm above that corner at 30° down)
             if (e_weep)
                 weep_cut(usb_cx + usb_w/2 + usb_cov_pad + weep_d + 1.0, -inner_y/2,
-                         floor_t + (e_seal ? gasket_groove + core_min_web() : 0.2) + weep_d/2,
+                         base_d - (lid_ribs ? lid_rib_h : 0) - weep_d/2 + 0.1,
                          "-y", wall_eff, weep_d, 0);
         }
         // screw posts from the face's underside to the relief over the ledge,

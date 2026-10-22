@@ -521,7 +521,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 74,
+   "engineering_param_count": 75,
    "alternatives": [
     "s3_lcd7"
    ],
@@ -1733,7 +1733,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 94,
+   "engineering_param_count": 95,
    "alternatives": [
     "c6_display",
     "watch_station"
@@ -2472,7 +2472,7 @@
   {
    "id": "vision_enclosure",
    "scad": "canary_vision_enclosure.scad",
-   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.6",
+   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.7",
    "family": "canary-vision",
    "device_compat": [
     "canary-vision",
@@ -2732,10 +2732,10 @@
     {
      "id": "kh_lock",
      "type": "bool",
-     "label": "(keyhole mounts) anti-lift knockouts: 0.6 mm web, pierce with #4/M3 on install",
+     "label": "(keyhole mounts) anti-lift knockouts (0.6 mm web), OFF: the plate screws enter from the back face, so a case hung on",
      "consequence": "",
      "audience": "engineering",
-     "default": true
+     "default": false
     },
     {
      "id": "hinge_teeth",
@@ -2770,7 +2770,7 @@
      "default": false
     }
    ],
-   "engineering_param_count": 204,
+   "engineering_param_count": 207,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -3197,10 +3197,10 @@
     {
      "id": "kh_lock",
      "type": "bool",
-     "label": "(keyhole mounts) two anti-lift knockout bosses: 0.6 mm web, pierce with",
+     "label": "(keyhole mounts) two anti-lift knockout bosses (0.6 mm web), OFF by default since v0.9.1:",
      "consequence": "",
      "audience": "engineering",
-     "default": true
+     "default": false
     },
     {
      "id": "board_clips",
@@ -3211,7 +3211,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 186,
+   "engineering_param_count": 189,
    "alternatives": [],
    "remix_of": null,
    "counts": {

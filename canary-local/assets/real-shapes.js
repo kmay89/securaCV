@@ -114,7 +114,7 @@ async function realWatch(scene) {
   const along = (s) => [p0[0], p0[1] + a[1] * s, p0[2] + a[2] * s];
   seatPart(scene, stand, { G, D: [0, 0, 0], color: shell2(), gloss: 0.18, stand: true });
   seatPart(scene, drum, { G, D: along(12.72), R: Ra, gloss: 0.22 });          // drum center: drum_h / 2
-  seatPart(scene, bezel, { G, D: along(24.53), R: M4.mul(Ra, rotXpi), gloss: 0.3 }); // face-down print → face out; fig.d − bezel height / 2
+  seatPart(scene, bezel, { G, D: along(24.09), R: M4.mul(Ra, rotXpi), gloss: 0.3 }); // face-down print → face out; fig.d − bezel height / 2
   scene.addMesh(screenPlane(40.0, 40.0, true), {         // the glass in the Ø40.0 aperture (face_fig_mm)
     screen: true,
     model: M4.mul(G, M4.mul(M4.translate(...along(24.64)), Ra)),  // drum_h − flush
@@ -179,7 +179,8 @@ async function realDash(scene) {
   const off = (s) => [C[0], C[1] + w[1] * s, C[2] + w[2] * s];
   seatPart(scene, stand, { G, D: [0, 0, 0], color: shell2(), gloss: 0.18, stand: true });
   seatPart(scene, frame, { G, D: off(1.5), R: M4.mul(Ra, rotXpi), gloss: 0.22 });  // face-down print → face out
-  seatPart(scene, back, { G, D: off(-11.3), R: Ra, color: shell2(), gloss: 0.22 }); // pads toward the fin
+  // the back prints pads-up, turned about Y (its selector) — turn it back
+  seatPart(scene, back, { G, D: off(-11.3), R: M4.mul(Ra, M4.rotY(Math.PI)), color: shell2(), gloss: 0.22 }); // pads toward the fin
   scene.addMesh(screenPlane(101.3, 61.2, false), {       // glass behind the 2.5 mm bezel lip
     screen: true,
     model: M4.mul(G, M4.mul(M4.translate(...off(7.4)), Ra)),

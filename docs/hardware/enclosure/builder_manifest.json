@@ -140,7 +140,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "b559f1ba73eb0438f232625059d5b2fd616b364eea50c837effbf29a685aef79",
+      "sha256": "c21312905947b9991cc07d55cbfa3bc0cee0eddb7cb17ca6850ce109ef8c9ee3",
       "groups": [
         {
           "name": "What to render",
@@ -690,6 +690,15 @@
               "type": "number",
               "default": 0.3,
               "desc": "clearance holes: plate screws — core_tol_hole()"
+            },
+            {
+              "name": "bridge_layer",
+              "type": "number",
+              "default": 0.2,
+              "min": 0.08,
+              "step": 0.04,
+              "max": 0.32,
+              "desc": "your slicer's layer height: the face's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)"
             }
           ]
         },
@@ -741,8 +750,8 @@
             {
               "name": "kh_lock",
               "type": "bool",
-              "default": true,
-              "desc": "(keyhole mounts) two anti-lift knockout bosses: 0.6 mm web, pierce with"
+              "default": false,
+              "desc": "(keyhole mounts) two anti-lift knockout bosses (0.6 mm web), OFF by default since v0.9.1:"
             }
           ]
         },
@@ -954,13 +963,13 @@
               "name": "vent_pad_d",
               "type": "number",
               "default": 12.0,
-              "desc": "GORE-vent recess Ø (the buzzer + pressure vent: the recess seats an adhesive vent)"
+              "desc": "GORE-vent recess Ø, on the face's INNER side (the buzzer + pressure vent: the recess seats an adhesive vent; it prints face-down, and an outer seat cannot bridge)"
             },
             {
               "name": "vent_pad_depth",
               "type": "number",
               "default": 0.8,
-              "desc": "GORE-vent recess depth into the face's outer surface — core_vent_pad_depth()"
+              "desc": "GORE-vent recess depth into the face's inner surface — core_vent_pad_depth()"
             },
             {
               "name": "vent_hole_d",
@@ -1129,7 +1138,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "63fd5fc0c72e785bafe23e45877934a0bf4273321827c4738cd156ffb108b76c"
+          "sha256": "001eb90d5c44965d921a4706534c795992aa15a51cb1ae08d19ce344e27079f1"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -1225,7 +1234,7 @@
         }
       },
       "units": {},
-      "sha256": "a6df717f1bde099a9a4070cd63ff4cddd547294a778e643dc2c38ac02140f2c9",
+      "sha256": "1c5b6ac05620125378e0de773547e97b00f149743764d3f31d42e69b5540190d",
       "groups": [
         {
           "name": "What to render",
@@ -1399,6 +1408,12 @@
               "type": "number",
               "default": 5.0,
               "desc": "module front-side component height (CSI connector etc.)"
+            },
+            {
+              "name": "vm_back_h",
+              "type": "number",
+              "default": 5.0,
+              "desc": "module BACK-side component height: the XIAO's socket rows and Body1 at the USB edge — brd_grove_v2_back_h(), the vendor CAD."
             },
             {
               "name": "cam_w",
@@ -1582,7 +1597,7 @@
               "name": "standoff_h",
               "type": "number",
               "default": 3.5,
-              "desc": "PCBs sit this high off the plate (RAISE if DevKit has soldered pin headers!)"
+              "desc": "the DevKit sits this high off the plate, the module at least this (RAISE if DevKit has soldered pin headers!)"
             },
             {
               "name": "cav_extra",
@@ -1663,8 +1678,8 @@
             {
               "name": "kh_lock",
               "type": "bool",
-              "default": true,
-              "desc": "(keyhole mounts) anti-lift knockouts: 0.6 mm web, pierce with #4/M3 on install"
+              "default": false,
+              "desc": "(keyhole mounts) anti-lift knockouts (0.6 mm web), OFF: the plate screws enter from the back face, so a case hung on"
             }
           ]
         },
@@ -1851,8 +1866,8 @@
             {
               "name": "br_screw_d",
               "type": "number",
-              "default": 4.2,
-              "desc": "countersunk wall screws (#8 / M4)"
+              "default": 4.8,
+              "desc": "countersunk wall screws (#8 / M4): the #8's 4.17 major + 2 x tol_hole (4.2 let the screw thread the bracket)"
             },
             {
               "name": "bracket_tripod",
@@ -2242,7 +2257,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "63fd5fc0c72e785bafe23e45877934a0bf4273321827c4738cd156ffb108b76c"
+          "sha256": "001eb90d5c44965d921a4706534c795992aa15a51cb1ae08d19ce344e27079f1"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -3697,7 +3712,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "63fd5fc0c72e785bafe23e45877934a0bf4273321827c4738cd156ffb108b76c"
+          "sha256": "001eb90d5c44965d921a4706534c795992aa15a51cb1ae08d19ce344e27079f1"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -4657,7 +4672,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "63fd5fc0c72e785bafe23e45877934a0bf4273321827c4738cd156ffb108b76c"
+          "sha256": "001eb90d5c44965d921a4706534c795992aa15a51cb1ae08d19ce344e27079f1"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -5116,7 +5131,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "63fd5fc0c72e785bafe23e45877934a0bf4273321827c4738cd156ffb108b76c"
+          "sha256": "001eb90d5c44965d921a4706534c795992aa15a51cb1ae08d19ce344e27079f1"
         },
         {
           "file": "canary_color_lib.scad",

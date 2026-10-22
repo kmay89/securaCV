@@ -90,6 +90,17 @@ function brd_xiao_w_measured() = 17.8;
 function brd_stack_sock_measured()   = 6.5;
 function brd_stack_sock_unmeasured() = 11.5;
 
+// GROVE VISION AI V2 — its BACK face, read off the vendor CAD (boards/vendor/
+// seeed_grove_vision_ai_v2.step.gz, product GroveVisionAI_v2, "drawing"
+// rung; back face at y = -2.51). The XIAO's two socket rows (18 x 2.5 each,
+// 2..20 mm in from the USB edge, ±7.75 off the centerline) and the block at
+// the USB edge beside them (Body1, 12.8 across x 8 deep — by its place, the
+// Grove socket) all stand 5.0 proud of the back face, XIAO seated or not.
+// A host that cables the module instead of stacking it must still stand the
+// module clear of them: the Vision's devkit plate stood it on a 3.5 ring
+// pedestal right under both rows (the Vision's v0.7 found it).
+function brd_grove_v2_back_h() = 5.0;   // socket rows + Body1, proud of the module's back face
+
 // Waveshare 1.47 family brass corner pillars above the PCB back:
 // the C3's are measured; the C6's 5.0 has never met calipers.
 function brd_ws147_brass_c3() = 3.0;    // MEASURED (kmay89)

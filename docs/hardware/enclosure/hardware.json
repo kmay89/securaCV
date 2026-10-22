@@ -405,8 +405,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 pan x 6 self-tap",
-     "text": "M2 pan x 6 self-tap (OV5647 to the front posts)"
+     "spec": "M2 pan x 4 self-tap",
+     "text": "M2 pan x 4 self-tap (OV5647 to the front posts)"
     },
     {
      "qty": 1,
@@ -429,8 +429,8 @@
     {
      "qty": 4,
      "kind": "wall-screw",
-     "spec": "#6 pan wall screw (bracket)",
-     "text": "#6 pan wall screw (bracket)"
+     "spec": "#8 / M4 countersunk wall screw (bracket)",
+     "text": "#8 / M4 countersunk wall screw (bracket)"
     }
    ],
    "lid_rib": {
@@ -450,6 +450,10 @@
     "SCR6": {
      "bom": 1,
      "echo": 1
+    },
+    "SCR7": {
+     "bom": 4,
+     "echo": 4
     }
    }
   },
@@ -472,8 +476,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 pan x 6 self-tap",
-     "text": "M2 pan x 6 self-tap (OV5647 to the front posts)"
+     "spec": "M2 pan x 4 self-tap",
+     "text": "M2 pan x 4 self-tap (OV5647 to the front posts)"
     },
     {
      "qty": 1,
@@ -496,8 +500,8 @@
     {
      "qty": 4,
      "kind": "wall-screw",
-     "spec": "#6 pan wall screw (bracket)",
-     "text": "#6 pan wall screw (bracket)"
+     "spec": "#8 / M4 countersunk wall screw (bracket)",
+     "text": "#8 / M4 countersunk wall screw (bracket)"
     }
    ],
    "lid_rib": {
@@ -517,6 +521,10 @@
     "SCR6": {
      "bom": 1,
      "echo": 1
+    },
+    "SCR7": {
+     "bom": 4,
+     "echo": 4
     }
    }
   },
@@ -540,8 +548,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 pan x 6 self-tap",
-     "text": "M2 pan x 6 self-tap (OV5647 to the front posts)"
+     "spec": "M2 pan x 4 self-tap",
+     "text": "M2 pan x 4 self-tap (OV5647 to the front posts)"
     },
     {
      "qty": 4,
@@ -570,8 +578,8 @@
     {
      "qty": 4,
      "kind": "wall-screw",
-     "spec": "#6 pan wall screw (bracket)",
-     "text": "#6 pan wall screw (bracket)"
+     "spec": "#8 / M4 countersunk wall screw (bracket)",
+     "text": "#8 / M4 countersunk wall screw (bracket)"
     }
    ],
    "bom": {
@@ -600,8 +608,8 @@
     {
      "qty": 4,
      "kind": "screw",
-     "spec": "M2 pan x 6 self-tap",
-     "text": "M2 pan x 6 self-tap (OV5647 to the front posts)"
+     "spec": "M2 pan x 4 self-tap",
+     "text": "M2 pan x 4 self-tap (OV5647 to the front posts)"
     },
     {
      "qty": 6,
@@ -648,8 +656,8 @@
     {
      "qty": 4,
      "kind": "wall-screw",
-     "spec": "#6 pan wall screw (bracket)",
-     "text": "#6 pan wall screw (bracket)"
+     "spec": "#8 / M4 countersunk wall screw (bracket)",
+     "text": "#8 / M4 countersunk wall screw (bracket)"
     },
     {
      "qty": 2,
@@ -679,6 +687,10 @@
     "SCR6": {
      "bom": 1,
      "echo": 1
+    },
+    "SCR7": {
+     "bom": 4,
+     "echo": 4
     }
    }
   },
@@ -788,12 +800,6 @@
      "kind": "wall-screw",
      "spec": "#6 pan wall screw (keyholes)",
      "text": "#6 pan wall screw (keyholes)"
-    },
-    {
-     "qty": 2,
-     "kind": "wall-screw",
-     "spec": "M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)",
-     "text": "M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)"
     }
    ],
    "lid_rib": {
@@ -876,12 +882,6 @@
      "kind": "wall-screw",
      "spec": "#6 pan wall screw (keyholes)",
      "text": "#6 pan wall screw (keyholes)"
-    },
-    {
-     "qty": 2,
-     "kind": "wall-screw",
-     "spec": "M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)",
-     "text": "M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)"
     },
     {
      "qty": 4,
@@ -987,34 +987,10 @@
    "detail": "1x M5 x 25 bolt + nut (hinge; Vision knob/bracket parts) — no row in bom_canary_sense.csv bills it"
   },
   {
-   "set": "vision.devkit_indoor",
-   "csv": "bom_canary_vision.csv",
-   "what": "unbilled #6 pan wall screw (bracket)",
-   "detail": "4x #6 pan wall screw (bracket) — no row in bom_canary_vision.csv bills it"
-  },
-  {
-   "set": "vision.xiao_indoor",
-   "csv": "bom_canary_vision.csv",
-   "what": "unbilled #6 pan wall screw (bracket)",
-   "detail": "4x #6 pan wall screw (bracket) — no row in bom_canary_vision.csv bills it"
-  },
-  {
-   "set": "vision.xiao_weather",
-   "csv": "bom_canary_vision.csv",
-   "what": "unbilled #6 pan wall screw (bracket)",
-   "detail": "4x #6 pan wall screw (bracket) — no row in bom_canary_vision.csv bills it"
-  },
-  {
    "set": "vision.xiao_weather",
    "csv": "bom_canary_vision.csv",
    "what": "unbilled #6 pan wall screw (keyholes)",
    "detail": "2x #6 pan wall screw (keyholes) — no row in bom_canary_vision.csv bills it"
-  },
-  {
-   "set": "wap.battery_weather",
-   "csv": "bom_canary_wap.csv",
-   "what": "unbilled M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)",
-   "detail": "2x M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat) — no row in bom_canary_wap.csv bills it"
   }
  ]
 }

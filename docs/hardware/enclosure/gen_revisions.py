@@ -1097,7 +1097,11 @@ def render_stale(recipes: list[dict], old_parts: dict) -> list[str]:
     return placed
 
 
-def write(note: str | None, want_regions: bool, backfill: bool = False, rerender: bool = False) -> int:
+def write(note: str | None, want_regions: bool, backfill: bool = False, rerender: bool = False,
+          notes: dict | None = None) -> int:
+    """`note` is the words for every revision this run records; `notes` (from
+    --notes FILE) gives one part's own words by key, and wins over `note`."""
+    notes = notes or {}
     led = load_ledger()
     old_parts = dict(led.get("parts", {}))
     recipes = all_recipes()
@@ -1156,10 +1160,16 @@ def write(note: str | None, want_regions: bool, backfill: bool = False, rerender
             kept += 1
             continue
         tris = read_stl(stl_path(r).read_bytes())
-        ch = changes_for(r, prev, tris, note, want_regions)
+        ch = changes_for(r, prev, tris, notes.get(key, note), want_regions)
         ch["why"] = why
         new_parts[key] = part_record(r, prev, src, geom, version, head, ch)
         bumped.append(key)
+    # a note for a part this run did not bump would be dropped without a word:
+    # refuse it instead, by name (a typo, or a part whose shape did not move)
+    unused = sorted(set(notes) - set(bumped) - set(recorded))
+    if unused:
+        sys.exit(f"gen_revisions: --notes names {len(unused)} part(s) this run records no revision for: "
+                 f"{', '.join(unused)} — not a part key (see --list), or its shape did not move")
     if missing:
         devs = [k for k in missing if st[k][0]["home"] == "dev"]
         others = [k for k in missing if st[k][0]["home"] != "dev"]
@@ -1239,6 +1249,9 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--rendered", action="store_true",
                     help="with --check: every dev render is expected on disk (after render.sh)")
     ap.add_argument("--note", metavar="TEXT", help="words for the revisions this run records")
+    ap.add_argument("--notes", metavar="FILE",
+                    help="JSON object {part key: words} — each part's own note, over --note; a key this run "
+                         "records no revision for is refused")
     ap.add_argument("--no-regions", action="store_true",
                     help="record a dev part's new rev without rendering its previous sources (no regions)")
     ap.add_argument("--render", metavar="SCAD|KEY", help="render one case's recipes into the tree first")
@@ -1263,7 +1276,12 @@ def main(argv: list[str]) -> int:
         return 0
     if args.render:
         render_recipes(args.render, all_recipes())
-    return write(args.note, not args.no_regions, backfill=args.backfill, rerender=args.render_stale)
+    notes = None
+    if args.notes:
+        notes = json.loads(Path(args.notes).read_text(encoding="utf-8"))
+        if not isinstance(notes, dict) or not all(isinstance(v, str) and v.strip() for v in notes.values()):
+            sys.exit(f"gen_revisions: --notes {args.notes}: want a JSON object of part key -> non-empty words")
+    return write(args.note, not args.no_regions, backfill=args.backfill, rerender=args.render_stale, notes=notes)
 
 
 if __name__ == "__main__":
