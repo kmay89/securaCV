@@ -59,3 +59,21 @@ test('demo mode is a hard guard: no real service is reachable, and every scenari
     await app2.close(); db2.close();
   } finally { await app.close(); db.close(); }
 });
+
+test('a demo app on an empty database seeds itself; a timed public demo resets on its cadence', async () => {
+  const { ensureDemo } = await import('../src/modules/demo.mjs');
+  const { runJob } = await import('../src/jobs.mjs');
+  const db = testDb(); const cfg = testCfg({ demo: true, demoResetMinutes: 60 });
+  const app = createApp({ db, cfg }); await app.listen();
+  try {
+    const seeded = await ensureDemo(db, cfg);
+    assert.ok(seeded && seeded.orders >= 7, 'seeded on first boot');
+    assert.equal(await ensureDemo(db, cfg), null, 'a used database is left alone');
+    let r = await runJob(app, 'demo_reset'); assert.ok(r.ok); assert.ok(r.result.next_in_s > 3000, 'just seeded: not due');
+    db.setSetting('demo:seeded_at', new Date(Date.now() - 61 * 60_000).toISOString());
+    r = await runJob(app, 'demo_reset'); assert.ok(r.ok); assert.equal(r.result.reset, true);
+    r = await runJob(app, 'demo_reset'); assert.ok(r.result.next_in_s > 3000, 'a reset restarts the clock');
+    const plain = createApp({ db: testDb(), cfg: testCfg() });
+    assert.equal((await runJob(plain, 'demo_reset')).result.skipped, 'not a timed public demo');
+  } finally { await app.close(); db.close(); }
+});

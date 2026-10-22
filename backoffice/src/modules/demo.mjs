@@ -84,7 +84,7 @@ export function makeOrderInput(i, items, { days = 0, external = `cs_demo_${Date.
 
 export async function seedDemo(db, cfg) {
   if (db.get('SELECT COUNT(*) AS n FROM orders').n) throw new Error('the database already has orders — demo data only goes into an empty one (`backoffice demo --reset` wipes it, or point BACKOFFICE_DATA_DIR somewhere fresh)');
-  db.setSetting('demo', '1');
+  db.setSetting('demo', '1'); db.setSetting('demo:seeded_at', nowIso());
   const q = silent(cfg);
 
   for (const it of [
@@ -172,6 +172,15 @@ export async function seedDemo(db, cfg) {
   await raise(db, q, 'stock:xiao-esp32s3-sense', 'inventory [reorder]: xiao-esp32s3-sense', 'XIAO ESP32S3 Sense (camera): 2 on hand, reorder point 4, reorder qty 12.\nSupplier: Example Distributor');
   db.audit('demo', 'demo.seed', null, null, { orders: 7, tickets: 4 });
   return { orders: db.get('SELECT COUNT(*) AS n FROM orders').n, tickets: db.get('SELECT COUNT(*) AS n FROM tickets').n, contacts: db.get('SELECT COUNT(*) AS n FROM contacts').n, items: db.get('SELECT COUNT(*) AS n FROM inventory_items').n };
+}
+
+// A demo app that finds an empty database makes itself the demo: operator,
+// flag, data. A used database is left exactly as it is.
+export async function ensureDemo(db, cfg) {
+  const { hasOperator, setupOperator } = await import('../auth.mjs');
+  if (!isEmpty(db) || hasOperator(db)) return null;
+  setupOperator(db, DEMO_PASSWORD);
+  return seedDemo(db, cfg);
 }
 
 // Wipe every business table (the operator login and settings survive) and seed again.

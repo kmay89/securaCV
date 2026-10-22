@@ -223,7 +223,7 @@ export const plain = (cfg, title, bodyHtml) => layout({ title, body: `<p>${bodyH
 
 function loginPage(cfg, err, ready, demo = null) {
   const hint = demo ? `<div class="flash"><b>Demo mode — synthetic data, nothing leaves this machine.</b><br>Password: <code>${e(demo.password)}</code> · authenticator code right now: <code>${e(demo.code)}</code> (it changes every 30 s; <code>backoffice code</code> prints it too)</div>` : '';
-  return layout({ title: 'Log in', company: cfg.company, nav: false, demo: !!demo, body: hint + (ready
+  return layout({ title: 'Log in', company: cfg.company, nav: false, demo: !!demo, demoResetMinutes: cfg.demoResetMinutes, body: hint + (ready
     ? `${err ? '<div class="flash err">Wrong password or code.</div>' : ''}<form method="post" action="/login" class="box"><label for="pw">Password</label><input id="pw" type="password" name="password" required autocomplete="current-password"><label for="code">Authenticator code</label><input id="code" name="code" inputmode="numeric" pattern="[0-9]{6}" required autocomplete="one-time-code"><div style="margin-top:.8rem"><button>Log in</button></div></form>`
     : '<p>No operator yet. On the server, run <code>backoffice setup</code> to set the password and get the authenticator QR.</p>') });
 }

@@ -42,7 +42,7 @@ export const NAV = [
   ['/status-admin', 'Status'], ['/exceptions', 'Exceptions'], ['/settings', 'Settings'],
 ];
 
-export function layout({ title, body, path = '/', flash = null, company = 'Errer Labs', nav = true, csrf = '', demo = false }) {
+export function layout({ title, body, path = '/', flash = null, company = 'Errer Labs', nav = true, csrf = '', demo = false, demoResetMinutes = 0 }) {
   const items = demo ? [...NAV, ['/demo', 'Demo scenarios']] : NAV;
   const navHtml = nav ? `<nav>${items.map(([p, l]) => `<a href="${p}" class="${path === p || (p !== '/' && path.startsWith(p)) ? 'on' : ''}">${l}</a>`).join('')}</nav>` : '';
   const flashHtml = flash ? `<div class="flash ${flash.kind === 'err' ? 'err' : ''}">${escapeHtml(flash.text)}</div>` : '';
