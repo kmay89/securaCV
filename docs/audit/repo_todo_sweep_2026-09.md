@@ -1824,7 +1824,7 @@ so — see D2 below.)
   HSTS declined: browsers ignore it on a self-signed certificate (RFC 6797
   s8.1) and on IP literals (s8.1.1), and it would strand a fallback unit for
   a browser that trusted the certificate.
-  *Done (2026-10-21, #<PR>):* the second commit of the PR that carries F344.
+  *Done (2026-10-21, #1848):* the second commit of the PR that carries F344.
   - `session_cookie_header()` in `canary_wap.ino` writes
     `"%s=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400%s"` with
     `tls ? "__Host-cv_session" : "cv_session", session_hex,
@@ -1868,7 +1868,7 @@ so — see D2 below.)
   section in `hardware_verification_checklist.md` (a plain-HTTP row that
   runs now, and an HTTPS row blocked until a WAP serves HTTPS, F15); the
   F289 rows written for `https://` say to run over `http://` until then.
-  *Review (2026-10-21, #<PR>):* F15's correction covers both trees, and the
+  *Review (2026-10-21, #1848):* F15's correction covers both trees, and the
   CHANGELOG said the docs no longer say either serves HTTPS, but
   SECURITY_MODEL's transport paragraph still opened with the WAP serving
   HTTPS after setup and the flagship's HTTPS builds serving it from the
@@ -1883,7 +1883,7 @@ so — see D2 below.)
   the reader's 512-byte ceiling and sign the browser out (integrity, not
   availability), as THREAT_MODEL, the CHANGELOG and the writer's comment
   say. Docs only.
-  *Review 4 (2026-10-21, #<PR>):* a correction to the Decided text above
+  *Review 4 (2026-10-21, #1848):* a correction to the Decided text above
   and to this PR's docs. A cookie follows the host name: RFC 6265bis's
   "Leave Secure Cookies Alone" refuses a non-`Secure` cookie only when a
   `Secure` one of the same name and path has a domain that domain-matches
@@ -1900,7 +1900,7 @@ so — see D2 below.)
   `http://192.168.4.1`, where the old sketch passes too (the setup branch's
   `302` is relative, so the wizard and the kit save stay on that host); it
   now runs at `http://canary.local`. Docs only.
-  *Review 5 (2026-10-21, #<PR>):* Review 4's "only to a browser that used a
+  *Review 5 (2026-10-21, #1848):* Review 4's "only to a browser that used a
   standalone unit over `https://192.168.4.1`" was too narrow. A joined unit
   serves that address too while its SoftAP is up: `wifi_init_provisioning()`
   raises the SoftAP at every boot, `loop()` drops it only once the home link
@@ -2270,7 +2270,7 @@ so — see D2 below.)
   a token-free way out once F345 has gated it.
   Corrections to this item: the phone does not "then need the BOOT tap"; the
   iPhone app has no tap flow and ends "on the Wi-Fi, not paired".
-  *Done (2026-10-20, #<PR>):* in two commits of the PR that carries F347,
+  *Done (2026-10-20, #1848):* in two commits of the PR that carries F347,
   and the review commits each bullet below names.
   - The claim: `spend_if_match()` and `wipe_hex()` in
     `firmware/common/network/claim_ticket.h` (staged copy cp'd), `take()` on
@@ -2741,7 +2741,7 @@ so — see D2 below.)
   the IP, rebinding or not, and the other public routes, which a rebinding
   page can read (F357, restated by this PR's review); widening the shared
   suffix list (F356).
-  *Done (2026-10-21, #<PR>):* the first commit of the PR that carries F337.
+  *Done (2026-10-21, #1848):* the first commit of the PR that carries F337.
   - `firmware/projects/canary-wap/arduino/canary_wap/host_guard.h` is a
     byte-identical copy of the canonical header, held by a `PAIRS` line and
     a comment entry in `check_improv_sync.sh` (main already had the
@@ -2803,7 +2803,7 @@ so — see D2 below.)
   against a browser, a rebinding resolver or a device (U1: the F344 row in
   `hardware_verification_checklist.md`, over plain HTTP). Filed: F356 and
   F357.
-  *Review (2026-10-21, #<PR>):*
+  *Review (2026-10-21, #1848):*
   - No row sent a Host too long for the 96-byte buffer, so a
     `request_host_names_device()` that took the truncated header (or a
     24-byte buffer) passed both suites. Both now send a 108-byte rebinding
@@ -2834,7 +2834,7 @@ so — see D2 below.)
     checklist's F255 intro now say a stock WAP serves plain HTTP (F15). The
     U1 row's SoftAP step names its precondition (the home link down, or a
     standalone unit).
-  *Review 2 (2026-10-21, #<PR>):*
+  *Review 2 (2026-10-21, #1848):*
   - The wizard token's re-issue answered through `http_send_json()`, which
     sends `Access-Control-Allow-Origin: *`, so the exact setup-name match
     did not keep its token from a page on another site that asks for a real
@@ -2876,7 +2876,7 @@ so — see D2 below.)
     `test_receipt_foreign_host_is_refused_first` does: sent after the tap,
     it could land after the owner's next ask had spent the tap, and a sketch
     without the Host row passed.
-  *Review 3 (2026-10-21, #<PR>):*
+  *Review 3 (2026-10-21, #1848):*
   - The pages and the mints asked the Host, but the cookie validator did
     not, and this PR's text said a rebinding page "holds no session for its
     own name". It can hold one: any host on the LAN takes a 24-hour session
@@ -2941,7 +2941,7 @@ so — see D2 below.)
     foreign name (the captive page has no links, and the wizard's two names
     pass).
   Host-tested; not run against a browser or on a device.
-  *Review 4 (2026-10-21, #<PR>):*
+  *Review 4 (2026-10-21, #1848):*
   - Review 3's "Still open" list named `/api/wifi/connect` and
     `/api/wifi/ap-only` as the routes that read a carried pair token with no
     Host. `/api/wifi/qr-scan` reads it too, with no Host and no setup gate:
@@ -2981,7 +2981,7 @@ so — see D2 below.)
     "can't forge them" is scoped to cross-site requests. The certificate
     comment in `setup()` now says no stock build stores a certificate
     (F15). No new number.
-  *Review 5 (2026-10-21, #<PR>):*
+  *Review 5 (2026-10-21, #1848):*
   - The docs said a DNS-rebinding page gets nothing from a WAP, unqualified
     (the CHANGELOG's headline, SECURITY_MODEL, THREAT_MODEL's row, the WAP
     README, `magic_pairing.md`, the sketch's comments). The code closes what
@@ -3034,7 +3034,7 @@ so — see D2 below.)
     joined unit raises the SoftAP at every boot until the home link has
     held 120 s, not only when the link is lost.
   Host-tested; not run against a browser or on a device.
-  *Review 6 (2026-10-22, #<PR>):*
+  *Review 6 (2026-10-22, #1848):*
   - Review 5's residual made "left open" its condition. It is not one: a
     page another network served under one of the device's names with a
     long `Cache-Control: max-age` stays in the browser's HTTP cache and is
@@ -3101,7 +3101,7 @@ so — see D2 below.)
     F15's dated correction). This PR files F356 and F357 only.
   Host-tested; the cache residual seen in headless Chromium against a
   stand-in server, not against a device.
-  *Review 7 (2026-10-22, #<PR>):*
+  *Review 7 (2026-10-22, #1848):*
   - Review 6's remedy, "clearing the browser's stored data for
     `canary.local` and the device's addresses removes such a copy", is
     wrong in Chromium. In headless Chromium 141 (Playwright's build 1194)
@@ -3163,7 +3163,7 @@ so — see D2 below.)
     `MUST_PASS` row only grew at its end).
   Host-tested; the cache clears tried in headless Chromium against a
   stand-in server, not against a device.
-  *Review 8 (2026-10-22, #<PR>):*
+  *Review 8 (2026-10-22, #1848):*
   - The WAP README's first-boot step (`firmware/projects/canary-wap/README.md`,
     "Connect to Your Device") still offered the unique `.local` name beside
     `canary.local` and `192.168.4.1`, which the setup branch answers with the
@@ -3229,7 +3229,7 @@ so — see D2 below.)
     6's) and the route-check comment's gap (the rule is this PR's) came from
     this PR.
   Host-tested; not run against a browser or on a device.
-  *Review 9 (2026-10-22, #<PR>):*
+  *Review 9 (2026-10-22, #1848):*
   - Review 8 said a `__Host-cv_session` set by any server whose certificate
     the browser accepted at the device's name "matches no session here, so
     the landing mints one again", in THREAT_MODEL's HTTP row, the CHANGELOG
@@ -3306,7 +3306,7 @@ so — see D2 below.)
     plan's transport bullet, which this PR rewrote, said port 80 redirects
     everything but the probes; it keeps `GET /api/fleet` too, and the
     redirect takes GET and POST. Docs only.
-  *Review 10 (2026-10-22, #<PR>):*
+  *Review 10 (2026-10-22, #1848):*
   - Review 9 said F15 would shut out a page planted over plain HTTP after
     setup, since that page is then cross-origin to the device. Being
     cross-origin keeps it from reading the landing, the exchange or the
@@ -3402,7 +3402,7 @@ so — see D2 below.)
   Host-tested (`test_provisioning_gate`, `test_claim_ticket`,
   `test_receipt_grant`, `test_session_cookie`); the 49.7-day wraps cannot be
   bench-tested.
-  *Done (2026-10-20, #<PR>):* in the third commit of the PR that carries
+  *Done (2026-10-20, #1848):* in the third commit of the PR that carries
   F342.
   - The sweeps: `expire()` in `firmware/common/network/provisioning_gate.h`
     (a `peek()` and a `take_exact()` of the stamp it read) and in

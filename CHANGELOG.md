@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### canary-wap answers the receipt, the setup mints and, after setup, its pages only to a Host that names it, and its HTTPS session cookie has a name of its own (sweep F344, F337)
+### canary-wap answers the receipt, the setup mints and, after setup, its pages only to a Host that names it, and its HTTPS session cookie has a name of its own (sweep F344, F337, #1848)
 
 - **A DNS-rebinding page under a public name gets no session, no pair token
   and no receipt from a WAP (sweep F344).** After setup the WAP read no `Host`
