@@ -12,13 +12,18 @@
  *    "sd":{"mounted":true,"usage_pct":N,"total_writes":N,"write_errors":N,
  *          "space_warning":false,"space_critical":false},
  *    "selftest":{"has_run":true,"health_score":N,"passed":N,"total":N,
- *                "tests":[{"name":"nvs_rw","passed":true,"ms":N},...]},
+ *                "tests":[{"name":"nvs_rw","passed":true,"ms":N},...,
+ *                         {"name":"watchdog","probe":false},...]},
  *    "system":{"uptime_sec":N,"boot_count":N,"reset_reason":N,
  *              "firmware":"2.4.15"},
  *    "csi_event_egress":{...}}
  *
  * Every key before `csi_event_egress` is the route's as it stood before
- * sweep F179, byte for byte. `csi_event_egress` is the object
+ * sweep F179, byte for byte, but for a self-test row the suite lists and
+ * does not check (selftest_result_t.not_a_probe, the watchdog's): it says
+ * `"probe":false` in place of `passed` and `ms`, and `total` counts the
+ * probes, so `passed` of `total` is the score's own fraction (a row that
+ * checks nothing used to read as a pass). `csi_event_egress` is the object
  * csi_event_egress_diagnostics_json() (include/csi_event_egress_diagnostics.h)
  * writes: the counters the loop task's last egress pump published, in the
  * names the MQTT health uses, or `null` before the first pump and on a
@@ -132,11 +137,15 @@ inline size_t build(const diag_snapshot_t& snap, const char* firmware, const cha
   w.add("\"selftest\":{\"has_run\":%s,\"health_score\":%u,"
         "\"passed\":%u,\"total\":%u,\"tests\":[",
         st.has_run ? "true" : "false", (unsigned)st.health_score,
-        (unsigned)st.passed_count, (unsigned)st.total_count);
+        (unsigned)st.passed_count, (unsigned)selftest_probe_count(&st));
   for (uint8_t i = 0; i < st.total_count && i < SELFTEST_COUNT; i++) {
+    const char* name = st.tests[i].name != nullptr ? st.tests[i].name : "unknown";
+    if (st.tests[i].not_a_probe) {
+      w.add("%s{\"name\":\"%s\",\"probe\":false}", i > 0 ? "," : "", name);
+      continue;
+    }
     w.add("%s{\"name\":\"%s\",\"passed\":%s,\"ms\":%u}", i > 0 ? "," : "",
-          st.tests[i].name != nullptr ? st.tests[i].name : "unknown",
-          st.tests[i].passed ? "true" : "false", (unsigned)st.tests[i].duration_ms);
+          name, st.tests[i].passed ? "true" : "false", (unsigned)st.tests[i].duration_ms);
   }
   w.add("]},");
 

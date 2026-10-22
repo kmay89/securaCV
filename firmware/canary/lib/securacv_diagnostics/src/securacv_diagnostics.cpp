@@ -283,14 +283,6 @@ static bool test_uptime() {
   return (int32_t)(millis() - start) > 0;
 }
 
-static bool test_watchdog() {
-#if FEATURE_WATCHDOG
-  return true;
-#else
-  return true;
-#endif
-}
-
 /* The chain self-test, made real. The old body returned crypto_healthy —
  * a diagnostic NAMED chain_ok that never looked at the chain, so a
  * silently rewritten tail still scored green. What a device can honestly
@@ -322,6 +314,9 @@ static bool test_chain() {
 
 typedef bool (*test_fn_t)(void);
 
+/* A row with no function is listed and not probed: its result reads "not a
+ * probe" (selftest_result_t.not_a_probe) and it counts toward neither the
+ * passes nor the score. */
 struct TestDef {
   const char* name;
   test_fn_t   fn;
@@ -336,7 +331,13 @@ static const TestDef TESTS[SELFTEST_COUNT] = {
   {"wifi_ok",    test_wifi},
   {"temp_range", test_temp},
   {"uptime_ok",  test_uptime},
-  {"watchdog",   test_watchdog},
+  /* Not a probe, until it is a real one. Its old test returned true on both
+   * branches of `#if FEATURE_WATCHDOG`, so every run scored a pass nothing
+   * checked: a tenth of the health score, the fleet beacon's health byte,
+   * the BLE health characteristic and the OTA confirm gate's 50% read it.
+   * A real probe must show the task watchdog is armed for the loop task
+   * without tripping it inside a diagnostic pass. */
+  {"watchdog",   nullptr},
   {"chain_ok",   test_chain},
 };
 
@@ -419,20 +420,28 @@ uint8_t diag_run_selftest(void) {
   s_selftest.run_at_ms = millis();
   s_selftest.has_run = true;
 
+  uint8_t probes = 0;
   for (int i = 0; i < SELFTEST_COUNT; i++) {
     s_selftest.tests[i].name = TESTS[i].name;
+    s_selftest.tests[i].not_a_probe = (TESTS[i].fn == nullptr);
+    if (s_selftest.tests[i].not_a_probe) {
+      s_selftest.tests[i].passed = false;
+      s_selftest.tests[i].duration_ms = 0;
+      continue;
+    }
+    probes++;
     uint32_t start = millis();
     s_selftest.tests[i].passed = TESTS[i].fn();
     s_selftest.tests[i].duration_ms = (uint16_t)(millis() - start);
     if (s_selftest.tests[i].passed) s_selftest.passed_count++;
   }
 
-  s_selftest.health_score = (uint8_t)(
-      (uint32_t)s_selftest.passed_count * 100 / SELFTEST_COUNT);
+  s_selftest.health_score = probes == 0 ? 0 : (uint8_t)(
+      (uint32_t)s_selftest.passed_count * 100 / probes);
 
   char detail[32];
   snprintf(detail, sizeof(detail), "%u/%u (%u%%)",
-           (unsigned)s_selftest.passed_count, (unsigned)SELFTEST_COUNT,
+           (unsigned)s_selftest.passed_count, (unsigned)probes,
            (unsigned)s_selftest.health_score);
   log_health(LOG_LEVEL_INFO, LOG_CAT_SYSTEM, "Self-test complete", detail);
 

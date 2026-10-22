@@ -123,16 +123,33 @@ typedef struct {
   const char* name;
   bool        passed;
   uint16_t    duration_ms;
+  /* A row the suite lists but does not check: it reads "not a probe" on
+   * every surface, never passes or fails, and counts toward neither
+   * passed_count nor health_score. The watchdog row is one until a real
+   * probe exists (its old test returned true on both branches of its #if). */
+  bool        not_a_probe;
 } selftest_result_t;
 
 typedef struct {
   selftest_result_t tests[SELFTEST_COUNT];
-  uint8_t           passed_count;
-  uint8_t           total_count;
-  uint8_t           health_score;
+  uint8_t           passed_count;   /* probes that passed */
+  uint8_t           total_count;    /* rows in tests[], probes or not */
+  uint8_t           health_score;   /* passed_count over the probes, 0-100 */
   uint32_t          run_at_ms;
   bool              has_run;
 } selftest_report_t;
+
+/* How many of a report's rows are probes: its rows less those marked
+ * not_a_probe. health_score is passed_count over this, never over every
+ * row, so a listed row that checks nothing cannot raise it. */
+static inline uint8_t selftest_probe_count(const selftest_report_t* r) {
+  if (r == NULL) return 0;
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < r->total_count && i < SELFTEST_COUNT; i++) {
+    if (!r->tests[i].not_a_probe) n++;
+  }
+  return n;
+}
 
 /* ────────────────────────────────────────────────────────────────────────── */
 /*  FULL DIAGNOSTIC SNAPSHOT                                                 */
@@ -181,7 +198,8 @@ void diag_record_sd_write(bool success);
 void diag_record_sd_write_bytes(size_t bytes, bool success);
 
 /* Run the self-test suite. Blocks for ~2-5 seconds. Results cached
- * until next call. Returns the health score (0-100). */
+ * until next call. Returns the health score (0-100): the probes that
+ * passed, over the probes (a row marked not_a_probe is neither). */
 uint8_t diag_run_selftest(void);
 
 /* Get the cached self-test report. */

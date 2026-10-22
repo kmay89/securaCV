@@ -3650,25 +3650,30 @@ static void run_wake() {
   int n = st.total_count;
   if (n > SELFTEST_COUNT) n = SELFTEST_COUNT;
   scene::WakeProbe probes[SELFTEST_COUNT];
+  // A row the suite lists but does not check reads "not a probe" from the
+  // first frame on, never Pass or Fail.
+  auto result_of = [&st](int i) {
+    return st.tests[i].not_a_probe ? scene::ProbeState::NotProbe
+           : st.tests[i].passed    ? scene::ProbeState::Pass
+                                   : scene::ProbeState::Fail;
+  };
   for (int i = 0; i < n; ++i) {
     probes[i].label = st.tests[i].name;
-    probes[i].state = scene::ProbeState::Pending;
+    probes[i].state = st.tests[i].not_a_probe ? scene::ProbeState::NotProbe
+                                              : scene::ProbeState::Pending;
     probes[i].ms = st.tests[i].duration_ms;
   }
 
   if (!caps.ansi) {
     // ASCII floor: no cursor control — reveal all and print the block once.
-    for (int i = 0; i < n; ++i)
-      probes[i].state = st.tests[i].passed ? scene::ProbeState::Pass
-                                           : scene::ProbeState::Fail;
+    for (int i = 0; i < n; ++i) probes[i].state = result_of(i);
     scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, true);
   } else {
     scene::hide_cursor(r);
     scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, false);
     bool skipped = false;
     for (int i = 0; i < n && !skipped; ++i) {
-      probes[i].state = st.tests[i].passed ? scene::ProbeState::Pass
-                                           : scene::ProbeState::Fail;
+      probes[i].state = result_of(i);
       scene::cursor_up(r, scene::wake_height(n));
       scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, i == n - 1);
       uint32_t until = millis() + 180;
@@ -3677,9 +3682,7 @@ static void run_wake() {
       }
     }
     if (skipped) {
-      for (int j = 0; j < n; ++j)
-        probes[j].state = st.tests[j].passed ? scene::ProbeState::Pass
-                                             : scene::ProbeState::Fail;
+      for (int j = 0; j < n; ++j) probes[j].state = result_of(j);
       scene::cursor_up(r, scene::wake_height(n));
       scene::wake_frame(r, scene::TRUST_INNER, probes, n, st.health_score, true);
     }
@@ -4167,8 +4170,10 @@ static void handle_serial_commands() {
       diag_run_selftest();
       selftest_report_t st;
       if (diag_get_selftest(&st)) {
+        // Over the probes: a listed row that checks nothing (the watchdog's)
+        // is neither a pass nor a probe.
         Serial.printf("  Self-test : %u/%u probes · %u%% health\n",
-                      st.passed_count, st.total_count, st.health_score);
+                      st.passed_count, selftest_probe_count(&st), st.health_score);
       }
 #else
       Serial.println("  Self-test : diagnostics not compiled in");

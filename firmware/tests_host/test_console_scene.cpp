@@ -260,6 +260,33 @@ static void test_wake_running_frame_does_not_spoil_score() {
   CHECK(sk.s.find("probes passed") == std::string::npos); // final score hidden until done
 }
 
+// A row the suite lists but does not check (the flagship's watchdog row,
+// device-details §1.4) says so in words, [--] "not a probe", and the status
+// row counts it as neither a pass nor a probe: 8 of 9, not 9 of 10.
+static void test_wake_not_a_probe_is_worded_and_not_counted() {
+  WakeProbe p[10];
+  for (int i = 0; i < 10; ++i) p[i] = kProbes[i];
+  p[8].state = ProbeState::NotProbe;    // "Watchdog"
+  CHECK(std::string(probe_marker(ProbeState::NotProbe)) == "[--]");
+  { Sink sk;
+    Renderer r{collect, &sk, caps_ascii()};
+    wake_frame(r, TRUST_INNER, p, 10, 88, /*done=*/true);
+    for (unsigned char c : sk.s) { CHECK(c != 0x1b); CHECK(c < 0x80); }
+    auto lines = split_crlf(sk.s);
+    size_t w = 0;
+    for (auto& ln : lines) { if (ln.empty()) continue; if (!w) w = ln.size(); CHECK(ln.size() == w); }
+    CHECK(sk.s.find("[--] Watchdog") != std::string::npos);
+    CHECK(sk.s.find("not a probe") != std::string::npos);
+    CHECK(sk.s.find("[OK] Watchdog") == std::string::npos);
+    CHECK(sk.s.find("8/9 probes passed") != std::string::npos); }
+  { Sink sk;   // while running, the row is already "not a probe", and uncounted
+    Renderer r{collect, &sk, caps_ascii()};
+    for (int i = 0; i < 10; ++i) if (i != 8) p[i].state = ProbeState::Pending;
+    wake_frame(r, TRUST_INNER, p, 10, 88, /*done=*/false);
+    CHECK(sk.s.find("0/9 reported") != std::string::npos);
+    CHECK(sk.s.find("not a probe") != std::string::npos); }
+}
+
 static void test_wake_cursor_control_is_gated() {
   // ANSI tier: cursor moves are emitted; ASCII tier: nothing (can't reposition).
   { Sink sk; Renderer r{collect, &sk, caps_full(90, 30)};
@@ -348,6 +375,7 @@ int main() {
   test_wake_markers_carry_words();
   test_wake_ascii_tier_is_safe_and_aligned();
   test_wake_running_frame_does_not_spoil_score();
+  test_wake_not_a_probe_is_worded_and_not_counted();
   test_wake_cursor_control_is_gated();
   test_wake_full_tier_lights_up();
 

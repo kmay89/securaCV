@@ -1,11 +1,12 @@
 /*
  * SecuraCV — the animated "wake" (host-testable, no Arduino).
  *
- * The animation with a job: instead of eye-candy, the boot self-test's ten
+ * The animation with a job: instead of eye-candy, the boot self-test's
  * probes light up [..] -> [OK]/[!!] one at a time, so the animation *is* the
  * health check. It reveals the REAL per-probe results (name + pass/fail +
  * duration) from diag_get_selftest(), then converges to the static identity
- * card. On a confirmed ANSI terminal each reveal repaints the fixed-height block
+ * card. A row the suite lists but does not check (the watchdog's, until it has
+ * a real probe) reads [--] "not a probe" and is counted as neither. On a confirmed ANSI terminal each reveal repaints the fixed-height block
  * in place (cursor-up + overwrite — every row is a fixed width, so no clearing
  * is needed and nothing tears). On the ASCII floor there is no cursor control,
  * so it degrades to printing the finished checklist once. Both end identically.
@@ -23,7 +24,9 @@
 
 namespace scene {
 
-enum class ProbeState : uint8_t { Pending = 0, Running, Pass, Fail };
+// NotProbe: a row listed but not checked. It never passes or fails, and the
+// status row's counts leave it out.
+enum class ProbeState : uint8_t { Pending = 0, Running, Pass, Fail, NotProbe };
 
 struct WakeProbe {
   const char* label;
@@ -39,6 +42,7 @@ inline const char* probe_marker(ProbeState s) {
     case ProbeState::Running: return "[~~]";
     case ProbeState::Pass:    return "[OK]";
     case ProbeState::Fail:    return "[!!]";
+    case ProbeState::NotProbe: return "[--]";
   }
   return "[..]";
 }
@@ -53,12 +57,15 @@ inline int probe_color(ProbeState s) {
 }
 
 // One probe row: "[OK] NVS read/write                      12ms" — marker + label
-// left, duration right, colored by state.
+// left, duration right, colored by state. A row that is not a probe says so
+// where a duration would be: "[--] Watchdog                 not a probe".
 inline void probe_row(const Renderer& r, int inner, const WakeProbe& p) {
   const int contentw = inner - 2;
   char ms[16];
   if (p.state == ProbeState::Pass || p.state == ProbeState::Fail)
     snprintf(ms, sizeof ms, "%ums", (unsigned)p.ms);
+  else if (p.state == ProbeState::NotProbe)
+    snprintf(ms, sizeof ms, "%s", "not a probe");
   else ms[0] = '\0';
   const int mslen = (int)strlen(ms);
 
@@ -78,11 +85,14 @@ inline int wake_height(int n) { return n + 3; }
 
 // Draw the whole block. `done` freezes the title/status; until then the status
 // shows how many have reported (never the final score, so the reveal isn't
-// spoiled). Health is the real report score, shown only when done.
+// spoiled). Health is the real report score, shown only when done. The counts
+// are over the probes: a NotProbe row is drawn, and counted in neither.
 inline void wake_frame(const Renderer& r, int inner, const WakeProbe* probes,
                        int n, int health, bool done) {
-  int reported = 0, passed = 0;
+  int reported = 0, passed = 0, probe_rows = 0;
   for (int i = 0; i < n; ++i) {
+    if (probes[i].state == ProbeState::NotProbe) continue;
+    probe_rows++;
     if (probes[i].state == ProbeState::Pass) { reported++; passed++; }
     else if (probes[i].state == ProbeState::Fail) reported++;
   }
@@ -92,10 +102,10 @@ inline void wake_frame(const Renderer& r, int inner, const WakeProbe* probes,
   char st[96];
   int sc;
   if (done) {
-    snprintf(st, sizeof st, "Health    %d%%   %d/%d probes passed", health, passed, n);
+    snprintf(st, sizeof st, "Health    %d%%   %d/%d probes passed", health, passed, probe_rows);
     sc = (health >= 100) ? COL_MOSS : COL_AMBER;
   } else {
-    snprintf(st, sizeof st, "Health    checking...   %d/%d reported", reported, n);
+    snprintf(st, sizeof st, "Health    checking...   %d/%d reported", reported, probe_rows);
     sc = COL_DIM;
   }
   row(r, inner, sc, st);

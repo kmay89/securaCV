@@ -198,8 +198,8 @@ static diag_snapshot_t typical() {
   s.selftest.health_score = 90;
   s.selftest.passed_count = 1;
   s.selftest.total_count = 2;
-  s.selftest.tests[0] = {"nvs_rw", true, 4};
-  s.selftest.tests[1] = {"sd_card", false, 120};
+  s.selftest.tests[0] = {"nvs_rw", true, 4, false};
+  s.selftest.tests[1] = {"sd_card", false, 120, false};
   s.uptime_sec = 86400;
   s.boot_count = 12;
   s.reset_reason = 1;
@@ -253,7 +253,7 @@ static void test_the_body_keeps_the_routes_keys_and_adds_the_counters() {
 
   s = typical();
   s.selftest.total_count = SELFTEST_COUNT;
-  for (int i = 0; i < SELFTEST_COUNT; ++i) s.selftest.tests[i] = {"t", true, (uint16_t)i};
+  for (int i = 0; i < SELFTEST_COUNT; ++i) s.selftest.tests[i] = {"t", true, (uint16_t)i, false};
   s.selftest.tests[3].name = nullptr;
   const std::string all_rows = body(s, nullptr);
   size_t rows = 0;
@@ -275,7 +275,9 @@ static void test_the_widest_body_fits_the_routes_buffer() {
   /* The longest self-test name the firmware registers ({"name", fn} rows
    * in securacv_diagnostics.cpp's table). */
   const std::string diag_cpp = read_file(CANARY_DIAG_CPP);
-  const std::regex row_re("\\{\\s*\"([a-z0-9_]+)\"\\s*,\\s*test_\\w+\\s*\\}");
+  /* A row is {"name", test_fn}, or {"name", nullptr} for one the suite lists
+   * and does not probe (the watchdog's). */
+  const std::regex row_re("\\{\\s*\"([a-z0-9_]+)\"\\s*,\\s*(?:test_\\w+|nullptr)\\s*\\}");
   size_t longest = 0;
   size_t registered = 0;
   for (std::sregex_iterator it(diag_cpp.begin(), diag_cpp.end(), row_re), end; it != end; ++it) {
@@ -292,7 +294,7 @@ static void test_the_widest_body_fits_the_routes_buffer() {
   s.selftest.has_run = false;
   s.selftest.total_count = SELFTEST_COUNT;
   const std::string name(longest, 'n');
-  for (int i = 0; i < SELFTEST_COUNT; ++i) s.selftest.tests[i] = {name.c_str(), false, 0xFFFF};
+  for (int i = 0; i < SELFTEST_COUNT; ++i) s.selftest.tests[i] = {name.c_str(), false, 0xFFFF, false};
   const std::string firmware(32, '9');
   CsiEventEgressStats wide;
   std::memset(&wide, 0xFF, sizeof(wide));
@@ -311,6 +313,46 @@ static void test_the_widest_body_fits_the_routes_buffer() {
         "one that fits gets it all");
   CHECK(diagnostics_json::build(s, firmware.c_str(), egress.c_str(), nullptr, 64) == 0,
         "no buffer: nothing");
+}
+
+/* ── A row that is not a probe (device-details §1.4) ─────────────────────── */
+
+/* The watchdog row's old test returned true on both branches of its #if, so
+ * every run counted a pass nothing checked: a tenth of the health score. The
+ * table now lists it with no function; the runner marks it not_a_probe, the
+ * body says so in place of passed/ms, and `total` counts the probes. */
+static void test_a_row_that_is_not_a_probe_says_so() {
+  std::printf("-- §1.4: the watchdog row is listed, not probed, and counted as neither\n");
+  const std::string diag_cpp = read_file(CANARY_DIAG_CPP);
+  const std::regex watchdog_re("\\{\\s*\"watchdog\"\\s*,\\s*nullptr\\s*\\}");
+  CHECK(std::regex_search(diag_cpp, watchdog_re),
+        "securacv_diagnostics.cpp lists the watchdog row with no probe function");
+  CHECK(diag_cpp.find("test_watchdog") == std::string::npos,
+        "no test_watchdog() that answers true without checking anything");
+
+  diag_snapshot_t s = typical();
+  s.selftest.total_count = 3;
+  s.selftest.passed_count = 1;
+  s.selftest.health_score = 50;
+  s.selftest.tests[2] = {"watchdog", false, 0, true};
+  CHECK(selftest_probe_count(&s.selftest) == 2, "two of the three rows are probes");
+  const std::string got = body(s, nullptr);
+  CHECK(got.find("\"passed\":1,\"total\":2,\"tests\":[") != std::string::npos,
+        "total counts the probes, so passed of total is the score's own fraction");
+  CHECK(got.find(",{\"name\":\"watchdog\",\"probe\":false}]") != std::string::npos,
+        "the row says probe:false, with no passed and no ms");
+  CHECK(got.find("{\"name\":\"watchdog\",\"passed\"") == std::string::npos,
+        "the row never reads as a pass or a fail");
+  CHECK(got.find("{\"name\":\"nvs_rw\",\"passed\":true,\"ms\":4},"
+                 "{\"name\":\"sd_card\",\"passed\":false,\"ms\":120},") != std::string::npos,
+        "the probe rows are spelled as they always were");
+
+  s.selftest.tests[0].not_a_probe = true;
+  s.selftest.tests[1].not_a_probe = true;
+  CHECK(selftest_probe_count(&s.selftest) == 0, "a report with no probe counts none");
+  CHECK(selftest_probe_count(nullptr) == 0, "no report: none");
+  s.selftest.total_count = 200;
+  CHECK(selftest_probe_count(&s.selftest) <= SELFTEST_COUNT, "a count past SELFTEST_COUNT reads no row past the array");
 }
 
 /* ── The handler ───────────────────────────────────────────────────────── */
@@ -393,6 +435,7 @@ int main() {
   test_the_counters_spell_the_healths_names();
   test_the_body_keeps_the_routes_keys_and_adds_the_counters();
   test_the_widest_body_fits_the_routes_buffer();
+  test_a_row_that_is_not_a_probe_says_so();
   test_the_handler_builds_with_the_builder();
   if (g_fail) {
     std::printf("test_canary_diagnostics: %d of %d checks FAILED\n", g_fail, g_checks);
