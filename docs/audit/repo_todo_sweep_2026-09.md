@@ -1871,11 +1871,13 @@ so — see D2 below.)
     declaration holds its initial value), and that handler, whose sweep
     expires a tap nobody took, runs on every pass of `loop()`, its call the
     bare statement there with nothing before it in `loop()` able to leave
-    (outside a lambda); no server the core brings is named, nor
+    (outside a lambda); none of these servers the core brings is named, nor
     ESPAsyncWebServer's (`WebServer`, `HTTPUpdateServer`, `ArduinoOTA`, the
     raw `WiFiServer`, core 3.x's `NetworkServer`, `WiFiProv`, whose SoftAP
-    scheme raises an access point of its own, and `AsyncWebServer`), and a
-    registry library is held where the build fetches it (below); the setup
+    scheme raises an access point of its own, with the ESP-IDF provisioning
+    manager it wraps, `wifi_prov_mgr_*` on core 2.x and `network_prov_mgr_*`
+    on 3.x, and `AsyncWebServer`), and a registry library is held where the
+    build fetches it (below); the setup
     state and the stored
     first-boot flag (`NVS_KEY_SETUP_OK`) are named only by the setup lib's
     pinned functions, the credentials reset that also clears that flag runs
@@ -1929,17 +1931,26 @@ so — see D2 below.)
     response file (`@file`), a build script (`extra_scripts`, or PlatformIO's
     `!command` dynamic value that runs a command and splices its stdout into
     the flags), a local library or a moved source folder fail: each is code,
-    or a binding of a name, that no rule would read. Every library the build
-    fetches is a `REGISTRY_LIBS` row with its reason (the four the flag files
-    name today: `rweather/Crypto`, `bblanchon/ArduinoJson`,
-    `knolleary/PubSubClient`, `h2zero/NimBLE-Arduino`), or a library under
-    the tree by its name: each `lib_deps` entry in the flag files (one a line
-    or comma-separated, an interpolated `${section.option}` read where the
-    flag files set it) and each dependency a library manifest under the tree
-    declares (`library.json`'s `"dependencies"`, `library.properties`'
-    `depends=`). A library no row names, a bare registry name or one fetched
-    by URL fails until a reviewer adds its row (`library_problems`), as
-    `PUBLIC_ALLOWLIST`'s routes are added.
+    or a binding of a name, that no rule would read. Every library `lib_deps`
+    or a library manifest under the tree names is a `REGISTRY_LIBS` row with
+    its reason (the four the flag files name today: `rweather/Crypto`,
+    `bblanchon/ArduinoJson`, `knolleary/PubSubClient`,
+    `h2zero/NimBLE-Arduino`), or a library under the tree by its name: each
+    entry of a `lib_deps` value in the flag files (under that key or
+    `lib_use`, `lib_force` or `lib_install`, the older names PlatformIO still
+    reads as it, in any case and at any indent, as configparser reads the
+    ini; one a line, or split on `, ` in a one-line value, as PlatformIO
+    splits it; an interpolated `${section.option}` read where the flag files
+    set it) and each dependency a library manifest under the tree declares
+    (`library.json`'s `"dependencies"`, `library.properties`' `depends=`).
+    A row is an `owner/name`: a library no row names fails until a reviewer
+    adds its row (`library_problems`), as `PUBLIC_ALLOWLIST`'s routes are
+    added, and a bare registry name or a URL (a version holding an `@`, a
+    `:` or a `/`, which PlatformIO reads as one) fails whatever the rows say.
+    A row vouches for the dependencies its library declares, which the check
+    does not read; the four rows' libraries declare none (no dependency in
+    the manifests of Crypto 0.4.0, ArduinoJson 7.4.3, PubSubClient 2.8 and
+    NimBLE-Arduino 2.5.1).
   - **Registrations.** Every registration call, or the call taken as a
     pointer, hands over an `httpd_uri_t` initializer the parser reads, so a
     route assigned field by field, or with a cast `.method` or a lambda
@@ -1963,12 +1974,12 @@ so — see D2 below.)
   rule, which replaces the old `auth_get_token` loop (rule 5 keeps its
   emitter-behind-the-Host half). A function defined twice (an `#if` body
   and its `#else` one) is every one of its bodies, whatever its head, in
-  this rule, the route-gate rule and the Host-first rule. 290 planted
-  fixtures (265 source edits, 25 table edits), with the self-test's lexer,
+  this rule, the route-gate rule and the Host-first rule. 292 planted
+  fixtures (267 source edits, 25 table edits), with the self-test's lexer,
   flag-file, build-input, library, reach, header, file-kind, route-form,
   symbol-binding and raw-literal cases, each fail for their named reason
   before the tree is read; the tree passes with its 83 registrations, in
-  about 19 s. The `/*`
+  about 20 s. The `/*`
   allowlist reasons now say what the
   port-80 redirect does (a probe path gets the probe's plain answer or the
   TLS hint, else 307, or 500 on an oversize target).
@@ -2002,10 +2013,15 @@ so — see D2 below.)
   otherwise followed, and a
   held name that is an ordinary word in the shared code (`begin`, `check`,
   `s_active`) is not read there, a library the build links is not read (a
-  registry one is held to `REGISTRY_LIBS` by its name, and the core only by
-  the spellings the census names, so a server or an access point the core
-  can start under another name, a server written on the raw socket API or an
-  ESP-IDF component such as `esp_local_ctrl`, is not seen), the linker is not
+  registry one is held to `REGISTRY_LIBS` by its name, its row vouching for
+  the dependencies it declares, and the core only by the spellings the
+  census names, so a server or an access point the core can start under
+  another name is not seen: a server written on the raw socket API, the
+  core's UDP classes, `WiFiUDP`, `AsyncUDP` and `DNSServer`, of which the
+  flagship's own captive DNS responder is a `WiFiUDP`, its mDNS and NetBIOS
+  responders, of which the flagship runs mDNS, a BLE GATT server, the core's
+  `BLEServer` or NimBLE's, which the flagship's status service runs, or an
+  ESP-IDF component such as `esp_local_ctrl`), the linker is not
   read (a flag that would bind a symbol fails, in the spellings the
   build-input rule names), a
   value is not checked but `SETUP_TIMEOUT_MS`'s (a `memset` of the private key
@@ -2531,6 +2547,73 @@ so — see D2 below.)
   unimplemented or blind to lambdas, `AsyncWebServer`, `WiFiServer`,
   `NetworkServer` or `WiFiProv` dropped from the server row, and a
   `REGISTRY_LIBS` row added for WiFiManager), the self-test refuses all 19.
+  Host-tested; not run on a device. No new number.
+  *Review (2026-10-22, the PR's eighth round):* held to the same threat
+  model, it found the seventh round's library rule reading the ini more
+  narrowly than PlatformIO does, three self-test gaps in that rule, one
+  overclaim in the docs (which a nit named too) and five more nits (the
+  comma split is in the first bullet). Each now fails, or is stated:
+  - an env written as an indented block, `[env:recovery]` with its
+    `extends`, `build_flags` and `lib_deps` keys indented by a tab (or two
+    spaces) and `tzapu/WiFiManager @ ^2.0.17` in its `lib_deps`: configparser
+    reads an option at any indent (each line indented no deeper than the
+    open key is a new option, each deeper one its value), and PlatformIO
+    6.2.0's `ProjectConfig` returned WiFiManager among the env's
+    `lib_deps`, while the rule read a key only at column 0 and printed
+    "83 registrations checked". So did `Lib_Deps` (configparser lowercases a
+    key) and `lib_install`, `lib_use` and `lib_force` (older names
+    PlatformIO's `ProjectOptions` still read as `lib_deps`, with only a
+    deprecation warning). `_ini_options` now reads the ini as configparser
+    does (the indent rule, an inline `;` or `#` comment, a key lowercased),
+    `library_problems` takes all four keys (`LIB_DEPS_KEYS`), and a value is
+    split as PlatformIO's `parse_multi_values` splits it, one a line or on
+    `, ` in a one-line value, so `bblanchon/ArduinoJson @ >=7.0.0,<8.0.0` is
+    one entry where it failed as an unknown library `<8.0.0` (an
+    interpolated one-line value is split where it lands, which may split
+    more than PlatformIO does, never less). On 13 `lib_deps` spellings the
+    entries match `ProjectConfig.get()`'s, but one where that wider split
+    reads more; on about 11,000 generated ini texts `_ini_options` reads
+    each option's value lines as configparser does;
+  - no self-test drove `library_manifests()`: main() passing `manifests={}`,
+    reading only `library.properties`, or only the top folder of each root
+    left it green. A temp-dir case now writes a `library.json` and a nested
+    `library.properties` and feeds `library_manifests()`'s output to the
+    rule, and the docstring's limits name `manifests=` among main()'s
+    wiring lines, which no self-test runs;
+  - nothing held a row's owner (`thingsboard/PubSubClient`, a fork, passed
+    once only the name was compared) or the URL guard (`rweather/Crypto @
+    https://...` passed once it was dropped). Both are self-test cases, and
+    the guard now follows PlatformIO's `PackageSpec`: a version holding an
+    `@`, a `:` or a `/` is a URL (an scp-style `git@github.com:...` too,
+    which the `://` test let through under a row's owner/name), in
+    `lib_deps` and in a manifest's version alike;
+  - the docs said no server the core brings is named, though the tree names
+    two: the flagship's captive DNS responder is a `WiFiUDP`, and it runs
+    mDNS. They now say none of the listed servers is named, and the
+    not-seen sentence names the core's UDP classes (`WiFiUDP`, `AsyncUDP`,
+    `DNSServer`), its mDNS and NetBIOS responders and a BLE GATT server (the
+    core's `BLEServer`, or NimBLE's, which the status service runs) with the
+    raw socket API and `esp_local_ctrl`;
+  - the nits: the server row names the ESP-IDF provisioning manager
+    `WiFiProv` wraps (`wifi_prov_mgr_*` on core 2.0.17, `network_prov_mgr_*`
+    on 3.3.8), each with a plant (IDF's `wifi_prov_mgr` example, ported, with
+    no service key, raised an open SoftAP and passed); a row now vouches for
+    its library's own dependencies, which PlatformIO fetches and the check
+    does not read; the docs, the failure message and the code state one rule
+    (a row is an `owner/name`, a bare-name row is itself a failure, and no
+    row admits a bare registry name or a URL); and the server row's comment
+    says an angled `#include <WebServer.h>` is a mention, a quoted one or
+    `<ESPAsyncWebServer.h>` not.
+  Two plants and the self-test's new library cases were added: 292 planted
+  fixtures (267 source, 25 table). Of 20 checker mutants that each undo one
+  of these fixes (the indent rule, the lowercased key or reference, the
+  older key names, an empty line ending a value, an inline comment kept,
+  the split on every comma or on none for an interpolated value, a trailing
+  empty line kept, the option read on the unstripped line, the owner
+  ignored, any version taken, a manifest's version a URL only by `://`, a
+  bare-name row unnamed or admitting a bare spec, `library_manifests()`
+  reading one manifest name or one folder level, and either provisioning
+  manager dropped from the server row), the self-test refuses all 20.
   Host-tested; not run on a device. No new number.
 - [x] **F339 [code] canary-wap: other bearer compares stay silent beside the
   lockout.** `csi_integration.cpp`'s `CSI_AUTH_OR_RETURN`

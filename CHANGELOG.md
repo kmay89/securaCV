@@ -121,9 +121,10 @@
     `loop()` above it (its sweep is what expires a tap nobody took); a server
     the core brings (`WebServer`, `HTTPUpdateServer`, `ArduinoOTA`, the raw
     `WiFiServer` or core 3.x's `NetworkServer`, and `WiFiProv`, whose SoftAP
-    scheme raises an access point of its own) or ESPAsyncWebServer's
-    (`AsyncWebServer`) named at all, whose routes, firmware push or access
-    point no rule reads; the setup state, or
+    scheme raises an access point of its own, with the ESP-IDF provisioning
+    manager it wraps, `wifi_prov_mgr_*` on core 2.x and `network_prov_mgr_*`
+    on 3.x) or ESPAsyncWebServer's (`AsyncWebServer`) named at all, whose
+    routes, firmware push or access point no rule reads; the setup state, or
     the stored first-boot flag it is read from (`NVS_KEY_SETUP_OK`), written
     outside the setup lib's pinned functions, the credentials reset that
     clears that flag run by anything but the BOOT hold, or the setup
@@ -200,13 +201,19 @@
     response file (`@file`), a build script (`extra_scripts`, or a `!command`
     dynamic value that runs a command and splices its stdout into the flags),
     a local library or a moved source folder;
-  - a library the build fetches, in a `lib_deps` entry of the flag files (one
-    a line or comma-separated, or interpolated from another option) or as a
-    dependency a library manifest under the tree declares, that no
-    `REGISTRY_LIBS` row names. Each row gives its reason, and the four rows
-    are the libraries the flag files name today (`rweather/Crypto`,
-    `bblanchon/ArduinoJson`, `knolleary/PubSubClient`,
-    `h2zero/NimBLE-Arduino`); a bare registry name or a URL is no row.
+  - a library the build fetches, as an entry of a `lib_deps` value in the
+    flag files (under that key or `lib_use`, `lib_force` or `lib_install`,
+    the older names PlatformIO still reads as it, in any case and at any
+    indent, as configparser reads the ini; one a line, or split on `, ` in a
+    one-line value, as PlatformIO splits it; or interpolated from another
+    option) or as a dependency a library manifest under the tree declares,
+    that no `REGISTRY_LIBS` row names. Each row is an `owner/name` with its
+    reason, and the four rows are the libraries the flag files name today
+    (`rweather/Crypto`, `bblanchon/ArduinoJson`, `knolleary/PubSubClient`,
+    `h2zero/NimBLE-Arduino`); no row admits a bare registry name or a URL (a
+    version holding an `@`, a `:` or a `/`, which PlatformIO reads as one),
+    and a row vouches for the dependencies its library declares, which are
+    not read (the four declare none).
     `tzapu/WiFiManager` added to `lib_deps` for a recovery portal passed
     every rule: its `autoConnect()`, handed no AP password, raises an open
     SoftAP and serves a firmware upload and `/erase` that no rule reads;
@@ -356,9 +363,10 @@
   `autoConnect()`, handed no AP password, raises an open SoftAP and serves a
   firmware upload and `/erase`, passed the sixth version, as did the core's
   raw `WiFiServer` (`NetworkServer` on core 3.x) and `WiFiProv`, whose SoftAP
-  scheme raises an access point of its own. Every library the build fetches
-  is now a `REGISTRY_LIBS` row with its reason (or a library under the tree),
-  and the server row names the core's three. It also found the docs stating
+  scheme raises an access point of its own. Every library `lib_deps` or a
+  manifest under the tree names is now a `REGISTRY_LIBS` row with its reason
+  (or a library under the tree), and the server row names the core's three.
+  It also found the docs stating
   the macro rule's flag clause as complete, though gcc's `--define-macro`
   (the long form of `-D`) passes it; that is a deliberate spelling, so the
   threat paragraphs now name the clause as defense in depth and the other
@@ -368,11 +376,32 @@
   nowhere says so, and two of the ledger's lists are complete. Of 19 checker
   mutants that each undo one of these fixes or weaken the new table, the
   self-test refuses all 19.
+  Its eighth review found the library rule reading the ini more narrowly than
+  PlatformIO does: the same `tzapu/WiFiManager` entry passed under an
+  indented `lib_deps` key (configparser reads an option at any indent, so an
+  env written as an indented block is read), under `Lib_Deps` (it lowercases
+  a key) and under `lib_install`, `lib_use` or `lib_force` (older names
+  PlatformIO still reads as `lib_deps`). The rule now reads the ini as
+  configparser does, takes all four keys, and splits a value as PlatformIO
+  does, so a version range (`>=7.0.0,<8.0.0`) is one entry rather than an
+  unknown library `<8.0.0`; a version holding an `@`, a `:` or a `/` is a
+  URL, as PlatformIO reads it, and a row is an `owner/name`, which no bare
+  name or URL matches. It also found no self-test driving
+  `library_manifests()`, a row's owner or the URL guard, and the docs saying
+  no server the core brings is named, though the flagship's own captive DNS
+  responder is a `WiFiUDP` and it runs mDNS: they now say which servers the
+  row names, and name the core's UDP classes, its responders and a BLE GATT
+  server as unseen. And it carried the nits: the server row names the ESP-IDF
+  provisioning manager `WiFiProv` wraps, a row vouches for its library's own
+  dependencies (the four declare none), the docs state one rule for a bare
+  name and a URL, and the server row's comment says which `#include`
+  spellings are a mention. Of 20 checker mutants that each undo one of these
+  fixes, the self-test refuses all 20.
   The head parser names a constructor
   for its class (it named `ScvNetworkManager`'s body after its last
   initializer, `m_peers_last_browse_ms`), a member as `Class::name`, and a
   function whose head ends in `noexcept`, `override`, `final`, a member's
-  `const` or a trailing return type. 290 planted fixtures (265 source, 25
+  `const` or a trailing return type. 292 planted fixtures (267 source, 25
   table), with the self-test's lexer, flag-file, build-input, library, reach,
   header, file-kind, route-form, symbol-binding and raw-literal cases, each
   fail for their named reason before the tree is read; they refuse each of
@@ -389,7 +418,7 @@
   ran), so it is an injector the build-input rule does not read, as are
   `--for-linker`, `--for-assembler` and `--define-macro`; they stay unread,
   deliberate spellings outside the threat model (the sixth review).
-  The tree passes with its 83 registrations in about 19 s. The threat model
+  The tree passes with its 83 registrations in about 20 s. The threat model
   is a careless or mistaken firmware edit (a refactor, a new route, a new
   feature, a moved line, a widened helper, a new file), not a deliberate
   attempt to evade the check (preprocessor tricks aimed at it, token pasting,
@@ -407,10 +436,15 @@
   flagship reaches are read for their `#define` lines, their asm and symbol
   bindings, and the names the check holds (but `INCLUDE_COMMON_WORDS`), not
   followed as code, a library the build links is not read (a registry one is
-  held to `REGISTRY_LIBS` by its name, the core only by the spellings the
-  census names, so a server or an access point the core can start under
-  another name, on the raw socket API or through an ESP-IDF component such as
-  `esp_local_ctrl`, is not seen), the linker is not read (a flag that would
+  held to `REGISTRY_LIBS` by its name, its row vouching for the dependencies
+  it declares, the core only by the spellings the census names, so a server
+  or an access point the core can start under another name is not seen: one
+  on the raw socket API, the core's UDP classes, `WiFiUDP`, `AsyncUDP` and
+  `DNSServer`, of which the flagship's own captive DNS responder is a
+  `WiFiUDP`, its mDNS and NetBIOS responders, of which the flagship runs
+  mDNS, a BLE GATT server, the core's `BLEServer` or NimBLE's, which the
+  flagship's status service runs, or an ESP-IDF component such as
+  `esp_local_ctrl`), the linker is not read (a flag that would
   bind a symbol fails instead, in the spellings the build-input rule names),
   an NVS record
   is not followed under a key built at run time or through a walk of the

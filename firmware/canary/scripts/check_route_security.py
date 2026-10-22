@@ -146,15 +146,20 @@ every other gate), and the premise the last one stands on:
     path, `-Xpreprocessor`/`-Wp,`, `-Xassembler`/`-Wa,`), a response file
     (`@file`), a build script, a local library, a moved source folder or
     PlatformIO's `!command` dynamic value (a command run at build time whose
-    stdout becomes flags). Every library the build fetches is a REGISTRY_LIBS
-    row with its reason, or a library under ROOTS by its name
-    (library_problems: each lib_deps entry in the flag files, an
-    interpolated `${section.option}` read where they set it, and each
-    dependency a library manifest under ROOTS declares), so a library that
-    raises its own access point or serves its own routes (WiFiManager's
-    autoConnect(), handed no AP password, raises an open SoftAP and serves a
-    firmware upload), a bare registry name or a URL fails until a reviewer
-    adds its row.
+    stdout becomes flags). Every library lib_deps or a library manifest
+    under ROOTS names is a REGISTRY_LIBS row with its reason, or a library
+    under ROOTS by its name (library_problems: each entry of a lib_deps value
+    in the flag files, under that key or an older name PlatformIO reads as it
+    (`lib_use`, `lib_force`, `lib_install`), in any case and at any indent,
+    as configparser reads the ini, an interpolated `${section.option}` read
+    where they set it, split as PlatformIO splits it; and each dependency a
+    library manifest under ROOTS declares), so a library that raises its own
+    access point or serves its own routes (WiFiManager's autoConnect(),
+    handed no AP password, raises an open SoftAP and serves a firmware
+    upload) fails until a reviewer adds its row. A row is an `owner/name` and
+    vouches for the dependencies its library declares, which are not read
+    (the four rows' libraries declare none); no row admits a bare registry
+    name or a URL.
     Every reader is named: an accessor in its home (SECRET_ACCESSORS), an
     emitter in its home carrying exactly what TOKEN_EMITTERS says, its
     reading statements pinned (EMITTER_STATEMENTS), a comparer reading only
@@ -256,13 +261,14 @@ every other gate), and the premise the last one stands on:
     setter and /api/status), its declaration holding its initial value, and
     that handler, whose sweep expires a tap nobody took, runs on every pass
     of loop(), its call there the bare statement at loop()'s own level with
-    nothing before it in loop() able to leave (outside a lambda); no server
-    the core brings is named, nor ESPAsyncWebServer's (Arduino's WebServer,
-    HTTPUpdateServer and ArduinoOTA, the raw WiFiServer, NetworkServer on
-    core 3.x, WiFiProv, whose SoftAP scheme raises an access point of its
-    own, and AsyncWebServer: routes, a firmware push or an access point no
-    rule reads), and a registry library is held where the build fetches it
-    (REGISTRY_LIBS, above); the setup state (s_active, s_first_boot,
+    nothing before it in loop() able to leave (outside a lambda); none of
+    these servers the core brings is named, nor ESPAsyncWebServer's
+    (Arduino's WebServer, HTTPUpdateServer and ArduinoOTA, the raw
+    WiFiServer, NetworkServer on core 3.x, WiFiProv, whose SoftAP scheme
+    raises an access point of its own, with the ESP-IDF provisioning manager
+    it wraps, and AsyncWebServer: routes, a firmware push or an access point
+    no rule reads), and a registry library is held where the build fetches
+    it (REGISTRY_LIBS, above); the setup state (s_active, s_first_boot,
     s_started_ms)
     and the stored flag first boot is read from (NVS_KEY_SETUP_OK) are named
     only by the setup lib's pinned functions, the credentials reset that also
@@ -350,13 +356,17 @@ names above, so their
 code is otherwise not followed, and a held name that is also an ordinary
 word there (INCLUDE_COMMON_WORDS: begin, check, s_active and the like) is
 not read in them; a library the build links is not read: the registry ones
-are held to REGISTRY_LIBS by name, each row with its reason, and the core is
-held only by the spellings the census names, so a server or an access point
-the core can start under another name (a server written on the raw socket
-API, an ESP-IDF component such as esp_local_ctrl that starts one of its own)
-is not seen; the linker is not read (a flag that would bind a symbol fails
-instead, in the spellings _BUILD_INPUT names: `-L`/`-l` and the driver's long
-aliases are not among them); a value is not
+are held to REGISTRY_LIBS by name, each row with its reason (and vouching for
+its library's own dependencies), and the core is held only by the spellings
+the census names, so a server or an access point the core can start under
+another name is not seen (a server written on the raw socket API, the core's
+UDP classes, WiFiUDP, AsyncUDP and DNSServer, of which the flagship's own
+captive DNS responder is a WiFiUDP, its mDNS and NetBIOS responders, of which
+the flagship runs mDNS, a BLE GATT server, the core's BLEServer or NimBLE's,
+which the flagship's status service runs, and an ESP-IDF component such as
+esp_local_ctrl that starts one of its own); the linker is not read (a flag
+that would bind a symbol fails instead, in the spellings _BUILD_INPUT names:
+`-L`/`-l` and the driver's long aliases are not among them); a value is not
 checked, only its spelling, but SETUP_TIMEOUT_MS's (a `memset` of the private key just before
 a mint passes, and both credentials would become HMACs of a zero key over
 public inputs; the values
@@ -395,13 +405,16 @@ an edit to that glue updates its row in the same review (the failure prints
 the row as it now is, so the update is mechanical). Each rule function is
 self-tested with its own fixtures, but main()'s own plumbing is not run by a
 self-test: a one-token edit to main() that dropped `+ reach_failures` from
-the failure list, or passed `includes={}` to check_bearer_only_answers rather
-than build_reach's output, would leave the self-test green (the real tree has
-no reach failure and clean headers). The composition that mutation would hide
-— build_reach's `includes` fed to check_bearer_only_answers, where a header
-reader is caught — is held by a two-file fixture in the self-test; main()'s
-two wiring lines themselves are not, as the threat model here is a careless
-firmware edit, not a malicious edit to this checker (which could `return 0`).
+the failure list, or passed `includes={}` (or `manifests={}`) to
+check_bearer_only_answers rather than build_reach's (or library_manifests')
+output, would leave the self-test green (the real tree has no reach failure,
+clean headers and no manifest dependency that fails). The
+compositions those mutations would hide — build_reach's `includes` fed to
+check_bearer_only_answers, where a header reader is caught, and
+library_manifests' output fed to it, where a manifest's dependency is held —
+are each held by a temp-dir fixture in the self-test; main()'s three wiring
+lines themselves are not, as the threat model here is a careless firmware
+edit, not a malicious edit to this checker (which could `return 0`).
 
 Run from the repo root (CI: firmware.yml job "Mesh + Scout Host Tests",
 step "Check canary (PIO) route security", beside the WAP's audit):
@@ -2221,17 +2234,25 @@ GATE_CALL_SITES = {
     # WebServer, the HTTPUpdateServer firmware push, ArduinoOTA, the raw
     # WiFiServer of the SimpleWiFiServer idiom, which core 3.x calls
     # NetworkServer, and WiFiProv, whose SoftAP scheme raises an access point
-    # of its own and serves its provisioning over HTTP), or ESPAsyncWebServer's,
-    # would serve routes, a firmware upload or an access point that no rule
-    # reads: none is named, in a function or outside one (an object of one
-    # declared at namespace scope, or its #include, is a mention, so the row
-    # reads every mention, as a variable's does). A registry library is held
-    # where the build fetches it instead (REGISTRY_LIBS); a server written on
-    # the raw socket API, or an ESP-IDF component that starts one of its own
-    # (esp_local_ctrl), is not named here.
+    # of its own and serves its provisioning over HTTP, with the ESP-IDF
+    # provisioning manager it wraps, wifi_prov_mgr_* on core 2.x and
+    # network_prov_mgr_* on 3.x), or ESPAsyncWebServer's, would serve routes,
+    # a firmware upload or an access point that no rule reads: none of these
+    # is named, in a function or outside one (an object of one declared at
+    # namespace scope is a mention, so the row reads every mention, as a
+    # variable's does; an angled `#include <WebServer.h>` is one too, but a
+    # quoted path is a string and `<ESPAsyncWebServer.h>` holds no
+    # AsyncWebServer as a whole name, so it is the class's use that fails). A
+    # registry library is held where the build fetches it instead
+    # (REGISTRY_LIBS). Not named here: a server written on the raw socket API,
+    # the core's UDP classes (WiFiUDP, AsyncUDP, DNSServer; the flagship's own
+    # captive DNS responder is a WiFiUDP), its mDNS and NetBIOS responders
+    # (the flagship runs mDNS), a BLE GATT server (the core's BLEServer, or
+    # NimBLE's, which the flagship's status service runs), and an ESP-IDF
+    # component that starts a server of its own (esp_local_ctrl).
     "another HTTP server": {
         "pattern": r"\b(?:WebServer|AsyncWebServer|HTTPUpdateServer|ArduinoOTA|WiFiServer"
-                   r"|NetworkServer|WiFiProv(?:Class)?)\b",
+                   r"|NetworkServer|WiFiProv(?:Class)?|wifi_prov_mgr_\w+|network_prov_mgr_\w+)\b",
         "callers": set(), "ident": True, "none": True, "home": None},
     # The token's alphabet, which format_api_token_string renders the HMAC
     # through (its declaration is the row's, so a narrowed alphabet fails).
@@ -4423,14 +4444,20 @@ def build_input_problems(flags: dict) -> list:
 # (`/update`, which posts to `/u`) and `/erase` to anyone who joins it (v2.0.17:
 # WiFi.softAP(name, "") and its WebServer's routes), and ESPAsyncWebServer,
 # PsychicHttp or ESPUI serve routes no route rule reads. So every library the
-# flag files' lib_deps fetch, and every dependency a library manifest under
+# flag files' lib_deps fetch (under that key or an older name PlatformIO still
+# reads as it, LIB_DEPS_KEYS), and every dependency a library manifest under
 # ROOTS declares (library.json's "dependencies", library.properties'
 # `depends=`), is a row here, matched by `owner/name` whatever version it
-# names, or a library under ROOTS by its name; a library no row names, a bare
-# registry name or one fetched by URL fails until a reviewer adds its row with a
-# reason, as PUBLIC_ALLOWLIST's routes are added (library_problems). A core
-# library is not fetched; the core's servers are the "another HTTP server"
-# census row's.
+# names, or a library under ROOTS by its name. A row is an `owner/name` and
+# admits only that: a library no row names fails until a reviewer adds its row
+# with a reason, as PUBLIC_ALLOWLIST's routes are added, and a bare registry
+# name (which the registry resolves by search) or a URL fails whatever the rows
+# say (library_problems). A row vouches for its library's own dependencies too,
+# which PlatformIO fetches and the check does not read: the four rows' libraries
+# declare none (no dependency in the manifests of Crypto 0.4.0, ArduinoJson
+# 7.4.3, PubSubClient 2.8 and NimBLE-Arduino 2.5.1, versions within the ranges
+# the flag files name). A core library is not fetched; the core's servers are
+# the "another HTTP server" census row's.
 REGISTRY_LIBS = {
     "rweather/Crypto": "Ed25519, Curve25519 and ChaChaPoly, with the hashes they use: no "
                        "network and no server",
@@ -4440,29 +4467,58 @@ REGISTRY_LIBS = {
     "h2zero/NimBLE-Arduino": "the BLE stack ([env:full]'s Scout and status service): no "
                              "Wi-Fi, no HTTP server and no access point",
 }
-# An ini section header and an option line, as configparser reads them.
-_INI_SECTION = re.compile(r"^\[([^\]\n]+)\][ \t]*$")
-_INI_OPTION = re.compile(r"^([A-Za-z_][\w.:-]*)[ \t]*[=:](.*)$")
-# A registry library's id (`owner/name`, or a bare name) and its version spec.
-_LIB_SPEC = re.compile(r"([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_. -]+)?)\s*(?:@\s*\S.*)?")
+# The keys PlatformIO reads as lib_deps: the name, and the older names its
+# ProjectOptions still map onto it (`oldnames`, read with only a deprecation
+# warning). An option's key is lowercased before it is compared (configparser's
+# optionxform), so `Lib_Deps` is lib_deps too.
+LIB_DEPS_KEYS = ("lib_deps", "lib_use", "lib_force", "lib_install")
+# An ini line as configparser reads it for PlatformIO (ProjectConfig): an
+# inline comment is a `;` or `#` at the line's start or after whitespace, and
+# the rest, stripped, is a section header `[...]` or an option whose key runs
+# to the first `=` or `:`, at any indent.
+_INI_INLINE_COMMENT = re.compile(r"(?:^|\s)[;#]")
+_INI_SECTION = re.compile(r"\[(.+)\]")
+_INI_OPTION = re.compile(r"([^=:]*?)\s*[=:]\s*(.*)")
+# A registry library's id (`owner/name`, or a bare name) and its version spec:
+# PlatformIO's PackageSpec reads a spec whose text after an `@` holds an `@`, a
+# `:` or a `/` as a URL (`owner/name @ https://...`, `@ git@host:...`), which
+# fetches what the URL names, so the version may hold none of them.
+_LIB_SPEC = re.compile(r"([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_. -]+)?)\s*(?:@\s*[^\s@:/][^@:/]*)?")
+_LIB_URL_CHARS = re.compile(r"[@:/]")
 _INTERPOLATION = re.compile(r"\$\{([^}]*)\}")
+# PlatformIO's own reading of `${section.option}` (ProjectConfigBase.VARTPL_RE):
+# the section runs to the first dot, and with no dot it is a built-in variable.
+_INTERPOLATION_REF = re.compile(r"(?:([^.}()]+)\.)?([^}]+)")
 
 
 def _ini_options(text: str) -> list:
     """[(section, key, [(line number, value line)])] of an ini text as
-    configparser reads it: a value runs on through the indented and empty
-    lines after its key (comment lines arrive blanked, flag_sources)."""
-    out, section, cur = [], "", None
-    for i, line in enumerate(text.split("\n"), 1):
-        m = _INI_SECTION.match(line)
-        if m:
-            section, cur = m.group(1).strip(), None
+    configparser reads it for PlatformIO: a line indented deeper than the
+    open option's key continues its value, and an empty line (a comment line
+    arrives blanked, flag_sources, or is stripped to nothing here) stays in
+    it; any other line, at any indent, is a section header or a new option,
+    its key lowercased. The first value line is the text after the key's
+    `=` or `:`, and every value line has its inline comment and outer
+    whitespace stripped, as configparser joins them."""
+    out, section, cur, indent = [], "", None, 0
+    for i, raw in enumerate(text.split("\n"), 1):
+        comment = _INI_INLINE_COMMENT.search(raw)
+        line = (raw[:comment.start()] if comment else raw).strip()
+        if not line:
+            if cur is not None:
+                cur[2].append((i, ""))
             continue
-        if cur is not None and (not line.strip() or line[:1] in " \t"):
+        depth = len(raw) - len(raw.lstrip())
+        if cur is not None and depth > indent:
             cur[2].append((i, line))
             continue
-        m = _INI_OPTION.match(line)
-        cur = (section, m.group(1), [(i, m.group(2))]) if m else None
+        indent = depth
+        m = _INI_SECTION.match(line)
+        if m:
+            section, cur = m.group(1), None
+            continue
+        m = _INI_OPTION.fullmatch(line)
+        cur = (section, m.group(1).lower(), [(i, m.group(2))]) if m and m.group(1) else None
         if cur:
             out.append(cur)
     return out
@@ -4506,48 +4562,83 @@ def _manifest_deps(fname: str, text: str) -> tuple:
         version = str(dep.get("version", ""))
         at = text.find(dep["name"])
         items.append((_line_of(text, at) if at >= 0 else 1,
-                      f"{ident}={version}" if "://" in version else ident))
+                      f"{ident}={version}" if _LIB_URL_CHARS.search(version) else ident))
     return items, names, problems
 
 
 def library_problems(sources: dict, flags: dict, manifests: dict, registry: dict) -> list:
-    """Every library the build fetches is a REGISTRY_LIBS row, or a library
-    under ROOTS by its name: each lib_deps entry in the flag files (one a line,
-    or comma-separated, an interpolated `${section.option}` read where the
-    flag files set it), and each dependency a library manifest under ROOTS
-    declares (`manifests`, library_manifests())."""
+    """Every library lib_deps or a library manifest under ROOTS names is a
+    REGISTRY_LIBS row, or a library under ROOTS by its name (a row vouching
+    for its library's own dependencies): each entry of a lib_deps value in
+    the flag files (under any of LIB_DEPS_KEYS, read as _ini_options reads
+    the ini, an interpolated `${section.option}` read where the flag files
+    set it, split as PlatformIO splits it: one a line, or on ", " in a
+    one-line value), and each dependency a library manifest under ROOTS
+    declares (`manifests`, library_manifests()). A row is an `owner/name`;
+    no row admits a bare registry name or a URL."""
     problems, specs = [], []
-    known = {k.casefold() for k in registry}
+    known = {k.casefold() for k in registry if k.count("/") == 1}
+    problems.extend(f"REGISTRY_LIBS: {k!r} is no owner/name row — a row admits the one "
+                    f"library its owner/name names (a bare registry name is resolved by "
+                    f"search, and a URL fetches what it names)"
+                    for k in sorted(registry) if k.count("/") != 1)
     local = set()
     for path in list(sources) + list(manifests):
         parts = path.split("/")
         local |= {parts[i + 1] for i, part in enumerate(parts[:-2]) if part == "lib"}
     options = [(fname, o) for fname, text in sorted(flags.items()) for o in _ini_options(text)]
 
-    def lib_values(fname, section, lines, via, seen):
+    def expand(fname, section, lines, via, seen):
+        """[[where, via, text]]: a value's lines with each `${section.option}`
+        replaced by the lines of the value it names (a lib_deps one by
+        nothing: every lib_deps value is read on its own), a one-line value
+        split on ", " where it lands, so no piece holds two of PlatformIO's
+        entries."""
+        out = []
         for n, line in lines:
-            for item in line.split(","):
-                item = item.split(";")[0].strip()
-                for ref in _INTERPOLATION.findall(item):
-                    sec, _dot, opt = ref.rpartition(".")
-                    sec = section if sec == "this" else sec
-                    if opt == "lib_deps" or (sec, opt) in seen:
-                        continue  # every lib_deps value is read on its own
-                    hits = [(f, o) for f, o in options if o[0] == sec and o[1] == opt]
-                    if not hits:
-                        problems.append(f"{fname}:{n}: lib_deps interpolates ${{{ref}}}, which "
-                                        f"no flag file sets, so the libraries it names are "
-                                        f"not held to REGISTRY_LIBS")
-                    for f, o in hits:
-                        lib_values(f, o[0], o[2], f"{via} through ${{{ref}}}",
-                                   seen | {(sec, opt)})
-                item = _INTERPOLATION.sub("", item).strip()
-                if item:
-                    specs.append((f"{fname}:{n}", via, item, True))
+            out.append([f"{fname}:{n}", via, ""])
+            for k, part in enumerate(_INTERPOLATION.split(line)):
+                if k % 2 == 0:
+                    out[-1][2] += part
+                    continue
+                m = _INTERPOLATION_REF.fullmatch(part)
+                sec, opt = (m.group(1), m.group(2).lower()) if m else (None, part)
+                sec = section if sec == "this" else sec
+                if opt in LIB_DEPS_KEYS or (sec, opt) in seen:
+                    continue  # every lib_deps value is read on its own
+                hits = [(f, o) for f, o in options if sec is not None and o[:2] == (sec, opt)]
+                if not hits:
+                    problems.append(f"{fname}:{n}: lib_deps interpolates ${{{part}}}, which "
+                                    f"no flag file sets, so the libraries it names are not "
+                                    f"held to REGISTRY_LIBS")
+                got = []
+                for f, o in hits:
+                    got += expand(f, o[0], o[2], f"{via} through ${{{part}}}",
+                                  seen | {(sec, opt)})
+                while got and not got[-1][2].strip():
+                    got.pop()
+                if len(got) == 1:
+                    got = [[got[0][0], got[0][1], s] for s in got[0][2].split(", ")]
+                for j, g in enumerate(got):
+                    if j:
+                        out.append(list(g))
+                    elif out[-1][2].strip():
+                        out[-1][2] += g[2]
+                    else:
+                        out[-1] = [g[0], g[1], out[-1][2] + g[2]]
+        return out
 
     for fname, (section, key, lines) in options:
-        if key == "lib_deps":
-            lib_values(fname, section, lines, f"[{section}] lib_deps", set())
+        if key in LIB_DEPS_KEYS:
+            pieces = expand(fname, section, lines, f"[{section}] {key}", set())
+            while pieces and not pieces[-1][2].strip():
+                pieces.pop()
+            if len(pieces) == 1:
+                pieces = [[pieces[0][0], pieces[0][1], s] for s in pieces[0][2].split(", ")]
+            for where, via, item in pieces:
+                item = re.sub(r"\s+;.*$", "", item.strip()).strip()
+                if item and not item.startswith((";", "#")):
+                    specs.append((where, via, item, True))
     for fname, text in sorted(manifests.items()):
         items, names, bad = _manifest_deps(fname, text)
         local |= set(names)
@@ -4558,13 +4649,13 @@ def library_problems(sources: dict, flags: dict, manifests: dict, registry: dict
         if in_flags and re.search(r"(?:symlink|file)://", spec):
             continue  # a local library in a flag file: build_input_problems names it
         m = _LIB_SPEC.fullmatch(spec)
-        ident = m.group(1).strip() if m and "://" not in spec else None
-        if ident is not None and (ident.casefold() in known or ("/" not in ident
-                                                                and ident in local)):
+        ident = m.group(1).strip() if m else None
+        if ident is not None and (ident.casefold() in known if "/" in ident
+                                  else ident in local):
             continue
         problems.append(f"{where}: {via} fetches {spec!r}, a library no REGISTRY_LIBS row "
-                        f"names (matched by owner/name; a bare registry name or a URL is "
-                        f"none) — its code is read by no rule, so one that raises its own "
+                        f"names (a row is an owner/name; no row admits a bare registry name "
+                        f"or a URL) — its code is read by no rule, so one that raises its own "
                         f"access point or serves its own routes (WiFiManager's autoConnect() "
                         f"raises an open SoftAP and serves a firmware upload) ships past every "
                         f"rule here; add its row with why it raises no access point and serves "
@@ -6714,6 +6805,18 @@ _FIX_PLANTS = (
      _FIX_SETUP_PRINT, _FIX_SETUP_PRINT + "  WiFiProv.beginProvision(WIFI_PROV_SCHEME_SOFTAP, "
      "WIFI_PROV_SCHEME_HANDLER_NONE, WIFI_PROV_SECURITY_0, NULL, \"SecuraCV-Recovery\");\n",
      ("another HTTP server named in setup",)),
+    # ...and the ESP-IDF provisioning manager it wraps, called directly (IDF's
+    # wifi_prov_mgr example, ported; handed no service key, its SoftAP is open).
+    ("the ESP-IDF provisioning manager raising its own SoftAP from setup()", _FIX_MAIN,
+     _FIX_SETUP_PRINT, _FIX_SETUP_PRINT + "  { wifi_prov_mgr_config_t cfg = { .scheme = "
+     "wifi_prov_scheme_softap, .scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE };\n"
+     "    wifi_prov_mgr_init(cfg);\n    wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_0, "
+     "NULL, \"SecuraCV-Recovery\", NULL); }\n",
+     ("another HTTP server named in setup",)),
+    ("core 3.x's network provisioning manager started in a helper", _FIX_MAIN, "",
+     "static void recovery_begin() {\n  network_prov_mgr_config_t cfg = {};\n"
+     "  network_prov_mgr_init(cfg);\n}\n",
+     ("another HTTP server named in recovery_begin",)),
     # A way out of loop() above the BOOT sweep, or above the setup timeout,
     # skips it on every pass that takes it.
     ("loop() returns early above the BOOT sweep", _FIX_MAIN,
@@ -7321,16 +7424,25 @@ def _assert_answer_gate_rule() -> None:
         assert any("is a build input the check does not read" in p for p in got), (line, got)
     registry = ini + "lib_deps =\n    rweather/Crypto @ ^0.4.0\n    ${env.lib_deps}\n"
     assert check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": registry}) == []
-    # Every library the build fetches is a REGISTRY_LIBS row, or a library
-    # under ROOTS by its name: one of the four the flag files name today, in
-    # each spelling PlatformIO takes, passes...
+    # Every library lib_deps or a manifest names is a REGISTRY_LIBS row, or a
+    # library under ROOTS by its name: one of the four the flag files name
+    # today, in each spelling PlatformIO takes, passes...
     mesh = {"fx/lib/securacv_mesh/library.json": '{"name": "securacv_mesh"}'}
     for libs in ("lib_deps =\n    ${env.lib_deps}\n    ; Must be 2.x\n"
                  "    h2zero/NimBLE-Arduino@^2.3.8\n",
                  "lib_deps = Rweather/crypto @ ^0.4.0, knolleary/PubSubClient @ ^2.8\n",
                  "lib_deps =\n    securacv_mesh\n",
                  "[common]\nlibs = bblanchon/ArduinoJson @ ^7.0.0\n[env:x]\n"
-                 "more = rweather/Crypto\nlib_deps =\n    ${common.libs}\n    ${this.more}\n"):
+                 "more = rweather/Crypto\nlib_deps =\n    ${common.libs}\n    ${this.more}\n",
+                 # a version range is one entry, as PlatformIO splits it (a
+                 # one-line value on ", ", a multi-line one by line)...
+                 "lib_deps = bblanchon/ArduinoJson @ >=7.0.0,<8.0.0\n",
+                 "lib_deps =\n    bblanchon/ArduinoJson @ >=7.0.0,<8.0.0\n",
+                 # ...and an indented block, an inline comment and an older key
+                 # name holding a row pass as the plain spelling does.
+                 "[env:recovery]\n\textends = env:release\n\tlib_deps =\n\t\t${env.lib_deps}\n"
+                 "\t\trweather/Crypto @ ^0.4.0 # pinned, not tzapu/WiFiManager\n",
+                 "[env:old]\nlib_install = knolleary/PubSubClient @ ^2.8\n"):
         got = check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": ini + libs},
                                         manifests=mesh)
         assert got == [], (libs, got)
@@ -7351,10 +7463,55 @@ def _assert_answer_gate_rule() -> None:
              "WiFiManager=https://github.com/tzapu/WiFiManager.git"),
             ("[common]\nlibs_external =\n    tzapu/WiFiManager\n[env:x]\n"
              "lib_deps =\n    ${env.lib_deps}\n    ${common.libs_external}\n",
-             "tzapu/WiFiManager")):
+             "tzapu/WiFiManager"),
+            # a one-line value interpolated is split where it lands (PlatformIO
+            # joins a list option's entries by line), its key and the
+            # reference read lowercased as PlatformIO looks it up, and an
+            # empty line inside a value stays in it
+            ("[common]\nLibs = bblanchon/ArduinoJson @ ^7.0.0, tzapu/WiFiManager\n[env:x]\n"
+             "lib_deps = ${common.LIBS}\n", "tzapu/WiFiManager"),
+            ("[env:a]\nlib_ignore = rweather/Crypto @ ^0.4.0, WiFiManager\n[env:x]\n"
+             "lib_deps =\n    ${env:a.lib_ignore}\n", "WiFiManager"),
+            ("lib_deps =\n    rweather/Crypto\n\n    tzapu/WiFiManager\n", "tzapu/WiFiManager"),
+            # The round-8 review: configparser reads an option at any indent (a
+            # tab- or space-indented block, each key a new option, each deeper
+            # line its value), lowercases its key, and PlatformIO reads lib_deps'
+            # older names as lib_deps...
+            ("[env:recovery]\n\textends = env:release\n\tbuild_flags =\n"
+             "\t\t${env:release.build_flags}\n\t\t-DSECURACV_RECOVERY_PORTAL=1\n"
+             "\tlib_deps =\n\t\t${env.lib_deps}\n\t\ttzapu/WiFiManager @ ^2.0.17\n",
+             "tzapu/WiFiManager @ ^2.0.17"),
+            ("[env:recovery]\n  extends = env:dev\n  lib_deps =\n    ${env.lib_deps}\n"
+             "    tzapu/WiFiManager @ ^2.0.17\n", "tzapu/WiFiManager @ ^2.0.17"),
+            ("[env:recovery]\nlib_install =\n    tzapu/WiFiManager @ ^2.0.17\n",
+             "tzapu/WiFiManager @ ^2.0.17"),
+            ("[env:recovery]\nlib_use = tzapu/WiFiManager\n", "tzapu/WiFiManager"),
+            ("[env:recovery]\nlib_force: tzapu/WiFiManager\n", "tzapu/WiFiManager"),
+            ("[env:recovery]\nLib_Deps = tzapu/WiFiManager\n", "tzapu/WiFiManager"),
+            # ...a row is matched by its owner as well as its name (a fork)...
+            ("lib_deps =\n    thingsboard/PubSubClient @ ^2.8\n",
+             "thingsboard/PubSubClient @ ^2.8"),
+            # ...and a version holding an `@`, `:` or `/` is a URL to PlatformIO,
+            # which fetches what it names, so a row's owner/name before it is
+            # no row (nor is one line of a multi-line value that holds two
+            # entries, which PlatformIO reads as one URL).
+            ("lib_deps =\n    rweather/Crypto @ https://github.com/rweather/arduinolibs.git\n",
+             "rweather/Crypto @ https://github.com/rweather/arduinolibs.git"),
+            ("lib_deps =\n    rweather/Crypto @ git@github.com:tzapu/WiFiManager.git\n",
+             "rweather/Crypto @ git@github.com:tzapu/WiFiManager.git"),
+            ("lib_deps = rweather/Crypto @ ^0.4.0,tzapu/WiFiManager\n",
+             "rweather/Crypto @ ^0.4.0,tzapu/WiFiManager"),
+            ("lib_deps =\n    rweather/Crypto @ ^0.4.0, tzapu/WiFiManager\n",
+             "rweather/Crypto @ ^0.4.0, tzapu/WiFiManager")):
         got = check_bearer_only_answers(clean, tables, flags={"fx/platformio.ini": ini + libs})
         assert any("a library no REGISTRY_LIBS row names" in p and repr(spec) in p
                    for p in got), (libs, got)
+    # A row is an owner/name: a bare-name row admits nothing and is named.
+    got = check_bearer_only_answers(
+        clean, dict(tables, registry=dict(REGISTRY_LIBS, WiFiManager="the recovery portal")),
+        flags={"fx/platformio.ini": ini + "lib_deps =\n    WiFiManager\n"})
+    assert any("REGISTRY_LIBS: 'WiFiManager' is no owner/name row" in p for p in got) and any(
+        "fetches 'WiFiManager'" in p for p in got), got
     got = check_bearer_only_answers(clean, tables, flags={
         "fx/platformio.ini": ini + "lib_deps =\n    ${sysenv.EXTRA_LIBS}\n"})
     assert any("interpolates ${sysenv.EXTRA_LIBS}, which no flag file sets" in p
@@ -7377,6 +7534,12 @@ def _assert_answer_gate_rule() -> None:
             ("fx/lib/securacv_network/library.json",
              '{"dependencies": {"WiFiManager": "https://github.com/tzapu/WiFiManager.git"}}',
              "'WiFiManager=https://github.com/tzapu/WiFiManager.git'"),
+            # (a version PlatformIO cannot read as one is a spec of its own: an
+            # scp-style git URL under a row's owner/name fetches what it names)
+            ("fx/lib/securacv_network/library.json",
+             '{"dependencies": [{"owner": "rweather", "name": "Crypto", '
+             '"version": "git@github.com:tzapu/WiFiManager.git"}]}',
+             "'rweather/Crypto=git@github.com:tzapu/WiFiManager.git'"),
             ("fx/lib/securacv_network/library.json",
              '{"dependencies": {"diag": "symlink://../../../common/diag"}}',
              "'diag=symlink://../../../common/diag'"),
@@ -7386,6 +7549,28 @@ def _assert_answer_gate_rule() -> None:
              "a library manifest the check cannot read as JSON")):
         got = check_bearer_only_answers(clean, tables, manifests=dict(manifests, **{path: text}))
         assert any(word in p for p in got), (text, got)
+    # ...and library_manifests() finds each manifest under a root by either
+    # name, however deep, and its output fed as `manifests=` (as main() feeds
+    # it) is held: a library that fetches WiFiManager fails. (main()'s own
+    # `manifests=library_manifests()` is not run by a self-test; see the limits
+    # in the docstring.)
+    with tempfile.TemporaryDirectory() as tmp:
+        lib = Path(tmp) / "lib"
+        (lib / "diag").mkdir(parents=True)
+        (lib / "recovery" / "extras").mkdir(parents=True)
+        (lib / "diag" / "library.json").write_text(
+            '{"name": "diag", "dependencies": {"tzapu/WiFiManager": "^2.0.17"}}')
+        (lib / "recovery" / "extras" / "library.properties").write_text(
+            "name=recovery\ndepends=WiFiManager\n")
+        found = library_manifests((lib,))
+        assert sorted(found) == [(lib / "diag" / "library.json").as_posix(),
+                                 (lib / "recovery" / "extras" / "library.properties").as_posix()
+                                 ], found
+        got = check_bearer_only_answers(clean, tables, manifests=found)
+        assert any("diag/library.json:1: its dependency list fetches 'tzapu/WiFiManager'" in p
+                   for p in got) and any(
+            "extras/library.properties:2: its dependency list fetches 'WiFiManager'" in p
+            for p in got), got
     # ...and the ` @ ` of a lib version spec, and a bare `-DBOARD` / `-B` inside
     # another flag's name, are not a response file or a prefix flag.
     benign_flags = (ini + "    -DBOARD_HAS_PSRAM\n    -mfix-esp32-psram-cache-issue\n"

@@ -1510,8 +1510,9 @@ jobs:
         # password, the TLS pin or the TLS key to a bearer-only grant, with
         # the grant glue and the device-side uses pinned, no #define or -D
         # flag standing in for them (against a careless edit, its threat
-        # model: gcc's --define-macro is not read), every library the build
-        # fetches named, and no session read (sweep F338).
+        # model: gcc's --define-macro is not read), every library lib_deps
+        # or a library manifest names either a reviewed REGISTRY_LIBS row or
+        # a library in the tree, and no session read (sweep F338).
         run: |
           python3 firmware/canary/scripts/check_route_security.py
 
