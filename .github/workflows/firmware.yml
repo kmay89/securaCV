@@ -1527,14 +1527,15 @@ jobs:
         # password, the TLS pin or the TLS key to a bearer-only grant, with
         # the grant glue and the device-side uses pinned, no #define or -D
         # flag standing in for them (against a careless edit, its threat
-        # model: gcc's --define-macro is not read), every library an env of
-        # the flagship's configuration fetches or a library manifest names
-        # either a reviewed REGISTRY_LIBS row or a library in the tree, and no
-        # session read (sweep F338). The library rule reads platformio.ini, its
-        # extends and its extra_configs with PlatformIO 6.1.19's own reader (the
-        # step above installs it): each env's lib_deps as `pio run` resolves
-        # it, and a ${sysenv.*} anywhere in the flag files fails, read in their
-        # text so the environment here cannot hide one. About 14-21 s on 3.11-3.14.
+        # model: gcc's --define-macro is not read), every library an env's
+        # lib_deps fetches or a library manifest names either a reviewed
+        # REGISTRY_LIBS row or a library in the tree, and no session read
+        # (sweep F338). The library rule reads platformio.ini, its extends and
+        # its extra_configs with PlatformIO 6.1.19's own reader (the step above
+        # installs it): each env's lib_deps as `pio run` resolves it, and a
+        # ${sysenv.*} or a custom_component_add anywhere in the flag files
+        # fails, read in their text so the environment here cannot hide one.
+        # About 14-22 s on 3.11-3.14.
         run: |
           python3 firmware/canary/scripts/check_route_security.py
 

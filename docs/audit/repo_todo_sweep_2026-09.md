@@ -1930,17 +1930,23 @@ so — see D2 below.)
     `-B` before a path, `-Xpreprocessor`/`-Wp,`, `-Xassembler`/`-Wa,`), a
     response file (`@file`), a build script (`extra_scripts`, or PlatformIO's
     `!command` dynamic value that runs a command and splices its stdout into
-    the flags), a local library, a moved source folder (each of those keys
-    in any case) or a `${sysenv.*}` reference anywhere in the flag files (a
-    value the build-time environment sets, which can name a library or a
-    flag; their text is read, so an empty environment at check time hides
-    none, and the tree has none) fail: each is code, or a binding of a name,
-    that no rule would read. Every library an env of the flagship's
-    configuration fetches, or a library manifest under the tree declares, is
-    a `REGISTRY_LIBS` row with its reason (the four the flag files name
-    today: `rweather/Crypto`, `bblanchon/ArduinoJson`,
-    `knolleary/PubSubClient`, `h2zero/NimBLE-Arduino`), or a library under
-    the tree by its name. The configuration is read with PlatformIO's own
+    the flags), a local library, a moved source folder, an ESP-IDF
+    component (pioarduino's `custom_component_add`, which the IDF component
+    manager fetches from Espressif's registry; no library, so the library
+    rule does not hold it) (each of those keys in any case) or a
+    `${sysenv.*}` reference anywhere in the flag files (a value the
+    build-time environment sets, which can name a library or a flag; their
+    text is read, so an empty environment at check time hides none, and the
+    tree has none) fail: each is code, or a binding of a name, that no rule
+    would read. Every library an env's `lib_deps` fetches, or a library
+    manifest under the tree declares, is a `REGISTRY_LIBS` row with its
+    reason (the four the flag files name today: `rweather/Crypto`,
+    `bblanchon/ArduinoJson`, `knolleary/PubSubClient`,
+    `h2zero/NimBLE-Arduino`), or a library under the tree by its name, with
+    a version range only where that library's manifest version is in it (for
+    a ranged entry `pio run` takes the tree's library only then, and
+    otherwise installs the name from the registry). The configuration is
+    read with PlatformIO's own
     reader, not an imitation of it, at the version the builds that ship the
     flagship pin (`PLATFORMIO_PIN`, 6.1.19: `firmware-release.yml` and
     `flasher-release.yml` hand it to `setup-platformio`; `firmware.yml`'s PR
@@ -1960,10 +1966,12 @@ so — see D2 below.)
     each manifest (`library.json`'s `"dependencies"`,
     `library.properties`' `depends=`) by its manifest parser, each
     dependency the `PackageSpec` PlatformIO builds from it. A configuration
-    PlatformIO refuses, an env whose `lib_deps` it cannot resolve, an env
-    whose `extends` reaches a cycle (which PlatformIO's reader walks forever,
-    so `pio run` hangs on it; the check names the cycle) and a file it reads
-    that `flag_sources` (the `-D` rule's flag files) does not hold fail;
+    PlatformIO refuses, an env whose `lib_deps` it cannot resolve, an
+    `extends` cycle anywhere in it (which PlatformIO's reader can walk
+    forever, from an env or through an interpolation into a section on it,
+    so `pio run` hangs; the check names the cycle and resolves no env's
+    `lib_deps` while one stands) and a file it reads that `flag_sources`
+    (the `-D` rule's flag files) does not hold fail;
     without the `platformio` module, or at another version of it, the
     check fails before any rule runs, naming `python3 -m pip install
     platformio==6.1.19`, and never reads the ini itself instead.
@@ -1972,7 +1980,9 @@ so — see D2 below.)
     env that fetches it, until a reviewer adds its row (`library_problems`),
     as `PUBLIC_ALLOWLIST`'s routes are added, and a bare registry name, a
     registry id, a URL or a path (a version PlatformIO reads as a URL
-    included) fails whatever the rows say.
+    included), or an owner before a tree library's name
+    (`tzapu/securacv_mesh`, the registry's library of that owner), fails
+    whatever the rows say.
     A row vouches for the dependencies its library declares, which the check
     does not read; the four rows' libraries declare none (no dependency in
     the manifests of Crypto 0.4.0, ArduinoJson 7.4.3, PubSubClient 2.8 and
@@ -2004,9 +2014,9 @@ so — see D2 below.)
   fixtures (268 source edits, 25 table edits), with the self-test's lexer,
   flag-file, build-input, library, reach, header, file-kind, route-form,
   symbol-binding and raw-literal cases, each fail for their named reason
-  before the tree is read (the library cases run 61 projects written into a
+  before the tree is read (the library cases run 69 projects written into a
   temp dir through PlatformIO 6.1.19's `ProjectConfig`); the tree passes
-  with its 83 registrations, in 14 to 21 s (Python 3.11 to 3.14). The `/*`
+  with its 83 registrations, in 14 to 22 s (Python 3.11 to 3.14). The `/*`
   allowlist reasons now say what the
   port-80 redirect does (a probe path gets the probe's plain answer or the
   TLS hint, else 307, or 500 on an oversize target).
@@ -2816,6 +2826,70 @@ so — see D2 below.)
   hanging as PlatformIO does; of 8 mutants of `platformio_pin_problems`, its
   test refuses all 8. The planted fixtures stay 293. Host-tested; not run
   on a device. No new number.
+  *Change (2026-10-22, the eleventh round's second review):* the review
+  found the self-test thinner again, and three edges of the reading.
+  - No case put an owner before a tree library's name: a rule admitting
+    `tzapu/securacv_mesh @ ^2.0.17` by its name passed, where PlatformIO
+    6.1.19's `pio pkg install` (it skips only an entry with no owner and no
+    URL) installs `tzapu/securacv_mesh` from the registry. It is a case now,
+    in `lib_deps` and as a manifest's `{"owner": "tzapu", "name":
+    "securacv_mesh"}`, and the message names it as the registry's library.
+  - A tree library's name with a range its manifest's version is not in
+    (`securacv_mesh @ ^0.2.0`, the library at 0.1.0) passed. `pio run` reads
+    a lib_deps entry as a built-in library only when the whole entry is a
+    library's name (`ProjectAsLibBuilder.install_dependencies`), and
+    `get_package` refuses a version outside the range, so it installs the
+    name from the registry. `_spec_admitted` now admits a ranged tree name
+    only where PlatformIO's own comparison puts that library's manifest
+    version in the range (a manifest that gives none read as
+    `0.0.0+<time>`, as `build_metadata` reads it), in `lib_deps` and in a
+    manifest's dependencies alike.
+  - An `extends` cycle no env's own walk reaches, but an interpolation
+    does (`[portal_libs]` and `[portal_more]` extending each other, read
+    through `${portal_libs.libs}`), hung the check with no message, as did
+    an env interpolating an env on a cycle: the round said that hang was
+    fixed, and it was only for a cycle an env's own walk reaches. Every
+    section's walk is checked now (`_extends_cycle` walks [env] and the
+    section for an env, the section alone otherwise, as `walk_options`
+    does); a cycle is named for each env that reaches it, else once by its
+    section, and no env's `lib_deps` is resolved while one stands, since
+    any env's value can interpolate a section on it. Its docstring no
+    longer says `config.get` never returns on a cycle (it returns when the
+    walk meets the option first).
+  - pioarduino's `custom_component_add` in `[env:full]`
+    (`espressif/network_provisioning`, whose softAP scheme raises its own
+    access point; the platform's `espidf.py` and `component_manager.py`
+    hand each entry to the IDF component manager, which fetches it from
+    Espressif's registry) passed every rule, while the round's docstring
+    said every library an env fetches was held. The key fails as a build
+    input now (`_BUILD_INPUT`, any case), and the docstring claims what is
+    held: an env's `lib_deps` and the manifests under the tree.
+  - The pin test held neither "every" release pin nor "exactly one" in the
+    route-check job, nor the release list (it loops over the module's own
+    tuple), nor `main()`'s refusal of another version. It now fails a
+    second 6.2.0 pin in a release workflow, a second pin in the route-check
+    job in either order and the pin twice, a release list other than the
+    two workflows that run `pio run -e release_ha`, and a `main()` that
+    runs past another version or no module (14 tests). A two-target
+    `extends` on two lines is a cycle case (edges split on commas missed it
+    and hung).
+  The library cases are 69 projects: 13 passing (a range the tree
+  library's version is in), 35 failing and naming their env (an owner
+  before a tree library's name, and a range its version is not in) and 21
+  more (their messages, the two-line `extends`, the interpolated cycle, an
+  env interpolating an env on one, and the component; the `[env]` cycle
+  case also names a section's own cycle beside it), with two
+  `custom_component_add` build-input lines and three manifest cases. Of 13
+  checker mutants (the review's surviving owner mutant among them), the
+  self-test refuses all 13, four by hanging as PlatformIO does; the
+  review's other survivor, the `${sysenv.` pattern narrowed to that one
+  spelling, refuses what PlatformIO reads as the environment (its
+  `VARTPL_RE` takes no space and no other case as `sysenv`), so no case
+  tells it from the wider pattern, which stays. Of 6 mutants of
+  `platformio_pin_problems` and `main()`'s guard, the pin test refuses all
+  6. The planted fixtures stay 293. The tree passes in 14.6 s on Python
+  3.11 and 22.0 s on 3.13 (PlatformIO 6.1.19), and under 6.2.0 with the pin
+  lifted. Host-tested; not run on a device. No new number.
 - [x] **F339 [code] canary-wap: other bearer compares stay silent beside the
   lockout.** `csi_integration.cpp`'s `CSI_AUTH_OR_RETURN`
   (`api_auth_check_optional`, every CSI dashboard route), `csi_mqtt.cpp`'s

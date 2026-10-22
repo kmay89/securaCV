@@ -16,22 +16,37 @@ unfiltered `unittest discover -s scripts/tests`.
 
 What is pinned:
   - the tree holds: every pin is PLATFORMIO_PIN;
+  - PLATFORMIO_PIN_RELEASES is the two workflows that build the flagship's
+    shipped env (`pio run -e release_ha`), by value and by what each runs,
+    so a name dropped from the tuple does not drop its check unseen (the
+    cases below loop over the tuple);
   - it FAILS on each drift it claims to catch: either release workflow's pin
-    bumped alone, a release workflow with no pin (setup-platformio then
-    installs the newest), the route-check job's pin bumped, its install step
-    removed or moved below the check, a pin in another job only, and the
-    check run twice or not at all;
-  - a pin quoted in a comment is not read as one.
+    bumped alone, a second pin in a release workflow that is not
+    PLATFORMIO_PIN (every pin is held, not the first), a release workflow
+    with no pin (setup-platformio then installs the newest), the
+    route-check job's pin bumped, a second pin in that job in either order
+    and the pin twice (exactly one), its install step removed or moved below
+    the check, a pin in another job only, and the check run twice or not at
+    all;
+  - a pin quoted in a comment is not read as one;
+  - main() refuses another PlatformIO, or none, before any rule runs, naming
+    the install command (in CI its job installs the pin, so this refusal is
+    otherwise never seen to work).
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
+import re
 import shutil
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO / ".github" / "workflows"
@@ -45,6 +60,19 @@ PIN = crs.PLATFORMIO_PIN
 NAMES = crs.PLATFORMIO_PIN_RELEASES + crs.PLATFORMIO_PIN_CHECK[:1]
 PIN_LINE = f'platformio-version: "{PIN}"'
 CHECK_RUN = crs.PLATFORMIO_PIN_CHECK[1]
+# A second setup-platformio step, as a workflow would add one.
+STEP = ("      - uses: ./.github/actions/setup-platformio\n"
+        "        with:\n"
+        '          platformio-version: "{}"\n')
+
+
+def step_bounds(text: str, at: int) -> tuple:
+    """(start, end) of the workflow step (`      - ` at six spaces) that holds
+    offset `at` of `text`; `end` is the next step's start."""
+    start = text.rfind("\n      - ", 0, at) + 1
+    end = text.find("\n      - ", at) + 1
+    assert start > 0 and end > 0, (start, end)
+    return start, end
 
 
 class PlatformioPinTest(unittest.TestCase):
@@ -66,6 +94,22 @@ class PlatformioPinTest(unittest.TestCase):
     def test_tree_holds(self) -> None:
         self.assertEqual(crs.platformio_pin_problems(WORKFLOWS), [])
 
+    def test_release_workflows_are_the_flagship_release_builds(self) -> None:
+        self.assertEqual(crs.PLATFORMIO_PIN_RELEASES,
+                         ("firmware-release.yml", "flasher-release.yml"))
+        builds = sorted(p.name for p in WORKFLOWS.glob("*.yml")
+                        if re.search(r"\bpio run -e release_ha\b", p.read_text()))
+        self.assertEqual(builds, sorted(crs.PLATFORMIO_PIN_RELEASES))
+
+    def test_second_release_pin_fails(self) -> None:
+        for name in crs.PLATFORMIO_PIN_RELEASES:
+            with self.subTest(name=name):
+                text = (WORKFLOWS / name).read_text()
+                _start, end = step_bounds(text, text.index(f"          {PIN_LINE}\n"))
+                got = self.doctored(name, text, text[:end] + STEP.format("6.2.0") + text[end:])
+                self.assert_named(got, name, "platformio-version '6.2.0' is not "
+                                             "check_route_security.py's PLATFORMIO_PIN")
+
     def test_release_pin_bumped_alone_fails(self) -> None:
         for name in crs.PLATFORMIO_PIN_RELEASES:
             with self.subTest(name=name):
@@ -82,6 +126,22 @@ class PlatformioPinTest(unittest.TestCase):
     def test_route_check_job_pin_bumped_fails(self) -> None:
         got = self.doctored("firmware.yml", PIN_LINE, 'platformio-version: "6.2.0"')
         self.assert_named(got, "firmware.yml", "installs platformio-version '6.2.0'")
+
+    def test_route_check_job_with_two_pins_fails(self) -> None:
+        text = (WORKFLOWS / "firmware.yml").read_text()
+        check, _end = step_bounds(text, text.index(f"          {CHECK_RUN}\n"))
+        bumped = text.replace(PIN_LINE, 'platformio-version: "6.2.0"')
+        self.assertEqual(text.count(PIN_LINE), 1)
+        for doctored, first, second in (
+                (text[:check] + STEP.format("6.2.0") + text[check:], PIN, "6.2.0"),
+                (bumped[:check] + STEP.format(PIN) + bumped[check:], "6.2.0", PIN),
+                (text[:check] + STEP.format(PIN) + text[check:], PIN, PIN)):
+            with self.subTest(pins=(first, second)):
+                got = self.doctored("firmware.yml", text, doctored)
+                self.assertTrue(any(re.search(
+                    rf"installs platformio-version '{re.escape(first)}' \(line \d+\), "
+                    rf"'{re.escape(second)}' \(line \d+\) above it, not exactly "
+                    rf"PLATFORMIO_PIN", p) for p in got), got)
 
     def test_route_check_job_without_its_install_fails(self) -> None:
         got = self.doctored("firmware.yml", f"          {PIN_LINE}\n", "")
@@ -119,6 +179,37 @@ class PlatformioPinTest(unittest.TestCase):
         got = self.doctored(name, f"          {PIN_LINE}\n",
                             f"          # was platformio-version: \"{PIN}\"\n")
         self.assert_named(got, name, "hands setup-platformio no platformio-version")
+
+
+class MainRefusesAnotherPlatformioTest(unittest.TestCase):
+    """main()'s version guard: another PlatformIO, or none, stops it before
+    any rule runs, naming the install command; PLATFORMIO_PIN gets past it."""
+
+    def run_main(self, module) -> tuple:
+        out = io.StringIO()
+        ran = mock.Mock(side_effect=RuntimeError("main() ran past its version guard"))
+        with mock.patch.object(crs, "platformio", module), \
+                mock.patch.object(crs, "_assert_parser_robust", ran), \
+                contextlib.redirect_stdout(out):
+            code = crs.main()
+        return code, out.getvalue()
+
+    def test_another_version_or_none_is_refused(self) -> None:
+        for module, found in ((types.SimpleNamespace(__version__="6.2.0"),
+                               "platformio 6.2.0 is installed"),
+                              (types.SimpleNamespace(__version__="6.1.18"),
+                               "platformio 6.1.18 is installed"),
+                              (None, "no platformio module imports")):
+            with self.subTest(found=found):
+                code, out = self.run_main(module)
+                self.assertEqual(code, 1, out)
+                self.assertIn(found, out)
+                self.assertIn(f"run: {crs.PLATFORMIO_INSTALL}", out)
+                self.assertIn(f"platformio=={PIN}", crs.PLATFORMIO_INSTALL)
+
+    def test_the_pin_gets_past_the_guard(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "ran past its version guard"):
+            self.run_main(types.SimpleNamespace(__version__=PIN))
 
 
 if __name__ == "__main__":

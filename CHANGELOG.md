@@ -200,8 +200,11 @@
     `-B` before a path, `-Xpreprocessor`/`-Wp,`, `-Xassembler`/`-Wa,`), a
     response file (`@file`), a build script (`extra_scripts`, or a `!command`
     dynamic value that runs a command and splices its stdout into the flags),
-    a local library, a moved source folder (each of those keys in any case),
-    or a `${sysenv.*}` value the build-time environment sets;
+    a local library, a moved source folder, an ESP-IDF component
+    (`custom_component_add`, which pioarduino's IDF component manager fetches
+    from Espressif's registry; no library, so the library rule does not hold
+    it) (each of those keys in any case), or a `${sysenv.*}` value the
+    build-time environment sets;
   - a library the build fetches, as an entry of an env's `lib_deps` or as a
     dependency a library manifest under the tree declares, that no
     `REGISTRY_LIBS` row names. The configuration is read with PlatformIO's
@@ -216,8 +219,10 @@
     one-line list split on `, `); each entry is read by PlatformIO's
     `PackageSpec` in that folder, and each manifest by its manifest parser.
     A failing entry names every env that fetches it. A configuration
-    PlatformIO refuses, an env whose `lib_deps` it cannot resolve, an env
-    whose `extends` reaches a cycle (which PlatformIO walks forever), a file
+    PlatformIO refuses, an env whose `lib_deps` it cannot resolve, an
+    `extends` cycle anywhere in it (which PlatformIO can walk forever, from
+    an env or through an interpolation into a section on it; no env's
+    `lib_deps` is resolved while one stands), a file
     it reads that the `-D` rule's flag files do not hold, and a `${sysenv.*}`
     reference anywhere in the flag files (read in their text, so an empty
     environment at check time hides none) fail too; without the `platformio`
@@ -228,7 +233,10 @@
     flag files name today (`rweather/Crypto`, `bblanchon/ArduinoJson`,
     `knolleary/PubSubClient`, `h2zero/NimBLE-Arduino`); no row admits a bare
     registry name, a registry id, a URL or a path (a version PlatformIO reads
-    as a URL, `rweather/Crypto @ git@github.com:...`, included), and a row
+    as a URL, `rweather/Crypto @ git@github.com:...`, included), an owner
+    before a tree library's name (`tzapu/securacv_mesh`) is the registry's
+    library, a tree library's name with a version range is that library only
+    where its manifest's version is in the range, and a row
     vouches for the dependencies its library declares, which are not read
     (the four declare none).
     `tzapu/WiFiManager` added to `lib_deps` for a recovery portal passed
@@ -533,6 +541,54 @@
   as its name), the self-test refuses all 24 (the dropped cycle check by
   hanging, as PlatformIO does); of 8 mutants of `platformio_pin_problems`,
   its test refuses all 8. The planted fixtures stay 293.
+  That round's second review found the self-test thinner again, and three
+  edges. No case put an owner before a tree library's name, so a rule that
+  admitted `tzapu/securacv_mesh @ ^2.0.17` by its name passed, where
+  PlatformIO installs it from the registry (`pio pkg install` skips only an
+  entry with no owner and no URL); it is a case now, in `lib_deps` and in a
+  manifest. A tree library's name with a range its manifest's version is not
+  in (`securacv_mesh @ ^0.2.0` against 0.1.0) passed, where `pio run` reads
+  the whole entry as no library's name, `get_package` refuses the tree's
+  copy and the name is installed from the registry; it is admitted now only
+  where PlatformIO's own comparison puts that version in the range (a
+  manifest that gives no version read as `0.0.0+<time>`, as PlatformIO's
+  `build_metadata` reads it).
+  An `extends` cycle no env's own walk reaches, but an interpolation does
+  (two helper sections extending each other, read through
+  `${portal_libs.libs}`), still hung the check with no message, as did an
+  env interpolating an env on a cycle: the round said the hang was fixed,
+  and it was only for a cycle an env's own walk reaches. Every section's
+  walk is checked now; a cycle is named for each env that reaches it, else
+  once by its section, and no env's `lib_deps` is resolved while one stands.
+  And pioarduino's `custom_component_add` in `[env:full]` (an ESP-IDF
+  component the IDF component manager fetches from Espressif's registry;
+  `espressif/network_provisioning`'s softAP scheme raises its own access
+  point) passed every rule, while the round's docstring said every library
+  an env fetches was held: it fails as a build input now, and the docstring
+  claims what is held (an env's `lib_deps` and the manifests under the
+  tree). The pin test now holds every release pin (a second one in a release
+  workflow), exactly one in the route-check job (a second in either order,
+  or the pin twice), the release list itself (the two workflows that run
+  `pio run -e release_ha`) and `main()`'s refusal of another version, or
+  none, which no test drove; and a two-target `extends` on two lines is a
+  cycle case (edges split on commas missed it and hung). `_extends_cycle`'s
+  docstring no longer says `config.get` never returns on a cycle: it returns
+  when the walk meets the option first. The library cases are 69 projects:
+  13 passing (a range the tree library's version is in), 35 failing and
+  naming their env (an owner before a tree library's name, and a range its
+  version is not in), and 21 more (their messages, the two-line `extends`,
+  the interpolated cycle, an env interpolating an env on one, and the
+  component), with two `custom_component_add` build-input lines and three
+  manifest cases. Of 13 checker mutants (the review's surviving owner mutant
+  among them), the self-test refuses all 13, four by hanging as PlatformIO
+  does; the review's other survivor, the `${sysenv.` pattern narrowed to
+  that one spelling, refuses what PlatformIO reads as the environment (its
+  `VARTPL_RE` takes no space and no other case as `sysenv`), so no case
+  tells it from the wider pattern, which stays. Of 6 mutants of
+  `platformio_pin_problems` and `main()`'s guard, the pin test (14 tests)
+  refuses all 6. The planted fixtures stay 293. The tree passes in 14.6 s on
+  Python 3.11 and 22.0 s on 3.13 (PlatformIO 6.1.19), and under 6.2.0 with
+  the pin lifted.
   The head parser names a constructor
   for its class (it named `ScvNetworkManager`'s body after its last
   initializer, `m_peers_last_browse_ms`), a member as `Class::name`, and a
@@ -554,7 +610,7 @@
   ran), so it is an injector the build-input rule does not read, as are
   `--for-linker`, `--for-assembler` and `--define-macro`; they stay unread,
   deliberate spellings outside the threat model (the sixth review).
-  The tree passes with its 83 registrations in 14 to 21 s (Python 3.11 to
+  The tree passes with its 83 registrations in 14 to 22 s (Python 3.11 to
   3.14, PlatformIO 6.1.19). The threat model
   is a careless or mistaken firmware edit (a refactor, a new route, a new
   feature, a moved line, a widened helper, a new file), not a deliberate
