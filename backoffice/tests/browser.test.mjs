@@ -12,8 +12,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { createApp } from '../src/server.mjs';
-import { setupOperator, totp } from '../src/auth.mjs';
-import { seedDemo } from '../src/modules/demo.mjs';
+import { totp } from '../src/auth.mjs';
+import { seedDemo, DEMO_USERS, DEMO_PASSWORD, DEMO_TOTP_SECRET } from '../src/modules/demo.mjs';
 import { testDb, testCfg } from './helpers.mjs';
 
 const require = createRequire(import.meta.url);
@@ -28,7 +28,7 @@ if (!pw && required) throw new Error('BACKOFFICE_BROWSER=require but playwright 
 test('a person can log in, ship an order, answer a ticket, move stock, post an expense and log out', { skip: pw ? false : 'playwright not installed (see the header of this file)' }, async () => {
   const db = testDb(); const cfg = testCfg({ secret: 's' });
   await seedDemo(db, cfg);
-  const totpSecret = setupOperator(db, 'browser-test-password-1');
+  // the demo people are the login (a demo database has exactly them, on every boot)
   const app = createApp({ db, cfg }); const addr = await app.listen(); const base = `http://127.0.0.1:${addr.port}`; cfg.baseUrl = base;
   const browser = await pw.chromium.launch();
   const errors = [];
@@ -38,7 +38,7 @@ test('a person can log in, ship an order, answer a ticket, move stock, post an e
     page.on('console', m => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
 
     await page.goto(base + '/orders'); assert.match(page.url(), /\/login$/, 'the admin redirects to login');
-    await page.fill('#email', 'owner@localhost'); await page.fill('#pw', 'browser-test-password-1'); await page.fill('#code', totp(totpSecret)); await page.click('button:has-text("Log in")');
+    await page.fill('#email', DEMO_USERS[0].email); await page.fill('#pw', DEMO_PASSWORD); await page.fill('#code', totp(DEMO_TOTP_SECRET)); await page.click('button:has-text("Log in")');
     await page.waitForURL(base + '/'); assert.ok(await page.$('.hero'), 'the home page shows the hero');
 
     // ship the packed order through its form
