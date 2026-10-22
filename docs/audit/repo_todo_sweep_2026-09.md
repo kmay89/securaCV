@@ -1706,7 +1706,7 @@ so — see D2 below.)
   bearer-only grant. Review whether the flagship needs one (it has no session
   cookie today, so F328's any-session class has no counterpart), and port what
   applies. From code. Found by the F289 follow-up (#1832).
-  *Done (2026-10-21, #<PR>; decided 2026-10-19 under the maintainer's
+  *Done (2026-10-21, #1852; decided 2026-10-19 under the maintainer's
   instruction to fix the remaining open items in best engineering practice
   and best value for the user and security):*
   `firmware/canary/scripts/check_route_security.py` now holds every answer
@@ -2357,7 +2357,7 @@ so — see D2 below.)
   nits: a library manifest is excused by its name (`library.json`,
   `library.properties`), not by a `.json` suffix; a file git ignores (an
   editor's backup, an OS's `.DS_Store`) no longer fails a local run, while a
-  tracked one still does; and the CHANGELOG heading carries `#<PR>`.
+  tracked one still does; and the CHANGELOG heading carries the PR number.
   This repair found seven more of the same kinds and fixed them beside these
   (each passed the round-3 repair and the check as F340 left it): the paste
   spelled with the digraph `%:%:`, in a header the flagship includes, or as a
@@ -3043,7 +3043,7 @@ so — see D2 below.)
     the Host guard's `403` keeps the token. Found by the PR's review.
     F338's flagship route-check tables, which are not in the tree yet, are
     to be written against this API (2026-10-21: written against it in
-    #<PR>, F338).
+    #1852, F338).
   The posture: A host's wrong bearers hold only that host's address (F343).
   A browser that mistyped the token waits at most about 60 s, or taps BOOT,
   which clears its address (F341). A host that strikes from 9 or more
@@ -3145,7 +3145,7 @@ so — see D2 below.)
   leave A served at once, B and the overflow held, and a refusal or a
   foreign Host clearing nothing; text pins hold both calls in place.
   F338's flagship tables, which are not in the tree yet, are to be written
-  against this code (2026-10-21: written against it in #<PR>, F338). The
+  against this code (2026-10-21: written against it in #1852, F338). The
   ESP32 compile is CI's; not run on a device (U1:
   the receipt-lockout row and the flagship's bearer-lockout row in
   `hardware_verification_checklist.md`).
@@ -3925,7 +3925,7 @@ so — see D2 below.)
   `;`, which `main.cpp` no longer has, and a pin on the argument alone would pass a
   deleted call, a discarded result or a dropped halt loop (no host suite or
   guard reads that statement today, nor which 32-byte key it passes;
-  2026-10-21, #<PR>: F338's route check now holds it whole, `device.privkey`
+  2026-10-21, #1852: F338's route check now holds it whole, `device.privkey`
   included, at `setup()`'s own level with no block or preprocessor
   conditional around it and no `goto` before it).
   Host-tested; the PlatformIO compile is CI's; not run on a device (U1).

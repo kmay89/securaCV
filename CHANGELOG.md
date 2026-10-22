@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### The flagship's route check holds every answer that carries a credential to a bearer-only grant, on the grants as #1838 left them (sweep F338, #<PR>)
+### The flagship's route check holds every answer that carries a credential to a bearer-only grant, on the grants as #1838 left them (sweep F338, #1852)
 
 - **`firmware/canary/scripts/check_route_security.py` gains the bearer-only
   answer rule (`check_bearer_only_answers`), canary-wap's F328 rule ported to
