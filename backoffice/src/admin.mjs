@@ -1,11 +1,15 @@
 // The admin: one page per module, plain forms, no client JavaScript.
 import { html, redirect, text, HttpError, escapeHtml as e } from './http.mjs';
-import { layout, table, money, dt, day, statusPill, field, form, button, cards } from './render.mjs';
+import { layout, table, money, dt, day, statusPill, field, form, button, cards, tags as tagsHtml, tabs } from './render.mjs';
 import { snapshot } from './modules/dashboard.mjs';
-import { listOrders, orderById, transition, refund, recordOrder, fulfillCsv, weekLabel, STATUSES } from './modules/orders.mjs';
+import { listOrders, orderById, transition, refund, recordOrder, fulfillCsv, weekLabel, STATUSES, timeline, addNote, setTags, updateShipping, resendTracking, statusCounts } from './modules/orders.mjs';
+import { customerStats, tagList } from './modules/contacts.mjs';
+import { registerShop } from './admin_shop.mjs';
+import { line, tile } from './charts.mjs';
+import { analytics } from './modules/analytics.mjs';
 import { parseCsv, detectColumns, csvRowToOrder } from './modules/stripe.mjs';
 import { listTickets, ticketById, reply, setStatus, update as updateTicket, openTicket, STATUSES as TSTATUS, KINDS } from './modules/support.mjs';
-import { searchContacts, contactById, upsertContact, waitlistSummary, waitlistFor } from './modules/contacts.mjs';
+import { contactById, upsertContact, setContactTags as setContactTagsFn } from './modules/contacts.mjs';
 import { sendConsentRequest, notifyWaitlist, listCampaigns, createCampaign, queueCampaign, campaign } from './modules/campaigns.mjs';
 import { listItems, upsertItem, move, setRecipe, recipes, moves, buildable } from './modules/inventory.mjs';
 import { listDevices, registerDevice, importManifest, assignToOrder } from './modules/devices.mjs';
@@ -24,16 +28,33 @@ import { join } from 'node:path';
 
 export function registerAdmin(app) {
   const { db, cfg, router } = app;
-  const page = (c, title, body) => html(c.res, layout({ title, body, path: c.url.pathname, company: cfg.company, csrf: c.csrf, demo: cfg.demo, demoResetMinutes: cfg.demoResetMinutes, flash: c.query.get('ok') ? { text: c.query.get('ok') } : c.query.get('err') ? { kind: 'err', text: c.query.get('err') } : null }));
+  const page = (c, title, body) => html(c.res, layout({ title, body, path: c.url.pathname, company: cfg.company, csrf: c.csrf, demo: cfg.demo, demoResetMinutes: cfg.demoResetMinutes, q: c.url.pathname === '/search' ? c.query.get('q') || '' : '', flash: c.query.get('ok') ? { text: c.query.get('ok') } : c.query.get('err') ? { kind: 'err', text: c.query.get('err') } : null }));
   const back = (c, to, ok) => redirect(c.res, `${to}?ok=${encodeURIComponent(ok)}`);
   const link = (href, label) => `<a href="${e(href)}">${e(label)}</a>`;
   const filters = (c, fields) => `<form method="get" class="row" style="margin:.6rem 0">${fields.map(([n, l, opts]) => opts ? field(n, l, { options: [['', 'any'], ...opts], value: c.query.get(n) || '' }) : field(n, l, { value: c.query.get(n) || '' })).join('')}<div><label>&nbsp;</label><button class="quiet">Filter</button></div></form>`;
 
-  // ---------- dashboard
+  registerShop(app, { page, back, link, filters });
+
+  // ---------- home: what needs doing today, the last 30 days at a glance, what just happened
   router.get('/', (c) => {
     const s = snapshot(db);
     const m = s.books.months.at(-1) || { income_cents: 0, expenses_cents: 0, net_cents: 0 };
-    const body = cards([
+    const a = analytics(db, { days: 30 }); const t = a.totals, pv = a.previous;
+    const todo = [
+      s.orders.open ? `${link('/orders?status=open', `${s.orders.open} order${s.orders.open === 1 ? '' : 's'} to pack or ship`)} · batch ${e(weekLabel())}` : null,
+      s.support.open ? link('/tickets?status=open', `${s.support.open} support ticket${s.support.open === 1 ? '' : 's'} waiting on us`) + (s.support.breached ? ` <span class="bad">(${s.support.breached} past SLA)</span>` : '') : null,
+      s.inventory.low.length ? link('/inventory', `${s.inventory.low.length} part${s.inventory.low.length === 1 ? '' : 's'} at or under the reorder point: ${s.inventory.low.map(i => i.sku).join(', ')}`) : null,
+      s.warranty.open ? link('/warranty', `${s.warranty.open} warranty claim${s.warranty.open === 1 ? '' : 's'} open`) : null,
+      s.books.receivable_cents ? link('/invoices', `${money(s.books.receivable_cents)} in invoices outstanding`) : null,
+      s.exceptions.length ? link('/exceptions', `${s.exceptions.length} exception${s.exceptions.length === 1 ? '' : 's'} need a decision`) : null,
+      s.waitlist.some(w => w.waiting) ? link('/contacts?segment=waitlist', `${s.waitlist.reduce((n, w) => n + w.waiting, 0)} people waiting for stock`) : null,
+      s.probes.some(p => p.last_ok === 0) ? `<span class="bad">${link('/status-admin', 'a probe is down')}</span>` : null,
+    ].filter(Boolean);
+    const activity = db.all('SELECT * FROM audit_log WHERE action NOT IN (\'demo.seed\') ORDER BY at DESC, id DESC LIMIT 16').map(describeAudit).filter(Boolean);
+    const body = `<div class="two"><div><h2>Today</h2>${todo.length ? `<ul class="todo">${todo.map(x => `<li>${x}</li>`).join('')}</ul>` : '<p class="ok">Nothing waiting. Silence means healthy.</p>'}</div>
+<div><h2>Last 30 days</h2><div class="cards">${tile('Total sales', money(t.total_cents), { prev: pv.total_cents, cur: t.total_cents })}${tile('Orders', t.orders, { prev: pv.orders, cur: t.orders })}${tile('Average order', money(t.aov_cents), { prev: pv.aov_cents, cur: t.aov_cents })}${tile('Returning', `${Math.round(t.returning_rate * 100)}%`, { prev: pv.returning_rate, cur: t.returning_rate })}</div></div></div>
+${line({ points: a.series.buckets.map(b => ({ label: b.label, value: b.net_cents })), title: 'Net sales per day, 30 days', money: true, height: 170 })}
+<p class="muted">${link('/analytics', 'Full analytics')} · ${link('/batches', 'Batches')} · ${link('/products', 'Products')}</p>` + cards([
       ['Orders to pack/ship', s.orders.open, s.orders.open ? 'warn' : ''], ['This batch', `${s.orders.thisBatch} <span class="muted" style="font-size:.8rem">${weekLabel()}</span>`],
       ['Revenue, 30 days', money(s.orders.revenue30)], ['Units, 30 days', s.orders.units30],
       ['Support needing an answer', s.support.open, s.support.breached ? 'bad' : ''], ['SLA breaches', s.support.breached, s.support.breached ? 'bad' : 'ok'],
@@ -45,16 +66,22 @@ export function registerAdmin(app) {
     ]) +
     `<h2>Exceptions (what a human must decide)</h2>${table(s.exceptions, [{ label: 'Opened', get: r => dt(r.opened_at) }, { label: 'Title', html: r => link('/exceptions', r.title) }, { label: 'Issue', html: r => r.github_issue ? link(`https://github.com/${cfg.githubRepo}/issues/${r.github_issue}`, '#' + r.github_issue) : '—' }], { empty: 'Silence means healthy.' })}` +
     `<h2>Waitlist</h2>${table(s.waitlist, [{ label: 'SKU', key: 'sku' }, { label: 'People', key: 'people', num: true }, { label: 'Units', key: 'units', num: true }, { label: 'Not yet notified', key: 'waiting', num: true }], { empty: 'Nobody waiting.' })}` +
-    `<h2>Mail outbox</h2><p>${Object.entries(s.mail).map(([k, v]) => `${e(k)}: <b>${v}</b>`).join(' · ') || 'empty'} · contacts ${s.contacts.n} (${s.contacts.consented || 0} consented)</p>`;
-    page(c, 'Dashboard', body);
+    `<h2>Mail outbox</h2><p>${Object.entries(s.mail).map(([k, v]) => `${e(k)}: <b>${v}</b>`).join(' · ') || 'empty'} · customers ${s.contacts.n} (${s.contacts.consented || 0} opted in)</p>` +
+    `<h2>Activity</h2><ul class="tl">${activity.map(x => `<li><span class="meta">${e(dt(x.at))} · ${e(x.actor)}</span><br>${x.html}</li>`).join('') || '<li class="muted">Nothing yet.</li>'}</ul>`;
+    page(c, 'Home', body);
   });
 
   // ---------- orders
   router.get('/orders', (c) => {
-    const rows = listOrders(db, { status: c.query.get('status') || '', batch: c.query.get('batch') || '', q: c.query.get('q') || '' });
-    const body = filters(c, [['status', 'Status', STATUSES.map(s => [s, s])], ['batch', 'Batch (e.g. ' + weekLabel() + ')'], ['q', 'Search']]) +
-      `<p>${link(`/orders.csv?batch=${e(c.query.get('batch') || '')}&status=${e(c.query.get('status') || 'paid')}`, 'Download fulfill.mjs CSV for this filter')} · ${link('/orders/import', 'Import a Stripe CSV')} · ${link('/orders/new', 'Manual order')}</p>` +
-      table(rows, [{ label: '#', html: r => link(`/orders/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Paid', get: r => day(r.paid_at) }, { label: 'Batch', key: 'batch' }, { label: 'Customer', get: r => `${r.ship_name || ''} ${r.email ? `<${r.email}>` : ''}` }, { label: 'Items', key: 'items_text' }, { label: 'Total', get: r => money(r.total_cents, r.currency), num: true }, { label: 'Tracking', key: 'tracking' }]);
+    const f = { status: c.query.get('status') || '', batch: c.query.get('batch') || '', q: c.query.get('q') || '', tag: c.query.get('tag') || '', from: c.query.get('from') || '', to: c.query.get('to') || '', discount: c.query.get('discount') || '', sku: c.query.get('sku') || '' };
+    const rows = listOrders(db, f); const n = statusCounts(db);
+    const qs = (o) => '/orders?' + new URLSearchParams({ ...f, ...o }).toString();
+    const body = tabs([[qs({ status: '' }), 'All', n.all, ''], [qs({ status: 'open' }), 'Open', n.open, 'open'], [qs({ status: 'paid' }), 'To pack', n.paid, 'paid'], [qs({ status: 'packed' }), 'To ship', n.packed, 'packed'], [qs({ status: 'shipped' }), 'Shipped', n.shipped, 'shipped'], [qs({ status: 'delivered' }), 'Delivered', n.delivered, 'delivered'], [qs({ status: 'refunded' }), 'Refunded', n.refunded, 'refunded'], [qs({ status: 'canceled' }), 'Canceled', n.canceled, 'canceled']], f.status) +
+      filters(c, [['q', 'Search # / name / email / tracking'], ['batch', 'Batch (e.g. ' + weekLabel() + ')'], ['tag', 'Tag'], ['from', 'Paid from (YYYY-MM-DD)'], ['to', 'Paid to'], ['discount', 'Discount code'], ['sku', 'SKU']]) +
+      `<p>${rows.length} shown · ${link(`/orders.csv?batch=${e(f.batch)}&status=${e(f.status || 'paid')}`, 'fulfill.mjs CSV for this filter')} · ${link('/batches', 'Batches')} · ${link('/orders/import', 'Import a Stripe CSV')} · ${link('/orders/new', 'Manual order')}</p>` +
+      `<form method="post" action="/orders/bulk"><input type="hidden" name="_csrf" value="${e(c.csrf)}">` +
+      table(rows, [{ label: '', html: r => `<input type="checkbox" name="ids[]" value="${r.id}" style="width:auto" aria-label="select ${e(r.number)}">` }, { label: '#', html: r => link(`/orders/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Paid', get: r => day(r.paid_at) }, { label: 'Batch', key: 'batch' }, { label: 'Customer', html: r => `${r.contact_id ? link(`/contacts/${r.contact_id}`, r.ship_name || r.email) : e(r.ship_name || '')}${r.email ? `<br><span class="muted">${e(r.email)}</span>` : ''}` }, { label: 'Items', get: r => `${r.units} · ${r.items_text || ''}` }, { label: 'Total', html: r => `${money(r.total_cents, r.currency)}${r.discount_code ? `<br><span class="muted">${e(r.discount_code)}</span>` : ''}${r.refunded_cents ? `<br><span class="bad">−${money(r.refunded_cents)}</span>` : ''}`, num: true }, { label: 'Tags', html: r => tagsHtml(r.tags) }, { label: 'Tracking', key: 'tracking' }]) +
+      (rows.length ? `<div class="row" style="margin:.6rem 0;align-items:end"><div>${field('action', 'With the selected orders', { options: [['packed', 'mark packed (pulls parts from stock)'], ['delivered', 'mark delivered'], ['slips', 'print packing slips'], ['tag', 'add a tag'], ['canceled', 'cancel (only paid, unpacked orders)']] })}</div><div>${field('tag', 'Tag (for "add a tag")')}</div><div><label>&nbsp;</label><button>Apply</button></div></div>` : '') + '</form>';
     page(c, 'Orders', body);
   });
   router.get('/orders.csv', (c) => text(c.res, fulfillCsv(db, { batch: c.query.get('batch') || '', status: c.query.get('status') || 'paid' }), 200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="orders.csv"' }));
@@ -66,29 +93,48 @@ export function registerAdmin(app) {
     for (const r of rows) { const o = csvRowToOrder(r, map); if (o.status_hint && !/paid|succeeded|complete/i.test(o.status_hint)) { res.skipped++; continue; } try { const { created } = recordOrder(db, o, { catalog, actor: 'web' }); created ? res.created++ : res.existing++; } catch (err) { res.errors.push(`${o.external_id || o.email}: ${err.message}`); } }
     back(c, '/orders', `created ${res.created}, already known ${res.existing}, skipped ${res.skipped}${res.errors.length ? `, errors: ${res.errors.join('; ')}` : ''}`);
   });
-  router.get('/orders/new', (c) => page(c, 'Manual order', form('/orders/new', c.csrf, `<div class="row">${field('email', 'Email', { type: 'email', required: true })}${field('name', 'Ship to name', { required: true })}</div><div class="row">${field('sku', 'SKU', { required: true })}${field('qty', 'Qty', { type: 'number', value: 1 })}${field('cents', 'Total cents (0 for a free reship)', { type: 'number', value: 0 })}</div><div class="row">${field('line1', 'Address line 1', { required: true })}${field('line2', 'Line 2')}</div><div class="row">${field('city', 'City', { required: true })}${field('state', 'State', { required: true })}${field('zip', 'ZIP', { required: true })}</div>${field('notes', 'Notes')}`, { submit: 'Create order' })));
+  router.get('/orders/new', (c) => page(c, 'Manual order', form('/orders/new', c.csrf, `<div class="row">${field('email', 'Email', { type: 'email', required: true })}${field('name', 'Ship to name', { required: true })}</div><div class="row">${field('sku', 'SKU', { required: true })}${field('qty', 'Qty', { type: 'number', value: 1 })}${field('cents', 'Total cents (0 for a free reship)', { type: 'number', value: 0 })}</div><div class="row">${field('line1', 'Address line 1', { required: true })}${field('line2', 'Line 2')}</div><div class="row">${field('city', 'City', { required: true })}${field('state', 'State', { required: true })}${field('zip', 'ZIP', { required: true })}</div><div class="row">${field('discount_code', 'Discount code (optional; priced by its rules)')}${field('tags', 'Tags')}</div>${field('notes', 'Notes')}`, { submit: 'Create order' })));
   router.post('/orders/new', async (c) => {
     const b = c.body; const cents = Number(b.cents || 0); const qty = Number(b.qty || 1);
-    const { order } = recordOrder(db, { source: 'manual', email: b.email, name: b.name, subtotal_cents: cents, total_cents: cents, ship: { line1: b.line1, line2: b.line2, city: b.city, state: b.state, zip: b.zip }, items: [{ sku: b.sku, name: b.sku, qty, unit_cents: Math.round(cents / qty) }], notes: b.notes }, { catalog: await app.catalog().catch(() => null), actor: 'web' });
+    const { order } = recordOrder(db, { source: 'manual', email: b.email, name: b.name, subtotal_cents: cents, total_cents: cents, discount_code: b.discount_code || null, tags: b.tags || '', ship: { line1: b.line1, line2: b.line2, city: b.city, state: b.state, zip: b.zip }, items: [{ sku: b.sku, name: b.sku, qty, unit_cents: Math.round(cents / qty) }], notes: b.notes }, { catalog: await app.catalog().catch(() => null), actor: 'web' });
     back(c, `/orders/${order.id}`, `created ${order.number}`);
   });
   router.get('/orders/:id', (c) => {
     const o = orderById(db, c.params.id); if (!o) throw new HttpError(404, 'no such order');
     const devices = db.all('SELECT * FROM devices WHERE order_id = ?', o.id);
+    const cust = o.contact_id ? customerStats(db, o.contact_id) : null;
+    const events = timeline(db, o.id);
+    const claims = db.all('SELECT * FROM warranty_claims WHERE order_id = ? OR reship_order_id = ?', o.id, o.id);
+    const tickets = o.contact_id ? db.all('SELECT id, number, subject, status FROM tickets WHERE contact_id = ? ORDER BY id DESC LIMIT 5', o.contact_id) : [];
     const next = { paid: 'packed', packed: 'shipped', shipped: 'delivered' }[o.status];
     const act = next === 'shipped' ? form(`/orders/${o.id}/transition`, c.csrf, `<input type="hidden" name="to" value="shipped"><div class="row">${field('carrier', 'Carrier', { value: 'USPS' })}${field('tracking', 'Tracking number')}</div>`, { submit: 'Mark shipped + email tracking' })
       : next ? `<form method="post" action="/orders/${o.id}/transition" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="${next}"><button>Mark ${next}</button></form>` : '';
-    const body = `<p>${statusPill(o.status)} · ${e(o.source)} ${o.external_id ? `· <span class="muted">${e(o.external_id)}</span>` : ''} · batch ${e(o.batch || '')} · paid ${dt(o.paid_at)} · packed ${dt(o.packed_at)} · shipped ${dt(o.shipped_at)} ${o.tracking ? `· ${e(o.carrier)} ${e(o.tracking)}` : ''}</p>
-<div class="row"><div><b>Ship to</b><br>${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)} ${e(o.ship_country)}<br>${o.email ? link(`/contacts?q=${encodeURIComponent(o.email)}`, o.email) : ''}</div>
-<div><b>Money</b><br>subtotal ${money(o.subtotal_cents)} · shipping ${money(o.shipping_cents)} · tax ${money(o.tax_cents)}<br><b>total ${money(o.total_cents)}</b>${o.refunded_cents ? ` · refunded ${money(o.refunded_cents)}` : ''}<br>COGS ${money(o.items.reduce((s, i) => s + i.cogs_cents * i.qty, 0))}</div></div>
-${table(o.items, [{ label: 'SKU', key: 'sku' }, { label: 'Item', key: 'name' }, { label: 'Qty', key: 'qty', num: true }, { label: 'Unit', get: r => money(r.unit_cents), num: true }, { label: 'COGS/unit', get: r => money(r.cogs_cents), num: true }])}
-<p style="margin-top:1rem">${act} ${o.status === 'paid' ? button(`/orders/${o.id}/transition`, c.csrf, 'Cancel', { quiet: true }).replace('<button', '<input type="hidden" name="to" value="canceled"><button') : ''}</p>
-<h2>Devices in this box</h2>${table(devices, [{ label: 'Serial', key: 'serial' }, { label: 'MAC', key: 'mac' }, { label: 'Firmware', key: 'fw_version' }, { label: 'Status', key: 'status' }], { empty: 'No serial scanned yet — the packing-slip QA line.' })}
-${form(`/orders/${o.id}/assign`, c.csrf, field('serial', 'Scan a board serial to tie it to this order'), { submit: 'Assign' })}
-<h2>Refund</h2>${form(`/orders/${o.id}/refund`, c.csrf, `<div class="row">${field('cents', 'Cents', { type: 'number', value: o.total_cents - o.refunded_cents })}${field('reason', 'Reason')}</div><p class="muted">Records the refund in the books. Issue the actual refund in Stripe (money stays a human action).</p>`, { submit: 'Record refund' })}
-<p class="muted">Notes: ${e(o.notes || '')}</p>`;
+    const undo = o.status === 'packed' ? `<form method="post" action="/orders/${o.id}/transition" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="paid"><button class="quiet">Unpack (return parts)</button></form>` : '';
+    const cancel = o.status === 'paid' ? `<form method="post" action="/orders/${o.id}/transition" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="canceled"><button class="quiet">Cancel</button></form>` : '';
+    const resend = ['shipped', 'delivered'].includes(o.status) && o.email ? button(`/orders/${o.id}/resend-tracking`, c.csrf, 'Re-send tracking email', { quiet: true }) : '';
+    const body = `<p>${statusPill(o.status)} · ${e(o.source)} ${o.external_id ? `· <span class="muted">${e(o.external_id)}</span>` : ''} · batch ${link(`/orders?batch=${e(o.batch || '')}`, o.batch || '')} · paid ${dt(o.paid_at)}${o.tracking ? ` · ${e(o.carrier)} <b>${e(o.tracking)}</b>` : ''} · ${link(`/orders/${o.id}/packing-slip`, 'Packing slip')}</p>
+<p>${act} ${undo} ${cancel} ${resend}</p>
+<div class="two"><div>
+<div class="card"><div class="k">Customer</div>${o.contact_id ? `<b>${link(`/contacts/${o.contact_id}`, o.ship_name || o.email)}</b><br><span class="muted">${e(o.email || '')}</span><br>${cust.orders} order${cust.orders === 1 ? '' : 's'} · ${money(cust.spent_cents)} lifetime${cust.orders > 1 ? ' · <span class="pill ok">repeat</span>' : ' · first order'}${cust.open_tickets ? ` · <span class="warn">${cust.open_tickets} open ticket${cust.open_tickets === 1 ? '' : 's'}</span>` : ''}` : '<span class="muted">no customer record (no email on the order)</span>'}</div>
+<div class="card" style="margin-top:.8rem"><div class="k">Ship to</div>${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)} ${e(o.ship_country)}${['paid', 'packed'].includes(o.status) ? `<details style="margin-top:.5rem"><summary class="muted">Edit address</summary>${form(`/orders/${o.id}/address`, c.csrf, `<div class="row">${field('name', 'Name', { value: o.ship_name })}${field('line1', 'Line 1', { value: o.ship_line1, required: true })}</div><div class="row">${field('line2', 'Line 2', { value: o.ship_line2 })}${field('city', 'City', { value: o.ship_city, required: true })}${field('state', 'State', { value: o.ship_state })}${field('zip', 'ZIP', { value: o.ship_zip, required: true })}</div>`, { submit: 'Save address' })}</details>` : ''}</div>
+<div class="card" style="margin-top:.8rem"><div class="k">Payment</div><table><tr><td>Subtotal</td><td class="num">${money(o.subtotal_cents)}</td></tr>${o.discount_cents || o.discount_code ? `<tr><td>Discount ${o.discount_code ? link(`/orders?discount=${encodeURIComponent(o.discount_code)}`, o.discount_code) : ''}</td><td class="num">−${money(o.discount_cents)}</td></tr>` : ''}<tr><td>Shipping</td><td class="num">${money(o.shipping_cents)}</td></tr><tr><td>Tax</td><td class="num">${money(o.tax_cents)}</td></tr><tr><td><b>Total charged</b></td><td class="num"><b>${money(o.total_cents)}</b></td></tr>${o.refunded_cents ? `<tr><td class="bad">Refunded</td><td class="num bad">−${money(o.refunded_cents)}</td></tr>` : ''}<tr><td class="muted">Cost of goods</td><td class="num muted">${money(o.items.reduce((s, i) => s + i.cogs_cents * i.qty, 0))}</td></tr><tr><td class="muted">Margin</td><td class="num muted">${o.total_cents ? Math.round(100 * (o.subtotal_cents - o.discount_cents - o.refunded_cents - o.items.reduce((s, i) => s + i.cogs_cents * i.qty, 0)) / Math.max(1, o.subtotal_cents - o.discount_cents)) : 0}%</td></tr></table></div>
+</div><div>
+<h2 style="margin-top:0">Timeline</h2><ul class="tl">${events.map(ev => `<li class="${e(ev.kind)}"><span class="meta">${e(dt(ev.at))} · ${e(ev.actor)}</span><br>${e(ev.text)}</li>`).join('') || '<li class="muted">No events recorded.</li>'}</ul>
+${form(`/orders/${o.id}/note`, c.csrf, field('body', 'Add a note (internal; the customer never sees it)', { type: 'textarea', rows: 2, required: true }), { submit: 'Add note' })}
+</div></div>
+<h2>Items</h2>${table(o.items, [{ label: 'SKU', html: r => link(`/products/${encodeURIComponent(r.sku)}`, r.sku) }, { label: 'Item', key: 'name' }, { label: 'Qty', key: 'qty', num: true }, { label: 'Unit', get: r => money(r.unit_cents), num: true }, { label: 'Line', get: r => money(r.unit_cents * r.qty), num: true }, { label: 'COGS/unit', get: r => money(r.cogs_cents), num: true }], { empty: 'No line items — Stripe did not send them and they could not be fetched. Add them before packing.' })}
+<div class="two"><div><h2>Tags</h2><p>${tagsHtml(o.tags) || '<span class="muted">none</span>'}</p>${form(`/orders/${o.id}/tags`, c.csrf, field('tags', 'Tags, comma-separated (gift, rush, wholesale-interest…)', { value: o.tags }), { submit: 'Save tags' })}</div>
+<div><h2>Devices in this box</h2>${table(devices, [{ label: 'Serial', key: 'serial' }, { label: 'MAC', key: 'mac' }, { label: 'Firmware', key: 'fw_version' }, { label: 'Status', key: 'status' }], { empty: 'No serial scanned yet — the packing-slip QA line.' })}
+${form(`/orders/${o.id}/assign`, c.csrf, field('serial', 'Scan a board serial to tie it to this order'), { submit: 'Assign' })}</div></div>
+${claims.length || tickets.length ? `<div class="two"><div><h2>Warranty</h2>${table(claims, [{ label: '#', html: r => link(`/warranty/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Category', key: 'category' }])}</div><div><h2>Customer's tickets</h2>${table(tickets, [{ label: '#', html: r => link(`/tickets/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Subject', key: 'subject' }])}</div></div>` : ''}
+<h2>Refund</h2>${o.total_cents - o.refunded_cents > 0 ? form(`/orders/${o.id}/refund`, c.csrf, `<div class="row">${field('cents', 'Cents', { type: 'number', value: o.total_cents - o.refunded_cents })}${field('reason', 'Reason')}</div><p class="muted">Records the refund in the books and on the timeline. Issue the actual refund in Stripe (money stays a human action); the webhook then confirms it.</p>`, { submit: 'Record refund' }) : '<p class="muted">Fully refunded.</p>'}
+${o.notes ? `<p class="muted">Order notes: ${e(o.notes)}</p>` : ''}`;
     page(c, `Order ${o.number}`, body);
   });
+  router.post('/orders/:id/note', (c) => { addNote(db, Number(c.params.id), c.body.body, { actor: 'web' }); back(c, `/orders/${c.params.id}`, 'note added'); });
+  router.post('/orders/:id/tags', (c) => { setTags(db, Number(c.params.id), c.body.tags || '', { actor: 'web' }); back(c, `/orders/${c.params.id}`, 'tags saved'); });
+  router.post('/orders/:id/address', (c) => { updateShipping(db, Number(c.params.id), c.body, { actor: 'web' }); back(c, `/orders/${c.params.id}`, 'address updated'); });
+  router.post('/orders/:id/resend-tracking', (c) => { resendTracking(db, Number(c.params.id), { cfg, actor: 'web' }); back(c, `/orders/${c.params.id}`, 'tracking email queued'); });
   router.post('/orders/:id/transition', (c) => { const o = transition(db, c.params.id, c.body.to, { actor: 'web', carrier: c.body.carrier, tracking: c.body.tracking, cfg }); back(c, `/orders/${o.id}`, `${o.number} is now ${o.status}`); });
   router.post('/orders/:id/refund', (c) => { const o = refund(db, c.params.id, c.body.cents, { actor: 'web', reason: c.body.reason }); back(c, `/orders/${o.id}`, `refund recorded`); });
   router.post('/orders/:id/assign', (c) => { assignToOrder(db, c.body.serial, Number(c.params.id)); back(c, `/orders/${c.params.id}`, `assigned ${c.body.serial}`); });
@@ -128,22 +174,32 @@ ${form(`/tickets/${t.id}/note`, c.csrf, field('body', 'Internal note', { type: '
   router.post('/canned', (c) => { db.run('INSERT INTO canned_replies (slug, title, body) VALUES (?, ?, ?) ON CONFLICT(slug) DO UPDATE SET title = excluded.title, body = excluded.body', c.body.slug, c.body.title, c.body.body); back(c, '/canned', 'saved'); });
 
   // ---------- contacts & waitlist
-  router.get('/contacts', (c) => {
-    const rows = searchContacts(db, c.query.get('q') || '');
-    page(c, 'Contacts', filters(c, [['q', 'Search email / name / org']]) + table(rows, [{ label: 'Email', html: r => link(`/contacts/${r.id}`, r.email) }, { label: 'Name', key: 'name' }, { label: 'Org', key: 'org' }, { label: 'Kind', key: 'kind' }, { label: 'Source', key: 'source' }, { label: 'Marketing', html: r => r.consent_marketing && !r.unsubscribed_at ? '<span class="ok">consented</span>' : r.unsubscribed_at ? '<span class="bad">unsubscribed</span>' : '<span class="muted">no</span>' }, { label: 'Since', get: r => day(r.created_at) }]) +
-      `<h2>Waitlist</h2>${table(waitlistSummary(db), [{ label: 'SKU', key: 'sku' }, { label: 'People', key: 'people', num: true }, { label: 'Units', key: 'units', num: true }, { label: 'Waiting', key: 'waiting', num: true }, { label: '', html: r => `<form method="post" action="/waitlist/notify" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="sku" value="${e(r.sku)}"><button class="quiet">Notify "in stock"</button></form>` }])}` +
-      form('/contacts/new', c.csrf, `<div class="row">${field('email', 'Email', { type: 'email', required: true })}${field('name', 'Name')}${field('org', 'Org')}${field('kind', 'Kind', { options: ['person', 'school', 'business', 'nonprofit', 'press', 'vendor'] })}</div>`, { submit: 'Add contact' }));
-  });
-  router.post('/contacts/new', (c) => { const ct = upsertContact(db, { ...c.body, source: 'manual' }); back(c, `/contacts/${ct.id}`, 'saved'); });
+  router.post('/contacts/new', (c) => { const ct = upsertContact(db, { ...c.body, source: 'manual' }); if (c.body.tags) setContactTagsFn(db, ct.id, c.body.tags); back(c, `/contacts/${ct.id}`, 'saved'); });
   router.get('/contacts/:id', (c) => {
     const ct = contactById(db, c.params.id); if (!ct) throw new HttpError(404, 'no such contact');
-    const orders = db.all('SELECT * FROM orders WHERE contact_id = ? ORDER BY id DESC', ct.id); const tickets = db.all('SELECT * FROM tickets WHERE contact_id = ? ORDER BY id DESC', ct.id);
+    const st = customerStats(db, ct.id);
+    const orders = db.all('SELECT o.*, (SELECT GROUP_CONCAT(qty || \'× \' || sku, \', \') FROM order_items i WHERE i.order_id = o.id) AS items_text FROM orders o WHERE contact_id = ? ORDER BY id DESC', ct.id); const tickets = db.all('SELECT * FROM tickets WHERE contact_id = ? ORDER BY id DESC', ct.id);
     const wl = db.all('SELECT * FROM waitlist WHERE contact_id = ?', ct.id);
-    page(c, ct.email, `<p>${e(ct.name || '')} ${ct.org ? '· ' + e(ct.org) : ''} · ${e(ct.kind)} · via ${e(ct.source || '')} · since ${day(ct.created_at)} · marketing: ${ct.consent_marketing && !ct.unsubscribed_at ? `<span class="ok">consented ${day(ct.consent_at)}</span>` : ct.unsubscribed_at ? `<span class="bad">unsubscribed ${day(ct.unsubscribed_at)}</span>` : 'no'} ${!ct.consent_marketing ? button(`/contacts/${ct.id}/consent`, c.csrf, 'Send double opt-in mail', { quiet: true }) : ''}</p>
-<h2>Orders</h2>${table(orders, [{ label: '#', html: r => link(`/orders/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Total', get: r => money(r.total_cents), num: true }, { label: 'Paid', get: r => day(r.paid_at) }])}
+    const invoices = db.all('SELECT * FROM invoices WHERE contact_id = ? ORDER BY id DESC', ct.id);
+    const events = [
+      ...db.all('SELECT ev.at, ev.text, o.number, o.id AS order_id FROM order_events ev JOIN orders o ON o.id = ev.order_id WHERE o.contact_id = ? AND ev.kind IN (\'placed\',\'shipped\',\'delivered\',\'refund\',\'canceled\')', ct.id).map(x => ({ at: x.at, html: `${link(`/orders/${x.order_id}`, x.number)} — ${e(x.text)}` })),
+      ...db.all('SELECT m.created_at AS at, m.direction, t.number, t.id AS ticket_id, t.subject FROM ticket_messages m JOIN tickets t ON t.id = m.ticket_id WHERE t.contact_id = ?', ct.id).map(x => ({ at: x.at, html: `${link(`/tickets/${x.ticket_id}`, x.number)} — ${x.direction === 'in' ? 'wrote in' : x.direction === 'out' ? 'we replied' : 'note'}: ${e(x.subject)}` })),
+      ...(ct.consent_at ? [{ at: ct.consent_at, html: 'Confirmed marketing opt-in (double opt-in)' }] : []), ...(ct.unsubscribed_at ? [{ at: ct.unsubscribed_at, html: 'Unsubscribed from marketing' }] : []),
+      ...wl.map(w => ({ at: w.created_at, html: `Joined the waitlist for ${e(w.sku)} (${w.qty})` })), { at: ct.created_at, html: `Customer record created via ${e(ct.source || 'manual')}` },
+    ].sort((a, b) => b.at.localeCompare(a.at));
+    page(c, ct.name || ct.email, `<p>${e(ct.email)} ${ct.org ? '· ' + e(ct.org) : ''} · ${e(ct.kind)} · via ${e(ct.source || '')} · since ${day(ct.created_at)} · marketing: ${ct.consent_marketing && !ct.unsubscribed_at ? `<span class="ok">opted in ${day(ct.consent_at)}</span>` : ct.unsubscribed_at ? `<span class="bad">unsubscribed ${day(ct.unsubscribed_at)}</span>` : 'no'} ${!ct.consent_marketing ? button(`/contacts/${ct.id}/consent`, c.csrf, 'Send double opt-in mail', { quiet: true }) : ''}</p>
+<p>${tagsHtml(ct.tags) || '<span class="muted">no tags</span>'}</p>
+${cards([['Orders', st.orders], ['Lifetime spend', money(st.spent_cents)], ['Average order', money(st.aov_cents)], ['Units', st.units], ['First order', st.first_order_at ? day(st.first_order_at) : '—'], ['Last order', st.last_order_at ? day(st.last_order_at) : '—'], ['Tickets', `${st.tickets}${st.open_tickets ? ` (${st.open_tickets} open)` : ''}`, st.open_tickets ? 'warn' : ''], ['Warranty claims', st.claims, st.claims ? 'warn' : '']])}
+<div class="two"><div>
+<h2>Orders</h2>${table(orders, [{ label: '#', html: r => link(`/orders/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Items', key: 'items_text' }, { label: 'Total', get: r => money(r.total_cents), num: true }, { label: 'Paid', get: r => day(r.paid_at) }])}
 <h2>Tickets</h2>${table(tickets, [{ label: '#', html: r => link(`/tickets/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Subject', key: 'subject' }])}
-<h2>Waitlist</h2>${table(wl, [{ label: 'SKU', key: 'sku' }, { label: 'Qty', key: 'qty' }, { label: 'Notified', get: r => dt(r.notified_at) }])}
-${form(`/contacts/${ct.id}/notes`, c.csrf, field('notes', 'Notes', { type: 'textarea', value: ct.notes || '' }), { submit: 'Save notes' })}`);
+${invoices.length ? `<h2>Invoices</h2>${table(invoices, [{ label: '#', html: r => link(`/invoices/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Total', get: r => money(r.total_cents), num: true }])}` : ''}
+<h2>Waitlist</h2>${table(wl, [{ label: 'SKU', html: r => link(`/products/${encodeURIComponent(r.sku)}`, r.sku) }, { label: 'Qty', key: 'qty' }, { label: 'Notified', get: r => dt(r.notified_at) }])}
+</div><div>
+<h2>Timeline</h2><ul class="tl">${events.map(x => `<li><span class="meta">${e(dt(x.at))}</span><br>${x.html}</li>`).join('')}</ul>
+${form(`/contacts/${ct.id}/tags`, c.csrf, field('tags', 'Tags, comma-separated (vip, school, press…)', { value: ct.tags }), { submit: 'Save tags' })}
+${form(`/contacts/${ct.id}/notes`, c.csrf, field('notes', 'Notes', { type: 'textarea', value: ct.notes || '' }), { submit: 'Save notes' })}
+</div></div>`);
   });
   router.post('/contacts/:id/consent', (c) => { sendConsentRequest(db, Number(c.params.id), cfg); back(c, `/contacts/${c.params.id}`, 'confirmation mail queued'); });
   router.post('/contacts/:id/notes', (c) => { db.run('UPDATE contacts SET notes = ? WHERE id = ?', c.body.notes, c.params.id); back(c, `/contacts/${c.params.id}`, 'saved'); });
@@ -273,4 +329,24 @@ curl -H "Authorization: Bearer <token>" ${cfg.baseUrl}/api/demo/scenarios`)}</pr
     const r = await sc.run(app);
     redirect(c.res, `/demo?ok=${encodeURIComponent(sc.label)}&result=${encodeURIComponent(JSON.stringify(r, null, 1).slice(0, 1500))}`);
   });
+}
+
+// The activity feed: an audit row as one readable line.
+function describeAudit(r) {
+  const d = (() => { try { return JSON.parse(r.detail || '{}'); } catch { return {}; } })();
+  const ent = r.entity_id ? `<b>${e(r.entity_id)}</b>` : '';
+  const text = {
+    'order.create': `Order ${ent} placed${d.total_cents != null ? ` · $${(d.total_cents / 100).toFixed(2)}` : ''}${d.discount_code ? ` · code ${e(d.discount_code)}` : ''}`,
+    'order.packed': `Order ${ent} packed`, 'order.shipped': `Order ${ent} shipped${d.tracking ? ` · ${e(d.carrier || '')} ${e(d.tracking)}` : ''}`, 'order.delivered': `Order ${ent} delivered`, 'order.canceled': `Order ${ent} canceled`,
+    'order.refund': `Refund of $${((d.cents || 0) / 100).toFixed(2)} on ${ent}`, 'order.note': `Note added to ${ent}`, 'order.tags': `Tags on ${ent}: ${e(d.tags || '')}`, 'order.address': `Address changed on ${ent}`, 'order.resend_tracking': `Tracking re-sent for ${ent}`,
+    'ticket.open': `Ticket ${ent} opened (${e(d.kind || '')} via ${e(d.channel || '')})`, 'ticket.reply': `Replied on ${ent}`, 'ticket.closed': 'Ticket closed', 'device.assign': `Board ${ent} scanned into an order`,
+    'contact.consent': 'A customer confirmed marketing opt-in', 'contact.unsubscribe': 'A customer unsubscribed', 'contact.tags': `Customer tags: ${e(d.tags || '')}`,
+    'discount.create': `Discount ${ent} created`, 'discount.disabled': `Discount ${ent} disabled`, 'discount.active': `Discount ${ent} enabled`,
+    'auth.login': 'Operator logged in', 'auth.login.failed': '<span class="bad">A login attempt failed</span>', 'auth.token.create': `API token ${ent} created`,
+    'warranty.open': `Warranty claim ${ent} opened`, 'warranty.reship': `Reship order created for claim ${ent}`, 'warranty.resolve': `Warranty claim ${ent} resolved`,
+    'invoice.create': `Invoice ${ent} drafted`, 'invoice.issue': `Invoice ${ent} issued`, 'invoice.paid': `Invoice ${ent} paid`, 'invoice.void': `Invoice ${ent} voided`,
+    'exception.raise': `<span class="warn">Exception raised: ${ent}</span>`, 'exception.resolve': `Exception resolved: ${ent}`, 'ticket.waiting_on_customer': 'Ticket waiting on the customer', 'ticket.open': `Ticket ${ent} opened (${e(d.kind || '')} via ${e(d.channel || '')})`,
+    'inventory.move': `Stock moved: ${ent}`, 'campaign.queue': `Campaign ${ent} queued`, 'waitlist.notify': `In-stock mail sent for ${ent}`, 'contact.consent.request': 'Opt-in mail sent',
+  }[r.action];
+  return { at: r.at, actor: r.actor, html: text || `${e(r.action)} ${ent}` };
 }

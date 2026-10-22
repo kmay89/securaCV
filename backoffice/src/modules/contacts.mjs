@@ -52,6 +52,36 @@ export function unsubscribe(db, t) {
   db.audit('public', 'contact.unsubscribe', 'contact', c.id);
   return contactById(db, c.id);
 }
+// Tags are a comma-separated list, trimmed, deduplicated, stored lowercase.
+export const normalizeTags = (t) => [...new Set((Array.isArray(t) ? t : String(t || '').split(',')).map(x => String(x).trim().toLowerCase().replace(/\s+/g, '-').slice(0, 40)).filter(Boolean))].join(',');
+export const tagList = (t) => String(t || '').split(',').filter(Boolean);
+export function setContactTags(db, id, tags) { const c = contactById(db, id); if (!c) throw new Error('no such contact'); const t = normalizeTags(tags); db.run('UPDATE contacts SET tags = ? WHERE id = ?', t, id); db.audit('web', 'contact.tags', 'contact', id, { tags: t }); return contactById(db, id); }
+
+// The customers list a storefront admin shows: who they are, how many orders,
+// what they spent, when they last bought. Spend excludes canceled orders and
+// refunds, so it is money actually kept.
+export function listCustomers(db, { q = '', tag = '', segment = '', sort = 'recent', limit = 300 } = {}) {
+  const like = `%${q}%`;
+  const order = { spent: 'spent_cents DESC, id DESC', orders: 'orders DESC, id DESC', name: 'name COLLATE NOCASE, email', recent: 'COALESCE(last_order_at, created_at) DESC' }[sort] || 'id DESC';
+  const seg = { repeat: 'WHERE orders >= 2', consented: 'WHERE consent_marketing = 1 AND unsubscribed_at IS NULL', waitlist: 'WHERE id IN (SELECT contact_id FROM waitlist WHERE notified_at IS NULL)', orgs: "WHERE kind IN ('school','business','nonprofit')", never: 'WHERE orders = 0' }[segment] || '';
+  return db.all(`SELECT * FROM (SELECT c.*,
+      (SELECT COUNT(*) FROM orders o WHERE o.contact_id = c.id AND o.status != 'canceled' AND o.total_cents > 0) AS orders,
+      (SELECT COALESCE(SUM(o.total_cents - o.refunded_cents),0) FROM orders o WHERE o.contact_id = c.id AND o.status != 'canceled') AS spent_cents,
+      (SELECT MAX(o.paid_at) FROM orders o WHERE o.contact_id = c.id AND o.status != 'canceled') AS last_order_at,
+      (SELECT MIN(o.paid_at) FROM orders o WHERE o.contact_id = c.id AND o.status != 'canceled') AS first_order_at,
+      (SELECT COUNT(*) FROM tickets t WHERE t.contact_id = c.id) AS tickets
+    FROM contacts c WHERE (? = '' OR c.email LIKE ? OR c.name LIKE ? OR c.org LIKE ?) AND (? = '' OR (',' || c.tags || ',') LIKE ?)) ${seg} ORDER BY ${order} LIMIT ?`, q, like, like, like, tag, `%,${tag},%`, limit);
+}
+export function customerStats(db, id) {
+  const r = db.get(`SELECT COUNT(*) AS orders, COALESCE(SUM(total_cents - refunded_cents),0) AS spent_cents, COALESCE(SUM(refunded_cents),0) AS refunded_cents, MIN(paid_at) AS first_order_at, MAX(paid_at) AS last_order_at,
+    COALESCE(SUM((SELECT SUM(qty) FROM order_items i WHERE i.order_id = o.id)),0) AS units FROM orders o WHERE contact_id = ? AND status != 'canceled' AND total_cents > 0`, id);
+  const t = db.get('SELECT COUNT(*) AS tickets, SUM(CASE WHEN status != \'closed\' THEN 1 ELSE 0 END) AS open_tickets FROM tickets WHERE contact_id = ?', id);
+  const w = db.get('SELECT COUNT(*) AS claims FROM warranty_claims WHERE contact_id = ? OR order_id IN (SELECT id FROM orders WHERE contact_id = ?)', id, id);
+  return { ...r, aov_cents: r.orders ? Math.round(r.spent_cents / r.orders) : 0, tickets: t.tickets, open_tickets: t.open_tickets || 0, claims: w.claims,
+    top_sku: db.get('SELECT i.sku, SUM(i.qty) AS n FROM order_items i JOIN orders o ON o.id = i.order_id WHERE o.contact_id = ? AND o.status != \'canceled\' GROUP BY i.sku ORDER BY n DESC LIMIT 1', id)?.sku || null };
+}
+export const customerCounts = (db) => ({ all: db.get('SELECT COUNT(*) AS n FROM contacts').n, repeat: listCustomers(db, { segment: 'repeat', limit: 100000 }).length, consented: db.get('SELECT COUNT(*) AS n FROM contacts WHERE consent_marketing = 1 AND unsubscribed_at IS NULL').n, waitlist: db.get('SELECT COUNT(DISTINCT contact_id) AS n FROM waitlist WHERE notified_at IS NULL').n, orgs: db.get("SELECT COUNT(*) AS n FROM contacts WHERE kind IN ('school','business','nonprofit')").n });
+
 export const canMarket = (c) => !!c && c.consent_marketing === 1 && !c.unsubscribed_at;
 
 export function joinWaitlist(db, contactId, sku, qty = 1) {

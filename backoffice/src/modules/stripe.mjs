@@ -41,6 +41,8 @@ export function eventToOrder(event) {
       currency: o.currency || 'usd',
       subtotal_cents: o.amount_subtotal ?? 0, shipping_cents: o.total_details?.amount_shipping ?? o.shipping_cost?.amount_total ?? 0,
       tax_cents: o.total_details?.amount_tax ?? 0, total_cents: o.amount_total ?? 0,
+      discount_cents: o.total_details?.amount_discount ?? 0,
+      discount_code: (() => { const d = o.discounts?.[0]; if (!d) return null; const pc = d.promotion_code; const cp = d.coupon; return (typeof pc === 'object' && pc?.code) || (typeof cp === 'object' && (cp?.name || cp?.id)) || (typeof pc === 'string' ? pc : null) || (typeof cp === 'string' ? cp : null); })(),
       ship: { line1: addr.line1 || '', line2: addr.line2 || '', city: addr.city || '', state: addr.state || '', zip: addr.postal_code || '', country: addr.country || 'US' },
       items, paid_at: new Date((o.created || Date.now() / 1000) * 1000).toISOString(),
     };

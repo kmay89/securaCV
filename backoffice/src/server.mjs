@@ -8,7 +8,12 @@ import { layout } from './render.mjs';
 import { sessionFor, login, logout, apiTokenFor, hasOperator } from './auth.mjs';
 import { loadCatalog } from './modules/catalog.mjs';
 import { verifyStripeSignature, eventToOrder, fetchLineItems } from './modules/stripe.mjs';
-import { recordOrder, refund, orderByNumber, transition, listOrders } from './modules/orders.mjs';
+import { recordOrder, refund, orderByNumber, transition, listOrders, timeline, addNote, setTags, batches, statusCounts } from './modules/orders.mjs';
+import { listCustomers, contactById, customerStats, setContactTags } from './modules/contacts.mjs';
+import { listDiscounts, createDiscount, setDiscountStatus, evaluate as evaluateDiscount } from './modules/discounts.mjs';
+import { analytics } from './modules/analytics.mjs';
+import { listProducts, productDetail } from './modules/products.mjs';
+import { search } from './modules/search.mjs';
 import { upsertSubscription, postSubscriptionPayment } from './modules/subscriptions.mjs';
 import { postPayout, profitAndLoss, postExpense } from './modules/ledger.mjs';
 import { confirmConsent, unsubscribe, upsertContact, joinWaitlist, validEmail, searchContacts } from './modules/contacts.mjs';
@@ -24,6 +29,7 @@ import { registerAdmin } from './admin.mjs';
 import { runJob, JOBS } from './jobs.mjs';
 import { isDemo, DEMO_PASSWORD, DEMO_WEBHOOK_SECRET, DEMO_CATALOG, SCENARIOS, localBase } from './modules/demo.mjs';
 import { totp } from './auth.mjs';
+import { weekLabel as weekLabelNow } from './modules/orders.mjs';
 
 export function createApp({ db, cfg }) {
   cfg.secret = cfg.secret || db.setting('app:secret') || (() => { const s = randomBytes(32).toString('base64url'); db.setSetting('app:secret', s); return s; })();
@@ -113,7 +119,22 @@ export function createApp({ db, cfg }) {
   router.post('/api/tickets', (c) => json(c.res, openTicket(db, { ...c.body, channel: 'api', cfg }), 201));
   router.post('/api/tickets/:number/reply', (c) => { const t = ticketByNumber(db, c.params.number); if (!t) throw new HttpError(404, 'no such ticket'); json(c.res, ticketReply(db, t.id, c.body.body, { cfg, actor: c.actor, close: !!c.body.close })); });
   router.post('/api/mail/ingest', (c) => json(c.res, ingestEmail(db, c.body, { cfg })), { raw: false });
+  router.get('/api/orders/:number/events', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, timeline(db, o.id)); });
+  router.post('/api/orders/:number/note', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, addNote(db, o.id, c.body.body, { actor: c.actor }), 201); });
+  router.post('/api/orders/:number/tags', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, setTags(db, o.id, c.body.tags, { actor: c.actor })); });
+  router.get('/api/batches', (c) => json(c.res, { this_week: weekLabelNow(), counts: statusCounts(db), batches: batches(db) }));
   router.get('/api/contacts', (c) => json(c.res, searchContacts(db, c.query.get('q') || '')));
+  router.get('/api/customers', (c) => json(c.res, listCustomers(db, { q: c.query.get('q') || '', tag: c.query.get('tag') || '', segment: c.query.get('segment') || '', sort: c.query.get('sort') || 'recent' })));
+  router.get('/api/customers/:id', (c) => { const ct = contactById(db, c.params.id); if (!ct) throw new HttpError(404, 'no such customer'); json(c.res, { ...ct, stats: customerStats(db, ct.id), orders: listOrders(db, { q: ct.email, limit: 100 }).filter(o => o.contact_id === ct.id) }); });
+  router.post('/api/customers/:id/tags', (c) => json(c.res, setContactTags(db, Number(c.params.id), c.body.tags)));
+  router.get('/api/products', async (c) => json(c.res, listProducts(db, await app.catalog(), { days: Number(c.query.get('days')) || 30 })));
+  router.get('/api/products/:sku', async (c) => { const p = productDetail(db, await app.catalog(), c.params.sku); if (!p) throw new HttpError(404, 'no such product'); json(c.res, p); });
+  router.get('/api/discounts', (c) => json(c.res, listDiscounts(db)));
+  router.post('/api/discounts', (c) => json(c.res, createDiscount(db, c.body), 201));
+  router.post('/api/discounts/:code/status', (c) => json(c.res, setDiscountStatus(db, c.params.code, c.body.status)));
+  router.get('/api/discounts/:code/evaluate', (c) => json(c.res, evaluateDiscount(db, c.params.code, { subtotal_cents: Number(c.query.get('subtotal') || 0), shipping_cents: Number(c.query.get('shipping') || 0) })));
+  router.get('/api/analytics', (c) => json(c.res, analytics(db, { days: Number(c.query.get('days')) || 30 })));
+  router.get('/api/search', (c) => json(c.res, search(db, c.query.get('q') || '')));
   router.get('/api/inventory', (c) => json(c.res, listItems(db)));
   router.post('/api/inventory/move', (c) => json(c.res, invMove(db, c.body.sku, Number(c.body.delta), c.body.reason || 'adjust', c.body.ref || null)));
   router.get('/api/devices', (c) => json(c.res, listDevices(db, { q: c.query.get('q') || '' })));
@@ -214,7 +235,9 @@ export function safeLocalPath(referer) {
 
 const corsHeaders = (cfg) => ({ 'Access-Control-Allow-Origin': cfg.siteOrigin, 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type', Vary: 'Origin' });
 
-const API_INDEX = ['GET /api/snapshot', 'GET /api/orders?status=&batch=&q=', 'GET /api/orders/:number', 'POST /api/orders', 'POST /api/orders/:number/transition {to, carrier, tracking}', 'POST /api/orders/:number/refund {cents, reason}',
+const API_INDEX = ['GET /api/snapshot', 'GET /api/analytics?days=7|30|90|365', 'GET /api/search?q=', 'GET /api/orders?status=&batch=&q=&tag=&from=&to=&discount=&sku=', 'GET /api/orders/:number', 'POST /api/orders {…, discount_code, tags}', 'POST /api/orders/:number/transition {to, carrier, tracking}', 'POST /api/orders/:number/refund {cents, reason}',
+  'GET /api/orders/:number/events', 'POST /api/orders/:number/note {body}', 'POST /api/orders/:number/tags {tags}', 'GET /api/batches', 'GET /api/customers?q=&tag=&segment=&sort=', 'GET /api/customers/:id', 'POST /api/customers/:id/tags {tags}',
+  'GET /api/products?days=', 'GET /api/products/:sku', 'GET /api/discounts', 'POST /api/discounts {code, kind, value, min_subtotal_cents, starts_at, ends_at, max_uses, note}', 'POST /api/discounts/:code/status {status}', 'GET /api/discounts/:code/evaluate?subtotal=&shipping=',
   'GET /api/tickets?status=&kind=&q=', 'GET /api/tickets/:number', 'POST /api/tickets {email, subject, body}', 'POST /api/tickets/:number/reply {body, close}', 'POST /api/mail/ingest {from, subject, text, messageId, inReplyTo}',
   'GET /api/contacts?q=', 'GET /api/inventory', 'POST /api/inventory/move {sku, delta, reason, ref}', 'GET /api/devices?q=', 'POST /api/devices {serial, mac, board, product_sku, fw_version, fw_sha256, batch}',
   'GET /api/books/pnl?from=&to=', 'POST /api/books/expense {date, account, cents, memo}', 'GET /api/exceptions', 'POST /api/exceptions/:key/resolve', 'GET /api/jobs', 'POST /api/jobs/:name'];
@@ -222,9 +245,9 @@ const API_INDEX = ['GET /api/snapshot', 'GET /api/orders?status=&batch=&q=', 'GE
 export const plain = (cfg, title, bodyHtml) => layout({ title, body: `<p>${bodyHtml}</p><p><a href="${e(cfg.siteOrigin)}">← back to ${e(cfg.product || 'the site')}</a></p>`, company: cfg.company, nav: false, demo: cfg.demo });
 
 function loginPage(cfg, err, ready, demo = null) {
-  const hint = demo ? `<div class="flash"><b>Demo mode — synthetic data, nothing leaves this machine.</b><br>Password: <code>${e(demo.password)}</code> · authenticator code right now: <code>${e(demo.code)}</code> (it changes every 30 s; <code>backoffice code</code> prints it too)</div>` : '';
+  const hint = demo ? `<div class="flash"><b>Demo mode — synthetic data, nothing leaves this machine.</b><br>The form is filled in: password <code>${e(demo.password)}</code>, authenticator code <code>${e(demo.code)}</code> right now (it changes every 30 s — reload if a login is refused). Just press <b>Log in</b>.</div>` : '';
   return layout({ title: 'Log in', company: cfg.company, nav: false, demo: !!demo, demoResetMinutes: cfg.demoResetMinutes, body: hint + (ready
-    ? `${err ? '<div class="flash err">Wrong password or code.</div>' : ''}<form method="post" action="/login" class="box"><label for="pw">Password</label><input id="pw" type="password" name="password" required autocomplete="current-password"><label for="code">Authenticator code</label><input id="code" name="code" inputmode="numeric" pattern="[0-9]{6}" required autocomplete="one-time-code"><div style="margin-top:.8rem"><button>Log in</button></div></form>`
+    ? `${err ? '<div class="flash err">Wrong password or code.' + (demo ? ' The code has probably rolled over — this page now carries the current one; press Log in again.' : '') + '</div>' : ''}<form method="post" action="/login" class="box"><label for="pw">Password</label><input id="pw" type="${demo ? 'text' : 'password'}" name="password" value="${demo ? e(demo.password) : ''}" required autocomplete="current-password"><label for="code">Authenticator code</label><input id="code" name="code" value="${demo ? e(demo.code) : ''}" inputmode="numeric" pattern="[0-9]{6}" required autocomplete="one-time-code"><div style="margin-top:.8rem"><button>Log in</button></div></form>`
     : '<p>No operator yet. On the server, run <code>backoffice setup</code> to set the password and get the authenticator QR.</p>') });
 }
 
