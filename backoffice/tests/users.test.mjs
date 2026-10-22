@@ -153,6 +153,10 @@ test('the operator from before people existed is carried over as the first owner
   const oldApp = createApp({ db: old, cfg: testCfg({ demo: true, supportAddr: 'hello@errer.test' }) });
   assert.equal(listUsers(old).length, 5, 'exactly the demo people'); assert.equal(userByEmail(old, 'hello@errer.test') ?? null, null, 'the carried operator is gone');
   assert.ok(login(old, { email: DEMO_USERS[0].email, password: DEMO_PASSWORD, code: totp(DEMO_TOTP_SECRET) }), 'the login page\'s own values work');
+  // a visitor who promoted the open invitation (or accepted it) finds it back as the viewer invitation on the next boot
+  const { seedDemoUsers } = await import('../src/modules/demo.mjs'); const stub = userByEmail(old, 'auditor@example-accounting.example.test');
+  old.run("UPDATE users SET role = 'owner', name = 'Promoted', password_hash = 'x', totp_secret = 'y' WHERE id = ?", stub.id); seedDemoUsers(old);
+  const again = old.get('SELECT role, name, status, password_hash, totp_secret FROM users WHERE id = ?', stub.id); assert.deepEqual([again.role, again.name, again.status, again.password_hash, again.totp_secret], ['viewer', 'Auditor Stub', 'invited', null, null]);
   await oldApp.close?.(); old.close();
 });
 
