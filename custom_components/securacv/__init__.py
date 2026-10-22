@@ -58,13 +58,12 @@ from .const import (
     DASHBOARDS_LINK,
     DEFAULT_MQTT_TOPIC_PREFIX,
     DOMAIN,
-    MANUFACTURER,
-    MODEL_CANARY,
     SETUP_MODE_BOTH,
     SETUP_MODE_KERNEL,
     TOPIC_AVAILABILITY,
     TOPIC_HEALTH,
     TOPIC_STATUS,
+    canonical_device_type,
 )
 from .data import SecuraCVConfigEntry, SecuraCVRuntimeData, runtime_for
 from .device_trust import TrustStore, TrustVerdict, normalize_hex
@@ -72,6 +71,7 @@ from .kernel_trust import normalize_kernel_key, valid_kernel_device_id
 from .mqtt_payload import (  # noqa: F401 - re-exported: every handler imports the gate from here
     DEVICE_ID_RE,
     MAX_MQTT_PAYLOAD_BYTES,
+    broker_text,
     mqtt_payload_text,
     mqtt_payload_within_cap,
     parse_mqtt_json,
@@ -610,13 +610,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: SecuraCVConfigEntry) -> 
                 )
             # Health-topic subscription: snags the device's pubkey_hex
             # the first time we see it and TOFU-pins via the trust
-            # store. Sensor.py also subscribes to health for its own
+            # store, and takes the firmware version the device page
+            # shows. Sensor.py also subscribes to health for its own
             # state — that's fine, MQTT allows multiple subscribers
             # per topic and the two callbacks operate on independent
             # runtime slices.
             runtime.unsub_mqtt.append(
                 await mqtt.async_subscribe(
-                    hass, f"{mqtt_prefix}/+/{TOPIC_HEALTH}", _async_health_for_tofu(hass, entry)
+                    hass, f"{mqtt_prefix}/+/{TOPIC_HEALTH}", _async_device_health_received(hass, entry)
                 )
             )
             _LOGGER.info("SecuraCV MQTT subscriptions active (prefix: %s)", mqtt_prefix)
@@ -892,46 +893,39 @@ def _async_device_status_received(hass: HomeAssistant, entry: SecuraCVConfigEntr
                 _async_canary_online_changed(hass, entry, device_id, False)
             return
 
-        devices = runtime.devices
-        status_data = parse_mqtt_json(payload) or {}
-        fw_version = status_data.get("firmware_version") or status_data.get("fw_version")
-        hw_version = status_data.get("hardware") or status_data.get("board")
-        config_url = _safe_config_url(status_data.get("ap_ip") or status_data.get("ip"))
+        from .entity import async_sync_canary_device
 
-        if device_id not in devices:
+        status_data = parse_mqtt_json(payload) or {}
+        # An availability message may have made the record first; "registered"
+        # says whether a status has named the device yet.
+        device = runtime.devices.setdefault(device_id, {"status": None})
+        device["status"] = payload
+        # What the status says for the device page, remembered across the
+        # publishes that leave it out (the last will names no device_type, so
+        # the model must outlive it). Each value is bounded broker text.
+        device_type = canonical_device_type(broker_text(status_data.get("device_type")))
+        status_firmware = broker_text(status_data.get("firmware_version")) or broker_text(
+            status_data.get("fw_version")
+        )
+        hardware = broker_text(status_data.get("hardware")) or broker_text(status_data.get("board"))
+        config_url = _safe_config_url(status_data.get("ap_ip") or status_data.get("ip"))
+        for key, value in (
+            ("device_type", device_type),
+            ("status_firmware", status_firmware),
+            ("hardware", hardware),
+            ("configuration_url", config_url),
+        ):
+            if value:
+                device[key] = value
+
+        name: str | None = None
+        if not device.get("registered"):
             _LOGGER.info("Discovered SecuraCV Canary device: %s", device_id)
-            devices[device_id] = {"status": payload}
-            display_name = _device_display_name(
+            device["registered"] = True
+            name = _device_display_name(
                 status_data.get("device_name") or status_data.get("name"), device_id
             )
-
-            from .entity import kernel_via_device_kwargs
-
-            dr.async_get(hass).async_get_or_create(
-                config_entry_id=entry.entry_id,
-                identifiers={(DOMAIN, f"canary_{device_id}")},
-                manufacturer=MANUFACTURER,
-                model=MODEL_CANARY,
-                name=display_name,
-                sw_version=str(fw_version) if fw_version else None,
-                hw_version=str(hw_version) if hw_version else None,
-                configuration_url=config_url,
-                **kernel_via_device_kwargs(hass, entry),
-            )
-        else:
-            devices[device_id]["status"] = payload
-            if fw_version and fw_version != devices[device_id].get("_last_fw"):
-                devices[device_id]["_last_fw"] = fw_version
-                from .entity import kernel_via_device_kwargs
-
-                dr.async_get(hass).async_get_or_create(
-                    config_entry_id=entry.entry_id,
-                    identifiers={(DOMAIN, f"canary_{device_id}")},
-                    sw_version=str(fw_version),
-                    hw_version=str(hw_version) if hw_version else None,
-                    configuration_url=config_url,
-                    **kernel_via_device_kwargs(hass, entry),
-                )
+        async_sync_canary_device(hass, entry, device_id, name=name)
         # The verdict comes from voice.py so the entities, the spoken answer
         # and the availability can never disagree about which Canaries are up.
         _async_canary_online_changed(hass, entry, device_id, status_online(payload))
@@ -964,6 +958,52 @@ def _async_device_status_received(hass: HomeAssistant, entry: SecuraCVConfigEntr
 # We deliberately *accept* the payload regardless of verdict — the
 # scope decision is "warn loudly, accept" so a benign re-flash doesn't
 # stall a live deployment.
+
+
+def _async_device_health_received(hass: HomeAssistant, entry: SecuraCVConfigEntry):
+    """Subscriber for `{prefix}/+/health`: the TOFU pin, then the firmware.
+
+    Every Canary family publishes its firmware version on health (as
+    ``firmware_version``) and none on status, so this is where the device
+    page's firmware comes from. The pin runs first and on its own terms
+    (``_async_health_for_tofu``); the version is recorded per device and
+    written only when it changed.
+    """
+    tofu = _async_health_for_tofu(hass, entry)
+
+    @callback
+    def _callback(msg: mqtt.ReceiveMessage) -> None:
+        tofu(msg)
+        _async_record_health_firmware(hass, entry, msg)
+
+    return _callback
+
+
+@callback
+def _async_record_health_firmware(
+    hass: HomeAssistant, entry: SecuraCVConfigEntry, msg: mqtt.ReceiveMessage
+) -> None:
+    """Record a health publish's ``firmware_version`` and update the device page."""
+    parts = msg.topic.split("/")
+    if len(parts) < 3:
+        return
+    device_id = parts[-2]
+    if not valid_device_id(device_id):
+        return
+    runtime = runtime_for(entry)
+    if runtime is None:
+        return
+    data = parse_mqtt_json(msg.payload)
+    if data is None:
+        return
+    firmware = broker_text(data.get("firmware_version"))
+    if firmware is None or runtime.canary_firmware.get(device_id) == firmware:
+        return
+    runtime.canary_firmware[device_id] = firmware
+
+    from .entity import async_sync_canary_device
+
+    async_sync_canary_device(hass, entry, device_id)
 
 
 def _async_health_for_tofu(hass: HomeAssistant, entry: SecuraCVConfigEntry):

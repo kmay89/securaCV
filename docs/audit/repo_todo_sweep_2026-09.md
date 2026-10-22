@@ -3346,6 +3346,67 @@ so — see D2 below.)
   refusal fails provisioning with the stored token untouched. It should land
   with or before any rotation. A host case beside `test_wap_hmac_fail.cpp`'s
   provisioning runs. Found by F359's review (#1840).
+- [ ] **F391 [code] Home Assistant's diagnostics redaction set lacks the
+  identifier keys a device-details projection would carry.**
+  `custom_components/securacv/diagnostics.py`'s `TO_REDACT` (`:47-81`) is the
+  second net behind the dump's projections (its docstring, `:1-18`). It names
+  `unique_id`, `mac`, `bssid`, `ssid`, `device_id` and the network addresses,
+  but not `hw_token`, `mdns_host`, `serial_number`, `chip_id`, `module_id`,
+  `local_address`, `address` or `peer_address`, the keys the Canaries' answers
+  use for those identifiers. The config-entry dump projects every payload
+  today (`_canary_shape()`, `:192-204`), so none of them reaches it yet; the
+  per-device diagnostics device-details PR 16 adds would put a details
+  projection there. Fix: name the eight keys literally (device-details PR 2),
+  derive the set from the generated vocabulary (device-details PR 3), and add
+  `uptime`, `boot_count`, `sd_writes`, `http_requests` and `last_frame_age_ms`
+  as the second net behind the health projection (device-details PR 16). From
+  code. Found by the device-details design's privacy review
+  (`docs/design/device_details.md` §11, P18); filed by #<PR>, 2026-10-22.
+  *Partly done (#<PR>), the literal keys (device-details PR 2); the item
+  stays open for PRs 3 and 16:* `TO_REDACT` names the eight keys literally,
+  under a comment that says what each one is, and
+  `test_the_redaction_set_names_every_identifier_class` names them too; a new
+  `test_an_identifier_key_is_replaced_wherever_it_lands` seeds each key with
+  a value, nested (a Bluetooth address two objects deep, one inside a list),
+  and finds none of the values in the swept result. Both fail on the set as
+  it was. Host-tested in both Home Assistant lanes (the stub suite on Python
+  3.11 and 3.13, the real core at 2026.5.0 and 2026.10.1).
+- [x] **F392 [decision] Home Assistant's config-entry diagnostics dump keeps
+  half of each Canary's key fingerprint.**
+  `async_get_config_entry_diagnostics()` writes each pinned Canary's
+  fingerprint through `_truncated()`, which keeps `SHOWN_HEX = 8` of its 16
+  hex digits (`diagnostics.py:84-91`, `:256-262`), and the module's docstring
+  says a diagnostics file gets attached to GitHub issues (`:3-4`). Until F390
+  is fixed, a WAP serves its whole fingerprint to anyone in radio range as its
+  Device Information serial, and its name and beacons carry the last two bytes
+  for good, so a posted dump lets a stranger nearby match the device. Fewer
+  digits is no fix while the whole value is on air. Decide the dump's rule
+  beside the device-details design's Copy Details rule, which puts no handle
+  in shared text.
+  *Decided (2026-10-22, under the maintainer's instruction to fix the
+  remaining open items in best engineering practice and best value for the
+  user and security): no digits, and a per-dump salted correlation id in their
+  place, because no support flow needs to correlate one dump with another. It
+  is Home Assistant only, so it lands with device-details PR 2, with a test
+  that the dump carries no digit of any fingerprint.*
+  Found by the device-details design's privacy review
+  (`docs/design/device_details.md` §11, P19); filed by #<PR>, 2026-10-22.
+  *Done (#<PR>):* each pinned Canary's trust row carries `key_correlation_id`
+  in place of `fingerprint`: HMAC-SHA-256 of the case-folded fingerprint
+  under 16 bytes from `secrets.token_bytes()` drawn once per dump and never
+  written to it, its first four bytes spelled as eight letters from
+  `ghjkmnpqrstvwxyz`, an alphabet with no hex digit, so no digit of the
+  fingerprint can appear in it (`_correlation_ids()`); an unpinned Canary's is
+  `None`. Two Canaries pinned to one key share an id within a dump, and the
+  next dump of the same state gives other ids. `SHOWN_HEX` is gone (the kernel
+  id and the Canary ids keep their eight characters as `SHOWN_ID_CHARS`); the
+  kernel key's own eight-character fingerprint is unchanged. The stub suite
+  asserts that no run of four of the fingerprint's characters, in either case,
+  appears anywhere in the dump, and the real-core dump test does the same for
+  a TOFU-pinned Canary; both fail on the dump as it was. The docs that
+  described eight-character fingerprints say so now (`THREAT_MODEL.md`,
+  `SECURITY_MODEL.md`, `homeassistant_setup.md`, `ha_frigate_product.md`).
+  Host-tested in both Home Assistant lanes.
 
 ### Parity & sub-projects
 

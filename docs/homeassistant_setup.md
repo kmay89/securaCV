@@ -581,7 +581,15 @@ not data loss.
 #### Canary devices: "SecuraCV Canary <id>"
 
 One device per Canary, created the first time its `securacv/<id>/status`
-publish is seen, attached under the kernel device when one exists. Every
+publish is seen, attached under the kernel device when one exists. Its model
+is the product name for the `device_type` its status names (*Canary WAP*,
+*Canary Sense*, *Canary Dash*, and so on; *SecuraCV Canary* when the status
+names none, as the `firmware/canary` build's does, or names a type this
+release does not know), and its firmware is the `firmware_version` its
+`health` topic reports, which is where every Canary publishes it (a version
+on its `status` shows only until a health has reported one). Each is
+unsigned text from the broker, bounded to 64 characters; no serial number is
+set. Every
 unique id is `securacv_canary_<device_id>_<suffix>` with the suffix shown in
 parentheses. **Signed** means the publish carries the device's Ed25519
 signature and the integration checks it against the pinned key
@@ -1313,7 +1321,7 @@ silent — are sensors and events, not issues.
 | The Export button is unavailable | The kernel is unreachable; both buttons follow the kernel's availability. |
 | The export notification's link says expired | Links live 24 hours. **Media → SecuraCV evidence** resolves each pack to a fresh link; or export again. |
 | `pwk_*` entities and `securacv_*` entities both show | The claim has not reached the bridge yet: it needs the broker, and a bridge from this release or later. `witness/claim_state` reads `claimed` once it has. |
-| Diagnostics show redacted values | By design: tokens, hosts, ids, keys, hashes, MACs, SSIDs, names and coordinates are redacted; fingerprints are truncated to eight characters. |
+| Diagnostics show redacted values | By design: tokens, hosts, ids, keys, hashes, MACs, SSIDs, names, coordinates and a Canary's hardware, chip, module and Bluetooth identifiers are redacted; the kernel key's fingerprint is shown as its eight characters, and each Canary's key fingerprint as a correlation id (`key_correlation_id`) that links rows of the same dump and carries none of its digits. |
 
 ## Alternative Setup Modes
 

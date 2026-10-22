@@ -10,15 +10,29 @@ an identifier the owner did not mean to publish (THREAT_MODEL.md principle
      event type / time bucket / attestation, evidence exports to a count;
   2. ``async_redact_data`` then sweeps the result for every key in
      ``TO_REDACT`` (tokens, the pairing token id, the kernel URL's host,
-     keys, hashes, entry ids, network and location identifiers), so a
-     value that reaches the dump through a path this file did not foresee
-     is still replaced.
+     keys, hashes, entry ids, network and location identifiers, and the
+     keys a Canary's answers use for its hardware, chip, module and radio
+     identifiers), so a value that reaches the dump through a path this
+     file did not foresee is still replaced.
 
-Fingerprints are shown truncated (eight hex characters), enough to correlate
-with what the kernel or a Canary prints, never the whole identifier.
+A Canary's key fingerprint carries none of its digits into the dump. Until
+the canary-wap stops serving it, the whole fingerprint is readable by anyone
+in radio range (its Bluetooth Device Information serial), and the last four
+digits are on air for good in its Bluetooth name and beacons, so any part of
+it in a posted dump lets a stranger nearby match the device. Each pinned
+Canary gets a correlation id instead: a keyed hash of its fingerprint under
+a salt drawn for this dump and never written down, spelled in letters that
+are not hex digits. Two Canaries pinned to one key share an id within a
+dump; nothing links an id to the key, or one dump to another. The kernel's
+own key fingerprint (eight hex characters, the kernel_fingerprint sensor's
+state) is unchanged.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
+import secrets
+from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any
 from urllib.parse import urlsplit
@@ -40,7 +54,7 @@ from .const import (
 from . import PLATFORMS
 from .data import SecuraCVConfigEntry, runtime_for
 from .kernel_trust import kernel_key_fingerprint, normalize_kernel_key
-from .mqtt_payload import parse_mqtt_json
+from .mqtt_payload import broker_text, parse_mqtt_json
 
 # Every key whose value is a secret, a credential, a stable identifier, a
 # network address or a location. Applied recursively by async_redact_data.
@@ -78,17 +92,60 @@ TO_REDACT = {
     "longitude",
     "seed",
     "sig",
+    # The identifier keys a Canary's answers use (device-details finding P18,
+    # ledger F391): the salted hardware token, the mDNS host name, a serial
+    # number, chip and module ids, and Bluetooth addresses (the radio's own,
+    # a connection's, a peer's). Named before any projection of those
+    # answers reaches a dump.
+    "hw_token",
+    "mdns_host",
+    "serial_number",
+    "chip_id",
+    "module_id",
+    "local_address",
+    "address",
+    "peer_address",
 }
 
-# How much of an identifier survives: the fingerprint rule.
-SHOWN_HEX = 8
+# How many characters of the kernel id and of a Canary id the dump keeps.
+SHOWN_ID_CHARS = 8
+
+# The correlation id's alphabet: sixteen letters, none of them a hex digit,
+# so no digit of the fingerprint it stands for can appear in it.
+_CORRELATION_ALPHABET = "ghjkmnpqrstvwxyz"
+# Eight letters, 32 bits of the keyed hash: with ten pinned Canaries in one
+# dump, two different keys share an id about once in 95 million dumps.
+_CORRELATION_LETTERS = 8
 
 
-def _truncated(value: Any, keep: int = SHOWN_HEX) -> str | None:
+def _truncated(value: Any, keep: int = SHOWN_ID_CHARS) -> str | None:
     """`value` cut to `keep` characters plus an ellipsis, or None."""
     if not isinstance(value, str) or not value:
         return None
     return value[:keep] + "…" if len(value) > keep else value
+
+
+def _correlation_ids() -> Callable[[Any], str | None]:
+    """A per-dump correlation id for key fingerprints (finding P19, F392).
+
+    The salt is 16 random bytes drawn for one dump and never written to it,
+    so an id says only "the same key as another row of this dump". The
+    fingerprint is case-folded first, so two spellings of one key share an
+    id. None for an unpinned device.
+    """
+    salt = secrets.token_bytes(16)
+
+    def correlation_id(fingerprint: Any) -> str | None:
+        if not isinstance(fingerprint, str) or not fingerprint:
+            return None
+        digest = hmac.new(salt, fingerprint.lower().encode(), hashlib.sha256).digest()
+        letters = "".join(
+            _CORRELATION_ALPHABET[byte >> 4] + _CORRELATION_ALPHABET[byte & 0x0F]
+            for byte in digest[: _CORRELATION_LETTERS // 2]
+        )
+        return f"{letters[:4]}-{letters[4:]}"
+
+    return correlation_id
 
 
 def _url_shape(url: Any) -> dict[str, Any]:
@@ -189,15 +246,21 @@ def _storage_shape(status: Any) -> dict[str, Any] | None:
     }
 
 
-def _canary_shape(device: dict[str, Any]) -> dict[str, Any]:
-    """Firmware, hardware and liveness — never the raw status payload."""
+def _canary_shape(device: dict[str, Any], health_firmware: str | None = None) -> dict[str, Any]:
+    """Firmware, hardware and liveness — never the raw status payload.
+
+    The firmware is what the device page shows: the health topic's version,
+    else the status's. Each value is bounded broker text, as on that page.
+    """
     status = device.get("status")
     data = status if isinstance(status, dict) else (parse_mqtt_json(status) or {})
     return {
         "online": device.get("online"),
-        "firmware": data.get("firmware_version") or data.get("fw_version"),
-        "hardware": data.get("hardware") or data.get("board"),
-        "device_type": data.get("device_type"),
+        "firmware": health_firmware
+        or broker_text(data.get("firmware_version"))
+        or broker_text(data.get("fw_version")),
+        "hardware": broker_text(data.get("hardware")) or broker_text(data.get("board")),
+        "device_type": broker_text(data.get("device_type")),
         "last_event_type": (device.get("last_event") or {}).get("event_type")
         if isinstance(device.get("last_event"), dict)
         else None,
@@ -219,7 +282,7 @@ async def async_get_config_entry_diagnostics(
         "api": _url_shape(entry.data.get(CONF_URL)),
         "auth_mode": entry.data.get(CONF_AUTH_MODE),
         # The prefix only (`pwk_` + four hex), under a key the sweep leaves alone.
-        "kernel_device_id_prefix": _truncated(entry.data.get(CONF_KERNEL_DEVICE_ID), keep=8),
+        "kernel_device_id_prefix": _truncated(entry.data.get(CONF_KERNEL_DEVICE_ID)),
         "key_pinned": pinned_key is not None,
         "pinned_fingerprint": kernel_key_fingerprint(pinned_key) if pinned_key else None,
         "topic_prefix": entry.data.get(CONF_MQTT_TOPIC_PREFIX),
@@ -241,31 +304,30 @@ async def async_get_config_entry_diagnostics(
     }
 
     # Canary ids are the owner's local pseudonyms; the dump keeps eight
-    # characters of each, enough to tell devices apart, like the fingerprints.
+    # characters of each. A Canary's key fingerprint keeps none of its
+    # digits: the module docstring says why, and what stands in for it.
     devices_info: dict[str, Any] = {}
     trust_info: dict[str, Any] = {}
+    correlation_id = _correlation_ids()
     if runtime is not None:
         for device_id, device in runtime.devices.items():
-            shown = _truncated(device_id, keep=8) or device_id
-            devices_info[shown] = _canary_shape(device if isinstance(device, dict) else {})
+            shown = _truncated(device_id) or device_id
+            devices_info[shown] = _canary_shape(
+                device if isinstance(device, dict) else {},
+                runtime.canary_firmware.get(device_id),
+            )
             entry_trust = runtime.trust_store.get(device_id)
             if entry_trust:
                 trust_info[shown] = {
                     "pinned": bool(entry_trust.fingerprint_hex),
                     "pin_source": getattr(entry_trust, "pin_source", "unknown"),
-                    # The full fingerprint is exactly 16 hex chars
-                    # (device_trust: sha256 digest[:8].hex()), so truncate
-                    # to half of it — diagnostics dumps get shared publicly,
-                    # and 8 chars is plenty to correlate against the
-                    # fingerprint the device shows (docs/device_trust.md)
-                    # without republishing the whole identifier.
-                    "fingerprint": _truncated(entry_trust.fingerprint_hex),
+                    "key_correlation_id": correlation_id(entry_trust.fingerprint_hex),
                 }
 
     verify_info: dict[str, Any] = {}
     if runtime is not None:
         for device_id, verdict in runtime.verify.items():
-            verify_info[_truncated(device_id, keep=8) or device_id] = {
+            verify_info[_truncated(device_id) or device_id] = {
                 "trusted": verdict.get("trusted", False),
                 "reason": verdict.get("reason", "unknown"),
             }

@@ -64,6 +64,17 @@ on:
       - 'firmware/common/csi/src/csi_event_id_floor.h'
       - 'firmware/tests_host/test_csi_event_wire.cpp'
       - 'firmware/tests_host/test_device_signature_common.cpp'
+      # test_device_registry_versions.py holds its per-family status and
+      # health fixtures to each family's producer (the canary's main.cpp and
+      # the canary-wap's csi_mqtt.cpp are listed above) and the product-name
+      # table to the device types the firmware configs publish, with the
+      # displays' fleet model for the one legacy type.
+      - 'firmware/configs/*/*/config.h'
+      - 'firmware/projects/canary-sense/src/net/mqtt_mgr.cpp'
+      - 'firmware/projects/canary-vision/src/net/mqtt_mgr.cpp'
+      - 'firmware/projects/canary-sentinel/src/net/mqtt_mgr.cpp'
+      - 'firmware/projects/canary-display/src/net/mqtt_mgr.cpp'
+      - 'firmware/projects/canary-display/include/canary/fleet/fleet_model.h'
   pull_request:
     branches: [main]
     paths:
@@ -124,6 +135,17 @@ on:
       - 'firmware/common/csi/src/csi_event_id_floor.h'
       - 'firmware/tests_host/test_csi_event_wire.cpp'
       - 'firmware/tests_host/test_device_signature_common.cpp'
+      # test_device_registry_versions.py holds its per-family status and
+      # health fixtures to each family's producer (the canary's main.cpp and
+      # the canary-wap's csi_mqtt.cpp are listed above) and the product-name
+      # table to the device types the firmware configs publish, with the
+      # displays' fleet model for the one legacy type.
+      - 'firmware/configs/*/*/config.h'
+      - 'firmware/projects/canary-sense/src/net/mqtt_mgr.cpp'
+      - 'firmware/projects/canary-vision/src/net/mqtt_mgr.cpp'
+      - 'firmware/projects/canary-sentinel/src/net/mqtt_mgr.cpp'
+      - 'firmware/projects/canary-display/src/net/mqtt_mgr.cpp'
+      - 'firmware/projects/canary-display/include/canary/fleet/fleet_model.h'
 
 permissions:
   contents: read

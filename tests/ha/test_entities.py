@@ -115,7 +115,8 @@ async def test_canary_entities_hang_off_a_device_linked_to_the_kernel(
     canary = canary_device(hass, entry, CANARY)
     assert canary is not None
     assert canary.name == "Kitchen cam"
-    assert canary.model == "SecuraCV Canary"
+    # The product name for the device_type its status names (canary-sense).
+    assert canary.model == "Canary Sense"
     assert canary.manufacturer == "ERRERlabs"
     assert canary.sw_version == "2.4.16"
     assert canary.hw_version == "esp32s3"
@@ -161,6 +162,35 @@ async def test_canary_entities_hang_off_a_device_linked_to_the_kernel(
 
     # The health publish TOFU-pinned the Canary.
     assert entry.runtime_data.trust_store.is_pinned(CANARY)
+
+
+async def test_canary_device_page_takes_its_firmware_from_health(
+    hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry
+) -> None:
+    """Every family publishes its version on health, none on status: the page
+    shows health's, keeps its product model through the last will (which
+    names no device_type), and every value is a str with no serial number."""
+    entry = await setup_kernel_entry(enable_mqtt=True)
+    status = {"online": True, "device_type": "canary-wap", "csi_running": True, "wifi_connected": True, "rssi": -58}
+    fire(hass, f"securacv/{CANARY}/status", status, retain=True)
+    fire(hass, f"securacv/{CANARY}/health", {"public_key": CANARY_KEY, "memory_free": 141220, "uptime": 3600, "firmware_version": "2.4.16"}, retain=True)
+    await hass.async_block_till_done()
+    canary = canary_device(hass, entry, CANARY)
+    assert canary.sw_version == "2.4.16"
+    assert canary.model == "Canary WAP"
+    assert canary.serial_number is None
+
+    # The WAP's last will, then an update reported on health: live publishes
+    # to the existing subscriptions (the core delivers a retained message to
+    # a subscription once, as a broker does on SUBSCRIBE).
+    fire(hass, f"securacv/{CANARY}/status", {"online": False})
+    fire(hass, f"securacv/{CANARY}/health", {"public_key": CANARY_KEY, "uptime": 60, "firmware_version": "2.4.17"})
+    await hass.async_block_till_done()
+    canary = canary_device(hass, entry, CANARY)
+    assert canary.model == "Canary WAP"
+    assert canary.sw_version == "2.4.17"
+    for field in ("name", "model", "manufacturer", "sw_version"):
+        assert isinstance(getattr(canary, field), str), field
 
 
 async def test_canary_availability_follows_its_status_topic(

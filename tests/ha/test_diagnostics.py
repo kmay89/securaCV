@@ -3,6 +3,7 @@ carries no identifier the owner did not mean to publish."""
 from __future__ import annotations
 
 import json
+import re
 
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
@@ -102,7 +103,13 @@ async def test_no_seeded_secret_survives_the_dump(
     assert diagnostics["canary_devices"][shown]["online"] is True
     assert diagnostics["canary_devices"][shown]["firmware"] == "2.4.16"
     assert diagnostics["trust"][shown]["pinned"] is True
-    assert len(diagnostics["trust"][shown]["fingerprint"]) == 9
+    # No digit of the Canary's key fingerprint: a per-dump correlation id in
+    # letters that are not hex digits (device-details P19, ledger F392).
+    assert "fingerprint" not in diagnostics["trust"][shown]
+    assert re.fullmatch(r"[g-hj-km-np-tv-z]{4}-[g-hj-km-np-tv-z]{4}", diagnostics["trust"][shown]["key_correlation_id"])
+    canary_fingerprint = entry.runtime_data.trust_store.get(CANARY).fingerprint_hex.lower()
+    for start in range(len(canary_fingerprint) - 3):
+        assert canary_fingerprint[start : start + 4] not in dump.lower()
     assert diagnostics["platforms_loaded"] == ["sensor", "binary_sensor", "event", "button"]
     assert diagnostics["chain_verification"]["ok"] is True
     assert "head_hash" not in diagnostics["chain_verification"]

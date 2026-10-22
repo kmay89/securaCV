@@ -343,7 +343,39 @@ FUTURE_TAMPER_TYPES = [
 # =============================================================================
 MANUFACTURER = "ERRERlabs"
 MODEL_KERNEL = "Privacy Witness Kernel"
+# The model of a Canary whose status names no device_type this build knows
+# (the flagship `firmware/canary`, whose status carries none, or a type from
+# firmware newer than this integration).
 MODEL_CANARY = "SecuraCV Canary"
+
+# What a Canary's device page calls its model: the product name for the
+# device_type its status topic publishes (canary_model() below). For each of
+# these types, the name the Apple apps show (ios/Shared/DeviceNaming.swift);
+# the canary-wap's own MQTT discovery says "Canary WAP" too.
+#
+# A table, not a transform: title-casing the wire string would name types
+# nobody ships, so a type missing here keeps MODEL_CANARY instead of a guess.
+# Every key is a device_type some build publishes on its status topic: each
+# CD_/CS_/SENT_/CONFIG_DEVICE_TYPE in firmware/configs/*/*/config.h and the
+# canary-wap's literal in csi_mqtt.cpp, plus "canary-display", which display
+# images published before the flavors had their own types (the displays'
+# own fleet_model.h still reads it). That one names the line, not a product,
+# so it reads "Canary display", as on the Apple apps. The Dash 7 publishes
+# "canary-dash" and the Nightstand Touch "canary-nightstand", so neither has
+# a key of its own. test_device_registry_versions.py holds the keys to those
+# configs.
+CANARY_PRODUCT_NAMES: dict[str, str] = {
+    "canary-wap": "Canary WAP",
+    "canary-vision": "Canary Vision",
+    "canary-sense": "Canary Sense",
+    "canary-sentinel": "Canary Sentinel",
+    "canary-dash": "Canary Dash",
+    "canary-nightstand": "Canary Nightstand",
+    "canary-nightstand7": "Canary Nightstand 7",
+    "canary-nightlight": "Canary Nightlight",
+    "canary-watch": "Canary Watch Station",
+    "canary-display": "Canary display",
+}
 
 # =============================================================================
 # Default values
@@ -517,6 +549,15 @@ def canonical_device_type(value) -> str | None:
     if not isinstance(value, str):
         return None
     return value.strip().lower().replace("_", "-") or None
+
+
+def canary_model(device_type: object) -> str:
+    """The device-page model for a published device_type (CANARY_PRODUCT_NAMES).
+
+    Always a str: MODEL_CANARY when the type is absent, not a string, or not
+    in the table. The wire string itself is never shown.
+    """
+    return CANARY_PRODUCT_NAMES.get(canonical_device_type(device_type) or "", MODEL_CANARY)
 
 
 def modality_for(event: dict | None, device_type: str | None = None) -> str:

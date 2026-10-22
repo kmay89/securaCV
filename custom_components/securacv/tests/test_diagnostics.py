@@ -6,12 +6,15 @@ firmware / hardware / online, the latest witness event to type / bucket /
 attestation (never the zone label), the digest to counts, the kernel URL
 to scheme and port. Then ``async_redact_data`` sweeps the result with
 ``TO_REDACT``, so a secret that reached the dump through a path this file
-did not foresee is still replaced. The old regression (a fingerprint
-"truncated" to its own full length) stays pinned.
+did not foresee is still replaced. A Canary's key fingerprint keeps none of
+its digits (device-details finding P19, ledger F392): a per-dump salted
+correlation id stands in for it. The old regression (a fingerprint
+"truncated" to its own full length) is a special case of that rule.
 """
 
 from __future__ import annotations
 
+import re
 import types
 
 from . import conftest  # noqa: F401  (installs ha stubs at import time)
@@ -74,9 +77,17 @@ IDENTITY = {
 }
 
 
-def _entry_with_kernel(hass: HomeAssistant, fp: str | None = FULL_FP):
-    trust_entry = types.SimpleNamespace(fingerprint_hex=fp, pin_source="tofu")
-    trust_store = types.SimpleNamespace(get=lambda device_id: trust_entry)
+def _entry_with_kernel(
+    hass: HomeAssistant,
+    fp: str | None = FULL_FP,
+    devices: dict | None = None,
+    fingerprints: dict[str, str] | None = None,
+):
+    def _trust(device_id: str):
+        value = (fingerprints or {}).get(device_id, fp)
+        return types.SimpleNamespace(fingerprint_hex=value, pin_source="tofu")
+
+    trust_store = types.SimpleNamespace(get=_trust)
     coordinator = types.SimpleNamespace(
         data={
             "latest_event": LATEST_EVENT,
@@ -113,7 +124,7 @@ def _entry_with_kernel(hass: HomeAssistant, fp: str | None = FULL_FP):
         hass,
         trust_store=trust_store,
         coordinator=coordinator,
-        devices={"canary01": {"status": STATUS, "online": True}},
+        devices=devices if devices is not None else {"canary01": {"status": STATUS, "online": True}},
         mqtt_prefix="securacv",
         unsub_mqtt=[lambda: None, lambda: None],
     )
@@ -142,22 +153,65 @@ def _diag(hass, entry):
     return run(async_get_config_entry_diagnostics(hass, entry))
 
 
-def test_fingerprint_is_actually_truncated() -> None:
+# A correlation id: two groups of four letters, none of them a hex digit.
+CORRELATION_ID = re.compile(r"[g-hj-km-np-tv-z]{4}-[g-hj-km-np-tv-z]{4}")
+
+
+def _windows(value: str, width: int = 4) -> set[str]:
+    """Every run of `width` characters of `value`, lowercased."""
+    value = value.lower()
+    return {value[i : i + width] for i in range(len(value) - width + 1)}
+
+
+def test_no_digit_of_a_canary_fingerprint_reaches_the_dump() -> None:
+    """P19 / F392: no digits, a per-dump salted correlation id instead.
+
+    Four hex digits already pick one Canary out of the few in radio range
+    (a canary-wap's Bluetooth name and the fleet beacon carry the last
+    four), so no run of four of the
+    fingerprint's characters may appear anywhere in the dump, in either
+    case, and the field is no longer called a fingerprint.
+    """
     hass = HomeAssistant()
     diag = _diag(hass, _entry_with_kernel(hass))
-    shown = diag["trust"]["canary01"]["fingerprint"]
-    assert shown.endswith("…")
-    # Really shorter than the identifier it stands for — not the old no-op.
-    assert len(shown.rstrip("…")) < len(FULL_FP)
-    assert shown == FULL_FP[:8] + "…"
-    # And the full fingerprint appears nowhere in the dump.
-    assert FULL_FP not in repr(diag)
+    row = diag["trust"]["canary01"]
+    assert "fingerprint" not in row
+    assert row["pinned"] is True
+    assert CORRELATION_ID.fullmatch(row["key_correlation_id"]), row["key_correlation_id"]
+    text = repr(diag).lower()
+    for window in _windows(FULL_FP):
+        assert window not in text, window
+
+
+def test_the_correlation_id_correlates_within_one_dump_only() -> None:
+    """Same key, same id in one dump (case-folded, as the store compares);
+    another key, another id; the next dump of the same state, other ids."""
+    shared = "aabbccdd11223344"
+    other = "99887766deadbeef"
+    devices = {name: {"status": STATUS, "online": True} for name in ("canaryA1", "canaryB2", "canaryC3")}
+    fingerprints = {"canaryA1": shared, "canaryB2": shared.upper(), "canaryC3": other}
+
+    hass = HomeAssistant()
+    entry = _entry_with_kernel(hass, devices=devices, fingerprints=fingerprints)
+    first = _diag(hass, entry)["trust"]
+    second = _diag(hass, entry)["trust"]
+
+    assert first["canaryA1"]["key_correlation_id"] == first["canaryB2"]["key_correlation_id"]
+    assert first["canaryA1"]["key_correlation_id"] != first["canaryC3"]["key_correlation_id"]
+    # A fresh salt per dump: nothing links one posted dump to another, and
+    # nobody holding a fingerprint can compute its id.
+    assert first["canaryA1"]["key_correlation_id"] != second["canaryA1"]["key_correlation_id"]
+    assert first["canaryC3"]["key_correlation_id"] != second["canaryC3"]["key_correlation_id"]
+    text = repr(first).lower() + repr(second).lower()
+    for fingerprint in (shared, other):
+        for window in _windows(fingerprint):
+            assert window not in text, window
 
 
 def test_diagnostics_survive_an_unpinned_device() -> None:
     hass = HomeAssistant()
     diag = _diag(hass, _entry_with_kernel(hass, fp=""))
-    assert diag["trust"]["canary01"]["fingerprint"] is None
+    assert diag["trust"]["canary01"]["key_correlation_id"] is None
     assert diag["trust"]["canary01"]["pinned"] is False
 
 
@@ -285,5 +339,45 @@ def test_the_redaction_set_names_every_identifier_class() -> None:
         "device_name",
         "latitude",
         "longitude",
+        # The identifier keys a Canary's answers use (P18, ledger F391).
+        "hw_token",
+        "mdns_host",
+        "serial_number",
+        "chip_id",
+        "module_id",
+        "local_address",
+        "address",
+        "peer_address",
     ):
         assert key in TO_REDACT, key
+
+
+def test_an_identifier_key_is_replaced_wherever_it_lands() -> None:
+    """The second net: a value that reaches the dump under one of the
+    identifier keys, at any depth, comes out redacted."""
+    from homeassistant.components.diagnostics import async_redact_data
+
+    seeded = {
+        "hw_token": "b7a1c2d3e4f5a6b7",
+        "mdns_host": "canary-kitchen.local",
+        "serial_number": "7FA319C0AABBCCDD",
+        "chip_id": "0x00a1b2c3d4e5",
+        "module_id": "1073741824",
+        "bluetooth": {
+            "local_address": "34:85:18:aa:bb:cd",
+            "connection": {"address": "5c:aa:bb:cc:dd:ee"},
+            "paired": [{"peer_address": "7e:11:22:33:44:55"}],
+        },
+    }
+    text = repr(async_redact_data(seeded, TO_REDACT))
+    for value in (
+        "b7a1c2d3e4f5a6b7",
+        "canary-kitchen.local",
+        "7FA319C0AABBCCDD",
+        "0x00a1b2c3d4e5",
+        "1073741824",
+        "34:85:18:aa:bb:cd",
+        "5c:aa:bb:cc:dd:ee",
+        "7e:11:22:33:44:55",
+    ):
+        assert value not in text, value
