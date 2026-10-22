@@ -1275,7 +1275,12 @@ class SecuraCVCanaryHealthSensor(SecuraCVCanarySensorBase):
         if isinstance(public_key, str):
             public_key = normalize_hex(public_key)
         self._attr_extra_state_attributes = {
-            "battery_percent": 100 if battery is None else battery,
+            # No battery reported (mains power, or a board that reads none)
+            # is unknown, never 100: Sense, Vision and Sentinel used to send
+            # a hard-coded 100 beside battery_present: false, and this
+            # attribute turned every mains Canary's "no battery" into a full
+            # one (device-details §1.4).
+            "battery_percent": battery,
             "memory_free_bytes": memory_free,
             "uptime_seconds": data.get("uptime", 0),
             "firmware_version": data.get("firmware_version", ""),
