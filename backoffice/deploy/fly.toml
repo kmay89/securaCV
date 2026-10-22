@@ -9,7 +9,9 @@ app = "securacv-backoffice-demo"
 primary_region = "iad"
 
 [build]
-  dockerfile = "deploy/Dockerfile"
+  # flyctl resolves this relative to THIS file's folder (deploy/); the build
+  # context is the directory you run from (backoffice/).
+  dockerfile = "Dockerfile"
 
 [env]
   BACKOFFICE_DEMO = "1"
