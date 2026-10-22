@@ -362,6 +362,11 @@ export function seedDemoUsers(db) {
   for (const u of DEMO_USERS) db.run(`INSERT INTO users (email, name, role, status, password_hash, totp_secret, password_set_at, created_at, invited_by) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)
     ON CONFLICT(email) DO UPDATE SET name = excluded.name, role = excluded.role, status = 'active', password_hash = excluded.password_hash, totp_secret = excluded.totp_secret, totp_pending = NULL, invite_token = NULL, failed_logins = 0, locked_until = NULL`, u.email, u.name, u.role, hash, DEMO_TOTP_SECRET, daysAgo(40), daysAgo(40), u.role === 'owner' ? null : 'demo@errer.example.test');
   db.run("INSERT INTO users (email, name, role, status, invite_token, invite_expires_at, invited_by, created_at) VALUES ('auditor@example-accounting.example.test', 'Auditor Stub', 'viewer', 'invited', ?, ?, 'demo@errer.example.test', ?) ON CONFLICT(email) DO UPDATE SET invite_token = excluded.invite_token, invite_expires_at = excluded.invite_expires_at, status = 'invited'", 'demo-invite-' + Math.random().toString(36).slice(2, 12), new Date(Date.now() + 40 * 3600000).toISOString(), daysAgo(0, 8));
+  // A demo has exactly the demo people: an operator carried over from before people existed (or anyone
+  // invited while playing) would otherwise sit on the People page with a password nobody on the login page has.
+  const keep = [...DEMO_USERS.map(u => u.email), 'auditor@example-accounting.example.test'];
+  db.run(`DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE email NOT IN (${keep.map(() => '?').join(',')}))`, ...keep);
+  db.run(`DELETE FROM users WHERE email NOT IN (${keep.map(() => '?').join(',')})`, ...keep);
   db.setSetting('auth:password', 'users');
 }
 // A demo app that finds an empty database makes itself the demo: operator,

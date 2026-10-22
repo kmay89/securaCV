@@ -31,7 +31,7 @@ import { openExceptions, resolve as resolveException, raise as raiseException } 
 import { snapshot } from './modules/dashboard.mjs';
 import { registerAdmin } from './admin.mjs';
 import { runJob, JOBS } from './jobs.mjs';
-import { isDemo, DEMO_PASSWORD, DEMO_USERS, DEMO_TOTP_SECRET, DEMO_WEBHOOK_SECRET, DEMO_CATALOG, SCENARIOS, localBase } from './modules/demo.mjs';
+import { isDemo, DEMO_PASSWORD, DEMO_USERS, DEMO_TOTP_SECRET, DEMO_WEBHOOK_SECRET, DEMO_CATALOG, SCENARIOS, localBase, seedDemoUsers } from './modules/demo.mjs';
 import { totp } from './auth.mjs';
 import { weekLabel as weekLabelNow } from './modules/orders.mjs';
 
@@ -45,6 +45,8 @@ export function createApp({ db, cfg }) {
     cfg.stripeWebhookSecret = DEMO_WEBHOOK_SECRET;
     cfg.mailFrom = cfg.mailFrom || 'Errer Labs (demo) <demo@backoffice.example.test>';
     cfg.baseUrl = localBase(cfg); cfg.siteOrigin = cfg.baseUrl;   // every link, probe and scenario stays on this machine
+    // A demo database from before people existed (or between resets) must have the demo people the login page names, on every boot.
+    if (isDemo(db)) seedDemoUsers(db);
   }
   // In demo mode the catalog is the demo's own, never fetched from the live site.
   const app = { db, cfg, json, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o) };
