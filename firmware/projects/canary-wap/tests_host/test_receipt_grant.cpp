@@ -1862,13 +1862,22 @@ static_assert(sizeof(OVERSIZE_REBINDING_HOST) - 1 == 108, "the oversize row is 1
   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb."      \
   "ccccccccccccccccccccccccc.local"
 static_assert(sizeof(LONGEST_HELD_HOST) - 1 == 95, "the longest held row is 95 bytes");
+// The shortest Host the buffer cannot hold (96 bytes: a 92-byte .local name
+// and a port), which host_guard.h passes read whole: refused, because the
+// header is cut (review 6 of F344: the 108-byte row is foreign read whole
+// too, so a 128-byte buffer passed every row before this one).
+#define SHORTEST_CUT_HOST                                                   \
+  "ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd."      \
+  "eeeeeeeeeeeeeeeeeeeeee.local:443"
+static_assert(sizeof(SHORTEST_CUT_HOST) - 1 == 96, "the shortest cut row is 96 bytes");
 
 void test_receipt_foreign_host_is_refused_first() {
   CHECK(canary::net::host_names_this_device(std::string(OVERSIZE_REBINDING_HOST, 95).c_str()));
+  CHECK(canary::net::host_names_this_device(SHORTEST_CUT_HOST));
   // An empty and a blank Host too (review 4 of F344): host_guard.h calls an
   // empty authority foreign, and the receipt's question must not pass one.
-  for (const char* host : {"evil.example", "canary.local.evil.example", OVERSIZE_REBINDING_HOST, "", "   ",
-                           (const char*)nullptr}) {
+  for (const char* host : {"evil.example", "canary.local.evil.example", OVERSIZE_REBINDING_HOST, SHORTEST_CUT_HOST,
+                           "", "   ", (const char*)nullptr}) {
     const std::string why = host ? std::string("Host '") + host + "'" : std::string("no Host");
     // An open tap: refused, and the tap stays open. The owner then asks
     // from another address under the device's name and is served.

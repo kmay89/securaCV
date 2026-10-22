@@ -870,24 +870,28 @@ so — see D2 below.)
   *Note (2026-10-21, F344's fifth review):* two corrections to the note
   above, and one thing no Host question closes. A carried pair token works
   with no Host on `/api/wifi/ap-only` and `/api/wifi/qr-scan` (start, status
-  and stop) as well as `/api/wifi/connect`. F334's decision takes connect
-  and ap-only from it after setup and answers the scan's start `404` then;
-  the scan's status and stop keep `qr_scan_request_allowed()`, which takes
-  the pair token, and `qr_auto_scan_tick()` runs whenever no Wi-Fi is
-  configured, so a standalone unit with a camera keeps scanning after setup
-  and a carried token can still read that scan's status and stop it. And
+  and stop) as well as `/api/wifi/connect`. F334's decision, still open,
+  would take connect and ap-only from it after setup and answer the scan's
+  start `404` then; the scan's status and stop keep
+  `qr_scan_request_allowed()`, which takes the pair token, and
+  `qr_auto_scan_tick()` runs whenever no Wi-Fi is configured, so a
+  standalone unit with a camera keeps scanning after setup and even then a
+  carried token could read that scan's status and stop it. And
   `host_guard.h` accepts a name because public DNS cannot mint it, which is
   not the same as only this device answering to it: every WAP claims
   `canary.local` over mDNS, and the SoftAP's captive DNS answers every name
   with the device. So a page another network served under one of those
-  names (a hostile hotspot, or mDNS spoofed on a shared Wi-Fi), left open
-  until the browser comes home or joins the SoftAP, is same-origin with the
-  device and passes every Host check: it can take the landing's pair token,
-  a session through `?cv_pair=`, during setup the wizard token's re-issue,
-  and, around a BOOT tap pressed from that browser, a receipt it can read.
-  The flagship and the display share the rule. Only HTTPS with an identity
-  the browser can check closes it (F15, F256). From code; not run in a
-  browser. No new number.
+  names, or at the device's own LAN address (an IP literal passes), on a
+  hostile hotspot or with mDNS spoofed on a shared Wi-Fi, left open or kept
+  in the browser's HTTP cache until the browser comes home or joins the
+  SoftAP, is same-origin with the device and passes every Host check: it
+  can take the landing's pair token, a session through `?cv_pair=`, during
+  setup the wizard token's re-issue, and, around a BOOT tap pressed from
+  that browser, a receipt it can read. The flagship and the display share
+  the rule. Only HTTPS with an identity the browser can check closes it
+  (F15, F256). From code; the cache half seen in headless Chromium against
+  a stand-in server (F344's sixth review), not against a device. No new
+  number.
 - [ ] **F58 [decision] The canary's identity-key store still reports success
   whatever the write did.** `nvs_store_key()`
   (`firmware/canary/lib/securacv_crypto/src/securacv_crypto.cpp`) ignores
@@ -3006,6 +3010,71 @@ so — see D2 below.)
     joined unit raises the SoftAP at every boot until the home link has
     held 120 s, not only when the link is lost.
   Host-tested; not run against a browser or on a device.
+  *Review 6 (2026-10-22, #<PR>):*
+  - Review 5's residual made "left open" its condition. It is not one: a
+    page another network served under one of the device's names with a
+    long `Cache-Control: max-age` stays in the browser's HTTP cache and is
+    served again, with no request to the device, after the browser has
+    quit. Seen in headless Chromium 1194 with a persistent profile and
+    `canary.local` mapped to local servers: a planted `/settings` sent with
+    `max-age=31536000`, the browser closed and that server gone, then a
+    stand-in device on the same origin. Opening `/settings` showed the
+    planted page, the stand-in never saw `GET /settings`, and the planted
+    script read the stand-in's API with `Host: canary.local:<port>`, a Host
+    `host_names_this_device()` accepts. SECURITY_MODEL's "What it leaves",
+    THREAT_MODEL's row, the CHANGELOG, the WAP README, `magic_pairing.md`,
+    LESSONS_LEARNED, F57's note and the two sketch comments now say the
+    page may be left open or kept in the browser's HTTP cache. Each list of
+    the names but LESSONS_LEARNED's and the re-issue comment's (which name
+    only the setup names) adds the device's own LAN address (it passes as an
+    IP literal), and SECURITY_MODEL, THREAT_MODEL, the CHANGELOG and the
+    README say clearing the browser's stored data for `canary.local` and
+    the device's addresses drops a cached copy. The close is unchanged:
+    HTTPS with a checked identity (F15, F256).
+  - Review 5 put F334 in the present tense ("F334 takes connect and
+    ap-only from it after setup") in SECURITY_MODEL, THREAT_MODEL's row and
+    the CHANGELOG. F334 is open: `wifi_change_authorize()` still proceeds on
+    a live pair token after setup, and `handle_qr_scan_start()` has no setup
+    gate. The three now say F334's decision, still open, would take them.
+  - F15's correction had not reached three docs: the bench runbook's D1
+    (which had the bench record the first TLS boot's keygen time),
+    `ESP32S3_OPTIMIZATION_ROADMAP.md` §3.8 ("landed ... with an on-device
+    ECDSA P-256 self-signed certificate") and `PARITY_PLAN.md` (the same,
+    its "loads or generates", and a TLS row to tick once the compile is
+    green). Each carries a dated correction, D1 records the HTTP-only reason
+    until F15's guard is fixed, and the CHANGELOG's F15 bullet names them.
+  - Review 4 said `handle_qr_scan_start()` starts a scan "on
+    `pair_token_valid()` (taking over from the boot scan)", which reads as
+    if the takeover needs the token. It needs nothing: with the boot scan
+    running, the handler stops it and waits for its task before it reads the
+    body or checks the token, so any request, a cross-site `no-cors` POST
+    and a rebinding page's included, stops the boot scan of a unit with no
+    Wi-Fi saved and, holding no live pair token, is then refused. The 15 s
+    it pushes the boot tick out is
+    overwritten when the task exits (`g_qr_auto_scan` is still set then, so
+    the exit re-arms 5 s), so the scan returns about five seconds after it
+    unwinds, and repeating the request keeps it off. A denial of service,
+    older than F344 and outside it; SECURITY_MODEL and THREAT_MODEL now list
+    it among a cross-site page's requests. Not numbered here: left for the
+    session lead to file.
+  - No row sent a Host of 96 to 127 bytes that names the device (the
+    108-byte row is foreign read whole, and `host_guard.h` itself refuses a
+    name of 96 bytes or more), so a 128-byte Host buffer in
+    `request_host_names_device()` or in `session_validate_cookie()` passed
+    both suites (1035 and 4098 checks). A 96-byte row, a 92-byte `.local`
+    name and a port, which `host_guard.h` passes read whole, is now refused
+    on `/`, the exchange, the pages, the cookie validator and the receipt:
+    the first mutant fails 29 of 1083 and 37 of 4186, the second 2 of 1083
+    (the receipt suite does not run the real validator).
+  - `/api/device-info` answers its `500` and `503` through
+    `http_send_error()`, with `Access-Control-Allow-Origin: *` (as F357
+    says); SECURITY_MODEL and THREAT_MODEL now say so beside "send no CORS
+    header". `check_route_security.py`'s two mint-rule comments say "under
+    a public name".
+  - No F358 is filed: F337's decision takes no number (its certgen fact is
+    F15's dated correction). This PR files F356 and F357 only.
+  Host-tested; the cache residual seen in headless Chromium against a
+  stand-in server, not against a device.
 - [ ] **F345 [decision] canary-wap: Forget Wi-Fi from any session re-arms the
   Bluetooth setup door, whose claim buys the receipt.** `POST
   /api/wifi/forget` takes `api_auth_check` (any session, the landing page's

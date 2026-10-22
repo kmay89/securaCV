@@ -17,11 +17,11 @@
   pair token only to a Host that names the device, but a live one's value,
   wherever it is carried, still works for its ten minutes on
   `/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` with no
-  Host question. The owner-authority PR, F334, takes connect and ap-only from
-  it after setup and answers the scan's start `404` then; the scan's status
-  and stop keep taking it, and a standalone unit with a camera keeps scanning
-  for a Wi-Fi QR code after setup, so a carried token can still read that
-  scan's status and stop it.) The WAP now stages the shared
+  Host question. F334's decision, still open, would take connect and ap-only
+  from it after setup and answer the scan's start `404` then; it leaves the
+  scan's status and stop taking it, and a standalone unit with a camera keeps
+  scanning for a Wi-Fi QR code after setup, so even then a carried token could
+  read that scan's status and stop it.) The WAP now stages the shared
   `firmware/common/network/host_guard.h` that the flagship and the display
   already use (byte-identical, held by `check_improv_sync.sh`). After setup,
   `/`, `/?cv_pair=`, `/admin`, `/settings` and `/companion` answer a Host that
@@ -56,12 +56,16 @@
   token's value carried off the LAN works for its ten minutes, as above; and
   the Host question tells a public name from a name only the local network
   answers, not the device from another server that answered such a name
-  (`canary.local`, `192.168.4.1`, any `.local` name, a single label or a
-  private suffix) on a network the browser used before, such as a hostile
-  hotspot or mDNS spoofed on a shared Wi-Fi. A page loaded there and left open
-  runs same-origin with the device when the browser comes home (every WAP
-  claims `canary.local`) or joins the SoftAP (whose captive DNS answers every
-  name with the device): it can take the landing's pair token, a session
+  (`canary.local`, `192.168.4.1`, the device's own LAN address, any `.local`
+  name, a single label or a private suffix) on a network the browser used
+  before, such as a hostile hotspot or mDNS spoofed on a shared Wi-Fi. A page
+  loaded there runs same-origin with the device when the browser comes home
+  (every WAP claims `canary.local`) or joins the SoftAP (whose captive DNS
+  answers every name with the device), whether it was left open or kept in
+  the browser's HTTP cache, which serves it again with no request to the
+  device for as long as its server said, even after the browser has quit
+  (clearing the browser's stored data for `canary.local` and the device's
+  addresses removes it): it can take the landing's pair token, a session
   through `?cv_pair=`, during setup the wizard token's re-issue, and, around a
   BOOT tap the owner presses from that browser, the receipt. Only HTTPS with
   an identity the browser can check closes that (F15, F256). Host-tested
@@ -123,7 +127,8 @@
   `tls_mode_reason`. THREAT_MODEL, SECURITY_MODEL, FEATURES.md, the WAP's
   READMEs, `device_trust.md`, the FAQ, `magic_pairing.md`,
   `iphone_companion_app.md`, the captive
-  portal test plan, the bench checklist, the flagship's getting-started
+  portal test plan, the bench checklist, the bench runbook's Track D,
+  `PARITY_PLAN.md`, the S3 optimization roadmap, the flagship's getting-started
   guide, `firmware/README.md`'s `dev` row and the glossary's TLS pin no
   longer say otherwise (the broker password's provisioning request is plain
   on every stock unit, and the flagship guide says to use `http://`); the

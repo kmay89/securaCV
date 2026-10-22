@@ -682,9 +682,13 @@
   tells a public name from a name only the local network answers, not this
   device from another server that answered that name on a network the
   browser used before (`canary.local` from a hostile hotspot, a page left
-  open until the browser comes home): only an identity the browser checks,
-  HTTPS with a pin, tells those apart, so a doc that says "a rebinding page
-  gets nothing" scopes it to a public name (the PR's fifth review).
+  open, or kept in the HTTP cache, until the browser comes home): only an
+  identity the browser checks, HTTPS with a pin, tells those apart, so a doc
+  that says "a rebinding page gets nothing" scopes it to a public name (the
+  PR's fifth review). And a residual that names how long the planted page
+  must live is checked against the browser's cache, not only its tabs: a
+  fresh cached answer comes back with no request to the device, after the
+  browser has quit (the sixth review, seen in headless Chromium).
 - **Regression check:** `projects/canary-wap/tests_host/test_session_cookie.cpp`
   (the pages and the setup names, an oversize Host, the re-issue's
   headers, and the real cookie validator under the device's names and

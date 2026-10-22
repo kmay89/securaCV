@@ -68,9 +68,12 @@ to a fixed point, every function that calls one). What it reads:
     only, so no file writes or clears it directly.
   - The mints (sweep F344): session_issue(), pair_token_issue() and
     send_pair_landing() hand their caller a session or a pair token, and no
-    mint may answer a DNS-rebinding page (the cookie gates also refuse a
-    session's value under such a name: session_validate_cookie() asks the
-    Host itself, test_session_cookie). Each call stands in a MINT_SITES
+    mint may answer a DNS-rebinding page under a public name (the cookie
+    gates also refuse a session's value under such a name:
+    session_validate_cookie() asks the Host itself, test_session_cookie; a
+    page another network served under one of the device's own names passes
+    every Host test, and only HTTPS with a checked identity tells it apart,
+    F15, F256). Each call stands in a MINT_SITES
     function, after that function's gate for it (handle_ui's and the
     receipt's Host row, the
     setup branch's exact setup names, /api/pair/token's cookie-or-bearer
@@ -305,9 +308,11 @@ AUTH_TABLE_HOME = "api_auth.h"
 
 # The mints (sweep F344): a call of one hands its caller a dashboard session
 # (session_issue) or a pair token (pair_token_issue; send_pair_landing serves
-# one in the landing page). No mint may answer a DNS-rebinding page (a
-# session's value it carries in anyway is refused by the cookie gates,
-# whose session_validate_cookie() asks the Host), so every call stands in a
+# one in the landing page). No mint may answer a DNS-rebinding page under a
+# public name (a session's value it carries in anyway is refused by the
+# cookie gates, whose session_validate_cookie() asks the Host; a page served
+# under one of the device's own names is not told apart by any Host test),
+# so every call stands in a
 # MINT_SITES function, after that function's gate, and nowhere else:
 #   ("refusal", cond): after an `if` at the top level of the body whose
 #     whole condition is `cond` and whose branch returns;

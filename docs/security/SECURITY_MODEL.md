@@ -404,27 +404,32 @@ a rebinding page that holds the bearer token itself is F57's open question,
 and a pair token's value carried off the LAN is read with no Host on
 `/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` (start,
 status and stop; a started scan acts only on a code held to the camera) for
-its ten minutes. The owner-authority PR (F334) takes connect and ap-only
-from it after setup and answers the scan's start `404` then; the scan's
-status and stop keep taking it, and a standalone unit with a camera keeps
-scanning for a Wi-Fi QR code after setup, so a carried token can still read
-that scan's status (the network name the code held, the error text) and stop
-it. Refused after setup: a router name under another suffix (`.fritz.box`,
-`.localdomain`, `.home`), a name with a trailing dot, a public split-horizon
-name, and a reverse proxy that forwards a public Host; use the `.local`
-name, the IP or the bare router name instead (widening the shared list is
-F356). What it leaves: the Host question tells a public name from a name
+its ten minutes. F334's decision, still open (no owner-authority PR has
+landed), would take connect and ap-only from it after setup and answer the
+scan's start `404` then; it leaves the scan's status and stop taking it, and
+a standalone unit with a camera keeps scanning for a Wi-Fi QR code after
+setup, so even then a carried token could read that scan's status (the
+network name the code held, the error text) and stop it. Refused after
+setup: a router name under another suffix (`.fritz.box`, `.localdomain`,
+`.home`), a name with a trailing dot, a public split-horizon name, and a
+reverse proxy that forwards a public Host; use the `.local` name, the IP or
+the bare router name instead (widening the shared list is F356). What it leaves: the Host question tells a public name from a name
 only the local network answers; it cannot tell this device from another
-server that answered such a name (`canary.local`, `192.168.4.1`, any
-`.local` name, a single label or a private suffix) on a network the browser
-used before, such as a hostile hotspot or mDNS spoofed on a shared Wi-Fi. A
-page loaded there and left open runs same-origin with the device when the
-browser comes home (every WAP claims `canary.local`) or joins the SoftAP
-(whose captive DNS answers every name with the device). It can take the
-landing's pair token, a 24-hour session through `?cv_pair=`, during setup
-the wizard token's re-issue (at either setup name), and, around a BOOT tap
-the owner presses from that browser, the receipt: one browser is one address
-to the tap rule (F342), and here the answer is readable. Only HTTPS with an
+server that answered such a name (`canary.local`, `192.168.4.1`, the
+device's own LAN address, any `.local` name, a single label or a private
+suffix) on a network the browser used before, such as a hostile hotspot or
+mDNS spoofed on a shared Wi-Fi. A page loaded there runs same-origin with
+the device when the browser comes home (every WAP claims `canary.local`) or
+joins the SoftAP (whose captive DNS answers every name with the device),
+whether it was left open or kept in the browser's HTTP cache: a cached
+answer is served again, with no request to the device, for as long as the
+server that sent it said, even after the browser has quit. Clearing the
+browser's stored data for `canary.local` and the device's addresses removes
+such a copy. It can take the landing's pair token, a 24-hour session
+through `?cv_pair=`, during setup the wizard token's re-issue (at either
+setup name), and, around a BOOT tap the owner presses from that browser, the
+receipt: one browser is one address to the tap rule (F342), and here the
+answer is readable. Only HTTPS with an
 identity the browser can check closes it (F15, F256). And a cross-site page
 can still send requests at the IP address (an IP literal passes). It cannot
 read what the landing, the exchange, the pages, the wizard token's re-issue
@@ -439,16 +444,21 @@ which the exact match passes) and could spend it on `/api/wifi/connect` or
 `check_route_security.py` refuses a mint site that answers through
 `http_send_json()`. Its requests spend no claim, from another address close
 an open tap rather than take it (F342), from the owner's own browser can
-still use up an open tap, and can churn pair tokens: a denial of service,
-not a way to the token. Three public routes do answer it readably:
+still use up an open tap, can churn pair tokens, and can stop the boot
+Wi-Fi QR scan of a unit with no Wi-Fi saved each time it asks: `POST
+/api/wifi/qr-scan` yields that scan before it reads the body or checks the
+pair token, and the scan starts again about five seconds after its task
+unwinds (older than F344; noted under it in the ledger). A denial of
+service, not a way to the token. Three public routes do answer it readably:
 `/api/wifi` (the home network's name, the station address, the SoftAP's name
 and client count), `/api/wifi/scan` (nearby networks) and `/api/fleet`
 (coarse presence) send `Access-Control-Allow-Origin: *` (`http_send_json()`;
 `/api/fleet`'s by its documented contract), so any page can read them at the
 IP, rebinding or not, and the Host question cannot close that. The other
 public routes (`/api/selftest`, `/api/device-info`, `/api/help-qr`,
-`/enroll`, `/api/device/enroll`) send no CORS header, so only a rebinding
-page reads them, and they ask no Host. Both are F357. Host-tested; not run
+`/enroll`, `/api/device/enroll`) send no CORS header (`/api/device-info`'s
+`500` and `503` error codes do, through `http_send_error()`, and carry
+nothing else), so only a rebinding page reads them, and they ask no Host. Both are F357. Host-tested; not run
 against a browser or on a device.
 
 Since sweep F342 the tap goes to the one address asking for it: when a

@@ -3727,11 +3727,13 @@ static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_l
 // truncated header is never read as a name (a 108-byte rebinding name cut to
 // 95 bytes can end in ".local"). What it cannot tell (review 5 of F344): this
 // device from another server that answered one of those names (canary.local,
-// 192.168.4.1, a single label) on a network the browser used before. A page
-// loaded there and left open is same-origin with this device once the
-// browser comes home (every WAP claims canary.local) or joins the SoftAP
-// (the captive DNS answers every name), and its Host passes. Only HTTPS with
-// an identity the browser checks closes that (F15, F256).
+// 192.168.4.1, this device's own LAN address, a single label) on a network
+// the browser used before. A page loaded there, left open or kept in the
+// browser's HTTP cache (served again with no request here, after the browser
+// has quit: review 6), is same-origin with this device once the browser
+// comes home (every WAP claims canary.local) or joins the SoftAP (the
+// captive DNS answers every name), and its Host passes. Only HTTPS with an
+// identity the browser checks closes that (F15, F256).
 //
 // No SoftAP or interface exemption, unlike the flagship's: the WAP's captive
 // DNS answers every name with the device (setup_wizard.h), so an exemption
@@ -6924,8 +6926,9 @@ static bool scan_cache_listed_ssid(const char* posted, char* out, size_t cap) {
 // before, it was, and could spend the token cross-site). The SoftAP's key
 // keeps every other device off it, not a page in the owner's own browser: one
 // another network served as http://192.168.4.1 or http://canary.local, left
-// open, reads this same-origin once the browser joins the SoftAP, and no
-// Host test can tell it from the wizard (request_host_names_device()).
+// open or kept in the browser's HTTP cache, reads this same-origin once the
+// browser joins the SoftAP, and no Host test can tell it from the wizard
+// (request_host_names_device()).
 static esp_err_t handle_wifi_pair_token(httpd_req_t* req) {
   g_health.http_requests++;
   if (!setup_wizard::is_active() || !request_host_is_setup_name(req)) {

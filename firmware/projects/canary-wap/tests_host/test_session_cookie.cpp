@@ -684,16 +684,26 @@ static_assert(sizeof(OVERSIZE_REBINDING_HOST) - 1 == 108, "the oversize row is 1
   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb."      \
   "ccccccccccccccccccccccccc.local"
 static_assert(sizeof(LONGEST_HELD_HOST) - 1 == 95, "the longest held row is 95 bytes");
+// The shortest Host the buffer cannot hold (96 bytes: a 92-byte .local name
+// and a port), a name host_guard.h accepts read whole (its own 96-byte copy
+// holds the name without the port): refused, because the header is cut. The
+// 108-byte row is foreign read whole too, so before this row a 128-byte Host
+// buffer, in the pages' question or in the cookie validator's, passed both
+// suites (review 6 of F344).
+#define SHORTEST_CUT_HOST                                                   \
+  "ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd."      \
+  "eeeeeeeeeeeeeeeeeeeeee.local:443"
+static_assert(sizeof(SHORTEST_CUT_HOST) - 1 == 96, "the shortest cut row is 96 bytes");
 
-// A DNS-rebinding page's names (one too long for the buffer), an empty and a
-// blank Host, and a request with no Host at all. host_guard.h calls an empty
-// authority foreign; no browser sends one, but the pages and the receipt
-// must not read it as the device's name (review 4 of F344: a
-// request_host_names_device() that passed an empty or blank Host passed
-// every row before these two).
+// A DNS-rebinding page's names (one too long for the buffer), the shortest
+// of the device's names the buffer cannot hold, an empty and a blank Host,
+// and a request with no Host at all. host_guard.h calls an empty authority
+// foreign; no browser sends one, but the pages and the receipt must not read
+// it as the device's name (review 4 of F344: a request_host_names_device()
+// that passed an empty or blank Host passed every row before these two).
 const char* const kForeignHosts[] = {"evil.example", "evil.example:80", "canary.local.evil.example",
                                      "canary-7916.local.evil.example", "192.168.1.50.nip.io",
-                                     OVERSIZE_REBINDING_HOST, "", "   ", nullptr};
+                                     OVERSIZE_REBINDING_HOST, SHORTEST_CUT_HOST, "", "   ", nullptr};
 std::string host_label(const char* host) {
   return host ? std::string("Host '") + host + "'" : std::string("no Host");
 }
@@ -754,6 +764,8 @@ void test_every_name_the_household_uses_still_lands() {
   // ARE a name host_guard.h accepts, so the row above tests the cut.
   CHECK(canary::net::host_names_this_device(std::string(OVERSIZE_REBINDING_HOST, 95).c_str()));
   CHECK(canary::net::host_names_this_device(LONGEST_HELD_HOST));
+  // And the 96-byte row is refused only by the buffer: the rule passes it.
+  CHECK(canary::net::host_names_this_device(SHORTEST_CUT_HOST));
   for (const char* host : {"canary-7916.local", "canary-7916.local:443", "canary.local", "CANARY-7916.LOCAL",
                            "192.168.1.50", "192.168.1.50:80", "192.168.4.1", "[fe80::1]", "[fe80::1]:443",
                            "canary-7916", "canary-7916.lan", "canary-7916.home.arpa", "canary-7916.internal",
@@ -1218,9 +1230,9 @@ void test_every_cookie_gate_asks_the_host() {
               std::string("Host ") + host + ": the live __Host- session was refused");
   }
   // A rebinding page's names, an empty or blank Host, none, the 108-byte
-  // one, and the router names the rule leaves out: the same live value, set
-  // by the page itself for its own name, is refused (before: it validated,
-  // so every cookie gate let it in).
+  // one, the 96-byte one the buffer cannot hold, and the router names the
+  // rule leaves out: the same live value, set by the page itself for its own
+  // name, is refused (before: it validated, so every cookie gate let it in).
   for (const char* host : kForeignHosts) {
     CHECK_MSG(!cookie_validates(host, plain), host_label(host) + ": a live session validated under it");
     CHECK_MSG(!cookie_validates(host, prefixed), host_label(host) + ": a live __Host- session validated under it");
