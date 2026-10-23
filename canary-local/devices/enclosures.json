@@ -581,7 +581,7 @@
   {
    "id": "7-touch-dashboard-case",
    "name": "7″ touch dashboard case",
-   "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (bottom-wall intake → top-wall exhaust — print in PETG/ASA, this panel runs hot; the two-part tray adds a ~41 cm² back grille, and the one-piece `frame`'s plate deliberately carries none — see the back-plate section), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered USB pass-through plus a matching side exit on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours",
+   "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (bottom-wall intake → top-wall exhaust — print in PETG/ASA, this panel runs hot; the two-part tray adds a ~40 cm² back grille, and the one-piece `frame`'s plate deliberately carries none — see the back-plate section), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered USB pass-through plus a matching side exit on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours",
    "status": "in-development",
    "note": "glass drops in, lip 10.4, TPU-fitted ports",
    "device": "canary-display-dash7",
@@ -7148,7 +7148,7 @@
    ]
   },
   "canary_outlet_cradle.scad": {
-   "title": "Canary — OUTLET PLUG-IN CRADLE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — OUTLET PLUG-IN CRADLE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -9017,7 +9017,7 @@
    ]
   },
   "canary_mount_adapters.scad": {
-   "title": "Canary — UNIVERSAL MOUNT ADAPTERS  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — UNIVERSAL MOUNT ADAPTERS  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -9067,8 +9067,8 @@
       },
       {
        "name": "screw_d",
-       "default": "4.2",
-       "comment": "wall screws (#8 / M4), counterbored"
+       "default": "4.8",
+       "comment": "wall screw clearance (#8 / M4): the #8's 4.17 major + 2 x tol_hole (4.2 let the screw thread the adapter), counterbored"
       }
      ]
     },
@@ -9145,8 +9145,7 @@
       },
       {
        "name": "cb_h",
-       "default": "2.2",
-       "comment": "pan-head counterbore depth (a #8 pan head sits in it)"
+       "default": "3.5"
       },
       {
        "name": "mag_ap_t",
@@ -9155,7 +9154,7 @@
       {
        "name": "pole_t",
        "default": "max(ap_t, strap_t + 1.2 + cb_h)",
-       "comment": "5.6 at the defaults"
+       "comment": "6.9 at the defaults (5.6 before the v0.2 seat)"
       }
      ]
     }
@@ -13693,11 +13692,6 @@
        "name": "ledge_slope_max",
        "default": "max(ledge_side, ledge_top, ledge_bot)",
        "comment": "deepest back-slope"
-      },
-      {
-       "name": "ledge_slope_n",
-       "default": "20",
-       "comment": "steps in the 45° back-slope. Each step overhangs by"
       }
      ]
     },
@@ -14835,8 +14829,13 @@
        "comment": "window center across the wall"
       },
       {
+       "name": "btn_pcb_top",
+       "default": "panel_core_dy + pcb_h/2",
+       "comment": "the board's BUTTON edge, frame y"
+      },
+      {
        "name": "btn_tower_len",
-       "default": "btn_reach > 0 ? btn_reach : fr_yo/2 - pcb_h/2 - 3.6"
+       "default": "btn_reach > 0 ? btn_reach : fr_yo/2 - btn_pcb_top - 3.6"
       },
       {
        "name": "usb_open_w",
@@ -15600,7 +15599,7 @@
    ]
   },
   "canary_vehicle_mount.scad": {
-   "title": "Canary — VEHICLE MOUNT KIT  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — VEHICLE MOUNT KIT  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -15845,7 +15844,7 @@
    ]
   },
   "canary_vision_pro_mount.scad": {
-   "title": "Canary — VISION PRO MOUNT  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — VISION PRO MOUNT  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -15964,14 +15963,45 @@
        "comment": "face web the stud head grips behind — mount_kh_face()"
       },
       {
-       "name": "kh_x",
-       "default": "12.0",
-       "comment": "keyhole pair spacing (± from center)"
+       "name": "kh_gap",
+       "default": "30.0",
+       "comment": "keyhole pair spacing, IN LINE along the slots (vertical, as every case back) — set it to the stud surface's stud_gap (the asserts say when plate_h must grow)"
       },
       {
        "name": "kh_y",
-       "default": "22.0",
-       "comment": "keyhole row offset from center, toward the TOP edge"
+       "default": "7.5",
+       "comment": "keyhole pair center, from the plate center toward the TOP edge"
+      }
+     ]
+    },
+    {
+     "name": "Quality",
+     "note": "",
+     "params": [
+      {
+       "name": "mag_r",
+       "default": "mag_d/2 + core_tol_press()",
+       "comment": "the magnet pocket's radius"
+      },
+      {
+       "name": "dev_x",
+       "default": "12.0",
+       "comment": "tripod at -dev_x, magnet at +dev_x"
+      },
+      {
+       "name": "dev_y",
+       "default": "-plate_h/2 + mag_r + 1.4",
+       "comment": "both: 1.4 of wall under the magnet pocket (-20.5 at plate_h 64)"
+      },
+      {
+       "name": "kh_lo",
+       "default": "kh_y - kh_gap/2 - kh_slot_l/2",
+       "comment": "the lower pocket's head-circle center (its low end)"
+      },
+      {
+       "name": "kh_cav",
+       "default": "(kh_head_d + 0.6)/2",
+       "comment": "its head cavity's radius (mount_keyhole_pocket)"
       }
      ]
     }

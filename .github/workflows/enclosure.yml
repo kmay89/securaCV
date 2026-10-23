@@ -405,7 +405,8 @@ jobs:
     # broken gate must not hide the state of the other twenty — that is the
     # same argument as splitting the mesh checks out of this job.
     #
-    # NOTHING was dropped to fit the clock. All 21 gates run, the inverted
+    # NOTHING was dropped to fit the clock. Every gate runs (21 then; the
+    # 2026-10-22 audit added the tethers and fil groups' seven), the inverted
     # ones keep their empty/solid semantics, and the self-test that proves a
     # broken render is rejected still runs as its own group.
     # PER-GROUP BUDGETS, sized from measurement rather than one number for
@@ -466,6 +467,8 @@ jobs:
           - { group: dock-p,        minutes: 35 }
           - { group: frame,         minutes: 35 }
           - { group: ports,         minutes: 45 }
+          - { group: tethers,       minutes: 15 }
+          - { group: fil,           minutes: 35 }
           - { group: battery-none,  minutes: 65 }
           - { group: battery-3000,  minutes: 105 }
           - { group: battery-10000, minutes: 105 }
@@ -588,6 +591,26 @@ jobs:
           fit frame_sd_window empty || exit 1  # SD opening really open through the plate
           fit sd_tether_hole empty || exit 1   # tether anchor hole really open through the plate
           fit sd_tether_barb solid "the SD cover's barb misses its anchor hole — strap length, hole position or install transform drifted" || exit 1
+              ;;
+            tethers)
+              # The two TPU fitments' leashes (the grommet's on the port blank,
+              # the BOOT/RESET plug's): each anchor hole really open, each barb
+              # really in its hole, and the blank's barb flush. These probes
+              # existed in the file and no gate ran them (2026-10-22 audit).
+              # Sized from a local run (195 / 3 / 2 / 212 / 15 s): re-measure
+              # from CI once it has two green runs, as the table above says.
+          bfit none port_teth_hole  empty || exit 1
+          bfit none port_teth_barb  solid "the grommet's leash barb misses its anchor hole" || exit 1
+          bfit none port_barb_proud empty || exit 1
+          bfit none plug_teth_hole  empty || exit 1
+          bfit none plug_teth_barb  solid "the BOOT/RESET plug's leash barb misses its anchor hole" || exit 1
+              ;;
+            fil)
+              # The multi-filament split: body, ink and accent must tile the
+              # frame with no gap and no overlap, or the AMS prints a seam or a
+              # double wall. Two probes, ~8 minutes each locally (475 / 437 s).
+          bfit none fil_gap     empty || exit 1
+          bfit none fil_overlap empty || exit 1
               ;;
             tpu)
           fit frame_usb_seal solid "the grommet no longer fills the USB port — waist or installed transform drifted" || exit 1

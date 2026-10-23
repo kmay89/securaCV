@@ -119,6 +119,7 @@ devstl dev_adapter_corner.stl   canary_mount_adapters.scad -D 'part="corner"'
 devstl dev_adapter_magnet.stl   canary_mount_adapters.scad -D 'part="magnet"'
 devstl dev_adapter_pole.stl     canary_mount_adapters.scad -D 'part="pole"'
 devstl dev_adapter_template.stl canary_mount_adapters.scad -D 'part="template"'
+devstl dev_vision_pro_plate.stl canary_vision_pro_mount.scad -D 'part="plate"'
 devstl dev_insert_horn.stl   canary_inserts.scad -D 'part="horn"'
 devstl dev_insert_glare.stl  canary_inserts.scad -D 'part="glare_ring"'
 devstl dev_gland_body.stl    canary_inserts.scad -D 'part="gland_body"'
@@ -216,12 +217,22 @@ devstl dev_lcd7_gauge_tray.stl  canary_s3_lcd7.scad -D 'part="gauge_tray"'
 # corner-radius gauge — 4 sockets bracketing glass_r; settle the slab's
 # corner shape here (~6 g) before any 150 g case print
 devstl dev_lcd7_radius_gauge.stl canary_s3_lcd7.scad -D 'part="radius_gauge"'
+# ring gauge — the whole glass opening as one flat loop (~5 g), the first
+# print of the set: every outline error shows at once, before any corner
+devstl dev_lcd7_ring_gauge.stl  canary_s3_lcd7.scad -D 'part="ring_gauge"'
 # frame TPU fitments — TPU 90-95A from an EXTERNAL spool (never the AMS):
 # USB wire grommet, captive leashed BOOT/RESET press-through plug (towers
-# reach the caps at the board edge), SD peel cover
+# reach the caps at the board edge), SD peel cover, and the leashed blank
+# that fills whichever cable exit is idle (every frame prints one)
 devstl dev_lcd7_grommet_usb.stl  canary_s3_lcd7.scad -D 'part="grommet_usb"'
 devstl dev_lcd7_plug_buttons.stl canary_s3_lcd7.scad -D 'part="plug_buttons"'
 devstl dev_lcd7_plug_sd.stl      canary_s3_lcd7.scad -D 'part="plug_sd"'
+devstl dev_lcd7_plug_port.stl    canary_s3_lcd7.scad -D 'part="plug_port"'
+# color + QR coupons — the frame's clipped body-filament shares, printed
+# before the case (their accent/ink inlays are many islands by design, so
+# they stay out of the one-part mesh check)
+devstl dev_lcd7_coupon_body.stl    canary_s3_lcd7.scad -D 'part="coupon_body"'
+devstl dev_lcd7_coupon_qr_body.stl canary_s3_lcd7.scad -D 'part="coupon_qr_body"'
 devstl dev_t169_bezel.stl    canary_s3_touch169.scad -D 'part="bezel"'
 devstl dev_t169_back.stl     canary_s3_touch169.scad -D 'part="back"'
 devstl dev_t169_stand.stl    canary_s3_touch169.scad -D 'part="stand"'

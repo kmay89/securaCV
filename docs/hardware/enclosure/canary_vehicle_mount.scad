@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — VEHICLE MOUNT KIT  ⚠️ IN DEVELOPMENT (v0.1-dev)
+//  Canary — VEHICLE MOUNT KIT  ⚠️ IN DEVELOPMENT (v0.2-dev)
 //  Puts any keyhole-pocket Canary (WAP weather, field case, Vision back)
 //  in a vehicle cabin, on the shared two-T-stud interface:
 //
@@ -26,6 +26,22 @@
 //  The vent prongs print sideways by design (extruded profile: flex loads
 //  stay in-plane); the studs on the vent clip therefore print sideways too
 //  — fine at 04 stems, but deburr the head undersides.
+//
+//  2026-10-23: v0.2-dev — two things the print pose and the tape got wrong:
+//    * the vent clip EXPORTED STANDING: vent() stood the extruded profile up
+//      in XZ (rotate 90 about X), so the face was a 50 mm tower and both
+//      prongs 18.5-22 mm cantilevers off it with nothing under them — the
+//      sweep read 1363 mm² of ceiling (z 21.5 and 26.1, 22.0 and 18.5 of
+//      span) on 128 mm² of bed. It now lies as this header always said: the
+//      profile on the bed, extruded up vent_w — 32 tall, ceilings 3 mm²
+//      (the stud cone lips), the same solid turned (volume unchanged);
+//    * the dash plate's THREE VHB registers were 20 wide on 19 mm centers,
+//      so they ran together into one 58 x 60 recess (a 58 mm bridge 0.6 over
+//      the bed) with the tether slot inside the tape. Two registers now, one
+//      per long edge, the slot on the bare land between them, and a cord
+//      groove from the slot out under the front edge: a taped plate stands
+//      only tape - vhb_rec off the dash (0.4-0.5 on 1.0-1.1 mm VHB), so the
+//      lanyard the retention note relies on could not pass under the front bar.
 // ============================================================================
 
 use <canary_core_lib.scad>   // shared 2D primitives — rrect2d has one home now
@@ -67,7 +83,7 @@ louver_gap = 2.2;    // louver BLADE thickness + play — MEASURE your vents (bl
 /* [Quality] */
 $fa = 3; $fs = 0.4;
 
-echo(str("Canary vehicle mount v0.1-dev — stud_gap ", stud_gap,
+echo(str("Canary vehicle mount v0.2-dev — stud_gap ", stud_gap,
          "  (IN DEVELOPMENT — no battery builds on a hot dash!)"));
 assert(stud_gap >= stud_head + 4, "studs overlap — raise stud_gap");
 
@@ -109,12 +125,21 @@ module dash() {
                 translate([riser_l, 0, 0]) cube([0.1, riser_w, riser_h + 0.1]);
             }
         }
-        // VHB strip registers on the underside
-        for (yc = [-(dash_w/2 - 16), 0, dash_w/2 - 16])
+        // VHB strip registers on the underside: TWO, 6 mm in from each long
+        // edge (v0.2: a third on the centerline overlapped both — 20 wide on
+        // 19 mm centers — into one 58 x 60 recess with the tether slot in the
+        // tape); the 18 mm center land between them carries the slot
+        for (yc = [-(dash_w/2 - 16), dash_w/2 - 16])
             translate([-dash_l/2 + 8, yc - vhb_w/2, -0.1]) cube([vhb_l, vhb_w, vhb_rec + 0.1]);
         // tether slot near the front edge
         translate([-dash_l/2 + 10, 0, -0.1]) linear_extrude(dash_t + 0.2)
             rrect2d(tether_l, tether_w, 1.5);
+        // cord groove from the slot out under the front edge (v0.2): taped
+        // down, the plate stands only tape - vhb_rec off the dash (0.4-0.5 on
+        // 1.0-1.1 mm VHB), so a lanyard through the slot had no way back out
+        // under the front bar.
+        // 6 wide = a 6 mm bridge at z 1.5, under the catalog's 7.0 ceiling
+        translate([-dash_l/2 - 1, -(tether_w - 2)/2, -0.1]) cube([11, tether_w - 2, 1.6]);
     }
     // studs on the tilted face (gap along Y so both sit at the same height)
     for (s = [1, -1])
@@ -126,7 +151,10 @@ module dash() {
 // ---- vent clip (extruded side profile; prints on its side) -------------------
 // The two prongs straddle ONE louver blade (gap = louver_gap); the upper
 // prong's tip hook dips 1.0 into the gap and snaps behind the blade's rear
-// edge, the lower tip up-ramp preloads the blade underside.
+// edge, the lower tip up-ramp preloads the blade underside. Drawn in its
+// PRINT POSE (v0.2): the profile lies in XY on the bed and extrudes up +Z by
+// vent_w, so the profile's "up" is +Y here and the studs point -X sideways.
+// v0.1 stood the profile up in XZ and exported both prongs as cantilevers.
 module vent() {
     face_h = vent_fh;                  // the grown face (the knob is its minimum)
     zm = face_h/2;  g = louver_gap/2;
@@ -149,10 +177,11 @@ module vent() {
         [face_t, zm + g + prong_t],
         [face_t, face_h], [0, face_h],
     ];
-    rotate([90, 0, 0]) translate([0, 0, -vent_w/2]) linear_extrude(vent_w) polygon(pts);
-    // studs on the front face, vertical gap, pointing -X (sideways in print)
+    linear_extrude(vent_w) polygon(pts);
+    // studs on the front face, gap along the profile's up axis (vertical in
+    // use), mid-width, pointing -X (sideways in print)
     for (s = [1, -1])
-        translate([0.02, 0, zm + s*stud_gap/2]) rotate([0, -90, 0]) tstud();
+        translate([0.02, zm + s*stud_gap/2, vent_w/2]) rotate([0, -90, 0]) tstud();
 }
 
 // ---- selector -----------------------------------------------------------------
