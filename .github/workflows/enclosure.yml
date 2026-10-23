@@ -322,6 +322,12 @@ jobs:
               dev_c3_147_hdr_bezel.stl) echo 2 ;;
               dev_c3_147_usba_bezel.stl) echo 2 ;;
               dev_c3_147_usba_hdr_bezel.stl) echo 2 ;;
+              # the lid's wordmark inlay is a SET of six letters and the S3
+              # stick's accent inlay eight: fewer means a letter was lost,
+              # and an empty file means the font was missing and text()
+              # drew nothing — which the deboss in the part alone never shows
+              dev_c3_147_mark.stl)      echo 6 ;;
+              dev_s3_147_fil_accent.stl) echo 8 ;;
               *)                        echo 1 ;;
             esac
           }

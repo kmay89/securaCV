@@ -105,8 +105,11 @@ devstl dev_outlet_cradle.stl canary_outlet_cradle.scad -D 'part="cradle"'
 devstl dev_relay_body.stl    canary_relay_solar.scad   -D 'part="body"'
 devstl dev_relay_lid.stl     canary_relay_solar.scad   -D 'part="lid"'
 devstl dev_relay_roof.stl    canary_relay_solar.scad   -D 'part="roof"'
+devstl dev_relay_gasket.stl  canary_relay_solar.scad   -D 'part="gasket"'
 devstl dev_combo_back.stl    canary_combo.scad         -D 'part="back"'
 devstl dev_combo_front.stl   canary_combo.scad         -D 'part="front"'
+devstl dev_combo_gasket.stl  canary_combo.scad         -D 'part="gasket"' -D 'opt_seal=true'
+devstl dev_combo_hood.stl    canary_combo.scad         -D 'part="hood"' -D 'opt_hood=true'
 devstl dev_hub_tray.stl      canary_hub_din.scad       -D 'part="tray"'
 devstl dev_hub_cover.stl     canary_hub_din.scad       -D 'part="cover"' 
 devstl dev_hammond_wap.stl    canary_hammond_chassis.scad -D 'stack="wap"'
@@ -162,6 +165,15 @@ devstl dev_c3_147_bare_bezel.stl canary_c3_lcd147.scad -D 'headers="none"' -D 'p
 devstl dev_c3_147_bare_lid.stl   canary_c3_lcd147.scad -D 'headers="none"' -D 'part="lid"'
 devstl dev_c3_147_hdr_bezel.stl canary_c3_lcd147.scad -D 'headers="male"' -D 'part="bezel"'
 devstl dev_c3_147_hdr_lid.stl   canary_c3_lcd147.scad -D 'headers="male"' -D 'part="lid"'
+# The parts gen_3mf.py packages beside the bezel and lid, mesh-checked like
+# them: the fit coupon (the one-color test print the header sends you to
+# first — the bezel AND band, so one solid), and the lid's two inlays. The
+# wordmark is a SET of six letters (expect_parts says so); fewer means a
+# letter was lost, and none means the font was missing and text() drew
+# nothing — which the lid's deboss alone would never show.
+devstl dev_c3_147_coupon.stl canary_c3_lcd147.scad -D 'headers="pillars"' -D 'part="coupon"'
+devstl dev_c3_147_mark.stl   canary_c3_lcd147.scad -D 'headers="pillars"' -D 'part="mark"'
+devstl dev_c3_147_shell.stl  canary_c3_lcd147.scad -D 'headers="pillars"' -D 'part="shell"'
 # …and the same case cut for the OTHER board: the ESP32-S3-LCD-1.47, whose
 # PCB ends in a series-A male plug. Rendered because the port axis moves the
 # opening, the insertion slot, the drop collar and the light ring's notch
@@ -181,6 +193,10 @@ devstl dev_c3_147_usba_hdr_lid.stl   canary_c3_lcd147.scad -D 'port="usb_a"' -D 
 devstl dev_s3_147_bezel.stl  canary_s3_lcd147.scad -D 'part="bezel"'
 devstl dev_s3_147_back.stl   canary_s3_lcd147.scad -D 'part="back"'
 devstl dev_s3_147_band.stl   canary_s3_lcd147.scad -D 'part="fil_light"'
+# …and the back as gen_3mf.py stick packages it: body and inlay apart, which
+# part="back" (their union) cannot show. The accent is eight letters.
+devstl dev_s3_147_fil_body.stl   canary_s3_lcd147.scad -D 'part="fil_body"'
+devstl dev_s3_147_fil_accent.stl canary_s3_lcd147.scad -D 'part="fil_accent"'
 # …and the same stick for a board with its GPIO rows soldered on. Rendered
 # here rather than trusted, because the headers axis moves the cavity, the
 # compliant ribs and the band's slot together — and the rib/pin-row clearance
