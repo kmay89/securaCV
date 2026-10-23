@@ -131,7 +131,7 @@ JOIN = {
         ("wall-screw", r"^#6 pan wall screw \(keyholes\)", "SCR4"),  # keyhole mount
     ]),
     "canary-vision": ("bom_canary_vision.csv", [
-        ("screw", r"^M2 pan x (4|5|6|8|10) self-tap", "SCR5"),        # the mixed row: camera posts (6 Vision / 5 doorbell), the doorbell's board posts (4), the plate screws pl_len() picks (8 Vision / 10 doorbell)
+        ("screw", r"^M2 pan x (4|5|6|8|10) self-tap", "SCR5"),        # the mixed row: camera posts (4 Vision / 5 doorbell), the doorbell's board posts (4), the plate screws pl_len() picks (8 Vision / 10 doorbell)
         ("insert", r"^M2 heat-set insert 3\.5 OD x 4\b", "INS1"),
         ("security-screw", r"^M2 x 10 security screw", "SCR8"),
         ("bolt", r"^M5 x 25 bolt \+ nut", "SCR6"),
@@ -151,14 +151,9 @@ JOIN = {
 # not edited. A new one fails --check; so does one that stops happening.
 KNOWN_DRIFT = {
     "doorbell+inserts|short INS1",
-    "sense|unbilled #6 pan wall screw (bracket)",
+    "sense|unbilled #8 / M4 countersunk wall screw (bracket)",
     "sense|unbilled M5 x 25 bolt + nut (hinge; Vision knob/bracket parts)",
-    "vision.devkit_indoor|unbilled #6 pan wall screw (bracket)",
-    "vision.xiao_indoor|unbilled #6 pan wall screw (bracket)",
-    "vision.xiao_weather|unbilled #6 pan wall screw (bracket)",
     "vision.xiao_weather|unbilled #6 pan wall screw (keyholes)",
-    "wap.battery_weather|unbilled M3 flat-head wall screw x 12 (pierce the anti-lift "
-    "knockouts after hanging; 90° seat)",
 }
 
 _HW_LINE = re.compile(r'^"HARDWARE — (.+?): (.*)"$')

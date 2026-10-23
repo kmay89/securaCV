@@ -465,8 +465,11 @@ never the AMS**, §0):
 - **`plug_buttons`** — a captive plug for the BOOT/RESET window: its cap
   nests the window's bevel, a 45° lip snaps in behind the wall (it cannot
   fall out or be pushed inside), and the buttons are pressed **through** the
-  plug via two pips under the face dimples — it never needs to come out.
-  Set `btn_reach` to your measured wall-to-button gap minus ~0.5.
+  plug by two towers under the face dimples, whose reach is derived to rest on
+  the caps at the board edge (6.565 mm from the lip plane with
+  `btn_reach = 0`) — it never needs to come out. Only if your caps sit elsewhere, set
+  `btn_reach` to the measured lip-plane-to-cap distance (up to 0.6 mm past the
+  derived reach is accepted as squeeze).
 - **`plug_sd`** — a peel-open cover for the SD opening, **countersunk
   flush**: the plate carries a 45° rim and the cap a matching tapered edge,
   so both print clean back-plate-down and the taper self-centers the cap.

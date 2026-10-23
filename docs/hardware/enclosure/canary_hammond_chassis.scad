@@ -18,12 +18,21 @@
 //  v0.2-dev (2026-08-23): canary_*_lib adoption; the Grove Vision AI V2 plate
 //  arithmetic now reads the registry's measured 40 x 20 — this file still
 //  carried the wrong 25 x 25 that three siblings had already corrected.
+//  2026-10-23: END STOPS along the board's length. Every stack hung on one
+//  clip pair at mid-span and its rails, and nothing located it along Y: the
+//  board slid ±5 (and on) along its rails with nothing in the way, so a USB
+//  plug pushed it along — the wap XIAO leaves its clips after 13.5 mm. The
+//  WAP's AUD-2 and the Sense's v0.2 stops never reached this plate. Each end
+//  now gets a 3.0 x 2.0 column past each corner (the Sense's bump), 0.3 off
+//  the board's end, up to its top face, outboard of a spec-max Type-C
+//  overmold and of the hanging XIAO.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect2d — the catalog's shared helpers
 use <canary_snap_lib.scad>   // the cantilever board clip + its strain budget
 use <canary_board_lib.scad>  // board registry — vm_l/vm_w read it; the knobs cite it
 use <canary_rib_lib.scad>    // the long-axis rib bars (board_rail) and their ceilings
+use <canary_port_lib.scad>   // port_usbc_overmold_w — the board's end stops stand outside a plug's envelope
 
 /* [What to render] */
 part  = "plate";     // ["plate"]
@@ -91,6 +100,12 @@ rib_l = 2*(plate_l/2 - 14 - 5 - 2);         // between the vent columns (plate_l
 assert(rib_h == 0 || rib_y + 0.8 + 1.0 <= boss_dy/2 - (boss_screw_d + 2*tol_hole)/2 - 1,
        "the rib bars run into the boss slots — shorten the board zone or set rib_h = 0");
 assert(rib_h == 0 || rib_h <= rib_h_max(rib_t_max(plate_t)), "rib_h is past the rib_lib slenderness ceiling for this plate");
+// the board's END STOPS (see plate()): a column's inboard edge across the
+// board — outside a spec-max Type-C overmold on the axis, beside a hanging
+// XIAO, and within 2.6 of the board's edge so it catches the corner
+stop_x0 = max(port_usbc_overmold_w()/2 + 0.2, (stack == "wap") ? 0 : xiao_w/2 + 0.3, b_w/2 - 2.6);
+assert(stop_x0 < b_w/2 - 0.5, "the board's end stops no longer catch its corners — the board is too narrow beside the overmold/XIAO");
+assert(rib_h == 0 || b_l/2 + 0.3 + 2.0 <= rib_y - 0.8 - 0.6, "the board's end stops run into the rib bars' coves");
 echo(str("Canary Hammond chassis v0.2-dev — plate ", plate_l, "x", plate_w,
          ", stack=", stack, " on ", soff, " mm rails  (IN DEVELOPMENT)"));
 
@@ -144,6 +159,14 @@ module plate() {
             // Ø2 pin prints oversize) and still reach 0.8 under the module's edge
             if (half) translate([s*(xiao_w/2 + 1.3), -b_l/2 + 1.2, plate_t - 0.01]) cylinder(d = 2.0, h = soff + 0.01);
         }
+        // END STOPS along the board's length (2026-10-23): the clips hold X and Z
+        // only, so a USB plug slid the board along its rails. A 3.0 x 2.0 column
+        // past each corner of each end (the Sense's +Y bump), 0.3 off the end,
+        // up to the board's top face (on the vision stack the -Y pair stands 0.5
+        // past the corner pins, which sit under the module's edge)
+        for (sx = [1, -1], sy = [1, -1])
+            translate([sx > 0 ? stop_x0 : -(stop_x0 + 3.0), sy > 0 ? b_l/2 + 0.3 : -(b_l/2 + 0.3 + 2.0), plate_t - 0.01])
+                cube([3.0, 2.0, soff + b_t + 0.01]);
         // long-axis rib bars (canary_rib_lib board_rail, turned to run along X):
         // the width derives from the plate (rib_t_max), the root is coved
         if (rib_h > 0) for (sy = [1, -1])

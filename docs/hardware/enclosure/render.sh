@@ -79,7 +79,9 @@ sstl() { local out=$1; shift; echo "Rendering $out ..."
   "$OPENSCAD" --export-format binstl -o "$out" "$@" "$SSRC"; }
 sstl "canary_sense_back.stl"  -D 'part="back"'
 sstl "canary_sense_front.stl" -D 'part="front"'
-# (bracket/knob are identical to the Vision case parts — reuse those STLs)
+# (bracket/knob are mesh-identical to the Vision case parts — print those STLs; the
+#  builder serves this file's own copies, so they render below as dev parts, with the
+#  sealed build's TPU gasket, and CI mesh-checks what it serves)
 
 # --- Thermal / outdoor kit (WAP): solar shield + desiccant tray -------------
 stl "canary_wap_enclosure_weather_shield.stl" -D 'preset="battery_weather"' -D 'part="shield"'
@@ -87,21 +89,30 @@ stl "canary_wap_enclosure_tray.stl" -D 'part="tray"'
 
 # --- IN DEVELOPMENT designs: rendered + mesh-checked in CI, STLs NOT committed
 # (dev_*.stl is gitignored; print from the .scad while these mature)
-devstl() { local out=$1 src=$2; shift 2; echo "Rendering $out (dev) ..."
+NDEV=0
+devstl() { local out=$1 src=$2; shift 2; echo "Rendering $out (dev) ..."; NDEV=$((NDEV + 1))
   "$OPENSCAD" --export-format binstl -o "$out" "$@" "$src"; }
 devstl dev_watch_drum.stl    canary_watch_station.scad -D 'part="drum"'
 devstl dev_watch_bezel.stl   canary_watch_station.scad -D 'part="bezel"'
 devstl dev_watch_stand.stl   canary_watch_station.scad -D 'part="stand"'
 devstl dev_sense_stand.stl   canary_sense_stand.scad   -D 'part="base"'
+devstl dev_sense_ballast_lid.stl canary_sense_stand.scad -D 'part="ballast_lid"'
 devstl dev_sense_gang.stl    canary_sense_gang.scad    -D 'part="plate"'
+devstl dev_sense_gasket.stl  canary_sense_enclosure.scad -D 'opt_seal=true' -D 'opt_vent=true' -D 'part="gasket"'
+devstl dev_sense_bracket.stl canary_sense_enclosure.scad -D 'part="bracket"'
+devstl dev_sense_knob.stl    canary_sense_enclosure.scad -D 'part="knob"'
 devstl dev_outlet_cradle.stl canary_outlet_cradle.scad -D 'part="cradle"'
 devstl dev_relay_body.stl    canary_relay_solar.scad   -D 'part="body"'
 devstl dev_relay_lid.stl     canary_relay_solar.scad   -D 'part="lid"'
 devstl dev_relay_roof.stl    canary_relay_solar.scad   -D 'part="roof"'
+devstl dev_relay_gasket.stl  canary_relay_solar.scad   -D 'part="gasket"'
 devstl dev_combo_back.stl    canary_combo.scad         -D 'part="back"'
 devstl dev_combo_front.stl   canary_combo.scad         -D 'part="front"'
+devstl dev_combo_gasket.stl  canary_combo.scad         -D 'part="gasket"' -D 'opt_seal=true'
+devstl dev_combo_hood.stl    canary_combo.scad         -D 'part="hood"' -D 'opt_hood=true'
 devstl dev_hub_tray.stl      canary_hub_din.scad       -D 'part="tray"'
 devstl dev_hub_cover.stl     canary_hub_din.scad       -D 'part="cover"' 
+devstl dev_hub_clip.stl      canary_hub_din.scad       -D 'part="clip"'
 devstl dev_hammond_wap.stl    canary_hammond_chassis.scad -D 'stack="wap"'
 devstl dev_hammond_vision.stl canary_hammond_chassis.scad -D 'stack="vision"'
 devstl dev_hammond_sense.stl  canary_hammond_chassis.scad -D 'stack="sense"'
@@ -109,6 +120,7 @@ devstl dev_adapter_corner.stl   canary_mount_adapters.scad -D 'part="corner"'
 devstl dev_adapter_magnet.stl   canary_mount_adapters.scad -D 'part="magnet"'
 devstl dev_adapter_pole.stl     canary_mount_adapters.scad -D 'part="pole"'
 devstl dev_adapter_template.stl canary_mount_adapters.scad -D 'part="template"'
+devstl dev_vision_pro_plate.stl canary_vision_pro_mount.scad -D 'part="plate"'
 devstl dev_insert_horn.stl   canary_inserts.scad -D 'part="horn"'
 devstl dev_insert_glare.stl  canary_inserts.scad -D 'part="glare_ring"'
 devstl dev_gland_body.stl    canary_inserts.scad -D 'part="gland_body"'
@@ -155,6 +167,15 @@ devstl dev_c3_147_bare_bezel.stl canary_c3_lcd147.scad -D 'headers="none"' -D 'p
 devstl dev_c3_147_bare_lid.stl   canary_c3_lcd147.scad -D 'headers="none"' -D 'part="lid"'
 devstl dev_c3_147_hdr_bezel.stl canary_c3_lcd147.scad -D 'headers="male"' -D 'part="bezel"'
 devstl dev_c3_147_hdr_lid.stl   canary_c3_lcd147.scad -D 'headers="male"' -D 'part="lid"'
+# The fit coupon (the one-color test print the header sends you to first —
+# the bezel AND band, so one solid) and the lid's two inlays that gen_3mf.py
+# packages beside it, mesh-checked like the bezel and lid. The wordmark is a
+# SET of six letters (expect_parts says so); fewer means a letter was lost. A
+# text() that drew nothing writes no file at all, which stops this script (a
+# missing font is not caught here: OpenSCAD substitutes another silently).
+devstl dev_c3_147_coupon.stl canary_c3_lcd147.scad -D 'headers="pillars"' -D 'part="coupon"'
+devstl dev_c3_147_mark.stl   canary_c3_lcd147.scad -D 'headers="pillars"' -D 'part="mark"'
+devstl dev_c3_147_shell.stl  canary_c3_lcd147.scad -D 'headers="pillars"' -D 'part="shell"'
 # …and the same case cut for the OTHER board: the ESP32-S3-LCD-1.47, whose
 # PCB ends in a series-A male plug. Rendered because the port axis moves the
 # opening, the insertion slot, the drop collar and the light ring's notch
@@ -174,6 +195,10 @@ devstl dev_c3_147_usba_hdr_lid.stl   canary_c3_lcd147.scad -D 'port="usb_a"' -D 
 devstl dev_s3_147_bezel.stl  canary_s3_lcd147.scad -D 'part="bezel"'
 devstl dev_s3_147_back.stl   canary_s3_lcd147.scad -D 'part="back"'
 devstl dev_s3_147_band.stl   canary_s3_lcd147.scad -D 'part="fil_light"'
+# …and the back as gen_3mf.py stick packages it: body and inlay apart, which
+# part="back" (their union) cannot show. The accent is eight letters.
+devstl dev_s3_147_fil_body.stl   canary_s3_lcd147.scad -D 'part="fil_body"'
+devstl dev_s3_147_fil_accent.stl canary_s3_lcd147.scad -D 'part="fil_accent"'
 # …and the same stick for a board with its GPIO rows soldered on. Rendered
 # here rather than trusted, because the headers axis moves the cavity, the
 # compliant ribs and the band's slot together — and the rib/pin-row clearance
@@ -193,12 +218,22 @@ devstl dev_lcd7_gauge_tray.stl  canary_s3_lcd7.scad -D 'part="gauge_tray"'
 # corner-radius gauge — 4 sockets bracketing glass_r; settle the slab's
 # corner shape here (~6 g) before any 150 g case print
 devstl dev_lcd7_radius_gauge.stl canary_s3_lcd7.scad -D 'part="radius_gauge"'
+# ring gauge — the whole glass opening as one flat loop (~5 g), the first
+# print of the set: every outline error shows at once, before any corner
+devstl dev_lcd7_ring_gauge.stl  canary_s3_lcd7.scad -D 'part="ring_gauge"'
 # frame TPU fitments — TPU 90-95A from an EXTERNAL spool (never the AMS):
 # USB wire grommet, captive leashed BOOT/RESET press-through plug (towers
-# reach the caps at the board edge), SD peel cover
+# reach the caps at the board edge), SD peel cover, and the leashed blank
+# that fills whichever cable exit is idle (every frame prints one)
 devstl dev_lcd7_grommet_usb.stl  canary_s3_lcd7.scad -D 'part="grommet_usb"'
 devstl dev_lcd7_plug_buttons.stl canary_s3_lcd7.scad -D 'part="plug_buttons"'
 devstl dev_lcd7_plug_sd.stl      canary_s3_lcd7.scad -D 'part="plug_sd"'
+devstl dev_lcd7_plug_port.stl    canary_s3_lcd7.scad -D 'part="plug_port"'
+# color + QR coupons — the frame's clipped body-filament shares, printed
+# before the case (their accent/ink inlays are many islands by design, so
+# they stay out of the one-part mesh check)
+devstl dev_lcd7_coupon_body.stl    canary_s3_lcd7.scad -D 'part="coupon_body"'
+devstl dev_lcd7_coupon_qr_body.stl canary_s3_lcd7.scad -D 'part="coupon_qr_body"'
 devstl dev_t169_bezel.stl    canary_s3_touch169.scad -D 'part="bezel"'
 devstl dev_t169_back.stl     canary_s3_touch169.scad -D 'part="back"'
 devstl dev_t169_stand.stl    canary_s3_touch169.scad -D 'part="stand"'
@@ -261,4 +296,6 @@ if [[ "${1:-}" != "--no-png" ]]; then
   (SRC="canary_dock.scad";          png "preview_dev_dock.png")
 fi
 
-echo "Done: released STLs (WAP 10 / Vision 9 / Doorbell 6 / Sense 2) + 59 dev renders + 3 SVG templates + previews."
+# counted, not typed: the typed line said 59 dev renders long after there were 87
+nrel() { ls "$@" 2>/dev/null | wc -l | tr -d ' '; }
+echo "Done: released STLs (WAP $(nrel canary_wap_enclosure_*.stl) / Vision $(nrel canary_vision_enclosure_*.stl) / Doorbell $(nrel canary_vision_doorbell_*.stl) / Sense $(nrel canary_sense_*.stl)) + $NDEV dev renders + 3 SVG templates + previews."

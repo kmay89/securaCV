@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.3-dev)
+//  Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.4-dev)
 //  ONE small print that calibrates your printer for the ENTIRE Canary
 //  catalog before you commit to any case. Every fit the enclosures use is
 //  exercised on a labeled station, laid out on a branded 90 × 68 plate:
@@ -67,6 +67,18 @@
 //  root_r), but the gate reckons a fillet as a shorter beam and the WAP's
 //  4.7 mm beam goes over budget with one — a stiffer root on that beam would
 //  crack where the fillet was meant to save it.
+//
+//  2026-10-23 (v0.4-dev): the SCREW and INSERT stations now cut what the cases
+//  cut, and the labels say what they label. The pan-head seat at (19, -8)
+//  broke 1.0 into the right keyhole's head channel — a 0.4 mm³ crescent
+//  through the very floor the seat exists to test — and sat inside the word
+//  SCREW; it moved to (24, -12), 3.9 clear of the channel. The INSERT bore
+//  was insert_h deep with nothing under it, where every case cuts
+//  pl_post_pilot (insert_h + 0.5, and the screw's pilot past it), so the
+//  knurl's 6.3 mm³ of melt had nowhere to go and the station calibrated a
+//  seat no case cuts: it is pl_post_pilot now. SCREW moved off the ladder's
+//  "-", INSERT back onto the plate (its T ran off the edge), and the EMBLEM
+//  label only prints with its station.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 // ============================================================================
@@ -187,7 +199,7 @@ $fa = 3; $fs = 0.4;
 // literal assignment falls into the group above it and the Customizer offers
 // the coupon's own plate size to the user under the heading "Quality".
 bw = 90; bh = 68;
-echo(str("Canary fit coupon v0.3-dev — base ", bw, "x", bh, "  (IN DEVELOPMENT)"));
+echo(str("Canary fit coupon v0.4-dev — base ", bw, "x", bh, "  (IN DEVELOPMENT)"));
 if (emblem_h > 0) {
     echo(str("EMBLEM station: mark ", mark_h_mm(emblem_h, emblem_rib),
              " tall x ", mark_w_mm(emblem_h, emblem_rib),
@@ -302,7 +314,9 @@ module base() {
             // the WAP's 90° cone for a flat head, and beside it the Vision/Sense
             // flat-floored pan-head seat (cb_flat_cut) with the 1.0 floor under it
             cs_cone90_cut(23, 1, base_t, screw_d + 2*tol_hole, 1.2);
-            cb_flat_cut(19, -8, base_t, screw_d + 2*tol_hole, screw_head_d + 2*tol_hole, 2.0);
+            // (v0.4: at (19, -8) the Ø4.6 seat broke into the right keyhole's head
+            // channel and sat inside the SCREW label; here it clears both)
+            cb_flat_cut(24, -12, base_t, screw_d + 2*tol_hole, screw_head_d + 2*tol_hole, 2.0);
             // ...plus the −/0/+ pilot ladder: blind holes, drive the screw into each
             for (i = [0:2]) translate([ladder_x[i], 1, base_t - 4]) cylinder(d = ladder_d[i], h = 4.1);
             // POCKET station: keyhole pocket pair for the mate's studs (gap = stud_gap)
@@ -312,12 +326,12 @@ module base() {
             // park (the keyholes' slot end), on the same drop
             translate([pocket_cx, 0, 0]) mount_dovelug_pocket(-14 + kh_slot_l/2, 0, clear = dt_clear);
             // labels — grid-aligned, none touching a neighbor
-            lbl(-24, 21, "EMBOSS", 3);  lbl(-3, 20.5, "EMBLEM", 3);  lbl(22, 21, "DEBOSS", 3);
+            lbl(-24, 21, "EMBOSS", 3);  if (emblem_h > 0) lbl(-3, 20.5, "EMBLEM", 3);  lbl(22, 21, "DEBOSS", 3);
             lbl(-24, 9.5, "SLIDE");     lbl(2, 9.5, "PORT");     lbl(30, 9.5, "PRESS");
-            lbl(-24, -4.5, "GROOVE", 3);   lbl(19, -5.5, "SCREW");
+            lbl(-24, -4.5, "GROOVE", 3);   lbl(17, -5.5, "SCREW");   // x 17 (v0.4): at 19 its W met the ladder's "-"
             for (i = [0:2]) lbl(ladder_x[i], -4.5, ladder_tag[i], 3);   // on the SCREW line, under their holes
             lbl(-31, -16.5, "CLIP", 3);    // on the channel floor, between the rails
-            lbl(pocket_cx, -25.5, "POCKET");  lbl(34, -21, "INSERT");
+            lbl(pocket_cx, -25.5, "POCKET");  lbl(32.5, -21, "INSERT");   // x 32.5 (v0.4): at 34 its T ran off the plate
             // foot line: the small-text legibility test doubles as the colophon
 //      GLYPH   — the SecuraCV bird debossed into the BED-SIDE face at full
 //                size: the first-layer / plate-texture test, and the one
@@ -365,7 +379,12 @@ module base() {
         translate([34, -14, base_t - 0.01]) difference() {
             union() { cylinder(d = insert_d + 2.4, h = insert_h + 2);
                       cylinder(d1 = insert_d + 4.4, d2 = insert_d + 2.4, h = 1); }   // 45° root collar
-            translate([0, 0, 2]) cylinder(d = insert_d - 0.3, h = insert_h + 2.1);   // 0.3 interference: the brass bites
+            // the cases' own insert bore (v0.4), pl_post_pilot turned to face up:
+            // insert_h + 0.5 deep at 0.3 interference (the brass bites), and the M2
+            // machine screw's Ø2.3 pilot on past it — insert_h deep and blind, the
+            // knurl's melt had nowhere to go but up
+            translate([0, 0, insert_h + 2]) mirror([0, 0, 1])
+                pl_post_pilot(0, 0, 0, insert_h + 1.5, scr_nominal("m2") + 0.3, true, insert_d - 0.3, insert_h);
         }
     }
 }

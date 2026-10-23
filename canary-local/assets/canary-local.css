@@ -260,6 +260,17 @@ button:disabled { opacity: 0.35; cursor: default; }
 .enclab-status.ok { background: rgba(67, 160, 71, 0.12); color: #7fd184; border: 1px solid rgba(67,160,71,0.35); }
 .enclab-status.dev { background: rgba(251, 140, 0, 0.1); color: #ffb45e; border: 1px solid rgba(251,140,0,0.3); }
 .enclab-files a { margin-right: 10px; }
+.enclab-legend .leg-rev { font-weight: 600; color: var(--fg, #e8e8ea); }
+.enclab-rev { font-size: 12.5px; margin: 8px 0; padding: 8px 12px; border-radius: 9px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); }
+.enclab-rev-list { margin: 6px 0 0; padding-left: 18px; }
+.enclab-rev-list > li { margin: 3px 0; }
+.enclab-rev-changes { margin: 2px 0 4px; padding-left: 16px; color: var(--muted); }
+.enclab-rev-toggle { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; cursor: pointer; }
+.enclab-rev-swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; background: rgb(255, 115, 26); }
+.asm-rev-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; margin: 6px 0; cursor: pointer; }
+.enclab-rev-id { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); }
+.enclab-rev-idlabel { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.enclab-rev-idout { margin-top: 6px; }
 .params h4 { margin: 16px 0 6px; }
 .pgroup { border: 1px solid var(--edge); border-radius: 10px; margin: 6px 0; background: var(--surface); }
 .pgroup summary { cursor: pointer; padding: 8px 12px; font-size: 14px; }
