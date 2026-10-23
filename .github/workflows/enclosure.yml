@@ -79,7 +79,15 @@ jobs:
     # Renders + mesh checks only. The seated-fit suite used to live here and
     # was the long pole by far; it now has its own job (see `fit` below), so
     # this one reports in minutes instead of waiting on it.
-    timeout-minutes: 40
+    #
+    # 75, re-measured (CI.md R2: ~2-3x the healthy runtime). The 2026-10-22
+    # audit put 16 parts that never rendered into render.sh and added the
+    # revision check, and the job went from 24.8 min (main, 40119d27) to 32.0
+    # and 34.8 on that PR's runs: 80-87% of the old 40, with the OpenSCAD
+    # install under 30 s each time. The install has its own clock (see the
+    # fit job's "THE INSTALL IS NOT THE GATE"), because on the same days it
+    # took 3 to over 10 minutes on other runners.
+    timeout-minutes: 75
     defaults:
       run:
         working-directory: docs/hardware/enclosure
@@ -120,6 +128,7 @@ jobs:
         run: python3 gen_mark_svg.py --check
 
       - name: Install OpenSCAD + admesh
+        timeout-minutes: 15
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq openscad admesh
@@ -457,7 +466,19 @@ jobs:
     # If a group starts consuming most of its budget again, re-measure and
     # re-cut rather than doubling: a gate that got slower is telling you the
     # part got heavier, and that is worth knowing before the timeout is.
-    timeout-minutes: ${{ matrix.minutes }}
+    #
+    # THE INSTALL IS NOT THE GATE (2026-10-23). These budgets used to be the
+    # job's, so the apt install of OpenSCAD spent from them, and the install
+    # stopped being a rounding error: 14-30 s on every runner on 2026-10-21,
+    # then 2.8-8.7 min on six of thirteen runners on 5da963c8 and 3.9-6.5 on
+    # three more on 3555613d, where tpu was canceled at 10 minutes still
+    # inside apt, its 18-second gate never started (b61d40f2 went the same
+    # way). So each group's minutes now bound its gate STEP, the thing they
+    # were measured from; the install step has its own 15, and the job's
+    # number is only a backstop over both: 15 + the largest gate budget (105)
+    # is the policy ceiling of 120. A hung gate still dies on its own small
+    # clock, and as a failed step that names itself, not a cancellation.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -469,8 +490,8 @@ jobs:
           - { group: dock-p,        minutes: 35 }
           - { group: frame,         minutes: 35 }
           - { group: ports,         minutes: 45 }
-          - { group: tethers,       minutes: 20 }
-          - { group: fil,           minutes: 35 }
+          - { group: tethers,       minutes: 15 }
+          - { group: fil,           minutes: 20 }
           - { group: battery-none,  minutes: 65 }
           - { group: battery-3000,  minutes: 105 }
           - { group: battery-10000, minutes: 105 }
@@ -481,11 +502,13 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install OpenSCAD
+        timeout-minutes: 15
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq openscad
 
       - name: 7in dashboard parts must actually assemble
+        timeout-minutes: ${{ matrix.minutes }}
         run: |
           # A valid mesh is not a valid case. v0.1 of the 7" case exported three
           # watertight, single-part STLs whose bezel lip floated 5 mm clear of
@@ -600,10 +623,9 @@ jobs:
               # plug's): each anchor hole really open, each barb really in its
               # hole, and the grommet's barb flush. These probes
               # existed in the file and no gate ran them (2026-10-22 audit).
-              # First CI run (5da963c8): the gate step 5.2 min, fil's 4.2 — but
-              # that run's apt install took 8.7 min on the fil runner (a slow
-              # mirror is what canceled tpu at 10 min on b61d40f2), so the
-              # budget carries the install too: 20, not 2 x the gate alone.
+              # The gate step took 5.2 and 5.6 min on 5da963c8 and 3555613d
+              # (fil's 4.2 and 8.2), so 15 and 20: about 2.5x, the gate alone,
+              # now that the install has its own clock.
           bfit none port_teth_hole  empty || exit 1
           bfit none port_teth_barb  solid "the grommet's leash barb misses its anchor hole" || exit 1
           bfit none port_barb_proud empty || exit 1
