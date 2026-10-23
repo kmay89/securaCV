@@ -3,6 +3,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { readdirSync, readFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+// Who is acting right now. The HTTP pipeline runs each request inside this store with the
+// logged-in person's email, so a handler that says actor 'web' is written down under their name.
+export const actorStore = new AsyncLocalStorage();
+export const currentActor = (fallback = 'web') => actorStore.getStore()?.actor || fallback;
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -61,7 +67,7 @@ function wrap(db) {
     },
     audit: (actor, action, entity = null, entityId = null, detail = null) => api.run(
       'INSERT INTO audit_log (at, actor, action, entity, entity_id, detail) VALUES (?, ?, ?, ?, ?, ?)',
-      nowIso(), actor, action, entity, entityId == null ? null : String(entityId), detail == null ? null : (typeof detail === 'string' ? detail : JSON.stringify(detail))),
+      nowIso(), actor === 'web' ? currentActor('web') : actor, action, entity, entityId == null ? null : String(entityId), detail == null ? null : (typeof detail === 'string' ? detail : JSON.stringify(detail))),
     close: () => db.close(),
   };
   return api;

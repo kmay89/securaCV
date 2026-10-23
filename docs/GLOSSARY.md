@@ -628,7 +628,9 @@ CI and host-tested, not bench-tested against a TLS broker.
 self-signed HTTPS certificate, on a Canary that serves HTTPS — a Canary WAP
 built with its HTTPS server, or a `firmware/canary` flagship built with
 `FEATURE_HTTPS` (its dev builds since 2026-09; off in release, not yet
-bench-tested). It is carried in the provisioning receipt (and the WAP's
+bench-tested). None does on a stock build today: the on-device certificate
+step compiles out, so no unit has a certificate or a pin (F15). It is
+carried in the provisioning receipt (and the WAP's
 pairing QR). The iPhone app dials an https Canary only through that pin (an
 exact match on the leaf certificate) and refuses one it has no pin for. Not the
 broker pin (`mqtt_fp`, above), which protects the other direction.

@@ -7,13 +7,33 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
 
 ## The door
 
-- **One operator.** A password (scrypt, N=16384) and a TOTP code (RFC 6238,
-  SHA-1, 30 s, ±1 step). Both, every time. There are no roles because there
-  are no other users; adding them is a migration, not a redesign.
-- **Lockout.** Eight failed logins from one address in fifteen minutes and
-  that address waits the window out — the right password included. Every
-  attempt, locked or not, is in the audit log with its address; the Health
-  page counts the last 24 hours.
+- **People, each with their own door.** Every person has a password (scrypt,
+  N=16384) and an authenticator (TOTP, RFC 6238, SHA-1, 30 s, ±1 step).
+  Both, every time. Nobody is ever handed a password: an owner creates an
+  invitation, which is a link that works once and for 48 hours; the person
+  chooses their own password and scans their own authenticator, and the
+  account opens only when a code from it has been seen. The invitation can
+  be handed over any way the owner trusts (and is mailed when a relay is
+  configured); it carries no secret of its own.
+- **Roles, checked on every request.** `owner` (everything, including
+  people, tokens, settings, the books and forgetting a customer), `ops`
+  (runs the shop; not people, tokens, settings or the books), `support`
+  (tickets, customers, warranty, notes and tags; reads the rest), `viewer`
+  (reads, changes nothing). The rule lives in one function (`can()` in
+  `auth.mjs`), by path and method, and the pipeline applies it before any
+  handler runs — the sidebar hides what a role cannot open, but hiding is
+  never the enforcement. A role change or a disable applies to the person's
+  live sessions at once. The last active owner cannot be demoted, disabled
+  or removed. API tokens are owner-made and not bound to a role; their
+  scope is the limit.
+- **Every action under a name.** The audit log and every order timeline
+  record the person's email (or `token:<name>` for the API), set by the
+  pipeline for the request, so no handler can forget to say who.
+- **Lockout, twice.** Eight failed logins from one address in fifteen
+  minutes and that address waits the window out; eight failures against one
+  person and that person waits, the right password included. Every attempt,
+  locked or not, is in the audit log with its address; the Health page
+  counts the last 24 hours and names anyone locked out.
 - **Sessions.** A random 256-bit id in an `HttpOnly; SameSite=Strict`
   cookie (`Secure` when the base URL is https), 12 hours absolute, a new id
   on every login, deleted on logout. A CSRF token per session rides in every
@@ -23,13 +43,18 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   of the table verifies nothing. A token can be read-only (`--read-only`,
   or the Scope choice on Settings): GET only, for a dashboard or a monitor.
   Revocation is immediate.
-- **Rotation.** `backoffice setup --force` sets a new password and a new
-  authenticator secret. The Health page warns when the password is a year
-  old.
-- **Recovery.** A lost authenticator is recovered on the server, never over
-  the network: `backoffice setup --force` from a shell with access to the
-  data directory. There are no backup codes by design — the shell *is* the
-  recovery factor, and it needs the host's own credentials.
+- **Rotation.** Each person changes their own password on *Your account*
+  (the current one is required) and sets up a new authenticator there; the
+  old authenticator keeps working until a code from the new one is seen,
+  so a half-finished switch locks nobody out. *Log out everywhere else*
+  ends their other sessions. The Health page warns when the oldest owner
+  password is a year old.
+- **Recovery.** A lost authenticator is recovered by a person, not a
+  network: an owner sends a fresh invitation (the same link flow, which
+  replaces the password and authenticator), or, for the last owner,
+  `backoffice setup --force` from a shell with access to the data
+  directory. There are no backup codes by design — another owner, or the
+  shell, *is* the recovery factor.
 
 ## The pages
 

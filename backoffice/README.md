@@ -38,7 +38,15 @@ already chose it. Everything *around* Stripe is here.
 | An uptime dashboard, a runbook, a morning report | **Health** | the doctor's checklist (configuration, backups and their proofs, books, probes, jobs, logins, disk) with what to do about each; the same list is `backoffice doctor`, `/api/health` (503 when anything fails, for an outside monitor) and the morning digest email |
 | An audit trail | **Audit log** | every action by anyone or anything, append-only, filterable, CSV |
 | A fulfillment app's pick-and-pack flow | **Pack bench / Ship bench** | one order at a time through the weekly batch: pick list, serial scan, one button; then tracking in, one button, the customer mailed |
-| An admin login | **Auth** | one operator, password + authenticator code, lockout after eight failures, strict cookies, CSRF plus a cross-site refusal, read-only or read-write bearer tokens. The whole model is in [`SECURITY.md`](SECURITY.md) |
+| A purchasing module (an ERP's) | **Purchasing** | purchase orders drafted from the reorder points in one click (grouped by supplier, at the reorder quantity), marked ordered with an expected date, received into stock line by line and booked as inventory; "buildable" looks ahead to when the parts land |
+| A marketing dashboard (Klaviyo's) | **Marketing** | the funnel from a signup to a repeat buyer, where people come from, what every campaign and automation did in the week after (orders and replies, no pixels), the codes, and customers and sales by state on a tile map that fetches nothing from a map provider |
+| Carrier tracking + a customer order page (Shopify's) | **Delivery** | a delivery estimate in every tracking mail (business days, a band a day across the country), a signed public status page per order with the stepper, the carrier link and the items, and — with USPS API credentials — the hourly carrier poll that marks delivered on the carrier's day and raises a carrier alert as an exception |
+| A recall / safety-notice tool | **Recall** | by batch, firmware version or SKU: every board, where it shipped, who has it; one transactional notice each with their serials filled in, noted on every order, sent only by a second, separate button |
+| A human-in-the-loop queue | **Decide (on Home)** | the system drafts the next move and says why — approve a drafted PO, send the one in-stock mail, answer a ticket with the canned reply that matches, mark a week-old parcel delivered, remind about an overdue invoice — one button each; nothing acts on its own, and a card disappears when its condition clears |
+| A privacy desk (GDPR tooling) | **Customers** | the right to a copy (everything held about a person as one JSON) and the right to be forgotten (name, addresses, messages, attachments and mail blanked in one transaction; order numbers, amounts and dates kept so the books still add up), both logged |
+| Attachments in a helpdesk | **Support** | the photo of the warped lid and the PDF of the purchase order travel with the mail, stored with the message (images, PDFs and text, 5 MB each), shown inline, served same-origin and sandboxed |
+| User accounts and permissions (what every SaaS charges per seat for) | **People** | each person with their own password and authenticator, invited by a link that works once (they set their own password and scan a QR off the page — no QR service, the code is drawn here), four roles checked on every request (owner, ops, support, viewer), every action written down under the person's name, lockout per address and per person, a role change or a disable that applies to live sessions at once, *Your account* for password and authenticator rotation |
+| An admin login | **Auth** | password + authenticator code for everyone, lockout after eight failures, strict cookies, CSRF plus a cross-site refusal, read-only or read-write bearer tokens. The whole model is in [`SECURITY.md`](SECURITY.md) |
 
 What is deliberately **not** here: the attestation service (LICENSING.md §2b
 is a product service with a timestamping authority behind it, not back-office
@@ -54,8 +62,11 @@ git clone https://github.com/kmay89/securaCV && cd securaCV/backoffice
 npm run demo            # wipes ./data-demo, seeds a synthetic week, serves http://127.0.0.1:8787
 ```
 
-The login form comes filled in (password `demo1234`, the current
-authenticator code) — press **Log in**. Sixty days of a small company are
+The login form comes filled in (the demo owner's email, password `demo1234`,
+the current authenticator code) — press **Log in**. The demo people (an
+owner, an ops person, a support person, a viewer, one open invitation) share
+that password and authenticator so you can log in as any of them and see
+what each role may do. Sixty days of a small company are
 waiting: ~45 orders across nine weekly batches, repeat buyers, five discount
 codes, a refund and a cancellation, answered tickets, the books balanced.
 Every page carries a yellow **DEMO MODE** banner, and **Demo scenarios** in

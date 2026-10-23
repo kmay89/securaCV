@@ -26,10 +26,12 @@ test('TOTP matches the RFC 6238 SHA-1 test vectors (6-digit truncation)', () => 
 test('operator setup, login with password + code, sessions and API tokens', () => {
   const db = testDb();
   const secret = setupOperator(db, 'a very long password');
-  assert.equal(login(db, 'a very long password', '000000'), null, 'wrong code fails');
-  assert.equal(login(db, 'wrong', totp(secret)), null, 'wrong password fails');
-  const s = login(db, 'a very long password', totp(secret));
-  assert.ok(s && s.id && s.csrf);
+  assert.equal(login(db, { password: 'a very long password', code: '000000' }), null, 'wrong code fails');
+  assert.equal(login(db, { password: 'wrong', code: totp(secret) }), null, 'wrong password fails');
+  const s = login(db, { password: 'a very long password', code: totp(secret) });
+  assert.ok(s && s.id && s.csrf && s.role === 'owner', 'the only person can log in without typing an email');
+  assert.ok(login(db, { email: 'owner@localhost', password: 'a very long password', code: totp(secret) }), 'and with it');
+  assert.equal(login(db, { email: 'nobody@localhost', password: 'a very long password', code: totp(secret) }), null);
   assert.ok(sessionFor(db, s.id));
   assert.equal(sessionFor(db, 'nope'), null);
   const t = createApiToken(db, 'cli');

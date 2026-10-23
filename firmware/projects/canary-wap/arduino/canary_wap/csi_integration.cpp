@@ -37,6 +37,7 @@
 #include "csi_event_log.h"        // SD-backed event persistence + backfill
 #include "csi_event_egress.h"     // committed events -> SD log + MQTT, in id order
 #include "api_auth.h"             // api_auth_check() — Bearer token gate
+#include "host_guard.h"           // the cookie gates' Host question (staged copy of firmware/common/network; F344)
 
 #include <Arduino.h>
 #include <Preferences.h>          // NVS-backed settings store
@@ -1657,11 +1658,15 @@ PairSlot* find_slot(const uint8_t* token) {
  * on / (per pull-request review #392 r3213361582).
  *
  * Each cookie is HttpOnly + SameSite=Strict, so JS can't read it (no XSS
- * exfil) and cross-origin requests can't forge it (no CSRF), and Secure
- * on an answer from the HTTPS server (canary_wap.ino
- * session_cookie_header()). Cookie body
+ * exfil) and cross-origin requests can't forge it (no CSRF). Its name and
+ * Secure follow the answer's transport (canary_wap.ino
+ * session_cookie_header(), sweep F337): __Host-cv_session, Secure, on an
+ * answer from the HTTPS server; cv_session, without Secure, on a plain-HTTP
+ * one. The reader below takes the __Host- one first. Cookie body
  * is 32 bytes hex-encoded — 256-bit entropy, indistinguishable from
- * random by anything an in-page script could observe.
+ * random by anything an in-page script could observe. Sessions live only
+ * in these RAM slots, so every one ends at a reboot (an update's included)
+ * and none needs migrating when the cookie's name changes.
  *
  * 8 slots is enough for a household worth of phones / laptops / tablets
  * pairing concurrently. 24 h TTL matches typical "remember me" UX and
@@ -1717,16 +1722,46 @@ bool find_valid_session(const uint8_t* token) {
   return false;
 }
 
-/* Read the cv_session cookie out of the Cookie request header.
+/* Read the session cookie out of the Cookie request header. Two names
+ * (sweep F337; canary_wap.ino session_cookie_header() mints them):
+ * __Host-cv_session, which only an HTTPS answer sets, and cv_session, which
+ * a plain-HTTP answer sets. A browser that met both transports at one host
+ * sends both over HTTPS, so __Host-cv_session is taken FIRST, and when it is
+ * present but malformed the read fails rather than falling back to the plain
+ * one (in current browsers only an https answer at this host name can set
+ * that name: this device, another unit answering the same name, or a server
+ * whose certificate the browser accepted there; the plain one is the cookie
+ * an http page could have planted). Two
+ * units sharing canary.local or 192.168.4.1 can leave another unit's stale
+ * __Host- cookie in front of a good plain one: it is read, it validates
+ * against no slot here, and the landing mints a session again. A server
+ * whose certificate the browser accepted at this name can do more: set the
+ * __Host- name to a session it took at the landing, which validates here
+ * (fixation), or set it Partitioned, which the landing's cookie does not
+ * replace, so while the planted one is the older the browser sends it
+ * first and every sign-in falls back to the landing (seen in headless
+ * Chromium 141 against a stand-in server; docs/security/THREAT_MODEL.md).
+ *
+ * Reading plain cv_session on an HTTPS request too is safe only while
+ * sessions carry no per-session state: session_issue() stamps a fresh,
+ * interchangeable slot, so either cookie buys the same thing. Any change
+ * that elevates one session over another must first bind the name to the
+ * transport, so that HTTPS reads only __Host-cv_session, and must mint a
+ * fresh session at the elevation, as the receipt's grant already does:
+ * binding the name does not stop fixation, since a server at this name can
+ * set the __Host- name to a session it holds.
+ *
  * The Cookie header is a single string of "name=value; name=value; ..."
- * pairs. We find the first cookie NAMED cv_session and copy out exactly
- * SESSION_TOK_HEX_LEN bytes after its "=". The name is the whole name: it
- * starts the header or follows a ';' (spaces or tabs between), so another
- * cookie whose name ends in it ("xcv_session=") or whose value holds it
- * ("foo=cv_session=") is never read as the session (sweep F289's
- * residual; tests_host/test_session_cookie.cpp). Returns false on any
- * parse failure (header missing, cookie absent, hex too short / too long).
- * Never sends a response. */
+ * pairs. For each name we find the first cookie NAMED it and copy out
+ * exactly SESSION_TOK_HEX_LEN bytes after its "=". The name is the whole
+ * name: it starts the header or follows a ';' (spaces or tabs between), so
+ * another cookie whose name ends in it ("xcv_session=", and so
+ * "__Host-cv_session=" for the plain name, whose byte before is '-') or
+ * whose value holds it ("foo=cv_session=") is never read as the session
+ * (sweep F289's residual; tests_host/test_session_cookie.cpp). Names are
+ * case-sensitive, so "__host-cv_session=" is not either cookie. Returns
+ * false on any parse failure (header missing, cookie absent, hex too short /
+ * too long). Never sends a response. */
 bool read_session_cookie_hex(httpd_req_t* req, char* hex_out) {
   if (!req || !hex_out) return false;
   const size_t hdr_len = httpd_req_get_hdr_value_len(req, "Cookie");
@@ -1737,16 +1772,19 @@ bool read_session_cookie_hex(httpd_req_t* req, char* hex_out) {
   if (httpd_req_get_hdr_value_str(req, "Cookie", buf, sizeof(buf)) != ESP_OK) {
     return false;
   }
-  static const char kName[] = "cv_session=";
-  const char* k = nullptr;
-  for (const char* p = strstr(buf, kName); p; p = strstr(p + 1, kName)) {
-    const char* q = p;
-    while (q > buf && (q[-1] == ' ' || q[-1] == '\t')) --q;
-    if (q == buf || q[-1] == ';') {
-      k = p + (sizeof(kName) - 1);
-      break;
+  /* The value of the first cookie whose whole name is `name` ("name="),
+   * or nullptr. */
+  auto value_of = [&buf](const char* name) -> const char* {
+    const size_t name_len = strlen(name);
+    for (const char* p = strstr(buf, name); p; p = strstr(p + 1, name)) {
+      const char* q = p;
+      while (q > buf && (q[-1] == ' ' || q[-1] == '\t')) --q;
+      if (q == buf || q[-1] == ';') return p + name_len;
     }
-  }
+    return nullptr;
+  };
+  const char* k = value_of("__Host-cv_session=");
+  if (!k) k = value_of("cv_session=");
   if (!k) return false;
   /* Ensure there are exactly SESSION_TOK_HEX_LEN hex chars and the
    * value is terminated by ';' or end-of-string. Anything else is
@@ -1768,7 +1806,32 @@ bool read_session_cookie_hex(httpd_req_t* req, char* hex_out) {
 
 namespace csi_integration {
 
+/* The one question behind every cookie gate: CSI_AUTH_OR_RETURN and
+ * api_auth.h's api_auth_check(), api_auth_check_optional() and
+ * api_auth_check_or_query() through the cv_session_validate() bridge
+ * below, and /tune, /mqtt and handle_ui directly.
+ *
+ * The Host first (review 3 of sweep F344): a Host that cannot name this
+ * device (host_guard.h's rule, the one canary_wap.ino's
+ * request_host_names_device() asks on the pages and the receipt) is no
+ * session, whatever the cookie holds. Closing the places that mint keeps a
+ * DNS-rebinding page from being HANDED a session, not from holding one: any
+ * host on the LAN takes a session at the landing, and a page can set that
+ * value for its own name with document.cookie. Before, this read the cookie
+ * and the slot and no Host, so a value carried off the LAN reached the live
+ * camera, the vault download, every session admin route and GET
+ * /api/pair/token from a rebinding page for its 24 h. A session is never
+ * tied to the name it was minted under: a browser sends a host-only cookie
+ * only to the name that set it, and every name the device mints under is
+ * one this rule accepts. A missing Host, or one too long for the buffer, is
+ * foreign (a truncated header is never read as a name). Asked before the
+ * response starts, as the cookie is: esp_http_server purges the request
+ * headers on the first send. */
 bool session_validate_cookie(httpd_req_t* req) {
+  if (!req) return false;
+  char host[96];
+  if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) return false;
+  if (!canary::net::host_names_this_device(host)) return false;
   char hex[SESSION_TOK_HEX_LEN + 1];
   if (!read_session_cookie_hex(req, hex)) return false;
   uint8_t raw[SESSION_TOK_BYTES];
