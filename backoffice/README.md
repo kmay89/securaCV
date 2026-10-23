@@ -69,7 +69,7 @@ that password and authenticator so you can log in as any of them and see
 what each role may do. Sixty days of a small company are
 waiting: ~45 orders across nine weekly batches, repeat buyers, five discount
 codes, a refund and a cancellation, answered tickets, the books balanced.
-Every page carries a yellow **DEMO MODE** banner, and **Demo scenarios** in
+Every page carries a **Demo** banner (every name, order and dollar is synthetic), and **Demo scenarios** in
 the nav is a page of buttons that push synthetic events through the real
 code paths: a signed Stripe webhook that creates an order, a refund, a
 payout, an inbound support email, a customer reply, an out-of-office
