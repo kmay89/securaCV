@@ -10,7 +10,7 @@ import { backup, checkBackup, liveCounts, listBackups } from './modules/backup.m
 import { runJob, jobRuns } from './jobs.mjs';
 import { join } from 'node:path';
 
-export function registerOps(app, { page, back, link }) {
+export function registerOps(app, { page, back, link, filters }) {
   const { db, cfg, router } = app;
 
   // ---------- the pack bench: the next order to pack, its pick list, the serial scan, one button
@@ -84,9 +84,9 @@ ${o.notes || o.tags ? `<p class="warn"><b>Note:</b> ${e(o.notes || '')} ${o.tags
     const { f, rows } = auditQuery(c, 500);
     const actors = db.all('SELECT DISTINCT actor FROM audit_log ORDER BY actor').map(r => r.actor); const entities = db.all('SELECT DISTINCT entity FROM audit_log WHERE entity IS NOT NULL ORDER BY entity').map(r => r.entity);
     page(c, 'Audit log', `<p class="muted">Every action anyone or anything took, in order, with who and what: logins, orders, refunds, replies, stock moves, backups, reconciliations. Append-only. ${link(`/audit.csv?${new URLSearchParams(f)}`, 'CSV of this filter')}</p>
-<form method="get" class="row" style="margin:.6rem 0">${field('actor', 'Actor', { options: [['', 'any'], ...actors.map(a => [a, a])], value: f.actor })}${field('action', 'Action starts with', { value: f.action, placeholder: 'order.' })}${field('entity', 'Entity', { options: [['', 'any'], ...entities.map(a => [a, a])], value: f.entity })}${field('q', 'Contains', { value: f.q })}${field('from', 'From (YYYY-MM-DD)', { value: f.from })}${field('to', 'To', { value: f.to })}<div><label>&nbsp;</label><button class="quiet">Filter</button></div></form>
+${filters(c, [['actor', 'Actor', actors.map(a => [a, a])], ['action', 'Action starts with'], ['entity', 'Entity', entities.map(a => [a, a])], ['q', 'Contains'], ['from', 'From (YYYY-MM-DD)'], ['to', 'To']])}
 <p class="muted">${rows.length} shown${rows.length === 500 ? ' (capped — narrow the filter or take the CSV)' : ''}</p>` +
-      table(rows, [{ label: 'When', get: r => dt(r.at) }, { label: 'Actor', key: 'actor' }, { label: 'Action', key: 'action' }, { label: 'Entity', get: r => `${r.entity || ''} ${r.entity_id || ''}` }, { label: 'Detail', html: r => `<span class="muted" style="font-size:12.5px">${e(String(r.detail || '').slice(0, 200))}</span>` }], { empty: 'Nothing matches.' }));
+      table(rows, [{ label: 'When', get: r => dt(r.at) }, { label: 'Actor', key: 'actor' }, { label: 'Action', key: 'action' }, { label: 'Entity', html: r => `${e(r.entity || '')} <span class="muted" title="${e(r.entity_id || '')}">${e(shortId(r.entity_id))}</span>`, nowrap: true }, { label: 'Detail', html: r => `<span class="muted" style="font-size:12.5px">${e(prettyDetail(r.detail))}</span>` }], { empty: 'Nothing matches.' }));
   });
   router.get('/audit.csv', (c) => { const { rows } = auditQuery(c, 100000); const esc = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }; text(c.res, ['id,at,actor,action,entity,entity_id,detail', ...rows.map(r => [r.id, r.at, r.actor, r.action, r.entity, r.entity_id, r.detail].map(esc).join(','))].join('\n') + '\n', 200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="audit.csv"' }); });
 
@@ -95,4 +95,14 @@ ${o.notes || o.tags ? `<p class="warn"><b>Note:</b> ${e(o.notes || '')} ${o.tags
   router.get('/api/backups', (c) => c.app.json(c.res, { backups: listBackups(join(cfg.dataDir, 'backups')), live: liveCounts(db) }));
   router.post('/api/backups', async (c) => { const r = await runJob(app, 'backup'); c.app.json(c.res, r, r.ok ? 201 : 500); });
   router.get('/api/audit', (c) => c.app.json(c.res, auditQuery(c, Number(c.query.get('limit')) || 200).rows));
+}
+
+// A long entity id (a backup's file path, say) shown by its tail.
+const shortId = (id) => { const s = String(id ?? ''); return s.length > 32 ? '…' + s.slice(-30) : s; };
+// An audit row's detail as readable pairs: nulls dropped, long values cut.
+function prettyDetail(d) {
+  if (!d) return '';
+  let o; try { o = JSON.parse(d); } catch { return String(d).slice(0, 200); }
+  if (o == null || typeof o !== 'object') return String(o).slice(0, 200);
+  return Object.entries(o).filter(([, v]) => v != null && v !== '').map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ').slice(0, 220);
 }

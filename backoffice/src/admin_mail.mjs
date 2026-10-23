@@ -1,7 +1,7 @@
 // Mail: campaigns with a live segment count, a designed preview, a test send,
 // scheduling and an honest report; automations; the audience and its health.
 import { html, redirect, HttpError, escapeHtml as e } from './http.mjs';
-import { table, money, dt, day, statusPill, field, form, button, cards, tabs } from './render.mjs';
+import { table, money, dt, day, statusPill, field, form, button, cards, tabs, meta } from './render.mjs';
 import { columns } from './charts.mjs';
 import { listCampaigns, campaign, createCampaign, updateCampaign, duplicateCampaign, queueCampaign, scheduleCampaign, sendTest, previewHtml, campaignReport } from './modules/campaigns.mjs';
 import { SEGMENTS, segmentCount, audienceStats, clearBounce } from './modules/contacts.mjs';
@@ -60,7 +60,7 @@ export function registerMail(app, { page, back, link }) {
   router.get('/campaigns/:slug', (c) => {
     const cp = campaign(db, c.params.slug); if (!cp) throw new HttpError(404, 'no such campaign');
     const n = safeSeg(cp.segment); const sent = cp.status === 'sent'; const rep = campaignReport(db, cp.slug);
-    const body = mailTabs('campaigns') + `<p>${statusPill(cp.status)} · to <code>${e(cp.segment)}</code>${sent ? ` · ${cp.recipients} recipients · sent ${dt(cp.sent_at)}` : ` · <b>${n ?? '?'}</b> people right now`}${cp.scheduled_at ? ` · goes out ${dt(cp.scheduled_at)}` : ''} · ${link('/campaigns', 'all campaigns')}</p>
+    const body = mailTabs('campaigns') + meta([['Status', statusPill(cp.status)], ['Segment', `<code>${e(cp.segment)}</code>`], sent ? ['Recipients', `${cp.recipients}`] : ['People right now', `<b>${n ?? '?'}</b>`], sent ? ['Sent', dt(cp.sent_at)] : null, cp.scheduled_at ? ['Goes out', dt(cp.scheduled_at)] : null, ['', link('/campaigns', 'all campaigns')]]) + `
 ${sent ? `<h2>What happened</h2>${cards([['Delivered', rep.sent, 'ok'], ['Suppressed (consent withdrawn)', rep.suppressed], ['Failed', rep.failed, rep.failed ? 'bad' : ''], ['Unsubscribed within 7 days', rep.unsubscribed, rep.unsubscribed ? 'warn' : 'ok'], ['Replies within 7 days', rep.replies], ['Orders within 7 days', `${rep.orders} <span class="muted" style="font-size:.9rem">${money(rep.revenue_cents)}</span>`]])}<p class="muted">Measured without a pixel: orders and replies from the recipients in the week after, matched by address. Opens and clicks are not tracked, by rule.</p>` : ''}
 <div class="two"><div><h2>${sent ? 'As sent' : 'Edit'}</h2>${sent ? `<div class="card"><b>${e(cp.subject)}</b>${cp.preheader ? `<br><span class="muted">${e(cp.preheader)}</span>` : ''}<pre style="margin-top:.6rem;white-space:pre-wrap">${e(cp.body_text)}</pre></div>` : form(`/campaigns/${e(cp.slug)}/update`, c.csrf, `${field('subject', 'Subject', { value: cp.subject, required: true })}${field('preheader', 'Preheader', { value: cp.preheader || '' })}${field('segment', 'Who', { options: segOptions().some(o => o[0] === cp.segment) ? segOptions() : [[cp.segment, cp.segment], ...segOptions()], value: cp.segment })}${field('body_text', 'Body', { type: 'textarea', rows: 14, value: cp.body_text, required: true })}`, { submit: 'Save' })}
 <p>${button(`/campaigns/${e(cp.slug)}/duplicate`, c.csrf, 'Duplicate as a new draft', { quiet: true })}</p></div>

@@ -43,7 +43,7 @@ test('demo mode is a hard guard: no real service is reachable, and every scenari
     assert.ok(cfg.demo); assert.equal(cfg.githubToken, ''); assert.equal(cfg.smtpUrl, ''); assert.equal(cfg.imapUrl, ''); assert.equal(cfg.stripeApiKey, '');
     const login = await (await fetch(cfg.baseUrl + '/login')).text();
     assert.ok(login.includes(DEMO_PASSWORD) && login.includes(totp(DEMO_TOTP_SECRET)), 'the login page hands over the demo credentials');
-    assert.ok(login.includes('DEMO MODE'), 'the banner is on public pages too');
+    assert.ok(login.includes('class="demo"'), 'the banner is on public pages too');
     const token = createApiToken(db, 't'); const h = { authorization: `Bearer ${token}` };
     const list = await (await fetch(cfg.baseUrl + '/api/demo/scenarios', { headers: h })).json();
     assert.deepEqual(Object.keys(list), Object.keys(SCENARIOS));
