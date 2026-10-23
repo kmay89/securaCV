@@ -53,7 +53,7 @@
 //     four M3s included — they were billed nowhere.
 //   - THE VENT SLOTS DREW NOTHING. rrect2d(2.0, L, 1) is offset(1) of
 //     offset(-1) of a 2.0-wide slot, which is empty: the tray's 15 floor
-//     slots and the cover's 11 chimney slots were solid plate (1964 and 650
+//     slots and the cover's 11 chimney slots were solid plate (about 3740 and 1650
 //     mm3 stood in their footprints). They are canary_core_lib pill2d()
 //     stadiums now — the same 2.0 x L slots the knobs always described.
 //   - THE microSD END WAS WALLED OFF. The -X short wall (the Pi 5's microSD

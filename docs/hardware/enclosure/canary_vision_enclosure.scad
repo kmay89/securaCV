@@ -148,7 +148,8 @@
 //      cluster seat_inner): an outer seat is a Ø12 pocket on the bed whose
 //      roof is a circle full of holes; inside, it prints on top.
 //  v0.7 (2026-10-22): audit — the devkit plate, the weather plate and front,
-//  every front's hinge bore and the bracket move; the xiao plates do not:
+//  every front's hinge bore and the bracket move, and the key notch (the last
+//  item) moves every plate:
 //    * THE DEVKIT MODULE COULD NOT SIT IN ITS CLIPS. The Grove Vision AI V2's
 //      back carries the XIAO's two socket rows and Body1 at its USB edge, all
 //      5.0 proud (vendor STEP; brd_grove_v2_back_h()), stacked XIAO or not.

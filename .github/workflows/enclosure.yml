@@ -323,9 +323,11 @@ jobs:
               dev_c3_147_usba_bezel.stl) echo 2 ;;
               dev_c3_147_usba_hdr_bezel.stl) echo 2 ;;
               # the lid's wordmark inlay is a SET of six letters and the S3
-              # stick's accent inlay eight: fewer means a letter was lost,
-              # and an empty file means the font was missing and text()
-              # drew nothing — which the deboss in the part alone never shows
+              # stick's accent inlay eight: fewer means a letter was lost (a
+              # missing font does not show here — OpenSCAD falls back to
+              # another font silently — and a text() that drew nothing writes
+              # no file, which stops render.sh and fails gen_revisions.py
+              # --check --rendered)
               dev_c3_147_mark.stl)      echo 6 ;;
               dev_s3_147_fil_accent.stl) echo 8 ;;
               *)                        echo 1 ;;
@@ -386,7 +388,7 @@ jobs:
     runs-on: ubuntu-24.04
     # A MATRIX, not a bigger number — and the history is why.
     #
-    # These are full-assembly CGAL intersections, 21 of them, on a 2-core
+    # These are full-assembly CGAL intersections, 28 of them, on a 2-core
     # runner. As one serial step the suite has now blown three budgets: 30 min
     # (died at 30:15 "with the geometry all green"), then 75 as part of the
     # combined job, then 90 with a job all to itself — canceled at 89m45s.
@@ -402,7 +404,7 @@ jobs:
     # portrait are separate.
     #
     # fail-fast: false on purpose. These check different things, and one
-    # broken gate must not hide the state of the other twenty — that is the
+    # broken gate must not hide the state of the others — that is the
     # same argument as splitting the mesh checks out of this job.
     #
     # NOTHING was dropped to fit the clock. Every gate runs (21 then; the
@@ -593,9 +595,10 @@ jobs:
           fit sd_tether_barb solid "the SD cover's barb misses its anchor hole — strap length, hole position or install transform drifted" || exit 1
               ;;
             tethers)
-              # The two TPU fitments' leashes (the grommet's on the port blank,
-              # the BOOT/RESET plug's): each anchor hole really open, each barb
-              # really in its hole, and the blank's barb flush. These probes
+              # The two TPU fitments' leashes (the USB grommet's — the port
+              # blank carries the same strap and barb — and the BOOT/RESET
+              # plug's): each anchor hole really open, each barb really in its
+              # hole, and the grommet's barb flush. These probes
               # existed in the file and no gate ran them (2026-10-22 audit).
               # First CI run (5da963c8): the gate step 5.2 min, fil's 4.2 — but
               # that run's apt install took 8.7 min on the fil runner (a slow

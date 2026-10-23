@@ -129,7 +129,7 @@ and produces a **signed, verified event** end-to-end.
 
 ## 6. Field-case shopping list (the parts that make CER‑4 possible)
 
-Ø1.5 mm nitrile/silicone O-ring cord (~200 mm cut, or a cord kit) ·
+Ø1.5 mm nitrile/silicone O-ring cord (~221 mm cut — the body render echoes it — or a cord kit) ·
 8× M3 heat-set inserts + M3×8 pan (or torx security) screws ·
 Ø12×2 mm polycarbonate disc + neutral-cure silicone ·
 adhesive ePTFE vent patch (≥ Ø10) · closed-cell foam: a 2 mm sheet for the bed under the battery + a ~10 mm block for the pad over it (the body render echoes its size: 9.6 × 27.6 × 34.8 at the defaults) ·

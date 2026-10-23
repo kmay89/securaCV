@@ -4,9 +4,13 @@
 //    part = "horn"       — exponential buzzer horn: glues INSIDE the WAP lid
 //                          over the vent cluster; channels the piezo into the
 //                          hole ring for a slightly more directional chirp.
-//                          It needs horn_h of room over the PCB top under the
-//                          vent: the camera presets leave 12.4; compact_plain
-//                          leaves 6.35, so no horn this tall fits it.
+//                          It needs horn_h of room under the vent over
+//                          whatever is stacked there: the camera presets leave
+//                          12.4 over the PCB top, but the Sense expansion board
+//                          under the vent takes ~6 of it (the WAP's mag_under),
+//                          and compact_plain leaves 6.35 — so at the default 8
+//                          it fits no preset as drawn; shorten horn_h to under
+//                          ~6 for a camera build (the 2026-10-23 claims review).
 //    part = "glare_ring" — matte washer behind a camera disc: kills internal
 //                          reflections off glossy prints (print MATTE BLACK).
 //    part = "gland_body" / "gland_bush" / "gland_cap" — three-part printed

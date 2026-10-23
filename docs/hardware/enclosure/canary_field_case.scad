@@ -27,7 +27,7 @@
 //  Print: body + lid in ASA (outdoor) or PETG, 5-6 perimeters, 40 % gyroid,
 //  0.2 mm layers, flat as modeled — no supports. Boot: TPU 95A, open up.
 //  Hardware: 8x M3 heat-set insert (Ø4.6) + M3x8 pan head; Ø1.5 O-ring cord
-//  (~200 mm, nitrile/silicone); Ø12x2 polycarbonate lens disc, silicone-
+//  (~221 mm, the echo says; nitrile/silicone); Ø12x2 polycarbonate lens disc, silicone-
 //  bonded; 1x adhesive ePTFE vent patch (Ø10+); closed-cell foam pad.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print- or dunk-validated.
@@ -449,7 +449,8 @@ module lid() {                          // z=0 is the OUTER face; print face-dow
             cb_flat_cut(0, 0, lid_t, screw_c_d, cb_d, cb_h);
         // lens: disc pocket (disc lands 0.2 sub-flush) + window. At -lens_y:
         // the lid assembles turned over about X, like the key slot above (cut
-        // at +lens_y, cam_dy = -0.64 put the window 1.28 off the camera)
+        // at +lens_y, a cam_dy of -0.64 — the registry's offset, which this
+        // file leaves at 0 — would put the window 1.28 off the camera)
         translate([lens_x, -lens_y, -0.1]) cylinder(d = disc_d + 2*tol_slide, h = disc_t + 0.3);
         translate([lens_x, -lens_y, -0.1]) cylinder(d = ap_d, h = lid_t + 0.2);
         // bezel recess around the lens (press-fit trim ring hides the bond line)

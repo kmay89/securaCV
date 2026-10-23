@@ -167,12 +167,12 @@ devstl dev_c3_147_bare_bezel.stl canary_c3_lcd147.scad -D 'headers="none"' -D 'p
 devstl dev_c3_147_bare_lid.stl   canary_c3_lcd147.scad -D 'headers="none"' -D 'part="lid"'
 devstl dev_c3_147_hdr_bezel.stl canary_c3_lcd147.scad -D 'headers="male"' -D 'part="bezel"'
 devstl dev_c3_147_hdr_lid.stl   canary_c3_lcd147.scad -D 'headers="male"' -D 'part="lid"'
-# The parts gen_3mf.py packages beside the bezel and lid, mesh-checked like
-# them: the fit coupon (the one-color test print the header sends you to
-# first — the bezel AND band, so one solid), and the lid's two inlays. The
-# wordmark is a SET of six letters (expect_parts says so); fewer means a
-# letter was lost, and none means the font was missing and text() drew
-# nothing — which the lid's deboss alone would never show.
+# The fit coupon (the one-color test print the header sends you to first —
+# the bezel AND band, so one solid) and the lid's two inlays that gen_3mf.py
+# packages beside it, mesh-checked like the bezel and lid. The wordmark is a
+# SET of six letters (expect_parts says so); fewer means a letter was lost. A
+# text() that drew nothing writes no file at all, which stops this script (a
+# missing font is not caught here: OpenSCAD substitutes another silently).
 devstl dev_c3_147_coupon.stl canary_c3_lcd147.scad -D 'headers="pillars"' -D 'part="coupon"'
 devstl dev_c3_147_mark.stl   canary_c3_lcd147.scad -D 'headers="pillars"' -D 'part="mark"'
 devstl dev_c3_147_shell.stl  canary_c3_lcd147.scad -D 'headers="pillars"' -D 'part="shell"'

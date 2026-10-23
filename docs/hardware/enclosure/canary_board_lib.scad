@@ -118,8 +118,9 @@ function brd_ws169_glass_h() = 41.13;
 // module's top face at y = 13.71 over x 4.75..12.75, z -10.75..-2.75. So the
 // lens top stands 12.7 above the PCB top face (the WAP's knob said 6.0 —
 // half the real stack), the module is 8 x 8, and its center sits 6.95 along
-// the LENGTH from the board center toward the antenna end, away from the
-// USB (the WAP's window sat over the board center, 7 mm off the lens); it
+// the LENGTH from the board center toward the USB end (Seeed's model puts the
+// USB-C port and the module over the same end — PL-7b; the WAP's window once
+// sat over the board center, 7 mm off the lens); it
 // overhangs that end by ~0.5. Across the width the model reads ~0.6 toward
 // one long edge; which edge needs a bench unit (the model's handedness is
 // not stated), so it is carried as 0 and the WAP's window keeps 0.5 a side
