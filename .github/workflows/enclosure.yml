@@ -599,7 +599,7 @@ jobs:
               # existed in the file and no gate ran them (2026-10-22 audit).
               # First CI run (5da963c8): the gate step 5.2 min, fil's 4.2 — but
               # that run's apt install took 8.7 min on the fil runner (a slow
-              # mirror is what cancelled tpu at 10 min on b61d40f2), so the
+              # mirror is what canceled tpu at 10 min on b61d40f2), so the
               # budget carries the install too: 20, not 2 x the gate alone.
           bfit none port_teth_hole  empty || exit 1
           bfit none port_teth_barb  solid "the grommet's leash barb misses its anchor hole" || exit 1
