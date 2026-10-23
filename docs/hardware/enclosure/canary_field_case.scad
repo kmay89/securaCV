@@ -50,13 +50,35 @@
 //  carries the house key (lid_key_rib / lid_key_slot); the two mid-side lobes
 //  are four at x = ±inner_l/4, taking the worst seal span from 47 to ~38 mm;
 //  inserts are 7.0 deep so the M3 x 8 does not bottom out.
+//
+//  2026-10-23 (v0.1-dev): FIT + PRINT REVIEW — every field mesh moves.
+//  THE LID CLOSES OVER THE CAMERA: stack_h was 6.5 against the registry's
+//  12.7 lens height (brd_xiao_sense_cam_h(), Seeed's model), so the lens top
+//  stood at 21.9 over a 21.5 lid face — the module ∩ the seated lid probed
+//  172 mm3 — and the window sat over the board center while the module sits
+//  6.95 toward the USB (the WAP's error, corrected there 2026-09-26). stack_h
+//  is the registry's, cam_dx +6.95, and the Ø8 barrel stands 1.3 into a Ø10
+//  window, its top 0.5 behind the disc (the WAP's arrangement, asserted):
+//  outer height 21.5 -> 24.6, the boot 25.4 -> 28.5, the plan view unchanged.
+//  The vent left the lens's new end for x = 5, and the lid cuts its lens and
+//  vent at -y (it assembles turned over about X, like its key slot).
+//  BOARD END STOPS (the WAP's v0.9.1): nothing located the board along X —
+//  it slid 2.2 to the divider and 12.7 to the wall, keeping 1.9 of each
+//  8 mm clip hook. The cavity takes the house floor cove; the face-down
+//  lid's bezel and disc counterbores take bridge steps; the trim ring prints
+//  show face down. THE BOOT's retention lip sat 0.6 under the lid face, 0.5-
+//  1.0 into the lid's side (162.7 mm3) — it now stands on the face and hooks
+//  it — and its 8 x 29 lanyard window, a 29 mm TPU lintel printed on air, is
+//  a bore on the case's lanyard axis. An echo sizes the battery's over-pad:
+//  a second foam_t pad left the pack 4.0 mm of travel.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect2d, tearbore_x, flat pan-head counterbore
 use <canary_snap_lib.scad>   // the cantilever board clip + its strain budget
 use <canary_mount_lib.scad>  // the stud/keyhole hanging standard — the blind pocket's one home
 use <canary_board_lib.scad>  // board registry — the XIAO numbers the knobs cite
-// (no canary_port_lib: ZERO external connectors is this case's whole seal story)
+use <canary_port_lib.scad>   // only the Type-C overmold envelope the board's end stops stand clear of — no wall
+                             // opening: ZERO external connectors is still this case's whole seal story
 
 /* [What to render] */
 part = "all";        // ["body","lid","boot","gasket","bezel","all"]
@@ -67,8 +89,8 @@ board_w = 17.5;      // board width — the xiao registry record, brd_w("xiao");
                      // CLIPS, so clip_clear absorbs the measured 17.8 width
                      // (brd_xiao_w_measured) and the spec 17.5 stays
 board_h = 1.2;       // PCB thickness — the xiao registry record, brd_t("xiao")
-stack_h = 6.5;       // Sense expansion + camera height above the base PCB
-cam_dx = 0.0;        // lens center offset from board center
+stack_h = 12.7;      // Sense camera lens top above the base PCB's top face — brd_xiao_sense_cam_h() (Seeed's model), canary_board_lib
+cam_dx = 6.95;       // lens center offset from board center, + = toward the USB (+X) — brd_xiao_sense_cam_dx() is -6.95 with + = away from the USB: the module sits over the USB end
 cam_dy = 0.0;        // lens center offset from board center, along Y (cam_dx is X) — the disc pocket, aperture and bezel recess follow it
 
 /* [Battery] — MEASURE yours; 503035 (500 mAh) default. LiPo: never charge below 0 C */
@@ -90,7 +112,7 @@ wall_t  = 4.0;   // deviates: drop-case wall — impact duty is this case's whol
 floor_t = 4.5;   // floor thickness — 4.5 so the keyhole pockets reach the standard 3.5 mm depth with a 1.0 mm ceiling
 lid_t   = 4.0;   // lid plate thickness, 4.0 like the walls; the lens web left under the disc pocket (lid_t - disc_t - 0.2) is asserted >= 1.5
 r_in    = 3.0;       // cavity corner radius
-head_clear = 1.8;    // clearance above the camera stack
+head_clear = -1.3;   // camera-top clearance under the lid's inner face. NEGATIVE: the Ø8 lens barrel stands 1.3 into the lid's window, its top 0.5 behind the disc (the WAP's arrangement; asserted)
 
 /* [O-ring seal] — Ø1.5 cord in a body-rim groove, 27 % squeeze */
 oring_d = 1.5;       // O-ring cord diameter — the squeeze (1 - grv_d/oring_d) is asserted at 15-40 % and the groove fill at <= 90 %
@@ -111,14 +133,16 @@ cb_h = 2.0;                         // pan-head counterbore depth
 
 /* [Lens window] — Ø12x2 polycarbonate disc, bonded from outside */
 disc_d = 12.0;  disc_t = 2.0;
-ap_d   = 8.0;        // aperture through the web behind the disc
+ap_d   = 10.0;       // window through the web behind the disc. The Ø8 lens barrel stands in it, 1.0 a side (asserted); the disc keeps a 1.2 bond ring
+bridge_layer = 0.2;  // your slicer's layer height: the face-down lid's bezel-recess and disc-seat counterbores get bridge steps this thick (core_bridge_steps)  // [0.08:0.04:0.32]
 
 /* [Vent] — Ø3 hole + adhesive ePTFE patch on the INSIDE face */
 vent_d = 3.0;    // vent hole diameter through the lid; the ePTFE patch's spot-face on the inner face is vent_d + 2.4 wide and 0.9 deep
-vent_x = 30.0;   // vent position X — over the plug room beyond the board's USB edge: at (-15, 6) the
-                 // membrane sat under the battery's foam-over pad and got pressed
-                 // on every close; the lens keep-out and the wall are asserted
-vent_y = 0.0;    // vent position Y (see vent_x)
+vent_x = 5.0;    // vent position X — over the board's antenna end, clear of the lens and the battery
+                 // (the lens moved to the USB end and its bezel reaches x = 29.7, so the old
+                 // x = 30 over the plug room cut the bezel recess; at (-15, 6) the membrane sat
+                 // under the battery's foam-over pad); the lens keep-out and the wall are asserted
+vent_y = 0.0;    // vent position Y, assembled (the lid cuts it at -vent_y, see lid()) — see vent_x
 
 /* [Stud/keyhole interface] — blind keyhole pockets, seal-safe (never reach the cavity) */
 kh_x = 18.0;         // +/- X of the two keyholes
@@ -235,6 +259,19 @@ assert(grv_fill <= 0.90, "O-ring groove over-filled (>90%) — widen grv_w");
 assert(g_c - grv_w/2 >= 0.8, "inner groove cheek < 0.8 mm");
 assert(wall_t - g_c - grv_w/2 >= 0.8, "outer groove cheek < 0.8 mm — thicken wall_t");
 assert(lid_t - disc_t - 0.2 >= 1.5, "lens web < 1.5 mm — thicken lid_t or thin disc_t");
+// the Sense camera (2026-10-23): the stack is at least the registry's lens
+// height, the lens top stays >= 0.2 behind the bonded disc, and where the
+// barrel stands into the lid it stands in a window 1.0 a side wider than it —
+// which also covers the registry's 0.64 cross-width offset, whose side wants
+// a bench unit (cam_dy stays 0)
+assert(stack_h >= brd_xiao_sense_cam_h() - 1e-6,
+       str("stack_h ", stack_h, " is under the Sense camera's lens height brd_xiao_sense_cam_h() ", brd_xiao_sense_cam_h(),
+           " — the lid lands on the lens"));
+assert(standoff_h + board_h + stack_h <= cav_h + (lid_t - disc_t - 0.2) - 0.2,
+       "the camera's lens top reaches the lens disc — raise head_clear");
+assert(standoff_h + board_h + stack_h <= cav_h || ap_d >= brd_xiao_sense_cam_fp() + 2.0,
+       str("the Ø", brd_xiao_sense_cam_fp(), " lens barrel stands ", standoff_h + board_h + stack_h - cav_h,
+           " mm into the lid — its window (ap_d) needs Ø", brd_xiao_sense_cam_fp() + 2.0, " (1.0 a side)"));
 assert(!bez_on || bez_recess < disc_t, "bezel recess deeper than the disc pocket makes the disc unseatable");
 assert(!bez_on || (bez_o >= disc_d + 4 && bez_i < disc_d), "bezel must overlap the disc edge and clear the pocket");
 assert(!bez_on || lid_t - bez_recess >= 1.8, "bezel recess leaves < 1.8 mm lid web");
@@ -257,6 +294,15 @@ echo(str("O-ring: Ø", oring_d, " cord, cut ~", round(cord_len), " mm, squeeze "
          round(squeeze*100), "%, groove fill ", round(grv_fill*100), "%; worst clamp span ",
          round(seal_span*10)/10, " mm (", len(lobes()), " lobes)"));
 echo("CER-4 design intent: IP67 + MIL-STD-810H 516.8 IV (boot on) — VERIFY per field_ratings.md");
+// the battery's foam: foam_t is the bed UNDER the pack; the pad over it fills
+// the rest of the cavity up to the lid plate (0.5 squeeze), cut inside the
+// lid's lip ring so it never props the lid. A second foam_t pad left the pack
+// cav_h - batt_h - 2*foam_t of free travel (4.0 mm at 2026-09's numbers) in
+// the case built to be dropped — the number nobody was told to cut.
+echo(str("Battery foam: a ", foam_t, " mm closed-cell bed under the pack; the pad over it is ",
+         cav_h - foam_t - batt_h + 0.5, " thick x ", inner_w - 2*(tol_slide + lip_w), " wide x ",
+         min(batt_l, batt_l + batt_pad - tol_slide - lip_w), " long (inside the lid's lip ring, 0.5 squeeze) — a ",
+         foam_t, " mm pad would leave the pack ", cav_h - batt_h - 2*foam_t, " mm to rattle"));
 if (wall_t < 4.0 || floor_t < 4.0 || lid_t < 4.0)
     echo("NOTE: shell thinner than 4.0 mm — CER-4 submersion intent assumes 4.0 mm");
 
@@ -293,6 +339,31 @@ module edgeclip(px, py, ang) {
                        snap_budget_once(), over = (brd_xiao_w_measured() - board_w)/2);
 }
 
+// The board's END STOPS (2026-10-23) — the WAP's v0.9.1 port. The clips hold
+// Y and Z and the rails are flat rests, so nothing located the board ALONG X:
+// the measured board slid 2.2 to the divider (a plug pushed in with the lid
+// off) and 12.7 toward the +X wall (a drop), where each 8 mm clip kept 1.9 of
+// its hook — and with the lens barrel standing 1.3 into a window 1.0 a side
+// wider, a 1 mm slide lands the lid on the camera. A core_min_wall() column
+// off each end of each long edge, up to the PCB's top face, 0.3 off the drawn
+// ends (a real XIAO mics 21.14: 0.23 a side), outside the Type-C overmold's
+// spec envelope across the connector's axis so a spec-max plug still seats
+// with the lid off; the -X pair runs back into the divider rather than leave
+// a 0.75 sliver beside it.
+stop_y0 = port_usbc_overmold_w()/2 + 0.2;   // a stop's inboard edge across the board
+module board_stops() {
+    for (sx = [1, -1], sy = [1, -1]) {
+        x1 = bcx + sx*(board_l/2 + 0.3);                  // the face a board end meets
+        x0 = sx > 0 ? x1 : x_div + rib_t/2 - 0.01;
+        t  = sx > 0 ? core_min_wall() : x1 - x0;
+        translate([x0, sy > 0 ? stop_y0 : -board_w/2, floor_t - 0.01])
+            cube([t, board_w/2 - stop_y0, standoff_h + board_h + 0.01]);
+    }
+}
+assert(board_w/2 - stop_y0 >= core_min_wall(), "the board's end stops would be thinner than a wall across the board");
+assert(bcx + board_l/2 + 0.3 + core_min_wall() <= inner_l/2 - 1.0, "the board's +X end stop runs into the +X wall");
+assert(bcx - board_l/2 - 0.3 - (x_div + rib_t/2) >= core_min_wall(), "the board's -X end stop is thinner than a wall — the board sits too close to the divider");
+
 // blind keyhole pocket, opening on the bottom face (z0 = 0); slot slides
 // toward +X so the case drops on and gravity latches. The drawing is
 // canary_mount_lib's, natively along X — this file passes its own Ø8.0 head
@@ -309,8 +380,10 @@ module keyhole_pocket(xc) {
 module body() {
     difference() {
         linear_extrude(base_h) outline2d();
-        // cavity
-        translate([0, 0, floor_t]) linear_extrude(cav_h + 0.1) cav2d();
+        // cavity — with the house floor cove (cavity_cut, DESIGN_RULES §2):
+        // the drop case's floor met its walls in a square corner along one
+        // layer line, the hinge a corner drop cracks
+        translate([0, 0, floor_t]) cavity_cut(inner_l, inner_w, r_in, cav_h + 0.1);
         // O-ring groove in the rim top
         translate([0, 0, base_h - grv_d]) linear_extrude(grv_d + 0.2) grv_ring2d();
         // heat-set insert pockets in the lobe tops
@@ -332,6 +405,7 @@ module body() {
             cube([board_l - 1, 3, standoff_h + 0.01]);
     edgeclip(bcx,  board_w/2,  90);
     edgeclip(bcx, -board_w/2, 270);
+    board_stops();
     difference() {                     // battery divider with a wire notch
         // the divider runs 0.3 INTO each side wall — it is the drop case's
         // only transverse member, and the old cut stopped 0.5 mm short of
@@ -373,17 +447,28 @@ module lid() {                          // z=0 is the OUTER face; print face-dow
         // the cut volumes land exactly where the local cylinders did.
         for (p = lobes()) translate([p[0], p[1], lid_t]) mirror([0, 0, 1])
             cb_flat_cut(0, 0, lid_t, screw_c_d, cb_d, cb_h);
-        // lens: disc pocket (disc lands 0.2 sub-flush) + aperture
-        translate([lens_x, lens_y, -0.1]) cylinder(d = disc_d + 2*tol_slide, h = disc_t + 0.3);
-        translate([lens_x, lens_y, -0.1]) cylinder(d = ap_d, h = lid_t + 0.2);
+        // lens: disc pocket (disc lands 0.2 sub-flush) + window. At -lens_y:
+        // the lid assembles turned over about X, like the key slot above (cut
+        // at +lens_y, cam_dy = -0.64 put the window 1.28 off the camera)
+        translate([lens_x, -lens_y, -0.1]) cylinder(d = disc_d + 2*tol_slide, h = disc_t + 0.3);
+        translate([lens_x, -lens_y, -0.1]) cylinder(d = ap_d, h = lid_t + 0.2);
         // bezel recess around the lens (press-fit trim ring hides the bond line)
         if (bez_on)
-            translate([lens_x, lens_y, -0.1]) cylinder(d = bez_o, h = bez_recess + 0.1);
+            translate([lens_x, -lens_y, -0.1]) cylinder(d = bez_o, h = bez_recess + 0.1);
+        // both counterbores open on the BED of this face-down print, so the
+        // first layer over each floor was a ring round the next hole with
+        // nothing under it (3.3 wide round the disc pocket; 2.2 round the old
+        // Ø8 aperture, 1.2 round the Ø10 window — and that floor is the disc's
+        // seal face). Bridge steps: a slot, then a square, every layer a
+        // straight bridge anchored on the bore's wall
+        if (bez_on)
+            core_bridge_steps(lens_x, -lens_y, bez_recess, disc_d + 2*tol_slide, bez_o, up = 1, layer = bridge_layer);
+        core_bridge_steps(lens_x, -lens_y, disc_t + 0.2, ap_d, disc_d + 2*tol_slide, up = 1, layer = bridge_layer);
         // vent hole (ePTFE patch adheres to the flat INNER face around it —
         // spot-face the INNER side; an outer recess would expose the membrane
-        // to rain, UV and pokes)
-        translate([vent_x, vent_y, -0.1]) cylinder(d = vent_d, h = lid_t + 0.2);
-        translate([vent_x, vent_y, lid_t - 0.9]) cylinder(d = vent_d + 2.4, h = 1.0);
+        // to rain, UV and pokes); at -vent_y, the same turn-over as the lens
+        translate([vent_x, -vent_y, -0.1]) cylinder(d = vent_d, h = lid_t + 0.2);
+        translate([vent_x, -vent_y, lid_t - 0.9]) cylinder(d = vent_d + 2.4, h = 1.0);
         // debossed label on the outer face (mirrored: read from outside)
         if (label_text != "")
             translate([label_dx, label_dy, -0.1]) linear_extrude(label_depth + 0.1)
@@ -400,16 +485,20 @@ module gasket() {                       // printed-TPU fallback if you skip the 
 }
 
 module bezel() {                        // contrast-color lens trim ring
-    // z0 = the face that lands on the recess floor; print as modeled.
-    // The inner lip floats 0.2 mm above the bonded disc and hides the
-    // silicone bond line — the detail every consumer camera trim ring exists for.
+    // z0 = the SHOW FACE, and it prints face down as modeled: the lip's face
+    // is on the bed, so every layer stands inside the one below. (Modeled
+    // relief face down until 2026-10-23, the lip's underside was a 1.05 ring
+    // overhanging the disc relief, 0.2 off the lens for any sag to close.)
+    // Assembled it turns over: the relief face lands on the recess floor. The
+    // inner lip floats 0.2 mm above the bonded disc and hides the silicone
+    // bond line — the detail every consumer camera trim ring exists for.
     difference() {
         cylinder(d = bez_o - 2*tol_press, h = bez_recess + bez_proud);
         translate([0, 0, -0.1]) cylinder(d = bez_i, h = bez_recess + bez_proud + 0.2);
-        // relief over the disc: the disc top sits (bez_recess - 0.2) above z0,
-        // so a relief of height bez_recess leaves 0.2 clearance and makes the
-        // inner lip exactly bez_proud thick
-        translate([0, 0, -0.1]) cylinder(d = disc_d + 0.6, h = bez_recess + 0.1);
+        // relief over the disc, cut from the relief face: the disc top sits
+        // (bez_recess - 0.2) above the recess floor, so a relief bez_recess
+        // deep leaves 0.2 clearance and the inner lip exactly bez_proud thick
+        translate([0, 0, bez_proud]) cylinder(d = disc_d + 0.6, h = bez_recess + 0.1);
     }
 }
 
@@ -430,10 +519,13 @@ module boot() {                         // TPU 95A; print open-side-up
         for (s = [1, -1])
             translate([s*kh_x, 0, -0.1]) linear_extrude(boot_floor + 0.2)
                 rrect2d(kh_slot_l + kh_head_d + 8, kh_head_d + 8, 3);
-        // lanyard window on the -X face
-        translate([-(out_l/2 + lob_off + boot_w + 4), -(end_lob_y + lob_d/2 + 2),
-                   boot_floor + lan_z - 3.5])
-            cube([lob_off + boot_w + 6, 2*(end_lob_y + lob_d/2 + 2), 8]);
+        // lanyard bore on the case's own bore axis, through the wraps round
+        // both -X lobes and the tongue between them — 0.5 over the case's
+        // bore. It was an 8 x 29 window, and the TPU wall over it was a lintel
+        // anchored only at its jambs, 29 mm apart, printed on air
+        translate([-(inner_l/2 + lob_off), 0, boot_floor + lan_z]) rotate([0, 0, 90])
+            tearbore_x(-(2*end_lob_y + lob_d + 2*boot_w + 8)/2, 0, 0,
+                       2*end_lob_y + lob_d + 2*boot_w + 8, lan_d + 0.5);
         // grip grooves
         for (k = [0:grip_grooves - 1])
             translate([0, 0, boot_floor + 4 + k*5]) linear_extrude(1.4) difference() {
@@ -443,8 +535,13 @@ module boot() {                         // TPU 95A; print open-side-up
     }
     // retention lip: snaps over the lid's chamfered edge — anchored to the
     // LID EDGE's height (it used to ride at bh - 1.2, which the raised rim
-    // would have carried up past the edge it grips)
-    translate([0, 0, boot_floor + total_h - 0.6]) linear_extrude(1.2) difference() {
+    // would have carried up past the edge it grips). It STANDS ON the face
+    // plane (2026-10-23): centered on it, its lower 0.6 sat 0.5-1.0 inside the
+    // lid's side all round (162.7 mm3 against a 0.2 boot_fit), so it pressed
+    // the side instead of hooking the face; now it overhangs the face's flat
+    // band ~0.5 past the bullnose, 0.3 clear of the counterbores, its top
+    // still under the rim
+    translate([0, 0, boot_floor + total_h]) linear_extrude(min(1.2, rim_over)) difference() {
         offset(r = -boot_fit + 0.3) outline2d();
         offset(r = -boot_fit - 0.8) outline2d();
     }

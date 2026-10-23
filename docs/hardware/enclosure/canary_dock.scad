@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — FLEET PROVISIONING DOCK  ⚠️ IN DEVELOPMENT (v0.1-dev)
+//  Canary — FLEET PROVISIONING DOCK  ⚠️ IN DEVELOPMENT (v0.2-dev)
 //  The v1 validation runbook flashes and validates fleets of boards. This
 //  dock holds N bare XIAOs reclined side by side next to a USB hub, USB-C
 //  ports up, each bay NUMBERED — flash, provision, verify, deploy, in order
@@ -9,6 +9,13 @@
 //
 //  v0.1-dev (2026-08-23): canary_*_lib adoption (dedup, mesh-identical). The
 //  17.8 lesson this file taught now lives in the board registry, cited below.
+//
+//  v0.2-dev (2026-10-23): the bay numbers were half gone. Placed at 0.72 of
+//  the block's height they sat centered 13.96 up the face, and the Ø12 thumb
+//  cutout reaches 13.24 up it, so every digit lost its lower 40-47 % to the
+//  hole. The number is now centered between the cutout's top and the face's
+//  top edge, at size 6 so it fits the Sense pocket's taller cutout too, and
+//  an assert refuses a recline/thumb_d that leaves it no room.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect2d — the catalog's shared helpers
@@ -38,6 +45,7 @@ thumb_d = 12.0;      // thumb cutout for extraction
 bay_pitch = 24.0;    // bay-to-bay spacing
 base_d = 34.0;       // block depth (front-back)
 label_depth = 0.6;
+label_size  = 6.0;   // bay number text height — centered between the thumb cutout and the face's top edge, asserted to fit there (v0.2: a 7, set lower, lost 40-47 % of each digit to the cutout)
 label_font = "Liberation Sans:style=Bold";
 tol_slide = 0.20;
 
@@ -48,7 +56,14 @@ pocket_d = variant == "sense" ? pocket_sense : pocket_bare;
 bw = n_bays * bay_pitch + 10;
 bh = 2 + board_l*cos(recline) + 2;   // bays start 2 above the base; the USB end sits 2 under the top
 front_setback = (bh - 4)*tan(recline);   // the front face leans back with the bays
-echo(str("Canary provisioning dock v0.1-dev — ", n_bays, " bays, ", bw, " mm wide  (IN DEVELOPMENT)"));
+// the bay number (v0.2): s runs up the face from its z = 4 line; the thumb
+// cutout's top is at lbl_s_hole and the face's top edge at (bh - 4)/cos(recline),
+// and the number is centered between them
+lbl_s_hole = (3 + pocket_d/2 + 2*tan(recline))*sin(recline) - 2*cos(recline) + board_l*0.35 + thumb_d/2;
+lbl_s      = (lbl_s_hole + (bh - 4)/cos(recline))/2;
+assert((bh - 4)/cos(recline) - lbl_s_hole >= label_size + 0.5,   // a digit stands ~0.99 x its size
+       "the bay number cannot fit between the thumb cutout and the face's top edge — a smaller thumb_d or a lower cutout");
+echo(str("Canary provisioning dock v0.2-dev — ", n_bays, " bays, ", bw, " mm wide  (IN DEVELOPMENT)"));
 
 // (rrect2d comes from canary_core_lib — the local copy is gone)
 
@@ -74,12 +89,13 @@ module dock() {
                     translate([0, 0, -1]) cylinder(d = thumb_d, h = 14);
             }
             // bay number, debossed into the reclined front face: the face passes
-            // through (y = -base_d/2, z = 4) at 90 - recline from horizontal
-            // (at 0.72 of the height: the thumb cutout owns the lower third)
-            translate([bx, -base_d/2 + (bh*0.72 - 4)*tan(recline), bh*0.72])
+            // through (y = -base_d/2, z = 4) at 90 - recline from horizontal, and
+            // the number sits lbl_s up it, clear of the thumb cutout (v0.2: at 0.72
+            // of the height the cutout took the lower 40-47 % of every digit)
+            translate([bx, -base_d/2 + lbl_s*sin(recline), 4 + lbl_s*cos(recline)])
                 rotate([90 - recline, 0, 0])
                     translate([0, 0, -label_depth]) linear_extrude(label_depth + 1)
-                        text(str(i + 1), size = 7, font = label_font, halign = "center", valign = "center");
+                        text(str(i + 1), size = label_size, font = label_font, halign = "center", valign = "center");
         }
         // cable channel along the back base (route to the hub)
         translate([0, base_d/2 - 3, -0.1]) linear_extrude(6) rrect2d(bw - 16, 5, 2);

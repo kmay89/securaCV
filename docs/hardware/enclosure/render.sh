@@ -112,6 +112,7 @@ devstl dev_combo_gasket.stl  canary_combo.scad         -D 'part="gasket"' -D 'op
 devstl dev_combo_hood.stl    canary_combo.scad         -D 'part="hood"' -D 'opt_hood=true'
 devstl dev_hub_tray.stl      canary_hub_din.scad       -D 'part="tray"'
 devstl dev_hub_cover.stl     canary_hub_din.scad       -D 'part="cover"' 
+devstl dev_hub_clip.stl      canary_hub_din.scad       -D 'part="clip"'
 devstl dev_hammond_wap.stl    canary_hammond_chassis.scad -D 'stack="wap"'
 devstl dev_hammond_vision.stl canary_hammond_chassis.scad -D 'stack="vision"'
 devstl dev_hammond_sense.stl  canary_hammond_chassis.scad -D 'stack="sense"'

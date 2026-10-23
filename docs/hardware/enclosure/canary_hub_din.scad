@@ -39,6 +39,33 @@
 //  seats keep a 1.0 floor. The DIN clip (v0.3) prints hooks-down with every
 //  land face a bridge of <= 7 mm; it had no supportless pose (its 37 mm leaf
 //  floated 1.6 over the land).
+//
+//  2026-10-23 audit fix: four defects, each probed in the assembled pose.
+//   - NOTHING FASTENED THE PI OR THE COVER TO THE TRAY. Each tray standoff's
+//     pilot opens only upward (Ø2.2 from 1.0 over the floor; a Ø2.0 core
+//     under it is solid, 47 mm3 in 4 parts), and the standoffs named were
+//     F-F — no male end — so the cover screw (16 long) stopped 4 mm into the
+//     standoff top and the cover, standoffs and Pi lifted off together on the
+//     skirt's 0.2 slide fit. The standoffs are M-F: the male end goes DOWN
+//     through the PCB into that pilot (it fits pcb_t + the pilot's 5.0 open
+//     depth, so a stock 6 mm male end), the cover screw into the female top.
+//     No mesh moves; the hardware is derived and echoed (hw_echo), the clip's
+//     four M3s included — they were billed nowhere.
+//   - THE VENT SLOTS DREW NOTHING. rrect2d(2.0, L, 1) is offset(1) of
+//     offset(-1) of a 2.0-wide slot, which is empty: the tray's 15 floor
+//     slots and the cover's 11 chimney slots were solid plate (1964 and 650
+//     mm3 stood in their footprints). They are canary_core_lib pill2d()
+//     stadiums now — the same 2.0 x L slots the knobs always described.
+//   - THE microSD END WAS WALLED OFF. The -X short wall (the Pi 5's microSD
+//     end, across the board from USB/Ethernet) stood solid from the floor to
+//     the PCB's underside, so a card standing more than board_clear past the
+//     board's edge landed on it (16.5 mm3 at 2.5 past) and the Pi rested on
+//     the card, not its standoffs; with the card out the slot faced solid
+//     wall. That face now opens from the floor's top (the floor edge stays
+//     whole, the reason the 2026-09-03 change raised it).
+//   - din = false (the header's "or screws flat") left a tray with no hole in
+//     it: the clip's four countersunk M3 holes are cut either way and are the
+//     flat-mount holes without the clip.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d — the catalog's shared helpers
@@ -59,9 +86,9 @@ hole_off_y = 3.5;
 pcb_t = 1.4;
 standoff_h = 6.0;    // clearance under the board (PoE HAT pins / SD access)
 hat_h = 22.0;        // headroom above the PCB (HAT/M.2 + fan)
-// The cover's guide tubes SEAT on the F-F standoff tops, making this number
-// the cover's Z datum — measure the standoffs actually fitted.
-standoff_ff = 11.0;  // F-F brass standoffs on the Pi's hole grid: 11 bare, 16 with a HAT
+// The cover's guide tubes SEAT on the standoff tops, making this number the
+// cover's Z datum — measure the standoffs actually fitted.
+standoff_ff = 11.0;  // M-F brass standoffs on the Pi's hole grid, male end DOWN through the PCB into the tray standoff's pilot: 11 bare, 16 with a HAT
 
 /* [Shell] */
 wall_t = 2.0;     // wall thickness — catalog default shell, core_wall(), canary_core_lib
@@ -73,8 +100,8 @@ tol_slide = 0.20;  // catalog default — core_tol_slide(), canary_core_lib
 tol_hole  = 0.30;  // catalog default — core_tol_hole(), canary_core_lib
 screw_d = 2.2;       // M2.5 self-tap into the standoffs
 screw_head_d = 5.0;
-lid_screw_d = 2.8;   // M2.5 CLEARANCE: the cover's screws run down the Pi's hole grid into F-F
-                     // standoffs (no corner posts — they stood inside the Pi footprint)
+lid_screw_d = 2.8;   // M2.5 CLEARANCE: the cover's screws run down the Pi's hole grid into the M-F
+                     // standoffs' female tops (no corner posts — they stood inside the Pi footprint)
 clip_screw_d = 3.4;  // M3 clearance through the floor into the clip's lands (self-tap 2.6 there)
 lid_edge  = 0.8;   // first (45°) stage of the cover's edge break, mm — the house face edge, core_face_edge()  // [0:0.1:1.5]
 lid_edge2 = 0.8;   // second (~66°) stage, mm: what makes the edge read as a roundover instead of a bevel — core_face_edge2()  // [0:0.1:1.5]
@@ -99,7 +126,7 @@ out_l = inner_l + 2*wall_t;
 out_w = inner_w + 2*wall_t;
 tray_h = floor_t + standoff_h + pcb_t + 6;     // tray walls stop above the PCB
 total_h = floor_t + standoff_h + pcb_t + hat_h + lid_t;
-// The cover's guide tubes run from the lid's inner face DOWN TO the F-F
+// The cover's guide tubes run from the lid's inner face DOWN TO the
 // standoff tops, and no further: tube bottom = standoff top is the cover's
 // Z datum (it used to have none — 2.0 mm of free travel, closing by landing
 // on the bare Pi PCB), and the old fixed `ch - 2` length drove the tubes
@@ -113,11 +140,7 @@ assert(head_seat > 0 && lid_t - head_seat >= 1.0 - 1e-9, "hub cover: the head se
 assert(tube_h >= 2.0,
        str("hub cover: standoff_ff (", standoff_ff, ") nearly fills hat_h (", hat_h,
            ") — no room for the guide tubes; raise hat_h or shorten the standoffs"));
-// the fastener, derived: through the head seat + lid + tube, then ~4 mm of
-// thread into the standoff's female M2.5
-echo(str("hub cover screws: 4 x M2.5 x ", ceil((lid_t - head_seat) + tube_h + 4),
-         " machine, through the cover into the ", standoff_ff,
-         " mm F-F standoffs (tube bottoms seat on the standoff tops = the Z datum)"));
+// (the fasteners are derived and echoed under the clip's numbers below: hw_echo)
 echo(str("Canary hub (Pi 5, DIN) v0.1-dev — ", out_l, " x ", out_w, " x ", total_h,
          " mm  (IN DEVELOPMENT)"));
 
@@ -174,6 +197,27 @@ assert(post_y1 + 0.6 + leaf_t + leaf_rel - post_y1 <= port_flat_span_max(), "din
 function clip_screws() = [[-6.5, 25.5], [6.5, 25.5], [-6.5, -25.5], [6.5, -25.5]];   // M3s, floor -> clip lands (between the vent slots)
 assert(clip_screws()[0][1] - 1.3 >= leaf_y1 + leaf_rel + 0.8 - 1e-9 && clip_screws()[0][1] + 1.3 <= land_o - 1.2,
        "din_clip: an M3 pilot breaks into the leaf relief or out of the land");
+
+// The tray's printed standoffs take a thread only from ABOVE: the pilot
+// starts pilot_skin over the floor and the floor under it is solid. So the
+// brass standoff's lower end is MALE, down through the PCB into that pilot —
+// an F-F standoff joins nothing to the tray (2026-10-23). Its male end may
+// be as long as the PCB plus the pilot's open depth.
+pilot_skin = 1.0;    // solid floor under each tray standoff's pilot
+clip_pilot = 6.1;    // the clip's M3 self-tap pilot depth, from its tray face
+ff_male_max = pcb_t + standoff_h - pilot_skin;
+// the fasteners, derived from the same numbers that draw them: the cover
+// screw passes the head seat's floor + the tube and takes ~4 mm of the
+// standoff's female M2.5; the clip's M3 flat heads sit in the floor's 90°
+// cones, the longest standard length that stays 0.5 short of the clip's pilot
+clip_m3 = max([for (l = hw_std_lens()) if (l <= floor_t + clip_pilot - 0.5) l]);
+hw_echo("Hub (Pi 5, DIN)", [
+    hw_item(4, str("M2.5 M-F brass standoff ", standoff_ff, " mm, male thread <= ", ff_male_max,
+                   " (down through the PCB into the tray standoff)")),
+    hw_item(4, hw_screw("m2.5", "pan", ceil((lid_t - head_seat) + tube_h + 4), "machine")),
+    hw_item(din ? len(clip_screws()) : 0, hw_screw("m3", "flat", clip_m3, "self-tap")),
+    hw_item(din ? 0 : len(clip_screws()), "M3 flat wall screw (flat mount, din = false)"),
+]);
 
 module din_clip() {
     // The leaf is a printed spring, so the snap doctrine applies: beam
@@ -237,7 +281,7 @@ module din_clip() {
 module clip() {
     difference() {
         translate([0, 0, -din_hz]) din_clip();
-        for (c = clip_screws()) translate([c[0], c[1], -din_hz - 6.1]) cylinder(d = 2.6, h = 7);
+        for (c = clip_screws()) translate([c[0], c[1], -din_hz - clip_pilot]) cylinder(d = 2.6, h = clip_pilot + 0.9);
     }
 }
 
@@ -253,25 +297,36 @@ module tray() {
             // USB/eth face also open on one long wall (Pi 5 ports are on one long edge)
             translate([0, -(inner_w/2 + wall_t/2), floor_t + standoff_h + tray_h/2])
                 cube([inner_l - 10, wall_t*2, tray_h], center = true);
-            // clip screws through the floor: 90° cone seats for M3 flat heads (canary_core_lib)
-            if (din) for (c = clip_screws()) cs_cone90_cut(c[0], c[1], floor_t, clip_screw_d, 1.65);
-            // floor vent slots
+            // the microSD end (-X, across the board from the USB/Ethernet stack):
+            // the card rides UNDER the PCB and stands past its edge, so this face
+            // opens from the floor's top, not the standoff line (2026-10-23: the
+            // wall stub there took a card standing more than board_clear past the
+            // board's edge). The floor edge stays whole: the cut starts at floor_t
+            translate([-(inner_l/2 + wall_t/2), 0, floor_t + (standoff_h + 0.2)/2])
+                cube([wall_t*2, inner_w - 6, standoff_h + 0.2], center = true);
+            // clip screws through the floor: 90° cone seats for M3 flat heads (canary_core_lib);
+            // with din = false the same four are the flat-mount holes (they were behind
+            // `if (din)`, and the "or screws flat" tray had no hole at all)
+            for (c = clip_screws()) cs_cone90_cut(c[0], c[1], floor_t, clip_screw_d, 1.65);
+            // floor vent slots — pill2d stadiums (2026-10-23: rrect2d(2.0, L, 1) is
+            // offset(1) of offset(-1) of a 2.0-wide slot, which is empty, so the
+            // floor had no vents at all)
             for (x = [-inner_l/2 + 8 : vent_slot_p : inner_l/2 - 8])
                 translate([x, 0, -0.1]) linear_extrude(floor_t + 0.2)
-                    rrect2d(vent_slot_w, inner_w - 16, 1);
+                    rotate(90) pill2d(inner_w - 16, vent_slot_w);
         }
         // Pi standoffs (M2.5 self-tap), Ø6 — inside the Pi 5's Ø6.2 keep-out ring
         for (h = holes()) translate([h[0], h[1], floor_t])
             difference() {
                 cylinder(d = 6, h = standoff_h);
-                translate([0, 0, 1]) cylinder(d = screw_d, h = standoff_h + 1);
+                translate([0, 0, pilot_skin]) cylinder(d = screw_d, h = standoff_h + 1);
             }
     }
 }
 
 // cover: slides over the tray walls; chimney vents over the SoC zone; screwed
 // down the Pi's hole grid with M2.5 machine screws (length echoed at render)
-// through guide tubes that seat on the F-F standoff tops
+// through guide tubes that seat on the M-F standoff tops
 module cover() {
     ch = total_h - tray_h + 4;                  // cover skirt height (4 mm overlap)
     union() {
@@ -293,9 +348,10 @@ module cover() {
                         rrect2d(out_l + 2*tol_slide, out_w + 2*tol_slide, corner_r + tol_slide);
                     }
             }
-            // top chimney vents
+            // top chimney vents — pill2d stadiums (2026-10-23: the rrect2d(2.0, L, 1)
+            // they were drawn with is empty, so the cover had no chimney at all)
             for (x = [-25 : vent_slot_p : 25])
-                translate([x, 0, -0.1]) linear_extrude(lid_t + 0.2) rrect2d(vent_slot_w, out_w - 24, 1);
+                translate([x, 0, -0.1]) linear_extrude(lid_t + 0.2) rotate(90) pill2d(out_w - 24, vent_slot_w);
             // The cover is modeled in its PRINT pose and assembles turned over
             // about X (rotate([180, 0, 0]): y -> -y), the one flip that keeps
             // the tubes on the Pi's hole grid (it is symmetric in Y, not in X).

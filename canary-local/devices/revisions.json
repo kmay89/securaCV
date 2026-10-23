@@ -38910,22 +38910,22 @@
    },
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_button_ring.stl",
-   "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "10ba94d2",
+   "version": "v0.2-dev",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "bc43eaf8",
    "geom": {
     "triangles": 892,
-    "volume_mm3": 56.672,
-    "area_mm2": 214.807,
+    "volume_mm3": 64.862,
+    "area_mm2": 236.286,
     "bbox_mm": [
-     16.1,
-     16.1,
+     16.5,
+     16.5,
      0.8
     ],
     "lo_mm": [
-     -8.05,
-     -8.05,
+     -8.25,
+     -8.25,
      0.0
     ],
     "centroid_mm": [
@@ -38934,17 +38934,17 @@
      0.4
     ],
     "moments_mm2": [
-     26.7492,
-     26.7492,
+     27.5638,
+     27.5638,
      0.0533
     ],
     "products_mm2": [
-     0.0,
+     -0.0,
      0.0,
      0.0
     ],
     "third_mm3": [
-     -0.0,
+     0.0,
      0.0,
      -0.0
     ]
@@ -38993,6 +38993,251 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.2-dev",
+     "src": "bc43eaf8",
+     "geom": {
+      "triangles": 892,
+      "volume_mm3": 64.862,
+      "area_mm2": 236.286,
+      "bbox_mm": [
+       16.5,
+       16.5,
+       0.8
+      ],
+      "lo_mm": [
+       -8.25,
+       -8.25,
+       0.0
+      ],
+      "centroid_mm": [
+       -0.0,
+       -0.0,
+       0.4
+      ],
+      "moments_mm2": [
+       27.5638,
+       27.5638,
+       0.0533
+      ],
+      "products_mm2": [
+       -0.0,
+       0.0,
+       0.0
+      ],
+      "third_mm3": [
+       0.0,
+       0.0,
+       -0.0
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 8.19,
+      "area_mm2": 21.479,
+      "bbox_mm": [
+       0.4,
+       0.4,
+       0.0
+      ],
+      "triangles": 0,
+      "knobs": [
+       {
+        "knob": "bore_corner_r",
+        "to": 2.6
+       },
+       {
+        "knob": "post_d",
+        "from": 6.7
+       },
+       {
+        "knob": "post_dx",
+        "to": 4.55
+       },
+       {
+        "knob": "post_dy",
+        "to": 4.55
+       }
+      ],
+      "commits": [],
+      "previous": "rendered sources@9cee6c5",
+      "regions": [
+       {
+        "kind": "added",
+        "box": [
+         -8.3,
+         -1.5,
+         -0.05,
+         -7.9,
+         1.7,
+         0.75
+        ],
+        "cells": 16
+       },
+       {
+        "kind": "added",
+        "box": [
+         -1.5,
+         -8.3,
+         -0.05,
+         1.7,
+         -7.9,
+         0.75
+        ],
+        "cells": 16
+       },
+       {
+        "kind": "added",
+        "box": [
+         -7.1,
+         -7.1,
+         -0.05,
+         -4.3,
+         -4.3,
+         0.75
+        ],
+        "cells": 14
+       },
+       {
+        "kind": "added",
+        "box": [
+         4.5,
+         4.5,
+         -0.05,
+         6.9,
+         6.9,
+         0.75
+        ],
+        "cells": 12
+       },
+       {
+        "kind": "added",
+        "box": [
+         -6.3,
+         5.3,
+         -0.05,
+         -5.1,
+         6.5,
+         0.75
+        ],
+        "cells": 6
+       },
+       {
+        "kind": "added",
+        "box": [
+         5.3,
+         -6.3,
+         -0.05,
+         6.5,
+         -5.1,
+         0.75
+        ],
+        "cells": 6
+       },
+       {
+        "kind": "added",
+        "box": [
+         -7.9,
+         -3.1,
+         -0.05,
+         -7.5,
+         -2.3,
+         0.75
+        ],
+        "cells": 4
+       },
+       {
+        "kind": "added",
+        "box": [
+         -4.7,
+         6.5,
+         -0.05,
+         -3.9,
+         7.3,
+         0.75
+        ],
+        "cells": 4
+       },
+       {
+        "kind": "added",
+        "box": [
+         -3.1,
+         -7.9,
+         -0.05,
+         -2.3,
+         -7.5,
+         0.75
+        ],
+        "cells": 4
+       },
+       {
+        "kind": "added",
+        "box": [
+         -2.3,
+         7.7,
+         -0.05,
+         -1.5,
+         8.1,
+         0.75
+        ],
+        "cells": 4
+       },
+       {
+        "kind": "added",
+        "box": [
+         1.7,
+         7.7,
+         -0.05,
+         2.5,
+         8.1,
+         0.75
+        ],
+        "cells": 4
+       },
+       {
+        "kind": "added",
+        "box": [
+         6.5,
+         -4.7,
+         -0.05,
+         7.3,
+         -3.9,
+         0.75
+        ],
+        "cells": 4
+       },
+       {
+        "kind": "added",
+        "box": [
+         7.7,
+         -2.3,
+         -0.05,
+         8.1,
+         -1.5,
+         0.75
+        ],
+        "cells": 4
+       },
+       {
+        "kind": "added",
+        "box": [
+         7.7,
+         1.7,
+         -0.05,
+         8.1,
+         2.5,
+         0.75
+        ],
+        "cells": 4
+       }
+      ],
+      "note": "OD 16.1 → 16.5. tol_slide was subtracted twice (0.4 a side in the Ø16.9 seat, now 0.2).",
+      "why": "bbox_mm[x] 16.1 -> 16.5"
+     }
     }
    ]
   },
@@ -41670,14 +41915,14 @@
    },
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_coupon_base.stl",
-   "version": "v0.3-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "26fce876",
+   "version": "v0.4-dev",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "ac42c251",
    "geom": {
-    "triangles": 36870,
-    "volume_mm3": 28814.322,
-    "area_mm2": 16469.085,
+    "triangles": 36022,
+    "volume_mm3": 28816.856,
+    "area_mm2": 16446.17,
     "bbox_mm": [
      90.0,
      68.0,
@@ -41689,24 +41934,24 @@
      -0.1
     ],
     "centroid_mm": [
-     -0.3877,
-     -0.2833,
-     2.6359
+     -0.4047,
+     -0.2637,
+     2.6357
     ],
     "moments_mm2": [
-     713.9002,
-     392.9892,
-     2.7242
+     713.2994,
+     392.9681,
+     2.7217
     ],
     "products_mm2": [
-     1.4863,
-     -0.875,
-     -1.6015
+     1.779,
+     -0.9153,
+     -1.5625
     ],
     "third_mm3": [
-     423.905,
-     224.735,
-     3.323
+     443.213,
+     208.091,
+     3.314
     ]
    },
    "history": [
@@ -41753,6 +41998,212 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.4-dev",
+     "src": "ac42c251",
+     "geom": {
+      "triangles": 36022,
+      "volume_mm3": 28816.856,
+      "area_mm2": 16446.17,
+      "bbox_mm": [
+       90.0,
+       68.0,
+       13.09
+      ],
+      "lo_mm": [
+       -45.0,
+       -34.0,
+       -0.1
+      ],
+      "centroid_mm": [
+       -0.4047,
+       -0.2637,
+       2.6357
+      ],
+      "moments_mm2": [
+       713.2994,
+       392.9681,
+       2.7217
+      ],
+      "products_mm2": [
+       1.779,
+       -0.9153,
+       -1.5625
+      ],
+      "third_mm3": [
+       443.213,
+       208.091,
+       3.314
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 2.534,
+      "area_mm2": -22.915,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": -848,
+      "knobs": [],
+      "commits": [
+       "1308352e enclosures: audited fixes for the WAP, Vision, Dash and round cases, each part's revision says what moved"
+      ],
+      "previous": "rendered sources@e12bb36",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         5.75,
+         -14.45,
+         -0.15,
+         30.55,
+         -3.25,
+         5.05
+        ],
+        "cells": 1713
+       },
+       {
+        "kind": "moved",
+        "box": [
+         24.15,
+         -23.25,
+         4.65,
+         34.15,
+         -18.85,
+         5.05
+        ],
+        "cells": 145
+       },
+       {
+        "kind": "removed",
+        "box": [
+         32.55,
+         -15.65,
+         5.45,
+         35.75,
+         -12.45,
+         7.05
+        ],
+        "cells": 126
+       },
+       {
+        "kind": "moved",
+        "box": [
+         34.95,
+         -23.25,
+         4.65,
+         42.15,
+         -18.85,
+         5.05
+        ],
+        "cells": 115
+       },
+       {
+        "kind": "added",
+        "box": [
+         2.55,
+         19.15,
+         4.65,
+         5.75,
+         21.95,
+         5.05
+        ],
+        "cells": 42
+       },
+       {
+        "kind": "added",
+        "box": [
+         -8.65,
+         19.15,
+         4.65,
+         -5.85,
+         21.95,
+         5.05
+        ],
+        "cells": 30
+       },
+       {
+        "kind": "added",
+        "box": [
+         -5.45,
+         19.15,
+         4.65,
+         -3.05,
+         21.95,
+         5.05
+        ],
+        "cells": 30
+       },
+       {
+        "kind": "added",
+        "box": [
+         42.95,
+         -23.25,
+         4.65,
+         44.95,
+         -18.85,
+         5.05
+        ],
+        "cells": 24
+       },
+       {
+        "kind": "removed",
+        "box": [
+         21.75,
+         -23.25,
+         4.65,
+         22.55,
+         -18.85,
+         5.05
+        ],
+        "cells": 22
+       },
+       {
+        "kind": "added",
+        "box": [
+         -11.45,
+         19.15,
+         4.65,
+         -9.05,
+         21.95,
+         5.05
+        ],
+        "cells": 20
+       },
+       {
+        "kind": "added",
+        "box": [
+         0.15,
+         19.15,
+         4.65,
+         2.15,
+         21.95,
+         5.05
+        ],
+        "cells": 19
+       },
+       {
+        "kind": "added",
+        "box": [
+         -2.65,
+         19.15,
+         4.65,
+         -0.25,
+         21.95,
+         5.05
+        ],
+        "cells": 18
+       }
+      ],
+      "note": "the pan-head seat moves from (19,-8) to (24,-12), out of the right keyhole channel. The INSERT bore is now cut by pl_post_pilot (4.0 → 4.5 deep, plus a Ø2.3 pilot). The SCREW and INSERT labels moved, and the EMBLEM label prints only with its station.",
+      "why": "triangles 36870 -> 36022"
+     }
     }
    ]
   },
@@ -41763,10 +42214,10 @@
    },
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_coupon_mate.stl",
-   "version": "v0.3-dev",
+   "version": "v0.4-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "85b55a53",
+   "src": "25e4310d",
    "geom": {
     "triangles": 2716,
     "volume_mm3": 3103.254,
@@ -41856,10 +42307,10 @@
    },
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_coupon_strip.stl",
-   "version": "v0.3-dev",
+   "version": "v0.4-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "b3ff7313",
+   "src": "34210203",
    "geom": {
     "triangles": 28,
     "volume_mm3": 48.239,
@@ -42643,14 +43094,14 @@
    "defines": {},
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_dock.stl",
-   "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "97f9207d",
+   "version": "v0.2-dev",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "59a4dcd6",
    "geom": {
-    "triangles": 5598,
-    "volume_mm3": 65594.179,
-    "area_mm2": 18653.946,
+    "triangles": 5896,
+    "volume_mm3": 65588.008,
+    "area_mm2": 18678.639,
     "bbox_mm": [
      106.0,
      34.0,
@@ -42662,24 +43113,24 @@
      0.0
     ],
     "centroid_mm": [
-     -0.0011,
-     2.3706,
-     11.9212
+     -0.0008,
+     2.3718,
+     11.9199
     ],
     "moments_mm2": [
-     984.0749,
-     79.5805,
-     49.3141
+     984.101,
+     79.572,
+     49.303
     ],
     "products_mm2": [
-     0.0169,
-     -0.0059,
-     11.4111
+     0.0111,
+     -0.0075,
+     11.4305
     ],
     "third_mm3": [
-     1.892,
-     -225.387,
-     8.48
+     1.215,
+     -225.499,
+     8.503
     ]
    },
    "history": [
@@ -42726,6 +43177,121 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.2-dev",
+     "src": "59a4dcd6",
+     "geom": {
+      "triangles": 5896,
+      "volume_mm3": 65588.008,
+      "area_mm2": 18678.639,
+      "bbox_mm": [
+       106.0,
+       34.0,
+       24.284
+      ],
+      "lo_mm": [
+       -53.0,
+       -17.0,
+       0.0
+      ],
+      "centroid_mm": [
+       -0.0008,
+       2.3718,
+       11.9199
+      ],
+      "moments_mm2": [
+       984.101,
+       79.572,
+       49.303
+      ],
+      "products_mm2": [
+       0.0111,
+       -0.0075,
+       11.4305
+      ],
+      "third_mm3": [
+       1.215,
+       -225.499,
+       8.503
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -6.171,
+      "area_mm2": 24.693,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 298,
+      "knobs": [
+       {
+        "knob": "label_size",
+        "to": 6.0
+       }
+      ],
+      "commits": [
+       "1308352e enclosures: audited fixes for the WAP, Vision, Dash and round cases, each part's revision says what moved"
+      ],
+      "previous": "rendered sources@7b6244e",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -14.25,
+         -13.45,
+         16.75,
+         -9.85,
+         -11.45,
+         23.55
+        ],
+        "cells": 129
+       },
+       {
+        "kind": "moved",
+        "box": [
+         33.35,
+         -13.45,
+         16.35,
+         38.15,
+         -11.45,
+         23.15
+        ],
+        "cells": 121
+       },
+       {
+        "kind": "moved",
+        "box": [
+         9.75,
+         -13.45,
+         16.35,
+         14.15,
+         -11.45,
+         23.55
+        ],
+        "cells": 107
+       },
+       {
+        "kind": "moved",
+        "box": [
+         -37.85,
+         -13.45,
+         16.75,
+         -33.85,
+         -11.45,
+         23.15
+        ],
+        "cells": 90
+       }
+      ],
+      "note": "bay numbers move up between the thumb cutout and the face top, size 7 → 6. The cutout took 40-47 % of each digit.",
+      "why": "triangles 5598 -> 5896"
+     }
     }
    ]
   },
@@ -42737,9 +43303,9 @@
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_field_bezel.stl",
    "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "17c6f148",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "c73d162a",
    "geom": {
     "triangles": 1208,
     "volume_mm3": 305.623,
@@ -42756,8 +43322,8 @@
     ],
     "centroid_mm": [
      0.0,
-     0.0,
-     0.9499
+     -0.0,
+     0.8501
     ],
     "moments_mm2": [
      30.4803,
@@ -42766,13 +43332,13 @@
     ],
     "products_mm2": [
      0.0,
-     -0.0,
+     0.0,
      -0.0
     ],
     "third_mm3": [
      -0.0,
-     -0.0,
-     -0.02
+     0.0,
+     0.02
     ]
    },
    "history": [
@@ -42819,6 +43385,110 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.1-dev",
+     "src": "c73d162a",
+     "geom": {
+      "triangles": 1208,
+      "volume_mm3": 305.623,
+      "area_mm2": 554.173,
+      "bbox_mm": [
+       18.8,
+       18.8,
+       1.8
+      ],
+      "lo_mm": [
+       -9.4,
+       -9.4,
+       0.0
+      ],
+      "centroid_mm": [
+       0.0,
+       -0.0,
+       0.8501
+      ],
+      "moments_mm2": [
+       30.4803,
+       30.4803,
+       0.2708
+      ],
+      "products_mm2": [
+       0.0,
+       0.0,
+       -0.0
+      ],
+      "third_mm3": [
+       -0.0,
+       0.0,
+       0.02
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 0.0,
+      "area_mm2": 0.0,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 0,
+      "knobs": [
+       {
+        "knob": "ap_d",
+        "from": 8.0,
+        "to": 10.0
+       },
+       {
+        "knob": "bridge_layer",
+        "to": 0.2
+       },
+       {
+        "knob": "cam_dx",
+        "from": 0.0,
+        "to": 6.95
+       },
+       {
+        "knob": "head_clear",
+        "from": 1.8,
+        "to": -1.3
+       },
+       {
+        "knob": "stack_h",
+        "from": 6.5,
+        "to": 12.7
+       },
+       {
+        "knob": "vent_x",
+        "from": 30.0,
+        "to": 5.0
+       }
+      ],
+      "commits": [
+       "1308352e enclosures: audited fixes for the WAP, Vision, Dash and round cases, each part's revision says what moved"
+      ],
+      "previous": "rendered sources@e12bb36",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -6.25,
+         -6.25,
+         -0.05,
+         6.15,
+         6.15,
+         1.95
+        ],
+        "cells": 956
+       }
+      ],
+      "note": "print pose turned show face down (the 1.05 mm lip overhang is gone); assembled shape unchanged.",
+      "why": "centroid[z] 0.9499 -> 0.8501"
+     }
     }
    ]
   },
@@ -42830,17 +43500,17 @@
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_field_body.stl",
    "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "93b4b3f7",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "3fb16745",
    "geom": {
-    "triangles": 5512,
-    "volume_mm3": 34939.615,
-    "area_mm2": 19165.856,
+    "triangles": 5768,
+    "volume_mm3": 39621.626,
+    "area_mm2": 20876.098,
     "bbox_mm": [
      100.996,
      55.998,
-     17.5
+     20.6
     ],
     "lo_mm": [
      -50.496,
@@ -42848,24 +43518,24 @@
      0.0
     ],
     "centroid_mm": [
-     0.598,
-     -0.0133,
-     6.7103
+     0.5457,
+     -0.0117,
+     8.0311
     ],
     "moments_mm2": [
-     792.0341,
-     215.9231,
-     25.2903
+     810.5079,
+     222.0841,
+     36.2742
     ],
     "products_mm2": [
-     0.0439,
-     -0.6929,
-     -0.0429
+     0.0381,
+     -1.3239,
+     -0.0192
     ],
     "third_mm3": [
-     -520.969,
-     7.143,
-     66.097
+     -522.993,
+     6.514,
+     101.764
     ]
    },
    "history": [
@@ -42912,6 +43582,230 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.1-dev",
+     "src": "3fb16745",
+     "geom": {
+      "triangles": 5768,
+      "volume_mm3": 39621.626,
+      "area_mm2": 20876.098,
+      "bbox_mm": [
+       100.996,
+       55.998,
+       20.6
+      ],
+      "lo_mm": [
+       -50.496,
+       -27.999,
+       0.0
+      ],
+      "centroid_mm": [
+       0.5457,
+       -0.0117,
+       8.0311
+      ],
+      "moments_mm2": [
+       810.5079,
+       222.0841,
+       36.2742
+      ],
+      "products_mm2": [
+       0.0381,
+       -1.3239,
+       -0.0192
+      ],
+      "third_mm3": [
+       -522.993,
+       6.514,
+       101.764
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 4682.011,
+      "area_mm2": 1710.242,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       3.1
+      ],
+      "triangles": 256,
+      "knobs": [
+       {
+        "knob": "ap_d",
+        "from": 8.0,
+        "to": 10.0
+       },
+       {
+        "knob": "bridge_layer",
+        "to": 0.2
+       },
+       {
+        "knob": "cam_dx",
+        "from": 0.0,
+        "to": 6.95
+       },
+       {
+        "knob": "head_clear",
+        "from": 1.8,
+        "to": -1.3
+       },
+       {
+        "knob": "stack_h",
+        "from": 6.5,
+        "to": 12.7
+       },
+       {
+        "knob": "vent_x",
+        "from": 30.0,
+        "to": 5.0
+       }
+      ],
+      "commits": [
+       "1308352e enclosures: audited fixes for the WAP, Vision, Dash and round cases, each part's revision says what moved"
+      ],
+      "previous": "rendered sources@e12bb36",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -50.55,
+         -28.05,
+         16.35,
+         50.65,
+         27.95,
+         20.75
+        ],
+        "cells": 68248
+       },
+       {
+        "kind": "added",
+        "box": [
+         0.65,
+         -15.65,
+         4.35,
+         37.85,
+         15.55,
+         9.15
+        ],
+        "cells": 1850
+       },
+       {
+        "kind": "added",
+        "box": [
+         -38.15,
+         -15.65,
+         4.35,
+         -1.35,
+         15.55,
+         5.15
+        ],
+        "cells": 745
+       },
+       {
+        "kind": "added",
+        "box": [
+         -20.95,
+         -25.65,
+         10.35,
+         -16.95,
+         -21.65,
+         13.55
+        ],
+        "cells": 632
+       },
+       {
+        "kind": "added",
+        "box": [
+         -20.95,
+         21.55,
+         10.35,
+         -16.95,
+         25.55,
+         13.55
+        ],
+        "cells": 632
+       },
+       {
+        "kind": "added",
+        "box": [
+         17.05,
+         -25.65,
+         10.35,
+         21.05,
+         -21.65,
+         13.55
+        ],
+        "cells": 632
+       },
+       {
+        "kind": "added",
+        "box": [
+         17.05,
+         21.55,
+         10.35,
+         21.05,
+         25.55,
+         13.55
+        ],
+        "cells": 632
+       },
+       {
+        "kind": "added",
+        "box": [
+         -48.15,
+         -10.05,
+         10.35,
+         -44.15,
+         -6.05,
+         13.55
+        ],
+        "cells": 624
+       },
+       {
+        "kind": "added",
+        "box": [
+         -48.15,
+         5.95,
+         10.35,
+         -44.15,
+         9.95,
+         13.55
+        ],
+        "cells": 624
+       },
+       {
+        "kind": "added",
+        "box": [
+         43.85,
+         -10.05,
+         10.35,
+         47.85,
+         -6.05,
+         13.55
+        ],
+        "cells": 624
+       },
+       {
+        "kind": "added",
+        "box": [
+         43.85,
+         5.95,
+         10.35,
+         47.85,
+         9.95,
+         13.55
+        ],
+        "cells": 624
+       }
+      ],
+      "note": "cavity +3.1 so the Sense camera fits under the lid, using the registry's 12.7 lens height (height 17.5 -> 20.6); board end stops (X travel 2.2/12.7 -> ±0.23); house 0.8 floor cove.",
+      "why": "triangles 5512 -> 5768"
+     }
     }
    ]
   },
@@ -42923,17 +43817,17 @@
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_field_boot.stl",
    "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "e76107e5",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "3434c3b0",
    "geom": {
-    "triangles": 27992,
-    "volume_mm3": 26978.02,
-    "area_mm2": 25732.283,
+    "triangles": 29224,
+    "volume_mm3": 30360.503,
+    "area_mm2": 28389.705,
     "bbox_mm": [
      105.593,
      60.597,
-     25.4
+     28.5
     ],
     "lo_mm": [
      -52.796,
@@ -42941,24 +43835,24 @@
      0.0
     ],
     "centroid_mm": [
-     1.7255,
-     0.0,
-     9.8499
+     0.2919,
+     -0.0,
+     11.3037
     ],
     "moments_mm2": [
-     989.5233,
-     330.8073,
-     70.596
+     1040.2503,
+     328.0723,
+     87.1867
     ],
     "products_mm2": [
      0.0005,
-     -3.2463,
+     -1.0458,
      -0.0
     ],
     "third_mm3": [
-     -1181.523,
+     -292.363,
      -0.0,
-     230.201
+     281.43
     ]
    },
    "history": [
@@ -43005,6 +43899,122 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.1-dev",
+     "src": "3434c3b0",
+     "geom": {
+      "triangles": 29224,
+      "volume_mm3": 30360.503,
+      "area_mm2": 28389.705,
+      "bbox_mm": [
+       105.593,
+       60.597,
+       28.5
+      ],
+      "lo_mm": [
+       -52.796,
+       -30.298,
+       0.0
+      ],
+      "centroid_mm": [
+       0.2919,
+       -0.0,
+       11.3037
+      ],
+      "moments_mm2": [
+       1040.2503,
+       328.0723,
+       87.1867
+      ],
+      "products_mm2": [
+       0.0005,
+       -1.0458,
+       -0.0
+      ],
+      "third_mm3": [
+       -292.363,
+       -0.0,
+       281.43
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 3382.483,
+      "area_mm2": 2657.422,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       3.1
+      ],
+      "triangles": 1232,
+      "knobs": [
+       {
+        "knob": "ap_d",
+        "from": 8.0,
+        "to": 10.0
+       },
+       {
+        "knob": "bridge_layer",
+        "to": 0.2
+       },
+       {
+        "knob": "cam_dx",
+        "from": 0.0,
+        "to": 6.95
+       },
+       {
+        "knob": "head_clear",
+        "from": 1.8,
+        "to": -1.3
+       },
+       {
+        "knob": "stack_h",
+        "from": 6.5,
+        "to": 12.7
+       },
+       {
+        "knob": "vent_x",
+        "from": 30.0,
+        "to": 5.0
+       }
+      ],
+      "commits": [
+       "1308352e enclosures: audited fixes for the WAP, Vision, Dash and round cases, each part's revision says what moved"
+      ],
+      "previous": "rendered sources@e12bb36",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -52.85,
+         -30.35,
+         23.55,
+         52.75,
+         30.45,
+         28.35
+        ],
+        "cells": 47238
+       },
+       {
+        "kind": "moved",
+        "box": [
+         -52.85,
+         -15.15,
+         3.95,
+         -41.65,
+         15.25,
+         11.95
+        ],
+        "cells": 12689
+       }
+      ],
+      "note": "follows the taller case (25.4 -> 28.5); retention lip lifted onto the lid face (was 162.7 mm3 inside the lid's side); lanyard window replaced by a bore on the case's lanyard axis (29 mm TPU lintel gone).",
+      "why": "triangles 27992 -> 29224"
+     }
     }
    ]
   },
@@ -43018,7 +44028,7 @@
    "version": "v0.1-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "4f04f38f",
+   "src": "f7adb12e",
    "geom": {
     "triangles": 832,
     "volume_mm3": 433.881,
@@ -43109,13 +44119,13 @@
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_field_lid.stl",
    "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "dd237603",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "5aa9aa59",
    "geom": {
-    "triangles": 17100,
-    "volume_mm3": 14570.785,
-    "area_mm2": 10296.896,
+    "triangles": 17284,
+    "volume_mm3": 14476.54,
+    "area_mm2": 10329.747,
     "bbox_mm": [
      100.996,
      55.998,
@@ -43127,24 +44137,24 @@
      0.0
     ],
     "centroid_mm": [
-     -0.5511,
-     0.0248,
-     2.182
+     -0.8623,
+     0.025,
+     2.1807
     ],
     "moments_mm2": [
-     655.7091,
-     152.4908,
-     1.6084
+     650.9569,
+     153.398,
+     1.6127
     ],
     "products_mm2": [
-     0.1011,
-     0.3067,
+     0.1096,
+     0.5366,
      0.0011
     ],
     "third_mm3": [
-     897.97,
-     -8.382,
-     0.484
+     1289.217,
+     -8.505,
+     0.491
     ]
    },
    "history": [
@@ -43191,6 +44201,110 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.1-dev",
+     "src": "5aa9aa59",
+     "geom": {
+      "triangles": 17284,
+      "volume_mm3": 14476.54,
+      "area_mm2": 10329.747,
+      "bbox_mm": [
+       100.996,
+       55.998,
+       6.0
+      ],
+      "lo_mm": [
+       -50.496,
+       -27.999,
+       0.0
+      ],
+      "centroid_mm": [
+       -0.8623,
+       0.025,
+       2.1807
+      ],
+      "moments_mm2": [
+       650.9569,
+       153.398,
+       1.6127
+      ],
+      "products_mm2": [
+       0.1096,
+       0.5366,
+       0.0011
+      ],
+      "third_mm3": [
+       1289.217,
+       -8.505,
+       0.491
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -94.245,
+      "area_mm2": 32.851,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 184,
+      "knobs": [
+       {
+        "knob": "ap_d",
+        "from": 8.0,
+        "to": 10.0
+       },
+       {
+        "knob": "bridge_layer",
+        "to": 0.2
+       },
+       {
+        "knob": "cam_dx",
+        "from": 0.0,
+        "to": 6.95
+       },
+       {
+        "knob": "head_clear",
+        "from": 1.8,
+        "to": -1.3
+       },
+       {
+        "knob": "stack_h",
+        "from": 6.5,
+        "to": 12.7
+       },
+       {
+        "knob": "vent_x",
+        "from": 30.0,
+        "to": 5.0
+       }
+      ],
+      "commits": [
+       "1308352e enclosures: audited fixes for the WAP, Vision, Dash and round cases, each part's revision says what moved"
+      ],
+      "previous": "rendered sources@e12bb36",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         2.25,
+         -9.65,
+         -0.05,
+         32.65,
+         9.55,
+         3.95
+        ],
+        "cells": 11780
+       }
+      ],
+      "note": "lens window moved 6.95 mm to the camera at the USB end and opened to Ø10 for the barrel; vent moved to x=5; lens and vent cut at -y (the lid turns over about X); bridge steps on the bezel and disc counterbores.",
+      "why": "triangles 17100 -> 17284"
+     }
     }
    ]
   },
@@ -43201,14 +44315,14 @@
    },
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_fixture_plate.stl",
-   "version": "v0.2-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "cacbbb3c",
+   "version": "v0.3-dev",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "58a07c8e",
    "geom": {
-    "triangles": 9520,
-    "volume_mm3": 36904.057,
-    "area_mm2": 22631.938,
+    "triangles": 9960,
+    "volume_mm3": 36901.762,
+    "area_mm2": 22640.894,
     "bbox_mm": [
      120.0,
      80.0,
@@ -43220,24 +44334,24 @@
      0.0
     ],
     "centroid_mm": [
-     -0.3772,
-     0.4936,
-     2.0626
+     -0.3748,
+     0.482,
+     2.0625
     ],
     "moments_mm2": [
-     1220.8718,
-     525.8654,
-     1.9693
+     1220.8598,
+     525.562,
+     1.9692
     ],
     "products_mm2": [
-     -28.2452,
-     -3.9951,
-     1.9435
+     -27.813,
+     -3.9915,
+     1.9242
     ],
     "third_mm3": [
-     894.179,
-     -569.292,
-     3.92
+     888.981,
+     -561.08,
+     3.921
     ]
    },
    "history": [
@@ -43284,6 +44398,212 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.3-dev",
+     "src": "58a07c8e",
+     "geom": {
+      "triangles": 9960,
+      "volume_mm3": 36901.762,
+      "area_mm2": 22640.894,
+      "bbox_mm": [
+       120.0,
+       80.0,
+       12.4
+      ],
+      "lo_mm": [
+       -60.0,
+       -40.0,
+       0.0
+      ],
+      "centroid_mm": [
+       -0.3748,
+       0.482,
+       2.0625
+      ],
+      "moments_mm2": [
+       1220.8598,
+       525.562,
+       1.9692
+      ],
+      "products_mm2": [
+       -27.813,
+       -3.9915,
+       1.9242
+      ],
+      "third_mm3": [
+       888.981,
+       -561.08,
+       3.921
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -2.295,
+      "area_mm2": 8.956,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 440,
+      "knobs": [],
+      "commits": [
+       "1308352e enclosures: audited fixes for the WAP, Vision, Dash and round cases, each part's revision says what moved"
+      ],
+      "previous": "rendered sources@e12bb36",
+      "regions": [
+       {
+        "kind": "removed",
+        "box": [
+         -39.25,
+         28.35,
+         3.55,
+         -35.65,
+         31.95,
+         3.95
+        ],
+        "cells": 38
+       },
+       {
+        "kind": "added",
+        "box": [
+         -34.05,
+         -1.65,
+         3.55,
+         -31.25,
+         1.95,
+         3.95
+        ],
+        "cells": 35
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -34.05,
+         28.35,
+         3.55,
+         -31.25,
+         31.95,
+         3.95
+        ],
+        "cells": 35
+       },
+       {
+        "kind": "added",
+        "box": [
+         -42.85,
+         -1.65,
+         3.55,
+         -39.65,
+         1.95,
+         3.95
+        ],
+        "cells": 33
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -42.85,
+         28.35,
+         3.55,
+         -39.65,
+         31.95,
+         3.95
+        ],
+        "cells": 33
+       },
+       {
+        "kind": "added",
+        "box": [
+         -47.65,
+         -1.65,
+         3.55,
+         -44.45,
+         1.95,
+         3.95
+        ],
+        "cells": 32
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -47.65,
+         28.35,
+         3.55,
+         -44.45,
+         31.95,
+         3.95
+        ],
+        "cells": 32
+       },
+       {
+        "kind": "added",
+        "box": [
+         -30.85,
+         -1.65,
+         3.55,
+         -28.45,
+         1.95,
+         3.95
+        ],
+        "cells": 28
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -30.85,
+         28.35,
+         3.55,
+         -28.45,
+         31.95,
+         3.95
+        ],
+        "cells": 28
+       },
+       {
+        "kind": "added",
+        "box": [
+         -44.05,
+         -1.65,
+         3.55,
+         -43.25,
+         1.95,
+         3.95
+        ],
+        "cells": 18
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -44.05,
+         28.35,
+         3.55,
+         -43.25,
+         31.95,
+         3.95
+        ],
+        "cells": 18
+       },
+       {
+        "kind": "added",
+        "box": [
+         -36.45,
+         -1.25,
+         3.55,
+         -35.65,
+         1.15,
+         3.95
+        ],
+        "cells": 8
+       }
+      ],
+      "note": "the 'XIAO S3' label moves from below the board (y 0) to above it (y 30). The reed wire channel ran through its 'O'.",
+      "why": "triangles 9520 -> 9960"
+     }
     }
    ]
   },
@@ -43294,14 +44614,14 @@
    },
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_fixture_slider.stl",
-   "version": "v0.2-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "229a3cab",
+   "version": "v0.3-dev",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "bd578b0b",
    "geom": {
-    "triangles": 540,
-    "volume_mm3": 287.405,
-    "area_mm2": 724.077,
+    "triangles": 556,
+    "volume_mm3": 286.179,
+    "area_mm2": 613.972,
     "bbox_mm": [
      20.0,
      8.0,
@@ -43313,24 +44633,24 @@
      0.0
     ],
     "centroid_mm": [
-     -0.0,
      0.0,
-     2.5108
+     0.0,
+     2.6324
     ],
     "moments_mm2": [
-     23.0124,
-     7.1595,
-     4.8286
+     18.8114,
+     7.4262,
+     4.7379
     ],
     "products_mm2": [
      0.0,
      -0.0,
-     -0.0
+     0.0
     ],
     "third_mm3": [
-     0.0,
      -0.0,
-     9.595
+     -0.0,
+     8.034
     ]
    },
    "history": [
@@ -43377,6 +44697,80 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.3-dev",
+     "src": "bd578b0b",
+     "geom": {
+      "triangles": 556,
+      "volume_mm3": 286.179,
+      "area_mm2": 613.972,
+      "bbox_mm": [
+       20.0,
+       8.0,
+       7.69
+      ],
+      "lo_mm": [
+       -10.0,
+       -4.0,
+       0.0
+      ],
+      "centroid_mm": [
+       0.0,
+       0.0,
+       2.6324
+      ],
+      "moments_mm2": [
+       18.8114,
+       7.4262,
+       4.7379
+      ],
+      "products_mm2": [
+       0.0,
+       -0.0,
+       0.0
+      ],
+      "third_mm3": [
+       -0.0,
+       -0.0,
+       8.034
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -1.226,
+      "area_mm2": -110.105,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 16,
+      "knobs": [],
+      "commits": [
+       "1308352e enclosures: audited fixes for the WAP, Vision, Dash and round cases, each part's revision says what moved"
+      ],
+      "previous": "rendered sources@e12bb36",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -10.05,
+         -3.25,
+         1.15,
+         9.95,
+         3.15,
+         3.15
+        ],
+        "cells": 967
+       }
+      ],
+      "note": "the underside relief goes from 1.2 to 2.4 tall and the magnet-pocket floor from 1.3 to 3.2 (0.8 web). The slider rode on the reed glass (12-14 mm³ overlap) once the reed channel became an open slot.",
+      "why": "triangles 540 -> 556"
+     }
     }
    ]
   },
@@ -43387,14 +44781,14 @@
    },
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_gland_body.stl",
-   "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "6325358b",
+   "version": "v0.2-dev",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "1a4afa50",
    "geom": {
-    "triangles": 2372,
-    "volume_mm3": 409.448,
-    "area_mm2": 828.486,
+    "triangles": 2392,
+    "volume_mm3": 435.818,
+    "area_mm2": 828.654,
     "bbox_mm": [
      14.0,
      13.994,
@@ -43406,14 +44800,14 @@
      0.0
     ],
     "centroid_mm": [
+     -0.0,
      0.0,
-     0.0,
-     3.7924
+     3.9166
     ],
     "moments_mm2": [
-     10.576,
-     10.576,
-     12.0743
+     10.4175,
+     10.4175,
+     12.1526
     ],
     "products_mm2": [
      -0.0,
@@ -43421,9 +44815,9 @@
      0.0
     ],
     "third_mm3": [
+     0.0,
      -0.0,
-     -0.0,
-     26.925
+     24.811
     ]
    },
    "history": [
@@ -43470,6 +44864,107 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.2-dev",
+     "src": "1a4afa50",
+     "geom": {
+      "triangles": 2392,
+      "volume_mm3": 435.818,
+      "area_mm2": 828.654,
+      "bbox_mm": [
+       14.0,
+       13.994,
+       11.2
+      ],
+      "lo_mm": [
+       -7.0,
+       -6.997,
+       0.0
+      ],
+      "centroid_mm": [
+       -0.0,
+       0.0,
+       3.9166
+      ],
+      "moments_mm2": [
+       10.4175,
+       10.4175,
+       12.1526
+      ],
+      "products_mm2": [
+       -0.0,
+       -0.0,
+       0.0
+      ],
+      "third_mm3": [
+       0.0,
+       -0.0,
+       24.811
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 26.37,
+      "area_mm2": 0.168,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 20,
+      "knobs": [
+       {
+        "knob": "cg_hole",
+        "from": 8.2,
+        "to": 8.4
+       },
+       {
+        "knob": "cg_oring_d",
+        "to": 1.0
+       },
+       {
+        "knob": "cg_oring_dep",
+        "to": 0.65
+       },
+       {
+        "knob": "gr_od",
+        "from": 13.4,
+        "to": 14.0
+       },
+       {
+        "knob": "gr_t",
+        "from": 0.6,
+        "to": 0.2
+       },
+       {
+        "knob": "horn_mouth",
+        "from": 14.0,
+        "to": 12.0
+       }
+      ],
+      "commits": [],
+      "previous": "rendered sources@36b5039",
+      "regions": [
+       {
+        "kind": "added",
+        "box": [
+         -5.85,
+         -5.85,
+         1.15,
+         5.75,
+         5.75,
+         11.15
+        ],
+        "cells": 644
+       }
+      ],
+      "note": "the flange O-ring groove goes from 0.75 to 0.65 deep, so the cap's 0.1 snap slack rests the Ø1 cord at 25 %. The hole it fits is the relay lid's 8.4 now (AUD-15), so the barb catches there again.",
+      "why": "triangles 2372 -> 2392"
+     }
     }
    ]
   },
@@ -43480,10 +44975,10 @@
    },
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_gland_bush.stl",
-   "version": "v0.1-dev",
+   "version": "v0.2-dev",
    "rev": "r1",
    "recorded": "2026-10-22",
-   "src": "0631ab2f",
+   "src": "2033d220",
    "geom": {
     "triangles": 300,
     "volume_mm3": 36.764,
@@ -43573,33 +45068,33 @@
    },
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_gland_cap.stl",
-   "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "81e8add3",
+   "version": "v0.2-dev",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "cba62c42",
    "geom": {
-    "triangles": 1682,
-    "volume_mm3": 243.814,
-    "area_mm2": 433.264,
+    "triangles": 1986,
+    "volume_mm3": 443.941,
+    "area_mm2": 720.92,
     "bbox_mm": [
-     11.4,
-     11.393,
-     4.3
+     11.6,
+     11.6,
+     8.6
     ],
     "lo_mm": [
-     -5.7,
-     -5.697,
+     -5.8,
+     -5.8,
      0.0
     ],
     "centroid_mm": [
-     0.0,
-     0.0,
-     1.8884
+     -0.0,
+     -0.0,
+     3.8639
     ],
     "moments_mm2": [
-     11.3042,
-     11.3042,
-     1.6939
+     12.3675,
+     12.3675,
+     6.767
     ],
     "products_mm2": [
      -0.0,
@@ -43607,9 +45102,9 @@
      0.0
     ],
     "third_mm3": [
-     -0.0,
-     -0.0,
-     0.622
+     0.0,
+     0.0,
+     2.928
     ]
    },
    "history": [
@@ -43656,6 +45151,107 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.2-dev",
+     "src": "cba62c42",
+     "geom": {
+      "triangles": 1986,
+      "volume_mm3": 443.941,
+      "area_mm2": 720.92,
+      "bbox_mm": [
+       11.6,
+       11.6,
+       8.6
+      ],
+      "lo_mm": [
+       -5.8,
+       -5.8,
+       0.0
+      ],
+      "centroid_mm": [
+       -0.0,
+       -0.0,
+       3.8639
+      ],
+      "moments_mm2": [
+       12.3675,
+       12.3675,
+       6.767
+      ],
+      "products_mm2": [
+       -0.0,
+       0.0,
+       0.0
+      ],
+      "third_mm3": [
+       0.0,
+       0.0,
+       2.928
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 200.127,
+      "area_mm2": 287.656,
+      "bbox_mm": [
+       0.2,
+       0.207,
+       4.3
+      ],
+      "triangles": 304,
+      "knobs": [
+       {
+        "knob": "cg_hole",
+        "from": 8.2,
+        "to": 8.4
+       },
+       {
+        "knob": "cg_oring_d",
+        "to": 1.0
+       },
+       {
+        "knob": "cg_oring_dep",
+        "to": 0.65
+       },
+       {
+        "knob": "gr_od",
+        "from": 13.4,
+        "to": 14.0
+       },
+       {
+        "knob": "gr_t",
+        "from": 0.6,
+        "to": 0.2
+       },
+       {
+        "knob": "horn_mouth",
+        "from": 14.0,
+        "to": 12.0
+       }
+      ],
+      "commits": [],
+      "previous": "rendered sources@36b5039",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -5.85,
+         -5.85,
+         -0.05,
+         5.75,
+         5.75,
+         8.75
+        ],
+        "cells": 3546
+       }
+      ],
+      "note": "4.3 → 8.6 tall. A skirt carries the cap to the panel's inside face so the snap clamps the panel; before, the cap parked 4.3 above it and nothing held the body. The hole it fits is the relay lid's 8.4 now (AUD-15), so the barb catches there again.",
+      "why": "triangles 1682 -> 1986"
+     }
     }
    ]
   },
@@ -43667,13 +45263,13 @@
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_hammond_sense.stl",
    "version": "v0.2-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "a4292a3f",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "8de96d0d",
    "geom": {
-    "triangles": 3156,
-    "volume_mm3": 36331.964,
-    "area_mm2": 32747.013,
+    "triangles": 3220,
+    "volume_mm3": 36763.964,
+    "area_mm2": 33467.013,
     "bbox_mm": [
      158.0,
      88.0,
@@ -43685,24 +45281,24 @@
      0.0
     ],
     "centroid_mm": [
-     -0.0,
      0.0,
-     2.3132
+     0.0,
+     2.4199
     ],
     "moments_mm2": [
-     1762.9766,
-     618.2682,
-     12.036
+     1745.6255,
+     617.3864,
+     13.1707
     ],
     "products_mm2": [
      0.0,
-     0.0,
-     0.0
+     -0.0,
+     -0.0
     ],
     "third_mm3": [
-     0.0,
-     0.0,
-     133.265
+     -0.0,
+     -0.0,
+     144.944
     ]
    },
    "history": [
@@ -43749,6 +45345,116 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.2-dev",
+     "src": "8de96d0d",
+     "geom": {
+      "triangles": 3220,
+      "volume_mm3": 36763.964,
+      "area_mm2": 33467.013,
+      "bbox_mm": [
+       158.0,
+       88.0,
+       21.6
+      ],
+      "lo_mm": [
+       -79.0,
+       -44.0,
+       0.0
+      ],
+      "centroid_mm": [
+       0.0,
+       0.0,
+       2.4199
+      ],
+      "moments_mm2": [
+       1745.6255,
+       617.3864,
+       13.1707
+      ],
+      "products_mm2": [
+       0.0,
+       -0.0,
+       -0.0
+      ],
+      "third_mm3": [
+       -0.0,
+       -0.0,
+       144.944
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 432.0,
+      "area_mm2": 720.0,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 64,
+      "knobs": [],
+      "commits": [
+       "1308352e enclosures: audited fixes for the WAP, Vision, Dash and round cases, each part's revision says what moved"
+      ],
+      "previous": "rendered sources@7b6244e",
+      "regions": [
+       {
+        "kind": "added",
+        "box": [
+         15.35,
+         -24.45,
+         2.35,
+         18.55,
+         -22.45,
+         20.35
+        ],
+        "cells": 1800
+       },
+       {
+        "kind": "added",
+        "box": [
+         15.35,
+         22.35,
+         2.35,
+         18.55,
+         24.35,
+         20.35
+        ],
+        "cells": 1800
+       },
+       {
+        "kind": "added",
+        "box": [
+         -18.25,
+         -24.45,
+         2.35,
+         -15.45,
+         -22.45,
+         20.35
+        ],
+        "cells": 1575
+       },
+       {
+        "kind": "added",
+        "box": [
+         -18.25,
+         22.35,
+         2.35,
+         -15.45,
+         24.35,
+         20.35
+        ],
+        "cells": 1575
+       }
+      ],
+      "note": "board end stops along Y (3.0 x 2.0 columns 0.3 off each end of the MR60 carrier)",
+      "why": "triangles 3156 -> 3220"
+     }
     }
    ]
   },
@@ -43760,13 +45466,13 @@
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_hammond_vision.stl",
    "version": "v0.2-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "015f7bb5",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "2ff8dfbc",
    "geom": {
-    "triangles": 3284,
-    "volume_mm3": 33682.054,
-    "area_mm2": 31123.272,
+    "triangles": 3348,
+    "volume_mm3": 34114.054,
+    "area_mm2": 31843.272,
     "bbox_mm": [
      158.0,
      88.0,
@@ -43778,24 +45484,24 @@
      0.0
     ],
     "centroid_mm": [
-     -0.0,
-     0.2543,
-     1.6376
+     0.0,
+     0.2511,
+     1.7612
     ],
     "moments_mm2": [
-     1874.3082,
-     639.1995,
-     4.8309
+     1852.0324,
+     636.8554,
+     6.3032
     ],
     "products_mm2": [
      0.0,
-     0.0,
-     2.4475
+     -0.0,
+     2.3854
     ],
     "third_mm3": [
      0.0,
-     -449.208,
-     55.227
+     -441.753,
+     73.983
     ]
    },
    "history": [
@@ -43842,6 +45548,116 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.2-dev",
+     "src": "2ff8dfbc",
+     "geom": {
+      "triangles": 3348,
+      "volume_mm3": 34114.054,
+      "area_mm2": 31843.272,
+      "bbox_mm": [
+       158.0,
+       88.0,
+       21.6
+      ],
+      "lo_mm": [
+       -79.0,
+       -44.0,
+       0.0
+      ],
+      "centroid_mm": [
+       0.0,
+       0.2511,
+       1.7612
+      ],
+      "moments_mm2": [
+       1852.0324,
+       636.8554,
+       6.3032
+      ],
+      "products_mm2": [
+       0.0,
+       -0.0,
+       2.3854
+      ],
+      "third_mm3": [
+       0.0,
+       -441.753,
+       73.983
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 432.0,
+      "area_mm2": 720.0,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 64,
+      "knobs": [],
+      "commits": [
+       "1308352e enclosures: audited fixes for the WAP, Vision, Dash and round cases, each part's revision says what moved"
+      ],
+      "previous": "rendered sources@7b6244e",
+      "regions": [
+       {
+        "kind": "added",
+        "box": [
+         -12.25,
+         -22.45,
+         2.35,
+         -9.05,
+         -20.45,
+         20.35
+        ],
+        "cells": 1800
+       },
+       {
+        "kind": "added",
+        "box": [
+         -12.25,
+         20.35,
+         2.35,
+         -9.05,
+         22.35,
+         20.35
+        ],
+        "cells": 1800
+       },
+       {
+        "kind": "added",
+        "box": [
+         9.35,
+         -22.45,
+         2.35,
+         12.15,
+         -20.45,
+         20.35
+        ],
+        "cells": 1575
+       },
+       {
+        "kind": "added",
+        "box": [
+         9.35,
+         20.35,
+         2.35,
+         12.15,
+         22.35,
+         20.35
+        ],
+        "cells": 1575
+       }
+      ],
+      "note": "board end stops along Y (3.0 x 2.0 columns, outboard of the hanging XIAO, 0.5 past the corner pins)",
+      "why": "triangles 3284 -> 3348"
+     }
     }
    ]
   },
@@ -43853,13 +45669,13 @@
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_hammond_wap.stl",
    "version": "v0.2-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "25b7b5b2",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "03060050",
    "geom": {
-    "triangles": 3156,
-    "volume_mm3": 32854.364,
-    "area_mm2": 29838.613,
+    "triangles": 3220,
+    "volume_mm3": 32967.164,
+    "area_mm2": 30026.613,
     "bbox_mm": [
      158.0,
      88.0,
@@ -43873,22 +45689,22 @@
     "centroid_mm": [
      0.0,
      0.0,
-     1.3305
+     1.3422
     ],
     "moments_mm2": [
-     1923.7088,
-     648.737,
-     0.8465
+     1917.3414,
+     646.9949,
+     0.8898
     ],
     "products_mm2": [
      0.0,
      -0.0,
-     -0.0
+     0.0
     ],
     "third_mm3": [
      -0.0,
      0.0,
-     1.095
+     1.262
     ]
    },
    "history": [
@@ -43935,6 +45751,209 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.2-dev",
+     "src": "03060050",
+     "geom": {
+      "triangles": 3220,
+      "volume_mm3": 32967.164,
+      "area_mm2": 30026.613,
+      "bbox_mm": [
+       158.0,
+       88.0,
+       8.3
+      ],
+      "lo_mm": [
+       -79.0,
+       -44.0,
+       0.0
+      ],
+      "centroid_mm": [
+       0.0,
+       0.0,
+       1.3422
+      ],
+      "moments_mm2": [
+       1917.3414,
+       646.9949,
+       0.8898
+      ],
+      "products_mm2": [
+       0.0,
+       -0.0,
+       0.0
+      ],
+      "third_mm3": [
+       -0.0,
+       0.0,
+       1.262
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 112.8,
+      "area_mm2": 188.0,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 64,
+      "knobs": [],
+      "commits": [
+       "1308352e enclosures: audited fixes for the WAP, Vision, Dash and round cases, each part's revision says what moved"
+      ],
+      "previous": "rendered sources@7b6244e",
+      "regions": [
+       {
+        "kind": "added",
+        "box": [
+         -9.45,
+         -12.85,
+         2.35,
+         -6.25,
+         -10.85,
+         7.15
+        ],
+        "cells": 480
+       },
+       {
+        "kind": "added",
+        "box": [
+         -9.45,
+         10.75,
+         2.35,
+         -6.25,
+         12.75,
+         7.15
+        ],
+        "cells": 480
+       },
+       {
+        "kind": "added",
+        "box": [
+         6.55,
+         -12.85,
+         2.35,
+         9.35,
+         -10.85,
+         7.15
+        ],
+        "cells": 420
+       },
+       {
+        "kind": "added",
+        "box": [
+         6.55,
+         10.75,
+         2.35,
+         9.35,
+         12.75,
+         7.15
+        ],
+        "cells": 420
+       }
+      ],
+      "note": "board end stops along Y (3.0 x 2.0 columns 0.3 off each end, up to the board top): a USB plug slid the XIAO along its rails",
+      "why": "triangles 3156 -> 3220"
+     }
+    }
+   ]
+  },
+  "dev_hub_clip.stl": {
+   "scad": "canary_hub_din.scad",
+   "defines": {
+    "part": "clip"
+   },
+   "home": "dev",
+   "file": "docs/hardware/enclosure/dev_hub_clip.stl",
+   "version": "v0.1-dev",
+   "rev": "r1",
+   "recorded": "2026-10-23",
+   "src": "691a7e0f",
+   "geom": {
+    "triangles": 550,
+    "volume_mm3": 20081.806,
+    "area_mm2": 10078.742,
+    "bbox_mm": [
+     42.0,
+     60.2,
+     12.7
+    ],
+    "lo_mm": [
+     -21.0,
+     -31.1,
+     0.0
+    ],
+    "centroid_mm": [
+     -0.5871,
+     1.2174,
+     6.3382
+    ],
+    "moments_mm2": [
+     153.9127,
+     371.693,
+     13.9363
+    ],
+    "products_mm2": [
+     14.666,
+     -0.46,
+     -1.3418
+    ],
+    "third_mm3": [
+     83.204,
+     -717.359,
+     -2.434
+    ]
+   },
+   "history": [
+    {
+     "rev": "r1",
+     "recorded": "2026-10-23",
+     "version": "v0.1-dev",
+     "src": "691a7e0f",
+     "geom": {
+      "triangles": 550,
+      "volume_mm3": 20081.806,
+      "area_mm2": 10078.742,
+      "bbox_mm": [
+       42.0,
+       60.2,
+       12.7
+      ],
+      "lo_mm": [
+       -21.0,
+       -31.1,
+       0.0
+      ],
+      "centroid_mm": [
+       -0.5871,
+       1.2174,
+       6.3382
+      ],
+      "moments_mm2": [
+       153.9127,
+       371.693,
+       13.9363
+      ],
+      "products_mm2": [
+       14.666,
+       -0.46,
+       -1.3418
+      ],
+      "third_mm3": [
+       83.204,
+       -717.359,
+       -2.434
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": null
     }
    ]
   },
@@ -43946,13 +45965,13 @@
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_hub_cover.stl",
    "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "a108be65",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "d203d5f5",
    "geom": {
-    "triangles": 4236,
-    "volume_mm3": 18727.411,
-    "area_mm2": 21777.749,
+    "triangles": 5072,
+    "volume_mm3": 17076.059,
+    "area_mm2": 21847.74,
     "bbox_mm": [
      94.6,
      65.6,
@@ -43964,24 +45983,24 @@
      0.0
     ],
     "centroid_mm": [
-     -0.419,
-     -2.4403,
-     4.4145
+     -0.4595,
+     -2.6762,
+     4.7447
     ],
     "moments_mm2": [
-     895.1672,
-     508.6685,
-     35.3763
+     957.5081,
+     545.8714,
+     37.5287
     ],
     "products_mm2": [
-     -2.2851,
-     -1.3943,
-     -35.6448
+     -2.6145,
+     -1.3774,
+     -38.2081
     ],
     "third_mm3": [
-     -30.638,
-     1237.991,
-     372.994
+     52.356,
+     1659.635,
+     376.033
     ]
    },
    "history": [
@@ -44028,6 +46047,198 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.1-dev",
+     "src": "d203d5f5",
+     "geom": {
+      "triangles": 5072,
+      "volume_mm3": 17076.059,
+      "area_mm2": 21847.74,
+      "bbox_mm": [
+       94.6,
+       65.6,
+       23.99
+      ],
+      "lo_mm": [
+       -47.3,
+       -32.8,
+       0.0
+      ],
+      "centroid_mm": [
+       -0.4595,
+       -2.6762,
+       4.7447
+      ],
+      "moments_mm2": [
+       957.5081,
+       545.8714,
+       37.5287
+      ],
+      "products_mm2": [
+       -2.6145,
+       -1.3774,
+       -38.2081
+      ],
+      "third_mm3": [
+       52.356,
+       1659.635,
+       376.033
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -1651.352,
+      "area_mm2": 69.991,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 836,
+      "knobs": [],
+      "commits": [],
+      "previous": "rendered sources@36b5039",
+      "regions": [
+       {
+        "kind": "removed",
+        "box": [
+         -26.15,
+         -18.85,
+         -0.05,
+         -24.15,
+         19.15,
+         1.95
+        ],
+        "cells": 2345
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -16.15,
+         -18.85,
+         -0.05,
+         -14.15,
+         19.15,
+         1.95
+        ],
+        "cells": 2345
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -6.15,
+         -18.85,
+         -0.05,
+         -4.15,
+         19.15,
+         1.95
+        ],
+        "cells": 2345
+       },
+       {
+        "kind": "removed",
+        "box": [
+         3.85,
+         -18.85,
+         -0.05,
+         5.85,
+         19.15,
+         1.95
+        ],
+        "cells": 2345
+       },
+       {
+        "kind": "removed",
+        "box": [
+         13.85,
+         -18.85,
+         -0.05,
+         15.85,
+         19.15,
+         1.95
+        ],
+        "cells": 2345
+       },
+       {
+        "kind": "removed",
+        "box": [
+         23.85,
+         -18.85,
+         -0.05,
+         25.85,
+         19.15,
+         1.95
+        ],
+        "cells": 2345
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -20.95,
+         -18.85,
+         -0.05,
+         -18.95,
+         19.15,
+         1.95
+        ],
+        "cells": 2340
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -10.95,
+         -18.85,
+         -0.05,
+         -8.95,
+         19.15,
+         1.95
+        ],
+        "cells": 2340
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -0.95,
+         -18.85,
+         -0.05,
+         1.05,
+         19.15,
+         1.95
+        ],
+        "cells": 2340
+       },
+       {
+        "kind": "removed",
+        "box": [
+         9.05,
+         -18.85,
+         -0.05,
+         11.05,
+         19.15,
+         1.95
+        ],
+        "cells": 2340
+       },
+       {
+        "kind": "removed",
+        "box": [
+         19.05,
+         -18.85,
+         -0.05,
+         21.05,
+         19.15,
+         1.95
+        ],
+        "cells": 2340
+       }
+      ],
+      "note": "the 11 chimney slots now exist (pill2d; the rrect2d drew nothing); 18727.2 -> 17076.2 mm3",
+      "why": "triangles 4236 -> 5072"
+     }
     }
    ]
   },
@@ -44039,13 +46250,13 @@
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_hub_tray.stl",
    "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "25fb0272",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "87b5a123",
    "geom": {
-    "triangles": 3508,
-    "volume_mm3": 22540.543,
-    "area_mm2": 18094.093,
+    "triangles": 4656,
+    "volume_mm3": 18178.777,
+    "area_mm2": 18883.179,
     "bbox_mm": [
      91.0,
      62.0,
@@ -44057,24 +46268,24 @@
      0.0
     ],
     "centroid_mm": [
-     -0.2671,
-     1.5167,
-     3.1563
+     1.2991,
+     1.8807,
+     3.3992
     ],
     "moments_mm2": [
-     794.8734,
-     416.9655,
-     11.7605
+     819.9378,
+     479.0274,
+     13.4244
     ],
     "products_mm2": [
-     0.4052,
-     -0.7432,
-     14.4753
+     -2.4431,
+     2.9364,
+     17.4916
     ],
     "third_mm3": [
-     -65.654,
-     -534.189,
-     77.287
+     -898.546,
+     -1014.837,
+     86.065
     ]
    },
    "history": [
@@ -44121,6 +46332,258 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.1-dev",
+     "src": "87b5a123",
+     "geom": {
+      "triangles": 4656,
+      "volume_mm3": 18178.777,
+      "area_mm2": 18883.179,
+      "bbox_mm": [
+       91.0,
+       62.0,
+       16.4
+      ],
+      "lo_mm": [
+       -45.5,
+       -31.0,
+       0.0
+      ],
+      "centroid_mm": [
+       1.2991,
+       1.8807,
+       3.3992
+      ],
+      "moments_mm2": [
+       819.9378,
+       479.0274,
+       13.4244
+      ],
+      "products_mm2": [
+       -2.4431,
+       2.9364,
+       17.4916
+      ],
+      "third_mm3": [
+       -898.546,
+       -1014.837,
+       86.065
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -4361.766,
+      "area_mm2": 789.086,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 1148,
+      "knobs": [],
+      "commits": [],
+      "previous": "rendered sources@36b5039",
+      "regions": [
+       {
+        "kind": "removed",
+        "box": [
+         -45.55,
+         -25.85,
+         3.15,
+         -43.55,
+         26.15,
+         9.15
+        ],
+        "cells": 9750
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -31.55,
+         -21.05,
+         -0.05,
+         -29.55,
+         20.95,
+         3.15
+        ],
+        "cells": 4168
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -21.55,
+         -21.05,
+         -0.05,
+         -19.55,
+         20.95,
+         3.15
+        ],
+        "cells": 4168
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -11.55,
+         -21.05,
+         -0.05,
+         -9.55,
+         20.95,
+         3.15
+        ],
+        "cells": 4168
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -1.55,
+         -21.05,
+         -0.05,
+         0.45,
+         20.95,
+         3.15
+        ],
+        "cells": 4168
+       },
+       {
+        "kind": "removed",
+        "box": [
+         8.45,
+         -21.05,
+         -0.05,
+         10.45,
+         20.95,
+         3.15
+        ],
+        "cells": 4168
+       },
+       {
+        "kind": "removed",
+        "box": [
+         18.45,
+         -21.05,
+         -0.05,
+         20.45,
+         20.95,
+         3.15
+        ],
+        "cells": 4168
+       },
+       {
+        "kind": "removed",
+        "box": [
+         28.45,
+         -21.05,
+         -0.05,
+         30.45,
+         20.95,
+         3.15
+        ],
+        "cells": 4168
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -36.35,
+         -21.05,
+         -0.05,
+         -34.35,
+         20.95,
+         3.15
+        ],
+        "cells": 4144
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -26.35,
+         -21.05,
+         -0.05,
+         -24.35,
+         20.95,
+         3.15
+        ],
+        "cells": 4144
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -16.35,
+         -21.05,
+         -0.05,
+         -14.35,
+         20.95,
+         3.15
+        ],
+        "cells": 4144
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -6.35,
+         -21.05,
+         -0.05,
+         -4.35,
+         20.95,
+         3.15
+        ],
+        "cells": 4144
+       },
+       {
+        "kind": "removed",
+        "box": [
+         3.65,
+         -21.05,
+         -0.05,
+         5.65,
+         20.95,
+         3.15
+        ],
+        "cells": 4144
+       },
+       {
+        "kind": "removed",
+        "box": [
+         13.65,
+         -21.05,
+         -0.05,
+         15.65,
+         20.95,
+         3.15
+        ],
+        "cells": 4144
+       },
+       {
+        "kind": "removed",
+        "box": [
+         23.65,
+         -21.05,
+         -0.05,
+         25.65,
+         20.95,
+         3.15
+        ],
+        "cells": 4144
+       },
+       {
+        "kind": "removed",
+        "box": [
+         33.65,
+         -21.05,
+         -0.05,
+         35.65,
+         20.95,
+         3.15
+        ],
+        "cells": 4144
+       }
+      ],
+      "note": "the floor vent slots now exist (15 pill2d stadiums; rrect2d(2.0, L, 1) was empty) and the -X microSD face opens from the floor's top so a card can be fitted and reached; 22540.5 -> 18178.7 mm3",
+      "why": "triangles 3508 -> 4656"
+     }
     }
    ]
   },
@@ -44131,33 +46594,33 @@
    },
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_insert_glare.stl",
-   "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "0f09e853",
+   "version": "v0.2-dev",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "da87a211",
    "geom": {
-    "triangles": 756,
-    "volume_mm3": 32.662,
-    "area_mm2": 153.914,
+    "triangles": 772,
+    "volume_mm3": 13.469,
+    "area_mm2": 150.085,
     "bbox_mm": [
-     13.4,
-     13.394,
-     0.6
+     14.0,
+     13.994,
+     0.2
     ],
     "lo_mm": [
-     -6.7,
-     -6.697,
+     -7.0,
+     -6.997,
      0.0
     ],
     "centroid_mm": [
      0.0,
      -0.0,
-     0.3
+     0.1
     ],
     "moments_mm2": [
-     18.1,
-     18.1,
-     0.03
+     19.1274,
+     19.1274,
+     0.0033
     ],
     "products_mm2": [
      -0.0,
@@ -44214,6 +46677,107 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.2-dev",
+     "src": "da87a211",
+     "geom": {
+      "triangles": 772,
+      "volume_mm3": 13.469,
+      "area_mm2": 150.085,
+      "bbox_mm": [
+       14.0,
+       13.994,
+       0.2
+      ],
+      "lo_mm": [
+       -7.0,
+       -6.997,
+       0.0
+      ],
+      "centroid_mm": [
+       0.0,
+       -0.0,
+       0.1
+      ],
+      "moments_mm2": [
+       19.1274,
+       19.1274,
+       0.0033
+      ],
+      "products_mm2": [
+       -0.0,
+       0.0,
+       0.0
+      ],
+      "third_mm3": [
+       -0.0,
+       0.0,
+       -0.0
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -19.193,
+      "area_mm2": -3.829,
+      "bbox_mm": [
+       0.6,
+       0.6,
+       -0.4
+      ],
+      "triangles": 16,
+      "knobs": [
+       {
+        "knob": "cg_hole",
+        "from": 8.2,
+        "to": 8.4
+       },
+       {
+        "knob": "cg_oring_d",
+        "to": 1.0
+       },
+       {
+        "knob": "cg_oring_dep",
+        "to": 0.65
+       },
+       {
+        "knob": "gr_od",
+        "from": 13.4,
+        "to": 14.0
+       },
+       {
+        "knob": "gr_t",
+        "from": 0.6,
+        "to": 0.2
+       },
+       {
+        "knob": "horn_mouth",
+        "from": 14.0,
+        "to": 12.0
+       }
+      ],
+      "commits": [],
+      "previous": "rendered sources@36b5039",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -7.05,
+         -7.05,
+         -0.05,
+         6.95,
+         6.95,
+         0.75
+        ],
+        "cells": 412
+       }
+      ],
+      "note": "13.4 x 0.6 → 14.0 x 0.2. The disc stood 0.4 proud in its 1.2-deep seat and the ring floated 0.5 a side.",
+      "why": "triangles 756 -> 772"
+     }
     }
    ]
   },
@@ -44224,43 +46788,43 @@
    },
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_insert_guide.stl",
-   "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "de29ad34",
+   "version": "v0.2-dev",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "7894e4c7",
    "geom": {
-    "triangles": 1092,
-    "volume_mm3": 927.865,
-    "area_mm2": 885.211,
+    "triangles": 308,
+    "volume_mm3": 732.869,
+    "area_mm2": 688.123,
     "bbox_mm": [
-     11.9,
-     11.893,
+     8.7,
+     8.7,
      12.0
     ],
     "lo_mm": [
-     -5.95,
-     -5.947,
+     0.2,
+     0.2,
      0.0
     ],
     "centroid_mm": [
-     -0.0,
-     0.0,
-     6.4187
+     4.5536,
+     4.6286,
+     6.0855
     ],
     "moments_mm2": [
-     11.7215,
-     10.133,
-     12.8634
+     7.0876,
+     7.3091,
+     11.9733
     ],
     "products_mm2": [
-     0.0,
-     -0.0,
-     -0.0
+     -0.2968,
+     0.2617,
+     -0.0067
     ],
     "third_mm3": [
-     0.0,
-     -0.0,
-     -7.027
+     0.279,
+     -0.536,
+     -1.886
     ]
    },
    "history": [
@@ -44307,6 +46871,95 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.2-dev",
+     "src": "7894e4c7",
+     "geom": {
+      "triangles": 308,
+      "volume_mm3": 732.869,
+      "area_mm2": 688.123,
+      "bbox_mm": [
+       8.7,
+       8.7,
+       12.0
+      ],
+      "lo_mm": [
+       0.2,
+       0.2,
+       0.0
+      ],
+      "centroid_mm": [
+       4.5536,
+       4.6286,
+       6.0855
+      ],
+      "moments_mm2": [
+       7.0876,
+       7.3091,
+       11.9733
+      ],
+      "products_mm2": [
+       -0.2968,
+       0.2617,
+       -0.0067
+      ],
+      "third_mm3": [
+       0.279,
+       -0.536,
+       -1.886
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -194.996,
+      "area_mm2": -197.088,
+      "bbox_mm": [
+       -3.2,
+       -3.193,
+       0.0
+      ],
+      "triangles": -784,
+      "knobs": [
+       {
+        "knob": "bore_corner_r",
+        "to": 2.6
+       },
+       {
+        "knob": "post_d",
+        "from": 6.7
+       },
+       {
+        "knob": "post_dx",
+        "to": 4.55
+       },
+       {
+        "knob": "post_dy",
+        "to": 4.55
+       }
+      ],
+      "commits": [],
+      "previous": "rendered sources@9cee6c5",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -6.0,
+         -6.0,
+         -0.05,
+         8.8,
+         8.8,
+         11.95
+        ],
+        "cells": 19946
+       }
+      ],
+      "note": "the slip-over tube becomes a corner block registering on the bore walls and ledge, with its bore on the post axis. No catalog corner post can be slipped over: the old tube met 237 mm³ of the WAP shell.",
+      "why": "triangles 1092 -> 308"
+     }
     }
    ]
   },
@@ -44317,43 +46970,43 @@
    },
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_insert_horn.stl",
-   "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "87eb0e55",
+   "version": "v0.2-dev",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "e2a582e2",
    "geom": {
-    "triangles": 6104,
-    "volume_mm3": 492.622,
-    "area_mm2": 951.339,
+    "triangles": 5868,
+    "volume_mm3": 315.059,
+    "area_mm2": 599.9,
     "bbox_mm": [
-     20.8,
-     20.8,
+     14.797,
+     14.799,
      8.01
     ],
     "lo_mm": [
-     -10.4,
-     -10.4,
+     -7.397,
+     -7.399,
      0.0
     ],
     "centroid_mm": [
-     -0.0,
      0.0,
-     5.7259
+     0.0,
+     3.1119
     ],
     "moments_mm2": [
-     23.9764,
-     23.9764,
-     4.8695
+     12.0493,
+     12.0493,
+     5.3303
     ],
     "products_mm2": [
-     -0.0,
      0.0,
-     -0.0
+     -0.0,
+     0.0
     ],
     "third_mm3": [
      0.0,
-     -0.0,
-     -11.221
+     0.0,
+     6.13
     ]
    },
    "history": [
@@ -44400,6 +47053,107 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.2-dev",
+     "src": "e2a582e2",
+     "geom": {
+      "triangles": 5868,
+      "volume_mm3": 315.059,
+      "area_mm2": 599.9,
+      "bbox_mm": [
+       14.797,
+       14.799,
+       8.01
+      ],
+      "lo_mm": [
+       -7.397,
+       -7.399,
+       0.0
+      ],
+      "centroid_mm": [
+       0.0,
+       0.0,
+       3.1119
+      ],
+      "moments_mm2": [
+       12.0493,
+       12.0493,
+       5.3303
+      ],
+      "products_mm2": [
+       0.0,
+       -0.0,
+       0.0
+      ],
+      "third_mm3": [
+       0.0,
+       0.0,
+       6.13
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -177.563,
+      "area_mm2": -351.439,
+      "bbox_mm": [
+       -6.003,
+       -6.001,
+       0.0
+      ],
+      "triangles": -236,
+      "knobs": [
+       {
+        "knob": "cg_hole",
+        "from": 8.2,
+        "to": 8.4
+       },
+       {
+        "knob": "cg_oring_d",
+        "to": 1.0
+       },
+       {
+        "knob": "cg_oring_dep",
+        "to": 0.65
+       },
+       {
+        "knob": "gr_od",
+        "from": 13.4,
+        "to": 14.0
+       },
+       {
+        "knob": "gr_t",
+        "from": 0.6,
+        "to": 0.2
+       },
+       {
+        "knob": "horn_mouth",
+        "from": 14.0,
+        "to": 12.0
+       }
+      ],
+      "commits": [],
+      "previous": "rendered sources@36b5039",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -10.45,
+         -10.45,
+         -0.05,
+         10.35,
+         10.35,
+         7.95
+        ],
+        "cells": 11224
+       }
+      ],
+      "note": "mouth 14 → 12 and the 4 mm flange dropped (Ø20.8 → Ø14.8) so it clears the WAP camera module and magnet ring. The print pose flips glue-face down: contact 24 → 60 mm², and the 184 mm² flange overhang is gone.",
+      "why": "triangles 6104 -> 5868"
+     }
     }
    ]
   },
@@ -44411,17 +47165,17 @@
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_jbox_body.stl",
    "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "ca9b735c",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "01cc0203",
    "geom": {
-    "triangles": 2284,
-    "volume_mm3": 12541.687,
-    "area_mm2": 9757.288,
+    "triangles": 3116,
+    "volume_mm3": 14252.472,
+    "area_mm2": 11326.069,
     "bbox_mm": [
      42.6,
      51.08,
-     15.9
+     20.1
     ],
     "lo_mm": [
      -21.3,
@@ -44429,24 +47183,24 @@
      0.0
     ],
     "centroid_mm": [
-     0.2325,
-     0.0019,
-     6.187
+     0.3762,
+     0.001,
+     7.9793
     ],
     "moments_mm2": [
-     190.3988,
-     260.1451,
-     21.4268
+     198.6281,
+     264.9743,
+     34.3798
     ],
     "products_mm2": [
-     0.0989,
-     0.4171,
-     0.076
+     0.1,
+     0.5678,
+     0.0925
     ],
     "third_mm3": [
-     -37.685,
-     0.179,
-     39.078
+     -70.288,
+     0.51,
+     68.667
     ]
    },
    "history": [
@@ -44493,6 +47247,106 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.1-dev",
+     "src": "01cc0203",
+     "geom": {
+      "triangles": 3116,
+      "volume_mm3": 14252.472,
+      "area_mm2": 11326.069,
+      "bbox_mm": [
+       42.6,
+       51.08,
+       20.1
+      ],
+      "lo_mm": [
+       -21.3,
+       -25.54,
+       0.0
+      ],
+      "centroid_mm": [
+       0.3762,
+       0.001,
+       7.9793
+      ],
+      "moments_mm2": [
+       198.6281,
+       264.9743,
+       34.3798
+      ],
+      "products_mm2": [
+       0.1,
+       0.5678,
+       0.0925
+      ],
+      "third_mm3": [
+       -70.288,
+       0.51,
+       68.667
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 1710.785,
+      "area_mm2": 1568.781,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       4.2
+      ],
+      "triangles": 832,
+      "knobs": [
+       {
+        "knob": "cam_dx",
+        "from": 0.0,
+        "to": -6.95
+       },
+       {
+        "knob": "cam_dy",
+        "from": 0.0,
+        "to": -0.64
+       },
+       {
+        "knob": "pigtail_h",
+        "from": 6.5,
+        "to": 6.9
+       },
+       {
+        "knob": "pigtail_w",
+        "from": 10.5,
+        "to": 12.8
+       },
+       {
+        "knob": "stack_h",
+        "from": 8.0,
+        "to": 12.2
+       }
+      ],
+      "commits": [
+       "1308352e enclosures: audited fixes for the WAP, Vision, Dash and round cases, each part's revision says what moved"
+      ],
+      "previous": "rendered sources@e12bb36",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -21.35,
+         -25.59,
+         -0.05,
+         21.45,
+         25.61,
+         19.95
+        ],
+        "cells": 48204
+       }
+      ],
+      "note": "cavity raised for the Sense lens (stack_h 8.0 -> 12.2, body 15.9 -> 20.1), boss keels reach the bed, pigtail slot opened to the spec Type-C overmold (12.8 x 6.9 full width, chamfers above), X end stops, and two #8 wall-screw holes with counterbores",
+      "why": "triangles 2284 -> 3116"
+     }
     }
    ]
   },
@@ -44504,13 +47358,13 @@
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_jbox_lid.stl",
    "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "066707db",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "1703d9d3",
    "geom": {
     "triangles": 3068,
-    "volume_mm3": 4040.206,
-    "area_mm2": 4345.05,
+    "volume_mm3": 4032.11,
+    "area_mm2": 4331.789,
     "bbox_mm": [
      42.6,
      39.1,
@@ -44522,24 +47376,24 @@
      0.0
     ],
     "centroid_mm": [
-     0.231,
-     0.049,
-     1.4187
+     0.61,
+     0.0176,
+     1.4138
     ],
     "moments_mm2": [
-     156.9775,
-     135.5998,
-     0.9926
+     153.9266,
+     135.7308,
+     0.9811
     ],
     "products_mm2": [
-     -0.0113,
-     0.5659,
-     0.12
+     0.208,
+     0.5221,
+     0.133
     ],
     "third_mm3": [
-     -31.451,
-     -6.511,
-     1.251
+     -156.206,
+     4.474,
+     1.228
     ]
    },
    "history": [
@@ -44586,6 +47440,106 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.1-dev",
+     "src": "1703d9d3",
+     "geom": {
+      "triangles": 3068,
+      "volume_mm3": 4032.11,
+      "area_mm2": 4331.789,
+      "bbox_mm": [
+       42.6,
+       39.1,
+       5.4
+      ],
+      "lo_mm": [
+       -21.3,
+       -19.55,
+       0.0
+      ],
+      "centroid_mm": [
+       0.61,
+       0.0176,
+       1.4138
+      ],
+      "moments_mm2": [
+       153.9266,
+       135.7308,
+       0.9811
+      ],
+      "products_mm2": [
+       0.208,
+       0.5221,
+       0.133
+      ],
+      "third_mm3": [
+       -156.206,
+       4.474,
+       1.228
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -8.096,
+      "area_mm2": -13.261,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 0,
+      "knobs": [
+       {
+        "knob": "cam_dx",
+        "from": 0.0,
+        "to": -6.95
+       },
+       {
+        "knob": "cam_dy",
+        "from": 0.0,
+        "to": -0.64
+       },
+       {
+        "knob": "pigtail_h",
+        "from": 6.5,
+        "to": 6.9
+       },
+       {
+        "knob": "pigtail_w",
+        "from": 10.5,
+        "to": 12.8
+       },
+       {
+        "knob": "stack_h",
+        "from": 8.0,
+        "to": 12.2
+       }
+      ],
+      "commits": [
+       "1308352e enclosures: audited fixes for the WAP, Vision, Dash and round cases, each part's revision says what moved"
+      ],
+      "previous": "rendered sources@e12bb36",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -18.95,
+         -11.6,
+         -0.05,
+         11.85,
+         12.4,
+         5.55
+        ],
+        "cells": 5606
+       }
+      ],
+      "note": "aperture and knockout ring moved onto the Sense lens (-6.95, -0.64); the lip notch widens with pigtail_w (14.5 -> 16.8)",
+      "why": "volume_mm3 4040.206 -> 4032.11"
+     }
     }
    ]
   },
@@ -49590,13 +52544,13 @@
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_sign.stl",
    "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "a3b5bcbb",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "158fe0dc",
    "geom": {
-    "triangles": 37916,
-    "volume_mm3": 21862.951,
-    "area_mm2": 17566.641,
+    "triangles": 38804,
+    "volume_mm3": 21848.173,
+    "area_mm2": 17549.883,
     "bbox_mm": [
      110.0,
      70.0,
@@ -49609,13 +52563,13 @@
     ],
     "centroid_mm": [
      -0.0076,
-     -0.0977,
-     1.4512
+     -0.0978,
+     1.4518
     ],
     "moments_mm2": [
-     978.0188,
-     398.4946,
-     0.7232
+     977.1202,
+     398.2321,
+     0.7229
     ],
     "products_mm2": [
      0.0156,
@@ -49623,9 +52577,9 @@
      -0.1123
     ],
     "third_mm3": [
-     15.639,
-     92.392,
-     0.035
+     15.629,
+     92.377,
+     0.034
     ]
    },
    "history": [
@@ -49672,6 +52626,120 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.1-dev",
+     "src": "158fe0dc",
+     "geom": {
+      "triangles": 38804,
+      "volume_mm3": 21848.173,
+      "area_mm2": 17549.883,
+      "bbox_mm": [
+       110.0,
+       70.0,
+       3.0
+      ],
+      "lo_mm": [
+       -55.0,
+       -35.0,
+       0.0
+      ],
+      "centroid_mm": [
+       -0.0076,
+       -0.0978,
+       1.4518
+      ],
+      "moments_mm2": [
+       977.1202,
+       398.2321,
+       0.7229
+      ],
+      "products_mm2": [
+       0.0156,
+       -0.0087,
+       -0.1123
+      ],
+      "third_mm3": [
+       15.629,
+       92.377,
+       0.034
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": -14.778,
+      "area_mm2": -16.758,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "triangles": 888,
+      "knobs": [
+       {
+        "knob": "screw_d",
+        "from": 4.2,
+        "to": 4.8
+       }
+      ],
+      "commits": [],
+      "previous": "rendered sources@36b5039",
+      "regions": [
+       {
+        "kind": "removed",
+        "box": [
+         -50.25,
+         -30.25,
+         -0.05,
+         -45.45,
+         -25.45,
+         1.15
+        ],
+        "cells": 59
+       },
+       {
+        "kind": "removed",
+        "box": [
+         -50.25,
+         25.75,
+         -0.05,
+         -45.45,
+         30.55,
+         1.15
+        ],
+        "cells": 59
+       },
+       {
+        "kind": "removed",
+        "box": [
+         45.75,
+         -30.25,
+         -0.05,
+         50.55,
+         -25.45,
+         1.15
+        ],
+        "cells": 59
+       },
+       {
+        "kind": "removed",
+        "box": [
+         45.75,
+         25.75,
+         -0.05,
+         50.55,
+         30.55,
+         1.15
+        ],
+        "cells": 59
+       }
+      ],
+      "note": "#8 holes 4.2 -> 4.8 clearance (0.017 -> 0.317 a side); the countersink depth follows (2.30 -> 1.96)",
+      "why": "triangles 37916 -> 38804"
+     }
     }
    ]
   },
@@ -51288,42 +54356,42 @@
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_wear_clip.stl",
    "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "a265d06f",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "c0b0eec6",
    "geom": {
-    "triangles": 1140,
-    "volume_mm3": 14965.926,
-    "area_mm2": 10950.405,
+    "triangles": 1644,
+    "volume_mm3": 15367.052,
+    "area_mm2": 11111.1,
     "bbox_mm": [
-     15.98,
-     45.0,
-     58.0
+     18.38,
+     58.0,
+     45.0
     ],
     "lo_mm": [
-     -3.38,
-     -22.5,
+     -5.78,
+     0.0,
      0.0
     ],
     "centroid_mm": [
-     4.6409,
-     0.0,
-     32.2109
+     4.4662,
+     32.1271,
+     22.4908
     ],
     "moments_mm2": [
-     13.147,
-     167.1573,
-     274.7167
+     14.029,
+     276.42,
+     162.9977
     ],
     "products_mm2": [
-     -0.0,
-     6.9501,
-     0.0
+     7.3149,
+     0.0523,
+     0.0289
     ],
     "third_mm3": [
-     9.494,
-     -0.0,
-     -540.721
+     6.895,
+     -540.924,
+     4.229
     ]
    },
    "history": [
@@ -51370,6 +54438,87 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.1-dev",
+     "src": "c0b0eec6",
+     "geom": {
+      "triangles": 1644,
+      "volume_mm3": 15367.052,
+      "area_mm2": 11111.1,
+      "bbox_mm": [
+       18.38,
+       58.0,
+       45.0
+      ],
+      "lo_mm": [
+       -5.78,
+       0.0,
+       0.0
+      ],
+      "centroid_mm": [
+       4.4662,
+       32.1271,
+       22.4908
+      ],
+      "moments_mm2": [
+       14.029,
+       276.42,
+       162.9977
+      ],
+      "products_mm2": [
+       7.3149,
+       0.0523,
+       0.0289
+      ],
+      "third_mm3": [
+       6.895,
+       -540.924,
+       4.229
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 401.126,
+      "area_mm2": 160.695,
+      "bbox_mm": [
+       2.4,
+       13.0,
+       -13.0
+      ],
+      "triangles": 504,
+      "knobs": [
+       {
+        "knob": "stud_riser",
+        "to": 2.4
+       },
+       {
+        "knob": "stud_riser_d",
+        "to": 10.0
+       }
+      ],
+      "commits": [],
+      "previous": "rendered sources@36b5039",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -5.83,
+         -22.55,
+         -0.05,
+         12.57,
+         57.85,
+         57.95
+        ],
+        "cells": 338672
+       }
+      ],
+      "note": "profile laid on the bed (the leaf tip no longer starts 8 mm up on air; flex in the layer plane); studs on 2.4 mm riser pads so they reach the keyholes through the boot's floor.",
+      "why": "triangles 1140 -> 1644"
+     }
     }
    ]
   },
@@ -51381,17 +54530,17 @@
    "home": "dev",
    "file": "docs/hardware/enclosure/dev_wear_molle.stl",
    "version": "v0.1-dev",
-   "rev": "r1",
-   "recorded": "2026-10-22",
-   "src": "89317d2d",
+   "rev": "r2",
+   "recorded": "2026-10-23",
+   "src": "47a16c32",
    "geom": {
-    "triangles": 1832,
-    "volume_mm3": 14067.851,
-    "area_mm2": 10818.005,
+    "triangles": 2336,
+    "volume_mm3": 14470.404,
+    "area_mm2": 10979.12,
     "bbox_mm": [
      55.0,
      90.0,
-     6.39
+     8.79
     ],
     "lo_mm": [
      -27.5,
@@ -51399,24 +54548,24 @@
      0.0
     ],
     "centroid_mm": [
-     -0.0,
+     -0.0099,
      0.0,
-     1.5366
+     1.6344
     ],
     "moments_mm2": [
-     258.1399,
-     645.9251,
-     0.8815
+     251.1759,
+     637.1344,
+     1.284
     ],
     "products_mm2": [
      -0.0,
-     -0.0,
+     -0.0253,
      0.0
     ],
     "third_mm3": [
-     0.0,
+     7.117,
      -0.0,
-     0.467
+     2.418
     ]
    },
    "history": [
@@ -51463,6 +54612,99 @@
      "recorded_on": "80d594435106ce844b46b41cc3ce5136085dee93",
      "introduced_in": null,
      "changes": null
+    },
+    {
+     "rev": "r2",
+     "recorded": "2026-10-23",
+     "version": "v0.1-dev",
+     "src": "47a16c32",
+     "geom": {
+      "triangles": 2336,
+      "volume_mm3": 14470.404,
+      "area_mm2": 10979.12,
+      "bbox_mm": [
+       55.0,
+       90.0,
+       8.79
+      ],
+      "lo_mm": [
+       -27.5,
+       -45.0,
+       0.0
+      ],
+      "centroid_mm": [
+       -0.0099,
+       0.0,
+       1.6344
+      ],
+      "moments_mm2": [
+       251.1759,
+       637.1344,
+       1.284
+      ],
+      "products_mm2": [
+       -0.0,
+       -0.0253,
+       0.0
+      ],
+      "third_mm3": [
+       7.117,
+       -0.0,
+       2.418
+      ]
+     },
+     "recorded_on": "5da963c8fdf869dfed897f87107db37c9244fe09",
+     "introduced_in": null,
+     "changes": {
+      "volume_mm3": 402.553,
+      "area_mm2": 161.115,
+      "bbox_mm": [
+       0.0,
+       0.0,
+       2.4
+      ],
+      "triangles": 504,
+      "knobs": [
+       {
+        "knob": "stud_riser",
+        "to": 2.4
+       },
+       {
+        "knob": "stud_riser_d",
+        "to": 10.0
+       }
+      ],
+      "commits": [],
+      "previous": "rendered sources@36b5039",
+      "regions": [
+       {
+        "kind": "moved",
+        "box": [
+         -7.15,
+         -23.05,
+         3.15,
+         4.85,
+         -13.05,
+         8.75
+        ],
+        "cells": 3708
+       },
+       {
+        "kind": "moved",
+        "box": [
+         -7.15,
+         12.95,
+         3.15,
+         4.85,
+         22.95,
+         8.75
+        ],
+        "cells": 3708
+       }
+      ],
+      "note": "studs on 2.4 mm riser pads (height 6.39 -> 8.79) so they reach the keyholes through the field boot's floor.",
+      "why": "triangles 1832 -> 2336"
+     }
     }
    ]
   },
