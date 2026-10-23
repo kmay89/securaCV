@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — BENCH BRING-UP FIXTURE  ⚠️ IN DEVELOPMENT (v0.3-dev)
+//  Canary — BENCH BRING-UP FIXTURE  ⚠️ IN DEVELOPMENT (v0.4-dev)
 //  Companion to docs/hardware/bench_bringup.md ("start here"): instead of a
 //  desk of loose alligator clips, a labeled plate holds every bring-up part
 //  in its station while you wire and test:
@@ -37,11 +37,26 @@
 //  crown's 0.3 + tol_press + 0.2 clear) and the pocket floor a 0.8 web over
 //  it, 4.5 deep for the 3 mm magnet. And the XIAO label moved above the
 //  board: under it, the wire channel to the reed ran through its "O".
+//
+//  v0.4-dev (2026-10-23, the cross-family review): NOTHING LOCATED THE XIAO
+//  ALONG ITS RAILS. The clips hold X and Z only, so every USB plug-in shoved
+//  the board along the rails — the space past each end at the PCB's height
+//  was empty for 15 mm, and at 13.5 the board leaves its clips: the WAP's
+//  AUD-2 and the J-box's AUD-20 defect, on the jig whose USB is plugged most.
+//  End stops now: a core_min_wall() column off each end of each long edge,
+//  0.3 off the drawn end, up to the PCB's top face, outside a spec-max Type-C
+//  overmold across the axis (either end may be the USB end) and so clear of
+//  a Sense's microSD card and camera, which stand over the PCB's top; each
+//  column's root runs back into its rail's end at rail height, so a plug's
+//  push bends the rail, not a 1.2 mm column. And the clip gate was run for
+//  the 17.5 spec board (no `over`): the measured 17.8 bends the beam 0.65,
+//  not 0.5 — 1.88 % against the 2 % cycle budget, not the 1.45 % above.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect2d — the catalog's shared helpers
 use <canary_snap_lib.scad>   // the cantilever board clip + the CYCLE strain budget
 use <canary_board_lib.scad>  // board registry — the XIAO numbers the knobs cite
+use <canary_port_lib.scad>   // port_usbc_overmold_w — the board's end stops stand outside a plug's envelope
 
 /* [What to render] */
 part = "all";        // ["plate","slider","all"]
@@ -52,7 +67,8 @@ board_w = 17.5;      // board width — the 17.5 spec, brd_w("xiao"); the clips'
                      // absorbs the measured 17.8 (brd_xiao_w_measured())
 board_h = 1.2;       // PCB thickness — the 1.2 spec, brd_t("xiao")
 standoff_h = 6.0;    // clip-beam root height: 6.0 puts the beam at 7.2 mm and the
-                     // repeated-insertion strain at 1.45 % (< snap_budget_cycle);
+                     // repeated-insertion strain at 1.88 % with the measured 17.8
+                     // board (< snap_budget_cycle; 1.45 % for the 17.5 spec);
                      // it also leaves lead room under the board (was 3.0 — that
                      // root made even the WAP's 1.0/0.5 clip fail the cycle budget)
 
@@ -85,7 +101,7 @@ tol_slide = 0.20;  tol_press = 0.10;
 /* [Quality] */
 $fa = 3; $fs = 0.4;
 
-echo(str("Canary bench fixture v0.3-dev — ", fx_w, "x", fx_h, "  (IN DEVELOPMENT)"));
+echo(str("Canary bench fixture v0.4-dev — ", fx_w, "x", fx_h, "  (IN DEVELOPMENT)"));
 
 // (rrect2d comes from canary_core_lib — the local copy is gone)
 module lbl(x, y, s) { translate([x, y, fx_t - label_depth]) linear_extrude(label_depth + 0.1)
@@ -99,8 +115,15 @@ module edgeclip(px, py, ang) {
     translate([px, py, 0]) rotate([0, 0, ang - 90])
         snap_boardclip(0, 0, 1, fx_t, fx_t + standoff_h + board_h,
                        clip_w, clip_t, clip_hook, clip_hook_h, clip_clear,
-                       snap_budget_cycle());
+                       snap_budget_cycle(),
+                       over = (brd_xiao_w_measured() - board_w)/2);   // v0.4: the gate reads the real board
 }
+
+// the board's end stops: a column's inboard edge across the board, outside a
+// spec-max Type-C overmold on the connector's axis (v0.4)
+stop_x0 = port_usbc_overmold_w()/2 + 0.2;
+assert(board_w/2 - stop_x0 >= core_min_wall(), "the board's end stops would be thinner than a wall beside the overmold");
+assert(stop_x0 >= board_w/2 - 3, "the end stops' roots no longer sit on the rails");
 
 // station centers
 x_xiao = -38;  y_xiao =  16;
@@ -155,6 +178,17 @@ module plate() {
             translate([x_xiao + s*(board_w/2 - 1.5) - 1.5, y_xiao - (board_l - 1)/2, fx_t - 0.01])
                 cube([3, board_l - 1, standoff_h + 0.01]);
             edgeclip(x_xiao + s*board_w/2, y_xiao, s > 0 ? 0 : 180);
+        }
+        // END STOPS along the rails (v0.4): the clips hold X and Z only. A column
+        // off each end of each long edge, 0.3 off the drawn end, up to the PCB's
+        // top face and outside the overmold across the axis; its root runs back
+        // into the rail's end at rail height (the rail is 3 wide under it)
+        for (sx = [1, -1], sy = [1, -1]) {
+            x0 = x_xiao + (sx > 0 ? stop_x0 : -board_w/2);
+            translate([x0, y_xiao + (sy > 0 ? board_l/2 + 0.3 : -(board_l/2 + 0.3 + core_min_wall())), fx_t - 0.01])
+                cube([board_w/2 - stop_x0, core_min_wall(), standoff_h + board_h + 0.01]);
+            translate([x0, y_xiao + (sy > 0 ? (board_l - 1)/2 - 0.01 : -(board_l/2 + 0.3) - 0.01), fx_t - 0.01])
+                cube([board_w/2 - stop_x0, board_l/2 + 0.3 - (board_l - 1)/2 + 0.02, standoff_h + 0.01]);
         }
     }
 }

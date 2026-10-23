@@ -26,7 +26,10 @@
 //         bezel (contrast lens trim ring — hides the disc bond line) / all
 //  Print: body + lid in ASA (outdoor) or PETG, 5-6 perimeters, 40 % gyroid,
 //  0.2 mm layers, flat as modeled — no supports. Boot: TPU 95A, open up.
-//  Hardware: 8x M3 heat-set insert (Ø4.6) + M3x8 pan head; Ø1.5 O-ring cord
+//  Hardware: 8x M3 heat-set insert (Ø4.6) + M3 x 8 BUTTON head (ISO 7380:
+//  Ø5.7 x 1.65 — it sits 0.35 under the face in the Ø6.4 x 2.0 counterbore; an
+//  ISO 7045 pan head, 2.4 tall, stands 0.4 proud, and the lid's 1.8 web assert
+//  forbids the deeper seat that would take one); Ø1.5 O-ring cord
 //  (~221 mm, the echo says; nitrile/silicone); Ø12x2 polycarbonate lens disc, silicone-
 //  bonded; 1x adhesive ePTFE vent patch (Ø10+); closed-cell foam pad.
 //

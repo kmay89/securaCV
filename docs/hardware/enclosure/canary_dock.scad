@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — FLEET PROVISIONING DOCK  ⚠️ IN DEVELOPMENT (v0.2-dev)
+//  Canary — FLEET PROVISIONING DOCK  ⚠️ IN DEVELOPMENT (v0.3-dev)
 //  The v1 validation runbook flashes and validates fleets of boards. This
 //  dock holds N bare XIAOs reclined side by side next to a USB hub, USB-C
 //  ports up, each bay NUMBERED — flash, provision, verify, deploy, in order
@@ -16,6 +16,16 @@
 //  hole. The number is now centered between the cutout's top and the face's
 //  top edge, at size 6 so it fits the Sense pocket's taller cutout too, and
 //  an assert refuses a recline/thumb_d that leaves it no room.
+//
+//  v0.3-dev (2026-10-23, the cross-family review): the Sense pocket held the
+//  lens 0.2 INTO its front wall. The "13.7 measured" was the GLB's camera-top
+//  coordinate, not the stack: from the PCB's bottom face to the lens top is
+//  13.96 in Seeed's model (brd_xiao_sense_cam_h()'s 12.7 over its 1.25 board
+//  solid). And a square-edged 17.8 PCB in the 18.2 pocket cannot reach the back
+//  wall past the r1.5 corners: its back face rides 0.75 off it. 0.75 + 13.96
+//  in 14.5 put the lens 0.21 past the front wall (the board turned round, its
+//  corners 0.04 mm² into the front corners). pocket_sense is 15.0: the lens
+//  clears by 0.29, and turned round the PCB's corners clear too.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect2d — the catalog's shared helpers
@@ -31,14 +41,14 @@ recline = 15;        // bay recline angle (degrees)
 /* [Board] — XIAO (any variant); defaults measured from the committed vendor
    GLB (canary-local/boards/seeed_xiao_esp32s3_sense.glb): board 21 x 17.8 mm,
    bare thickness 4.4 incl the USB shell; a Sense with its camera folded flat
-   stacks to 13.7 — pick the variant to size the pocket. */
+   stacks to 13.96 (PCB bottom to lens top) — pick the variant to size the pocket. */
 variant = "bare";    // ["bare","sense"]
 board_l = 21.0;      // board length (USB edge at the TOP of the bay) — brd_l("xiao")
 board_w = 17.8;      // measured — brd_xiao_w_measured(), canary_board_lib (was 17.5:
                      // spec-sized pockets pinched the real board; this file is where
                      // that lesson was learned, and the registry is where it lives)
 pocket_bare  = 7.0;  // pocket depth: bare XIAO (4.4 measured + finger room)
-pocket_sense = 14.5; // pocket depth: Sense w/ camera folded on top (13.7 measured)
+pocket_sense = 15.0; // pocket depth: Sense w/ camera folded on top — 13.96 PCB bottom to lens top (Seeed's GLB) + the 0.75 the PCB rides the r1.5 corners + 0.29 (v0.3: 14.5 held the lens 0.21 into the front wall)
 thumb_d = 12.0;      // thumb cutout for extraction
 
 /* [Block] */
@@ -63,7 +73,7 @@ lbl_s_hole = (3 + pocket_d/2 + 2*tan(recline))*sin(recline) - 2*cos(recline) + b
 lbl_s      = (lbl_s_hole + (bh - 4)/cos(recline))/2;
 assert((bh - 4)/cos(recline) - lbl_s_hole >= label_size + 0.5,   // a digit stands ~0.99 x its size
        "the bay number cannot fit between the thumb cutout and the face's top edge — a smaller thumb_d or a lower cutout");
-echo(str("Canary provisioning dock v0.2-dev — ", n_bays, " bays, ", bw, " mm wide  (IN DEVELOPMENT)"));
+echo(str("Canary provisioning dock v0.3-dev — ", n_bays, " bays, ", bw, " mm wide  (IN DEVELOPMENT)"));
 
 // (rrect2d comes from canary_core_lib — the local copy is gone)
 

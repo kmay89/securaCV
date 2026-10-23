@@ -245,6 +245,7 @@ devstl dev_coupon_strip.stl  canary_fit_coupon.scad    -D 'part="strip"'
 devstl dev_fixture_plate.stl  canary_bench_fixture.scad -D 'part="plate"'
 devstl dev_fixture_slider.stl canary_bench_fixture.scad -D 'part="slider"'
 devstl dev_dock.stl          canary_dock.scad
+devstl dev_dock_sense.stl    canary_dock.scad          -D 'variant="sense"'
 devstl dev_insert_guide.stl  canary_shop_tools.scad -D 'part="insert_guide"'
 devstl dev_button_ring.stl   canary_shop_tools.scad -D 'part="button_ring"'
 

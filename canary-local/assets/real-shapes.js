@@ -59,15 +59,6 @@ function roleFor(color, explicit) {
   return color === f.shell2 ? "shell2" : color === f.shell ? "shell" : null;
 }
 
-// Center a mesh on its bbox, then pre-rotate (print → device orientation),
-// then place. Baking center+pre into the model matrix keeps the mesh data
-// shared between cards (the cache holds one copy per file).
-function place(scene, parsed, { pre = M4.ident(), at = M4.ident(), color = shell(), gloss = 0.22, role }) {
-  const c = parsed.bbox.center;
-  const model = M4.mul(at, M4.mul(pre, M4.translate(-c[0], -c[1], -c[2])));
-  scene.addMesh(parsed.mesh, { color, gloss, model, role: roleFor(color, role) });
-}
-
 const rotXpi = M4.rotX(Math.PI);          // face-down print → face forward
 const standUp = M4.rotX(-Math.PI / 2);    // flat print → upright (z → y)
 
@@ -92,7 +83,7 @@ function seatPart(scene, parsed, { G, D, R = M4.ident(), color = shell(), gloss 
 // pos [0, 9.679, 30.436] rot [65, 0, 0]) — drum +z along the pocket axis
 // a = (0, −sin65°, cos65°), no azimuth flip (the USB slot at 270° lands in
 // the stand's chin pocket). Along a: the drum spans 0…drum_h (the ledger's
-// seam, 25.44), the bezel's face caps the puck at fig.d (27.63) with the
+// seam, 25.44), the bezel's face caps the puck at fig.d (27.64) with the
 // bezel centered half its own print height behind that, and the glass — the
 // disc's front, under the bezel lip by `flush` = finger_root + glass_float
 // (0.7 + 0.1) — at drum_h − flush, drawn at the bezel's aperture
@@ -178,7 +169,14 @@ async function realDash(scene) {
   const w = [0, -Math.cos(25 * Math.PI / 180), Math.sin(25 * Math.PI / 180)]; // face normal
   const off = (s) => [C[0], C[1] + w[1] * s, C[2] + w[2] * s];
   seatPart(scene, stand, { G, D: [0, 0, 0], color: shell2(), gloss: 0.18, stand: true });
-  seatPart(scene, frame, { G, D: off(1.5), R: M4.mul(Ra, rotXpi), gloss: 0.22 });  // face-down print → face out
+  // face-down print → face out, turned about Y like the back — the CAD's own
+  // turn (gen_assembled_dims.py rotates frame() about Y, so +Y stays up) and
+  // assembly.json's. It was turned about X, which also swaps its ends: the
+  // chimney vents in the frame's +Y wall sat on the desk (stand z 9.1, the
+  // CAD's 79.2) and the USB slot faced up, every vertex up to 138.8 mm off
+  // the Assemble tab's seat. tests/real_shapes.test.js holds all three parts
+  // of each display card to assembly.json, vertex for vertex.
+  seatPart(scene, frame, { G, D: off(1.5), R: M4.mul(Ra, M4.rotY(Math.PI)), gloss: 0.22 });
   // the back prints pads-up, turned about Y (its selector) — turn it back
   seatPart(scene, back, { G, D: off(-11.3), R: M4.mul(Ra, M4.rotY(Math.PI)), color: shell2(), gloss: 0.22 }); // pads toward the fin
   scene.addMesh(screenPlane(101.3, 61.2, false), {       // glass behind the 2.5 mm bezel lip
@@ -193,18 +191,38 @@ async function realDash(scene) {
 }
 
 // The witnesses: their PRINT-VALIDATED shells (the exact STLs a builder
-// slices), closed as two-part boxes. Print orientation convention across
-// the library: fronts/lids print A-face-down (flip to face the viewer),
-// backs/bases print outer-face-down (already facing away after centering).
-// Depths stack from the parts' own bounding boxes — no invented numbers.
-async function realTwoPart(scene, frontFile, backFile, { color = shell(), dist = 130, nest = 1.6, extras = null } = {}) {
+// slices), closed the way the CAD closes them. Each case is a piston plate:
+// the FRONT (the WAP's lid) is the deep shell, printed face-down (flip it to
+// face the viewer), and the BACK (the WAP's base) is the plate that seats
+// inside the shell's walls, printed outer-face-down — already as assembled.
+// The fit check, and gen_assembly_poses.py that seats the Assemble tab, keep
+// back() as modeled and turn the front over about X at base_d + lid_t, where
+// the turned shell's walls come down to the plate's back face — so the seat
+// is the back's min z plus the front's height, read off the meshes, never a
+// typed number. Both parts keep the case's own x/y (the Vision's hinge fins
+// and the Sense's ears put the front's bbox center 10.25 mm off the case
+// axis), and the pair is centered once, on the closed envelope — the box the
+// card's massing figure is drawn in, so the swap to the real shapes does not
+// jump. This used to stack the two bounding boxes with a typed 1.6 mm nest,
+// as if the back were a deep base under a lid: the plates hung 15.6 mm
+// (Vision, Sense) and 6.5 mm (WAP) out of their shells, the closed cards
+// measured 39.98 / 38.10 / 21.75 deep against the ledger's 24.38 / 22.5 /
+// 15.25, and the finned shells slid 10.25 mm sideways off their plates.
+// tests/real_shapes.test.js holds the seat to assembly.json and the closed
+// card to assembled_dims.json.
+async function realTwoPart(scene, frontFile, backFile, { color = shell(), dist = 130, extras = null } = {}) {
   const [front, back] = await Promise.all([load(frontFile, ENC), load(backFile, ENC)]);
   scene.clearParts();
-  const fz = front.bbox.size[2], bz = back.bbox.size[2];
-  // the front's lip nests INTO the back by ~nest mm — flush-stacking the
-  // two bboxes showed a phantom seam gap no real build has
-  place(scene, back, { at: M4.translate(0, 0, -fz / 2 + nest / 2), color: shell2(), gloss: 0.25 });
-  place(scene, front, { pre: rotXpi, at: M4.translate(0, 0, bz / 2 - nest / 2), color, gloss: 0.25 });
+  const b = back.bbox, f = front.bbox;
+  const z0 = b.min[2];                               // the plate's back face: the case's back plane
+  const seat = z0 + f.max[2];                        // base_d + lid_t: the turned shell's walls end on z0
+  // the closed envelope: the back as modeled, the front turned over (y and z flip) at the seat
+  const lo = [Math.min(b.min[0], f.min[0]), Math.min(b.min[1], -f.max[1]), z0];
+  const hi = [Math.max(b.max[0], f.max[0]), Math.max(b.max[1], -f.min[1]), Math.max(b.max[2], seat - f.min[2])];
+  const C = M4.translate(...lo.map((v, k) => -(v + hi[k]) / 2));
+  scene.addMesh(back.mesh, { color: shell2(), gloss: 0.25, model: C, role: roleFor(shell2()) });
+  scene.addMesh(front.mesh, { color, gloss: 0.25, role: roleFor(color),
+    model: M4.mul(C, M4.mul(M4.translate(0, 0, seat), rotXpi)) });
   if (extras) await extras();
   scene.dist = dist;
 }

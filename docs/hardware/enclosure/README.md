@@ -10,8 +10,10 @@ to spin it in GitHub's 3D viewer, no download needed.**
 ## New here? Your first hour
 
 You need: a filament printer (PETG recommended), the boards for whichever
-Canary you're building (see the [hardware guide](../README.md)), and 4× M2
-screws per case. Then:
+Canary you're building (see the [hardware guide](../README.md)), and the M2
+self-tappers your case's `HARDWARE` render line lists (4 on an indoor WAP or a
+Sense, 8–10 on a Vision with its camera screws, 12 on the Outdoor WAP with its
+sun shield, 19 on the doorbell). Then:
 
 1. **Print the [fit coupon](./canary_fit_coupon.scad)** (one small plate). Its
    labeled stations test every fit used across this folder; if a station is
@@ -22,8 +24,10 @@ screws per case. Then:
    up, no supports — ever). New to slicing these? The
    [PETG Cura guide](./printing_petg_cura.md) has a settings sheet and a
    one-click profile.
-3. **Fit your boards** — every case uses the same snap-clip cradles: boards
-   press in, no screws. Each device section below has its assembly steps.
+3. **Fit your boards** — every case but the doorbell uses the same snap-clip
+   cradles: boards press in, no screws (the doorbell's module drops into a
+   cradle and takes two M2 × 4 board screws). Each device section below has
+   its assembly steps.
 4. **Mount it** — print the wall bracket / plate for your case, or print a
    [paper template](#the-complete-file-map) at 100 % and drill from that.
 
@@ -92,7 +96,7 @@ the `.scad`, no committed STLs; see the [dev gallery](#in-development)):
 | [`canary_hammond_chassis.scad`](./canary_hammond_chassis.scad) | **Chassis plate** carrying any Canary stack inside the off-the-shelf Hammond IP66 box |
 | [`canary_mount_adapters.scad`](./canary_mount_adapters.scad) | **Mount adapters**: corner wedge, magnet plate, pole plate, drill template — all on the shared stud interface |
 | [`canary_field_case.scad`](./canary_field_case.scad) | **Field case**: GoPro-class rugged witness — O-ring sealed, no external ports, TPU impact boot; the only CER‑4 (IP67 + drop) intent design ([ratings](./field_ratings.md)) |
-| [`canary_dash_display.scad`](./canary_dash_display.scad) | **Dashboard display case** for the Waveshare 4.3" touch panel ([display research](../display_research.md) Option B): bezel frame, vented back with keyholes + 75 mm pair, desk stand |
+| [`canary_dash_display.scad`](./canary_dash_display.scad) | **Dashboard display case** for the Waveshare 4.3" touch panel ([display research](../display_research.md) Option B): bezel frame, vented back that clicks onto a wall cradle (two #8 / M4 pan screws into the wall), desk stand |
 | [`canary_vehicle_mount.scad`](./canary_vehicle_mount.scad) | **Vehicle mounts**: VHB dash plate (10° riser) + air-vent louver clip, on the shared stud interface — USB power only, no batteries on a hot dash. Pairs with [Canary Vehicle](../canary_vehicle_can.md)'s passive CAN bus witness (arrival/departure claims) |
 | [`canary_wear_clip.scad`](./canary_wear_clip.scad) | **Body-worn carry**: belt leaf-spring clip + MOLLE/PALS adapter for the field case (or any keyhole case) |
 | [`canary_vision_pro_mount.scad`](./canary_vision_pro_mount.scad) | **Vision Pro mount**: bridges a reCamera Pro onto the shared stud interface — keyhole back, 1/4"-20 tripod counterbore and/or magnet pocket front (reCamera's confirmed mount options) |
@@ -113,7 +117,7 @@ the `.scad`, no committed STLs; see the [dev gallery](#in-development)):
 | [`canary_port_lib.scad`](./canary_port_lib.scad) | **Connector openings** — the WAP's bridge-safe chamfered-top profile, USB-C stadium vs series-A rectangle (shape follows shell; the standard is not a knob), and the 11.0 mm insertion-length floor as a shared assert. Not a printable part |
 | [`canary_board_lib.scad`](./canary_board_lib.scad) | **The board registry** — every module the catalog mounts, with the panel-lib evidence ladder (measured / drawing / spec / unmeasured) and the measured facts that used to live in one file each (the XIAO's real 17.8 width, the 6.5 seated-stack height, the Grove's 40 × 20). Not a printable part |
 | [`canary_color_lib.scad`](./canary_color_lib.scad) | **The colorway registry** — the spool palettes (body / ink / light per colorway, lowercase sRGB hex) every consumer reads from one home: the Customizer previews, the builder manifest carry, the website's AR variant picker and showroom finishes. The self-check enforces the doctrine (ink contrasts its body; the light role is near-white or a printed band reads switched-off). Not a printable part |
-| [`canary_cradle_lib.scad`](./canary_cradle_lib.scad) | **The click-on wall dock** — a plate takes the wall screws and the case snaps onto it, thermostat-style: two rigid T-studs (the catalog's existing stud/keyhole standard) carry the weight, two sprung clips hold the bottom in, and the case pulls off for service without touching the wall. The clip arms are **cut into the plate** so they bend in the print plane — a snap arm standing off a flat-printed plate flexes across its layer bonds and breaks. Shared by the 7″ and the 4.3″; the feature geometry is fixed here so one plate fits any case at the same span. Not a printable part on its own — each case exports its own `part="cradle"` |
+| [`canary_cradle_lib.scad`](./canary_cradle_lib.scad) | **The click-on wall dock** — a plate takes the wall screws and the case snaps onto it, thermostat-style: two rigid T-studs (the catalog's existing stud/keyhole standard) carry the weight, two sprung clips hold the bottom in, and the case pulls off for service without touching the wall. The clip arms are **cut into the plate** so they bend in the print plane — a snap arm standing off a flat-printed plate flexes across its layer bonds and breaks. Worn by the 4.3″ dash so far (the 7″ hangs on two screws through plain keyholes, or stands in its own desk dock); the feature geometry is fixed here so one plate fits any case at the same span. Not a printable part on its own — each case exports its own `part="cradle"` |
 | [`canary_shop_tools.scad`](./canary_shop_tools.scad) | Heat-set **insert press guide** + doorbell button accent ring |
 | [`canary_templates_2d.scad`](./canary_templates_2d.scad) → [studs](./template_studs.svg) · [bracket](./template_bracket.svg) · [doorbell](./template_doorbell.svg) | **1:1 paper drill templates** — print the SVG at 100 % (check the 20 mm square), tape to the wall, drill. Rendered by [`gen_templates.py`](./gen_templates.py), whose `--check` (in CI) fails when a committed SVG is not what the source renders today, or when a number the template copies from the doorbell or the Vision bracket stops equaling the part — the doorbell's sat at its v0.6 size under the v0.9 plate until that gate existed |
 | [`canary_s3_lcd7_fitcheck.scad`](./canary_s3_lcd7_fitcheck.scad) | **Not a printable part** — renders the 7" bezel and tray in their *assembled* positions and intersects them, so CI can catch a case whose parts are each a perfect mesh but don't clamp anything. Collisions must be empty; the lip's bearing patch must not be |
@@ -124,7 +128,7 @@ Everything shares one design language, so skills transfer between parts: the
 same three **print-tolerance knobs** (`tol_slide`/`tol_press`/`tol_hole` —
 the fit coupon tunes them), the same **snap-clip board cradles**, the same
 **two-stud wall-hanging interface**, and the same opt-in **weather sealing**
-(printed TPU gasket + drip-edge lid). A CI gate re-renders and mesh-checks
+(printed TPU gasket in the shell's ledge + O-ringed plate screws). A CI gate re-renders and mesh-checks
 all ~60 parts on every change, so what's in this folder always builds.
 
 ## Pick your variant
@@ -139,14 +143,14 @@ minutes.
 |---------|-----|---------|------------------------------|
 | **WAP · compact** | plain XIAO ESP32-S3, USB-powered, smallest box | <img src="./preview_compact.png" width="260"> | [base](./canary_wap_enclosure_compact_base.stl) · [lid](./canary_wap_enclosure_compact_lid.stl) |
 | **WAP · battery** | XIAO Sense camera + LiPo + GPS, indoor | <img src="./preview_all.png" width="260"> | [base](./canary_wap_enclosure_battery_base.stl) · [lid](./canary_wap_enclosure_battery_lid.stl) |
-| **WAP · weather** | battery build + TPU gasket seal, drip-edge lid, keyhole mounts (CER‑2 / ~IP54 target — [ratings](./field_ratings.md)) | <img src="./preview_weather.png" width="260"> | [base](./canary_wap_enclosure_weather_base.stl) · [lid](./canary_wap_enclosure_weather_lid.stl) · [gasket](./canary_wap_enclosure_weather_gasket.stl) |
+| **WAP · weather** | battery build + TPU gasket seal, O-ringed plate screws, keyhole mounts (CER‑2 / ~IP54 target — [ratings](./field_ratings.md)) | <img src="./preview_weather.png" width="260"> | [base](./canary_wap_enclosure_weather_base.stl) · [lid](./canary_wap_enclosure_weather_lid.stl) · [gasket](./canary_wap_enclosure_weather_gasket.stl) |
 | **WAP · clip coupon** | **print first** — 15 min snap-fit tuner | <img src="./preview_coupon.png" width="260"> | [coupon](./canary_wap_enclosure_clip_coupon.stl) |
 | **Vision · xiao indoor** | stacked XIAO host (recommended), hinge mount, desk/shelf | <img src="./preview_vision_xiao_indoor.png" width="260"> | [back](./canary_vision_enclosure_xiao_indoor_back.stl) · [front](./canary_vision_enclosure_xiao_indoor_front.stl) |
 | **Vision · xiao weather** | stacked XIAO, sealed + rain hood + vent, hinge & keyholes | <img src="./preview_vision_xiao_weather.png" width="260"> | [back](./canary_vision_enclosure_xiao_weather_back.stl) · [front](./canary_vision_enclosure_xiao_weather_front.stl) · [hood](./canary_vision_enclosure_xiao_weather_hood.stl) · [gasket](./canary_vision_enclosure_xiao_weather_gasket.stl) |
 | **Vision · devkit indoor** | Grove-cabled ESP32-C3-DevKitM-1 host | <img src="./preview_vision_devkit.png" width="260"> | [back](./canary_vision_enclosure_devkit_indoor_back.stl) · [front](./canary_vision_enclosure_devkit_indoor_front.stl) |
 | **Vision · mount kit** | wall bracket (GoPro-prong, tripod nut) + M5 thumbscrew knob | <img src="./preview_vision_bracket.png" width="180"> <img src="./preview_vision_knob.png" width="120"> | [bracket](./canary_vision_enclosure_bracket.stl) · [knob](./canary_vision_enclosure_knob.stl) |
 | **Vision · DOORBELL** | Wyze/Ring form factor: camera + button + speaker, LiPo bay and antenna landing, TPU service buttons for the XIAO's R and B through the back, plate-mounted with a hidden security screw, sealed by default | <img src="./preview_doorbell.png" width="260"> | [body](./canary_vision_doorbell_body.stl) · [face](./canary_vision_doorbell_face.stl) · [plate](./canary_vision_doorbell_plate.stl) · [wedge 15°](./canary_vision_doorbell_plate_wedge15.stl) · [gasket](./canary_vision_doorbell_gasket.stl) · [retainer](./canary_vision_doorbell_retainer.stl) · [plungers R+B](./canary_vision_doorbell_plunger.stl) |
-| **Sense · radome** | MR60BHA2 mmWave witness: thin radar window, hinge + keyholes (shares the Vision bracket/knob) | <img src="./preview_sense.png" width="260"> | [back](./canary_sense_back.stl) · [front](./canary_sense_front.stl) |
+| **Sense · radome** | MR60BHA2 mmWave witness: thin radar window, hinge (shares the Vision bracket/knob); keyholes in the `sense_ceiling` build | <img src="./preview_sense.png" width="260"> | [back](./canary_sense_back.stl) · [front](./canary_sense_front.stl) |
 | **Thermal / outdoor kit** | solar radiation shield (weather WAP) + universal desiccant tray | — | [shield](./canary_wap_enclosure_weather_shield.stl) · [tray](./canary_wap_enclosure_tray.stl) |
 
 ### In development
@@ -161,13 +165,13 @@ measurements welcome.
 | **Watch station** — SenseCAP-Watcher-style desk puck: XIAO ESP32-S3 pinned into the Round Display's back socket (see [display research](../display_research.md)); v0.3 from the first print's calipers: the Ø43.0 glass is the whole disc, so the snap bezel carries a glass pocket and a 1.5 mm lip, the drum a rim counterbore, three seat pads to the PCB, an end-stop under the XIAO's USB shell and a bay for the flex antenna, the stack measured at 18.44; an open 220° cradle with a push-out window replaces the divot block | drum + snap bezel + 25° open cradle | <img src="./preview_dev_station.png" width="230"> | [`canary_watch_station.scad`](./canary_watch_station.scad) |
 | **Sense bedside stand** — weighted base + tilted stalk with the three-prong hinge head (wellbeing channel, ≤1.5 m) | ballast pockets, GoPro-compatible head | <img src="./preview_dev_stand.png" width="230"> | [`canary_sense_stand.scad`](./canary_sense_stand.scad) |
 | **Sense in-wall plate** — single-gang flush mount; the faceplate IS the radome (check local code; low-voltage box only) | one-piece plate, 6-32 slots | <img src="./preview_dev_gang.png" width="230"> | [`canary_sense_gang.scad`](./canary_sense_gang.scad) |
-| **Outlet cradle** — collar grips a USB wall wart; T-studs hang any keyhole-pocket Canary | measure your adapter | <img src="./preview_dev_cradle.png" width="230"> | [`canary_outlet_cradle.scad`](./canary_outlet_cradle.scad) |
+| **Outlet cradle** — collar grips a USB wall wart; T-studs hang a Canary built with an in-line keyhole pair (the WAP and Vision weather builds, the Sense's `sense_ceiling`; `target` reads the spread) — not the WAP compact's single pocket, nor the Combo's side-by-side pair | measure your adapter | <img src="./preview_dev_cradle.png" width="230"> | [`canary_outlet_cradle.scad`](./canary_outlet_cradle.scad) |
 | **Solar LoRa relay pod** — off-grid mesh backhaul: LoRa board + 18650, SMA top on a washer land, solar roof bracket with a drained panel bed, pole straps, weeps | sealed body + roof | <img src="./preview_dev_relay.png" width="230"> | [`canary_relay_solar.scad`](./canary_relay_solar.scad) |
 | **Combo witness** — Vision + Sense stacks in one face (lens + radome); radar-confirmed camera events | dual column, 3 USB ports | <img src="./preview_dev_combo.png" width="230"> | [`canary_combo.scad`](./canary_combo.scad) |
 | **Hub (Pi 5, DIN rail)** — vented tray + cover for the server side; printed DIN spring clip | chimney vents, HAT headroom | <img src="./preview_dev_hub.png" width="230"> | [`canary_hub_din.scad`](./canary_hub_din.scad) |
 | **Hammond chassis plates** — bring the Canary rail/clip cradles into the ENC1 polycarbonate route (`stack` = wap/vision/sense) | boss grid: MEASURE your box | <img src="./preview_dev_hammond.png" width="230"> | [`canary_hammond_chassis.scad`](./canary_hammond_chassis.scad) |
 | **Mount adapters** — the T-stud interface everywhere: 90° corner wedge, magnet plate, pole strap plate, drill template | set `stud_gap` per case | <img src="./preview_dev_adapters.png" width="230"> | [`canary_mount_adapters.scad`](./canary_mount_adapters.scad) |
-| **Functional inserts** — buzzer horn (a few dB of on-axis directivity; at the default `horn_h` 8 it fits no WAP preset as drawn — the camera presets leave 12.4 over the PCB but the Sense expansion board under the vent takes ~6 of it, and compact_plain leaves 6.35 — so shorten `horn_h` to under ~6 for a camera build), matte anti-glare ring, 3-part printed cable gland (TPU bush) | glue-in / press-in parts | <img src="./preview_dev_inserts.png" width="230"> | [`canary_inserts.scad`](./canary_inserts.scad) |
+| **Functional inserts** — buzzer horn (a few dB of on-axis directivity; at the default `horn_h` 8, the shortest its profile prints without support, it fits no WAP preset: alone it needs `horn_h` ≤ 5.0 on a camera preset (the Sense camera's flex) and ≤ 4.0 on compact_plain, and with the BOM's piezo glued under its throat only 2.7 / 2.15, where it is a short flare that needs support; without the room, glue the piezo straight onto the GORE seat), matte anti-glare ring, 3-part printed cable gland (TPU bush) | glue-in / press-in parts | <img src="./preview_dev_inserts.png" width="230"> | [`canary_inserts.scad`](./canary_inserts.scad) |
 | **Covert junction box** — compact WAP disguised as utility hardware; aperture hidden in a mock knockout | pair with the signage plate | <img src="./preview_dev_jbox.png" width="230"> | [`canary_jbox.scad`](./canary_jbox.scad) |
 | **Witness signage plate** — "presence sensing in use / no video stored", debossed, 3 parametric lines | check local signage rules | <img src="./preview_dev_sign.png" width="230"> | [`canary_sign.scad`](./canary_sign.scad) |
 | **Field case** — bag-carry rugged witness at the honest top of the FDM ceiling: Ø1.5 O-ring cord (27 % squeeze), eight-lobe clamp, zero external ports (open to charge), bonded PC lens disc behind a contrast-color trim bezel, ePTFE vent, 4 mm walls, TPU impact boot + lanyard. CER‑4 intent: IP67 + MIL‑STD‑810H transit drop — [earn the rating, don't assume it](./field_ratings.md) | 84 × 39 shell, 101 × 56 over its screw lobes, 24.6 tall with the lid; boot on ≈ 106 × 61 | <img src="./preview_dev_field.png" width="230"> | [`canary_field_case.scad`](./canary_field_case.scad) |
@@ -175,9 +179,9 @@ measurements welcome.
 | **S3 hallway stick case** — Waveshare **ESP32-S3-LCD-1.47** (the USB-A STICK, not the C6 header board). The hallway nightlight body: plugs into a wall adapter, the 172x320 glass faces the corridor, and the WS2812 leaves through a **lit white seam** down both long walls. Screwless — four cantilever beams cut into the bezel wall, sized by strain (ε printed at render, PETG budget 1.8%), with 45° hold faces at all four hooks (the plate pulls out against their undersides) and a far-end scallop that lifts the far pair first, so a thumb pops it for the microSD and the plug end is never the end that lets go. The plug end is the whole design problem: the opening is a RECTANGLE (series-A is not a stadium — that is USB-C), the wall is thin and relieved so a recessed receptacle clears it, an assert fails the render if under 11 mm of insertion length survives, and the drop buttress reaches INWARD (outward would eat the very length it protects). The RGB does **not** fire backwards — Waveshare's "clear acrylic sandwich panel" is the tell, the LED glows out the edge gap between the LCD module and the PCB — so the light gets a **seam** along the side walls at exactly that band rather than a hole in the back, which frees the back for the mark. The seam is filled with **unfilled white PETG**, a light pipe rather than a slot, and its x span is derived from the cavity face and asserted: the first version stopped 0.65 mm short and would have shipped a light pipe with no light in it. The side elevation reads 1 mm black / 3 mm white / black. Ties are hidden ribs in the inner 1.2 mm of the wall, so the white line is unbroken and each side presses in as ONE strip. No vents — the case is 8.2 mm of measured stack in a 9.2 mm shell, and the thumb scoop to the USB opening is the airway. Black PETG, yellow mark, white band. **Two board builds** since the board is sold bare but advertises GPIO expansion: `headers="none"` and `headers="male"` (the 2.54 mm rows soldered pointing down). The plug end does not move — headers add depth *behind* the PCB, so the insertion length and the drop collar are untouched and the case simply gets 5.85 mm deeper (bezel 9.200 → 15.050). What the axis does turn on is the compliant PCB ribs: they land on the same long edges the pin rows run down, and at the unmeasured `hdr_inset` candidates they clear by 0.20 mm or overlap by 0.20, so that arithmetic is an assert rather than a comment | screwless snap, thumb-release, 3 filaments, 2 board builds, `gen_3mf.py stick` / `stick-male` | <img src="./preview_dev_s3_147.png" width="230"> | [`canary_s3_lcd147.scad`](./canary_s3_lcd147.scad) |
 | **C6 display pocket case** — Waveshare **ESP32-C6-LCD-1.47** (portrait), both board builds: `headers="none"` (stripped: no headers, corner pillars removed) or `headers="male"` (as shipped: down-facing pin headers + brass M2 corner pillars — deeper cavity, press bosses land on the pillar tops). Face-down bezel over the active-area window, edge-captured board (no screws into the board), snap-in vented back, blind keyhole. The overhanging BOOT/RST buttons and the USB-C shell (both BACK-mounted — photo-verified) get full-depth insertion channels behind "ear"/"chin" wall bulges, and the USB-C port is a true stadium (full-round ends) sized shell + tolerance. The board record is the 1.47's, from the Waveshare mechanical drawing — the board trio (`board_l` / `board_w` / `pcb_t`) is owned by its device manifest as `ws147` registry references; the 1.69 board has its own case, `canary_s3_touch169.scad`. The bezel face prints **flat on the plate** — the same untapered "edge chamfer" the C3 sibling carried, drawing the same 0.80 mm square rabbet around the first-layer perimeter, is gone here too (390.33 mm² of bed contact where flat gives 493.69), and [`check_foot_relief.py`](./check_foot_relief.py) is what keeps it gone. Heat-escape slots on the sides + a back grille | snap-fit, vented, 2 board builds | <img src="./preview_dev_c6_147.png" width="230"> | [`canary_c6_display.scad`](./canary_c6_display.scad) |
 | **C3 pocket display case** — Waveshare **ESP32-C3-LCD-1.47** (portrait; the C6 sibling's exact outline + panel, plus a TF slot and an RGB LED), three board builds: `headers="pillars"` (the board **as Waveshare ships it** — brass corner pillars on, headers not soldered; the press bosses span the measured 2.8 mm to land on the flat pillar tops and hold the board against the bezel, and the lid skirt is notched around each pillar), `"none"` (stripped, pillars unscrewed — the shallowest case), or `"male"` (down-facing headers + pillars — deepest, thin skirt clear of the pin rows). Three PETG spools, and the **slots are roles**: slot 1 body = **YELLOW** (bezel and lid both), slot 2 mark = **BLACK**, slot 3 light = **WHITE**. The white does the job of Waveshare's clear-acrylic sandwich: measured off the hardware at 1 mm behind the glass front, 2.8 mm tall, and it is **ONE continuous U** — up both long walls, around both far corners, across the LED's end wall — white through the full wall depth with no ties crossing it. Both earlier cuts are lessons kept: outer-skin webs chop the strip into dashes, inboard ribs put black slats in the light path, and a strip that stops short of the corners goes dark exactly where it turns. The black is the **branding**: the lid's back carries the "Canary" wordmark, debossed and filled at zero clearance so the AMS fuses it. The wordmark alone, not the bird — [`canary_mark_lib.scad`](./canary_mark_lib.scad) states a ~30 mm minimum for the mark's interior detail and this lid is 25.12 mm across. It carries the mark **and** the wall hanger (`lid_back`): the plate is 41 mm tall and the wordmark takes four of them, so the hanger sits high and the word reads below it. The hanger is an **egg** — [`canary_vent_lib.scad`](./canary_vent_lib.scad)'s house ovoid, mounted upright (wide base down, crown up). A round keyhole admits exactly one head size and a real wall screw did not fit the old Ø7 one; an egg tapers continuously, so one opening takes a range of heads — offer the head into the base, let the case drop, and the flank carries the screw to the crown, which is sized to the shank and will not give the head back. The through cut is asserted clear of the press bosses and the skirt's snap band. The glass is **located, not clamped**: bosses cut to the exact component stack (no preload), and the face touches the panel only on a land over the module border — the innermost 0.5 mm of lip is relieved 0.25 so the window rim never puts a contact line on the glass edge. BOOT/RST are **printed-in-place flexure paddles**: a press pad cut free by a 0.55 mm slot on three sides, hinged at its USB end, a boss on its back over the actuator — press it with a fingertip, no tool, nothing internal exposed, and the pad sits recessed so a pocket squeeze lands on the ear rim instead. USB-C is a true stadium hugging the shell at ~0.05 mm per side with a **chamfered** rim for the plug's overmold (the recessed ring it replaced left a 0.4 mm floor over the insertion slot and broke out on the first print). The front face itself prints **flat on the plate**, with no modeled foot relief: the "face edge chamfer" this file used to carry was an untapered cut, so what it drew was a 0.80 mm square **rabbet** around the whole first-layer perimeter — an overhang, on the one surface a person looks at, giving up a fifth of the face plate's bed contact (403.62 mm² where flat gives 508.15) to duplicate a ~0.2 mm elephant-foot compensation the slicer already applies. [`check_foot_relief.py`](./check_foot_relief.py) measures every exported mesh and fails the build if a stepped foot comes back; a real taper still passes. **Keyed lid**: the board's M2 pillar pattern is asymmetric, so on the USB-C board a tab on the lid's inner face rides in the USB insertion slot: offered the wrong way round, it lands on the far wall's rim and the lid refuses to close, in all three builds (the skirt's one-ended USB relief, the old key, only caught the stripped build). The USB-A board has no slot and no tab: turned, its skirt lands on the drop collar. The error is physical, not a rattle you discover later. Asymmetric snap nubs give it a real click. microSD swaps with the lid off (the slot mouth faces down-board; no wall window could pass a card). **Two plates, not one with a flag**: `gen_3mf.py c3` cuts the case for the board as Waveshare ships it, `gen_3mf.py c3-male` cuts it for a board with the headers soldered on — 3.00 mm deeper in the bezel (12.25 → 15.25) with press bosses 3.00 mm longer (4.80 → 7.80) and a thin skirt clear of the pin rows, same outline. They are not interchangeable on a finished print, so the board they were cut for is in the filename; `-bezel` / `-lid` suffixes split either one when you are iterating on one half. **It also fits the USB-A board** (`port="usb_a"` — the ESP32-S3-LCD-1.47, same PCB outline, same panel, same buttons, but the board *ends* in a series-A male plug): `gen_3mf.py c3-usba` / `c3-usba-male`. The port axis is the only difference and it is additive — every USB-C part renders vertex-for-vertex identical to before it existed. Four things move with it: the opening becomes a **rectangle** (a stadium leaves a series-A shell's square corners nowhere to go), it centers on the **PCB mid-plane** because the plug straddles the board rather than sitting on its back, the chin bulge disappears (nothing to swallow — the plug goes through and stands outside), and the root gains an **inward** drop collar (outward would spend the very insertion length it protects; the assert caught that on the first cut, at 8.8 mm against an 11.0 floor). The interesting one is the **light ring**: a series-A plug sits low enough to land on the band, so rather than shortening the ring on every wall or stopping it at this one — the U this case abandoned when print 3 showed the pipe going dark where it turns — the ring **dives under the plug**, keeping 1.55 mm of white running beneath the opening. Still one closed ring, and the band's part count is what proves it. Not offered in the `pillars` build: that is a measured claim about the C3's brass standoffs and nobody has had an S3 in hand to say the same | 3 filaments, snap lid, keyed, 2 boards × 3 board builds, `gen_3mf.py c3` / `c3-male` / `c3-usba` / `c3-usba-male` | <img src="./preview_dev_c3_147.png" width="230"> | [`canary_c3_lcd147.scad`](./canary_c3_lcd147.scad) |
-| **7″ touch dashboard case** — Waveshare **ESP32-S3-Touch-LCD-7** (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four **gusseted** outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (**bottom-wall intake → top-wall exhaust** — print in PETG/ASA, this panel runs hot; the two-part tray adds a ~40 cm² back grille, and the one-piece `frame`'s plate deliberately carries none — see the back-plate section), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered **USB pass-through** plus a matching **side exit** on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three **TPU fitments**: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk **dock** for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape **and** portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). **Print the `gauge` corner pair first** (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours | glass drops in, lip 10.4, TPU-fitted ports | <img src="./preview_dev_lcd7.png" width="230"> | [`canary_s3_lcd7.scad`](./canary_s3_lcd7.scad) |
+| **7″ touch dashboard case** — Waveshare **ESP32-S3-Touch-LCD-7** (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four **gusseted** outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (**bottom-wall intake → top-wall exhaust** — print in PETG/ASA, this panel runs hot; the two-part tray adds a ~40 cm² back grille, and the one-piece `frame`'s plate deliberately carries none — see the back-plate section), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered **USB pass-through** plus a matching **side exit** on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three **TPU fitments**: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk **dock** for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape **and** portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). **Print the `ring_gauge` (~5.6 g) and the `frame_gauge` corner (~19 g) before the one-piece `frame` (~136 g)** — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). The two-part bezel + tray and its `gauge` pair are legacy: the tray's PCB bosses stand where the panel's own M3 standoffs go, so it cannot take the bonded panel (its render says LEGACY). Connector centers and `pcb_h` are NOMINAL — measure yours | glass drops in, lip 10.4, TPU-fitted ports | <img src="./preview_dev_lcd7.png" width="230"> | [`canary_s3_lcd7.scad`](./canary_s3_lcd7.scad) |
 | **1.69″ touch watch-display puck** — Waveshare **ESP32-S3-Touch-LCD-1.69** (rounded-square 240×280 capacitive-touch smartwatch board — S3, IMU, RTC, battery/charger). The bonded glass slab (41.13 × 33.13) overhangs the smaller PCB (37.12 × 29.83) by ~2 mm, so the face lip captures it — no screws (this board has no mount holes). Face-down bezel + snap-in vented back (skirt rides the overhang, 4 nubs, standoffs press the board forward, blind keyhole). USB-C (bottom) + PWR/BOOT/RST (top) + battery/RTC/pin slot (side); side heat slots + back grille; optional 22° cradle. Connector centers NOMINAL — measure yours | snap-fit, vented, edge-captured | <img src="./preview_dev_t169.png" width="230"> | [`canary_s3_touch169.scad`](./canary_s3_touch169.scad) |
-| **Vehicle mount kit** — VHB-taped dash plate with a 10° stud riser + an air-vent louver clip (extruded spring prongs snap over one blade). ⚠️ cabins exceed +60 °C: USB power only, ASA, light colors | set `stud_gap` per case (36 = field) | <img src="./preview_dev_veh.png" width="230"> | [`canary_vehicle_mount.scad`](./canary_vehicle_mount.scad) |
+| **Vehicle mount kit** — VHB-taped dash plate (the tape on its flat underside) with a 10° stud riser + an air-vent louver clip (extruded spring prongs snap over one blade), the studs on 2.4 mm riser pads so they reach a booted field case's keyholes. ⚠️ cabins exceed +60 °C: USB power only, ASA, light colors | set `stud_gap` per case (36 = field) | <img src="./preview_dev_veh.png" width="230"> | [`canary_vehicle_mount.scad`](./canary_vehicle_mount.scad) |
 | **Body-worn clips** — belt leaf-spring clip (prints with its profile on the bed: the leaf's flex stays in the layer plane) + MOLLE/PALS weave plate, both on the two-stud interface; made for the field case's floor keyholes, the studs on 2.4 mm riser pads so they reach them through the boot's floor | check local recording law; pair with the sign | <img src="./preview_dev_wear.png" width="230"> | [`canary_wear_clip.scad`](./canary_wear_clip.scad) |
 | **Vision Pro mount** — bridges a Seeed reCamera Pro onto the shared stud interface: keyhole pockets on the back (hangs on any existing stud surface in this catalog), 1/4"-20 tripod counterbore and/or magnet pocket on the front (reCamera's confirmed mount options, [Canary Vision Pro doc](../canary_vision_pro_recamera.md)). No confirmed body dimensions yet — mounting interface only | measure your screw/nut; no bench unit yet | <img src="./preview_dev_visionpro.png" width="230"> | [`canary_vision_pro_mount.scad`](./canary_vision_pro_mount.scad) |
 | **Universal fit coupon** — ONE small print that calibrates every fit in the catalog: the **Canary bird debossed full-size into the bed face** (the glyph first-layer test — `glyph_rib` is the one number it tunes), the WAP's two-sided clip channel, keyhole+stud **with a click detent** (slide the mate on, it clicks and stays) beside the doorbell's **dovetail lug** pocket (the mate carries both, so a snapped stud does not end the station), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labeled with the parameter it tunes | **print this before any case** | <img src="./preview_dev_coupon.png" width="230"> | [`canary_fit_coupon.scad`](./canary_fit_coupon.scad) |
@@ -344,15 +348,17 @@ protocols that earn each level — see
 | **ASA** | outdoor, sun-exposed | UV-stable, HDT ~95 °C; print hot and draft-free |
 | **PC / PC-blend** | maximum impact + heat (vandal-prone spots) | highest toughness/HDT; needs an enclosed printer; pair with neutral-cure silicone only |
 | **CF-PETG / CF-Nylon** | Vision **bracket + knob** | ~2× stiffness for the cantilevered hinge; hardened nozzle required |
-| **TPU 90–95 A** | gaskets | 2 perimeters, 100 % infill, slow |
+| **TPU 90–95 A** | gaskets, the doorbell's service plungers, the field case's boot, the 7″ case's fitments, the fit coupon's STRIP, the printed gland's bush | 2 perimeters, 100 % infill, slow — from an external spool, never the AMS |
 | PLA | clip coupon / fit checks **only** | creeps and softens ~55 °C — not for deployed housings |
 
 **Thermal / outdoor kit** — the enemy outdoors is solar heat as much as
 water: a dark case in sun can exceed the LiPo's comfort zone (build plan
 §9.2). `part="shield"` prints a Stevenson-screen style **solar radiation
 shield**: a second roof standing 6 mm above the lid on hollow standoffs,
-fastened by the existing corner screws (swap in M2 × 16–18), with apertures
-auto-opened over the camera/LED/touch. Print it in **white or light ASA**.
+fastened by four M2 × 12 flat-head screws of its own into blind pilots in
+the face over the corner posts (`opt_shield`, on in the Outdoor preset — the
+plate screws stay in the back, and a longer screw would run past the 3.6 mm
+pilot), with apertures auto-opened over the camera/LED/touch. Print it in **white or light ASA**.
 `part="tray"` is a slotted **desiccant tray** for a 1 g silica pack — clip or
 VHB it into any Canary cavity to keep condensation off the boards. For insect
 resistance, keep vent holes ≤ 1.0 mm (the Sense case defaults to 1.0 × 10;
@@ -410,13 +416,13 @@ one-click [importable Cura profile](./profiles/README.md)). For the reasoning
 behind it all — where strength comes from, fits, finish, durability — see
 [**Best-practice printing tips**](./printing_best_practices.md).
 
-**Mass budget** (solid-volume upper bounds from the rendered STLs; PETG at
-1.27 g/cm³ — multiply by 0.84 for ASA): WAP compact ≈ 12 g/pair, WAP battery
-≈ 34 g/pair, WAP weather ≈ 68 g/pair + 0.6 g gasket (the 2026-09 audit grew
-the seal-mode walls to true 1.2 mm gasket cheeks); Vision xiao ≈ 31 g/pair
-(weather ≈ 51 g), Vision devkit ≈ 42 g/pair, bracket ≈ 10 g, knob ≈ 3 g.
-Even the heaviest full kit stays under ~75 g — wall anchors, not weight,
-size the mounting.
+**Mass budget** (solid-volume upper bounds from the committed STLs; PETG at
+1.27 g/cm³ — multiply by 0.84 for ASA): WAP compact ≈ 14 g/pair, WAP battery
+≈ 49 g/pair, WAP weather ≈ 98 g/pair + 0.6 g gasket (+ 26 g sun shield);
+Vision xiao ≈ 43 g/pair (weather ≈ 81 g), Vision devkit ≈ 58 g/pair,
+bracket ≈ 10 g, knob ≈ 3 g; Sense ≈ 44 g/pair; the doorbell's six parts
+≈ 213 g (≈ 444 g on the 15° wedge plate). Wall anchors, not weight, size
+the mounting.
 
 ---
 
@@ -427,7 +433,7 @@ in §6.6 of the [Peripheral Build Plan](../canary_peripheral_build_plan.md).
 Authored in [OpenSCAD](https://openscad.org), and built as a **configurator**:
 tick the peripherals you fitted and the case rebuilds itself — adding the right
 bays, ports and cutouts and resizing to suit. Opt-in extras add a **TPU gasket +
-drip-edge lid** for splash resistance and **wall-mount keyholes/tabs**.
+O-ringed plate screws** for splash resistance and **wall-mount keyholes/tabs**.
 
 ## Configure it (you tick what you have)
 
@@ -444,7 +450,7 @@ panel shows your options as checkboxes. Tick what's on your device:
 | `opt_tamper` | **magnet pocket** on the lid underside |
 | `opt_touch` | thinned **touch window** on the lid (capacitive sensing through the wall) |
 | `opt_antenna` | **bulkhead hole** in the side wall for a u.FL/SMA antenna |
-| `opt_seal` | **weather mode**: perimeter gasket groove + printable TPU gasket + drip-edge lid + USB plug recess (see [Weather mode](#weather-mode-opt_seal)) |
+| `opt_seal` | **weather mode**: gasket groove in the shell's ledge + printable TPU gasket + O-ring glands under the plate screws (pan heads, mid posts on the long walls) + USB plug recess (see [Weather mode](#weather-mode-opt_seal)) |
 | `opt_mount` | **wall mounting**: blind keyholes and/or external screw tabs (see [Mounting](#mounting-opt_mount)) |
 
 Prefer a one-click starting point? Set **`preset`** to `battery_full`,
@@ -456,9 +462,9 @@ The three committed example presets:
 
 | Preset | Outer size (rendered) | What's on it |
 |--------|----------------------|--------------|
-| **battery_full** | **104.5 × 39 × 17.9 mm** | camera + buzzer + LED + LiPo bay + GPS bay + tamper |
-| **compact_plain** | **33.7 × 36.6 × 15.05 mm** | plain board (no camera), buzzer + LED, USB-powered |
-| **battery_weather** | **108.5 × 43 × 21.25 mm** | battery_full **+ gasket seal + drip-edge lid + keyhole mounts + weep** |
+| **battery_full** | **106.5 × 45.8 × 21.3 mm** | camera + buzzer + LED + LiPo bay + GPS bay + tamper |
+| **compact_plain** | **35.7 × 38.6 × 15.25 mm** | plain board (no camera), buzzer + LED, USB-powered |
+| **battery_weather** | **112.1 × 56.2 × 24.1 mm** | battery_full **+ gasket seal + O-ringed plate screws + keyhole mounts + weep** |
 
 > Corner posts always sit in **true corners beside the board** — that's why even
 > the compact case isn't as tiny as the bare-board reference. The board is always
@@ -466,14 +472,14 @@ The three committed example presets:
 
 ![battery_full preset — base and lid](./preview_all.png)
 ![compact_plain preset — base and lid](./preview_compact.png)
-![battery_weather preset — base, drip-edge lid and TPU gasket](./preview_weather.png)
+![battery_weather preset — base, shell and TPU gasket](./preview_weather.png)
 
 | | |
 |---|---|
 | **Source** | [`canary_wap_enclosure.scad`](./canary_wap_enclosure.scad) (configurator) |
 | **Example STLs** | [`..._battery_base/lid.stl`](./canary_wap_enclosure_battery_base.stl), [`..._compact_base/lid.stl`](./canary_wap_enclosure_compact_base.stl), [`..._weather_base/lid/gasket.stl`](./canary_wap_enclosure_weather_base.stl) |
 | **Clip test coupon** | [`..._clip_coupon.stl`](./canary_wap_enclosure_clip_coupon.stl) — print first to tune the snap fit |
-| **Fasteners** | 4 × **M2** flat-head self-tapping screws into the corner posts — max length is echoed at render (10 mm compact, 13 mm battery: the pilot is blind). `screw_size` = `m2` / `m2.5` / `m3` and `screw_head` = `flat` / `pan` re-derive pilot, clearance, seat and post size from the catalog's screw registry (`canary_core_lib`) |
+| **Fasteners** | **M2** self-tappers through the plate's recessed seats into blind pilots in the shell's post ends — the render's `HARDWARE` line is the count and length: 4 × flat × 10 on the compact and battery builds, 8 × pan × 8 over 8 O-rings on the Outdoor build (four corners + two mid posts per long wall), plus the sun shield's own 4 × flat × 12 into the face. `screw_size` = `m2` / `m2.5` / `m3` and `screw_head` = `flat` / `pan` re-derive pilot, clearance, seat and post size from the catalog's screw registry (`canary_core_lib`) |
 
 ## Print tolerances (tune once for your printer)
 
@@ -482,9 +488,9 @@ Print the **clip coupon** and check the lid fit on a small test before adjusting
 
 | Param | Default | Governs | Symptom → change |
 |-------|--------:|---------|------------------|
-| `tol_slide` | 0.20 | lid lip ↔ base, drip skirt ↔ wall, camera-disc seat | lid binds → raise; lid rattles → lower |
+| `tol_slide` | 0.20 | plate ↔ bore, camera-disc seat | plate binds → raise; plate rattles → lower |
 | `tol_press` | 0.10 | tamper magnet pocket, LED light pipe | part won't press in → raise; falls out → lower |
-| `tol_hole` | 0.30 | lid screw clearance holes | screw drags on the lid → raise |
+| `tol_hole` | 0.30 | plate screw clearance holes | screw drags in the plate → raise |
 | `clip_clear` | 0.25 | snap-clip face ↔ board edge | tune **on the coupon**, with `clip_t`/`clip_hook` |
 
 Enter **true part sizes** in the dimension parameters (e.g. `mag_d` is the
@@ -500,18 +506,20 @@ the clearance for you.
 A printed case is **never IP-rated**; for harsh outdoor exposure use the
 polycarbonate enclosures listed in build plan §9. Weather mode upgrades this case
 from "indoor only" to **rain/splash-resistant (≈ IP54)** — *not* immersion:
-the four corner screws can't clamp the long spans like a molded box can.
+printed posts and M2 screws can't clamp the long spans like a molded box can.
 
 What `opt_seal = true` adds:
 
-- **Perimeter gasket groove** in the base rim (walls auto-thicken to 4.0 mm to
-  host it with a 1.2 mm cheek each side) and a matching **printable TPU gasket**
-  (`part = "gasket"`). The gasket stands
-  0.3 mm proud and squeezes ~20 % under the lid screws (the ring prints 0.5
+- **Gasket groove** in the shell's internal ledge (the walls auto-thicken —
+  5.8 mm on the weather preset, a 1.2 mm skin outside the plate's 4.6 mm
+  ledge band, which carries the groove with a cheek each side) and a matching
+  **printable TPU gasket** (`part = "gasket"`). The gasket stands
+  0.3 mm proud and squeezes ~20 % under the plate screws (the ring prints 0.5
   narrower than the groove — ~86 % fill — so the incompressible TPU has room
-  to flow instead of propping the lid open).
-- **Drip-edge lid**: the lid grows a 3 mm skirt that overlaps the base wall, so
-  water sheds off the seam instead of sitting on it.
+  to flow instead of propping the plate open).
+- **Mid posts**: seal mode adds screw posts along each long wall so no clamp
+  span passes 40 mm (the render echoes them). There is no drip skirt: the
+  only seam is the plate's, on the back face.
 - **USB plug recess**: a shallow recess frames the USB-C opening so a flanged
   silicone dust plug seats flush (fit one for deployment; remove to charge/flash).
 - **Rim headroom guarantee**: the cavity auto-grows so the gasket path stays
@@ -521,11 +529,11 @@ What `opt_seal = true` adds:
 - **Weep** (`opt_weep`, on in the weather preset): a Ø2 drain through the
   USB wall at the floor corner — the low point when hung USB-down — angled
   downward, so condensate leaves and driven rain does not enter.
-- **Sealed screw heads** (`head_seal`, off by default): the corner posts stand
-  INSIDE the gasket line, so a bare screw is a drip path down its thread onto
-  the post and into the cavity. `head_seal = true` cuts an O-ring gland under
-  each head (a standard 2 × 1 ring for M2; needs `screw_head = "pan"`) and
-  the head squeezes it 25 %.
+- **Sealed screw heads** (always, in seal mode): the posts stand INSIDE the
+  gasket line, so a bare screw is a drip path down its thread onto the post
+  and into the cavity. Every plate screw seat carries an O-ring gland under
+  its head (a standard 2 × 1 ring for M2; the weather preset forces
+  `screw_head = "pan"`) and the head squeezes it 25 %.
 - **USB drip awning** (`usb_hood`): for a case that stands sideways or on a
   desk rather than hanging USB-down — a 45° awning over the opening that
   prints with the wall. Exclusive with the plug recess.
@@ -548,10 +556,13 @@ To finish the seal you also need to:
 **Gasket print settings:** TPU 90–95A, 0.2 mm layers, 2 perimeters, 100 % infill,
 slow (~25 mm/s). It's a 1.1 mm-wide ring — print it alone, brim optional.
 
-**Assembly order with the seal:** board + battery in, gasket into the groove,
-lid on (lip nests inside the gasket ring), then the 4 screws in two passes
-(snug diagonally, then final quarter-turns) so the squeeze is even. With
-`head_seal`, drop an O-ring into each gland before the screw.
+**Assembly order with the seal:** board + battery onto the plate; turn the
+shell face-down and press the gasket into the groove in its ledge on a thin
+film of silicone grease (the ring is 0.5 mm narrower than its groove, so dry
+it falls out when the shell turns face-up); lower the shell over the plate
+(the plate nests inside its walls, onto the gasket), turn the case over,
+drop an O-ring into each seat's gland, then the 8 screws in two passes (snug
+diagonally, then final quarter-turns) so the squeeze is even.
 
 **Drop resistance:** `batt_hold` (default on) drops two ribs from the lid over
 the battery bay, resting `batt_h` above the floor so the cell cannot bounce
@@ -590,19 +601,19 @@ These dimensions were reconciled against **Seeed's official spec** and a
 |---------|-------|--------|
 | Board cradle + frame | base | always (standoffs + perimeter frame, PCB `standoff_h` off the floor) |
 | **Board snap clips** | base, long edges | `board_clips` — 4 tabs hook over the PCB, **clicks in, no screws** |
-| **USB-C port** | base, −X wall | always (12 × 6.5 mm, centered on the connector axis; board parked at this wall) |
+| **USB-C port** | shell, −X wall | always (12 × 6.5 mm, centered on the connector axis; board parked at this wall) |
 | Battery bay + **wire channel** | base | `opt_battery` (lead notch in the ribs: `batt_wire_w`) |
 | GPS module bay | base | `opt_gps` |
-| Antenna bulkhead | base, +X wall | `opt_antenna` |
+| Antenna bulkhead | shell, +X wall | `opt_antenna` |
 | **Camera/sensor window + disc seat** | lid | `opt_camera` (12 × 1 mm clear disc, `cam_disc_d/t`) |
 | **Light-pipe / LED port** | lid | `opt_led` (press fit) |
 | **Buzzer + pressure vent** | lid | `opt_buzzer` (GORE seat + hole-ring) |
 | **Cap-touch window** | lid | `opt_touch` (thinned to `touch_wall`) |
 | **Tamper-magnet pocket** | lid underside | `opt_tamper` (press fit — add a drop of glue) |
-| **Gasket groove + drip skirt + USB plug recess** | base rim / lid edge | `opt_seal` |
+| **Gasket groove + O-ring glands + USB plug recess** | shell ledge / plate seats / USB wall | `opt_seal` |
 | **Keyholes / screw tabs** | base back / walls | `opt_mount` + `mount_style` |
 | **Chamfered lid edge, debossed label** | lid | `lid_edge`, `label_text` (label needs the font installed) |
-| Screw lid | 4 corners | countersunk M2 into self-tapping posts; lip nests into base |
+| Plate screws | 4 corners (+ mid posts sealed) | M2 through the plate's recessed seats into blind pilots in the shell's post ends; the plate nests inside the walls |
 
 ## Render / regenerate the STLs
 
@@ -817,14 +828,15 @@ to measure against. Print this before anything larger.
 
 The one-piece frame ships **black-bodied**: black case, black bezel, black egg
 vent mouths, the **house mark and its lockup in yellow**, and the help QR's
-modules in white printed straight onto the plate. Everything else —
+modules in yellow straight onto the black plate. Everything else —
 BOOT/RESET/SD, the rating block, the adhesive-rail moats — is plain deboss in
 the body color, no filament of its own.
 
 | slot | filament | what it prints |
 |---|---|---|
 | 1 | `pal_body` — **Black** | the case, the bezel ring, the vent mouths |
-| 2 | `pal_accent` — **Signal Yellow** (RAL 1003) | everything the back plate says: the bird, the three-row lockup under it (SECURACV / CANARY / ERRERlabs), and the help QR's modules |
+| 2 | — | unused on this palette: `ink_groups` is empty, and the packager keeps the number so a three-filament build is one edit away |
+| 3 | `pal_accent` — **Signal Yellow** (RAL 1003) | everything the back plate says: the bird, the three-row lockup under it (SECURACV / CANARY / ERRERlabs), and the help QR's modules |
 
 **Two filaments, not three.** `ink_groups` is empty on purpose — a white QR
 beside a yellow mark made the plate a three-way argument, and the symbol read
@@ -1002,7 +1014,7 @@ and `fil_gap` gate that the three parts tile the frame exactly.
 
 The S3 hallway stick is the other three-filament part in this directory, and
 it is a far cheaper first multi-color job than the 7" frame: both halves fit
-one plate at about 20 g of part.
+one plate at about 5 g of part.
 
 ```bash
 python3 gen_3mf.py stick      # writes stick_case.3mf — two objects, three filaments
@@ -1021,7 +1033,7 @@ handsome case with a dead seam.
 
 The packaged plate renders the band with `band_clear = 0`, which is the
 co-print mode the `.scad` documents: the slot is always cut at full size and
-only the loose INSERT is shrunk, so a band packaged at the default 0.10 would
+only the loose INSERT is shrunk, so a band packaged at the insert setting (0.10) would
 print 0.2 mm undersize in every direction and ask the AMS to bridge a gap that
 should not be there. At 0 the band exactly fills the pocket it was cut from —
 provably, since the bezel subtracts `seam − ribs` and the band *is*
@@ -1076,8 +1088,11 @@ strip carrying its own rib notches, so it goes in as a single piece.
 3. Press a 6 mm magnet into the lid pocket (press fit — a drop of CA glue makes
    it permanent); add a GORE vent into the seat on the face's inner side if
    sealing; press the light pipe into the LED port.
-4. (weather mode) Seat the TPU gasket in the rim groove; glue the clear disc
-   into the camera seat.
+4. (weather mode) Glue the clear disc into the camera seat. Turn the shell
+   face-down and press the TPU gasket into the groove in its ledge on a thin
+   film of silicone grease — the printed ring is 0.5 mm narrower than its
+   groove (1.1 in 1.6), so dry it drops out when step 5 turns the shell
+   face-up over the plate.
 5. Lower the **shell** over the plate (its walls swallow the plate's edge —
    the key slot on the plate meets the rib in the +Y wall, so it only goes
    one way), turn the case over and drive the M2 screws through the plate's
@@ -1185,12 +1200,12 @@ Parametric camera unit for the Canary Vision stack — **OV5647 camera**
 
 | `host` | Build | Case |
 |--------|-------|------|
-| **`xiao`** (default) | XIAO ESP32-C3/S3 **seated in the module's stacking socket** — recommended, zero wiring | compact single column, ≈ **43 × 75 × 23 mm**; the bottom wall carries **both USB-C ports** (module *model port* above, XIAO *firmware port* below — both DERIVED from the seated stack) |
-| `devkit` | ESP32-C3-DevKitM-1 joined by the **Grove I2C cable** | two columns, ≈ 75 × 76 × 18.5 mm |
+| **`xiao`** (default) | XIAO ESP32-C3/S3 **seated in the module's stacking socket** — recommended, zero wiring | compact single column, ≈ **45 × 76 × 24.4 mm** (+ 20.5 mm prongs); the bottom wall carries **both USB-C ports** (module *model port* above, XIAO *firmware port* below — both DERIVED from the seated stack) |
+| `devkit` | ESP32-C3-DevKitM-1 joined by the **Grove I2C cable** | two columns, ≈ 77 × 78 × 19.5 mm |
 
-The front face carries the lens aperture (recessed clear-disc seat + optional
-rain hood) and the LED light pipe; the back shell carries the boards and the
-mounts.
+The front shell carries the lens aperture (recessed clear-disc seat +
+optional rain hood), the LED light pipe and the hinge fins; the back plate
+carries the boards (and the keyholes, when fitted).
 
 ![vision_weather preset (xiao host) — back, front and gasket](./preview_vision_xiao_weather.png)
 
@@ -1226,9 +1241,9 @@ pitch, M5 axis):
 ## Water ingress
 
 Same opt-in system as the WAP case (`opt_seal`): perimeter **TPU gasket** in a
-groove on the back-shell rim, **drip-edge skirt** on the front so water sheds
-off the seam, **flanged USB plug recess** on the bottom wall, plus two
-camera-specific items:
+groove in the front shell's internal ledge (the only seam is the plate's, on
+the back face), an O-ring under each of the six plate screws, **flanged USB
+plug recess** on the bottom wall, plus two camera-specific items:
 
 - **Rain/glare hood** (`opt_hood`): a ~220° collar over the lens window, open
   at the bottom — keeps rain and skylight off the glass. A separate part
@@ -1251,8 +1266,8 @@ pressure equalization, and treat the result as **rain/splash-resistant
 `host` is independent of the preset — any combination works. `part` = `back` /
 `front` / `all` / `gasket` / `bracket` / `knob` / `hood`. Committed STLs:
 `xiao_indoor`, `xiao_weather` (+ hood + gasket) and `devkit_indoor`; other combos
-render via the Customizer or CLI. Outer sizes: xiao ≈ **43 × 75 × 23 mm**
-(weather ≈ 47 × 79 × 30), devkit ≈ 75 × 76 × 18.5 (+20 mm prongs on all).
+render via the Customizer or CLI. Outer sizes: xiao ≈ **45 × 76 × 24.4 mm**
+(weather ≈ 51 × 82 × 30), devkit ≈ 77 × 78 × 19.5 (+20.5 mm prongs on all).
 
 **v0.4 (2026-09 assembly review)** — every Vision STL is re-cut, for cause:
 the front's pan-head seat was as deep as the front (a Ø4.6 through-hole the
@@ -1316,7 +1331,10 @@ applied here, and every front STL is re-cut:
    module's own USB-C faces the middle gap — open the case to reflash models.
 3. Route the camera FPC to the module's CSI connector (and, devkit host, the
    Grove cable across the middle gap to the DevKit pins).
-4. (weather) Seat the TPU gasket in the rim groove.
+4. (weather) Turn the front face-down and press the TPU gasket into the
+   groove in its ledge on a thin film of silicone grease — the printed ring
+   is 0.5 mm narrower than its groove, so dry it drops out when step 5 turns
+   the shell face-up over the plate.
 5. Lower the **shell** over the plate (the walls swallow the plate's edge;
    the plate's key slot meets the rib in the +Y wall, so it only goes one
    way), turn it over and drive the short M2 screws through the plate's
@@ -1342,7 +1360,7 @@ applied here, and every front STL is re-cut:
 | `cam_barrel_in` | 0.4 | how far the barrel stands into the front's bore; the rest under the disc is focus travel |
 | `cam_fov` / `cam_fov_margin` | 62 / 4 | the lens's diagonal FOV (datasheet) and the margin the hole's cone keeps around it |
 | `bridge_layer` | 0.2 | your slicer's layer height: the disc seat's bridge steps are this thick |
-| `screw_size` / `screw_head` / `head_seal` | m2 / pan / off | fastener from the catalog registry; `head_seal` rings each head with an O-ring in seal mode |
+| `screw_size` / `screw_head` | m2 / pan | fastener from the catalog registry; a sealed plate always rings each head with an O-ring (`head_seal` is gone) |
 | `opt_weep` / `seal_mid_posts` | preset / off | Ø2 drain at the bottom wall (on in `vision_weather`); an extra screw post per long wall for gasket squeeze |
 | `lens_dx/dy` | 0 / −1.7 | Lens center offset from the camera-board center (vendor CAD) |
 | `cam_hole_x/y` / `cam_grid_dy` | 21 / 12.5 / 4.05 | Pi-cam mounting grid, and its center's offset above the carrier's center (vendor CAD) |
@@ -1644,8 +1662,8 @@ seal-safe pockets on the body's back — offer it 8 mm high, windows over the
 lugs, and let it drop), lands in the plate's **collar**, and locks with a
 hidden **security screw** driven up through the collar into a blind boss —
 Ring-style tool-only removal, and the pilot never breaches the seal
-envelope. With `screw_insert = true` that boss takes a fifth M2 insert from
-the outer face (the BOM's INS1 counts it) and the security screw becomes the
+envelope. With `screw_insert = true` that boss takes a thirteenth M2 insert from
+the outer face, one past the twelve plate posts' (the BOM's INS1 counts all 13) and the security screw becomes the
 machine-thread variant of SCR8 — a self-tapper strips brass.
 
 **Power:** USB-C from the stack's ports loops through the internal cable well
@@ -1654,8 +1672,8 @@ wall or under trim — use a **right-angle USB-C plug** and seal the pass-throug
 with a grommet or silicone. (Native 16–24 VAC doorbell wiring needs a
 rectifier/buck module — out of scope here; USB is the supported path.)
 
-**Weather:** sealed **by default** (`opt_seal = true`): TPU gasket + drip-edge
-face, no side openings at all — the only penetrations are the sealed lens
+**Weather:** sealed **by default** (`opt_seal = true`): TPU gasket in the
+face's ledge and an O-ring under each plate screw, no side openings at all — the only penetrations are the sealed lens
 disc, the IP65 button, the speaker grille (its Ø1 holes end at the driver,
 sealed on its foam ring behind the MESH1 patch), the rear cable exit against
 the wall, the two service plungers (each rim seated on silicone) and the open
@@ -1694,8 +1712,10 @@ stop; nothing clicks — there is no clip), drive the two
 stick the **antenna** to the +X wall of the face between its ribs and run
 the pigtail under the module to the XIAO's u.FL → foam strip in the bay,
 cell in on edge (leads toward the well) → plug the right-angle USB-C into
-the XIAO, leg down through the oval → gasket in the groove, face on (the
-cradle finds the magnet's pad), 12 × M2 × 10 pan heads with their O-rings
+the XIAO, leg down through the oval → turn the face over and press the
+gasket into the groove in its ledge on a thin film of silicone grease (dry,
+the 1.1 mm ring falls out of its 1.6 mm groove when the face turns back),
+face on (the cradle finds the magnet's pad), 12 × M2 × 10 pan heads with their O-rings
 (black-oxide looks best) → wall plate
 on the frame, cable through its slot, offer the body 8 mm high over the
 lugs, drop it into the collar, drive the security screw up through the
@@ -1725,7 +1745,7 @@ collar.
 | `lug_y` / `lug_mid_y` / `dt_clear` | 41.5 / 6 / 0.2 | where the dovetail lugs park (clear of the cable slot); the pocket fit (dial it on the coupon's POCKET station) |
 | `collar_t` / `collar_tb` / `collar_arm` | 2.4 / 3.5 / 18 | the collar's side returns, bottom wall and how far the returns climb the body |
 | `btn_nut_ac` | 16.2 | the button's panel nut across corners — asserted against the bottom posts |
-| `opt_weep`, `seal_mid_posts`, `head_seal` | on / on / off | drain, mid-wall clamp posts, O-ring under each face screw |
+| `opt_weep`, `seal_mid_posts` | on / on | drain, mid-wall clamp posts (a sealed plate always takes an O-ring under each screw head) |
 | `usb_exit_*` | 14×10 oval | cable exit size/position, from the MODULE's centerline (guarded against the lug pockets; the wall plate's pass is this plus 4, run 8 mm up the slide) |
 | `sec_screw_d` | 2.2 | security screw — use a Torx/security drive |
 | `opt_vent` | **false** (since v0.9) | the GORE vent cluster on the face. Off, the sealed body breathes through its open Ø2 weep (the assert holds one path or the other). On — a membrane-only path with no open hole — **an adhesive GORE/ePTFE membrane over the cluster (inner face) is REQUIRED**: unmembraned holes defeat the seal. The speaker's mesh is not a path: it fronts a sealed-back driver on a foam ring |
@@ -1744,7 +1764,7 @@ Housing for the **canary-sense mmWave witness**
 ([design doc](../../canary_sense_mr60bha2_design.md)): the Seeed **MR60BHA2**
 60 GHz radar carrier with a **stacked XIAO ESP32-C6**, ceiling- or
 wall-mounted (bedside ≤ 1.5 m for the wellbeing/breathing channel). Outer
-≈ **57 × 58 × 21.5 mm** + prongs; reuses the Vision case's GoPro hinge,
+≈ **59 × 60 × 22.5 mm** + 20.5 mm prongs; reuses the Vision case's GoPro hinge,
 blind keyholes, bracket and knob (print those from the Vision file).
 
 **v0.2 (2026-09 assembly review)** — both Sense STLs are re-cut: the front's
@@ -1785,7 +1805,7 @@ exits the bottom wall at a height DERIVED from the seated stack
 | `radome_t` | 1.5 | radar window thickness; 1.5 ≈ half-wave in PETG/ASA (optimum) — avoid 0.7–1.1 (quarter-wave reflection band) |
 | `rad_win_x/y`, `rad_dx/dy` | 24×24 / 0, 6 | window size/position over the antenna — **measure** |
 | `radar_l/radar_w`, `stack_sock_h`, `xiao_below` | 44×36 / 6.5 / 5.5 | carrier + seated-stack dimensions — **measure** (the XIAO port height follows) |
-| `screw_size` / `screw_head` / `head_seal` | m2 / pan / off | fastener from the catalog registry; O-ring under each head in seal mode |
+| `screw_size` / `screw_head` | m2 / pan | fastener from the catalog registry; O-ring under each head in seal mode |
 | `lux_dx/dy`, `lp_dx/dy` | — | sensor/LED positions from the board center |
 | `opt_seal`, `mount_style` | off / hinge | same systems as the Vision case |
 | `radar` | `"bha2"` | `"fda2"` = the MR60**FDA2** fall-detection sibling: same carrier family and radome physics, but **ceiling-mount it** (keyholes), 2.4–3.1 m, facing straight down over the fall zone — and re-verify `rad_dx/dy` on that carrier |
@@ -1805,7 +1825,10 @@ exits the bottom wall at a height DERIVED from the seated stack
 3. Press the **light pipe** into the WS2812 port; when sealing, glue a clear
    disc behind the **lux aperture** (the BH1750 needs to see room light) and
    stick a GORE-type membrane over any vent seat.
-4. (weather mode) Seat the **TPU gasket** in the rim groove.
+4. (weather mode) Turn the radome shell face-down and press the **TPU gasket**
+   into the groove in its ledge on a thin film of silicone grease — the
+   printed ring is 0.5 mm narrower than its groove, so dry it drops out when
+   step 5 turns the shell face-up over the plate.
 5. Lower the **radome shell** over the plate (the walls swallow the plate's
    edge — the key slot meets the rib in the +Y wall, so the window can only
    land over the antenna array), turn it over and drive the 4 × M2 × 8 screws

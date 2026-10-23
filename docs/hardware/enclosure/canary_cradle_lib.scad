@@ -88,6 +88,16 @@
 //  The FEATURE geometry is fixed by this file so one printed plate size
 //  fits any case that adopts the interface at the same span; only the span
 //  and the plate outline are the adopter's business.
+//
+//  2026-10-23 (the cross-family review): THE WALL SCREWS THREADED THE PLATE.
+//  The two spine slots were Ø4.4 for the "#8 / M4" pan screws the dash's
+//  header and its BOM row (D-SCR2) name: 0.115 a side over a #8's 4.17
+//  major, below the catalog's 0.30 clearance rule, so a #8 cuts thread in
+//  the plate's 2.0 web and holds it off the wall instead of clamping it.
+//  The hole AUD-5 opened to Ø4.8 on the Vision bracket, AUD-19/20 on the
+//  adapters and the sign, and the doorbell's wall plate the same day:
+//  cr_wall_screw_d() is 4.8 now (0.31 a side). The Ø8.6 head seats stay
+//  (the #8 pan head's 8.2 + 0.2 a side), so only the slot's web moves.
 // ============================================================================
 
 use <canary_mount_lib.scad>  // the catalog stud standard — the cr_stud_*
@@ -134,6 +144,7 @@ function cr_fit()      = 0.3;   // per-face clearance on every docking face
 function cr_arm_l()      = 20.0;  // tongue length, root → barb center
 function cr_arm_w()      = 2.8;   // tongue width at the TIP (the bending dim)
 function cr_arm_w_root() = 4.2;   // ...and at the root, so stress evens out
+function cr_wall_screw_d() = 4.8;  // the two wall screws' slot width: a #8 / M4 pan (#8 4.17 major) + 2 x tol_hole (Ø4.4 left 0.115 a side)
 function cr_arm_slot()   = 1.6;   // U-slot around the tongue = its swing room.
                                   // Must exceed cr_eng + cr_fit or the arm
                                   // bottoms out on the plate before the barb
@@ -312,7 +323,7 @@ module cradle_plate(dx, dy, w, h, rail = 0) {
         // the case's pads land on
         for (sy = [1, -1]) translate([0, sy*(h/2 - r - 8), 0]) {
             hull() for (dyy = [-2.5, 2.5]) translate([0, dyy, -0.1])
-                cylinder(d = 4.4, h = cr_plate_t() + 0.2);
+                cylinder(d = cr_wall_screw_d(), h = cr_plate_t() + 0.2);
             hull() for (dyy = [-2.5, 2.5]) translate([0, dyy, cr_plate_t() - 2.0])
                 cylinder(d = 8.6, h = 2.1);
         }

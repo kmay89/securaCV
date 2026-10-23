@@ -1,21 +1,36 @@
 // ============================================================================
-//  Canary — FUNCTIONAL INSERTS  ⚠️ IN DEVELOPMENT (v0.2-dev)
+//  Canary — FUNCTIONAL INSERTS  ⚠️ IN DEVELOPMENT (v0.2.1-dev)
 //  Three small parts referenced by the enclosure docs but never modeled:
 //    part = "horn"       — exponential buzzer horn: glues INSIDE the WAP lid
 //                          over the vent cluster; channels the piezo into the
 //                          hole ring for a slightly more directional chirp.
-//                          It needs horn_h of room under the vent over
-//                          whatever is stacked there: the camera presets leave
-//                          12.4 over the PCB top, but the Sense expansion board
-//                          under the vent takes ~6 of it (the WAP's mag_under),
-//                          and compact_plain leaves 6.35 — so at the default 8
-//                          it fits no preset as drawn; shorten horn_h to under
-//                          ~6 for a camera build (the 2026-10-23 claims review).
+//                          It needs horn_h of room under the vent, and the
+//                          piezo it channels hangs under its throat. Against
+//                          Seeed's board models (the board's ±0.25 float):
+//                          the camera presets leave 12.4 over the PCB top and
+//                          the Sense camera's flex fold rises to 7.3-7.5 under
+//                          the throat's rim, so the horn ALONE fits at
+//                          horn_h <= 5.0 (at ~6 it meets the flex by 0.9;
+//                          the model mirrored, the FPC connector at 6.18
+//                          binds first, at 6.2); compact_plain leaves 6.35
+//                          over a 2.0 shield can: horn_h <= 4.0. With the
+//                          BOM's piezo (BZ1, CPT-9019S, 9 x 9 x 1.9) glued
+//                          under the throat, 0.3 clear: 2.7 on a camera
+//                          build, 2.15 compact. And 8 is the SHORTEST this
+//                          profile prints without support (the bore's
+//                          steepest flare is (mouth - throat)/horn_h, 45° at
+//                          8; at 7 down to 2.7 the bore overhangs 59-97 mm²),
+//                          so the default stays 8 and fits no WAP preset; at
+//                          a height that fits it is a short flare that needs
+//                          support. Without the room, glue the piezo straight
+//                          onto the GORE seat and leave the horn out.
 //    part = "glare_ring" — matte washer behind a camera disc: kills internal
 //                          reflections off glossy prints (print MATTE BLACK).
 //    part = "gland_body" / "gland_bush" / "gland_cap" — three-part printed
 //                          cable gland (rigid body + TPU bush + press cap)
-//                          for the relay/gang cable pass-throughs. The TPU
+//                          for the relay's panel-lead hole (Ø8.4 in its 2.0
+//                          face; the gang plate has no cable pass-through —
+//                          its power arrives by in-box USB). The TPU
 //                          bush is squeezed between the nose bore and the
 //                          cable; the cap snaps over the barb and holds it
 //                          down on its seat, and its skirt clamps the panel
@@ -39,6 +54,17 @@
 //    slide 5.4 out of its hole. A skirt carries the cap down to the panel,
 //    and the O-ring groove is 0.65 deep so the cap's 0.1 of snap slack rests
 //    the cord at 25 %.
+//
+//  v0.2.1-dev (2026-10-23, the cross-family review): two claims, no geometry.
+//    HORN — the header's "shorten horn_h to under ~6 for a camera build" still
+//    met the Sense camera's flex (0.9 at 6, Seeed's model), it gave no number
+//    for compact_plain, and it left out the piezo, which hangs under the
+//    throat: 2.7 / 2.15 is all that fits with it. Those heights print the bore
+//    over 59-97 mm² of overhang (8 is this profile's support-free minimum), so
+//    horn_h stays 8 and the header says what fits where.
+//    GLAND — it said "the relay/gang cable pass-throughs": the gang plate has
+//    none (device screws, light pipe, lux window only); the relay's face hole
+//    is the one it fits (8.0 + 2 x tol_slide = cg_hole, its lid_t = cg_panel).
 // ============================================================================
 
 use <canary_snap_lib.scad>   // snap_budget_once — the cap's one-time snap strain
@@ -53,7 +79,7 @@ horn_mouth  = 12.0;  // at the lid face: the WAP's Ø12 vent-pad recess, so the 
                      // magnet ring; Ø14.8 now clears both.) Physics honesty: a
                      // lid-scale horn cannot LOAD a ~4 kHz chirp (flare cutoff ~8.5 kHz,
                      // mouth << lambda) - expect a few dB of on-axis directivity, not "louder"
-horn_h      = 8.0;
+horn_h      = 8.0;   // the shortest support-free length of this profile (steepest bore flare (mouth - throat)/horn_h = 45° at 8) — it fits no WAP preset; the header gives the room each leaves (v0.2.1)
 horn_wall   = 1.4;
 
 /* [Glare ring] — matches the camera disc seats */
@@ -75,7 +101,7 @@ tol_press = 0.10;    // catalog default — core_tol_press(), canary_core_lib
 /* [Quality] */
 $fa = 3; $fs = 0.4;
 
-echo(str("Canary inserts v0.2-dev — ", part, "  (IN DEVELOPMENT)"));
+echo(str("Canary inserts v0.2.1-dev — ", part, "  (IN DEVELOPMENT)"));
 
 // ---- cable gland arithmetic (body z: flange face at 0, nose up) ---------------
 // The bush used to be a Ø6.3→5.4 cone driven into the Ø5.5 nose bore: its

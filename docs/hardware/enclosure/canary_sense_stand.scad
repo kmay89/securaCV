@@ -19,7 +19,11 @@
 //  center fin's rear flank),
 //  through upright, to 30° below horizontal toward the front (32° touches,
 //  35° hits 8 mm³, 40° 66 — the case's top wall on the stalk). pose_low = 15
-//  keeps 15° in hand. (The 2026-09-26 numbers — free 45° past horizontal
+//  keeps 15° in hand. DETENTS: the teeth hold the case at radome level and
+//  every 30° from it — tipped back 30° and 60°, forward 30°, 60° and to
+//  horizontal (radome straight down). The next one forward, 30° below
+//  horizontal, is free by only the 2° before the top wall's touch, outside
+//  pose_low's margin. (The 2026-09-26 numbers — free 45° past horizontal
 //  toward the back, 20° below toward the front — did not reproduce: at
 //  head_off 10 the fin points dug 0.8 mm into the stalk top from 10° above
 //  to 30° below horizontal, 4.2 mm³ radome-down; plumb measured 2,061.)
@@ -47,6 +51,23 @@
 //  bed — the base touched the bed on a 4.2 mm rim, 1158 of 6648 mm² — and each
 //  pocket a 25.6 mm bridge. (3) The head fins' feet are trimmed to the stalk
 //  top: the outer fins' 15 mm feet hung up to 6 mm over air, 12° off flat.
+//  2026-10-23: the head's detents, against the case they hold:
+//    * THE BEDSIDE POSE WAS NOT A DETENT. The pockets were cut in the head's
+//      own frame, and the head leans stalk_tilt with the stalk, so its 30°
+//      detents fell stalk_tilt off the world's: radome level sat 12° from one
+//      and 18° from the next (the released front hung upright on the head:
+//      teeth in the outer fins' solid, 34.97 mm³ in 24 pieces; EMPTY only
+//      12° radome-down or 18° radome-up), and the clamped teeth could not
+//      hold the pose this header calls the bedside one. The pockets are
+//      turned back by stalk_tilt about the bolt: radome level and every 30°
+//      from it are detents (EMPTY), 15° off one is not (the teeth meet the
+//      fins), and the case clears the stand at every detent in the free range;
+//    * the outer fins stood at the bare GoPro pitch, 0.175 off the case fins
+//      — the head is the third copy of the bracket's three prongs, and the
+//      bracket's own lesson (a printed fin's +0.1 left 0.075 of that gap)
+//      reached the bracket in AUD-12 but not here. hinge_clear 0.15, the
+//      bracket's: 0.325, and a free tooth rides 0.275 into the fin it cams
+//      over instead of 0.425.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 // ============================================================================
@@ -78,6 +99,7 @@ prong_t     = 3.0;
 prong_pitch = 6.35;
 fin_r       = 7.5;
 hinge_bolt_d = 5.0;
+hinge_clear = 0.15;  // outer fins stand this much wider than the GoPro pitch: the bracket's (a printed fin's +0.1 left 0.075 of the bare 0.175 gap)  // [0:0.05:0.4]
 hinge_teeth = true;
 teeth_n     = 24;
 teeth_h     = 0.6;
@@ -101,7 +123,7 @@ head_off = 15.0;                     // bolt axis above the head's base plate: t
 axis_z = base_t - 2 + (stalk_h - 0.2 + head_off)*cos(stalk_tilt);
 // the same point, for a probe that hangs the case on it (the pose sweep in the header)
 function sense_stand_axis() = [0, base_d*0.05 + (stalk_h - 0.2 + head_off)*sin(stalk_tilt), axis_z];
-function sense_stand_head_x() = prong_pitch + prong_t;   // the head's half-width along the bolt
+function sense_stand_head_x() = prong_pitch + hinge_clear + prong_t;   // the head's half-width along the bolt
 // the lowest free pose (tipped pose_low below horizontal, radome down-forward) keeps the
 // case's leading corner 2 mm over the base; the plumb pose is not free, so not asserted
 assert(axis_z - case_reach*sin(pose_low) - case_face*cos(pose_low) >= base_t + 2,
@@ -148,13 +170,17 @@ module head_fin(xc) {
 module hinge_head() {
     difference() {
         union() {
-            head_fin(0); head_fin(-prong_pitch); head_fin(prong_pitch);
+            // the outer fins hinge_clear wider than the GoPro pitch, the bracket's
+            head_fin(0); head_fin(-(prong_pitch + hinge_clear)); head_fin(prong_pitch + hinge_clear);
         }
-        tearbore_x(-prong_pitch - prong_t, 0, head_off, 2*(prong_pitch + prong_t), hinge_hole);
+        tearbore_x(-prong_pitch - hinge_clear - prong_t, 0, head_off, 2*(prong_pitch + hinge_clear + prong_t), hinge_hole);
         // detent tooth POCKETS in the outer fins' inner faces — the case fins
-        // carry the male teeth (same female convention as the Vision bracket)
-        if (hinge_teeth) {
-            xi = prong_pitch - prong_t/2;
+        // carry the male teeth (same female convention as the Vision bracket).
+        // Turned back by stalk_tilt about the bolt: the head leans with the
+        // stalk, and pockets cut square in its frame put every detent
+        // stalk_tilt off the world's, the radome-level pose among them
+        if (hinge_teeth) translate([0, 0, head_off]) rotate([stalk_tilt, 0, 0]) translate([0, 0, -head_off]) {
+            xi = prong_pitch + hinge_clear - prong_t/2;
             translate([ xi - 0.05, 0, head_off]) rotate([0,  90, 0])
                 linear_extrude(teeth_h + 0.15) offset(delta = 0.12) teeth2d();
             translate([-xi + 0.05, 0, head_off]) rotate([0, -90, 0])

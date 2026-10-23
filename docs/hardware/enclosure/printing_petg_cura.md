@@ -203,9 +203,9 @@ are off for every row** — the orientation is what makes that true.
 | Part | Orient | Brim? | The one thing |
 |---|---|---|---|
 | **[Fit coupon](./canary_fit_coupon.scad)** | flat, as exported | no | **Print this first.** Every station is labeled with the parameter it tunes. Don't print a case until the clip/slide/press stations feel right. |
-| **WAP base** | open side **up** | no | The USB-C cutout bridges fine at 240 °C; no support. |
+| **WAP base** (the plate) | back face down, open side **up** | no | Boards, clips and keyholes face up; nothing bridges — the USB-C opening is in the lid's wall, where its roof is chamfered. |
 | **WAP lid** | **face-down** | no | Face-down puts the chamfered edge + debossed label on layer 1 — a clean bed = a clean lid. |
-| **WAP weather lid** | face-down | no | The 3 mm drip skirt is self-supporting; the gasket lands separately. |
+| **WAP weather lid** | face-down | no | The walls run flush to the back (no skirt since v0.9); the gasket groove is in the internal ledge, facing up as printed. The gasket prints separately. |
 | **TPU gasket** | flat | **yes** (thin ring) | TPU 90–95 A, **2 walls, 100 % infill, ~25 mm/s, fan low/off.** It's a 1.1 mm ring — brim keeps it from wandering. |
 | **Vision back / front** | back open-up / front **face-down** | no | The GoPro hinge prongs print as part of the shell, fins self-supporting. |
 | **Vision rain hood** (`part="hood"`) | drip edge down, spigot up | no | A C-section with no overhang. The most sun-exposed part on the Vision: print it in **ASA**, then press the spigot into the front's groove and bond it. |
@@ -213,9 +213,10 @@ are off for every row** — the orientation is what makes that true.
 | **Vision knob** | flat | **yes** | Prints over an M5×25 bolt; small round footprint needs the brim. |
 | **Sense radome front** | **face-down**, window flat on the plate | no | **Radome flatness is the whole game.** Uniform 1.5 mm membrane (the model refuses 0.7–1.1 mm — the quarter-wave band that reflects the beam back), **unfilled PETG/ASA only** — no CF, no metallic paint, no foil label in front of the antenna or you blind the 60 GHz radar. Textured PEI is fine; don't sand the window. |
 | **Sense back** | open side up | no | — |
-| **Doorbell body** | tall pill, back flat on plate | **yes** | Tall + narrow footprint — brim for stability. Sealed by default; treat like a weather build (5 walls). |
+| **Doorbell body** (the plate the stack rides on) | back face down on the bed | no | 22.8 mm tall on a 48.7 × 166.4 footprint, 86 % of it on the bed — nothing to topple. Sealed by default; treat like a weather build (5 walls). |
 | **Doorbell face** | **face-down** | recommended | Two-stage soft edges + button bezel land on layer 1 face-down. |
-| **Doorbell / wall plates** | flat | no | T-studs print upward, self-supporting. |
+| **Doorbell wall plates** (flat and 15° wedge) | wall face down, as exported | no | The three dovetail lugs print upward, self-supporting. |
+| **Doorbell plungers** (`part="plunger"`) | heads down, as exported | no | **TPU 90–95 A** from the external spool, 0.2 mm layers (the web is exactly three), 100 % infill, slow. The R + B pair is one print on a sprue: cut it with scissors, never tear (one dimple = R, two = B). |
 | **Field case** | body open-up, boot separate in **TPU** | **yes** | Top of the FDM ceiling: **4 mm walls, O-ring groove, no over-cooling.** Anneal it. The rating is *earned by test*, not assumed — [field_ratings.md](./field_ratings.md). |
 | **Solar shield / desiccant tray** | flat | no | Print the shield **white/light ASA** — it's a sun part. |
 | **Paper templates** | — | — | These are **SVGs you print on paper at 100 %** — no plastic. Check the 20 mm square. |

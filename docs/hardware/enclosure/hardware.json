@@ -285,8 +285,16 @@
    ],
    "bom": {
     "INS1": {
-     "bom": 5,
+     "bom": 13,
      "echo": 13
+    },
+    "SCR10": {
+     "bom": 12,
+     "echo": 12
+    },
+    "SCR5": {
+     "bom": 18,
+     "echo": 6
     }
    }
   },
@@ -336,6 +344,14 @@
     "SCR3": {
      "bom": 4,
      "echo": 4
+    },
+    "SCR6": {
+     "bom": 1,
+     "echo": 1
+    },
+    "SCR7": {
+     "bom": 4,
+     "echo": 4
     }
    }
   },
@@ -381,6 +397,10 @@
    ],
    "bom": {
     "INS1": {
+     "bom": 4,
+     "echo": 4
+    },
+    "SCR8": {
      "bom": 4,
      "echo": 4
     }
@@ -584,7 +604,15 @@
    ],
    "bom": {
     "INS1": {
-     "bom": 5,
+     "bom": 13,
+     "echo": 4
+    },
+    "SCR10": {
+     "bom": 12,
+     "echo": 4
+    },
+    "SCR5": {
+     "bom": 18,
      "echo": 4
     }
    }
@@ -691,6 +719,10 @@
     "SCR7": {
      "bom": 4,
      "echo": 4
+    },
+    "SCR9": {
+     "bom": 2,
+     "echo": 2
     }
    }
   },
@@ -826,6 +858,82 @@
     }
    }
   },
+  "wap.battery_weather+inserts": {
+   "device": "canary-wap",
+   "scad": "canary_wap_enclosure.scad",
+   "overrides": {
+    "preset": "battery_weather",
+    "part": "base",
+    "screw_insert": "true"
+   },
+   "case": "WAP",
+   "items": [
+    {
+     "qty": 8,
+     "kind": "screw",
+     "spec": "M2 pan x 8 machine (into the inserts)",
+     "text": "M2 pan x 8 machine (into the inserts) (plate to the post ends)"
+    },
+    {
+     "qty": 8,
+     "kind": "insert",
+     "spec": "M2 heat-set insert 3.5 OD x 4",
+     "text": "M2 heat-set insert 3.5 OD x 4"
+    },
+    {
+     "qty": 8,
+     "kind": "o-ring",
+     "spec": "O-ring 2 ID x 1 CS (under the head)",
+     "text": "O-ring 2 ID x 1 CS (under the head)"
+    },
+    {
+     "qty": 1,
+     "kind": "gasket",
+     "spec": "TPU gasket (print part=\"gasket\")",
+     "text": "TPU gasket (print part=\"gasket\")"
+    },
+    {
+     "qty": 1,
+     "kind": "vent",
+     "spec": "Ø12 adhesive ePTFE/GORE vent patch",
+     "text": "Ø12 adhesive ePTFE/GORE vent patch"
+    },
+    {
+     "qty": 1,
+     "kind": "light-pipe",
+     "spec": "Ø3 light pipe",
+     "text": "Ø3 light pipe"
+    },
+    {
+     "qty": 1,
+     "kind": "window",
+     "spec": "Ø12 x 1 clear disc (bond)",
+     "text": "Ø12 x 1 clear disc (bond)"
+    },
+    {
+     "qty": 1,
+     "kind": "magnet",
+     "spec": "Ø6 x 2.2 disc magnet (press + glue)",
+     "text": "Ø6 x 2.2 disc magnet (press + glue)"
+    },
+    {
+     "qty": 2,
+     "kind": "wall-screw",
+     "spec": "#6 pan wall screw (keyholes)",
+     "text": "#6 pan wall screw (keyholes)"
+    }
+   ],
+   "bom": {
+    "INS1": {
+     "bom": 8,
+     "echo": 8
+    },
+    "SCR5": {
+     "bom": 8,
+     "echo": 8
+    }
+   }
+  },
   "wap.battery_weather.shield": {
    "device": "canary-wap",
    "scad": "canary_wap_enclosure.scad",
@@ -890,7 +998,20 @@
      "text": "M2 flat x 12 self-tap (shield to the face's pilots)"
     }
    ],
-   "bom": {}
+   "bom": {
+    "ORG1": {
+     "bom": 8,
+     "echo": 8
+    },
+    "SCR3": {
+     "bom": 12,
+     "echo": 12
+    },
+    "SCR4": {
+     "bom": 2,
+     "echo": 2
+    }
+   }
   },
   "wap.compact_plain": {
    "device": "canary-wap",
@@ -961,36 +1082,15 @@
    ],
    "bom": {
     "INS1": {
-     "bom": 4,
+     "bom": 8,
+     "echo": 4
+    },
+    "SCR5": {
+     "bom": 8,
      "echo": 4
     }
    }
   }
  },
- "bom_drift": [
-  {
-   "set": "doorbell+inserts",
-   "csv": "bom_canary_vision.csv",
-   "what": "short INS1",
-   "detail": "bom_canary_vision.csv INS1 qty 5 < 13 the CAD echoes"
-  },
-  {
-   "set": "sense",
-   "csv": "bom_canary_sense.csv",
-   "what": "unbilled #8 / M4 countersunk wall screw (bracket)",
-   "detail": "4x #8 / M4 countersunk wall screw (bracket) — no row in bom_canary_sense.csv bills it"
-  },
-  {
-   "set": "sense",
-   "csv": "bom_canary_sense.csv",
-   "what": "unbilled M5 x 25 bolt + nut (hinge; Vision knob/bracket parts)",
-   "detail": "1x M5 x 25 bolt + nut (hinge; Vision knob/bracket parts) — no row in bom_canary_sense.csv bills it"
-  },
-  {
-   "set": "vision.xiao_weather",
-   "csv": "bom_canary_vision.csv",
-   "what": "unbilled #6 pan wall screw (keyholes)",
-   "detail": "2x #6 pan wall screw (keyholes) — no row in bom_canary_vision.csv bills it"
-  }
- ]
+ "bom_drift": []
 }
