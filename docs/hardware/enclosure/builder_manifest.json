@@ -140,7 +140,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "5658e86d4b87760c0bab0751f5309bbd66c6c0cbeeb4f7ae5bfd00c4ae33d8e3",
+      "sha256": "b304fe3e10bb1d00cb222908401a5f5e1a5a2f31dba1a01a2b50f7c04bdd89ea",
       "groups": [
         {
           "name": "What to render",
@@ -347,8 +347,8 @@
             {
               "name": "tab_hole_d",
               "type": "number",
-              "default": 3.6,
-              "desc": "through-hole (M3 / #6)"
+              "default": 4.2,
+              "desc": "through-hole (M3 / #6): the #6's 3.505 major + 2 x tol_hole, rounded up (3.6 left a #6 0.04 a side; no released preset draws the tabs)"
             },
             {
               "name": "tab_cb_d",
@@ -963,7 +963,7 @@
               "name": "vent_pad_d",
               "type": "number",
               "default": 12.0,
-              "desc": "GORE-vent recess Ø, on the face's INNER side (the buzzer + pressure vent: the recess seats an adhesive vent; it prints face-down, and an outer seat cannot bridge)"
+              "desc": "GORE-vent patch Ø (the recess is cut tol_slide over it), on the face's INNER side (the buzzer + pressure vent: the recess seats an adhesive vent; it prints face-down, and an outer seat cannot bridge)"
             },
             {
               "name": "vent_pad_depth",
@@ -1122,7 +1122,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
+          "sha256": "bdfc31b56f5b08c462d44f62e91c6c2e944555bae361f2cfbcfee762734b00d9"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -1146,7 +1146,7 @@
         },
         {
           "file": "canary_rib_lib.scad",
-          "sha256": "c28d6c3ab4b6688057958dfd38d756ac4eaa7166326b186fb930097ad8c186c5"
+          "sha256": "8288799d4f67dde3bb1584d87ef06b0ada557abde0789416429516abe0c644d0"
         },
         {
           "file": "canary_color_lib.scad",
@@ -1234,7 +1234,7 @@
         }
       },
       "units": {},
-      "sha256": "87c15ceeb063f33954f808be8f373e51de408db1171fa6ce7cb44b330ec09942",
+      "sha256": "625dca17605104e2f27531a9950b1f83d5b570973efda5be8209b2fdeb014f07",
       "groups": [
         {
           "name": "What to render",
@@ -2023,7 +2023,7 @@
               "name": "vent_pad_d",
               "type": "number",
               "default": 12.0,
-              "desc": "GORE-vent seat Ø, on the front's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
+              "desc": "GORE-vent patch Ø (its seat is cut tol_slide over it), on the front's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
             },
             {
               "name": "vent_pad_depth",
@@ -2241,7 +2241,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
+          "sha256": "bdfc31b56f5b08c462d44f62e91c6c2e944555bae361f2cfbcfee762734b00d9"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -2265,7 +2265,7 @@
         },
         {
           "file": "canary_rib_lib.scad",
-          "sha256": "c28d6c3ab4b6688057958dfd38d756ac4eaa7166326b186fb930097ad8c186c5"
+          "sha256": "8288799d4f67dde3bb1584d87ef06b0ada557abde0789416429516abe0c644d0"
         },
         {
           "file": "canary_color_lib.scad",
@@ -2342,7 +2342,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "92eadc437cc90a8e7be32460ee9a0270d46cee3d0e11915714e48ea79d2fa161",
+      "sha256": "3c060f7351615a74cec5993f602e12963076107a6b5cb1d44d2e83c3531adf2d",
       "groups": [
         {
           "name": "What to render",
@@ -3366,8 +3366,8 @@
             {
               "name": "plate_screw_d",
               "type": "number",
-              "default": 4.2,
-              "desc": "wall screws (#8 / M4 PAN head — the seats are flat counterbores)"
+              "default": 4.8,
+              "desc": "wall screws (#8 / M4 PAN head — the seats are flat counterbores): the #8's 4.17 major + 2 x tol_hole (4.2 let the screw thread the plate, the Vision bracket's AUD-5)"
             },
             {
               "name": "plate_head_h",
@@ -3536,7 +3536,7 @@
               "name": "vent_pad_d",
               "type": "number",
               "default": 12.0,
-              "desc": "GORE-vent seat Ø, on the face's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
+              "desc": "GORE-vent patch Ø (its seat is cut tol_slide over it), on the face's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
             },
             {
               "name": "vent_pad_depth",
@@ -3700,7 +3700,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
+          "sha256": "bdfc31b56f5b08c462d44f62e91c6c2e944555bae361f2cfbcfee762734b00d9"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -3720,7 +3720,7 @@
         },
         {
           "file": "canary_rib_lib.scad",
-          "sha256": "c28d6c3ab4b6688057958dfd38d756ac4eaa7166326b186fb930097ad8c186c5"
+          "sha256": "8288799d4f67dde3bb1584d87ef06b0ada557abde0789416429516abe0c644d0"
         },
         {
           "file": "canary_color_lib.scad",
@@ -3808,7 +3808,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "71a15ebfaf82ea51541b0ecd9b5ae93769663858645341056fa55807df3923ba",
+      "sha256": "f2bd12199b63a1aa9bcfc3138f86cd9d888c86947099c06ca2fbbfa7d2ef2e84",
       "groups": [
         {
           "name": "What to render",
@@ -3876,7 +3876,7 @@
               "name": "opt_seal",
               "type": "bool",
               "default": false,
-              "desc": "perimeter TPU gasket + drip-edge front (indoor ceilings rarely need it)"
+              "desc": "perimeter TPU gasket in the shell's ledge + O-rings under the plate screws (indoor ceilings rarely need it)"
             },
             {
               "name": "opt_weep",
@@ -4091,7 +4091,7 @@
               "name": "vent_pad_d",
               "type": "number",
               "default": 12.0,
-              "desc": "GORE-vent seat Ø on the front's outer face — core_vent_pad_d()"
+              "desc": "GORE-vent patch Ø (its seat on the front's outer face is cut tol_slide over it) — core_vent_pad_d()"
             },
             {
               "name": "vent_pad_depth",
@@ -4212,7 +4212,7 @@
               "name": "tol_slide",
               "type": "number",
               "default": 0.2,
-              "desc": "sliding fits: front lip, drip skirt — core_tol_slide()"
+              "desc": "sliding fits: the plate in its bore — core_tol_slide()"
             },
             {
               "name": "tol_press",
@@ -4224,7 +4224,7 @@
               "name": "tol_hole",
               "type": "number",
               "default": 0.3,
-              "desc": "clearance holes: front screws — core_tol_hole()"
+              "desc": "clearance holes: the plate screws — core_tol_hole()"
             }
           ]
         },
@@ -4665,7 +4665,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
+          "sha256": "bdfc31b56f5b08c462d44f62e91c6c2e944555bae361f2cfbcfee762734b00d9"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -4689,7 +4689,7 @@
         },
         {
           "file": "canary_rib_lib.scad",
-          "sha256": "c28d6c3ab4b6688057958dfd38d756ac4eaa7166326b186fb930097ad8c186c5"
+          "sha256": "8288799d4f67dde3bb1584d87ef06b0ada557abde0789416429516abe0c644d0"
         },
         {
           "file": "canary_color_lib.scad",
@@ -5124,7 +5124,7 @@
         },
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
+          "sha256": "bdfc31b56f5b08c462d44f62e91c6c2e944555bae361f2cfbcfee762734b00d9"
         },
         {
           "file": "canary_mount_lib.scad",

@@ -213,7 +213,7 @@
      "id": "battery_full",
      "label": "battery full",
      "set": "wap-battery",
-     "dims_mm": "104.5 × 39 × 17.9 mm",
+     "dims_mm": "106.5 × 45.8 × 21.3 mm",
      "contents": "camera + buzzer + LED + LiPo bay + GPS bay + tamper",
      "options": {
       "opt_camera": true,
@@ -243,7 +243,7 @@
      "id": "compact_plain",
      "label": "compact plain",
      "set": "wap-compact",
-     "dims_mm": "33.7 × 36.6 × 15.05 mm",
+     "dims_mm": "35.7 × 38.6 × 15.25 mm",
      "contents": "plain board (no camera), buzzer + LED, USB-powered",
      "options": {
       "opt_camera": false,
@@ -273,8 +273,8 @@
      "id": "battery_weather",
      "label": "battery weather",
      "set": "wap-weather",
-     "dims_mm": "108.5 × 43 × 21.25 mm",
-     "contents": "battery_full + gasket seal + drip-edge lid + keyhole mounts + weep",
+     "dims_mm": "112.1 × 56.2 × 24.1 mm",
+     "contents": "battery_full + gasket seal + O-ringed plate screws + keyhole mounts + weep",
      "options": {
       "opt_camera": true,
       "opt_buzzer": true,
@@ -331,7 +331,7 @@
    "always": [
     {
      "label": "Fasteners",
-     "note": "4 × M2 flat-head self-tapping screws into the corner posts — max length is echoed at render (10 mm compact, 13 mm battery: the pilot is blind). `screw_size` = `m2` / `m2.5` / `m3` and `screw_head` = `flat` / `pan` re-derive pilot, clearance, seat and post size from the catalog's screw registry (`canary_core_lib`)"
+     "note": "M2 self-tappers through the plate's recessed seats into blind pilots in the shell's post ends — the render's `HARDWARE` line is the count and length: 4 × flat × 10 on the compact and battery builds, 8 × pan × 8 over 8 O-rings on the Outdoor build (four corners + two mid posts per long wall), plus the sun shield's own 4 × flat × 12 into the face. `screw_size` = `m2` / `m2.5` / `m3` and `screw_head` = `flat` / `pan` re-derive pilot, clearance, seat and post size from the catalog's screw registry (`canary_core_lib`)"
     }
    ],
    "recipes": [
@@ -356,7 +356,7 @@
     {
      "label": "Printed-enclosure weather kit",
      "formula": "SCR3+ORG1+CW1+ADH1+PLUG1+SCR4+FIL1+VENT1+LP1",
-     "usd": 11.75,
+     "usd": 12.35,
      "note": "Splash-resistant (~IP54) printed case, enclosure/ v0.7 - NOT a substitute for ENC1 outdoors"
     }
    ],
@@ -625,7 +625,7 @@
     {
      "label": "Printed camera unit",
      "formula": "req + CAM1 + ENC2 + SCR5-7 + NUT1 + CW2",
-     "usd": 41.84,
+     "usd": 42.24,
      "note": "Wall/tripod-mountable unit with adjustable hinge; add WAP weather-kit items for sealing"
     }
    ],
@@ -697,6 +697,9 @@
      "consequence": "light-pipe port (outside the radome zone)",
      "audience": "user",
      "default": true,
+     "bom": [
+      "LP1"
+     ],
      "fw": [
       "FEATURE_STATUS_LED"
      ]
@@ -735,7 +738,7 @@
     {
      "id": "opt_seal",
      "group": "Options (applied when preset = custom)",
-     "label": "perimeter TPU gasket + drip-edge front (indoor ceilings rarely need it)",
+     "label": "perimeter TPU gasket in the shell's ledge + O-rings under the plate screws (indoor ceilings rarely need it)",
      "consequence": "",
      "audience": "user",
      "default": false,
@@ -767,7 +770,9 @@
      "audience": "user",
      "default": true,
      "bom": [
-      "SCR4"
+      "SCR4",
+      "SCR6",
+      "SCR7"
      ]
     },
     {
@@ -805,7 +810,7 @@
      "id": "sense-radome",
      "label": "Sense · radome",
      "set": "sense-radome",
-     "contents": "MR60BHA2 mmWave witness: thin radar window, hinge + keyholes (shares the Vision bracket/knob)",
+     "contents": "MR60BHA2 mmWave witness: thin radar window, hinge (shares the Vision bracket/knob); keyholes in the `sense_ceiling` build",
      "status": "released",
      "parts": [
       {
