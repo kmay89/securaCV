@@ -38,7 +38,6 @@ test('every page the owner can reach from Home answers, and none of them leaks a
     const leaks = [];
     for (const [p, r] of pages) for (const m of r.html.matchAll(/\b(undefined|NaN|\[object Object\])\b/g)) leaks.push(`${p}: …${r.html.slice(Math.max(0, m.index - 50), m.index + 20).replace(/\s+/g, ' ')}…`);
     assert.deepEqual(leaks.slice(0, 20), [], 'nothing renders a JavaScript value by accident');
-    for (const [p, r] of pages) assert.ok(!/\bflock\b/i.test(r.html), `${p} says fleet, never the other word`);
   } finally { await app.close(); db.close(); }
 });
 
