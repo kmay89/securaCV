@@ -4,7 +4,7 @@
 // expense categories a Schedule C asks for. This is bookkeeping, not tax
 // advice — the year-end export goes to a human accountant.
 import { nowIso, today } from '../db.mjs';
-import { token } from '../http.mjs';
+import { token, csvLine } from '../http.mjs';
 
 export const ACCOUNTS = {
   'assets:stripe': 'Stripe balance (cleared, not yet paid out)',
@@ -55,11 +55,14 @@ export const postRefund = (db, order, cents, reason = '', date = today()) => pos
 
 // A payout moves money Stripe → bank; the fee is what Stripe kept.
 export function postPayout(db, { id, date = today(), amount_cents, fee_cents = 0 }) {
+  if (!Number.isInteger(amount_cents) || amount_cents < 0 || !Number.isInteger(fee_cents) || fee_cents < 0) throw new Error('a payout and its fee are whole numbers of cents, 0 or more');
   if (id && db.get('SELECT id FROM ledger WHERE ref = ?', `payout:${id}`)) return null;
   return post(db, { date, legs: [{ account: 'assets:bank', debit: amount_cents }, { account: 'expenses:fees', debit: fee_cents }, { account: 'assets:stripe', credit: amount_cents + fee_cents }], memo: `payout ${id || ''}`.trim(), ref: id ? `payout:${id}` : null, source: 'stripe' });
 }
 export function postExpense(db, { date = today(), account, cents, memo = '', paidFrom = 'assets:bank', ref = null }) {
-  if (!account.startsWith('expenses:') && account !== 'assets:inventory') throw new Error('expense account required');
+  if (!String(account || '').startsWith('expenses:') && account !== 'assets:inventory') throw new Error('expense account required');
+  if (!Number.isInteger(cents) || cents <= 0) throw new Error('an expense is a whole number of cents above zero');
+  if (!ACCOUNTS[paidFrom]) throw new Error(`unknown account ${paidFrom}`);
   return post(db, { date, legs: [{ account, debit: cents }, { account: paidFrom, credit: cents }], memo, ref, source: 'manual' });
 }
 export const postInvoicePaid = (db, inv, date = today()) => post(db, { date, legs: [{ account: 'assets:bank', debit: inv.total_cents }, { account: 'assets:receivable', credit: inv.total_cents }], memo: `invoice ${inv.number} paid`, ref: `invoice:${inv.number}`, source: 'invoice' });
@@ -90,7 +93,6 @@ export const salesTaxByState = (db, { from, to }) => db.all('SELECT ship_state A
 
 export function ledgerCsv(db, { from = '0000-00-00', to = '9999-99-99' } = {}) {
   const rows = db.all('SELECT * FROM ledger WHERE date BETWEEN ? AND ? ORDER BY date, txn, id', from, to);
-  const esc = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-  return ['date,txn,account,debit,credit,memo,ref,source', ...rows.map(r => [r.date, r.txn, r.account, (r.debit_cents / 100).toFixed(2), (r.credit_cents / 100).toFixed(2), r.memo, r.ref, r.source].map(esc).join(','))].join('\n') + '\n';
+  return ['date,txn,account,debit,credit,memo,ref,source', ...rows.map(r => csvLine([r.date, r.txn, r.account, (r.debit_cents / 100).toFixed(2), (r.credit_cents / 100).toFixed(2), r.memo, r.ref, r.source]))].join('\n') + '\n';
 }
 export const unreconciledStripeCents = (db) => { const r = db.get('SELECT SUM(debit_cents) - SUM(credit_cents) AS c FROM ledger WHERE account = \'assets:stripe\''); return r?.c || 0; };

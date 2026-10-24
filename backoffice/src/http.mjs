@@ -73,6 +73,24 @@ export class RateLimiter {
 }
 
 export const token = (n = 24) => randomBytes(n).toString('base64url');
+
+// A whole number from a form field or a JSON body, or a clear refusal. NaN binds to SQLite as
+// NULL (a NOT NULL error, a 500), 1.5 lands in an INTEGER column as a REAL, Infinity as itself:
+// none of them may reach a row. `fallback` answers an empty field; otherwise empty is refused too.
+export function int(v, { name = 'value', min = -Infinity, max = Infinity, fallback } = {}) {
+  if ((v === '' || v == null) && fallback !== undefined) return fallback;
+  const n = typeof v === 'number' ? v : Number(String(v ?? '').trim());
+  if (String(v ?? '').trim() === '' || !Number.isInteger(n)) throw new HttpError(400, `${name} must be a whole number${v == null || String(v).trim() === '' ? '' : ` (got ${JSON.stringify(String(v)).slice(0, 40)})`}`);
+  if (n < min) throw new HttpError(400, `${name} must be at least ${min}`);
+  if (n > max) throw new HttpError(400, `${name} must be at most ${max}`);
+  return n;
+}
+
+// One CSV cell: quoted when it holds a comma, a quote or a line break, and a leading =, +, -, @,
+// tab or CR prefixed with an apostrophe, so a spreadsheet never runs a customer's name as a
+// formula (CSV injection). A plain negative number keeps its sign.
+export const csvCell = (v) => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = `'${s}`; return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+export const csvLine = (cells) => cells.map(csvCell).join(',');
 export const safeEqual = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && timingSafeEqual(x, y); };
 
 // --- router

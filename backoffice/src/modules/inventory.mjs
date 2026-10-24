@@ -5,6 +5,8 @@
 import { nowIso } from '../db.mjs';
 
 export function upsertItem(db, it) {
+  if (!String(it.sku || '').trim()) throw new Error('a SKU is required');
+  for (const k of ['on_hand', 'reorder_point', 'reorder_qty', 'unit_cost_cents']) { const v = it[k]; if (v != null && v !== '' && (!Number.isInteger(Number(v)) || Number(v) < 0)) throw new Error(`${k} must be a whole number, 0 or more`); }
   db.run(`INSERT INTO inventory_items (sku, name, kind, on_hand, reorder_point, reorder_qty, unit_cost_cents, supplier, supplier_url, location, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(sku) DO UPDATE SET name = excluded.name, kind = excluded.kind, reorder_point = excluded.reorder_point, reorder_qty = excluded.reorder_qty,
@@ -17,6 +19,7 @@ export const listItems = (db) => db.all('SELECT *, (on_hand <= reorder_point AND
 
 export function move(db, sku, delta, reason, ref = null) {
   const it = item(db, sku); if (!it) throw new Error(`unknown inventory sku: ${sku}`);
+  if (!Number.isInteger(delta) || delta === 0) throw new Error(`a stock move is a whole number of units, not zero (got ${JSON.stringify(delta)})`);
   if (it.on_hand + delta < 0) throw new Error(`${sku}: on hand ${it.on_hand}, cannot move ${delta}`);
   db.run('UPDATE inventory_items SET on_hand = on_hand + ?, updated_at = ? WHERE sku = ?', delta, nowIso(), sku);
   db.run('INSERT INTO inventory_moves (sku, delta, reason, ref, at) VALUES (?, ?, ?, ?, ?)', sku, delta, reason, ref, nowIso());
@@ -27,7 +30,7 @@ export const moves = (db, sku = '', limit = 200) => db.all('SELECT * FROM invent
 export function setRecipe(db, finishedSku, parts) {
   db.tx(() => {
     db.run('DELETE FROM recipes WHERE finished_sku = ?', finishedSku);
-    for (const [part, qty] of Object.entries(parts)) { if (!item(db, part)) throw new Error(`recipe part not in inventory: ${part}`); db.run('INSERT INTO recipes (finished_sku, part_sku, qty) VALUES (?, ?, ?)', finishedSku, part, Number(qty) || 1); }
+    for (const [part, qty] of Object.entries(parts)) { if (!item(db, part)) throw new Error(`recipe part not in inventory: ${part}`); const q = qty == null || qty === '' ? 1 : Number(qty); if (!Number.isInteger(q) || q < 1) throw new Error(`${part}: a recipe quantity is a whole number of at least 1`); db.run('INSERT INTO recipes (finished_sku, part_sku, qty) VALUES (?, ?, ?)', finishedSku, part, q); }
   });
 }
 export const recipe = (db, finishedSku) => db.all('SELECT r.part_sku, r.qty, i.name, i.on_hand FROM recipes r JOIN inventory_items i ON i.sku = r.part_sku WHERE r.finished_sku = ?', finishedSku);

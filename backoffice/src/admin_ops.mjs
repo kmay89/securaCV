@@ -2,9 +2,9 @@
 // weekly batch as a flow), the Health page (the doctor's checklist with the
 // buttons that prove things), and the Audit log (every action, filterable,
 // exportable). Same conventions: server-rendered, plain forms, no script.
-import { text, HttpError, escapeHtml as e } from './http.mjs';
+import { text, HttpError, escapeHtml as e, csvLine } from './http.mjs';
 import { table, money, dt, day, statusPill, field, form, button } from './render.mjs';
-import { listOrders, orderById, weekLabel, statusCounts } from './modules/orders.mjs';
+import { listOrders, orderById, weekLabel, statusCounts, addressIssues } from './modules/orders.mjs';
 import { doctor } from './modules/health.mjs';
 import { backup, checkBackup, liveCounts, listBackups } from './modules/backup.mjs';
 import { runJob, jobRuns } from './jobs.mjs';
@@ -20,6 +20,7 @@ export function registerOps(app, { page, back, link, filters }) {
   };
   const batchFor = (status, wanted) => { if (wanted) return wanted; const cur = weekLabel(); if (listOrders(db, { status, batch: cur, limit: 1 }).length) return cur; const any = listOrders(db, { status, limit: 1 }); return any.length ? any[any.length - 1].batch : cur; };
   const progress = (status, batch, doneStatuses) => { const all = listOrders(db, { batch, limit: 1000 }).filter(o => !['canceled', 'refunded'].includes(o.status)); const done = all.filter(o => doneStatuses.includes(o.status)).length; return { total: all.length, done, left: all.filter(o => o.status === status).length }; };
+  const addrWarn = (o) => { const bad = addressIssues({ line1: o.ship_line1, city: o.ship_city, state: o.ship_state, zip: o.ship_zip, country: o.ship_country }); return bad.length ? `<p class="flash err" style="margin:.4rem 0"><b>This address will not make a label:</b> ${e(bad.join('; '))} — <a href="/orders/${o.id}">fix it on the order</a> first.</p>` : ''; };
   const picklist = (o) => `<ul class="picklist">${o.items.map(i => `<li><span class="box" aria-hidden="true"></span><span class="q">${i.qty}×</span><span>${e(i.name)}<br><span class="sku">${e(i.sku)}</span></span></li>`).join('') || '<li class="muted">No line items — add them on the order before packing.</li>'}</ul>`;
 
   router.get('/pack', (c) => {
@@ -37,7 +38,7 @@ ${o.notes || o.tags ? `<p class="warn"><b>Note:</b> ${e(o.notes || '')} ${o.tags
 <form method="post" action="/orders/${o.id}/assign"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="_back" value="/pack?batch=${e(batch)}"><div class="row"><div><label for="f_serial">Scan serial</label><input id="f_serial" name="serial" autofocus autocomplete="off" placeholder="DEMO-W-0005"></div><div><label>&nbsp;</label><button class="quiet">Assign to ${e(o.number)}</button></div></div></form>
 <form method="post" action="/orders/${o.id}/transition"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="packed"><input type="hidden" name="_back" value="/pack?batch=${e(batch)}"><button class="big">Packed — next order →</button></form>
 <p style="margin:.6rem 0 0"><a class="btn quiet" href="/pack?batch=${e(batch)}&after=${o.id}">Skip for now</a> <a class="btn quiet" href="/orders/${o.id}/packing-slip">Packing slip</a></p></div>
-<div><div class="card"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Ship to</div><p class="addr">${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)}${o.ship_country !== 'US' ? '<br>' + e(o.ship_country) : ''}</p><p class="muted">${e(o.email || '')} · paid ${day(o.paid_at)} · ${money(o.total_cents)}</p></div>
+<div><div class="card"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Ship to</div><p class="addr">${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)}${o.ship_country !== 'US' ? '<br>' + e(o.ship_country) : ''}</p>${addrWarn(o)}<p class="muted">${e(o.email || '')} · paid ${day(o.paid_at)} · ${money(o.total_cents)}</p></div>
 <div class="card" style="margin-top:.9rem"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">How this works</div><p class="muted" style="margin:.3rem 0 0;font-size:13.5px">Marking an order packed pulls its parts from stock through the recipe and writes the timeline. Scan a board first if the kit ships with one. Print the slips for the whole batch once, then work down the list.</p></div></div></div>`;
     page(c, 'Pack bench', body);
   });
@@ -50,7 +51,7 @@ ${o.notes || o.tags ? `<p class="warn"><b>Note:</b> ${e(o.notes || '')} ${o.tags
     const head = `<p class="muted">Batch <b>${e(batch)}</b> · ${p.done} of ${p.total} shipped · ${p.left} to go · ${link(`/orders.csv?batch=${e(batch)}&status=packed`, 'fulfill.mjs CSV for the labels')} · ${link(`/orders?batch=${e(batch)}&status=packed`, 'the list')}</p><div class="progress"><i style="width:${p.total ? Math.round(100 * p.done / p.total) : 0}%"></i></div>`;
     if (!o) return page(c, 'Ship bench', head + `<div class="card"><p class="ok" style="font-size:1.1rem;margin:0"><b>Everything packed in ${e(batch)} has shipped.</b></p><p>${statusCounts(db).paid ? link('/pack', `${statusCounts(db).paid} still to pack →`) : link('/', 'Back to Home')}</p></div>`);
     const body = head + `<div class="bench"><div class="card"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Ship this</div><h2 style="margin:.2rem 0 .6rem">${link(`/orders/${o.id}`, o.number)} <span class="muted" style="font-weight:400">· ${e(o.ship_name)}</span></h2>
-<p class="addr">${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)}</p>
+<p class="addr">${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)}</p>${addrWarn(o)}
 <p class="muted">${o.items.map(i => `${i.qty}× ${e(i.name)}`).join(', ')} · packed ${dt(o.packed_at)}</p>
 <form method="post" action="/orders/${o.id}/transition"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="shipped"><input type="hidden" name="_back" value="/ship?batch=${e(batch)}"><div class="row">${field('carrier', 'Carrier', { value: 'USPS' })}<div><label for="f_tracking">Tracking number</label><input id="f_tracking" name="tracking" autofocus autocomplete="off" placeholder="9400 1000 0000 0000 0000 00"></div></div><button class="big">Shipped — email tracking, next →</button></form>
 <p style="margin:.6rem 0 0"><a class="btn quiet" href="/ship?batch=${e(batch)}&after=${o.id}">Skip for now</a></p></div>
@@ -88,7 +89,7 @@ ${filters(c, [['actor', 'Actor', actors.map(a => [a, a])], ['action', 'Action st
 <p class="muted">${rows.length} shown${rows.length === 500 ? ' (capped — narrow the filter or take the CSV)' : ''}</p>` +
       table(rows, [{ label: 'When', get: r => dt(r.at) }, { label: 'Actor', key: 'actor' }, { label: 'Action', key: 'action' }, { label: 'Entity', html: r => `${e(r.entity || '')} <span class="muted" title="${e(r.entity_id || '')}">${e(shortId(r.entity_id))}</span>`, nowrap: true }, { label: 'Detail', html: r => `<span class="muted" style="font-size:12.5px">${e(prettyDetail(r.detail))}</span>` }], { empty: 'Nothing matches.' }));
   });
-  router.get('/audit.csv', (c) => { const { rows } = auditQuery(c, 100000); const esc = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }; text(c.res, ['id,at,actor,action,entity,entity_id,detail', ...rows.map(r => [r.id, r.at, r.actor, r.action, r.entity, r.entity_id, r.detail].map(esc).join(','))].join('\n') + '\n', 200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="audit.csv"' }); });
+  router.get('/audit.csv', (c) => { const { rows } = auditQuery(c, 100000); text(c.res, ['id,at,actor,action,entity,entity_id,detail', ...rows.map(r => csvLine([r.id, r.at, r.actor, r.action, r.entity, r.entity_id, r.detail]))].join('\n') + '\n', 200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="audit.csv"' }); });
 
   // ---------- a checked backup from the CLI's point of view is also an API call
   router.get('/api/health', (c) => { const h = doctor(db, cfg); c.res.statusCode = h.ok ? 200 : 503; c.res.setHeader('Content-Type', 'application/json; charset=utf-8'); c.res.end(JSON.stringify(h, null, 2)); });

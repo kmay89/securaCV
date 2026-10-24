@@ -31,7 +31,7 @@ test('paid → packed consumes the recipe; shipped queues the tracking mail; ref
   assert.equal(item(db, 'xiao-esp32s3').on_hand, 4); assert.equal(item(db, 'wap-shell').on_hand, 1);
   transition(db, order.id, 'shipped', { carrier: 'USPS', tracking: '9400 1', cfg });
   const mail = db.get('SELECT * FROM mail_outbox WHERE ref = ?', 'order:EL-000001');
-  assert.ok(mail && mail.to_addr === 'ada@example.test' && mail.body_text.includes('9400 1'));
+  assert.ok(mail && mail.to_addr === 'ada@example.test' && mail.body_text.includes('Tracking: 94001'), 'the tracking number is mailed as the carrier prints it (no spaces)');
   assert.equal(orderByNumber(db, 'EL-000001').status, 'shipped');
   refund(db, order.id, 800, { reason: 'shipping overcharge' });
   assert.equal(orderByNumber(db, 'EL-000001').refunded_cents, 800);

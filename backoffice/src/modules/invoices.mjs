@@ -8,13 +8,17 @@ import { enqueue } from './mail.mjs';
 import { postInvoicePaid, postTransaction } from './ledger.mjs';
 
 export function createInvoice(db, { email, name = null, org = null, bill_to = '', po_number = '', terms_days = 30, items, shipping_cents = 0, tax_cents = 0, notes = '' }) {
+  if (!items?.length) throw new Error('an invoice needs at least one line');
+  const whole = (v, what, min = 0) => { const n = v == null || v === '' ? min : Number(v); if (!Number.isInteger(n) || n < min) throw new Error(`${what} must be a whole number${min ? ` of at least ${min}` : ', 0 or more'}`); return n; };
+  items = items.map(i => ({ ...i, qty: whole(i.qty, `qty on ${i.sku || i.description || 'a line'}`, 1), unit_cents: whole(i.unit_cents, `unit cents on ${i.sku || i.description || 'a line'}`) }));
+  shipping_cents = whole(shipping_cents, 'shipping cents'); tax_cents = whole(tax_cents, 'tax cents'); terms_days = whole(terms_days === '' || terms_days == null ? 30 : terms_days, 'terms (days)');
   const contact = email ? upsertContact(db, { email, name, org, kind: org ? 'business' : 'person', source: 'invoice' }) : null;
-  const subtotal = items.reduce((s, i) => s + (Number(i.unit_cents) || 0) * (Number(i.qty) || 1), 0);
+  const subtotal = items.reduce((s, i) => s + i.unit_cents * i.qty, 0);
   return db.tx(() => {
     const number = db.nextNumber('INV', { year: true });
     const r = db.run(`INSERT INTO invoices (number, contact_id, po_number, status, terms_days, bill_to, subtotal_cents, shipping_cents, tax_cents, total_cents, notes, created_at)
-      VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)`, number, contact?.id ?? null, po_number, Number(terms_days) || 30, bill_to || [name, org].filter(Boolean).join('\n'), subtotal, shipping_cents, tax_cents, subtotal + shipping_cents + tax_cents, notes, nowIso());
-    for (const i of items) db.run('INSERT INTO invoice_items (invoice_id, sku, description, qty, unit_cents) VALUES (?, ?, ?, ?, ?)', r.lastInsertRowid, i.sku || null, i.description || i.sku, Number(i.qty) || 1, Number(i.unit_cents) || 0);
+      VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)`, number, contact?.id ?? null, po_number, terms_days, bill_to || [name, org].filter(Boolean).join('\n'), subtotal, shipping_cents, tax_cents, subtotal + shipping_cents + tax_cents, notes, nowIso());
+    for (const i of items) db.run('INSERT INTO invoice_items (invoice_id, sku, description, qty, unit_cents) VALUES (?, ?, ?, ?, ?)', r.lastInsertRowid, i.sku || null, i.description || i.sku, i.qty, i.unit_cents);
     db.audit('web', 'invoice.create', 'invoice', number);
     return invoiceById(db, r.lastInsertRowid);
   });

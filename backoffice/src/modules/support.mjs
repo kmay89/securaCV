@@ -8,6 +8,7 @@ import { upsertContact, validEmail, markBounced } from './contacts.mjs';
 import { enqueue, fill } from './mail.mjs';
 
 export const STATUSES = ['open', 'waiting_on_customer', 'waiting_on_us', 'closed'];
+export const PRIORITIES = ['low', 'normal', 'high', 'urgent'];
 export const KINDS = ['support', 'sales', 'press', 'security', 'warranty', 'feedback', 'build_request', 'wholesale'];
 const TOKEN_RE = /\[(T-\d{6}) ([a-z0-9]{6})\]/i;
 
@@ -33,7 +34,10 @@ export function openTicket(db, { email, name = null, subject, body, kind = null,
       VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?)`, number, contact?.id ?? null, String(subject || '(no subject)').slice(0, 200), priority || guess.priority, channel, kind || guess.kind, now, now, sla, tt);
     const id = r.lastInsertRowid;
     addMessage(db, id, { direction: 'in', from_addr: fromAddr || contact?.email || null, body: body || '', message_id: messageId, in_reply_to: inReplyTo });
-    if (autoAck && contact?.email) enqueue(db, { to: contact.email, subject: `[${number} ${tt}] Re: ${subject}`, kind: 'support', ref: `ticket:${number}`,
+    // One acknowledgement per address per hour: a form or a mailbox fed someone else's address in a
+    // loop would otherwise make this server the one flooding them.
+    const ackedLately = contact?.email && db.get("SELECT id FROM mail_outbox WHERE to_addr = ? AND kind = 'support' AND ref LIKE 'ticket:%' AND created_at >= ?", contact.email, new Date(Date.now() - 3600_000).toISOString());
+    if (autoAck && contact?.email && !ackedLately) enqueue(db, { to: contact.email, subject: `[${number} ${tt}] Re: ${subject}`, kind: 'support', ref: `ticket:${number}`,
       headers: inReplyToHeaders(messageId), text: fill(ACK_TPL, { name: contact.name || 'there', number, company: cfg.company || 'Errer Labs', hours: cfg.slaHours || 24 }) });
     db.audit('system', 'ticket.open', 'ticket', number, { kind: kind || guess.kind, channel });
     return ticketById(db, id);
@@ -82,7 +86,7 @@ export function setStatus(db, ticketId, status, { actor = 'web' } = {}) {
 }
 export function update(db, ticketId, { kind, priority, labels }) {
   if (kind && KINDS.includes(kind)) db.run('UPDATE tickets SET kind = ? WHERE id = ?', kind, ticketId);
-  if (priority) db.run('UPDATE tickets SET priority = ? WHERE id = ?', priority, ticketId);
+  if (priority) { if (!PRIORITIES.includes(priority)) throw new Error(`priority is one of ${PRIORITIES.join(', ')}`); db.run('UPDATE tickets SET priority = ? WHERE id = ?', priority, ticketId); }
   if (labels != null) db.run('UPDATE tickets SET labels = ? WHERE id = ?', labels, ticketId);
   return ticketById(db, ticketId);
 }

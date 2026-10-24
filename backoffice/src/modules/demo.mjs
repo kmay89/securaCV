@@ -219,14 +219,14 @@ export async function seedDemo(db, cfg) {
     db.run('UPDATE orders SET packed_at = ?, shipped_at = CASE WHEN shipped_at IS NULL THEN NULL ELSE ? END, delivered_at = CASE WHEN delivered_at IS NULL THEN NULL ELSE ? END WHERE id = ?', packedAt, shippedAt, deliveredAt, ord.id);
   }
   // The older boards went out in the first weeks, one per delivered WAP order, scanned at packing.
-  { let k = 1; for (const o of db.all("SELECT o.id FROM orders o JOIN order_items i ON i.order_id = o.id WHERE o.status = 'delivered' AND i.sku IN ('wap-kit', 'wap-kit-outdoor') ORDER BY o.paid_at LIMIT 6")) { assignToOrder(db, `DEMO-W-01${String(k++).padStart(2, '0')}`, o.id, { actor: 'web' }); db.run('UPDATE order_events SET at = (SELECT packed_at FROM orders WHERE id = ?) WHERE order_id = ? AND kind = \'device\'', o.id, o.id); } }
+  { let k = 1; for (const o of db.all("SELECT o.id FROM orders o JOIN order_items i ON i.order_id = o.id WHERE o.status = 'delivered' AND i.sku IN ('wap-kit', 'wap-kit-outdoor') ORDER BY o.paid_at LIMIT 6")) { assignToOrder(db, `DEMO-W-01${String(k++).padStart(2, '0')}`, o.id, { actor: 'web', force: true }); db.run('UPDATE order_events SET at = (SELECT packed_at FROM orders WHERE id = ?) WHERE order_id = ? AND kind = \'device\'', o.id, o.id); } }
   // The tracking mails are dated when the label printed; the ones older than the live week went out (demo transport, nothing left the machine).
   db.run("UPDATE mail_outbox SET created_at = COALESCE((SELECT o.shipped_at FROM orders o WHERE 'order:' || o.number = mail_outbox.ref), created_at) WHERE ref LIKE 'order:%'");
   // Last week's story: the orders the tickets, claims and serials refer to.
   const [o1, o2, o3, o4] = story.map(([i, items, days]) => mk(i, items, days, { external: i }));
   for (const [o, serials, pk] of [[o1, ['DEMO-W-0001'], 8], [o2, ['DEMO-W-0002', 'DEMO-W-0003'], 5], [o3, ['DEMO-V-0001'], 5], [o4, ['DEMO-W-0004'], 1]]) {
     transition(db, o.id, 'packed', { actor: 'web', at: daysAgo(pk, 14) });
-    for (const s of serials) { assignToOrder(db, s, o.id, { actor: 'web' }); db.run('UPDATE order_events SET at = ? WHERE order_id = ? AND kind = \'device\'', daysAgo(pk, 15), o.id); }
+    for (const s of serials) { assignToOrder(db, s, o.id, { actor: 'web', force: true }); db.run('UPDATE order_events SET at = ? WHERE order_id = ? AND kind = \'device\'', daysAgo(pk, 15), o.id); }
   }
   transition(db, o1.id, 'shipped', { actor: 'web', at: daysAgo(7, 11), carrier: 'USPS', tracking: 'DEMO0000000000000001', cfg: q }); transition(db, o1.id, 'delivered', { actor: 'web', at: daysAgo(4, 15) });
   transition(db, o2.id, 'shipped', { actor: 'web', at: daysAgo(4, 11), carrier: 'USPS', tracking: 'DEMO0000000000000002', cfg: q });

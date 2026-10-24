@@ -1,7 +1,7 @@
 // Server-rendered HTML, one stylesheet, no client JavaScript. The admin is a
 // set of plain pages and forms so it works from a phone, a text browser and
 // an AI operator's fetch() alike.
-import { escapeHtml } from './http.mjs';
+import { escapeHtml, token } from './http.mjs';
 import { can } from './auth.mjs';
 const e = escapeHtml;
 
@@ -138,10 +138,13 @@ export function field(name, label, { type = 'text', value = '', required = false
 }
 
 export const form = (action, csrf, inner, { submit = 'Save', cls = 'box', method = 'post' } = {}) =>
-  `<form method="${method}" action="${e(action)}" class="${cls}"><input type="hidden" name="_csrf" value="${e(csrf)}">${inner}<div style="margin-top:.8rem"><button>${e(submit)}</button></div></form>`;
+  `<form method="${method}" action="${e(action)}" class="${cls}"><input type="hidden" name="_csrf" value="${e(csrf)}">${method === 'post' ? once() : ''}${inner}<div style="margin-top:.8rem"><button>${e(submit)}</button></div></form>`;
+// A submission token: the server runs a form once per token, so a double click or a repeated
+// POST records one order, one refund, one stock move — not two.
+export const once = () => `<input type="hidden" name="_once" value="${token(12)}">`;
 
 export const button = (action, csrf, label, { quiet = false, confirm = '' } = {}) =>
-  `<form method="post" action="${e(action)}" class="inline"><input type="hidden" name="_csrf" value="${e(csrf)}"><button class="${quiet ? 'quiet' : ''}">${e(label)}</button></form>`;
+  `<form method="post" action="${e(action)}" class="inline"><input type="hidden" name="_csrf" value="${e(csrf)}">${once()}<button class="${quiet ? 'quiet' : ''}">${e(label)}</button></form>`;
 
 export const tags = (t) => String(t || '').split(',').filter(Boolean).map(x => `<span class="tag">${e(x)}</span>`).join('');
 export const tabs = (items, current) => `<div class="tabs">${items.map(([href, label, n, key]) => `<a href="${e(href)}" class="${(key ?? label) === current ? 'on' : ''}">${e(label)}${n != null ? ` <b>${n}</b>` : ''}</a>`).join('')}</div>`;
