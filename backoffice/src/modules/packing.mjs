@@ -73,8 +73,11 @@ const planCost = (parcels) => parcels.reduce((a, p) => a + p.cost_est, 0);
 // A flat list of parcels → the cheapest set of boxes, plus what no box can ever hold.
 export function pack(parcels, ship) {
   const out = { parcels: [], oversize: [], total_cost_est: 0 };
+  // A parcel is admitted only when some box can take it ALONE by all three tests — sides, weight
+  // AND usable volume (inner volume × fill factor); one that passes the first two but not the
+  // third would never be placed by fillBox() and would wedge the greedy loop.
   let items = [];
-  for (const p of parcels) { if (ship.boxes.some((b) => parcelFitsBox(p, b) && p.weight_oz <= b.max_weight_oz)) items.push(p); else out.oversize.push({ item: p.id, reason: 'no box in the catalog fits this parcel by size or weight' }); }
+  for (const p of parcels) { if (ship.boxes.some((b) => parcelFitsBox(p, b) && p.weight_oz <= b.max_weight_oz && volume(p) <= volume(b.inner) * ship.fill_efficiency)) items.push(p); else out.oversize.push({ item: p.id, reason: 'no box in the catalog fits this parcel by size or weight' }); }
   if (!items.length) return out;
   items = items.slice().sort((a, b) => volume(b) - volume(a));
   const candidates = [singleBoxPlan(items, ship), greedyPlan(items, ship)].filter(Boolean).sort((a, b) => { const d = planCost(a) - planCost(b); return Math.abs(d) > 1e-9 ? d : a.length - b.length; });

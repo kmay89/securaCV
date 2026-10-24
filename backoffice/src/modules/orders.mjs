@@ -225,7 +225,8 @@ export function transition(db, id, to, { actor = 'web', carrier = null, tracking
             shipped_at = CASE WHEN ? = 'shipped' THEN ? ELSE shipped_at END, delivered_at = CASE WHEN ? = 'delivered' THEN ? ELSE delivered_at END WHERE id = ?`,
       to, to, now, to, now, to, now, to, now, id);
     if (to === 'packed') { if (!o.items.length) throw new Error(`${o.number} has no line items — fetch them from Stripe (STRIPE_API_KEY) or add them before packing`); consumeForOrder(db, o); db.run('UPDATE orders SET pack_plan = ? WHERE id = ?', shipping ? JSON.stringify(plan) : null, id); }
-    if (to === 'paid' && o.status === 'packed') releaseForOrder(db, o);
+    // Unpacking frees the lines for editing, so the plan made for the old lines goes with it; the next pack plans afresh.
+    if (to === 'paid' && o.status === 'packed') { releaseForOrder(db, o); db.run('UPDATE orders SET pack_plan = NULL WHERE id = ?', id); }
     if (to === 'shipped') {
       db.run('UPDATE orders SET carrier = ?, tracking = ?, measured_oz = ?, postage_cents = postage_cents + ? WHERE id = ?', carrier, tracking || null, measuredOz, postageCents, id);
       db.run('UPDATE devices SET status = \'shipped\' WHERE order_id = ?', id);

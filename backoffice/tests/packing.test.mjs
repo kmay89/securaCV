@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pack, explode, packOrder, weightCheck, normalizeShipping, MAX_UNITS } from '../src/modules/packing.mjs';
 import { recordOrder, transition, weekLabel, orderById, fulfillCsv, editItems, MAX_LINE_QTY } from '../src/modules/orders.mjs';
-import { upsertItem, setRecipe, item } from '../src/modules/inventory.mjs';
+import { upsertItem, setRecipe, item, move } from '../src/modules/inventory.mjs';
 import { trialBalance } from '../src/modules/ledger.mjs';
 import { setTimezone } from '../src/render.mjs';
 import { DEMO_SHIPPING } from '../src/modules/demo.mjs';
@@ -42,6 +42,9 @@ test('packOrder: boxes, weight and postage for an order; every reason a human sh
   assert.equal(huge.boxes.length, 0); assert.match(huge.warnings[0], new RegExp(`more than ${MAX_UNITS} units`));
   const big = packOrder(normalizeShipping({ ...JSON.parse(readFileSync(fixture('shipping.json'), 'utf8')), parcels: { crate: { l: 40, w: 40, h: 40, weight_oz: 10 } } }), [{ sku: 'crate', qty: 1 }]);
   assert.match(big.warnings[0], /no box in the catalog fits/);
+  // a parcel whose sides and weight pass but whose volume beats every box's usable volume is oversize, not a crash
+  const snug = normalizeShipping({ fill_efficiency: 0.78, dim_weight_divisor: 166, boxes: [{ id: 'cube', name: 'Cube', inner: { l: 10, w: 10, h: 10 }, max_weight_oz: 100 }], parcels: { block: { l: 10, w: 10, h: 10, weight_oz: 5 } }, ground_advantage_rate_tiers: [{ max_oz: 100, usd: 5 }] });
+  const tight = packOrder(snug, [{ sku: 'block', qty: 1 }]); assert.equal(tight.boxes.length, 0); assert.match(tight.warnings[0], /block: no box in the catalog fits/);
   const none = packOrder(null, [{ sku: 'wap-kit', qty: 1 }]);
   assert.equal(none.boxes.length, 0); assert.match(none.warnings[0], /no shipping data/);
   // the same SKU on two lines is one count
@@ -92,6 +95,11 @@ test('packing an order freezes its plan; shipping checks the scale, books the la
   const p = recordOrder(db, sampleOrder({ external_id: 'p2' }), { catalog: cat }).order; transition(db, p.id, 'packed', { shipping: DEMO_SHIPPING });
   transition(db, p.id, 'shipped', { tracking: '9400222', cfg, measuredOz: 20, shipAnyway: true });
   assert.match(db.get("SELECT text FROM order_events WHERE order_id = ? AND kind = 'shipped'", p.id).text, /scale 20 oz vs 7 oz \(\+13 oz, shipped anyway\)/);
+  // unpacking drops the frozen plan: the lines may change, and the next pack plans afresh
+  move(db, 'xiao-esp32s3', 10, 'receive'); const u = recordOrder(db, sampleOrder({ external_id: 'u5' }), { catalog: cat }).order; transition(db, u.id, 'packed', { shipping: DEMO_SHIPPING });
+  assert.equal(JSON.parse(orderById(db, u.id).pack_plan).total_oz, 7); transition(db, u.id, 'paid'); assert.equal(orderById(db, u.id).pack_plan, null);
+  editItems(db, u.id, [{ sku: 'wap-kit', qty: 3 }], { catalog: cat }); transition(db, u.id, 'packed', { shipping: DEMO_SHIPPING });
+  assert.equal(JSON.parse(orderById(db, u.id).pack_plan).total_oz, 21, 'the new plan is for the new lines');
   // no shipping data: packed without a plan, shipped without a check
   const q = recordOrder(db, sampleOrder({ external_id: 'q3' }), { catalog: cat }).order; transition(db, q.id, 'packed');
   assert.equal(orderById(db, q.id).pack_plan, null); transition(db, q.id, 'shipped', { tracking: '9400333', cfg, measuredOz: 99 });
