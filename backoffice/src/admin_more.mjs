@@ -2,7 +2,7 @@
 // "buildable", recalls by batch or firmware, ticket attachments, the right to
 // be forgotten, and the Decide queue on Home — the system drafts, a person
 // approves. Same conventions: server-rendered, plain forms, no script.
-import { text, json, HttpError, escapeHtml as e } from './http.mjs';
+import { text, json, HttpError, escapeHtml as e, int } from './http.mjs';
 import { table, money, dt, day, statusPill, field, form, button, cards, tabs, meta } from './render.mjs';
 import { tile, hbars } from './charts.mjs';
 import { stateTileMap } from './statemap.mjs';
@@ -54,7 +54,7 @@ ${maps}
   router.get('/api/suggestions', (c) => json(c.res, suggestions(db, cfg)));
 
   // ---------- purchasing: what is on order, from whom, arriving when
-  const poLines = (s) => String(s || '').split('\n').map(l => l.split('|').map(x => x.trim())).filter(l => l[0]).map(([sku, qty, cents]) => ({ sku, qty: Number(qty || 1), unit_cost_cents: cents === undefined || cents === '' ? undefined : Number(cents) }));
+  const poLines = (s) => String(s || '').split('\n').map(l => l.split('|').map(x => x.trim())).filter(l => l[0]).map(([sku, qty, cents]) => ({ sku, qty: int(qty, { name: `${sku} qty`, min: 1, fallback: 1 }), unit_cost_cents: cents === undefined || cents === '' ? undefined : int(cents, { name: `${sku} unit cents`, min: 0 }) }));
   router.get('/purchasing', (c) => {
     const st = c.query.get('status') || ''; const rows = listPos(db, { status: st }); const all = listPos(db);
     const n = Object.fromEntries(PO_STATUSES.map(s => [s, all.filter(r => r.status === s).length]));
@@ -76,7 +76,7 @@ ${maps}
     page(c, `${p.number} · ${p.supplier}`, meta([['Status', statusPill(p.status)], ['Supplier', p.supplier_url ? `<a href="${e(p.supplier_url)}" rel="noopener noreferrer">${e(p.supplier)}</a>` : e(p.supplier)], ['Total', money(p.total_cents)], ['Created', dt(p.created_at)], ['Ordered', dt(p.ordered_at)], ['Expected', e(p.expected_at || '—')], ['Received', dt(p.received_at)]]) + `${p.notes ? `<p class="muted">${e(p.notes)}</p>` : ''}${lines}${acts.join('')}<p>${link('/purchasing', 'All purchase orders')} · ${link('/inventory', 'Inventory')}</p>`);
   });
   router.post('/purchasing/:id/order', (c) => { const p = markOrdered(db, Number(c.params.id), { expected_at: c.body.expected_at || null, actor: 'web' }); backTo(c, `/purchasing/${p.id}`, `${p.number} is ordered${p.expected_at ? `, expected ${p.expected_at}` : ''}`); });
-  router.post('/purchasing/:id/receive', (c) => { const received = Object.fromEntries(Object.entries(c.body).filter(([k]) => k.startsWith('recv_')).map(([k, v]) => [k.slice(5), Number(v)])); const p = receivePo(db, Number(c.params.id), { received, paidFrom: c.body.paidFrom || 'assets:bank', actor: 'web' }); backTo(c, `/purchasing/${p.id}`, `${p.number} ${p.status === 'received' ? 'received in full' : 'partly received'} — stock moved, inventory booked`); });
+  router.post('/purchasing/:id/receive', (c) => { const received = Object.fromEntries(Object.entries(c.body).filter(([k]) => k.startsWith('recv_')).map(([k, v]) => [k.slice(5), int(v, { name: `${k.slice(5)} received`, min: 0, fallback: 0 })])); const p = receivePo(db, Number(c.params.id), { received, paidFrom: c.body.paidFrom || 'assets:bank', actor: 'web' }); backTo(c, `/purchasing/${p.id}`, `${p.number} ${p.status === 'received' ? 'received in full' : 'partly received'} — stock moved, inventory booked`); });
   router.post('/purchasing/:id/cancel', (c) => { const p = cancelPo(db, Number(c.params.id), { actor: 'web' }); back(c, `/purchasing/${p.id}`, `${p.number} canceled`); });
   router.get('/api/purchasing', (c) => json(c.res, listPos(db, { status: c.query.get('status') || '' })));
   router.post('/api/purchasing', (c) => json(c.res, createPo(db, { ...c.body, actor: c.actor }), 201));
@@ -129,7 +129,7 @@ ${!r.sent_at && q.customers.length ? `<form method="post" action="/devices/recal
   router.post('/invoices/:id/remind', (c) => { const inv = remindInvoice(db, Number(c.params.id), cfg, { actor: 'web' }); backTo(c, `/invoices/${inv.id}`, `reminder queued for ${inv.number}`); });
   router.post('/api/invoices/:number/remind', (c) => { const inv = db.get('SELECT id FROM invoices WHERE number = ?', c.params.number); if (!inv) throw new HttpError(404, 'no such invoice'); json(c.res, remindInvoice(db, inv.id, cfg, { actor: c.actor })); });
   router.post('/orders/:id/items', async (c) => {
-    const items = String(c.body.lines || '').split('\n').map(l => l.split('|').map(x => x.trim())).filter(l => l[0]).map(([sku, qty]) => ({ sku, qty: Number(qty || 1) }));
+    const items = String(c.body.lines || '').split('\n').map(l => l.split('|').map(x => x.trim())).filter(l => l[0]).map(([sku, qty]) => ({ sku, qty: int(qty, { name: `${sku} qty`, min: 1, fallback: 1 }) }));
     const o = editItems(db, Number(c.params.id), items, { catalog: await app.catalog().catch(() => null), actor: 'web' }); back(c, `/orders/${o.id}`, `items on ${o.number} changed`);
   });
   router.post('/orders/track', async (c) => { if (!trackingConfigured(cfg)) throw new HttpError(400, 'set USPS_CLIENT_ID and USPS_CLIENT_SECRET first (Settings explains)'); const r = await pollTracking(db, cfg, { fetchImpl: app.fetchImpl || fetch, minAgeH: 0 }); backTo(c, '/ship', `checked ${r.checked} parcel${r.checked === 1 ? '' : 's'}: ${r.delivered} delivered, ${r.alerts} alert${r.alerts === 1 ? '' : 's'}`); });

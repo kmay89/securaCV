@@ -12,7 +12,12 @@ export function createPo(db, { supplier, supplier_url = null, items, expected_at
   return db.tx(() => {
     const number = db.nextNumber('PO');
     const r = db.run('INSERT INTO purchase_orders (number, supplier, supplier_url, status, expected_at, notes, created_at) VALUES (?, ?, ?, \'draft\', ?, ?, ?)', number, supplier, supplier_url, expected_at || null, notes, nowIso());
-    for (const it of items) { const inv = item(db, it.sku); if (!inv) throw new Error(`unknown inventory sku: ${it.sku}`); const q = Number(it.qty) || 0; if (q <= 0) throw new Error(`${it.sku}: qty must be positive`); db.run('INSERT INTO purchase_order_items (po_id, sku, qty, unit_cost_cents) VALUES (?, ?, ?, ?)', r.lastInsertRowid, it.sku, q, Number(it.unit_cost_cents ?? inv.unit_cost_cents) || 0); }
+    for (const it of items) {
+      const inv = item(db, it.sku); if (!inv) throw new Error(`unknown inventory sku: ${it.sku}`);
+      const q = Number(it.qty); if (!Number.isInteger(q) || q <= 0) throw new Error(`${it.sku}: qty must be a positive whole number`);
+      const unit = it.unit_cost_cents == null || it.unit_cost_cents === '' ? inv.unit_cost_cents : Number(it.unit_cost_cents); if (!Number.isInteger(unit) || unit < 0) throw new Error(`${it.sku}: unit cost must be a whole number of cents`);
+      db.run('INSERT INTO purchase_order_items (po_id, sku, qty, unit_cost_cents) VALUES (?, ?, ?, ?)', r.lastInsertRowid, it.sku, q, unit);
+    }
     db.audit(actor, 'po.create', 'po', number, { supplier, lines: items.length });
     return poById(db, r.lastInsertRowid);
   });
@@ -32,7 +37,9 @@ export function receivePo(db, id, { received = null, actor = 'web', paidFrom = '
   return db.tx(() => {
     let cents = 0;
     for (const it of p.items) {
-      const want = received ? Number(received[it.sku] ?? 0) : it.qty - it.received_qty; if (want <= 0) continue;
+      const want = received ? Number(received[it.sku] ?? 0) : it.qty - it.received_qty;
+      if (!Number.isInteger(want) || want < 0) throw new Error(`${it.sku}: a received quantity is a whole number, 0 or more`);
+      if (want <= 0) continue;
       const q = Math.min(want, it.qty - it.received_qty); if (q <= 0) continue;
       move(db, it.sku, q, 'receive', `po:${p.number}`); db.run('UPDATE purchase_order_items SET received_qty = received_qty + ? WHERE id = ?', q, it.id); cents += q * it.unit_cost_cents;
     }

@@ -1,6 +1,6 @@
 // Mail: campaigns with a live segment count, a designed preview, a test send,
 // scheduling and an honest report; automations; the audience and its health.
-import { html, redirect, HttpError, escapeHtml as e } from './http.mjs';
+import { html, redirect, HttpError, escapeHtml as e, int } from './http.mjs';
 import { table, money, dt, day, statusPill, field, form, button, cards, tabs, meta } from './render.mjs';
 import { columns } from './charts.mjs';
 import { listCampaigns, campaign, createCampaign, updateCampaign, duplicateCampaign, queueCampaign, scheduleCampaign, sendTest, previewHtml, campaignReport } from './modules/campaigns.mjs';
@@ -36,7 +36,7 @@ export function registerMail(app, { page, back, link }) {
       `<h2>Add one</h2>${editor({ slug: '', name: '', trigger: 'consent_confirmed', trigger_arg: 0, delay_hours: 24, subject: '', body_text: 'Hi {{first_name}},\n\n', enabled: 1 }).replace('<input type="hidden" name="slug" value="">', field('slug', 'Slug', { required: true, placeholder: 'thank-you' }))}`;
     page(c, 'Mail', body);
   });
-  router.post('/campaigns/automations/save', (c) => { const a = upsertAutomation(db, { ...c.body, enabled: !!c.body.enabled }); back(c, '/campaigns/automations', `saved ${a.slug}`); });
+  router.post('/campaigns/automations/save', (c) => { const a = upsertAutomation(db, { ...c.body, trigger_arg: int(c.body.trigger_arg, { name: 'days', min: 0, max: 3650, fallback: 0 }), delay_hours: int(c.body.delay_hours, { name: 'wait (hours)', min: 0, max: 8760, fallback: 0 }), enabled: !!c.body.enabled }); back(c, '/campaigns/automations', `saved ${a.slug}`); });
   router.post('/campaigns/automations/run', (c) => { const r = runAutomations(db, cfg); back(c, '/campaigns/automations', `enrolled ${r.enrolled}, queued ${r.sent}, skipped ${r.skipped}`); });
   router.post('/campaigns/automations/:slug/toggle', (c) => { const a = automation(db, c.params.slug); if (!a) throw new HttpError(404, 'no such automation'); setAutomationEnabled(db, a.slug, !a.enabled); back(c, '/campaigns/automations', `${a.slug} ${a.enabled ? 'paused' : 'enabled'}`); });
 

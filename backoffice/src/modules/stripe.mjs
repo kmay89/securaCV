@@ -27,7 +27,9 @@ export function signStripePayload(rawBody, secret, t = Math.floor(Date.now() / 1
 export function eventToOrder(event) {
   const type = event.type || '';
   const o = event.data?.object || {};
-  if (type === 'checkout.session.completed' && o.payment_status === 'paid') {
+  // A card pays inside `completed`; ACH / bank debit pay later and arrive as `async_payment_succeeded`;
+  // a 100 % code pays nothing and says `no_payment_required`. All three are an order.
+  if ((type === 'checkout.session.completed' && ['paid', 'no_payment_required'].includes(o.payment_status)) || type === 'checkout.session.async_payment_succeeded') {
     const addr = o.shipping_details?.address || o.customer_details?.address || {};
     const items = (o.line_items?.data || []).map(li => ({
       sku: li.price?.product?.metadata?.sku || li.price?.metadata?.sku || li.price?.product?.name || li.description,

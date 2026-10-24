@@ -70,8 +70,30 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   (it is logged, the client gets a generic line).
 - The public surface is small and rate-limited per address: the Stripe
   webhook (signature + timestamp tolerance + idempotency on event id), the
-  website forms (honeypot + 30/min), the status page, confirm/unsubscribe
-  links (random 144-bit tokens), invoice links (HMAC of the number).
+  website forms (honeypot + 30/min per IP + 5 per 10 min per email, and one
+  acknowledgement per address per hour so the forms cannot be turned on a
+  third party's inbox), the status page, confirm/unsubscribe links (random
+  144-bit tokens), invoice and order links (HMAC of the number, compared in
+  constant time).
+- A Stripe event id is claimed before the work, marked applied after it,
+  and released if the work fails: two deliveries at the same instant apply
+  once, a delivery that failed is left for Stripe to retry, and a claim the
+  process died on is taken over by the next redelivery once it is a minute
+  old. Only an applied event is ever answered "duplicate".
+- Every form carries a one-time token beside the CSRF token: the first
+  submit runs, a second with the same token (a double click, a browser
+  retry) is answered "already submitted" and changes nothing. A refused
+  submit frees its token so the corrected form goes through.
+- A bug (a 500) is logged, answered with a generic line, and raised as an
+  exception keyed on the route, so it shows on Home and, with a GitHub
+  token, as an issue. A row that would collide with one that exists is a
+  409 that names the constraint, never a 500.
+- Numbers arrive whole or not at all: quantities, cents, stock moves,
+  reorder points, receipts and intervals are checked at the route and again
+  in the module (`NaN` would bind as NULL, `1.5` would land in an INTEGER
+  column as a REAL). Every CSV the admin downloads is formula-safe: a cell
+  starting with `=`, `+`, `-` or `@` is prefixed with an apostrophe, so a
+  customer's name is never run by a spreadsheet.
 
 ## The data
 
@@ -84,6 +106,15 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   never holds a readable database.
 - Secrets live in the environment, never in the database or the audit log;
   the Settings page shows which are set, not what they are.
+- Shipping is guarded against the mistakes that put a wrong box in the mail:
+  a tracking number is normalized and may sit on one order only; the
+  fulfill CSV lists paid and packed orders whatever filter the link named;
+  a hand-typed US address needs a two-letter state and a 5 or 5+4 ZIP, and
+  one Stripe delivered that a label cannot carry is flagged on the order
+  and both benches; a board goes into one unshipped order; a MAC belongs to
+  one serial. "Refunded" is what a recorded refund makes an order, never a
+  status anyone sets, and a refund in full before shipping returns the
+  parts to stock.
 - Mail: no tracking pixels, no remote images, ever. Outbound SMTP is
   STARTTLS-or-nothing (`smtp://`) or SMTPS; credentials are never offered on
   a plain connection. Marketing mail goes only to double opt-in addresses,

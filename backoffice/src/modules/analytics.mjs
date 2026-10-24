@@ -1,3 +1,4 @@
+import { csvLine } from '../http.mjs';
 // Analytics: the sales numbers a storefront admin shows, computed from the
 // orders table on every request (a company of one has thousands of orders,
 // not millions). Definitions follow the common storefront vocabulary so the
@@ -74,5 +75,5 @@ export function analytics(db, { days = 30, now = Date.now() } = {}) {
 
 export function analyticsCsv(db, opts) {
   const a = analytics(db, opts);
-  return [`${a.series.step},orders,units,net_sales_usd,total_sales_usd,tickets`, ...a.series.buckets.map(b => [b.label, b.orders, b.units, (b.net_cents / 100).toFixed(2), (b.total_cents / 100).toFixed(2), b.tickets].join(','))].join('\n') + '\n';
+  return [`${a.series.step},orders,units,net_sales_usd,total_sales_usd,tickets`, ...a.series.buckets.map(b => csvLine([b.label, b.orders, b.units, (b.net_cents / 100).toFixed(2), (b.total_cents / 100).toFixed(2), b.tickets]))].join('\n') + '\n';
 }

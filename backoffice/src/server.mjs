@@ -8,7 +8,7 @@ import { layout, setTimezone, dt as fmtDt, day as fmtDay } from './render.mjs';
 import { orderToken, deliveryLine, trackingUrl } from './modules/delivery.mjs';
 import { editItems } from './modules/orders.mjs';
 import { sessionFor, login, logout, apiTokenFor, hasOperator, carryLegacyOperator, can } from './auth.mjs';
-import { actorStore } from './db.mjs';
+import { actorStore, nowIso } from './db.mjs';
 import { registerUsers } from './admin_users.mjs';
 import { loadCatalog } from './modules/catalog.mjs';
 import { verifyStripeSignature, eventToOrder, fetchLineItems, resolveDiscountCode } from './modules/stripe.mjs';
@@ -49,7 +49,7 @@ export function createApp({ db, cfg }) {
     if (isDemo(db)) seedDemoUsers(db);
   }
   // In demo mode the catalog is the demo's own, never fetched from the live site.
-  const app = { db, cfg, json, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o) };
+  const app = { db, cfg, json, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), formLimiter: new RateLimiter({ limit: 5, windowMs: 10 * 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), once: new Map(), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o) };
   const { router } = app;
 
   // ---------- public
@@ -61,7 +61,7 @@ export function createApp({ db, cfg }) {
   router.get('/u/:token', unsub); router.post('/u/:token', unsub, { public: true });
   router.get('/i/:number/:token', (c) => {
     const inv = invoiceByNumber(db, c.params.number);
-    if (!inv || invoiceToken(cfg.secret, inv.number) !== c.params.token) throw new HttpError(404, 'no such invoice');
+    if (!inv || !safeEqual(invoiceToken(cfg.secret, inv.number), c.params.token)) throw new HttpError(404, 'no such invoice');
     html(c.res, invoicePage(cfg, inv), 200, { 'Cache-Control': 'private, no-store' });
   });
 
@@ -76,11 +76,16 @@ export function createApp({ db, cfg }) {
     if (!cfg.stripeWebhookSecret) throw new HttpError(503, 'STRIPE_WEBHOOK_SECRET not set');
     if (!verifyStripeSignature(c.raw, c.req.headers['stripe-signature'], cfg.stripeWebhookSecret)) throw new HttpError(400, 'bad signature');
     let event; try { event = JSON.parse(c.raw.toString('utf8')); } catch { throw new HttpError(400, 'bad JSON'); }
-    // Stripe redelivers; an event id is applied exactly once.
-    if (event.id && db.get('SELECT id FROM stripe_events WHERE id = ?', event.id)) return json(c.res, { received: true, duplicate: true });
+    // Stripe redelivers, sometimes twice at once. The event id is claimed BEFORE the work (an
+    // insert that only one delivery wins) and marked applied AFTER it; a failure releases the
+    // claim, and a claim left in flight (the process died mid-way) is taken over by the next
+    // redelivery once it is a minute old. Only an applied event answers "duplicate".
+    if (event.id && !claimStripeEvent(db, event)) return json(c.res, { received: true, duplicate: true });
     const mapped = eventToOrder(event);
-    const result = await applyStripeEvent(app, mapped, event);
-    if (event.id) db.run('INSERT OR IGNORE INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)', event.id, event.type || '', new Date().toISOString());
+    let result;
+    try { result = await applyStripeEvent(app, mapped, event); }
+    catch (err) { if (event.id) db.run('DELETE FROM stripe_events WHERE id = ? AND applied_at IS NULL', event.id); throw err; }
+    if (event.id) db.run('UPDATE stripe_events SET applied_at = ? WHERE id = ?', nowIso(), event.id);
     json(c.res, { received: true, ...result });
   }, { public: true, raw: true });
 
@@ -90,6 +95,7 @@ export function createApp({ db, cfg }) {
     if (!app.limiter.allow(`forms:${clientIp(c.req)}`)) throw new HttpError(429, 'slow down');
     const email = String(b.email || '').trim();
     if (!validEmail(email)) throw new HttpError(400, 'a valid email is required');
+    if (!app.formLimiter.allow(`forms:${email.toLowerCase()}`)) throw new HttpError(429, 'that address has sent enough forms for now — try again in ten minutes');
     const kind = c.params.kind;
     let out;
     if (kind === 'waitlist') {
@@ -179,6 +185,7 @@ export function createApp({ db, cfg }) {
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     const route = router.match(req.method, url.pathname);
+    let onceKey = null;
     try {
       if (!route) throw new HttpError(404, 'not found');
       if (cfg.secure) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -197,18 +204,31 @@ export function createApp({ db, cfg }) {
         // A person's role decides, by path and method; an owner-made API token is not bound to a role.
         if (session && !tokenRow && !can(session.role, req.method, url.pathname)) throw new HttpError(403, `your role (${session.role}) cannot do this — an owner can`);
         if (session && !tokenRow && req.method === 'POST' && route.opts.csrf !== false && !url.pathname.startsWith('/api')) {
-          if (c.body._csrf !== session.csrf) throw new HttpError(403, 'bad CSRF token');
+          if (!safeEqual(c.body._csrf || '', session.csrf)) throw new HttpError(403, 'bad CSRF token');
+          // A form carries a one-time token: the first POST with it runs, a second (a double click, a
+          // repeated submit) is answered with "already done" and changes nothing.
+          if (typeof c.body._once === 'string' && c.body._once) {
+            const key = `${session.id}:${c.body._once}`; const now = Date.now();
+            if (app.once.size > 5000) for (const [k, t] of app.once) if (now - t > 7_200_000) app.once.delete(k);
+            if (app.once.has(key)) return redirect(res, `${safeLocalPath(req.headers.referer) || '/'}?ok=${encodeURIComponent('that form was already submitted — nothing was done twice')}`);
+            app.once.set(key, now); onceKey = key;
+          }
         }
       }
       await actorStore.run({ actor: c.actor }, () => route.handler(c));
     } catch (err) {
+      if (onceKey) app.once.delete(onceKey);   // a refused submission may be corrected and sent again
       // A business rule ("cannot move", "unknown SKU") is the caller's mistake: 400. A thrown
       // TypeError or a database error is ours: 500, and it is logged.
-      const status = err.status || (err instanceof Error && !(err instanceof TypeError || err instanceof RangeError || err instanceof ReferenceError || err instanceof SyntaxError) && !/SQLITE|sqlite/i.test(String(err.code || err.message)) ? 400 : 500);
-      // Our own bug never reaches the page or the API body: it is logged here, and the
-      // client gets a generic line. A refused request (4xx) carries the rule it broke.
-      if (status === 500) console.error('[backoffice]', req.method, JSON.stringify(url.pathname), err);
-      const message = status === 500 ? 'Something went wrong on our side; it has been logged.' : String(err.message);
+      // A row that would collide with one that exists (a second device with the same MAC, a slug
+      // taken) is the caller's to resolve: 409, with the constraint named, never a 500.
+      const conflict = /SQLITE_CONSTRAINT|constraint failed/i.test(String(err.code || '') + ' ' + String(err.message || ''));
+      const status = err.status || (conflict ? 409 : err instanceof Error && !(err instanceof TypeError || err instanceof RangeError || err instanceof ReferenceError || err instanceof SyntaxError) && !/SQLITE|sqlite/i.test(String(err.code || err.message)) ? 400 : 500);
+      // Our own bug never reaches the page or the API body: it is logged here, raised as an
+      // exception (so it shows on Home and, with a token, as an issue), and the client gets a
+      // generic line. A refused request (4xx) carries the rule it broke.
+      if (status === 500) { console.error('[backoffice]', req.method, JSON.stringify(url.pathname), err); const where = `${req.method} ${url.pathname.replace(/\/\d+(?=\/|$)/g, '/:id')}`; raiseException(db, cfg, `bug:${where}`, `backoffice [bug]: ${where}`, `${String(err.stack || err).slice(0, 1500)}\n\nThe person saw a generic error; the request was refused, nothing half-written. Fix the code, then resolve this.`).catch(() => {}); }
+      const message = status === 500 ? 'Something went wrong on our side; it has been logged.' : conflict ? `that would collide with a record that already exists (${String(err.message).replace(/^.*constraint failed:\s*/i, '')})` : String(err.message);
       if ((req.headers.accept || '').includes('text/html') && !url.pathname.startsWith('/api')) {
         // Back to the admin page the form came from — only ever a local admin path.
         const back = safeLocalPath(req.headers.referer);
@@ -251,6 +271,14 @@ export async function applyStripeEvent(app, m, event = null) {
     return { subscription_payment: sub, posted: !!posted };
   }
   return { ignored: m.type || m.kind };
+}
+
+// True when this delivery owns the event: a fresh id, or a claim another delivery left in flight
+// for over a minute. An applied event, or a claim younger than that, belongs to someone else.
+export function claimStripeEvent(db, event, { staleMs = 60_000, now = Date.now() } = {}) {
+  const at = new Date(now).toISOString();
+  if (db.run('INSERT OR IGNORE INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)', event.id, event.type || '', at).changes) return true;
+  return db.run('UPDATE stripe_events SET received_at = ? WHERE id = ? AND applied_at IS NULL AND received_at < ?', at, event.id, new Date(now - staleMs).toISOString()).changes > 0;
 }
 
 // A redirect target is accepted only when it parses and its origin IS the site's.
