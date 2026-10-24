@@ -50,7 +50,7 @@ jobs:
       ORG: ${{ github.event.inputs.org || vars.FLY_DEMO_ORG || 'personal' }}
       REGION: ${{ github.event.inputs.region || vars.FLY_DEMO_REGION || 'iad' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Is a Fly token configured?
         id: gate
         run: |

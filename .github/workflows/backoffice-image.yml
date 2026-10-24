@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-24.04  # the image the job was written against (CI.md R11)
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Image name (owner lower-cased, as GHCR requires)
         id: meta
