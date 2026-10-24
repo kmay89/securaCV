@@ -154,7 +154,17 @@ test('Stripe: a delayed payment and a free checkout are orders; a redelivered ev
     const bad = JSON.stringify({ id: 'evt_bad', type: 'checkout.session.completed', data: { object: base({ id: 'cs_bad', payment_status: 'paid', line_items: { data: [{ description: 'Mystery', quantity: 1, price: { unit_amount: 1, product: { metadata: { sku: 'mystery' } } } }] } }) } });
     const rb = await fetch(url, { method: 'POST', body: bad, headers: { 'content-type': 'application/json', 'stripe-signature': signStripePayload(bad, 'whsec_test') } });
     assert.equal(rb.status, 400); assert.equal(db.get('SELECT COUNT(*) AS n FROM stripe_events WHERE id = ?', 'evt_bad').n, 0, 'a failed event is released for Stripe to retry');
-    assert.equal(db.get('SELECT COUNT(*) AS n FROM stripe_events WHERE id = ?', 'evt_twice').n, 1);
+    assert.ok(db.get('SELECT applied_at FROM stripe_events WHERE id = ?', 'evt_twice').applied_at, 'the applied event is marked so');
+    // a claim the process died on: the row exists, never applied, a minute old — the redelivery takes it over and records the order
+    db.run("INSERT INTO stripe_events (id, type, received_at) VALUES ('evt_crashed', 'checkout.session.completed', ?)", new Date(Date.now() - 120_000).toISOString());
+    const crashed = JSON.stringify({ id: 'evt_crashed', type: 'checkout.session.completed', data: { object: base({ id: 'cs_crashed', payment_intent: 'pi_crashed', payment_status: 'paid' }) } });
+    const rc = await (await fetch(url, { method: 'POST', body: crashed, headers: { 'content-type': 'application/json', 'stripe-signature': signStripePayload(crashed, 'whsec_test') } })).json();
+    assert.equal(rc.created, true, 'an in-flight claim left behind is retaken, not answered as a duplicate'); assert.ok(db.get("SELECT applied_at FROM stripe_events WHERE id = 'evt_crashed'").applied_at);
+    // a claim seconds old is another delivery still working: this one steps back
+    db.run("INSERT INTO stripe_events (id, type, received_at) VALUES ('evt_live', 'checkout.session.completed', ?)", new Date().toISOString());
+    const live = JSON.stringify({ id: 'evt_live', type: 'checkout.session.completed', data: { object: base({ id: 'cs_live9', payment_intent: 'pi_live9', payment_status: 'paid' }) } });
+    assert.equal((await (await fetch(url, { method: 'POST', body: live, headers: { 'content-type': 'application/json', 'stripe-signature': signStripePayload(live, 'whsec_test') } })).json()).duplicate, true);
+    assert.equal(db.get('SELECT COUNT(*) AS n FROM orders').n, 2);
   } finally { await app.close(); db.close(); }
 });
 

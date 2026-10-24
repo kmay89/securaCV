@@ -75,9 +75,11 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   third party's inbox), the status page, confirm/unsubscribe links (random
   144-bit tokens), invoice and order links (HMAC of the number, compared in
   constant time).
-- A Stripe event id is claimed before the work and released if the work
-  fails: two deliveries at the same instant apply once, and a delivery that
-  failed is left for Stripe to retry.
+- A Stripe event id is claimed before the work, marked applied after it,
+  and released if the work fails: two deliveries at the same instant apply
+  once, a delivery that failed is left for Stripe to retry, and a claim the
+  process died on is taken over by the next redelivery once it is a minute
+  old. Only an applied event is ever answered "duplicate".
 - Every form carries a one-time token beside the CSRF token: the first
   submit runs, a second with the same token (a double click, a browser
   retry) is answered "already submitted" and changes nothing. A refused

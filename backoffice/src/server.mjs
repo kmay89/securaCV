@@ -77,12 +77,15 @@ export function createApp({ db, cfg }) {
     if (!verifyStripeSignature(c.raw, c.req.headers['stripe-signature'], cfg.stripeWebhookSecret)) throw new HttpError(400, 'bad signature');
     let event; try { event = JSON.parse(c.raw.toString('utf8')); } catch { throw new HttpError(400, 'bad JSON'); }
     // Stripe redelivers, sometimes twice at once. The event id is claimed BEFORE the work (an
-    // insert that only one delivery wins), and released if the work fails so the retry can do it.
-    if (event.id && !db.run('INSERT OR IGNORE INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)', event.id, event.type || '', nowIso()).changes) return json(c.res, { received: true, duplicate: true });
+    // insert that only one delivery wins) and marked applied AFTER it; a failure releases the
+    // claim, and a claim left in flight (the process died mid-way) is taken over by the next
+    // redelivery once it is a minute old. Only an applied event answers "duplicate".
+    if (event.id && !claimStripeEvent(db, event)) return json(c.res, { received: true, duplicate: true });
     const mapped = eventToOrder(event);
     let result;
     try { result = await applyStripeEvent(app, mapped, event); }
-    catch (err) { if (event.id) db.run('DELETE FROM stripe_events WHERE id = ?', event.id); throw err; }
+    catch (err) { if (event.id) db.run('DELETE FROM stripe_events WHERE id = ? AND applied_at IS NULL', event.id); throw err; }
+    if (event.id) db.run('UPDATE stripe_events SET applied_at = ? WHERE id = ?', nowIso(), event.id);
     json(c.res, { received: true, ...result });
   }, { public: true, raw: true });
 
@@ -268,6 +271,14 @@ export async function applyStripeEvent(app, m, event = null) {
     return { subscription_payment: sub, posted: !!posted };
   }
   return { ignored: m.type || m.kind };
+}
+
+// True when this delivery owns the event: a fresh id, or a claim another delivery left in flight
+// for over a minute. An applied event, or a claim younger than that, belongs to someone else.
+export function claimStripeEvent(db, event, { staleMs = 60_000, now = Date.now() } = {}) {
+  const at = new Date(now).toISOString();
+  if (db.run('INSERT OR IGNORE INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)', event.id, event.type || '', at).changes) return true;
+  return db.run('UPDATE stripe_events SET received_at = ? WHERE id = ? AND applied_at IS NULL AND received_at < ?', at, event.id, new Date(now - staleMs).toISOString()).changes > 0;
 }
 
 // A redirect target is accepted only when it parses and its origin IS the site's.
