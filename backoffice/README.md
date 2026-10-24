@@ -171,6 +171,24 @@ Nothing above types a SKU, an address, or a price by hand: the catalog is
 `store.json`, the address is what Stripe collected, COGS is frozen from the
 store's `cogs` recipe at the moment of sale.
 
+### The first order, from nothing — and the test that keeps it true
+
+`/demo/first-order` (demo mode) empties the database to day zero (the people
+stay) and walks one synthetic customer through the whole chain a step at a
+time: the first parts received, the first boards flashed, a question through
+the website form and its answer, the Checkout sale by signed webhook (and
+Stripe's retry of it, applied once), the bench with its checks, the label
+from the manifest, the mail, the carrier saying delivered, the follow-up
+automation, a warranty fix through the same bench, a partial refund, a
+payout, the week's jobs and the doctor. Every step runs the real code path
+and shows what it did, where to look and what it checked.
+
+The steps live once, in `src/modules/walkthrough.mjs`, and
+`tests/first_order.test.mjs` runs the same list end to end and holds every
+check. **A new flow is a new step there**: write what it does, how to look,
+and what must be true afterwards, and the demo page, the test and
+`backoffice first-order` (the shell) all get it.
+
 ### Your phone is the scanner
 
 No scanner, no app: the iPhone's own camera reads a QR code and opens the link,

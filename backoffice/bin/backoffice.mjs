@@ -30,6 +30,7 @@ import { notifyWaitlist, createCampaign, queueCampaign } from '../src/modules/ca
 import { sendOutbox } from '../src/modules/mail.mjs';
 import { openExceptions } from '../src/modules/exceptions.mjs';
 import { seedDemo, resetDemo, isEmpty, isDemo, ensureDemo, DEMO_PASSWORD, DEMO_TOTP_SECRET } from '../src/modules/demo.mjs';
+import { STEPS, startEmpty, runAll } from '../src/modules/walkthrough.mjs';
 import { totp } from '../src/auth.mjs';
 import { listPos, poByNumber, createPo, markOrdered, receivePo, cancelPo, draftReorder, buildableAhead } from '../src/modules/purchasing.mjs';
 import { recallQuery, batches as deviceBatches, createRecall, sendRecall, listRecalls, DEFAULT_BODY } from '../src/modules/recall.mjs';
@@ -54,6 +55,7 @@ const HELP = `backoffice — the company in one SQLite file (${cfg.dbPath})
 
   setup [--email you@… --name …]           the first owner: password + authenticator (first run; --force resets that owner)
   users | users invite <email> --name … --role owner|ops|support|viewer | users role|disable|enable|remove <email> | users roles
+  first-order                              empty a DEMO database and walk the first customer through the whole chain (the same steps as tests/first_order.test.mjs)
   demo [--reset|--if-empty]                fill an EMPTY database with a synthetic week to explore (--reset wipes a DEMO db and reseeds; --if-empty is a no-op on a used one)
   code                                     print the current authenticator code (same as your phone shows; for local trying-out)
   serve                                    run the web admin, API, forms, webhook and the scheduler
@@ -138,6 +140,13 @@ const main = async () => {
       const secret = setupOperator(db, pw, { email: flags.email || cfg.supportAddr || 'owner@localhost', name: flags.name || 'Owner' });
       for (const p of DEFAULT_PROBES(cfg)) upsertProbe(db, p);
       return out(`Operator set. Add this to your authenticator app (TOTP):\n\n  ${totpUri(secret, cfg.supportAddr || 'operator', `${cfg.company} backoffice`)}\n\n(secret: ${secret})\n\nDefault status probes seeded. Now: backoffice serve`);
+    }
+    case 'first-order': {
+      if (!isDemo(db) && !isEmpty(db)) return out('refusing: this database is not flagged as a demo and is not empty — point BACKOFFICE_DATA_DIR at a demo directory');
+      cfg.demo = true; startEmpty(db); await app.listen();
+      try { const rs = await runAll(app); for (const r of rs) { out(`${r.ok ? 'ok  ' : 'FAIL'} ${r.title}`); for (const ch of r.checks) out(`       ${ch.ok ? '✓' : '✗'} ${ch.label}${!ch.ok && ch.detail ? ` — ${ch.detail}` : ''}`); if (r.error) out(`       ${r.error}`); }
+        out(`${rs.filter(r => r.ok).length} of ${STEPS.length} steps green`); return await app.close(); }
+      catch (err) { await app.close(); throw err; }
     }
     case 'demo': {
       if (flags['if-empty'] && (!isEmpty(db) || hasOperator(db))) return out(isDemo(db) ? 'demo database already seeded; serving it as is' : 'database is not empty and not a demo — leaving it alone');

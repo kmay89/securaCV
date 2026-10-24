@@ -33,6 +33,7 @@ import { backup, listBackups } from './modules/backup.mjs';
 import { outboxStats, fill } from './modules/mail.mjs';
 import { jobRuns, runJob, JOBS } from './jobs.mjs';
 import { SCENARIOS, resetDemo, PEOPLE } from './modules/demo.mjs';
+import { STEPS, walkthroughState, nextStep, runStep, runAll, resetWalkthrough } from './modules/walkthrough.mjs';
 import { join } from 'node:path';
 
 export function registerAdmin(app) {
@@ -348,9 +349,29 @@ ${last ? `<pre>${e(last)}</pre>` : ''}
 </div>
 <h2>The API side</h2><pre>${e(`curl -X POST -H "Authorization: Bearer <token from Settings>" ${cfg.baseUrl}/api/demo/order
 curl -H "Authorization: Bearer <token>" ${cfg.baseUrl}/api/demo/scenarios`)}</pre>
+<h2>The first order, from nothing</h2><p class="muted">Empty the demo and walk one customer through the whole chain a step at a time — parts, boards, a question, the sale, the bench, the label, the carrier, the follow-up, a warranty fix, a refund, a payout, the week's end — each step the real code path, saying what it did, where to look and what it checked. ${link('/demo/first-order', 'Open the walkthrough →')}</p>
 <h2>Start over</h2>${button('/demo/reset', c.csrf, 'Wipe and reseed the demo data', { quiet: true })} <span class="muted">keeps the operator login; everything else is regenerated</span>`;
     page(c, 'Demo scenarios', body);
   });
+  // The walkthrough: the first order from an empty database, one step at a time or all at once; the log stays on the page.
+  router.get('/demo/first-order', (c) => {
+    if (!cfg.demo) throw new HttpError(404, 'not in demo mode');
+    const s = walkthroughState(db); const empty = db.setting('demo:empty') === '1'; const next = nextStep(db);
+    const log = Object.fromEntries(s.log.map(l => [l.id, l]));
+    const rows = STEPS.map((st, i) => { const l = log[st.id]; const state = l ? (l.ok ? 'ok' : 'bad') : st.id === next?.id ? 'next' : 'todo';
+      return `<li class="wt ${state}"><div class="wt-h"><span class="n">${i + 1}</span><b>${e(st.title)}</b> <span class="pill ${state === 'ok' ? 'ok' : state === 'bad' ? 'bad' : ''}">${state === 'ok' ? 'done' : state === 'bad' ? 'failed' : state === 'next' ? 'next' : ''}</span></div><p class="muted">${e(st.tell)}</p>${l ? `<div class="wt-r">${Object.keys(l.facts || {}).length ? `<dl>${Object.entries(l.facts).map(([k, v]) => `<dt>${e(k.replace(/_/g, ' '))}</dt><dd>${e(v == null ? '—' : String(v))}</dd>`).join('')}</dl>` : ''}<ul class="wt-checks">${(l.checks || []).map(ch => `<li class="${ch.ok ? 'ok' : 'bad'}">${ch.ok ? '✓' : '✗'} ${e(ch.label)}${!ch.ok && ch.detail ? ` <span class="muted">— ${e(ch.detail)}</span>` : ''}</li>`).join('')}</ul>${(l.links || []).length ? `<p class="muted">Look: ${l.links.map(([t, href]) => link(href, t)).join(' · ')}</p>` : ''}${l.error ? `<p class="err">${e(l.error)}</p>` : ''}</div>` : ''}</li>`; }).join('');
+    const body = `<p class="muted">One customer, from nothing to the end of the week. Every step runs the real code path — the signed webhook, the public form, the bench's own transition with its checks, the carrier poller fed a synthetic carrier — and says what it did, where to look and what it checked. The same steps are <code>tests/first_order.test.mjs</code>; a new flow is a new step there, and this page gets it too.</p>
+<div class="row" style="margin:.6rem 0 1rem">${empty || s.done.length ? '' : `<p class="warn" style="margin:0 0 .4rem"><b>The demo is holding its full synthetic week.</b> The walkthrough starts from nothing: the first button empties it (the people stay).</p>`}
+${button('/demo/first-order/reset', c.csrf, s.done.length || !empty ? 'Start over from nothing' : 'Start from nothing', { quiet: !!empty && !s.done.length })}
+${empty && next ? button('/demo/first-order/next', c.csrf, `Run step ${STEPS.indexOf(next) + 1}: ${next.title}`) : ''}
+${empty && next ? button('/demo/first-order/all', c.csrf, 'Run every remaining step', { quiet: true }) : ''}
+${!next && s.done.length ? `<p class="ok" style="margin:0"><b>The chain ran end to end: ${s.log.filter(l => l.ok).length} of ${STEPS.length} steps green.</b> ${link('/demo/reset', '')}</p>` : ''}</div>
+<ol class="walk">${rows}</ol>`;
+    page(c, 'The first order, from nothing', body);
+  });
+  router.post('/demo/first-order/reset', (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); resetWalkthrough(db); back(c, '/demo/first-order', 'emptied: no orders, no customers, no parts — the people stay'); });
+  router.post('/demo/first-order/next', async (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); const st = nextStep(db); if (!st) return back(c, '/demo/first-order', 'every step has run'); const r = await runStep(app, st.id); back(c, '/demo/first-order', `${st.title}: ${r.ok ? 'every check green' : 'a check failed — see the step'}`); });
+  router.post('/demo/first-order/all', async (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); const rs = await runAll(app); back(c, '/demo/first-order', `${rs.length} step${rs.length === 1 ? '' : 's'} ran, ${rs.filter(r => r.ok).length} green`); });
   router.post('/demo/reset', async (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); const r = await resetDemo(db, cfg); back(c, '/demo', `reseeded: ${JSON.stringify(r)}`); });
   router.post('/demo/:scenario', async (c) => {
     if (!cfg.demo) throw new HttpError(404, 'not in demo mode');
