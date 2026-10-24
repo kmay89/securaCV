@@ -14,7 +14,7 @@ import { DEMO_SHIPPING, DEMO_USERS, DEMO_PASSWORD, DEMO_TOTP_SECRET, seedDemo } 
 import { createApp } from '../src/server.mjs';
 import { totp } from '../src/auth.mjs';
 import { qrSvg } from '../src/qr.mjs';
-import { testDb, testCfg, catalog, sampleOrder } from './helpers.mjs';
+import { testDb, testCfg, catalog, sampleOrder, fixture } from './helpers.mjs';
 
 const twoKits = (over = {}) => sampleOrder({ items: [{ sku: 'wap-kit', name: 'Canary WAP Kit', qty: 2, unit_cents: 6900 }], ...over });
 const stock = (db) => { upsertItem(db, { sku: 'xiao-esp32s3', name: 'board', on_hand: 20 }); upsertItem(db, { sku: 'xiao-esp32s3-sense', name: 'sense board', on_hand: 20 }); setRecipe(db, 'wap-kit', { 'xiao-esp32s3': 1 }); setRecipe(db, 'vision-kit', { 'xiao-esp32s3-sense': 1 }); setRecipe(db, 'witness-pair', { 'xiao-esp32s3': 2 }); };
@@ -152,4 +152,49 @@ test('the phone is the scanner: the slip\'s code opens the order where it stands
     const posted = await fetch(base + '/orders/import-labels', { method: 'POST', headers: { cookie }, body: new URLSearchParams({ _csrf: csrf, json: JSON.stringify(manifest) }) });
     assert.ok((await posted.text()).includes('<b>0 shipped</b>'), 'the page reports the count');
   } finally { await app.close(); db.close(); }
+});
+
+test('production edges: the session rides a Lax cookie so a scanned link opens logged in; phones get no autofocus; a double tap is not an error; a viewer can look, not pack; logout drops the bench; the doctor names a default base URL and missing box data', async () => {
+  const cfg = testCfg({ demo: true }); const db = testDb(); await seedDemo(db, cfg); const app = createApp({ db, cfg }); const addr = await app.listen(); const base = `http://127.0.0.1:${addr.port}`;
+  try {
+    const login = await fetch(base + '/login', { method: 'POST', body: new URLSearchParams({ email: DEMO_USERS[0].email, password: DEMO_PASSWORD, code: totp(DEMO_TOTP_SECRET) }), redirect: 'manual' });
+    const set = login.headers.get('set-cookie'); assert.match(set, /SameSite=Lax/); assert.match(set, /HttpOnly/); assert.ok(!/SameSite=Strict/.test(set));
+    const cookie = set.split(';')[0]; const csrf = db.get('SELECT csrf FROM sessions').csrf;
+    const get = (p, h = {}) => fetch(base + p, { headers: { cookie, ...h }, redirect: 'manual' });
+    const paid = db.get("SELECT id, number FROM orders WHERE status = 'paid' AND EXISTS (SELECT 1 FROM order_items i WHERE i.order_id = orders.id AND i.sku = 'wap-kit') ORDER BY id LIMIT 1");
+    const desk = await (await get(`/pack?order=${paid.id}`)).text(); assert.ok(desk.includes('id="f_serial" name="serial" autofocus'), 'a laptop focuses the scan field');
+    const phone = await (await get(`/pack?order=${paid.id}`, { 'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1' })).text();
+    assert.ok(phone.includes('id="f_serial" name="serial"  autocomplete') && !phone.includes('autofocus'), 'a phone keeps its keyboard down');
+    const packed = db.get("SELECT id, number FROM orders WHERE status = 'packed' ORDER BY id LIMIT 1");
+    const again = await fetch(base + `/orders/${packed.id}/transition`, { method: 'POST', headers: { cookie }, body: new URLSearchParams({ _csrf: csrf, to: 'packed', bench: '1', _back: '/pack' }), redirect: 'manual' });
+    assert.match(decodeURIComponent(again.headers.get('location')), new RegExp(`^/pack\\?ok=${packed.number} is already packed`)); assert.equal(db.get('SELECT status FROM orders WHERE id = ?', packed.id).status, 'packed');
+    // the viewer: the scan page shows the board and the open order, with no button
+    const viewer = DEMO_USERS.find(u => u.role === 'viewer'); assert.ok(viewer, 'the demo has a viewer');
+    const vl = await fetch(base + '/login', { method: 'POST', body: new URLSearchParams({ email: viewer.email, password: DEMO_PASSWORD, code: totp(DEMO_TOTP_SECRET) }), redirect: 'manual' }); const vcookie = vl.headers.get('set-cookie').split(';')[0];
+    const vb = await fetch(base + `/pack?order=${paid.id}`, { headers: { cookie: vcookie } }); const vbench = (vb.headers.get('set-cookie') || '').split(';')[0];
+    const wap = db.get("SELECT serial FROM devices WHERE product_sku = 'wap-kit' AND order_id IS NULL ORDER BY id LIMIT 1");
+    const vhtml = await (await fetch(base + `/q/b/${wap.serial}`, { headers: { cookie: `${vcookie}; ${vbench}` } })).text();
+    assert.ok(vhtml.includes('can look, not pack') && !vhtml.includes('/assign"'));
+    // logout drops both cookies
+    const out = await fetch(base + '/logout', { method: 'POST', headers: { cookie: `${cookie}; bo_bench=${paid.id}` }, body: new URLSearchParams({ _csrf: csrf }), redirect: 'manual' });
+    const dropped = out.headers.getSetCookie ? out.headers.getSetCookie() : [out.headers.get('set-cookie')]; assert.ok(dropped.some(x => x.startsWith('bo_bench=') && /Max-Age=0/.test(x)) && dropped.some(x => x.startsWith('bo_session=') && /Max-Age=0/.test(x)));
+    // the devices list links each board's label
+    const devs = await (await fetch(base + '/devices', { headers: { cookie: vcookie } })).text(); assert.ok(devs.includes(`/devices/labels?serials=${wap.serial}`));
+    // the manifest import leaves an audit line
+    importLabels(db, [{ order_id: 'EL-999999', tracking: '9400 1', status: 'labeled' }], { cfg });
+    assert.deepEqual(JSON.parse(db.get("SELECT detail FROM audit_log WHERE action = 'orders.import_labels' ORDER BY id DESC LIMIT 1").detail).problems, ['EL-999999: no such order here']);
+  } finally { await app.close(); db.close(); }
+  // the doctor, outside the demo: the default base URL and the unloaded box data are named
+  const { doctor } = await import('../src/modules/health.mjs'); const { loadShipping } = await import('../src/modules/catalog.mjs');
+  const prod = testCfg({ demo: false, baseUrl: 'http://127.0.0.1:8787' }); const pdb = testDb();
+  let by = Object.fromEntries(doctor(pdb, prod).checks.map(c => [c.key, c]));
+  assert.equal(by.base_url.ok, false); assert.match(by.base_url.detail, /127\.0\.0\.1:8787 — a phone scanning a slip lands nowhere/);
+  assert.equal(by.shipping_data.ok, null); assert.match(by.shipping_data.detail, /not asked for yet/);
+  await loadShipping({ ...prod, shippingJson: '', storeJson: '/nonexistent/store.json' }).catch(() => {});
+  by = Object.fromEntries(doctor(pdb, prod).checks.map(c => [c.key, c])); assert.equal(by.shipping_data.ok, false, by.shipping_data.detail); assert.match(by.shipping_data.detail, /ENOENT|no such file/);
+  await loadShipping({ ...prod, shippingJson: '', storeJson: 'https://example.test/catalog' }).catch(() => {});
+  by = Object.fromEntries(doctor(pdb, prod).checks.map(c => [c.key, c])); assert.match(by.shipping_data.detail, /no shipping.json source/, 'a catalog URL with no shipping.json beside it says so');
+  await loadShipping({ ...prod, shippingJson: fixture('shipping.json') }, { force: true });
+  by = Object.fromEntries(doctor(pdb, { ...prod, baseUrl: 'https://ops.example.test' }).checks.map(c => [c.key, c])); assert.equal(by.shipping_data.ok, true); assert.match(by.shipping_data.detail, /\d+ boxes, \d+ parcels/); assert.equal(by.base_url.ok, true);
+  pdb.close();
 });

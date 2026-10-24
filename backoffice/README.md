@@ -196,6 +196,13 @@ and the backoffice is already a web page. Log in once on the phone's browser
   it names that is not packed, or already shipped with another number, is
   reported by name and the rest still goes.
 
+Three things to know before the first batch. Use Safari itself on the phone,
+not a copy added to the home screen (iOS keeps those cookie jars apart, and the
+camera opens links in Safari). The Health page says whether
+`BACKOFFICE_BASE_URL` is a real address — the codes encode it, and the default
+points at the machine itself. And a second tap on a bench button is never an
+error: an order already packed says so and nothing moves twice.
+
 The codes are made here (`src/qr.mjs`, the same encoder the authenticator
 enrollment page uses; `tests/users.test.mjs` holds it to a reference encoder
 bit for bit), so a slip never carries a code the phone cannot read. They encode
@@ -280,7 +287,9 @@ Three numbers show up around an order, and each has one source.
 - **Privacy** — contacts exist because they bought, wrote or asked. No
   tracking pixels, no open/click beacons, no third party sees the list. Mail
   is plain text. The admin sets `noindex` and every cookie is `HttpOnly;
-  SameSite=Strict`.
+  SameSite=Lax` (Lax so a code the phone's camera scans opens the bench
+  logged in; every write is a POST under the CSRF token and the cross-site
+  refusal).
 
 ## Layout
 

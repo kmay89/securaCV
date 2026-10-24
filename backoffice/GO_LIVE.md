@@ -73,7 +73,8 @@ arriving, that is itself the alarm.
   the live webhook at the same URL.
 - Set `SUPPORT_ADDR`, the real `IMAP_URL` / `SMTP_URL` (a relay with SPF and
   DKIM for your domain — never a home connection), `MAIL_FROM`.
-- Set `BACKOFFICE_BASE_URL=https://…` so cookies are `Secure` and HSTS is
+- Set `BACKOFFICE_BASE_URL=https://…` (it is also what the slip and board-label
+  codes encode, so the phone can open them) so cookies are `Secure` and HSTS is
   on. Health checks it.
 - For the first month, keep comparing Orders with the Stripe dashboard once
   a week. `reconcile` runs daily and raises an exception on any gap.

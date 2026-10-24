@@ -18,8 +18,12 @@ export function parseCookies(req) {
   return out;
 }
 
+// SameSite=Lax, not Strict: a link the phone's camera hands to the browser (the slip's code, a
+// board's label) is a top-level navigation from outside the site, and Strict withholds the
+// session on exactly that hop — the scan would land on the login page. Lax sends the cookie on
+// top-level GETs only; every write is a POST under the CSRF token and the cross-site refusal.
 export function cookie(name, value, { maxAge = 0, secure = false, path = '/' } = {}) {
-  const bits = [`${name}=${encodeURIComponent(value)}`, `Path=${path}`, 'HttpOnly', 'SameSite=Strict'];
+  const bits = [`${name}=${encodeURIComponent(value)}`, `Path=${path}`, 'HttpOnly', 'SameSite=Lax'];
   if (secure) bits.push('Secure');
   if (maxAge) bits.push(`Max-Age=${maxAge}`);
   if (maxAge < 0) bits.push('Max-Age=0');

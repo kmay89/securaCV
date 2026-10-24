@@ -25,7 +25,7 @@ test('end to end: login + CSRF, public forms, signed Stripe webhook, bearer API,
     r = await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ password: 'operator password 1', code: totp(totpSecret) }) });
     assert.equal(r.headers.get('location'), '/');
     const cookie = r.headers.get('set-cookie').split(';')[0];
-    assert.match(r.headers.get('set-cookie'), /HttpOnly; SameSite=Strict/);
+    assert.match(r.headers.get("set-cookie"), /HttpOnly; SameSite=Lax/); // Lax, not Strict: a link the phone scans must arrive logged in
     const csrf = db.get('SELECT csrf FROM sessions').csrf;
     r = await fetch(base + '/', { headers: { cookie } }); assert.equal(r.status, 200); const dash = await r.text(); assert.ok(dash.includes('class="hero"'));
     assert.ok(dash.includes(`action="/logout" class="inline"><input type="hidden" name="_csrf" value="${csrf}"`), 'the visible Log out button carries the CSRF token');

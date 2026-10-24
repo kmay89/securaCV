@@ -300,6 +300,7 @@ export function importLabels(db, manifest, { cfg = null, actor = 'web', at = nul
     try { transition(db, o.id, 'shipped', { actor, carrier: String(r?.carrier || 'USPS'), tracking, cfg, at, postageCents }); out.shipped.push(`${number}: ${tracking}`); }
     catch (err) { out.problems.push(`${number}: ${err.message}`); }
   }
+  db.audit(actor, 'orders.import_labels', 'manifest', `${rows.length} entries`, { shipped: out.shipped.length, skipped: out.skipped.length, problems: out.problems });
   return out;
 }
 

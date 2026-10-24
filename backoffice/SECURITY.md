@@ -34,7 +34,7 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   person and that person waits, the right password included. Every attempt,
   locked or not, is in the audit log with its address; the Health page
   counts the last 24 hours and names anyone locked out.
-- **Sessions.** A random 256-bit id in an `HttpOnly; SameSite=Strict`
+- **Sessions.** A random 256-bit id in an `HttpOnly; SameSite=Lax`
   cookie (`Secure` when the base URL is https), 12 hours absolute, a new id
   on every login, deleted on logout. A CSRF token per session rides in every
   form; a POST whose browser says it came from another site

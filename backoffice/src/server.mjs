@@ -135,7 +135,7 @@ export function createApp({ db, cfg }) {
     app.lockout.clear(ip);
     redirect(c.res, '/', { 'Set-Cookie': cookie('bo_session', s.id, { maxAge: cfg.sessionHours * 3600, secure: cfg.secure }) });
   }, { public: true, csrf: false });
-  router.post('/logout', (c) => { if (c.session) logout(db, c.session.id); redirect(c.res, '/login', { 'Set-Cookie': cookie('bo_session', '', { maxAge: -1, secure: cfg.secure }) }); });
+  router.post('/logout', (c) => { if (c.session) logout(db, c.session.id); redirect(c.res, '/login', { 'Set-Cookie': [cookie('bo_session', '', { maxAge: -1, secure: cfg.secure }), cookie('bo_bench', '', { maxAge: -1, secure: cfg.secure })] }); });
 
   // ---------- JSON API (bearer token or a logged-in session)
   router.get('/api', (c) => json(c.res, { name: 'securacv-backoffice', endpoints: API_INDEX }));
