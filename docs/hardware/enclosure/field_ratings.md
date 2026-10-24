@@ -79,7 +79,7 @@ the verified rating is earned in §5 and belongs to one physical unit.
 | Level | Means | Maps to | Design prerequisites | Who can reach it |
 |-------|-------|---------|----------------------|-------------------|
 | **CER‑1 · Indoor** | dust-protected desk/wall duty | ~IP20–40 | any case as printed | every design |
-| **CER‑2 · Sheltered outdoor** | rain-splash under an eave/porch | ~IP53–54 target | weather preset: printed TPU gasket, drip skirt, USB plug, vent, mounted ports-down | WAP/Vision weather, doorbell (plate-sealed) |
+| **CER‑2 · Sheltered outdoor** | rain-splash under an eave/porch | ~IP53–54 target | weather preset: printed TPU gasket in the shell's ledge, O-ringed plate screws, USB plug, vent, mounted ports-down | WAP/Vision weather, doorbell (plate-sealed) |
 | **CER‑3 · Exposed outdoor** | direct rain + hose-down washes | ~IP55 target | CER‑2 + cable gland on any wire exit + solar shield + 4–5 perimeter walls | WAP/Vision weather (careful print), relay pod (dev) |
 | **CER‑4 · Field** | 1 m submersion 30 min + 1.22 m transit drops, bag-carry | ~IP67 + 810H 516.8 IV target | **field case only**: O-ring cord, 8-lobe clamp, no external ports, ePTFE vent, 4 mm walls, TPU boot, foam-bedded battery | [`canary_field_case.scad`](./canary_field_case.scad) |
 

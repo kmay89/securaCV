@@ -284,3 +284,122 @@ test("A56: the real Dash's cable side lands where the visitor's turn puts it", a
     assert.strictEqual(turned.length, scene.parts.length - 1, `turn ${t}: the stand is left out`);
   }
 });
+
+// The witnesses' two-part cards close the way the CAD closes them. Each case
+// is a shell over a piston plate (the fit check: back() as modeled, the front
+// turned over about X at base_d + lid_t), so the closed card measures the
+// ledger's assembled envelope (docs/hardware/enclosure/assembled_dims.json),
+// its plate is placed as modeled (a pure translation), and its front, seen
+// from its plate, sits exactly where assembly.json seats it
+// (gen_assembly_poses.py) — the Vision and the Sense cards load the very STLs
+// those rows seat; the WAP's Assemble tab shows the weather set, so its
+// compact card is held by the envelope alone. The bbox-stacked card stood each
+// plate 15.6 mm (Vision, Sense) / 6.5 mm (WAP) out of its shell, measured
+// 39.98 / 38.10 / 21.75 deep, and slid the finned shells 10.25 mm along y.
+test("the two-part witness cards close at the CAD's seat and measure the ledger's envelope", async () => {
+  const { upgradeRealShape } = await import("../assets/real-shapes.js");
+  const { M4 } = await import("../assets/scene3d.js");
+  const asm = JSON.parse(readFileSync(join(ROOT, "devices/assembly.json"), "utf8"));
+  const dims = JSON.parse(readFileSync(join(REPO, "docs/hardware/enclosure/assembled_dims.json"), "utf8"));
+  const ap = (m, x, y, z) => [0, 1, 2].map((k) => m[k] * x + m[4 + k] * y + m[8 + k] * z + m[12 + k]);
+  const cards = {
+    "canary-vision": ["canary_vision_enclosure_xiao_indoor_front.stl", "canary_vision_enclosure_xiao_indoor_back.stl"],
+    "canary-sense": ["canary_sense_front.stl", "canary_sense_back.stl"],
+    "canary-wap": null,
+  };
+  const real = globalThis.fetch;
+  globalThis.fetch = shimFetch([]);
+  try {
+    for (const [dev, seatedFiles] of Object.entries(cards)) {
+      const scene = fakeScene();
+      assert.ok(await upgradeRealShape(scene, dev), `${dev}: the card upgrades`);
+      assert.strictEqual(scene.parts.length, 2, `${dev}: the card is a plate and a shell`);
+      const [back, front] = scene.parts;
+      const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (const p of [back, front]) {
+        const P = p.builder.pos;
+        for (let i = 0; i < P.length; i += 3) {
+          const v = ap(p.model, P[i], P[i + 1], P[i + 2]);
+          for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], v[k]); hi[k] = Math.max(hi[k], v[k]); }
+        }
+      }
+      const fig = dims.devices[`device.${dev}`].fig;
+      for (const [k, want, what] of [[0, fig.w, "width"], [1, fig.h, "height"], [2, fig.d, "depth"]]) {
+        const got = hi[k] - lo[k];
+        assert.ok(Math.abs(got - want) < 0.02, `${dev}: the closed card's ${what} is ${got.toFixed(3)}, the ledger's ${want}`);
+      }
+      // the plate as modeled: no turn, only the card's centering
+      const rot = Array.from(back.model).slice(0, 12);
+      assert.deepStrictEqual(rot.map((v) => +v.toFixed(9) || 0), [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0],
+        `${dev}: the plate is placed as modeled (a translation only)`);
+      if (!seatedFiles) continue;
+      const rows = Object.fromEntries((asm.devices[dev]?.parts || []).map((p) => [p.id, p]));
+      assert.deepStrictEqual([rows.front?.file, rows.back?.file], seatedFiles,
+        `${dev}: assembly.json seats the STLs this card loads (the comparison below is not vacuous)`);
+      const s = rows.front.seated;
+      assert.deepStrictEqual(rows.back.seated.pos, [0, 0, 0], `${dev}: assembly.json keeps the plate as modeled`);
+      const cad = M4.mul(M4.translate(...s.pos), M4.rotX((s.rot?.[0] || 0) * Math.PI / 180));
+      assert.deepStrictEqual((s.rot || [0, 0, 0]).slice(1), [0, 0], `${dev}: the CAD turns the front about X only`);
+      const t = [back.model[12], back.model[13], back.model[14]];
+      const P = front.builder.pos;
+      let worst = 0;
+      for (let i = 0; i < P.length; i += 3) {
+        const a = ap(front.model, P[i], P[i + 1], P[i + 2]).map((v, k) => v - t[k]);
+        const b = ap(cad, P[i], P[i + 1], P[i + 2]);
+        worst = Math.max(worst, Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]));
+      }
+      assert.ok(worst < 0.01, `${dev}: the card's front is up to ${worst.toFixed(3)} mm off assembly.json's seat`);
+    }
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+// The display cards pose their printed parts in the stand's frame by hand
+// (seatPart: a center, a turn); assembly.json is where the CAD seats the same
+// preview STLs (gen_assembly_poses.py). Held vertex for vertex, so a part
+// turned the wrong way about its own center — the Dash frame turned about X,
+// its chimney vents on the desk and its USB slot facing up, up to 138.8 mm
+// off — fails, not only a part off its center (scene_figures.test.js holds
+// the offsets along the face normal; A56's bottom-wall average is symmetric
+// under that turn, so neither saw it).
+test("the Watch and Dash cards seat every printed part where assembly.json does", async () => {
+  const { upgradeRealShape } = await import("../assets/real-shapes.js");
+  const { M4 } = await import("../assets/scene3d.js");
+  const asm = JSON.parse(readFileSync(join(ROOT, "devices/assembly.json"), "utf8"));
+  const D = Math.PI / 180;
+  // assembly.json's rot is a THREE 'XYZ' Euler in degrees: R = Rx · Ry · Rz
+  const seat = (s) => M4.mul(M4.translate(...s.pos), M4.mul(M4.rotX((s.rot?.[0] || 0) * D),
+    M4.mul(M4.rotY((s.rot?.[1] || 0) * D), M4.rotZ((s.rot?.[2] || 0) * D))));
+  const ap = (m, v) => [0, 1, 2].map((k) => m[k] * v[0] + m[4 + k] * v[1] + m[8 + k] * v[2] + m[12 + k]);
+  const real = globalThis.fetch;
+  globalThis.fetch = shimFetch([]);
+  try {
+    for (const [dev, ids] of [["canary-display-watch", ["stand", "drum", "bezel"]],
+                              ["canary-display-dash", ["stand", "frame", "back"]]]) {
+      const scene = fakeScene();
+      assert.ok(await upgradeRealShape(scene, dev), `${dev}: the card upgrades`);
+      const meshes = scene.parts.filter((p) => !p.screen);
+      assert.strictEqual(meshes.length, 3, `${dev}: three printed parts`);
+      assert.ok(meshes[0].stand, `${dev}: the first part is the stand`);
+      const rows = Object.fromEntries(asm.devices[dev].parts.map((p) => [p.id, p]));
+      const cardStand = M4.rigidInverse(meshes[0].model);
+      const cadStand = M4.rigidInverse(seat(rows.stand.seated));
+      ids.slice(1).forEach((id, j) => {
+        const part = meshes[j + 1];
+        assert.ok(rows[id]?.seated, `${dev}: assembly.json seats the ${id}`);
+        const card = M4.mul(cardStand, part.model);
+        const cad = M4.mul(cadStand, seat(rows[id].seated));
+        let worst = 0;
+        const P = part.builder.pos;
+        for (let i = 0; i < P.length; i += 3) {
+          const v = [P[i], P[i + 1], P[i + 2]], a = ap(card, v), b = ap(cad, v);
+          worst = Math.max(worst, Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]));
+        }
+        assert.ok(worst < 0.05, `${dev}: the card's ${id} is up to ${worst.toFixed(2)} mm off assembly.json's seat`);
+      });
+    }
+  } finally {
+    globalThis.fetch = real;
+  }
+});

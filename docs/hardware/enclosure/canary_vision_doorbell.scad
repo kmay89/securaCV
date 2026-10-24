@@ -277,6 +277,18 @@
 //      slab nothing touches; 0.30 meets the lips), past the heads' 0.2. Each
 //      rim seats on a film of neutral-cure silicone and the TPU web is the
 //      seal (svc_proud); no mesh moves for this one.
+//  v0.9 follow-up (2026-10-23): THE WALL SCREWS THREADED THE PLATE. Its four
+//  #8 holes were Ø4.2 — a 33-gon whose flats sit at r 2.0905 against the #8's
+//  4.166 / 2 = 2.083 major, 0.0075 a side before an FDM hole prints small — so
+//  the screw cut its thread in the 2.0 web under the head and held the plate
+//  off its anchor (the Vision bracket's AUD-5, the mounts' AUD-19, the sign's
+//  AUD-20). plate_screw_d is 4.8 (0.31 a side); the counterbore stays the
+//  Ø8.6 it was (the #8 pan head's 8.2 + 0.2 a side), so only the web's
+//  annulus moves: both wall plates, envelope unchanged. The drill template
+//  follows (db_screw_d, gen_templates.py). And the GORE seat (opt_vent, off by
+//  default) takes the slide tolerance, vent_pad_d + 2 x tol_slide: cut at
+//  exactly the Ø12 the echo bills, the patch had no room in its own seat (the
+//  Vision's and the WAP's, the same day). No default mesh moves for that one.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft_edge_plate, foot_chamfer_ring, the
@@ -539,7 +551,7 @@ wplate_t    = 5.0;    // wall plate thickness at the THIN end: a #8 pan head rec
 plate_wedge = 0;      // vertical wedge: camera tilts down the approach  // [0:5:15]
 plate_wedge_x = 0;    // horizontal wedge: aims left/right (corner installs)  // [-15:5:15]
 sec_screw_d = 2.2;    // security screw (M2 self-tap; use a Torx/security drive)
-plate_screw_d = 4.2;  // wall screws (#8 / M4 PAN head — the seats are flat counterbores)
+plate_screw_d = 4.8;  // wall screws (#8 / M4 PAN head — the seats are flat counterbores): the #8's 4.17 major + 2 x tol_hole (4.2 let the screw thread the plate, the Vision bracket's AUD-5)
 plate_head_h = 2.8;   // wall-screw pan head height: the seat is cut this deep (+0.2) so the head sits flush  // [2.0:0.1:3.2]
 collar_t    = 2.4;    // the collar's side-return thickness (it wraps the body's bottom end; 6 perimeters at 0.4)
 collar_tb   = 3.5;    // the collar's bottom wall — the security screw passes up through it and its head bears on it
@@ -576,7 +588,7 @@ label_font  = "Liberation Sans:style=Bold";  // the font label_text is set in (i
 lp_d   = 3.0;      // light-pipe diameter (hole = lp_d + 2*tol_press) — core_lightpipe_d()
 lp_dx  = 8.0;      // light-pipe port center X, from the face's center
 lp_dy  = -8.0;     // light-pipe port center Y, from the module center
-vent_pad_d     = 12.0;  // GORE-vent seat Ø, on the face's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()
+vent_pad_d     = 12.0;  // GORE-vent patch Ø (its seat is cut tol_slide over it), on the face's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()
 vent_pad_depth = 0.8;   // that seat's recess depth — core_vent_pad_depth()
 vent_hole_d    = 1.0;   // fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm)
 vent_ring_d    = 6.0;   // Ø of the ring the vent holes sit on — core_vent_ring_d()
@@ -1520,7 +1532,7 @@ module shell_solid() {
                 }
                 if (e_led) core_lightpipe_bore(lp_dx, vm_cy + lp_dy, lid_t, lp_d, tol_press);
                 if (e_vent) core_vent_cluster(vent_dx, vm_cy + vent_dy, lid_t,
-                                              vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes,
+                                              vent_pad_d + 2*tol_slide, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes,
                                               seat_inner = true);   // the membrane goes INSIDE: nothing to bridge on the bed
                 if (label_text != "")
                     translate([label_dx, label_dy, lid_t - label_depth])
@@ -1735,7 +1747,7 @@ module plate() {
             translate([sx*(out_x/2 - plate_screw_inset()[0]), sy*(out_y/2 - plate_screw_inset()[1]), -0.1])
                 cylinder(d = plate_screw_d, h = hmax + 1);
             translate([sx*(out_x/2 - plate_screw_inset()[0]), sy*(out_y/2 - plate_screw_inset()[1]), plate_seat_z])
-                cylinder(d = plate_screw_d + 4.4, h = hmax + 1);
+                cylinder(d = 8.6, h = hmax + 1);   // the #8 pan head's 8.2 + 0.2 a side — held where it was when the hole opened to 4.8
         }
         // cable pass: a roomier match for the back plate's oval exit, run
         // mount_dt_travel() up the slide as a SLOT — the plug's cable leg is in

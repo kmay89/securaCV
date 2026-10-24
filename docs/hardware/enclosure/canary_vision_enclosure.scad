@@ -191,6 +191,12 @@
 //      inside the gasket line. The Sense's PL-3 form now (core_key_d() + 0.3
 //      in from the bore wall, asserted in seal mode); the doorbell's seal
 //      review found the same cut there.
+//  v0.7 follow-up (2026-10-23): the GORE seat takes the slide tolerance. It
+//  was cut at exactly vent_pad_d, the Ø12 the echo bills (a 95-gon, Ø11.99
+//  across its flats), so the patch had no room before an FDM pocket prints
+//  small and rode the rim instead of bonding to the floor. The seat is
+//  vent_pad_d + 2 x tol_slide (Ø12.4), as the disc seat takes; the weather
+//  front moves, its envelope does not (the indoor fronts cut no vent).
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, tearbore_x, soft_edge_plate,
@@ -395,7 +401,7 @@ hood_seat     = 0.6;  // groove in the front's show face the hood's spigot press
 lp_d   = 3.0;      // light-pipe diameter (hole = lp_d + 2*tol_press)
 lp_dx  = 8.0;      // light-pipe port center X, from the module center
 lp_dy  = -8.0;     // light-pipe port center Y, from the module center
-vent_pad_d     = 12.0;  // GORE-vent seat Ø, on the front's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()
+vent_pad_d     = 12.0;  // GORE-vent patch Ø (its seat is cut tol_slide over it), on the front's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()
 vent_pad_depth = 0.8;   // GORE-seat recess depth into the front's inner face — core_vent_pad_depth()
 vent_hole_d    = 1.0;   // fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm)
 vent_ring_d    = 6.0;   // Ø of the ring the vent holes sit on — core_vent_ring_d()
@@ -1025,7 +1031,7 @@ module shell_solid() {
                     translate([lens_x, lens_y, lid_t - hood_seat]) linear_extrude(hood_seat + 1) hood_ring2d();
                 if (e_led) core_lightpipe_bore(vm_cx + lp_dx, vm_cy + lp_dy, lid_t, lp_d, tol_press);
                 if (e_vent || e_buzzer) core_vent_cluster(vm_cx + vent_dx, vm_cy + vent_dy, lid_t,
-                                                  vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes,
+                                                  vent_pad_d + 2*tol_slide, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes,
                                                   seat_inner = true);   // the membrane goes INSIDE: nothing to bridge on the bed
                 if (label_text != "")
                     translate([label_dx, label_dy, lid_t - label_depth])

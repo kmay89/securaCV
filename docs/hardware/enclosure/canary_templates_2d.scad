@@ -14,6 +14,8 @@
 //  2026-08-23: the studs-mode drill number now reads mount_kh_shank_d() from
 //  canary_mount_lib — same 4.2, but the paper can no longer drift from the
 //  keyhole pockets it templates.
+//  2026-10-23: db_screw_d 4.2 -> 4.8 with the doorbell wall plate's #8 holes
+//  (4.2 left a #8 0.0075 a side; the plate's v0.9 follow-up note).
 // ============================================================================
 
 use <canary_mount_lib.scad>  // the stud/keyhole standard the studs template drills for
@@ -30,7 +32,7 @@ br_x = 46.0;  br_y = 34.0;  br_screw_d = 4.8;
 /* [Doorbell] — mirror canary_vision_doorbell plate defaults (gen_templates.py --check
    probes the doorbell and fails when one of these stops equaling its source) */
 db_out_x = 51.5;  db_out_y = 169.2;   // the shell/slab outline (its version echo prints both)
-db_screw_inset_x = 7.5;  db_screw_inset_y = 14.0;  db_screw_d = 4.2;
+db_screw_inset_x = 7.5;  db_screw_inset_y = 14.0;  db_screw_d = 4.8;
 db_exit_dx = 2.2;  db_exit_cy = -8.8;   db_exit_w = 14.0;  db_exit_h = 10.0;   // exit_cx (the module's centerline, vm_cx), exit_cy (v0.8: the well sits over the speaker zone)
 db_exit_slide = 8.0;                   // the wall plate's pass runs this far up the slide (mount_dt_travel)
 db_r = 12.0;                           // the plate outline's corner radius (the doorbell's rr)

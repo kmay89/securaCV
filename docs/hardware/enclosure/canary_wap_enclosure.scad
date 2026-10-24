@@ -121,6 +121,20 @@
 //              the back face into the cavity, inside the gasket line on the
 //              weather build. It is the Sense's PL-3 form now (core_key_d() +
 //              0.3 in from the bore wall, asserted in seal mode).
+//  2026-10-23: the GORE seat takes the slide tolerance. It was cut at exactly
+//              vent_pad_d, the Ø12 the echo bills (a 95-gon whose flats sit
+//              at Ø11.99), so the patch met its own seat with nothing to
+//              spare before an FDM pocket prints small, and rode the rim
+//              instead of bonding to the floor. The seat is vent_pad_d +
+//              2 x tol_slide (Ø12.4) now, like the disc seat beside it; the
+//              web asserts measure the seat. Every lid moves (the buzzer
+//              vent is in all three presets); envelopes unchanged.
+//  2026-10-23: the screw tabs' holes were Ø3.6 for "M3 / #6": 3.58 at the
+//              29-gon's flats, 0.04 a side over a #6's 3.505 major (a #6
+//              shank + 0.06 met all four tabs). tab_hole_d 4.2, the #6 + 2 x
+//              tol_hole (+ 0.3 a side: EMPTY). No released preset draws the
+//              tabs (only battery_weather mounts, on keyholes), so no
+//              committed mesh moves; the builder's tabs option does.
 // ============================================================================
 
 use <canary_core_lib.scad>    // rrect/rrect2d, soft-edge face, foot chamfer, the piston plate (pl_*)
@@ -170,7 +184,7 @@ mount_style = "keyhole"; // ["keyhole","tabs","both"]
 tab_l       = 10.0;   // ear length along the wall
 tab_w       = 8.0;    // ear protrusion from the wall
 tab_t       = 3.0;    // ear thickness
-tab_hole_d  = 3.6;    // through-hole (M3 / #6)
+tab_hole_d  = 4.2;    // through-hole (M3 / #6): the #6's 3.505 major + 2 x tol_hole, rounded up (3.6 left a #6 0.04 a side; no released preset draws the tabs)
 tab_cb_d    = 7.0;    // pan-head counterbore diameter
 tab_cb_h    = 1.0;    // counterbore depth
 
@@ -350,7 +364,7 @@ lp_d           = 3.0;   // light-pipe diameter (3 mm pipe -> 3.2 mm hole at defa
 lp_dx          = -1.0;  // light-pipe port center X, from the board center (off the lens at -6.95: the Ø3.2 bore keeps a web to the Ø12.4 disc seat — asserted)
 lp_dy          = 9.5;   // light-pipe port center Y, from the board center (9.5, past the board's edge: at 7.5 the bore broke into the moved disc seat)
 // Buzzer + pressure vent (recess seats an adhesive GORE vent; ring of holes passes sound/pressure)
-vent_pad_d     = 12.0;  // GORE-vent recess Ø, on the face's INNER side (the buzzer + pressure vent: the recess seats an adhesive vent; it prints face-down, and an outer seat cannot bridge)
+vent_pad_d     = 12.0;  // GORE-vent patch Ø (the recess is cut tol_slide over it), on the face's INNER side (the buzzer + pressure vent: the recess seats an adhesive vent; it prints face-down, and an outer seat cannot bridge)
 vent_pad_depth = 0.8;   // GORE-vent recess depth into the face's inner surface — core_vent_pad_depth()
 vent_hole_d    = 1.0;   // fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm); the
                         // membrane behind them seals, so the holes only need to pass sound + pressure
@@ -646,7 +660,7 @@ assert(!e_camera || cam_win_d >= cam_need,
 // glued disc landed on the flush pipe's rim and could not seat)
 cam_r  = e_camera ? max(cam_win_d/2, cam_disc_d > 0 ? cam_disc_d/2 + tol_slide : 0) : 0;
 lp_r   = e_led    ? lp_d/2 + tol_press : 0;
-vent_r = e_buzzer ? vent_pad_d/2 : 0;
+vent_r = e_buzzer ? vent_pad_d/2 + tol_slide : 0;
 mag_r  = e_tamper ? mag_d/2 + tol_press + 1.2 : 0;
 tch_r  = e_touch  ? touch_d/2 : 0;
 function _web_ok(ax, ay, ar, bx, by, br) = ar == 0 || br == 0 || norm([ax - bx, ay - by]) >= ar + br + core_min_web();
@@ -1009,7 +1023,7 @@ module shell_solid() {
                 // face it was a Ø12 pocket on the bed whose floor bridged a circle full of
                 // holes (the doorbell's first print: a nest of strings), and that floor is
                 // the membrane's adhesive land. The membrane goes in from inside
-                if (e_buzzer) core_vent_cluster(vnt[0], vnt[1], lid_t, vent_pad_d, vent_pad_depth,
+                if (e_buzzer) core_vent_cluster(vnt[0], vnt[1], lid_t, vent_pad_d + 2*tol_slide, vent_pad_depth,
                                                 vent_ring_d, vent_hole_d, vent_holes, seat_inner = true);
                 if (e_touch)  translate([tch[0], tch[1], -1]) cylinder(d = touch_d, h = lid_t - touch_wall + 1); // touch window (blind thinning)
                 // debossed label on the outer face (prints face-down -> crisp first-layer voids)

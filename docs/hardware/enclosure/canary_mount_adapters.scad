@@ -1,15 +1,26 @@
 // ============================================================================
 //  Canary — UNIVERSAL MOUNT ADAPTERS  ⚠️ IN DEVELOPMENT (v0.2-dev)
 //  The T-stud/keyhole interface is the de-facto Canary mounting standard:
-//  every case with blind keyhole pockets hangs on two Ø4 studs with Ø6.6
-//  heads. These adapters carry that interface into three more scenarios:
+//  a case with a pair of blind keyhole pockets in line along their slots
+//  hangs on two Ø4 studs with Ø6.6 heads. These adapters carry that
+//  interface into three more scenarios:
 //    part = "corner"   — 90° inside-corner wedge (two 45° wall faces)
-//    part = "magnet"   — magnet plate (4 x Ø20x3 pockets + steel-surface note)
+//    part = "magnet"   — magnet plate (2 x Ø20x3 pockets, mag_n + steel-surface note)
 //    part = "pole"     — strap plate (hose-clamp/zip-tie channels)
 //    part = "template" — 1 mm drill/hang template (stud + cable marks)
 //
-//  Set stud_gap to the target case's pocket spacing (see the README table:
-//  Vision/Sense = 2*(inner/2 - kh_inset); WAP = 2*kh_x, preset-dependent).
+//  Set stud_gap to the target case's pocket spread. Each case file states
+//  it (canary_outlet_cradle.scad's `target` reads them live through use <>):
+//  sense_kh_spread(), vision_kh_spread(host), wap_kh_spread(preset) — at
+//  these sources 29.8, 46.2 (xiao) / 48.0 (devkit), 80.5 (battery presets)
+//  — and the field case's 2 x kh_x, 36. The default 30 is the Vision Pro
+//  plate's kh_gap, the fit coupon's POCKET pair and the paper studs template.
+//  The pockets exist only in a case's keyhole build: of the released STLs,
+//  the weather builds (the WAP's weather base, the Vision's xiao weather
+//  back); a Sense needs preset="sense_ceiling". The studs pair in line along
+//  the slots, as those cases' pockets run. The Combo's two do not: they sit
+//  side by side, 41.2 apart at one height with vertical slots, so it hangs
+//  on two wall screws (its echo bills them), not on these studs.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 //
@@ -30,6 +41,11 @@
 //      now prints on its long edge (the selector) with a 45° teardrop crown
 //      on each pocket, so every pocket roof self-supports;
 //    * the template's "UP" ran 0.78 past the top edge and lost its tops.
+//  2026-10-23: the header sent stud_gap to "the README table", which does not
+//  exist (the README says only "set stud_gap per case"), and promised every
+//  keyhole case on these studs: it now names where each spread is read,
+//  which builds have pockets, and the one pair (the Combo's) that runs side
+//  by side. No mesh moves.
 // ============================================================================
 
 use <canary_core_lib.scad>   // shared 2D primitives — rrect2d has one home now
