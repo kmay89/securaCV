@@ -2,7 +2,7 @@
 // API for the CLI / an AI operator, and the server-rendered admin.
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { Router, HttpError, parseCookies, cookie, readBody, parseBody, RateLimiter, Lockout, html, json, text, redirect, clientIp, escapeHtml, safeEqual } from './http.mjs';
+import { Router, HttpError, parseCookies, cookie, readBody, parseBody, RateLimiter, Lockout, html, json, text, redirect, clientIp, escapeHtml, safeEqual, int, asArray } from './http.mjs';
 const e = escapeHtml;
 import { layout, setTimezone, dt as fmtDt, day as fmtDay } from './render.mjs';
 import { orderToken, deliveryLine, trackingUrl } from './modules/delivery.mjs';
@@ -10,7 +10,7 @@ import { editItems } from './modules/orders.mjs';
 import { sessionFor, login, logout, apiTokenFor, hasOperator, carryLegacyOperator, can } from './auth.mjs';
 import { actorStore, nowIso } from './db.mjs';
 import { registerUsers } from './admin_users.mjs';
-import { loadCatalog } from './modules/catalog.mjs';
+import { loadCatalog, loadShipping } from './modules/catalog.mjs';
 import { verifyStripeSignature, eventToOrder, fetchLineItems, resolveDiscountCode } from './modules/stripe.mjs';
 import { recordOrder, refund, orderByNumber, transition, listOrders, timeline, addNote, setTags, batches, statusCounts } from './modules/orders.mjs';
 import { listCustomers, contactById, customerStats, setContactTags } from './modules/contacts.mjs';
@@ -31,7 +31,7 @@ import { openExceptions, resolve as resolveException, raise as raiseException } 
 import { snapshot } from './modules/dashboard.mjs';
 import { registerAdmin } from './admin.mjs';
 import { runJob, JOBS } from './jobs.mjs';
-import { isDemo, DEMO_PASSWORD, DEMO_USERS, DEMO_TOTP_SECRET, DEMO_WEBHOOK_SECRET, DEMO_CATALOG, SCENARIOS, localBase, seedDemoUsers } from './modules/demo.mjs';
+import { isDemo, DEMO_PASSWORD, DEMO_USERS, DEMO_TOTP_SECRET, DEMO_WEBHOOK_SECRET, DEMO_CATALOG, DEMO_SHIPPING, SCENARIOS, localBase, seedDemoUsers } from './modules/demo.mjs';
 import { totp } from './auth.mjs';
 import { weekLabel as weekLabelNow } from './modules/orders.mjs';
 
@@ -49,7 +49,9 @@ export function createApp({ db, cfg }) {
     if (isDemo(db)) seedDemoUsers(db);
   }
   // In demo mode the catalog is the demo's own, never fetched from the live site.
-  const app = { db, cfg, json, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), formLimiter: new RateLimiter({ limit: 5, windowMs: 10 * 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), once: new Map(), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o) };
+  const app = { db, cfg, json, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), formLimiter: new RateLimiter({ limit: 5, windowMs: 10 * 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), once: new Map(), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o), shipping: cfg.demo ? async () => DEMO_SHIPPING : (o) => loadShipping(cfg, o) };
+  // The website's fulfillment block knows where parcels leave from and how far a scale may drift; the environment can override either.
+  app.catalog().then(cat => { const f = cat?.fulfillment || {}; if (f.ship_from?.state && !process.env.SHIP_FROM_STATE) cfg.shipFromState = String(f.ship_from.state).toUpperCase(); if (Number.isFinite(Number(f.weight_tolerance_oz)) && cfg.weightToleranceOz == null) cfg.weightToleranceOz = Number(f.weight_tolerance_oz); }).catch(() => {});
   const { router } = app;
 
   // ---------- public
@@ -133,7 +135,7 @@ export function createApp({ db, cfg }) {
     app.lockout.clear(ip);
     redirect(c.res, '/', { 'Set-Cookie': cookie('bo_session', s.id, { maxAge: cfg.sessionHours * 3600, secure: cfg.secure }) });
   }, { public: true, csrf: false });
-  router.post('/logout', (c) => { if (c.session) logout(db, c.session.id); redirect(c.res, '/login', { 'Set-Cookie': cookie('bo_session', '', { maxAge: -1, secure: cfg.secure }) }); });
+  router.post('/logout', (c) => { if (c.session) logout(db, c.session.id); redirect(c.res, '/login', { 'Set-Cookie': [cookie('bo_session', '', { maxAge: -1, secure: cfg.secure }), cookie('bo_bench', '', { maxAge: -1, secure: cfg.secure })] }); });
 
   // ---------- JSON API (bearer token or a logged-in session)
   router.get('/api', (c) => json(c.res, { name: 'securacv-backoffice', endpoints: API_INDEX }));
@@ -141,14 +143,15 @@ export function createApp({ db, cfg }) {
   router.get('/api/orders', (c) => json(c.res, listOrders(db, Object.fromEntries(['status', 'batch', 'q', 'tag', 'from', 'to', 'discount', 'sku'].map(k => [k, c.query.get(k) || ''])))));
   router.get('/api/orders/:number', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, o); });
   router.post('/api/orders', async (c) => json(c.res, recordOrder(db, c.body, { catalog: await app.catalog().catch(() => null), actor: c.actor }), 201));
-  router.post('/api/orders/:number/transition', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, transition(db, o.id, c.body.to, { actor: c.actor, carrier: c.body.carrier, tracking: c.body.tracking, cfg })); });
-  router.post('/api/orders/:number/refund', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, refund(db, o.id, c.body.cents, { actor: c.actor, reason: c.body.reason })); });
+  router.post('/api/orders/:number/transition', async (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, transition(db, o.id, c.body.to, { actor: c.actor, carrier: c.body.carrier, tracking: c.body.tracking, cfg, shipping: c.body.to === 'packed' ? await app.shipping().catch(() => null) : null, measuredOz: c.body.measured_oz ?? null, postageCents: int(c.body.postage_cents, { name: 'postage_cents', min: 0, fallback: 0 }), shipAnyway: !!c.body.ship_anyway, check: c.body.check && typeof c.body.check === 'object' && !Array.isArray(c.body.check) ? { ticked: asArray(c.body.check.ticked ?? [], 'check.ticked'), measuredOz: c.body.check.measured_oz ?? null, anyway: !!c.body.check.anyway, reason: c.body.check.reason } : null })); });
+  router.post('/api/orders/:number/refund', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, refund(db, o.id, int(c.body.cents, { name: 'cents', min: 1 }), { actor: c.actor, reason: c.body.reason })); });
   router.get('/api/tickets', (c) => json(c.res, listTickets(db, { status: c.query.get('status') || '', kind: c.query.get('kind') || '', q: c.query.get('q') || '' })));
   router.get('/api/tickets/:number', (c) => { const t = ticketByNumber(db, c.params.number); if (!t) throw new HttpError(404, 'no such ticket'); json(c.res, t); });
   router.post('/api/tickets', (c) => json(c.res, openTicket(db, { ...c.body, channel: 'api', cfg }), 201));
   router.post('/api/tickets/:number/reply', (c) => { const t = ticketByNumber(db, c.params.number); if (!t) throw new HttpError(404, 'no such ticket'); json(c.res, ticketReply(db, t.id, c.body.body, { cfg, actor: c.actor, close: !!c.body.close })); });
   router.post('/api/mail/ingest', (c) => json(c.res, ingestEmail(db, c.body, { cfg })), { raw: false });
-  router.post('/api/orders/:number/items', async (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, editItems(db, o.id, c.body.items || [], { catalog: await app.catalog().catch(() => null), actor: c.actor })); });
+  router.post('/api/orders/:number/items', async (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, editItems(db, o.id, asArray(c.body.items, 'items'), { catalog: await app.catalog().catch(() => null), actor: c.actor })); });
+  router.get('/api/orders/:number/packing', async (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); const { packOrder } = await import('./modules/packing.mjs'); json(c.res, { frozen: o.pack_plan ? JSON.parse(o.pack_plan) : null, now: packOrder(await app.shipping().catch(() => null), o.items) }); });
   router.get('/api/orders/:number/events', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, timeline(db, o.id)); });
   router.post('/api/orders/:number/note', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, addNote(db, o.id, c.body.body, { actor: c.actor }), 201); });
   router.post('/api/orders/:number/tags', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, setTags(db, o.id, c.body.tags, { actor: c.actor })); });
@@ -166,7 +169,7 @@ export function createApp({ db, cfg }) {
   router.get('/api/analytics', (c) => json(c.res, analytics(db, { days: Number(c.query.get('days')) || 30 })));
   router.get('/api/search', (c) => json(c.res, search(db, c.query.get('q') || '')));
   router.get('/api/inventory', (c) => json(c.res, listItems(db)));
-  router.post('/api/inventory/move', (c) => json(c.res, invMove(db, c.body.sku, Number(c.body.delta), c.body.reason || 'adjust', c.body.ref || null)));
+  router.post('/api/inventory/move', (c) => json(c.res, invMove(db, String(c.body.sku || ''), int(c.body.delta, { name: 'delta' }), String(c.body.reason || 'adjust'), c.body.ref == null ? null : String(c.body.ref).slice(0, 120))));
   router.get('/api/devices', (c) => json(c.res, listDevices(db, { q: c.query.get('q') || '' })));
   router.post('/api/devices', (c) => json(c.res, registerDevice(db, c.body), 201));
   router.get('/api/books/pnl', (c) => json(c.res, profitAndLoss(db, { from: c.query.get('from') || '0000-00-00', to: c.query.get('to') || '9999-99-99' })));
@@ -253,6 +256,7 @@ export async function applyStripeEvent(app, m, event = null) {
     if (!m.line_items_present) { try { const items = await fetchLineItems(cfg, m.external_id, { fetchImpl: app.fetchImpl || fetch }); if (items) m.items = items; } catch (e) { db.audit('stripe', 'order.line_items.failed', 'order', m.external_id, { error: String(e.message || e) }); } }
     if (m.discount_code && /^promo_|^[A-Za-z0-9]{8,}$/.test(m.discount_code) && !db.get('SELECT code FROM discounts WHERE code = ?', m.discount_code)) { try { m.discount_code = await resolveDiscountCode(cfg, m.discount_code, { fetchImpl: app.fetchImpl || fetch }); } catch { /* the id stays */ } }
     const { order, created } = recordOrder(db, m, { catalog, actor: 'stripe' });
+    if (created && order.currency !== 'usd') await raiseException(db, cfg, `currency:${order.number}`, `orders [currency]: ${order.number} is in ${order.currency.toUpperCase()}`, `Stripe charged ${order.currency.toUpperCase()} for ${order.number}; the books and the sales-tax table count every order as USD cents. Check the Payment Link's currency, and correct the ledger by hand if this was real: ${cfg.baseUrl}/orders/${order.id}`);
     if (created && !order.items.length) await raiseException(db, cfg, `stripe:line-items:${order.number}`, `orders [no line items]: ${order.number}`, `Stripe's webhook carried no line_items for ${m.external_id} and they could not be fetched${cfg.stripeApiKey ? '' : ' (STRIPE_API_KEY is not set)'}. The order is recorded with no items and cannot be packed until they are added — see ${cfg.baseUrl}/orders/${order.id}.`);
     return { order: order.number, created, items: order.items.length };
   }

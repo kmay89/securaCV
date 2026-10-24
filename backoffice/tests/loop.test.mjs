@@ -113,7 +113,7 @@ test('purchasing: a draft from the reorder points, ordered, received into stock 
 test('a recall by firmware finds every board, where it went and who has it; one transactional notice each, serials filled in', () => {
   const db = testDb(); const cfg = testCfg(); const cat = catalog();
   for (let i = 1; i <= 4; i++) registerDevice(db, { serial: `S-${i}`, mac: `02:00:00:00:00:0${i}`, board: 'xiao', product_sku: 'wap-kit', fw_version: i <= 3 ? '2.4.1' : '2.5.0', batch: i <= 2 ? 'B1' : 'B2' });
-  const o1 = recordOrder(db, sampleOrder({ external_id: 'o1' }), { catalog: cat }).order; const o2 = recordOrder(db, sampleOrder({ external_id: 'o2', email: 'bob@example.test', name: 'Bob Fixture' }), { catalog: cat }).order;
+  const o1 = recordOrder(db, sampleOrder({ external_id: 'o1', items: [{ sku: 'wap-kit', name: 'Canary WAP Kit', qty: 2, unit_cents: 6900 }] }), { catalog: cat }).order; const o2 = recordOrder(db, sampleOrder({ external_id: 'o2', email: 'bob@example.test', name: 'Bob Fixture' }), { catalog: cat }).order;
   assignToOrder(db, 'S-1', o1.id); assignToOrder(db, 'S-2', o1.id); assignToOrder(db, 'S-3', o2.id);
   const q = recallQuery(db, { fw: '2.4.1' }); assert.equal(q.devices.length, 3); assert.equal(q.shipped, 3); assert.equal(q.in_stock, 0);
   assert.deepEqual(q.customers.map(c => [c.email, c.serials, c.orders]), [['ada@example.test', ['S-1', 'S-2'], [o1.number]], ['bob@example.test', ['S-3'], [o2.number]]]);

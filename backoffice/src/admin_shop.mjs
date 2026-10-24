@@ -4,7 +4,9 @@
 import { redirect, text, HttpError, escapeHtml as e, csvLine } from './http.mjs';
 import { table, money, day, statusPill, field, form, cards, tags as tagsHtml, tabs } from './render.mjs';
 import { columns, line, hbars, tile } from './charts.mjs';
-import { listOrders, orderById, bulkTransition, batches, setTags, weekLabel } from './modules/orders.mjs';
+import { listOrders, orderById, bulkTransition, batches, setTags, weekLabel, packPlanOf } from './modules/orders.mjs';
+import { packOrder } from './modules/packing.mjs';
+import { qrSvg } from './qr.mjs';
 import { listCustomers, contactById, customerStats, customerCounts, setContactTags } from './modules/contacts.mjs';
 import { listDiscounts, createDiscount, setDiscountStatus, evaluate, describe, KINDS } from './modules/discounts.mjs';
 import { analytics, analyticsCsv } from './modules/analytics.mjs';
@@ -97,19 +99,20 @@ export function registerShop(app, { page, back, link, filters }) {
   });
 
   // ---------- packing slips (one page per order; print = PDF)
-  const slip = (o) => { const devices = db.all('SELECT serial, fw_version FROM devices WHERE order_id = ?', o.id);
-    return `<div class="slip"><div class="row"><div><b style="font-size:1.2rem">${e(cfg.company)}</b><br><span class="muted">${e(cfg.supportAddr || '')}</span></div><div style="text-align:right"><b>Packing slip</b><br>Order <b>${e(o.number)}</b><br>Paid ${day(o.paid_at)} · batch ${e(o.batch || '')}</div></div>
+  const slip = (o, ship = null) => { const devices = db.all('SELECT serial, fw_version FROM devices WHERE order_id = ?', o.id); const plan = packPlanOf(o) || packOrder(ship, o.items);
+    return `<div class="slip"><div class="row"><div><b style="font-size:1.2rem">${e(cfg.company)}</b><br><span class="muted">${e(cfg.supportAddr || '')}</span></div><div style="text-align:right;display:flex;gap:.8rem;align-items:flex-start;justify-content:flex-end"><div><b>Packing slip</b><br>Order <b>${e(o.number)}</b><br>Paid ${day(o.paid_at)} · batch ${e(o.batch || '')}</div><div class="qr" title="Scan with your phone: opens this order on the bench">${qrSvg(`${cfg.baseUrl}/q/o/${encodeURIComponent(o.number)}`, { size: 84, label: `Order ${o.number}` })}</div></div></div>
 <h2>Ship to</h2><p>${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)} ${o.ship_country !== 'US' ? e(o.ship_country) : ''}<br><span class="muted">${e(o.email || '')}</span></p>
+${plan?.boxes?.length ? `<div class="box"><b>Pack</b>: ${plan.boxes.map(b => `${e(b.box_name)} · expected ${b.weight_oz} oz`).join(' + ')}${plan.service ? ` · ${e(plan.service)}` : ''}${plan.boxes.length > 1 ? ` · <b>${plan.boxes.length} boxes, ${plan.boxes.length} labels</b>` : ''}</div>` : ''}${(plan?.warnings || []).filter(w => !/boxes —/.test(w)).map(w => `<div class="box"><b>Check</b>: ${e(w)}</div>`).join('')}
 <table><thead><tr><th>Item</th><th>SKU</th><th class="num">Qty</th><th>Packed ☐</th></tr></thead><tbody>${o.items.map(i => `<tr><td>${e(i.name)}</td><td>${e(i.sku)}</td><td class="num">${i.qty}</td><td>☐</td></tr>`).join('')}</tbody></table>
 ${devices.length ? `<p><b>Boards in this box:</b> ${devices.map(d => `${e(d.serial)} (fw ${e(d.fw_version || '?')})`).join(', ')}</p>` : '<p class="muted">Scan each board serial into the order before sealing (the QA line).</p>'}
 ${o.notes ? `<div class="box"><b>Notes</b><br>${e(o.notes)}</div>` : ''}${o.tags.includes('gift') ? '<div class="box"><b>Gift</b> — no prices in the box.</div>' : ''}
 <p class="muted">Prices are on the receipt Stripe emailed. Your Canary provisions itself at home: power it on and point your phone's camera at the QR card. Anything wrong, missing or broken: reply to any of our emails — we fix, we don't ask you to send things back (terms of sale §7).</p></div>`; };
-  router.get('/orders/packing-slips', (c) => {
+  router.get('/orders/packing-slips', async (c) => { const ship = await app.shipping().catch(() => null);
     const ids = (c.query.get('ids') || '').split(',').filter(Boolean).map(Number);
     const orders = ids.length ? ids.map(id => orderById(db, id)).filter(Boolean) : listOrders(db, { batch: c.query.get('batch') || weekLabel(), status: c.query.get('status') || '', limit: 500 }).filter(o => ['paid', 'packed', 'shipped', 'delivered'].includes(o.status)).map(o => orderById(db, o.id));
-    page(c, `Packing slips (${orders.length})`, `<p class="noprint muted">Print this page: one slip per page. ${link('/batches', 'Batches')}</p>${orders.map(slip).join('') || '<p class="muted">Nothing to print.</p>'}`);
+    page(c, `Packing slips (${orders.length})`, `<p class="noprint muted">Print this page: one slip per page. ${link('/batches', 'Batches')}</p>${orders.map(o => slip(o, ship)).join('') || '<p class="muted">Nothing to print.</p>'}`);
   });
-  router.get('/orders/:id/packing-slip', (c) => { const o = orderById(db, c.params.id); if (!o) throw new HttpError(404, 'no such order'); page(c, `Packing slip ${o.number}`, `<p class="noprint muted">Print this page for the box. ${link(`/orders/${o.id}`, 'Back to the order')}</p>${slip(o)}`); });
+  router.get('/orders/:id/packing-slip', async (c) => { const o = orderById(db, c.params.id); if (!o) throw new HttpError(404, 'no such order'); page(c, `Packing slip ${o.number}`, `<p class="noprint muted">Print this page for the box. ${link(`/orders/${o.id}`, 'Back to the order')}</p>${slip(o, await app.shipping().catch(() => null))}`); });
 
   // ---------- bulk actions on the orders list
   router.post('/orders/bulk', (c) => {

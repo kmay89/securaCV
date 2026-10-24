@@ -7,10 +7,12 @@ const e = escapeHtml;
 
 export const money = (cents, cur = 'usd') => {
   const n = (Number(cents) || 0) / 100;
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: cur.toUpperCase() }).format(n);
+  // A currency code the formatter does not know (a bad import, a Stripe test value) never takes the page down: the amount shows with its code.
+  try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: String(cur || 'usd').toUpperCase() }).format(n); } catch { return `${n.toFixed(2)} ${String(cur || '').toUpperCase()}`; }
 };
 // Times show in the operator's zone (OPERATOR_TZ); storage stays UTC ISO.
 let TZ = 'UTC';
+export const currentTz = () => TZ;
 export function setTimezone(tz) { try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); TZ = tz || 'UTC'; } catch { TZ = 'UTC'; } return TZ; }
 export const timezone = () => TZ;
 const parts = (d, tz = TZ) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: 'short' }).formatToParts(d).map(p => [p.type, p.value]));
@@ -33,7 +35,7 @@ h1{font-size:1.5rem;letter-spacing:-.015em;margin:.1rem 0 1.1rem;font-weight:650
 /* the frame: a sidebar on wide screens, a top strip on narrow ones */
 .frame{display:grid;grid-template-columns:1fr;min-height:100vh}@media(min-width:960px){.frame{grid-template-columns:232px 1fr}.frame.solo{grid-template-columns:1fr}}.solo main{max-width:720px}
 aside{background:var(--side);border-right:1px solid var(--line);padding:1rem .8rem;position:sticky;top:0;align-self:start;max-height:100vh;overflow:auto}
-@media(max-width:959px){aside{position:static;max-height:none;border-right:0;border-bottom:1px solid var(--line);padding:.6rem .8rem}}
+@media(max-width:959px){.frame{grid-template-rows:auto 1fr}aside{position:static;max-height:none;border-right:0;border-bottom:1px solid var(--line);padding:.6rem .8rem}}
 .brand{display:flex;align-items:center;gap:.5rem;padding:.2rem .6rem .8rem;font-weight:700;letter-spacing:-.01em;font-size:15px}.brand .pill{font-weight:600}
 aside form.search{margin:0 0 .7rem}aside form.search input{width:100%;padding:.45rem .7rem;border-radius:9px;background:var(--field);font-size:13.5px}
 nav .g{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:.9rem .6rem .3rem;font-weight:600}
@@ -90,7 +92,7 @@ details.more{margin:1rem 0}details.more summary{cursor:pointer;color:var(--muted
 .bench{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr);gap:1rem;align-items:start}@media(max-width:800px){.bench{grid-template-columns:1fr}}
 .bench .card{padding:1.1rem 1.2rem}.progress{height:7px;background:var(--line2);border-radius:999px;overflow:hidden;margin:.4rem 0 1rem}.progress i{display:block;height:100%;background:var(--ok);border-radius:999px}
 .picklist{list-style:none;padding:0;margin:.4rem 0}.picklist li{display:flex;gap:.7rem;align-items:center;padding:.5rem 0;border-bottom:1px solid var(--line2);font-size:15px}.picklist li:last-child{border-bottom:0}.picklist .box{width:22px;height:22px;border:2px solid var(--line);border-radius:6px;flex:none}.picklist .q{font-weight:700;min-width:2.2rem}.picklist .sku{color:var(--muted);font-size:13px}
-.addr{font-size:1.05rem;line-height:1.45}.bench .big{width:100%;text-align:center;margin-top:.8rem}
+.addr{font-size:1.05rem;line-height:1.45}.bench .big{width:100%;text-align:center;margin-top:.8rem}.pick{display:flex;gap:.8rem;align-items:center;padding:.65rem .7rem;border:1px solid var(--line);border-radius:9px;margin:.4rem 0;cursor:pointer;font-size:15.5px;background:var(--card)}.pick input{width:24px;height:24px;margin:0;flex:none;accent-color:var(--ok)}.pick .q{font-weight:700;min-width:2.4rem;font-size:1.1rem}.pick .sku{color:var(--muted);font-size:13px}.pick:has(:checked){background:rgba(47,122,72,.09);border-color:var(--ok)}.pick:has(:checked) .q{color:var(--ok)}.gate:has(.pick input:not(:checked)):not(:has(.anyway:checked)) .big,.gate:has(.need:not(:checked)):not(:has(.anyway:checked)) .big{opacity:.4;pointer-events:none}.boxcard{display:flex;justify-content:space-between;align-items:center;gap:1rem;border:2px solid var(--fg);border-radius:10px;padding:.7rem 1rem;margin:.5rem 0}.boxcard .nm{font-weight:700;font-size:1.15rem}.boxcard .oz{font-size:2.1rem;font-weight:700;letter-spacing:-.02em;white-space:nowrap}.boxcard .oz small{font-size:1rem;font-weight:500;color:var(--muted)}.labels{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:.5rem}.label{display:flex;gap:.5rem;align-items:center;border:1px dashed var(--line);border-radius:6px;padding:.4rem;background:#fff;color:#000;break-inside:avoid}.label svg{flex:none}.label .t{font-size:13px;line-height:1.35}.label .muted{color:#555}.scan{max-width:520px;margin:0 auto}.scan h1{font-size:1.7rem;word-break:break-all}.scan .big{width:100%;font-size:1.15rem;padding:.9rem 1rem;margin:.8rem 0 .4rem}.slip .qr svg{display:block}@media print{.label{border-color:#bbb}.labels{gap:.25rem}}.anyway-box{margin-top:.7rem}.anyway-box summary{cursor:pointer;font-size:13.5px}.pills form.inline{display:inline-flex;align-items:center;gap:.2rem;margin:0 .3rem .3rem 0}button.x{padding:.05rem .45rem;line-height:1.2;font-size:14px}
 /* health */
 .checks{list-style:none;padding:0;margin:.6rem 0;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}.checks li{display:grid;grid-template-columns:26px 220px 1fr;gap:.7rem;padding:.6rem 1rem;border-bottom:1px solid var(--line2);align-items:baseline;font-size:14px}.checks li:last-child{border-bottom:0}.checks .ic{font-weight:700}.checks .fix{color:var(--muted);font-size:12.5px}@media(max-width:700px){.checks li{grid-template-columns:26px 1fr}}
 .slip{background:#fff;color:#000;max-width:720px;margin:0 auto 1rem;padding:1.2rem;border:1px solid #ccc;page-break-after:always}.slip table,.slip th,.slip td{color:#000;background:#fff;border-color:#ccc;box-shadow:none}.slip h2{margin:.6rem 0 .3rem}.slip .box{border:1px dashed #999;padding:.5rem;margin:.6rem 0;min-height:3rem}

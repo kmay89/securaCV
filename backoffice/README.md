@@ -171,6 +171,92 @@ Nothing above types a SKU, an address, or a price by hand: the catalog is
 `store.json`, the address is what Stripe collected, COGS is frozen from the
 store's `cogs` recipe at the moment of sale.
 
+### Your phone is the scanner
+
+No scanner, no app: the iPhone's own camera reads a QR code and opens the link,
+and the backoffice is already a web page. Log in once on the phone's browser
+(the session lasts `SESSION_HOURS`, 12 by default) and the codes do the rest.
+
+- **The packing slip carries a code** (`/q/o/<number>`). Scan it and the order
+  opens where it stands: the pack bench if it is paid, the ship bench if it is
+  packed, the order page once it has shipped. So the slip in your hand is the
+  order on the screen, and a tracking number goes to the box it belongs to.
+- **Each board gets a label** — Devices → "Print board labels", a QR and the
+  serial per sticker (`/q/b/<serial>`). Scan one with the pack bench open on an
+  order and the phone shows the board, the order and one button: "Put … into
+  EL-…". A board the order does not ask for, or one more than it holds, shows
+  why instead of the button. Scanning a board with no bench open just shows the
+  board — where it is, which order has it — which is also how a returned unit
+  is looked up. A scan never changes anything by itself; the tap posts the same
+  form the bench does.
+- **Ship the batch from the manifest.** The website's `fulfill.mjs --buy` buys
+  the labels and writes `manifest.json`; paste it at the ship bench and every
+  packed order it names is shipped with its tracking and label cost, and the
+  customers get their mail. The same manifest twice changes nothing; an order
+  it names that is not packed, or already shipped with another number, is
+  reported by name and the rest still goes.
+
+Three things to know before the first batch. Use Safari itself on the phone,
+not a copy added to the home screen (iOS keeps those cookie jars apart, and the
+camera opens links in Safari). The Health page says whether
+`BACKOFFICE_BASE_URL` is a real address — the codes encode it, and the default
+points at the machine itself. And a second tap on a bench button is never an
+error: an order already packed says so and nothing moves twice.
+
+The codes are made here (`src/qr.mjs`, the same encoder the authenticator
+enrollment page uses; `tests/users.test.mjs` holds it to a reference encoder
+bit for bit), so a slip never carries a code the phone cannot read. They encode
+`BACKOFFICE_BASE_URL`, so set it to the address the phone reaches.
+
+### The pack bench is a gate
+
+One or two people pack here, so the bench does not try to be a warehouse
+system; it makes the four mistakes that cost a reship refusable by name. The
+box card shows the carton, its inside size and the weight it should read, large.
+Each line is a tick as it goes in. The lines that ship a pre-flashed board say
+how many, and the board card counts the scans against that — a board flashed for
+a different kit, or one more than the order holds, is refused at the scan (with
+a × to take one back out). The scale field is checked against the plan. The
+"Packed" button stays dim until all of that is done, and the server checks the
+same proof when the form posts, so the gate holds without the browser's help.
+"Pack anyway" exists for the day something is off and the box must still go; it
+needs a reason, and what was skipped goes on the timeline with it. How many
+boards a line needs comes from the data, never a guess: its recipe's board
+parts (a SKU some registered board carries as its `board`), or, with no recipe,
+one per unit when registered boards are flashed for that SKU. Unknown data gates
+nothing. The order page's "Mark packed" sends you to the bench for that order.
+
+### How the shipping numbers are made
+
+Three numbers show up around an order, and each has one source.
+
+- **The box.** The website's `shipping.json` (next to `store.json`; `SHIPPING_JSON`
+  overrides the path or URL) holds the carton catalog with inner dimensions and
+  each SKU's packed parcel. `src/modules/packing.mjs` is a port of the website's
+  `scripts/box-fit.mjs` — first-fit decreasing, a box fits when every parcel fits
+  by sorted dimensions and the summed volume stays under the inner volume × the
+  fill factor, the plan is the cheaper of "one box" and "greedy by cost per packed
+  volume", a box is priced by billable weight (actual or dimensional, whichever is
+  greater) off the Ground Advantage tiers, a flat-rate box by its flat price — and
+  `tests/fixtures/boxfit_expected.json` is that script's own output on eighteen
+  orders, which the port must reproduce. The plan is made from the lines when an
+  order is **packed** and frozen on it (`pack_plan`); the pack bench, the ship
+  bench, the packing slip and the fulfill CSV (`box`, `expected_oz`, `pieces`,
+  `service`) all read the same plan. A multi-line order is one shipment: its
+  boxes are planned together, and the CSV says how many lines it has so the label
+  tool does not make one label per row.
+- **The scale.** At either bench a measured weight is checked against the plan;
+  past the tolerance (`fulfillment.weight_tolerance_oz` in `store.json`, 1.5 oz
+  when unset) the pack or ship is refused with the delta — a missing or extra
+  item is the usual cause — unless "anyway" is ticked, and then the timeline says so.
+- **The postage.** The plan's cost is an estimate for a mid zone (the file says
+  which); the label's real price, typed at the ship bench, is booked to
+  `expenses:postage` and shown beside the shipping the customer paid. The
+  **delivery estimate** the customer sees is bands by state from
+  `SHIP_FROM_STATE` (the website's `fulfillment.ship_from.state` when unset),
+  two to seven business days, replaced by the carrier's own word when USPS
+  tracking is configured.
+
 ## How each piece behaves (the rules it keeps)
 
 - **Orders** — one row per shipment; an unknown SKU is a refused order, not a
@@ -201,7 +287,9 @@ store's `cogs` recipe at the moment of sale.
 - **Privacy** — contacts exist because they bought, wrote or asked. No
   tracking pixels, no open/click beacons, no third party sees the list. Mail
   is plain text. The admin sets `noindex` and every cookie is `HttpOnly;
-  SameSite=Strict`.
+  SameSite=Lax` (Lax so a code the phone's camera scans opens the bench
+  logged in; every write is a POST under the CSRF token and the cross-site
+  refusal).
 
 ## Layout
 

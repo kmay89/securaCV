@@ -11,6 +11,7 @@
 // the banner. `backoffice demo --reset` wipes and reseeds.
 import { nowIso } from '../db.mjs';
 import { normalize } from './catalog.mjs';
+import { normalizeShipping } from './packing.mjs';
 import { upsertContact, requestConsent, confirmConsent, joinWaitlist } from './contacts.mjs';
 import { recordOrder, transition, refund, setTags, addNote } from './orders.mjs';
 import { upsertItem, move, setRecipe } from './inventory.mjs';
@@ -65,6 +66,20 @@ export const DEMO_STORE = { mode: 'live', shipping_flat: 8, groups: [
     { id: 'wap-parts', name: 'WAP Enclosure Set', price: 15, radio: false, ship: { oz: 3, box: 'mailer' }, cogs: { devices: {}, extra_usd: 6.5 } },
     { id: 'vision-parts', name: 'Vision Enclosure Set', price: 19, radio: false, ship: { oz: 4, box: 'mailer' }, cogs: { devices: {}, extra_usd: 8.5 } } ] } ] };
 export const DEMO_CATALOG = normalize(DEMO_STORE);
+// The website's shipping.json for the demo's SKUs (same boxes, same parcels, same tiers), so the
+// pack bench plans a real box without fetching anything.
+export const DEMO_SHIPPING = normalizeShipping({ fill_efficiency: 0.78, dim_weight_divisor: 166,
+  ground_advantage_rate_tiers: [{ max_oz: 4, usd: 3.8 }, { max_oz: 8, usd: 4.35 }, { max_oz: 12, usd: 4.8 }, { max_oz: 16, usd: 5.25 }, { max_oz: 32, usd: 6.75 }, { max_oz: 48, usd: 8.1 }, { max_oz: 80, usd: 10.5 }, { max_oz: 160, usd: 15.9 }, { max_oz: 1120, usd: 26.0 }],
+  boxes: [
+    { id: 'ga-mailer', name: 'Padded poly mailer (Ground Advantage)', service: 'USPS Ground Advantage', pricing: 'weight', soft: true, inner: { l: 9, w: 6, h: 2 }, max_weight_oz: 24 },
+    { id: 'ga-box-s', name: 'Small carton (Ground Advantage)', service: 'USPS Ground Advantage', pricing: 'weight', inner: { l: 6, w: 4, h: 4 }, max_weight_oz: 1120 },
+    { id: 'ga-box-m', name: 'Medium carton (Ground Advantage)', service: 'USPS Ground Advantage', pricing: 'weight', inner: { l: 9, w: 6, h: 4 }, max_weight_oz: 1120 },
+    { id: 'ga-box-l', name: 'Large carton (Ground Advantage)', service: 'USPS Ground Advantage', pricing: 'weight', inner: { l: 12, w: 9, h: 6 }, max_weight_oz: 1120 },
+    { id: 'fr-padded', name: 'USPS Priority Flat Rate Padded Envelope', service: 'USPS Priority Mail', pricing: 'flat', soft: true, inner: { l: 12.25, w: 9.25, h: 1 }, max_weight_oz: 1120, flat_usd: 10.4 },
+    { id: 'fr-small', name: 'USPS Small Flat Rate Box', service: 'USPS Priority Mail', pricing: 'flat', inner: { l: 8.625, w: 5.375, h: 1.625 }, max_weight_oz: 1120, flat_usd: 10.2 },
+    { id: 'fr-medium', name: 'USPS Medium Flat Rate Box', service: 'USPS Priority Mail', pricing: 'flat', inner: { l: 11, w: 8.5, h: 5.5 }, max_weight_oz: 1120, flat_usd: 18.3 },
+    { id: 'fr-large', name: 'USPS Large Flat Rate Box', service: 'USPS Priority Mail', pricing: 'flat', inner: { l: 12, w: 12, h: 5.5 }, max_weight_oz: 1120, flat_usd: 24.1 }],
+  parcels: { 'wap-kit': { l: 6, w: 4, h: 2.5, weight_oz: 7 }, 'wap-kit-outdoor': { l: 6.5, w: 4.5, h: 3, weight_oz: 9 }, 'vision-kit': { l: 7, w: 5, h: 3, weight_oz: 10 }, 'witness-pair': { l: 9, w: 6, h: 3.5, weight_oz: 15 }, 'wap-parts': { l: 6, w: 4, h: 2, weight_oz: 4, soft: true }, 'vision-parts': { l: 7, w: 5, h: 2.5, weight_oz: 6, soft: true } } });
 const BOM = { 'canary-wap': 21.4, 'canary-vision': 38.9 };
 
 // Synthetic people. The surname says what they are; the domain cannot exist.
@@ -212,7 +227,7 @@ export async function seedDemo(db, cfg) {
     const paid = ord.paid_at;
     if (o.fate === 'canceled') { transition(db, ord.id, 'canceled', { actor: 'web', at: after(paid, 5) }); db.run('UPDATE orders SET notes = ? WHERE id = ?', 'Customer wrote within the hour: ordered twice by mistake. Refunded in Stripe, nothing packed.', ord.id); continue; }
     const packedAt = after(paid, 20 + (o.i % 30)), shippedAt = after(packedAt, 18 + (o.i % 20)), deliveredAt = after(shippedAt, 60 + (o.i % 48));
-    transition(db, ord.id, 'packed', { actor: 'web', at: packedAt });
+    transition(db, ord.id, 'packed', { actor: 'web', at: packedAt, shipping: DEMO_SHIPPING });
     if (['shipped', 'delivered', 'refunded'].includes(o.fate)) transition(db, ord.id, 'shipped', { actor: 'web', at: shippedAt, carrier: 'USPS', tracking: tracking(++tn), cfg: q });
     if (['delivered', 'refunded'].includes(o.fate)) transition(db, ord.id, 'delivered', { actor: 'web', at: deliveredAt });
     if (o.fate === 'refunded') refund(db, ord.id, ord.total_cents, { actor: 'stripe', reason: 'changed their mind within 30 days — kept the kit as a spare, we refunded (terms §6)', at: after(deliveredAt, 30) });
@@ -225,7 +240,7 @@ export async function seedDemo(db, cfg) {
   // Last week's story: the orders the tickets, claims and serials refer to.
   const [o1, o2, o3, o4] = story.map(([i, items, days]) => mk(i, items, days, { external: i }));
   for (const [o, serials, pk] of [[o1, ['DEMO-W-0001'], 8], [o2, ['DEMO-W-0002', 'DEMO-W-0003'], 5], [o3, ['DEMO-V-0001'], 5], [o4, ['DEMO-W-0004'], 1]]) {
-    transition(db, o.id, 'packed', { actor: 'web', at: daysAgo(pk, 14) });
+    transition(db, o.id, 'packed', { actor: 'web', at: daysAgo(pk, 14), shipping: DEMO_SHIPPING });
     for (const s of serials) { assignToOrder(db, s, o.id, { actor: 'web', force: true }); db.run('UPDATE order_events SET at = ? WHERE order_id = ? AND kind = \'device\'', daysAgo(pk, 15), o.id); }
   }
   transition(db, o1.id, 'shipped', { actor: 'web', at: daysAgo(7, 11), carrier: 'USPS', tracking: 'DEMO0000000000000001', cfg: q }); transition(db, o1.id, 'delivered', { actor: 'web', at: daysAgo(4, 15) });
