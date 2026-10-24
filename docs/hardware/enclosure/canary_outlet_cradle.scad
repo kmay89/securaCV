@@ -16,6 +16,17 @@
 //  51.8 (DevKit host), WAP 66.0 (custom defaults) / 84.3 (battery presets).
 //  The WAP's compact preset has ONE centered pocket — it cannot hang on a
 //  stud pair at all.
+//  THE POCKETS ARE A BUILD OPTION, and the default target's case is not
+//  printed with them: of the released STLs only the weather builds carry
+//  pockets (the WAP's weather base, 80.5 apart, and the Vision's xiao
+//  weather back, 46.2 — the spreads target_gap() reads). The released Sense
+//  back is its hinge build, solid where the pockets would be: print the
+//  Sense with preset="sense_ceiling" (or mount_style keyhole / both) to hang
+//  it here.
+//  "wap_battery" reads the battery presets' spread, but only battery_weather
+//  cuts the pockets (battery_full forces mounting off); "wap_custom" needs
+//  opt_mount=true. The Combo's two pockets sit side by side (±inner_x/4, at
+//  one height) with vertical slots, so no vertical stud pair holds it.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
 //  2026-09-26: the stud spread is read LIVE off each case (sense_kh_spread(),
@@ -23,6 +34,10 @@
 //              — the table here had drifted 0.4 on the Sense and the Vision
 //              (xiao) since the piston-plate port. A target that reads a single
 //              centered pocket (the WAP's compact preset) is refused.
+//  2026-10-23: the WHICH CASES note above says which builds carry the
+//              pockets: the README promised "any keyhole-pocket Canary" and
+//              the released Sense row "hinge + keyholes", while the default
+//              target's released case has no pocket at all. No mesh moves.
 //  2026-10-23: v0.2-dev — the cradle had NO support-free pose. It exported
 //              in its modeling frame, where the mirrored studs hang below the
 //              face plate: the part stood on the two Ø6.6 stud heads (68 mm²)

@@ -53,7 +53,7 @@
   {
    "id": "bench_fixture",
    "scad": "canary_bench_fixture.scad",
-   "title": "Canary — BENCH BRING-UP FIXTURE  ⚠️ IN DEVELOPMENT (v0.3-dev)",
+   "title": "Canary — BENCH BRING-UP FIXTURE  ⚠️ IN DEVELOPMENT (v0.4-dev)",
    "family": "universal",
    "device_compat": [
     "_universal"
@@ -79,7 +79,7 @@
     "slider"
    ],
    "options": [],
-   "engineering_param_count": 20,
+   "engineering_param_count": 21,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -537,7 +537,7 @@
   {
    "id": "dock",
    "scad": "canary_dock.scad",
-   "title": "Canary — FLEET PROVISIONING DOCK  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "Canary — FLEET PROVISIONING DOCK  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "family": "universal",
    "device_compat": [
     "_universal"
@@ -706,7 +706,7 @@
   {
    "id": "hammond_chassis",
    "scad": "canary_hammond_chassis.scad",
-   "title": "Canary — HAMMOND INTERNAL CHASSIS PLATE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "Canary — HAMMOND INTERNAL CHASSIS PLATE  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "family": "universal",
    "device_compat": [
     "_universal"
@@ -756,7 +756,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 27,
+   "engineering_param_count": 28,
    "alternatives": [
     "field_case",
     "relay_solar"
@@ -823,7 +823,7 @@
   {
    "id": "inserts",
    "scad": "canary_inserts.scad",
-   "title": "Canary — FUNCTIONAL INSERTS  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "Canary — FUNCTIONAL INSERTS  ⚠️ IN DEVELOPMENT (v0.2.1-dev)",
    "family": "universal",
    "device_compat": [
     "_universal"
@@ -836,7 +836,7 @@
     {
      "id": "functional-inserts",
      "name": "Functional inserts",
-     "for": "buzzer horn (a few dB of on-axis directivity; at the default `horn_h` 8 it fits no WAP preset as drawn — the camera presets leave 12.4 over the PCB but the Sense expansion board under the vent takes ~6 of it, and compact_plain leaves 6.35 — so shorten `horn_h` to under ~6 for a camera build), matte anti-glare ring, 3-part printed cable gland (TPU bush)",
+     "for": "buzzer horn (a few dB of on-axis directivity; at the default `horn_h` 8, the shortest its profile prints without support, it fits no WAP preset: alone it needs `horn_h` ≤ 5.0 on a camera preset (the Sense camera's flex) and ≤ 4.0 on compact_plain, and with the BOM's piezo glued under its throat only 2.7 / 2.15, where it is a short flare that needs support; without the room, glue the piezo straight onto the GORE seat), matte anti-glare ring, 3-part printed cable gland (TPU bush)",
      "status": "in-development",
      "device": "_universal",
      "selects": {},
@@ -1011,7 +1011,7 @@
     {
      "id": "outlet-cradle",
      "name": "Outlet cradle",
-     "for": "collar grips a USB wall wart; T-studs hang any keyhole-pocket Canary",
+     "for": "collar grips a USB wall wart; T-studs hang a Canary built with an in-line keyhole pair (the WAP and Vision weather builds, the Sense's `sense_ceiling`; `target` reads the spread) — not the WAP compact's single pocket, nor the Combo's side-by-side pair",
      "status": "in-development",
      "device": "_universal",
      "selects": {},
@@ -1293,7 +1293,7 @@
     {
      "id": "7-touch-dashboard-case",
      "name": "7″ touch dashboard case",
-     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (bottom-wall intake → top-wall exhaust — print in PETG/ASA, this panel runs hot; the two-part tray adds a ~40 cm² back grille, and the one-piece `frame`'s plate deliberately carries none — see the back-plate section), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered USB pass-through plus a matching side exit on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours",
+     "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (bottom-wall intake → top-wall exhaust — print in PETG/ASA, this panel runs hot; the two-part tray adds a ~40 cm² back grille, and the one-piece `frame`'s plate deliberately carries none — see the back-plate section), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered USB pass-through plus a matching side exit on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `ring_gauge` (~5.6 g) and the `frame_gauge` corner (~19 g) before the one-piece `frame` (~136 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). The two-part bezel + tray and its `gauge` pair are legacy: the tray's PCB bosses stand where the panel's own M3 standoffs go, so it cannot take the bonded panel (its render says LEGACY). Connector centers and `pcb_h` are NOMINAL — measure yours",
      "status": "in-development",
      "device": "canary-display-dash7",
      "selects": {},
@@ -1788,7 +1788,7 @@
     {
      "id": "sense-radome",
      "name": "Sense · radome",
-     "for": "MR60BHA2 mmWave witness: thin radar window, hinge + keyholes (shares the Vision bracket/knob)",
+     "for": "MR60BHA2 mmWave witness: thin radar window, hinge (shares the Vision bracket/knob); keyholes in the `sense_ceiling` build",
      "status": "released",
      "device": "canary-sense",
      "selects": {
@@ -1822,6 +1822,9 @@
      "consequence": "light-pipe port (outside the radome zone)",
      "audience": "user",
      "default": true,
+     "bom": [
+      "LP1"
+     ],
      "fw": [
       "FEATURE_STATUS_LED"
      ]
@@ -1860,7 +1863,7 @@
     {
      "id": "opt_seal",
      "type": "bool",
-     "label": "perimeter TPU gasket + drip-edge front (indoor ceilings rarely need it)",
+     "label": "perimeter TPU gasket in the shell's ledge + O-rings under the plate screws (indoor ceilings rarely need it)",
      "consequence": "",
      "audience": "user",
      "default": false,
@@ -1898,7 +1901,9 @@
      "audience": "user",
      "default": true,
      "bom": [
-      "SCR4"
+      "SCR4",
+      "SCR6",
+      "SCR7"
      ]
     },
     {
@@ -2067,7 +2072,7 @@
      "default": true
     }
    ],
-   "engineering_param_count": 24,
+   "engineering_param_count": 25,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2081,7 +2086,7 @@
   {
    "id": "shop_tools",
    "scad": "canary_shop_tools.scad",
-   "title": "Canary — SHOP TOOLS  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "Canary — SHOP TOOLS  ⚠️ IN DEVELOPMENT (v0.2.1-dev)",
    "family": "universal",
    "device_compat": [
     "_universal"
@@ -2223,7 +2228,7 @@
   {
    "id": "vehicle_mount",
    "scad": "canary_vehicle_mount.scad",
-   "title": "Canary — VEHICLE MOUNT KIT  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "Canary — VEHICLE MOUNT KIT  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "family": "universal",
    "device_compat": [
     "_universal"
@@ -2236,7 +2241,7 @@
     {
      "id": "vehicle-mount-kit",
      "name": "Vehicle mount kit",
-     "for": "VHB-taped dash plate with a 10° stud riser + an air-vent louver clip (extruded spring prongs snap over one blade). ⚠️ cabins exceed +60 °C: USB power only, ASA, light colors",
+     "for": "VHB-taped dash plate (the tape on its flat underside) with a 10° stud riser + an air-vent louver clip (extruded spring prongs snap over one blade), the studs on 2.4 mm riser pads so they reach a booted field case's keyholes. ⚠️ cabins exceed +60 °C: USB power only, ASA, light colors",
      "status": "in-development",
      "device": "_universal",
      "selects": {},
@@ -2249,7 +2254,7 @@
     "vent"
    ],
    "options": [],
-   "engineering_param_count": 19,
+   "engineering_param_count": 22,
    "alternatives": [],
    "remix_of": null,
    "counts": {
@@ -2907,7 +2912,7 @@
     {
      "id": "wap-weather",
      "name": "WAP · weather",
-     "for": "battery build + TPU gasket seal, drip-edge lid, keyhole mounts (CER‑2 / ~IP54 target — ratings)",
+     "for": "battery build + TPU gasket seal, O-ringed plate screws, keyhole mounts (CER‑2 / ~IP54 target — ratings)",
      "status": "released",
      "device": "canary-wap",
      "selects": {

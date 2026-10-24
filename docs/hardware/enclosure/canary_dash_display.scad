@@ -3,15 +3,17 @@
 //  Housing for the Waveshare ESP32-S3-Touch-LCD-4.3 — the "step-up dashboard"
 //  option from docs/hardware/display_research.md (Option B): a 4.3" 800x480
 //  IPS touch panel for an event-timeline view, vs the Watch Station's glance
-//  puck. Three parts:
+//  puck. Four parts:
 //
 //    frame — front bezel shell; the panel drops in face-first, the bezel lip
 //            overlaps the glass 2.5 mm all round (prints face-down: the
 //            A-surface is your textured build plate)
-//    back  — vented rear cover, M2 self-tap corner bosses; carries TWO
-//            through-keyholes AND a 75 mm horizontal M4 pair (a VESA-75
-//            square can't fit this panel height)
+//    back  — vented rear cover, M2 self-tap corner bosses; four dock pads
+//            click it onto the wall cradle (part="cradle", two #8 / M4
+//            pan screws into the wall). v0.1's two keyholes and 75 mm M4
+//            pair are gone (v0.2, see the mount note below)
 //    stand — free-standing desk cradle, 25 deg recline, no hardware
+//    cradle — the wall dock plate (canary_cradle_lib) the back clicks onto
 //
 //  ⚠️ DIMENSIONS ARE NOMINAL — Waveshare doesn't publish a full mechanical
 //  drawing. MEASURE your board (glass outline, rear stack depth, USB

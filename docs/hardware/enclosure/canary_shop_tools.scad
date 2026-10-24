@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — SHOP TOOLS  ⚠️ IN DEVELOPMENT (v0.2-dev)
+//  Canary — SHOP TOOLS  ⚠️ IN DEVELOPMENT (v0.2.1-dev)
 //    part = "insert_guide" — heat-set insert press guide: a corner block
 //        that drops into a bore corner of the face-down shell, sits on the
 //        ledge with two faces on the bore walls, and holds its bore over a
@@ -24,15 +24,24 @@
 //  (post_dx/post_dy, measured per case in their help). The button ring took
 //  tol_slide off twice (Ø16.1 in the Ø16.9 seat, 0.4 a side): it is now
 //  bez_d, tol_slide a side once.
+//
+//  v0.2.1-dev (2026-10-23, the cross-family review): the help listed one
+//  offset per case, but a sealed build's ledge is 4.6 wide, not 1.8, so its
+//  posts sit 2.8 further in and its bore corner is r5.4: probed with
+//  screw_insert on, the Outdoor WAP (battery_weather) is 7.35 / r5.4 and the
+//  weather Vision and the sealed Sense 7.65 / r5.4. A guide printed at the
+//  WAP's 4.55 for an Outdoor WAP held its bore 2.8 off the post on each axis
+//  (and its corner could not reach into the r5.4 corner). The help lists
+//  every insert host now; no geometry moved.
 // ============================================================================
 
 /* [What to render] */
 part = "insert_guide";   // ["insert_guide","button_ring"]
 
 /* [Insert guide] — sits in a bore corner on the ledge, over a screw_insert post */
-post_dx  = 4.55;     // post center from the bore wall along X (ledge_w + the post's offset from the cavity wall): WAP 4.55, Vision and Sense 4.85, sealed doorbell 8.85
-post_dy  = 4.55;     // post center from the bore wall along Y: WAP 4.55, Vision and Sense 4.85, sealed doorbell 8.85
-bore_corner_r = 2.6; // the plate bore's corner radius (the case's bore_r): 2.6 on the unsealed WAP, Vision and Sense, 10.8 on the sealed doorbell
+post_dx  = 4.55;     // post center from the bore wall along X (ledge_w + the post's offset from the cavity wall): WAP 4.55, Vision and Sense 4.85; sealed: WAP (battery_weather) 7.35, Vision (vision_weather) and Sense 7.65, doorbell 8.85
+post_dy  = 4.55;     // post center from the bore wall along Y: WAP 4.55, Vision and Sense 4.85; sealed: WAP (battery_weather) 7.35, Vision (vision_weather) and Sense 7.65, doorbell 8.85
+bore_corner_r = 2.6; // the plate bore's corner radius (the case's bore_r): 2.6 on the unsealed WAP, Vision and Sense, 5.4 on the sealed WAP, Vision and Sense, 10.8 on the sealed doorbell
 insert_d = 3.5;      // insert knurl OD (M2 short series); the guide bore passes it with 0.2 a side
 guide_h  = 12.0;     // guide height above the ledge — the length that holds the iron square
 
@@ -47,7 +56,7 @@ tol_slide = 0.20;    // catalog default — core_tol_slide(), canary_core_lib
 /* [Quality] */
 $fa = 3; $fs = 0.4;
 
-echo(str("Canary shop tools v0.2-dev — ", part, "  (IN DEVELOPMENT)"));
+echo(str("Canary shop tools v0.2.1-dev — ", part, "  (IN DEVELOPMENT)"));
 
 // The bore corner at the origin, its walls on x = 0 and y = 0, the block in
 // +x +y; z = 0 is the face that sits on the ledge (the post end is

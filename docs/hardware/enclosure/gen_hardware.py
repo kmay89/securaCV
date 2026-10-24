@@ -68,11 +68,15 @@ FASTENERS = ("screw", "insert", "security-screw", "wall-screw", "bolt", "o-ring"
 
 # The committed sets: render.sh's presets (base part — the hardware line is a
 # top-level echo, so any part gives it; the WAP shield is the exception, its
-# render adds the longer screws that replace the lid's), plus one
-# screw_insert=true set per case family, because INS1 is billed for exactly
-# that option. `rib` marks the eight preset sets whose headroom RIB_TABLE publishes;
-# `join` the kinds the BOM join reads from this set, `join_text` an optional
-# filter on the item text (the shield set only adds its replacement screws).
+# render adds the four screws that hold the shield on, ON TOP of the plate's
+# eight: they drive into their own blind pilots from the face), plus the
+# screw_insert=true sets, because INS1 and the machine screws are billed for
+# exactly that option — one per case family, and the WAP's Outdoor build too
+# (eight posts where the others have four). `rib` marks the eight preset sets
+# whose headroom RIB_TABLE publishes; `join` the kinds the BOM join reads from
+# this set. (The shield set used to carry a text filter, `join_text`, for
+# screws that REPLACED the lid's: once the echo stopped saying so it matched
+# nothing and the set joined no row at all, so the filter is gone.)
 _WAP = "canary_wap_enclosure.scad"
 _VIS = "canary_vision_enclosure.scad"
 _DOOR = "canary_vision_doorbell.scad"
@@ -85,11 +89,13 @@ SETS = [
     {"id": "wap.battery_weather", "device": "canary-wap", "scad": _WAP,
      "overrides": {"preset": '"battery_weather"', "part": '"base"'}, "rib": True},
     {"id": "wap.battery_weather.shield", "device": "canary-wap", "scad": _WAP,
-     "overrides": {"preset": '"battery_weather"', "part": '"shield"'},
-     "join_text": "REPLACES"},
+     "overrides": {"preset": '"battery_weather"', "part": '"shield"'}},
     {"id": "wap.compact_plain+inserts", "device": "canary-wap", "scad": _WAP,
      "overrides": {"preset": '"compact_plain"', "part": '"base"', "screw_insert": "true"},
-     "join": ("insert",)},
+     "join": ("insert", "screw")},
+    {"id": "wap.battery_weather+inserts", "device": "canary-wap", "scad": _WAP,
+     "overrides": {"preset": '"battery_weather"', "part": '"base"', "screw_insert": "true"},
+     "join": ("insert", "screw")},
     {"id": "vision.xiao_indoor", "device": "canary-vision", "scad": _VIS,
      "overrides": {"host": '"xiao"', "preset": '"vision_indoor"', "part": '"back"'}, "rib": True},
     {"id": "vision.xiao_weather", "device": "canary-vision", "scad": _VIS,
@@ -99,15 +105,15 @@ SETS = [
     {"id": "vision.xiao_indoor+inserts", "device": "canary-vision", "scad": _VIS,
      "overrides": {"host": '"xiao"', "preset": '"vision_indoor"', "part": '"back"',
                    "screw_insert": "true"},
-     "join": ("insert",)},
+     "join": ("insert", "screw")},
     {"id": "doorbell", "device": "canary-vision", "scad": _DOOR,
      "overrides": {"part": '"body"'}, "rib": True},
     {"id": "doorbell+inserts", "device": "canary-vision", "scad": _DOOR,
-     "overrides": {"part": '"body"', "screw_insert": "true"}, "join": ("insert",)},
+     "overrides": {"part": '"body"', "screw_insert": "true"}, "join": ("insert", "screw")},
     {"id": "sense", "device": "canary-sense", "scad": _SENSE,
      "overrides": {"part": '"back"'}, "rib": True},
     {"id": "sense+inserts", "device": "canary-sense", "scad": _SENSE,
-     "overrides": {"part": '"back"', "screw_insert": "true"}, "join": ("insert",)},
+     "overrides": {"part": '"back"', "screw_insert": "true"}, "join": ("insert", "screw")},
 ]
 
 # The bound each case's own PLS-4 assert holds lid_rib_h to, and the WAP's
@@ -126,20 +132,26 @@ RIB_BOUND = {
 JOIN = {
     "canary-wap": ("bom_canary_wap.csv", [
         ("screw", r"^M2 (pan|flat) x (8|10|12|16) self-tap", "SCR3"),  # flat (indoor, from the back) or pan (Outdoor: O-ring glands) + the shield's flat x 12
+        ("screw", r"^M2 (pan|flat) x (8|10) machine \(into the inserts\)", "SCR5"),  # the insert builds: flat x 10 indoor, pan x 8 Outdoor
         ("insert", r"^M2 heat-set insert 3\.5 OD x 4\b", "INS1"),   # 3.5mm OD x 4.0mm
         ("o-ring", r"^O-ring 2 ID x 1 CS", "ORG1"),                # the sealed back seats' glands
         ("wall-screw", r"^#6 pan wall screw \(keyholes\)", "SCR4"),  # keyhole mount
     ]),
     "canary-vision": ("bom_canary_vision.csv", [
+        ("screw", r"^M2 pan x (8|10) machine \(into the inserts\)", "SCR10"),  # the insert builds' plate screws: 8 Vision / 10 doorbell
         ("screw", r"^M2 pan x (4|5|6|8|10) self-tap", "SCR5"),        # the mixed row: camera posts (4 Vision / 5 doorbell), the doorbell's board posts (4), the plate screws pl_len() picks (8 Vision / 10 doorbell)
         ("insert", r"^M2 heat-set insert 3\.5 OD x 4\b", "INS1"),
         ("security-screw", r"^M2 x 10 security screw", "SCR8"),
         ("bolt", r"^M5 x 25 bolt \+ nut", "SCR6"),
-        ("wall-screw", r"^#8 ", "SCR7"),                            # #8 / M4 countersunk (bracket)
+        ("wall-screw", r"^#8 ", "SCR7"),                            # #8 / M4: countersunk (the bracket), pan (the doorbell plate) — the row names both
+        ("wall-screw", r"^#6 pan wall screw \(keyholes\)", "SCR9"),  # the weather preset's keyholes
         ("o-ring", r"^O-ring 2 ID x 1 CS", "ORG1"),                # the sealed back seats' glands
     ]),
     "canary-sense": ("bom_canary_sense.csv", [
         ("screw", r"^M2 pan x 8 self-tap", "SCR3"),                  # PAN head, 8 mm: the plate screw pl_len() picks — a longer one is drift, not a match
+        ("screw", r"^M2 pan x 8 machine \(into the inserts\)", "SCR8"),  # the insert build's
+        ("bolt", r"^M5 x 25 bolt \+ nut", "SCR6"),                  # the hinge (the Vision's bracket and knob)
+        ("wall-screw", r"^#8 / M4 countersunk", "SCR7"),           # the bracket's four corners
         ("insert", r"^M2 heat-set insert 3\.5 OD x 4\b", "INS1"),
         ("o-ring", r"^O-ring 2 ID x 1 CS", "ORG1"),                # the sealed back seats' glands
         ("wall-screw", r"^#6 pan wall screw \(keyholes\)", "SCR4"),  # keyhole mount
@@ -149,12 +161,10 @@ JOIN = {
 # Disagreements between the CAD's echo and the BOM CSVs that are KNOWN and
 # await a human (the CSV's owner) — found by this gate's first run, reported,
 # not edited. A new one fails --check; so does one that stops happening.
-KNOWN_DRIFT = {
-    "doorbell+inserts|short INS1",
-    "sense|unbilled #8 / M4 countersunk wall screw (bracket)",
-    "sense|unbilled M5 x 25 bolt + nut (hinge; Vision knob/bracket parts)",
-    "vision.xiao_weather|unbilled #6 pan wall screw (keyholes)",
-}
+# (2026-10-23: empty — the four the first run found were fixed in the CSVs:
+# the doorbell's INS1 13, the Sense's hinge bolt and bracket screws, the
+# Vision weather preset's keyhole screws.)
+KNOWN_DRIFT: set[str] = set()
 
 _HW_LINE = re.compile(r'^"HARDWARE — (.+?): (.*)"$')
 _ITEM = re.compile(r"^(\d+)x (.+)$")
@@ -260,8 +270,6 @@ def join(sets: dict, boms: dict | None = None) -> tuple[dict, list[dict]]:
         need: dict[str, int] = {}
         for it in rec["items"]:
             if it["kind"] not in kinds:
-                continue
-            if spec.get("join_text") and spec["join_text"] not in it["text"]:
                 continue
             ref = next((r for k, pat, r in rules if k == it["kind"] and re.search(pat, it["text"])),
                        None)

@@ -1955,7 +1955,7 @@
    "traced_to": [
     {
      "file": "canary_vision_doorbell_plate.stl",
-     "triangles": 4276,
+     "triangles": 4356,
      "mm": [
       56.7,
       172.7,
@@ -2130,7 +2130,7 @@
     },
     {
      "file": "canary_wap_enclosure_compact_lid.stl",
-     "triangles": 2712,
+     "triangles": 2724,
      "mm": [
       35.7,
       38.6,
@@ -2478,7 +2478,7 @@
    "traced_to": [
     {
      "file": "canary_vision_doorbell_plate.stl",
-     "triangles": 4276,
+     "triangles": 4356,
      "mm": [
       56.7,
       172.7,
@@ -3346,7 +3346,7 @@
    "traced_to": [
     {
      "file": "canary_wap_enclosure_compact_lid.stl",
-     "triangles": 2712,
+     "triangles": 2724,
      "mm": [
       35.7,
       38.6,

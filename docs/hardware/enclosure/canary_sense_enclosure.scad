@@ -75,6 +75,12 @@
 //              as on the Vision (its v0.7): the knockouts' screws go in from
 //              the cavity and the plate screws from the back face, so the
 //              documented anti-lift install could not be done.
+//  2026-10-23: the GORE seat (opt_vent, off by default) takes the slide
+//              tolerance, vent_pad_d + 2 x tol_slide: cut at exactly the
+//              Ø12 the echo bills (a 95-gon, Ø11.99 across its flats), the
+//              patch had no room in its own seat — the Vision's and the
+//              WAP's, the same day. The window-clearance assert measures the
+//              seat. No default mesh moves.
 // ============================================================================
 
 use <canary_core_lib.scad>    // rrect/rrect2d, soft-edge front, foot chamfer, screw seats, tearbore
@@ -97,7 +103,7 @@ opt_led    = true;    // onboard WS2812 -> light-pipe port (outside the radome z
 opt_lux    = true;    // BH1750 lux sensor -> small light aperture (outside the radome zone)
 opt_vent   = false;   // GORE vent cluster (recommended with opt_seal)
 opt_tamper = false;   // reed/Hall magnet pocket
-opt_seal   = false;   // perimeter TPU gasket + drip-edge front (indoor ceilings rarely need it)
+opt_seal   = false;   // perimeter TPU gasket in the shell's ledge + O-rings under the plate screws (indoor ceilings rarely need it)
 opt_weep   = false;   // Ø2 weep at the bottom wall's floor corner (seal mode): condensate leaves
 weep_d     = 2.0;     // weep bore  // [1.5:0.5:3]
 seal_mid_posts = false; // (seal mode) one extra screw post mid-way along each ±X wall
@@ -163,7 +169,7 @@ lux_disc_d = 0;      // 0 = bare hole; > 0 cuts a recessed seat on the outer fac
                      // disc of that diameter (6 mm x 1 mm is easy to find) — use it with opt_seal
 lux_dx = -13.0;     // lux aperture center X, from the board center (asserted clear of the window)
 lux_dy = -14.0;     // lux aperture center Y, from the board center
-vent_pad_d     = 12.0;  // GORE-vent seat Ø on the front's outer face — core_vent_pad_d()
+vent_pad_d     = 12.0;  // GORE-vent patch Ø (its seat on the front's outer face is cut tol_slide over it) — core_vent_pad_d()
 vent_pad_depth = 0.8;   // that seat's recess depth — core_vent_pad_depth()
 vent_hole_d    = 1.0;   // fine holes — insect-resistant (see README thermal/outdoor kit)
 vent_ring_d    = 6.0;   // Ø of the ring the vent holes sit on — core_vent_ring_d()
@@ -192,9 +198,9 @@ lid_key    = true; // poka-yoke: a rib on the +Y bore wall and a slot in the pla
                    // a lid two ways and every lid feature lines up one way; turned round it stands lip_h proud
 
 /* [Print tolerances] — defaults = the catalog trio (core_tol_*(), canary_core_lib), dialed on the fit coupon */
-tol_slide = 0.20;    // sliding fits: front lip, drip skirt — core_tol_slide()
+tol_slide = 0.20;    // sliding fits: the plate in its bore — core_tol_slide()
 tol_press = 0.10;    // press fits: magnet, light pipe — core_tol_press()
-tol_hole  = 0.30;    // clearance holes: front screws — core_tol_hole()
+tol_hole  = 0.30;    // clearance holes: the plate screws — core_tol_hole()
 
 /* [Engineering] (see README "Engineering & materials") */
 screw_insert = false;   // heat-set inserts in the screw posts, sized by screw_size (the posts fatten; the screws become machine screws)
@@ -403,7 +409,7 @@ function _win_clear(dx, dy, d) =
 assert(!e_led || _win_clear(lp_dx, lp_dy, lp_d + 2*tol_press), "the LED light pipe sits inside the radome window");
 assert(!e_lux || _win_clear(lux_dx, lux_dy, max(lux_d, lux_disc_d)), "the lux aperture sits inside the radome window");
 assert(lux_disc_d == 0 || lux_disc_d > lux_d + 1.5, "lux_disc_d must overlap the aperture by >= 0.75 a side");
-assert(!e_vent || _win_clear(vent_dx, vent_dy, vent_pad_d), "the vent cluster sits inside the radome window");
+assert(!e_vent || _win_clear(vent_dx, vent_dy, vent_pad_d + 2*tol_slide), "the vent cluster sits inside the radome window");
 assert(!e_tamper || _win_clear(mag_dx, mag_dy, mag_d + 2*tol_press + 2.4),
        "the tamper magnet sits inside the radome window — NdFeB in the beam; move mag_dx/mag_dy");
 assert(radome_t >= 1.3 && radome_t < lid_t,
@@ -673,7 +679,7 @@ module shell_solid() {
                             cylinder(d = lux_disc_d + 2*tol_slide, h = 1.3);
                 }
                 if (e_vent) core_vent_cluster(radar_cx + vent_dx, radar_cy + vent_dy, lid_t,
-                                              vent_pad_d, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes);
+                                              vent_pad_d + 2*tol_slide, vent_pad_depth, vent_ring_d, vent_hole_d, vent_holes);
                 if (label_text != "")
                     translate([label_dx, label_dy, lid_t - label_depth])
                         linear_extrude(label_depth + 1) rotate(label_rot)
