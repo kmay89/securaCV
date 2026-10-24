@@ -2,7 +2,7 @@
 // "buildable", recalls by batch or firmware, ticket attachments, the right to
 // be forgotten, and the Decide queue on Home — the system drafts, a person
 // approves. Same conventions: server-rendered, plain forms, no script.
-import { text, json, HttpError, escapeHtml as e, int } from './http.mjs';
+import { text, json, HttpError, escapeHtml as e, int, asArray } from './http.mjs';
 import { table, money, dt, day, statusPill, field, form, button, cards, tabs, meta } from './render.mjs';
 import { tile, hbars } from './charts.mjs';
 import { stateTileMap } from './statemap.mjs';
@@ -79,7 +79,7 @@ ${maps}
   router.post('/purchasing/:id/receive', (c) => { const received = Object.fromEntries(Object.entries(c.body).filter(([k]) => k.startsWith('recv_')).map(([k, v]) => [k.slice(5), int(v, { name: `${k.slice(5)} received`, min: 0, fallback: 0 })])); const p = receivePo(db, Number(c.params.id), { received, paidFrom: c.body.paidFrom || 'assets:bank', actor: 'web' }); backTo(c, `/purchasing/${p.id}`, `${p.number} ${p.status === 'received' ? 'received in full' : 'partly received'} — stock moved, inventory booked`); });
   router.post('/purchasing/:id/cancel', (c) => { const p = cancelPo(db, Number(c.params.id), { actor: 'web' }); back(c, `/purchasing/${p.id}`, `${p.number} canceled`); });
   router.get('/api/purchasing', (c) => json(c.res, listPos(db, { status: c.query.get('status') || '' })));
-  router.post('/api/purchasing', (c) => json(c.res, createPo(db, { ...c.body, actor: c.actor }), 201));
+  router.post('/api/purchasing', (c) => json(c.res, createPo(db, { ...c.body, items: asArray(c.body.items, 'items'), actor: c.actor }), 201));
   router.post('/api/purchasing/draft', (c) => json(c.res, draftReorder(db, { skus: c.body.skus || null, actor: c.actor }), 201));
   router.post('/api/purchasing/:number/:action', (c) => { const p = db.get('SELECT id FROM purchase_orders WHERE number = ?', c.params.number); if (!p) throw new HttpError(404, 'no such purchase order'); const fn = { order: () => markOrdered(db, p.id, { expected_at: c.body.expected_at || null, actor: c.actor }), receive: () => receivePo(db, p.id, { received: c.body.received || null, actor: c.actor }), cancel: () => cancelPo(db, p.id, { actor: c.actor }) }[c.params.action]; if (!fn) throw new HttpError(404, 'action is order, receive or cancel'); json(c.res, fn()); });
 

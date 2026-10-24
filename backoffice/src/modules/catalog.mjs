@@ -3,6 +3,7 @@
 // We read it — from a path or the live URL — and cache it. A SKU we don't
 // recognize is an error, never a guess (the same rule fulfill.mjs keeps).
 import { readFileSync } from 'node:fs';
+import { normalizeShipping } from './packing.mjs';
 
 let cache = { at: 0, data: null, from: null };
 
@@ -17,6 +18,22 @@ export async function loadCatalog(cfg, { force = false, fetchImpl = fetch } = {}
   } else json = JSON.parse(readFileSync(src, 'utf8'));
   const data = normalize(json);
   cache = { at: Date.now(), data, from: src };
+  return data;
+}
+
+// shipping.json, read the same way: the box catalog and each SKU's packed parcel the box-fit
+// method needs. SHIPPING_JSON names it; blank means the file beside store.json.
+let shipCache = { at: 0, data: null, from: null };
+export const shippingSource = (cfg) => cfg.shippingJson || String(cfg.storeJson || '').replace(/store\.json$/, 'shipping.json');
+export async function loadShipping(cfg, { force = false, fetchImpl = fetch } = {}) {
+  const src = shippingSource(cfg);
+  if (!src || src === cfg.storeJson) throw new Error('no shipping.json source (set SHIPPING_JSON)');
+  if (!force && shipCache.data && shipCache.from === src && Date.now() - shipCache.at < 10 * 60_000) return shipCache.data;
+  let json;
+  if (/^https?:\/\//.test(src)) { const r = await fetchImpl(src, { headers: { accept: 'application/json' } }); if (!r.ok) throw new Error(`shipping fetch ${r.status} from ${src}`); json = await r.json(); }
+  else json = JSON.parse(readFileSync(src, 'utf8'));
+  const data = normalizeShipping(json);
+  shipCache = { at: Date.now(), data, from: src };
   return data;
 }
 

@@ -24,6 +24,7 @@ export function loadConfig(overrides = {}) {
     githubToken: env('GITHUB_TOKEN', ''),
     githubRepo: env('GITHUB_REPO', 'kmay89/securaCV'),
     storeJson: env('STORE_JSON', 'https://securacv.com/store.json'), // catalog: path or URL
+    shippingJson: env('SHIPPING_JSON', ''),                           // boxes + parcels: path or URL; blank = next to store.json
     slaHours: Number(env('SUPPORT_SLA_HOURS', '24')),
     sessionHours: Number(env('SESSION_HOURS', '12')),
     backupKeep: Number(env('BACKUP_KEEP', '14')),

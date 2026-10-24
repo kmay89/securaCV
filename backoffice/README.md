@@ -171,6 +171,37 @@ Nothing above types a SKU, an address, or a price by hand: the catalog is
 `store.json`, the address is what Stripe collected, COGS is frozen from the
 store's `cogs` recipe at the moment of sale.
 
+### How the shipping numbers are made
+
+Three numbers show up around an order, and each has one source.
+
+- **The box.** The website's `shipping.json` (next to `store.json`; `SHIPPING_JSON`
+  overrides the path or URL) holds the carton catalog with inner dimensions and
+  each SKU's packed parcel. `src/modules/packing.mjs` is a port of the website's
+  `scripts/box-fit.mjs` — first-fit decreasing, a box fits when every parcel fits
+  by sorted dimensions and the summed volume stays under the inner volume × the
+  fill factor, the plan is the cheaper of "one box" and "greedy by cost per packed
+  volume", a box is priced by billable weight (actual or dimensional, whichever is
+  greater) off the Ground Advantage tiers, a flat-rate box by its flat price — and
+  `tests/fixtures/boxfit_expected.json` is that script's own output on eighteen
+  orders, which the port must reproduce. The plan is made from the lines when an
+  order is **packed** and frozen on it (`pack_plan`); the pack bench, the ship
+  bench, the packing slip and the fulfill CSV (`box`, `expected_oz`, `pieces`,
+  `service`) all read the same plan. A multi-line order is one shipment: its
+  boxes are planned together, and the CSV says how many lines it has so the label
+  tool does not make one label per row.
+- **The scale.** At the ship bench a measured weight is checked against the plan;
+  past the tolerance (`fulfillment.weight_tolerance_oz` in `store.json`, 1.5 oz
+  when unset) the ship is refused with the delta — a missing or extra item is the
+  usual cause — unless "ship anyway" is ticked, and then the timeline says so.
+- **The postage.** The plan's cost is an estimate for a mid zone (the file says
+  which); the label's real price, typed at the ship bench, is booked to
+  `expenses:postage` and shown beside the shipping the customer paid. The
+  **delivery estimate** the customer sees is bands by state from
+  `SHIP_FROM_STATE` (the website's `fulfillment.ship_from.state` when unset),
+  two to seven business days, replaced by the carrier's own word when USPS
+  tracking is configured.
+
 ## How each piece behaves (the rules it keeps)
 
 - **Orders** — one row per shipment; an unknown SKU is a refused order, not a

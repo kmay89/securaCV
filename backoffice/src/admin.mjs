@@ -2,7 +2,8 @@
 import { html, redirect, text, HttpError, escapeHtml as e, int, csvLine } from './http.mjs';
 import { layout, table, money, dt, day, statusPill, field, form, button, cards, tags as tagsHtml, tabs, meta } from './render.mjs';
 import { snapshot } from './modules/dashboard.mjs';
-import { listOrders, orderById, transition, refund, recordOrder, fulfillCsv, weekLabel, STATUSES, timeline, addNote, setTags, updateShipping, resendTracking, statusCounts, addressIssues } from './modules/orders.mjs';
+import { listOrders, orderById, transition, refund, recordOrder, fulfillCsv, weekLabel, STATUSES, timeline, addNote, setTags, updateShipping, resendTracking, statusCounts, addressIssues, packPlanOf } from './modules/orders.mjs';
+import { packOrder } from './modules/packing.mjs';
 import { customerStats, tagList } from './modules/contacts.mjs';
 import { registerShop } from './admin_shop.mjs';
 import { registerOps } from './admin_ops.mjs';
@@ -105,15 +106,16 @@ export function registerAdmin(app) {
     const { order } = recordOrder(db, { source: 'manual', email: b.email, name: String(b.name || '').trim(), subtotal_cents: cents, total_cents: cents, discount_code: b.discount_code || null, tags: b.tags || '', ship, items: [{ sku: String(b.sku).trim(), name: String(b.sku).trim(), qty, unit_cents: Math.round(cents / qty) }], notes: b.notes }, { catalog: await app.catalog().catch(() => null), actor: 'web' });
     back(c, `/orders/${order.id}`, `created ${order.number}`);
   });
-  router.get('/orders/:id', (c) => {
+  router.get('/orders/:id', async (c) => {
     const o = orderById(db, c.params.id); if (!o) throw new HttpError(404, 'no such order');
+    const frozen = packPlanOf(o); const plan = frozen || (['paid', 'packed'].includes(o.status) ? packOrder(await app.shipping().catch(() => null), o.items) : null);
     const devices = db.all('SELECT * FROM devices WHERE order_id = ?', o.id);
     const cust = o.contact_id ? customerStats(db, o.contact_id) : null;
     const events = timeline(db, o.id);
     const claims = db.all('SELECT * FROM warranty_claims WHERE order_id = ? OR reship_order_id = ?', o.id, o.id);
     const tickets = o.contact_id ? db.all('SELECT id, number, subject, status FROM tickets WHERE contact_id = ? ORDER BY id DESC LIMIT 5', o.contact_id) : [];
     const next = { paid: 'packed', packed: 'shipped', shipped: 'delivered' }[o.status];
-    const act = next === 'shipped' ? form(`/orders/${o.id}/transition`, c.csrf, `<input type="hidden" name="to" value="shipped"><div class="row">${field('carrier', 'Carrier', { value: 'USPS' })}${field('tracking', 'Tracking number')}</div>`, { submit: 'Mark shipped + email tracking' })
+    const act = next === 'shipped' ? form(`/orders/${o.id}/transition`, c.csrf, `<input type="hidden" name="to" value="shipped"><div class="row">${field('carrier', 'Carrier', { value: 'USPS' })}${field('tracking', 'Tracking number')}</div><div class="row">${field('measured_oz', `Scale (oz)${plan?.total_oz != null ? ` — the plan expects ${plan.total_oz}` : ''}`, { type: 'text', placeholder: plan?.total_oz != null ? String(plan.total_oz) : '' })}${field('postage_cents', 'Label cost (cents, optional)', { type: 'number' })}</div><label><input type="checkbox" name="ship_anyway" value="1" style="width:auto"> ship anyway if the scale disagrees with the plan</label>`, { submit: 'Mark shipped + email tracking' })
       : next ? `<form method="post" action="/orders/${o.id}/transition" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="${next}"><button>Mark ${next}</button></form>` : '';
     const undo = o.status === 'packed' ? `<form method="post" action="/orders/${o.id}/transition" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="paid"><button class="quiet">Unpack (return parts)</button></form>` : '';
     const cancel = o.status === 'paid' ? `<form method="post" action="/orders/${o.id}/transition" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="canceled"><button class="quiet">Cancel</button></form>` : '';
@@ -128,7 +130,8 @@ ${where}<p>${act} ${undo} ${cancel} ${resend}</p>
 <div class="two"><div>
 <div class="card"><div class="k">Customer</div>${o.contact_id ? `<b>${link(`/contacts/${o.contact_id}`, o.ship_name || o.email)}</b><br><span class="muted">${e(o.email || '')}</span><br>${cust.orders} order${cust.orders === 1 ? '' : 's'} · ${money(cust.spent_cents)} lifetime${cust.orders > 1 ? ' · <span class="pill ok">repeat</span>' : ' · first order'}${cust.open_tickets ? ` · <span class="warn">${cust.open_tickets} open ticket${cust.open_tickets === 1 ? '' : 's'}</span>` : ''}` : '<span class="muted">no customer record (no email on the order)</span>'}</div>
 <div class="card" style="margin-top:.8rem"><div class="k">Ship to</div>${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)} ${e(o.ship_country)}${mapLinks(o)}${['paid', 'packed'].includes(o.status) ? `<details style="margin-top:.5rem"><summary class="muted">Edit address</summary>${form(`/orders/${o.id}/address`, c.csrf, `<div class="row">${field('name', 'Name', { value: o.ship_name })}${field('line1', 'Line 1', { value: o.ship_line1, required: true })}</div><div class="row">${field('line2', 'Line 2', { value: o.ship_line2 })}${field('city', 'City', { value: o.ship_city, required: true })}${field('state', 'State', { value: o.ship_state })}${field('zip', 'ZIP', { value: o.ship_zip, required: true })}</div>`, { submit: 'Save address' })}</details>` : ''}</div>
-<div class="card" style="margin-top:.8rem"><div class="k">Payment</div><table><tr><td>Subtotal</td><td class="num">${money(o.subtotal_cents)}</td></tr>${o.discount_cents || o.discount_code ? `<tr><td>Discount ${o.discount_code ? link(`/orders?discount=${encodeURIComponent(o.discount_code)}`, o.discount_code) : ''}</td><td class="num">−${money(o.discount_cents)}</td></tr>` : ''}<tr><td>Shipping</td><td class="num">${money(o.shipping_cents)}</td></tr><tr><td>Tax</td><td class="num">${money(o.tax_cents)}</td></tr><tr><td><b>Total charged</b></td><td class="num"><b>${money(o.total_cents)}</b></td></tr>${o.refunded_cents ? `<tr><td class="bad">Refunded</td><td class="num bad">−${money(o.refunded_cents)}</td></tr>` : ''}<tr><td class="muted">Cost of goods</td><td class="num muted">${money(o.items.reduce((s, i) => s + i.cogs_cents * i.qty, 0))}</td></tr><tr><td class="muted">Margin</td><td class="num muted">${o.total_cents ? Math.round(100 * (o.subtotal_cents - o.discount_cents - o.refunded_cents - o.items.reduce((s, i) => s + i.cogs_cents * i.qty, 0)) / Math.max(1, o.subtotal_cents - o.discount_cents)) : 0}%</td></tr></table></div>
+${packingCard(plan, frozen, o)}
+<div class="card" style="margin-top:.8rem"><div class="k">Payment</div><table><tr><td>Subtotal</td><td class="num">${money(o.subtotal_cents)}</td></tr>${o.discount_cents || o.discount_code ? `<tr><td>Discount ${o.discount_code ? link(`/orders?discount=${encodeURIComponent(o.discount_code)}`, o.discount_code) : ''}</td><td class="num">−${money(o.discount_cents)}</td></tr>` : ''}<tr><td>Shipping</td><td class="num">${money(o.shipping_cents)}</td></tr><tr><td>Tax</td><td class="num">${money(o.tax_cents)}</td></tr><tr><td><b>Total charged</b></td><td class="num"><b>${money(o.total_cents)}</b></td></tr>${o.refunded_cents ? `<tr><td class="bad">Refunded</td><td class="num bad">−${money(o.refunded_cents)}</td></tr>` : ''}${o.postage_cents ? `<tr><td class="muted">Postage paid (label)</td><td class="num muted">${money(o.postage_cents)}${o.shipping_cents ? ` <span class="${o.postage_cents > o.shipping_cents ? 'bad' : 'ok'}">(${o.postage_cents > o.shipping_cents ? '−' : '+'}${money(Math.abs(o.shipping_cents - o.postage_cents))} on shipping)</span>` : ''}</td></tr>` : ''}<tr><td class="muted">Cost of goods</td><td class="num muted">${money(o.items.reduce((s, i) => s + i.cogs_cents * i.qty, 0))}</td></tr><tr><td class="muted">Margin</td><td class="num muted">${o.total_cents ? Math.round(100 * (o.subtotal_cents - o.discount_cents - o.refunded_cents - o.items.reduce((s, i) => s + i.cogs_cents * i.qty, 0)) / Math.max(1, o.subtotal_cents - o.discount_cents)) : 0}%</td></tr></table></div>
 </div><div>
 <h2 style="margin-top:0">Timeline</h2><ul class="tl">${events.map(ev => `<li class="${e(ev.kind)}"><span class="meta">${e(dt(ev.at))} · ${e(ev.actor)}</span><br>${e(ev.text)}</li>`).join('') || '<li class="muted">No events recorded.</li>'}</ul>
 ${form(`/orders/${o.id}/note`, c.csrf, field('body', 'Add a note (internal; the customer never sees it)', { type: 'textarea', rows: 2, required: true }), { submit: 'Add note' })}
@@ -147,7 +150,7 @@ ${o.notes ? `<p class="muted">Order notes: ${e(o.notes)}</p>` : ''}`;
   router.post('/orders/:id/tags', (c) => { setTags(db, Number(c.params.id), c.body.tags || '', { actor: 'web' }); back(c, `/orders/${c.params.id}`, 'tags saved'); });
   router.post('/orders/:id/address', (c) => { updateShipping(db, Number(c.params.id), c.body, { actor: 'web' }); back(c, `/orders/${c.params.id}`, 'address updated'); });
   router.post('/orders/:id/resend-tracking', (c) => { resendTracking(db, Number(c.params.id), { cfg, actor: 'web' }); back(c, `/orders/${c.params.id}`, 'tracking email queued'); });
-  router.post('/orders/:id/transition', (c) => { const o = transition(db, c.params.id, c.body.to, { actor: 'web', carrier: c.body.carrier, tracking: c.body.tracking, cfg }); backTo(c, `/orders/${o.id}`, `${o.number} is now ${o.status}`); });
+  router.post('/orders/:id/transition', async (c) => { const o = transition(db, c.params.id, c.body.to, { actor: 'web', carrier: c.body.carrier, tracking: c.body.tracking, cfg, shipping: c.body.to === 'packed' ? await app.shipping().catch(() => null) : null, measuredOz: c.body.measured_oz ?? null, postageCents: int(c.body.postage_cents, { name: 'label cost (cents)', min: 0, fallback: 0 }), shipAnyway: !!c.body.ship_anyway }); backTo(c, `/orders/${o.id}`, `${o.number} is now ${o.status}`); });
   router.post('/orders/:id/refund', (c) => { const o = refund(db, c.params.id, int(c.body.cents, { name: 'the refund (cents)', min: 1 }), { actor: 'web', reason: c.body.reason }); back(c, `/orders/${o.id}`, `refund recorded`); });
   router.post('/orders/:id/assign', (c) => { assignToOrder(db, c.body.serial, Number(c.params.id)); backTo(c, `/orders/${c.params.id}`, `assigned ${c.body.serial}`); });
 
@@ -348,6 +351,17 @@ curl -H "Authorization: Bearer <token>" ${cfg.baseUrl}/api/demo/scenarios`)}</pr
     const r = await sc.run(app);
     redirect(c.res, `/demo?ok=${encodeURIComponent(sc.label)}&result=${encodeURIComponent(JSON.stringify(r, null, 1).slice(0, 1500))}`);
   });
+}
+
+// The box: which carton(s), what each weighs, roughly what the label costs, and anything a human
+// should see before the tape. Frozen on the order when it was packed; live from the lines before.
+export function packingCard(plan, frozen, o) {
+  if (!plan) return '';
+  const rows = (plan.boxes || []).map(b => `<tr><td>${e(b.box_name)}<br><span class="muted" style="font-size:12px">${e(b.items.map((id, i, a) => a.indexOf(id) === i ? `${a.filter(x => x === id).length}× ${id}` : null).filter(Boolean).join(', '))} · ${b.inner.l}×${b.inner.w}×${b.inner.h} in · ${Math.round(b.fill * 100)}% full</span></td><td class="num">${b.weight_oz} oz</td><td class="num">${b.cost_est != null ? `≈ ${money(Math.round(b.cost_est * 100))}` : ''}</td></tr>`).join('');
+  const warn = (plan.warnings || []).map(w => `<p class="warn" style="margin:.3rem 0 0;font-size:13px">${e(w)}</p>`).join('');
+  const charged = o.shipping_cents; const est = plan.total_cost_est != null ? Math.round(plan.total_cost_est * 100) : null;
+  const vs = est != null ? `<p class="muted" style="margin:.4rem 0 0;font-size:12.5px">Shipping charged ${money(charged)} · postage ≈ ${money(est)} at a mid zone${o.measured_oz ? ` · scale read ${o.measured_oz} oz` : ''}${frozen ? '' : ' · from the lines as they are now; frozen when packed'}</p>` : '';
+  return `<div class="card" style="margin-top:.8rem"><div class="k">The box${plan.boxes?.length > 1 ? `es (${plan.boxes.length})` : ''}</div>${rows ? `<table><thead><tr><th>Carton</th><th class="num">Expected</th><th class="num">Postage</th></tr></thead><tbody>${rows}</tbody></table>` : '<p class="muted" style="margin:0">No plan — see below.</p>'}${warn}${vs}</div>`;
 }
 
 // Open the ship-to address in a maps app — a link the operator clicks, never a tile fetched by the page.

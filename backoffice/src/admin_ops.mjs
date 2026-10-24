@@ -4,7 +4,8 @@
 // exportable). Same conventions: server-rendered, plain forms, no script.
 import { text, HttpError, escapeHtml as e, csvLine } from './http.mjs';
 import { table, money, dt, day, statusPill, field, form, button } from './render.mjs';
-import { listOrders, orderById, weekLabel, statusCounts, addressIssues } from './modules/orders.mjs';
+import { listOrders, orderById, weekLabel, statusCounts, addressIssues, packPlanOf } from './modules/orders.mjs';
+import { packOrder } from './modules/packing.mjs';
 import { doctor } from './modules/health.mjs';
 import { backup, checkBackup, liveCounts, listBackups } from './modules/backup.mjs';
 import { runJob, jobRuns } from './jobs.mjs';
@@ -21,9 +22,11 @@ export function registerOps(app, { page, back, link, filters }) {
   const batchFor = (status, wanted) => { if (wanted) return wanted; const cur = weekLabel(); if (listOrders(db, { status, batch: cur, limit: 1 }).length) return cur; const any = listOrders(db, { status, limit: 1 }); return any.length ? any[any.length - 1].batch : cur; };
   const progress = (status, batch, doneStatuses) => { const all = listOrders(db, { batch, limit: 1000 }).filter(o => !['canceled', 'refunded'].includes(o.status)); const done = all.filter(o => doneStatuses.includes(o.status)).length; return { total: all.length, done, left: all.filter(o => o.status === status).length }; };
   const addrWarn = (o) => { const bad = addressIssues({ line1: o.ship_line1, city: o.ship_city, state: o.ship_state, zip: o.ship_zip, country: o.ship_country }); return bad.length ? `<p class="flash err" style="margin:.4rem 0"><b>This address will not make a label:</b> ${e(bad.join('; '))} — <a href="/orders/${o.id}">fix it on the order</a> first.</p>` : ''; };
+  // One line for the bench: the carton(s), the expected weight, the postage estimate, and any warning.
+  const packLine = (plan, atShip = false) => { if (!plan) return ''; const boxes = (plan.boxes || []).map(b => `<b>${e(b.box_name.replace(/ \(.*\)$/, ''))}</b> ${b.weight_oz} oz`).join(' + '); const warn = (plan.warnings || []).map(w => `<br><span class="warn">${e(w)}</span>`).join(''); return `<p class="muted" style="margin:.4rem 0">${boxes ? `${atShip ? 'Packed as' : 'Pack in'}: ${boxes}${plan.total_cost_est != null ? ` · postage ≈ ${money(Math.round(plan.total_cost_est * 100))}` : ''}${atShip && plan.total_oz != null ? ` · weigh it: within ${cfg.weightToleranceOz ?? 1.5} oz of ${plan.total_oz} oz, or recount` : ''}` : 'No box plan.'}${warn}</p>`; };
   const picklist = (o) => `<ul class="picklist">${o.items.map(i => `<li><span class="box" aria-hidden="true"></span><span class="q">${i.qty}×</span><span>${e(i.name)}<br><span class="sku">${e(i.sku)}</span></span></li>`).join('') || '<li class="muted">No line items — add them on the order before packing.</li>'}</ul>`;
 
-  router.get('/pack', (c) => {
+  router.get('/pack', async (c) => {
     const batch = batchFor('paid', c.query.get('batch') || ''); const after = Number(c.query.get('after') || 0);
     const o = nextIn('paid', batch, after) ? orderById(db, nextIn('paid', batch, after).id) : null;
     const p = progress('paid', batch, ['packed', 'shipped', 'delivered']);
@@ -33,6 +36,7 @@ export function registerOps(app, { page, back, link, filters }) {
     const needsBoard = o.items.some(i => /kit|pair/.test(i.sku));
     const body = head + `<div class="bench"><div class="card"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Pack this</div><h2 style="margin:.2rem 0 .6rem">${link(`/orders/${o.id}`, o.number)} <span class="muted" style="font-weight:400">· ${e(o.ship_name)}</span></h2>
 ${picklist(o)}
+${packLine(packOrder(await app.shipping().catch(() => null), o.items))}
 ${o.notes || o.tags ? `<p class="warn"><b>Note:</b> ${e(o.notes || '')} ${o.tags ? `<span class="muted">tags: ${e(o.tags)}</span>` : ''}</p>` : ''}
 <h2>Boards in the box ${needsBoard ? '' : '<span class="muted">(none needed)</span>'}</h2>${devices.length ? `<p>${devices.map(d => `<span class="pill ok">${e(d.serial)} · fw ${e(d.fw_version || '?')}</span>`).join(' ')}</p>` : needsBoard ? '<p class="muted">Scan the flashed board’s serial so the order knows which board it got.</p>' : ''}
 <form method="post" action="/orders/${o.id}/assign"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="_back" value="/pack?batch=${e(batch)}"><div class="row"><div><label for="f_serial">Scan serial</label><input id="f_serial" name="serial" autofocus autocomplete="off" placeholder="DEMO-W-0005"></div><div><label>&nbsp;</label><button class="quiet">Assign to ${e(o.number)}</button></div></div></form>
@@ -44,7 +48,7 @@ ${o.notes || o.tags ? `<p class="warn"><b>Note:</b> ${e(o.notes || '')} ${o.tags
   });
 
   // ---------- the ship bench: the next packed order, the tracking number, one button (the label comes from the fulfill CSV → PirateShip)
-  router.get('/ship', (c) => {
+  router.get('/ship', async (c) => {
     const batch = batchFor('packed', c.query.get('batch') || ''); const after = Number(c.query.get('after') || 0);
     const o = nextIn('packed', batch, after) ? orderById(db, nextIn('packed', batch, after).id) : null;
     const p = progress('packed', batch, ['shipped', 'delivered']);
@@ -53,7 +57,7 @@ ${o.notes || o.tags ? `<p class="warn"><b>Note:</b> ${e(o.notes || '')} ${o.tags
     const body = head + `<div class="bench"><div class="card"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Ship this</div><h2 style="margin:.2rem 0 .6rem">${link(`/orders/${o.id}`, o.number)} <span class="muted" style="font-weight:400">· ${e(o.ship_name)}</span></h2>
 <p class="addr">${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)}</p>${addrWarn(o)}
 <p class="muted">${o.items.map(i => `${i.qty}× ${e(i.name)}`).join(', ')} · packed ${dt(o.packed_at)}</p>
-<form method="post" action="/orders/${o.id}/transition"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="shipped"><input type="hidden" name="_back" value="/ship?batch=${e(batch)}"><div class="row">${field('carrier', 'Carrier', { value: 'USPS' })}<div><label for="f_tracking">Tracking number</label><input id="f_tracking" name="tracking" autofocus autocomplete="off" placeholder="9400 1000 0000 0000 0000 00"></div></div><button class="big">Shipped — email tracking, next →</button></form>
+<form method="post" action="/orders/${o.id}/transition"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="shipped"><input type="hidden" name="_back" value="/ship?batch=${e(batch)}">${packLine(packPlanOf(o) || packOrder(await app.shipping().catch(() => null), o.items), true)}<div class="row">${field('carrier', 'Carrier', { value: 'USPS' })}<div><label for="f_tracking">Tracking number</label><input id="f_tracking" name="tracking" autofocus autocomplete="off" placeholder="9400 1000 0000 0000 0000 00"></div></div><div class="row">${field('measured_oz', 'Scale (oz)', { type: 'text', placeholder: (packPlanOf(o)?.total_oz ?? '') + '' })}${field('postage_cents', 'Label cost (cents)', { type: 'number' })}</div><label><input type="checkbox" name="ship_anyway" value="1" style="width:auto"> ship anyway if the scale disagrees</label><button class="big" style="margin-top:.6rem">Shipped — email tracking, next →</button></form>
 <p style="margin:.6rem 0 0"><a class="btn quiet" href="/ship?batch=${e(batch)}&after=${o.id}">Skip for now</a></p></div>
 <div><div class="card"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">How this works</div><p class="muted" style="margin:.3rem 0 0;font-size:13.5px">Buy the batch's labels in one go from the CSV, then paste each tracking number here. Marking shipped mails the customer their tracking, marks the boards in the box as shipped and writes the timeline.</p></div></div></div>`;
     page(c, 'Ship bench', body);

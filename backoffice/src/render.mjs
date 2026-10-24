@@ -7,10 +7,12 @@ const e = escapeHtml;
 
 export const money = (cents, cur = 'usd') => {
   const n = (Number(cents) || 0) / 100;
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: cur.toUpperCase() }).format(n);
+  // A currency code the formatter does not know (a bad import, a Stripe test value) never takes the page down: the amount shows with its code.
+  try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: String(cur || 'usd').toUpperCase() }).format(n); } catch { return `${n.toFixed(2)} ${String(cur || '').toUpperCase()}`; }
 };
 // Times show in the operator's zone (OPERATOR_TZ); storage stays UTC ISO.
 let TZ = 'UTC';
+export const currentTz = () => TZ;
 export function setTimezone(tz) { try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); TZ = tz || 'UTC'; } catch { TZ = 'UTC'; } return TZ; }
 export const timezone = () => TZ;
 const parts = (d, tz = TZ) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: 'short' }).formatToParts(d).map(p => [p.type, p.value]));

@@ -86,6 +86,9 @@ export function int(v, { name = 'value', min = -Infinity, max = Infinity, fallba
   return n;
 }
 
+// A JSON body field that must be a list (lines on an order, items on a purchase order).
+export function asArray(v, name = 'items') { if (!Array.isArray(v)) throw new HttpError(400, `${name} must be an array`); return v; }
+
 // One CSV cell: quoted when it holds a comma, a quote or a line break, and a leading =, +, -, @,
 // tab or CR prefixed with an apostrophe, so a spreadsheet never runs a customer's name as a
 // formula (CSV injection). A plain negative number keeps its sign.

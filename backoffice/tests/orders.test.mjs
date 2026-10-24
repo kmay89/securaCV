@@ -47,8 +47,9 @@ test('the fulfill.mjs CSV carries one row per item with the catalog SKU', () => 
   recordOrder(db, sampleOrder({ items: [{ sku: 'wap-kit', name: 'Canary WAP Kit', qty: 2, unit_cents: 6900 }, { sku: 'wap-parts', name: 'WAP Enclosure Set', qty: 1, unit_cents: 1500 }] }), { catalog: catalog() });
   const csv = fulfillCsv(db);
   const lines = csv.trim().split('\n');
-  assert.equal(lines[0], 'order_id,email,name,sku,qty,line1,line2,city,state,zip,country');
+  assert.equal(lines[0], 'order_id,email,name,sku,qty,line1,line2,city,state,zip,country,order_lines,box,expected_oz,pieces,service', 'the website\'s columns first, the frozen box plan after');
   assert.equal(lines.length, 3);
+  assert.ok(lines[1].endsWith(',2,,,,'), 'not yet packed: the plan columns are empty, the line count is there');
   assert.ok(lines[1].startsWith('EL-000001,ada@example.test,Ada Lovelace,wap-kit,2,'));
   assert.equal(listOrders(db, { q: 'Lovelace' }).length, 1);
 });

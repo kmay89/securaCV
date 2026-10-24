@@ -12,11 +12,18 @@ import { evaluate as evaluateDiscount } from './discounts.mjs';
 import { normalizeTags } from './contacts.mjs';
 import { estimateDelivery, orderStatusUrl } from './delivery.mjs';
 import { csvLine } from '../http.mjs';
+import { currentTz } from '../render.mjs';
+import { packOrder, weightCheck } from './packing.mjs';
+import { postExpense } from './ledger.mjs';
 
 // A whole number of cents, zero or more: Stripe always sends one; a hand-typed order or an API caller may not.
 const cents = (v, name) => { const n = v == null || v === '' ? 0 : Number(v); if (!Number.isInteger(n) || n < 0) throw new Error(`${name} must be a whole number of cents, 0 or more`); return n; };
 // A line's quantity is a whole number of at least one; its unit price a whole number of cents.
-const lineQty = (v) => { const n = v == null || v === '' ? 1 : Number(v); if (!Number.isInteger(n) || n < 1) throw new Error(`qty must be a whole number of at least 1 (got ${JSON.stringify(v)})`); return n; };
+export const MAX_LINE_QTY = 999;   // Stripe's adjustable quantity stops at 999; anything above is a typo or an attack on the planner
+const lineQty = (v) => { const n = v == null || v === '' ? 1 : Number(v); if (!Number.isInteger(n) || n < 1) throw new Error(`qty must be a whole number of at least 1 (got ${JSON.stringify(v)})`); if (n > MAX_LINE_QTY) throw new Error(`qty ${n} is more than ${MAX_LINE_QTY} on one line — split the order, or check the number`); return n; };
+// The same SKU twice on one order (two Payment Link lines, a typed duplicate) is one line with the quantities added; a differing unit price keeps both.
+const mergeLines = (items) => { const out = []; for (const it of items) { const same = out.find(x => x.sku === it.sku && x.unit_cents === it.unit_cents && x.cogs_cents === it.cogs_cents); if (same) same.qty += it.qty; else out.push({ ...it }); } return out; };
+const currencyOf = (v) => { const c = String(v || 'usd').trim().toLowerCase(); if (!/^[a-z]{3}$/.test(c)) throw new Error(`currency must be a three-letter code (got ${JSON.stringify(v)})`); return c; };
 const lineCents = (v, fallback = 0) => { if (v == null || v === '') return fallback; const n = Number(v); if (!Number.isInteger(n) || n < 0) throw new Error(`unit price must be a whole number of cents (got ${JSON.stringify(v)})`); return n; };
 
 // What a shipping label needs. A US address wants a two-letter state and a 5 or 5+4 ZIP; anywhere
@@ -41,9 +48,13 @@ export function normalizeTracking(t) {
 
 export const STATUSES = ['pending', 'paid', 'packed', 'shipped', 'delivered', 'refunded', 'canceled'];
 
-export function weekLabel(d = new Date()) {
-  // ISO week, e.g. 2026-W43 — the weekly batch the store-README describes.
-  const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+export function weekLabel(d = new Date(), tz = currentTz()) {
+  // ISO week, e.g. 2026-W43 — the weekly batch the store-README describes. "Orders in by Sunday
+  // night" is Sunday night where the operator is (OPERATOR_TZ), so the calendar date is taken in
+  // that zone before the week is counted: an order paid 23:30 Sunday in Boston is 03:30 Monday UTC
+  // and still belongs to the week that just closed.
+  const ymd = (() => { try { const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d).map(x => [x.type, x.value])); return [+p.year, +p.month - 1, +p.day]; } catch { return [d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()]; } })();
+  const date = new Date(Date.UTC(...ymd));
   const dayNum = date.getUTCDay() || 7; date.setUTCDate(date.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
   return `${date.getUTCFullYear()}-W${String(Math.ceil((((date - yearStart) / 86400000) + 1) / 7)).padStart(2, '0')}`;
@@ -52,12 +63,15 @@ export function weekLabel(d = new Date()) {
 export function recordOrder(db, o, { catalog = null, bomTotals = {}, actor = 'system' } = {}) {
   if (o.external_id) { const dup = db.get('SELECT id FROM orders WHERE external_id = ?', o.external_id); if (dup) return { order: orderById(db, dup.id), created: false }; }
   const unknown = [];
-  const items = (o.items || []).map(it => {
+  if (o.items != null && !Array.isArray(o.items)) throw new Error('items must be a list of {sku, qty, unit_cents}');
+  const items = mergeLines((o.items || []).map(it => {
+    if (!it || typeof it !== 'object') throw new Error('each item is an object with a sku');
     const p = catalog ? resolveSku(catalog, it.sku) || resolveSku(catalog, it.name) : null;
     if (catalog && !p) unknown.push(it.sku || it.name);
     return { sku: p?.sku || it.sku || it.name, name: p?.name || it.name, qty: lineQty(it.qty), unit_cents: lineCents(it.unit_cents, p?.price_cents ?? 0), cogs_cents: p ? cogsCents(p, bomTotals) : 0 };
-  });
+  }));
   if (unknown.length) throw new Error(`unknown SKU(s): ${unknown.join(', ')} — add them to store.json or fix the Payment Link metadata`);
+  const currency = currencyOf(o.currency);
   for (const k of ['subtotal_cents', 'shipping_cents', 'tax_cents', 'total_cents']) cents(o[k], k);
   return db.tx(() => {
     const contact = o.email ? upsertContact(db, { email: o.email, name: o.name || null, source: 'store' }) : null;
@@ -87,7 +101,7 @@ export function recordOrder(db, o, { catalog = null, bomTotals = {}, actor = 'sy
     const r = db.run(`INSERT INTO orders (number, external_id, payment_intent, source, contact_id, status, currency, subtotal_cents, shipping_cents, tax_cents, total_cents, discount_code, discount_cents, tags,
         ship_name, ship_line1, ship_line2, ship_city, ship_state, ship_zip, ship_country, created_at, paid_at, batch, notes)
       VALUES (?, ?, ?, ?, ?, 'paid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      number, o.external_id || null, o.payment_intent || null, o.source || 'manual', contact?.id ?? null, o.currency || 'usd',
+      number, o.external_id || null, o.payment_intent || null, o.source || 'manual', contact?.id ?? null, currency,
       subtotal, shipping, tax, total, discountCode, discountCents, normalizeTags(o.tags),
       o.name || contact?.name || '', o.ship?.line1 || '', o.ship?.line2 || '', o.ship?.city || '', (o.ship?.state || '').toUpperCase(), o.ship?.zip || '', (o.ship?.country || 'US').toUpperCase(),
       o.created_at || paidAt, paidAt, weekLabel(new Date(paidAt)), o.notes || null);
@@ -150,11 +164,12 @@ export function editItems(db, orderId, items, { catalog = null, bomTotals = {}, 
   if (o.status !== 'paid') throw new Error(`${o.number} is ${o.status} — items change only before packing (unpack it first)`);
   const unknown = []; const next = (items || []).filter(it => it && (it.sku || it.name)).map(it => { const p = catalog ? resolveSku(catalog, it.sku) || resolveSku(catalog, it.name) : null; if (catalog && !p) unknown.push(it.sku || it.name); const qty = Math.max(1, Number(it.qty) || 1); return { sku: p?.sku || it.sku || it.name, name: p?.name || it.name || it.sku, qty, unit_cents: it.unit_cents != null ? Number(it.unit_cents) : (p?.price_cents ?? 0), cogs_cents: p ? cogsCents(p, bomTotals) : Number(it.cogs_cents) || 0 }; });
   if (unknown.length) throw new Error(`unknown SKU(s): ${unknown.join(', ')}`); if (!next.length) throw new Error('an order needs at least one line');
+  const merged = mergeLines(next.map(it => ({ ...it, qty: lineQty(it.qty) })));
   return db.tx(() => {
     db.run('DELETE FROM order_items WHERE order_id = ?', o.id);
-    for (const it of next) db.run('INSERT INTO order_items (order_id, sku, name, qty, unit_cents, cogs_cents) VALUES (?, ?, ?, ?, ?, ?)', o.id, it.sku, it.name, it.qty, it.unit_cents, it.cogs_cents);
-    addEvent(db, o.id, { kind: 'items', actor, text: `Items changed: ${o.items.map(i => `${i.qty}× ${i.sku}`).join(', ') || 'none'} → ${next.map(i => `${i.qty}× ${i.sku}`).join(', ')} (the charge is unchanged)` });
-    db.audit(actor, 'order.items', 'order', o.number, { items: next.map(i => `${i.qty}× ${i.sku}`) });
+    for (const it of merged) db.run('INSERT INTO order_items (order_id, sku, name, qty, unit_cents, cogs_cents) VALUES (?, ?, ?, ?, ?, ?)', o.id, it.sku, it.name, it.qty, it.unit_cents, it.cogs_cents);
+    addEvent(db, o.id, { kind: 'items', actor, text: `Items changed: ${o.items.map(i => `${i.qty}× ${i.sku}`).join(', ') || 'none'} → ${merged.map(i => `${i.qty}× ${i.sku}`).join(', ')} (the charge is unchanged)` });
+    db.audit(actor, 'order.items', 'order', o.number, { items: merged.map(i => `${i.qty}× ${i.sku}`) });
     return orderById(db, o.id);
   });
 }
@@ -182,35 +197,47 @@ export const listOrders = (db, { status = '', batch = '', q = '', tag = '', from
   `SELECT o.*, c.email, (SELECT GROUP_CONCAT(qty || '× ' || sku, ', ') FROM order_items i WHERE i.order_id = o.id) AS items_text, (SELECT COALESCE(SUM(qty),0) FROM order_items i WHERE i.order_id = o.id) AS units FROM orders o LEFT JOIN contacts c ON c.id = o.contact_id
    WHERE (? = '' OR o.status = ? OR (? = 'open' AND o.status IN ('paid','packed'))) AND (? = '' OR o.batch = ?) AND (? = '' OR o.number LIKE ? OR o.ship_name LIKE ? OR c.email LIKE ? OR o.tracking LIKE ? OR o.external_id LIKE ?)
      AND (? = '' OR (',' || o.tags || ',') LIKE ?) AND (? = '' OR o.paid_at >= ?) AND (? = '' OR o.paid_at < ?) AND (? = '' OR o.discount_code = ?) AND (? = '' OR o.id IN (SELECT order_id FROM order_items WHERE sku = ?))
-   ORDER BY o.id DESC LIMIT ?`, status, status, status, batch, batch, q, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, tag, `%,${tag},%`, from, from, to, to ? to + 'T23:59:59.999Z' : '', discount, discount.toUpperCase(), sku, sku, limit);
+   ORDER BY o.paid_at DESC, o.id DESC LIMIT ?`, status, status, status, batch, batch, q, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, tag, `%,${tag},%`, from, from, to, to ? to + 'T23:59:59.999Z' : '', discount, discount.toUpperCase(), sku, sku, limit);
 
-export function transition(db, id, to, { actor = 'web', carrier = null, tracking = null, cfg = null, at = null } = {}) {
+export const packPlanOf = (o) => { try { return o?.pack_plan ? JSON.parse(o.pack_plan) : null; } catch { return null; } };
+export function transition(db, id, to, { actor = 'web', carrier = null, tracking = null, cfg = null, at = null, shipping = null, measuredOz = null, postageCents = 0, shipAnyway = false } = {}) {
   const o = orderById(db, id); if (!o) throw new Error('no such order');
+  if (typeof to !== 'string' || !STATUSES.includes(to)) throw new Error(`"${String(to).slice(0, 30)}" is not an order status (${STATUSES.join(', ')})`);
   const allowed = { paid: ['packed', 'canceled'], pending: ['paid', 'canceled'], packed: ['shipped', 'paid'], shipped: ['delivered'], delivered: [] };
   // "Refunded" is what a recorded refund makes an order, never a status someone sets: setting it
   // by hand would leave the books showing a sale the customer no longer paid for.
   if (to === 'refunded') throw new Error(`record the refund instead (the order becomes refunded when the full amount is recorded) — ${o.number} stays ${o.status}`);
   if (!(allowed[o.status] || []).includes(to)) throw new Error(`cannot move ${o.number} from ${o.status} to ${to}`);
+  let scale = { checked: false };
   if (to === 'shipped') {
     tracking = normalizeTracking(tracking); carrier = String(carrier || 'USPS').trim().slice(0, 40) || 'USPS';
     if (tracking) { const twin = db.get('SELECT number FROM orders WHERE tracking = ? AND id != ?', tracking, o.id); if (twin) throw new Error(`tracking ${tracking} is already on order ${twin.number} — one label cannot ship two boxes`); }
+    if (measuredOz != null && measuredOz !== '') { measuredOz = Number(measuredOz); if (!Number.isFinite(measuredOz) || measuredOz <= 0 || measuredOz > 2000) throw new Error('the scale reading is a number of ounces above zero'); } else measuredOz = null;
+    if (!Number.isInteger(postageCents) || postageCents < 0 || postageCents > 100_000) throw new Error('the label cost is a whole number of cents, 0 or more');
+    scale = weightCheck(packPlanOf(o), measuredOz, { tolerance: cfg?.weightToleranceOz ?? 1.5 });
+    if (scale.checked && !scale.ok && !shipAnyway) throw new Error(`the scale reads ${scale.measured} oz, the plan expects ${scale.expected} oz (${scale.delta > 0 ? '+' : ''}${scale.delta} oz, over the ${scale.tolerance} oz tolerance) — recount the box, or tick "ship anyway"`);
   }
+  // The plan is made from the lines as they are now and frozen on the order: the bench reads it, the scale checks against it, the CSV carries it.
+  const plan = to === 'packed' ? packOrder(shipping, o.items) : null;
   return db.tx(() => {
     const now = at || nowIso();
     db.run(`UPDATE orders SET status = ?, paid_at = CASE WHEN ? = 'paid' THEN ? ELSE paid_at END, packed_at = CASE WHEN ? = 'packed' THEN ? ELSE packed_at END,
             shipped_at = CASE WHEN ? = 'shipped' THEN ? ELSE shipped_at END, delivered_at = CASE WHEN ? = 'delivered' THEN ? ELSE delivered_at END WHERE id = ?`,
       to, to, now, to, now, to, now, to, now, id);
-    if (to === 'packed') { if (!o.items.length) throw new Error(`${o.number} has no line items — fetch them from Stripe (STRIPE_API_KEY) or add them before packing`); consumeForOrder(db, o); }
+    if (to === 'packed') { if (!o.items.length) throw new Error(`${o.number} has no line items — fetch them from Stripe (STRIPE_API_KEY) or add them before packing`); consumeForOrder(db, o); db.run('UPDATE orders SET pack_plan = ? WHERE id = ?', shipping ? JSON.stringify(plan) : null, id); }
     if (to === 'paid' && o.status === 'packed') releaseForOrder(db, o);
     if (to === 'shipped') {
-      db.run('UPDATE orders SET carrier = ?, tracking = ? WHERE id = ?', carrier, tracking || null, id);
+      db.run('UPDATE orders SET carrier = ?, tracking = ?, measured_oz = ?, postage_cents = postage_cents + ? WHERE id = ?', carrier, tracking || null, measuredOz, postageCents, id);
       db.run('UPDATE devices SET status = \'shipped\' WHERE order_id = ?', id);
+      if (postageCents) postExpense(db, { date: now.slice(0, 10), account: 'expenses:postage', cents: postageCents, memo: `label ${o.number}`, paidFrom: 'assets:bank', ref: `order:${o.number}` });
       if (o.email) { const est = estimateDelivery(now, o.ship_state, { fromState: cfg?.shipFromState, carrier: carrier || 'USPS' }); enqueue(db, { to: o.email, subject: `Your ${cfg?.product || 'SecuraCV'} order ${o.number} is on its way`, kind: 'transactional', ref: `order:${o.number}`, contactId: o.contact_id,
         text: fill(SHIPPED_TPL, { name: o.ship_name || 'there', number: o.number, carrier: carrier || 'USPS', tracking: tracking || '(no tracking)', company: cfg?.company || 'Errer Labs', support: cfg?.supportAddr || '', estimate: est ? `Expect it ${est.label} (${est.min_days}–${est.max_days} business days — an estimate, not a promise).` : '', status_url: cfg?.secret ? orderStatusUrl(cfg, o) : '' }) }); }
     }
-    const line = { packed: `Packed${o.items.length ? ` · ${o.items.map(i => `${i.qty}× ${i.sku}`).join(', ')} pulled from stock` : ''}`, shipped: `Shipped via ${carrier || 'USPS'}${tracking ? ` · ${tracking}` : ''}${o.email ? ` · tracking emailed to ${o.email}` : ''}`, delivered: 'Delivered', canceled: `Canceled${o.total_cents - o.refunded_cents > 0 ? ` — ${usd(o.total_cents - o.refunded_cents)} was paid: refund it in Stripe, and the webhook (or "Record refund") writes it here` : ''}`, paid: o.status === 'packed' ? 'Unpacked — parts returned to stock' : 'Marked paid' }[to] || `Now ${to}`;
+    const boxLine = plan?.boxes?.length ? ` · ${plan.boxes.map(b => `${b.box_name.replace(/ \(.*\)$/, '')} ${b.weight_oz} oz`).join(' + ')}${plan.total_cost_est != null ? ` · postage ≈ ${usd(Math.round(plan.total_cost_est * 100))}` : ''}` : plan?.warnings?.length ? ` · box: ${plan.warnings[0]}` : '';
+    const scaleLine = scale.checked ? ` · scale ${scale.measured} oz vs ${scale.expected} oz${scale.ok ? ' ✓' : ` (${scale.delta > 0 ? '+' : ''}${scale.delta} oz, shipped anyway)`}` : measuredOz != null ? ` · scale ${measuredOz} oz` : '';
+    const line = { packed: `Packed${o.items.length ? ` · ${o.items.map(i => `${i.qty}× ${i.sku}`).join(', ')} pulled from stock` : ''}${boxLine}`, shipped: `Shipped via ${carrier || 'USPS'}${tracking ? ` · ${tracking}` : ''}${scaleLine}${postageCents ? ` · label ${usd(postageCents)}` : ''}${o.email ? ` · tracking emailed to ${o.email}` : ''}`, delivered: 'Delivered', canceled: `Canceled${o.total_cents - o.refunded_cents > 0 ? ` — ${usd(o.total_cents - o.refunded_cents)} was paid: refund it in Stripe, and the webhook (or "Record refund") writes it here` : ''}`, paid: o.status === 'packed' ? 'Unpacked — parts returned to stock' : 'Marked paid' }[to] || `Now ${to}`;
     addEvent(db, id, { kind: to === 'paid' && o.status === 'packed' ? 'unpacked' : to, actor, at: now, text: line });
-    db.audit(actor, `order.${to}`, 'order', o.number, { carrier, tracking });
+    db.audit(actor, `order.${to}`, 'order', o.number, { carrier, tracking, boxes: plan?.boxes?.map(b => b.box) || undefined, measured_oz: measuredOz ?? undefined, postage_cents: postageCents || undefined, scale: scale.checked ? (scale.ok ? 'ok' : 'off, shipped anyway') : undefined });
     return orderById(db, id);
   });
 }
@@ -239,10 +266,13 @@ export function refund(db, id, amountCents, { actor = 'web', reason = '', at = n
 export function fulfillCsv(db, { batch = '', status = 'paid' } = {}) {
   const want = ['paid', 'packed', 'open'].includes(status) ? status : 'open';
   const rows = listOrders(db, { batch, status: want, limit: 5000 }).reverse().filter(o => ['paid', 'packed'].includes(o.status));
-  const head = ['order_id', 'email', 'name', 'sku', 'qty', 'line1', 'line2', 'city', 'state', 'zip', 'country'];
+  // After the website's columns: the frozen plan (box id, expected ounces, pieces, service) and
+  // how many lines the order has, so a multi-line order is visibly one shipment, not N rows that
+  // each want a label. Extra columns are ignored by a reader that does not know them.
+  const head = ['order_id', 'email', 'name', 'sku', 'qty', 'line1', 'line2', 'city', 'state', 'zip', 'country', 'order_lines', 'box', 'expected_oz', 'pieces', 'service'];
   const out = [head.join(',')];
-  for (const o of rows) for (const it of db.all('SELECT * FROM order_items WHERE order_id = ?', o.id))
-    out.push(csvLine([o.number, o.email, o.ship_name, it.sku, it.qty, o.ship_line1, o.ship_line2, o.ship_city, o.ship_state, o.ship_zip, o.ship_country]));
+  for (const o of rows) { const items = db.all('SELECT * FROM order_items WHERE order_id = ?', o.id); const plan = packPlanOf(o);
+    for (const it of items) out.push(csvLine([o.number, o.email, o.ship_name, it.sku, it.qty, o.ship_line1, o.ship_line2, o.ship_city, o.ship_state, o.ship_zip, o.ship_country, items.length, plan?.boxes?.map(b => b.box).join('+') || '', plan?.total_oz ?? '', plan?.pieces ?? '', plan?.service || ''])); }
   return out.join('\n') + '\n';
 }
 
