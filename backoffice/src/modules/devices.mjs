@@ -28,20 +28,27 @@ export const listDevices = (db, { q = '', status = '', limit = 500 } = {}) => db
 // The packing-slip QA line: scan the flashed board's serial against THAT
 // order. A serial already assigned elsewhere is a stop, not a warning.
 // `force` is for seeding history (a demo assigns boards to orders that shipped long ago); the bench never passes it.
+// Would this board go into this order? The answer the scan page shows before the tap, and the
+// rule assignToOrder enforces: a known serial, not in another box, not shipped or scrapped, an
+// order that has not shipped, a board the order's lines ask for, and room left for it.
+export function canAssign(db, serial, orderId) {
+  const d = deviceBySerial(db, serial); if (!d) return { ok: false, why: `unknown serial ${normSerial(serial)}`, device: null };
+  const o = db.get('SELECT id, number, status FROM orders WHERE id = ?', orderId); if (!o) return { ok: false, why: 'no such order', device: d };
+  if (d.order_id === orderId) return { ok: true, already: true, device: d, order: o };
+  if (d.order_id) return { ok: false, why: `${d.serial} is already on order ${d.order_number}`, device: d, order: o };
+  if (['shipped', 'scrapped'].includes(d.status)) return { ok: false, why: `${d.serial} is ${d.status} — it cannot go into another box`, device: d, order: o };
+  if (!['paid', 'packed'].includes(o.status)) return { ok: false, why: `${o.number} is ${o.status} — boards go into orders that have not shipped`, device: d, order: o };
+  const full = orderById(db, orderId);
+  if (d.product_sku && full.items.length && !full.items.some(i => i.sku === d.product_sku)) return { ok: false, why: `${d.serial} is flashed for ${d.product_sku} — ${o.number} has no ${d.product_sku} line (it has ${full.items.map(i => `${i.qty}× ${i.sku}`).join(', ')})`, device: d, order: o };
+  const need = boardsNeeded(db, full); const have = db.all('SELECT serial FROM devices WHERE order_id = ?', orderId);
+  if (need.needed && have.length >= need.needed) return { ok: false, why: `${o.number} needs ${need.needed} board${need.needed === 1 ? '' : 's'} and already has ${have.map(h => h.serial).join(', ')} — take one out first`, device: d, order: o };
+  return { ok: true, device: d, order: o, needed: need.needed, have: have.length };
+}
 export function assignToOrder(db, serial, orderId, { actor = 'web', force = false } = {}) {
   const d = deviceBySerial(db, serial); if (!d) throw new Error(`unknown serial ${serial}`);
   if (d.order_id && d.order_id !== orderId) throw new Error(`${d.serial} is already on order ${d.order_number}`);
-  if (!force && ['shipped', 'scrapped'].includes(d.status)) throw new Error(`${d.serial} is ${d.status} — it cannot go into another box`);
-  const o = db.get('SELECT number, status FROM orders WHERE id = ?', orderId); if (!o) throw new Error('no such order');
-  if (!force && !['paid', 'packed'].includes(o.status)) throw new Error(`${o.number} is ${o.status} — boards go into orders that have not shipped`);
-  if (!force && d.order_id !== orderId) {
-    // The board must be one the order asks for, and one the order still has room for: a Vision
-    // board in a WAP box, or a third board in a two-kit order, is the mistake this bench exists to catch.
-    const full = orderById(db, orderId);
-    if (d.product_sku && full.items.length && !full.items.some(i => i.sku === d.product_sku)) throw new Error(`${d.serial} is flashed for ${d.product_sku} — ${o.number} has no ${d.product_sku} line (it has ${full.items.map(i => `${i.qty}× ${i.sku}`).join(', ')})`);
-    const need = boardsNeeded(db, full); const have = db.all('SELECT serial FROM devices WHERE order_id = ?', orderId);
-    if (need.needed && have.length >= need.needed) throw new Error(`${o.number} needs ${need.needed} board${need.needed === 1 ? '' : 's'} and already has ${have.map(h => h.serial).join(', ')} — take one out first`);
-  }
+  if (!force) { const v = canAssign(db, serial, orderId); if (!v.ok) throw new Error(v.why); if (v.already) return d; }
+  else if (!db.get('SELECT 1 FROM orders WHERE id = ?', orderId)) throw new Error('no such order');
   db.run('UPDATE devices SET order_id = ? WHERE id = ?', orderId, d.id);
   addEvent(db, orderId, { kind: 'device', actor, text: `Board ${d.serial} (${d.board || 'board'}, firmware ${d.fw_version || '?'}) scanned into this box` });
   db.audit(actor, 'device.assign', 'device', d.serial, { order_id: orderId });

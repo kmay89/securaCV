@@ -7,12 +7,13 @@
 // with the browser's CSS off and with a form posted by hand.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { recordOrder, transition, orderById, boardsNeeded, boardsOn } from '../src/modules/orders.mjs';
+import { recordOrder, transition, orderById, boardsNeeded, boardsOn, importLabels } from '../src/modules/orders.mjs';
 import { registerDevice, assignToOrder, unassign } from '../src/modules/devices.mjs';
 import { upsertItem, setRecipe, item } from '../src/modules/inventory.mjs';
 import { DEMO_SHIPPING, DEMO_USERS, DEMO_PASSWORD, DEMO_TOTP_SECRET, seedDemo } from '../src/modules/demo.mjs';
 import { createApp } from '../src/server.mjs';
 import { totp } from '../src/auth.mjs';
+import { qrSvg } from '../src/qr.mjs';
 import { testDb, testCfg, catalog, sampleOrder } from './helpers.mjs';
 
 const twoKits = (over = {}) => sampleOrder({ items: [{ sku: 'wap-kit', name: 'Canary WAP Kit', qty: 2, unit_cents: 6900 }], ...over });
@@ -109,5 +110,46 @@ test('over HTTP: the bench shows the box card, one tick per line and the board c
     // a board can be taken back out of an unshipped box from the order page
     r = await post(`/orders/${o.id}/unassign`, { serial: wap.serial }); assert.match(decodeURIComponent(r.headers.get('location')), /is back out of the box/);
     assert.equal(db.get('SELECT order_id FROM devices WHERE serial = ?', wap.serial).order_id, null);
+  } finally { await app.close(); db.close(); }
+});
+
+test('the phone is the scanner: the slip\'s code opens the order where it stands, a board\'s code offers one tap into the open bench order, the manifest ships the batch', async () => {
+  const cfg = testCfg({ demo: true }); const db = testDb(); await seedDemo(db, cfg); const app = createApp({ db, cfg }); const addr = await app.listen(); const base = `http://127.0.0.1:${addr.port}`;
+  try {
+    const login = await fetch(base + '/login', { method: 'POST', body: new URLSearchParams({ email: DEMO_USERS[0].email, password: DEMO_PASSWORD, code: totp(DEMO_TOTP_SECRET) }), redirect: 'manual' });
+    let cookie = login.headers.get('set-cookie').split(';')[0]; const csrf = db.get('SELECT csrf FROM sessions').csrf;
+    const get = (p) => fetch(base + p, { headers: { cookie }, redirect: 'manual' });
+    const paid = db.get("SELECT o.id, o.number FROM orders o WHERE o.status = 'paid' AND EXISTS (SELECT 1 FROM order_items i WHERE i.order_id = o.id AND i.sku = 'wap-kit') ORDER BY o.id LIMIT 1");
+    const packed = db.get("SELECT id, number FROM orders WHERE status = 'packed' ORDER BY id LIMIT 1"); const shipped = db.get("SELECT id, number FROM orders WHERE status = 'shipped' ORDER BY id LIMIT 1");
+    // the slip's code: by status, to the pack bench, the ship bench, or the order
+    assert.equal((await get(`/q/o/${paid.number}`)).headers.get('location'), `/pack?order=${paid.id}`);
+    assert.equal((await get(`/q/o/${packed.number}`)).headers.get('location'), `/ship?order=${packed.id}`);
+    assert.equal((await get(`/q/o/${shipped.number}`)).headers.get('location'), `/orders/${shipped.id}`);
+    assert.equal((await get('/q/o/EL-999999')).status, 404);
+    const slipHtml = await (await get(`/orders/${paid.id}/packing-slip`)).text(); assert.ok(slipHtml.includes(`aria-label="Order ${paid.number}"`) && slipHtml.includes('<svg'), 'the slip carries its code');
+    // a board's code with no bench open: the board, and what to do
+    const wap = db.get("SELECT serial FROM devices WHERE product_sku = 'wap-kit' AND order_id IS NULL ORDER BY id LIMIT 1"); const vision = db.get("SELECT serial FROM devices WHERE product_sku = 'vision-kit' AND order_id IS NULL LIMIT 1");
+    let html = await (await get(`/q/b/${wap.serial}`)).text(); assert.ok(html.includes('No order is open on the pack bench') && !html.includes('/assign"'));
+    assert.ok((await (await get('/q/b/NOPE-1')).text()).includes('No board with that serial is registered'));
+    // opening the bench on an order sets the bench cookie; now the board's code offers one tap, the wrong kit's board says why not
+    const bench = await get(`/pack?order=${paid.id}`); const bc = (bench.headers.get('set-cookie') || '').split(';')[0]; assert.equal(bc, `bo_bench=${paid.id}`); cookie = `${cookie}; ${bc}`;
+    html = await (await get(`/q/b/${wap.serial}`)).text(); assert.ok(html.includes(`action="/orders/${paid.id}/assign"`) && html.includes(`Put ${wap.serial} into ${paid.number}`), 'one tap into the open order');
+    html = await (await get(`/q/b/${vision.serial}`)).text(); assert.ok(html.includes('Not this one') && html.includes('is flashed for vision-kit') && !html.includes('/assign"'));
+    const r = await fetch(base + `/orders/${paid.id}/assign`, { method: 'POST', headers: { cookie }, body: new URLSearchParams({ _csrf: csrf, serial: wap.serial, _back: `/pack?order=${paid.id}` }), redirect: 'manual' });
+    assert.match(r.headers.get('location'), new RegExp(`^/pack\\?order=${paid.id}&ok=`)); assert.equal(db.get('SELECT order_id FROM devices WHERE serial = ?', wap.serial).order_id, paid.id);
+    html = await (await get(`/q/b/${wap.serial}`)).text(); assert.ok(html.includes(`is already in ${paid.number}`));
+    // the label sheet: a code per board
+    const sheet = await (await get('/devices/labels?status=stock')).text(); assert.equal((sheet.match(/class="label"/g) || []).length, db.get("SELECT COUNT(*) n FROM devices WHERE status = 'stock'").n); assert.ok(sheet.includes(`<b>${wap.serial}</b>`) && sheet.includes(qrSvg(`${cfg.baseUrl}/q/b/${wap.serial}`, { size: 96, label: wap.serial })), 'each label is the serial and the code that opens it');
+    // the manifest: the packed order ships with its tracking and rate, the rest is reported by name
+    const manifest = [{ order_id: packed.number, tracking: '9400 1000 0000 0000 0000 11', rate: 4.8, status: 'labeled' }, { order_id: shipped.number, tracking: '9400 1000 0000 0000 0000 22', status: 'labeled' }, { order_id: paid.number, tracking: '9400 1000 0000 0000 0000 33', status: 'labeled' }, { order_id: 'EL-999999', tracking: '9400 1', status: 'labeled' }, { order_id: packed.number, status: 'blocked', tracking: null }];
+    const imp = importLabels(db, manifest, { cfg });
+    assert.deepEqual(imp.shipped, [`${packed.number}: 9400100000000000000011`]);
+    assert.equal(imp.problems.length, 3); assert.match(imp.problems.join('\n'), /already shipped with/); assert.match(imp.problems.join('\n'), /is paid, not packed — pack it first/); assert.match(imp.problems.join('\n'), /EL-999999: no such order here/);
+    assert.deepEqual(imp.skipped, [`${packed.number}: no label (blocked)`]);
+    const s = orderById(db, packed.id); assert.equal(s.status, 'shipped'); assert.equal(s.tracking, '9400100000000000000011'); assert.equal(s.postage_cents, 480);
+    assert.deepEqual(importLabels(db, manifest.slice(0, 1), { cfg }).skipped, [`${packed.number}: already shipped with that tracking`], 'the same manifest twice changes nothing');
+    assert.throws(() => importLabels(db, { nope: 1 }), /manifest.json is a list of orders/);
+    const posted = await fetch(base + '/orders/import-labels', { method: 'POST', headers: { cookie }, body: new URLSearchParams({ _csrf: csrf, json: JSON.stringify(manifest) }) });
+    assert.ok((await posted.text()).includes('<b>0 shipped</b>'), 'the page reports the count');
   } finally { await app.close(); db.close(); }
 });

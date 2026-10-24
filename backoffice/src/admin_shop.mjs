@@ -6,6 +6,7 @@ import { table, money, day, statusPill, field, form, cards, tags as tagsHtml, ta
 import { columns, line, hbars, tile } from './charts.mjs';
 import { listOrders, orderById, bulkTransition, batches, setTags, weekLabel, packPlanOf } from './modules/orders.mjs';
 import { packOrder } from './modules/packing.mjs';
+import { qrSvg } from './qr.mjs';
 import { listCustomers, contactById, customerStats, customerCounts, setContactTags } from './modules/contacts.mjs';
 import { listDiscounts, createDiscount, setDiscountStatus, evaluate, describe, KINDS } from './modules/discounts.mjs';
 import { analytics, analyticsCsv } from './modules/analytics.mjs';
@@ -99,7 +100,7 @@ export function registerShop(app, { page, back, link, filters }) {
 
   // ---------- packing slips (one page per order; print = PDF)
   const slip = (o, ship = null) => { const devices = db.all('SELECT serial, fw_version FROM devices WHERE order_id = ?', o.id); const plan = packPlanOf(o) || packOrder(ship, o.items);
-    return `<div class="slip"><div class="row"><div><b style="font-size:1.2rem">${e(cfg.company)}</b><br><span class="muted">${e(cfg.supportAddr || '')}</span></div><div style="text-align:right"><b>Packing slip</b><br>Order <b>${e(o.number)}</b><br>Paid ${day(o.paid_at)} · batch ${e(o.batch || '')}</div></div>
+    return `<div class="slip"><div class="row"><div><b style="font-size:1.2rem">${e(cfg.company)}</b><br><span class="muted">${e(cfg.supportAddr || '')}</span></div><div style="text-align:right;display:flex;gap:.8rem;align-items:flex-start;justify-content:flex-end"><div><b>Packing slip</b><br>Order <b>${e(o.number)}</b><br>Paid ${day(o.paid_at)} · batch ${e(o.batch || '')}</div><div class="qr" title="Scan with your phone: opens this order on the bench">${qrSvg(`${cfg.baseUrl}/q/o/${encodeURIComponent(o.number)}`, { size: 84, label: `Order ${o.number}` })}</div></div></div>
 <h2>Ship to</h2><p>${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)} ${o.ship_country !== 'US' ? e(o.ship_country) : ''}<br><span class="muted">${e(o.email || '')}</span></p>
 ${plan?.boxes?.length ? `<div class="box"><b>Pack</b>: ${plan.boxes.map(b => `${e(b.box_name)} · expected ${b.weight_oz} oz`).join(' + ')}${plan.service ? ` · ${e(plan.service)}` : ''}${plan.boxes.length > 1 ? ` · <b>${plan.boxes.length} boxes, ${plan.boxes.length} labels</b>` : ''}</div>` : ''}${(plan?.warnings || []).filter(w => !/boxes —/.test(w)).map(w => `<div class="box"><b>Check</b>: ${e(w)}</div>`).join('')}
 <table><thead><tr><th>Item</th><th>SKU</th><th class="num">Qty</th><th>Packed ☐</th></tr></thead><tbody>${o.items.map(i => `<tr><td>${e(i.name)}</td><td>${e(i.sku)}</td><td class="num">${i.qty}</td><td>☐</td></tr>`).join('')}</tbody></table>

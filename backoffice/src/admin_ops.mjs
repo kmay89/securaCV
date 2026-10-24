@@ -2,9 +2,11 @@
 // weekly batch as a flow), the Health page (the doctor's checklist with the
 // buttons that prove things), and the Audit log (every action, filterable,
 // exportable). Same conventions: server-rendered, plain forms, no script.
-import { text, HttpError, escapeHtml as e, csvLine } from './http.mjs';
+import { text, redirect, HttpError, escapeHtml as e, csvLine, cookie, parseCookies } from './http.mjs';
 import { table, money, dt, day, statusPill, field, form, button } from './render.mjs';
-import { listOrders, orderById, weekLabel, statusCounts, addressIssues, packPlanOf, boardsNeeded, boardsOn } from './modules/orders.mjs';
+import { listOrders, orderById, orderByNumber, weekLabel, statusCounts, addressIssues, packPlanOf, boardsNeeded, boardsOn, importLabels } from './modules/orders.mjs';
+import { deviceBySerial, canAssign, listDevices } from './modules/devices.mjs';
+import { qrSvg } from './qr.mjs';
 import { packOrder } from './modules/packing.mjs';
 import { doctor } from './modules/health.mjs';
 import { backup, checkBackup, liveCounts, listBackups } from './modules/backup.mjs';
@@ -41,6 +43,8 @@ export function registerOps(app, { page, back, link, filters }) {
     if (chosen && !o) return page(c, 'Pack bench', head + `<div class="card"><p style="margin:0">${link(`/orders/${chosen.id}`, chosen.number)} is <b>${e(chosen.status)}</b> — nothing to pack. ${link('/pack', 'Next order in the batch →')}</p></div>`);
     if (!o) return page(c, 'Pack bench', head + `<div class="card"><p class="ok" style="font-size:1.1rem;margin:0"><b>Everything in ${e(batch)} is packed.</b></p><p>${link('/ship', 'Open the ship bench →')} ${p.total ? '' : '<span class="muted">(no orders in this batch yet)</span>'}</p>${statusCounts(db).paid ? `<p class="muted">Other batches still have ${statusCounts(db).paid} order${statusCounts(db).paid === 1 ? '' : 's'} to pack: ${link('/orders?status=paid', 'see them')}</p>` : ''}</div>`);
     const here = chosen ? `/pack?order=${o.id}` : `/pack?batch=${encodeURIComponent(batch)}`;
+    // The order on this bench is the one a scanned board goes into (the phone's camera opens /q/b/<serial>, which reads this).
+    c.res.setHeader('Set-Cookie', cookie('bo_bench', String(o.id), { maxAge: cfg.sessionHours * 3600, secure: cfg.secure }));
     const plan = packOrder(await app.shipping().catch(() => null), o.items);
     const need = boardsNeeded(db, o); const boards = boardsOn(db, o.id); const boardsDone = !need.needed || boards.length === need.needed;
     const csrf = `<input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="_back" value="${e(here)}">`;
@@ -65,9 +69,12 @@ ${boxCards(plan)}
 
   // ---------- the ship bench: the next packed order, the tracking number, one button (the label comes from the fulfill CSV → PirateShip)
   router.get('/ship', async (c) => {
-    const batch = batchFor('packed', c.query.get('batch') || ''); const after = Number(c.query.get('after') || 0);
-    const o = nextIn('packed', batch, after) ? orderById(db, nextIn('packed', batch, after).id) : null;
+    const wanted = Number(c.query.get('order') || 0); const chosen = wanted ? orderById(db, wanted) : null;
+    if (wanted && !chosen) throw new HttpError(404, 'no such order');
+    const batch = chosen ? chosen.batch : batchFor('packed', c.query.get('batch') || ''); const after = Number(c.query.get('after') || 0);
+    const o = chosen ? (chosen.status === 'packed' ? chosen : null) : nextIn('packed', batch, after) ? orderById(db, nextIn('packed', batch, after).id) : null;
     const p = progress('packed', batch, ['shipped', 'delivered']);
+    if (chosen && !o) return page(c, 'Ship bench', `<div class="card"><p style="margin:0">${link(`/orders/${chosen.id}`, chosen.number)} is <b>${e(chosen.status)}</b> — ${chosen.status === 'paid' ? `not packed yet: ${link(`/pack?order=${chosen.id}`, 'pack it first →')}` : 'nothing to ship'}. ${link('/ship', 'Next packed order →')}</p></div>`);
     const head = `<p class="muted">Batch <b>${e(batch)}</b> · ${p.done} of ${p.total} shipped · ${p.left} to go · ${link(`/orders.csv?batch=${e(batch)}&status=packed`, 'fulfill.mjs CSV for the labels')} · ${link(`/orders?batch=${e(batch)}&status=packed`, 'the list')}</p><div class="progress"><i style="width:${p.total ? Math.round(100 * p.done / p.total) : 0}%"></i></div>`;
     if (!o) return page(c, 'Ship bench', head + `<div class="card"><p class="ok" style="font-size:1.1rem;margin:0"><b>Everything packed in ${e(batch)} has shipped.</b></p><p>${statusCounts(db).paid ? link('/pack', `${statusCounts(db).paid} still to pack →`) : link('/', 'Back to Home')}</p></div>`);
     const body = head + `<div class="bench"><div class="card"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Ship this</div><h2 style="margin:.2rem 0 .6rem">${link(`/orders/${o.id}`, o.number)} <span class="muted" style="font-weight:400">· ${e(o.ship_name)}</span></h2>
@@ -75,8 +82,46 @@ ${boxCards(plan)}
 <p class="muted">${o.items.map(i => `${i.qty}× ${e(i.name)}`).join(', ')} · packed ${dt(o.packed_at)}</p>
 <form method="post" action="/orders/${o.id}/transition"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="shipped"><input type="hidden" name="_back" value="/ship?batch=${e(batch)}">${packLine(packPlanOf(o) || packOrder(await app.shipping().catch(() => null), o.items), true)}<div class="row">${field('carrier', 'Carrier', { value: 'USPS' })}<div><label for="f_tracking">Tracking number</label><input id="f_tracking" name="tracking" autofocus autocomplete="off" placeholder="9400 1000 0000 0000 0000 00"></div></div><div class="row">${field('measured_oz', 'Scale (oz)', { type: 'text', placeholder: (packPlanOf(o)?.total_oz ?? '') + '' })}${field('postage_cents', 'Label cost (cents)', { type: 'number' })}</div><label><input type="checkbox" name="ship_anyway" value="1" style="width:auto"> ship anyway if the scale disagrees</label><button class="big" style="margin-top:.6rem">Shipped — email tracking, next →</button></form>
 <p style="margin:.6rem 0 0"><a class="btn quiet" href="/ship?batch=${e(batch)}&after=${o.id}">Skip for now</a></p></div>
-<div><div class="card"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">How this works</div><p class="muted" style="margin:.3rem 0 0;font-size:13.5px">Buy the batch's labels in one go from the CSV, then paste each tracking number here. Marking shipped mails the customer their tracking, marks the boards in the box as shipped and writes the timeline.</p></div></div></div>`;
+<div><div class="card"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Ship the whole batch at once</div><p class="muted" style="margin:.3rem 0 .5rem;font-size:13.5px">Bought the labels with the website's <code>fulfill.mjs --buy</code>? Paste its <code>manifest.json</code>: every packed order it names is shipped with its tracking and label cost, and the customers get their mail. Nothing is typed.</p>${form('/orders/import-labels', c.csrf, field('json', 'manifest.json', { type: 'textarea', rows: 3, required: true }), { submit: 'Ship from the manifest' })}</div>
+<div class="card" style="margin-top:.9rem"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">How this works</div><p class="muted" style="margin:.3rem 0 0;font-size:13.5px">Buy the batch's labels in one go from the CSV, then paste each tracking number here (or scan the slip's code with your phone to open this order on it). Marking shipped mails the customer their tracking, marks the boards in the box as shipped and writes the timeline.</p></div></div></div>`;
     page(c, 'Ship bench', body);
+  });
+
+  // ---------- the phone is the scanner: the codes on the slip and the board labels open these,
+  // in whatever browser the camera hands the link to (log in there once; the session lasts the day).
+  // A GET never changes anything — the board page shows the board, the open bench order and ONE
+  // button, which posts to the same /assign the bench uses, so a stray link cannot pack a box.
+  router.get('/q/o/:number', (c) => {
+    const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, `no order ${e(c.params.number)}`);
+    redirect(c.res, o.status === 'paid' ? `/pack?order=${o.id}` : o.status === 'packed' ? `/ship?order=${o.id}` : `/orders/${o.id}`);
+  });
+  router.get('/q/b/:serial', (c) => {
+    const d = deviceBySerial(db, c.params.serial);
+    const benchId = Number(parseCookies(c.req).bo_bench || 0); const bench = benchId ? orderById(db, benchId) : null;
+    const where = d ? (d.order_id ? `in ${link(`/orders/${d.order_id}`, d.order_number)}` : d.status === 'stock' ? 'in stock, not in any box' : d.status) : '';
+    const card = d ? `<div class="scan"><p style="margin:0;font-size:1.05rem">${e(d.product_sku || d.board || 'board')} · firmware ${e(d.fw_version || '?')} · ${where}</p>` : `<div class="scan"><p class="err">No board with that serial is registered. ${link('/devices', 'The registry')}</p>`;
+    let action = '';
+    if (d && bench && bench.status === 'paid') {
+      const v = canAssign(db, d.serial, bench.id); const have = boardsOn(db, bench.id).length; const need = boardsNeeded(db, bench).needed;
+      action = v.ok && !v.already ? `<form method="post" action="/orders/${bench.id}/assign"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="_back" value="/pack?order=${bench.id}"><input type="hidden" name="serial" value="${e(d.serial)}"><button class="big">Put ${e(d.serial)} into ${e(bench.number)} →</button></form><p class="muted">${e(bench.ship_name)} · ${bench.items.map(i => `${i.qty}× ${e(i.sku)}`).join(', ')}${need ? ` · ${have} of ${need} boards in so far` : ''}</p>`
+        : v.already ? `<p class="ok"><b>${e(d.serial)} is already in ${e(bench.number)}.</b></p><p>${link(`/pack?order=${bench.id}`, 'Back to the bench →')}</p>`
+        : `<p class="err"><b>Not this one.</b> ${e(v.why)}</p><p>${link(`/pack?order=${bench.id}`, `Back to ${bench.number} →`)}</p>`;
+    } else if (d && bench) action = `<p class="muted">The bench is on ${link(`/orders/${bench.id}`, bench.number)}, which is ${e(bench.status)} — open the order you are packing on the pack bench first.</p>`;
+    else if (d) action = `<p class="muted">No order is open on the pack bench. Scan a packing slip's code, or ${link('/pack', 'open the pack bench')}, then scan this board again.</p>`;
+    page(c, `Board ${d ? d.serial : c.params.serial}`, card + action + '</div>');
+  });
+  // The label sheet: one QR per board, for the sticker printer or a sheet of labels. Scan one at the bench.
+  router.get('/devices/labels', (c) => {
+    const q = c.query.get('q') || ''; const serials = (c.query.get('serials') || '').split(',').map(x => x.trim()).filter(Boolean);
+    const devices = serials.length ? serials.map(s => deviceBySerial(db, s)).filter(Boolean) : listDevices(db, { q, status: c.query.get('status') || '', limit: 200 });
+    const labels = devices.map(d => `<div class="label">${qrSvg(`${cfg.baseUrl}/q/b/${encodeURIComponent(d.serial)}`, { size: 96, label: d.serial })}<div class="t"><b>${e(d.serial)}</b><br>${e(d.product_sku || d.board || '')}<br><span class="muted">fw ${e(d.fw_version || '?')}${d.batch ? ` · ${e(d.batch)}` : ''}</span></div></div>`).join('');
+    page(c, `Board labels (${devices.length})`, `<p class="noprint muted">Print this page onto label stock (each label is a QR and the serial; the QR opens <code>${e(cfg.baseUrl)}/q/b/…</code> on the phone). ${link('/devices', 'The registry')} · ${filters(c, [['q', 'Serial / MAC / batch'], ['status', 'Status']])}</p><div class="labels">${labels || '<p class="muted">No boards match.</p>'}</div>`);
+  });
+  router.post('/orders/import-labels', (c) => {
+    let j; try { j = JSON.parse(c.body.json); } catch { throw new HttpError(400, 'that is not JSON — paste the whole manifest.json'); }
+    const r = importLabels(db, j, { cfg, actor: 'web' });
+    const lines = [...r.shipped.map(x => `✓ ${x}`), ...r.skipped.map(x => `– ${x}`), ...r.problems.map(x => `✗ ${x}`)];
+    page(c, 'Labels imported', `<div class="card"><p><b>${r.shipped.length} shipped</b>, ${r.skipped.length} left as they were, ${r.problems.length} problem${r.problems.length === 1 ? '' : 's'}.</p><ul>${lines.map(l => `<li class="${l[0] === '✗' ? 'err' : l[0] === '✓' ? 'ok' : 'muted'}">${e(l)}</li>`).join('')}</ul><p>${link('/ship', 'Ship bench →')} · ${link('/orders?status=shipped', 'Shipped orders')}</p></div>`);
   });
 
   // ---------- health: the checklist, and the buttons that prove things

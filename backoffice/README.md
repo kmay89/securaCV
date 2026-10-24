@@ -171,6 +171,36 @@ Nothing above types a SKU, an address, or a price by hand: the catalog is
 `store.json`, the address is what Stripe collected, COGS is frozen from the
 store's `cogs` recipe at the moment of sale.
 
+### Your phone is the scanner
+
+No scanner, no app: the iPhone's own camera reads a QR code and opens the link,
+and the backoffice is already a web page. Log in once on the phone's browser
+(the session lasts `SESSION_HOURS`, 12 by default) and the codes do the rest.
+
+- **The packing slip carries a code** (`/q/o/<number>`). Scan it and the order
+  opens where it stands: the pack bench if it is paid, the ship bench if it is
+  packed, the order page once it has shipped. So the slip in your hand is the
+  order on the screen, and a tracking number goes to the box it belongs to.
+- **Each board gets a label** — Devices → "Print board labels", a QR and the
+  serial per sticker (`/q/b/<serial>`). Scan one with the pack bench open on an
+  order and the phone shows the board, the order and one button: "Put … into
+  EL-…". A board the order does not ask for, or one more than it holds, shows
+  why instead of the button. Scanning a board with no bench open just shows the
+  board — where it is, which order has it — which is also how a returned unit
+  is looked up. A scan never changes anything by itself; the tap posts the same
+  form the bench does.
+- **Ship the batch from the manifest.** The website's `fulfill.mjs --buy` buys
+  the labels and writes `manifest.json`; paste it at the ship bench and every
+  packed order it names is shipped with its tracking and label cost, and the
+  customers get their mail. The same manifest twice changes nothing; an order
+  it names that is not packed, or already shipped with another number, is
+  reported by name and the rest still goes.
+
+The codes are made here (`src/qr.mjs`, the same encoder the authenticator
+enrollment page uses; `tests/users.test.mjs` holds it to a reference encoder
+bit for bit), so a slip never carries a code the phone cannot read. They encode
+`BACKOFFICE_BASE_URL`, so set it to the address the phone reaches.
+
 ### The pack bench is a gate
 
 One or two people pack here, so the bench does not try to be a warehouse

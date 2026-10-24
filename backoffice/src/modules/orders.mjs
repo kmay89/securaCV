@@ -280,6 +280,29 @@ export function transition(db, id, to, { actor = 'web', carrier = null, tracking
   });
 }
 
+// The website's fulfill.mjs buys the batch's labels and writes manifest.json: one entry per
+// order with its tracking number and the rate paid. Importing it ships every packed order it
+// names — tracking, carrier, postage, the customer's mail — with no typing. An order already
+// shipped with that tracking is left alone; a different tracking, an unknown order, an entry
+// without a label, are each reported by name and nothing else stops.
+export function importLabels(db, manifest, { cfg = null, actor = 'web', at = null } = {}) {
+  const rows = Array.isArray(manifest) ? manifest : Array.isArray(manifest?.manifest) ? manifest.manifest : null;
+  if (!rows) throw new Error('manifest.json is a list of orders (fulfill.mjs writes it next to the slips)');
+  const out = { shipped: [], skipped: [], problems: [] };
+  for (const r of rows) {
+    const number = String(r?.order_id || '').trim(); const tracking = normalizeTracking(r?.tracking);
+    if (!number) { out.problems.push('an entry has no order_id'); continue; }
+    if (!tracking) { out.skipped.push(`${number}: no label (${r?.status || 'no status'})`); continue; }
+    const o = orderByNumber(db, number); if (!o) { out.problems.push(`${number}: no such order here`); continue; }
+    if (o.status === 'shipped' || o.status === 'delivered') { if (o.tracking === tracking) out.skipped.push(`${number}: already shipped with that tracking`); else out.problems.push(`${number}: already shipped with ${o.tracking || 'no tracking'}, the manifest says ${tracking}`); continue; }
+    if (o.status !== 'packed') { out.problems.push(`${number}: is ${o.status}, not packed — pack it first`); continue; }
+    const rate = Number(r?.rate); const postageCents = Number.isFinite(rate) && rate > 0 ? Math.round(rate * 100) : 0;
+    try { transition(db, o.id, 'shipped', { actor, carrier: String(r?.carrier || 'USPS'), tracking, cfg, at, postageCents }); out.shipped.push(`${number}: ${tracking}`); }
+    catch (err) { out.problems.push(`${number}: ${err.message}`); }
+  }
+  return out;
+}
+
 export function refund(db, id, amountCents, { actor = 'web', reason = '', at = null } = {}) {
   const o = orderById(db, id); if (!o) throw new Error('no such order');
   const asked = Number(amountCents); if (!Number.isInteger(asked)) throw new Error('the refund is a whole number of cents');
