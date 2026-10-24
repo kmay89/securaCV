@@ -171,6 +171,24 @@ Nothing above types a SKU, an address, or a price by hand: the catalog is
 `store.json`, the address is what Stripe collected, COGS is frozen from the
 store's `cogs` recipe at the moment of sale.
 
+### The pack bench is a gate
+
+One or two people pack here, so the bench does not try to be a warehouse
+system; it makes the four mistakes that cost a reship refusable by name. The
+box card shows the carton, its inside size and the weight it should read, large.
+Each line is a tick as it goes in. The lines that ship a pre-flashed board say
+how many, and the board card counts the scans against that — a board flashed for
+a different kit, or one more than the order holds, is refused at the scan (with
+a × to take one back out). The scale field is checked against the plan. The
+"Packed" button stays dim until all of that is done, and the server checks the
+same proof when the form posts, so the gate holds without the browser's help.
+"Pack anyway" exists for the day something is off and the box must still go; it
+needs a reason, and what was skipped goes on the timeline with it. How many
+boards a line needs comes from the data, never a guess: its recipe's board
+parts (a SKU some registered board carries as its `board`), or, with no recipe,
+one per unit when registered boards are flashed for that SKU. Unknown data gates
+nothing. The order page's "Mark packed" sends you to the bench for that order.
+
 ### How the shipping numbers are made
 
 Three numbers show up around an order, and each has one source.
@@ -190,10 +208,10 @@ Three numbers show up around an order, and each has one source.
   `service`) all read the same plan. A multi-line order is one shipment: its
   boxes are planned together, and the CSV says how many lines it has so the label
   tool does not make one label per row.
-- **The scale.** At the ship bench a measured weight is checked against the plan;
+- **The scale.** At either bench a measured weight is checked against the plan;
   past the tolerance (`fulfillment.weight_tolerance_oz` in `store.json`, 1.5 oz
-  when unset) the ship is refused with the delta — a missing or extra item is the
-  usual cause — unless "ship anyway" is ticked, and then the timeline says so.
+  when unset) the pack or ship is refused with the delta — a missing or extra
+  item is the usual cause — unless "anyway" is ticked, and then the timeline says so.
 - **The postage.** The plan's cost is an estimate for a mid zone (the file says
   which); the label's real price, typed at the ship bench, is booked to
   `expenses:postage` and shown beside the shipping the customer paid. The

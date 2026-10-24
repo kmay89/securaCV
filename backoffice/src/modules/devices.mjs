@@ -3,7 +3,7 @@
 // (firmware/provisioning/create_manifest.py) or by hand at the bench. A
 // warranty claim resolves against this, and a recall would start here.
 import { nowIso } from '../db.mjs';
-import { addEvent } from './orders.mjs';
+import { addEvent, orderById, boardsNeeded } from './orders.mjs';
 
 export const normSerial = (s) => String(s || '').trim().toUpperCase();
 export const normMac = (s) => s ? String(s).trim().toUpperCase().replace(/[^0-9A-F]/g, '').replace(/(..)(?=.)/g, '$1:') : null;
@@ -34,9 +34,30 @@ export function assignToOrder(db, serial, orderId, { actor = 'web', force = fals
   if (!force && ['shipped', 'scrapped'].includes(d.status)) throw new Error(`${d.serial} is ${d.status} — it cannot go into another box`);
   const o = db.get('SELECT number, status FROM orders WHERE id = ?', orderId); if (!o) throw new Error('no such order');
   if (!force && !['paid', 'packed'].includes(o.status)) throw new Error(`${o.number} is ${o.status} — boards go into orders that have not shipped`);
+  if (!force && d.order_id !== orderId) {
+    // The board must be one the order asks for, and one the order still has room for: a Vision
+    // board in a WAP box, or a third board in a two-kit order, is the mistake this bench exists to catch.
+    const full = orderById(db, orderId);
+    if (d.product_sku && full.items.length && !full.items.some(i => i.sku === d.product_sku)) throw new Error(`${d.serial} is flashed for ${d.product_sku} — ${o.number} has no ${d.product_sku} line (it has ${full.items.map(i => `${i.qty}× ${i.sku}`).join(', ')})`);
+    const need = boardsNeeded(db, full); const have = db.all('SELECT serial FROM devices WHERE order_id = ?', orderId);
+    if (need.needed && have.length >= need.needed) throw new Error(`${o.number} needs ${need.needed} board${need.needed === 1 ? '' : 's'} and already has ${have.map(h => h.serial).join(', ')} — take one out first`);
+  }
   db.run('UPDATE devices SET order_id = ? WHERE id = ?', orderId, d.id);
   addEvent(db, orderId, { kind: 'device', actor, text: `Board ${d.serial} (${d.board || 'board'}, firmware ${d.fw_version || '?'}) scanned into this box` });
   db.audit(actor, 'device.assign', 'device', d.serial, { order_id: orderId });
+  return deviceBySerial(db, serial);
+}
+
+// The board comes back out of the box (wrong one scanned, or the order is repacked without it).
+// Only from an order that has not shipped: a shipped board's history is a record, not a draft.
+export function unassign(db, serial, { actor = 'web' } = {}) {
+  const d = deviceBySerial(db, serial); if (!d) throw new Error(`unknown serial ${serial}`);
+  if (!d.order_id) throw new Error(`${d.serial} is not in any box`);
+  const o = db.get('SELECT number, status FROM orders WHERE id = ?', d.order_id);
+  if (!['paid', 'packed'].includes(o.status) || d.status === 'shipped') throw new Error(`${d.serial} went out with ${o.number} — it stays on the record`);
+  db.run('UPDATE devices SET order_id = NULL WHERE id = ?', d.id);
+  addEvent(db, d.order_id, { kind: 'device', actor, text: `Board ${d.serial} taken back out of this box` });
+  db.audit(actor, 'device.unassign', 'device', d.serial, { order_id: d.order_id });
   return deviceBySerial(db, serial);
 }
 

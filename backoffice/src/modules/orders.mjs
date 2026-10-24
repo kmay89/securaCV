@@ -200,7 +200,29 @@ export const listOrders = (db, { status = '', batch = '', q = '', tag = '', from
    ORDER BY o.paid_at DESC, o.id DESC LIMIT ?`, status, status, status, batch, batch, q, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, tag, `%,${tag},%`, from, from, to, to ? to + 'T23:59:59.999Z' : '', discount, discount.toUpperCase(), sku, sku, limit);
 
 export const packPlanOf = (o) => { try { return o?.pack_plan ? JSON.parse(o.pack_plan) : null; } catch { return null; } };
-export function transition(db, id, to, { actor = 'web', carrier = null, tracking = null, cfg = null, at = null, shipping = null, measuredOz = null, postageCents = 0, shipAnyway = false } = {}) {
+
+// How many pre-flashed boards the box must hold, from the data rather than a guess: a line's
+// recipe parts that are board SKUs (a SKU some registered board carries as its `board`), or,
+// when the recipe says nothing, a line whose SKU is what registered boards are flashed for
+// (`product_sku`), one per unit. Zero when the data cannot say — a gate that fires on a guess is
+// a gate people learn to click through.
+export function boardsNeeded(db, o) {
+  const boardSkus = new Set(db.all('SELECT DISTINCT board FROM devices WHERE board IS NOT NULL').map(r => r.board));
+  const productSkus = new Set(db.all('SELECT DISTINCT product_sku FROM devices WHERE product_sku IS NOT NULL').map(r => r.product_sku));
+  let needed = 0; const lines = [];
+  for (const it of o.items || []) {
+    let per = db.all('SELECT part_sku, qty FROM recipes WHERE finished_sku = ?', it.sku).filter(p => boardSkus.has(p.part_sku)).reduce((a, p) => a + p.qty, 0);
+    if (!per && productSkus.has(it.sku)) per = 1;
+    if (per) { needed += per * it.qty; lines.push({ sku: it.sku, boards: per * it.qty }); }
+  }
+  return { needed, lines };
+}
+export const boardsOn = (db, orderId) => db.all('SELECT id, serial, board, product_sku, fw_version, status FROM devices WHERE order_id = ? ORDER BY id', orderId);
+// `check` is the pack bench's proof that the box holds what the order says: { ticked: [sku…] (every
+// line, as it went in), measuredOz (the scale, optional), anyway (skip what failed), reason (why) }.
+// Without it (the API, a seed) packing is unchecked, as before; with it every failure is refused by
+// name unless `anyway` is ticked with a reason, and whatever was skipped goes on the timeline.
+export function transition(db, id, to, { actor = 'web', carrier = null, tracking = null, cfg = null, at = null, shipping = null, measuredOz = null, postageCents = 0, shipAnyway = false, check = null } = {}) {
   const o = orderById(db, id); if (!o) throw new Error('no such order');
   if (typeof to !== 'string' || !STATUSES.includes(to)) throw new Error(`"${String(to).slice(0, 30)}" is not an order status (${STATUSES.join(', ')})`);
   const allowed = { paid: ['packed', 'canceled'], pending: ['paid', 'canceled'], packed: ['shipped', 'paid'], shipped: ['delivered'], delivered: [] };
@@ -219,12 +241,26 @@ export function transition(db, id, to, { actor = 'web', carrier = null, tracking
   }
   // The plan is made from the lines as they are now and frozen on the order: the bench reads it, the scale checks against it, the CSV carries it.
   const plan = to === 'packed' ? packOrder(shipping, o.items) : null;
+  const skipped = []; let packedOz = null; const boards = to === 'packed' ? boardsOn(db, o.id) : [];
+  if (to === 'packed' && check && typeof check === 'object') {
+    const anyway = !!check.anyway; const reason = String(check.reason || '').trim().slice(0, 200);
+    if (anyway && !reason) throw new Error('"pack anyway" needs a reason — it goes on the timeline');
+    const ticked = new Set((Array.isArray(check.ticked) ? check.ticked : []).map(String));
+    const missing = o.items.filter(i => !ticked.has(i.sku));
+    if (missing.length) { if (!anyway) throw new Error(`not every line is ticked: ${missing.map(i => `${i.qty}× ${i.sku}`).join(', ')} — tick each line as it goes in the box, or tick "pack anyway" and say why`); skipped.push(`${missing.length} line${missing.length === 1 ? '' : 's'} unticked`); }
+    const need = boardsNeeded(db, o);
+    if (need.needed && boards.length !== need.needed) { if (!anyway) throw new Error(`${o.number} needs ${need.needed} board${need.needed === 1 ? '' : 's'} in the box, ${boards.length} scanned — scan the ${need.needed > boards.length ? `${need.needed - boards.length} missing` : 'right ones'}, or tick "pack anyway" and say why`); skipped.push(`${boards.length} of ${need.needed} boards`); }
+    if (check.measuredOz != null && check.measuredOz !== '') { packedOz = Number(check.measuredOz); if (!Number.isFinite(packedOz) || packedOz <= 0 || packedOz > 2000) throw new Error('the scale reading is a number of ounces above zero'); }
+    scale = weightCheck(plan, packedOz, { tolerance: cfg?.weightToleranceOz ?? 1.5 });
+    if (scale.checked && !scale.ok) { if (!anyway) throw new Error(`the scale reads ${scale.measured} oz, the plan expects ${scale.expected} oz (${scale.delta > 0 ? '+' : ''}${scale.delta} oz, over the ${scale.tolerance} oz tolerance) — recount the box, or tick "pack anyway" and say why`); skipped.push(`scale ${scale.delta > 0 ? '+' : ''}${scale.delta} oz`); }
+    if (anyway) skipped.push(`packed anyway: ${reason}`);
+  }
   return db.tx(() => {
     const now = at || nowIso();
     db.run(`UPDATE orders SET status = ?, paid_at = CASE WHEN ? = 'paid' THEN ? ELSE paid_at END, packed_at = CASE WHEN ? = 'packed' THEN ? ELSE packed_at END,
             shipped_at = CASE WHEN ? = 'shipped' THEN ? ELSE shipped_at END, delivered_at = CASE WHEN ? = 'delivered' THEN ? ELSE delivered_at END WHERE id = ?`,
       to, to, now, to, now, to, now, to, now, id);
-    if (to === 'packed') { if (!o.items.length) throw new Error(`${o.number} has no line items — fetch them from Stripe (STRIPE_API_KEY) or add them before packing`); consumeForOrder(db, o); db.run('UPDATE orders SET pack_plan = ? WHERE id = ?', shipping ? JSON.stringify(plan) : null, id); }
+    if (to === 'packed') { if (!o.items.length) throw new Error(`${o.number} has no line items — fetch them from Stripe (STRIPE_API_KEY) or add them before packing`); consumeForOrder(db, o); db.run('UPDATE orders SET pack_plan = ?, measured_oz = COALESCE(?, measured_oz) WHERE id = ?', shipping ? JSON.stringify(plan) : null, packedOz, id); }
     // Unpacking frees the lines for editing, so the plan made for the old lines goes with it; the next pack plans afresh.
     if (to === 'paid' && o.status === 'packed') { releaseForOrder(db, o); db.run('UPDATE orders SET pack_plan = NULL WHERE id = ?', id); }
     if (to === 'shipped') {
@@ -235,10 +271,11 @@ export function transition(db, id, to, { actor = 'web', carrier = null, tracking
         text: fill(SHIPPED_TPL, { name: o.ship_name || 'there', number: o.number, carrier: carrier || 'USPS', tracking: tracking || '(no tracking)', company: cfg?.company || 'Errer Labs', support: cfg?.supportAddr || '', estimate: est ? `Expect it ${est.label} (${est.min_days}–${est.max_days} business days — an estimate, not a promise).` : '', status_url: cfg?.secret ? orderStatusUrl(cfg, o) : '' }) }); }
     }
     const boxLine = plan?.boxes?.length ? ` · ${plan.boxes.map(b => `${b.box_name.replace(/ \(.*\)$/, '')} ${b.weight_oz} oz`).join(' + ')}${plan.total_cost_est != null ? ` · postage ≈ ${usd(Math.round(plan.total_cost_est * 100))}` : ''}` : plan?.warnings?.length ? ` · box: ${plan.warnings[0]}` : '';
-    const scaleLine = scale.checked ? ` · scale ${scale.measured} oz vs ${scale.expected} oz${scale.ok ? ' ✓' : ` (${scale.delta > 0 ? '+' : ''}${scale.delta} oz, shipped anyway)`}` : measuredOz != null ? ` · scale ${measuredOz} oz` : '';
-    const line = { packed: `Packed${o.items.length ? ` · ${o.items.map(i => `${i.qty}× ${i.sku}`).join(', ')} pulled from stock` : ''}${boxLine}`, shipped: `Shipped via ${carrier || 'USPS'}${tracking ? ` · ${tracking}` : ''}${scaleLine}${postageCents ? ` · label ${usd(postageCents)}` : ''}${o.email ? ` · tracking emailed to ${o.email}` : ''}`, delivered: 'Delivered', canceled: `Canceled${o.total_cents - o.refunded_cents > 0 ? ` — ${usd(o.total_cents - o.refunded_cents)} was paid: refund it in Stripe, and the webhook (or "Record refund") writes it here` : ''}`, paid: o.status === 'packed' ? 'Unpacked — parts returned to stock' : 'Marked paid' }[to] || `Now ${to}`;
+    const scaleLine = scale.checked ? ` · scale ${scale.measured} oz vs ${scale.expected} oz${scale.ok ? ' ✓' : ` (${scale.delta > 0 ? '+' : ''}${scale.delta} oz, ${to === 'packed' ? 'packed' : 'shipped'} anyway)`}` : (to === 'shipped' ? measuredOz : packedOz) != null ? ` · scale ${to === 'shipped' ? measuredOz : packedOz} oz` : '';
+    const checkLine = check ? (skipped.length ? ` · ${skipped.join(', ')}` : ' · every line ticked') + (boards.length ? ` · boards ${boards.map(b => b.serial).join(', ')}` : '') + scaleLine : '';
+    const line = { packed: `Packed${o.items.length ? ` · ${o.items.map(i => `${i.qty}× ${i.sku}`).join(', ')} pulled from stock` : ''}${boxLine}${checkLine}`, shipped: `Shipped via ${carrier || 'USPS'}${tracking ? ` · ${tracking}` : ''}${scaleLine}${postageCents ? ` · label ${usd(postageCents)}` : ''}${o.email ? ` · tracking emailed to ${o.email}` : ''}`, delivered: 'Delivered', canceled: `Canceled${o.total_cents - o.refunded_cents > 0 ? ` — ${usd(o.total_cents - o.refunded_cents)} was paid: refund it in Stripe, and the webhook (or "Record refund") writes it here` : ''}`, paid: o.status === 'packed' ? 'Unpacked — parts returned to stock' : 'Marked paid' }[to] || `Now ${to}`;
     addEvent(db, id, { kind: to === 'paid' && o.status === 'packed' ? 'unpacked' : to, actor, at: now, text: line });
-    db.audit(actor, `order.${to}`, 'order', o.number, { carrier, tracking, boxes: plan?.boxes?.map(b => b.box) || undefined, measured_oz: measuredOz ?? undefined, postage_cents: postageCents || undefined, scale: scale.checked ? (scale.ok ? 'ok' : 'off, shipped anyway') : undefined });
+    db.audit(actor, `order.${to}`, 'order', o.number, { carrier, tracking, boxes: plan?.boxes?.map(b => b.box) || undefined, measured_oz: measuredOz ?? packedOz ?? undefined, postage_cents: postageCents || undefined, scale: scale.checked ? (scale.ok ? 'ok' : 'off, went anyway') : undefined, skipped: skipped.length ? skipped : undefined });
     return orderById(db, id);
   });
 }

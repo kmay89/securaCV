@@ -4,7 +4,7 @@
 // exportable). Same conventions: server-rendered, plain forms, no script.
 import { text, HttpError, escapeHtml as e, csvLine } from './http.mjs';
 import { table, money, dt, day, statusPill, field, form, button } from './render.mjs';
-import { listOrders, orderById, weekLabel, statusCounts, addressIssues, packPlanOf } from './modules/orders.mjs';
+import { listOrders, orderById, weekLabel, statusCounts, addressIssues, packPlanOf, boardsNeeded, boardsOn } from './modules/orders.mjs';
 import { packOrder } from './modules/packing.mjs';
 import { doctor } from './modules/health.mjs';
 import { backup, checkBackup, liveCounts, listBackups } from './modules/backup.mjs';
@@ -26,24 +26,40 @@ export function registerOps(app, { page, back, link, filters }) {
   const packLine = (plan, atShip = false) => { if (!plan) return ''; const boxes = (plan.boxes || []).map(b => `<b>${e(b.box_name.replace(/ \(.*\)$/, ''))}</b> ${b.weight_oz} oz`).join(' + '); const warn = (plan.warnings || []).map(w => `<br><span class="warn">${e(w)}</span>`).join(''); return `<p class="muted" style="margin:.4rem 0">${boxes ? `${atShip ? 'Packed as' : 'Pack in'}: ${boxes}${plan.total_cost_est != null ? ` · postage ≈ ${money(Math.round(plan.total_cost_est * 100))}` : ''}${atShip && plan.total_oz != null ? ` · weigh it: within ${cfg.weightToleranceOz ?? 1.5} oz of ${plan.total_oz} oz, or recount` : ''}` : 'No box plan.'}${warn}</p>`; };
   const picklist = (o) => `<ul class="picklist">${o.items.map(i => `<li><span class="box" aria-hidden="true"></span><span class="q">${i.qty}×</span><span>${e(i.name)}<br><span class="sku">${e(i.sku)}</span></span></li>`).join('') || '<li class="muted">No line items — add them on the order before packing.</li>'}</ul>`;
 
+  // The box card: the carton by name and inner size, what goes in it, and the weight it should read —
+  // big enough to match against the stack by eye and against the scale without arithmetic.
+  const boxCards = (plan) => (plan?.boxes || []).map((b, i) => `<div class="boxcard"><div><div class="nm">${plan.boxes.length > 1 ? `Box ${i + 1} of ${plan.boxes.length}: ` : ''}${e(b.box_name.replace(/ \(.*\)$/, ''))}</div><div class="muted">inside ${b.inner.l} × ${b.inner.w} × ${b.inner.h} in · ${b.items.length} piece${b.items.length === 1 ? '' : 's'}${b.cost_est != null ? ` · postage ≈ ${money(Math.round(b.cost_est * 100))}` : ''}</div></div><div class="oz">${b.weight_oz} <small>oz</small></div></div>`).join('') + (plan?.warnings || []).map(w => `<p class="warn" style="margin:.3rem 0">${e(w)}</p>`).join('');
+
   router.get('/pack', async (c) => {
-    const batch = batchFor('paid', c.query.get('batch') || ''); const after = Number(c.query.get('after') || 0);
-    const o = nextIn('paid', batch, after) ? orderById(db, nextIn('paid', batch, after).id) : null;
+    // `?order=` opens one order by choice (the order page sends you here); otherwise the next unpacked in the batch.
+    const wanted = Number(c.query.get('order') || 0); const chosen = wanted ? orderById(db, wanted) : null;
+    if (wanted && !chosen) throw new HttpError(404, 'no such order');
+    const batch = chosen ? chosen.batch : batchFor('paid', c.query.get('batch') || ''); const after = Number(c.query.get('after') || 0);
+    const o = chosen ? (chosen.status === 'paid' ? chosen : null) : nextIn('paid', batch, after) ? orderById(db, nextIn('paid', batch, after).id) : null;
     const p = progress('paid', batch, ['packed', 'shipped', 'delivered']);
     const head = `<p class="muted">Batch <b>${e(batch)}</b> · ${p.done} of ${p.total} packed · ${p.left} to go · ${link(`/orders?batch=${e(batch)}`, 'the list')} · ${link(`/orders/packing-slips?batch=${e(batch)}&status=paid`, 'print all slips')}</p><div class="progress"><i style="width:${p.total ? Math.round(100 * p.done / p.total) : 0}%"></i></div>`;
+    if (chosen && !o) return page(c, 'Pack bench', head + `<div class="card"><p style="margin:0">${link(`/orders/${chosen.id}`, chosen.number)} is <b>${e(chosen.status)}</b> — nothing to pack. ${link('/pack', 'Next order in the batch →')}</p></div>`);
     if (!o) return page(c, 'Pack bench', head + `<div class="card"><p class="ok" style="font-size:1.1rem;margin:0"><b>Everything in ${e(batch)} is packed.</b></p><p>${link('/ship', 'Open the ship bench →')} ${p.total ? '' : '<span class="muted">(no orders in this batch yet)</span>'}</p>${statusCounts(db).paid ? `<p class="muted">Other batches still have ${statusCounts(db).paid} order${statusCounts(db).paid === 1 ? '' : 's'} to pack: ${link('/orders?status=paid', 'see them')}</p>` : ''}</div>`);
-    const devices = db.all('SELECT serial, fw_version FROM devices WHERE order_id = ?', o.id);
-    const needsBoard = o.items.some(i => /kit|pair/.test(i.sku));
-    const body = head + `<div class="bench"><div class="card"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Pack this</div><h2 style="margin:.2rem 0 .6rem">${link(`/orders/${o.id}`, o.number)} <span class="muted" style="font-weight:400">· ${e(o.ship_name)}</span></h2>
-${picklist(o)}
-${packLine(packOrder(await app.shipping().catch(() => null), o.items))}
+    const here = chosen ? `/pack?order=${o.id}` : `/pack?batch=${encodeURIComponent(batch)}`;
+    const plan = packOrder(await app.shipping().catch(() => null), o.items);
+    const need = boardsNeeded(db, o); const boards = boardsOn(db, o.id); const boardsDone = !need.needed || boards.length === need.needed;
+    const csrf = `<input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="_back" value="${e(here)}">`;
+    const picks = o.items.map(i => { const nl = need.lines.find(l => l.sku === i.sku); return `<label class="pick"><input type="checkbox" name="ticked[]" value="${e(i.sku)}"><span class="q">${i.qty}×</span><span>${e(i.name)}<br><span class="sku">${e(i.sku)}${nl ? ` · ${nl.boards} board${nl.boards === 1 ? '' : 's'} inside` : ''}</span></span></label>`; }).join('') || '<p class="muted">No line items — add them on the order before packing.</p>';
+    const boardsHtml = `<h2 style="display:flex;justify-content:space-between;align-items:baseline;margin-top:0">Boards in the box <span class="${boardsDone ? 'ok' : 'warn'}" style="font-size:.95rem">${need.needed ? `${boards.length} of ${need.needed} scanned${boardsDone ? ' ✓' : ''}` : boards.length ? `${boards.length} scanned` : 'none needed'}</span></h2>
+${boards.length ? `<div class="pills">${boards.map(d => `<form method="post" action="/orders/${o.id}/unassign" class="inline">${csrf}<input type="hidden" name="serial" value="${e(d.serial)}"><span class="pill ok">${e(d.serial)} · fw ${e(d.fw_version || '?')}</span> <button class="quiet x" title="Take ${e(d.serial)} back out">×</button></form>`).join(' ')}</div>` : ''}
+${!need.needed || boards.length < need.needed ? `<form method="post" action="/orders/${o.id}/assign">${csrf}<label for="f_serial">Scan the next board's serial</label><div style="display:flex;gap:.5rem;align-items:stretch"><input id="f_serial" name="serial" ${o.items.length ? 'autofocus' : ''} autocomplete="off" placeholder="DEMO-W-0005" style="flex:1;min-width:0"><button class="quiet" style="flex:none">Into the box</button></div></form>` : ''}`;
+    const body = head + `<div class="bench"><div class="card"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Pack this</div><h2 style="margin:.2rem 0 .6rem;font-size:1.5rem">${link(`/orders/${o.id}`, o.number)} <span class="muted" style="font-weight:400;font-size:1.1rem">· ${e(o.ship_name)}</span></h2>
 ${o.notes || o.tags ? `<p class="warn"><b>Note:</b> ${e(o.notes || '')} ${o.tags ? `<span class="muted">tags: ${e(o.tags)}</span>` : ''}</p>` : ''}
-<h2>Boards in the box ${needsBoard ? '' : '<span class="muted">(none needed)</span>'}</h2>${devices.length ? `<p>${devices.map(d => `<span class="pill ok">${e(d.serial)} · fw ${e(d.fw_version || '?')}</span>`).join(' ')}</p>` : needsBoard ? '<p class="muted">Scan the flashed board’s serial so the order knows which board it got.</p>' : ''}
-<form method="post" action="/orders/${o.id}/assign"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="_back" value="/pack?batch=${e(batch)}"><div class="row"><div><label for="f_serial">Scan serial</label><input id="f_serial" name="serial" autofocus autocomplete="off" placeholder="DEMO-W-0005"></div><div><label>&nbsp;</label><button class="quiet">Assign to ${e(o.number)}</button></div></div></form>
-<form method="post" action="/orders/${o.id}/transition"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="to" value="packed"><input type="hidden" name="_back" value="/pack?batch=${e(batch)}"><button class="big">Packed — next order →</button></form>
-<p style="margin:.6rem 0 0"><a class="btn quiet" href="/pack?batch=${e(batch)}&after=${o.id}">Skip for now</a> <a class="btn quiet" href="/orders/${o.id}/packing-slip">Packing slip</a></p></div>
+${boxCards(plan)}
+<form method="post" action="/orders/${o.id}/transition" class="gate">${csrf}<input type="hidden" name="to" value="packed"><input type="hidden" name="bench" value="1"><input type="checkbox" class="need" disabled hidden ${boardsDone ? 'checked' : ''}>
+<h2>Tick each line as it goes in</h2>${picks}
+<div class="row" style="margin-top:.6rem"><div><label for="f_measured_oz">Scale (oz)${plan.total_oz != null ? ` — should read about ${plan.total_oz}` : ''}</label><input id="f_measured_oz" name="measured_oz" inputmode="decimal" autocomplete="off" placeholder="${plan.total_oz != null ? plan.total_oz : 'optional'}"></div></div>
+<button class="big">Packed — next order →</button>
+<details class="anyway-box"><summary class="muted">Something is off but it has to go</summary><label><input type="checkbox" class="anyway" name="pack_anyway" value="1" style="width:auto"> pack anyway</label>${field('reason', 'Why (goes on the timeline)')}</details></form>
+<p style="margin:.6rem 0 0"><a class="btn quiet" href="/pack?batch=${encodeURIComponent(batch)}&after=${o.id}">Skip for now</a> <a class="btn quiet" href="/orders/${o.id}/packing-slip">Packing slip</a></p></div>
 <div><div class="card"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Ship to</div><p class="addr">${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)}${o.ship_country !== 'US' ? '<br>' + e(o.ship_country) : ''}</p>${addrWarn(o)}<p class="muted">${e(o.email || '')} · paid ${day(o.paid_at)} · ${money(o.total_cents)}</p></div>
-<div class="card" style="margin-top:.9rem"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">How this works</div><p class="muted" style="margin:.3rem 0 0;font-size:13.5px">Marking an order packed pulls its parts from stock through the recipe and writes the timeline. Scan a board first if the kit ships with one. Print the slips for the whole batch once, then work down the list.</p></div></div></div>`;
+<div class="card" style="margin-top:.9rem">${boardsHtml}</div>
+<div class="card" style="margin-top:.9rem"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">How this works</div><p class="muted" style="margin:.3rem 0 0;font-size:13.5px">Pick the box on the card, tick each line as it goes in, scan every board the lines call for, set the box on the scale. The button opens when all of that is done; the server checks the same things, so a wrong count, a missing board or a board for the wrong kit is refused by name. Marking it packed pulls the parts from stock and writes who checked what.</p></div></div></div>`;
     page(c, 'Pack bench', body);
   });
 
