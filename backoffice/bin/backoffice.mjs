@@ -2,7 +2,7 @@
 // The command line is the same company as the web admin — same SQLite file,
 // same functions — so an operator (or an AI operator) can run the whole
 // business from a terminal. `backoffice help` lists everything.
-import { readFileSync } from 'node:fs';
+import { readFileSync, unlinkSync } from 'node:fs';
 import { loadConfig } from '../src/config.mjs';
 import { openDb } from '../src/db.mjs';
 import { setupOperator, createApiToken, revokeApiToken, totpUri, hasOperator, listUsers, inviteUser, userByEmail, setRole, setStatus, removeUser, ROLES, ROLE_TEXT } from '../src/auth.mjs';
@@ -22,7 +22,7 @@ import { registerDevice, importManifest, listDevices } from '../src/modules/devi
 import { openClaim, ANSWERS, listClaims } from '../src/modules/warranty.mjs';
 import { profitAndLoss, trialBalance, monthly, postExpense, postPayout, salesTaxByState, ledgerCsv, ACCOUNTS } from '../src/modules/ledger.mjs';
 import { upsertProbe, DEFAULT_PROBES, runDueProbes, publicStatus } from '../src/modules/status.mjs';
-import { backup, listBackups, checkBackup, liveCounts, restore, restoreDrill, uploadOffsite, offsiteConfigured } from '../src/modules/backup.mjs';
+import { backup, listBackups, checkBackup, liveCounts, restore, restoreDrill, uploadOffsite, offsiteConfigured, fetchOffsite } from '../src/modules/backup.mjs';
 import { doctor, digestText } from '../src/modules/health.mjs';
 import { reconcile } from '../src/modules/reconcile.mjs';
 import { snapshot } from '../src/modules/dashboard.mjs';
@@ -69,6 +69,7 @@ const HELP = `backoffice — the company in one SQLite file (${cfg.dbPath})
   backup check <file> [--live]            prove a copy boots; --live also compares row counts with the running database
   backup drill                             pull the latest copy back (off-site when configured) and prove it
   restore <file> [--to <db path>]          put a checked copy in place (stop serve first; the old file is kept beside it)
+  restore --offsite [<name>]               the same, from the latest off-site copy (or a named one) — the "server died" drill
   reconcile                                Stripe payouts → the books, charges → orders (needs STRIPE_API_KEY)
   digest                                   print the morning digest (what the job emails to OPERATOR_EMAIL)
   job <name> | job list                    run one scheduled job now (outbox inbox probes sla stock invoices books backup)
@@ -195,7 +196,12 @@ const main = async () => {
     }
     case 'backups': return out(listBackups(join(cfg.dataDir, 'backups')));
     case 'restore': {
-      if (!args[0]) throw new Error('restore <backup file> [--to <db path>] — stop `serve` first');
+      if (flags.offsite) {   // the server died: pull the latest off-site copy back and put it in place
+        const got = await fetchOffsite(cfg, { name: args[0] || null });
+        try { const r = restore(got.path, flags.to || cfg.dbPath); return out({ ...r, from: got.source, encrypted: got.encrypted, note: 'start `backoffice serve` again; the replaced file is kept beside the database until you delete it' }); }
+        finally { try { unlinkSync(got.path); } catch { /* gone */ } }
+      }
+      if (!args[0]) throw new Error('restore <backup file> [--to <db path>] | restore --offsite [<name>] — stop `serve` first');
       const r = restore(args[0], flags.to || cfg.dbPath); return out({ ...r, note: 'start `backoffice serve` again; the replaced file is kept beside the database until you delete it' });
     }
     case 'doctor': {

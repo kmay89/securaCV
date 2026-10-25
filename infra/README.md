@@ -41,6 +41,10 @@ $0 for certificates (Let's Encrypt through Caddy). Nothing else recurs.
   drills a restore weekly); the kit's job is to keep `/srv/data` on a real
   disk and the server patched.
 
+> Not the technical reader? [`OWNERS-MANUAL.md`](OWNERS-MANUAL.md) is the
+> same server in plain language: why each decision, what can break, what it
+> costs, what to do, and the two things never to lose.
+
 ## First server (about fifteen minutes, most of it DNS)
 
 1. **Make the user-data.** From this directory on your laptop:
@@ -107,14 +111,16 @@ nothing new — the forced command already accepts any app under `/srv/apps`.
 | Add or change a hostname | edit `/srv/edge/sites/<host>.caddy`, then `kit reload` |
 | Update the kit itself | `kit update` (git pull of this directory) |
 | A shell in a container | `kit run backoffice sh` |
+| Restore the backoffice from off-site | `kit offline backoffice node bin/backoffice.mjs restore --offsite` (stops it, restores, starts it) |
 
 ## When the server dies
 
 Make a new one (steps 1–3 above, same hostnames). `kit app add` each app,
 paste each `.env` back from your password manager, then for the backoffice
-restore the latest off-site backup (`backoffice restore --offsite`, which
-needs `BACKUP_S3_*` and `BACKUP_ENCRYPTION_KEY` in the `.env` — the same
-values, so keep them in the password manager too). Deploy. The whole thing is
+restore the latest off-site backup — `kit offline backoffice node bin/backoffice.mjs restore --offsite`,
+which stops the app, pulls the copy back, puts it in place and starts the
+app again; it needs `BACKUP_S3_*` and `BACKUP_ENCRYPTION_KEY` in the `.env`,
+the same values, so keep them in the password manager too. The whole thing is
 under half an hour, and the weekly restore drill is what makes that a fact
 rather than a hope.
 
