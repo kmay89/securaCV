@@ -94,7 +94,7 @@ cmd_env() { need_app "${1:-}"; "${EDITOR:-nano}" "$APPS/$1/.env"; chmod 640 "$AP
 # directory is handed over from inside a container (neither ops nor deploy may chown on the host).
 # Idempotent: nothing happens once the owner matches.
 init_data() {
-  local app="$1" tag="$2" dir="$DATA/$app"; [ -d "$dir" ] || return 0
+  local app="$1" tag="$2"; local dir="$DATA/$app"; [ -d "$dir" ] || return 0
   local image; image="$(TAG="$tag" compose "$app" config --images 2>/dev/null | head -1)"; [ -n "$image" ] || return 0
   local uid gid; uid="$(docker run --rm --entrypoint id "$image" -u 2>/dev/null || true)"; gid="$(docker run --rm --entrypoint id "$image" -g 2>/dev/null || true)"
   if ! [[ "$uid" =~ ^[0-9]+$ && "$gid" =~ ^[0-9]+$ ]]; then echo "  (could not ask $image who it runs as; leaving $dir as is)"; return 0; fi
