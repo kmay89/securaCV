@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# On your laptop: fill cloud-init.yaml with your SSH public key and the ACME contact, print it.
+#   infra/bin/render-cloud-init --ssh-key ~/.ssh/id_ed25519.pub --email you@example.com > user-data.yaml
+set -euo pipefail
+key="" email=""
+while [ $# -gt 0 ]; do case "$1" in --ssh-key) key="$2"; shift 2;; --email) email="$2"; shift 2;; *) echo "usage: $0 --ssh-key <pubkey file> --email <acme contact>" >&2; exit 2;; esac; done
+[ -f "${key:-}" ] || { echo "render-cloud-init: --ssh-key must be a public key file" >&2; exit 2; }
+[[ "${email:-}" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || { echo "render-cloud-init: --email must be an address Let's Encrypt can reach" >&2; exit 2; }
+pub="$(head -n1 "$key" | tr -d '\r')"
+[[ "$pub" =~ ^(ssh-ed25519|ecdsa-sha2-nistp256|ssh-rsa)\ [A-Za-z0-9+/=]+ ]] || { echo "render-cloud-init: $key does not look like an OpenSSH public key" >&2; exit 2; }
+here="$(cd "$(dirname "$0")/.." && pwd)"
+sed -e "s|__SSH_PUBLIC_KEY__|$pub|" -e "s|__ACME_EMAIL__|$email|g" "$here/cloud-init.yaml"

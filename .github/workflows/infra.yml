@@ -1,0 +1,35 @@
+name: Infra kit
+
+# The server kit under infra/ is checked like code: the scripts parse and pass
+# shellcheck, every compose file renders, the Caddyfile validates with the real
+# Caddy, cloud-init accepts the user-data, and render-cloud-init leaves no
+# placeholder behind. infra/bin/check is the one script; this just runs it.
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra.yml"
+
+permissions:
+  contents: read
+
+# A test workflow (CI.md R3): PR runs collapse per branch, every main commit
+# keeps its own group so a burst of merges can never evict a queued main run.
+concurrency:
+  group: infra-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: infra/bin/check
+    runs-on: ubuntu-24.04  # the image the job was written against (CI.md R11)
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the kit
+        run: infra/bin/check

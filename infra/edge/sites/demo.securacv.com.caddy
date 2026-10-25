@@ -1,0 +1,5 @@
+# The public demo: the same image, BACKOFFICE_DEMO=1, reseeded hourly. `kit site add demo.securacv.com backoffice-demo:8787`.
+demo.securacv.com {
+	import secure
+	reverse_proxy backoffice-demo:8787
+}

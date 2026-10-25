@@ -1,0 +1,21 @@
+# The edge. One file per hostname in sites/; this file never changes.
+{
+	email {$ACME_EMAIL}
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+# Every site gets the same posture: compressed, HSTS, no sniffing, no
+# referrer leaking, no server banner. A site file adds routing, nothing else.
+(secure) {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+}
+
+import /etc/caddy/sites/*.caddy

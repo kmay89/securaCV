@@ -99,10 +99,8 @@ to main. Pick one:
 
 | Where | Cost | How |
 |---|---|---|
-| Fly.io | free allowance | from `backoffice/`: `fly apps create <name>` then `fly deploy --config deploy/fly.toml --app <name>` (builds on Fly's remote builder; no local Docker) → `https://<name>.fly.dev` |
-| Fly.io, no terminal | free allowance | Fly dashboard → Account → Tokens → create one; add it to this repo as the secret `FLY_API_TOKEN`; Actions → "Backoffice demo → Fly.io" → Run workflow. It creates the app and a 1 GB data volume, deploys **one** machine on it, and redeploys on every merge that touches `backoffice/`. (One machine matters: two would be two databases, and a login on one is unknown to the other — the "every other page bounces to the login screen" symptom.) |
-| Render | free tier (sleeps when idle, ~30 s to wake) | New → Blueprint → this repo; `backoffice/deploy/render.yaml` is read automatically |
-| Any VPS with Docker | ~$4–6/month | point a DNS name at it, then `DEMO_HOST=demo.example.com docker compose -f backoffice/deploy/docker-compose.demo.yml up -d` (Caddy gets the certificate) |
+| **Your own server (the way we run it)** | ~$4–6/month for the box, everything else $0 | [`infra/`](../infra/README.md): one small VPS, Caddy at the edge, every app a container, deploys on merge. `kit app add backoffice`, `kit site add ops.example.com backoffice:8787`, `kit deploy backoffice latest`. The public demo is the same image as a second app (`backoffice-demo`) on its own hostname. |
+| Render | free tier (sleeps when idle, ~30 s to wake) | New → Blueprint → this repo; `backoffice/deploy/render.yaml` is read automatically (demo only: the free tier has no disk) |
 | A laptop, for a meeting | — | `docker run --rm -e BACKOFFICE_DEMO=1 -p 8787:8787 ghcr.io/kmay89/securacv-backoffice` |
 
 The login page shows the demo credentials, so anyone with the link can
