@@ -9,15 +9,21 @@ package_update: true
 package_upgrade: true
 packages: [ufw, fail2ban, unattended-upgrades, git, curl, ca-certificates, jq]
 
+# ops and deploy share the `kit` group: it owns /srv/apps and /srv/data (setgid), so what ops
+# makes, deploy can start, and nobody else on the box reads an app's .env.
+groups:
+  - kit
+
 users:
   - name: ops
-    groups: [sudo]
+    groups: [sudo, kit]
     shell: /bin/bash
     sudo: ['ALL=(ALL) NOPASSWD:ALL']
     ssh_authorized_keys:
       - "__SSH_PUBLIC_KEY__"
   - name: deploy
     shell: /bin/bash
+    groups: [kit]
     # CI's user: no sudo; in the docker group so `kit deploy` can pull and start containers.
     # Its only key is written later by `kit deploy-key`, bound to the forced command.
 
@@ -71,7 +77,11 @@ runcmd:
   - mkdir -p /srv/kit /srv/edge/sites /srv/apps /srv/data /srv/sites
   - git clone --depth 1 --filter=blob:none --sparse https://github.com/kmay89/securaCV.git /srv/kit
   - git -C /srv/kit sparse-checkout set infra
-  - chown -R ops:ops /srv/kit /srv/edge /srv/apps /srv/sites
+  - chown -R ops:ops /srv/kit /srv/edge
+  # apps, data and sites: ops owns them, the kit group (ops + deploy) shares them, setgid keeps it so
+  - chown -R ops:kit /srv/apps /srv/data /srv/sites
+  - chmod 2770 /srv/apps /srv/data
+  - chmod 2775 /srv/sites
   - chmod 755 /srv/kit/infra/bin/kit /srv/kit/infra/bin/deploy
   - ln -sf /srv/kit/infra/bin/kit /usr/local/bin/kit
   # the edge: the private network every app joins, and Caddy on 80/443

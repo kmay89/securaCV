@@ -14,7 +14,7 @@ $0 for certificates (Let's Encrypt through Caddy). Nothing else recurs.
 ```
 /srv/kit/infra/           this directory, a sparse checkout of the repo (kit update = git pull)
 /srv/edge/                Caddy: compose.yml, Caddyfile, sites/<host>.caddy — one file per hostname
-/srv/apps/<name>/         one app: compose.yml, .env (0600), .tag (what is deployed)
+/srv/apps/<name>/         one app: compose.yml, .env (0640, ops:kit), .tag (what is deployed)
 /srv/data/<name>/         that app's data — the only thing on the box that matters
 /srv/sites/<host>/        a static site Caddy serves from disk (optional)
 ```
@@ -26,7 +26,8 @@ $0 for certificates (Let's Encrypt through Caddy). Nothing else recurs.
   `edge` network. Apps publish **no ports**; the firewall allows 22, 80, 443
   and nothing else. There is exactly one place TLS, headers and routing live.
 - **One container per app, one directory per app.** `compose.yml` says which
-  image; `.env` holds its secrets (mode 0600, never in git); `/srv/data/<name>`
+  image; `.env` holds its secrets (mode 0640, owner `ops`, group `kit` so the
+  deploy user can start it; never in git); `/srv/data/<name>`
   is its disk. Delete the directory and the app is gone; nothing else knows it.
 - **Images come from CI, not from the server.** The server never builds. CI
   publishes `ghcr.io/<owner>/<image>:<sha>` and `:latest`; a deploy is "pull
@@ -56,7 +57,7 @@ $0 for certificates (Let's Encrypt through Caddy). Nothing else recurs.
    keys only, unattended upgrades on, fail2ban on, Docker up, Caddy up.
 4. **Add the first app:**
    ```sh
-   kit app add backoffice          # copies the compose, makes /srv/data/backoffice and a 0600 .env from the example
+   kit app add backoffice          # copies the compose, makes /srv/data/backoffice and a 0640 .env from the example
    kit env backoffice              # opens the .env in $EDITOR: paste the real values
    kit site add ops.example.com backoffice:8787
    kit deploy backoffice latest    # pulls, starts, waits for healthy
@@ -123,8 +124,8 @@ rather than a hope.
   needs more than one box is the day to read about Kubernetes, not before;
   everything here (images from CI, one `.env` per app, `/healthz`) carries
   over unchanged.
-- **No secrets manager.** Secrets are files with mode 0600 on a box only you
-  can reach by key, plus the same values in a password manager. That is the
+- **No secrets manager.** Secrets are files two users can read (`ops` and
+  `deploy`, the `kit` group) on a box only you can reach by key, plus the same values in a password manager. That is the
   right size for one operator; the moment there are several, a vault earns
   its keep.
 - **No server-side backups of `/srv/data`.** Each app owns its backups: the
@@ -137,7 +138,13 @@ rather than a hope.
 SSH: keys only, root login off, a sudo user (`ops`) and a no-sudo deploy user
 (`deploy`) whose key is bound to one forced command. The deploy user is in
 the `docker` group, which is root-equivalent on the box — the forced command
-is what fences it, so never give that key a shell. Firewall: deny by default,
+is what fences it, so never give that key a shell. Both users share the `kit`
+group, which owns `/srv/apps` and `/srv/data` (setgid, mode 2770): `ops` makes
+an app, `deploy` reads its compose and `.env` and rewrites its `.tag`, and no
+other account on the box reads either. An app's data directory is handed to
+the uid its image runs as (the backoffice's `node`) by `kit deploy`, from
+inside a container, so the SQLite file is the process's own from the first
+write. Firewall: deny by default,
 22/80/443 in. Patches: unattended security upgrades with a 04:30 reboot when a
 kernel needs one. fail2ban watches sshd. Containers: no published ports,
 `no-new-privileges`, all capabilities dropped, memory and PID limits, logs
