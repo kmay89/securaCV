@@ -136,7 +136,7 @@ export function table(rows, cols, { empty = 'Nothing here.' } = {}) {
 export const pill = (s, cls = '') => `<span class="pill ${cls}">${e(String(s ?? '').replace(/_/g, ' '))}</span>`;
 export const statusPill = (s) => pill(s, /paid|open|active|ok|resolved|sent|shipped|delivered/.test(s) ? 'ok' : /fail|bad|past_due|overdue|urgent|declined/.test(s) ? 'bad' : /waiting|packed|queued|draft|monitoring/.test(s) ? 'warn' : '');
 
-export function field(name, label, { type = 'text', value = '', required = false, options = null, placeholder = '', rows = 0 } = {}) {
+export function field(name, label, { type = 'text', value = '', required = false, options = null, placeholder = '', rows = 0, inputmode = null } = {}) {
   const id = `f_${name}`;
   let input;
   if (options) input = `<select id="${id}" name="${e(name)}">${options.map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${e(v)}" ${String(v) === String(value) ? 'selected' : ''}>${e(l)}</option>`; }).join('')}</select>`;
@@ -144,7 +144,9 @@ export function field(name, label, { type = 'text', value = '', required = false
   else {
     // a phone opens the keyboard the field needs: digits for counts and money, a decimal pad for a scale reading,
     // no autocorrect or capitalization on serials, SKUs, tracking numbers and codes
-    const hint = type === 'number' ? 'inputmode="decimal"' : /^(cents|qty|delta|count|units|oz|zip|code|quantity|stock|cap|reorder_at|on_hand)$/.test(name) ? 'inputmode="numeric"' : type === 'email' ? 'inputmode="email" autocomplete="email" autocapitalize="none"' : /serial|sku|tracking|mac|token|slug|number|ref$/.test(name) ? 'autocapitalize="none" autocorrect="off" spellcheck="false"' : '';
+    // (a "code" is letters as often as digits — a discount code, a canned-reply key — so it gets the identifier
+    // treatment; a caller that knows better passes inputmode, as the login page's six-digit authenticator code does)
+    const hint = inputmode ? `inputmode="${e(inputmode)}"` : type === 'number' ? 'inputmode="decimal"' : /^(cents|qty|delta|count|units|oz|zip|quantity|stock|cap|reorder_at|on_hand)$/.test(name) ? 'inputmode="numeric"' : type === 'email' ? 'inputmode="email" autocomplete="email" autocapitalize="none"' : /serial|sku|tracking|mac|token|slug|number|code|ref$/.test(name) ? 'autocapitalize="none" autocorrect="off" spellcheck="false"' : '';
     input = `<input id="${id}" type="${type}" name="${e(name)}" value="${e(value)}" placeholder="${e(placeholder)}" ${required ? 'required' : ''} ${hint}>`;
   }
   return `<div><label for="${id}">${e(label)}</label>${input}</div>`;
