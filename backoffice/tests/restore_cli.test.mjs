@@ -52,7 +52,7 @@ test('restore --offsite in a fresh data directory restores the latest copy, a na
       assert.equal(settingOf(dbPath, 'marker'), 'latest-copy', 'the restored database holds the backup, not the pages the startup connection wrote');
       const r2 = await run('--offsite', older.name);
       assert.equal(r2.status, 0, r2.stderr + r2.stdout);
-      assert.match(r2.stdout, new RegExp(older.name.replace(/\./g, '\\.')), 'the output names the copy that was restored');
+      assert.ok(r2.stdout.includes(older.name), 'the output names the copy that was restored');
       assert.equal(settingOf(dbPath, 'marker'), 'older-copy', 'a named copy is the one restored');
       const r3 = await run('--offsite', 'backoffice-2020-01-01T00-00-00-000.db.enc');
       assert.notEqual(r3.status, 0, 'a name that is not off-site must fail');
