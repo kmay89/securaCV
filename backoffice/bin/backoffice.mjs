@@ -196,13 +196,18 @@ const main = async () => {
     }
     case 'backups': return out(listBackups(join(cfg.dataDir, 'backups')));
     case 'restore': {
-      if (flags.offsite) {   // the server died: pull the latest off-site copy back and put it in place
-        const got = await fetchOffsite(cfg, { name: args[0] || null });
-        try { const r = restore(got.path, flags.to || cfg.dbPath); return out({ ...r, from: got.source, encrypted: got.encrypted, note: 'start `backoffice serve` again; the replaced file is kept beside the database until you delete it' }); }
+      // This process opened the live database at startup (openDb above). Replacing the file under an open
+      // WAL connection lets the final close checkpoint the old pages over the restored copy — so the
+      // connection is closed first, and the file is replaced only after.
+      const dest = flags.to || cfg.dbPath; if (dest === cfg.dbPath) db.close();
+      if (flags.offsite) {   // the server died: pull the latest off-site copy back (or a named one) and put it in place
+        const name = typeof flags.offsite === 'string' ? flags.offsite : (args[0] || null);   // `--offsite <name>` parses as the flag's value
+        const got = await fetchOffsite(cfg, { name });
+        try { const r = restore(got.path, dest); return out({ ...r, from: got.source, encrypted: got.encrypted, note: 'start `backoffice serve` again; the replaced file is kept beside the database until you delete it' }); }
         finally { try { unlinkSync(got.path); } catch { /* gone */ } }
       }
       if (!args[0]) throw new Error('restore <backup file> [--to <db path>] | restore --offsite [<name>] — stop `serve` first');
-      const r = restore(args[0], flags.to || cfg.dbPath); return out({ ...r, note: 'start `backoffice serve` again; the replaced file is kept beside the database until you delete it' });
+      const r = restore(args[0], dest); return out({ ...r, note: 'start `backoffice serve` again; the replaced file is kept beside the database until you delete it' });
     }
     case 'doctor': {
       const h = doctor(db, cfg); const ic = (ok) => ok === true ? 'ok ' : ok === false ? '!! ' : '-- ';
@@ -331,4 +336,4 @@ function ask(q, hidden = false) {
   });
 }
 
-main().then(() => { if (cmd !== 'serve') db.close(); }).catch(err => { console.error(`error: ${err.message}`); process.exit(1); });
+main().then(() => { if (cmd !== 'serve') { try { db.close(); } catch { /* restore closed it first */ } } }).catch(err => { console.error(`error: ${err.message}`); process.exit(1); });
