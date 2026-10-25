@@ -402,3 +402,22 @@ the admin shows, `/api/snapshot` returns.
 The company is `data/backoffice.db`. Restore is `cp`. Leaving is `sqlite3
 backoffice.db .dump`, or the ledger/orders CSV exports — there is no export
 fee and no format that is ours alone.
+
+## On a phone and an iPad
+
+The admin is one HTML layout for every screen, and `tests/mobile.test.mjs`
+holds it to the rules that make it usable with a thumb, on every section
+and the detail pages a day's work lands on, at a phone's width and an
+iPad's: no page is wider than the screen (a wide table scrolls inside its
+own box), every navigation link, button and field is at least 40 px tall,
+every field is 16 px type or larger (iOS zooms the page when a smaller one
+is focused), no text is under 12 px, and a table of five or more columns
+folds into cards on a phone — the first named column leads, every other
+cell carries its own label — so nothing needs a sideways scroll to read.
+Fields open the keyboard they need (digits for counts and money, a decimal
+pad for a scale reading, no autocorrect on serials and tracking numbers).
+The pack and ship benches and the phone-scanner pages were built for a
+phone first; the rest follows these rules by construction, so a new page
+made from `layout()`, `table()` and `field()` passes without thought, and
+one that does not fails the test by name.
+
