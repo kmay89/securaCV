@@ -224,6 +224,41 @@ enrollment page uses; `tests/users.test.mjs` holds it to a reference encoder
 bit for bit), so a slip never carries a code the phone cannot read. They encode
 `BACKOFFICE_BASE_URL`, so set it to the address the phone reaches.
 
+### The storefront's server half
+
+The website is static; what it cannot know on its own it asks here, over
+four public routes (CORS to `SITE_ORIGIN`): `GET /store/catalog` (price,
+what is sellable now and how many, when the current batch closes and ships),
+`GET /store/estimate?zip=` (the sentence a shopper reads before paying:
+"Order by Sunday 11 pm · ships Tue, Oct 27 · arrives Oct 29–Oct 31"),
+`POST /store/checkout` (the cart → a hosted Stripe Checkout Session, the only
+place a card is ever typed) and `GET /store/session/:id` (what the thanks page
+shows once the webhook has recorded the order).
+
+- **Stock is not a number typed in `store.json`.** What is sellable now is the
+  batch cap (`stock` in `store.json`) minus what this batch has sold, and never
+  more than the shelf can build once the orders already paid but not yet
+  packed have taken their parts. A kit carrying `authorization: pending-fcc`
+  is refused at checkout, by name, whatever the site shows.
+- **The ship date is the batch cadence** — `BATCH_CLOSE_DAY` at
+  `BATCH_CLOSE_HOUR` in `OPERATOR_TZ`, shipping `BATCH_SHIP_DAY` (Sunday 11 pm
+  → Tuesday unset) — and **the arrival window is the same estimate** the
+  order page and the tracking mail use after shipping, counted from the ship
+  date. One method, before and after the sale. The Checkout Session carries
+  both on its shipping option, so Stripe's page says the same thing.
+- **The sale lands by webhook as before**; a site order also gets "We have
+  your order" with the batch, the ship date, the window and the status link.
+- **Tax.** `TAX_MODE=none` collects nothing, which is only right while you owe
+  sales tax nowhere; `TAX_MODE=stripe` turns on Stripe Tax (computed by the
+  shipping address at checkout, a per-transaction fee), which is the honest
+  setting from the first taxable sale. The books carry whatever Stripe
+  collected either way.
+- **Demo mode takes no payments**: `/store/checkout` answers 503 and the site
+  falls back to its own cart; the walkthrough drives `createCheckout` against
+  a stub Stripe instead. `tests/storefront.test.mjs` holds the cadence across
+  zone and weekday boundaries, ZIP → state, availability, every refusal, the
+  exact session Stripe is asked for, and the routes.
+
 ### The pack bench is a gate
 
 One or two people pack here, so the bench does not try to be a warehouse
