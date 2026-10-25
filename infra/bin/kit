@@ -23,6 +23,7 @@ kit — one server, many apps
   kit env <app>                           edit the app's .env (0640, group kit)
   kit deploy <app> [<tag>]                pull the tag (default: the one deployed, else latest), start, wait for healthy, else roll back
   kit run <app> <cmd…>                    run a command in the app's container
+  kit offline <app> <cmd…>                stop the app, run a command in a fresh container of it (same env, same data), start it again — for a restore
   kit site add <host> <app>:<port>|static  write /srv/edge/sites/<host>.caddy and reload the edge
   kit reload                              reload Caddy after editing a site file
   kit deploy-key                          make the CI deploy key (prints the private half ONCE and the known_hosts line)
@@ -128,6 +129,16 @@ cmd_deploy() {
 
 cmd_logs() { need_app "${1:-}"; local app="$1"; shift; docker logs --tail 200 "$@" "$app"; }
 cmd_run() { need_app "${1:-}"; local app="$1"; shift; [ $# -gt 0 ] || die "kit run <app> <cmd…>"; docker exec -it "$app" "$@"; }
+# A restore must not race the running process for the database file: stop it, run the command in a
+# throwaway container with the same env and volumes, then start it again whatever happened.
+cmd_offline() {
+  need_app "${1:-}"; local app="$1"; shift; [ $# -gt 0 ] || die "kit offline <app> <cmd…>"
+  local tag; tag="$(cat "$APPS/$app/.tag" 2>/dev/null || echo latest)"
+  echo "stopping $app"; TAG="$tag" compose "$app" stop
+  local rc=0; TAG="$tag" compose "$app" run --rm --no-deps "$app" "$@" || rc=$?
+  echo "starting $app"; TAG="$tag" compose "$app" up -d
+  return "$rc"
+}
 
 cmd_site_add() {
   local host="${1:-}" target="${2:-}"; [ -n "$host" ] && [ -n "$target" ] || die "kit site add <host> <app>:<port>|static"
@@ -161,6 +172,7 @@ case "${1:-help}" in
   env) shift; cmd_env "$@";;
   deploy) shift; cmd_deploy "$@";;
   run) shift; cmd_run "$@";;
+  offline) shift; cmd_offline "$@";;
   site) shift; case "${1:-}" in add) shift; cmd_site_add "$@";; *) die "kit site add <host> <app>:<port>|static";; esac;;
   reload) cmd_reload;;
   deploy-key) cmd_deploy_key;;

@@ -116,16 +116,30 @@ export async function uploadOffsite(cfg, path, { fetchImpl = fetch } = {}) {
   if (!ptr.ok) throw new Error(`off-site pointer PUT ${ptr.status}`);
   return { url: objectUrl(cfg, name), name, bytes: body.length, etag: head.headers.get('etag'), read_back: true, encrypted: sealed };
 }
+// Pull one off-site copy back to a private temp file: the one `latest.txt` points at, or a named
+// one (`backoffice-<stamp>.db[.enc]`, as `backoffice backups --offsite` would list it). A sealed copy
+// is opened with BACKUP_ENCRYPTION_KEY, and refused by name when the key is missing — the drill and
+// `restore --offsite` both come through here, so "the server died" and "the weekly proof" read the
+// same bytes the same way. The caller deletes the file.
+export const OFFSITE_NAME = /^backoffice-[0-9T-]+\.db(\.enc)?$/;
+export async function fetchOffsite(cfg, { name = null, fetchImpl = fetch, what = 'restore' } = {}) {
+  if (!offsiteConfigured(cfg)) throw new Error(`${what}: BACKUP_S3_URL / KEY / SECRET are not set — there is no off-site copy to fetch`);
+  if (!name) {
+    const ptr = await s3(cfg, 'GET', 'latest.txt', { fetchImpl }); if (!ptr.ok) throw new Error(`${what}: no latest.txt off-site (${ptr.status})`);
+    name = (await ptr.text()).trim();
+  }
+  if (!OFFSITE_NAME.test(name)) throw new Error(`${what}: bad off-site name ${JSON.stringify(name)}`);
+  const get = await s3(cfg, 'GET', name, { fetchImpl }); if (!get.ok) throw new Error(`${what}: GET ${name} ${get.status}`);
+  let bytes = Buffer.from(await get.arrayBuffer()); const encrypted = name.endsWith('.enc');
+  if (encrypted) { if (!cfg.backupEncryptionKey) throw new Error(`${what}: the off-site copy is sealed and BACKUP_ENCRYPTION_KEY is not set`); bytes = unseal(bytes, cfg.backupEncryptionKey); }
+  const path = join(tmpdir(), `${what}-${process.pid}-${name.replace(/\.enc$/, '')}`); writeFileSync(path, bytes, { mode: 0o600 });
+  return { path, name, source: objectUrl(cfg, name), encrypted, bytes: bytes.length };
+}
 // The drill: pull the latest copy back, open it, prove it. Nothing in the live database is touched.
 export async function restoreDrill(cfg, { fetchImpl = fetch, now = new Date(), localDir = null } = {}) {
   let path, source;
   if (offsiteConfigured(cfg)) {
-    const ptr = await s3(cfg, 'GET', 'latest.txt', { fetchImpl }); if (!ptr.ok) throw new Error(`drill: no latest.txt off-site (${ptr.status})`);
-    const name = (await ptr.text()).trim(); if (!/^backoffice-[0-9T-]+\.db(\.enc)?$/.test(name)) throw new Error(`drill: bad pointer ${JSON.stringify(name)}`);
-    const get = await s3(cfg, 'GET', name, { fetchImpl }); if (!get.ok) throw new Error(`drill: GET ${name} ${get.status}`);
-    let bytes = Buffer.from(await get.arrayBuffer());
-    if (name.endsWith('.enc')) { if (!cfg.backupEncryptionKey) throw new Error('drill: the off-site copy is sealed and BACKUP_ENCRYPTION_KEY is not set'); bytes = unseal(bytes, cfg.backupEncryptionKey); }
-    path = join(tmpdir(), `drill-${process.pid}-${name.replace(/\.enc$/, '')}`); writeFileSync(path, bytes, { mode: 0o600 }); source = objectUrl(cfg, name);
+    ({ path, source } = await fetchOffsite(cfg, { fetchImpl, what: 'drill' }));
   } else {
     const latest = listBackups(localDir)[0]; if (!latest) throw new Error('drill: no backup exists yet');
     path = join(localDir, latest.name); source = path;
