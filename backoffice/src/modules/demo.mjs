@@ -57,14 +57,14 @@ export const localBase = (cfg) => {
 
 export const DEMO_STORE = { mode: 'live', shipping_flat: 8, groups: [
   { id: 'Kits', products: [
-    { id: 'wap-kit', name: 'Canary WAP Kit', price: 69, radio: true, ship: { oz: 5, box: 'small' }, cogs: { devices: { 'canary-wap': 1 }, extra_usd: 9 } },
-    { id: 'wap-kit-outdoor', name: 'Canary WAP Kit — Outdoor', price: 84, radio: true, ship: { oz: 7, box: 'small' }, cogs: { devices: { 'canary-wap': 1 }, extra_usd: 21 } },
-    { id: 'vision-kit', name: 'Canary Vision Kit', price: 119, radio: true, ship: { oz: 6, box: 'small' }, cogs: { devices: { 'canary-vision': 1 }, extra_usd: 17 } } ] },
+    { id: 'wap-kit', stock: 10, name: 'Canary WAP Kit', price: 69, radio: true, ship: { oz: 5, box: 'small' }, cogs: { devices: { 'canary-wap': 1 }, extra_usd: 9 } },
+    { id: 'wap-kit-outdoor', stock: 6, name: 'Canary WAP Kit — Outdoor', price: 84, radio: true, ship: { oz: 7, box: 'small' }, cogs: { devices: { 'canary-wap': 1 }, extra_usd: 21 } },
+    { id: 'vision-kit', stock: 8, name: 'Canary Vision Kit', price: 119, radio: true, ship: { oz: 6, box: 'small' }, cogs: { devices: { 'canary-vision': 1 }, extra_usd: 17 } } ] },
   { id: 'Bundles', products: [
-    { id: 'witness-pair', name: 'Witness Pair — 2× Canary WAP', price: 129, radio: true, ship: { oz: 10, box: 'medium' }, cogs: { devices: { 'canary-wap': 2 }, extra_usd: 18 } } ] },
+    { id: 'witness-pair', stock: 5, name: 'Witness Pair — 2× Canary WAP', price: 129, radio: true, ship: { oz: 10, box: 'medium' }, cogs: { devices: { 'canary-wap': 2 }, extra_usd: 18 } } ] },
   { id: 'Printed enclosure sets', products: [
-    { id: 'wap-parts', name: 'WAP Enclosure Set', price: 15, radio: false, ship: { oz: 3, box: 'mailer' }, cogs: { devices: {}, extra_usd: 6.5 } },
-    { id: 'vision-parts', name: 'Vision Enclosure Set', price: 19, radio: false, ship: { oz: 4, box: 'mailer' }, cogs: { devices: {}, extra_usd: 8.5 } } ] } ] };
+    { id: 'wap-parts', stock: 15, name: 'WAP Enclosure Set', price: 15, radio: false, ship: { oz: 3, box: 'mailer' }, cogs: { devices: {}, extra_usd: 6.5 } },
+    { id: 'vision-parts', stock: 15, name: 'Vision Enclosure Set', price: 19, radio: false, ship: { oz: 4, box: 'mailer' }, cogs: { devices: {}, extra_usd: 8.5 } } ] } ] };
 export const DEMO_CATALOG = normalize(DEMO_STORE);
 // The website's shipping.json for the demo's SKUs (same boxes, same parcels, same tiers), so the
 // pack bench plans a real box without fetching anything.

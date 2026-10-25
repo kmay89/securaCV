@@ -99,10 +99,8 @@ to main. Pick one:
 
 | Where | Cost | How |
 |---|---|---|
-| Fly.io | free allowance | from `backoffice/`: `fly apps create <name>` then `fly deploy --config deploy/fly.toml --app <name>` (builds on Fly's remote builder; no local Docker) → `https://<name>.fly.dev` |
-| Fly.io, no terminal | free allowance | Fly dashboard → Account → Tokens → create one; add it to this repo as the secret `FLY_API_TOKEN`; Actions → "Backoffice demo → Fly.io" → Run workflow. It creates the app and a 1 GB data volume, deploys **one** machine on it, and redeploys on every merge that touches `backoffice/`. (One machine matters: two would be two databases, and a login on one is unknown to the other — the "every other page bounces to the login screen" symptom.) |
-| Render | free tier (sleeps when idle, ~30 s to wake) | New → Blueprint → this repo; `backoffice/deploy/render.yaml` is read automatically |
-| Any VPS with Docker | ~$4–6/month | point a DNS name at it, then `DEMO_HOST=demo.example.com docker compose -f backoffice/deploy/docker-compose.demo.yml up -d` (Caddy gets the certificate) |
+| **Your own server (the way we run it)** | ~$4–6/month for the box, everything else $0 | [`infra/`](../infra/README.md): one small VPS, Caddy at the edge, every app a container, deploys on merge. `kit app add backoffice`, `kit site add ops.example.com backoffice:8787`, `kit deploy backoffice latest`. The public demo is the same image as a second app (`backoffice-demo`) on its own hostname. |
+| Render | free tier (sleeps when idle, ~30 s to wake) | New → Blueprint → this repo; `backoffice/deploy/render.yaml` is read automatically (demo only: the free tier has no disk) |
 | A laptop, for a meeting | — | `docker run --rm -e BACKOFFICE_DEMO=1 -p 8787:8787 ghcr.io/kmay89/securacv-backoffice` |
 
 The login page shows the demo credentials, so anyone with the link can
@@ -225,6 +223,41 @@ The codes are made here (`src/qr.mjs`, the same encoder the authenticator
 enrollment page uses; `tests/users.test.mjs` holds it to a reference encoder
 bit for bit), so a slip never carries a code the phone cannot read. They encode
 `BACKOFFICE_BASE_URL`, so set it to the address the phone reaches.
+
+### The storefront's server half
+
+The website is static; what it cannot know on its own it asks here, over
+four public routes (CORS to `SITE_ORIGIN`): `GET /store/catalog` (price,
+what is sellable now and how many, when the current batch closes and ships),
+`GET /store/estimate?zip=` (the sentence a shopper reads before paying:
+"Order by Sunday 11 pm · ships Tue, Oct 27 · arrives Oct 29–Oct 31"),
+`POST /store/checkout` (the cart → a hosted Stripe Checkout Session, the only
+place a card is ever typed) and `GET /store/session/:id` (what the thanks page
+shows once the webhook has recorded the order).
+
+- **Stock is not a number typed in `store.json`.** What is sellable now is the
+  batch cap (`stock` in `store.json`) minus what this batch has sold, and never
+  more than the shelf can build once the orders already paid but not yet
+  packed have taken their parts. A kit carrying `authorization: pending-fcc`
+  is refused at checkout, by name, whatever the site shows.
+- **The ship date is the batch cadence** — `BATCH_CLOSE_DAY` at
+  `BATCH_CLOSE_HOUR` in `OPERATOR_TZ`, shipping `BATCH_SHIP_DAY` (Sunday 11 pm
+  → Tuesday unset) — and **the arrival window is the same estimate** the
+  order page and the tracking mail use after shipping, counted from the ship
+  date. One method, before and after the sale. The Checkout Session carries
+  both on its shipping option, so Stripe's page says the same thing.
+- **The sale lands by webhook as before**; a site order also gets "We have
+  your order" with the batch, the ship date, the window and the status link.
+- **Tax.** `TAX_MODE=none` collects nothing, which is only right while you owe
+  sales tax nowhere; `TAX_MODE=stripe` turns on Stripe Tax (computed by the
+  shipping address at checkout, a per-transaction fee), which is the honest
+  setting from the first taxable sale. The books carry whatever Stripe
+  collected either way.
+- **Demo mode takes no payments**: `/store/checkout` answers 503 and the site
+  falls back to its own cart; the walkthrough drives `createCheckout` against
+  a stub Stripe instead. `tests/storefront.test.mjs` holds the cadence across
+  zone and weekday boundaries, ZIP → state, availability, every refusal, the
+  exact session Stripe is asked for, and the routes.
 
 ### The pack bench is a gate
 

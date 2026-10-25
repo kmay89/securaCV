@@ -31,6 +31,8 @@ import { exportContact } from './privacy.mjs';
 import { runAutomations, seedAutomations } from './automations.mjs';
 import { doctor } from './health.mjs';
 import { customerStats } from './contacts.mjs';
+import { createCheckout, estimateForZip, storefrontCatalog } from './storefront.mjs';
+import { normalize } from './catalog.mjs';
 
 // The one customer. A placeholder name on a reserved domain, like everything in the demo.
 export const FIRST = { email: 'first.customer@customer.example.test', name: 'First Customer', line1: '1 Example Lane', city: 'Madison', state: 'WI', zip: '53703' };
@@ -138,16 +140,29 @@ export const STEPS = [
         checks: [check('the form was accepted', r.status < 300, String(r.status)), check('a confirmation mail is queued with a link', !!link), check('no consent until the click', before === 0), check('the click confirms consent', after?.consent_marketing === 1), check('the consent is audited', !!db.get("SELECT 1 FROM audit_log WHERE action = 'contact.consent'"))] };
     } },
 
-  { id: 'order', title: 'They buy: Checkout completes', tell: 'Stripe\'s signed checkout.session.completed webhook arrives. The order is recorded once, the contact becomes a customer, the sale is on the books. Stripe\'s retry of the same event is applied once.',
+  { id: 'order', title: 'They buy: the cart becomes a Checkout Session, Stripe completes it', tell: 'The site asks for the estimate at their ZIP, then sends the cart here; a hosted Checkout Session is created with the batch\'s ship date and the arrival window as Stripe\'s own delivery estimate (Stripe is stood in for by a stub). Stripe\'s signed checkout.session.completed webhook then records the order once — its retry is applied once too — the customer gets "we have it", and the sale is on the books.',
     run: async (ctx) => {
-      const { db, state } = ctx; const kit = DEMO_CATALOG.products.get('wap-kit');
-      const ev = checkoutEvent('0001', { ...FIRST, items: [{ sku: 'wap-kit', name: kit.name, qty: 1, unit_cents: kit.price_cents }], subtotal: kit.price_cents, shipping: 800, tax: Math.round(kit.price_cents * 0.055) });
+      const { db, cfg, state } = ctx; const kit = DEMO_CATALOG.products.get('wap-kit');
+      const est = estimateForZip(FIRST.zip, { cfg }); const cat = storefrontCatalog(db, DEMO_CATALOG, { cfg });
+      const before = cat.products.find(p => p.sku === 'wap-kit');
+      // Stripe, stood in: the stub records what was asked and answers a session, as the API would
+      let asked = null; const stripe = async (url, init) => { asked = { url, body: Object.fromEntries(new URLSearchParams(init.body)) }; return { ok: true, json: async () => ({ id: 'cs_first_0001', url: 'https://checkout.stripe.com/c/pay/cs_first_0001' }) }; };
+      const co = await createCheckout(db, { ...cfg, stripeApiKey: 'sk_test_synthetic' }, DEMO_CATALOG, { items: [{ sku: 'wap-kit', qty: 1 }], zip: FIRST.zip, email: FIRST.email }, { fetchImpl: stripe });
+      // the store's FCC gate, on a catalog that carries one (the demo's own does not model authorization)
+      const gated = normalize({ mode: 'live', shipping_flat: 8, groups: [{ products: [{ id: 'vision-kit', name: 'Canary Vision Kit', price: 119, authorization: 'pending-fcc' }] }] });
+      let refusedFcc = ''; try { await createCheckout(db, { ...cfg, stripeApiKey: 'sk_test_synthetic' }, gated, { items: [{ sku: 'vision-kit', qty: 1 }] }, { fetchImpl: stripe }); } catch (err) { refusedFcc = err.message; }
+      const ev = checkoutEvent('0001', { ...FIRST, items: [{ sku: 'wap-kit', name: kit.name, qty: 1, unit_cents: kit.price_cents }], subtotal: kit.price_cents, shipping: 800, tax: 0 });
       const first = await postWebhook(ctx, ev); const again = await postWebhook(ctx, ev);
       const o = db.get('SELECT * FROM orders ORDER BY id DESC LIMIT 1'); state.order = o?.number;
       const items = o ? db.all('SELECT sku, qty FROM order_items WHERE order_id = ?', o.id) : []; const tb = trialBalance(db); const cs = o?.contact_id ? customerStats(db, o.contact_id) : null;
-      return { facts: { order: o?.number, total: o ? money(o.total_cents) : null, items: items.map(i => `${i.qty}× ${i.sku}`).join(', '), first_delivery: first.status, redelivery: `${again.status} ${again.duplicate ? 'duplicate' : JSON.stringify(again).slice(0, 60)}` },
-        links: [['The order', o ? `/orders/${o.id}` : '/orders'], ['Pack bench', o ? `/pack?order=${o.id}` : '/pack'], ['Books', '/books']],
-        checks: [check('the webhook was accepted', first.status === 200, String(first.status)), check('one order, paid', !!o && o.status === 'paid' && db.get('SELECT COUNT(*) n FROM orders').n === 1), check('the line is the kit', items.length === 1 && items[0].sku === 'wap-kit' && items[0].qty === 1), check('the same event twice is one order', db.get('SELECT COUNT(*) n FROM orders').n === 1 && again.status === 200), check('the customer has one order', cs?.orders === 1), check('books balanced', tb.balanced)] };
+      const mail = db.get("SELECT subject, body_text FROM mail_outbox WHERE to_addr = ? AND subject LIKE 'We have your%' ORDER BY id DESC LIMIT 1", FIRST.email);
+      const after = storefrontCatalog(db, DEMO_CATALOG, { cfg }).products.find(p => p.sku === 'wap-kit');
+      return { facts: { estimate: est.label, available_before: before?.available, checkout_url: co.url, shipping_option: asked?.body['shipping_options[0][shipping_rate_data][display_name]'], delivery_estimate_days: `${asked?.body['shipping_options[0][shipping_rate_data][delivery_estimate][minimum][value]']}–${asked?.body['shipping_options[0][shipping_rate_data][delivery_estimate][maximum][value]']}`, fcc_refusal: refusedFcc.slice(0, 80), order: o?.number, total: o ? money(o.total_cents) : null, first_delivery: first.status, redelivery: `${again.status} ${again.duplicate ? 'duplicate' : ''}`, confirmation_mail: mail?.subject || '(none)', available_after: after?.available },
+        links: [['The order', o ? `/orders/${o.id}` : '/orders'], ['Pack bench', o ? `/pack?order=${o.id}` : '/pack'], ['Books', '/books'], ['Mail', '/mail']],
+        checks: [check('the estimate names the ship date and the arrival window', !!est.delivers && /ships .* arrives/.test(est.label), est.label), check('the session carried the kit as a line with its sku', asked?.body['line_items[0][price_data][product_data][metadata][sku]'] === 'wap-kit' && asked?.body['line_items[0][quantity]'] === '1'),
+          check('the shipping option carries the ship date and the delivery estimate', /ships/.test(asked?.body['shipping_options[0][shipping_rate_data][display_name]'] || '') && asked?.body['shipping_options[0][shipping_rate_data][delivery_estimate][minimum][unit]'] === 'business_day'), check('the success URL carries the session id back to the site', /session_id=\{CHECKOUT_SESSION_ID\}/.test(asked?.body.success_url || '')),
+          check('a kit pending FCC authorization is refused at checkout', /not for sale until its FCC authorization/.test(refusedFcc), refusedFcc), check('the webhook was accepted', first.status === 200, String(first.status)), check('one order, paid', !!o && o.status === 'paid' && db.get('SELECT COUNT(*) n FROM orders').n === 1), check('the line is the kit', items.length === 1 && items[0].sku === 'wap-kit' && items[0].qty === 1),
+          check('the same event twice is one order', db.get('SELECT COUNT(*) n FROM orders').n === 1 && again.status === 200), check('the customer has one order', cs?.orders === 1), check('"we have your order" is queued with the ship date and the window', !!mail && mail.body_text.includes(est.ships.ships_label) && mail.body_text.includes('/o/'), mail?.body_text?.slice(0, 80)), check('the batch has one fewer to sell', before?.available != null && after?.available === before.available - 1, `${before?.available} → ${after?.available}`), check('books balanced', tb.balanced)] };
     } },
 
   { id: 'pack', title: 'Packed at the bench', tell: 'The bench refuses an unticked line, then the board is scanned in, every line ticked, the box weighed, and the pack goes through: parts leave the shelf, the plan is frozen, the timeline says who checked what.',

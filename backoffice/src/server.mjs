@@ -12,6 +12,7 @@ import { actorStore, nowIso } from './db.mjs';
 import { registerUsers } from './admin_users.mjs';
 import { loadCatalog, loadShipping } from './modules/catalog.mjs';
 import { verifyStripeSignature, eventToOrder, fetchLineItems, resolveDiscountCode } from './modules/stripe.mjs';
+import { storefrontCatalog, estimateForZip, createCheckout, sessionStatus, StoreError } from './modules/storefront.mjs';
 import { recordOrder, refund, orderByNumber, transition, listOrders, timeline, addNote, setTags, batches, statusCounts } from './modules/orders.mjs';
 import { listCustomers, contactById, customerStats, setContactTags } from './modules/contacts.mjs';
 import { listDiscounts, createDiscount, setDiscountStatus, evaluate as evaluateDiscount } from './modules/discounts.mjs';
@@ -122,6 +123,21 @@ export function createApp({ db, cfg }) {
     json(c.res, out, 200, corsHeaders(cfg));
   }, { public: true });
   router.add('OPTIONS', '/forms/:kind', (c) => { c.res.writeHead(204, corsHeaders(cfg)); c.res.end(); }, { public: true });
+
+  // ---------- the storefront's server half (storefront.mjs): the live catalog, the estimate before
+  // paying, the hosted Checkout Session, and what the thanks page shows. Public, CORS to the site.
+  const store = (fn) => async (c) => { try { await fn(c); } catch (err) { if (err instanceof StoreError) throw new HttpError(err.status, err.message); throw err; } };
+  router.get('/store/catalog', store(async (c) => { const cat = await app.catalog().catch(() => null); if (!cat) throw new HttpError(503, 'the catalog is not loaded'); json(c.res, storefrontCatalog(db, cat, { cfg }), 200, { ...corsHeaders(cfg), 'Cache-Control': 'public, max-age=60' }); }), { public: true });
+  router.get('/store/estimate', store(async (c) => { json(c.res, estimateForZip(c.query.get('zip') || '', { cfg }), 200, { ...corsHeaders(cfg), 'Cache-Control': 'public, max-age=300' }); }), { public: true });
+  router.post('/store/checkout', store(async (c) => {
+    if (!app.limiter.allow(`store:${clientIp(c.req)}`)) throw new HttpError(429, 'slow down');
+    if (cfg.demo) throw new HttpError(503, 'the demo takes no payments — the site falls back to its own cart');
+    const cat = await app.catalog().catch(() => null); if (!cat) throw new HttpError(503, 'the catalog is not loaded');
+    const r = await createCheckout(db, cfg, cat, { items: c.body?.items, zip: c.body?.zip, email: c.body?.email }, { fetchImpl: app.fetchImpl || fetch });
+    json(c.res, { url: r.url, id: r.id, ships: r.ships, delivers: r.delivers }, 200, corsHeaders(cfg));
+  }), { public: true });
+  router.get('/store/session/:id', store(async (c) => { json(c.res, sessionStatus(db, cfg, c.params.id), 200, { ...corsHeaders(cfg), 'Cache-Control': 'private, no-store' }); }), { public: true });
+  for (const p of ['/store/catalog', '/store/estimate', '/store/checkout', '/store/session/:id']) router.add('OPTIONS', p, (c) => { c.res.writeHead(204, corsHeaders(cfg)); c.res.end(); }, { public: true });
 
   // ---------- auth
   router.get('/login', (c) => html(c.res, loginPage(cfg, c.query.get('err'), hasOperator(db), c.query.get('ok'), cfg.demo ? { password: DEMO_PASSWORD, code: totp(DEMO_TOTP_SECRET), email: c.query.get('as') || DEMO_USERS[0].email, users: DEMO_USERS } : null)));
@@ -256,6 +272,12 @@ export async function applyStripeEvent(app, m, event = null) {
     if (!m.line_items_present) { try { const items = await fetchLineItems(cfg, m.external_id, { fetchImpl: app.fetchImpl || fetch }); if (items) m.items = items; } catch (e) { db.audit('stripe', 'order.line_items.failed', 'order', m.external_id, { error: String(e.message || e) }); } }
     if (m.discount_code && /^promo_|^[A-Za-z0-9]{8,}$/.test(m.discount_code) && !db.get('SELECT code FROM discounts WHERE code = ?', m.discount_code)) { try { m.discount_code = await resolveDiscountCode(cfg, m.discount_code, { fetchImpl: app.fetchImpl || fetch }); } catch { /* the id stays */ } }
     const { order, created } = recordOrder(db, m, { catalog, actor: 'stripe' });
+    if (created && order.email && order.items.length) {
+      // "We have it": the order, the batch it ships in and the arrival window — the same estimate the store showed before paying.
+      const est = estimateForZip(order.ship_zip, { cfg }); const { enqueue, fill } = await import('./modules/mail.mjs'); const { orderStatusUrl } = await import('./modules/delivery.mjs');
+      enqueue(db, { to: order.email, subject: `We have your ${cfg.product || 'SecuraCV'} order ${order.number}`, kind: 'transactional', ref: `order:${order.number}`, contactId: order.contact_id,
+        text: fill(ORDER_TPL, { name: order.ship_name || 'there', number: order.number, items: order.items.map(i => `${i.qty}× ${i.name}`).join('\n'), ships: est.ships.ships_label, closes: est.ships.closes_label, arrives: est.delivers ? est.delivers.label : 'a few business days after it ships', status_url: orderStatusUrl(cfg, order), company: cfg.company || 'Errer Labs', support: cfg.supportAddr || '' }) });
+    }
     if (created && order.currency !== 'usd') await raiseException(db, cfg, `currency:${order.number}`, `orders [currency]: ${order.number} is in ${order.currency.toUpperCase()}`, `Stripe charged ${order.currency.toUpperCase()} for ${order.number}; the books and the sales-tax table count every order as USD cents. Check the Payment Link's currency, and correct the ledger by hand if this was real: ${cfg.baseUrl}/orders/${order.id}`);
     if (created && !order.items.length) await raiseException(db, cfg, `stripe:line-items:${order.number}`, `orders [no line items]: ${order.number}`, `Stripe's webhook carried no line_items for ${m.external_id} and they could not be fetched${cfg.stripeApiKey ? '' : ' (STRIPE_API_KEY is not set)'}. The order is recorded with no items and cannot be packed until they are added — see ${cfg.baseUrl}/orders/${order.id}.`);
     return { order: order.number, created, items: order.items.length };
@@ -299,7 +321,7 @@ export function safeLocalPath(referer) {
   return /^\/(?!\/)[A-Za-z0-9/._~-]*$/.test(u.pathname) ? u.pathname : null;
 }
 
-const corsHeaders = (cfg) => ({ 'Access-Control-Allow-Origin': cfg.siteOrigin, 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type', Vary: 'Origin' });
+const corsHeaders = (cfg) => ({ 'Access-Control-Allow-Origin': cfg.siteOrigin, 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type', Vary: 'Origin' });
 
 const API_INDEX = ['GET /api/snapshot', 'GET /api/analytics?days=7|30|90|365', 'GET /api/search?q=', 'GET /api/orders?status=&batch=&q=&tag=&from=&to=&discount=&sku=', 'GET /api/orders/:number', 'POST /api/orders {…, discount_code, tags}', 'POST /api/orders/:number/transition {to, carrier, tracking}', 'POST /api/orders/:number/refund {cents, reason}',
   'GET /api/orders/:number/events', 'POST /api/orders/:number/note {body}', 'POST /api/orders/:number/tags {tags}', 'GET /api/batches', 'GET /api/customers?q=&tag=&segment=&sort=', 'GET /api/customers/:id', 'POST /api/customers/:id/tags {tags}',
@@ -348,3 +370,19 @@ function invoicePage(cfg, inv) {
 <tfoot><tr><td colspan="3" class="num">Subtotal</td><td class="num">${money(inv.subtotal_cents)}</td></tr><tr><td colspan="3" class="num">Shipping</td><td class="num">${money(inv.shipping_cents)}</td></tr><tr><td colspan="3" class="num">Tax</td><td class="num">${money(inv.tax_cents)}</td></tr><tr><td colspan="3" class="num"><b>Total (USD)</b></td><td class="num"><b>${money(inv.total_cents)}</b></td></tr></tfoot></table>
 <p>${e(inv.notes || '')}</p><p class="muted">Pay by ACH or check to the remittance details ${cfg.remittance ? 'below' : 'in the covering email'}.</p>${cfg.remittance ? `<pre>${e(cfg.remittance)}</pre>` : ''}<p class="muted">Print this page for a PDF.</p>` });
 }
+
+const ORDER_TPL = `Hi {{name}},
+
+We have your order {{number}}:
+
+{{items}}
+
+It goes out in the batch that closes {{closes}} and ships {{ships}}; expect it {{arrives}} — an estimate, not a promise. You'll get the tracking number the day it ships.
+
+Where it is, any time: {{status_url}}
+
+Anything wrong, missing or broken: reply to this mail. We fix; we don't ask you to send things back.
+
+— {{company}}
+{{support}}
+`;

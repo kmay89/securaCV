@@ -34,6 +34,11 @@ export function loadConfig(overrides = {}) {
     operatorEmail: env('OPERATOR_EMAIL', env('SUPPORT_ADDR', '')),
     tz: env('OPERATOR_TZ', 'UTC'),                                     // every time the admin shows, the digest hour, campaign scheduling
     shipFromState: env('SHIP_FROM_STATE', 'MA'),                        // the delivery estimate counts from here
+    batchCloseDay: Number(env('BATCH_CLOSE_DAY', '0')),                 // the batch cadence the store promises: orders in by this weekday (0 = Sunday)…
+    batchCloseHour: Number(env('BATCH_CLOSE_HOUR', '23')),              // …at this hour (operator time, 23 = 11 pm)…
+    batchShipDay: Number(env('BATCH_SHIP_DAY', '2')),                   // …ship on this weekday (2 = Tuesday)
+    taxMode: env('TAX_MODE', 'none'),                                   // none | stripe — see README "Tax"
+    checkoutSuccessPath: env('CHECKOUT_SUCCESS_PATH', '/store/thanks'), // on the website, where Stripe sends a paid shopper
     uspsClientId: env('USPS_CLIENT_ID', ''), uspsClientSecret: env('USPS_CLIENT_SECRET', ''), uspsApiBase: env('USPS_API_BASE', 'https://apis.usps.com'),       // the morning digest goes here
     digestHour: Number(env('DIGEST_HOUR', '7')),                       // UTC hour the digest is sent
     secure: env('BACKOFFICE_BASE_URL', '').startsWith('https://'),

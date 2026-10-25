@@ -1,0 +1,26 @@
+# The edge: Caddy owns :80 and :443, gets certificates by itself, and forwards
+# each hostname in sites/*.caddy to one container on the private `edge`
+# network. Apps publish no ports; this is the only thing that does.
+services:
+  caddy:
+    image: caddy:2
+    container_name: edge
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in /srv/edge/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/sites:ro
+      - /srv/sites:/srv/sites:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [edge]
+    security_opt: [no-new-privileges:true]
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+volumes:
+  caddy-data:
+  caddy-config:
+networks:
+  edge:
+    external: true

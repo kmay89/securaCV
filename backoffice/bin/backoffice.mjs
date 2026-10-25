@@ -48,6 +48,9 @@ const flags = {}; const args = [];
 for (let i = 0; i < rest.length; i++) { const a = rest[i]; if (a.startsWith('--')) { const [k, v] = a.slice(2).split('='); flags[k] = v ?? (rest[i + 1] && !rest[i + 1].startsWith('--') ? rest[++i] : true); } else args.push(a); }
 const out = (x) => console.log(typeof x === 'string' ? x : JSON.stringify(x, null, 2));
 const cfg = loadConfig();
+// The walkthrough is a demo by construction: createApp reads cfg.demo (the demo catalog and
+// shipping, the demo webhook secret, every live integration off), so it is decided before the app exists.
+if (cmd === 'first-order') cfg.demo = true;
 const db = openDb(cfg.dbPath);
 const app = createApp({ db, cfg });
 
