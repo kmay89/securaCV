@@ -913,6 +913,19 @@ Arduino-framework build. No other firmware tree (canary-wap,
 canary-sense, canary-vision, canary-display, ...) reports `key_at_rest`
 yet.
 
+The canary-wap's stored MQTT broker password sits in NVS the same way, as
+plain bytes (no canary-wap build enables NVS encryption, and its partition
+table has no key partition for it), so the same physical access reads it.
+While it is stored it is also in RAM: in the bridge's active settings from
+their first load at boot, whether the bridge is on or not, in the MQTT
+client while one is open, and on the HTTP task's stack whenever a handler
+reads the settings row, the public `GET /api/fleet` among them. No handler
+wipes its copy, by decision (sweep F349): a wipe in one handler would remove
+none of the copies a reader of the device's memory or flash would take. The
+firmware makes no RAM-residue promise for a secret that lives as long as the
+device runs; the stack wipes it does keep (the SoftAP passphrase's) are
+hygiene where a wipe costs one line, not a guarantee.
+
 **What key recovery gets an attacker.** They can sign new records as that
 device. From that point on, a chain they produce is cryptographically
 indistinguishable from one the real device produced.

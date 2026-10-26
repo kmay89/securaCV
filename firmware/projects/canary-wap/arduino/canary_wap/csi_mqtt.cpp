@@ -2457,7 +2457,14 @@ esp_err_t handle_config_post(httpd_req_t* req) {
   Config c;
   config_load(&c);
   /* What NVS holds before any field is applied: move_needs_password()
-   * compares the destination the body leaves against it. */
+   * compares the destination the body leaves against it. Neither copy, nor
+   * buf below, nor the heap body buffer, is wiped on return, by decision
+   * (sweep F349): while the row holds a broker password it also sits in RAM
+   * in s_active_cfg from the bridge's first settings load at boot, enabled
+   * or not, and in the esp-mqtt client while one is open, other readers of
+   * the row (GET /api/fleet among them) load it onto this task's stack too,
+   * and NVS holds it in plain bytes, so a wipe here would remove no copy a
+   * reader of this device's memory or flash would take. */
   const Config before = c;
 
   json_extract_bool  (body, "\"enabled\"",   &c.enabled);

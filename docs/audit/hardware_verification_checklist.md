@@ -3242,6 +3242,53 @@ the compile is CI's; nothing here ran on a device or in a browser. Owner: U1.
     `docs/audit/repro/F341/flagship-receipt/`; step 7:
     `docs/audit/repro/F340/refused-token/`).
 
+## canary-wap after a failed provisioning (F336) — on-device verification
+
+Code: `provision_device()`, the `if (!provision_device())` block in
+`setup()`, `resolve_ap_password()`, `wifi_init_provisioning()`,
+`ble_improv_door_should_open()` and `factory_reset_by_hold()` in
+`canary_wap.ino`. Nothing here is host-tested: no host harness compiles
+`setup()` or the radio. The release and debug lines compile in CI (the FULL
+legs and the DEV profile gate). Expected values are from the code as read;
+this row is what decides them. Owner: U1.
+
+- [ ] **A release WAP whose settings storage refuses its identity serves no web page, says so, and recovers with a clean install**
+  - Setup: a canary-wap board and the `canary-wap-default` image; ESP-IDF's
+    `nvs_partition_gen.py` and `esptool.py`; a serial monitor (either
+    flasher's console); a phone with the SecuraCV app (or any Improv
+    client) and a Wi-Fi scanner app; a laptop with `curl` and `dns-sd` (or
+    `avahi-browse`). Two images for the `nvs` partition (`0x9000`, size
+    `0x5000`, `default_8MB.csv`): (a) a `filler` namespace of blobs that
+    leaves no room for another namespace (the key store's session cannot
+    open), and (b) a `securacv` namespace holding a 32-byte `privkey` and no
+    `api_tkn`, plus filler so the token's put is refused.
+  - Repro: for each image, flash the release image, `esptool.py write_flash
+    0x9000 <image>`, and reset with the console open. Read the console.
+    Scan the air for two minutes and record every network the board's MAC
+    broadcasts, its security, and whether a client that joins gets an
+    address. `curl -m 5` ports 80 and 443 on every address the board holds.
+    On image (b), open the app's Bluetooth setup door and give it the home
+    Wi-Fi; record what the phone shows, whether the board appears in the
+    router's client list, what `dns-sd -B _securacv._tcp` lists, and whether
+    port 80 answers on the board's home address. Then hold BOOT 10 s,
+    release, and record whether the next boot provisions. Last, run a clean
+    install from a flasher and record whether that boot provisions.
+  - Expected: the console prints `[!!] PROVISIONING FAILED - storage refused
+    the identity; no web server this boot. Reflash with a clean install
+    (full erase)` and does not halt; nothing answers on 80 or 443 on any
+    address. No network named for the Canary under its own key is
+    broadcast. Because `WiFi.mode(WIFI_AP_STA)` runs before the fail-closed
+    return, the radio may broadcast an access point the firmware never
+    configured (IDF's default open `ESP_XXXXXX`, since these images leave the
+    driver no stored config). Record its name, security and what answers on
+    it: DHCP alone is the expected worst case, and anything more is a
+    finding. On image (b) the setup door's join may complete and mDNS may
+    advertise `_securacv._tcp` on port 80 with nothing behind it; record what
+    the phone says when its claim fails. The BOOT hold keeps the key and token
+    rows, so its next boot may or may not provision: record which. The clean
+    install provisions, under a new device id.
+  - Artifact: `docs/audit/repro/F336/failed-provisioning/`.
+
 ## Canary Nightlight: side turns, the tumble's Startle, the hop (F250, F242, F244, F279, F285) — on-device verification
 
 Code: `firmware/projects/canary-display/src/hal/display_1in47.cpp`

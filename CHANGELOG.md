@@ -1,6 +1,29 @@
 # Changelog
 
 ## [Unreleased]
+### canary-wap: after setup the API token alone moves its network, reboots it, re-keys its vault and confirms a pairing, and the sign-in checks a pasted token by itself; a failed provisioning says what the unit does (sweep F333, F334, F335, F336, F345, F346, F348, F349, F361, #<PR>)
+
+- **canary-wap: a failed provisioning says what the unit does (sweep F336,
+  decision).** `setup()` no longer prints "HALTING" (it never halted) or says
+  it still serves HTTP. A release build prints `[!!] PROVISIONING FAILED -
+  storage refused the identity; no web server this boot. Reflash with a clean
+  install (full erase)`; a debug build says its access point may still start
+  on a debug key it does not print. No behavior change: the loop keeps the
+  serial console, Bluetooth and the BOOT hold, and a release build starts no
+  web server. A stored identity key that cannot be read still halts first,
+  with its own line (F360). What the radio broadcasts in that state is a new
+  U1 row.
+- **canary-wap: where the MQTT broker password lives is written down (sweep
+  F349, decision; F348 kept).** `docs/security/SECURITY_MODEL.md` says the
+  stored broker password is plain bytes in NVS and, while it is stored, stays
+  in RAM, that no handler wipes its copy, by decision, and that the firmware
+  makes no RAM-residue promise for a secret that lives as long as the device
+  runs. The broker gate keeps its split: the route check holds its shape,
+  `test_mqtt_reinit` what it decides (11 chosen mutations of its body pass the
+  first and fail the second). The camera's hub re-point stays outside that
+  gate, as F333 decided; F333's Forget clears the stored login instead.
+  Comment and docs only.
+
 ### The backoffice closes the Shopify gaps (backoffice 0.5.0)
 
 - Labels bought from the ship bench (Shippo), the tracking and postage written

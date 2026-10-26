@@ -12585,9 +12585,19 @@ void setup() {
       while (true) { delay(1000); }
     }
     Serial.println();
-    Serial.println("[!!] PROVISIONING FAILED - HALTING");
-    // Don't infinite loop - just log and continue with limited function
-    // The device should still serve HTTP so user can diagnose
+    // No halt (sweep F336): the loop keeps the serial console, Bluetooth and
+    // the BOOT hold. start_http_server() below runs only behind
+    // start_wifi_ap(), and a release build's resolve_ap_password() refuses an
+    // identity provisioning did not finish, so a release build serves no web
+    // page this boot. Whether to halt instead is F58's call; what else still
+    // runs is in the ledger's F336. Both lines keep the "[!!] PROVISIONING
+    // FAILED" prefix and name no credential word, so a flasher's boot
+    // diagnosis can key on the prefix and its report scrubber keeps the line.
+#if SECURACV_RELEASE_BUILD
+    Serial.println("[!!] PROVISIONING FAILED - storage refused the identity; no web server this boot. Reflash with a clean install (full erase)");
+#else
+    Serial.println("[!!] PROVISIONING FAILED - debug build: the AP may still start, on a random debug key this log does not show");
+#endif
     log_health(SCV_LOG_CRITICAL, SCV_CAT_CRYPTO, "Provisioning failed", nullptr);
   }
 

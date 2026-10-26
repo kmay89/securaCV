@@ -1766,7 +1766,7 @@ so — see D2 below.)
   decide whether setting or clearing the key takes a bearer, or stays posture
   and `THREAT_MODEL.md` says so. From code; not probed. Found by the F289
   follow-up (#1832).
-- [ ] **F336 [decision] canary-wap starts its servers after its provisioning
+- [x] **F336 [decision] canary-wap starts its servers after its provisioning
   failed.** `provision_device()` returns before it mints the bearer token when
   `generate_keypair()` or `nvs_store_key()` fails, and `setup()` carries on to
   the HTTP servers. Since F331 no `api_auth.h` gate takes the empty token; a
@@ -1775,6 +1775,62 @@ so — see D2 below.)
   serves. Decide whether `setup()` should stop, or serve only a diagnostic,
   after a failed provisioning. From code; not probed. Found by the F289
   follow-up's review (#1832).
+  *Decided (2026-10-19, under the maintainer's instruction to fix the
+  remaining items in best engineering practice): keep the posture, with no
+  halt and no diagnostic server, and make `setup()` say what it does.* Read
+  against the code at 3e593a01, the mechanism above is partly wrong.
+  `generate_keypair()` cannot fail, so every real failure is the settings
+  storage. (Since F360 a stored key that cannot be read or used halts
+  `setup()` first, with its own line; what follows is every other failure.) `nvs_store_key()` answers false only when the `securacv` session
+  will not open (its put stays unread, for F58); `nvs_store_token()` answers
+  false when its put is refused. On the key path no identity is derived, the
+  SSID stays empty, and `WiFi.softAP()` refuses it in every build. On the
+  token path the identity and the token are derived but `g_device.initialized`
+  stays false, and a release build's `resolve_ap_password()` fails closed.
+  Either way a release build (FULL, the only profile `firmware/flavors.json`
+  ships) never calls `start_http_server()`, which runs only behind
+  `start_wifi_ap()`, and TLS stays off. What still runs: the loop (serial,
+  Bluetooth, the BOOT hold), and three joins that do not ask about the
+  identity, namely the Bluetooth setup door (`ble_improv_submit_join()`),
+  bonded-Bluetooth provisioning and the boot QR scan (`qr_auto_scan_tick()`).
+  After one of them the `STA_GOT_IP` handler, registered before the
+  fail-closed return, advertises port 80 over mDNS with nothing behind it,
+  and a door join's claim names a server that never started.
+  `wifi_init_provisioning()` also calls `WiFi.mode(WIFI_AP_STA)` before that
+  return, so the radio's AP interface may run under the driver's stored
+  config, or IDF's default open one, with nothing listening; that is the U1
+  row's question. A non-release build (DEV or MINIMAL; `canary-wap-mobile` is
+  the DEV env, on no flasher) raises the AP under an unprinted `dev-` password
+  and serves the ordinary posture with the real token. No gate takes an empty
+  token (F331) and no Bluetooth path reads the token, so no credential is
+  reachable. A fresh OTA image that fails here fails its required "device
+  identity" self-test and rolls back, so an update cannot leave a unit here.
+  Halting would cost the BOOT hold and Bluetooth for nothing; a diagnostic
+  server would add a public route and an AP posture for a rare failure. The
+  BOOT hold keeps the key and token rows, so it may not free the space; the
+  sure recovery is a clean install (full erase), which also erases the
+  identity key, so a hub that knew the unit sees a new one. Done (2026-10-26,
+  #<PR>):
+  `setup()`'s "HALTING" line and its "should still serve HTTP" comment are
+  replaced by the posture per build, both lines keeping the `[!!]
+  PROVISIONING FAILED` prefix and no credential word (the flashers' report
+  scrubber redacts such lines). No behavior change; no host harness compiles
+  `setup()`, CI compiles both lines (the FULL legs and the DEV profile gate),
+  and the U1 row "canary-wap after a failed provisioning (F336)" is what
+  proves it. Not taken, with the reason: keeping the setup door shut when
+  provisioning failed (the unit is dark and the recovery is the same clean
+  install either way; F333's `keyless_join_open()`, which the door and the
+  boot scan now share, asks about stored Wi-Fi and standalone mode, not the
+  identity, and is left so); `WiFi.mode(WIFI_STA)` on the early returns
+  (`wifi_connect_to_home()` raises AP_STA again on any later join, so it would
+  not hold; if the U1 row finds a stray AP, the fix is to enable the AP
+  interface only from the path that configures it, filed then); a
+  `provisioning-failed` boot signature (cause, "clean install", the new-device
+  warning), which needs the same entry in three hand-mirrored tables
+  (`canary-local/assets/flash-core.js`, `desktop/src/app.js`, the website's
+  `js/help-catalog.js`) for a failure no bench has reproduced yet; add it to
+  all three in one change once the U1 row has seen the line. Whether a unit
+  with a full NVS halts or runs on an identity it cannot keep stays F58's.
 - [x] **F337 [decision] canary-wap over HTTPS: the session cookie's name, and
   no HSTS.** (1) Since F326 the cookie is `Secure` over HTTPS, and a browser
   that holds a `Secure` `cv_session` refuses a same-name cookie an `http:`
@@ -3447,7 +3503,7 @@ so — see D2 below.)
   after issue, eviction keeping a 49.7-day-old slot, and the text checks).
   The ESP32 compile and the flagship's PlatformIO compile are CI's; not run
   on a device, and the wraps cannot be (U1's F342/F347 section says so).
-- [ ] **F348 [decision] The WAP's route check holds the broker gate's shape,
+- [x] **F348 [decision] The WAP's route check holds the broker gate's shape,
   not its condition.** F328's broker half requires #1835's
   `move_needs_password()` as the whole condition of a top-level returning
   `if` before the handler's first write, handed a bearer from
@@ -3459,7 +3515,57 @@ so — see D2 below.)
   reverted (#1835). Decide whether the check should pin the gate's body token
   for token, or keep that split. Found by the F289 follow-up's review
   (#1832), and re-read against #1835's gate (2026-10-19).
-- [ ] **F349 [decision] canary-wap: `handle_config_post()` wipes no copy of
+  *Decided (2026-10-19, under the maintainer's instruction to fix the
+  remaining items in best engineering practice): keep the split.* The route
+  check holds the gate's place and inputs (`broker_gate_problems()`), and
+  `test_mqtt_reinit.cpp` holds what it decides, as the check's docstring
+  says. Measured at 3e593a01, and again on this PR's tree (2026-10-26:
+  3063 checks, 54 tests at baseline; the call-site mutations and the
+  survivor below too), on 11 chosen mutations of
+  `move_needs_password()`'s body: ignore the bearer, invert it, answer always
+  false, always true, or `!bearer` alone, and drop each of the host, port,
+  TLS-mode, CA, typed-password and nothing-stored clauses. Every one passes
+  the route check and fails `run-mqtt-reinit` (in `expect_refused`'s "the
+  move answered 200 OK", `expect_saved`'s 403 for the bearer,
+  `test_the_config_answer_escapes_what_the_page_sent` or
+  `test_a_config_post_reinits_on_the_loop_task`). Two call-site mutations
+  (the gate handed `c` twice, `password_in_body` passed as true) fail the
+  suite's `-Werror` build instead. One mutation survives both: comparing the
+  derived `tls` bool instead of `tls_mode`. It is benign today, because the
+  POST refuses modes 2 and 3 at save, so between the modes a session can
+  write the two change together, and a stored 2 or 3 moved to 1 only tightens
+  verification against the owner's CA (a CA sent is its own clause). The
+  route check (`firmware.yml`, the route-check step) and the suite (the
+  `make -C firmware/projects/canary-wap/tests_host` step) are steps of one
+  job, mesh-scout-host-tests, so a PR cannot be green with the meaning
+  broken. A token-for-token pin would copy the body into Python and catch
+  nothing the suite misses, while failing every honest strengthening (a new
+  move clause). It would not separate a case-folded host either: the suite
+  already refuses one (`a_session_cannot_move_the_broker_and_keep_its_password`
+  holds `broker.local`, `BROKER.LOCAL` and `Broker.local.` as moves). F339
+  changes where the gate's `bearer` comes from (`api_auth_bearer_grant()`,
+  compared once per request), not the gate's body or its tests, so this
+  evidence carries over.
+  The move rule is `POST /api/mqtt/config`'s alone. The camera's hub
+  re-point (`qr_scan_task_fn()`) stays outside it on purpose, as F333
+  decided: every code also chooses the network the unit joins, so whoever
+  shows the code can answer the stored broker host on that network, and on a
+  plain link a host compare on that branch would protect nothing. F333
+  closes the road where it opens instead. After F334, F345 and F333, a
+  keyless join (the Bluetooth setup door or the camera's boot scan, both
+  through `keyless_join_open()`) reaches a set-up unit only after the owner's
+  own bearer Forget or the 10 s BOOT hold, and neither leaves a login on
+  file: the hold clears the whole broker row, and Forget clears the stored
+  user and password (`csi_mqtt::login_clear()`). The exceptions are F333's
+  stated residuals: a login the owner types after a Forget and before the
+  unit is set up again, and a clear the settings store refused, which
+  Forget's answer reports. That road's guards are F333's
+  (`test_mqtt_reinit`'s login-clear tests, `test_provisioning_logic`'s
+  predicate table, and `test_docs_claims.py`'s pins that the hub branch names
+  no `mc.pass` and that Forget calls `login_clear()`). No code, check or doc
+  change here. Done (2026-10-26, #<PR>): recorded, with F333's road
+  closed in the same PR.
+- [x] **F349 [decision] canary-wap: `handle_config_post()` wipes no copy of
   the stored broker password.** The handler's `config_load()` copy (`c`) and
   the `before` copy #1835's move gate compares against stay on its stack on
   every return, the `password_needed` refusal included, as `c` did on every
@@ -3473,6 +3579,37 @@ so — see D2 below.)
   parallel F325 gate, which wiped `c` and `buf` on its refusal only; that gate
   was dropped for #1835's, which wipes nothing, so the item now says what
   holds, and the decision is whether to wipe at all.
+  *Decided (2026-10-19, under the maintainer's instruction to fix the
+  remaining items in best engineering practice): keep, documented; no wipe.*
+  The copies are as stated, and one more: `c`, `before` and `buf` (the typed
+  password) on the httpd stack, and the whole body in a heap block that
+  `HeapBuf` frees unwiped. The stored password is not short-lived on this
+  device, though. `open_client()` copies it into the global `s_active_cfg` on
+  the bridge's first settings load at boot, enabled or not, and hands it to
+  the esp-mqtt client while one is open. NVS holds it as plain bytes (no
+  canary-wap build enables NVS encryption, and its partition table has no key
+  partition for it). And the other readers of the row load it onto a stack
+  too: `handle_config_get` (a session), and in the sketch `handle_status`,
+  `handle_fleet` (the public `GET /api/fleet`, also on the port-80 server),
+  `handle_help_qr`, `qr_scan_task_fn()` and `mdns_sync_broker_txt()`. So any
+  caller on the network already puts it on the httpd stack at will, and a
+  wipe in this one handler would remove no copy a reader of the device's RAM
+  or flash would take, while implying a residue rule the device does not
+  keep. A wipe-on-return holder would also cost `before` its `const` (wiping
+  a const object is undefined behavior) and add a struct four guards parse.
+  If memory residue ever comes into scope, the one change is a row load
+  without the password for the four sketch readers that use only `enabled`,
+  `host` and `port` (`handle_status`, `handle_fleet`, `handle_help_qr`,
+  `mdns_sync_broker_txt()`), which ends the public route's copy; recorded,
+  not done. Done (2026-10-26, #<PR>): the comment beside `before` in
+  `handle_config_post()` says why nothing there is wiped, and `docs/security/SECURITY_MODEL.md` ("Physical
+  extraction and the flash-encryption default") says where the broker
+  password lives at rest and in RAM while it is stored, and states the rule
+  once, so the next review need not refile it for another secret: no
+  RAM-residue promise for a secret that lives as long as the device runs; the
+  stack wipes the firmware does keep (the SoftAP passphrase's) are hygiene
+  where a wipe costs one line, not a guarantee. No behavior change;
+  `run-mqtt-reinit` and `run-ha-discovery-ids` pass with the comment.
 - [x] **F350 [code] The flagship's SoftAP password could be computed from its
   public fingerprint.** `firmware/canary/src/main.cpp`'s `derive_ap_password()`
   built `cv-` plus 5 characters from `device.pubkey_fp`. The device publishes
