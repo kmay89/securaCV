@@ -21,6 +21,7 @@ import { currentTz } from '../render.mjs';
 import { isOn } from '../flags.mjs';
 import { timedFetch } from '../net.mjs';
 import { recordSession } from './recovery.mjs';
+import { listingState } from './listing.mjs';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -113,8 +114,9 @@ export function storefrontCatalog(db, catalog, { now = new Date(), cfg = {} } = 
   const products = [];
   for (const p of catalog.products.values()) {
     const available = availableNow(db, p, { now, tz: cfg.tz });
-    const reason = p.authorization === 'pending-fcc' ? 'pending-fcc' : available === 0 ? 'batch-full' : null;
-    products.push({ sku: p.sku, name: p.name, price_cents: p.price_cents, group: p.group, available, sellable: !reason, reason, link: p.link || '' });
+    const state = listingState(p, now.getTime());
+    const reason = p.authorization === 'pending-fcc' ? 'pending-fcc' : state || (available === 0 ? 'batch-full' : null);
+    products.push({ sku: p.sku, name: p.name, price_cents: p.price_cents, group: p.group, available, sellable: !reason, reason, link: p.link || '', hidden: !!p.hidden, opens: state === 'not-yet' ? p.available_from : null, closes: p.available_until || null });
   }
   return { mode: catalog.mode, shipping_flat_cents: catalog.shipping_flat_cents, ships, products, checkout: cfg.demo ? 'demo' : cfg.stripeApiKey ? 'hosted' : 'links', generated_at: now.toISOString() };
 }
@@ -143,6 +145,7 @@ export async function createCheckout(db, cfg, catalog, { items, zip = null, emai
     if (!Number.isInteger(qty) || qty < 1 || qty > 10) throw new StoreError(400, `${sku || 'a line'}: quantity is a whole number from 1 to 10`);
     const p = catalog.products.get(sku); if (!p) throw new StoreError(400, `${sku}: not in the catalog`);
     if (p.authorization === 'pending-fcc') throw new StoreError(400, `${p.name} is not for sale until its FCC authorization is complete`);
+    const st = listingState(p, now.getTime()); if (st) throw new StoreError(400, st === 'not-yet' ? `${p.name} is not on sale yet` : st === 'ended' ? `${p.name} is no longer offered` : `${p.name} is not in the store`);
     const same = lines.find(l => l.sku === sku); if (same) same.qty += qty; else lines.push({ sku, qty, name: p.name, unit_cents: p.price_cents, product: p });
     units += qty;
   }

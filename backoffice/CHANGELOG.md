@@ -5,6 +5,27 @@ the build hash on `/healthz`, the Health page and `backoffice version` is the co
 CI stamped into the image. `tests/environment.test.mjs` holds the top entry here to
 the package version, so neither moves without the other.
 
+## 0.6.0
+
+- **The store listing, edited here.** A product's price, name, this batch's
+  cap, whether it shows at all, and the window it sells in (a launch: listed
+  today, on sale from a date; or an end) are edited on its Products page and
+  served by `/store/catalog` the moment they are saved — the website takes the
+  live price, name, hidden flag and window from that answer, so the price on
+  the page and the price Stripe charges are one number. `store.json` stays the
+  base and the fallback; the Products page prints the patch the file would need
+  and the doctor counts what is edited here. `product_overrides`, migration 013,
+  `src/modules/listing.mjs`.
+- **Your phone, in Settings.** Paste an ntfy topic, keep or drop the new-order
+  nudge, send a test push. The environment's `NTFY_URL` still wins; staging and
+  the demo push nowhere. A doctor row says where a new order reaches you.
+- **Where sales tax is owed.** `src/modules/nexus.mjs` reads the trailing
+  year's orders by state against the common 2026 thresholds (the home state
+  always; $100,000 in most states, some with 200 orders, a few at $250,000 or
+  $500,000; five with none): Books shows every state's standing, and the doctor
+  fails when nothing is collected but tax is owed, or a state is within 20% of
+  its line. Collecting is the `stripe_tax` flag; registering is a human's step.
+
 ## 0.5.0
 
 - **Labels from the ship bench.** With `SHIPPO_API_TOKEN` and a `SHIP_FROM_*`

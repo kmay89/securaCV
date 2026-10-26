@@ -33,7 +33,7 @@ export function loadConfig(overrides = {}) {
     backupEncryptionKey: env('BACKUP_ENCRYPTION_KEY', ''),             // a passphrase; off-site copies are sealed (AES-256-GCM) under it
     backupS3Key: env('BACKUP_S3_KEY', ''), backupS3Secret: env('BACKUP_S3_SECRET', ''), backupS3Region: env('BACKUP_S3_REGION', 'us-east-1'),
     operatorEmail: env('OPERATOR_EMAIL', env('SUPPORT_ADDR', '')),
-    notifyNewOrder: env('NOTIFY_NEW_ORDER', '1') === '1',                 // a new order mails the operator the minute it lands (and pushes, below)
+    notifyNewOrder: env('NOTIFY_NEW_ORDER', '') === '' ? null : env('NOTIFY_NEW_ORDER', '') === '1',   // a new order mails the operator the minute it lands (and pushes); null = Settings decides (on by default)
     ntfyUrl: env('NTFY_URL', ''), ntfyToken: env('NTFY_TOKEN', ''),      // optional: an ntfy topic URL for a phone push on a new order — off unless set
     recoveryHours: Number(env('CHECKOUT_RECOVERY_HOURS', '1')),          // an abandoned checkout with an email gets its one follow-up this long after it expires
     shippoToken: env('SHIPPO_API_TOKEN', ''),                             // labels from the ship bench (Shippo; the website's fulfill.mjs uses the same account)
