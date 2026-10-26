@@ -1,6 +1,17 @@
 # Changelog
 
 ## [Unreleased]
+### The customer always knows where their order is (backoffice 0.4.0)
+
+- The promise made at checkout (ships on, arrives by) is written on the order
+  and read everywhere: the customer's page has one honest line per state
+  (waiting, packed, running late with an apology and a refund offer, in
+  transit, carrier problem, delivered, canceled, refunded); a cancel and a
+  refund mail by themselves; the late apology, the carrier-problem note and
+  the address question are one-click Decide cards, once per order; every
+  order page lists what the customer has been told and whether it went;
+  urgency follows the promised ship day, not a flat window.
+
 ### The backoffice shows where attention goes: one urgency scale from stated deadlines, the same on every page (backoffice 0.3.0)
 
 - **`backoffice/src/attention.mjs`** ranks everything that wants the admin into

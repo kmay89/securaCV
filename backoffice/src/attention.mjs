@@ -16,6 +16,7 @@ import { supportStats } from './modules/support.mjs';
 import { lowStock } from './modules/inventory.mjs';
 import { openExceptions } from './modules/exceptions.mjs';
 import { doctor } from './modules/health.mjs';
+import { orderPromise } from './modules/promise.mjs';
 
 export const LEVELS = ['now', 'soon', 'calm'];
 const RANK = { now: 0, soon: 1, calm: 2 };
@@ -33,7 +34,7 @@ export const WINDOWS = Object.freeze({
 });
 
 const H = 3600000, D = 86400000;
-const KIND_ORDER = ['exceptions', 'tickets', 'orders', 'warranty', 'health', 'invoices', 'inventory'];
+const KIND_ORDER = ['exceptions', 'mail', 'tickets', 'carrier', 'orders', 'warranty', 'health', 'invoices', 'inventory'];
 
 // A human span, coarse on purpose: the admin needs "2 d", not "47 h 12 m".
 export function span(ms) {
@@ -78,9 +79,14 @@ export function ticketLevel(t, now = Date.now()) {
   if (t.first_response_at) return 'calm';
   return dueIn(t.sla_due_at, { now }).level;
 }
-// The level of one order row: a paid or packed order against the shipping promise.
-export function orderLevel(o, now = Date.now()) {
-  if (!o || !['paid', 'packed'].includes(o.status)) return o?.tracking_status === 'alert' ? 'now' : 'calm';
+// The level of one order row: a paid or packed order against the promise the store made (promise.mjs) —
+// past the day it was due to ship is `now`, the ship day itself is `soon` (it goes out today), and a
+// carrier alert on a shipped order is `now`. The flat hour windows below are the fallback for a row
+// that carries no promise and cannot compute one (no payment time).
+export function orderLevel(o, now = Date.now(), cfg = {}) {
+  if (!o) return 'calm';
+  if (!['paid', 'packed'].includes(o.status)) return o.tracking_status === 'alert' ? 'now' : 'calm';
+  if (o.paid_at || o.promised_ship_on) { const p = orderPromise(o, cfg, { now }); return p.late ? 'now' : p.ships_today ? 'soon' : 'calm'; }
   return waiting(o.paid_at, { now, soonMs: WINDOWS.orderShipHours * H, nowMs: WINDOWS.orderShipHardHours * H }).level;
 }
 
@@ -91,10 +97,18 @@ export function attention(db, cfg, { now = Date.now() } = {}) {
   const items = [];
   const o = orderStats(db);
   if (o.open) {
-    const oldest = db.get("SELECT MIN(paid_at) AS t FROM orders WHERE status IN ('paid','packed')").t;
-    const w = waiting(oldest, { now, soonMs: WINDOWS.orderShipHours * H, nowMs: WINDOWS.orderShipHardHours * H });
-    items.push({ key: 'orders', n: o.open, level: w.level, what: `order${o.open === 1 ? '' : 's'} to pack or ship`, due: w.ms != null && w.level !== 'calm' ? `oldest ${w.text}` : '', href: '/pack', nav: '/pack', action: 'Open the pack bench' });
+    // against the promise: how many are past their ship day, how many go out today
+    const open = db.all("SELECT id, number, status, paid_at, promised_ship_on, promised_arrive_by, ship_zip, ship_state, created_at FROM orders WHERE status IN ('paid','packed')").map(r => orderPromise(r, cfg, { now }));
+    const late = open.filter(p => p.late), todayN = open.filter(p => p.ships_today).length;
+    const worstLate = late.reduce((m, p) => Math.max(m, p.days_late), 0);
+    const due = late.length ? `${late.length} past the ship day it was promised${worstLate ? `, the worst by ${worstLate} d` : ''}` : todayN ? `${todayN} promised to ship today` : '';
+    items.push({ key: 'orders', n: o.open, level: late.length ? 'now' : todayN ? 'soon' : 'calm', what: `order${o.open === 1 ? '' : 's'} to pack or ship`, due, href: '/pack', nav: '/pack', action: 'Open the pack bench' });
   }
+  const alerts = db.get("SELECT COUNT(*) AS n FROM orders WHERE status = 'shipped' AND tracking_status = 'alert'").n;
+  if (alerts) items.push({ key: 'carrier', n: alerts, level: 'now', what: `parcel${alerts === 1 ? '' : 's'} the carrier reports a problem with`, due: '', href: '/orders?status=shipped', nav: '/orders', action: 'Look' });
+  // a customer mail that failed to send: the customer was not told what the page says they were
+  const failed = db.get("SELECT COUNT(*) AS n FROM mail_outbox WHERE status = 'failed' AND kind IN ('transactional','support')").n;
+  if (failed) items.push({ key: 'mail', n: failed, level: 'now', what: `customer mail${failed === 1 ? '' : 's'} failed to send`, due: 'the customer has not been told', href: '/campaigns/outbox', nav: '/campaigns', action: 'Retry' });
   const s = supportStats(db);
   if (s.open) {
     const next = db.get("SELECT MIN(sla_due_at) AS t FROM tickets WHERE status IN ('open','waiting_on_us') AND first_response_at IS NULL").t;

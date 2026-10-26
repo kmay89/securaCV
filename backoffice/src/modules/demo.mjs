@@ -414,6 +414,11 @@ export const SCENARIOS = {
       line_items: { data: o.items.map(it => ({ description: it.name, quantity: it.qty, price: { unit_amount: it.unit_cents, product: { metadata: { sku: it.sku } } } })) } } } };
     return postWebhook(app, event);
   } },
+  late: { label: 'A batch slips: the oldest unshipped order is past the ship day it was promised', run: async (app) => {
+    const o = app.db.get("SELECT * FROM orders WHERE status IN ('paid','packed') ORDER BY paid_at LIMIT 1"); if (!o) return { skipped: 'no unshipped order' };
+    const shipOn = daysAgo(3).slice(0, 10); app.db.run('UPDATE orders SET paid_at = ?, promised_ship_on = ?, promised_arrive_by = ? WHERE id = ?', daysAgo(9), shipOn, daysAgo(-2).slice(0, 10), o.id);
+    app.forgetAttention?.(); return { order: o.number, promised_ship_on: shipOn, see: ['/', `/orders/${o.id}`, 'the customer\'s page'] };
+  } },
   refund: { label: 'Stripe reports a partial refund on the latest shipped order', run: async (app) => {
     const o = app.db.get('SELECT * FROM orders WHERE status = \'shipped\' AND payment_intent IS NOT NULL ORDER BY id DESC LIMIT 1');
     if (!o) return { skipped: 'no shipped order with a PaymentIntent' };

@@ -5,6 +5,39 @@ the build hash on `/healthz`, the Health page and `backoffice version` is the co
 CI stamped into the image. `tests/environment.test.mjs` holds the top entry here to
 the package version, so neither moves without the other.
 
+## 0.4.0
+
+- **The customer always knows where their order is.** The promise the store
+  made at checkout — the day it ships, the window it arrives in — is written
+  on the order (`promised_ship_on`, `promised_arrive_by`, migration 011) and
+  every surface reads it. The customer's page (`/o/<number>/<token>`) now has
+  one honest line for every state: "ships Tue, Nov 3 · arrives Nov 5–Nov 9"
+  while it waits, "Packed and waiting for the label" once pulled, "Running
+  later than planned — it was due to ship …" with an apology and a refund
+  offer the moment a batch slips, the carrier's word and a tracking link in
+  transit, "The carrier reports a problem" with what happens next, "Delivered",
+  and for a cancel or a refund what money is coming back and when. The
+  stepper shows the promised ship day before it happens. The support address
+  is on the page.
+- **A cancel and a refund mail by themselves**, from the transition and the
+  refund record, whoever triggered them (the order page, the API, Stripe's
+  webhook, a lost dispute): what is coming back, when banks show it, keep
+  what arrived.
+- **Three mails a person sends with one click, once per order:** the late
+  apology (a Decide card counts the late customers not yet told; "Send the
+  apology" tells them all), the carrier-problem note when tracking reports an
+  alert, and the address question when the address would not make a label —
+  each also a button on the order page, each a line on the order's timeline.
+- **"The customer knows", on every order page:** what their page says right
+  now, the promise made at checkout, every mail sent to them with whether it
+  was sent, queued or failed (and the error), and the nudges that are still
+  owed.
+- **Urgency follows the promise, not a flat window.** An order is *now* past
+  the day it was promised to ship, *soon* on the ship day itself, calm before
+  — so the weekly batch no longer makes a four-day-old order amber. A carrier
+  alert and a failed customer mail are *now* in their own right.
+- A demo scenario, "A batch slips", shows the whole path.
+
 ## 0.3.0
 
 - **One scale of urgency, everywhere.** `src/attention.mjs` ranks everything that

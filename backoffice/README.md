@@ -315,6 +315,32 @@ Three numbers show up around an order, and each has one source.
   two to seven business days, replaced by the carrier's own word when USPS
   tracking is configured.
 
+## What the customer is told, and when
+
+The customer hears from us at every turn, by mail, and can see the same thing
+any time on their page (`/o/<number>/<token>`, the link in every mail and on the
+thanks page — no login). The promise the store made at checkout is written on
+the order (`promised_ship_on`, `promised_arrive_by`), and every line below reads
+it, so a mail and the page never disagree.
+
+| Moment | Mail | Their page says |
+|---|---|---|
+| Paid | "We have your order": items, the batch it ships in, the arrival window, the page link | "Ships Tue, Nov 3 · arrives Nov 5–Nov 9" |
+| Packed | — | "Packed and waiting for the label — ships Tue, Nov 3" |
+| The ship day passes | the late apology, **a person's click** (a Decide card counts them; once per order), with a refund offer | "Running later than planned — it was due to ship Tue, Nov 3", and the same offer |
+| Shipped | "On its way": carrier, tracking, the estimate | "On its way · estimated Nov 5–Nov 9", the tracking link |
+| Carrier reports a problem | the carrier note, **a person's click**, once | "The carrier reports a problem", what happens next |
+| Delivered (carrier or a click) | the "settled in?" automation, three days later | "Delivered Nov 6" |
+| The address will not make a label | the address question, **a person's click**, once | unchanged (it still ships on the promise once fixed) |
+| Canceled | by itself: what is coming back and when | "Canceled Oct 28", the money line |
+| Refunded, in part or full | by itself, whoever recorded it (page, API, Stripe) | "Refunded $15.00", keep what arrived |
+| A support ticket | the acknowledgment with the ticket number and the SLA; every reply in the same thread | — |
+
+Every order page has a **The customer knows** card: what their page says right
+now, the promise, every mail with whether it was sent, queued or failed, and the
+nudges still owed. A failed customer mail is *now* on the home page and the
+sidebar: the page says they were told, and they were not.
+
 ## How each piece behaves (the rules it keeps)
 
 - **Where to look is computed, never typed.** `src/attention.mjs` turns every
@@ -382,6 +408,7 @@ bin/backoffice.mjs      the CLI — same functions as the web admin, `backoffice
 src/db.mjs              node:sqlite, migrations/, numbers (EL-, T-, WC-, INV-YYYY-), audit log, savepoint transactions
 src/http.mjs            router, body parsing, cookies, CSRF, rate limiter, escaping
 src/render.mjs          server-rendered HTML; no client JavaScript
+src/modules/promise.mjs the promise made at checkout, one honest line per state for the customer, the mails a person sends with one click, what the customer has been told
 src/attention.mjs       the one scale of urgency (now / soon / calm) from stated deadlines; the sidebar badges, the home page, the Decide queue, every table row and the digest read it
 src/auth.mjs            scrypt password, TOTP (RFC 6238), sessions, API tokens
 src/server.mjs          public endpoints, the JSON API, the request pipeline

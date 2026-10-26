@@ -8,6 +8,8 @@ import { lowStock, buildable } from './inventory.mjs';
 import { waitlistSummary } from './contacts.mjs';
 import { onOrder, draftedFor } from './purchasing.mjs';
 import { classify } from './support.mjs';
+import { lateOrders, told, labelOf } from './promise.mjs';
+import { addressIssues } from './orders.mjs';
 
 const CANNED_RULES = [[/blink|no hub|not showing|fleet|join/i, 'no-hub-blink'], [/ship|batch|update|when|tracking/i, 'batch-cadence'], [/face|recogni/i, 'no-face-rec']];
 
@@ -36,6 +38,16 @@ export function suggestions(db, cfg, { now = Date.now() } = {}) {
     const reminded = db.get("SELECT created_at FROM mail_outbox WHERE ref = ? AND created_at > ?", `invoice-reminder:${i.number}`, new Date(now - 7 * 86400000).toISOString()); if (reminded) continue;
     out.push({ key: `invoice:${i.number}`, kind: 'books', title: `Remind ${i.email || 'the buyer'} about ${i.number}`, detail: `${money(i.total_cents)} was due ${i.due_at}`, why: 'overdue, and no reminder went out this week', due_at: `${i.due_at}T23:59:59Z`, action: { href: `/invoices/${i.id}/remind`, label: 'Send a reminder', fields: { _back: '/' } }, link: `/invoices/${i.id}` });
   }
+  // an order past the day it was promised to ship, and the customer not yet told: the apology, one click, once
+  const late = lateOrders(db, cfg, { now }).filter(o => !told(db, o.number, 'late'));
+  if (late.length) {
+    const worst = late.reduce((m, o) => Math.max(m, o.promise.days_late), 0);
+    out.push({ key: 'late', kind: 'orders', title: `Tell ${late.length} customer${late.length === 1 ? '' : 's'} ${late.length === 1 ? 'the' : 'their'} order is running late`, detail: late.map(o => `${o.number} (${o.ship_name || o.email}, due ${labelOf(o.promise.ship_on)})`).join(', '), why: `past the ship day the store promised${worst ? `, the worst by ${worst} d` : ''}; the status page already says so, the mail says sorry and offers a refund`, due_at: `${late[0].promise.ship_on}T23:59:59Z`, action: { href: '/orders/late/notify', label: 'Send the apology', fields: { _back: '/' } }, link: '/orders?status=open' });
+  }
+  // a parcel the carrier reports a problem with, and the customer not yet written to
+  for (const o of db.all("SELECT o.id, o.number, o.ship_name, c.email, o.tracking_detail FROM orders o LEFT JOIN contacts c ON c.id = o.contact_id WHERE o.status = 'shipped' AND o.tracking_status = 'alert' AND c.email IS NOT NULL ORDER BY o.shipped_at LIMIT 5")) { if (told(db, o.number, 'carrier')) continue; out.push({ key: `carrier:${o.number}`, kind: 'orders', title: `Write to ${o.ship_name || o.email}: the carrier reports a problem on ${o.number}`, detail: o.tracking_detail || 'no detail from the carrier', why: 'their status page says "the carrier reports a problem"; this mail says we are on it and when we send another', action: { href: `/orders/${o.id}/tell-carrier`, label: 'Send it', fields: { _back: '/' } }, link: `/orders/${o.id}` }); }
+  // an address that will not make a label, and the customer not yet asked
+  for (const o of db.all("SELECT o.id, o.number, o.ship_name, c.email, o.ship_line1, o.ship_city, o.ship_state, o.ship_zip, o.ship_country FROM orders o LEFT JOIN contacts c ON c.id = o.contact_id WHERE o.status IN ('paid','packed') AND c.email IS NOT NULL ORDER BY o.paid_at LIMIT 20")) { const issues = addressIssues({ line1: o.ship_line1, city: o.ship_city, state: o.ship_state, zip: o.ship_zip, country: o.ship_country }); if (!issues.length || told(db, o.number, 'address')) continue; out.push({ key: `address:${o.number}`, kind: 'orders', title: `Ask ${o.ship_name || o.email} to confirm the address on ${o.number}`, detail: issues.join('; '), why: 'the label would not print as written; the mail shows the address as we have it and asks for the correction by reply', action: { href: `/orders/${o.id}/tell-address`, label: 'Ask them', fields: { _back: '/' } }, link: `/orders/${o.id}` }); }
   // a campaign about to go out
   for (const cp of db.all("SELECT slug, subject, scheduled_at, segment FROM campaigns WHERE status = 'scheduled' AND scheduled_at < ?", new Date(now + 36 * 3600000).toISOString())) out.push({ key: `campaign:${cp.slug}`, kind: 'mail', title: `"${cp.subject}" goes out ${cp.scheduled_at.slice(0, 16).replace('T', ' ')} UTC`, detail: `to ${cp.segment} — last chance to read it once more`, why: 'scheduled within the next day and a half', due_at: cp.scheduled_at, link: `/campaigns/${cp.slug}` });
   return out;

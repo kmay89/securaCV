@@ -7,6 +7,7 @@ const e = escapeHtml;
 import { layout, setTimezone, setEnvironment, dt as fmtDt, day as fmtDay , setAttention } from './render.mjs';
 import { applyEnv, ENV_TEXT } from './env.mjs';
 import { attention } from './attention.mjs';
+import { customerLine, orderPromise } from './modules/promise.mjs';
 import { build, recordBoot } from './version.mjs';
 import { listFlags, setFlag, clearFlag } from './flags.mjs';
 import { orderToken, deliveryLine, trackingUrl } from './modules/delivery.mjs';
@@ -199,7 +200,7 @@ export function createApp({ db, cfg }) {
   router.get('/api/orders/:number', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, o); });
   router.post('/api/orders', async (c) => json(c.res, recordOrder(db, c.body, { catalog: await app.catalog().catch(() => null), actor: c.actor }), 201));
   router.post('/api/orders/:number/transition', async (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, transition(db, o.id, c.body.to, { actor: c.actor, carrier: c.body.carrier, tracking: c.body.tracking, cfg, shipping: c.body.to === 'packed' ? await app.shipping().catch(() => null) : null, measuredOz: c.body.measured_oz ?? null, postageCents: int(c.body.postage_cents, { name: 'postage_cents', min: 0, fallback: 0 }), shipAnyway: !!c.body.ship_anyway, check: c.body.check && typeof c.body.check === 'object' && !Array.isArray(c.body.check) ? { ticked: asArray(c.body.check.ticked ?? [], 'check.ticked'), measuredOz: c.body.check.measured_oz ?? null, anyway: !!c.body.check.anyway, reason: c.body.check.reason } : null })); });
-  router.post('/api/orders/:number/refund', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, refund(db, o.id, int(c.body.cents, { name: 'cents', min: 1 }), { actor: c.actor, reason: c.body.reason })); });
+  router.post('/api/orders/:number/refund', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, refund(db, o.id, int(c.body.cents, { name: 'cents', min: 1 }), { actor: c.actor, reason: c.body.reason , cfg })); });
   router.get('/api/tickets', (c) => json(c.res, listTickets(db, { status: c.query.get('status') || '', kind: c.query.get('kind') || '', q: c.query.get('q') || '' })));
   router.get('/api/tickets/:number', (c) => { const t = ticketByNumber(db, c.params.number); if (!t) throw new HttpError(404, 'no such ticket'); json(c.res, t); });
   router.post('/api/tickets', (c) => json(c.res, openTicket(db, { ...c.body, channel: 'api', cfg }), 201));
@@ -323,10 +324,10 @@ export async function applyStripeEvent(app, m, event = null) {
     const catalog = await app.catalog().catch(() => null);
     if (!m.line_items_present) { try { const items = await fetchLineItems(cfg, m.external_id, { fetchImpl: app.fetchImpl || timedFetch }); if (items) m.items = items; } catch (e) { db.audit('stripe', 'order.line_items.failed', 'order', m.external_id, { error: String(e.message || e) }); } }
     if (m.discount_code && /^promo_|^[A-Za-z0-9]{8,}$/.test(m.discount_code) && !db.get('SELECT code FROM discounts WHERE code = ?', m.discount_code)) { try { m.discount_code = await resolveDiscountCode(cfg, m.discount_code, { fetchImpl: app.fetchImpl || timedFetch }); } catch { /* the id stays */ } }
-    const { order, created } = recordOrder(db, m, { catalog, actor: 'stripe' });
-    if (created && order.email && order.items.length) {
-      // "We have it": the order, the batch it ships in and the arrival window — the same estimate the store showed before paying.
-      const est = estimateForZip(order.ship_zip, { cfg }); const { enqueue, fill } = await import('./modules/mail.mjs'); const { orderStatusUrl } = await import('./modules/delivery.mjs');
+    // "We have it": the order, the batch it ships in and the arrival window — the same estimate the store showed before paying, written on the order as its promise.
+    const est = estimateForZip(m.ship?.zip || m.ship_zip, { cfg });
+    const { order, created } = recordOrder(db, m, { catalog, actor: 'stripe', promise: { ship_on: est.ships.ships_on, arrive_by: est.delivers?.latest || null } });
+    if (created && order.email && order.items.length) { const { enqueue, fill } = await import('./modules/mail.mjs'); const { orderStatusUrl } = await import('./modules/delivery.mjs');
       enqueue(db, { to: order.email, subject: `We have your ${cfg.product || 'SecuraCV'} order ${order.number}`, kind: 'transactional', ref: `order:${order.number}`, contactId: order.contact_id,
         text: fill(ORDER_TPL, { name: order.ship_name || 'there', number: order.number, items: order.items.map(i => `${i.qty}× ${i.name}`).join('\n'), ships: est.ships.ships_label, closes: est.ships.closes_label, arrives: est.delivers ? est.delivers.label : 'a few business days after it ships', status_url: orderStatusUrl(cfg, order), company: cfg.company || 'Errer Labs', support: cfg.supportAddr || '' }) });
     }
@@ -351,7 +352,7 @@ export async function applyStripeEvent(app, m, event = null) {
     // refusal makes Stripe retry for three days, by which time the order is here; the retry then applies. The
     // stripe:failed exception the pipeline raises names it meanwhile, and resolves on the delivery that works.
     if (!o) throw new Error(`refund for ${m.external_id}: no order carries that PaymentIntent yet — retried until one does`);
-    const delta = m.refunded_cents - o.refunded_cents; if (delta > 0) refund(db, o.id, delta, { actor: 'stripe', reason: 'stripe' });
+    const delta = m.refunded_cents - o.refunded_cents; if (delta > 0) refund(db, o.id, delta, { actor: 'stripe', reason: 'stripe', cfg });
     return { order: o.number, refunded_cents: m.refunded_cents };
   }
   if (m.kind === 'dispute') {
@@ -367,7 +368,7 @@ export async function applyStripeEvent(app, m, event = null) {
     } else if (m.type === 'charge.dispute.closed') {
       const lost = m.status === 'lost';
       addEvent(db, o.id, { kind: 'note', actor: 'stripe', text: `Dispute ${m.status || 'closed'}${lost ? ` — ${(m.amount_cents / 100).toFixed(2)} USD taken back` : ''} (${m.dispute})` });
-      if (lost && m.amount_cents > o.refunded_cents) refund(db, o.id, m.amount_cents - o.refunded_cents, { actor: 'stripe', reason: 'dispute lost' });
+      if (lost && m.amount_cents > o.refunded_cents) refund(db, o.id, m.amount_cents - o.refunded_cents, { actor: 'stripe', reason: 'dispute lost', cfg });
       await resolveException(db, cfg, `dispute:${o.number}`, `Closed: ${m.status || 'closed'}.`);
     }
     return { order: o.number, dispute: m.dispute, status: m.status };
@@ -433,13 +434,15 @@ function loginPage(cfg, err, ready, ok = null, demo = null) {
 
 function orderStatusPage(cfg, o) {
   const steps = ['paid', 'packed', 'shipped', 'delivered']; const i = steps.indexOf(o.status); const at = { paid: o.paid_at, packed: o.packed_at, shipped: o.shipped_at, delivered: o.delivered_at };
-  const dl = deliveryLine(o, cfg); const turl = trackingUrl(o.carrier, o.tracking);
-  const stepper = ['canceled', 'refunded'].includes(o.status) ? `<p><span class="pill">${e(o.status)}</span></p>` : `<ol class="steps">${steps.map((st, j) => `<li class="${j < i ? 'done' : j === i ? 'now' : ''}">${st[0].toUpperCase() + st.slice(1)}${at[st] && j <= i ? `<span class="when">${e(fmtDay(at[st]))}</span>` : ''}</li>`).join('')}</ol>`;
+  // One honest line for the state it is in (promise.mjs): the batch it ships in and the window, "running late", the carrier's word, the refund on its way.
+  const line = customerLine(o, cfg); const turl = trackingUrl(o.carrier, o.tracking); const p = orderPromise(o, cfg);
+  const stepper = ['canceled', 'refunded'].includes(o.status) ? `<p><span class="pill">${e(o.status)}</span></p>` : `<ol class="steps">${steps.map((st, j) => `<li class="${j < i ? 'done' : j === i ? 'now' : ''}">${st[0].toUpperCase() + st.slice(1)}${at[st] && j <= i ? `<span class="when">${e(fmtDay(at[st]))}</span>` : j > i && st === 'shipped' && p.ship_on && !p.late ? `<span class="when">${e(p.ships_label)}</span>` : ''}</li>`).join('')}</ol>`;
+  const tone = line.state === 'late' || line.state === 'alert' ? 'var(--warn)' : line.state === 'delivered' ? 'var(--ok)' : 'inherit';
   return layout({ title: `Order ${o.number}`, company: cfg.company, nav: false, demo: cfg.demo, body: `${stepper}
-<div class="card" style="max-width:720px"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Where it is</div><p style="font-size:1.15rem;margin:.3rem 0 .2rem"><b>${e(dl.text)}</b></p>${dl.estimate ? `<p class="muted" style="margin:0">An estimate from the ship date and the distance, not the carrier's word; ${e(dl.estimate.carrier)} usually takes ${dl.estimate.min_days}–${dl.estimate.max_days} business days on this route.</p>` : dl.carrier ? `<p class="muted" style="margin:0">From the carrier${o.tracking_detail ? `: ${e(o.tracking_detail)}` : ''}${o.tracking_checked_at ? `, checked ${e(fmtDt(o.tracking_checked_at))}` : ''}.</p>` : ''}${turl ? `<p style="margin:.6rem 0 0">${e(o.carrier || 'USPS')} <a href="${e(turl)}" rel="noopener">${e(o.tracking)}</a> <span class="muted">(opens the carrier's site)</span></p>` : ''}</div>
+<div class="card" style="max-width:720px"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Where it is</div><p style="font-size:1.15rem;margin:.3rem 0 .2rem;color:${tone}"><b>${e(line.text)}</b></p>${line.detail ? `<p class="muted" style="margin:0">${e(line.detail)}</p>` : ''}${turl ? `<p style="margin:.6rem 0 0">${e(o.carrier || 'USPS')} <a href="${e(turl)}" rel="noopener">${e(o.tracking)}</a> <span class="muted">(opens the carrier's site)</span></p>` : ''}</div>
 <h2>In the box</h2><table style="max-width:720px"><thead><tr><th>Item</th><th class="num">Qty</th></tr></thead><tbody>${o.items.map(it => `<tr><td>${e(it.name)}</td><td class="num">${it.qty}</td></tr>`).join('')}</tbody></table>
 <h2>Shipping to</h2><p>${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)}</p>
-<p class="muted">Anything wrong, missing or broken: reply to any email from us — a person reads every one, and we fix rather than ask you to send things back. Your Canary provisions itself at home: power it on and point your phone's camera at the QR card in the box.</p><p><a href="${e(cfg.siteOrigin)}">← ${e(cfg.product || 'the site')}</a></p>` });
+<p class="muted">Anything wrong, missing or broken: reply to any email from us${cfg.supportAddr ? `, or write to <a href="mailto:${e(cfg.supportAddr)}?subject=${encodeURIComponent(`Order ${o.number}`)}">${e(cfg.supportAddr)}</a>` : ''} — a person reads every one, and we fix rather than ask you to send things back. Your Canary provisions itself at home: power it on and point your phone's camera at the QR card in the box.</p><p><a href="${e(cfg.siteOrigin)}">← ${e(cfg.product || 'the site')}</a></p>` });
 }
 
 function statusPage(db, cfg) {

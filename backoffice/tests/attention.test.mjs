@@ -34,9 +34,13 @@ test('a ticket row and an order row carry their level from their own columns and
   assert.equal(ticketLevel({ status: 'open', first_response_at: iso(now - H), sla_due_at: iso(now - 2 * H) }, now), 'calm', 'answered: the clock stopped');
   assert.equal(ticketLevel({ status: 'closed', first_response_at: null, sla_due_at: iso(now - 2 * H) }, now), 'calm');
   assert.equal(ticketLevel({ status: 'waiting_on_customer', first_response_at: null, sla_due_at: iso(now - 2 * H) }, now), 'calm');
-  assert.equal(orderLevel({ status: 'paid', paid_at: iso(now - 3 * H) }, now), 'calm');
-  assert.equal(orderLevel({ status: 'packed', paid_at: iso(now - (WINDOWS.orderShipHours + 1) * H) }, now), 'soon');
-  assert.equal(orderLevel({ status: 'paid', paid_at: iso(now - (WINDOWS.orderShipHardHours + 1) * H) }, now), 'now');
+  // an order's level follows the promise written on it (promise.mjs): calm before the ship day, soon on it, now past it
+  const ymd = (ms) => iso(ms).slice(0, 10);
+  assert.equal(orderLevel({ status: 'paid', paid_at: iso(now - 3 * H), promised_ship_on: ymd(now + 2 * D) }, now), 'calm');
+  assert.equal(orderLevel({ status: 'packed', paid_at: iso(now - 4 * D), promised_ship_on: ymd(now) }, now), 'soon', 'the ship day itself');
+  assert.equal(orderLevel({ status: 'paid', paid_at: iso(now - 6 * D), promised_ship_on: ymd(now - 2 * D) }, now), 'now', 'past the promise');
+  // no promise and no payment time: the flat windows are the fallback
+  assert.equal(orderLevel({ status: 'paid', paid_at: null }, now), 'calm');
   assert.equal(orderLevel({ status: 'shipped', paid_at: iso(now - 30 * D), tracking_status: 'alert' }, now), 'now', 'a carrier alert on a shipped order');
   assert.equal(orderLevel({ status: 'delivered', paid_at: iso(now - 30 * D) }, now), 'calm');
 });
@@ -47,14 +51,14 @@ test('the attention list ranks what wants the admin, the sidebar counts follow i
   assert.deepEqual(attention(db, cfg).items.filter(i => i.key !== 'health'), [], 'an empty business wants nothing');
   // a fresh order (calm), one four days unshipped (soon), a ticket past its SLA (now)
   recordOrder(db, sampleOrder({ external_id: 'cs_a', paid_at: iso(now - H) }), { catalog: catalog(), actor: 'test' });
-  recordOrder(db, sampleOrder({ external_id: 'cs_b', paid_at: iso(now - 4 * D) }), { catalog: catalog(), actor: 'test' });
+  recordOrder(db, sampleOrder({ external_id: 'cs_b', paid_at: iso(now - 4 * D) }), { catalog: catalog(), actor: 'test', promise: { ship_on: iso(now).slice(0, 10), arrive_by: null } });
   db.run("UPDATE orders SET paid_at = ? WHERE external_id = 'cs_b'", iso(now - 4 * D));
   const t = openTicket(db, { email: 'ada@example.test', subject: 'Any update?', body: 'hello', cfg, autoAck: false });
   db.run('UPDATE tickets SET sla_due_at = ? WHERE id = ?', iso(now - 15 * H), t.id);
   const a = attention(db, cfg, { now });
   const byKey = Object.fromEntries(a.items.map(i => [i.key, i]));
   assert.equal(byKey.tickets.level, 'now'); assert.match(byKey.tickets.due, /overdue 15 h/); assert.equal(byKey.tickets.n, 1);
-  assert.equal(byKey.orders.level, 'soon'); assert.equal(byKey.orders.n, 2); assert.match(byKey.orders.due, /oldest waiting 4 d/);
+  assert.equal(byKey.orders.level, 'soon'); assert.equal(byKey.orders.n, 2); assert.match(byKey.orders.due, /1 promised to ship today/);
   assert.equal(a.items[0].key, 'tickets', 'ranked: now before soon, a person waiting before a parcel'); assert.equal(a.level, 'now');
   assert.deepEqual(a.nav['/tickets'], { n: 1, level: 'now' }); assert.deepEqual(a.nav['/pack'], { n: 2, level: 'soon' });
   const lines = todayLines(db, cfg); assert.equal(lines[0].href, '/tickets?status=open'); assert.equal(lines[0].urgent, true); assert.equal(lines[0].level, 'now');
@@ -71,7 +75,7 @@ test('every page wears the same marks: a sidebar badge, the home focus strip, th
   const db = testDb(); const cfg = testCfg({ secret: 's', attentionTtlMs: 0 }); const app = createApp({ db, cfg }); const addr = await app.listen(); const base = `http://127.0.0.1:${addr.port}`;
   try {
     const now = Date.now();
-    recordOrder(db, sampleOrder({ external_id: 'cs_old' }), { catalog: catalog(), actor: 'test' }); db.run("UPDATE orders SET paid_at = ? WHERE external_id = 'cs_old'", iso(now - 6 * D));
+    recordOrder(db, sampleOrder({ external_id: 'cs_old' }), { catalog: catalog(), actor: 'test', promise: { ship_on: iso(now - 3 * D).slice(0, 10), arrive_by: null } }); db.run("UPDATE orders SET paid_at = ? WHERE external_id = 'cs_old'", iso(now - 6 * D));
     const t = openTicket(db, { email: 'ada@example.test', subject: 'Where is it', body: 'hello', cfg, autoAck: false }); db.run('UPDATE tickets SET sla_due_at = ? WHERE id = ?', iso(now - 15 * H), t.id);
     const secret = setupOperator(db, 'owner password 1234', { email: 'o@errer.test', name: 'O' });
     const r = await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ email: 'o@errer.test', password: 'owner password 1234', code: totp(secret) }).toString() });
@@ -79,14 +83,14 @@ test('every page wears the same marks: a sidebar badge, the home focus strip, th
     const home = await get('/');
     assert.ok(home.includes('<div class="focus now">') && home.includes('overdue 15 h') && home.includes('Answer →'), 'the focus strip is the ticket past its SLA, with its clock and its one action');
     assert.ok(/href="\/tickets" class=""><span>Support<\/span> <span class="b now"[^>]*>1<\/span>/.test(home), 'the sidebar counts the ticket in red');
-    assert.ok(/href="\/pack" class=""><span>Pack bench<\/span> <span class="b now"[^>]*>1<\/span>/.test(home), 'an order six days unshipped is past the hard window');
-    assert.ok(home.includes('<a class="act now" href="/pack">') && home.includes('oldest waiting 6 d'), 'the order card wears the same level and its clock');
+    assert.ok(/href="\/pack" class=""><span>Pack bench<\/span> <span class="b now"[^>]*>1<\/span>/.test(home), 'an order past the day it was promised to ship');
+    assert.ok(home.includes('<a class="act now" href="/pack">') && home.includes('1 past the ship day it was promised'), 'the order card wears the same level and its clock');
     const tickets = await get('/tickets');
     assert.ok(tickets.includes('<tr class="now">') && tickets.includes('<span class="due now">overdue 15 h</span>') && tickets.includes('Needs us <b>1</b>'), 'the row edge, the cell, the default tab');
     assert.ok(!(await get('/tickets?status=closed')).includes('Where is it'), 'the closed tab does not show it');
     const detail = await get(`/tickets/${t.id}`); assert.ok(detail.includes('First reply') && detail.includes('<span class="due now">overdue 15 h</span>'), 'the fact strip says how late, not two stamps to subtract');
     const orders = await get('/orders');
-    assert.ok(orders.includes('<tr class="now">') && orders.includes('waiting 6 d') && orders.includes('1 order has waited longer than 2 days since payment'), 'the late line and the row');
+    assert.ok(orders.includes('<tr class="now">') && orders.includes('waiting 6 d') && orders.includes('1 order is past the day it was promised to ship'), 'the late line and the row');
     // answering it clears the badge on the very next page (a write forgets the memo)
     const csrf = db.get('SELECT csrf FROM sessions WHERE id = ?', cookie.split('=')[1]).csrf;
     await fetch(base + `/tickets/${t.id}/reply`, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ _csrf: csrf, body: 'On its way.' }).toString() });
