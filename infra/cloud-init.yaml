@@ -50,6 +50,11 @@ write_files:
       maxretry = 5
       findtime = 10m
       bantime = 1h
+  - path: /etc/cron.d/kit-staging-refresh
+    permissions: '0644'
+    content: |
+      # the nightly staging refresh (kit refresh): a no-op until a backoffice-staging app exists
+      10 4 * * * ops [ -d /srv/apps/backoffice-staging ] && /usr/local/bin/kit refresh backoffice-staging >> /srv/apps/backoffice-staging/refresh.log 2>&1
   - path: /etc/docker/daemon.json
     permissions: '0644'
     content: |

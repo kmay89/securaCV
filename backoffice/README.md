@@ -110,10 +110,15 @@ Room page can carry a "try the demo" link to it.
 
 ## Going live, and staying reliable
 
-[`GO_LIVE.md`](GO_LIVE.md) is the order: a shadow fortnight in Stripe test
-mode, backups proven in two places (sealed off-site, a weekly restore
-drill), an outside monitor on `/api/health`, the morning digest, then the
-live keys. The Health page and `backoffice doctor` show the same checklist,
+[`GO_LIVE.md`](GO_LIVE.md) is the order: three copies that each say which
+they are (production, staging on last night's data, the demo), a shadow
+fortnight in Stripe test mode, backups proven in two places (sealed off-site,
+a weekly restore drill), an outside monitor on `/api/health`, the morning
+digest, then the live keys. Every merge deploys to staging; production
+changes only by the "Promote backoffice to production" button
+([`../docs/RELEASE_BUTTONS.md`](../docs/RELEASE_BUTTONS.md)), and a build
+takes a copy of the data before any migration it applies
+([`src/migrations/README.md`](src/migrations/README.md)). The Health page and `backoffice doctor` show the same checklist,
 green when each is done. [`SECURITY.md`](SECURITY.md) says what is defended
 and what is not.
 

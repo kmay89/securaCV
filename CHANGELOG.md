@@ -1,6 +1,30 @@
 # Changelog
 
 ## [Unreleased]
+### The backoffice says which environment and build it is, guards its migrations, carries feature flags, and reaches production only through a promote button (backoffice 0.2.0)
+
+- **Environment label and build** (`backoffice/src/env.mjs`, `version.mjs`):
+  `BACKOFFICE_ENV` on every page, the title, `/healthz` (`ok <env> <build>`)
+  and the doctor; production refuses a demo seed, a database another
+  environment labeled and a plain-http base; staging mutes mail, issues and
+  off-site writes and refuses a live Stripe key. CI stamps the commit into the
+  image; the first boot of a build on a database is a `deploy.boot` audit row.
+- **Migration safety:** a `VACUUM INTO` copy before the first pending migration
+  on a file database (newest five kept), a refusal to open a database a newer
+  build migrated, and `src/migrations/README.md`'s additive-only rule held by a
+  test.
+- **Feature flags** (`src/flags.mjs`): declared once with kind, default, owner
+  and date; `FLAG_<NAME>` from the environment, then Settings, then the
+  default; every flip audited; `stripe_tax` first (`TAX_MODE=stripe` still
+  reads as it). The doctor names a rollout flag past its date.
+- **Staging and the promote button** (`infra/apps/backoffice-staging`,
+  `kit refresh|tag|cron`, `backoffice-promote.yml`): every merge deploys to
+  staging, which runs last night's production copy with test keys; the
+  forced SSH command answers `tag <app>`; "Promote backoffice to production"
+  sends the tag staging runs and proves production answers it from outside.
+  The owner's manual, the infra README, GO_LIVE and RELEASE_BUTTONS carry the
+  story; `backoffice/CHANGELOG.md` starts, held to `package.json` by a test.
+
 ### Dependency advisories of 2026-10-19 to -23: the TLS roots and verifier, two constant-time crates, and body-parser (Dependency Audit #330)
 
 - **Five advisories, every one with a reachable fix, so none is ignored.**
