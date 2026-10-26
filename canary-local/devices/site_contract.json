@@ -12,6 +12,7 @@
     "canary-local/devices/figures.json",
     "canary-local/devices/hatch.json",
     "canary-local/devices/registry.json",
+    "canary-local/devices/revisions.json",
     "canary-local/enclosures/preview/canary_combo_back.stl",
     "canary-local/enclosures/preview/canary_combo_front.stl",
     "canary-local/enclosures/preview/canary_dash_display_back.stl",

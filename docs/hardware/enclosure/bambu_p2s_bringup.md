@@ -70,14 +70,14 @@ is load-bearing:
 ## 2 · Filament
 
 For the whole bring-up path you need **one spool of PETG**. That is not an
-understatement of the catalog's needs — the entire released set of 34 STLs is
+understatement of the catalog's needs — the entire released set of 29 STLs is
 **under a kilogram** ([printer_selection.md](./printer_selection.md#running-cost--per-device-computed-from-the-meshes)).
 
 | Material | For | Notes |
 |---|---|---|
 | **PETG** | Everything on this page | The default. Buy a known brand; generic PETG varies wildly. |
 | ASA | Outdoor / sun-exposed parts | Door closed, minimal cooling. Not needed for bring-up. |
-| TPU 90–95 A | Gaskets only | **External spool holder — never the AMS.** |
+| TPU 90–95 A | Gaskets and the other flexible parts (the doorbell's service plungers, the 7″ fitments, the coupon's STRIP) | **External spool holder — never the AMS.** |
 | CF-PETG / CF-Nylon | Vision bracket only | Hardened nozzle required. |
 
 **Dry the PETG before you trust a result.** PETG absorbs water; wet PETG
@@ -231,7 +231,7 @@ the real hardware, not by eye:
 | **GROOVE** | the TPU STRIP | strip won't seat flat | strip lifts out | `gasket_w` / `gasket_groove` |
 | **PRESS** | a 6 × 2 mm magnet, 3 mm rod | needs force / cracks | magnet drops out | **`tol_press`** |
 | **SCREW** | an M2 screw, ~0.3 N·m | strips the post | spins free | `screw_d` / **`tol_hole`** |
-| **INSERT** | an M3 heat-set insert | insert won't sink | insert spins | `insert_d` |
+| **INSERT** | an M2 short-series heat-set insert (3.5 × 4.0 — the catalog's `screw_insert`) | insert won't sink | insert spins | `insert_d` |
 
 **Adjust the `.scad` parameter and re-export — never the slicer's XY
 compensation.** Fixing fit in the slicer corrects the same error twice and
@@ -239,9 +239,9 @@ throws off every other fit in the catalog.
 
 You only need to care about the stations a given part uses. **For the 7"
 dashboard that is SLIDE and SCREW** — `tol_slide` sizes the glass and board
-pockets, `tol_hole` sizes the M3 clearance through the bezel ears. The case has
+pockets, `tol_hole` sizes the M3 clearance holes the case screws pass. The case has
 **no press fit at all** (no magnet pocket, no light pipe), so a PRESS result
-changes nothing about it — don't reprint the bezel chasing one.
+changes nothing about it — don't reprint the frame chasing one.
 
 ---
 
@@ -274,15 +274,20 @@ Retraction distance (anti-stringing): ______ mm
 ## 6 · Print #2 — one small released case
 
 Before the big one, print something **print-validated**: the WAP compact base +
-lid. It is two parts, ~11 g, and it is in the committed, validated set — so if
+lid. It is two parts, ~14 g, and it is in the committed, validated set — so if
 it comes out wrong, the problem is your machine or filament, not the model.
 
 ```sh
 ./render.sh --no-png    # or just take the two committed STLs
 ```
-Print `canary_wap_enclosure_compact_base.stl` (open side **up**) and
-`canary_wap_enclosure_compact_lid.stl` (**face-down**). Snap them together. The
-lid should close with a positive click and no rattle.
+Print `canary_wap_enclosure_compact_base.stl` (the plate: back face down, open
+side **up**) and `canary_wap_enclosure_compact_lid.stl` (the shell:
+**face-down**). If you have a bare XIAO, press it into the plate's four edge
+clips — they should click over the board. Drop the plate into the shell's bore
+(the key slot lets it in one way round only) and drive the four M2 flat × 10
+self-tappers through its recessed seats, snug at ≤ 0.3 N·m. The plate should
+slide in without binding and sit without rattle — there is no snap to click:
+the screws hold it.
 
 **If this part is good, the machine is good.** Everything after this is about
 the 7" model, not the printer.
@@ -296,7 +301,7 @@ the 7" model, not the printer.
 
 Do this one before the 7" frame if you have the AMS loaded. It is the cheapest
 three-filament print in the catalog — both halves of the
-[S3 hallway stick](./canary_s3_lcd147.scad) on one plate, about **20 g** — and
+[S3 hallway stick](./canary_s3_lcd147.scad) on one plate, about **5 g** — and
 it rehearses everything the frame will ask of you: an inlay registered inside
 a recess, a tool change on a small part, and a purge tower that outweighs the
 job.
@@ -322,7 +327,7 @@ filament is opaque: the case will look correct and the seam will be dead.
 
 Open `stick_case.3mf` directly — both objects are already positioned, already
 registered, and already on their filaments. Slice as-is. Expect the purge
-tower to dwarf the parts; that is normal for a 20 g three-filament plate and
+tower to dwarf the parts; that is normal for a 5 g three-filament plate and
 the plate leaves it the whole right half of the bed on purpose.
 
 **What it proves.** Press the bezel and the back together: they should click
@@ -333,8 +338,9 @@ behind it. If the band is a row of dashes rather than a line, you are printing
 an older revision of the `.scad`.
 
 **No AMS?** Print `part="bezel"` and `part="back"` in black, then
-`part="fil_light"` alone in white and press the two strips in — that is what
-the default `band_clear = 0.10` is for.
+`part="fil_light"` alone in white and press the two strips in — render that
+`fil_light` with `-D band_clear=0.10` (the default, 0, is the AMS co-print: a
+strip at 0 is exactly its slot and will not press in).
 
 ---
 
@@ -398,25 +404,34 @@ filament. Two parameters deserve individual attention:
 ### 7b · Print the corner gauge — not the case
 
 ```sh
-openscad --export-format binstl -o lcd7_gauge_tray.stl  -D 'part="gauge_tray"'  canary_s3_lcd7.scad
-openscad --export-format binstl -o lcd7_gauge_bezel.stl -D 'part="gauge_bezel"' canary_s3_lcd7.scad
+openscad --export-format binstl -o lcd7_ring_gauge.stl  -D 'part="ring_gauge"'  canary_s3_lcd7.scad
+openscad --export-format binstl -o lcd7_frame_gauge.stl -D 'part="frame_gauge"' canary_s3_lcd7.scad
 ```
 
-These are one real corner of each part, cut out of the actual geometry by
-intersection — they cannot drift from what you are about to print. Together
-they are **≈16.5 g against the case pair's ≈158 g: about 10 %.**
+The ring gauge (§7b″) is the frame's glass opening as a flat loop; the frame
+gauge is one real corner of the one-piece `frame` (§7b′) — a boss and a wall
+keyhole — cut out of the actual geometry by intersection, so it cannot drift
+from what you are about to print. Together they are **≈24.5 g against the
+frame's ≈136 g** (solid-volume upper bounds): under a fifth.
 
-Assemble the pair around your panel's own corner with one M3 and check, in
-order:
+Lay the panel in the ring first (§7b″ reads it), then assemble the frame gauge
+on the panel's own corner with one M3 × 8 from the back and check, in order:
 
-1. The glass corner **drops into the cavity** without forcing.
-2. The lip **lands on the black border** and the window **clears the lit area**.
-3. The M3 **threads into the post** and the PCB boss meets its mount hole.
-4. Calipers across the closed pair read the **echoed closed height** (27.6 mm at
-   the defaults — the render prints the exact figure).
+1. The glass corner **drops into the pocket** without forcing.
+2. The glass border **lands on the adhesive ledge**.
+3. The M3 **threads through the boss into the panel's own white standoff** —
+   it only goes home if the mount-offset signs are right.
+4. The glass stands where `glass_guard` says (**−0.2** today: a finger run off
+   the glass steps **down** onto the case, never up into an edge).
 
-Anything wrong here is a 16 g mistake. The same thing wrong on the slab is 158 g
-and most of a day.
+Anything wrong here is a 25 g mistake. The same thing wrong on the frame is
+136 g and most of a day.
+
+> ⚠️ **Not the `gauge_tray` / `gauge_bezel` pair.** Those are corners of the
+> legacy two-part bezel + tray (§7c), which predates the registered panel: the
+> tray's four PCB bosses (Ø7, standing up to the PCB's underside) are where the
+> panel's own M3 standoffs (6.9 mm behind the PCB) have to go, so the bonded
+> panel cannot seat in it. Every render of those parts echoes `LEGACY`.
 
 ### 7b′ · Or: the one-piece frame
 
@@ -465,8 +480,11 @@ never the AMS**, §0):
 - **`plug_buttons`** — a captive plug for the BOOT/RESET window: its cap
   nests the window's bevel, a 45° lip snaps in behind the wall (it cannot
   fall out or be pushed inside), and the buttons are pressed **through** the
-  plug via two pips under the face dimples — it never needs to come out.
-  Set `btn_reach` to your measured wall-to-button gap minus ~0.5.
+  plug by two towers under the face dimples, whose reach is derived to rest on
+  the caps at the board edge (6.565 mm from the lip plane with
+  `btn_reach = 0`) — it never needs to come out. Only if your caps sit elsewhere, set
+  `btn_reach` to the measured lip-plane-to-cap distance (up to 0.6 mm past the
+  derived reach is accepted as squeeze).
 - **`plug_sd`** — a peel-open cover for the SD opening, **countersunk
   flush**: the plate carries a 45° rim and the cap a matching tapered edge,
   so both print clean back-plate-down and the taper self-centers the cap.
@@ -536,7 +554,7 @@ durability/finish features landed:
     edge chamfer print in the accent; every back deboss floor sits at
     1.2 mm (`label_back_depth`), so BOOT/RESET, SD, the brand line and the
     rail moats all show through in the body color.
-  - **Accent front ring** — swap back to the accent at **z = 22.9 mm**
+  - **Accent front ring** — swap back to the accent at **z = 22.7 mm**
     (`fr_depth − 0.6` — the render echo prints your exact number if you
     changed the stack). The last 0.6 mm of the print is only the front rim
     and its glass entry chamfer, so the swap paints a clean accent ring
@@ -571,7 +589,7 @@ durability/finish features landed:
 external spool), the whole two-tone story runs itself, no pauses:
 
 - **The two z-bands** — in Bambu Studio right-click the layer slider at the
-  two echoed heights (0.8 mm and 22.9 mm at stock dims) and *Add color
+  two echoed heights (0.8 mm and 22.7 mm at stock dims) and *Add color
   change*; the AMS swaps automatically. Accent back skin, body-color words
   in the debosses, accent front ring.
 - **The lettering** — *Color Painting → Smart Fill* on the frame body: one
@@ -603,7 +621,7 @@ external spool), the whole two-tone story runs itself, no pauses:
   part before you print nine more.**
 
 ```sh
-# ~6 g, print FIRST after any radius doubt: four corner sockets bracketing
+# ~11 g, print FIRST after any radius doubt: four corner sockets bracketing
 # glass_r — the one that hugs the panel's corner with no daylight and no
 # bind is your radius
 openscad --export-format binstl -o lcd7_radius_gauge.stl -D 'part="radius_gauge"' canary_s3_lcd7.scad
@@ -616,13 +634,13 @@ openscad --export-format binstl -o lcd7_plug_sd.stl      -D 'part="plug_sd"'    
 ```
 
 Same doctrine as 7b: **gauges before the slab, smallest first.** The
-`radius_gauge` (~6 g) settles the corner **shape**; the `frame_gauge` (one
-corner containing a boss and a wall keyhole, ~10 %) then proves the whole
+`radius_gauge` (~11 g) settles the corner **shape**; the `frame_gauge` (one
+corner containing a boss and a wall keyhole, ~19 g — ~14 % of the frame) then proves the whole
 corner — assembled on the panel's corner with one screw it checks `glass_r`
 in context, the mount-offset **signs** (`m3_ox`/`m3_oy` — the screw only
 threads home if they're right), and `standoff_len` (the glass sits exactly
 `glass_guard` **below** the rim only if that's right). **Read that pass
-criterion off `glass_guard` in the `.scad`, not off this page.** It is `0`
+criterion off `glass_guard` in the `.scad`, not off this page.** It is `−0.2`
 today, so **a step DOWN onto the case is the pass**: run a finger off the
 glass outward and it must drop onto the case, never climb into an edge. A rim
 you can feel as a ridge is a fail — that is exactly what the first fitting
@@ -633,6 +651,15 @@ frame and gauge print
 lifts.
 
 ### 7c · Print the case
+
+> ⚠️ **LEGACY — do not print `bezel` + `back` for a build.** The two-part case
+> predates the registered panel: the tray's four PCB bosses (Ø7, standing up to
+> the PCB's underside) are where the panel's own white M3 standoffs (6.9 mm
+> behind the PCB) have to go, so the bonded panel cannot seat, and the legacy
+> §7d screws would drive from under the bonded glass. Every render of these
+> parts echoes `LEGACY`. **The case is `part="frame"` (§7b′).** The two lines
+> stay for the legacy fit gates; the stand and its gauge below are current —
+> the stand is the frame's desk dock.
 
 ```sh
 openscad --export-format binstl -o lcd7_bezel.stl -D 'part="bezel"' canary_s3_lcd7.scad
@@ -658,9 +685,10 @@ not quoted — nothing here has been benchmarked.
 the catalog, which is the shape most prone to lifting a corner — if one lifts,
 a 5 mm outer brim is the fix, not a hotter bed.
 
-**Both case parts fit a 256 mm bed with room to spare, but they are the largest
-things in the catalog** — the bezel is ~208 mm across the corner ears against
-the released set's largest part at 120.5 mm. Two consequences:
+**The frame (197.3 × 115.1 mm) fits a 256 mm bed with room to spare, but it is
+the largest thing in the catalog** (the legacy bezel, ~208 mm across its ears,
+was larger) — against the released set's largest part, the doorbell's 15°
+wedge plate, at 175.8 mm. Two consequences:
 
 - **Bed adhesion matters more than it ever has here.** A wide, thin, face-down
   part is exactly the shape that lifts at a corner. Clean plate, no skipping §1.4.
@@ -722,7 +750,7 @@ It debosses its own dimensions, so a loose ring on a bench is never a mystery.
 
 ### 7c″ · The color + fit coupon — print this before the frame
 
-One part answers two questions at **20.9 cm³ — a fifth of a frame** (body 20.56, ink 0.31, accent 0.02):
+One part answers two questions at **23.6 cm³ of body — a fifth of a frame** (the ink volume is empty on the shipped palette):
 
 ```sh
 for f in body accent; do   # add 'ink' if you have put a group back on it
@@ -778,26 +806,23 @@ print it and scan it.
 python3 gen_3mf.py color   # the QR plaque rides plate 2 with the coupon
 ```
 
-It is the **back plate only** — 3 mm, not the frame's 23.5 — cut from the real
+It is the **back plate only** — 3 mm, not the frame's 23.3 — cut from the real
 frame at the real QR, so the deboss depth, module shape and first layer are the
 ones the case will actually print. Two filaments:
 
 | slot | gets | why |
 |---|---|---|
 | 1 | body (**Black**) — the field | on the shipped palette the field *is* the case |
-| 2 | ink (**White**) — the modules | the modules always get their own filament |
+| 3 | accent (**Signal Yellow**) — the modules | the modules always get their own filament: `accent_groups` carries `"qr"`, and the packager reads the slot from the `.scad` (slot 2 stays empty) |
 
-⚠️ **That is white-on-black — INVERTED from the spec**, and it is the shipped
+⚠️ **That is yellow-on-black — INVERTED from the spec**, and it is the shipped
 default (`qr_style = "bare"`), chosen so the symbol sits *in* the black case
 instead of inside a bright rectangle on it. Readers are specified to want dark
 modules on a light field. Many current phone cameras decode inverted symbols;
 plenty of older and embedded readers refuse, and nothing in this repo can tell
 you which yours is — **which is exactly why this coupon exists.** If it will
-not scan, set `qr_style = "plaque"`: the white prints as a light plaque with
+not scan, set `qr_style = "plaque"`: the accent prints as a light plaque with
 the modules punched through it in black, and the conforming polarity is back.
-
-There is deliberately **no accent slot**. Yellow on a finder pattern is how you
-make a symbol that looks finished and never scans.
 
 The plaque stops exactly at the quiet zone (`qr_back_reach`) and not a
 millimeter further — that radius is what the model's asserts guarantee is clear
@@ -872,7 +897,7 @@ read. If you never see that dialog, you opened an STL.
 
 **Rehearse the colors on the coupon first** (§7c): `gen_3mf.py color` writes a
 plate with the color coupon and the QR plaque on it, and it is a few grams
-against the frame's ~160.
+against the frame's ~136.
 
 <details><summary>Exporting the STLs by hand (only if you are not using the packager)</summary>
 
@@ -916,26 +941,41 @@ height — so the modules and the plate around them come out the SAME color, and
 there is no swap height that fixes it, because the field and the modules are at
 different heights but the wrong way round. Giving the modules their own
 filament is what makes the symbol possible. For the same reason, **the modules
-must stay in the ink filament** — yellow against either body color has nowhere
-near enough contrast to decode.
+need a filament of their own** — on the shipped black body that is the yellow
+accent, light on dark; scan the §7c‴ plaque before trusting any pairing.
 
 **The AMS carries the case's three rigid filaments and nothing else.** The TPU
 fitments still come off the external spool (§0), and they print on their own
 plate regardless.
 
-**If you have no AMS, print `part="frame"` and follow §7b′ — not `fil_body`.**
-`fil_body` is the body's *share* of the three-way split: the final 0.6 mm bezel
-band has been subtracted out of it, because that material belongs to `fil_ink`.
-Printed on its own it is a case with the front bezel missing, not a
-single-color case. Only the full `frame` mesh is the whole part.
+**If you have no AMS, print `part="frame"` and follow §7b′.** `fil_body` is the
+body's *share* of the split: it subtracts only what another filament claims
+beyond the deboss recesses — the front bezel band or the vent-mouth rings,
+when `bezel_color` / `vent_ring_color` hand them over. On the shipped palette
+both are `"body"`, so `fil_body` is the same solid as `frame`; on any other it
+is a case with that band missing, and only `frame` is the whole part.
 
 ### 7d · Assembly order
 
-1. Seat the PCB on the four molded bosses; drive **M3 into the boss pilots**.
-2. Drop the panel in — the glass back sits flush with the tray's wall top.
-3. Lay the bezel on; the lip closes onto the glass border.
-4. **M3 × 16–20 from the front**, through the bezel's counterbored ears, self-
-   tapping into the full-height corner posts. Snug, not tight — see below.
+**The frame (§7b′):**
+
+1. With the frame empty, feed the power cable's head in through the bottom
+   port and plug it into the panel; leave a service loop.
+2. Peel the panel's adhesive liners and seat it through the front opening,
+   glass outward, onto the adhesive ledge; press the border down all round.
+3. Drive the **4 × M3 × 8 from the back** through the plate's bosses into the
+   panel's own white standoffs (the render's line names the length). Snug,
+   not tight — see below.
+4. Open the grommet at its slit, wrap it round the wire and press it into the
+   port; press the button plug into the BOOT/RESET window; push the SD
+   cover's barb through its anchor hole, lay the strap in its channel and
+   press the cap home.
+
+> ⚠️ **The legacy bezel + tray (§7c) cannot be assembled on the bonded panel:**
+> the steps it was drawn for — seat the PCB on the four molded bosses and drive
+> M3 into their pilots, drop the panel in, lay the bezel on, M3 × 16–20 from the
+> front into the corner posts — put the PCB where the panel's own standoffs
+> are and its screws under the bonded glass.
 
 > **PETG creeps under sustained clamp load.** If this is going to live screwed
 > together for months, either re-torque 24 h after assembly, or fit brass

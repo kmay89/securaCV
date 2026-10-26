@@ -57,7 +57,7 @@ struct httpd_req {
    * suites' request_peer_key() (peer_source.h) reads these. */
   uint8_t peer[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 192, 168, 1, 20};
   bool peer_ok = true;
-  std::map<std::string, std::string> req_hdrs;   /* "Authorization", "Cookie" */
+  std::map<std::string, std::string> req_hdrs;   /* "Authorization", "Cookie", "Host" */
   std::string query;                             /* after the '?'; "" = none */
   std::string status = "200 OK";
   std::string type;

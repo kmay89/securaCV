@@ -224,11 +224,12 @@ KNOB_MEANINGS = {
     "usb_shell_h":   ("the USB connector shell, or an opening sized to it", r"\bshell", None, None),
     "usb_slot_w":    ("a side slot a USB plug enters through", r"\bslot", None, None),
     "usb_slot_h":    ("a side slot a USB plug enters through", r"\bslot", None, None),
-    # the J-box's (C10): the connector sits recessed, so only a pre-made pigtail
-    # cable leaves through the wall — a plug and its boot never cross it
-    "pigtail_w":     ("the slot a pigtail cable passes through, no plug or boot",
+    # the J-box's (C10): the connector sits 7.1 inside the wall, so the plug
+    # overmold of whatever is plugged in stands in the slot (2026-10-23: it
+    # opens to the Type-C spec overmold) — a strain-relief boot never crosses it
+    "pigtail_w":     ("the slot a pigtail cable and its plug's overmold pass through",
                       r"\bpigtail", r"\bboots?\b", "usb_w for an opening a plug and boot pass"),
-    "pigtail_h":     ("the slot a pigtail cable passes through, no plug or boot",
+    "pigtail_h":     ("the slot a pigtail cable and its plug's overmold pass through",
                       r"\bpigtail", r"\bboots?\b", "usb_h for an opening a plug and boot pass"),
     "vm_l":          ("the Grove Vision AI V2 module", r"grove|vision|\bmodule\b",
                       r"radar|mr60|carrier", "radar_l for the MR60 radar carrier"),

@@ -235,7 +235,9 @@ DEVICES = {
                   ("T", "[0, lobe_low_y, 0]")],
         "parts": {
             "stand": "world",
-            "back": [],
+            # the back exports PADS-UP (the selector's
+            # translate([0, 0, back_t]) rotate([0, 180, 0])); undo it
+            "back": [("R", [0, 180, 0]), ("T", "[0, 0, -back_t]")],
             "frame": [("T", "[0, 0, back_t + frame_h]"), ("R", [0, 180, 0])],
             # glass front on the face's inner side, looking out (+z)
             "panel": [("T", "[0, 0, back_t + frame_h - face_t]")],

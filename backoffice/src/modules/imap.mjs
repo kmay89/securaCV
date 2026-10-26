@@ -50,7 +50,11 @@ export async function imapFetchUnseen(url, { limit = 50, markSeen = true, timeou
   r = await c.cmd('UID SEARCH UNSEEN'); if (!r.ok) { sock.end(); throw new Error(`imap search: ${r.msg}`); }
   const uids = (r.lines.map(l => l.text).find(t => t.startsWith('* SEARCH')) || '').split(/\s+/).slice(2).filter(Boolean).slice(0, limit);
   const out = [];
+  const MAX = 8 * 1024 * 1024;
   for (const uid of uids) {
+    // the size before the body: a message over the cap is never pulled into memory (one 64 MB message used to cost 26 s of CPU and the container's memory)
+    const sz = await c.cmd(`UID FETCH ${uid} (RFC822.SIZE)`); const n = Number((sz.lines.map(l => l.text).join(' ').match(/RFC822\.SIZE (\d+)/) || [])[1]);
+    if (Number.isFinite(n) && n > MAX) { out.push({ uid: `${validity}:${uid}`, raw: null, skipped: `message is ${Math.round(n / 1048576)} MB, over the ${MAX / 1048576} MB cap` }); if (markSeen) await c.cmd(`UID STORE ${uid} +FLAGS (\\Seen)`); continue; }
     r = await c.cmd(`UID FETCH ${uid} (BODY.PEEK[])`); if (!r.ok) continue;
     const lit = r.lines.find(l => l.literal); if (!lit) continue;
     out.push({ uid: `${validity}:${uid}`, raw: lit.literal });

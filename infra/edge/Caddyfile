@@ -1,0 +1,32 @@
+# The edge. One file per hostname in sites/; this file never changes.
+{
+	email {$ACME_EMAIL}
+	servers {
+		protocols h1 h2 h3
+		# a client that opens a socket and says nothing, or trickles a body, is dropped at the edge
+		timeouts {
+			read_header 10s
+			read_body 1m
+			write 2m
+			idle 2m
+		}
+	}
+}
+
+# Every site gets the same posture: compressed, HSTS, no sniffing, no
+# referrer leaking, no server banner. A site file adds routing, nothing else.
+(secure) {
+	encode zstd gzip
+	# no app behind this edge takes a body over 2 MB (the backoffice caps at 1 MiB itself)
+	request_body {
+		max_size 2MB
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+}
+
+import /etc/caddy/sites/*.caddy

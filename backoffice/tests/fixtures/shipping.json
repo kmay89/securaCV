@@ -1,0 +1,137 @@
+{
+  "_readme": "The packing side of the store, kept out of store.json so the catalog stays about selling and this stays about shipping. Two tables: `boxes` (what we can ship in — USPS Flat Rate cartons and our own boxes on Ground Advantage, with real inner dimensions) and `parcels` (how one unit of each store SKU packs down — a tidy inner package with dimensions and weight). scripts/box-fit.mjs joins the two: it packs an order's parcels into the cheapest box(es) that fit, splits into several boxes when one won't hold it, splits into several shipments when stock can't fill it now, and decides what to reship when a unit goes out wrong. Dimensions are inches (inner, usable), weights are ounces. Costs are labeled estimates: the real number is whatever Pirate Ship prints at label time — this file exists so a packed box is never a surprise and the flat rate in store.json is set on purpose, not on a guess. Keep parcel ids in lockstep with store.json product ids; the box-fit guard fails CI if a sellable SKU has no parcel here.",
+  "fill_efficiency": 0.78,
+  "dim_weight_divisor": 166,
+  "cost_zone_note": "est_zone4 — a representative mid-zone (roughly the middle of the country from a coastal drop). Coastal-to-coastal is dearer, in-region cheaper. Pirate Ship shows the true zone-priced number when the label is bought.",
+  "ground_advantage_rate_tiers": [
+    { "max_oz": 4, "usd": 3.8 },
+    { "max_oz": 8, "usd": 4.35 },
+    { "max_oz": 12, "usd": 4.8 },
+    { "max_oz": 16, "usd": 5.25 },
+    { "max_oz": 32, "usd": 6.75 },
+    { "max_oz": 48, "usd": 8.1 },
+    { "max_oz": 80, "usd": 10.5 },
+    { "max_oz": 160, "usd": 15.9 },
+    { "max_oz": 1120, "usd": 26.0 }
+  ],
+  "boxes": [
+    {
+      "id": "ga-mailer",
+      "name": "Padded poly mailer (Ground Advantage)",
+      "service": "USPS Ground Advantage",
+      "pricing": "weight",
+      "soft": true,
+      "inner": { "l": 9, "w": 6, "h": 2 },
+      "max_weight_oz": 24,
+      "note": "The long tail: one printed-parts pack or a small reshipped part. Squishes to fit, so the height is generous."
+    },
+    {
+      "id": "ga-box-s",
+      "name": "Small carton (Ground Advantage)",
+      "service": "USPS Ground Advantage",
+      "pricing": "weight",
+      "soft": false,
+      "inner": { "l": 6, "w": 4, "h": 4 },
+      "max_weight_oz": 1120,
+      "note": "One indoor kit. The everyday box — light and small, so Ground Advantage beats every flat rate here."
+    },
+    {
+      "id": "ga-box-m",
+      "name": "Medium carton (Ground Advantage)",
+      "service": "USPS Ground Advantage",
+      "pricing": "weight",
+      "soft": false,
+      "inner": { "l": 9, "w": 6, "h": 4 },
+      "max_weight_oz": 1120,
+      "note": "A pair of kits or one small bundle. Own-box Ground Advantage until the weight crosses into flat-rate territory."
+    },
+    {
+      "id": "ga-box-l",
+      "name": "Large carton (Ground Advantage)",
+      "service": "USPS Ground Advantage",
+      "pricing": "weight",
+      "soft": false,
+      "inner": { "l": 12, "w": 9, "h": 6 },
+      "max_weight_oz": 1120,
+      "note": "A full fleet bundle or a stack of kits. Compare against the Large Flat Rate box once it's heavy."
+    },
+    {
+      "id": "fr-padded",
+      "name": "USPS Priority Flat Rate Padded Envelope",
+      "service": "USPS Priority Mail",
+      "pricing": "flat",
+      "soft": true,
+      "inner": { "l": 12.25, "w": 9.25, "h": 1 },
+      "max_weight_oz": 1120,
+      "flat_usd": 10.4,
+      "note": "Flat and thin. Rarely the cheapest for our rigid parcels — kept so the tool can prove Ground Advantage wins rather than assume it."
+    },
+    {
+      "id": "fr-small",
+      "name": "USPS Small Flat Rate Box",
+      "service": "USPS Priority Mail",
+      "pricing": "flat",
+      "soft": false,
+      "inner": { "l": 8.625, "w": 5.375, "h": 1.625 },
+      "max_weight_oz": 1120,
+      "flat_usd": 10.2,
+      "note": "Shallow. Only a flat parts pack fits; a kit's enclosure is too tall for it."
+    },
+    {
+      "id": "fr-medium",
+      "name": "USPS Medium Flat Rate Box",
+      "service": "USPS Priority Mail",
+      "pricing": "flat",
+      "soft": false,
+      "inner": { "l": 11, "w": 8.5, "h": 5.5 },
+      "max_weight_oz": 1120,
+      "flat_usd": 18.3,
+      "note": "Flat rate wins here only when the box is dense/heavy enough that weight-priced Ground Advantage would cost more."
+    },
+    {
+      "id": "fr-large",
+      "name": "USPS Large Flat Rate Box",
+      "service": "USPS Priority Mail",
+      "pricing": "flat",
+      "soft": false,
+      "inner": { "l": 12, "w": 12, "h": 5.5 },
+      "max_weight_oz": 1120,
+      "flat_usd": 24.1,
+      "note": "The heavy-multi-kit escape hatch: one price no matter the weight, so it caps the cost of a dense large order."
+    }
+  ],
+  "parcels": {
+    "wap-kit": {
+      "l": 6, "w": 4, "h": 2.5, "weight_oz": 7, "soft": false,
+      "note": "Board + SD + printed PETG case + cable + QR card, packed tidy."
+    },
+    "wap-kit-outdoor": {
+      "l": 6.5, "w": 4.5, "h": 3, "weight_oz": 9, "soft": false,
+      "note": "WAP kit + weather kit (vent, sealed plug, gasket, window, silicone); ASA case runs a touch bigger."
+    },
+    "vision-kit": {
+      "l": 7, "w": 5, "h": 3, "weight_oz": 10, "soft": false,
+      "note": "Camera board set + printed case with GoPro hinge + mount hardware + cable + QR card."
+    },
+    "vision-kit-outdoor": {
+      "l": 7.5, "w": 5.5, "h": 3.5, "weight_oz": 12, "soft": false,
+      "note": "Vision kit + weather kit + ASA case."
+    },
+    "witness-pair": {
+      "l": 9, "w": 6, "h": 3.5, "weight_oz": 15, "soft": false,
+      "note": "Two WAP kits pre-packed as one box, per the product copy — one parcel, not two."
+    },
+    "watchful-house": {
+      "l": 11, "w": 8, "h": 4.5, "weight_oz": 26, "soft": false,
+      "note": "Vision + two WAP kits as one fleet box."
+    },
+    "wap-parts": {
+      "l": 6, "w": 4, "h": 2, "weight_oz": 4, "soft": true,
+      "note": "Printed PETG case + fastener set. Soft enough for a padded mailer."
+    },
+    "vision-parts": {
+      "l": 7, "w": 5, "h": 2.5, "weight_oz": 6, "soft": true,
+      "note": "Printed set + M2/M5 hardware + lens window. Padded-mailer friendly."
+    }
+  }
+}

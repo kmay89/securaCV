@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — VISION PRO MOUNT  ⚠️ IN DEVELOPMENT (v0.1-dev)
+//  Canary — VISION PRO MOUNT  ⚠️ IN DEVELOPMENT (v0.2-dev)
 //  Bridges a Seeed reCamera Pro (or any reCamera-family unit) onto the
 //  shared T-stud wall ecosystem. The BACK carries two BLIND KEYHOLE
 //  POCKETS — identical geometry to every Canary case's back
@@ -26,6 +26,19 @@
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print- or bench-validated.
 //  See docs/hardware/canary_vision_pro_recamera.md for the integration
 //  story this hardware serves (webhook sensor adapter, no new firmware).
+//
+//  2026-10-23: v0.2-dev — the keyhole pair now runs IN LINE along its slots,
+//  down the plate's centerline, as on every case back in the catalog. v0.1
+//  cut the pockets side by side at (±12, 22) with vertical slots: no stud
+//  surface pairs its studs that way, so on a vertical pair (the corner
+//  wedge, the pole and magnet plates, the vent clip, the outlet cradle)
+//  parking one pocket buried the other stud whole in the plate (70.35 mm³),
+//  and turned 90° to fit, the slots ran level with nothing to latch them.
+//  Set kh_gap to the stud surface's stud_gap (the adapters' 30 is the
+//  default). The tripod and magnet move beside the keyhole column, below
+//  its lower pocket, in every mount mode. The magnet pocket also gains the
+//  press tolerance the adapters' magnet plate cuts: it was drawn at exactly
+//  the disc's Ø20.0 (19.99 across the 120-gon's flats).
 // ============================================================================
 
 use <canary_core_lib.scad>   // shared 2D primitives — rrect2d has one home now
@@ -58,19 +71,21 @@ kh_shank_d = 4.2;   // slot width (Ø4 stud stem) — mount_kh_shank_d()
 kh_slot_l  = 8.0;   // slot travel — mount_kh_slot_l()
 kh_head_h  = 3.5;   // total pocket depth (face web included) — mount_kh_head_h()
 kh_face    = 1.0;   // face web the stud head grips behind — mount_kh_face()
-kh_x       = 12.0;  // keyhole pair spacing (± from center)
-kh_y       = 22.0;  // keyhole row offset from center, toward the TOP edge
+kh_gap     = 30.0;  // keyhole pair spacing, IN LINE along the slots (vertical, as every case back) — set it to the stud surface's stud_gap (the asserts say when plate_h must grow)
+kh_y       = 7.5;   // keyhole pair center, from the plate center toward the TOP edge
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;
 
-echo(str("Canary Vision Pro mount v0.1-dev — mount=", mount,
+echo(str("Canary Vision Pro mount v0.2-dev — mount=", mount,
          "  (IN DEVELOPMENT — measure your screw/nut before printing!)"));
 assert(plate_t > kh_head_h, "plate_t must exceed the keyhole pocket depth");
 assert(plate_t > tripod_head_h + 1.5, "plate_t must clear the tripod counterbore + a solid wall");
 assert(mag_t < plate_t, "mag_t must be shallower than plate_t");
-assert(kh_x * 2 + kh_head_d < plate_w, "keyhole pair too wide for plate_w");
-assert(kh_y + kh_slot_l/2 + kh_head_d/2 < plate_h/2, "keyhole row too close to the top edge");
+// the upper pocket's head cavity (kh_head_d + 0.6 wide, mount_keyhole_pocket)
+// keeps a structural wall to the top edge
+assert(kh_y + kh_gap/2 + kh_slot_l/2 + (kh_head_d + 0.6)/2 + core_min_wall() <= plate_h/2,
+       "upper keyhole too close to the top edge — lower kh_y or kh_gap, or raise plate_h");
 
 // Blind keyhole pocket, opening on the BACK face (z=0) and cutting +Z into
 // the plate — canary_mount_lib's pocket on its native Y axis (slot vertical,
@@ -96,19 +111,41 @@ module tripod_hole(xc, yc) {
 
 // Magnet disc pocket, recessed into the FRONT face (the disc glues in
 // flush and mates with the camera's own magnetic mount).
+// v0.2: + the catalog's press tolerance a side (the adapters' magnet plate cuts
+// the same Ø20.2); at exactly mag_d it drew a hole the disc could not enter
 module magnet_pocket(xc, yc) {
-    translate([xc, yc, plate_t - mag_t]) cylinder(d = mag_d, h = mag_t + 0.1);
+    translate([xc, yc, plate_t - mag_t]) cylinder(d = mag_d + 2*core_tol_press(), h = mag_t + 0.1);
 }
 
+// ---- layout (v0.2) ------------------------------------------------------------
+// The keyholes sit on the centerline, in line along their slots. The device
+// features sit BESIDE that column and below its lower pocket — tripod left,
+// magnet right, in every mount mode: centered (x = 0), the tripod counterbore
+// would cut into the lower pocket (both open on the back, 3.5 deep) and the
+// magnet pocket's floor would stand 0.5 over its head cavity.
+mag_r  = mag_d/2 + core_tol_press();        // the magnet pocket's radius
+dev_x  = 12.0;                              // tripod at -dev_x, magnet at +dev_x
+dev_y  = -plate_h/2 + mag_r + 1.4;          // both: 1.4 of wall under the magnet pocket (-20.5 at plate_h 64)
+kh_lo  = kh_y - kh_gap/2 - kh_slot_l/2;     // the lower pocket's head-circle center (its low end)
+kh_cav = (kh_head_d + 0.6)/2;               // its head cavity's radius (mount_keyhole_pocket)
+// XY gap from a circle (x, y, r) to the lower pocket's head cavity (a stadium)
+function kh_clear_to(x, y, r) = norm([x, y - min(max(y, kh_lo), kh_lo + kh_slot_l)]) - kh_cav - r;
+// the magnet pocket is cut from the front, the keyhole from the back, so a web
+// suffices between them; the tripod counterbore shares the keyhole's depth band
+assert(kh_clear_to(dev_x, dev_y, mag_r) >= core_min_web(),
+       "the magnet pocket crowds the lower keyhole — raise kh_y or plate_h, or lower kh_gap");
+assert(kh_clear_to(-dev_x, dev_y, tripod_head_d/2) >= core_min_wall(),
+       "the tripod counterbore cuts into the lower keyhole — raise kh_y or plate_h, or lower kh_gap");
+assert(plate_h/2 + dev_y - mag_r >= core_min_wall() && plate_w/2 - dev_x - mag_r >= core_min_wall(),
+       "the magnet pocket crowds the plate edge");
+
 module plate() {
-    tripod_x = (mount == "both") ? -12 : 0;
-    magnet_x = (mount == "both") ?  12 : 0;
     difference() {
         linear_extrude(plate_t) rrect2d(plate_w, plate_h, plate_r);
-        keyhole_pocket(-kh_x, kh_y);
-        keyhole_pocket( kh_x, kh_y);
-        if (mount == "tripod" || mount == "both") tripod_hole(tripod_x, -16);
-        if (mount == "magnet" || mount == "both") magnet_pocket(magnet_x, -16);
+        keyhole_pocket(0, kh_y + kh_gap/2);
+        keyhole_pocket(0, kh_y - kh_gap/2);
+        if (mount == "tripod" || mount == "both") tripod_hole(-dev_x, dev_y);
+        if (mount == "magnet" || mount == "both") magnet_pocket( dev_x, dev_y);
     }
 }
 

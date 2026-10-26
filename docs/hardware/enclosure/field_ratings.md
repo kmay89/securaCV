@@ -43,7 +43,7 @@ equalize through ePTFE.
 - **The seam is what fails, not the wall.** Corner-screwed printed-gasket
   lids (our weather presets) are splash-tight, not dunk-tight. Reaching IP67
   needs a **real O-ring cord in a groove, compressed 15–35 %, with clamp
-  points ≤ ~40 mm apart** — that's exactly why the field case has six screw
+  points ≤ ~40 mm apart** — that's exactly why the field case has eight screw
   lobes, not four corner screws.
 - **Impacts break layer adhesion first.** Z-tensile is 50–70 % of in-plane
   strength; a hard corner drop starts a delamination crack. The answer is
@@ -79,9 +79,9 @@ the verified rating is earned in §5 and belongs to one physical unit.
 | Level | Means | Maps to | Design prerequisites | Who can reach it |
 |-------|-------|---------|----------------------|-------------------|
 | **CER‑1 · Indoor** | dust-protected desk/wall duty | ~IP20–40 | any case as printed | every design |
-| **CER‑2 · Sheltered outdoor** | rain-splash under an eave/porch | ~IP53–54 target | weather preset: printed TPU gasket, drip skirt, USB plug, vent, mounted ports-down | WAP/Vision weather, doorbell (plate-sealed) |
+| **CER‑2 · Sheltered outdoor** | rain-splash under an eave/porch | ~IP53–54 target | weather preset: printed TPU gasket in the shell's ledge, O-ringed plate screws, USB plug, vent, mounted ports-down | WAP/Vision weather, doorbell (plate-sealed) |
 | **CER‑3 · Exposed outdoor** | direct rain + hose-down washes | ~IP55 target | CER‑2 + cable gland on any wire exit + solar shield + 4–5 perimeter walls | WAP/Vision weather (careful print), relay pod (dev) |
-| **CER‑4 · Field** | 1 m submersion 30 min + 1.22 m transit drops, bag-carry | ~IP67 + 810H 516.8 IV target | **field case only**: O-ring cord, 6-lobe clamp, no external ports, ePTFE vent, 4 mm walls, TPU boot, foam-bedded battery | [`canary_field_case.scad`](./canary_field_case.scad) |
+| **CER‑4 · Field** | 1 m submersion 30 min + 1.22 m transit drops, bag-carry | ~IP67 + 810H 516.8 IV target | **field case only**: O-ring cord, 8-lobe clamp, no external ports, ePTFE vent, 4 mm walls, TPU boot, foam-bedded battery | [`canary_field_case.scad`](./canary_field_case.scad) |
 
 Current honest status (2026‑07): **every level is *target/intent* — no unit
 has been through §5 yet.** Log your results (printer, filament, settings,
@@ -129,10 +129,10 @@ and produces a **signed, verified event** end-to-end.
 
 ## 6. Field-case shopping list (the parts that make CER‑4 possible)
 
-Ø1.5 mm nitrile/silicone O-ring cord (~200 mm cut, or a cord kit) ·
-6× M3 heat-set inserts + M3×8 pan (or torx security) screws ·
+Ø1.5 mm nitrile/silicone O-ring cord (~221 mm cut — the body render echoes it — or a cord kit) ·
+8× M3 heat-set inserts + M3×8 pan (or torx security) screws ·
 Ø12×2 mm polycarbonate disc + neutral-cure silicone ·
-adhesive ePTFE vent patch (≥ Ø10) · closed-cell foam sheet 2 mm ·
+adhesive ePTFE vent patch (≥ Ø10) · closed-cell foam: a 2 mm sheet for the bed under the battery + a ~10 mm block for the pad over it (the body render echoes its size: 9.6 × 27.6 × 34.8 at the defaults) ·
 1 g desiccant sachet · TPU 95A for the boot · ASA (or PETG) for the shell.
 
 *Sources: [Seeed XIAO ESP32‑S3 spec](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/) ·

@@ -39,7 +39,7 @@
 //       - It releases where it is pried: the far-end scallop lifts the far
 //         pair first, so the plug end is never the end that lets go.
 //       - The beams are sized by STRAIN, not by eye: see the ε calculation at
-//         `snap_beam_l`. PETG takes about 1.8% repeatedly; a beam short
+//         `snap_lever`. PETG takes about 1.8% repeatedly; a beam short
 //         enough to feel stiff is a beam that goes white and then snaps off
 //         on the third opening.
 //
@@ -382,13 +382,23 @@ snap_w = 4.6;        // beam width
 // button ear took its old place at the plug end), and a beam must root on
 // solid wall above the seam's roof, not on it — see the seam assert.
 snap_beam_l = 6.0;   // free beam LENGTH — see the strain note below
-snap_beam_t = 0.85;  // beam thickness (the wall is locally thinned to this)
+// 2026-10-22 audit: 0.85 -> 0.8, with snap_eng below — the strain gate had
+// been reading the wrong lever (see THE SNAP-BEAM STRAIN CHECK). 0.8 is two
+// 0.4 lines exactly, core_min_web(): thinner is not a beam a nozzle lays.
+snap_beam_t = 0.8;   // beam thickness (the wall is locally thinned to this)
 // The hook has to FIT the 2.0 plate it hooks: its height at the plate edge
 // (eng on the underside + flat + eng on the top face, at 45° each) plus
 // tol_press either side is the groove, and the groove needs a lip of plate
 // above and below it. 0.55 / 0.5 drew a 1.34-1.75 mm hook into a 0.8 mm
 // groove — ~0.3 mm of interference at every seat, a plate that never closed.
-snap_eng = 0.4;      // engagement depth (how far the hook stands past the plate edge)
+// 2026-10-22 audit: 0.4 -> 0.25. With the lever measured to the hook (5.0,
+// not the beam's 6.0) a 0.85 beam at 0.4 strained 2.55% — 2.8% counting the
+// pedestal's stiffness — against this file's 1.8; no thinner beam prints and
+// no longer one roots above the seam, so engagement is what gives. 1.68% now.
+// Held: all four hooks still catch with the plate lifted 0.05, and the
+// groove's lips grow 0.38 -> 0.53. (The header's 2026-09-24 entry measured
+// "engagement 0.40 past the plate edge at every hook"; it is 0.25 from here.)
+snap_eng = 0.25;     // engagement depth (how far the hook stands past the plate edge)
 snap_flat = 0.3;     // the vertical flat at the hook tip
 snap_slot = 0.9;     // U-slot width freeing each side of the beam
 snap_hold = 45;      // hook UNDERSIDE angle from horizontal — the retention face; 45 is the flattest a face-down print holds
@@ -538,22 +548,8 @@ assert(usb_bot >= face_t + 0.6,
            "bezel face. Check usb_dz."));
 
 // ── THE SNAP-BEAM STRAIN CHECK ─────────────────────────────────────────────
-// Cantilever with a rectangular section (canary_snap_lib snap_strain):
-//     ε = 1.5 · y · t / L²
-// deflected by the hook's engagement PLUS tol_press — the plate floats that
-// much in the cavity, and when it is pushed toward a beam the beam opens by
-// both. PETG tolerates roughly 1.8% strain on a joint meant to be opened
-// again and again (the catalog's cycled budget, snap_budget_cycle(), is 2.0;
-// this file keeps its tighter 1.8). If this assert fires the fix is a LONGER
-// or THINNER beam — never a shallower engagement: snap_eng is already what
-// the 2.0 plate can take (the groove assert below), and less is a snap that
-// lets go.
-snap_defl   = snap_eng + tol_press;
-snap_strain = snap_strain(snap_beam_t, snap_defl, snap_beam_l);
-assert(snap_strain <= min(0.018, snap_budget_cycle()),
-       str("Snap beam strain is ", snap_strain*100,
-           "% — above the ~1.8% PETG can take repeatedly. Lengthen ",
-           "snap_beam_l or thin snap_beam_t."));
+// (It lives below beam_root_z now — it reads the hook's height, which is
+// derived from the plate. See there.)
 // The print pose decides the hold: the underside is an overhang on the
 // face-down bezel, so it cannot be flatter than 45°.
 assert(snap_hold >= 45 && snap_entry >= 45,
@@ -634,6 +630,36 @@ assert(!light_seam || beam_root_z >= face_t + seam_dz + seam_h + 1.0,
        str("the snap beams root at z=", beam_root_z, ", within 1.0 mm of the ",
            "light seam's roof (", face_t + seam_dz + seam_h, ") — shorten ",
            "snap_beam_l."));
+
+// ── THE SNAP-BEAM STRAIN CHECK ─────────────────────────────────────────────
+// Cantilever with a rectangular section (canary_snap_lib snap_strain):
+//     ε = 1.5 · y · t / L²
+// deflected by the hook's engagement PLUS tol_press — the plate floats that
+// much in the cavity, and when it is pushed toward a beam the beam opens by
+// both. PETG tolerates roughly 1.8% strain on a joint meant to be opened
+// again and again (the catalog's cycled budget, snap_budget_cycle(), is 2.0;
+// this file keeps its tighter 1.8).
+// L IS THE LEVER TO THE HOOK, not the beam's length — 2026-10-22 audit. The
+// plate's edge loads the beam where it rides the hook's tip, at groove_mid_z,
+// and the beam's last millimeter above that, up to the rim, carries no
+// moment at all. The gate used snap_beam_l (6.0) where the lever is 5.0
+// (root z 5.2, hook z 10.2): it read 1.77% for a beam at 2.55%. That is
+// canary_snap_lib's own definition — the working length is the root-to-seat
+// rise — and still a hair kind: the hook's pedestal stiffens the beam from
+// z 8.1 up, which puts the root nearer 1.8% than this figure's 1.68%.
+// The fix is a LONGER or THINNER beam where one exists, and here neither
+// does: the root cannot drop past the seam's roof + 1.0 (asserted above, 0.2
+// away), and a beam under snap_beam_t's 0.8 is under two lines. So this
+// once, engagement gave (0.4 -> 0.25). It is still the one to protect —
+// the groove assert holds the plate around it, and a snap that lets go is
+// the failure on the other side of this one.
+snap_defl   = snap_eng + tol_press;
+snap_lever  = groove_mid_z - beam_root_z;   // root -> hook, where the plate loads it
+snap_strain = snap_strain(snap_beam_t, snap_defl, snap_lever);
+assert(snap_strain <= min(0.018, snap_budget_cycle()),
+       str("Snap beam strain is ", snap_strain*100,
+           "% — above the ~1.8% PETG can take repeatedly. Lengthen ",
+           "snap_beam_l or thin snap_beam_t."));
 
 // ── The glass has to be RETAINED, not merely framed ──────────────────────
 // The bezel face overlaps the LCD module's border by this much on each side.
@@ -1230,9 +1256,8 @@ module back_cutouts() {
             cylinder(h = back_t + 2, d = led_d);
 }
 
-// The mark, as a deboss in the back's outer face. `grow` lets the ACCENT part
-// be generated a hair larger so the yellow inlay actually touches the walls
-// of the pocket it sits in rather than rattling inside it.
+// The mark, as a deboss in the back's outer face. `grow` offsets the drawing
+// for a caller that needs it; both the pocket and the inlay take 0 now.
 module back_mark(grow = 0) {
     translate([mark_dx, mark_dy, back_t - mark_depth])
         linear_extrude(mark_depth + 0.02)
@@ -1255,8 +1280,18 @@ module back_body() {
 
 // The yellow inlay: exactly the pocket the body left. Printed in the accent
 // filament and loaded as a second part — never re-centered.
+// 2026-10-22 audit: ZERO clearance, as the comment above always said and the
+// call never did. It was back_mark(-0.08) — the inlay SHRUNK 0.08 a side,
+// where the note on back_mark promised "a hair larger" — so fil_accent came
+// out 9.86 mm³ in a 14.52 mm³ pocket, and at this 2.55 mm cap height (just
+// over mark_word_min_h's 2.4) the 0.16 it took off every stroke left a 0.4
+// bead 8.7 mm² of the letters' 20.2 to lay (43%), against 18.9 (93%) as cut.
+// The 0.08 ring around each letter is a gap the slicer leaves empty. This is
+// a co-print (gen_3mf.py stick: one multi-part object), and the C3 lid's
+// doctrine is the house one: the AMS fuses filaments that meet, and a shrunk
+// inlay only asks it to bridge a gap that should not exist.
 module back_accent() {
-    if (mark_show) back_mark(-0.08);
+    if (mark_show) back_mark(0);
 }
 
 // The diffuser plug for the LED window. Natural / translucent PETG. A press

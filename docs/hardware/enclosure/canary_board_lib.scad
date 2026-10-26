@@ -90,6 +90,17 @@ function brd_xiao_w_measured() = 17.8;
 function brd_stack_sock_measured()   = 6.5;
 function brd_stack_sock_unmeasured() = 11.5;
 
+// GROVE VISION AI V2 — its BACK face, read off the vendor CAD (boards/vendor/
+// seeed_grove_vision_ai_v2.step.gz, product GroveVisionAI_v2, "drawing"
+// rung; back face at y = -2.51). The XIAO's two socket rows (18 x 2.5 each,
+// 2..20 mm in from the USB edge, ±7.75 off the centerline) and the block at
+// the USB edge beside them (Body1, 12.8 across x 8 deep — by its place, the
+// Grove socket) all stand 5.0 proud of the back face, XIAO seated or not.
+// A host that cables the module instead of stacking it must still stand the
+// module clear of them: the Vision's devkit plate stood it on a 3.5 ring
+// pedestal right under both rows (the Vision's v0.7 found it).
+function brd_grove_v2_back_h() = 5.0;   // socket rows + Body1, proud of the module's back face
+
 // Waveshare 1.47 family brass corner pillars above the PCB back:
 // the C3's are measured; the C6's 5.0 has never met calipers.
 function brd_ws147_brass_c3() = 3.0;    // MEASURED (kmay89)
@@ -107,8 +118,9 @@ function brd_ws169_glass_h() = 41.13;
 // module's top face at y = 13.71 over x 4.75..12.75, z -10.75..-2.75. So the
 // lens top stands 12.7 above the PCB top face (the WAP's knob said 6.0 —
 // half the real stack), the module is 8 x 8, and its center sits 6.95 along
-// the LENGTH from the board center toward the antenna end, away from the
-// USB (the WAP's window sat over the board center, 7 mm off the lens); it
+// the LENGTH from the board center toward the USB end (Seeed's model puts the
+// USB-C port and the module over the same end — PL-7b; the WAP's window once
+// sat over the board center, 7 mm off the lens); it
 // overhangs that end by ~0.5. Across the width the model reads ~0.6 toward
 // one long edge; which edge needs a bench unit (the model's handedness is
 // not stated), so it is carried as 0 and the WAP's window keeps 0.5 a side

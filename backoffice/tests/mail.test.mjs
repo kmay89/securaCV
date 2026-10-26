@@ -59,9 +59,14 @@ test('the SMTP client authenticates, dot-stuffs and delivers; the outbox suppres
   enqueue(db, { to: 'later@b.test', subject: 'x', text: 'y' });
   const r2 = await sendOutbox(db, cfg);
   assert.equal(r2.failed, 1);
-  assert.equal(db.get('SELECT status, attempts FROM mail_outbox WHERE to_addr = ?', 'later@b.test').status, 'queued');
+  const later = db.get('SELECT status, attempts, next_attempt_at FROM mail_outbox WHERE to_addr = ?', 'later@b.test');
+  assert.equal(later.status, 'queued'); assert.equal(later.attempts, 1);
+  assert.ok(later.next_attempt_at > new Date().toISOString(), 'the retry waits: a dead relay is not hammered every minute');
+  assert.equal((await sendOutbox(db, cfg)).failed, 0, 'and the next run leaves it alone until then');
   // no SMTP configured → nothing is sent, nothing is lost
+  enqueue(db, { to: 'nowhere@b.test', subject: 'x', text: 'y' });
   assert.equal((await sendOutbox(db, testCfg({ smtpUrl: '' }))).skipped, 1);
+  assert.equal(db.get('SELECT status FROM mail_outbox WHERE to_addr = ?', 'nowhere@b.test').status, 'queued');
 });
 
 test('smtp:// fails closed when the relay does not offer STARTTLS', async () => {

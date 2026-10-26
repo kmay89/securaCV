@@ -1,0 +1,71 @@
+name: Backoffice deploy
+
+# Deploys the backoffice to the server the infra kit set up, after "Backoffice
+# image" has published the commit's image to GHCR. It does one thing over SSH
+# as the locked-down `deploy` user — "<app> <tag>" — which the server's forced
+# command turns into `kit deploy`: pull, start, wait for healthy, or roll back.
+#
+# It needs three repository secrets, all printed by `kit deploy-key` on the
+# server: DEPLOY_HOST, DEPLOY_SSH_KEY and DEPLOY_KNOWN_HOSTS (the server's host
+# key, so a wrong server is refused). Optional: the variable DEPLOY_APPS, the
+# space-separated apps to redeploy (default `backoffice`; add `backoffice-demo`
+# for the public demo), and DEPLOY_URL to confirm /healthz from the outside.
+# Without the secrets it does nothing, so forks are unaffected.
+on:
+  workflow_run:
+    workflows: ["Backoffice image"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Deploys land in order, one per published image; nothing is canceled.
+concurrency:
+  group: backoffice-deploy-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: kit deploy over ssh
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04  # the image the job was written against (CI.md R11)
+    timeout-minutes: 10
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      DEPLOY_APPS: ${{ vars.DEPLOY_APPS || 'backoffice' }}
+      DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Is a server configured?
+        id: gate
+        run: |
+          if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_SSH_KEY" ] || [ -z "$DEPLOY_KNOWN_HOSTS" ]; then
+            echo "No DEPLOY_HOST / DEPLOY_SSH_KEY / DEPLOY_KNOWN_HOSTS secrets — nothing to deploy to. \`kit deploy-key\` on the server prints all three."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Deploy ${{ env.DEPLOY_APPS }} ← ${{ github.event.workflow_run.head_sha }}
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          umask 077; mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          tag="${HEAD_SHA:0:12}"
+          for app in $DEPLOY_APPS; do
+            echo "== $app ← $tag"
+            ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts -o BatchMode=yes -o ConnectTimeout=20 "deploy@$DEPLOY_HOST" "$app $tag"
+          done
+          rm -f ~/.ssh/deploy_key
+      - name: The server answers from the outside
+        if: steps.gate.outputs.run == 'true' && env.DEPLOY_URL != ''
+        run: |
+          for _ in 1 2 3 4 5 6; do
+            if curl -fsS --max-time 10 "$DEPLOY_URL/healthz" >/dev/null; then echo "$DEPLOY_URL/healthz ok"; exit 0; fi
+            sleep 10
+          done
+          echo "$DEPLOY_URL/healthz did not answer after a minute" >&2; exit 1

@@ -21,7 +21,8 @@ export const ANSWERS = {
 
 export function openClaim(db, { orderNumber, email, serial = null, category, description = '', cfg = {}, actor = 'web' }) {
   if (!ANSWERS[category]) throw new Error(`unknown warranty category ${category}`);
-  const order = orderNumber ? orderByNumber(db, orderNumber) : null;
+  const order = orderNumber ? orderByNumber(db, String(orderNumber).trim()) : null;
+  if (orderNumber && !order) throw new Error(`no order ${String(orderNumber).trim()} — check the number, or leave it empty for a claim with no order`);
   const contact = email ? upsertContact(db, { email, source: 'support' }) : (order?.contact_id ? db.get('SELECT * FROM contacts WHERE id = ?', order.contact_id) : null);
   const device = serial ? db.get('SELECT * FROM devices WHERE serial = ?', String(serial).toUpperCase()) : null;
   return db.tx(() => {
@@ -41,12 +42,15 @@ export const listClaims = (db, { status = '' } = {}) => db.all('SELECT w.*, o.nu
 // Create the $0 reship order with the items the answer calls for.
 export function reship(db, claimId, items, { recordOrderFn, catalog = null, actor = 'web' } = {}) {
   const c = claimById(db, claimId); if (!c) throw new Error('no such claim');
+  if (c.reship_order_id) throw new Error(`${c.number} already has its reship order — one claim, one box`);
+  if (c.status !== 'open') throw new Error(`${c.number} is ${c.status}; only an open claim ships a replacement`);
+  if (!items?.length || items.some(i => !i.sku)) throw new Error('name at least one SKU to reship');
   const orig = c.order_id ? orderById(db, c.order_id) : null;
   if (!orig) throw new Error('claim has no original order to copy the address from');
   const { order } = recordOrderFn(db, {
     source: 'manual', email: c.email, name: orig.ship_name, currency: orig.currency, subtotal_cents: 0, shipping_cents: 0, tax_cents: 0, total_cents: 0,
     ship: { line1: orig.ship_line1, line2: orig.ship_line2, city: orig.ship_city, state: orig.ship_state, zip: orig.ship_zip, country: orig.ship_country },
-    items: items.map(it => ({ ...it, unit_cents: 0 })), notes: `warranty reship for ${c.number} (orig ${orig.number})`,
+    items: items.map(it => ({ ...it, unit_cents: 0 })), notes: `warranty reship for ${c.number} (orig ${orig.number})`, allow_duplicate: true,
   }, { catalog, actor });
   db.run('UPDATE warranty_claims SET reship_order_id = ?, status = \'shipping\' WHERE id = ?', order.id, claimId);
   db.audit(actor, 'warranty.reship', 'warranty', c.number, { reship: order.number });

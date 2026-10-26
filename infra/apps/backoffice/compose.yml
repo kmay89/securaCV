@@ -1,0 +1,26 @@
+# The backoffice on the edge. `kit deploy backoffice <tag>` sets TAG and brings this up;
+# Caddy reaches it as backoffice:8787 on the edge network. No ports are published.
+services:
+  backoffice:
+    image: ghcr.io/kmay89/securacv-backoffice:${TAG:-latest}
+    container_name: backoffice
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      BACKOFFICE_HOST: 0.0.0.0
+      BACKOFFICE_PORT: "8787"
+      BACKOFFICE_DATA_DIR: /data
+    volumes:
+      - /srv/data/backoffice:/data
+    networks: [edge]
+    security_opt: [no-new-privileges:true]
+    # the image is read-only at runtime: the app writes only to its data volume and /tmp
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    mem_limit: 512m
+    pids_limit: 256
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+networks:
+  edge:
+    external: true

@@ -159,6 +159,7 @@ btn_proud = 1.8;               // BLACK ACTUATOR overhang past the PCB edge (pho
 btn_ch_w  = 3.4;               // actuator channel width (Y) — hugs the black nub, nothing more
 btn_body_w = 5.2;              // shallow relief width for the switch's metal body — MEASURE
 btn_body_p = 0.4;              // metal body overhang past the PCB edge — MEASURE
+btn_body_d = 3.5;              // switch body depth IN from its overhanging face (X) — MEASURE; the C3 sibling's number for the same switch, which the stripped back's bosses must clear
 
 /* [Stud/keyhole interface] */
 opt_keyhole = true;            // one blind keyhole in the back (wall hang)
@@ -299,7 +300,18 @@ snap_w = snap_window(nub_w, snap_play);
 // shortens by brass_h and widens to cover the pillar); on the stripped board
 // they press the bare PCB corners
 stand_ix = 2.6;                                  // inset from ±X edge (M2 pattern) — MEASURE
-stand_iy = 2.6;                                  // inset from ±Y edge (M2 pattern) — MEASURE
+// 2026-10-22 audit: 2.2 on the STRIPPED board, where the bosses press bare PCB
+// and run the full stack down past the BOOT/RST bodies. At 2.6 the USB-end
+// pair's Ø4.2 reached y −13.485 while the switch body (the C3 sibling's
+// model of the same switch: btn_body_w less 2·tol_slide wide, btn_body_d
+// deep, 2·btn_dz tall) starts at −13.585 — a 0.1 lap over the body's whole
+// height, 0.30 mm³ of back in a board proxy, 1.40 with the board at the USB
+// end of its 0.2 Y float. 2.2 leaves 0.3 nominal and 0.1 at that float
+// (asserted below). Both ends move, so the pattern stays 180°-symmetric and
+// the back still flips; the far pair lands nearer the drawing's 1.97 far
+// holes than 2.6 did. The male build keeps 2.6 — its bosses stop on the
+// pillar tops, a millimeter above the switch bodies.
+stand_iy = (headers == "male") ? 2.6 : 2.2;      // inset from ±Y edge (M2 pattern; stripped: off the switch bodies) — MEASURE
 stand_d  = (headers == "male") ? 4.6 : 4.2;      // boss Ø — covers the pillar top but stays
                                                  // clear of the last header pin of each row
 stand_len = stack_eff - ((headers == "male") ? brass_h : 0);
@@ -378,6 +390,17 @@ assert(headers != "male" || hdr_drop > back_stack, "headers=male but hdr_drop is
 assert(headers != "male" || tol_slide + hdr_inset - 0.35 >= tol_press + skirt_wall + 0.25,
        "skirt would sit in the header pin row — thin skirt_wall or re-measure hdr_inset");
 assert(board_w/2 - stand_ix - stand_d/2 > 0, "press bosses collide at the board center — check stand_ix/stand_d");
+// a boss that runs down past the switch bodies (no pillar top to stop on)
+// must clear them at either end of the board's Y float — the C3 sibling's
+// box gate, with the float it leaves out (that file's bosses clear by 0.1
+// centered, which is all its gate asks)
+assert(!opt_btn || (headers == "male" && brass_h >= 2*btn_dz + 0.3)
+       || abs(board_w/2 - stand_ix) + stand_d/2 <= board_w/2 + btn_body_p - btn_body_d
+       || -(board_l/2 - stand_iy) + stand_d/2 + tol_slide + 0.05 <= btn_y - btn_body_w/2 + tol_slide,
+       str("a back press boss reaches y=", -(board_l/2 - stand_iy) + stand_d/2,
+           " and the BOOT/RST body starts at y=", btn_y - btn_body_w/2 + tol_slide,
+           " — with the board's ", tol_slide, " Y float the boss lands on the ",
+           "switch. Lower stand_iy, never move the switch."));
 // the keyhole pad stands in the cavity, so everything around it gets a gate
 assert(!opt_keyhole || stack_eff - kh_pad_h >= 1.5,
        str("the keyhole pad tops out only ", stack_eff - kh_pad_h,

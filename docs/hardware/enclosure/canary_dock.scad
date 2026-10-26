@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — FLEET PROVISIONING DOCK  ⚠️ IN DEVELOPMENT (v0.1-dev)
+//  Canary — FLEET PROVISIONING DOCK  ⚠️ IN DEVELOPMENT (v0.3-dev)
 //  The v1 validation runbook flashes and validates fleets of boards. This
 //  dock holds N bare XIAOs reclined side by side next to a USB hub, USB-C
 //  ports up, each bay NUMBERED — flash, provision, verify, deploy, in order
@@ -9,6 +9,23 @@
 //
 //  v0.1-dev (2026-08-23): canary_*_lib adoption (dedup, mesh-identical). The
 //  17.8 lesson this file taught now lives in the board registry, cited below.
+//
+//  v0.2-dev (2026-10-23): the bay numbers were half gone. Placed at 0.72 of
+//  the block's height they sat centered 13.96 up the face, and the Ø12 thumb
+//  cutout reaches 13.24 up it, so every digit lost its lower 40-47 % to the
+//  hole. The number is now centered between the cutout's top and the face's
+//  top edge, at size 6 so it fits the Sense pocket's taller cutout too, and
+//  an assert refuses a recline/thumb_d that leaves it no room.
+//
+//  v0.3-dev (2026-10-23, the cross-family review): the Sense pocket held the
+//  lens 0.2 INTO its front wall. The "13.7 measured" was the GLB's camera-top
+//  coordinate, not the stack: from the PCB's bottom face to the lens top is
+//  13.96 in Seeed's model (brd_xiao_sense_cam_h()'s 12.7 over its 1.25 board
+//  solid). And a square-edged 17.8 PCB in the 18.2 pocket cannot reach the back
+//  wall past the r1.5 corners: its back face rides 0.75 off it. 0.75 + 13.96
+//  in 14.5 put the lens 0.21 past the front wall (the board turned round, its
+//  corners 0.04 mm² into the front corners). pocket_sense is 15.0: the lens
+//  clears by 0.29, and turned round the PCB's corners clear too.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect2d — the catalog's shared helpers
@@ -24,20 +41,21 @@ recline = 15;        // bay recline angle (degrees)
 /* [Board] — XIAO (any variant); defaults measured from the committed vendor
    GLB (canary-local/boards/seeed_xiao_esp32s3_sense.glb): board 21 x 17.8 mm,
    bare thickness 4.4 incl the USB shell; a Sense with its camera folded flat
-   stacks to 13.7 — pick the variant to size the pocket. */
+   stacks to 13.96 (PCB bottom to lens top) — pick the variant to size the pocket. */
 variant = "bare";    // ["bare","sense"]
 board_l = 21.0;      // board length (USB edge at the TOP of the bay) — brd_l("xiao")
 board_w = 17.8;      // measured — brd_xiao_w_measured(), canary_board_lib (was 17.5:
                      // spec-sized pockets pinched the real board; this file is where
                      // that lesson was learned, and the registry is where it lives)
 pocket_bare  = 7.0;  // pocket depth: bare XIAO (4.4 measured + finger room)
-pocket_sense = 14.5; // pocket depth: Sense w/ camera folded on top (13.7 measured)
+pocket_sense = 15.0; // pocket depth: Sense w/ camera folded on top — 13.96 PCB bottom to lens top (Seeed's GLB) + the 0.75 the PCB rides the r1.5 corners + 0.29 (v0.3: 14.5 held the lens 0.21 into the front wall)
 thumb_d = 12.0;      // thumb cutout for extraction
 
 /* [Block] */
 bay_pitch = 24.0;    // bay-to-bay spacing
 base_d = 34.0;       // block depth (front-back)
 label_depth = 0.6;
+label_size  = 6.0;   // bay number text height — centered between the thumb cutout and the face's top edge, asserted to fit there (v0.2: a 7, set lower, lost 40-47 % of each digit to the cutout)
 label_font = "Liberation Sans:style=Bold";
 tol_slide = 0.20;
 
@@ -48,7 +66,14 @@ pocket_d = variant == "sense" ? pocket_sense : pocket_bare;
 bw = n_bays * bay_pitch + 10;
 bh = 2 + board_l*cos(recline) + 2;   // bays start 2 above the base; the USB end sits 2 under the top
 front_setback = (bh - 4)*tan(recline);   // the front face leans back with the bays
-echo(str("Canary provisioning dock v0.1-dev — ", n_bays, " bays, ", bw, " mm wide  (IN DEVELOPMENT)"));
+// the bay number (v0.2): s runs up the face from its z = 4 line; the thumb
+// cutout's top is at lbl_s_hole and the face's top edge at (bh - 4)/cos(recline),
+// and the number is centered between them
+lbl_s_hole = (3 + pocket_d/2 + 2*tan(recline))*sin(recline) - 2*cos(recline) + board_l*0.35 + thumb_d/2;
+lbl_s      = (lbl_s_hole + (bh - 4)/cos(recline))/2;
+assert((bh - 4)/cos(recline) - lbl_s_hole >= label_size + 0.5,   // a digit stands ~0.99 x its size
+       "the bay number cannot fit between the thumb cutout and the face's top edge — a smaller thumb_d or a lower cutout");
+echo(str("Canary provisioning dock v0.3-dev — ", n_bays, " bays, ", bw, " mm wide  (IN DEVELOPMENT)"));
 
 // (rrect2d comes from canary_core_lib — the local copy is gone)
 
@@ -74,12 +99,13 @@ module dock() {
                     translate([0, 0, -1]) cylinder(d = thumb_d, h = 14);
             }
             // bay number, debossed into the reclined front face: the face passes
-            // through (y = -base_d/2, z = 4) at 90 - recline from horizontal
-            // (at 0.72 of the height: the thumb cutout owns the lower third)
-            translate([bx, -base_d/2 + (bh*0.72 - 4)*tan(recline), bh*0.72])
+            // through (y = -base_d/2, z = 4) at 90 - recline from horizontal, and
+            // the number sits lbl_s up it, clear of the thumb cutout (v0.2: at 0.72
+            // of the height the cutout took the lower 40-47 % of every digit)
+            translate([bx, -base_d/2 + lbl_s*sin(recline), 4 + lbl_s*cos(recline)])
                 rotate([90 - recline, 0, 0])
                     translate([0, 0, -label_depth]) linear_extrude(label_depth + 1)
-                        text(str(i + 1), size = 7, font = label_font, halign = "center", valign = "center");
+                        text(str(i + 1), size = label_size, font = label_font, halign = "center", valign = "center");
         }
         // cable channel along the back base (route to the hub)
         translate([0, base_d/2 - 3, -0.1]) linear_extrude(6) rrect2d(bw - 16, 5, 2);

@@ -200,8 +200,11 @@ so this was a v5→v5 port (namespace, `MqttOptions::new`/`Broker`,
   that the program then extracts.
 - **The kernel's `Cargo.lock`: fixed.** `zip` came from `c2pa` (the optional
   `c2pa-export` feature) at 8.6.0. `c2pa` 0.91.3 requires `zip ^9.0.4`, so
-  the lockfile takes `c2pa` 0.91.3 and `zip` 9.0.5 (#1802). `c2pa` 0.91.3
-  declares Rust 1.96; CI builds on current stable.
+  the lockfile took `c2pa` 0.91.3 and `zip` 9.0.5 (#1802); it now carries
+  `c2pa` 0.91.6, whose `c2pa_raw_crypto` 0.2 moves to `elliptic-curve` 0.14
+  and so takes the unfixable `crypto-bigint` 0.5 line off the tree
+  (RUSTSEC-2026-0387, the 2026-10-26 audit). `c2pa` 0.91.x declares
+  Rust 1.96; CI builds on current stable.
 - **The Flasher's and the Lab's `Cargo.lock`
   (`desktop/src-tauri`, `desktop-lab/src-tauri`): not reachable.** `zip`
   4.6.1 comes from exactly one crate, `tauri-plugin-updater`, as an optional,

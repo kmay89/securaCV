@@ -12,6 +12,7 @@ import { openExceptions } from './exceptions.mjs';
 import { lastReconcile } from './reconcile.mjs';
 import { jobRuns } from '../jobs.mjs';
 import { orderStats } from './orders.mjs';
+import { shippingStatus } from './catalog.mjs';
 import { supportStats } from './support.mjs';
 import { lowStock } from './inventory.mjs';
 import { analytics } from './analytics.mjs';
@@ -25,8 +26,14 @@ export function doctor(db, cfg) {
   const parse = (s) => { try { return JSON.parse(s || 'null'); } catch { return null; } };
   const demo = !!cfg.demo;
   // identity & reach
-  add('operator', 'Operator login set', hasOperator(db), hasOperator(db) ? 'password + authenticator' : 'no operator', 'run `backoffice setup`');
+  const people = db.all("SELECT role, COUNT(*) AS n FROM users WHERE status = 'active' GROUP BY role"); const locked = db.get('SELECT COUNT(*) AS n FROM users WHERE locked_until > ?', new Date().toISOString()).n;
+  add('operator', 'An owner can log in', hasOperator(db), hasOperator(db) ? `password + authenticator · ${people.map(p => `${p.n} ${p.role}`).join(', ')}${locked ? ` · ${locked} locked out` : ''}` : 'no owner', 'run `backoffice setup`, or accept the invitation');
+  const stale = db.get("SELECT COUNT(*) AS n FROM users WHERE status = 'invited' AND invite_expires_at < ?", new Date().toISOString()).n; add('invites', 'Invitations', stale === 0, stale ? `${stale} expired without being accepted` : 'none waiting past their time', 'remove them on /users, or invite again');
   add('https', 'Served over HTTPS (secure cookies)', demo ? null : cfg.secure, demo ? 'demo mode' : cfg.secure ? cfg.baseUrl : `BACKOFFICE_BASE_URL is ${cfg.baseUrl}`, 'put Caddy or Fly in front and set BACKOFFICE_BASE_URL=https://…');
+  const defaultUrl = /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(cfg.baseUrl);
+  add('base_url', 'The codes on slips and labels point here', demo ? null : !defaultUrl, demo ? 'demo mode' : defaultUrl ? `BACKOFFICE_BASE_URL is ${cfg.baseUrl} — a phone scanning a slip lands nowhere` : cfg.baseUrl, 'set BACKOFFICE_BASE_URL to the address the phone reaches');
+  const sh = shippingStatus();
+  add('shipping_data', 'Box data (shipping.json) for the pack bench', demo ? null : sh.loaded_at ? !sh.error || hoursSince(sh.loaded_at) < 24 : sh.error ? false : null, demo ? 'demo boxes' : sh.loaded_at ? `${sh.boxes} boxes, ${sh.parcels} parcels · loaded ${fmtH(hoursSince(sh.loaded_at))}${sh.error ? ` · last refresh failed: ${sh.error}` : ''}` : sh.error ? sh.error : 'not asked for yet — opens with the first order page', 'set SHIPPING_JSON (or put shipping.json beside store.json) so boxes are planned, not guessed');
   add('smtp', 'Outbound mail relay', demo ? null : !!cfg.smtpUrl, demo ? 'demo transport' : cfg.smtpUrl ? 'SMTP_URL set' : 'mail is queued, never sent', 'set SMTP_URL to a relay with SPF/DKIM for your domain');
   add('imap', 'Support mailbox read', demo ? null : !!cfg.imapUrl, demo ? 'demo mode' : cfg.imapUrl ? 'IMAP_URL set' : 'inbound mail is not read', 'set IMAP_URL and SUPPORT_ADDR');
   add('stripe_webhook', 'Stripe webhook signing secret', !!cfg.stripeWebhookSecret, cfg.stripeWebhookSecret ? 'set' : 'orders cannot arrive', 'set STRIPE_WEBHOOK_SECRET from the Stripe dashboard');
@@ -35,7 +42,7 @@ export function doctor(db, cfg) {
   // the door
   const fails24 = db.get('SELECT COUNT(*) AS n FROM audit_log WHERE action = \'auth.login.failed\' AND at >= ?', new Date(Date.now() - 86400000).toISOString()).n;
   add('logins', 'Failed logins, 24 h', fails24 <= 20, `${fails24}${fails24 ? ` · last from ${(() => { try { return JSON.parse(db.get('SELECT detail FROM audit_log WHERE action = \'auth.login.failed\' ORDER BY id DESC LIMIT 1')?.detail || '{}').ip || '?'; } catch { return '?'; } })()}` : ''} · lockout after 8 in 15 min per address`, 'read the audit log; if it is you, use `backoffice code`; if not, the lockout is already holding');
-  const pwAge = hoursSince(db.setting('auth:password_set_at')); add('password_age', 'Operator password age', pwAge == null ? null : pwAge < 365 * 24, pwAge == null ? 'set before this check existed' : fmtH(pwAge), 'rotate with `backoffice setup --force` (it also issues a new authenticator secret)');
+  const pwAge = hoursSince(db.get("SELECT MIN(password_set_at) AS t FROM users WHERE role = 'owner' AND status = 'active'")?.t); add('password_age', 'Oldest owner password', pwAge == null ? null : pwAge < 365 * 24, pwAge == null ? 'set before this check existed' : fmtH(pwAge), 'change it on /me (Your account)');
   const rwTokens = db.all('SELECT name, last_used_at FROM api_tokens WHERE scope = \'rw\''); add('tokens', 'API tokens that can write', null, rwTokens.length ? rwTokens.map(t => `${t.name}${t.last_used_at ? '' : ' (never used)'}`).join(', ') : 'none', 'revoke what is not used; a dashboard needs only a read-only token');
   // data & its proofs
   const integrity = db.get('PRAGMA integrity_check').integrity_check;

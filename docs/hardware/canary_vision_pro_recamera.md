@@ -184,6 +184,8 @@ reCamera Pro body dimensions exist to shell around):
   Canary case's back — so the plate hangs on *any* existing stud surface
   in the catalog: a bare wall bracket, `canary_mount_adapters.scad`'s
   corner/magnet/pole plates, or `canary_vehicle_mount.scad`'s dash plate.
+  The pair runs in line along its slots like every case back; set `kh_gap`
+  to that surface's `stud_gap` (30 for the mount adapters).
 - **Front:** the reCamera line's own confirmed mount options — a 1/4"-20
   tripod-screw counterbore and/or a magnet disc pocket, selectable via the
   `mount` parameter (`"tripod"`, `"magnet"`, or `"both"`).

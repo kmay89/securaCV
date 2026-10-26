@@ -11,6 +11,7 @@
 // the banner. `backoffice demo --reset` wipes and reseeds.
 import { nowIso } from '../db.mjs';
 import { normalize } from './catalog.mjs';
+import { normalizeShipping } from './packing.mjs';
 import { upsertContact, requestConsent, confirmConsent, joinWaitlist } from './contacts.mjs';
 import { recordOrder, transition, refund, setTags, addNote } from './orders.mjs';
 import { upsertItem, move, setRecipe } from './inventory.mjs';
@@ -24,8 +25,25 @@ import { upsertSubscription } from './subscriptions.mjs';
 import { createCampaign } from './campaigns.mjs';
 import { raise } from './exceptions.mjs';
 import { signStripePayload } from './stripe.mjs';
+import { createPo, markOrdered, receivePo, draftReorder } from './purchasing.mjs';
+import { saveAttachments } from './support.mjs';
+import { hashPassword } from '../auth.mjs';
+import { deflateSync } from 'node:zlib';
+
+// A real, tiny PNG (a flat color with a darker band), so an attachment renders in the browser without any file on disk.
+export function tinyPng(w = 64, h = 48, rgb = [214, 196, 150]) {
+  const crc = (buf) => { let c = ~0; for (const b of buf) { c ^= b; for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1)); } return (~c) >>> 0; };
+  const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const td = Buffer.concat([Buffer.from(type), data]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([len, td, c]); };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+  const raw = Buffer.alloc((w * 3 + 1) * h);
+  for (let y = 0; y < h; y++) { raw[y * (w * 3 + 1)] = 0; for (let x = 0; x < w; x++) { const dark = y > h * 0.4 && y < h * 0.6 ? 0.55 : 1; const o = y * (w * 3 + 1) + 1 + x * 3; raw[o] = Math.round(rgb[0] * dark); raw[o + 1] = Math.round(rgb[1] * dark); raw[o + 2] = Math.round(rgb[2] * dark); } }
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
 
 export const DEMO_PASSWORD = 'demo1234';
+// Every demo person shares one authenticator secret, so the login page can show one code for all of them. Demo only.
+export const DEMO_TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+export const DEMO_USERS = [{ email: 'demo@errer.example.test', name: 'Demo Owner', role: 'owner' }, { email: 'ops@errer.example.test', name: 'Ops Placeholder', role: 'ops' }, { email: 'support@errer.example.test', name: 'Support Fixture', role: 'support' }, { email: 'viewer@errer.example.test', name: 'Viewer Stub', role: 'viewer' }];
 export const DEMO_WEBHOOK_SECRET = 'whsec_demo_not_a_real_secret';
 export const isDemo = (db) => db.setting('demo') === '1';
 export const isEmpty = (db) => db.get('SELECT COUNT(*) AS n FROM orders').n === 0 && db.get('SELECT COUNT(*) AS n FROM contacts').n === 0 && db.get('SELECT COUNT(*) AS n FROM tickets').n === 0;
@@ -39,15 +57,29 @@ export const localBase = (cfg) => {
 
 export const DEMO_STORE = { mode: 'live', shipping_flat: 8, groups: [
   { id: 'Kits', products: [
-    { id: 'wap-kit', name: 'Canary WAP Kit', price: 69, radio: true, ship: { oz: 5, box: 'small' }, cogs: { devices: { 'canary-wap': 1 }, extra_usd: 9 } },
-    { id: 'wap-kit-outdoor', name: 'Canary WAP Kit — Outdoor', price: 84, radio: true, ship: { oz: 7, box: 'small' }, cogs: { devices: { 'canary-wap': 1 }, extra_usd: 21 } },
-    { id: 'vision-kit', name: 'Canary Vision Kit', price: 119, radio: true, ship: { oz: 6, box: 'small' }, cogs: { devices: { 'canary-vision': 1 }, extra_usd: 17 } } ] },
+    { id: 'wap-kit', stock: 10, name: 'Canary WAP Kit', price: 69, radio: true, ship: { oz: 5, box: 'small' }, cogs: { devices: { 'canary-wap': 1 }, extra_usd: 9 } },
+    { id: 'wap-kit-outdoor', stock: 6, name: 'Canary WAP Kit — Outdoor', price: 84, radio: true, ship: { oz: 7, box: 'small' }, cogs: { devices: { 'canary-wap': 1 }, extra_usd: 21 } },
+    { id: 'vision-kit', stock: 8, name: 'Canary Vision Kit', price: 119, radio: true, ship: { oz: 6, box: 'small' }, cogs: { devices: { 'canary-vision': 1 }, extra_usd: 17 } } ] },
   { id: 'Bundles', products: [
-    { id: 'witness-pair', name: 'Witness Pair — 2× Canary WAP', price: 129, radio: true, ship: { oz: 10, box: 'medium' }, cogs: { devices: { 'canary-wap': 2 }, extra_usd: 18 } } ] },
+    { id: 'witness-pair', stock: 5, name: 'Witness Pair — 2× Canary WAP', price: 129, radio: true, ship: { oz: 10, box: 'medium' }, cogs: { devices: { 'canary-wap': 2 }, extra_usd: 18 } } ] },
   { id: 'Printed enclosure sets', products: [
-    { id: 'wap-parts', name: 'WAP Enclosure Set', price: 15, radio: false, ship: { oz: 3, box: 'mailer' }, cogs: { devices: {}, extra_usd: 6.5 } },
-    { id: 'vision-parts', name: 'Vision Enclosure Set', price: 19, radio: false, ship: { oz: 4, box: 'mailer' }, cogs: { devices: {}, extra_usd: 8.5 } } ] } ] };
+    { id: 'wap-parts', stock: 15, name: 'WAP Enclosure Set', price: 15, radio: false, ship: { oz: 3, box: 'mailer' }, cogs: { devices: {}, extra_usd: 6.5 } },
+    { id: 'vision-parts', stock: 15, name: 'Vision Enclosure Set', price: 19, radio: false, ship: { oz: 4, box: 'mailer' }, cogs: { devices: {}, extra_usd: 8.5 } } ] } ] };
 export const DEMO_CATALOG = normalize(DEMO_STORE);
+// The website's shipping.json for the demo's SKUs (same boxes, same parcels, same tiers), so the
+// pack bench plans a real box without fetching anything.
+export const DEMO_SHIPPING = normalizeShipping({ fill_efficiency: 0.78, dim_weight_divisor: 166,
+  ground_advantage_rate_tiers: [{ max_oz: 4, usd: 3.8 }, { max_oz: 8, usd: 4.35 }, { max_oz: 12, usd: 4.8 }, { max_oz: 16, usd: 5.25 }, { max_oz: 32, usd: 6.75 }, { max_oz: 48, usd: 8.1 }, { max_oz: 80, usd: 10.5 }, { max_oz: 160, usd: 15.9 }, { max_oz: 1120, usd: 26.0 }],
+  boxes: [
+    { id: 'ga-mailer', name: 'Padded poly mailer (Ground Advantage)', service: 'USPS Ground Advantage', pricing: 'weight', soft: true, inner: { l: 9, w: 6, h: 2 }, max_weight_oz: 24 },
+    { id: 'ga-box-s', name: 'Small carton (Ground Advantage)', service: 'USPS Ground Advantage', pricing: 'weight', inner: { l: 6, w: 4, h: 4 }, max_weight_oz: 1120 },
+    { id: 'ga-box-m', name: 'Medium carton (Ground Advantage)', service: 'USPS Ground Advantage', pricing: 'weight', inner: { l: 9, w: 6, h: 4 }, max_weight_oz: 1120 },
+    { id: 'ga-box-l', name: 'Large carton (Ground Advantage)', service: 'USPS Ground Advantage', pricing: 'weight', inner: { l: 12, w: 9, h: 6 }, max_weight_oz: 1120 },
+    { id: 'fr-padded', name: 'USPS Priority Flat Rate Padded Envelope', service: 'USPS Priority Mail', pricing: 'flat', soft: true, inner: { l: 12.25, w: 9.25, h: 1 }, max_weight_oz: 1120, flat_usd: 10.4 },
+    { id: 'fr-small', name: 'USPS Small Flat Rate Box', service: 'USPS Priority Mail', pricing: 'flat', inner: { l: 8.625, w: 5.375, h: 1.625 }, max_weight_oz: 1120, flat_usd: 10.2 },
+    { id: 'fr-medium', name: 'USPS Medium Flat Rate Box', service: 'USPS Priority Mail', pricing: 'flat', inner: { l: 11, w: 8.5, h: 5.5 }, max_weight_oz: 1120, flat_usd: 18.3 },
+    { id: 'fr-large', name: 'USPS Large Flat Rate Box', service: 'USPS Priority Mail', pricing: 'flat', inner: { l: 12, w: 12, h: 5.5 }, max_weight_oz: 1120, flat_usd: 24.1 }],
+  parcels: { 'wap-kit': { l: 6, w: 4, h: 2.5, weight_oz: 7 }, 'wap-kit-outdoor': { l: 6.5, w: 4.5, h: 3, weight_oz: 9 }, 'vision-kit': { l: 7, w: 5, h: 3, weight_oz: 10 }, 'witness-pair': { l: 9, w: 6, h: 3.5, weight_oz: 15 }, 'wap-parts': { l: 6, w: 4, h: 2, weight_oz: 4, soft: true }, 'vision-parts': { l: 7, w: 5, h: 2.5, weight_oz: 6, soft: true } } });
 const BOM = { 'canary-wap': 21.4, 'canary-vision': 38.9 };
 
 // Synthetic people. The surname says what they are; the domain cannot exist.
@@ -154,6 +186,7 @@ function planOrders() {
 export async function seedDemo(db, cfg) {
   if (db.get('SELECT COUNT(*) AS n FROM orders').n) throw new Error('the database already has orders — demo data only goes into an empty one (`backoffice demo --reset` wipes it, or point BACKOFFICE_DATA_DIR somewhere fresh)');
   db.setSetting('demo', '1'); db.setSetting('demo:seeded_at', nowIso());
+  seedDemoUsers(db);
   const q = silent(cfg);
   const { createDiscount, setDiscountStatus } = await import('./discounts.mjs');
   const { setContactTags } = await import('./contacts.mjs');
@@ -169,13 +202,20 @@ export async function seedDemo(db, cfg) {
   for (const o of plan) if (['packed', 'shipped', 'delivered', 'refunded'].includes(o.fate)) consume(o.items);
   for (const [, items, , fate] of story) if (fate !== 'paid') consume(items);
   for (const it of PARTS) upsertItem(db, { sku: it[0], name: it[1], kind: it[2], on_hand: 0, reorder_point: it[4], reorder_qty: it[5], unit_cost_cents: it[6], supplier: it[7] });
-  for (const it of PARTS) { const n = it[3] + (need[it[0]] || 0); if (n) move(db, it[0], n, 'receive', 'po:DEMO-0001'); }
+  const PO1 = { 'xiao-esp32s3': 25, 'cable-usbc-1m': 50 };   // this much of the shelf came in on a purchase order three weeks ago
+  for (const it of PARTS) { const n = it[3] + (need[it[0]] || 0) - (PO1[it[0]] || 0); if (n > 0) move(db, it[0], n, 'receive', 'po:DEMO-0001'); }
   db.run('UPDATE inventory_moves SET at = ?', daysAgo(62));
+  const po1 = createPo(db, { supplier: 'Example Distributor', supplier_url: 'https://distributor.example.test/order', items: Object.entries(PO1).map(([sku, qty]) => ({ sku, qty })), notes: 'Boards and cables for the autumn batches.', actor: 'web' });
+  markOrdered(db, po1.id, { expected_at: daysAgo(21).slice(0, 10), actor: 'web' }); receivePo(db, po1.id, { actor: 'web' });
+  db.run('UPDATE purchase_orders SET created_at = ?, ordered_at = ?, received_at = ? WHERE id = ?', daysAgo(30), daysAgo(29), daysAgo(20), po1.id);
+  db.run('UPDATE inventory_moves SET at = ? WHERE ref = ?', daysAgo(20), `po:${po1.number}`); db.run('UPDATE ledger SET date = ? WHERE ref = ?', daysAgo(20).slice(0, 10), `po:${po1.number}`);
   for (const [sku, parts] of Object.entries(RECIPES)) setRecipe(db, sku, parts);
 
   const batch = 'DEMO-BATCH-A';
   for (let i = 1; i <= 8; i++) registerDevice(db, { serial: `DEMO-W-${String(i).padStart(4, '0')}`, mac: `02:00:00:00:00:${String(i).padStart(2, '0')}`, board: 'xiao-esp32s3', product_sku: 'wap-kit', fw_version: '2.5.0', fw_sha256: '00'.repeat(32), flashed_at: daysAgo(5), batch });
   for (let i = 1; i <= 2; i++) registerDevice(db, { serial: `DEMO-V-${String(i).padStart(4, '0')}`, mac: `02:00:00:00:01:${String(i).padStart(2, '0')}`, board: 'xiao-esp32s3-sense', product_sku: 'vision-kit', fw_version: '2.5.0', fw_sha256: '11'.repeat(32), flashed_at: daysAgo(5), batch });
+
+  for (let i = 1; i <= 6; i++) registerDevice(db, { serial: `DEMO-W-01${String(i).padStart(2, '0')}`, mac: `02:00:00:00:02:${String(i).padStart(2, '0')}`, board: 'xiao-esp32s3', product_sku: 'wap-kit', fw_version: '2.4.1', fw_sha256: '24'.repeat(32), flashed_at: daysAgo(55), batch: 'DEMO-BATCH-0' });
 
   // The background two months, oldest first, every step stamped at the hour it would have happened.
   const mk = (i, items, days, extra = {}) => recordOrder(db, makeOrderInput(i, items, { days, external: `cs_demo_seed_${extra.external || i}`, discount: extra.discount || null, tags: extra.tags || '' }), { catalog: DEMO_CATALOG, bomTotals: BOM, actor: 'stripe' }).order;
@@ -187,19 +227,21 @@ export async function seedDemo(db, cfg) {
     const paid = ord.paid_at;
     if (o.fate === 'canceled') { transition(db, ord.id, 'canceled', { actor: 'web', at: after(paid, 5) }); db.run('UPDATE orders SET notes = ? WHERE id = ?', 'Customer wrote within the hour: ordered twice by mistake. Refunded in Stripe, nothing packed.', ord.id); continue; }
     const packedAt = after(paid, 20 + (o.i % 30)), shippedAt = after(packedAt, 18 + (o.i % 20)), deliveredAt = after(shippedAt, 60 + (o.i % 48));
-    transition(db, ord.id, 'packed', { actor: 'web', at: packedAt });
+    transition(db, ord.id, 'packed', { actor: 'web', at: packedAt, shipping: DEMO_SHIPPING });
     if (['shipped', 'delivered', 'refunded'].includes(o.fate)) transition(db, ord.id, 'shipped', { actor: 'web', at: shippedAt, carrier: 'USPS', tracking: tracking(++tn), cfg: q });
     if (['delivered', 'refunded'].includes(o.fate)) transition(db, ord.id, 'delivered', { actor: 'web', at: deliveredAt });
     if (o.fate === 'refunded') refund(db, ord.id, ord.total_cents, { actor: 'stripe', reason: 'changed their mind within 30 days — kept the kit as a spare, we refunded (terms §6)', at: after(deliveredAt, 30) });
     db.run('UPDATE orders SET packed_at = ?, shipped_at = CASE WHEN shipped_at IS NULL THEN NULL ELSE ? END, delivered_at = CASE WHEN delivered_at IS NULL THEN NULL ELSE ? END WHERE id = ?', packedAt, shippedAt, deliveredAt, ord.id);
   }
+  // The older boards went out in the first weeks, one per delivered WAP order, scanned at packing.
+  { let k = 1; for (const o of db.all("SELECT o.id FROM orders o JOIN order_items i ON i.order_id = o.id WHERE o.status = 'delivered' AND i.sku IN ('wap-kit', 'wap-kit-outdoor') ORDER BY o.paid_at LIMIT 6")) { assignToOrder(db, `DEMO-W-01${String(k++).padStart(2, '0')}`, o.id, { actor: 'web', force: true }); db.run('UPDATE order_events SET at = (SELECT packed_at FROM orders WHERE id = ?) WHERE order_id = ? AND kind = \'device\'', o.id, o.id); } }
   // The tracking mails are dated when the label printed; the ones older than the live week went out (demo transport, nothing left the machine).
   db.run("UPDATE mail_outbox SET created_at = COALESCE((SELECT o.shipped_at FROM orders o WHERE 'order:' || o.number = mail_outbox.ref), created_at) WHERE ref LIKE 'order:%'");
   // Last week's story: the orders the tickets, claims and serials refer to.
   const [o1, o2, o3, o4] = story.map(([i, items, days]) => mk(i, items, days, { external: i }));
   for (const [o, serials, pk] of [[o1, ['DEMO-W-0001'], 8], [o2, ['DEMO-W-0002', 'DEMO-W-0003'], 5], [o3, ['DEMO-V-0001'], 5], [o4, ['DEMO-W-0004'], 1]]) {
-    transition(db, o.id, 'packed', { actor: 'web', at: daysAgo(pk, 14) });
-    for (const s of serials) { assignToOrder(db, s, o.id, { actor: 'web' }); db.run('UPDATE order_events SET at = ? WHERE order_id = ? AND kind = \'device\'', daysAgo(pk, 15), o.id); }
+    transition(db, o.id, 'packed', { actor: 'web', at: daysAgo(pk, 14), shipping: DEMO_SHIPPING });
+    for (const s of serials) { assignToOrder(db, s, o.id, { actor: 'web', force: true }); db.run('UPDATE order_events SET at = ? WHERE order_id = ? AND kind = \'device\'', daysAgo(pk, 15), o.id); }
   }
   transition(db, o1.id, 'shipped', { actor: 'web', at: daysAgo(7, 11), carrier: 'USPS', tracking: 'DEMO0000000000000001', cfg: q }); transition(db, o1.id, 'delivered', { actor: 'web', at: daysAgo(4, 15) });
   transition(db, o2.id, 'shipped', { actor: 'web', at: daysAgo(4, 11), carrier: 'USPS', tracking: 'DEMO0000000000000002', cfg: q });
@@ -295,7 +337,7 @@ export async function seedDemo(db, cfg) {
   db.run("UPDATE campaigns SET sent_at = ? WHERE slug = 'october-from-the-bench'", daysAgo(bestDay, 9));
   db.run("UPDATE mail_outbox SET created_at = ?, status = 'sent', sent_at = ? WHERE ref = 'campaign:october-from-the-bench'", daysAgo(bestDay, 9), daysAgo(bestDay, 9));
   createCampaign(db, { slug: 'november-batch-note', subject: 'November: the Witness Pair, and a question', preheader: 'One question for everyone who runs two', segment: 'customers', body_text: 'Hi {{first_name}},\n\nThe November batch ships next week. Two things:\n\n# The Witness Pair now provisions as a pair\n\nTwo QR cards, one scan each, both on the Wall in under a minute.\n\n# A question\n\nIf you run two or more Canaries: what would you want the Wall to show about them together? Reply to this mail — one line is plenty.\n\n— {{company}}' });
-  scheduleCampaign(db, 'november-batch-note', new Date(Date.now() + 3 * 86400000).toISOString(), { actor: 'web' });
+  scheduleCampaign(db, 'november-batch-note', new Date(Date.now() + 26 * 3600000).toISOString(), { actor: 'web' });
   createCampaign(db, { slug: 'vision-restock-waitlist', subject: 'Draft: the Vision kit is back', segment: 'waitlist:vision-kit', body_text: 'Hi {{first_name}},\n\nYou asked to hear when the Vision kit came back. It is back: {{site}}/store\n\n— {{company}}' });
   seedAutomations(db);
   runAutomations(db, q, { now: Date.now() });
@@ -303,8 +345,22 @@ export async function seedDemo(db, cfg) {
   db.run("UPDATE mail_outbox SET created_at = COALESCE((SELECT r.due_at FROM automation_runs r WHERE 'automation:' || r.automation_slug || ':' || r.ref = mail_outbox.ref), created_at) WHERE kind = 'automation'");
   db.run("UPDATE mail_outbox SET status = 'sent', sent_at = created_at WHERE kind = 'automation' AND created_at < ?", daysAgo(2));
   db.run("UPDATE audit_log SET at = ? WHERE action = 'campaign.queue'", daysAgo(bestDay, 9));
+  // What the carrier said about this week's parcels (a demo never calls USPS; the shape is the real one).
+  db.run("UPDATE orders SET tracking_status = 'out_for_delivery', tracking_detail = 'Out for Delivery, Springfield MA', tracking_checked_at = ?, expected_delivery_at = ? WHERE id = ?", daysAgo(0, 8), nowIso().slice(0, 10), o2.id);
+  db.run("UPDATE orders SET tracking_status = 'in_transit', tracking_detail = 'In Transit to Next Facility', tracking_checked_at = ?, expected_delivery_at = ? WHERE id = ?", daysAgo(0, 8), new Date(Date.now() + 86400000).toISOString().slice(0, 10), o3.id);
+  for (const [o, t] of [[o2, 'Out for delivery — Springfield MA'], [o3, 'In transit — next facility']]) db.run('INSERT INTO order_events (order_id, at, actor, kind, text) VALUES (?, ?, ?, ?, ?)', o.id, daysAgo(0, 8), 'carrier', 'tracking', t);
+  // The warped-lid claim came with a photo.
+  { const wt = db.get("SELECT t.id FROM tickets t JOIN warranty_claims w ON w.ticket_id = t.id WHERE w.category = 'warped_print'"); const m = wt && db.get("SELECT id FROM ticket_messages WHERE ticket_id = ? AND direction = 'in' ORDER BY id LIMIT 1", wt.id); if (m) saveAttachments(db, m.id, [{ filename: 'lid-bowed.png', mime: 'image/png', bytes: tinyPng(96, 64) }]); }
+  // Parts on order for the Vision kits, due next week; the printed shells drafted as a print run, waiting for a yes.
+  const po2 = createPo(db, { supplier: 'Example Distributor', supplier_url: 'https://distributor.example.test/order', items: [{ sku: 'xiao-esp32s3-sense', qty: 12 }, { sku: 'grove-vision-ai-v2', qty: 10 }], notes: 'Vision kit boards for the November batches.', actor: 'web' });
+  markOrdered(db, po2.id, { expected_at: new Date(Date.now() + 6 * 86400000).toISOString().slice(0, 10), actor: 'web' });
+  db.run('UPDATE purchase_orders SET created_at = ?, ordered_at = ? WHERE id = ?', daysAgo(3), daysAgo(3, 14), po2.id);
+  // The school's invoice is past due — the reminder is drafted on Home, not sent.
+  db.run('UPDATE invoices SET issued_at = ?, due_at = ? WHERE id = ?', daysAgo(36).slice(0, 10), daysAgo(6).slice(0, 10), inv.id);
+  db.run("UPDATE mail_outbox SET created_at = ?, status = 'sent', sent_at = ? WHERE ref = ?", daysAgo(36), daysAgo(36), `invoice:${inv.number}`);
   move(db, 'xiao-esp32s3-sense', -1, 'scrap', 'bench: bad USB-C port');
   await raise(db, q, 'stock:xiao-esp32s3-sense', 'inventory [reorder]: xiao-esp32s3-sense', 'XIAO ESP32S3 Sense (camera): 2 on hand, reorder point 4, reorder qty 12.\nSupplier: Example Distributor');
+  for (const po of draftReorder(db, { actor: 'system' })) db.run('UPDATE purchase_orders SET created_at = ? WHERE id = ?', daysAgo(1, 6), po.id);
   // The audit log says when each thing happened, not when the seed ran.
   db.run(`UPDATE audit_log SET at = COALESCE((SELECT ev.at FROM order_events ev JOIN orders o ON o.id = ev.order_id WHERE o.number = audit_log.entity_id AND ev.kind = CASE audit_log.action WHEN 'order.create' THEN 'placed' WHEN 'order.refund' THEN 'refund' ELSE replace(audit_log.action, 'order.', '') END ORDER BY ev.id LIMIT 1), at) WHERE entity = 'order'`);
   db.run(`UPDATE audit_log SET at = COALESCE((SELECT CASE audit_log.action WHEN 'ticket.open' THEN t.created_at WHEN 'ticket.reply' THEN t.first_response_at ELSE t.closed_at END FROM tickets t WHERE t.number = audit_log.entity_id OR CAST(t.id AS TEXT) = audit_log.entity_id), at) WHERE entity = 'ticket'`);
@@ -315,12 +371,24 @@ export async function seedDemo(db, cfg) {
   return n;
 }
 
+// The demo people: the owner from the login page, one of each other role, and one invitation still open. Same password, same authenticator, by design; ids survive a reseed so sessions do.
+export function seedDemoUsers(db) {
+  const hash = hashPassword(DEMO_PASSWORD); const now = nowIso();
+  for (const u of DEMO_USERS) db.run(`INSERT INTO users (email, name, role, status, password_hash, totp_secret, password_set_at, created_at, invited_by) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)
+    ON CONFLICT(email) DO UPDATE SET name = excluded.name, role = excluded.role, status = 'active', password_hash = excluded.password_hash, totp_secret = excluded.totp_secret, totp_pending = NULL, invite_token = NULL, failed_logins = 0, locked_until = NULL`, u.email, u.name, u.role, hash, DEMO_TOTP_SECRET, daysAgo(40), daysAgo(40), u.role === 'owner' ? null : 'demo@errer.example.test');
+  db.run("INSERT INTO users (email, name, role, status, invite_token, invite_expires_at, invited_by, created_at) VALUES ('auditor@example-accounting.example.test', 'Auditor Stub', 'viewer', 'invited', ?, ?, 'demo@errer.example.test', ?) ON CONFLICT(email) DO UPDATE SET name = excluded.name, role = 'viewer', status = 'invited', invite_token = excluded.invite_token, invite_expires_at = excluded.invite_expires_at, invited_by = excluded.invited_by, password_hash = NULL, totp_secret = NULL, totp_pending = NULL, failed_logins = 0, locked_until = NULL", 'demo-invite-' + Math.random().toString(36).slice(2, 12), new Date(Date.now() + 40 * 3600000).toISOString(), daysAgo(0, 8));
+  // A demo has exactly the demo people: an operator carried over from before people existed (or anyone
+  // invited while playing) would otherwise sit on the People page with a password nobody on the login page has.
+  const keep = [...DEMO_USERS.map(u => u.email), 'auditor@example-accounting.example.test'];
+  db.run(`DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE email NOT IN (${keep.map(() => '?').join(',')}))`, ...keep);
+  db.run(`DELETE FROM users WHERE email NOT IN (${keep.map(() => '?').join(',')})`, ...keep);
+  db.setSetting('auth:password', 'users');
+}
 // A demo app that finds an empty database makes itself the demo: operator,
 // flag, data. A used database is left exactly as it is.
 export async function ensureDemo(db, cfg) {
-  const { hasOperator, setupOperator } = await import('../auth.mjs');
+  const { hasOperator } = await import('../auth.mjs');
   if (!isEmpty(db) || hasOperator(db)) return null;
-  setupOperator(db, DEMO_PASSWORD);
   return seedDemo(db, cfg);
 }
 
@@ -328,7 +396,7 @@ export async function ensureDemo(db, cfg) {
 export async function resetDemo(db, cfg) {
   // A stale BACKOFFICE_DATA_DIR must never turn this into a wipe of real data.
   if (!isDemo(db) && !isEmpty(db)) throw new Error('refusing to reset: this database is not flagged as a demo and is not empty — point BACKOFFICE_DATA_DIR at the demo directory (npm run demo uses ./data-demo)');
-  const tables = ['ticket_messages', 'tickets', 'warranty_claims', 'order_events', 'order_items', 'orders', 'discounts', 'invoice_items', 'invoices', 'subscriptions', 'inventory_moves', 'recipes', 'inventory_items', 'devices', 'waitlist', 'contacts', 'mail_outbox', 'mail_seen', 'campaigns', 'probe_results', 'probes', 'incidents', 'ledger', 'exceptions', 'canned_replies', 'stripe_events', 'job_runs', 'audit_log'];
+  const tables = ['attachments', 'purchase_order_items', 'purchase_orders', 'recalls', 'ticket_messages', 'tickets', 'warranty_claims', 'order_events', 'order_items', 'orders', 'discounts', 'invoice_items', 'invoices', 'subscriptions', 'inventory_moves', 'recipes', 'inventory_items', 'devices', 'waitlist', 'contacts', 'mail_outbox', 'mail_seen', 'campaigns', 'probe_results', 'probes', 'incidents', 'ledger', 'exceptions', 'canned_replies', 'stripe_events', 'job_runs', 'audit_log'];
   db.exec('PRAGMA foreign_keys = OFF');
   try { db.tx(() => { for (const t of tables) db.run(`DELETE FROM ${t}`); db.run('DELETE FROM settings WHERE key LIKE \'seq:%\''); }); }
   finally { db.exec('PRAGMA foreign_keys = ON'); }

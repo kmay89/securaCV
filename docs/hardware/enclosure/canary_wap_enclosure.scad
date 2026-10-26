@@ -3,7 +3,7 @@
 //  @env cer=2 ip="~IP54" basis="weather preset"
 //  Board: Seeed XIAO ESP32-S3 Sense + optional LiPo (placed beside the board)
 //  Features: light-pipe port, buzzer/pressure vent, camera/sensor window with
-//            sealed-disc seat, USB-C access, board standoffs + snap clips,
+//            sealed-disc seat, USB-C access, board standoffs + snap clips + end stops,
 //            M2 screws through a piston plate, tamper-magnet pocket, opt-in
 //            weather sealing (TPU gasket in the plate ledge), opt-in wall
 //            mounting (keyholes/tabs).
@@ -93,6 +93,48 @@
 //              keeps the barrel inside the cavity. wap_kh_spread(preset) and
 //              wap_inner_l(preset) export the pocket spread the outlet cradle
 //              hangs the case by (this file's inner_l is the same function).
+//  2026-10-22: FIT + PRINT REVIEW (v0.9.1) — every outer envelope, the plate's
+//              bore and the screw pattern are unchanged; the inside moved.
+//              THE SHELL LOWERS STRAIGHT ON AGAIN: the board sat 1.1 off the
+//              USB wall, so the USB-C shell (brd_xiao_usb_overhang() 1.5 past
+//              the PCB) stood 0.4 into the wall line and the ledge came down
+//              flat on its top 8 mm early (14.1 mm^3 of a straight descent,
+//              every preset). The board now sits so that shell clears the
+//              ledge cove by tol_slide (+1.4 mm; the window, seat, pipe, vent,
+//              magnet and shield apertures ride on board_cx). That also gives
+//              the battery lid's disc seat its wall back: it ran 0.34 mm from
+//              the face's soft edge at the first layer, and the assert that
+//              guarded it measured from the outline before soft_edge_plate
+//              insets it. END STOPS locate the board along X (the clips hold
+//              Y and Z only: a plug slid it into the lens barrel, or 7 mm off
+//              the USB wall on the compact). The cell's end ribs sat exactly
+//              batt_l apart; they now leave it 0.4 a side. And the face-down
+//              shell no longer bridges over air on the bed: the GORE seat is
+//              on the inner face (seat_inner) and the disc seat carries bridge
+//              steps (bridge_layer), as the Vision, doorbell and combo do.
+//              kh_lock is OFF by default: the knockouts' screws go in from the
+//              cavity, and the shell is screwed on from the back face, so the
+//              documented anti-lift install could not be done — and a pierced
+//              knockout is an unsealed hole inside the gasket line.
+//              The plate's key notch ran ledge_w + 1.4 in from its edge,
+//              through the plate and past the ledge band: a 3.4 mm hole from
+//              the back face into the cavity, inside the gasket line on the
+//              weather build. It is the Sense's PL-3 form now (core_key_d() +
+//              0.3 in from the bore wall, asserted in seal mode).
+//  2026-10-23: the GORE seat takes the slide tolerance. It was cut at exactly
+//              vent_pad_d, the Ø12 the echo bills (a 95-gon whose flats sit
+//              at Ø11.99), so the patch met its own seat with nothing to
+//              spare before an FDM pocket prints small, and rode the rim
+//              instead of bonding to the floor. The seat is vent_pad_d +
+//              2 x tol_slide (Ø12.4) now, like the disc seat beside it; the
+//              web asserts measure the seat. Every lid moves (the buzzer
+//              vent is in all three presets); envelopes unchanged.
+//  2026-10-23: the screw tabs' holes were Ø3.6 for "M3 / #6": 3.58 at the
+//              29-gon's flats, 0.04 a side over a #6's 3.505 major (a #6
+//              shank + 0.06 met all four tabs). tab_hole_d 4.2, the #6 + 2 x
+//              tol_hole (+ 0.3 a side: EMPTY). No released preset draws the
+//              tabs (only battery_weather mounts, on keyholes), so no
+//              committed mesh moves; the builder's tabs option does.
 // ============================================================================
 
 use <canary_core_lib.scad>    // rrect/rrect2d, soft-edge face, foot chamfer, the piston plate (pl_*)
@@ -142,7 +184,7 @@ mount_style = "keyhole"; // ["keyhole","tabs","both"]
 tab_l       = 10.0;   // ear length along the wall
 tab_w       = 8.0;    // ear protrusion from the wall
 tab_t       = 3.0;    // ear thickness
-tab_hole_d  = 3.6;    // through-hole (M3 / #6)
+tab_hole_d  = 4.2;    // through-hole (M3 / #6): the #6's 3.505 major + 2 x tol_hole, rounded up (3.6 left a #6 0.04 a side; no released preset draws the tabs)
 tab_cb_d    = 7.0;    // pan-head counterbore diameter
 tab_cb_h    = 1.0;    // counterbore depth
 
@@ -245,6 +287,7 @@ lid_key    = true; // poka-yoke: a rib on the +Y bore wall and a slot in the pla
 tol_slide      = 0.20;  // sliding fits: plate <-> bore, camera-disc seat — core_tol_slide()
 tol_press      = 0.10;  // press fits: tamper magnet, LED light pipe — core_tol_press()
 tol_hole       = 0.30;  // clearance holes: plate screws — core_tol_hole()
+bridge_layer   = 0.2;   // your slicer's layer height: the face's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)  // [0.08:0.04:0.32]
 
 /* [Engineering — durability/rigidity options (see README "Engineering & materials")] */
 screw_insert = false;   // M2 brass heat-set inserts in the post ends (service-grade threads;
@@ -257,8 +300,10 @@ lid_rib_w    = 2.5;     // rib ring width
 lid_rib_h    = 1.0;     // rib depth below the face underside — keep <= the 1.0 mm component
                         // headroom built into cav_h, or raise stack_camera/stack_plain to suit
 foot_cham    = 0.5;     // 45° chamfer on the back edge: elephant-foot + first-layer delamination guard (0 = off)
-kh_lock      = true;    // (keyhole mounts) two anti-lift knockout bosses: 0.6 mm web, pierce with
-                        // #4/M3 screws on install so the case can't be lifted off the wall screws
+kh_lock      = false;   // (keyhole mounts) two anti-lift knockout bosses (0.6 mm web), OFF by default since v0.9.1:
+                        // their M3s go in from the cavity, and the shell's plate screws enter from the back face, so a
+                        // base hung on its keyholes cannot take its shell after them — and a pierced knockout is an
+                        // unsealed hole inside the gasket line (the Vision's v0.7 found it; DESIGN_RULES §6)
 
 /* [Thermal / outdoor kit] — part="shield" is a Stevenson-screen style solar
    radiation shield: a second roof standing sh_gap above the face on hollow
@@ -319,8 +364,8 @@ lp_d           = 3.0;   // light-pipe diameter (3 mm pipe -> 3.2 mm hole at defa
 lp_dx          = -1.0;  // light-pipe port center X, from the board center (off the lens at -6.95: the Ø3.2 bore keeps a web to the Ø12.4 disc seat — asserted)
 lp_dy          = 9.5;   // light-pipe port center Y, from the board center (9.5, past the board's edge: at 7.5 the bore broke into the moved disc seat)
 // Buzzer + pressure vent (recess seats an adhesive GORE vent; ring of holes passes sound/pressure)
-vent_pad_d     = 12.0;  // GORE-vent recess Ø (the buzzer + pressure vent: the recess seats an adhesive vent)
-vent_pad_depth = 0.8;   // GORE-vent recess depth into the face's outer surface — core_vent_pad_depth()
+vent_pad_d     = 12.0;  // GORE-vent patch Ø (the recess is cut tol_slide over it), on the face's INNER side (the buzzer + pressure vent: the recess seats an adhesive vent; it prints face-down, and an outer seat cannot bridge)
+vent_pad_depth = 0.8;   // GORE-vent recess depth into the face's inner surface — core_vent_pad_depth()
 vent_hole_d    = 1.0;   // fine holes — insect-resistant (the README's outdoor rule: <= 1.0 mm); the
                         // membrane behind them seals, so the holes only need to pass sound + pressure
 vent_ring_d    = 6.0;   // Ø of the ring the vent holes sit on — core_vent_ring_d()
@@ -449,7 +494,15 @@ module wap_fitcheck(lift = 0.1, turned = false) {
 }
 
 pcb_z    = floor_t + standoff_h;                // absolute z of PCB underside
-board_cx = -inner_l/2 + board_clear + board_l/2 + 0.5;   // USB-biased (0.5 = positioning margin, not a fit)
+// USB-biased, but no closer than the USB-C shell allows: it stands
+// brd_xiao_usb_overhang() past the PCB, and the shell is lowered over a clipped
+// board, so the receptacle's mouth stays tol_slide inboard of the ledge cove's
+// root (v0.9.1: at board_clear + 0.5 = 1.1 the mouth stood 0.4 INTO the wall line
+// and the ledge's flat face landed on the receptacle's top 8 mm above the seat).
+// A board shoved to its USB-end stops (0.3), or a shell offered a little off,
+// meets the cove's 45° and is led in, never the flat. The mouth sits 1.0 behind
+// the inner face; a plug's overmold already had to enter the 12 x 6.5 opening
+board_cx = -inner_l/2 + max(board_clear + 0.5, floor_cove + tol_slide + brd_xiao_usb_overhang()) + board_l/2;
 board_cy = 0;
 zone0    = -inner_l/2 + board_zone_l + 0.5;     // x where the appended bays begin
 batt_cx  = zone0 + batt_gap + batt_l/2;         // battery bay center
@@ -519,11 +572,22 @@ assert(!(usb_hood && e_seal && usb_cover),
 assert(!batt_hold || !e_battery || cav_h - batt_h >= 1.5,
        "batt_hold ribs would be shorter than 1.5 mm — the bay is already nearly full-height");
 assert(!e_seal || gasket_groove + 0.5 <= cav_h, "gasket_groove runs out of the ledge");
+assert(!e_seal || !lid_key || core_key_d() + 0.3 <= core_min_wall() + 1e-9,
+       "the plate's key notch would reach the gasket groove's outer cheek");
 assert(!e_seal || core_gasket_fill(gasket_w, gasket_groove, gasket_proud) <= core_gasket_fill_max(),
        str("the printed TPU ring would fill ", round(100*core_gasket_fill(gasket_w, gasket_groove, gasket_proud)),
            " % of its groove - past ", round(100*core_gasket_fill_max()),
            " % the incompressible gasket props the plate open instead of sealing; narrow gasket_w or deepen gasket_groove"));
 assert(cam_disc_t == 0 || cam_disc_t + 0.2 < lid_t, "cam_disc_t too thick for lid_t");
+// the disc seat prints on the bed (face-down) and carries bridge steps over its
+// floor (v0.9.1): its depth must land on a layer, and the two step layers must
+// stay inside the face
+assert(!e_camera || cam_disc_t == 0 || cam_disc_d == 0
+       || abs((cam_disc_t + 0.2)/bridge_layer - round((cam_disc_t + 0.2)/bridge_layer)) < 1e-6,
+       str("the disc seat depth (", cam_disc_t + 0.2, ") must be whole ", bridge_layer,
+           " mm layers — set bridge_layer to your slicer's layer height"));
+assert(!e_camera || cam_disc_t == 0 || cam_disc_d == 0 || cam_disc_t + 0.2 + 2*bridge_layer < lid_t,
+       "the disc seat's bridge steps run through the face — thin cam_disc_t or thicken lid_t");
 assert(cam_disc_t == 0 || cam_disc_d == 0 || cam_disc_d > cam_win_d,
        "cam_disc_d must be larger than cam_win_d or the disc falls through");
 assert(mount_extra0 == 0 || kh_head_h + 1.5 <= floor_t + kh_extra, "keyhole pocket too deep — raise kh_extra");
@@ -577,9 +641,15 @@ assert(!e_camera || cam_top <= base_h || cam_win_d >= brd_xiao_sense_cam_fp() + 
            brd_xiao_sense_cam_fp() + 1.0, " (0.5 a side) — raise cam_win_d"));
 // The module sits at the USB end of the board (0.5 past it), so the disc seat
 // reaches over the wall's top there: the shell keeps a full wall between the
-// seat's edge and the outside, and the barrel stays inside the cavity.
-assert(!e_camera || board_cx + cam_dx - cam_r >= -out_l/2 + core_min_wall(),
-       str("the camera disc seat runs to ", -out_l/2 - (board_cx + cam_dx - cam_r), " mm from the outer wall face — under core_min_wall(): shorten cam_disc_d or grow wall_t"));
+// seat's edge and the outside, and the barrel stays inside the cavity. The
+// outside is the FACE's outline, which soft_edge_plate insets by
+// lid_edge + 0.45*lid_edge2 at the top — the first layer of the face-down
+// print (v0.9.1: this measured from out_l/2, passed with 1.45, and the seat
+// printed 0.34 from the soft edge on the battery lid)
+face_inset = lid_edge + 0.45*lid_edge2;
+assert(!e_camera || board_cx + cam_dx - cam_r >= -out_l/2 + face_inset + core_min_wall(),
+       str("the camera disc seat runs to ", (board_cx + cam_dx - cam_r) - (-out_l/2 + face_inset),
+           " mm from the face's soft edge — under core_min_wall(): shorten cam_disc_d or grow wall_t"));
 assert(!e_camera || board_cx + cam_dx - brd_xiao_sense_cam_fp()/2 >= -inner_l/2 + 0.5,
        "the lens barrel runs into the USB wall — the board's positioning margin is gone");
 assert(!e_camera || cam_win_d >= cam_need,
@@ -590,7 +660,7 @@ assert(!e_camera || cam_win_d >= cam_need,
 // glued disc landed on the flush pipe's rim and could not seat)
 cam_r  = e_camera ? max(cam_win_d/2, cam_disc_d > 0 ? cam_disc_d/2 + tol_slide : 0) : 0;
 lp_r   = e_led    ? lp_d/2 + tol_press : 0;
-vent_r = e_buzzer ? vent_pad_d/2 : 0;
+vent_r = e_buzzer ? vent_pad_d/2 + tol_slide : 0;
 mag_r  = e_tamper ? mag_d/2 + tol_press + 1.2 : 0;
 tch_r  = e_touch  ? touch_d/2 : 0;
 function _web_ok(ax, ay, ar, bx, by, br) = ar == 0 || br == 0 || norm([ax - bx, ay - by]) >= ar + br + core_min_web();
@@ -625,7 +695,7 @@ function _mid_clear(x, half_w, x0, x1) = (x + pd/2 + 0.4 <= x0) || (x - pd/2 - 0
 for (x = mid_xs()) {
     assert(_mid_clear(x, board_w/2 + clip_stack + 0.4, board_cx - board_l/2 - 0.5, board_cx + board_l/2 + 0.5),
            "a mid post lands on the board's clips — widen the cavity (inner_w)");
-    assert(!e_battery || _mid_clear(x, batt_w/2 + 0.5, batt_cx - batt_l/2 - 1.2, batt_cx + batt_l/2 + 1.2),
+    assert(!e_battery || _mid_clear(x, batt_w/2 + 0.5, batt_cx - batt_l/2 - 1.6, batt_cx + batt_l/2 + 1.6),
            "a mid post lands on the cell — widen the cavity (inner_w)");
     assert(!e_gps || _mid_clear(x, (gps_w + 2.4)/2 + 0.4, gps_cx - (gps_l + 2.4)/2, gps_cx + (gps_l + 2.4)/2),
            "a mid post lands on the GPS cradle — widen the cavity (inner_w)");
@@ -712,11 +782,11 @@ module divrib(x) {
 // bore cannot locate a cell against them). Notched round the mid posts, whose
 // inner faces sit flush with the rails
 module batt_rails() {
-    x0 = batt_cx - batt_l/2 - 0.6;
+    x0 = batt_cx - batt_l/2 - 1.0;   // rib center to rib center (the end ribs sit 0.4 off the cell)
     for (s = [1, -1]) {
         y0 = batt_cy + s*(batt_w/2 + 0.5) - (s > 0 ? 0 : rail_t);
         difference() {
-            translate([x0, y0, floor_t]) cube([batt_l + 1.2, rail_t, 2.0]);
+            translate([x0, y0, floor_t]) cube([batt_l + 2.0, rail_t, 2.0]);
             for (p = mid_xy()) translate([p[0], p[1], floor_t - 0.1]) cylinder(d = pd + 0.8, h = 2.2);
         }
     }
@@ -734,6 +804,30 @@ module boardclip(cx, sy) {
                    clip_w, clip_t, clip_hook, clip_hook_h, clip_clear,
                    over = clip_over);
 }
+
+// The board's END STOPS (v0.9.1). The clips hold Y and Z only and the standoffs
+// are flat rests, so nothing located the board ALONG X: a USB-C plug slid it
+// along its standoffs until the Sense's lens barrel met the window's bore
+// (+1.85), or 7 mm off the USB wall on the compact's plain board, and pulling
+// the plug dragged the camera body into the USB wall. A core_min_wall() column
+// off each end of each long edge, up to the PCB's top face, 0.3 off the drawn
+// ends (a real board mics 21.14 against the drawn 21.0: 0.23 a side). They
+// stand outside the Type-C overmold's spec envelope across the connector's
+// axis, so a spec-max plug still reaches its receptacle, and beside the board,
+// never under it. With a battery the far pair stops at the bay's end-rib face,
+// so the cell keeps its 0.4 and the two print as one.
+stop_y0 = port_usbc_overmold_w()/2 + 0.2;   // a stop's inboard edge across the board
+module board_stops() {
+    for (sx = [1, -1], sy = [1, -1]) {
+        x0 = board_cx + sx*(board_l/2 + 0.3) - (sx > 0 ? 0 : core_min_wall());
+        t  = (sx > 0 && e_battery) ? min(core_min_wall(), batt_cx - batt_l/2 - 0.4 - x0) : core_min_wall();
+        translate([x0, board_cy + (sy > 0 ? stop_y0 : -board_w/2), floor_t])
+            cube([t, board_w/2 - stop_y0, standoff_h + board_h]);
+    }
+}
+assert(board_w/2 - stop_y0 >= core_min_wall(), "the board's end stops would be thinner than a wall across the board — the board is too narrow for them beside the overmold");
+assert(!e_battery || batt_cx - batt_l/2 - 0.4 - (board_cx + board_l/2 + 0.3) >= core_min_web(),
+       "the board's far end stop is under core_min_web() before the bay's end rib — raise batt_gap");
 
 // blind keyhole pocket cut into the thickened plate (xc = feature center along X);
 // head circle at the -X end, slot toward +X = UP when the case hangs USB-down.
@@ -770,7 +864,7 @@ module mount_tabs() {
 
 // ----------------------------------------------------------------------------
 //  The PLATE (part="base") — the chassis: the floor with its slab, the board
-//  standoffs, cradle frame and clips, the battery bay's ribs and rails, the
+//  standoffs, cradle frame, clips and end stops, the battery bay's ribs and rails, the
 //  GPS cradle, the keyholes, and the seats the screws enter through. Drawn in
 //  the assembled frame: front face at z = floor_t, body down to -mount_extra.
 //  Prints back-face down. The catalog's name for this half is back() (the
@@ -795,12 +889,20 @@ module base() {
                 for (sy = [1, -1])
                     for (cx = [board_cx - clip_dx, board_cx + clip_dx])
                         boardclip(cx, sy);
-            // battery: two transverse ribs bound its length, two rails its width
+            // battery: two transverse ribs bound its length, two rails its width.
+            // v0.9.1: the ribs' inner faces sat exactly batt_l apart, so a nominal
+            // 50.0 cell was a line-to-line fit between two printed walls (the rails
+            // give it 0.5) and a long one rode a rib top into the batt_hold ribs;
+            // they now stand 0.4 off each end (0.4, not 0.5: the -X rib stays clear
+            // of the board's standoffs instead of meeting one tangent, and the +X
+            // rib still fuses into the GPS rim)
             if (e_battery) {
-                divrib(batt_cx - batt_l/2 - 0.6);
-                divrib(batt_cx + batt_l/2 + 0.6);
+                divrib(batt_cx - batt_l/2 - 1.0);
+                divrib(batt_cx + batt_l/2 + 1.0);
                 batt_rails();
             }
+            // the board's end stops (see board_stops)
+            board_stops();
             // GPS module cradle rim (narrow module, so a proper rim is fine).
             // A lead notch on the board side lets the wires exit at plate level
             // instead of cresting the rim and holding the module proud.
@@ -819,8 +921,12 @@ module base() {
         // the screws: seats through the plate, pan heads over their glands in seal mode
         for (p = post_xy())
             pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, e_head, pl_r, scr_c, tol_hole, e_gland);
-        // the key slot in the plate's edge (the rib is on the shell's bore wall)
-        if (lid_key) translate([0, 0, floor_t]) lid_key_slot(key_x, bore_y/2 - tol_slide, 270, plate_t + 0.2, ledge_w + 0.4);
+        // the key notch in the plate's edge (the rib is on the shell's bore wall):
+        // core_key_d() + 0.3 into the plate from the bore wall — never through the
+        // ledge band (v0.9.1: the old ledge_w + 0.4 cut ran ledge_w + 1.4 in from the
+        // plate's edge, past the ledge into the cavity — a 3.4 mm hole from the back
+        // face, inside the gasket line on the sealed build; the Sense's PL-3 form)
+        if (lid_key) translate([0, 0, floor_t]) lid_key_slot(key_x, bore_y/2, 270, plate_t + 0.2, core_key_d() - 0.7);
         // blind keyhole pockets (never reach the plate's front — seal-safe)
         if (mount_extra0 > 0)
             for (xc = kh_xs) keyhole_pocket(xc);
@@ -900,13 +1006,25 @@ module shell_solid() {
                 if (e_camera) {
                     translate([cam[0], cam[1], -1]) cylinder(d = cam_win_d, h = lid_t + 2);  // camera window
                     // recessed seat on the outer face for a glued clear disc (sits 0.2 below the surface)
-                    if (cam_disc_t > 0 && cam_disc_d > 0)
+                    if (cam_disc_t > 0 && cam_disc_d > 0) {
                         translate([cam[0], cam[1], lid_t - (cam_disc_t + 0.2)])
                             cylinder(d = cam_disc_d + 2*tol_slide, h = cam_disc_t + 1);
+                        // v0.9.1: the shell prints face-DOWN, so the seat is a counterbore
+                        // on the bed and its floor — the disc's bond ring — was a ring round
+                        // the window with nothing under it (42 mm² at the first layer over
+                        // it). Bridge steps: a slot, then a square, then the round window,
+                        // every layer a straight bridge anchored on the seat's wall
+                        core_bridge_steps(cam[0], cam[1], lid_t - (cam_disc_t + 0.2), cam_win_d,
+                                          cam_disc_d + 2*tol_slide, up = -1, layer = bridge_layer, rot = 90);
+                    }
                 }
                 if (e_led)    core_lightpipe_bore(lp[0], lp[1], lid_t, lp_d, tol_press);                        // light pipe
-                if (e_buzzer) core_vent_cluster(vnt[0], vnt[1], lid_t, vent_pad_d, vent_pad_depth,
-                                                vent_ring_d, vent_hole_d, vent_holes);                          // buzzer vent
+                // buzzer vent. v0.9.1: the GORE seat is on the INNER face — on the outer
+                // face it was a Ø12 pocket on the bed whose floor bridged a circle full of
+                // holes (the doorbell's first print: a nest of strings), and that floor is
+                // the membrane's adhesive land. The membrane goes in from inside
+                if (e_buzzer) core_vent_cluster(vnt[0], vnt[1], lid_t, vent_pad_d + 2*tol_slide, vent_pad_depth,
+                                                vent_ring_d, vent_hole_d, vent_holes, seat_inner = true);
                 if (e_touch)  translate([tch[0], tch[1], -1]) cylinder(d = touch_d, h = lid_t - touch_wall + 1); // touch window (blind thinning)
                 // debossed label on the outer face (prints face-down -> crisp first-layer voids)
                 if (label_text != "")

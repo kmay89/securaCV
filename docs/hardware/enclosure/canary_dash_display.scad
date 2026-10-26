@@ -3,15 +3,17 @@
 //  Housing for the Waveshare ESP32-S3-Touch-LCD-4.3 — the "step-up dashboard"
 //  option from docs/hardware/display_research.md (Option B): a 4.3" 800x480
 //  IPS touch panel for an event-timeline view, vs the Watch Station's glance
-//  puck. Three parts:
+//  puck. Four parts:
 //
 //    frame — front bezel shell; the panel drops in face-first, the bezel lip
 //            overlaps the glass 2.5 mm all round (prints face-down: the
 //            A-surface is your textured build plate)
-//    back  — vented rear cover, M2 self-tap corner bosses; carries TWO
-//            through-keyholes AND a 75 mm horizontal M4 pair (a VESA-75
-//            square can't fit this panel height)
+//    back  — vented rear cover, M2 self-tap corner bosses; four dock pads
+//            click it onto the wall cradle (part="cradle", two #8 / M4
+//            pan screws into the wall). v0.1's two keyholes and 75 mm M4
+//            pair are gone (v0.2, see the mount note below)
 //    stand — free-standing desk cradle, 25 deg recline, no hardware
+//    cradle — the wall dock plate (canary_cradle_lib) the back clicks onto
 //
 //  ⚠️ DIMENSIONS ARE NOMINAL — Waveshare doesn't publish a full mechanical
 //  drawing. MEASURE your board (glass outline, rear stack depth, USB
@@ -80,7 +82,12 @@ r_out   = 5.0;   // deviates: display-frame radius class — scaled to the 4.3-i
    (bosses inside the frame would collide with the panel's sharp glass corners) */
 lob_d = 7.0;   // screw lobe Ø
 lob_o = 2.2;   // lobe diagonal offset outboard of the cavity corner
-pilot_d = 1.7;  screw_c = 2.4;  cb_d = 4.4;  cb_h = 1.4;
+pilot_d = 1.7;  screw_c = 2.4;  cb_d = 4.4;
+// v0.3: cb_h was 1.4 under a 1.6 mm pan head (the BOM's M2 x 8, ISO 7049 k),
+// so every head stood 0.2 proud of the back. 2.0 is SCR_REGISTRY's M2 pan
+// seat (k + 0.4 sink: flush, never proud) and leaves DESIGN_RULES' 1.0 head
+// floor, asserted below at equality; pilot_l re-derives 6.9 -> 7.5.
+cb_h = 2.0;      // pan-head counterbore depth in the back: the registry's M2 pan seat (head k 1.6 + 0.4 sink)
 screw_l = 8.0;   // M2 self-tapper length the pilots are cut for (the BOM's M2 x 8)  // [6:1:12]
 
 /* [Rear mounts] */
@@ -160,6 +167,22 @@ assert(bez_lip >= 1.5, "bezel lip < 1.5 mm won't retain the glass");
 // lobe must clear the cavity corner (cavity corner radius = 2)
 assert(sqrt(2)*(lob_o + 2) >= lob_d/2 + 2 + 0.2,
        "screw lobe intrudes into the panel cavity — raise lob_o or shrink lob_d");
+// ...and the glass-corner relief (frame()) must clear the screw pilot. That
+// assert above predates the relief: drilled ON the cavity corner, the Ø3.4
+// bore ran 0.56 mm from each pilot (sqrt2·lob_o − pilot_d/2 − 1.7) for the
+// pilot's whole depth — 0.41 to an M2 thread crest — where scr_post_min()
+// wants 1.5 a side. v0.3 centers it relief_in() inboard of the corner.
+function relief_d()  = 3.4;   // the glass-corner relief bore
+function relief_in() = 0.7;   // its center inboard of the cavity corner, on both axes
+assert(sqrt(2)*(lob_o + relief_in()) - pilot_d/2 - relief_d()/2 >= 1.5,
+       "the glass-corner relief leaves under 1.5 mm of wall beside the screw pilot — raise relief_in()");
+// ...and it still swallows the glass corner it exists for: a panel pushed
+// tol_slide into a corner can fill the cavity's whole square corner, so the
+// farthest point of that square outside the r2 arc stays inside the bore
+// (1.48 from the moved center; 2.0 from the old one, which a pushed panel
+// grazed)
+assert(norm([2 - relief_in(), relief_in()]) <= relief_d()/2,
+       "the glass-corner relief does not swallow the corner the r2 pocket arc misses — lower relief_in()");
 // The dock interface checks itself (strain budget, engagement, pad depth) —
 // `use <>` does not run a library's top-level asserts, so the adopter has to
 // ask. See the note in canary_cradle_lib.scad's header.
@@ -208,10 +231,14 @@ module frame() {
         // panel cavity behind the face
         translate([0, 0, face_t]) linear_extrude(cav_t + 0.1) rrect2d(inner_l, inner_w, 2);
         // corner reliefs: the panel has SHARP glass corners (see header) and a
-        // rounded pocket corner (r2) interferes 0.55 mm — drill the corners out
+        // rounded pocket corner (r2) interferes 0.55 mm — drill the corners out.
+        // v0.3: relief_in() inboard of the corner, not on it — on it, the bore
+        // left 0.57 mm of plastic beside each M2 pilot (a z = 13 section:
+        // 0.574 / 0.578), a web the self-tapper splits; now 1.55 (asserted
+        // with the lobe check)
         for (sx = [1, -1], sy = [1, -1])
-            translate([sx*inner_l/2, sy*inner_w/2, face_t])
-                cylinder(d = 3.4, h = cav_t + 0.1);
+            translate([sx*(inner_l/2 - relief_in()), sy*(inner_w/2 - relief_in()), face_t])
+                cylinder(d = relief_d(), h = cav_t + 0.1);
         // USB-C overmold channel through the bottom (-Y) wall, centered on
         // the shell's axis and open to the rear rim (see the [USB / terminals]
         // note): a round-ended floor the overmold rests in, straight sides up
@@ -254,7 +281,9 @@ module frame() {
 // PRINT IT PADS-UP (inner face on the bed). v0.1 said outer-face-down for a
 // clean A-surface, which was never the point here — the outer face is the one
 // against the wall. Pads-up puts the pocket bridges where a bridge belongs
-// and leaves nothing overhanging.
+// and leaves nothing overhanging. The module stays in the assembled frame
+// above (the dock gate and gen_assembled_dims.py read it); the SELECTOR
+// turns it onto its inner face for export (v0.3, see there).
 module back() {
     difference() {
         union() {
@@ -564,7 +593,14 @@ module cradle() {
 
 // ---- selector -----------------------------------------------------------------
 if      (part == "frame")  frame();
-else if (part == "back")   back();
+// v0.3: the back EXPORTS PADS-UP. Exported as modeled it stood on its four
+// pad tips with the whole 118 x 78 plate 6 mm over the bed (admesh Min Z
+// -6; the printability sweep: 1053 mm² of contact, a 6847 mm² ceiling at
+// z 6) — the opposite of the print note on back() and of the catalog's
+// "parts print flat as modeled". Turned about Y, so +Y (the stud pair) stays
+// up, the frame's convention: inner face on the bed, z 0..back_t + pad.
+// gen_assembly_poses.py undoes exactly this turn.
+else if (part == "back")   translate([0, 0, back_t]) rotate([0, 180, 0]) back();
 else if (part == "stand")  stand();
 else if (part == "cradle") cradle();
 // DOCK FIT GATE — the seated plate against the back it seats in. Must be

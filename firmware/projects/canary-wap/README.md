@@ -100,19 +100,27 @@ make monitor
    > from the device's private key) and is printed on the serial console at
    > first boot. There is no shared default password; release builds fail
    > closed if provisioning is incomplete.
-2. Open a browser at any of:
+2. Open a browser at either of:
    - **http://canary.local** — single-device catch-all (first Canary on the
      network claims it)
-   - **http://canary-\<name\>.local** — each device's unique mDNS hostname
-     once you name it (e.g. `canary-kitchen.local`). Until then it is
-     `canary-` plus four lowercase hex digits, the first two bytes of its key
-     fingerprint (e.g. `canary-7916.local`), not its device id's suffix; at
-     the default log level the serial log names it on the
-     `[INFO/NETWORK] mDNS started | canary-7916` line
    - **http://192.168.4.1** — numeric fallback that always works
+
+   The first-boot setup wizard opens only at those two names; under any
+   other name, the device's unique one included, `/` shows the static page
+   that says to type `canary.local` (sweep F344). After setup, on your home
+   network, the dashboard is at `canary.local` (when this unit holds that
+   name) and at the device's unique mDNS hostname,
+   **http://canary-\<name\>.local** once you name it (e.g.
+   `canary-kitchen.local`). Until then it is `canary-` plus four lowercase
+   hex digits, the first two bytes of its key fingerprint (e.g.
+   `canary-7916.local`), not its device id's suffix; at the default log
+   level the serial log names it on the
+   `[INFO/NETWORK] mDNS started | canary-7916` line.
    > When a TLS certificate is available the dashboard is served over
    > **HTTPS (port 443)** and plain-HTTP requests are redirected; without a
-   > cert the device runs HTTP-only. See the
+   > cert the device runs HTTP-only, which is every stock build today (the
+   > on-device certificate generator compiles out on every pinned core,
+   > F15). See the
    > [Arduino build README](arduino/canary_wap/README.md) for details.
    > The **MQTT bridge** (`/mqtt` page) has its own encryption setting:
    > *Off* (plain) or *On, check the broker's certificate* (paste the
@@ -230,27 +238,34 @@ The phone spends it on the home LAN — `GET /api/provisioning-receipt?claim=<he
 — and gets the same receipt the BOOT-tap route serves, `base_url` at the
 `.local` name. (Every grant names the `.local` name once the WAP is on the
 home Wi-Fi and the request did not arrive over its setup network, and so
-does port 80's redirect to https; `receipt_authority.h`, sweep F255. The
-dashboard at `https://canary-<suffix>.local/settings` then saves that
-receipt as `canary-recovery-kit.json`, for the iPhone app's **Ready to
-pair** row: offered after a BOOT-tap sign-in, and from **Settings**,
-**Device**, **Recovery kit** when already signed in; sweep F257.) The route decides bearer → claim → BOOT tap — the four-grant
-`provisioning_gate::receipt_decide` order minus its first question (a
-foreign `Host`), which the WAP does not ask on this route today (the
-flagship's `auth_gate` does); a wrong guess spends nothing, an expired claim
-is burned, and a claim that serves leaves the tap unspent.
+does port 80's redirect to https on a unit that serves HTTPS;
+`receipt_authority.h`, sweep F255. The dashboard at
+`http://canary-<suffix>.local/settings` (`https://` once the WAP serves
+HTTPS, which no stock build does yet, F15) then saves that receipt as
+`canary-recovery-kit.json`, for the iPhone app's **Ready to pair** row:
+offered after a BOOT-tap sign-in, and from **Settings**, **Device**,
+**Recovery kit** when already signed in; sweep F257.) The route decides in
+`provisioning_gate::receipt_decide`'s four-grant order: a `Host` that cannot
+name the device is refused first, `403 {"error":"host"}`, in every mode
+(sweep F344; `docs/design/magic_pairing.md` §3.7), then a valid bearer,
+then the claim, then the BOOT tap; a wrong guess spends nothing, an expired
+claim is burned, and a claim that serves leaves the tap unspent.
 Two factors: the encrypted link that provisioned, and presence on the Wi-Fi
 the WAP just joined. **The receipt the claim buys names the steady-state
-address** — `https://<name>.local` with the certificate's `tls_cert_fp` pin:
-the certificate is loaded or generated on every boot and only the HTTPS
-*server* waits for setup to end (the captive portal needs plain HTTP), so
-the claim's `claim_url` is the http address that answers now and the receipt
-is the one the phone keeps (`tls_after_setup()` in the sketch). The WAP then
-restarts once, ~10 s after the claim is spent (on HTTPS ~15 s after
-"Paired"); the reboot is held while a claim is outstanding (the claim
-promised 180 s; the grace alone ended at 120 s) and follows the same runway
-after one expires. Plain HTTP on an installed WAP redirects to https at the
-address the request used (its `Host`), never the setup network's.
+address.** Once a certificate is stored, that is `https://<name>.local`
+with the certificate's `tls_cert_fp` pin: the certificate is loaded on
+every boot and only the HTTPS *server* waits for setup to end (the captive
+portal needs plain HTTP), so the claim's `claim_url` is the http address
+that answers now and the receipt is the one the phone keeps
+(`tls_after_setup()` in the sketch). No stock build stores one today (the
+on-device generator compiles out on every pinned core, F15), so the receipt
+names `http://<name>.local` and an empty `tls_cert_fp`, and the WAP serves
+plain HTTP after setup. The WAP then restarts once, ~10 s after the claim
+is spent (on HTTPS ~15 s after "Paired"); the reboot is held while a claim
+is outstanding (the claim promised 180 s; the grace alone ended at 120 s)
+and follows the same runway after one expires. On a unit that serves
+HTTPS, plain HTTP redirects to https at the address the request used (its
+`Host`), never the setup network's.
 
 Design, threat model and bench checklist: `docs/design/magic_pairing.md`.
 **CI-compiled (also locally) and host-tested (`test_improv_core.cpp`,

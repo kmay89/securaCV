@@ -113,3 +113,6 @@ tvos/build/
 # backoffice — the company's SQLite file and backups live outside the tree
 backoffice/data/
 backoffice/.env
+
+# the kit: an app's secrets never enter git
+infra/apps/*/.env
