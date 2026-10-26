@@ -95,9 +95,11 @@ class SecuraCVRuntimeData:
     # "configuration_url", "registered" (the status handler has named it)}}.
     devices: dict[str, dict[str, Any]] = field(default_factory=dict)
     # The firmware version each Canary's health topic last reported (bounded
-    # text). Every family publishes its version there, not on status, so this
-    # is what the device page's firmware reads first. Kept apart from
-    # `devices` because a health publish must not count as a status one.
+    # text). Every family publishes firmware_version there and none puts that
+    # key on status (the flagship's status carries its version as
+    # "firmware"), so this is what the device page's firmware reads first.
+    # Kept apart from `devices` because a health publish must not count as a
+    # status one.
     canary_firmware: dict[str, str] = field(default_factory=dict)
     # The device-page facts last written to the device registry per Canary
     # ({"model", "sw_version", "hw_version", "configuration_url"}, each only

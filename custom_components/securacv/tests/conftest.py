@@ -1028,7 +1028,13 @@ def _augment_service_info() -> None:
 
 
 class DeviceRegistryStub:
-    """Records async_get_or_create calls and answers identifier lookups."""
+    """Records async_get_or_create calls and answers identifier lookups.
+
+    An update writes every keyword it is passed, None included, as the real
+    registry does (its keywords default to UNDEFINED, and an explicit None
+    clears the field): a writer that passes None for a fact it lacks erases
+    what an earlier write set, and a test on this stub must see that.
+    """
 
     def __init__(self) -> None:
         self.devices: list[types.SimpleNamespace] = []
@@ -1042,7 +1048,7 @@ class DeviceRegistryStub:
             if identifiers & device.identifiers:
                 device.identifiers |= identifiers
                 for key, value in kwargs.items():
-                    if key not in ("identifiers", "config_entry_id") and value is not None:
+                    if key not in ("identifiers", "config_entry_id"):
                         setattr(device, key, value)
                 return device
         device = types.SimpleNamespace(

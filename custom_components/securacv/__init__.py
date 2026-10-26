@@ -901,11 +901,17 @@ def _async_device_status_received(hass: HomeAssistant, entry: SecuraCVConfigEntr
         device = runtime.devices.setdefault(device_id, {"status": None})
         device["status"] = payload
         # What the status says for the device page, remembered across the
-        # publishes that leave it out (the last will names no device_type, so
-        # the model must outlive it). Each value is bounded broker text.
+        # publishes that leave it out (the canary-wap's last will is
+        # {"online":false}, with no device_type, so the model must outlive
+        # it). Each value is bounded broker text. No family puts
+        # firmware_version on status; the flagship's status carries its
+        # version as "firmware" (main.cpp mqtt_publish_status_update), which
+        # the page shows until a health has reported one.
         device_type = canonical_device_type(broker_text(status_data.get("device_type")))
-        status_firmware = broker_text(status_data.get("firmware_version")) or broker_text(
-            status_data.get("fw_version")
+        status_firmware = (
+            broker_text(status_data.get("firmware_version"))
+            or broker_text(status_data.get("fw_version"))
+            or broker_text(status_data.get("firmware"))
         )
         hardware = broker_text(status_data.get("hardware")) or broker_text(status_data.get("board"))
         config_url = _safe_config_url(status_data.get("ap_ip") or status_data.get("ip"))
@@ -963,11 +969,11 @@ def _async_device_status_received(hass: HomeAssistant, entry: SecuraCVConfigEntr
 def _async_device_health_received(hass: HomeAssistant, entry: SecuraCVConfigEntry):
     """Subscriber for `{prefix}/+/health`: the TOFU pin, then the firmware.
 
-    Every Canary family publishes its firmware version on health (as
-    ``firmware_version``) and none on status, so this is where the device
-    page's firmware comes from. The pin runs first and on its own terms
-    (``_async_health_for_tofu``); the version is recorded per device and
-    written only when it changed.
+    Every Canary family publishes ``firmware_version`` on health, and none
+    puts that key on status (only the flagship's status carries its version,
+    as ``firmware``), so this is where the device page's firmware comes from.
+    The pin runs first and on its own terms (``_async_health_for_tofu``); the
+    version is recorded per device and written only when it changed.
     """
     tofu = _async_health_for_tofu(hass, entry)
 

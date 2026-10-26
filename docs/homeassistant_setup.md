@@ -585,16 +585,18 @@ not data loss.
 
 #### Canary devices: "SecuraCV Canary <id>"
 
-One device per Canary, created the first time its `securacv/<id>/status`
-publish is seen, attached under the kernel device when one exists. Its model
-is the product name for the `device_type` its status names (*Canary WAP*,
-*Canary Sense*, *Canary Dash*, and so on; *SecuraCV Canary* when the status
-names none, as the `firmware/canary` build's does, or names a type this
-release does not know), and its firmware is the `firmware_version` its
-`health` topic reports, which is where every Canary publishes it (a version
-on its `status` shows only until a health has reported one). Each is
-unsigned text from the broker, bounded to 64 characters; no serial number is
-set. Every
+One device per Canary, created the first time its `securacv/<id>/status` or
+`securacv/<id>/health` publish is seen (a device its health created first
+takes the name its first status gives), attached under the kernel device
+when one exists. Its model is the product name for the `device_type` its
+status names (*Canary WAP*, *Canary Sense*, *Canary Dash*, and so on;
+*SecuraCV Canary* when the status names none, as the `firmware/canary`
+build's does, or names a type this release does not know), and its firmware
+is the `firmware_version` its `health` topic reports, which is where every
+Canary publishes it. A version on its `status` (only the `firmware/canary`
+build's carries one, as `firmware`) shows only until a health has reported
+one. Each is unsigned text from the broker, bounded to 64 characters; no
+serial number is set. Every
 unique id is `securacv_canary_<device_id>_<suffix>` with the suffix shown in
 parentheses. **Signed** means the publish carries the device's Ed25519
 signature and the integration checks it against the pinned key

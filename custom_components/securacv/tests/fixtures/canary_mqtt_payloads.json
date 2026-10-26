@@ -1,5 +1,5 @@
 {
-  "$comment": "One status and one health body per Canary family, in the keys each family's firmware publishes on <prefix>/<id>/status and <prefix>/<id>/health. Values are samples, not captures. Every family puts its firmware version on health (firmware_version) and none on status; every family but the flagship names its device_type on status. In the monorepo, test_device_registry_versions.py holds every key here to the producer named beside it (path#function); the HACS mirror carries no firmware, so there that check skips and the rest run on these bodies.",
+  "$comment": "One status and one health body per Canary family, in the keys each family's firmware publishes on <prefix>/<id>/status and <prefix>/<id>/health. Values are samples, not captures. Every family puts its firmware version on health as firmware_version, and none puts that key on status; the flagship's status alone carries its version, as firmware. Every family but the flagship names its device_type on status. In the monorepo, test_device_registry_versions.py holds every key here to the producer named beside it (path#function); the HACS mirror carries no firmware, so there that check skips and the rest run on these bodies.",
   "families": {
     "canary": {
       "status_producer": "firmware/canary/src/main.cpp#mqtt_publish_status_update",

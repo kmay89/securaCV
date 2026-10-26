@@ -4275,26 +4275,30 @@ so — see D2 below.)
   `uptime`, `boot_count`, `sd_writes`, `http_requests` and `last_frame_age_ms`
   as the second net behind the health projection (device-details PR 16). From
   code. Found by the device-details design's privacy review
-  (`docs/design/device_details.md` §11, P18); filed by #<PR>, 2026-10-22.
+  (`docs/design/device_details.md` §11, P18); filed by #<design PR>,
+  2026-10-22.
   *Partly done (#<PR>), the literal keys (device-details PR 2); the item
   stays open for PRs 3 and 16:* `TO_REDACT` names the eight keys literally,
   under a comment that says what each one is, and
   `test_the_redaction_set_names_every_identifier_class` names them too; a new
-  `test_an_identifier_key_is_replaced_wherever_it_lands` seeds each key with
-  a value, nested (a Bluetooth address two objects deep, one inside a list),
-  and finds none of the values in the swept result. Both fail on the set as
-  it was. Host-tested in both Home Assistant lanes (the stub suite on Python
-  3.11 and 3.13, the real core at 2026.5.0 and 2026.10.1).
+  `test_an_identifier_key_is_replaced_wherever_it_lands`, in the stub suite
+  and in the real-core lane (there through the core's own
+  `async_redact_data`), seeds each key with a value, nested (a Bluetooth
+  address two objects deep, one inside a list), and finds none of the values
+  in the swept result. All three fail on the set as it was. Host-tested in
+  both Home Assistant lanes (the stub suite on Python 3.11 and 3.13, the real
+  core at 2026.5.0 and 2026.10.1).
 - [x] **F392 [decision] Home Assistant's config-entry diagnostics dump keeps
   half of each Canary's key fingerprint.**
   `async_get_config_entry_diagnostics()` writes each pinned Canary's
   fingerprint through `_truncated()`, which keeps `SHOWN_HEX = 8` of its 16
   hex digits (`diagnostics.py:84-91`, `:256-262`), and the module's docstring
   says a diagnostics file gets attached to GitHub issues (`:3-4`). Until F390
-  is fixed, a WAP serves its whole fingerprint to anyone in radio range as its
-  Device Information serial, and its name and beacons carry the last two bytes
-  for good, so a posted dump lets a stranger nearby match the device. Fewer
-  digits is no fix while the whole value is on air. Decide the dump's rule
+  (filed with this entry by #<design PR>) is fixed, a WAP serves its whole
+  fingerprint to anyone in radio range as its Device Information serial, and
+  its name and beacons carry the last two bytes for good, so a posted dump
+  lets a stranger nearby match the device. Fewer digits is no fix while the
+  whole value is on air. Decide the dump's rule
   beside the device-details design's Copy Details rule, which puts no handle
   in shared text.
   *Decided (2026-10-22, under the maintainer's instruction to fix the
@@ -4304,7 +4308,8 @@ so — see D2 below.)
   is Home Assistant only, so it lands with device-details PR 2, with a test
   that the dump carries no digit of any fingerprint.*
   Found by the device-details design's privacy review
-  (`docs/design/device_details.md` §11, P19); filed by #<PR>, 2026-10-22.
+  (`docs/design/device_details.md` §11, P19); filed by #<design PR>,
+  2026-10-22.
   *Done (#<PR>):* each pinned Canary's trust row carries `key_correlation_id`
   in place of `fingerprint`: HMAC-SHA-256 of the case-folded fingerprint
   under 16 bytes from `secrets.token_bytes()` drawn once per dump and never
@@ -4317,10 +4322,26 @@ so — see D2 below.)
   kernel key's own eight-character fingerprint is unchanged. The stub suite
   asserts that no run of four of the fingerprint's characters, in either case,
   appears anywhere in the dump, and the real-core dump test does the same for
-  a TOFU-pinned Canary; both fail on the dump as it was. The docs that
-  described eight-character fingerprints say so now (`THREAT_MODEL.md`,
-  `SECURITY_MODEL.md`, `homeassistant_setup.md`, `ha_frigate_product.md`).
-  Host-tested in both Home Assistant lanes.
+  a TOFU-pinned Canary; both fail on the dump as it was. The rule "two
+  Canaries pinned to one key share an id" could not be seen for many pairs,
+  because the dump keyed each Canary's rows by eight characters of its id and
+  many ids share them (every canary-wap unit is `canary-s3-…` or
+  `canary-c3-…`; `canary_sense_001` and `canary_sentinel_001` are both
+  `canary_s…`), so one Canary's rows replaced another's. `_shown_ids()` now
+  gives ids that share their eight characters a per-dump ordinal
+  (`canary-s… #1`, `canary-s… #2`), numbered in the order the integration
+  recorded them, the same key in the device, trust and verification
+  sections, with no ninth character of any id;
+  `test_every_canary_keeps_its_own_row` (stub suite) holds two canary-wap
+  units pinned to one key and a Sense to their own rows, and fails on the
+  dump as it was. The dump's per-Canary `firmware` and `hardware` are the
+  device page's own (`entity.canary_registry_facts`), so a later status that
+  leaves a fact out no longer makes them disagree with the page;
+  `test_the_dump_shows_what_the_device_page_shows` (stub) and
+  `test_the_dump_shows_the_firmware_the_device_page_shows` (real core) hold
+  them there. The docs that described eight-character fingerprints say so
+  now (`THREAT_MODEL.md`, `SECURITY_MODEL.md`, `homeassistant_setup.md`,
+  `ha_frigate_product.md`). Host-tested in both Home Assistant lanes.
 
 ### Parity & sub-projects
 

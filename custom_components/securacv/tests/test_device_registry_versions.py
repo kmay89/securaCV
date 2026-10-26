@@ -1,30 +1,36 @@
 """A Canary's device page: its firmware, its model, and nothing else invented.
 
-Every Canary family publishes its firmware version on its health topic
-(``firmware_version``) and none on status, while the integration read the
-version from status only, so no Canary's device page showed its firmware
-(device-details design §1.3, PR 2). The model was the constant "SecuraCV
-Canary" whatever the status's ``device_type`` said. These tests drive the
-integration's own status and health subscriptions with each family's real
-body shape (``fixtures/canary_mqtt_payloads.json``) and read what reached the
-device registry:
+Every Canary family publishes ``firmware_version`` on its health topic, and
+no family puts that key on status (only the flagship's status carries its
+version, as ``firmware``), while the integration read the version from
+status's ``firmware_version`` or ``fw_version`` only, so no Canary's device
+page showed its firmware (device-details design §1.3, PR 2). The model was
+the constant "SecuraCV Canary" whatever the status's ``device_type`` said.
+These tests drive the integration's own status and health subscriptions with
+each family's real body shape (``fixtures/canary_mqtt_payloads.json``) and
+read what reached the device registry:
 
-  - the firmware comes from health, the status's version only until a health
-    has reported one, and a new version (an update) is written again;
+  - the firmware comes from health, the status's version (the flagship's
+    ``firmware``) only until a health has reported one, and a new version
+    (an update) is written again;
   - the model is the product name for the published device_type, kept
-    through the last will that names none, and the same rule every entity's
-    device_info applies, so an entity cannot put the plain model back;
+    through the canary-wap's last will, which names none, and the same rule
+    every entity's device_info applies, so an entity cannot put the plain
+    model back;
   - every value is a str, broker text is bounded to 64 printable
     characters, a non-string version is never ``str()``-ed, and no serial
     number is set on a Canary;
-  - a heartbeat that changes nothing writes nothing;
+  - a heartbeat that changes nothing writes nothing, and a publish that
+    leaves a fact out never clears it;
   - the health topic still pins the key first (trust on first use).
 
-In the monorepo two more checks hold the fixture and the product-name table
-to the firmware: every key a fixture body carries is spelled by the producer
-named beside it, and the table's keys are exactly the device types the
-firmware configs publish (plus the one legacy display type). The HACS mirror
-carries no firmware, so those two skip there; the rest run on the fixtures.
+In the monorepo three more checks hold the fixture and the product-name
+table to their sources: every key a fixture body carries is spelled by the
+producer named beside it, the table's keys are exactly the device types the
+firmware configs publish (plus the one legacy display type), and its names
+are the Apple apps' names for those types. The HACS mirror carries neither
+the firmware nor the apps, so those skip there; the rest run on the
+fixtures.
 """
 
 from __future__ import annotations
@@ -143,7 +149,8 @@ def test_every_family_shows_its_firmware_and_its_model(family: str) -> None:
 
 def test_health_before_status_still_gives_the_page_its_firmware() -> None:
     """Retained topics arrive in any order: a health first records the
-    version, and the status that follows names the device and keeps it."""
+    version (and makes the device), and the status that follows names the
+    device and keeps the version."""
     hass = _hass()
     _mqtt_entry(hass)
     sense = FAMILIES["canary-sense"]
@@ -151,11 +158,11 @@ def test_health_before_status_still_gives_the_page_its_firmware() -> None:
     _publish(hass, "sense01", "health", sense["health"])
     assert _device(hass, "sense01").sw_version == "2.4.16"
 
-    _publish(hass, "sense01", "status", sense["status"])
+    _publish(hass, "sense01", "status", dict(sense["status"], device_name="Hall"))
     device = _device(hass, "sense01")
     assert device.sw_version == "2.4.16"
     assert device.model == "Canary Sense"
-    assert device.name == "SecuraCV Canary sense01"
+    assert device.name == "Hall"
     _assert_strings(device)
 
 
@@ -192,6 +199,42 @@ def test_a_heartbeat_that_changes_nothing_writes_nothing() -> None:
         _publish(hass, "sense01", "status", dict(sense["status"], rssi=-70, ts_ms=7200000))
         _publish(hass, "sense01", "health", dict(sense["health"], uptime=7200, memory_free=190000))
     assert len(_calls_for(hass, "sense01")) == writes
+
+
+def test_the_flagship_shows_the_version_its_status_carries() -> None:
+    """The flagship's status names its version as ``firmware`` (main.cpp
+    mqtt_publish_status_update), no other key: the page shows it from the
+    first status, and health's version replaces it once one arrives."""
+    hass = _hass()
+    _mqtt_entry(hass)
+    flagship = FAMILIES["canary"]
+
+    _publish(hass, "flag01", "status", flagship["status"])
+    device = _device(hass, "flag01")
+    assert device.sw_version == flagship["status"]["firmware"] == "2.4.16"
+    assert device.model == MODEL_CANARY
+
+    _publish(hass, "flag01", "health", dict(flagship["health"], firmware_version="2.4.17"))
+    _publish(hass, "flag01", "status", flagship["status"])
+    assert _device(hass, "flag01").sw_version == "2.4.17"
+
+
+def test_an_update_keeps_the_board_and_the_address() -> None:
+    """A publish that leaves a fact out says nothing about it: an update's
+    status that names only its new version keeps the board and the address
+    an earlier status gave (the registry clears a field passed as None)."""
+    hass = _hass()
+    _mqtt_entry(hass)
+    first = {"online": True, "device_type": "canary-sense", "firmware_version": "2.4.15",
+             "hardware": "esp32s3", "ip": "192.168.1.51"}
+    _publish(hass, "sense01", "status", first)
+    _publish(hass, "sense01", "status", {"online": True, "firmware_version": "2.4.16"})
+
+    device = _device(hass, "sense01")
+    assert device.sw_version == "2.4.16"
+    assert device.hw_version == "esp32s3"
+    assert device.configuration_url == "http://192.168.1.51"
+    assert device.model == "Canary Sense"
 
 
 # ── the model ────────────────────────────────────────────────────────────
@@ -246,6 +289,10 @@ def test_broker_text_is_bounded_and_never_stringified() -> None:
 
     _publish(hass, "ctl01", "health", {"firmware_version": "2.4.16\x1b[31m\x00\n  beta "})
     assert _device(hass, "ctl01").sw_version == "2.4.16[31m beta"
+
+    # A cut that lands on a space leaves no trailing space.
+    _publish(hass, "cut01", "health", {"firmware_version": "1" * 63 + " 2.4.16"})
+    assert _device(hass, "cut01").sw_version == "1" * 63
 
     # A version that is not a string is no version: never "2.4" from 2.4, and
     # never a dict's repr on a device page.
@@ -396,3 +443,19 @@ def test_the_product_table_names_exactly_the_published_device_types() -> None:
         "CANARY_PRODUCT_NAMES must name every published device_type and no other "
         f"(published: {sorted(published)})"
     )
+
+
+@pytest.mark.skipif(
+    not (_REPO / "ios" / "Shared" / "DeviceNaming.swift").is_file(),
+    reason="monorepo-only: the HACS mirror carries no Apple app source",
+)
+def test_the_product_names_are_the_apple_apps_names() -> None:
+    """const.py says each name is the one the Apple apps show for that type:
+    held to DeviceNaming.swift's table, every Canary type in it and no
+    other, so a rename on either side fails here."""
+    swift = (_REPO / "ios" / "Shared" / "DeviceNaming.swift").read_text(encoding="utf-8")
+    block = re.search(r"static let titles: \[String: String\] = \[(.*?)^\s*\]", swift, re.S | re.M)
+    assert block, "DeviceNaming.titles not found; the pattern above moved"
+    apple = dict(re.findall(r'^\s*"(canary-[a-z0-9-]+)":\s*"([^"]+)",', block.group(1), re.M))
+    assert apple, "no Canary type in DeviceNaming.titles; the pattern above moved"
+    assert CANARY_PRODUCT_NAMES == apple

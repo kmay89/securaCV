@@ -9,9 +9,12 @@
   on `status`, and the integration read the version from `status` only, so
   no Canary's device page showed one. The health subscription now runs the
   trust-on-first-use pin first, unchanged, then records the version and
-  writes it as the device's software version. A status version is used
-  only until a health has reported one, a new version after an update is
-  written again, and a heartbeat that changes nothing writes nothing.
+  writes it as the device's software version. The `firmware/canary`
+  build's status carries its version too, under `firmware`, a key the
+  integration did not read; it is read now, so that build's page shows a
+  version from its first status. A status version is used only until a
+  health has reported one, a new version after an update is written again,
+  and a heartbeat that changes nothing writes nothing.
 - **The model is the product.** A Canary's model was the constant "SecuraCV
   Canary". It is now the product name for the `device_type` its status
   names, from a table (`CANARY_PRODUCT_NAMES` in `const.py`, the names the
@@ -21,9 +24,10 @@
   images older than the flavors' own types. A status that names no type (the
   `firmware/canary` build's names none) or a type this release does not know
   keeps "SecuraCV Canary"; the wire string is never shown. The type is
-  remembered, so the last will (`{"online": false}`, no `device_type`) keeps
-  the model, and every entity's device info applies the same rule, so an
-  entity no longer writes "SecuraCV Canary" back over it.
+  remembered, so the canary-wap's last will (`{"online": false}`, no
+  `device_type`) keeps the model, and every entity's device info applies
+  the same rule, so an entity no longer writes "SecuraCV Canary" back over
+  it.
 - **Every value is bounded text from the broker.** Version, board and name
   are cut to 64 printable characters, control characters dropped
   (`mqtt_payload.broker_text`); a version that is not a string (a number, an
@@ -47,21 +51,46 @@
   salt drawn for that one dump and never written, spelled in letters that
   are not hex digits. Two Canaries pinned to one key share an id within a
   dump; nothing links an id to a key or one dump to another. The kernel
-  key's own eight-character fingerprint is unchanged, and the dump's
-  per-Canary `firmware` is the version the device page shows.
+  key's own eight-character fingerprint is unchanged.
+- **Every Canary keeps its own row in the dump, and it says what the
+  device page says.** The dump keyed each Canary's rows by the first eight
+  characters of its id, and many ids share them: every canary-wap unit is
+  `canary-s3-…` or `canary-c3-…`, and a Sense (`canary_sense_001`) and a
+  Sentinel start alike, so one Canary's rows replaced another's and two
+  units pinned to one key could not be seen to share a correlation id. Ids
+  that share their eight characters now each get a per-dump ordinal
+  (`canary-s… #1`, `canary-s… #2`), numbered in the order the integration
+  recorded them; no ninth character is shown. The per-Canary `firmware` and
+  `hardware` are the device page's own (the version health reported, else
+  the status's, and the board the status last named), so they no longer
+  disagree with the page once a later status leaves a fact out.
 - **Tests.** `test_device_registry_versions.py` (new) drives the
   integration's own subscriptions with each family's status and health
   shape from `tests/fixtures/canary_mqtt_payloads.json`; in the monorepo it
-  also holds every fixture key to the producer named beside it and the
-  product table to the device types `firmware/configs/*/*/config.h` and the
-  canary-wap publish, and those checks skip in the HACS mirror, which
-  carries no firmware (`python.yml` watches the files they read).
-  `test_diagnostics.py` and the real-core lane (`tests/ha`) assert no run of
-  four fingerprint characters anywhere in the dump; the real-core lane also
-  checks the firmware and model on a device page. The stub suite passes on
-  Python 3.11 and 3.13 (927 tests) and the real-core lane on Home Assistant
-  2026.5.0 and 2026.10.1 (107 each). Host-tested; not run against a device
-  or a live broker.
+  also holds every fixture key to the producer named beside it, the
+  product table's keys to the device types `firmware/configs/*/*/config.h`
+  and the canary-wap publish, and its names to the Apple apps' table
+  (`ios/Shared/DeviceNaming.swift`), and those checks skip in the HACS
+  mirror, which carries neither (`python.yml` watches the files they
+  read). The stub suite's device registry now clears a field passed as
+  None, as the core's does, so a writer that sends None for a fact it lacks
+  fails there too. `test_diagnostics.py` and the real-core lane
+  (`tests/ha`) assert no run of four fingerprint characters anywhere in the
+  dump, that the dump's firmware is the device page's (health's over the
+  status's) and the board bounded, and that a value under each of the eight
+  new identifier keys is replaced at any depth by `async_redact_data` (the
+  core's own, in the real-core lane); the real-core lane also checks the
+  firmware and model on a device page, the flagship's status version, a
+  health-first Canary taking its status's name, and an update keeping the
+  board and the address. `test_diagnostics.py` also keeps two canary-wap
+  units and a Sense in rows of their own, the two units' correlation ids
+  equal. `python.yml` now also watches the eleven files outside its trees
+  that the stub suite already read (the dictionary, the voice sentences,
+  the seven contract vectors, and the viewer's verify and zip cores), found
+  by `scripts/check_path_filter_reads.py`. The stub suite
+  passes on Python 3.11 and 3.13 (932 tests) and the real-core lane on
+  Home Assistant 2026.5.0 and 2026.10.1 (112 each). Host-tested; not run
+  against a device or a live broker.
 ### Dependency advisories of 2026-10-19 to -23: the TLS roots and verifier, two constant-time crates, and body-parser (Dependency Audit #330)
 
 - **Five advisories, every one with a reachable fix, so none is ignored.**

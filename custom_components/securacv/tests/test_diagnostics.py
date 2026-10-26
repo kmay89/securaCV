@@ -14,11 +14,12 @@ correlation id stands in for it. The old regression (a fingerprint
 
 from __future__ import annotations
 
+import json
 import re
 import types
 
 from . import conftest  # noqa: F401  (installs ha stubs at import time)
-from .conftest import make_entry, make_runtime, run
+from .conftest import device_registry, make_entry, make_runtime, run
 
 from homeassistant.core import HomeAssistant  # noqa: E402  (the stub)
 
@@ -36,6 +37,7 @@ from ..const import (  # noqa: E402
     DOMAIN,
     SETUP_MODE_BOTH,
 )
+from .. import _async_device_status_received, _async_record_health_firmware  # noqa: E402
 from ..diagnostics import TO_REDACT, async_get_config_entry_diagnostics  # noqa: E402
 from ..kernel_trust import kernel_key_fingerprint  # noqa: E402
 
@@ -77,12 +79,28 @@ IDENTITY = {
 }
 
 
+def _publish(hass: HomeAssistant, entry, device_id: str, topic: str, body) -> None:
+    """A Canary's publish through the integration's own handler: the status
+    handler for status, the firmware half of the health subscription for
+    health (the trust store here is a stand-in, so the pin is not driven)."""
+    message = types.SimpleNamespace(
+        topic=f"securacv/{device_id}/{topic}",
+        payload=body if isinstance(body, str) else json.dumps(body),
+    )
+    if topic == "status":
+        _async_device_status_received(hass, entry)(message)
+    else:
+        _async_record_health_firmware(hass, entry, message)
+
+
 def _entry_with_kernel(
     hass: HomeAssistant,
     fp: str | None = FULL_FP,
     devices: dict | None = None,
     fingerprints: dict[str, str] | None = None,
 ):
+    """An entry with a kernel and, unless `devices` says otherwise, one
+    Canary ("canary01") whose record its STATUS publish wrote."""
     def _trust(device_id: str):
         value = (fingerprints or {}).get(device_id, fp)
         return types.SimpleNamespace(fingerprint_hex=value, pin_source="tofu")
@@ -124,12 +142,12 @@ def _entry_with_kernel(
         hass,
         trust_store=trust_store,
         coordinator=coordinator,
-        devices=devices if devices is not None else {"canary01": {"status": STATUS, "online": True}},
+        devices=devices if devices is not None else {},
         mqtt_prefix="securacv",
         unsub_mqtt=[lambda: None, lambda: None],
     )
     runtime.claim_published = True
-    return make_entry(
+    entry = make_entry(
         hass,
         runtime=runtime,
         data={
@@ -146,6 +164,9 @@ def _entry_with_kernel(
             CONF_SETUP_MODE: SETUP_MODE_BOTH,
         },
     )
+    if devices is None:
+        _publish(hass, entry, "canary01", "status", STATUS)
+    return entry
 
 
 def _diag(hass, entry):
@@ -206,6 +227,59 @@ def test_the_correlation_id_correlates_within_one_dump_only() -> None:
     for fingerprint in (shared, other):
         for window in _windows(fingerprint):
             assert window not in text, window
+
+
+def test_every_canary_keeps_its_own_row() -> None:
+    """Rows are keyed by eight characters of the Canary id, and many ids share
+    them: every canary-wap unit is `canary-s3-…`, and a Sense
+    (`canary-sense-…`) starts the same way. Each Canary keeps its own row in
+    every section, with a per-dump ordinal and no ninth character of its id,
+    so two units pinned to one key are seen to share a correlation id."""
+    hass = HomeAssistant()
+    shared, other = "aabbccdd11223344", "99887766deadbeef"
+    fingerprints = {"canary-s3-5e6f": shared, "canary-s3-7a8b": shared, "canary-sense-9c0d": other}
+    entry = _entry_with_kernel(hass, devices={}, fingerprints=fingerprints)
+    for device_id in ("canary-s3-5e6f", "canary-s3-7a8b", "canary-sense-9c0d", "canary01"):
+        _publish(hass, entry, device_id, "status", STATUS)
+    entry.runtime_data.verify["canary-s3-7a8b"] = {"trusted": True, "reason": "ok"}
+
+    diag = _diag(hass, entry)
+    assert diag["canary_device_count"] == 4
+    assert set(diag["canary_devices"]) == {"canary-s… #1", "canary-s… #2", "canary-s… #3", "canary01"}
+    assert set(diag["trust"]) == set(diag["canary_devices"])
+    assert diag["verification"] == {"canary-s… #2": {"trusted": True, "reason": "ok"}}
+    first, second, sense = (diag["trust"][f"canary-s… #{n}"]["key_correlation_id"] for n in (1, 2, 3))
+    assert first == second != sense
+    text = repr(diag)
+    for leaked in ("canary-s3", "canary-se", "5e6f", "7a8b", "9c0d"):
+        assert leaked not in text, leaked
+
+
+def test_the_dump_shows_what_the_device_page_shows() -> None:
+    """The per-Canary firmware is the device page's: the health topic's
+    version over the status's, kept through a last will that carries none.
+    Board and type are bounded broker text, and a non-string is no value."""
+    hass = HomeAssistant()
+    entry = _entry_with_kernel(hass, devices={})
+    status = {"online": True, "firmware_version": "2.4.15", "hardware": "h" * 300,
+              "device_type": "Canary_Sense" + "x" * 300}
+    _publish(hass, entry, "sense01", "status", status)
+    _publish(hass, entry, "sense01", "health", {"firmware_version": "2.4.16"})
+    _publish(hass, entry, "wap01", "status", {"online": True, "fw_version": "2.4.15", "device_type": "canary-wap"})
+    _publish(hass, entry, "wap01", "status", {"online": False})
+    _publish(hass, entry, "odd01", "status", {"online": True, "hardware": {"board": "x"}, "device_type": 7})
+
+    rows = _diag(hass, entry)["canary_devices"]
+    page = {d: device_registry(hass).async_get_device(identifiers={(DOMAIN, f"canary_{d}")})
+            for d in ("sense01", "wap01", "odd01")}
+    assert rows["sense01"]["firmware"] == page["sense01"].sw_version == "2.4.16"
+    assert rows["sense01"]["hardware"] == page["sense01"].hw_version == "h" * 64
+    assert rows["sense01"]["device_type"] == "canary-sense" + "x" * 52
+    assert rows["wap01"]["firmware"] == page["wap01"].sw_version == "2.4.15"
+    assert rows["wap01"]["online"] is False
+    assert rows["wap01"]["device_type"] == "canary-wap"
+    assert rows["odd01"]["firmware"] is None and rows["odd01"]["hardware"] is None
+    assert rows["odd01"]["device_type"] is None
 
 
 def test_diagnostics_survive_an_unpinned_device() -> None:

@@ -360,10 +360,12 @@ MODEL_CANARY = "SecuraCV Canary"
 # canary-wap's literal in csi_mqtt.cpp, plus "canary-display", which display
 # images published before the flavors had their own types (the displays'
 # own fleet_model.h still reads it). That one names the line, not a product,
-# so it reads "Canary display", as on the Apple apps. The Dash 7 publishes
-# "canary-dash" and the Nightstand Touch "canary-nightstand", so neither has
-# a key of its own. test_device_registry_versions.py holds the keys to those
-# configs.
+# so it reads "Canary display", as on the Apple apps. Three flavors publish a
+# sibling's type and so read as that sibling, here as on the Apple apps: the
+# Dash 7 publishes "canary-dash", and the Nightstand Touch (touch169) and the
+# AMOLED 2.41 (amoled241) publish "canary-nightstand". None has a key of its
+# own. test_device_registry_versions.py holds the keys to those configs and
+# the names to DeviceNaming.swift's table.
 CANARY_PRODUCT_NAMES: dict[str, str] = {
     "canary-wap": "Canary WAP",
     "canary-vision": "Canary Vision",

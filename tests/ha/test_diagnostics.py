@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 
+from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 from pytest_homeassistant_custom_component.components.diagnostics import get_diagnostics_for_config_entry
@@ -18,8 +19,10 @@ from conftest import (
     PAIRED_TOKEN_ID,
     KernelMock,
     bridge_event,
+    canary_device,
 )
 from custom_components.securacv.const import CONF_TOKEN_FILE
+from custom_components.securacv.diagnostics import TO_REDACT
 
 CANARY = "canary-kitchen-01"
 CANARY_KEY = "11" * 32
@@ -114,3 +117,64 @@ async def test_no_seeded_secret_survives_the_dump(
     assert diagnostics["chain_verification"]["ok"] is True
     assert "head_hash" not in diagnostics["chain_verification"]
     assert diagnostics["evidence_exports"] == {"count": 0}
+
+
+async def test_the_dump_shows_the_firmware_the_device_page_shows(
+    hass: HomeAssistant,
+    kernel: KernelMock,
+    mqtt_mock: MqttMockHAClient,
+    setup_kernel_entry,
+    hass_client: ClientSessionGenerator,
+) -> None:
+    """The per-Canary firmware is the device page's, health's over the
+    status's, and the board is bounded broker text, as on that page."""
+    entry = await setup_kernel_entry(enable_mqtt=True)
+    async_fire_mqtt_message(
+        hass,
+        f"securacv/{CANARY}/status",
+        json.dumps({"online": True, "firmware_version": "2.4.15", "hardware": "h" * 300, "device_type": "canary-sense"}),
+        qos=1,
+        retain=True,
+    )
+    async_fire_mqtt_message(
+        hass, f"securacv/{CANARY}/health", json.dumps({"public_key": CANARY_KEY, "firmware_version": "2.4.16"}), qos=1, retain=True
+    )
+    await hass.async_block_till_done()
+
+    diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+    (row,) = diagnostics["canary_devices"].values()
+    page = canary_device(hass, entry, CANARY)
+    assert page is not None
+    assert row["firmware"] == page.sw_version == "2.4.16"
+    assert row["hardware"] == page.hw_version == "h" * 64
+    assert row["device_type"] == "canary-sense"
+
+
+def test_an_identifier_key_is_replaced_wherever_it_lands() -> None:
+    """The second net on the core's own async_redact_data: a value under any
+    of the identifier keys a Canary's answers use, at any depth, comes out
+    redacted (device-details P18, ledger F391)."""
+    seeded = {
+        "hw_token": "b7a1c2d3e4f5a6b7",
+        "mdns_host": "canary-kitchen.local",
+        "serial_number": "7FA319C0AABBCCDD",
+        "chip_id": "0x00a1b2c3d4e5",
+        "module_id": "1073741824",
+        "bluetooth": {
+            "local_address": "34:85:18:aa:bb:cd",
+            "connection": {"address": "5c:aa:bb:cc:dd:ee"},
+            "paired": [{"peer_address": "7e:11:22:33:44:55"}],
+        },
+    }
+    text = json.dumps(async_redact_data(seeded, TO_REDACT))
+    for value in (
+        "b7a1c2d3e4f5a6b7",
+        "canary-kitchen.local",
+        "7FA319C0AABBCCDD",
+        "0x00a1b2c3d4e5",
+        "1073741824",
+        "34:85:18:aa:bb:cd",
+        "5c:aa:bb:cc:dd:ee",
+        "7e:11:22:33:44:55",
+    ):
+        assert value not in text, value

@@ -32,7 +32,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
-from collections.abc import Callable
+from collections import Counter
+from collections.abc import Callable, Iterable
 from dataclasses import asdict
 from typing import Any
 from urllib.parse import urlsplit
@@ -53,8 +54,8 @@ from .const import (
 )
 from . import PLATFORMS
 from .data import SecuraCVConfigEntry, runtime_for
+from .entity import canary_registry_facts
 from .kernel_trust import kernel_key_fingerprint, normalize_kernel_key
-from .mqtt_payload import broker_text, parse_mqtt_json
 
 # Every key whose value is a secret, a credential, a stable identifier, a
 # network address or a location. Applied recursively by async_redact_data.
@@ -123,6 +124,29 @@ def _truncated(value: Any, keep: int = SHOWN_ID_CHARS) -> str | None:
     if not isinstance(value, str) or not value:
         return None
     return value[:keep] + "…" if len(value) > keep else value
+
+
+def _shown_ids(device_ids: Iterable[str]) -> dict[str, str]:
+    """Each Canary id as the dump's row key: its first SHOWN_ID_CHARS characters.
+
+    Ids that share those characters (two canary-wap units, `canary-s3-…`;
+    a Sense and a Sentinel, `canary_s…`) each get a per-dump ordinal after
+    them, numbered in the order the runtime recorded them (the Canary
+    records, then any id only verification has seen), so no row replaces
+    another and no further character of an id is shown.
+    """
+    ids = list(dict.fromkeys(device_ids))
+    prefix = {device_id: _truncated(device_id) or device_id for device_id in ids}
+    shared = Counter(prefix.values())
+    seen: Counter[str] = Counter()
+    shown: dict[str, str] = {}
+    for device_id in ids:
+        key = prefix[device_id]
+        if shared[key] > 1:
+            seen[key] += 1
+            key = f"{key} #{seen[key]}"
+        shown[device_id] = key
+    return shown
 
 
 def _correlation_ids() -> Callable[[Any], str | None]:
@@ -246,21 +270,22 @@ def _storage_shape(status: Any) -> dict[str, Any] | None:
     }
 
 
-def _canary_shape(device: dict[str, Any], health_firmware: str | None = None) -> dict[str, Any]:
+def _canary_shape(device: dict[str, Any], page: dict[str, str]) -> dict[str, Any]:
     """Firmware, hardware and liveness — never the raw status payload.
 
-    The firmware is what the device page shows: the health topic's version,
-    else the status's. Each value is bounded broker text, as on that page.
+    The firmware and the board are the device page's own
+    (``entity.canary_registry_facts``: the health topic's version, else the
+    one the status last carried, and the board the status last named), and
+    the type is the canonical one the status last named. The status and
+    health handlers recorded each as bounded broker text; nothing here
+    re-reads a payload.
     """
-    status = device.get("status")
-    data = status if isinstance(status, dict) else (parse_mqtt_json(status) or {})
+    device_type = device.get("device_type")
     return {
         "online": device.get("online"),
-        "firmware": health_firmware
-        or broker_text(data.get("firmware_version"))
-        or broker_text(data.get("fw_version")),
-        "hardware": broker_text(data.get("hardware")) or broker_text(data.get("board")),
-        "device_type": broker_text(data.get("device_type")),
+        "firmware": page.get("sw_version"),
+        "hardware": page.get("hw_version"),
+        "device_type": device_type if isinstance(device_type, str) else None,
         "last_event_type": (device.get("last_event") or {}).get("event_type")
         if isinstance(device.get("last_event"), dict)
         else None,
@@ -304,17 +329,19 @@ async def async_get_config_entry_diagnostics(
     }
 
     # Canary ids are the owner's local pseudonyms; the dump keeps eight
-    # characters of each. A Canary's key fingerprint keeps none of its
-    # digits: the module docstring says why, and what stands in for it.
+    # characters of each (and an ordinal where two share them). A Canary's
+    # key fingerprint keeps none of its digits: the module docstring says
+    # why, and what stands in for it.
     devices_info: dict[str, Any] = {}
     trust_info: dict[str, Any] = {}
     correlation_id = _correlation_ids()
+    shown_ids = _shown_ids([*runtime.devices, *runtime.verify]) if runtime is not None else {}
     if runtime is not None:
         for device_id, device in runtime.devices.items():
-            shown = _truncated(device_id) or device_id
+            shown = shown_ids[device_id]
             devices_info[shown] = _canary_shape(
                 device if isinstance(device, dict) else {},
-                runtime.canary_firmware.get(device_id),
+                canary_registry_facts(entry, device_id),
             )
             entry_trust = runtime.trust_store.get(device_id)
             if entry_trust:
@@ -327,7 +354,7 @@ async def async_get_config_entry_diagnostics(
     verify_info: dict[str, Any] = {}
     if runtime is not None:
         for device_id, verdict in runtime.verify.items():
-            verify_info[_truncated(device_id) or device_id] = {
+            verify_info[shown_ids[device_id]] = {
                 "trusted": verdict.get("trusted", False),
                 "reason": verdict.get("reason", "unknown"),
             }
