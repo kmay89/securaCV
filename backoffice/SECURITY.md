@@ -232,9 +232,16 @@ Two more that shorten the day it goes wrong:
   — from a tripwire or from sixty misses — are written to `guard_blocks` and
   read back at boot, so a restart forgets none.
 
-What this does not do: it does not stop a root on the box from doing
-anything; it makes it impossible to do it *silently*, as long as the digest
-reaches an inbox the box does not control.
+What this does and does not do, exactly: root on the box can read
+`audit.key` and re-mark rows. The anchor protects the history *through the
+last anchor you hold* — every row up to it is either what was written or
+provably not — and nothing after it: the rows since the last digest can be
+rewritten and re-marked under the key, and the next digest would publish the
+rewritten head without complaint. So the window of silent alteration is one
+day wide, ending at each digest; a stricter operator keeps the key off the
+box (`BACKOFFICE_AUDIT_KEY` from a secret store the server reads at boot and
+cannot write) or mails the digest more often. Everything older than the last
+anchor, an intruder cannot touch without the anchor saying so.
 
 ## The data
 
@@ -270,9 +277,12 @@ reaches an inbox the box does not control.
 - **A compromised host.** Root on the box reads everything; the database is
   not encrypted at rest beyond file permissions. Full-disk encryption is the
   host's job (Fly volumes and most VPS images do it). What root cannot do is
-  alter the record quietly: the audit chain and the anchor in your inbox
-  (above) show the edit, and the self-check at boot names a data directory
-  or key readable by other accounts on the box.
+  alter the record *before the last anchor you hold* quietly: the chain and
+  the anchor in your inbox (above) show that edit. Rows written since the
+  last digest are not yet anchored and a root who reads `audit.key` can
+  rewrite them; see "Knowing it has not been breached" for the exact
+  boundary. The self-check at boot names a data directory or key readable by
+  other accounts on the box.
 - **A compromised operator device.** A session cookie stolen from a logged-in
   browser is a session until it expires or you log out. Keep the session
   short (`SESSION_HOURS`) and log out on shared machines.

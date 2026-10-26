@@ -78,6 +78,10 @@ In this order, and nothing in parallel:
      included. Treat the box as the intruder's; restore from a backup whose
      chain the same command verifies, on a fresh host, with a fresh
      `audit.key`.
+   - Chain OK, anchor on it: everything up to that anchor is what happened.
+     The rows since the last digest are not yet anchored; read them as
+     claims, not proof, and compare them with what the intruder would have
+     wanted hidden (a sign-in, a token, a change to a person).
    - Chain broken at a row: everything before it is trustworthy, the row and
      after are not. Same answer.
 5. **Narrow the door.** Set `ADMIN_ALLOW_CIDRS` to your networks and

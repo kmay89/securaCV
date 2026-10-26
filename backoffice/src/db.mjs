@@ -123,14 +123,16 @@ function wrap(db, { auditKey = { key: randomBytes(32), source: 'memory' } } = {}
       return year ? `${prefix}-${new Date().getUTCFullYear()}-${String(n).padStart(4, '0')}` : `${prefix}-${String(n).padStart(width, '0')}`;
     },
     // Every row is chained to the one before it (prev = the last row's mark, or 'genesis'); the mark is an HMAC
-    // under the key outside the database. The last row is read fresh each time: the CLI writes beside serve.
-    audit: (actor, action, entity = null, entityId = null, detail = null) => {
+    // under the key outside the database. The head is read and the row written inside one immediate transaction
+    // (a savepoint when a caller's transaction already holds the lock), so the CLI writing beside serve cannot
+    // read the same head and fork the chain; SQLite serializes the two writers, and the second reads the first's row.
+    audit: (actor, action, entity = null, entityId = null, detail = null) => api.tx(() => {
       const row = { at: nowIso(), actor: actor === 'web' ? currentActor('web') : actor, action, entity, entity_id: entityId == null ? null : String(entityId), detail: detail == null ? null : (typeof detail === 'string' ? detail : JSON.stringify(detail)) };
       const last = api.get('SELECT mac FROM audit_log ORDER BY id DESC LIMIT 1');
       const prev = last ? (last.mac || CHAIN_GENESIS) : CHAIN_GENESIS;   // rows from before the chain began end at 'genesis' too
       return api.run('INSERT INTO audit_log (at, actor, action, entity, entity_id, detail, prev, mac) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         row.at, row.actor, row.action, row.entity, row.entity_id, row.detail, prev, auditMac(auditKey.key, row, prev));
-    },
+    }),
     auditKey,
     close: () => db.close(),
   };

@@ -18,9 +18,10 @@ the package version, so neither moves without the other.
   before the chain". Migration 015, `src/integrity.mjs`.
 - **The anchor leaves the box.** The morning digest ends with the chain's
   head (`id:mac`). `backoffice verify --anchor <that line>` proves the record
-  still passes through it — so even a rewrite of the whole file and the key
-  beside it is caught by the one copy the attacker could not reach: your
-  inbox.
+  still passes through it — so a rewrite of the whole file and the key
+  beside it is caught, for every row up to that anchor, by the one copy the
+  attacker could not reach: your inbox. Rows written since the last digest
+  are not yet anchored; `SECURITY.md` states that boundary exactly.
 - **The last 24 hours, as questions.** A SECURITY block in the digest and
   on the Health page: who signed in from where (and by link), what failed and
   from which addresses, who was blocked and why, sign-ins from new networks,

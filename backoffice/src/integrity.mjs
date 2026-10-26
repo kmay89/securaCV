@@ -15,11 +15,13 @@ import { auditMac, CHAIN_GENESIS } from './db.mjs';
 
 // ---- the chain ----
 // Walks every row by id. Rows from before the chain began (no mark) are counted and skipped; the first marked
-// row must chain from 'genesis'. Stops at the first break and names the row.
+// row must chain from 'genesis'. Stops at the first break and names the row. A walk that starts later (`from`,
+// the boot self-check's tail) begins from the mark of the last marked row before it, so it judges the same chain.
 export function verifyChain(db, { anchor = null, key = db.auditKey?.key, from = 1 } = {}) {
-  const out = { ok: true, rows: 0, chained: 0, unchained: 0, first_id: null, head: null, broken_at: null, reason: null, anchor: null };
+  const out = { ok: true, rows: 0, chained: 0, unchained: 0, first_id: null, head: null, broken_at: null, reason: null, anchor: null, from };
   if (!key) return { ...out, ok: false, reason: 'no audit key' };
   let prev = CHAIN_GENESIS; let seenChain = false;
+  if (from > 1) { const before = db.get('SELECT mac FROM audit_log WHERE id < ? AND mac IS NOT NULL ORDER BY id DESC LIMIT 1', from); if (before) { prev = before.mac; seenChain = true; } }
   const stmt = db.raw.prepare('SELECT id, at, actor, action, entity, entity_id, detail, prev, mac FROM audit_log WHERE id >= ? ORDER BY id');
   for (const r of stmt.iterate(from)) {
     out.rows++;
@@ -32,7 +34,7 @@ export function verifyChain(db, { anchor = null, key = db.auditKey?.key, from = 
   if (out.ok && anchor) {
     // "id:mac" from a digest or a verify run: the chain must still pass through that row with that mark
     const m = /^(\d+):([A-Za-z0-9_-]+)$/.exec(String(anchor).trim());
-    if (!m) out.anchor = { ok: false, reason: 'an anchor is id:mac' };
+    if (!m) { out.anchor = { ok: false, reason: 'an anchor is id:mac' }; out.ok = false; }
     else { const row = db.get('SELECT id, mac FROM audit_log WHERE id = ?', Number(m[1])); out.anchor = { id: Number(m[1]), ok: !!row && row.mac === m[2], reason: !row ? 'no such row any more' : row.mac === m[2] ? null : 'that row carries another mark now' }; if (!out.anchor.ok) out.ok = false; }
   }
   return out;

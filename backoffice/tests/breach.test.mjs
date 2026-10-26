@@ -36,12 +36,27 @@ test('the audit chain: every row marked under the key, chained to the one before
   db.run('DELETE FROM audit_log WHERE id = 5'); assert.equal(verifyChain(db).ok, true, 'a cut tail looks clean on its own'); const a = verifyChain(db, { anchor }); assert.equal(a.ok, false); assert.equal(a.anchor.ok, false); assert.match(a.anchor.reason, /no such row/);
   // the anchor's row carrying another mark
   const a2 = verifyChain(db, { anchor: `3:${'x'.repeat(43)}` }); assert.equal(a2.anchor.ok, false); assert.match(a2.anchor.reason, /another mark/);
-  assert.equal(verifyChain(db, { anchor: 'nonsense' }).anchor.ok, false);
+  const bad = verifyChain(db, { anchor: 'nonsense' }); assert.equal(bad.anchor.ok, false); assert.equal(bad.ok, false, 'a malformed anchor fails the whole verify, so a script cannot read an unchecked anchor as success');
   // rows from before the chain began (no mark) are counted, not failed; one slipped in after it is
   const db2 = testDb(); db2.run("INSERT INTO audit_log (at, actor, action) VALUES ('2026-01-01T00:00:00.000Z', 'old', 'legacy.row')"); db2.audit('cli', 'new.row');
   const o = verifyChain(db2); assert.equal(o.ok, true); assert.equal(o.unchained, 1); assert.equal(o.chained, 1); assert.equal(o.first_id, 2);
   db2.run("INSERT INTO audit_log (at, actor, action) VALUES ('2026-01-02T00:00:00.000Z', 'x', 'slipped.in')"); const sl = verifyChain(db2); assert.equal(sl.ok, false); assert.match(sl.reason, /unmarked row after/);
   assert.equal(chainHead(db2).id, 2);
+});
+
+test('a walk that starts late judges the same chain: the tail of a long log verifies from the row before it, and two connections writing side by side never fork it', () => {
+  const db = testDb(); for (let i = 0; i < 60; i++) db.audit('cli', `t.${i}`);
+  const tail = verifyChain(db, { from: 40 }); assert.equal(tail.ok, true, tail.reason || ''); assert.equal(tail.chained, 21); assert.equal(tail.head.id, 60);
+  db.run("UPDATE audit_log SET actor = 'x' WHERE id = 45"); assert.equal(verifyChain(db, { from: 40 }).broken_at, 45); db.run("UPDATE audit_log SET actor = 'cli' WHERE id = 45");
+  db.run("UPDATE audit_log SET actor = 'x' WHERE id = 10"); assert.equal(verifyChain(db, { from: 40 }).ok, true, 'a break before the window is the full walk\'s to find'); assert.equal(verifyChain(db).broken_at, 10);
+  // legacy rows before the window: the window still starts from genesis when nothing before it is marked
+  const db2 = testDb(); db2.run("INSERT INTO audit_log (at, actor, action) VALUES ('2026-01-01T00:00:00.000Z', 'old', 'legacy.a')"); db2.run("INSERT INTO audit_log (at, actor, action) VALUES ('2026-01-01T00:00:00.000Z', 'old', 'legacy.b')"); db2.audit('cli', 'new'); assert.equal(verifyChain(db2, { from: 2 }).ok, true);
+  // two connections to one file, writing turn and turn about (the CLI beside serve)
+  const dir = mkdtempSync(join(tmpdir(), 'bo-two-')); const path = join(dir, 'b.db');
+  try { const a = openDb(path); const b = openDb(path); for (let i = 0; i < 30; i++) { a.audit('serve', `a.${i}`); b.audit('cli', `b.${i}`); } const v = verifyChain(a); assert.equal(v.ok, true, v.reason || ''); assert.equal(v.chained, 60); a.close(); b.close(); }
+  finally { rmSync(dir, { recursive: true, force: true }); }
+  // an audit inside a caller's transaction rides its lock as a savepoint, and still chains
+  const db3 = testDb(); db3.tx(() => { db3.audit('cli', 'in.tx.1'); db3.audit('cli', 'in.tx.2'); }); db3.audit('cli', 'after'); assert.equal(verifyChain(db3).chained, 3);
 });
 
 test('the key lives outside the database: made beside the file at 0600, read back on the next open, or taken from the environment', () => {
