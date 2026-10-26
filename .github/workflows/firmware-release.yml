@@ -156,6 +156,13 @@ jobs:
         # package code on the runner — the same rule ESPFLASH_VERSION applies
         # to the flash engine — so every version is exact. Bump deliberately;
         # Dependabot does not watch these lines.
+        #   platformio   — also the PlatformIO whose own reader the flagship
+        #                  route check reads platformio.ini with
+        #                  (check_route_security.py's PLATFORMIO_PIN, which
+        #                  firmware.yml's route-check job installs): bump them
+        #                  together, with flasher-release.yml's;
+        #                  scripts/tests/test_route_check_platformio_pin.py
+        #                  fails on any one moved alone
         #   cryptography — ota_release.py signing
         #   intelhex     — leftover from canary's floating espressif32 ^7.x
         #                  days (its esptool 4.11 imports it without declaring
