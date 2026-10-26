@@ -10,11 +10,22 @@
 //                  (ADMIN_ALLOW_CIDRS) hides the admin from every other network with a 404
 import { isIP } from 'node:net';
 
+// A v6 address written out: eight groups, so "2001:db8::1" and "2001:db8:0:1::1" share their /48.
+export function expand6(s) {
+  let t = String(s).toLowerCase().replace(/%.*$/, '');
+  const m = /^(.*:)(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(t);   // a v4 tail (::ffff:1.2.3.4) as two groups
+  if (m) t = `${m[1]}${((+m[2] << 8) | +m[3]).toString(16)}:${((+m[4] << 8) | +m[5]).toString(16)}`;
+  const [head, tail = null] = t.split('::');
+  const h = head ? head.split(':') : []; const l = tail != null ? (tail ? tail.split(':') : []) : [];
+  const fill = tail != null ? Array(Math.max(0, 8 - h.length - l.length)).fill('0') : [];
+  const groups = [...h, ...fill, ...l];
+  return groups.length === 8 ? groups.map(g => g.padStart(4, '0')).join(':') : null;
+}
 export function netOf(ip) {
   const s = String(ip || '').trim(); if (!s) return '-';
   const v = isIP(s);
   if (v === 4) return `${s.split('.').slice(0, 3).join('.')}.0/24`;
-  if (v === 6) { const m = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(s); if (m) return netOf(m[1]); return `${s.toLowerCase().split(':').slice(0, 3).join(':')}::/48`; }
+  if (v === 6) { const m = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(s); if (m) return netOf(m[1]); const x = expand6(s); return x ? `${x.split(':').slice(0, 3).join(':')}::/48` : '-'; }
   return '-';
 }
 

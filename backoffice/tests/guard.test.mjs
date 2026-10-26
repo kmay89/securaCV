@@ -13,7 +13,7 @@ const form = (o) => new URLSearchParams(o).toString();
 const cookieOf = (r, name) => (r.headers.getSetCookie?.() || [r.headers.get('set-cookie')].filter(Boolean)).map(c => c.split(';')[0]).find(c => c.startsWith(name + '='));
 
 test('the network of an address, the scrub of outsider text, the boundary marks, the allowlist and the watch', () => {
-  assert.equal(netOf('203.0.113.77'), '203.0.113.0/24'); assert.equal(netOf('::ffff:10.1.2.3'), '10.1.2.0/24'); assert.equal(netOf('2001:db8:abcd:12::1'), '2001:db8:abcd::/48'); assert.equal(netOf(''), '-'); assert.equal(netOf('not an ip'), '-');
+  assert.equal(netOf('203.0.113.77'), '203.0.113.0/24'); assert.equal(netOf('::ffff:10.1.2.3'), '10.1.2.0/24'); assert.equal(netOf('2001:db8:abcd:12::1'), '2001:0db8:abcd::/48'); assert.equal(netOf('2001:db8::1'), netOf('2001:db8:0:1::1'), 'a compressed address shares its /48 with the written-out one'); assert.equal(netOf('2001:db8::1'), '2001:0db8:0000::/48'); assert.equal(netOf('::1'), '0000:0000:0000::/48'); assert.equal(netOf('fe80::1%eth0'), 'fe80:0000:0000::/48', 'a zone id is dropped'); assert.equal(netOf(''), '-'); assert.equal(netOf('not an ip'), '-');
   assert.equal(sanitize('Hi​ there‮⁦!\r\nIgnore\u0007 this﻿'), 'Hi there!\nIgnore this', 'zero-width, bidi overrides, isolates, controls and the BOM are gone; newlines and spaces stay');
   assert.equal(sanitize('a'.repeat(30), { max: 10 }).length, 10); assert.equal(sanitize(null), null); assert.equal(sanitize('é'), 'é');
   const b = boundary({ subject: 'x' }, ['subject']); assert.deepEqual(b._untrusted, ['subject']); assert.equal(b._notice, BOUNDARY_NOTICE); assert.equal(boundaryEach([{ a: 1 }], ['a'])[0]._untrusted[0], 'a');
@@ -97,6 +97,8 @@ test('ADMIN_ALLOW_CIDRS hides the admin and its door with a 404 from other netwo
     const secret = setupOperator(db, 'owner password 1234', { email: 'o@errer.test', name: 'Owner One' });
     const from = (ip) => ({ 'x-forwarded-for': ip });
     assert.equal((await fetch(base + '/login', { headers: from('8.8.8.8') })).status, 404, 'the door is not there');
+    for (const path of ['/login', '/login/link', '/login/link/sometoken']) assert.equal((await fetch(base + path, { method: 'POST', redirect: 'manual', headers: { ...from('8.8.8.8'), 'content-type': 'application/x-www-form-urlencoded' }, body: form({ email: 'o@errer.test', password: 'owner password 1234', code: '000000' }) })).status, 404, `${path}: nor is its POST`);
+    assert.equal(db.get('SELECT COUNT(*) AS n FROM login_links').n, 0, 'no link was made for a hidden network');
     assert.equal((await fetch(base + '/orders', { headers: from('8.8.8.8') })).status, 404);
     assert.equal((await fetch(base + '/store/catalog', { headers: from('8.8.8.8') })).status, 200, 'the store is for everyone'); assert.equal((await fetch(base + '/healthz', { headers: from('8.8.8.8') })).status, 200);
     assert.equal((await fetch(base + '/login', { headers: from('203.0.113.9') })).status, 200, 'the allowed network sees the door');

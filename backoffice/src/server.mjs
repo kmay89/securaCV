@@ -330,7 +330,9 @@ export function createApp({ db, cfg }) {
       // SESSION_BIND_IP: a session that turns up from another network than it was opened on is over (a stolen cookie travels).
       // Judged before the allowlist, so a cookie carried off to a hidden network is ended, not merely refused.
       if (session && cfg.sessionBindIp && session.net && session.net !== netOf(ip)) { logout(db, session.id); db.audit('system', 'auth.session.moved', 'user', session.email, { from: session.net, to: netOf(ip) }); session = null; }
-      if (allow && !route.opts.public && !forCustomers && !allow(ip)) throw new HttpError(404, 'not found');
+      // The door itself (/login and its POSTs, registered public so the form needs no session) is the admin's, not a customer's.
+      const door = url.pathname === '/login' || url.pathname.startsWith('/login/');
+      if (allow && (door || (!route.opts.public && !forCustomers)) && !allow(ip)) throw new HttpError(404, 'not found');
       // A scanner (sixty misses in ten minutes) waits ten minutes; a person with a session, and the public endpoints, never do.
       if (!session && !route.opts.public && !forCustomers && watch.blocked(ip)) throw new HttpError(429, 'too many requests from this address — try again in ten minutes');
       const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
