@@ -7,14 +7,19 @@ const e = escapeHtml;
 import { layout, setTimezone, setEnvironment, dt as fmtDt, day as fmtDay , setAttention } from './render.mjs';
 import { applyEnv, ENV_TEXT } from './env.mjs';
 import { attention } from './attention.mjs';
+import { createHash } from 'node:crypto';
+import { enqueue } from './modules/mail.mjs';
 import { customerLine, orderPromise } from './modules/promise.mjs';
 import { markSessionPaid, markSessionExpired } from './modules/recovery.mjs';
 import { newOrderNudge } from './modules/notify.mjs';
+import { applyOverrides } from './modules/listing.mjs';
+import { Watch, cidrMatcher, netOf, knownNetwork, sanitizeFields, boundary, boundaryEach, BOUNDARY_HEADERS } from './guard.mjs';
+import { securityPush } from './modules/notify.mjs';
 import { build, recordBoot } from './version.mjs';
 import { listFlags, setFlag, clearFlag } from './flags.mjs';
 import { orderToken, deliveryLine, trackingUrl } from './modules/delivery.mjs';
 import { editItems } from './modules/orders.mjs';
-import { sessionFor, login, logout, apiTokenFor, hasOperator, carryLegacyOperator, can } from './auth.mjs';
+import { sessionFor, login, logout, apiTokenFor, hasOperator, carryLegacyOperator, can , requestSignInLink, signInLink, loginWithLink } from './auth.mjs';
 import { actorStore, nowIso } from './db.mjs';
 import { registerUsers } from './admin_users.mjs';
 import { loadCatalog, loadShipping } from './modules/catalog.mjs';
@@ -64,7 +69,10 @@ export function createApp({ db, cfg }) {
   recordBoot(db, cfg);
   // In demo mode the catalog is the demo's own, never fetched from the live site.
   setTrustedProxies(cfg.trustedProxies);
-  const app = { db, cfg, json, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), formLimiter: new RateLimiter({ limit: 5, windowMs: 10 * 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), once: new Map(), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o), shipping: cfg.demo ? async () => DEMO_SHIPPING : (o) => loadShipping(cfg, o) };
+  // The watch (guard.mjs): a scanner is blocked for ten minutes; ADMIN_ALLOW_CIDRS hides the admin from every other network.
+  const watch = new Watch(); const allow = cidrMatcher(cfg.adminAllowCidrs); const pushedLock = new Map();
+  // app.catalog is the file (store.json, or the demo's) with the listing edited in the admin laid over it (listing.mjs).
+  const app = { db, cfg, json, watch, allow, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), formLimiter: new RateLimiter({ limit: 5, windowMs: 10 * 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), once: new Map(), catalog: cfg.demo ? async () => applyOverrides(db, DEMO_CATALOG) : async (o) => applyOverrides(db, await loadCatalog(cfg, o)), shipping: cfg.demo ? async () => DEMO_SHIPPING : (o) => loadShipping(cfg, o) };
   // What wants the admin, memoized for a few seconds: the sidebar badges on every page read it, and
   // it runs the doctor (an integrity check among other things), which is not a per-page cost.
   let attMemo = { at: 0, value: null };
@@ -150,6 +158,7 @@ export function createApp({ db, cfg }) {
     const b = c.body || {};
     if (b.website || b._hp) return json(c.res, { ok: true }); // honeypot filled → pretend success, store nothing
     if (!app.limiter.allow(`forms:${clientIp(c.req)}`)) throw new HttpError(429, 'slow down');
+    sanitizeFields(b, ['name', 'subject', 'message', 'body', 'org', 'text', 'extra'], { max: 20000 });
     const email = String(b.email || '').trim();
     if (!validEmail(email)) throw new HttpError(400, 'a valid email is required');
     if (!app.formLimiter.allow(`forms:${email.toLowerCase()}`)) throw new HttpError(429, 'that address has sent enough forms for now — try again in ten minutes');
@@ -195,19 +204,61 @@ export function createApp({ db, cfg }) {
 
   // ---------- auth
   router.get('/login', (c) => html(c.res, loginPage(cfg, c.query.get('err'), hasOperator(db), c.query.get('ok'), cfg.demo ? { password: DEMO_PASSWORD, code: totp(DEMO_TOTP_SECRET), email: c.query.get('as') || DEMO_USERS[0].email, users: DEMO_USERS } : null)));
-  router.post('/login', (c) => {
+  router.post('/login', async (c) => {
     const ip = clientIp(c.req);
     if (!app.limiter.allow(`login:${ip}`)) throw new HttpError(429, 'slow down');
     // Eight wrong attempts in fifteen minutes and this address waits the window out; the audit log keeps every attempt.
     if (app.lockout.locked(ip)) { db.audit('web', 'auth.login.locked', 'session', null, { ip }); throw new HttpError(429, 'too many failed logins from this address — try again in fifteen minutes'); }
     const s = login(db, { email: c.body.email, password: c.body.password, code: c.body.code }, { sessionHours: cfg.sessionHours, ip });
-    if (!s) { app.lockout.fail(ip); return redirect(c.res, '/login?err=1'); }
-    app.lockout.clear(ip);
+    if (!s) { app.lockout.fail(ip); if (app.lockout.locked(ip)) await lockedOut(ip); return redirect(c.res, '/login?err=1'); }
+    app.lockout.clear(ip); await signedIn(s, ip);
     redirect(c.res, '/', { 'Set-Cookie': cookie('bo_session', s.id, { maxAge: cfg.sessionHours * 3600, secure: cfg.secure }) });
+  }, { public: true, csrf: false });
+  // The alerts the door raises: an address locked out (the phone, once an hour per address), and a sign-in from a
+  // network this person has not used in a month (the person by mail, the phone, the audit log).
+  const lockedOut = async (ip) => { const k = `lock:${ip}`; if (pushedLock.get(k) && Date.now() - pushedLock.get(k) < 3600_000) return; pushedLock.set(k, Date.now()); db.audit('system', 'guard.lockout', 'ip', ip, {}); await securityPush(db, cfg, k, { title: 'Backoffice: an address is locked out', body: `${ip} failed to sign in ${app.lockout.limit} times in fifteen minutes.` }, { fetchImpl: app.fetchImpl }); };
+  const signedIn = async (s, ip) => {
+    const k = knownNetwork(db, s.email, ip, { skipLatest: true });
+    if (k.known) return;
+    db.audit('system', 'auth.login.new_network', 'user', s.email, { ip, net: k.net, via: s.via });
+    enqueue(db, { to: s.email, subject: `${cfg.company || 'Errer Labs'} backoffice: a sign-in from a new network`, kind: 'transactional', ref: `security:new-network:${s.email}:${k.net}`, text: `Hi ${s.name.split(' ')[0]},\n\nYour backoffice account was just signed into from ${ip} (${k.net}), a network it has not used in the last 30 days.\n\nIf that was you, there is nothing to do. If it was not: open Your account, press "Log out everywhere else", change your password, and tell an owner.\n\n— ${cfg.company || 'Errer Labs'}\n` });
+    await securityPush(db, cfg, `net:${s.email}:${k.net}`, { title: 'Backoffice: sign-in from a new network', body: `${s.email} signed in from ${ip} (${k.net}).` }, { fetchImpl: app.fetchImpl });
+  };
+  // ---------- the sign-in link: stands in for the password, never for the authenticator (auth.mjs)
+  const linksOn = () => !!(cfg.smtpUrl || cfg.demo);
+  router.get('/login/link', (c) => html(c.res, linkRequestPage(cfg, { on: linksOn(), demo: cfg.demo })));
+  router.post('/login/link', async (c) => {
+    const ip = clientIp(c.req);
+    if (!app.limiter.allow(`link:${ip}`)) throw new HttpError(429, 'slow down');
+    const email = String(c.body.email || '').trim().toLowerCase();
+    if (!app.formLimiter.allow(`link:${email}`)) throw new HttpError(429, 'that address has asked for enough links for now — try again in ten minutes');
+    const r = requestSignInLink(db, email, { ip, minutes: cfg.signInLinkMinutes });
+    const nonceCookie = cookie('bo_link', r.nonce, { maxAge: cfg.signInLinkMinutes * 60, secure: cfg.secure });
+    if (r.token && linksOn()) {
+      const url = `${cfg.baseUrl}/login/link/${r.token}`;
+      enqueue(db, { to: r.user.email, subject: `Your ${cfg.company || 'Errer Labs'} backoffice sign-in link`, kind: 'transactional', ref: `signin:${r.user.email}:${Date.now()}`, text: `Hi ${r.user.name.split(' ')[0]},\n\nHere is your sign-in link, good for ${r.minutes} minutes and once: ${url}\n\nIt opens only in the browser you asked from, and your authenticator code is still needed. If you did not ask for it, ignore this mail; nobody can use it without your authenticator.\n\n— ${cfg.company || 'Errer Labs'}\n` });
+      if (cfg.demo) return redirect(c.res, `/login/link/${r.token}`, { 'Set-Cookie': nonceCookie });   // the demo has no mailbox to open: straight to the code step
+    }
+    redirect(c.res, `/login?ok=${encodeURIComponent(`If that address is a person here, a sign-in link is on its way — open it in this browser within ${cfg.signInLinkMinutes} minutes.`)}`, { 'Set-Cookie': nonceCookie });
+  }, { public: true, csrf: false });
+  router.get('/login/link/:token', (c) => {
+    const row = signInLink(db, c.params.token); const nonce = parseCookies(c.req).bo_link || '';
+    const ok = !!row && !!nonce && safeEqual(createHash('sha256').update(nonce).digest('base64url'), row.nonce_hash);
+    html(c.res, linkCodePage(cfg, { token: c.params.token, ok, err: c.query.get('err'), demo: cfg.demo ? { code: totp(DEMO_TOTP_SECRET) } : null }), ok ? 200 : 404);
+  });
+  router.post('/login/link/:token', async (c) => {
+    const ip = clientIp(c.req);
+    if (!app.limiter.allow(`login:${ip}`)) throw new HttpError(429, 'slow down');
+    if (app.lockout.locked(ip)) { db.audit('web', 'auth.login.locked', 'session', null, { ip }); throw new HttpError(429, 'too many failed logins from this address — try again in fifteen minutes'); }
+    const s = loginWithLink(db, { token: c.params.token, code: c.body.code, nonce: parseCookies(c.req).bo_link || '' }, { sessionHours: cfg.sessionHours, ip });
+    if (!s) { app.lockout.fail(ip); if (app.lockout.locked(ip)) await lockedOut(ip); return redirect(c.res, `/login/link/${encodeURIComponent(c.params.token)}?err=1`); }
+    app.lockout.clear(ip); await signedIn(s, ip);
+    redirect(c.res, '/', { 'Set-Cookie': [cookie('bo_session', s.id, { maxAge: cfg.sessionHours * 3600, secure: cfg.secure }), cookie('bo_link', '', { maxAge: -1, secure: cfg.secure })] });
   }, { public: true, csrf: false });
   router.post('/logout', (c) => { if (c.session) logout(db, c.session.id); redirect(c.res, '/login', { 'Set-Cookie': [cookie('bo_session', '', { maxAge: -1, secure: cfg.secure }), cookie('bo_bench', '', { maxAge: -1, secure: cfg.secure })] }); });
 
   // ---------- JSON API (bearer token or a logged-in session)
+  router.get('/robots.txt', (c) => text(c.res, 'User-agent: *\nDisallow: /\n', 200, { 'Cache-Control': 'public, max-age=86400' }), { public: true });
   router.get('/api', (c) => json(c.res, { name: 'securacv-backoffice', endpoints: API_INDEX }));
   router.get('/api/flags', (c) => json(c.res, listFlags(db, cfg)));
   router.post('/api/flags/:name', (c) => json(c.res, c.body.on === null || c.body.on === undefined ? clearFlag(db, cfg, c.params.name, { actor: c.actor }) : setFlag(db, cfg, c.params.name, c.body.on === true || c.body.on === 1 || c.body.on === '1' || c.body.on === 'true', { actor: c.actor })));
@@ -217,8 +268,10 @@ export function createApp({ db, cfg }) {
   router.post('/api/orders', async (c) => json(c.res, recordOrder(db, c.body, { catalog: await app.catalog().catch(() => null), actor: c.actor }), 201));
   router.post('/api/orders/:number/transition', async (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, transition(db, o.id, c.body.to, { actor: c.actor, carrier: c.body.carrier, tracking: c.body.tracking, cfg, shipping: c.body.to === 'packed' ? await app.shipping().catch(() => null) : null, measuredOz: c.body.measured_oz ?? null, postageCents: int(c.body.postage_cents, { name: 'postage_cents', min: 0, fallback: 0 }), shipAnyway: !!c.body.ship_anyway, check: c.body.check && typeof c.body.check === 'object' && !Array.isArray(c.body.check) ? { ticked: asArray(c.body.check.ticked ?? [], 'check.ticked'), measuredOz: c.body.check.measured_oz ?? null, anyway: !!c.body.check.anyway, reason: c.body.check.reason } : null })); });
   router.post('/api/orders/:number/refund', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, refund(db, o.id, int(c.body.cents, { name: 'cents', min: 1 }), { actor: c.actor, reason: c.body.reason , cfg })); });
-  router.get('/api/tickets', (c) => json(c.res, listTickets(db, { status: c.query.get('status') || '', kind: c.query.get('kind') || '', q: c.query.get('q') || '' })));
-  router.get('/api/tickets/:number', (c) => { const t = ticketByNumber(db, c.params.number); if (!t) throw new HttpError(404, 'no such ticket'); json(c.res, t); });
+  // Outsider-written fields are marked as data, not instructions (guard.mjs): the API is read by an AI operator as often as by a person.
+  const TICKET_UNTRUSTED = ['subject', 'email', 'name', 'messages[].body', 'messages[].from_addr', 'labels'];
+  router.get('/api/tickets', (c) => json(c.res, boundaryEach(listTickets(db, { status: c.query.get('status') || '', kind: c.query.get('kind') || '', q: c.query.get('q') || '' }), TICKET_UNTRUSTED), 200, BOUNDARY_HEADERS(TICKET_UNTRUSTED)));
+  router.get('/api/tickets/:number', (c) => { const t = ticketByNumber(db, c.params.number); if (!t) throw new HttpError(404, 'no such ticket'); json(c.res, boundary(t, TICKET_UNTRUSTED), 200, BOUNDARY_HEADERS(TICKET_UNTRUSTED)); });
   router.post('/api/tickets', (c) => json(c.res, openTicket(db, { ...c.body, channel: 'api', cfg }), 201));
   router.post('/api/tickets/:number/reply', (c) => { const t = ticketByNumber(db, c.params.number); if (!t) throw new HttpError(404, 'no such ticket'); json(c.res, ticketReply(db, t.id, c.body.body, { cfg, actor: c.actor, close: !!c.body.close })); });
   router.post('/api/mail/ingest', (c) => json(c.res, ingestEmail(db, c.body, { cfg })), { raw: false });
@@ -239,7 +292,7 @@ export function createApp({ db, cfg }) {
   router.post('/api/discounts/:code/status', (c) => json(c.res, setDiscountStatus(db, c.params.code, c.body.status)));
   router.get('/api/discounts/:code/evaluate', (c) => json(c.res, evaluateDiscount(db, c.params.code, { subtotal_cents: Number(c.query.get('subtotal') || 0), shipping_cents: Number(c.query.get('shipping') || 0) })));
   router.get('/api/analytics', (c) => json(c.res, analytics(db, { days: Number(c.query.get('days')) || 30 })));
-  router.get('/api/search', (c) => json(c.res, search(db, c.query.get('q') || '')));
+  router.get('/api/search', (c) => json(c.res, boundary(search(db, c.query.get('q') || ''), ['contacts[].name', 'contacts[].email', 'orders[].ship_name', 'tickets[].subject']), 200, BOUNDARY_HEADERS(['name', 'email', 'ship_name', 'subject'])));
   router.get('/api/inventory', (c) => json(c.res, listItems(db)));
   router.post('/api/inventory/move', (c) => json(c.res, invMove(db, String(c.body.sku || ''), int(c.body.delta, { name: 'delta' }), String(c.body.reason || 'adjust'), c.body.ref == null ? null : String(c.body.ref).slice(0, 120))));
   router.get('/api/devices', (c) => json(c.res, listDevices(db, { q: c.query.get('q') || '' })));
@@ -258,7 +311,7 @@ export function createApp({ db, cfg }) {
 
   // ---------- the pipeline
   const server = createServer(async (req, res) => {
-    let url = null, route = null, onceKey = null;
+    let url = null, route = null, onceKey = null, c = null;
     try {
       // inside the try: a request line or a path segment that does not parse is a 400, not a request that never gets an answer
       try { url = new URL(req.url, 'http://x'); } catch { throw new HttpError(400, 'bad request URL'); }
@@ -269,11 +322,22 @@ export function createApp({ db, cfg }) {
       const site = req.headers['sec-fetch-site'];
       // The admin is one origin; a sibling host (the website, a future subdomain) has no business writing here, so same-site is not enough.
       if (site && !['same-origin', 'none'].includes(site) && req.method !== 'GET' && req.method !== 'HEAD' && !route.opts.public) throw new HttpError(403, 'cross-site request refused');
+      const ip = clientIp(req);
+      // ADMIN_ALLOW_CIDRS: the admin (and its door) exist only for these networks; a customer's page, the store, the webhook and the status page are for everyone.
+      const forCustomers = ['/healthz', '/status', '/status.json', '/robots.txt'].includes(url.pathname) || /^\/(o|u|i|confirm)\//.test(url.pathname);
       const cookies = parseCookies(req);
-      const session = sessionFor(db, cookies.bo_session);
+      let session = sessionFor(db, cookies.bo_session);
+      // SESSION_BIND_IP: a session that turns up from another network than it was opened on is over (a stolen cookie travels).
+      // Judged before the allowlist, so a cookie carried off to a hidden network is ended, not merely refused.
+      if (session && cfg.sessionBindIp && session.net && session.net !== netOf(ip)) { logout(db, session.id); db.audit('system', 'auth.session.moved', 'user', session.email, { from: session.net, to: netOf(ip) }); session = null; }
+      // The door itself (/login and its POSTs, registered public so the form needs no session) is the admin's, not a customer's.
+      const door = url.pathname === '/login' || url.pathname.startsWith('/login/');
+      if (allow && (door || (!route.opts.public && !forCustomers)) && !allow(ip)) throw new HttpError(404, 'not found');
+      // A scanner (sixty misses in ten minutes) waits ten minutes; a person with a session, and the public endpoints, never do.
+      if (!session && !route.opts.public && !forCustomers && watch.blocked(ip)) throw new HttpError(429, 'too many requests from this address — try again in ten minutes');
       const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
       const tokenRow = url.pathname.startsWith('/api') ? apiTokenFor(db, bearer) : null;
-      const c = { req, res, url, params: route.params, query: url.searchParams, session, user: session ? { id: session.user_id, email: session.email, name: session.name, role: session.role } : null, csrf: session?.csrf, actor: tokenRow ? `token:${tokenRow.name}` : session ? session.email : 'public', app, db, cfg, body: {}, raw: null };
+      c = { req, res, url, params: route.params, query: url.searchParams, session, user: session ? { id: session.user_id, email: session.email, name: session.name, role: session.role } : null, csrf: session?.csrf, actor: tokenRow ? `token:${tokenRow.name}` : session ? session.email : 'public', app, db, cfg, body: {}, raw: null };
       if (req.method === 'POST' || req.method === 'PUT') { c.raw = await readBody(req); if (!route.opts.raw) c.body = parseBody(c.raw, req.headers['content-type'] || ''); }
       if (!route.opts.public && !url.pathname.startsWith('/login') && !['/healthz', '/status', '/status.json'].includes(url.pathname) && !url.pathname.startsWith('/confirm/') && !url.pathname.startsWith('/u/') && !url.pathname.startsWith('/i/') && !url.pathname.startsWith('/o/') && !url.pathname.startsWith('/invite/')) {
         if (url.pathname.startsWith('/api')) { if (!tokenRow && !session) throw new HttpError(401, 'bearer token or session required'); if (tokenRow?.scope === 'ro' && !['GET', 'HEAD'].includes(req.method)) throw new HttpError(403, 'this token is read-only'); }
@@ -302,6 +366,8 @@ export function createApp({ db, cfg }) {
       if (req.method === 'POST') app.forgetAttention();
     } catch (err) {
       if (onceKey) app.once.delete(onceKey);   // a refused submission may be corrected and sent again
+      // a miss without a session counts toward the watch; the sixtieth in ten minutes blocks the address and says so once
+      if (!c?.session && [401, 403, 404].includes(err.status) && watch.miss(clientIp(req))) { const ipB = clientIp(req); db.audit('system', 'guard.block', 'ip', ipB, { misses: watch.limit }); securityPush(db, cfg, `scan:${ipB}`, { title: 'Backoffice: a scanner was blocked', body: `${ipB} hit ${watch.limit} missing or refused pages in ten minutes; blocked for ten.` }, { fetchImpl: app.fetchImpl }).catch(() => {}); }
       // A business rule ("cannot move", "unknown SKU") is the caller's mistake: 400. A thrown
       // TypeError or a database error is ours: 500, and it is logged.
       // A row that would collide with one that exists (a second device with the same MAC, a slug
@@ -446,10 +512,20 @@ export const plain = (cfg, title, bodyHtml) => layout({ title, body: `<p>${bodyH
 function loginPage(cfg, err, ready, ok = null, demo = null) {
   const hint = demo ? `<div class="flash"><b>Demo mode — synthetic data, nothing leaves this machine.</b><br>The form is filled in: password <code>${e(demo.password)}</code>, authenticator code <code>${e(demo.code)}</code> right now (it changes every 30 s — reload if a login is refused). Just press <b>Log in</b>.<br><span class="muted">Every demo person shares that password and authenticator, so you can see what each role may do: ${demo.users.map(u => `<a href="/login?as=${encodeURIComponent(u.email)}">${e(u.name)}</a> (${e(u.role)})`).join(' · ')}.</span></div>` : '';
   return layout({ title: 'Log in', company: cfg.company, nav: false, demo: !!demo, demoResetMinutes: cfg.demoResetMinutes, flash: ok ? { text: ok } : null, body: hint + (ready
-    ? `${err ? '<div class="flash err">Wrong password or code.' + (demo ? ' The code has probably rolled over — this page now carries the current one; press Log in again.' : '') + '</div>' : ''}<form method="post" action="/login" class="box"><label for="email">Email <span class="muted">(leave empty if you are the only person here)</span></label><input id="email" type="email" name="email" value="${demo ? e(demo.email) : ''}" autocomplete="username"><label for="pw">Password</label><input id="pw" type="${demo ? 'text' : 'password'}" name="password" value="${demo ? e(demo.password) : ''}" required autocomplete="current-password"><label for="code">Authenticator code</label><input id="code" name="code" value="${demo ? e(demo.code) : ''}" inputmode="numeric" pattern="[0-9]{6}" required autocomplete="one-time-code"><div style="margin-top:.8rem"><button>Log in</button></div></form>`
+    ? `${err ? '<div class="flash err">Wrong password or code.' + (demo ? ' The code has probably rolled over — this page now carries the current one; press Log in again.' : '') + '</div>' : ''}<form method="post" action="/login" class="box"><label for="email">Email <span class="muted">(leave empty if you are the only person here)</span></label><input id="email" type="email" name="email" value="${demo ? e(demo.email) : ''}" autocomplete="username"><label for="pw">Password</label><input id="pw" type="${demo ? 'text' : 'password'}" name="password" value="${demo ? e(demo.password) : ''}" required autocomplete="current-password"><label for="code">Authenticator code</label><input id="code" name="code" value="${demo ? e(demo.code) : ''}" inputmode="numeric" pattern="[0-9]{6}" required autocomplete="one-time-code"><div style="margin-top:.8rem"><button>Log in</button></div></form>${cfg.smtpUrl || cfg.demo ? '<p class="muted">Rather not type a password? <a href="/login/link">Email me a sign-in link</a> — your authenticator is still needed.</p>' : ''}`
     : '<p>No operator yet. On the server, run <code>backoffice setup</code> to set the password and get the authenticator QR.</p>') });
 }
 
+function linkRequestPage(cfg, { on, demo }) {
+  return layout({ title: 'Sign in by link', company: cfg.company, nav: false, demo: !!demo, body: on
+    ? `<p>Type your email and a sign-in link is mailed to you: good for ${cfg.signInLinkMinutes} minutes, once, and only in this browser. Your authenticator code is still needed — the link stands in for the password, never for the second factor.</p><form method="post" action="/login/link" class="box"><label for="email">Email</label><input id="email" type="email" name="email" required autocomplete="email" autofocus><div style="margin-top:.8rem"><button>Email me a sign-in link</button></div></form><p><a href="/login">Sign in with a password instead</a></p>`
+    : `<p>Sign-in links need the mail relay (SMTP_URL), which is not set here${cfg.env === 'staging' ? ' — staging sends no mail' : ''}. <a href="/login">Sign in with a password</a>.</p>` });
+}
+function linkCodePage(cfg, { token, ok, err, demo }) {
+  return layout({ title: 'Sign in by link', company: cfg.company, nav: false, demo: !!demo, body: ok
+    ? `${err ? '<div class="flash err">Wrong code.</div>' : ''}${demo ? `<div class="flash">Demo: the authenticator code right now is <code>${e(demo.code)}</code> (it changes every 30 s).</div>` : ''}<p>The link is good. One more thing: the code from your authenticator.</p><form method="post" action="/login/link/${encodeURIComponent(token)}" class="box"><label for="code">Authenticator code</label><input id="code" name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" required autofocus value="${demo ? e(demo.code) : ''}"><div style="margin-top:.8rem"><button>Sign in</button></div></form>`
+    : `<p><b>This link does not open.</b> It has expired, was already used, or was opened in a different browser than the one that asked for it (a link only works where it was requested). <a href="/login/link">Ask for a new one</a>, or <a href="/login">sign in with a password</a>.</p>` });
+}
 const fieldHtml = (name, label, value) => `<div><label for="a_${name}">${e(label)}</label><input id="a_${name}" name="${name}" value="${e(value || '')}" ${name === 'line2' ? '' : 'required'} ${name === 'zip' ? 'inputmode="numeric"' : ''}></div>`;
 function orderStatusPage(cfg, o, { flash = null } = {}) {
   const steps = ['paid', 'packed', 'shipped', 'delivered']; const i = steps.indexOf(o.status); const at = { paid: o.paid_at, packed: o.packed_at, shipped: o.shipped_at, delivered: o.delivered_at };

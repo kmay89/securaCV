@@ -738,6 +738,21 @@
   unprovisioned), and
   an edit to pinned glue or a pinned statement updates its row in the same
   review (the failure prints the row as it now is).
+### The backoffice guards its door (backoffice 0.7.0)
+
+- Sign-in links that stand in for the password, never the authenticator,
+  bound to the browser that asked; a watch that blocks scanners, pushes on
+  lockouts and on sign-ins from a new network, an admin allowlist and
+  session-to-network binding; outsider text scrubbed at every ingress and
+  marked as data in the API; no indexing, no AI training, on every answer.
+
+### The backoffice edits the store listing without a commit, sets the phone in Settings, and watches sales-tax nexus (backoffice 0.6.0)
+
+- Price, name, batch cap, hidden and a sale window per product, live on the
+  site at once (the website reads them from the live catalog); the patch for
+  `store.json` printed for later. An ntfy topic and a test push in Settings.
+  Where sales tax is owed, from the orders, on Books and in the doctor.
+
 ### The backoffice closes the Shopify gaps (backoffice 0.5.0)
 
 - Labels bought from the ship bench (Shippo), the tracking and postage written
