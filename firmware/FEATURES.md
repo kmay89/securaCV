@@ -71,7 +71,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | SD storage (append-only, `/WITNESS` `/HEALTH` `/CHAIN` `/EXPORT`) | ✅ | ✅ | ❌ | ➖ | ➖ | ➖ | ✅ |
 | SD graceful shutdown flush | ✅ | ✅ | ➖ | ➖ | ➖ | ➖ | ⚠️ |
 | SD status counters (`witness_count` / `health_count` / `unacked_count`) | ✅ | ✅ | ➖ | ➖ | ➖ | ➖ | ⚠️ |
-| WiFi AP (SecuraCV-XXXX SSID, device-unique password) | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ✅ |
+| WiFi AP (SecuraCV-<kind>-XXXX SSID, device-unique password) | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ✅ |
 | SoftAP WPA2/WPA3 transition + PMF capable (F16; WPA2 where the core lacks SoftAP SAE, reported as `ap_auth`; CI-compiled, no bench) | ⚠️ | ⚠️ | ❌ | ❌ | ❌ | ➖ | ❌ |
 | WiFi STA (home network dual-mode) | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ✅ |
 | Web UI (embedded PROGMEM dashboard) | ⚠️ | ✅ | ❌ | ❌ | ✅ | ➖ | ✅ |
@@ -169,7 +169,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 > `wifi_mgr.cpp` — `open_setup_portal()` on first boot when no credentials
 > are stored, and again from the recovery path after three fixable join
 > failures. That module is exactly what the **WiFi AP** row describes: a
-> SoftAP named `SecuraCV-XXXX` from the device pseudonym (never the MAC) with
+> SoftAP named `SecuraCV-<kind>-XXXX` from the device pseudonym (never the MAC) with
 > a per-device password minted once and persisted in NVS
 > (`securacv`/`ap_pass`) — hence ✅. The **first-time setup wizard** row is
 > ⚠️ rather than ✅ for these two: the captive portal, the network list, the

@@ -302,7 +302,7 @@ SecuraCV's provisioning model: an AP-based variant (canary, WAP) brings up its
 own setup network afterwards; a sensor variant (vision, sense) re-seeds NVS
 from the firmware's compiled credentials on first boot
 ([`firmware_ota.md` § generic release builds + NVS](firmware_ota.md)) — and if
-those leave it without a real network, it raises its own `SecuraCV-XXXX` setup
+those leave it without a real network, it raises its own `SecuraCV-<kind>-XXXX` setup
 network too (the shared setup portal), so a factory flash never strands it.
 Every later OTA update inherits that identity. The "erase the entire chip first"
 option is a belt-and-suspenders full erase for a misbehaving board.

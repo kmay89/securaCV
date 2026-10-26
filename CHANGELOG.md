@@ -1,6 +1,56 @@
 # Changelog
 
 ## [Unreleased]
+### Firmware parity (#1816): every Canary goes online the same way, its setup network is named for its kind, Sense and Vision find each other, and an update must run healthy before it stays
+
+#1816 (1f4e564d) shipped without a CHANGELOG entry; this is it, written for
+owners updating from 2.4.16.
+
+- **Setup networks are named for their kind.** A Canary's setup network is
+  now `SecuraCV-<kind>-XXXX` (`SecuraCV-sense-K7MZ`, `SecuraCV-wap-…`,
+  `SecuraCV-vision-…`, `SecuraCV-display-…`, `SecuraCV-canary-…`); 2.4.16
+  named them all `SecuraCV-XXXX`. The four characters stay the same, and so
+  does the key, except on the all-rounder Canary (its new key is the F350
+  entry). A printed card or a phone that saved the old name holds a stale
+  one. **iPhone app 0.7.0 does not recognize the new names**: its QR join
+  and its name check miss them, though *Join its setup network* still
+  works. iPhone app 0.8.0, released with this train, reads them.
+- **One way online on every Canary.** Sense, Vision, the WAP, the
+  all-rounder and the displays follow one onboarding rule set (the WAP, the
+  all-rounder and the displays keep their own setup pages): a Canary
+  remembers up to four home networks; after 10 minutes offline it raises
+  its setup network again without forgetting anything (the all-rounder at
+  once; on the WAP the setup network only, not the Bluetooth door). The
+  Wi-Fi password field means the picked network's own password: no
+  8-character minimum, up to 64 characters, and open networks are allowed.
+- **Holding BOOT for 10 seconds** resets Wi-Fi and settings and keeps the
+  device's identity. On the all-rounder Canary a 30-second hold also wipes
+  its identity; 2.4.16 wiped everything at 5 seconds. The 7" Dash has no
+  button and resets from Settings.
+- **Sense and Vision answer on your network.** They serve `GET /api/status`
+  on port 80 (coarse: no presence or wellbeing values; it does include the
+  IP address, time zone, update target and whether Wi-Fi credentials are
+  stored), and every Canary serves `/api/fleet` for the Witness Wall. Sense
+  and Vision also send authenticated multicast heartbeats on the LAN
+  (239.83.67.86:5867), keyed from your Wi-Fi name and password, and elect a
+  coordinator that steps aside for a hub (`peer` and `coord` in
+  `/api/status` and the mDNS record). Anyone with your Wi-Fi password counts
+  as a peer; no released board sends events across this link, and on an open
+  network it stays off. `docs/TRUST_MODEL.md` has the reasoning.
+- **An update must run healthy before it stays.** 2.4.16 kept a new version
+  as soon as it booted. From 2.4.17, a new version is kept only after it has
+  run healthy for 60 seconds; a restart before then sends the Canary back to
+  the version it had, and the update is offered again (the fixes to when a
+  board counts as healthy are the next section). An update manifest can
+  name the board and chip it was built for, and a Canary refuses one for
+  another board; `min_version` is enforced. Release manifests stay in the
+  2.4.16 format until no Canary below 2.4.17 remains, because a 2.4.16
+  Canary cannot check the new one. Home Assistant gains
+  `securacv.staged_update`, which updates one Canary at a time and stops at
+  the first failure.
+- **Tested:** host tests and CI builds of every target. The bench plan in
+  `docs/PARITY.md` has not been run.
+
 ### After the 2.4.16 train: an OTA image too big for its slot is refused before it downloads, no app release can take `releases/latest`, and long release notes end with a link instead of mid-sentence
 
 - **Firmware: the pull-OTA engine checks the slot first.** Once the signed
@@ -12,9 +62,10 @@
   fit in the space your Canary keeps for updates. Install it over USB
   instead." It used to download and write until the slot ran out, then start
   again on the next poll: the C3 Visions still on 0x140000 slots against
-  2.4.16's 1.4 MB images. This helps only boards already running it; a C3
-  Vision on the old table still needs the one USB reflash the 2.4.16 notice
-  below describes. **Host-tested only** (`test_ota_logic.cpp`): the ESP32
+  2.4.16's 1.4 MB images. This helps only boards already running it: a C3
+  Vision (C3 DevKit or XIAO C3) last installed over USB before 2.4.16 still
+  needs one USB install from the browser flasher or the Flasher app before it
+  can update over the air. **Host-tested only** (`test_ota_logic.cpp`): the ESP32
   builds are CI's, and nothing was checked on a bench.
 - **Firmware release: every signed OTA image is measured, or says why
   not.** `flavors.json` budgets seven more images against their slots
@@ -999,8 +1050,9 @@
   `flash.test.js` feeds it the real lines and `desktop_parity.test.js` now
   holds the two lists equal. The gap predates F350 (the WAP prints the same
   line); F350 is what made the flagship's key worth leaking.
-- **Owner step: the setup network's key changes once, on update.** Its name
-  (`SecuraCV-canary-XXXX`) does not. No marker keeps the old key, because
+- **Owner step: the setup network's key changes once, on update.** Updating
+  from 2.4.16 changes its name too: 2.4.16 named it `SecuraCV-XXXX`, and
+  this release names it `SecuraCV-canary-XXXX` (#1816, below). No marker keeps the old key, because
   anyone who has seen the fingerprint can compute it. A printed card, a phone that
   saved the network and a recovery kit saved before the update hold the old
   key. The current one is on the serial banner (`Password`) and the

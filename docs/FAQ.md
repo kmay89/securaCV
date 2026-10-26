@@ -477,7 +477,8 @@ the Flasher. The all-rounder **Canary** build has no door and always uses
 the setup network below.
 
 Without the app — or for the all-rounder Canary — the **setup network**:
-the Canary raises `SecuraCV-XXXX`; join it from any phone with the key it
+the Canary raises `SecuraCV-<kind>-XXXX` (`SecuraCV-sense-K7MZ`, say; plain
+`SecuraCV-XXXX` before 2.4.17); join it from any phone with the key it
 printed on its serial console at boot (the Flasher's done card shows the
 same key for a Sense, Vision or WAP it just flashed) and the setup page
 opens on its own. For makers: the door is the open
@@ -493,11 +494,11 @@ minutes after power-on (unplug and replug to get another 30). A Sense or
 Vision that already has Wi-Fi opens it for 60 seconds when you tap its BOOT
 button. A Canary whose saved Wi-Fi has merely *stopped working* (the router
 rebooted, you changed the password) does **not** open it — it raises its
-`SecuraCV-XXXX` recovery network instead, which needs the key printed for
+`SecuraCV-<kind>-XXXX` recovery network instead, which needs the key printed for
 it. So a Canary on your network offers nothing to a stranger's phone, on a
 good day or a bad one.
 
-The older paths stay as the fallback: the `SecuraCV-XXXX` setup network with
+The older paths stay as the fallback: the `SecuraCV-<kind>-XXXX` setup network with
 its printed key, a display's glass QR (a display shows a QR instead of
 opening a door — a screen beats a radio), and the WAP's own setup page once
 it is paired.
@@ -516,7 +517,7 @@ rest of its life. Unplug it and plug it back in: the window starts again.
 The card also goes away for fifteen seconds of silence — the phone has to
 keep hearing the Canary, so walk closer — and once the Canary has joined
 your Wi-Fi it shuts the door for good, which is the card doing its job. If
-you need it before the app does, the `SecuraCV-XXXX` setup network with its
+you need it before the app does, the `SecuraCV-<kind>-XXXX` setup network with its
 printed key is always there.
 
 ### It says "this Canary already has Wi-Fi and isn't accepting a new network"
@@ -586,11 +587,13 @@ unproven password is not one worth remembering. "Forget" on the Set up
 screen clears it. The WAP's pairing key is a different thing, and it never
 rides Bluetooth at all (the claim ticket above).
 
-### My phone says "Unable to join the network SecuraCV-XXXX"
+### My phone says "Unable to join the network SecuraCV-display-XXXX"
 
 Forget the network on your phone, then scan the QR again.
 
-iPhone: **Settings → Wi-Fi → the (i) beside `SecuraCV-XXXX` → Forget This
+(Before 2.4.17 the name was `SecuraCV-XXXX`.)
+
+iPhone: **Settings → Wi-Fi → the (i) beside the network → Forget This
 Network.** Android: long-press the network in the Wi-Fi list → **Forget**.
 Then rescan the QR on the glass, or join by hand with the name and password
 printed under it.

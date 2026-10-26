@@ -11,7 +11,8 @@ ships with a captive-portal setup page that walks the phone through it.
 
 1. **Plug it in.** USB-C from the device to a phone charger, the wall, or
    a computer. The status LED breathes when it's running.
-2. **Open Wi-Fi on your phone and pick `SecuraCV-XXXX`.** Your phone will
+2. **Open Wi-Fi on your phone and pick `SecuraCV-<kind>-XXXX`** (the
+   kind is the device's: `SecuraCV-canary-…`, `SecuraCV-wap-…`). Your phone will
    pop up a "Sign in to network" sheet automatically — that's the
    captive-portal setup page the device serves.
 3. **Scan the big QR code on the page** with your phone's camera.
