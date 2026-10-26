@@ -2,15 +2,18 @@
 // API for the CLI / an AI operator, and the server-rendered admin.
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { Router, HttpError, parseCookies, cookie, readBody, parseBody, RateLimiter, Lockout, html, json, text, redirect, clientIp, escapeHtml, safeEqual } from './http.mjs';
+import { Router, HttpError, parseCookies, cookie, readBody, parseBody, RateLimiter, Lockout, html, json, text, redirect, clientIp, setTrustedProxies, escapeHtml, safeEqual, int, asArray } from './http.mjs';
 const e = escapeHtml;
 import { layout, setTimezone, dt as fmtDt, day as fmtDay } from './render.mjs';
 import { orderToken, deliveryLine, trackingUrl } from './modules/delivery.mjs';
 import { editItems } from './modules/orders.mjs';
-import { sessionFor, login, logout, apiTokenFor, hasOperator } from './auth.mjs';
-import { loadCatalog } from './modules/catalog.mjs';
+import { sessionFor, login, logout, apiTokenFor, hasOperator, carryLegacyOperator, can } from './auth.mjs';
+import { actorStore, nowIso } from './db.mjs';
+import { registerUsers } from './admin_users.mjs';
+import { loadCatalog, loadShipping } from './modules/catalog.mjs';
 import { verifyStripeSignature, eventToOrder, fetchLineItems, resolveDiscountCode } from './modules/stripe.mjs';
-import { recordOrder, refund, orderByNumber, transition, listOrders, timeline, addNote, setTags, batches, statusCounts } from './modules/orders.mjs';
+import { storefrontCatalog, estimateForZip, createCheckout, sessionStatus, StoreError, oversoldLines } from './modules/storefront.mjs';
+import { recordOrder, refund, orderByNumber, transition, listOrders, timeline, addNote, addEvent, setTags, batches, statusCounts } from './modules/orders.mjs';
 import { listCustomers, contactById, customerStats, setContactTags } from './modules/contacts.mjs';
 import { listDiscounts, createDiscount, setDiscountStatus, evaluate as evaluateDiscount } from './modules/discounts.mjs';
 import { analytics } from './modules/analytics.mjs';
@@ -18,6 +21,7 @@ import { listProducts, productDetail } from './modules/products.mjs';
 import { search } from './modules/search.mjs';
 import { upsertSubscription, postSubscriptionPayment } from './modules/subscriptions.mjs';
 import { postPayout, profitAndLoss, postExpense } from './modules/ledger.mjs';
+import { payoutFee } from './modules/reconcile.mjs';
 import { confirmConsent, unsubscribe, upsertContact, joinWaitlist, validEmail, searchContacts } from './modules/contacts.mjs';
 import { sendConsentRequest } from './modules/campaigns.mjs';
 import { openTicket, listTickets, ticketByNumber, reply as ticketReply, ingestEmail } from './modules/support.mjs';
@@ -29,12 +33,14 @@ import { openExceptions, resolve as resolveException, raise as raiseException } 
 import { snapshot } from './modules/dashboard.mjs';
 import { registerAdmin } from './admin.mjs';
 import { runJob, JOBS } from './jobs.mjs';
-import { isDemo, DEMO_PASSWORD, DEMO_WEBHOOK_SECRET, DEMO_CATALOG, SCENARIOS, localBase } from './modules/demo.mjs';
+import { isDemo, DEMO_PASSWORD, DEMO_USERS, DEMO_TOTP_SECRET, DEMO_WEBHOOK_SECRET, DEMO_CATALOG, DEMO_SHIPPING, SCENARIOS, localBase, seedDemoUsers } from './modules/demo.mjs';
 import { totp } from './auth.mjs';
 import { weekLabel as weekLabelNow } from './modules/orders.mjs';
+import { timedFetch } from './net.mjs';
 
 export function createApp({ db, cfg }) {
   cfg.tz = setTimezone(cfg.tz);
+  carryLegacyOperator(db, { email: cfg.supportAddr || 'owner@localhost' });
   cfg.secret = cfg.secret || db.setting('app:secret') || (() => { const s = randomBytes(32).toString('base64url'); db.setSetting('app:secret', s); return s; })();
   // Demo mode: synthetic data, and a hard rule that nothing reaches a real service.
   if (cfg.demo || isDemo(db)) {
@@ -42,13 +48,24 @@ export function createApp({ db, cfg }) {
     cfg.stripeWebhookSecret = DEMO_WEBHOOK_SECRET;
     cfg.mailFrom = cfg.mailFrom || 'Errer Labs (demo) <demo@backoffice.example.test>';
     cfg.baseUrl = localBase(cfg); cfg.siteOrigin = cfg.baseUrl;   // every link, probe and scenario stays on this machine
+    // A demo database from before people existed (or between resets) must have the demo people the login page names, on every boot.
+    if (isDemo(db)) seedDemoUsers(db);
   }
   // In demo mode the catalog is the demo's own, never fetched from the live site.
-  const app = { db, cfg, json, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o) };
+  setTrustedProxies(cfg.trustedProxies);
+  const app = { db, cfg, json, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), formLimiter: new RateLimiter({ limit: 5, windowMs: 10 * 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), once: new Map(), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o), shipping: cfg.demo ? async () => DEMO_SHIPPING : (o) => loadShipping(cfg, o) };
+  // The website's fulfillment block knows where parcels leave from and how far a scale may drift; the environment can override either.
+  app.catalog().then(cat => { const f = cat?.fulfillment || {}; if (f.ship_from?.state && !process.env.SHIP_FROM_STATE) cfg.shipFromState = String(f.ship_from.state).toUpperCase(); if (Number.isFinite(Number(f.weight_tolerance_oz)) && cfg.weightToleranceOz == null) cfg.weightToleranceOz = Number(f.weight_tolerance_oz); }).catch(() => {});
   const { router } = app;
 
   // ---------- public
-  router.get('/healthz', (c) => text(c.res, 'ok'));
+  // Docker and the kit poll this: it fails when the database cannot answer or the scheduler has not ticked in
+  // five minutes (a hung job), so a container that is up but not working is restarted rather than trusted.
+  router.get('/healthz', (c) => {
+    try { db.get('SELECT key FROM settings LIMIT 1'); } catch (err) { throw new HttpError(503, `database: ${err.message}`); }
+    if (app.schedulerTick && Date.now() - app.schedulerTick > 5 * 60_000) throw new HttpError(503, 'scheduler stalled');
+    text(c.res, 'ok');
+  });
   router.get('/status', (c) => html(c.res, statusPage(db, cfg), 200, { 'Cache-Control': 'public, max-age=60' }));
   router.get('/status.json', (c) => json(c.res, publicStatus(db), 200, { 'Cache-Control': 'public, max-age=60', 'Access-Control-Allow-Origin': '*' }));
   router.get('/confirm/:token', (c) => { const ok = confirmConsent(db, c.params.token); html(c.res, plain(cfg, ok ? 'Confirmed' : 'Link expired', ok ? `Thanks — ${e(ok.email)} is confirmed for occasional news. One-click unsubscribe is in every mail.` : 'That confirmation link is not valid any more. Sign up again if you still want the news.'), ok ? 200 : 404); });
@@ -56,7 +73,7 @@ export function createApp({ db, cfg }) {
   router.get('/u/:token', unsub); router.post('/u/:token', unsub, { public: true });
   router.get('/i/:number/:token', (c) => {
     const inv = invoiceByNumber(db, c.params.number);
-    if (!inv || invoiceToken(cfg.secret, inv.number) !== c.params.token) throw new HttpError(404, 'no such invoice');
+    if (!inv || !safeEqual(invoiceToken(cfg.secret, inv.number), c.params.token)) throw new HttpError(404, 'no such invoice');
     html(c.res, invoicePage(cfg, inv), 200, { 'Cache-Control': 'private, no-store' });
   });
 
@@ -71,11 +88,28 @@ export function createApp({ db, cfg }) {
     if (!cfg.stripeWebhookSecret) throw new HttpError(503, 'STRIPE_WEBHOOK_SECRET not set');
     if (!verifyStripeSignature(c.raw, c.req.headers['stripe-signature'], cfg.stripeWebhookSecret)) throw new HttpError(400, 'bad signature');
     let event; try { event = JSON.parse(c.raw.toString('utf8')); } catch { throw new HttpError(400, 'bad JSON'); }
-    // Stripe redelivers; an event id is applied exactly once.
-    if (event.id && db.get('SELECT id FROM stripe_events WHERE id = ?', event.id)) return json(c.res, { received: true, duplicate: true });
+    // Stripe redelivers, sometimes twice at once. The event id is claimed BEFORE the work (an
+    // insert that only one delivery wins) and marked applied AFTER it; a failure releases the
+    // claim, and a claim left in flight (the process died mid-way) is taken over by the next
+    // redelivery once it is a minute old. Only an applied event answers "duplicate".
+    if (app.resetting) throw new HttpError(503, 'the demo is resetting — retry in a moment');
+    if (event.id) {
+      const claim = claimStripeEvent(db, event);
+      if (claim === 'applied') return json(c.res, { received: true, duplicate: true });
+      // another delivery of the same event is mid-way: a 2xx here would make Stripe stop retrying while the first attempt may yet fail
+      if (claim === 'inflight') throw new HttpError(409, 'this event is being applied by another delivery — retry it shortly');
+    }
     const mapped = eventToOrder(event);
-    const result = await applyStripeEvent(app, mapped, event);
-    if (event.id) db.run('INSERT OR IGNORE INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)', event.id, event.type || '', new Date().toISOString());
+    let result;
+    try { result = await applyStripeEvent(app, mapped, event); }
+    catch (err) {
+      if (event.id) db.run('DELETE FROM stripe_events WHERE id = ? AND applied_at IS NULL', event.id);
+      // A business-rule failure (an unknown SKU on a new Payment Link, a currency the books refuse) is a 4xx Stripe retries for three
+      // days and then drops; it is raised here so a person sees it the first time, and resolved below when the event finally applies.
+      if (event.id) await raiseException(db, cfg, `stripe:failed:${event.id}`, `stripe [webhook failed]: ${event.type || 'event'} ${event.id}`, `${err.message}\n\nStripe retries this event for up to three days; fix the cause (the message names it) and it applies on the next delivery, or resend it from the Stripe dashboard.`).catch(() => {});
+      throw err;
+    }
+    if (event.id) { db.run('UPDATE stripe_events SET applied_at = ? WHERE id = ?', nowIso(), event.id); if (db.get('SELECT key FROM exceptions WHERE key = ? AND resolved_at IS NULL', `stripe:failed:${event.id}`)) await resolveException(db, cfg, `stripe:failed:${event.id}`, 'The event applied on a later delivery.').catch(() => {}); }
     json(c.res, { received: true, ...result });
   }, { public: true, raw: true });
 
@@ -85,6 +119,7 @@ export function createApp({ db, cfg }) {
     if (!app.limiter.allow(`forms:${clientIp(c.req)}`)) throw new HttpError(429, 'slow down');
     const email = String(b.email || '').trim();
     if (!validEmail(email)) throw new HttpError(400, 'a valid email is required');
+    if (!app.formLimiter.allow(`forms:${email.toLowerCase()}`)) throw new HttpError(429, 'that address has sent enough forms for now — try again in ten minutes');
     const kind = c.params.kind;
     let out;
     if (kind === 'waitlist') {
@@ -110,19 +145,34 @@ export function createApp({ db, cfg }) {
   }, { public: true });
   router.add('OPTIONS', '/forms/:kind', (c) => { c.res.writeHead(204, corsHeaders(cfg)); c.res.end(); }, { public: true });
 
+  // ---------- the storefront's server half (storefront.mjs): the live catalog, the estimate before
+  // paying, the hosted Checkout Session, and what the thanks page shows. Public, CORS to the site.
+  const store = (fn) => async (c) => { try { await fn(c); } catch (err) { if (err instanceof StoreError) throw new HttpError(err.status, err.message); throw err; } };
+  router.get('/store/catalog', store(async (c) => { const cat = await app.catalog().catch(() => null); if (!cat) throw new HttpError(503, 'the catalog is not loaded'); json(c.res, storefrontCatalog(db, cat, { cfg }), 200, { ...corsHeaders(cfg), 'Cache-Control': 'public, max-age=60' }); }), { public: true });
+  router.get('/store/estimate', store(async (c) => { json(c.res, estimateForZip(c.query.get('zip') || '', { cfg }), 200, { ...corsHeaders(cfg), 'Cache-Control': 'public, max-age=300' }); }), { public: true });
+  router.post('/store/checkout', store(async (c) => {
+    if (!app.limiter.allow(`store:${clientIp(c.req)}`)) throw new HttpError(429, 'slow down');
+    if (cfg.demo) throw new HttpError(503, 'the demo takes no payments — the site falls back to its own cart');
+    const cat = await app.catalog().catch(() => null); if (!cat) throw new HttpError(503, 'the catalog is not loaded');
+    const r = await createCheckout(db, cfg, cat, { items: c.body?.items, zip: c.body?.zip, email: c.body?.email }, { fetchImpl: app.fetchImpl || timedFetch });
+    json(c.res, { url: r.url, id: r.id, ships: r.ships, delivers: r.delivers }, 200, corsHeaders(cfg));
+  }), { public: true });
+  router.get('/store/session/:id', store(async (c) => { json(c.res, sessionStatus(db, cfg, c.params.id), 200, { ...corsHeaders(cfg), 'Cache-Control': 'private, no-store' }); }), { public: true });
+  for (const p of ['/store/catalog', '/store/estimate', '/store/checkout', '/store/session/:id']) router.add('OPTIONS', p, (c) => { c.res.writeHead(204, corsHeaders(cfg)); c.res.end(); }, { public: true });
+
   // ---------- auth
-  router.get('/login', (c) => html(c.res, loginPage(cfg, c.query.get('err'), hasOperator(db), cfg.demo ? { password: DEMO_PASSWORD, code: totp(db.setting('auth:totp') || 'AAAAAAAAAAAAAAAA') } : null)));
+  router.get('/login', (c) => html(c.res, loginPage(cfg, c.query.get('err'), hasOperator(db), c.query.get('ok'), cfg.demo ? { password: DEMO_PASSWORD, code: totp(DEMO_TOTP_SECRET), email: c.query.get('as') || DEMO_USERS[0].email, users: DEMO_USERS } : null)));
   router.post('/login', (c) => {
     const ip = clientIp(c.req);
     if (!app.limiter.allow(`login:${ip}`)) throw new HttpError(429, 'slow down');
     // Eight wrong attempts in fifteen minutes and this address waits the window out; the audit log keeps every attempt.
     if (app.lockout.locked(ip)) { db.audit('web', 'auth.login.locked', 'session', null, { ip }); throw new HttpError(429, 'too many failed logins from this address — try again in fifteen minutes'); }
-    const s = login(db, c.body.password, c.body.code, { sessionHours: cfg.sessionHours, ip });
+    const s = login(db, { email: c.body.email, password: c.body.password, code: c.body.code }, { sessionHours: cfg.sessionHours, ip });
     if (!s) { app.lockout.fail(ip); return redirect(c.res, '/login?err=1'); }
     app.lockout.clear(ip);
     redirect(c.res, '/', { 'Set-Cookie': cookie('bo_session', s.id, { maxAge: cfg.sessionHours * 3600, secure: cfg.secure }) });
   }, { public: true, csrf: false });
-  router.post('/logout', (c) => { if (c.session) logout(db, c.session.id); redirect(c.res, '/login', { 'Set-Cookie': cookie('bo_session', '', { maxAge: -1, secure: cfg.secure }) }); });
+  router.post('/logout', (c) => { if (c.session) logout(db, c.session.id); redirect(c.res, '/login', { 'Set-Cookie': [cookie('bo_session', '', { maxAge: -1, secure: cfg.secure }), cookie('bo_bench', '', { maxAge: -1, secure: cfg.secure })] }); });
 
   // ---------- JSON API (bearer token or a logged-in session)
   router.get('/api', (c) => json(c.res, { name: 'securacv-backoffice', endpoints: API_INDEX }));
@@ -130,14 +180,15 @@ export function createApp({ db, cfg }) {
   router.get('/api/orders', (c) => json(c.res, listOrders(db, Object.fromEntries(['status', 'batch', 'q', 'tag', 'from', 'to', 'discount', 'sku'].map(k => [k, c.query.get(k) || ''])))));
   router.get('/api/orders/:number', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, o); });
   router.post('/api/orders', async (c) => json(c.res, recordOrder(db, c.body, { catalog: await app.catalog().catch(() => null), actor: c.actor }), 201));
-  router.post('/api/orders/:number/transition', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, transition(db, o.id, c.body.to, { actor: c.actor, carrier: c.body.carrier, tracking: c.body.tracking, cfg })); });
-  router.post('/api/orders/:number/refund', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, refund(db, o.id, c.body.cents, { actor: c.actor, reason: c.body.reason })); });
+  router.post('/api/orders/:number/transition', async (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, transition(db, o.id, c.body.to, { actor: c.actor, carrier: c.body.carrier, tracking: c.body.tracking, cfg, shipping: c.body.to === 'packed' ? await app.shipping().catch(() => null) : null, measuredOz: c.body.measured_oz ?? null, postageCents: int(c.body.postage_cents, { name: 'postage_cents', min: 0, fallback: 0 }), shipAnyway: !!c.body.ship_anyway, check: c.body.check && typeof c.body.check === 'object' && !Array.isArray(c.body.check) ? { ticked: asArray(c.body.check.ticked ?? [], 'check.ticked'), measuredOz: c.body.check.measured_oz ?? null, anyway: !!c.body.check.anyway, reason: c.body.check.reason } : null })); });
+  router.post('/api/orders/:number/refund', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, refund(db, o.id, int(c.body.cents, { name: 'cents', min: 1 }), { actor: c.actor, reason: c.body.reason })); });
   router.get('/api/tickets', (c) => json(c.res, listTickets(db, { status: c.query.get('status') || '', kind: c.query.get('kind') || '', q: c.query.get('q') || '' })));
   router.get('/api/tickets/:number', (c) => { const t = ticketByNumber(db, c.params.number); if (!t) throw new HttpError(404, 'no such ticket'); json(c.res, t); });
   router.post('/api/tickets', (c) => json(c.res, openTicket(db, { ...c.body, channel: 'api', cfg }), 201));
   router.post('/api/tickets/:number/reply', (c) => { const t = ticketByNumber(db, c.params.number); if (!t) throw new HttpError(404, 'no such ticket'); json(c.res, ticketReply(db, t.id, c.body.body, { cfg, actor: c.actor, close: !!c.body.close })); });
   router.post('/api/mail/ingest', (c) => json(c.res, ingestEmail(db, c.body, { cfg })), { raw: false });
-  router.post('/api/orders/:number/items', async (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, editItems(db, o.id, c.body.items || [], { catalog: await app.catalog().catch(() => null), actor: c.actor })); });
+  router.post('/api/orders/:number/items', async (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, editItems(db, o.id, asArray(c.body.items, 'items'), { catalog: await app.catalog().catch(() => null), actor: c.actor })); });
+  router.get('/api/orders/:number/packing', async (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); const { packOrder } = await import('./modules/packing.mjs'); json(c.res, { frozen: o.pack_plan ? JSON.parse(o.pack_plan) : null, now: packOrder(await app.shipping().catch(() => null), o.items) }); });
   router.get('/api/orders/:number/events', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, timeline(db, o.id)); });
   router.post('/api/orders/:number/note', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, addNote(db, o.id, c.body.body, { actor: c.actor }), 201); });
   router.post('/api/orders/:number/tags', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, setTags(db, o.id, c.body.tags, { actor: c.actor })); });
@@ -155,7 +206,7 @@ export function createApp({ db, cfg }) {
   router.get('/api/analytics', (c) => json(c.res, analytics(db, { days: Number(c.query.get('days')) || 30 })));
   router.get('/api/search', (c) => json(c.res, search(db, c.query.get('q') || '')));
   router.get('/api/inventory', (c) => json(c.res, listItems(db)));
-  router.post('/api/inventory/move', (c) => json(c.res, invMove(db, c.body.sku, Number(c.body.delta), c.body.reason || 'adjust', c.body.ref || null)));
+  router.post('/api/inventory/move', (c) => json(c.res, invMove(db, String(c.body.sku || ''), int(c.body.delta, { name: 'delta' }), String(c.body.reason || 'adjust'), c.body.ref == null ? null : String(c.body.ref).slice(0, 120))));
   router.get('/api/devices', (c) => json(c.res, listDevices(db, { q: c.query.get('q') || '' })));
   router.post('/api/devices', (c) => json(c.res, registerDevice(db, c.body), 201));
   router.get('/api/books/pnl', (c) => json(c.res, profitAndLoss(db, { from: c.query.get('from') || '0000-00-00', to: c.query.get('to') || '9999-99-99' })));
@@ -165,46 +216,72 @@ export function createApp({ db, cfg }) {
   router.get('/api/jobs', (c) => json(c.res, Object.keys(JOBS)));
   router.post('/api/jobs/:name', async (c) => json(c.res, await runJob(app, c.params.name)));
   router.get('/api/demo/scenarios', (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); json(c.res, Object.fromEntries(Object.entries(SCENARIOS).map(([k, v]) => [k, v.label]))); });
-  router.post('/api/demo/:scenario', async (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); const sc = SCENARIOS[c.params.scenario]; if (!sc) throw new HttpError(404, 'unknown scenario'); json(c.res, await sc.run(app)); });
+  router.post('/api/demo/:scenario', async (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); if (app.resetting) throw new HttpError(503, 'the demo is resetting — retry in a moment'); const sc = SCENARIOS[c.params.scenario]; if (!sc) throw new HttpError(404, 'unknown scenario'); json(c.res, await sc.run(app)); });
 
   registerAdmin(app);
+  registerUsers(app);
 
   // ---------- the pipeline
   const server = createServer(async (req, res) => {
-    const url = new URL(req.url, 'http://x');
-    const route = router.match(req.method, url.pathname);
+    let url = null, route = null, onceKey = null;
     try {
+      // inside the try: a request line or a path segment that does not parse is a 400, not a request that never gets an answer
+      try { url = new URL(req.url, 'http://x'); } catch { throw new HttpError(400, 'bad request URL'); }
+      route = router.match(req.method, url.pathname);
       if (!route) throw new HttpError(404, 'not found');
       if (cfg.secure) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
       // A browser says where a request came from; a state change from another site is refused before the body is read.
       const site = req.headers['sec-fetch-site'];
-      if (site && !['same-origin', 'same-site', 'none'].includes(site) && req.method !== 'GET' && req.method !== 'HEAD' && !route.opts.public) throw new HttpError(403, 'cross-site request refused');
+      // The admin is one origin; a sibling host (the website, a future subdomain) has no business writing here, so same-site is not enough.
+      if (site && !['same-origin', 'none'].includes(site) && req.method !== 'GET' && req.method !== 'HEAD' && !route.opts.public) throw new HttpError(403, 'cross-site request refused');
       const cookies = parseCookies(req);
       const session = sessionFor(db, cookies.bo_session);
       const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
       const tokenRow = url.pathname.startsWith('/api') ? apiTokenFor(db, bearer) : null;
-      const c = { req, res, url, params: route.params, query: url.searchParams, session, csrf: session?.csrf, actor: tokenRow ? `token:${tokenRow.name}` : session ? 'web' : 'public', app, db, cfg, body: {}, raw: null };
+      const c = { req, res, url, params: route.params, query: url.searchParams, session, user: session ? { id: session.user_id, email: session.email, name: session.name, role: session.role } : null, csrf: session?.csrf, actor: tokenRow ? `token:${tokenRow.name}` : session ? session.email : 'public', app, db, cfg, body: {}, raw: null };
       if (req.method === 'POST' || req.method === 'PUT') { c.raw = await readBody(req); if (!route.opts.raw) c.body = parseBody(c.raw, req.headers['content-type'] || ''); }
-      if (!route.opts.public && !url.pathname.startsWith('/login') && !['/healthz', '/status', '/status.json'].includes(url.pathname) && !url.pathname.startsWith('/confirm/') && !url.pathname.startsWith('/u/') && !url.pathname.startsWith('/i/') && !url.pathname.startsWith('/o/')) {
+      if (!route.opts.public && !url.pathname.startsWith('/login') && !['/healthz', '/status', '/status.json'].includes(url.pathname) && !url.pathname.startsWith('/confirm/') && !url.pathname.startsWith('/u/') && !url.pathname.startsWith('/i/') && !url.pathname.startsWith('/o/') && !url.pathname.startsWith('/invite/')) {
         if (url.pathname.startsWith('/api')) { if (!tokenRow && !session) throw new HttpError(401, 'bearer token or session required'); if (tokenRow?.scope === 'ro' && !['GET', 'HEAD'].includes(req.method)) throw new HttpError(403, 'this token is read-only'); }
         else if (!session) return redirect(res, '/login');
+        // A person's role decides, by path and method; an owner-made API token is not bound to a role.
+        if (session && !tokenRow && !can(session.role, req.method, url.pathname)) throw new HttpError(403, `your role (${session.role}) cannot do this — an owner can`);
+        // A session writing through the API carries the same token a form does (in the body or an X-CSRF header): a cookie alone never writes. A bearer token needs none.
+        if (session && !tokenRow && !['GET', 'HEAD'].includes(req.method) && url.pathname.startsWith('/api')) {
+          const t = String((c.body && c.body._csrf) || req.headers['x-csrf'] || '');
+          if (!safeEqual(t, session.csrf)) throw new HttpError(403, 'a session-authenticated API write needs the session CSRF token (_csrf in the body or an X-CSRF header); a bearer token needs none');
+        }
         if (session && !tokenRow && req.method === 'POST' && route.opts.csrf !== false && !url.pathname.startsWith('/api')) {
-          if (c.body._csrf !== session.csrf) throw new HttpError(403, 'bad CSRF token');
+          if (!safeEqual(c.body._csrf || '', session.csrf)) throw new HttpError(403, 'bad CSRF token');
+          // A form carries a one-time token: the first POST with it runs, a second (a double click, a
+          // repeated submit) is answered with "already done" and changes nothing.
+          if (typeof c.body._once === 'string' && c.body._once) {
+            const key = `${session.id}:${c.body._once}`; const now = Date.now();
+            if (app.once.size > 5000) for (const [k, t] of app.once) if (now - t > 7_200_000) app.once.delete(k);
+            if (app.once.has(key)) return redirect(res, `${safeLocalPath(req.headers.referer) || '/'}?ok=${encodeURIComponent('that form was already submitted — nothing was done twice')}`);
+            app.once.set(key, now); onceKey = key;
+          }
         }
       }
-      await route.handler(c);
+      await actorStore.run({ actor: c.actor }, () => route.handler(c));
     } catch (err) {
+      if (onceKey) app.once.delete(onceKey);   // a refused submission may be corrected and sent again
       // A business rule ("cannot move", "unknown SKU") is the caller's mistake: 400. A thrown
       // TypeError or a database error is ours: 500, and it is logged.
-      const status = err.status || (err instanceof Error && !(err instanceof TypeError || err instanceof RangeError || err instanceof ReferenceError || err instanceof SyntaxError) && !/SQLITE|sqlite/i.test(String(err.code || err.message)) ? 400 : 500);
-      // Our own bug never reaches the page or the API body: it is logged here, and the
-      // client gets a generic line. A refused request (4xx) carries the rule it broke.
-      if (status === 500) console.error('[backoffice]', req.method, JSON.stringify(url.pathname), err);
-      const message = status === 500 ? 'Something went wrong on our side; it has been logged.' : String(err.message);
+      // A row that would collide with one that exists (a second device with the same MAC, a slug
+      // taken) is the caller's to resolve: 409, with the constraint named, never a 500.
+      const conflict = /SQLITE_CONSTRAINT|constraint failed/i.test(String(err.code || '') + ' ' + String(err.message || ''));
+      const status = err.status || (conflict ? 409 : err instanceof Error && !(err instanceof TypeError || err instanceof RangeError || err instanceof ReferenceError || err instanceof SyntaxError) && !/SQLITE|sqlite/i.test(String(err.code || err.message)) ? 400 : 500);
+      // Our own bug never reaches the page or the API body: it is logged here, raised as an
+      // exception (so it shows on Home and, with a token, as an issue), and the client gets a
+      // generic line. A refused request (4xx) carries the rule it broke.
+      if (status === 500) { console.error('[backoffice]', req.method, JSON.stringify(url.pathname), err); const where = `${req.method} ${url.pathname.replace(/\/\d+(?=\/|$)/g, '/:id')}`; raiseException(db, cfg, `bug:${where}`, `backoffice [bug]: ${where}`, `${String(err.stack || err).slice(0, 1500)}\n\nThe person saw a generic error; the request was refused, nothing half-written. Fix the code, then resolve this.`).catch(() => {}); }
+      const message = status === 500 ? 'Something went wrong on our side; it has been logged.' : conflict ? `that would collide with a record that already exists (${String(err.message).replace(/^.*constraint failed:\s*/i, '')})` : String(err.message);
       if ((req.headers.accept || '').includes('text/html') && !url.pathname.startsWith('/api')) {
         // Back to the admin page the form came from — only ever a local admin path.
         const back = safeLocalPath(req.headers.referer);
         if (status < 500 && req.method === 'POST' && back && !back.startsWith('/login')) return redirect(res, `${back}?err=${encodeURIComponent(message)}`);
+        const who = (() => { try { return sessionFor(db, parseCookies(req).bo_session); } catch { return null; } })();
+        if (who) return html(res, layout({ title: `${status}`, body: `<p>${escapeHtml(message)}</p><p><a href="/">← Home</a></p>`, path: url.pathname, company: cfg.company, csrf: who.csrf, user: { id: who.user_id, email: who.email, name: who.name, role: who.role }, demo: cfg.demo, demoResetMinutes: cfg.demoResetMinutes }), status);
         return html(res, plain(cfg, `${status}`, escapeHtml(message)), status);
       }
       json(res, { error: message, status }, status);
@@ -212,7 +289,11 @@ export function createApp({ db, cfg }) {
   });
   app.server = server;
   app.listen = () => new Promise(r => server.listen(cfg.port, cfg.host, () => { const a = server.address(); if (cfg.demo) { cfg.port = a.port; cfg.baseUrl = `http://127.0.0.1:${a.port}`; cfg.siteOrigin = cfg.baseUrl; } r(a); }));
-  app.close = () => new Promise(r => server.close(r));
+  // A request may take at most a minute; headers at most fifteen seconds (a client that opens a socket and
+  // says nothing is dropped, not kept). Caddy in front has its own limits; these hold without it.
+  server.headersTimeout = 15_000; server.requestTimeout = 60_000; server.keepAliveTimeout = 5_000;
+  app.close = () => new Promise(r => { server.close(r); server.closeIdleConnections?.(); });
+  app.closeAll = () => server.closeAllConnections?.();
   return app;
 }
 
@@ -220,27 +301,80 @@ export async function applyStripeEvent(app, m, event = null) {
   const { db, cfg } = app;
   if (m.kind === 'order') {
     const catalog = await app.catalog().catch(() => null);
-    if (!m.line_items_present) { try { const items = await fetchLineItems(cfg, m.external_id, { fetchImpl: app.fetchImpl || fetch }); if (items) m.items = items; } catch (e) { db.audit('stripe', 'order.line_items.failed', 'order', m.external_id, { error: String(e.message || e) }); } }
-    if (m.discount_code && /^promo_|^[A-Za-z0-9]{8,}$/.test(m.discount_code) && !db.get('SELECT code FROM discounts WHERE code = ?', m.discount_code)) { try { m.discount_code = await resolveDiscountCode(cfg, m.discount_code, { fetchImpl: app.fetchImpl || fetch }); } catch { /* the id stays */ } }
+    if (!m.line_items_present) { try { const items = await fetchLineItems(cfg, m.external_id, { fetchImpl: app.fetchImpl || timedFetch }); if (items) m.items = items; } catch (e) { db.audit('stripe', 'order.line_items.failed', 'order', m.external_id, { error: String(e.message || e) }); } }
+    if (m.discount_code && /^promo_|^[A-Za-z0-9]{8,}$/.test(m.discount_code) && !db.get('SELECT code FROM discounts WHERE code = ?', m.discount_code)) { try { m.discount_code = await resolveDiscountCode(cfg, m.discount_code, { fetchImpl: app.fetchImpl || timedFetch }); } catch { /* the id stays */ } }
     const { order, created } = recordOrder(db, m, { catalog, actor: 'stripe' });
+    if (created && order.email && order.items.length) {
+      // "We have it": the order, the batch it ships in and the arrival window — the same estimate the store showed before paying.
+      const est = estimateForZip(order.ship_zip, { cfg }); const { enqueue, fill } = await import('./modules/mail.mjs'); const { orderStatusUrl } = await import('./modules/delivery.mjs');
+      enqueue(db, { to: order.email, subject: `We have your ${cfg.product || 'SecuraCV'} order ${order.number}`, kind: 'transactional', ref: `order:${order.number}`, contactId: order.contact_id,
+        text: fill(ORDER_TPL, { name: order.ship_name || 'there', number: order.number, items: order.items.map(i => `${i.qty}× ${i.name}`).join('\n'), ships: est.ships.ships_label, closes: est.ships.closes_label, arrives: est.delivers ? est.delivers.label : 'a few business days after it ships', status_url: orderStatusUrl(cfg, order), company: cfg.company || 'Errer Labs', support: cfg.supportAddr || '' }) });
+    }
+    if (created && order.currency !== 'usd') await raiseException(db, cfg, `currency:${order.number}`, `orders [currency]: ${order.number} is in ${order.currency.toUpperCase()}`, `Stripe charged ${order.currency.toUpperCase()} for ${order.number}; the books and the sales-tax table count every order as USD cents. Check the Payment Link's currency, and correct the ledger by hand if this was real: ${cfg.baseUrl}/orders/${order.id}`);
+    // Sold past the cap or the shelf: the order stands (the customer paid), it is tagged so the Pack bench and the
+    // list show it, and an exception says by how much — the fix is parts, a cap, or a mail and a refund, a human's call.
+    if (created && order.items.length && catalog) {
+      const over = oversoldLines(db, order, catalog, { tz: cfg.tz });
+      if (over.length) {
+        setTags(db, order.id, `${order.tags || ''},oversold`); const why = over.map(x => `${x.sku}: ${x.short} short (${x.why})`).join('; ');
+        addEvent(db, order.id, { kind: 'note', actor: 'stripe', text: `Oversold — ${why}` });
+        await raiseException(db, cfg, `oversold:${order.number}`, `orders [oversold]: ${order.number} needs more than is there`, `${why}\n\nThe customer has paid. Make or receive the parts and pack it late (tell them the new date), raise the week's cap if it was wrong, or refund it in Stripe: ${cfg.baseUrl}/orders/${order.id}`);
+      }
+    }
     if (created && !order.items.length) await raiseException(db, cfg, `stripe:line-items:${order.number}`, `orders [no line items]: ${order.number}`, `Stripe's webhook carried no line_items for ${m.external_id} and they could not be fetched${cfg.stripeApiKey ? '' : ' (STRIPE_API_KEY is not set)'}. The order is recorded with no items and cannot be packed until they are added — see ${cfg.baseUrl}/orders/${order.id}.`);
     return { order: order.number, created, items: order.items.length };
   }
   if (m.kind === 'refund') {
     // A refund names the PaymentIntent (or the charge); a Checkout order is stored under its session id too.
     const o = db.get('SELECT * FROM orders WHERE payment_intent = ? OR external_id = ? OR external_id = ?', m.external_id, m.external_id, m.charge || '');
-    if (!o) return { ignored: 'unknown order' };
+    // No order yet: Stripe can deliver the refund before the session's own event (or the order's event failed). A
+    // refusal makes Stripe retry for three days, by which time the order is here; the retry then applies. The
+    // stripe:failed exception the pipeline raises names it meanwhile, and resolves on the delivery that works.
+    if (!o) throw new Error(`refund for ${m.external_id}: no order carries that PaymentIntent yet — retried until one does`);
     const delta = m.refunded_cents - o.refunded_cents; if (delta > 0) refund(db, o.id, delta, { actor: 'stripe', reason: 'stripe' });
     return { order: o.number, refunded_cents: m.refunded_cents };
   }
+  if (m.kind === 'dispute') {
+    // A chargeback: the money is already held back. The order is tagged, the timeline says so, an exception carries
+    // the evidence deadline; when Stripe closes it the exception resolves with the outcome (a loss is a refund the
+    // charge.refunded event does not send, so it is recorded here).
+    const o = db.get('SELECT * FROM orders WHERE payment_intent = ? OR external_id = ? OR external_id = ?', m.external_id || '', m.external_id || '', m.charge || '');
+    if (!o) return { ignored: 'dispute on an unknown charge', dispute: m.dispute };
+    if (m.type === 'charge.dispute.created') {
+      setTags(db, o.id, `${o.tags || ''},disputed`);
+      addEvent(db, o.id, { kind: 'note', actor: 'stripe', text: `Disputed — ${m.reason || 'no reason given'} · ${(m.amount_cents / 100).toFixed(2)} USD${m.due ? ` · evidence due ${m.due}` : ''} (${m.dispute})` });
+      await raiseException(db, cfg, `dispute:${o.number}`, `orders [dispute]: ${o.number} charged back (${m.reason || 'no reason'})`, `${(m.amount_cents / 100).toFixed(2)} USD is held back by the card network.${m.due ? ` Evidence is due ${m.due}.` : ''} Submit it in the Stripe dashboard (the tracking number, the signed-for delivery, the correspondence on ${cfg.baseUrl}/orders/${o.id}); this clears when Stripe closes the dispute.`);
+    } else if (m.type === 'charge.dispute.closed') {
+      const lost = m.status === 'lost';
+      addEvent(db, o.id, { kind: 'note', actor: 'stripe', text: `Dispute ${m.status || 'closed'}${lost ? ` — ${(m.amount_cents / 100).toFixed(2)} USD taken back` : ''} (${m.dispute})` });
+      if (lost && m.amount_cents > o.refunded_cents) refund(db, o.id, m.amount_cents - o.refunded_cents, { actor: 'stripe', reason: 'dispute lost' });
+      await resolveException(db, cfg, `dispute:${o.number}`, `Closed: ${m.status || 'closed'}.`);
+    }
+    return { order: o.number, dispute: m.dispute, status: m.status };
+  }
   if (m.kind === 'subscription') { const s = upsertSubscription(db, m); return { subscription: s.id, status: s.status }; }
-  if (m.kind === 'payout') { postPayout(db, { id: m.external_id, date: m.arrival || undefined, amount_cents: m.amount_cents }); return { payout: m.external_id }; }
+  if (m.kind === 'payout') {
+    // The webhook says what reached the bank; the fee Stripe kept is on the balance transactions, read with an
+    // API key. Without one the fee is 0 here and the daily reconcile job is what posts it — it skips a payout
+    // already in the books, so the two never post the same payout twice.
+    let fee = 0; try { fee = (await payoutFee(cfg, m.external_id, { fetchImpl: app.fetchImpl || timedFetch }))?.fee_cents ?? 0; } catch (e) { db.audit('stripe', 'payout.fee.failed', 'payout', m.external_id, { error: String(e.message || e) }); }
+    const posted = postPayout(db, { id: m.external_id, date: m.arrival || undefined, amount_cents: m.amount_cents, fee_cents: fee }); return { payout: m.external_id, posted: !!posted, fee_cents: fee };
+  }
   if (event?.type === 'invoice.paid' && event.data?.object?.subscription) {
     const o = event.data.object; const sub = typeof o.subscription === 'string' ? o.subscription : o.subscription?.id;
     const posted = postSubscriptionPayment(db, { external_id: sub, invoice_id: o.id, amount_cents: o.amount_paid || 0, date: new Date((o.created || Date.now() / 1000) * 1000).toISOString().slice(0, 10) });
     return { subscription_payment: sub, posted: !!posted };
   }
   return { ignored: m.type || m.kind };
+}
+
+// true: this delivery owns the event (a fresh id, or a claim another delivery left in flight for over
+// a minute). 'applied': it is done, answer duplicate. 'inflight': another delivery is on it right now.
+export function claimStripeEvent(db, event, { staleMs = 60_000, now = Date.now() } = {}) {
+  const at = new Date(now).toISOString();
+  if (db.run('INSERT OR IGNORE INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)', event.id, event.type || '', at).changes) return true;
+  if (db.run('UPDATE stripe_events SET received_at = ? WHERE id = ? AND applied_at IS NULL AND received_at < ?', at, event.id, new Date(now - staleMs).toISOString()).changes > 0) return true;
+  return db.get('SELECT applied_at FROM stripe_events WHERE id = ?', event.id)?.applied_at ? 'applied' : 'inflight';
 }
 
 // A redirect target is accepted only when it parses and its origin IS the site's.
@@ -257,7 +391,7 @@ export function safeLocalPath(referer) {
   return /^\/(?!\/)[A-Za-z0-9/._~-]*$/.test(u.pathname) ? u.pathname : null;
 }
 
-const corsHeaders = (cfg) => ({ 'Access-Control-Allow-Origin': cfg.siteOrigin, 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type', Vary: 'Origin' });
+const corsHeaders = (cfg) => ({ 'Access-Control-Allow-Origin': cfg.siteOrigin, 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type', Vary: 'Origin' });
 
 const API_INDEX = ['GET /api/snapshot', 'GET /api/analytics?days=7|30|90|365', 'GET /api/search?q=', 'GET /api/orders?status=&batch=&q=&tag=&from=&to=&discount=&sku=', 'GET /api/orders/:number', 'POST /api/orders {…, discount_code, tags}', 'POST /api/orders/:number/transition {to, carrier, tracking}', 'POST /api/orders/:number/refund {cents, reason}',
   'GET /api/orders/:number/events', 'POST /api/orders/:number/note {body}', 'POST /api/orders/:number/tags {tags}', 'GET /api/batches', 'GET /api/customers?q=&tag=&segment=&sort=', 'GET /api/customers/:id', 'POST /api/customers/:id/tags {tags}',
@@ -270,10 +404,10 @@ const API_INDEX = ['GET /api/snapshot', 'GET /api/analytics?days=7|30|90|365', '
 
 export const plain = (cfg, title, bodyHtml) => layout({ title, body: `<p>${bodyHtml}</p><p><a href="${e(cfg.siteOrigin)}">← back to ${e(cfg.product || 'the site')}</a></p>`, company: cfg.company, nav: false, demo: cfg.demo });
 
-function loginPage(cfg, err, ready, demo = null) {
-  const hint = demo ? `<div class="flash"><b>Demo mode — synthetic data, nothing leaves this machine.</b><br>The form is filled in: password <code>${e(demo.password)}</code>, authenticator code <code>${e(demo.code)}</code> right now (it changes every 30 s — reload if a login is refused). Just press <b>Log in</b>.</div>` : '';
-  return layout({ title: 'Log in', company: cfg.company, nav: false, demo: !!demo, demoResetMinutes: cfg.demoResetMinutes, body: hint + (ready
-    ? `${err ? '<div class="flash err">Wrong password or code.' + (demo ? ' The code has probably rolled over — this page now carries the current one; press Log in again.' : '') + '</div>' : ''}<form method="post" action="/login" class="box"><label for="pw">Password</label><input id="pw" type="${demo ? 'text' : 'password'}" name="password" value="${demo ? e(demo.password) : ''}" required autocomplete="current-password"><label for="code">Authenticator code</label><input id="code" name="code" value="${demo ? e(demo.code) : ''}" inputmode="numeric" pattern="[0-9]{6}" required autocomplete="one-time-code"><div style="margin-top:.8rem"><button>Log in</button></div></form>`
+function loginPage(cfg, err, ready, ok = null, demo = null) {
+  const hint = demo ? `<div class="flash"><b>Demo mode — synthetic data, nothing leaves this machine.</b><br>The form is filled in: password <code>${e(demo.password)}</code>, authenticator code <code>${e(demo.code)}</code> right now (it changes every 30 s — reload if a login is refused). Just press <b>Log in</b>.<br><span class="muted">Every demo person shares that password and authenticator, so you can see what each role may do: ${demo.users.map(u => `<a href="/login?as=${encodeURIComponent(u.email)}">${e(u.name)}</a> (${e(u.role)})`).join(' · ')}.</span></div>` : '';
+  return layout({ title: 'Log in', company: cfg.company, nav: false, demo: !!demo, demoResetMinutes: cfg.demoResetMinutes, flash: ok ? { text: ok } : null, body: hint + (ready
+    ? `${err ? '<div class="flash err">Wrong password or code.' + (demo ? ' The code has probably rolled over — this page now carries the current one; press Log in again.' : '') + '</div>' : ''}<form method="post" action="/login" class="box"><label for="email">Email <span class="muted">(leave empty if you are the only person here)</span></label><input id="email" type="email" name="email" value="${demo ? e(demo.email) : ''}" autocomplete="username"><label for="pw">Password</label><input id="pw" type="${demo ? 'text' : 'password'}" name="password" value="${demo ? e(demo.password) : ''}" required autocomplete="current-password"><label for="code">Authenticator code</label><input id="code" name="code" value="${demo ? e(demo.code) : ''}" inputmode="numeric" pattern="[0-9]{6}" required autocomplete="one-time-code"><div style="margin-top:.8rem"><button>Log in</button></div></form>`
     : '<p>No operator yet. On the server, run <code>backoffice setup</code> to set the password and get the authenticator QR.</p>') });
 }
 
@@ -306,3 +440,19 @@ function invoicePage(cfg, inv) {
 <tfoot><tr><td colspan="3" class="num">Subtotal</td><td class="num">${money(inv.subtotal_cents)}</td></tr><tr><td colspan="3" class="num">Shipping</td><td class="num">${money(inv.shipping_cents)}</td></tr><tr><td colspan="3" class="num">Tax</td><td class="num">${money(inv.tax_cents)}</td></tr><tr><td colspan="3" class="num"><b>Total (USD)</b></td><td class="num"><b>${money(inv.total_cents)}</b></td></tr></tfoot></table>
 <p>${e(inv.notes || '')}</p><p class="muted">Pay by ACH or check to the remittance details ${cfg.remittance ? 'below' : 'in the covering email'}.</p>${cfg.remittance ? `<pre>${e(cfg.remittance)}</pre>` : ''}<p class="muted">Print this page for a PDF.</p>` });
 }
+
+const ORDER_TPL = `Hi {{name}},
+
+We have your order {{number}}:
+
+{{items}}
+
+It goes out in the batch that closes {{closes}} and ships {{ships}}; expect it {{arrives}} — an estimate, not a promise. You'll get the tracking number the day it ships.
+
+Where it is, any time: {{status_url}}
+
+Anything wrong, missing or broken: reply to this mail. We fix; we don't ask you to send things back.
+
+— {{company}}
+{{support}}
+`;

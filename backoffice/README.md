@@ -31,7 +31,7 @@ already chose it. Everything *around* Stripe is here.
 | A status page + uptime monitor (Statuspage, UptimeRobot) | **Status** | HTTP probes, 90-day uptime, incidents, public `/status` and `/status.json` |
 | Form backends (Formspree) | **Forms** | `/forms/contact`, `/waitlist`, `/request`, `/feedback`, `/press`, `/wholesale` — honeypot + rate limit, straight into tickets and the waitlist |
 | An ops dashboard (Metabase, Baremetrics) | **Home** | what needs doing today, the last 30 days against the 30 before, a sales chart, the activity feed. **Not** visitor analytics — the site has none and never will |
-| Order management (Shopify's order admin) | **Orders** | status tabs with counts, filters by batch / tag / date / code / SKU, a timeline per order (placed, packed, shipped, refund, notes, tags, address changes, boards scanned), bulk pack / tag / print, packing slips, re-send tracking, the weekly **Batches** page, one search box over everything |
+| Order management (Shopify's order admin) | **Orders** | status tabs with counts, filters by batch / tag / date / code / SKU, a timeline per order (placed, packed, shipped, refund, notes, tags, address changes, boards scanned), bulk tag / print / deliver / cancel (never bulk pack — the bench ticks each line), packing slips, re-send tracking, the weekly **Batches** page, one search box over everything |
 | Alerting (PagerDuty) | **Exceptions** | doc 20, principle 4: thresholds open one deduplicated GitHub issue and close it themselves. Silence means healthy |
 | Backups you can trust | **Backups** | every copy is opened and proven (integrity, row counts, the books balanced); an off-site copy to any S3-compatible bucket, sealed with AES-256-GCM before it leaves, read back with a HEAD; a weekly drill pulls the latest copy down and proves it boots; `backoffice restore` is one command |
 | Reconciliation | **Reconcile** | daily, with a restricted Stripe key: every paid payout is in the books (posted automatically), every successful charge has an order — a gap is an exception with the ids |
@@ -45,7 +45,8 @@ already chose it. Everything *around* Stripe is here.
 | A human-in-the-loop queue | **Decide (on Home)** | the system drafts the next move and says why — approve a drafted PO, send the one in-stock mail, answer a ticket with the canned reply that matches, mark a week-old parcel delivered, remind about an overdue invoice — one button each; nothing acts on its own, and a card disappears when its condition clears |
 | A privacy desk (GDPR tooling) | **Customers** | the right to a copy (everything held about a person as one JSON) and the right to be forgotten (name, addresses, messages, attachments and mail blanked in one transaction; order numbers, amounts and dates kept so the books still add up), both logged |
 | Attachments in a helpdesk | **Support** | the photo of the warped lid and the PDF of the purchase order travel with the mail, stored with the message (images, PDFs and text, 5 MB each), shown inline, served same-origin and sandboxed |
-| An admin login | **Auth** | one operator, password + authenticator code, lockout after eight failures, strict cookies, CSRF plus a cross-site refusal, read-only or read-write bearer tokens. The whole model is in [`SECURITY.md`](SECURITY.md) |
+| User accounts and permissions (what every SaaS charges per seat for) | **People** | each person with their own password and authenticator, invited by a link that works once (they set their own password and scan a QR off the page — no QR service, the code is drawn here), four roles checked on every request (owner, ops, support, viewer), every action written down under the person's name, lockout per address and per person, a role change or a disable that applies to live sessions at once, *Your account* for password and authenticator rotation |
+| An admin login | **Auth** | password + authenticator code for everyone, lockout after eight failures, strict cookies, CSRF plus a cross-site refusal, read-only or read-write bearer tokens. The whole model is in [`SECURITY.md`](SECURITY.md) |
 
 What is deliberately **not** here: the attestation service (LICENSING.md §2b
 is a product service with a timestamping authority behind it, not back-office
@@ -61,11 +62,14 @@ git clone https://github.com/kmay89/securaCV && cd securaCV/backoffice
 npm run demo            # wipes ./data-demo, seeds a synthetic week, serves http://127.0.0.1:8787
 ```
 
-The login form comes filled in (password `demo1234`, the current
-authenticator code) — press **Log in**. Sixty days of a small company are
+The login form comes filled in (the demo owner's email, password `demo1234`,
+the current authenticator code) — press **Log in**. The demo people (an
+owner, an ops person, a support person, a viewer, one open invitation) share
+that password and authenticator so you can log in as any of them and see
+what each role may do. Sixty days of a small company are
 waiting: ~45 orders across nine weekly batches, repeat buyers, five discount
 codes, a refund and a cancellation, answered tickets, the books balanced.
-Every page carries a yellow **DEMO MODE** banner, and **Demo scenarios** in
+Every page carries a **Demo** banner (every name, order and dollar is synthetic), and **Demo scenarios** in
 the nav is a page of buttons that push synthetic events through the real
 code paths: a signed Stripe webhook that creates an order, a refund, a
 payout, an inbound support email, a customer reply, an out-of-office
@@ -95,10 +99,8 @@ to main. Pick one:
 
 | Where | Cost | How |
 |---|---|---|
-| Fly.io | free allowance | from `backoffice/`: `fly apps create <name>` then `fly deploy --config deploy/fly.toml --app <name>` (builds on Fly's remote builder; no local Docker) → `https://<name>.fly.dev` |
-| Fly.io, no terminal | free allowance | Fly dashboard → Account → Tokens → create one; add it to this repo as the secret `FLY_API_TOKEN`; Actions → "Backoffice demo → Fly.io" → Run workflow. It creates the app and a 1 GB data volume, deploys **one** machine on it, and redeploys on every merge that touches `backoffice/`. (One machine matters: two would be two databases, and a login on one is unknown to the other — the "every other page bounces to the login screen" symptom.) |
-| Render | free tier (sleeps when idle, ~30 s to wake) | New → Blueprint → this repo; `backoffice/deploy/render.yaml` is read automatically |
-| Any VPS with Docker | ~$4–6/month | point a DNS name at it, then `DEMO_HOST=demo.example.com docker compose -f backoffice/deploy/docker-compose.demo.yml up -d` (Caddy gets the certificate) |
+| **Your own server (the way we run it)** | ~$4–6/month for the box, everything else $0 | [`infra/`](../infra/README.md): one small VPS, Caddy at the edge, every app a container, deploys on merge. `kit app add backoffice`, `kit site add ops.example.com backoffice:8787`, `kit deploy backoffice latest`. The public demo is the same image as a second app (`backoffice-demo`) on its own hostname. |
+| Render | free tier (sleeps when idle, ~30 s to wake) | New → Blueprint → this repo; `backoffice/deploy/render.yaml` is read automatically (demo only: the free tier has no disk) |
 | A laptop, for a meeting | — | `docker run --rm -e BACKOFFICE_DEMO=1 -p 8787:8787 ghcr.io/kmay89/securacv-backoffice` |
 
 The login page shows the demo credentials, so anyone with the link can
@@ -132,8 +134,9 @@ Node 22.13 or newer is the only requirement.
 Then, once each:
 
 1. **Stripe → Developers → Webhooks** → endpoint `BASE_URL/webhooks/stripe`,
-   events `checkout.session.completed`, `charge.refunded`, `payout.paid`,
-   `customer.subscription.*`, `invoice.paid`. Paste the signing secret into
+   events `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+   `charge.refunded`, `charge.dispute.created`, `charge.dispute.closed`,
+   `payout.paid`, `customer.subscription.*`, `invoice.paid`. Paste the signing secret into
    `.env`. Put the store SKU in each Payment Link product's **metadata** as
    `sku` — that is how a line item resolves to `store.json` without guessing.
 2. **The support mailbox**: an app password for SMTP and IMAP on the address
@@ -167,6 +170,145 @@ Nothing above types a SKU, an address, or a price by hand: the catalog is
 `store.json`, the address is what Stripe collected, COGS is frozen from the
 store's `cogs` recipe at the moment of sale.
 
+### The first order, from nothing — and the test that keeps it true
+
+`/demo/first-order` (demo mode) empties the database to day zero (the people
+stay) and walks one synthetic customer through the whole chain a step at a
+time: the first parts received, the first boards flashed, a question through
+the website form and its answer, the Checkout sale by signed webhook (and
+Stripe's retry of it, applied once), the bench with its checks, the label
+from the manifest, the mail, the carrier saying delivered, the follow-up
+automation, a warranty fix through the same bench, a partial refund, a
+payout, the week's jobs and the doctor. Every step runs the real code path
+and shows what it did, where to look and what it checked.
+
+The steps live once, in `src/modules/walkthrough.mjs`, and
+`tests/first_order.test.mjs` runs the same list end to end and holds every
+check. **A new flow is a new step there**: write what it does, how to look,
+and what must be true afterwards, and the demo page, the test and
+`backoffice first-order` (the shell) all get it.
+
+### Your phone is the scanner
+
+No scanner, no app: the iPhone's own camera reads a QR code and opens the link,
+and the backoffice is already a web page. Log in once on the phone's browser
+(the session lasts `SESSION_HOURS`, 12 by default) and the codes do the rest.
+
+- **The packing slip carries a code** (`/q/o/<number>`). Scan it and the order
+  opens where it stands: the pack bench if it is paid, the ship bench if it is
+  packed, the order page once it has shipped. So the slip in your hand is the
+  order on the screen, and a tracking number goes to the box it belongs to.
+- **Each board gets a label** — Devices → "Print board labels", a QR and the
+  serial per sticker (`/q/b/<serial>`). Scan one with the pack bench open on an
+  order and the phone shows the board, the order and one button: "Put … into
+  EL-…". A board the order does not ask for, or one more than it holds, shows
+  why instead of the button. Scanning a board with no bench open just shows the
+  board — where it is, which order has it — which is also how a returned unit
+  is looked up. A scan never changes anything by itself; the tap posts the same
+  form the bench does.
+- **Ship the batch from the manifest.** The website's `fulfill.mjs --buy` buys
+  the labels and writes `manifest.json`; paste it at the ship bench and every
+  packed order it names is shipped with its tracking and label cost, and the
+  customers get their mail. The same manifest twice changes nothing; an order
+  it names that is not packed, or already shipped with another number, is
+  reported by name and the rest still goes.
+
+Three things to know before the first batch. Use Safari itself on the phone,
+not a copy added to the home screen (iOS keeps those cookie jars apart, and the
+camera opens links in Safari). The Health page says whether
+`BACKOFFICE_BASE_URL` is a real address — the codes encode it, and the default
+points at the machine itself. And a second tap on a bench button is never an
+error: an order already packed says so and nothing moves twice.
+
+The codes are made here (`src/qr.mjs`, the same encoder the authenticator
+enrollment page uses; `tests/users.test.mjs` holds it to a reference encoder
+bit for bit), so a slip never carries a code the phone cannot read. They encode
+`BACKOFFICE_BASE_URL`, so set it to the address the phone reaches.
+
+### The storefront's server half
+
+The website is static; what it cannot know on its own it asks here, over
+four public routes (CORS to `SITE_ORIGIN`): `GET /store/catalog` (price,
+what is sellable now and how many, when the current batch closes and ships),
+`GET /store/estimate?zip=` (the sentence a shopper reads before paying:
+"Order by Sunday 11 pm · ships Tue, Oct 27 · arrives Oct 29–Oct 31"),
+`POST /store/checkout` (the cart → a hosted Stripe Checkout Session, the only
+place a card is ever typed) and `GET /store/session/:id` (what the thanks page
+shows once the webhook has recorded the order).
+
+- **Stock is not a number typed in `store.json`.** What is sellable now is the
+  batch cap (`stock` in `store.json`) minus what this batch has sold, and never
+  more than the shelf can build once the orders already paid but not yet
+  packed have taken their parts. A kit carrying `authorization: pending-fcc`
+  is refused at checkout, by name, whatever the site shows.
+- **The ship date is the batch cadence** — `BATCH_CLOSE_DAY` at
+  `BATCH_CLOSE_HOUR` in `OPERATOR_TZ`, shipping `BATCH_SHIP_DAY` (Sunday 11 pm
+  → Tuesday unset) — and **the arrival window is the same estimate** the
+  order page and the tracking mail use after shipping, counted from the ship
+  date. One method, before and after the sale. The Checkout Session carries
+  both on its shipping option, so Stripe's page says the same thing.
+- **The sale lands by webhook as before**; a site order also gets "We have
+  your order" with the batch, the ship date, the window and the status link.
+- **Tax.** `TAX_MODE=none` collects nothing, which is only right while you owe
+  sales tax nowhere; `TAX_MODE=stripe` turns on Stripe Tax (computed by the
+  shipping address at checkout, a per-transaction fee), which is the honest
+  setting from the first taxable sale. The books carry whatever Stripe
+  collected either way.
+- **Demo mode takes no payments**: `/store/checkout` answers 503 and the site
+  falls back to its own cart; the walkthrough drives `createCheckout` against
+  a stub Stripe instead. `tests/storefront.test.mjs` holds the cadence across
+  zone and weekday boundaries, ZIP → state, availability, every refusal, the
+  exact session Stripe is asked for, and the routes.
+
+### The pack bench is a gate
+
+One or two people pack here, so the bench does not try to be a warehouse
+system; it makes the four mistakes that cost a reship refusable by name. The
+box card shows the carton, its inside size and the weight it should read, large.
+Each line is a tick as it goes in. The lines that ship a pre-flashed board say
+how many, and the board card counts the scans against that — a board flashed for
+a different kit, or one more than the order holds, is refused at the scan (with
+a × to take one back out). The scale field is checked against the plan. The
+"Packed" button stays dim until all of that is done, and the server checks the
+same proof when the form posts, so the gate holds without the browser's help.
+"Pack anyway" exists for the day something is off and the box must still go; it
+needs a reason, and what was skipped goes on the timeline with it. How many
+boards a line needs comes from the data, never a guess: its recipe's board
+parts (a SKU some registered board carries as its `board`), or, with no recipe,
+one per unit when registered boards are flashed for that SKU. Unknown data gates
+nothing. The order page's "Mark packed" sends you to the bench for that order.
+
+### How the shipping numbers are made
+
+Three numbers show up around an order, and each has one source.
+
+- **The box.** The website's `shipping.json` (next to `store.json`; `SHIPPING_JSON`
+  overrides the path or URL) holds the carton catalog with inner dimensions and
+  each SKU's packed parcel. `src/modules/packing.mjs` is a port of the website's
+  `scripts/box-fit.mjs` — first-fit decreasing, a box fits when every parcel fits
+  by sorted dimensions and the summed volume stays under the inner volume × the
+  fill factor, the plan is the cheaper of "one box" and "greedy by cost per packed
+  volume", a box is priced by billable weight (actual or dimensional, whichever is
+  greater) off the Ground Advantage tiers, a flat-rate box by its flat price — and
+  `tests/fixtures/boxfit_expected.json` is that script's own output on eighteen
+  orders, which the port must reproduce. The plan is made from the lines when an
+  order is **packed** and frozen on it (`pack_plan`); the pack bench, the ship
+  bench, the packing slip and the fulfill CSV (`box`, `expected_oz`, `pieces`,
+  `service`) all read the same plan. A multi-line order is one shipment: its
+  boxes are planned together, and the CSV says how many lines it has so the label
+  tool does not make one label per row.
+- **The scale.** At either bench a measured weight is checked against the plan;
+  past the tolerance (`fulfillment.weight_tolerance_oz` in `store.json`, 1.5 oz
+  when unset) the pack or ship is refused with the delta — a missing or extra
+  item is the usual cause — unless "anyway" is ticked, and then the timeline says so.
+- **The postage.** The plan's cost is an estimate for a mid zone (the file says
+  which); the label's real price, typed at the ship bench, is booked to
+  `expenses:postage` and shown beside the shipping the customer paid. The
+  **delivery estimate** the customer sees is bands by state from
+  `SHIP_FROM_STATE` (the website's `fulfillment.ship_from.state` when unset),
+  two to seven business days, replaced by the carrier's own word when USPS
+  tracking is configured.
+
 ## How each piece behaves (the rules it keeps)
 
 - **Orders** — one row per shipment; an unknown SKU is a refused order, not a
@@ -197,7 +339,9 @@ store's `cogs` recipe at the moment of sale.
 - **Privacy** — contacts exist because they bought, wrote or asked. No
   tracking pixels, no open/click beacons, no third party sees the list. Mail
   is plain text. The admin sets `noindex` and every cookie is `HttpOnly;
-  SameSite=Strict`.
+  SameSite=Lax` (Lax so a code the phone's camera scans opens the bench
+  logged in; every write is a POST under the CSRF token and the cross-site
+  refusal).
 
 ## Layout
 
@@ -228,7 +372,7 @@ the business logic, the HTTP surface or a form cannot merge.
 |---|---|---|
 | Unit + module tests | every rule in every module: books balance, SKUs resolve, consent is enforced, TOTP matches RFC 6238, mail threads, probes raise and resolve. Fakes stand in for SMTP, IMAP, Stripe and GitHub, so no network, no credentials | `npm test` (under a second) |
 | End-to-end over HTTP | the server as a client sees it: login + CSRF, public forms, a signed Stripe webhook creating an order, the bearer API driving it to shipped, unsubscribe, invoice links | part of `npm test` (`tests/server.test.mjs`) |
-| The admin in a real browser | the forms as a person submits them — log in, ship an order, answer a ticket from a canned reply, receive stock, post an expense, note and tag an order, create and try a discount code, tag a customer, read a product, the analytics charts, the header search, bulk-pack a batch, log out — with zero page or console errors. This is the layer that catches a button whose form is missing a field | `npm i --no-save playwright && npx playwright install chromium`, then `npm test`; it skips (and says so) when Playwright is absent, and CI makes a skip a failure |
+| The admin in a real browser | the forms as a person submits them — log in, ship an order, answer a ticket from a canned reply, receive stock, post an expense, note and tag an order, create and try a discount code, tag a customer, read a product, the analytics charts, the header search, bulk-tag a batch, log out — with zero page or console errors. This is the layer that catches a button whose form is missing a field | `npm i --no-save playwright && npx playwright install chromium`, then `npm test`; it skips (and says so) when Playwright is absent, and CI makes a skip a failure |
 | You, on the demo | anything the tests did not think of | `backoffice demo` → `serve` → click around |
 
 The pattern for adding coverage: a bug found by hand becomes an assertion
@@ -259,3 +403,22 @@ the admin shows, `/api/snapshot` returns.
 The company is `data/backoffice.db`. Restore is `cp`. Leaving is `sqlite3
 backoffice.db .dump`, or the ledger/orders CSV exports — there is no export
 fee and no format that is ours alone.
+
+## On a phone and an iPad
+
+The admin is one HTML layout for every screen, and `tests/mobile.test.mjs`
+holds it to the rules that make it usable with a thumb, on every section
+and the detail pages a day's work lands on, at a phone's width and an
+iPad's: no page is wider than the screen (a wide table scrolls inside its
+own box), every navigation link, button and field is at least 40 px tall,
+every field is 16 px type or larger (iOS zooms the page when a smaller one
+is focused), no text is under 12 px, and a table of five or more columns
+folds into cards on a phone — the first named column leads, every other
+cell carries its own label — so nothing needs a sideways scroll to read.
+Fields open the keyboard they need (digits for counts and money, a decimal
+pad for a scale reading, no autocorrect on serials and tracking numbers).
+The pack and ship benches and the phone-scanner pages were built for a
+phone first; the rest follows these rules by construction, so a new page
+made from `layout()`, `table()` and `field()` passes without thought, and
+one that does not fails the test by name.
+

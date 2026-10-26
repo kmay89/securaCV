@@ -1,0 +1,5 @@
+# The backoffice. `kit site add ops.securacv.com backoffice:8787` writes exactly this.
+ops.securacv.com {
+	import secure
+	reverse_proxy backoffice:8787
+}

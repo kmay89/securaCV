@@ -2,8 +2,8 @@
 // "buildable", recalls by batch or firmware, ticket attachments, the right to
 // be forgotten, and the Decide queue on Home — the system drafts, a person
 // approves. Same conventions: server-rendered, plain forms, no script.
-import { text, json, HttpError, escapeHtml as e } from './http.mjs';
-import { table, money, dt, day, statusPill, field, form, button, cards, tabs } from './render.mjs';
+import { text, json, HttpError, escapeHtml as e, int, asArray } from './http.mjs';
+import { table, money, dt, day, statusPill, field, form, button, cards, tabs, meta } from './render.mjs';
 import { tile, hbars } from './charts.mjs';
 import { stateTileMap } from './statemap.mjs';
 import { marketing } from './modules/marketing.mjs';
@@ -18,6 +18,7 @@ import { editItems } from './modules/orders.mjs';
 import { trackingConfigured, pollTracking } from './modules/shipping.mjs';
 import { orderToken } from './modules/delivery.mjs';
 import { listItems } from './modules/inventory.mjs';
+import { timedFetch } from './net.mjs';
 
 const KIND_LABEL = { purchasing: 'Purchasing', sales: 'Sales', support: 'Support', orders: 'Orders', books: 'Books', mail: 'Mail' };
 
@@ -41,10 +42,10 @@ export function registerMore(app, { page, back, link, filters, backTo }) {
     const maps = `<div class="two">${stateTileMap(m.byState, { title: 'Customers by state', fmt: (v) => String(v), sub: Object.fromEntries(Object.entries(m.ordersByState).map(([k, v]) => [k, `${v} order${v === 1 ? '' : 's'}`])) })}${stateTileMap(m.salesByState, { title: 'Sales by state', fmt: (v) => money(v) })}</div>`;
     const cities = table(m.cities, [{ label: 'Place', key: 'place' }, { label: 'Customers', key: 'customers', num: true }, { label: 'Sales', get: r => money(r.sales), num: true }], { empty: 'No shipped orders yet.' });
     const camps = table(m.campaigns, [{ label: 'Campaign', html: r => link(`/campaigns/${encodeURIComponent(r.slug)}`, r.subject) }, { label: 'Sent', get: r => day(r.sent_at) }, { label: 'To', get: r => r.report.sent || 0, num: true }, { label: 'Replies', get: r => r.report.replies, num: true }, { label: 'Orders, 7 d', get: r => r.report.orders, num: true }, { label: 'Revenue', get: r => money(r.report.revenue_cents), num: true }, { label: 'Unsubscribed', get: r => r.report.unsubscribed, num: true }], { empty: 'Nothing sent yet.' });
-    const autos = table(m.automations, [{ label: 'Automation', html: r => link('/automations', r.name) }, { label: 'On', html: r => r.enabled ? '<span class="ok">yes</span>' : '<span class="muted">paused</span>' }, { label: 'Sent', get: r => r.report.sent, num: true }, { label: 'Replies', get: r => r.report.replies, num: true }, { label: 'Orders, 7 d', get: r => r.report.orders, num: true }, { label: 'Revenue', get: r => money(r.report.revenue_cents), num: true }], { empty: 'No automations.' });
+    const autos = table(m.automations, [{ label: 'Automation', html: r => link('/campaigns/automations', r.name) }, { label: 'On', html: r => r.enabled ? '<span class="ok">yes</span>' : '<span class="muted">paused</span>' }, { label: 'Sent', get: r => r.report.sent, num: true }, { label: 'Replies', get: r => r.report.replies, num: true }, { label: 'Orders, 7 d', get: r => r.report.orders, num: true }, { label: 'Revenue', get: r => money(r.report.revenue_cents), num: true }], { empty: 'No automations.' });
     const codes = table(m.codes, [{ label: 'Code', html: r => link(`/orders?discount=${encodeURIComponent(r.code)}`, r.code) }, { label: 'Uses', key: 'uses', num: true }, { label: 'Given away', get: r => money(r.given_cents || 0), num: true }, { label: 'Sales with it', get: r => money(r.sales_cents || 0), num: true }], { empty: 'No code has been used.' });
     const a = m.audience;
-    page(c, 'Marketing', `${funnel}<div class="two">${sources}<div class="card viz"><div class="k">The audience, ${days} days</div><table style="box-shadow:none"><tr><td>Subscribers (opted in, not bounced)</td><td class="num"><b>${a.subscribers}</b></td></tr><tr><td>Joined in the period</td><td class="num">${a.joined}</td></tr><tr><td>Left in the period</td><td class="num ${a.left ? 'warn' : ''}">${a.left}</td></tr><tr><td>Bounced, suppressed</td><td class="num ${a.bounced ? 'warn' : ''}">${a.bounced}</td></tr><tr><td>Awaiting double opt-in</td><td class="num">${a.pending}</td></tr></table><p class="muted">${link('/audience', 'Segments and counts')} · ${link('/campaigns', 'Campaigns')} · ${link('/automations', 'Automations')}</p></div></div>
+    page(c, 'Marketing', `${funnel}<div class="two">${sources}<div class="card viz"><div class="k">The audience, ${days} days</div><table style="box-shadow:none"><tr><td>Subscribers (opted in, not bounced)</td><td class="num"><b>${a.subscribers}</b></td></tr><tr><td>Joined in the period</td><td class="num">${a.joined}</td></tr><tr><td>Left in the period</td><td class="num ${a.left ? 'warn' : ''}">${a.left}</td></tr><tr><td>Bounced, suppressed</td><td class="num ${a.bounced ? 'warn' : ''}">${a.bounced}</td></tr><tr><td>Awaiting double opt-in</td><td class="num">${a.pending}</td></tr></table><p class="muted">${link('/campaigns/audience', 'Segments and counts')} · ${link('/campaigns', 'Campaigns')} · ${link('/campaigns/automations', 'Automations')}</p></div></div>
 ${maps}
 <div class="two"><div><h2>Where the customers are</h2>${cities}</div><div><h2>Discount codes</h2>${codes}</div></div>
 <h2>What each campaign did <span class="muted" style="font-weight:400;font-size:13px">· orders and replies from recipients in the seven days after a send; no pixels, no click tracking</span></h2>${camps}
@@ -54,7 +55,7 @@ ${maps}
   router.get('/api/suggestions', (c) => json(c.res, suggestions(db, cfg)));
 
   // ---------- purchasing: what is on order, from whom, arriving when
-  const poLines = (s) => String(s || '').split('\n').map(l => l.split('|').map(x => x.trim())).filter(l => l[0]).map(([sku, qty, cents]) => ({ sku, qty: Number(qty || 1), unit_cost_cents: cents === undefined || cents === '' ? undefined : Number(cents) }));
+  const poLines = (s) => String(s || '').split('\n').map(l => l.split('|').map(x => x.trim())).filter(l => l[0]).map(([sku, qty, cents]) => ({ sku, qty: int(qty, { name: `${sku} qty`, min: 1, fallback: 1 }), unit_cost_cents: cents === undefined || cents === '' ? undefined : int(cents, { name: `${sku} unit cents`, min: 0 }) }));
   router.get('/purchasing', (c) => {
     const st = c.query.get('status') || ''; const rows = listPos(db, { status: st }); const all = listPos(db);
     const n = Object.fromEntries(PO_STATUSES.map(s => [s, all.filter(r => r.status === s).length]));
@@ -73,13 +74,13 @@ ${maps}
     if (p.status === 'draft') acts.push(form(`/purchasing/${p.id}/order`, c.csrf, `<b>Mark ordered</b><p class="muted">You placed it with the supplier (their site, an email, a phone call); this records it so "buildable" can look ahead.</p>${field('expected_at', 'Expected (YYYY-MM-DD)', { type: 'date', value: p.expected_at || '' })}`, { submit: 'Mark ordered' }));
     if (['ordered', 'draft'].includes(p.status)) acts.push(form(`/purchasing/${p.id}/receive`, c.csrf, `<b>Receive</b><p class="muted">Each line moves into stock (ref <code>po:${e(p.number)}</code>) and its value is booked as inventory. Leave a line at its remaining quantity for a full receipt; lower it for a partial one.</p><div class="row">${p.items.map(i => field(`recv_${i.sku}`, `${i.sku} (${i.qty - i.received_qty} open)`, { type: 'number', value: i.qty - i.received_qty })).join('')}</div>${field('paidFrom', 'Paid from', { options: [['assets:bank', 'bank'], ['equity:owner', 'owner (personal card)']] })}`, { submit: 'Receive into stock' }));
     if (p.status !== 'received' && p.status !== 'canceled') acts.push(button(`/purchasing/${p.id}/cancel`, c.csrf, 'Cancel this PO', { quiet: true }));
-    page(c, `${p.number} · ${p.supplier}`, `<p>${statusPill(p.status)} · ${p.supplier_url ? `<a href="${e(p.supplier_url)}" rel="noopener noreferrer">${e(p.supplier)}</a>` : e(p.supplier)} · ${money(p.total_cents)} · created ${dt(p.created_at)} · ordered ${dt(p.ordered_at)} · expected ${e(p.expected_at || '—')} · received ${dt(p.received_at)}</p>${p.notes ? `<p class="muted">${e(p.notes)}</p>` : ''}${lines}${acts.join('')}<p>${link('/purchasing', 'All purchase orders')} · ${link('/inventory', 'Inventory')}</p>`);
+    page(c, `${p.number} · ${p.supplier}`, meta([['Status', statusPill(p.status)], ['Supplier', p.supplier_url ? `<a href="${e(p.supplier_url)}" rel="noopener noreferrer">${e(p.supplier)}</a>` : e(p.supplier)], ['Total', money(p.total_cents)], ['Created', dt(p.created_at)], ['Ordered', dt(p.ordered_at)], ['Expected', e(p.expected_at || '—')], ['Received', dt(p.received_at)]]) + `${p.notes ? `<p class="muted">${e(p.notes)}</p>` : ''}${lines}${acts.join('')}<p>${link('/purchasing', 'All purchase orders')} · ${link('/inventory', 'Inventory')}</p>`);
   });
   router.post('/purchasing/:id/order', (c) => { const p = markOrdered(db, Number(c.params.id), { expected_at: c.body.expected_at || null, actor: 'web' }); backTo(c, `/purchasing/${p.id}`, `${p.number} is ordered${p.expected_at ? `, expected ${p.expected_at}` : ''}`); });
-  router.post('/purchasing/:id/receive', (c) => { const received = Object.fromEntries(Object.entries(c.body).filter(([k]) => k.startsWith('recv_')).map(([k, v]) => [k.slice(5), Number(v)])); const p = receivePo(db, Number(c.params.id), { received, paidFrom: c.body.paidFrom || 'assets:bank', actor: 'web' }); backTo(c, `/purchasing/${p.id}`, `${p.number} ${p.status === 'received' ? 'received in full' : 'partly received'} — stock moved, inventory booked`); });
+  router.post('/purchasing/:id/receive', (c) => { const received = Object.fromEntries(Object.entries(c.body).filter(([k]) => k.startsWith('recv_')).map(([k, v]) => [k.slice(5), int(v, { name: `${k.slice(5)} received`, min: 0, fallback: 0 })])); const p = receivePo(db, Number(c.params.id), { received, paidFrom: c.body.paidFrom || 'assets:bank', actor: 'web' }); backTo(c, `/purchasing/${p.id}`, `${p.number} ${p.status === 'received' ? 'received in full' : 'partly received'} — stock moved, inventory booked`); });
   router.post('/purchasing/:id/cancel', (c) => { const p = cancelPo(db, Number(c.params.id), { actor: 'web' }); back(c, `/purchasing/${p.id}`, `${p.number} canceled`); });
   router.get('/api/purchasing', (c) => json(c.res, listPos(db, { status: c.query.get('status') || '' })));
-  router.post('/api/purchasing', (c) => json(c.res, createPo(db, { ...c.body, actor: c.actor }), 201));
+  router.post('/api/purchasing', (c) => json(c.res, createPo(db, { ...c.body, items: asArray(c.body.items, 'items'), actor: c.actor }), 201));
   router.post('/api/purchasing/draft', (c) => json(c.res, draftReorder(db, { skus: c.body.skus || null, actor: c.actor }), 201));
   router.post('/api/purchasing/:number/:action', (c) => { const p = db.get('SELECT id FROM purchase_orders WHERE number = ?', c.params.number); if (!p) throw new HttpError(404, 'no such purchase order'); const fn = { order: () => markOrdered(db, p.id, { expected_at: c.body.expected_at || null, actor: c.actor }), receive: () => receivePo(db, p.id, { received: c.body.received || null, actor: c.actor }), cancel: () => cancelPo(db, p.id, { actor: c.actor }) }[c.params.action]; if (!fn) throw new HttpError(404, 'action is order, receive or cancel'); json(c.res, fn()); });
 
@@ -129,9 +130,9 @@ ${!r.sent_at && q.customers.length ? `<form method="post" action="/devices/recal
   router.post('/invoices/:id/remind', (c) => { const inv = remindInvoice(db, Number(c.params.id), cfg, { actor: 'web' }); backTo(c, `/invoices/${inv.id}`, `reminder queued for ${inv.number}`); });
   router.post('/api/invoices/:number/remind', (c) => { const inv = db.get('SELECT id FROM invoices WHERE number = ?', c.params.number); if (!inv) throw new HttpError(404, 'no such invoice'); json(c.res, remindInvoice(db, inv.id, cfg, { actor: c.actor })); });
   router.post('/orders/:id/items', async (c) => {
-    const items = String(c.body.lines || '').split('\n').map(l => l.split('|').map(x => x.trim())).filter(l => l[0]).map(([sku, qty]) => ({ sku, qty: Number(qty || 1) }));
+    const items = String(c.body.lines || '').split('\n').map(l => l.split('|').map(x => x.trim())).filter(l => l[0]).map(([sku, qty]) => ({ sku, qty: int(qty, { name: `${sku} qty`, min: 1, fallback: 1 }) }));
     const o = editItems(db, Number(c.params.id), items, { catalog: await app.catalog().catch(() => null), actor: 'web' }); back(c, `/orders/${o.id}`, `items on ${o.number} changed`);
   });
-  router.post('/orders/track', async (c) => { if (!trackingConfigured(cfg)) throw new HttpError(400, 'set USPS_CLIENT_ID and USPS_CLIENT_SECRET first (Settings explains)'); const r = await pollTracking(db, cfg, { fetchImpl: app.fetchImpl || fetch, minAgeH: 0 }); backTo(c, '/ship', `checked ${r.checked} parcel${r.checked === 1 ? '' : 's'}: ${r.delivered} delivered, ${r.alerts} alert${r.alerts === 1 ? '' : 's'}`); });
+  router.post('/orders/track', async (c) => { if (!trackingConfigured(cfg)) throw new HttpError(400, 'set USPS_CLIENT_ID and USPS_CLIENT_SECRET first (Settings explains)'); const r = await pollTracking(db, cfg, { fetchImpl: app.fetchImpl || timedFetch, minAgeH: 0 }); backTo(c, '/ship', `checked ${r.checked} parcel${r.checked === 1 ? '' : 's'}: ${r.delivered} delivered, ${r.alerts} alert${r.alerts === 1 ? '' : 's'}`); });
   router.get('/api/orders/:number/status-url', (c) => { const o = db.get('SELECT * FROM orders WHERE number = ?', c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, { url: `${cfg.baseUrl}/o/${o.number}/${orderToken(cfg.secret, o.number)}` }); });
 }

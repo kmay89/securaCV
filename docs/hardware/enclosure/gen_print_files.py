@@ -11,7 +11,9 @@ says exactly what the bytes are:
     DIR/print/<name>.stl              the parts (binary STL, millimeters)
     DIR/print/print-files.json        version, source commit + date, the
                                       .scad's sha256, each file's bytes,
-                                      sha256, bounding box and triangle count
+                                      sha256, bounding box and triangle count,
+                                      and its revision from the part ledger
+                                      (gen_revisions.py: rev, when, what moved)
 
 The case's version string is read off its own header (the "(v0.3-dev)" on
 line 2), never typed here. The status line says "in development — not
@@ -44,6 +46,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 sys.path.insert(0, str(HERE))
 import scad_probe  # noqa: E402
+import gen_revisions  # noqa: E402  (the part-revision ledger: each file's rev rides along)
 
 # (scad, part -D value, file stem, title, how it prints) — one case today
 JOBS = {
@@ -102,11 +105,44 @@ def openscad_version() -> str:
     return (out.stdout + out.stderr).strip().replace("OpenSCAD version ", "")
 
 
+def _change_lines(ch: dict) -> list[str]:
+    """What the newest rev moved, as the lines the site's print page shows on
+    hover — the ledger's own facts, in words (empty at r1)."""
+    if not ch:
+        return []
+    out = []
+    if ch.get("note"):
+        out.append(ch["note"])
+    out += [f"commit {c}" for c in ch.get("commits", [])]
+    for k in ch.get("knobs", []):
+        if "from" in k and "to" in k:
+            out.append(f"{k['knob']}: {k['from']} -> {k['to']}")
+        elif "to" in k:
+            out.append(f"{k['knob']}: new, {k['to']}")
+        else:
+            out.append(f"{k['knob']}: removed (was {k['from']})")
+    nums = []
+    if ch.get("volume_mm3"):
+        nums.append(f"volume {ch['volume_mm3']:+.1f} mm³")
+    if ch.get("area_mm2"):
+        nums.append(f"surface {ch['area_mm2']:+.1f} mm²")
+    if any(ch.get("bbox_mm") or []):
+        nums.append("envelope " + " × ".join(f"{v:+.1f}" for v in ch["bbox_mm"]) + " mm")
+    if nums:
+        out.append(", ".join(nums))
+    regs = ch.get("regions")
+    if isinstance(regs, list):
+        out.append(f"{len(regs)} changed region(s) on the part" if regs
+                   else ch.get("regions_note", "no region above the voxel size"))
+    return out
+
+
 def build(site: Path) -> dict:
     out_dir = site / "print"
     out_dir.mkdir(parents=True, exist_ok=True)
     entries = []
     sources = []
+    ledger = gen_revisions.load_ledger()
     for scad_name, parts in JOBS.items():
         scad = HERE / scad_name
         src = {
@@ -124,7 +160,7 @@ def build(site: Path) -> dict:
             except scad_probe.ProbeError as e:
                 sys.exit(f"gen_print_files: {e}")
             tris, size = stl_stats(out)
-            entries.append({
+            entry = {
                 "file": out.name,
                 "scad": src["scad"],
                 "part": part,
@@ -134,8 +170,38 @@ def build(site: Path) -> dict:
                 "sha256": sha256_of(out),
                 "triangles": tris,
                 "size_mm": size,
+            }
+            # The part's revision, from canary-local/devices/revisions.json
+            # (gen_revisions.py): the same recipe render.sh renders this part
+            # by, so the rev the site shows is the rev of these bytes. The
+            # ledger is regenerated BEFORE this runs (regen_cad.py's order);
+            # a part it does not know is refused rather than shipped unrevised.
+            hit = gen_revisions.find_part(scad_name, {"part": part}, ledger)
+            if not hit:
+                sys.exit(f"gen_print_files: {out.name} ({scad_name} part={part}) has no entry in "
+                         f"{gen_revisions.OUT_REL} — run gen_revisions.py first")
+            key, rev = hit
+            fresh = gen_revisions.fingerprint(gen_revisions.read_stl(out.read_bytes()))
+            why = gen_revisions.geom_equal(rev["geom"], fresh)
+            if why:
+                sys.exit(f"gen_print_files: {out.name} does not match {key} {rev['rev']} in the ledger ({why}) "
+                         f"— render.sh and gen_revisions.py first, then this")
+            last = rev["history"][-1].get("changes") or {}
+            entry.update({
+                "rev": rev["rev"],
+                "rev_recorded": rev["recorded"],
+                "rev_part": key,
+                "rev_changes": _change_lines(last),
+                # every rev's fingerprint and what it changed, oldest first: what
+                # the print page's "which revision is my STL?" matches a dropped
+                # file against (js/print-files.js), with the ledger's tolerance
+                "rev_history": [{"rev": h["rev"], "recorded": h["recorded"], "geom": h["geom"],
+                                 "changes": _change_lines(h.get("changes") or {})}
+                                for h in rev["history"]],
             })
+            entries.append(entry)
     return {
+        "tolerance": ledger.get("tolerance"),
         "comment": ("GENERATED by docs/hardware/enclosure/gen_print_files.py --site in kmay89/securaCV — "
                     "do not edit. The STLs beside this file are the case's parts rendered at full quality "
                     "from the commit named here; sha256s are of the bytes as written."),
@@ -175,6 +241,7 @@ def check(site: Path) -> list[str]:
         for part, stem, _, _ in parts:
             if f"{stem}.stl" not in listed:
                 bad.append(f"{MANIFEST}: {stem}.stl is not listed")
+    ledger = gen_revisions.load_ledger().get("parts", {})
     for e in m.get("files", []):
         f = out_dir / e["file"]
         if not f.exists():
@@ -182,6 +249,12 @@ def check(site: Path) -> list[str]:
             continue
         if f.stat().st_size != e["bytes"] or sha256_of(f) != e["sha256"]:
             bad.append(f"{f}: bytes differ from the manifest — replaced by hand? re-run --site")
+        # the rev the site shows is the ledger's for these bytes
+        part = ledger.get(e.get("rev_part", ""))
+        if not part:
+            bad.append(f"{MANIFEST}: {e['file']} names no part of {gen_revisions.OUT_REL} (rev_part) — re-run --site")
+        elif part["rev"] != e.get("rev"):
+            bad.append(f"{MANIFEST}: {e['file']} says {e.get('rev')}, the ledger says {part['rev']} — re-run --site")
     return bad
 
 

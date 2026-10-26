@@ -2,10 +2,10 @@
 // The command line is the same company as the web admin — same SQLite file,
 // same functions — so an operator (or an AI operator) can run the whole
 // business from a terminal. `backoffice help` lists everything.
-import { readFileSync } from 'node:fs';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { loadConfig } from '../src/config.mjs';
 import { openDb } from '../src/db.mjs';
-import { setupOperator, createApiToken, revokeApiToken, totpUri, hasOperator } from '../src/auth.mjs';
+import { setupOperator, createApiToken, revokeApiToken, totpUri, hasOperator, listUsers, inviteUser, userByEmail, setRole, setStatus, removeUser, ROLES, ROLE_TEXT } from '../src/auth.mjs';
 import { createApp } from '../src/server.mjs';
 import { startScheduler, runJob, JOBS } from '../src/jobs.mjs';
 import { loadCatalog } from '../src/modules/catalog.mjs';
@@ -22,14 +22,15 @@ import { registerDevice, importManifest, listDevices } from '../src/modules/devi
 import { openClaim, ANSWERS, listClaims } from '../src/modules/warranty.mjs';
 import { profitAndLoss, trialBalance, monthly, postExpense, postPayout, salesTaxByState, ledgerCsv, ACCOUNTS } from '../src/modules/ledger.mjs';
 import { upsertProbe, DEFAULT_PROBES, runDueProbes, publicStatus } from '../src/modules/status.mjs';
-import { backup, listBackups, checkBackup, liveCounts, restore, restoreDrill, uploadOffsite, offsiteConfigured } from '../src/modules/backup.mjs';
+import { backup, listBackups, checkBackup, liveCounts, restore, restoreDrill, uploadOffsite, offsiteConfigured, fetchOffsite } from '../src/modules/backup.mjs';
 import { doctor, digestText } from '../src/modules/health.mjs';
 import { reconcile } from '../src/modules/reconcile.mjs';
 import { snapshot } from '../src/modules/dashboard.mjs';
 import { notifyWaitlist, createCampaign, queueCampaign } from '../src/modules/campaigns.mjs';
 import { sendOutbox } from '../src/modules/mail.mjs';
 import { openExceptions } from '../src/modules/exceptions.mjs';
-import { seedDemo, resetDemo, isEmpty, isDemo, ensureDemo, DEMO_PASSWORD } from '../src/modules/demo.mjs';
+import { seedDemo, resetDemo, isEmpty, isDemo, ensureDemo, DEMO_PASSWORD, DEMO_TOTP_SECRET } from '../src/modules/demo.mjs';
+import { STEPS, startEmpty, runAll } from '../src/modules/walkthrough.mjs';
 import { totp } from '../src/auth.mjs';
 import { listPos, poByNumber, createPo, markOrdered, receivePo, cancelPo, draftReorder, buildableAhead } from '../src/modules/purchasing.mjs';
 import { recallQuery, batches as deviceBatches, createRecall, sendRecall, listRecalls, DEFAULT_BODY } from '../src/modules/recall.mjs';
@@ -47,12 +48,20 @@ const flags = {}; const args = [];
 for (let i = 0; i < rest.length; i++) { const a = rest[i]; if (a.startsWith('--')) { const [k, v] = a.slice(2).split('='); flags[k] = v ?? (rest[i + 1] && !rest[i + 1].startsWith('--') ? rest[++i] : true); } else args.push(a); }
 const out = (x) => console.log(typeof x === 'string' ? x : JSON.stringify(x, null, 2));
 const cfg = loadConfig();
+// The walkthrough is a demo by construction: createApp reads cfg.demo (the demo catalog and
+// shipping, the demo webhook secret, every live integration off), so it is decided before the app exists.
+if (cmd === 'first-order') cfg.demo = true;
 const db = openDb(cfg.dbPath);
+const PID_FILE = join(cfg.dataDir, 'backoffice.pid');
+// The pid of a `serve` in this process space, or null: no file, a pid that is not alive, or a file we cannot read.
+function servePid() { try { const pid = Number(readFileSync(PID_FILE, 'utf8').trim()); if (!pid || pid === process.pid) return null; process.kill(pid, 0); return pid; } catch { return null; } }
 const app = createApp({ db, cfg });
 
 const HELP = `backoffice — the company in one SQLite file (${cfg.dbPath})
 
-  setup                                    set the operator password + authenticator (first run)
+  setup [--email you@… --name …]           the first owner: password + authenticator (first run; --force resets that owner)
+  users | users invite <email> --name … --role owner|ops|support|viewer | users role|disable|enable|remove <email> | users roles
+  first-order                              empty a DEMO database and walk the first customer through the whole chain (the same steps as tests/first_order.test.mjs)
   demo [--reset|--if-empty]                fill an EMPTY database with a synthetic week to explore (--reset wipes a DEMO db and reseeds; --if-empty is a no-op on a used one)
   code                                     print the current authenticator code (same as your phone shows; for local trying-out)
   serve                                    run the web admin, API, forms, webhook and the scheduler
@@ -63,6 +72,7 @@ const HELP = `backoffice — the company in one SQLite file (${cfg.dbPath})
   backup check <file> [--live]            prove a copy boots; --live also compares row counts with the running database
   backup drill                             pull the latest copy back (off-site when configured) and prove it
   restore <file> [--to <db path>]          put a checked copy in place (stop serve first; the old file is kept beside it)
+  restore --offsite [<name>]               the same, from the latest off-site copy (or a named one) — the "server died" drill
   reconcile                                Stripe payouts → the books, charges → orders (needs STRIPE_API_KEY)
   digest                                   print the morning digest (what the job emails to OPERATOR_EMAIL)
   job <name> | job list                    run one scheduled job now (outbox inbox probes sla stock invoices books backup)
@@ -131,26 +141,66 @@ const main = async () => {
   switch (cmd) {
     case 'help': return out(HELP);
     case 'setup': {
-      if (hasOperator(db) && !flags.force) return out('operator exists; pass --force to reset the password and authenticator');
-      const pw = flags.password || await ask('New operator password: ', true);
+      if (hasOperator(db) && !flags.force) return out('an owner exists; pass --force to reset that owner\'s password and authenticator, or invite people with `backoffice users invite`');
+      const pw = flags.password || await ask('New owner password: ', true);
       if (String(pw).length < 12) throw new Error('use at least 12 characters');
-      const secret = setupOperator(db, pw);
+      const secret = setupOperator(db, pw, { email: flags.email || cfg.supportAddr || 'owner@localhost', name: flags.name || 'Owner' });
       for (const p of DEFAULT_PROBES(cfg)) upsertProbe(db, p);
       return out(`Operator set. Add this to your authenticator app (TOTP):\n\n  ${totpUri(secret, cfg.supportAddr || 'operator', `${cfg.company} backoffice`)}\n\n(secret: ${secret})\n\nDefault status probes seeded. Now: backoffice serve`);
     }
+    case 'first-order': {
+      if (!isDemo(db) && !isEmpty(db)) return out('refusing: this database is not flagged as a demo and is not empty — point BACKOFFICE_DATA_DIR at a demo directory');
+      cfg.demo = true; startEmpty(db); await app.listen();
+      try { const rs = await runAll(app); for (const r of rs) { out(`${r.ok ? 'ok  ' : 'FAIL'} ${r.title}`); for (const ch of r.checks) out(`       ${ch.ok ? '✓' : '✗'} ${ch.label}${!ch.ok && ch.detail ? ` — ${ch.detail}` : ''}`); if (r.error) out(`       ${r.error}`); }
+        out(`${rs.filter(r => r.ok).length} of ${STEPS.length} steps green`); return await app.close(); }
+      catch (err) { await app.close(); throw err; }
+    }
     case 'demo': {
       if (flags['if-empty'] && (!isEmpty(db) || hasOperator(db))) return out(isDemo(db) ? 'demo database already seeded; serving it as is' : 'database is not empty and not a demo — leaving it alone');
-      if (!hasOperator(db)) { setupOperator(db, DEMO_PASSWORD); out(`Operator set with the demo password: ${DEMO_PASSWORD}`); }
       out(flags.reset ? await resetDemo(db, cfg) : await seedDemo(db, cfg));
       return out(`Demo data loaded (synthetic; nothing leaves this machine). Now: backoffice serve  → http://127.0.0.1:${cfg.port}/  — the login page shows the password and the current code.`);
     }
-    case 'code': { const secret = db.setting('auth:totp'); if (!secret) throw new Error('no operator yet — run setup or demo'); return out(totp(secret)); }
+    case 'code': {
+      if (isDemo(db)) return out(totp(DEMO_TOTP_SECRET));
+      const owners = flags.email ? db.all('SELECT email, totp_secret FROM users WHERE email = ? AND status = \'active\' AND totp_secret IS NOT NULL', String(flags.email).toLowerCase()) : db.all("SELECT email, totp_secret FROM users WHERE role = 'owner' AND status = 'active' AND totp_secret IS NOT NULL ORDER BY id");
+      if (!owners.length) throw new Error(flags.email ? `${flags.email} is not an active person with an authenticator` : 'no active owner yet — run setup or demo');
+      if (owners.length > 1) throw new Error(`more than one active owner — say which: backoffice code --email <one of ${owners.map(o => o.email).join(', ')}>`);
+      return out(totp(owners[0].totp_secret));
+    }
+    case 'users': {
+      const sub = args[0];
+      if (!sub) return out(listUsers(db).map(u => `${u.email.padEnd(40)} ${u.role.padEnd(8)} ${u.status.padEnd(9)} ${u.name}${u.last_login_at ? `  last login ${u.last_login_at.slice(0, 16)}` : ''}${u.locked_until && u.locked_until > new Date().toISOString() ? '  LOCKED' : ''}`).join('\n') || 'nobody yet');
+      if (sub === 'roles') return out(Object.entries(ROLE_TEXT).map(([r, t]) => `${r.padEnd(8)} ${t}`).join('\n'));
+      if (sub === 'invite') { const u = inviteUser(db, { email: args[1], name: flags.name || args[1], role: flags.role || 'ops', actor: 'cli' }); return out(`Invited ${u.email} as ${u.role}. Send them this link (it works once, for 48 hours):\n\n  ${cfg.baseUrl}/invite/${u.invite_token}\n`); }
+      const u = userByEmail(db, args[1]); if (!u) throw new Error(`no such person: ${args[1]}`);
+      if (sub === 'role') return out(setRole(db, u.id, args[2], { actor: 'cli' }));
+      if (sub === 'disable') return out(setStatus(db, u.id, 'disabled', { actor: 'cli' }));
+      if (sub === 'enable') return out(setStatus(db, u.id, 'active', { actor: 'cli' }));
+      if (sub === 'remove') return out(removeUser(db, u.id, { actor: 'cli' }));
+      throw new Error(`users [invite <email> --name … --role ${ROLES.join('|')}] | role <email> <role> | disable|enable|remove <email> | roles`);
+    }
     case 'serve': {
       // BACKOFFICE_DEMO=1 on an empty database: seed itself, so a container is the whole demo.
       if (cfg.demo) { const r = await ensureDemo(db, cfg); if (r) console.log('[backoffice] demo mode: seeded', JSON.stringify(r)); }
-      if (!hasOperator(db)) console.error('[backoffice] no operator yet — run `backoffice setup` in another shell; serving anyway');
-      const addr = await app.listen(); startScheduler(app);
+      if (!hasOperator(db)) console.error('[backoffice] no owner yet — run `backoffice setup` in another shell; serving anyway');
+      const addr = await app.listen(); const stopScheduler = startScheduler(app);
+      // The pid beside the database: `restore` refuses to replace a file a running server has open.
+      try { writeFileSync(PID_FILE, String(process.pid)); } catch { /* read-only data dir: restore cannot check, serve still runs */ }
       console.log(`[backoffice] listening on http://${addr.address}:${addr.port}  (public base: ${cfg.baseUrl})`);
+      // docker stop sends SIGTERM and waits ten seconds: stop taking requests, let the ones in flight finish
+      // (eight seconds at most, then they are cut), close the database cleanly, exit 0.
+      let stopping = false;
+      const shutdown = async (sig) => {
+        if (stopping) return; stopping = true; console.log(`[backoffice] ${sig}: stopping`); stopScheduler();
+        await Promise.race([app.close(), new Promise(r => setTimeout(r, 8000).unref())]); app.closeAll?.();
+        try { db.close(); } catch { /* already closed */ } try { unlinkSync(PID_FILE); } catch { /* never written */ } process.exit(0);
+      };
+      process.on('SIGTERM', () => shutdown('SIGTERM')); process.on('SIGINT', () => shutdown('SIGINT'));
+      // A rejected promise nobody awaited is logged, not fatal: one bad job or mail must not take the shop down.
+      // An exception nobody caught leaves the process in a state nothing can vouch for: log it, close the
+      // database, exit 1 — the container's restart policy brings a clean one back within seconds.
+      process.on('unhandledRejection', (err) => console.error('[backoffice] unhandled rejection:', err?.stack || err));
+      process.on('uncaughtException', (err) => { console.error('[backoffice] uncaught exception, exiting:', err?.stack || err); try { db.close(); } catch { /* already closed */ } process.exit(1); });
       return new Promise(() => {});
     }
     case 'token': return args[0] === 'revoke' ? out(`revoked ${revokeApiToken(db, args[1])}`) : out(`${createApiToken(db, args[1] || 'cli', { scope: flags['read-only'] ? 'ro' : 'rw' })}\n(shown once — store it in the client's environment${flags['read-only'] ? '; read-only: GET only' : ''})`);
@@ -165,8 +215,23 @@ const main = async () => {
     }
     case 'backups': return out(listBackups(join(cfg.dataDir, 'backups')));
     case 'restore': {
-      if (!args[0]) throw new Error('restore <backup file> [--to <db path>] — stop `serve` first');
-      const r = restore(args[0], flags.to || cfg.dbPath); return out({ ...r, note: 'start `backoffice serve` again; the replaced file is kept beside the database until you delete it' });
+      // This process opened the live database at startup (openDb above). Replacing the file under an open
+      // WAL connection lets the final close checkpoint the old pages over the restored copy — so the
+      // connection is closed first, and the file is replaced only after.
+      const dest = flags.to || cfg.dbPath;
+      // A server with the file open would checkpoint its own pages over the restored copy. The pid file says whether
+      // one is running in this process space; `--force` is for a stale file left by a crash (the kit's `restore`
+      // stops the container first, which is the only safe order).
+      if (dest === cfg.dbPath && !flags.force) { const live = servePid(); if (live) throw new Error(`\`backoffice serve\` is running (pid ${live}) — stop it first (the restored file would be overwritten by its next checkpoint); --force overrides a stale pid file`); }
+      if (dest === cfg.dbPath) db.close();
+      if (flags.offsite) {   // the server died: pull the latest off-site copy back (or a named one) and put it in place
+        const name = typeof flags.offsite === 'string' ? flags.offsite : (args[0] || null);   // `--offsite <name>` parses as the flag's value
+        const got = await fetchOffsite(cfg, { name });
+        try { const r = restore(got.path, dest); return out({ ...r, from: got.source, encrypted: got.encrypted, note: 'start `backoffice serve` again; the replaced file is kept beside the database until you delete it' }); }
+        finally { try { unlinkSync(got.path); } catch { /* gone */ } }
+      }
+      if (!args[0]) throw new Error('restore <backup file> [--to <db path>] | restore --offsite [<name>] — stop `serve` first');
+      const r = restore(args[0], dest); return out({ ...r, note: 'start `backoffice serve` again; the replaced file is kept beside the database until you delete it' });
     }
     case 'doctor': {
       const h = doctor(db, cfg); const ic = (ok) => ok === true ? 'ok ' : ok === false ? '!! ' : '-- ';
@@ -295,4 +360,4 @@ function ask(q, hidden = false) {
   });
 }
 
-main().then(() => { if (cmd !== 'serve') db.close(); }).catch(err => { console.error(`error: ${err.message}`); process.exit(1); });
+main().then(() => { if (cmd !== 'serve') { try { db.close(); } catch { /* restore closed it first */ } } }).catch(err => { console.error(`error: ${err.message}`); process.exit(1); });
