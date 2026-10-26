@@ -65,3 +65,39 @@ test('a socket that opens and sends nothing is dropped by the headers timeout; a
     s.destroy();
   } finally { await app.close(); }
 });
+
+test('trusted proxies decide whose X-Forwarded-For counts; a session on the API writes only with its CSRF token; the probe stays off the inside; the books CSV is the owner\'s', async () => {
+  const { isTrustedProxy, setTrustedProxies } = await import('../src/http.mjs');
+  const { setupOperator, totp, can } = await import('../src/auth.mjs');
+  assert.ok(isTrustedProxy('127.0.0.1', ['loopback']) && isTrustedProxy('::1', ['loopback']) && !isTrustedProxy('8.8.8.8', ['loopback']));
+  assert.ok(isTrustedProxy('10.1.2.3', ['private']) && isTrustedProxy('172.20.0.2', ['private']) && isTrustedProxy('192.168.1.9', ['private']) && !isTrustedProxy('172.32.0.1', ['private']) && !isTrustedProxy('11.0.0.1', ['private']));
+  assert.ok(isTrustedProxy('203.0.113.7', ['203.0.113.0/24']) && !isTrustedProxy('203.0.114.7', ['203.0.113.0/24']) && isTrustedProxy('::ffff:203.0.113.9', ['203.0.113.9']) && !isTrustedProxy('203.0.113.9', []));
+  assert.ok(!can('ops', 'GET', '/books.csv') && can('owner', 'GET', '/books.csv'), 'the CSV is as owner-only as the page');
+  const db = testDb(); const cfg = testCfg({ secret: 's' }); const app = createApp({ db, cfg }); const addr = await app.listen(); const base = `http://127.0.0.1:${addr.port}`;
+  try {
+    const secret = setupOperator(db, 'owner password 1234', { email: 'o@errer.test', name: 'O' });
+    const form = (o) => new URLSearchParams(o).toString();
+    // the test client is the loopback peer, a trusted proxy by default: its X-Forwarded-For names the person
+    const lie = { 'x-forwarded-for': '198.51.100.7' };
+    await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', ...lie }, body: form({ email: 'o@errer.test', password: 'wrong', code: '000000' }) });
+    assert.equal(JSON.parse(db.get("SELECT detail FROM audit_log WHERE action = 'auth.login.failed' ORDER BY id DESC LIMIT 1").detail).ip, '198.51.100.7');
+    setTrustedProxies([]);   // nothing in front: the header is just a header
+    try {
+      await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', ...lie }, body: form({ email: 'o@errer.test', password: 'wrong', code: '000000' }) });
+      assert.equal(JSON.parse(db.get("SELECT detail FROM audit_log WHERE action = 'auth.login.failed' ORDER BY id DESC LIMIT 1").detail).ip, '127.0.0.1');
+    } finally { setTrustedProxies(cfg.trustedProxies); }
+    const r = await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ email: 'o@errer.test', password: 'owner password 1234', code: totp(secret) }) });
+    const cookie = r.headers.get('set-cookie').split(';')[0]; const csrf = db.get('SELECT csrf FROM sessions WHERE id = ?', cookie.split('=')[1]).csrf;
+    const order = { email: 'x@example.test', name: 'X', subtotal_cents: 100, shipping_cents: 0, tax_cents: 0, total_cents: 100, items: [{ sku: 'wap-kit', qty: 1, unit_cents: 100 }], ship: { line1: '1', city: 'B', state: 'MA', zip: '02134', country: 'US' } };
+    const bare = await fetch(base + '/api/orders', { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(order) });
+    assert.equal(bare.status, 403); assert.match((await bare.json()).error, /session CSRF token/);
+    assert.equal((await fetch(base + '/api/orders', { method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf': csrf }, body: JSON.stringify(order) })).status, 201, 'the X-CSRF header');
+    assert.equal((await fetch(base + '/api/orders', { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ ...order, _csrf: csrf, allow_duplicate: true }) })).status, 201, 'or _csrf in the body');
+    assert.equal((await fetch(base + '/api/orders', { headers: { cookie } })).status, 200, 'a read needs none');
+    for (const url of ['http://127.0.0.1:9/', 'http://localhost/x', 'http://10.0.0.5/', 'http://169.254.169.254/latest/meta-data/', 'http://[::1]/', 'http://backoffice.internal/', 'http://100.64.0.1/']) {
+      const p = await fetch(base + '/status-admin/probe', { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: form({ _csrf: csrf, name: 'x', url }) });
+      assert.equal(p.status, 400, url); assert.match((await p.json()).error, /public address/);
+    }
+    assert.equal(db.get('SELECT COUNT(*) AS n FROM probes').n, 0);
+  } finally { await app.close(); }
+});
