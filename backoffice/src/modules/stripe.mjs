@@ -3,6 +3,7 @@
 // subscription state. Two inputs: the signed webhook (live) and the CSV
 // export the weekly batch already uses (catch-up / offline).
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { timedFetch } from '../net.mjs';
 
 // Stripe-Signature: t=<ts>,v1=<hex>[,v1=<hex>…]; signed_payload = `${t}.${body}`
 export function verifyStripeSignature(rawBody, header, secret, { now = Date.now() / 1000, toleranceS = 300 } = {}) {
@@ -27,7 +28,12 @@ export function signStripePayload(rawBody, secret, t = Math.floor(Date.now() / 1
 export function eventToOrder(event) {
   const type = event.type || '';
   const o = event.data?.object || {};
-  if (type === 'checkout.session.completed' && o.payment_status === 'paid') {
+  // A card pays inside `completed`; ACH / bank debit pay later and arrive as `async_payment_succeeded`;
+  // a 100 % code pays nothing and says `no_payment_required`. All three are an order.
+  // A Checkout in `subscription` or `setup` mode is a plan or a saved card, never a box to pack: those
+  // arrive on their own events below. Only a `payment` session (the mode a Payment Link uses) is an order.
+  if (o.mode && o.mode !== 'payment' && type.startsWith('checkout.session.')) return { kind: 'ignore', type, why: `checkout mode ${o.mode}` };
+  if ((type === 'checkout.session.completed' && ['paid', 'no_payment_required'].includes(o.payment_status)) || type === 'checkout.session.async_payment_succeeded') {
     const addr = o.shipping_details?.address || o.customer_details?.address || {};
     const items = (o.line_items?.data || []).map(li => ({
       sku: li.price?.product?.metadata?.sku || li.price?.metadata?.sku || li.price?.product?.name || li.description,
@@ -49,6 +55,10 @@ export function eventToOrder(event) {
       items, paid_at: new Date((o.created || Date.now() / 1000) * 1000).toISOString(),
     };
   }
+  if (type === 'charge.dispute.created' || type === 'charge.dispute.closed' || type === 'charge.dispute.updated') {
+    return { kind: 'dispute', type, external_id: (typeof o.payment_intent === 'string' ? o.payment_intent : o.payment_intent?.id) || null, charge: typeof o.charge === 'string' ? o.charge : o.charge?.id || null,
+      dispute: o.id, status: o.status || '', reason: o.reason || '', amount_cents: o.amount ?? 0, due: o.evidence_details?.due_by ? new Date(o.evidence_details.due_by * 1000).toISOString().slice(0, 10) : null };
+  }
   if (type === 'charge.refunded') return { kind: 'refund', external_id: (typeof o.payment_intent === 'string' ? o.payment_intent : o.payment_intent?.id) || o.id, charge: o.id, refunded_cents: o.amount_refunded ?? 0 };
   if (type.startsWith('customer.subscription.')) {
     const item = o.items?.data?.[0];
@@ -66,7 +76,7 @@ export function eventToOrder(event) {
 // are expandable, never inline). With an API key we fetch them; without one
 // the order is recorded empty and an exception names it (orders.mjs refuses
 // to pack an order with no items, so nothing ships blind).
-export async function fetchLineItems(cfg, sessionId, { fetchImpl = fetch } = {}) {
+export async function fetchLineItems(cfg, sessionId, { fetchImpl = timedFetch } = {}) {
   if (!cfg.stripeApiKey) return null;
   const r = await fetchImpl(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}/line_items?limit=100&expand[]=data.price.product`, { headers: { authorization: `Bearer ${cfg.stripeApiKey}` } });
   if (!r.ok) throw new Error(`stripe line_items ${r.status} for ${sessionId}`);
@@ -81,7 +91,7 @@ export async function fetchLineItems(cfg, sessionId, { fetchImpl = fetch } = {})
 // A promotion id (promo_…) or coupon id from the webhook → the code the customer typed, when an
 // API key allows the lookup. Without one the id is kept as the code: still a stable label for
 // the books, and never fed to the local discount rules (recordOrder sees discount_cents set).
-export async function resolveDiscountCode(cfg, code, { fetchImpl = fetch } = {}) {
+export async function resolveDiscountCode(cfg, code, { fetchImpl = timedFetch } = {}) {
   if (!code || !cfg.stripeApiKey) return code;
   const isPromo = /^promo_[A-Za-z0-9]+$/.test(code);
   const r = await fetchImpl(`https://api.stripe.com/v1/${isPromo ? 'promotion_codes' : 'coupons'}/${encodeURIComponent(code)}`, { headers: { authorization: `Bearer ${cfg.stripeApiKey}` } });

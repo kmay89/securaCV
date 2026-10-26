@@ -92,7 +92,7 @@
      "board": "seeed_xiao_esp32s3_sense",
      "seated": {
       "pos": [
-       -37.247,
+       -35.847,
        0,
        12.48
       ],
@@ -139,7 +139,7 @@
      },
      "seated": {
       "pos": [
-       -32.65,
+       -31.25,
        6,
        17.1
       ]
@@ -170,7 +170,7 @@
      },
      "seated": {
       "pos": [
-       -39.65,
+       -38.25,
        9.5,
        14.1
       ]
@@ -228,7 +228,7 @@
      },
      "seated": {
       "pos": [
-       -45.6,
+       -44.2,
        -0.64,
        19.9
       ]
@@ -464,7 +464,7 @@
     {
      "title": "Add the sun shield (optional)",
      "readmeStep": null,
-     "note": "The vented sun shield clips over the lid for direct-sun installs — keeps the case cooler and shades the camera window."
+     "note": "The vented sun shield screws onto the face with its own four M2 × 12 flat heads, into the blind pilots over the corner posts — it keeps the case cooler and shades the camera window."
     }
    ]
   },
@@ -718,7 +718,7 @@
     {
      "title": "Start with the back shell",
      "readmeStep": null,
-     "note": "The back shell carries the boards and the mounts; the front face carries the lens. You build into the back, then cap it with the front."
+     "note": "The back plate carries the boards (and the keyholes, when fitted); the front shell carries the lens and the hinge. You build onto the plate, then lower the shell over it."
     },
     {
      "title": "Seat the XIAO stack in the module",
@@ -1060,13 +1060,13 @@
      "seated": {
       "pos": [
        0,
-       15.082,
-       39.346
+       12.363,
+       40.614
       ],
       "rot": [
-       65,
+       245,
        0,
-       0
+       180
       ]
      },
      "explode": [
@@ -1093,23 +1093,23 @@
      "instances": [
       [
        55.55,
-       28.816,
-       72.112
+       28.272,
+       72.365
       ],
       [
        55.55,
-       -1.19,
-       7.764
+       -1.733,
+       8.017
       ],
       [
        -55.55,
-       28.816,
-       72.112
+       28.272,
+       72.365
       ],
       [
        -55.55,
-       -1.19,
-       7.764
+       -1.733,
+       8.017
       ]
      ],
      "irot": [
@@ -1339,7 +1339,7 @@
     {
      "title": "Start with the back shell",
      "readmeStep": null,
-     "note": "The back shell carries the radar stack and the GoPro hinge; the front is the thin mmWave radome. Build into the back, then cap it."
+     "note": "The back plate carries the radar stack; the front is the one-piece shell — the thin mmWave radome, the walls and the GoPro hinge fins. Build onto the plate, then lower the shell over it."
     },
     {
      "title": "Seat the radar carrier",
@@ -1354,12 +1354,12 @@
     {
      "title": "Close the radome front",
      "readmeStep": 4,
-     "note": "The front's lip nests into the back; keep the antenna air-gap clear (the window sits a few mm off the AiP package)."
+     "note": "The plate nests inside the shell's walls (its key slot meets the +Y rib); keep the antenna air-gap clear (the window sits a few mm off the AiP package)."
     },
     {
      "title": "Drive the four corner screws",
      "readmeStep": null,
-     "note": "Last and outermost — through the front corners into the back posts. Snug, not cranked, into printed posts."
+     "note": "Last: four M2 pan × 8 through the plate's recessed seats into the shell's post ends. Snug, not cranked, into printed posts."
     }
    ]
   }

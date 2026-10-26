@@ -45,7 +45,7 @@ common/
 ├── network/        # Network modules
 │   ├── ap_security_policy.h     # what security the SoftAP and STA link ask the Wi-Fi driver for (F16; host-tested)
 │   ├── ap_password.h            # the SoftAP key: an HMAC of the device private key, `cv-` + 12, never from anything the device publishes, refused (false, "") when the HMAC fails; the canary (PIO) calls it, held equal to the WAP's own (F350; host-tested)
-│   ├── host_guard.h             # does the Host a request targeted name THIS device (the LAN pages' write guard)
+│   ├── host_guard.h             # does the Host a request targeted name THIS device (the LAN pages' write guard; the WAP's pages, receipt and session cookie ask it too, F344) (host-tested; a staged copy sits by the WAP sketch, held by check_improv_sync.sh)
 │   ├── tls_policy.h             # the canary's self-signed HTTPS decisions (F15; host-tested)
 │   ├── provision_core.h
 │   ├── wifi_join_policy.h

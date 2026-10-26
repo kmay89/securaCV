@@ -4,15 +4,19 @@
 // later raise just bumps last_seen. Resolution comments and closes it.
 // Silence means healthy. The inbox of the company is the issue tracker.
 import { nowIso } from '../db.mjs';
+import { timedFetch } from '../net.mjs';
 
-export async function raise(db, cfg, key, title, body, { fetchImpl = fetch } = {}) {
+export async function raise(db, cfg, key, title, body, { fetchImpl = timedFetch } = {}) {
   const now = nowIso();
   const existing = db.get('SELECT * FROM exceptions WHERE key = ?', key);
   if (existing && !existing.resolved_at) { db.run('UPDATE exceptions SET last_seen_at = ?, body = ? WHERE key = ?', now, body, key); return { ...existing, bumped: true }; }
   let issue = null;
-  if (cfg.githubToken) {
+  // The issue is a summons, not a record: customer emails are redacted before the body leaves the box (the full
+  // text stays in the exceptions table here), and nothing is posted unless a repository is named.
+  if (cfg.githubToken && cfg.githubRepo) {
+    const redact = (s) => String(s).replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, '[email]');
     try {
-      const r = await fetchImpl(`https://api.github.com/repos/${cfg.githubRepo}/issues`, { method: 'POST', headers: gh(cfg), body: JSON.stringify({ title, body: `${body}\n\n---\n_Opened by the backoffice (\`${key}\`). It closes itself when the condition clears._`, labels: ['backoffice', 'exception'] }) });
+      const r = await fetchImpl(`https://api.github.com/repos/${cfg.githubRepo}/issues`, { method: 'POST', headers: gh(cfg), body: JSON.stringify({ title: redact(title), body: `${redact(body)}\n\n---\n_Opened by the backoffice (\`${key}\`). It closes itself when the condition clears._`, labels: ['backoffice', 'exception'] }) });
       if (r.ok) issue = (await r.json()).number; else db.audit('system', 'exception.github.failed', 'exception', key, { status: r.status });
     } catch (e) { db.audit('system', 'exception.github.failed', 'exception', key, { error: String(e.message || e) }); }
   }
@@ -22,7 +26,7 @@ export async function raise(db, cfg, key, title, body, { fetchImpl = fetch } = {
   return db.get('SELECT * FROM exceptions WHERE key = ?', key);
 }
 
-export async function resolve(db, cfg, key, note = 'Condition cleared.', { fetchImpl = fetch } = {}) {
+export async function resolve(db, cfg, key, note = 'Condition cleared.', { fetchImpl = timedFetch } = {}) {
   const e = db.get('SELECT * FROM exceptions WHERE key = ? AND resolved_at IS NULL', key);
   if (!e) return null;
   db.run('UPDATE exceptions SET resolved_at = ? WHERE key = ?', nowIso(), key);

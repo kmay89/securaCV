@@ -288,7 +288,7 @@ it. Its JSON:
   "device_id":   "<the device id>",
   "claim":       "<32 hex characters>",
   "claim_url":   "<where to spend it: the receipt route at the device's .local name>",
-  "tls_cert_fp": "<SHA-256 of the HTTPS certificate the WAP will serve once setup completes — the pin the receipt's https base_url is held to; empty on a build with no HTTPS>",
+  "tls_cert_fp": "<SHA-256 of the HTTPS certificate the WAP will serve once setup completes — the pin the receipt's https base_url is held to; empty on a build with no HTTPS, and on every stock build today, which stores no certificate (F15)>",
   "sta_ip":      "<the address it got on your Wi-Fi, for a phone whose .local resolve is slow>",
   "mdns_host":   "<its .local host label>",
   "expires_in_s": 180
@@ -445,14 +445,36 @@ changes nothing for either. Host-tested in
 Who asks row 1: the flagship's receipt route asks it itself
 (`host_is_foreign`, the predicate its `auth_gate` asks ahead of every API
 handler, as `receipt_decide`'s first argument), and it runs rows 1, 2 and 4:
-the flagship has no setup-door claim. **The WAP sketch
-asks no Host question on this route today** (it has no `auth_gate`; its
-`/` page checks the Host header only to pick the first-boot wizard), so its
-`handle_provisioning_receipt` runs rows 2, 3 and 4 — bearer, claim, tap — in
-that order, with the same single-use claim (spent only on a match) and the
-same unspent tap, and its row 4 goes to one asker (below). Its
+the flagship has no setup-door claim. The WAP asks row 1 too (sweep F344),
+with the same `host_guard.h` (`request_host_names_device()`), as the first
+statement of `handle_provisioning_receipt`, in every mode, setup included,
+and with no SoftAP exemption: the WAP's captive DNS sends every name to the
+device, and its wizard asks at `canary.local` or `192.168.4.1`, which both
+pass. A foreign or missing Host gets `403 {"error":"host"}` before the bearer
+is read, the claim taken or the tap judged, so it is never a strike, never
+an asker for the tap, spends no claim and clears nothing. Then it runs rows
+2, 3 and 4 — bearer, claim, tap — in that order, with the same single-use
+claim (spent only on a match) and the same unspent tap, and its row 4 goes
+to one asker (below). After setup its `/` (the landing, its pair token and
+the `?cv_pair=` exchange), `/admin`, `/settings` and `/companion` ask the
+same question first and answer a foreign Host with a fixed `text/plain`
+`403`, so a DNS-rebinding page under a public name is handed no session;
+and the cookie validator behind every cookie route
+(`session_validate_cookie()`) asks it before it reads the cookie, so a live
+session's value that such a page sets for its own name with
+`document.cookie` is refused too (F344's third review; before, the
+validator read no Host). A page another network served under one of the
+names the rule accepts (`canary.local`, `192.168.4.1`, the device's own LAN
+address, any `.local` name, a single label, or a `.lan`, `.internal` or
+`.home.arpa` name), left open or kept in the browser's HTTP cache (which
+serves it again with no request to the device) until the browser comes home
+or joins the SoftAP, is not told apart from the device, and around a BOOT tap pressed
+from that browser it can read the receipt; only HTTPS with an identity the
+browser checks closes that, which neither F15's self-signed certificate nor F256 gives a
+browser (`SECURITY_MODEL.md`). During setup `/` sends to the
+wizard only a request for exactly `canary.local` or `192.168.4.1`. Its
 row 2 is the `Authorization: Bearer` header alone, never the dashboard's
-`cv_session` cookie (sweep F289): the landing page at `/` mints that session
+session cookie (`cv_session`, or `__Host-cv_session` over HTTPS; sweep F289): the landing page at `/` mints that session
 for whoever loads it on the home network, so it signs a browser into the
 dashboard and buys no receipt; `GET /api/pairing-qr`, which carries the
 token, takes the bearer alone the same way; and a `POST /api/mqtt/config`
@@ -485,9 +507,9 @@ the move gate still asks for the password), and a held one is not compared
 and, without the cookie, gets `429` with `Retry-After`; the posture is the
 per-address backoff below. Host-tested in
 `firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp` and, for
-the broker move, `test_mqtt_reinit.cpp` beside it. Adding
-the Host row to the WAP is a separate change, not a claim this document
-makes.
+the broker move, `test_mqtt_reinit.cpp` beside it; the WAP's Host row in
+`test_receipt_grant.cpp` too, and its pages' Host question in
+`test_session_cookie.cpp`. Not run on a device or against a browser.
 
 On the flagship (`firmware/canary`), row 2 is under the same per-address
 lockout (sweep F340): `bearer_present_and_valid()` is the accounted grant
@@ -878,8 +900,10 @@ the Fleet tab, which takes its recovery kit or a fresh setup. The kit is
 the receipt the WAP's own pages save: the setup wizard's close-out after a
 BOOT tap, and since #1802 its dashboard (F257), so a WAP set up through
 this door, which never runs the wizard's close-out, has a kit to save. On
-the dashboard (`https://canary-<suffix>.local/settings` once set up; port
-80 redirects there) a browser that is signed out chooses **Use BOOT Tap
+the dashboard (`http://canary-<suffix>.local/settings` once set up on a
+stock unit, which serves plain HTTP, F15; on a unit with a stored
+certificate `https://`, and port 80 redirects there) a browser that is
+signed out chooses **Use BOOT Tap
 Once**, and the tap that signs it in offers **Save my recovery kit** in the
 wizard's words; one signed in with its token saves it from **Settings**,
 **Device**, **Recovery kit** without a tap, while one signed in only by a
@@ -888,9 +912,12 @@ has been reloaded without its token) is refused there and sent back to the
 sign-in, whose BOOT tap offers the kit (F289: the receipt's bearer grant is
 the header alone, never the cookie; the sign-in then says the session does
 not cover this, not that a token it never sent was wrong). The session
-cookie a tap or a claim sets is `Secure` when the answer goes out over
-HTTPS, and not on the first-boot SoftAP's plain-HTTP setup, where a browser
-would drop it. A kit saved on the setup network names the
+cookie a tap or a claim sets is `__Host-cv_session` and `Secure` when the
+answer goes out over HTTPS, and `cv_session` without `Secure` on the
+first-boot SoftAP's plain-HTTP setup, where a browser would drop a `Secure`
+one (two names, F337, so that a browser holding the HTTPS cookie still signs
+in to a unit it meets over plain HTTP at `canary.local`; no stock build
+serves HTTPS yet, F15). A kit saved on the setup network names the
 SoftAP address; one saved over the home network names the `.local` name
 (F255: the receipt, and port 80's redirect, name the SoftAP address only
 for a request that arrived over the SoftAP, or while the STA holds no
@@ -905,8 +932,9 @@ names. A kit saved before a rename is dialed at the new name. "The row's
 id" is a 16-bit suffix of the WAP's key fingerprint, so two WAPs in one
 home can share one, and then one's kit moves onto the other (the rebase's
 comment says what follows). The app has no BOOT-tap
-pairing over the LAN: an installed WAP speaks https with no pin the phone
-could hold it to before the first dial (F256).
+pairing over the LAN (F256). A WAP that served https would have no pin the
+phone could hold it to before the first dial, and no stock WAP serves https
+today (F15), so the item waits on F15.
 
 Tests: `ImprovWireTests` (the codec, pinned to the firmware's vectors),
 `MagicPairPlanTests` (the sequence, its fallbacks and the retry rule),
@@ -1091,9 +1119,10 @@ cannot speak to.
       follow-up); the right token from a second host is served throughout,
       and the tap leaves that host's own count as it was (F343, F341).
 - [ ] Over HTTPS, the `Set-Cookie` that the landing's **Open dashboard**
-      link and a BOOT-tap receipt send carries `Secure`; on the first-boot
-      SoftAP's plain-HTTP setup the recovery-kit save's cookie carries none
-      and the browser keeps it (F289's follow-up).
+      link and a BOOT-tap receipt send is `__Host-cv_session` and carries
+      `Secure`; on the first-boot SoftAP's plain-HTTP setup the recovery-kit
+      save's cookie is `cv_session`, carries none and the browser keeps it
+      (F289's follow-up, F337). Blocked until a WAP serves HTTPS (F15).
 - [ ] With the WAP joined to the home Wi-Fi, a BOOT-tap receipt fetched
       from a laptop on the home network (the dashboard's sign-in at
       `https://canary-<suffix>.local/settings`) names `base_url` at
@@ -1102,7 +1131,9 @@ cannot speak to.
       bearer re-sync over the home network names the `.local` name; and
       `http://canary-<suffix>.local/settings` answers `301` to
       `https://canary-<suffix>.local/settings`, before and after the AP
-      drops.
+      drops. On a stock unit, which serves plain HTTP (F15), run it at
+      `http://` and expect `base_url` at `http://canary-<suffix>.local` and
+      no `301`; the `https` half waits for a WAP that serves HTTPS.
 - [ ] The dashboard's BOOT-tap sign-in offers **Save my recovery kit**,
       and a signed-in dashboard saves it from **Settings**, **Device**,
       **Recovery kit**; the saved `canary-recovery-kit.json` is the

@@ -5,8 +5,11 @@ docs/security/SECURITY_MODEL.md ships in every evidence export, and for a
 while it promised things the firmware did not do: zero outbound connections
 (the networked products open a broker socket, a daily signed-manifest check
 and SNTP), TLS on every hop (the flagship's release images serve plain HTTP on
-port 80, its dev and full builds serve HTTPS only from the first boot after
-setup, and the WAP's HTTPS is an after-setup opt-in), Bluetooth compiled out
+port 80, and since F15's correction of 2026-10-19 no stock unit of either tree
+serves HTTPS at all: the certificate generator's guard names a header no
+pinned core ships, so the flagship's dev and full builds and the WAP, whose
+HTTPS turns on by itself after setup once a certificate is stored, serve
+plain HTTP), Bluetooth compiled out
 (the shipped WAP profile compiles NimBLE), an API access code released only
 by a button press (the flagship hands its token with no press to the
 first-boot wizard, and after setup to a bearer caller and a request over its
@@ -76,9 +79,12 @@ BANNED = (
     ("All communication between your phone/computer and the device is "
      "encrypted with TLS",
      "the flagship's release images serve plain HTTP on port 80 (its dev and "
-     "full builds serve HTTPS from the first boot after setup, CI-compiled); "
-     "the WAP serves HTTPS after setup and falls back to HTTP when it fails "
-     "to start"),
+     "full builds serve HTTPS from the first boot after setup once a "
+     "certificate is stored, CI-compiled); the WAP serves HTTPS after setup "
+     "once a certificate is stored and falls back to HTTP when it fails to "
+     "start; and since F15's correction (2026-10-19) no stock unit of either "
+     "tree stores one, since the generator's guard names a header no pinned "
+     "core ships"),
     ("displayed only via physical button press",
      "one BOOT tap hands the flagship's token to one page load, but it also "
      "goes with no press to the first-boot wizard, and after setup to a "
@@ -88,8 +94,10 @@ BANNED = (
     ("TLS is required for all API access (no HTTP fallback)",
      "plain HTTP is a stated posture: setup mode and start failure on the "
      "WAP, the flagship's release images (its dev and full builds redirect "
-     "port 80 to HTTPS from the first boot after setup), the displays' LAN "
-     "page"),
+     "port 80 to HTTPS from the first boot after setup once a certificate is "
+     "stored), the displays' LAN page, and since F15's correction "
+     "(2026-10-19) every stock unit of either tree, none of which can "
+     "generate its certificate"),
     ("`securacv_mqtt` still plain",
      "firmware/canary's securacv_mqtt rides the shared broker-TLS transport "
      "(plain / CA / pin / lab, fail-closed) since 2026-09-19"),
@@ -188,7 +196,8 @@ MUST_PASS = [
     "BLE (NimBLE) is compiled into the shipped Canary WAP build",
     "the MINIMAL profile compiles it out; the code is not compiled in there",
     "a release image serves plain HTTP on port 80",
-    "the WAP serves HTTPS on port 443 once setup has completed",
+    "the WAP serves HTTPS on port 443 once setup has completed and a "
+    "certificate is stored",
     "set from the Broker encryption select in either flasher's broker block",
     "nothing outbound that is not disclosed, named and tested",
     "the token stops drive-by web pages, not a LAN host",

@@ -34,6 +34,10 @@ import {
   ELECTRICITY_DEFAULT,
 } from "./print-guide.js";
 import { sliceSeconds, slicerAvailable } from "./slicer.js";
+import {
+  loadLedger as loadRevisions, partRevision, changedRegions, revisionSummary, changeLines,
+  splitByRegions, CHANGED_COLOR, identifyMesh, regionBoxLines, changeLinesFor,
+} from "./revisions.js";
 import { setServes } from "./enclosure-sets.js";
 
 const el = (tag, cls, text) => {
@@ -450,6 +454,8 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
     shellMaterial: "PETG", // estimate basis for non-gasket parts
     electricity: ELECTRICITY_DEFAULT,
     play: null,            // active "watch it print" animation handle, or null
+    showChanges: true,     // tint the regions the newest revision moved (showroom mode)
+    revisions: null,       // devices/revisions.json, when it loaded
   };
 
   // filament swatches (+ custom)
@@ -522,7 +528,10 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
         const geom = { volume: meshVolume(mesh), area: meshArea(mesh), height: bbox.size[2] };
         // keep the raw STL bytes so the optional real slicer can run without
         // a refetch (parseSTL doesn't consume the buffer); small parts only.
-        metas.push({ part, mesh, bbox, triangles, geom, stlBuffer: buf });
+        metas.push({ part, mesh, bbox, triangles, geom, stlBuffer: buf,
+          // the part's revision (devices/revisions.json): rev, what moved,
+          // and the regions the showroom tints — null when unrecorded
+          revision: partRevision(lab.revisions, part.file) });
       } catch {
         metas.push(null);
       }
@@ -546,6 +555,11 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
       dot.style.background = `rgb(${c.map((x) => Math.round(x * 255)).join(",")})`;
       chip.append(dot, document.createTextNode(
         `${m.part.name} · ${fmtDims(m.bbox.size)} · ${m.triangles.toLocaleString()} tris`));
+      if (m.revision) {
+        const rev = el("span", "leg-rev", m.revision.rev);
+        rev.title = revisionSummary(m.revision);
+        chip.append(document.createTextNode(" · "), rev);
+      }
       legend.append(chip);
     });
   }
@@ -568,7 +582,19 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
       const { bbox } = m;
       const cx = cursor - totalW / 2 + bbox.size[0] / 2;
       const model = placeFloat(cx, -(bbox.size[2] / 2), bbox.center);
-      m.scenePart = scene.addMesh(m.mesh, { color: partColor(i), gloss: 0.18, model });
+      // the newest revision's regions, tinted on the part: the triangles
+      // inside those boxes are a second mesh in CHANGED_COLOR, the rest
+      // wear the filament; with no regions (or the toggle off) `inside`
+      // is empty and the whole part is the filament's
+      const regions = lab.showChanges ? changedRegions(m.revision) : [];
+      const { inside, outside } = splitByRegions(m.mesh, regions);
+      m.scenePart = scene.addMesh(outside, { color: partColor(i), gloss: 0.18, model });
+      m.changePart = inside.idx.length
+        ? scene.addMesh(inside, { color: CHANGED_COLOR, gloss: 0.3, model })
+        : null;
+      // the boxes themselves: a feature the revision REMOVED leaves no
+      // surface to tint, only the outline of where it was
+      if (regions.length) scene.addMesh(regionBoxLines(regions), { color: CHANGED_COLOR, lines: true, unlit: true, model });
       cursor += bbox.size[0] + gap;
       maxR = Math.max(maxR, Math.hypot(totalW / 2, bbox.size[1], bbox.size[2]));
     });
@@ -1023,6 +1049,132 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
     }
   }
 
+  // ── revisions: which rev each part is, what its newest rev moved ──
+  // devices/revisions.json is written by docs/hardware/enclosure/
+  // gen_revisions.py from the rendered meshes (CI refuses a part that moved
+  // unrecorded); nothing here is typed. A part at r1 has no previous rev to
+  // compare against and says so; the tint toggle only appears when some
+  // part of the set has regions to show.
+  function renderRevisions(set) {
+    const card = el("div", "enclab-rev");
+    if (!lab.revisions) {
+      card.append(el("span", "muted", "part revisions: ledger not loaded"));
+      return card;
+    }
+    const withRev = lab.metas.filter((m) => m.revision);
+    if (!withRev.length) {
+      card.append(el("span", "muted", "part revisions: none recorded for this set yet"));
+      return card;
+    }
+    const head = el("div", "enclab-rev-head");
+    head.append(el("strong", null, "Part revisions"), document.createTextNode(" — "));
+    head.append(el("span", "muted",
+      "each part's own count, bumped when its printed shape moved; what moved is read off the meshes, never typed."));
+    card.append(head);
+    const list = el("ul", "enclab-rev-list");
+    for (const m of withRev) {
+      const li = el("li");
+      li.append(el("b", null, `${m.part.name} ${m.revision.rev}`),
+        document.createTextNode(` · recorded ${m.revision.recorded}`
+          + (m.revision.version ? ` · ${m.revision.version}` : "")));
+      const lines = changeLines(m.revision);
+      if (lines.length) {
+        const ul = el("ul", "enclab-rev-changes");
+        for (const line of lines) ul.append(el("li", null, line));
+        li.append(ul);
+      } else {
+        li.append(el("span", "muted", " · first recorded revision"));
+      }
+      list.append(li);
+    }
+    card.append(list);
+    if (withRev.some((m) => changedRegions(m.revision).length)) {
+      const lbl = el("label", "enclab-rev-toggle");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = lab.showChanges;
+      cb.addEventListener("change", () => {
+        lab.showChanges = cb.checked;
+        if (lab.mode === "showroom") renderShowroom();
+      });
+      const sw = el("i", "enclab-rev-swatch");
+      lbl.append(cb, document.createTextNode(" tint what the newest revision moved "), sw);
+      card.append(lbl);
+    }
+    card.append(renderIdentify(set));
+    return card;
+  }
+
+  // ── "which revision is my STL?": a file you already have, against the ledger ──
+  // Read locally (FileReader; nothing leaves the browser), fingerprinted the
+  // way gen_revisions.py fingerprints, matched against every rev of every
+  // part. A match shows the file in the stage with everything the later revs
+  // changed tinted on it and their boxes drawn; no match says so plainly
+  // (a Customizer build or a remix is not a catalog revision).
+  function renderIdentify(set) {
+    const box = el("div", "enclab-rev-id");
+    const lbl = el("label", "enclab-rev-idlabel", "Have an STL from an earlier download? Check which revision it is: ");
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".stl,model/stl";
+    lbl.append(input);
+    const out = el("div", "enclab-rev-idout muted");
+    box.append(lbl, out);
+    input.addEventListener("change", async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      out.textContent = "measuring…";
+      let parsed;
+      try {
+        parsed = parseSTL(await file.arrayBuffer());
+      } catch (e) {
+        out.textContent = `not an STL this page can read (${e.message})`;
+        return;
+      }
+      const prefer = set.parts.length === 1 ? set.parts[0].file : null;
+      const hit = identifyMesh(lab.revisions, parsed.mesh, prefer);
+      out.innerHTML = "";
+      if (!hit) {
+        out.append(el("span", null,
+          `${file.name}: no recorded revision of any catalog part has this shape — a Customizer build, a remix, ` +
+          "or a scaled or re-meshed file. The catalog's own STLs and render.sh's recipes are what the ledger knows."));
+        return;
+      }
+      const head = el("p", null);
+      head.append(el("b", null, `${file.name} is ${hit.key} ${hit.rev}`),
+        document.createTextNode(` (recorded ${hit.recorded}). `),
+        document.createTextNode(hit.behind
+          ? `The current revision is ${hit.current}: ${hit.behind} change${hit.behind === 1 ? "" : "s"} since yours, tinted below.`
+          : "That is the current revision — nothing has changed since."));
+      out.append(head);
+      if (hit.behind) {
+        const ul = el("ul", "enclab-rev-changes");
+        for (const h of hit.since) {
+          const li = el("li", null, `${h.rev} · ${h.recorded}`);
+          const lines = changeLinesFor(h.changes);
+          if (lines.length) li.append(document.createTextNode(` — ${lines.join("; ")}`));
+          ul.append(li);
+        }
+        out.append(ul);
+      }
+      // show the file itself, tinted where the later revisions changed it
+      stopPlay();
+      scene.clearParts();
+      scene.overhangOn = false;
+      scene.clipZ = 1e9;
+      const { bbox } = parsed;
+      const model = placeFloat(0, -(bbox.size[2] / 2), bbox.center);
+      const { inside, outside } = splitByRegions(parsed.mesh, hit.regions);
+      scene.addMesh(outside, { color: lab.filament || PART_COLORS[0], gloss: 0.18, model });
+      if (inside.idx.length) scene.addMesh(inside, { color: CHANGED_COLOR, gloss: 0.3, model });
+      if (hit.regions.length) {
+        scene.addMesh(regionBoxLines(hit.regions), { color: CHANGED_COLOR, lines: true, unlit: true, model });
+      }
+      scene.dist = Math.max(60, Math.hypot(...bbox.size) * 1.6);
+    });
+    return box;
+  }
+
   async function showSet(set) {
     lab.set = set;
     info.innerHTML = "";
@@ -1041,6 +1193,7 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
     info.append(status);
     info.append(el("p", "body", set.for || set.note || ""));
 
+    if (lab.revisions === null) lab.revisions = await loadRevisions();
     lab.metas = await loadMetas(set);
     if (lab.set !== set) return; // user moved on mid-fetch
     if (lab.metas.length === 0 && lab.mode === "print") {
@@ -1051,6 +1204,7 @@ export function buildEnclosureLab(encData, deviceId, buildData, catalogData) {
     if (lab.mode === "print") renderPrintGuide();
     else renderShowroom();
     renderLegend();
+    info.append(renderRevisions(set));
 
     // downloads / sources — the STL is the tool-agnostic handoff: drop it into
     // any slicer. (The print guide's settings card exports a matching config.)

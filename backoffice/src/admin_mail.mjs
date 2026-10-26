@@ -1,12 +1,12 @@
 // Mail: campaigns with a live segment count, a designed preview, a test send,
 // scheduling and an honest report; automations; the audience and its health.
-import { html, redirect, HttpError, escapeHtml as e } from './http.mjs';
-import { table, money, dt, day, statusPill, field, form, button, cards, tabs } from './render.mjs';
+import { html, redirect, HttpError, escapeHtml as e, int } from './http.mjs';
+import { table, money, dt, day, statusPill, field, form, button, cards, tabs, meta } from './render.mjs';
 import { columns } from './charts.mjs';
 import { listCampaigns, campaign, createCampaign, updateCampaign, duplicateCampaign, queueCampaign, scheduleCampaign, sendTest, previewHtml, campaignReport } from './modules/campaigns.mjs';
 import { SEGMENTS, segmentCount, audienceStats, clearBounce } from './modules/contacts.mjs';
 import { listAutomations, automation, upsertAutomation, setAutomationEnabled, runsFor, runAutomations, automationReport, TRIGGERS } from './modules/automations.mjs';
-import { outboxStats } from './modules/mail.mjs';
+import { outboxStats, retryFailedMail } from './modules/mail.mjs';
 import { runJob } from './jobs.mjs';
 
 export function registerMail(app, { page, back, link }) {
@@ -23,7 +23,8 @@ export function registerMail(app, { page, back, link }) {
       form('/campaigns/new', c.csrf, `<b>New campaign</b><p class="muted">Plain text in, a designed mail out (the preview shows it). <code>{{first_name}}</code>, <code>{{name}}</code>, <code>{{city}}</code>, <code>{{site}}</code>, <code>{{unsubscribe}}</code> are filled in. <code># Heading</code>, <code>- bullets</code>, <code>**bold**</code> and bare links survive. Only people who confirmed the double opt-in receive it; every mail carries one-click unsubscribe; no pixels, ever.</p><div class="row">${field('slug', 'Slug', { required: true, placeholder: 'november-from-the-bench' })}${field('subject', 'Subject', { required: true })}</div><div class="row">${field('preheader', 'Preheader (the line inbox previews show after the subject)')}${field('segment', 'Who', { options: segOptions() })}</div>${field('body_text', 'Body', { type: 'textarea', required: true, rows: 12, placeholder: 'Hi {{first_name}},\n\nTwo things from the bench this month…' })}`, { submit: 'Save draft' }));
   });
   router.post('/campaigns/new', (c) => { const cp = createCampaign(db, c.body); back(c, `/campaigns/${cp.slug}`, 'draft saved'); });
-  router.get('/campaigns/outbox', (c) => page(c, 'Mail', mailTabs('outbox') + `<p>${button('/campaigns/flush', c.csrf, 'Send queued now', { quiet: true })}</p>` + table(db.all('SELECT * FROM mail_outbox ORDER BY id DESC LIMIT 200'), [{ label: 'When', get: r => dt(r.created_at) }, { label: 'To', key: 'to_addr' }, { label: 'Subject', key: 'subject' }, { label: 'Kind', key: 'kind' }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Error', key: 'last_error' }])));
+  router.get('/campaigns/outbox', (c) => page(c, 'Mail', mailTabs('outbox') + `<p>${button('/campaigns/flush', c.csrf, 'Send queued now', { quiet: true })} ${button('/campaigns/outbox/retry', c.csrf, 'Retry failed mail', { quiet: true })}</p>` + table(db.all('SELECT * FROM mail_outbox ORDER BY id DESC LIMIT 200'), [{ label: 'When', get: r => dt(r.created_at) }, { label: 'To', key: 'to_addr' }, { label: 'Subject', key: 'subject' }, { label: 'Kind', key: 'kind' }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Error', key: 'last_error' }])));
+  router.post('/campaigns/outbox/retry', (c) => { const n = retryFailedMail(db); db.audit('web', 'mail.retry_failed', 'outbox', String(n), {}); back(c, '/campaigns/outbox', `${n} failed mail${n === 1 ? '' : 's'} back in the queue`); });
   router.post('/campaigns/flush', async (c) => { const r = await runJob(app, 'outbox'); back(c, '/campaigns/outbox', JSON.stringify(r.result || r.error)); });
 
   // ---------- automations
@@ -36,7 +37,7 @@ export function registerMail(app, { page, back, link }) {
       `<h2>Add one</h2>${editor({ slug: '', name: '', trigger: 'consent_confirmed', trigger_arg: 0, delay_hours: 24, subject: '', body_text: 'Hi {{first_name}},\n\n', enabled: 1 }).replace('<input type="hidden" name="slug" value="">', field('slug', 'Slug', { required: true, placeholder: 'thank-you' }))}`;
     page(c, 'Mail', body);
   });
-  router.post('/campaigns/automations/save', (c) => { const a = upsertAutomation(db, { ...c.body, enabled: !!c.body.enabled }); back(c, '/campaigns/automations', `saved ${a.slug}`); });
+  router.post('/campaigns/automations/save', (c) => { const a = upsertAutomation(db, { ...c.body, trigger_arg: int(c.body.trigger_arg, { name: 'days', min: 0, max: 3650, fallback: 0 }), delay_hours: int(c.body.delay_hours, { name: 'wait (hours)', min: 0, max: 8760, fallback: 0 }), enabled: !!c.body.enabled }); back(c, '/campaigns/automations', `saved ${a.slug}`); });
   router.post('/campaigns/automations/run', (c) => { const r = runAutomations(db, cfg); back(c, '/campaigns/automations', `enrolled ${r.enrolled}, queued ${r.sent}, skipped ${r.skipped}`); });
   router.post('/campaigns/automations/:slug/toggle', (c) => { const a = automation(db, c.params.slug); if (!a) throw new HttpError(404, 'no such automation'); setAutomationEnabled(db, a.slug, !a.enabled); back(c, '/campaigns/automations', `${a.slug} ${a.enabled ? 'paused' : 'enabled'}`); });
 
@@ -60,7 +61,7 @@ export function registerMail(app, { page, back, link }) {
   router.get('/campaigns/:slug', (c) => {
     const cp = campaign(db, c.params.slug); if (!cp) throw new HttpError(404, 'no such campaign');
     const n = safeSeg(cp.segment); const sent = cp.status === 'sent'; const rep = campaignReport(db, cp.slug);
-    const body = mailTabs('campaigns') + `<p>${statusPill(cp.status)} · to <code>${e(cp.segment)}</code>${sent ? ` · ${cp.recipients} recipients · sent ${dt(cp.sent_at)}` : ` · <b>${n ?? '?'}</b> people right now`}${cp.scheduled_at ? ` · goes out ${dt(cp.scheduled_at)}` : ''} · ${link('/campaigns', 'all campaigns')}</p>
+    const body = mailTabs('campaigns') + meta([['Status', statusPill(cp.status)], ['Segment', `<code>${e(cp.segment)}</code>`], sent ? ['Recipients', `${cp.recipients}`] : ['People right now', `<b>${n ?? '?'}</b>`], sent ? ['Sent', dt(cp.sent_at)] : null, cp.scheduled_at ? ['Goes out', dt(cp.scheduled_at)] : null, ['', link('/campaigns', 'all campaigns')]]) + `
 ${sent ? `<h2>What happened</h2>${cards([['Delivered', rep.sent, 'ok'], ['Suppressed (consent withdrawn)', rep.suppressed], ['Failed', rep.failed, rep.failed ? 'bad' : ''], ['Unsubscribed within 7 days', rep.unsubscribed, rep.unsubscribed ? 'warn' : 'ok'], ['Replies within 7 days', rep.replies], ['Orders within 7 days', `${rep.orders} <span class="muted" style="font-size:.9rem">${money(rep.revenue_cents)}</span>`]])}<p class="muted">Measured without a pixel: orders and replies from the recipients in the week after, matched by address. Opens and clicks are not tracked, by rule.</p>` : ''}
 <div class="two"><div><h2>${sent ? 'As sent' : 'Edit'}</h2>${sent ? `<div class="card"><b>${e(cp.subject)}</b>${cp.preheader ? `<br><span class="muted">${e(cp.preheader)}</span>` : ''}<pre style="margin-top:.6rem;white-space:pre-wrap">${e(cp.body_text)}</pre></div>` : form(`/campaigns/${e(cp.slug)}/update`, c.csrf, `${field('subject', 'Subject', { value: cp.subject, required: true })}${field('preheader', 'Preheader', { value: cp.preheader || '' })}${field('segment', 'Who', { options: segOptions().some(o => o[0] === cp.segment) ? segOptions() : [[cp.segment, cp.segment], ...segOptions()], value: cp.segment })}${field('body_text', 'Body', { type: 'textarea', rows: 14, value: cp.body_text, required: true })}`, { submit: 'Save' })}
 <p>${button(`/campaigns/${e(cp.slug)}/duplicate`, c.csrf, 'Duplicate as a new draft', { quiet: true })}</p></div>

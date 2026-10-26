@@ -11,10 +11,13 @@ import { overdue } from './modules/invoices.mjs';
 import { raise, resolve } from './modules/exceptions.mjs';
 import { backup, checkBackup, liveCounts, uploadOffsite, restoreDrill, offsiteConfigured } from './modules/backup.mjs';
 import { reconcile } from './modules/reconcile.mjs';
+import { pollTracking } from './modules/shipping.mjs';
+import { hourIn } from './render.mjs';
 import { enqueue } from './modules/mail.mjs';
 import { unreconciledStripeCents } from './modules/ledger.mjs';
 import { resetDemo, isDemo } from './modules/demo.mjs';
 import { join } from 'node:path';
+import { timedFetch } from './net.mjs';
 
 export const JOBS = {
   // name: [interval seconds, fn(app)]
@@ -26,6 +29,7 @@ export const JOBS = {
     let created = 0, appended = 0, dup = 0;
     for (const m of msgs) {
       if (db.get('SELECT uid FROM mail_seen WHERE uid = ?', m.uid)) { dup++; continue; }
+      if (!m.raw) { db.audit('system', 'mail.inbox.skipped', 'mail', m.uid, { why: m.skipped }); continue; }   // over the size cap: left on the server, marked seen
       const r = ingestEmail(db, parseEmail(m.raw), { cfg });
       db.run('INSERT INTO mail_seen (uid, seen_at) VALUES (?, ?)', m.uid, nowIso());
       if (r.created) created++; else if (r.ticket) appended++; else dup++;
@@ -43,9 +47,11 @@ export const JOBS = {
   }],
   stock:    [3600, async ({ db, cfg }) => {
     const low = lowStock(db);
-    for (const i of low) await raise(db, cfg, `stock:${i.sku}`, `inventory [reorder]: ${i.sku}`, `${i.name}: ${i.on_hand} on hand, reorder point ${i.reorder_point}, reorder qty ${i.reorder_qty}.\n${i.supplier ? `Supplier: ${i.supplier} ${i.supplier_url || ''}` : ''}`);
-    const lowKeys = new Set(low.map(i => `stock:${i.sku}`));
-    for (const ex of db.all('SELECT key FROM exceptions WHERE key LIKE \'stock:%\' AND resolved_at IS NULL')) if (!lowKeys.has(ex.key)) await resolve(db, cfg, ex.key, 'Restocked.');
+    // A part a purchase order already covers (drafted on Home, or ordered) is a decision made, not an alarm.
+    const { onOrder, draftedFor } = await import('./modules/purchasing.mjs'); const oo = onOrder(db); const covered = new Set(low.filter(i => oo[i.sku] || draftedFor(db, i.sku)).map(i => i.sku));
+    for (const i of low) if (!covered.has(i.sku)) await raise(db, cfg, `stock:${i.sku}`, `inventory [reorder]: ${i.sku}`, `${i.name}: ${i.on_hand} on hand, reorder point ${i.reorder_point}, reorder qty ${i.reorder_qty}.\n${i.supplier ? `Supplier: ${i.supplier} ${i.supplier_url || ''}` : ''}`);
+    const lowKeys = new Set(low.filter(i => !covered.has(i.sku)).map(i => `stock:${i.sku}`));
+    for (const ex of db.all('SELECT key FROM exceptions WHERE key LIKE \'stock:%\' AND resolved_at IS NULL')) if (!lowKeys.has(ex.key)) await resolve(db, cfg, ex.key, covered.has(ex.key.slice(6)) ? 'A purchase order covers it.' : 'Restocked.');
     return { low: low.length };
   }],
   invoices: [3600, async ({ db, cfg }) => {
@@ -68,7 +74,7 @@ export const JOBS = {
     await resolve(db, cfg, 'backup:check', 'A checked backup exists again.');
     let offsite = { skipped: 'BACKUP_S3_URL / KEY / SECRET not set' };
     if (offsiteConfigured(cfg)) {
-      try { offsite = await uploadOffsite(cfg, b.path, { fetchImpl: app.fetchImpl || fetch }); await resolve(db, cfg, 'backup:offsite', 'The off-site copy is current again.'); }
+      try { offsite = await uploadOffsite(cfg, b.path, { fetchImpl: app.fetchImpl || timedFetch }); await resolve(db, cfg, 'backup:offsite', 'The off-site copy is current again.'); }
       catch (e) { offsite = { error: String(e.message || e) }; await raise(db, cfg, 'backup:offsite', 'backup [off-site failed]: the copy did not reach the bucket', `${e.message}\n\nThe local backup is checked; only the off-site copy is missing. Check BACKUP_S3_URL / KEY / SECRET and the bucket's permissions.`); }
     }
     db.audit('system', 'backup.taken', 'backup', b.path, { bytes: b.bytes, checked: checked.ok, offsite: offsite.read_back || false });
@@ -79,16 +85,18 @@ export const JOBS = {
   // Weekly: the latest copy (off-site when configured) is pulled back and proven to boot.
   restore_drill: [7 * 86400, async (app) => {
     const { db, cfg } = app;
-    try { const r = await restoreDrill(cfg, { fetchImpl: app.fetchImpl || fetch, localDir: join(cfg.dataDir, 'backups') }); db.setSetting('drill:last', JSON.stringify({ at: r.at, ok: r.ok, offsite: r.offsite, encrypted: !!r.encrypted, age_h: r.age_h, orders: r.counts?.orders ?? null, errors: (r.errors || []).slice(0, 5) })); if (!r.ok) throw new Error(r.errors.join('; ')); await resolve(db, cfg, 'backup:drill', 'The restore drill passed.'); db.audit('system', 'backup.drill', 'backup', r.source, { ok: true, orders: r.counts.orders }); return r; }
+    try { const r = await restoreDrill(cfg, { fetchImpl: app.fetchImpl || timedFetch, localDir: join(cfg.dataDir, 'backups') }); db.setSetting('drill:last', JSON.stringify({ at: r.at, ok: r.ok, offsite: r.offsite, encrypted: !!r.encrypted, age_h: r.age_h, orders: r.counts?.orders ?? null, errors: (r.errors || []).slice(0, 5) })); if (!r.ok) throw new Error(r.errors.join('; ')); await resolve(db, cfg, 'backup:drill', 'The restore drill passed.'); db.audit('system', 'backup.drill', 'backup', r.source, { ok: true, orders: r.counts.orders }); return r; }
     catch (e) { db.setSetting('drill:last', JSON.stringify({ at: nowIso(), ok: false, errors: [String(e.message || e).slice(0, 300)] })); await raise(db, cfg, 'backup:drill', 'backup [restore drill failed]: the latest copy could not be proven', String(e.message || e)); throw e; }
   }],
   // Daily: payouts and charges in Stripe against the books and the orders (needs STRIPE_API_KEY).
-  reconcile: [86400, async (app) => reconcile(app.db, app.cfg, { fetchImpl: app.fetchImpl || fetch })],
+  reconcile: [86400, async (app) => reconcile(app.db, app.cfg, { fetchImpl: app.fetchImpl || timedFetch })],
+  // Hourly, with USPS credentials: where every open shipment is; delivered when the carrier says so.
+  tracking: [3600, async (app) => pollTracking(app.db, app.cfg, { fetchImpl: app.fetchImpl || timedFetch })],
   // Once a day at DIGEST_HOUR (UTC): today's list, the numbers, the health checklist, to the operator.
   digest:   [600, async ({ db, cfg }) => {
     if (!cfg.operatorEmail) return { skipped: 'OPERATOR_EMAIL not set' };
     const today = new Date().toISOString().slice(0, 10);
-    if (new Date().getUTCHours() < cfg.digestHour) return { waiting: `until ${String(cfg.digestHour).padStart(2, '0')}:00 UTC` };
+    if (hourIn(cfg.tz) < cfg.digestHour) return { waiting: `until ${String(cfg.digestHour).padStart(2, '0')}:00 ${cfg.tz}` };
     if (db.setting('digest:last') === today) return { sent: 'already today' };
     const { digestText } = await import('./modules/health.mjs');
     const m = enqueue(db, { to: cfg.operatorEmail, subject: `${cfg.company}: the morning digest for ${today}`, kind: 'transactional', ref: `digest:${today}`, text: digestText(db, cfg) });
@@ -96,17 +104,19 @@ export const JOBS = {
     return { queued: m.id, to: cfg.operatorEmail };
   }],
   // A public demo starts over on a cadence so visitors always find the seeded week. Never runs outside demo mode.
-  demo_reset: [60, async ({ db, cfg }) => {
+  demo_reset: [60, async (app) => {
+    const { db, cfg } = app;
     if (!cfg.demo || !isDemo(db) || !cfg.demoResetMinutes) return { skipped: 'not a timed public demo' };
     const last = db.setting('demo:last_reset', db.setting('demo:seeded_at', ''));
     if (last && Date.now() - Date.parse(last) < cfg.demoResetMinutes * 60_000) return { next_in_s: Math.round((cfg.demoResetMinutes * 60_000 - (Date.now() - Date.parse(last))) / 1000) };
-    const r = await resetDemo(db, cfg); db.setSetting('demo:last_reset', nowIso());
-    return { reset: true, ...r };
+    app.resetting = true;
+    try { const r = await resetDemo(db, cfg); db.setSetting('demo:last_reset', nowIso()); return { reset: true, ...r }; }
+    finally { app.resetting = false; }
   }],
 };
 
-export async function runJob(app, name) {
-  const job = JOBS[name]; if (!job) throw new Error(`unknown job ${name}`);
+export async function runJob(app, name, { jobs = JOBS } = {}) {
+  const job = jobs[name]; if (!job) throw new Error(`unknown job ${name}`);
   const t0 = Date.now();
   try {
     const result = await job[1](app);
@@ -119,19 +129,25 @@ export async function runJob(app, name) {
   }
 }
 
-export function startScheduler(app, { tickMs = 10_000 } = {}) {
-  const last = {};
-  let running = false;
+export function startScheduler(app, { tickMs = 10_000, jobs = JOBS } = {}) {
+  // Seeded from the last run on record, so a process that restarts does not run every job again at
+  // once: fourteen crash-restarts used to replace two weeks of nightly backups with fourteen copies of
+  // the same hour, and each boot uploaded and drilled.
+  const last = {}; for (const r of jobRuns(app.db)) { const t = Date.parse(r.last_run_at); if (Number.isFinite(t)) last[r.name] = t; }
+  // The heartbeat /healthz reads: stamped when the scheduler starts and again each time a loop completes.
+  // A loop stuck on a job (the guard below returns without stamping) leaves it aging, and five minutes on
+  // /healthz says "scheduler stalled" — the symptom a job that never resolves would otherwise hide.
+  let running = false; app.schedulerTick = Date.now();
   const tick = async () => {
     if (running) return; running = true;
     try {
-      for (const [name, [interval]] of Object.entries(JOBS)) {
+      for (const [name, [interval]] of Object.entries(jobs)) {
         if (Date.now() - (last[name] || 0) < interval * 1000) continue;
         last[name] = Date.now();
-        const r = await runJob(app, name);
+        const r = await runJob(app, name, { jobs });
         if (r.ok) { const ex = app.db.get('SELECT key FROM exceptions WHERE key = ? AND resolved_at IS NULL', `job:${name}`); if (ex) await resolve(app.db, app.cfg, `job:${name}`, 'Ran clean.'); }
       }
-    } finally { running = false; }
+    } finally { running = false; app.schedulerTick = Date.now(); }
   };
   const timer = setInterval(tick, tickMs); timer.unref();
   setTimeout(tick, 1500).unref();
