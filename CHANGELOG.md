@@ -1,6 +1,55 @@
 # Changelog
 
 ## [Unreleased]
+### After the 2.4.16 train: an OTA image too big for its slot is refused before it downloads, no app release can take `releases/latest`, and long release notes end with a link instead of mid-sentence
+
+- **Firmware: the pull-OTA engine checks the slot first.** Once the signed
+  manifest is parsed, and before a byte is downloaded or written, the engine
+  compares the manifest's `size` with the inactive app slot. An image that
+  does not fit, or a board with no inactive slot at all (a single-app
+  table), is refused as `SECURACV_OTA_ERR_PARTITION`, with a log line that
+  says the unit needs a USB reflash and the sentence "This update does not
+  fit in the space your Canary keeps for updates. Install it over USB
+  instead." It used to download and write until the slot ran out, then start
+  again on the next poll: the C3 Visions still on 0x140000 slots against
+  2.4.16's 1.4 MB images. This helps only boards already running it; a C3
+  Vision on the old table still needs the one USB reflash the 2.4.16 notice
+  below describes. **Host-tested only** (`test_ota_logic.cpp`): the ESP32
+  builds are CI's, and nothing was checked on a bench.
+- **Firmware release: every signed OTA image is measured, or says why
+  not.** `flavors.json` budgets seven more images against their slots
+  (`canary-vision-xiao-c3`, `-xiao-s3`, and the `dash7`, `nightstand7`,
+  `nightstand-s3`, `touch169` and `amoled241` displays), and
+  `check_slot_budget.py` reports an unbudgeted product as a `::warning::`
+  annotation instead of a plain log line. Dash and Dash-modes stay
+  unbudgeted: their released image is built on `huge_app`, which has no
+  update slot (sweep F366).
+- **Flasher releases are never born as `releases/latest`.** On 2026-10-10
+  tauri-action created flasher-v0.12.0 as an ordinary published release, and
+  `releases/latest`, the URL every Canary polls for its OTA manifest, pointed
+  at the Flasher for about three minutes. `desktop-flasher-release.yml` now
+  creates the release itself with `--latest=false` and hands tauri-action its
+  id, so tauri-action only uploads; finalize fails the run if `latest` is not
+  a firmware release afterwards. The same workflow stops attaching a second,
+  unversioned copy of the macOS updater bundle, and its release body names
+  the Flasher (0.12.0 and 0.12.1 both said "the SecuraCV Lab"). Neither
+  app's body says a signed Mac build opens with no prompt any more: macOS
+  asks once.
+- **Release notes that fit.** GitHub keeps 125,000 characters of a release
+  body and drops the rest without a word; the 2.4.16 section is over
+  300,000. `firmware-release.yml` now cuts the body at 120,000 bytes, between
+  entries, and ends it with a link to `CHANGELOG.md` at the tag. The 400-byte
+  notes in each OTA manifest end on a line boundary, marked " …", instead of
+  mid-word.
+- **Apple.** `ios/scripts/cloudkit_schema.sh check` reads the production
+  schema as well as development and names the one that is short, and its
+  index test accepts the schema language's names for the two system-field
+  indexes; neither has run against the real container yet. The iPhone
+  release proves the widget and notification-service extensions are inside
+  the `.ipa`, as it already did the Watch app. The upload steps say where a
+  build goes: App Store Connect, then TestFlight, and to App Store users only
+  after someone submits it for review.
+
 ### The backoffice guards its door (backoffice 0.7.0)
 
 - Sign-in links that stand in for the password, never the authenticator,
@@ -2435,6 +2484,17 @@ the compose quickstarts and the setup guide all state.
 
 ## [2.4.16] - 2026-10-10
 
+> **Canary Vision on an ESP32-C3 (the C3 DevKit and the XIAO C3): one USB
+> reflash first.** 2.4.16 moves these boards to larger app slots (0x140000 →
+> 0x1E0000; the Bluetooth setup door needs the room), and a partition table
+> cannot change over the air. A unit last installed over USB before 2.4.16
+> keeps the old table, so its 2.4.16 update fails (the image is larger than
+> the slot) and it stays on its current version until it is reflashed once:
+> the browser flasher or the Flasher app, *Canary Vision* 2.4.16 for your
+> board. It updates over the air again after that. The XIAO S3 Vision is
+> unaffected; the C3 Super Mini has no over-the-air image and is always
+> installed over USB.
+
 ### release: the 2.4.16 train and every app that moved (iOS 0.7.0, tvOS 0.3.0, Flasher 0.12.0, Lab 0.3.0, kernel / HA / add-on 0.8.0)
 
 - **Firmware 2.4.16** — the seven version strings and `fw_train`. Everything
@@ -2444,11 +2504,18 @@ the compose quickstarts and the setup guide all state.
   emulator dist, `flash.json` and the firmware SBOM move with it.
 - **iOS 0.7.0** (`MARKETING_VERSION`, `ios/project.yml`; the Apple Watch app
   inherits it): the add-a-Canary rework and the Watch parity below. No
-  synced CloudKit record changed since `ios-v0.6.0`, so no schema promotion
-  is owed before this one. One trade-off a human should know about: the away
-  subscription belongs to the iCloud account, so setting every rule on one
-  device to *On Wi-Fi only* deletes it for the account's other devices too
-  until one with an *Anywhere* rule next opens (the Alerts footer says so).
+  synced CloudKit record changed since `ios-v0.6.0`, but Production may
+  still lack the field 0.6.0 added: `PairedDevice.tlsCertFP` (#1675) was
+  first written by 0.6.0, and nothing records its promotion to Production,
+  which every TestFlight and App Store build talks to (Production rejects a
+  save that carries a field its schema lacks, and the app swallows that
+  error). **Before 0.7.0 goes to App Review**, run
+  `ios/scripts/cloudkit_schema.sh check` (it now reads Production too) and,
+  if Production lacks the field, `promote`. One trade-off a human should
+  know about: the away subscription belongs to the iCloud account, so
+  setting every rule on one device to *On Wi-Fi only* deletes it for the
+  account's other devices too until one with an *Anywhere* rule next opens
+  (the Alerts footer says so).
 - **tvOS 0.3.0** — the first tvOS entry here since `tvos-v0.2.4`: viewer-token
   pairing with a pinned key, the sealed-log day timeline, and the hub's own
   row named as the witness kernel.
@@ -2510,13 +2577,14 @@ the compose quickstarts and the setup guide all state.
   its bench; the header's Help link opens securacv.com/help. A malformed
   `fleet.html` / `choose.html` link no longer throws. The print estimate
   drops a slice button that could only say no; the site map drops a test
-  fixture (a 404) and a template. The Lab app no longer bundles page tests,
-  Python generators or shell scripts, its native interface is trimmed to
-  the commands its pages call, and its Linux udev rule matches the
-  Flasher's. The Workshop no longer lists proof QR, chain verify and night
-  blackout as Display switches — none controlled anything. Publishing a Lab
-  draft attaches the SBOMs, and *Update everything* no longer rebuilds a
-  version already waiting as a draft.
+  fixture (a 404) and a template. The Lab app no longer bundles the Lab's
+  page tests or its own Python and shell tooling (the enclosure CAD scripts
+  under `docs/hardware/enclosure` still ship with it, A78), its native
+  interface is trimmed to the commands its pages call, and its Linux udev
+  rule matches the Flasher's. The Workshop no longer lists proof QR, chain
+  verify and night blackout as Display switches — none controlled anything.
+  Publishing a Lab draft attaches the SBOMs, and *Update everything* no
+  longer rebuilds a version already waiting as a draft.
 - **Kernel.** `witness_kernel::DetectorBackend` at the crate root now names
   the detection trait every backend implements; the legacy `Detector`,
   `StubDetector`, `CpuDetector`, `StubFrameSource` and frame.rs `Frame` are
@@ -2749,8 +2817,13 @@ that was still running when it merged. Design: `docs/design/magic_pairing.md`.
   the provisioning plan through the Supervisor proxy), the Canary
   walkthrough (one path per family: the glass QR and the phone joining the
   setup network itself, the Flasher-printed key, Bluetooth for a WAP), and
-  the "new Canary nearby" card above. No synced CloudKit record changed
-  since 0.5.6, so no schema promotion is owed before this one.
+  the "new Canary nearby" card above. *Correction (2026-10-10):* this line
+  said no synced CloudKit record changed since 0.5.6, so no schema
+  promotion was owed. A field did change: `PairedDevice.tlsCertFP` was added
+  between the two (f9126e46, #1675), and 0.6.0 is the first release that
+  writes it, so a Production promotion was owed before this one and nothing
+  records that it happened. The iOS 0.7.0 bullet under *release: the 2.4.16
+  train* above says how to check.
 
 ### The hub finishes without a wizard: the Flasher's first-boot watch waits for Home Assistant itself, self-setup is on by default and retries "not ready yet", and the iPhone app gains a Set up walkthrough that finishes a hub from the phone and gives a new Canary its Wi-Fi
 

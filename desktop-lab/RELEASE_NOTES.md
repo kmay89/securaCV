@@ -54,9 +54,10 @@ the menu bar.**
 - **Links that land:** *SecuraCV everywhere* opens the family map; old Lab
   addresses for pages that moved to securacv.com go to those pages; Help
   opens the Help Desk; the Witness Wall's back link returns to its bench.
-- **Lighter:** the app no longer bundles page tests, Python generators or
-  shell scripts, its native interface is trimmed to the commands its pages
-  use, and the print estimate drops a slice button that could only say no.
+- **Lighter:** the app no longer bundles the Lab's page tests or its own
+  Python and shell tooling (the enclosure CAD scripts still ship with it),
+  its native interface is trimmed to the commands its pages use, and the
+  print estimate drops a slice button that could only say no.
 - **Linux:** the .deb installs a udev rule covering Espressif native USB and
   the CP210x, CH340 and CH9102 bridges, so a Canary's serial port opens
   without root and ModemManager leaves it alone.
