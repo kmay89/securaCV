@@ -353,6 +353,10 @@ def test_wants_radar_link_by_type_or_by_a_reported_radar():
     # A Sentinel Lite: no object, no sensor; its status alone never earns one.
     assert not wants("health", "canary-sentinel", SENTINEL_LITE_HEALTH)
     assert not wants("status", "canary-sentinel", '{"device_type":"canary-sentinel"}')
+    # Only a health payload's object counts: the same object on any other
+    # Canary's status topic earns nothing (the firmware never sends one there).
+    assert not wants("status", "canary-sentinel", SENTINEL_HEALTH_WITH_RADAR)
+    assert not wants("status", None, SENTINEL_HEALTH_WITH_RADAR)
     # Other topics, and a `radar` that is not an object, never do.
     assert not wants("events", "canary-sentinel", SENTINEL_HEALTH_WITH_RADAR)
     assert not wants("health", "canary-sentinel", '{"radar":true}')

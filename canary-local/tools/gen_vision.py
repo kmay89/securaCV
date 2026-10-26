@@ -532,7 +532,7 @@ SERIAL = {
     "ready": [
         "",
         f"  watching · invoke every {INVOKE_PERIOD_MS} ms · heartbeat every {HEARTBEAT_MS // 1000} s",
-        "  a non-zero Grove Vision AI ID is the handshake — ID=0 means check the I2C link",
+        "  Grove Vision AI ID=1 is the handshake — ID=0 means check the I2C link",
     ],
     "id_zero_hint": "Grove Vision AI ID=0 → I2C wiring/pins wrong, Grove cable on the wrong "
                     "socket, or module in bootloader mode (tap Reset).",

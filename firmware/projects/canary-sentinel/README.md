@@ -102,7 +102,7 @@ golden vector.
 | Topic | Retained | Carries |
 |---|---|---|
 | `securacv/<id>/events` | no | one signed event per level transition: `event` (`level_changed`), `seq`, `bucket_uptime_s`, `level`, `confidence`, `anomaly`, `occupancy`, `range`, `modality_bits`, `signed` + `v`/`alg`/`fp`/`sig` |
-| `securacv/<id>/state` | yes | the latest claim + `presence` (level present/confirmed/loiter), `anomaly_active`, `channel_denied`, `modalities` (class names), `strong_modalities`, `tier`, uptime |
+| `securacv/<id>/state` | yes | the latest claim + `presence` (level present/confirmed/loiter), `anomaly_active`, `channel_denied` (a channel voting `Denied`, or a light sensor that did not answer at boot), `modalities` (class names), `strong_modalities`, `tier`, uptime |
 | `securacv/<id>/status` | yes | online/offline (LWT), heartbeat, RSSI, heap health |
 | `securacv/<id>/health` | yes | the public key HA TOFU-pins, firmware version; on a build with the radar, the `radar` link object (`link_ok`, `last_frame_age_ms`, `frame_errors`) once the link has been judged: a frame decoded, or one stall window (`SENT_STALE_RADAR`) passed since boot |
 | `securacv/<id>/chain` | yes | the signed chain head + length (the `chain` kind) |
@@ -117,8 +117,10 @@ device's sensing modality reads "Other sensor": it fuses several media, and a
 dedicated fusion modality is a later dictionary decision. A Sentinel whose
 health carries the radar object also gets the integration's Radar link
 diagnostic (`ok` / `stale` / `down`), read by the rule the radar's fusion
-vote uses, so the two never disagree; a Lite build sends no object and gets
-no sensor.
+vote uses: once the radar has spoken, the link reads `down` exactly when the
+radar votes `Denied`. A radar silent since boot reads `down` there while its
+channel never votes, as an unwired one does, so that diagnostic is the only
+place it shows. A Lite build sends no object and gets no sensor.
 
 ## Phases — what is proven where
 
@@ -136,17 +138,23 @@ above promises — one more reason nothing ships yet.
 
 The light sensor is read the same way. The BH1750 has no id register;
 its power-on acknowledgment at boot is the only presence probe, so the boot
-console prints `BH1750 ambient light sensor online` or `BH1750 not found`.
-A sensor that did not answer at boot is **absent**: the light channel never
-votes. One that answered and then fails a read is **blinded**: `Denied`,
+console's `BH1750` row reads `ambient light sensor online` or `not found:
+absent, never votes, reported as channel_denied`. A sensor that did not
+answer at boot is **absent**: the light channel never votes, so it adds no
+suspicion, but the state topic's `channel_denied` is true for it, so Home
+Assistant's Channel-blinded problem sensor stays on (R6: never a silent
+gap). One that answered and then fails a read is **blinded**: `Denied`,
 suspicion (R2). Before this, the boot answer was ignored and every failed
 read voted `Denied`, so a unit without a working light sensor showed a
 blinded channel for good, and on a build with the radar an `Anomaly`
 whenever the radar saw a body (a denied channel while a body is present is
 the evasion R2 flags; `test_sentinel_links.cpp` shows it under the `door`
-preset). The flip side, stated plainly: a sensor removed while the unit is
-off boots as absent, and until the device-details record carries the part's
-status the boot console is the only place that says so.
+preset). Now it shows the problem sensor and no `Anomaly`. A sensor removed
+while the unit is off therefore boots as absent: it reaches the owner as a
+denied channel, but no longer as suspicion. On the wire only the anomaly
+score (a blinded sensor raises it, an absent one does not) and, with a body
+present, the level tell the two apart, until the device-details record
+carries the part's status (device-details PR 15).
 
 ## Build & test
 

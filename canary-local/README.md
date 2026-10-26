@@ -719,8 +719,8 @@ HX6538 + Ethos-U55) and the ESP32 host only ever hears boxes over I2C.
   voxel tracking, NVS-backed tuning and the presence FSM. IoU/NMS remains on
   the labeled SSCMA-module side of that boundary, where it exists in hardware.
 - **The host flash + serial console** — the README's own quickstart commands
-  with one-tap copy, then the staged boot log; `Grove Vision AI ID=` non-zero
-  is the lesson.
+  with one-tap copy, then the staged boot log; `Grove Vision AI ID=1` (the
+  module answered; `ID=0`, it did not) is the lesson.
 - **MQTT + HA** — every topic from `topics.h`, all 19 discovery entities from
   `ha_discovery.cpp`, the retained `cfg/state` and the signed events.
 - **The Aim card** — the boxes-only channel, drawn the way the Lovelace card

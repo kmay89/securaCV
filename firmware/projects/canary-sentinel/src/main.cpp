@@ -39,8 +39,11 @@
   the radar UART's link health, as canary-sense's does (radar_link_health():
   link up or down, the age of the last frame, the parser's error count),
   never a reading. The device-details design classes that age and that count
-  as activity, since they can move with what happens in the room, so they go
-  to the owner's broker only.
+  as activity, which its policy keeps off the broker tier: they are not
+  allowed here by that design, but carried as a legacy exception, the health
+  object canary-sense already publishes, which the design's PR 7 asks this
+  file to publish too. Home Assistant's diagnostics redaction does not list
+  `last_frame_age_ms` yet; device-details PR 16 adds it.
 */
 
 #include <Arduino.h>
@@ -115,7 +118,7 @@ static canary::sentinel::RadarLink g_radar_link;  // the fusion vote and the hea
 #endif
 #if defined(FEATURE_AMBIENT_LIGHT) && FEATURE_AMBIENT_LIGHT
 static securacv::sensors::BH1750 g_lux;
-static float g_lux_baseline = -1.0f;
+static canary::sentinel::LightChannel g_light;  // its lux baseline (canary/sentinel_links.h)
 #endif
 
 // PIR settle tail: how long after the last motion edge PIR keeps voting Weak.
@@ -219,6 +222,17 @@ static void set_last_event(const char* e) {
   g_snap.last_event = g_last_event;
 }
 
+// Whether this build's light sensor did not answer at boot (the driver keeps
+// begin()'s answer as present()). A build without the sensor has nothing to
+// be absent. tests_host/test_sentinel_links.cpp holds this body to its source.
+static bool light_absent_at_boot() {
+#if defined(FEATURE_AMBIENT_LIGHT) && FEATURE_AMBIENT_LIGHT
+  return !g_lux.present();
+#else
+  return false;
+#endif
+}
+
 static void refresh_snapshot(const FusionResult& r, uint32_t now_ms) {
   g_snap.claim.level         = level_name(r.level);
   g_snap.claim.confidence    = r.confidence;
@@ -229,7 +243,10 @@ static void refresh_snapshot(const FusionResult& r, uint32_t now_ms) {
   g_snap.present   = (r.level == Level::Present || r.level == Level::Confirmed ||
                       r.level == Level::Loiter);
   g_snap.anomalous = (r.level == Level::Anomaly);
-  g_snap.denied_any        = r.denied_any;
+  // A channel voting Denied, or a light sensor absent since boot: an absent
+  // sensor never votes, but it is never a silent gap either (R6).
+  g_snap.denied_any        = canary::sentinel::channel_denied_reported(r.denied_any,
+                                                                       light_absent_at_boot());
   g_snap.strong_modalities = r.strong_modalities;
   g_snap.modalities = modality_list(r.modality_bits);
   g_snap.uptime_s = now_ms / 1000;
@@ -380,9 +397,14 @@ static void read_radar(uint32_t now) {
 // Assistant's radar-link diagnostic reads (link_ok / last_frame_age_ms /
 // frame_errors; RadarLinkHealth in canary/net/mqtt_mgr.h). It reports the
 // link read_radar() above already judges, by the same rule
-// (canary/sentinel_links.h), so the health object and the fusion vote cannot
-// disagree. The publish was there, carried from canary-sense; nothing here
-// passed it a radar, so a Standard build's health never carried one.
+// (canary/sentinel_links.h), so once the radar has spoken the health object
+// and the fusion vote agree: link_ok is false exactly when the vote is
+// Denied. A radar silent since boot is the exception: it reads down here
+// once judged, while its channel never votes, as an unwired one does. The
+// publish was there, carried from canary-sense; nothing here passed it a
+// radar, so a Standard build's health never carried one.
+// tests_host/test_sentinel_links.cpp holds this body, and both publishes'
+// use of it, to their source.
 //
 // nullptr while the link has not been judged yet (no frame decoded and the
 // stall window not yet over since the UART opened), which HA keeps as
@@ -404,31 +426,13 @@ static const canary::net::RadarLinkHealth* radar_link_health(uint32_t now_ms) {
 
 static void read_light(uint32_t now) {
 #if defined(FEATURE_AMBIENT_LIGHT) && FEATURE_AMBIENT_LIGHT
-  using canary::sentinel::LightLink;
   // begin()'s answer at boot (the driver keeps it as present()) tells a unit
-  // with no light sensor from a sensor that stopped answering
-  // (canary/sentinel_links.h).
-  const float lux = g_lux.read_lux();
-  switch (canary::sentinel::light_link(g_lux.present(), lux)) {
-    case LightLink::Absent:
-      // Nothing answered at boot: no light sensor on this unit, so the
-      // channel is not wired and never votes. setup() said so on the console.
-      return;
-    case LightLink::Blinded:
-      // It answered at boot and a read fails now: unplugged, jammed or dead
-      // since boot. Suspicion, not silence (R2).
-      g_engine.observe(Channel::Light, Vote::Denied, /*quality=*/100, now);
-      return;
-    case LightLink::Reading:
-      break;
-  }
-  if (g_lux_baseline < 0.0f) g_lux_baseline = lux;
-  const uint16_t delta = static_cast<uint16_t>(fabsf(lux - g_lux_baseline));
-  // Slow-track the baseline so a sunset drift doesn't read as an event.
-  g_lux_baseline += (lux - g_lux_baseline) * 0.02f;
-  g_engine.observe(Channel::Light,
-                   chan::light_vote(/*blinded=*/false, delta, /*weak_delta=*/50),
-                   /*quality=*/80, now);
+  // with no light sensor (no vote) from a sensor that stopped answering
+  // (Denied, R2); the rule and the vote are canary/sentinel_links.h's, and
+  // tests_host/test_sentinel_links.cpp holds this body to its source.
+  const canary::sentinel::LightSample s =
+      canary::sentinel::light_sample(g_light, g_lux.present(), g_lux.read_lux());
+  if (s.votes) g_engine.observe(Channel::Light, s.vote, s.quality, now);
 #else
   (void)now;
 #endif
@@ -754,11 +758,12 @@ void setup() {
   Wire.begin(I2C_SDA, I2C_SCL);
   // The POWER_ON acknowledgment is the BH1750's only presence probe. A unit
   // where nothing answers has no light sensor: its light channel never votes,
-  // where it used to vote Denied on every read (canary/sentinel_links.h).
+  // where it used to vote Denied on every read, and the state topic reports
+  // it as a denied channel (canary/sentinel_links.h).
   if (g_lux.begin(Wire, BH1750_ADDR)) {
     boot_kv("BH1750", "ambient light sensor online");
   } else {
-    boot_kv("BH1750", "not found — absent, so the light channel never votes");
+    boot_kv("BH1750", "not found: absent, never votes, reported as channel_denied");
   }
 #endif
 

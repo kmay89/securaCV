@@ -661,7 +661,8 @@ Canary Sentinel (the multi-sensor fusion guardian) is **not released yet** —
 its Phase 1a firmware is compiled by CI but has not run on a bench
 ([project README](../firmware/projects/canary-sentinel/README.md)). When a
 unit is built by hand, its own discovery announces **Presence** and
-**Anomaly** binary sensors, a **Channel blinded** problem sensor, **Level**,
+**Anomaly** binary sensors, a **Channel blinded** problem sensor (on while a
+channel votes denied, or when the light sensor did not answer at boot), **Level**,
 **Confidence**, **Anomaly score**, **Occupancy**, **Range band** and
 **Corroborating modalities** sensors, the uptime / RSSI / free-heap
 diagnostics and the firmware update entity — all from the coarse fused

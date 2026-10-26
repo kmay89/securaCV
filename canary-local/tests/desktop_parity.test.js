@@ -4776,9 +4776,13 @@ test("Vision module proof: the desktop reads module_ok and the firmware's own bo
   // ...and never the module's own id, which this design treats as a per-unit
   // identifier: no AI.ID() call in any form.
   assert.ok(!/\bAI\.ID\s*\(/.test(mgr), "vision_mgr.cpp calls AI.ID() again");
-  // The `j` proof record carries module_ok beside the legacy module_id.
+  // The `j` proof record carries module_ok beside the legacy module_id, and
+  // module_ok's value is the module verdict, not a constant.
   assert.ok(mainCpp.includes('\\"module_id\\":%d,\\"module_ok\\":%s,'),
     "canary-vision's `j` proof record lost module_ok");
+  assert.match(mainCpp,
+    /canary::vision::module_id\(\),\s*canary::vision::module_ok\(\) \? "true" : "false",/,
+    "the `j` proof record's module_ok is no longer canary::vision::module_ok()");
 
   // The engine: the receipt reads module_ok, and the boot-line proof carries one.
   assert.match(nativeFnBody(monitorRs, "vision_module_ok"), /vision\.get\("module_ok"\)/,

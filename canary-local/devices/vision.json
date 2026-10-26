@@ -441,7 +441,7 @@
     "ready": [
       "",
       "  watching \u00b7 invoke every 100 ms \u00b7 heartbeat every 5 s",
-      "  a non-zero Grove Vision AI ID is the handshake \u2014 ID=0 means check the I2C link"
+      "  Grove Vision AI ID=1 is the handshake \u2014 ID=0 means check the I2C link"
     ],
     "id_zero_hint": "Grove Vision AI ID=0 \u2192 I2C wiring/pins wrong, Grove cable on the wrong socket, or module in bootloader mode (tap Reset)."
   },

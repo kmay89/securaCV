@@ -415,7 +415,7 @@ has no jitter (`securacv_mqtt.cpp`; strategy doc 12, F4).
 | Wi-Fi backoff bounded and jittered; never-online never reboots | `test_wifi_join_policy.cpp`, `scripts/lint_wifi_join_policy.py` |
 | Offline queue bounded, ordered, tamper-first | `test_mqtt_offline_queue.cpp` |
 | Silent radar fails safe | `test_mr60_uart.cpp` (stall cases) |
-| A returning radar never signs "cleared" over a body | **not on main** — the stall-recovery cases arrive with #1740 |
+| A returning radar never signs "cleared" over a body | `test_mr60_uart.cpp` (`test_presence_fsm_stall_recovery_never_reports_clear_with_a_target`) |
 | Boot-time tail verification enters safe mode | `witnessd` boot path (#990); corrupt-store open is **not** covered |
 | Watchdog aborts a stalled loop | `witnessd.rs` watchdog unit test |
 | A Canary crash loop degrades to safe mode; a pending image never does; every escape works | `test_boot_policy.cpp`, `test_boot_guard.cpp` (decisions and NVS glue; the boot-path wiring is bench Track E) |

@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### Vision and Sentinel tell the truth about their modules: the Grove module's 1 or 0, never its id, a sample from every good invoke and none from a failed one; the Sentinel's radar link reaches Home Assistant, and a missing light sensor is absent, not blinded (F384; device-details PR 7, #<PR>)
+### Vision and Sentinel tell the truth about their modules: the Grove module's 1 or 0, never its id, a sample from every good invoke and none from a failed one; the Sentinel's radar link reaches Home Assistant, and a missing light sensor is absent, not blinded, and still reported (F384; device-details PR 7, #<PR>)
 
 - **Vision's `module_id` is 1 or 0 (sweep F384).** It was the SSCMA
   library's cached id accessor cast to `int`: the address of the library's
@@ -28,8 +28,16 @@
   out, and the Aim card's empty-frame cadence did not run; a failed invoke
   gave a sample built from the boxes the library still held from the last
   good frame. A successful invoke now always gives a sample, empty or not,
-  and a failed one gives none. (Read from the code and the library source;
-  not run on a device.)
+  and a failed one gives none. One consequence reaches past the FSM: the
+  Vision mirrors that presence onto the fleet beacon's alert flag and class
+  (`vision_tick()`), on by default and turned off by no Vision env, and the
+  beacon is readable by anything in radio range or on the LAN, unsigned by
+  design (`docs/TRUST_MODEL.md`). Before, with a working module the flag kept
+  its last value after the room emptied, until a later invoke found a box or
+  failed; now it clears when the FSM times the person out, which is what the
+  device-details design lists for that surface (§7.3, the `nearby` tier), not
+  a new one. (Read from the code and the library source; not run on a
+  device.)
 - **The desktop Flasher reads `module_ok`.** The flash engine's receipt
   (`monitor.rs`, shared with the Lab app's native bench) requires `module_ok`
   to be `true` when a proof carries it, beside `i2c_ready` and a positive
@@ -46,22 +54,38 @@
   radar-link diagnostic reads), and the Sentinel passed none, though it judged
   the link for its fusion vote. It now passes it, judged by the same stall
   rule (`include/canary/sentinel_links.h`): no object before a frame or a
-  whole stall window, and none on a build with no radar (Lite). The
-  integration gives a Canary the Radar link sensor when its health reports
-  the object, so a Sentinel with the radar gets one and a Lite never grows a
-  sensor that could only say "unknown"; a canary-sense still gets it from its
-  status. The object's frame age and error count are what the device-details
-  design classes as activity; like canary-sense's, they go only to the
-  owner's broker.
-- **A missing light sensor is absent, not blinded.** The Sentinel ignored
-  the BH1750's `begin()`, so on a unit with no working light sensor every read
-  failed and voted `Denied`: a blinded channel for good, and on a preset with
-  the radar an `Anomaly` whenever the radar saw a body. A sensor that did not
-  answer at boot is now absent: the light channel never votes, and the boot
-  console prints `BH1750 not found`. One that answered and then fails a read
-  is blinded, `Denied`, as before. A sensor removed while the unit is off
-  therefore boots as absent, and until the device-details record carries the
-  part's status, the boot console is the only place that says so.
+  whole stall window, and none on a build with no radar (Lite). Once the
+  radar has spoken, the object reads down exactly when the radar votes
+  `Denied`; a radar silent since boot reads down there while its channel
+  never votes, as an unwired one does, so this object is the only place it
+  shows. The integration gives a Canary the Radar link sensor when its
+  health reports the object, so a Sentinel with the radar gets one and a
+  Lite never grows a sensor that could only say "unknown"; a canary-sense
+  still gets it from its status. The object's frame age and error count are
+  what the device-details design classes as activity, which its policy keeps
+  off the broker tier: they ride the owner's broker here as a legacy
+  exception, the health object canary-sense already publishes, which the
+  design's PR 7 asks the Sentinel to publish too. Home Assistant's
+  diagnostics redaction does not list `last_frame_age_ms` yet; device-details
+  PR 16 adds it.
+- **A missing light sensor is absent, not blinded, and still reported.** The
+  Sentinel ignored the BH1750's `begin()`, so on a unit with no working light
+  sensor every read failed and voted `Denied`: a blinded channel for good,
+  and on a preset with the radar an `Anomaly` whenever the radar saw a body.
+  A sensor that did not answer at boot is now absent: the light channel never
+  votes, so it adds no suspicion, but the retained state's `channel_denied`
+  is true for it, so Home Assistant's Channel-blinded problem sensor stays on
+  (requirement R6: never a silent gap), and the boot console's `BH1750` row
+  reads `not found: absent, never votes, reported as channel_denied`. One
+  that answered and then fails a read is blinded, `Denied`, as before. So a
+  sensor unplugged while the unit is off still reaches the owner, as a
+  denied channel rather than as suspicion; R2's text in
+  `sentinel_requirements.h` now says that. On the wire only the anomaly
+  score (a blinded sensor raises it, an absent one does not) and, with a body
+  present, the level tell the two apart, until the device-details record
+  carries the part's status (device-details PR 15). The vote and the report
+  are one rule each in `sentinel_links.h` (`light_sample()`,
+  `channel_denied_reported()`), which `main.cpp` calls.
 - **Docs.** The Vision README and both Grove guides say what `ID=1` and
   `ID=0` mean, and that any other number is an older image whose ERROR line is
   the only answer; `gen_vision.py` stages `ID=1`, `must()`s the 1-or-0
@@ -73,14 +97,21 @@
   against a scripted module and pins all of the Vision side in 55 checks; the
   old file does not compile there (a pointer cast to `int`), and the old logic
   shimmed in, or the inversion alone restored, fails it.
-  `test_sentinel_links.cpp` (new, 27 checks) runs the radar and light rules
-  alone and through the real fusion engine under the `door` preset; the old
-  light rule fails it. Six new flash-engine tests cover old and new proof
-  records and both images' boot lines (three fail on the old rules); a
-  `desktop_parity.test.js` case holds the firmware's boot lines to the
-  engine, and two Home Assistant tests hold the radar-link gate (both fail on
-  the old one). Built with PlatformIO here: the four Vision envs and all five
-  Sentinel presets compile. Against the same envs built at the base commit,
+  `test_sentinel_links.cpp` (new, 55 checks) runs the radar and light rules
+  alone and through the real fusion engine under the `door` preset, and
+  holds the Sentinel's `main.cpp`, which no host suite compiles, to calling
+  them: its `radar_link_health()`, `read_light()` and
+  `light_absent_at_boot()` bodies, the snapshot's `channel_denied` and both
+  health publishes are compared with their source text, comments and spacing
+  aside. The old light rule fails it in the header or in `main.cpp`, and so
+  does a radar object that never reaches a publish. Six new flash-engine
+  tests cover old and new proof records, both images' boot lines and a blank
+  line between the ERROR line and the ID line (three fail on the old rules);
+  a `desktop_parity.test.js` case holds the firmware's boot lines and the
+  proof record's `module_ok` value to the engine, and two Home Assistant
+  tests hold the radar-link gate (both fail on the old one). Built with
+  PlatformIO here: the four Vision build envs (`flavors.json`) and all five
+  Sentinel envs compile. Against the same envs built at the base commit,
   the Vision images grow by 32 to 96 bytes and the Sentinel door and Lite
   images by 224 and 128 bytes, and the guarded images stay inside their
   slots: `canary-vision-default` 1,438,528 of 1,966,080 bytes,

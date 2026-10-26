@@ -863,6 +863,20 @@ mod tests {
             "the ERROR line is spent on its own ID line"
         );
 
+        // A blank line between them (a CRLF split, a stray newline) does not
+        // spend the ERROR line: only a line with something on it does.
+        let (sink, _) = read_lines(&[
+            "ERROR: Grove Vision AI V2 not responding — check wiring/model (see docs/hardware/grove_vision_ai_v2_guide.md)",
+            "",
+            "   ",
+            &id_line,
+        ]);
+        assert_eq!(
+            sink.last("serial:vision").unwrap()["module_ok"],
+            Value::Bool(false),
+            "blank lines between the ERROR line and the ID line keep the refusal"
+        );
+
         // An ERROR line, then anything else (here a reset's banner) before the
         // ID line: it was not this ID line's ERROR line.
         let (sink, _) = read_lines(&[

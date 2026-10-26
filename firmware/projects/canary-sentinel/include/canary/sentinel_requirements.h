@@ -19,8 +19,13 @@ namespace sentinel {
 constexpr uint8_t kMinConfirmModalities = 2;  // mirrors FusionConfig default
 
 // R2 — A blinded/denied channel is SUSPICION, not absence. Covering, jamming or
-// unplugging a sensor raises the anomaly accumulator; doing it while a body is
-// present escalates to Anomaly with no debounce grace.
+// unplugging a sensor that has answered since boot raises the anomaly
+// accumulator; doing it while a body is present escalates to Anomaly with no
+// debounce grace. A sensor that has not answered since boot never votes, as
+// an unwired channel does, so it adds no suspicion: a BH1750 that did not
+// acknowledge begin() is reported as a denied channel on the state topic
+// instead, and a radar that has never sent a frame as a down link in the
+// health payload (R6; canary/sentinel_links.h).
 constexpr bool kDeniedChannelIsSuspicion = true;
 
 // R3 — An uncorroborated dwelling body is surfaced, never dismissed. A

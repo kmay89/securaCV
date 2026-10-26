@@ -26,7 +26,9 @@ struct SentinelSnapshot {
   SentinelClaim claim;
   bool        present    = false;   // level is present / confirmed / loiter
   bool        anomalous  = false;   // level is anomaly (the overlay that latches)
-  bool        denied_any = false;   // a channel is blinded / stalled right now (R2, R6)
+  bool        denied_any = false;   // a channel is blinded / stalled right now, or the light
+                                    // sensor did not answer at boot (R2, R6; the wire's
+                                    // channel_denied, canary/sentinel_links.h)
   uint8_t     strong_modalities = 0;  // distinct classes voting Strong
   const char* modalities = "none";  // modality_bits as class names ("thermal,radar")
   const char* last_event = "boot";

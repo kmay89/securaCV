@@ -932,8 +932,11 @@ PRESET_LITE_BIN = $(BUILD_DIR)/test_sentinel_preset_mailbox_lite
 # The Sentinel's sensor links (projects/canary-sentinel's sentinel_links.h):
 # the radar object its health payload carries, judged by the rule its fusion
 # vote uses, and the BH1750's begin() result telling a unit with no light
-# sensor (the channel never votes) from a blinded one (Denied), through the
-# real engine under the door preset.
+# sensor (the channel never votes, and channel_denied reports it) from a
+# blinded one (Denied), through the real engine under the door preset. The
+# project's src/main.cpp is passed in and held to calling those rules (no
+# host suite compiles it), so the read fails closed.
+SENT_LINKS_READS = ../projects/canary-sentinel/src/main.cpp
 SENT_LINKS_BIN = $(BUILD_DIR)/test_sentinel_links
 
 # Fleet-figure art tier (common/core/fleet_figures_art.h over
@@ -1440,7 +1443,7 @@ $(PRESET_DOOR_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $
 $(PRESET_LITE_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $(SENT_CFG_DIR)/mailbox-lite/config.h Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) '-DSENTINEL_PRESET_NAME="mailbox-lite"' -I $(SENT_PROJ_INC) -I ../common -I $(SENT_CFG_DIR)/mailbox-lite test_sentinel_presets.cpp $(FUSION_SRC) -o $@)
 
-$(SENT_LINKS_BIN): test_sentinel_links.cpp $(FUSION_SRC) Makefile | $(BUILD_DIR)
+$(SENT_LINKS_BIN): test_sentinel_links.cpp $(FUSION_SRC) $(SENT_LINKS_READS) Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) -I $(SENT_PROJ_INC) -I ../common -I $(SENT_CFG_DIR)/door test_sentinel_links.cpp $(FUSION_SRC) -o $@)
 
 $(LOOK_BIN): test_look_engine.cpp $(LOOK_SRC) $(LOOK_HDRS) Makefile | $(BUILD_DIR)
@@ -1551,7 +1554,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(FUSION_BIN)
 	./$(PRESET_DOOR_BIN)
 	./$(PRESET_LITE_BIN)
-	./$(SENT_LINKS_BIN)
+	./$(SENT_LINKS_BIN) $(SENT_LINKS_READS)
 	./$(LOOK_BIN)
 	./$(PLUMAGE_BIN)
 	./$(STORY_BIN)
