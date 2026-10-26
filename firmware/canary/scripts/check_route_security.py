@@ -180,12 +180,16 @@ every other gate), and the premise the last one stands on:
     pip install platformio==6.1.19`; it never falls back to a reading of its
     own. The pin moves with the release builds' (platformio_pin_problems,
     which scripts/tests/test_route_check_platformio_pin.py runs in
-    lint.yml), and every invocation there is held to it, not only the pins
-    a workflow spells: each step of the two release workflows and of
-    firmware.yml's route-check job that runs setup-platformio hands it
-    exactly one platformio-version, the pin, and each pip install there
-    that names the platformio package names `platformio==6.1.19`, so a
-    second, unpinned setup step after the pinned one fails. So a library
+    lint.yml), and the installs there are held to it, not only the pins a
+    workflow spells: in the two release workflows and firmware.yml's
+    route-check job, each step that runs setup-platformio hands it exactly
+    one platformio-version, the pin, each install of the platformio package
+    or of its source (pip under any interpreter's name, pipx, `uv pip` and
+    `uv tool`) names `platformio==6.1.19`, and `pio upgrade` and the
+    get-platformio.py installer fail, so a second, unpinned install after
+    the pinned one fails. A requirements file a `-r` names, and an installer
+    none of those spells (`pipx run`, a script of its own), are not read.
+    So a library
     that raises its own access point or serves its
     own routes (WiFiManager's autoConnect(), handed no AP password, raises
     an open SoftAP and serves a firmware upload) fails, naming every env
@@ -1508,11 +1512,15 @@ SECRET_LOCAL_USES = {
 }
 
 # The emitters' reading statements (TOKEN_EMITTERS), pinned the way a
-# device-side use's are: keyed by the emitter's home file, each emitter
-# defined exactly once under ROOTS, there. The carry still runs through an
-# emitter (its callers answer what it carries); this holds what it does with
-# a credential besides putting it in the answer, so a serial or MQTT line
-# added inside the receipt's builder fails, as it would in raiseAp().
+# device-side use's are: keyed by the emitter's home file and its
+# definition's name, qualified as the definition is
+# (`receipt::send_provisioning_receipt` for one defined out of its
+# namespace), each emitter defined exactly once under ROOTS, there; a row
+# keyed by another name than its definition's fails. The carry still runs
+# through an emitter (its callers answer what it carries); this holds what it
+# does with a credential besides putting it in the answer, so a serial or
+# MQTT line added inside the receipt's builder fails, as it would in
+# raiseAp().
 EMITTER_STATEMENTS = {
     (_NET, "send_provisioning_receipt"): (
         'doc["token"] = auth_get_token();',
@@ -3267,18 +3275,11 @@ def _reader_problems(sources, T, defs, reads, carried, outside, handlers) -> lis
     accessors = T["accessors"]
     for name, (home, _kind) in sorted(accessors.items()):
         problems.extend(_home_problems(defs, name, home, "SECRET_ACCESSORS"))
-    rows = T["emitter_stmts"]
-    for name in sorted(T["emitters"]):
-        homes = [f for f, q in rows if q == name]
-        if len(homes) != 1:
-            problems.append(f"TOKEN_EMITTERS names {name}(), which has {len(homes)} "
-                            f"EMITTER_STATEMENTS rows; it takes one, keyed by its home file")
-        else:
-            problems.extend(_home_problems(defs, name, homes[0], "EMITTER_STATEMENTS"))
-    for f, q in sorted(rows):
-        if q not in T["emitters"]:
-            problems.append(f"EMITTER_STATEMENTS names {q}() ({f}), which is no TOKEN_EMITTERS "
-                            f"key — remove or fix the row")
+    # Each emitter defined once, in its home, its reading statements pinned
+    # at its definition under whatever qualifier it carries.
+    problems.extend(_statement_row_problems(sources, T, defs, reads, T["emitters"],
+                                            "TOKEN_EMITTERS", T["emitter_stmts"],
+                                            "EMITTER_STATEMENTS", once=True))
     for key in sorted(reads):
         fname, qual = key
         got = set(reads[key])
@@ -3294,11 +3295,6 @@ def _reader_problems(sources, T, defs, reads, carried, outside, handlers) -> lis
                 problems.append(f"{fname}:{line}: emitter {qual}() carries "
                                 f"{_kinds(carried[key])}; its TOKEN_EMITTERS entry says "
                                 f"{_kinds(want)}")
-            row = next((stmts for (f, q), stmts in rows.items()
-                        if q == qual and _in_file(fname, f)), None)
-            for d in (defs[key] if row is not None else ()):
-                problems.extend(_pin_problems(sources, T, key, d, _positions(reads, key, d), row,
-                                              "EMITTER_STATEMENTS"))
         elif bare in T["comparers"]:
             if got != {"token"}:
                 problems.append(f"{fname}:{line}: comparer {qual}() reads {_kinds(got)}; a "
@@ -3386,7 +3382,7 @@ def _answer_problems(sources, T, defs, by_name, reads, carried, stops, routes) -
     {`, and so is one registered bare from inside the class's own members.
     A bare name defined under more than one qualified name (`handle_status`
     and `Api::handle_status`) fails: the registration cannot say which one it
-    names, and its ANSWER_STATEMENTS row keys one."""
+    names, and a SECRET_ANSWERS handler's ANSWER_STATEMENTS row keys one."""
     problems = []
     handlers = {h.split("::")[-1] for _u, _m, h, _f in routes}
     public = {h.split("::")[-1] for u, m, h, _f in routes if (m, u) in T["public"]}
@@ -3409,10 +3405,11 @@ def _answer_problems(sources, T, defs, by_name, reads, carried, stops, routes) -
     for h in sorted(handlers):
         named = sorted({k[1] for k in by_name.get(h, ())})
         if len(named) > 1:
+            row = " and its ANSWER_STATEMENTS row keys one" if h in T["answers"] else ""
             problems.append(f"route handler {h}() is defined under {len(named)} names "
                             f"({', '.join(n + '()' for n in named)}): the answer rule reads "
-                            f"every one of them as its body and its ANSWER_STATEMENTS row "
-                            f"keys one; give each handler a name of its own")
+                            f"every one of them as its body{row}; give each handler a name "
+                            f"of its own")
         for fname, qual, text, blanked, d in bodies(h):
             m = _PRIVATE_KEY.search(blanked, d[3], d[4])
             if m:
@@ -3487,44 +3484,60 @@ def _answer_problems(sources, T, defs, by_name, reads, carried, stops, routes) -
     return problems
 
 
-def _answer_statement_problems(sources, T, defs, reads) -> list:
-    """Each SECRET_ANSWERS handler's own reading statements are exactly its
-    ANSWER_STATEMENTS row (keyed by its home file and its definition's
-    qualified name), in every body of it: every definition of its bare name,
-    as _answer_problems reads it, so a row that names the handler under
-    another qualifier than its definition's fails rather than holding
-    nothing."""
+def _statement_row_problems(sources, T, defs, reads, owners, owner_table, rows, table,
+                            once=False) -> list:
+    """Each name `owners` keys (bare, as its `owner_table` keys it) has
+    exactly one `table` row in `rows`, keyed by its home file and its
+    definition's qualified name, and that row pins the statements that read a
+    credential in every body of it: every definition of its bare name,
+    qualified or not (`Api::handle_status`,
+    `receipt::send_provisioning_receipt`). A row keyed under another
+    qualifier than its definition's, or naming no definition, fails rather
+    than holding nothing: the emitter rows were once counted under the bare
+    name and pinned under the definition's, so a row keyed bare for a
+    qualified emitter counted and pinned nothing. With `once`, the name is
+    defined exactly once under ROOTS, in its home file (_home_problems)."""
     problems = []
-    rows = T["answer_stmts"]
-    for h in sorted(T["answers"]):
-        homes = [(f, q) for f, q in rows if q.split("::")[-1] == h]
+    for name in sorted(owners):
+        homes = [(f, q) for f, q in rows if q.split("::")[-1] == name]
         if len(homes) != 1:
-            problems.append(f"SECRET_ANSWERS names {h}(), which has {len(homes)} "
-                            f"ANSWER_STATEMENTS rows; it takes one, keyed by its home file")
+            problems.append(f"{owner_table} names {name}(), which has {len(homes)} {table} "
+                            f"rows; it takes one, keyed by its home file")
             continue
         suffix, qual = homes[0]
-        keys = sorted(k for k in defs if k[1].split("::")[-1] == h)
+        keys = sorted(k for k in defs if k[1].split("::")[-1] == name)
         if not keys:
-            problems.append(f"ANSWER_STATEMENTS names {qual}() ({suffix}), which is defined "
-                            f"nowhere the check reads — remove or fix the row")
+            problems.append(f"{table} names {qual}() ({suffix}), which is defined nowhere the "
+                            f"check reads — remove or fix the row")
+            continue
+        if once:
+            problems.extend(_home_problems(defs, name, suffix, table))
         for key in keys:
             if key[1] != qual:
-                problems.append(f"ANSWER_STATEMENTS keys {h}() as {qual}(), but it is "
-                                f"defined as {key[1]}() in {key[0]}: key the row by the "
-                                f"definition's name")
+                problems.append(f"{table} keys {name}() as {qual}(), but it is defined as "
+                                f"{key[1]}() in {key[0]}: key the row by the definition's "
+                                f"name")
                 continue
             if not _in_file(key[0], suffix):
-                problems.append(f"ANSWER_STATEMENTS: {qual}() is defined in {key[0]}; its row "
-                                f"says {suffix} — remove or fix the row")
+                problems.append(f"{table}: {qual}() is defined in {key[0]}; its row says "
+                                f"{suffix} — remove or fix the row")
                 continue
             for d in defs[key]:
                 problems.extend(_pin_problems(sources, T, key, d, _positions(reads, key, d),
-                                              rows[homes[0]], "ANSWER_STATEMENTS"))
+                                              rows[homes[0]], table))
     for f, q in sorted(rows):
-        if q.split("::")[-1] not in T["answers"]:
-            problems.append(f"ANSWER_STATEMENTS names {q}() ({f}), which is no SECRET_ANSWERS "
-                            f"key — remove or fix the row")
+        if q.split("::")[-1] not in owners:
+            problems.append(f"{table} names {q}() ({f}), which is no {owner_table} key — "
+                            f"remove or fix the row")
     return problems
+
+
+def _answer_statement_problems(sources, T, defs, reads) -> list:
+    """Each SECRET_ANSWERS handler's own reading statements are exactly its
+    ANSWER_STATEMENTS row, in every body of it (_statement_row_problems):
+    every definition of its bare name, as _answer_problems reads it."""
+    return _statement_row_problems(sources, T, defs, reads, T["answers"], "SECRET_ANSWERS",
+                                   T["answer_stmts"], "ANSWER_STATEMENTS")
 
 
 def mint_order_problems(sources: dict, rows) -> list:
@@ -4604,9 +4617,9 @@ REGISTRY_LIBS = {
 # refuses any other, and a missing module, with the install command. The pin
 # moves with the release builds': platformio_pin_problems() fails when a
 # `platformio-version:` in PLATFORMIO_PIN_RELEASES, or the one the route-check
-# job installs, is not this one, or when a setup-platformio step or a pip
-# install of PlatformIO there does not pin it (a second, unpinned step after
-# the pinned one installs the newest over it), and
+# job installs, is not this one, or when a setup-platformio step, an install
+# of PlatformIO or an upgrade of it there does not pin it (a second, unpinned
+# install after the pinned one installs the newest over it), and
 # scripts/tests/test_route_check_platformio_pin.py
 # runs it in lint.yml, which no path filter skips (so a PR that edits only a
 # release workflow runs it; firmware.yml's filter does not name
@@ -4624,9 +4637,25 @@ _WORKFLOW_JOB = re.compile(r"^  [A-Za-z0-9_-]+:[ \t]*(?:#.*)?$")
 _SETUP_PLATFORMIO = re.compile(
     r"""^(?P<lead>[ \t]*(?:-[ \t]+)?)uses:[ \t]*(["']?)(?:[^"'\s#]*/)?setup-platformio"""
     r"""(?:@[^"'\s#]*)?\2[ \t]*(?:#.*)?$""")
-# A pip install in a shell line (pip, pip3, `python3 -m pip`, pipx, uv pip),
-# with its arguments up to the end of its command.
-_PIP_INSTALL = re.compile(r"(?:^|[\s;&|(])(?:pip3?|pipx|uv[ \t]+pip)[ \t]+install\b([^;&|#]*)")
+# An install in a shell line: pip under any interpreter's name (pip, pip3,
+# pip3.11, `python3 -m pip`, `-mpip`, an option before its verb), pipx, `uv
+# pip` and `uv tool`, each `install` or `upgrade`, with its arguments up to
+# the end of its command.
+_PIP_INSTALL = re.compile(
+    r"""(?:^|[\s;&|(/"']|(?<=-m))(?:pip[0-9.]*|pipx|uv[ \t]+pip|uv[ \t]+tool)"""
+    r"""(?:[ \t]+-\S+)*[ \t]+(?:install|upgrade)\b([^;&|]*)""")
+# A requirement that installs PlatformIO without naming it as a package:
+# its source (platformio-core, by URL or VCS, PlatformIO's documented way to
+# install its development version) or a wheel or sdist of it by path.
+_PLATFORMIO_SOURCE = re.compile(r"platformio[-_]core\b|(?:^|[/=])platformio-\d", re.I)
+# An upgrade of PlatformIO Core that names no package (`pio upgrade`,
+# `platformio upgrade`, `python3 -m platformio upgrade`; PlatformIO's own CLI
+# suggests the first when a newer release is out), and its installer script.
+_PIO_UPGRADE = re.compile(r"""(?:^|[\s;&|(/"'])(pio|platformio)[ \t]+upgrade\b""")
+_PIO_INSTALLER = re.compile(r"\bget-platformio\.py\b")
+# A step's `run:` key and its value (a literal `|` block's lines are read one
+# by one; any other value is folded).
+_RUN_KEY = re.compile(r"^(?P<lead>[ \t]*(?:-[ \t]+)?)run:[ \t]*(?P<value>.*)$")
 
 
 def _setup_platformio_steps(lines: list, lo: int, hi: int) -> list:
@@ -4653,26 +4682,70 @@ def _setup_platformio_steps(lines: list, lo: int, hi: int) -> list:
     return out
 
 
-def _pip_platformio(lines: list, lo: int, hi: int) -> list:
-    """[(line, requirement as written)] for every requirement that names the
-    platformio package in a pip install in lines[lo:hi] (a backslash-newline
-    continues a line; a comment line is skipped). A requirements file a
-    `-r` names is not read."""
+def _uncommented(text: str) -> str:
+    """`text` without a shell or YAML comment (a `#` at its start or after
+    whitespace, to the end)."""
+    return re.sub(r"(?:^|[ \t])#.*", "", text)
+
+
+def _shell_lines(lines: list, lo: int, hi: int) -> list:
+    """[(line, text)] for the commands in lines[lo:hi], each where it starts:
+    a backslash-newline continues a line, a `run:` value other than a literal
+    `|` block (folded `>`, or plain) is one line with its more-indented lines
+    joined as YAML folds them (a blank line ends one), and a comment is
+    dropped."""
     out, i = [], lo
     while i < hi:
-        first, text = i, lines[i]
+        first = i
+        run = _RUN_KEY.match(lines[i])
+        if run and not run.group("value").startswith("|"):
+            key, parts = len(run.group("lead")), [re.sub(r"^>[-+0-9]*", "", run.group("value"))]
+            i += 1
+            while i < hi and (not lines[i].strip()
+                              or len(lines[i]) - len(lines[i].lstrip()) > key):
+                if lines[i].strip():
+                    parts.append(lines[i].strip())
+                else:
+                    out.append((first, _uncommented(" ".join(parts))))
+                    first, parts = i + 1, []
+                i += 1
+            out.append((first, _uncommented(" ".join(parts))))
+            continue
+        text = _uncommented(lines[i])
         while text.rstrip().endswith("\\") and i + 1 < hi:
             i += 1
-            text = text.rstrip()[:-1] + " " + lines[i]
+            text = text.rstrip()[:-1] + " " + _uncommented(lines[i])
         i += 1
-        if text.lstrip().startswith("#"):
-            continue
+        out.append((first, text))
+    return out
+
+
+def _pip_platformio(lines: list, lo: int, hi: int) -> list:
+    """[(line, requirement as written)] for every requirement in an install
+    in lines[lo:hi] (_PIP_INSTALL, read as _shell_lines reads a step) that
+    names the platformio package or is its source (_PLATFORMIO_SOURCE). A
+    requirements file a `-r` names is not read."""
+    out = []
+    for first, text in _shell_lines(lines, lo, hi):
         for m in _PIP_INSTALL.finditer(text):
             for word in m.group(1).split():
                 req = word.strip("\"'")
-                if (req and not req.startswith("-")
-                        and re.split(r"[\s=<>!~\[;@]", req)[0].lower() == "platformio"):
+                if req and not req.startswith("-") and (
+                        re.split(r"[\s=<>!~\[;@]", req)[0].lower() == "platformio"
+                        or _PLATFORMIO_SOURCE.search(req)):
                     out.append((first, req))
+    return out
+
+
+def _pio_upgrades(lines: list, lo: int, hi: int) -> list:
+    """[(line, what)] for every upgrade of PlatformIO Core that names no
+    package in lines[lo:hi] (_PIO_UPGRADE, _PIO_INSTALLER)."""
+    out = []
+    for first, text in _shell_lines(lines, lo, hi):
+        out.extend((first, f"`{m.group(1)} upgrade` replaces PlatformIO Core with the newest "
+                           f"release") for m in _PIO_UPGRADE.finditer(text))
+        out.extend((first, "get-platformio.py installs the newest PlatformIO Core")
+                   for _m in _PIO_INSTALLER.finditer(text))
     return out
 
 
@@ -4683,13 +4756,19 @@ def platformio_pin_problems(workflows=Path(".github/workflows")) -> list:
     it runs this file (exactly one `platformio-version:` in that job, above
     the step that runs it): a release pin bumped alone would leave the library
     rule reading the configuration with a PlatformIO the release builds no
-    longer read it with. Every invocation is held, not only the pins the file
-    spells: each step in those workflows (in firmware.yml, in the route-check
-    job) that runs setup-platformio hands it exactly one platformio-version
-    (without one the action installs the newest PlatformIO), and each pip
-    install there that names the platformio package names it
-    `platformio==PLATFORMIO_PIN` (a second step after the pinned one replaces
-    it). firmware.yml's other jobs take the newest PlatformIO on purpose."""
+    longer read it with. The installs there are held, not only the pins the
+    file spells (a second install after the pinned one replaces it): each
+    step in those workflows (in firmware.yml, in the route-check job) that
+    runs setup-platformio hands it exactly one platformio-version (without
+    one the action installs the newest PlatformIO), each install there of
+    the platformio package or of its source names it
+    `platformio==PLATFORMIO_PIN` (_pip_platformio), and nothing there
+    upgrades PlatformIO Core by its CLI or its installer (_pio_upgrades).
+    The rule reads the forms _PIP_INSTALL, _PLATFORMIO_SOURCE, _PIO_UPGRADE
+    and _PIO_INSTALLER spell, in a step's lines as _shell_lines joins them;
+    a requirements file a `-r` names, and an installer they do not spell
+    (`pipx run`, a script of its own), are not read. firmware.yml's other
+    jobs take the newest PlatformIO on purpose."""
     problems, pin = [], repr(PLATFORMIO_PIN)
 
     def invocation_problems(name, lines, lo, hi):
@@ -4702,11 +4781,14 @@ def platformio_pin_problems(workflows=Path(".github/workflows")) -> list:
                            f"{'the newest PlatformIO' if not pins else 'whichever comes last'}"
                            f", not PLATFORMIO_PIN ({pin}): every setup-platformio step here "
                            f"pins it")
-        out.extend(f"{_shown(workflows / name)}:{at + 1}: a pip install names {req!r}, not "
-                   f"platformio=={PLATFORMIO_PIN} (PLATFORMIO_PIN), the PlatformIO whose reader "
-                   f"the library rule reads platformio.ini with"
+        out.extend(f"{_shown(workflows / name)}:{at + 1}: an install of PlatformIO names "
+                   f"{req!r}, not platformio=={PLATFORMIO_PIN} (PLATFORMIO_PIN), the PlatformIO "
+                   f"whose reader the library rule reads platformio.ini with"
                    for at, req in _pip_platformio(lines, lo, hi)
                    if req != f"platformio=={PLATFORMIO_PIN}")
+        out.extend(f"{_shown(workflows / name)}:{at + 1}: {what}, not PLATFORMIO_PIN ({pin}), "
+                   f"the PlatformIO whose reader the library rule reads platformio.ini with"
+                   for at, what in _pio_upgrades(lines, lo, hi))
         return out
     texts = {}
     for name in PLATFORMIO_PIN_RELEASES + PLATFORMIO_PIN_CHECK[:1]:
@@ -7690,16 +7772,24 @@ _QUALIFIED_EARLY = ("Api::handle_status() reaches a credential (getTlsCertFp) be
                     "refusal")
 
 
+def _edited_fixture(edits) -> dict:
+    """The clean fixture's sources with `edits` ((old, new, times) on
+    _FIX_NET, each old text there exactly `times` times) made."""
+    sources = _fixture_sources()
+    text = sources[_FIX_NET]
+    for old, new, times in edits:
+        assert text.count(old) == times, (f"the edited fixture's text {old!r} is in {_FIX_NET} "
+                                          f"{text.count(old)} times, not {times}")
+        text = text.replace(old, new)
+    sources[_FIX_NET] = text
+    return sources
+
+
 def _qualified_fixture():
     """(sources, tables): the clean fixture with /api/status's handler
     qualified (_FIX_QUALIFIED_NET), the census rows of the two gate hooks it
     reads and its ANSWER_STATEMENTS row naming Api::handle_status."""
-    sources = _fixture_sources()
-    text = sources[_FIX_NET]
-    for old, new in _FIX_QUALIFIED_NET:
-        assert text.count(old) == 1, f"the qualified fixture's text {old!r} is not in {_FIX_NET}"
-        text = text.replace(old, new)
-    sources[_FIX_NET] = text
+    sources = _edited_fixture((old, new, 1) for old, new in _FIX_QUALIFIED_NET)
     tables = _fixture_tables(_fixture_sources())
 
     def requal(row):
@@ -7742,15 +7832,98 @@ _FIX_QUALIFIED_PLANTS = (
      "static esp_err_t handle_status(httpd_req_t* req) {\n"
      "  return httpd_resp_sendstr(req, \"{}\");\n}\n", None,
      ("route handler handle_status() is defined under 2 names (Api::handle_status(), "
-      "handle_status())",
+      "handle_status()): the answer rule reads every one of them as its body and its "
+      "ANSWER_STATEMENTS row keys one",
       "ANSWER_STATEMENTS keys handle_status() as Api::handle_status(), but it is defined as "
       "handle_status() in fx/lib/securacv_other.cpp")),
+    # A handler that answers no credential has no ANSWER_STATEMENTS row, and
+    # its problem names none.
+    ("a handler that answers nothing defined under a second, qualified name", _FIX_OTHER, "",
+     "esp_err_t Api::handle_wifi_connect(httpd_req_t* req) {\n"
+     "  return httpd_resp_sendstr(req, \"{}\");\n}\n", None,
+     ("route handler handle_wifi_connect() is defined under 2 names "
+      "(Api::handle_wifi_connect(), handle_wifi_connect()): the answer rule reads every one "
+      "of them as its body; give each handler a name of its own",)),
     # A handler's row naming no definition the check reads: it held nothing.
     ("a SECRET_ANSWERS handler with no definition", _FIX_NET,
      "esp_err_t Api::handle_status(httpd_req_t* req) {\n",
      "esp_err_t Api::handle_status_v2(httpd_req_t* req) {\n", None,
      ("ANSWER_STATEMENTS names Api::handle_status() (securacv_network.cpp), which is defined "
       "nowhere the check reads",)),
+)
+
+# An emitter defined qualified: the fixture's receipt builder declared in a
+# namespace, defined out of it as receipt::send_provisioning_receipt and
+# called so, its census home and its EMITTER_STATEMENTS row naming it so
+# (_qualified_emitter_fixture). The emitter rule once counted an emitter's
+# rows under the bare name TOKEN_EMITTERS keys it by and pinned them only
+# under the definition's qualified name, so a row keyed bare counted and
+# pinned nothing: a serial line added to the builder passed every rule (#1852
+# review). (old, new, times) edits to _FIX_NET.
+_FIX_QUALIFIED_EMITTER_NET = (
+    ("static esp_err_t send_provisioning_receipt(httpd_req_t* req) {\n",
+     "namespace receipt { esp_err_t send_provisioning_receipt(httpd_req_t* req); }\n"
+     "esp_err_t receipt::send_provisioning_receipt(httpd_req_t* req) {\n", 1),
+    ("    return send_provisioning_receipt(req);\n",
+     "    return receipt::send_provisioning_receipt(req);\n", 2),
+)
+_QUALIFIED_RECEIPT = "receipt::send_provisioning_receipt"
+# The receipt builder's token statement, and a serial line printing the token
+# after it (the careless edit its EMITTER_STATEMENTS row is there to refuse).
+_FIX_RECEIPT_TOKEN = "  doc[\"token\"] = auth_get_token();\n"
+_RECEIPT_PRINT = "  Serial.printf(\"[RCPT] token %s\\n\", auth_get_token());\n"
+
+
+def _qualified_emitter_fixture():
+    """(sources, tables): the clean fixture with its receipt builder
+    qualified (_FIX_QUALIFIED_EMITTER_NET), the builder's census home and its
+    EMITTER_STATEMENTS row naming receipt::send_provisioning_receipt."""
+    sources = _edited_fixture(_FIX_QUALIFIED_EMITTER_NET)
+    tables = _fixture_tables(_fixture_sources())
+    census = dict(tables["census"])
+    census["send_provisioning_receipt"] = dict(census["send_provisioning_receipt"],
+                                               home=(_NET, _QUALIFIED_RECEIPT))
+    stmts = {((f, _QUALIFIED_RECEIPT) if q == "send_provisioning_receipt" else (f, q)): v
+             for (f, q), v in tables["emitter_stmts"].items()}
+    return sources, dict(tables, census=census, emitter_stmts=stmts)
+
+
+# (what, file, old text, new text, table plant or None, words every one of
+# which a problem names), on _qualified_emitter_fixture(); an empty old text
+# appends.
+_FIX_QUALIFIED_EMITTER_PLANTS = (
+    # The review's case: the row keyed by the bare name TOKEN_EMITTERS keys
+    # it by, a serial line printing the token added to the builder. Every
+    # rule passed it.
+    ("a qualified emitter prints the token, its row keyed bare", _FIX_NET,
+     _FIX_RECEIPT_TOKEN, _FIX_RECEIPT_TOKEN + _RECEIPT_PRINT,
+     _with("emitter_stmts", lambda e: {(f, q.split("::")[-1]): v for (f, q), v in e.items()}),
+     ("EMITTER_STATEMENTS keys send_provisioning_receipt() as send_provisioning_receipt(), but "
+      "it is defined as receipt::send_provisioning_receipt() in fx/lib/securacv_network.cpp",)),
+    ("a qualified emitter prints the token", _FIX_NET,
+     _FIX_RECEIPT_TOKEN, _FIX_RECEIPT_TOKEN + _RECEIPT_PRINT, None,
+     ("receipt::send_provisioning_receipt() reads the bearer token in a statement not in its "
+      "EMITTER_STATEMENTS row",)),
+    ("a qualified emitter's pinned statement deleted", _FIX_NET,
+     "  doc[\"ap_password\"] = net.getApPassword();\n", "", None,
+     ("receipt::send_provisioning_receipt()'s EMITTER_STATEMENTS row holds 'doc[\"ap_password\"] "
+      "= net.getApPassword();', which it no longer has",)),
+    # A second definition of the bare name: the emitter is defined once, and
+    # its row keys one name.
+    ("a qualified emitter's bare name defined again in another file", _FIX_OTHER, "",
+     "static esp_err_t send_provisioning_receipt(httpd_req_t* req) {\n"
+     "  return httpd_resp_sendstr(req, \"{}\");\n}\n", None,
+     ("EMITTER_STATEMENTS: send_provisioning_receipt() is defined in "
+      "fx/lib/securacv_network.cpp, fx/lib/securacv_other.cpp",
+      "EMITTER_STATEMENTS keys send_provisioning_receipt() as "
+      "receipt::send_provisioning_receipt(), but it is defined as send_provisioning_receipt() "
+      "in fx/lib/securacv_other.cpp")),
+    # An emitter's row naming no definition the check reads: it held nothing.
+    ("a TOKEN_EMITTERS emitter with no definition", _FIX_NET,
+     "esp_err_t receipt::send_provisioning_receipt(httpd_req_t* req) {\n",
+     "esp_err_t receipt::send_provisioning_receipt_v2(httpd_req_t* req) {\n", None,
+     ("EMITTER_STATEMENTS names receipt::send_provisioning_receipt() (securacv_network.cpp), "
+      "which is defined nowhere the check reads",)),
 )
 
 
@@ -7851,20 +8024,23 @@ def _assert_answer_gate_rule() -> None:
         assert not missing, (f"the bearer-only answer rule passed a table plant ({what}): "
                              f"expected problems naming {missing!r}, got {got!r}")
     # A callback registered qualified is read at its definition, by the grant
-    # and the answer statements alike: the qualified fixture passes, and every
+    # and the answer statements alike, and an emitter defined qualified has
+    # its statements pinned there: each qualified fixture passes, and every
     # plant on it fails for its named reason.
-    qualified, qtables = _qualified_fixture()
-    got = check_bearer_only_answers(qualified, qtables)
-    assert got == [], "the qualified-handler fixture fails: " + "; ".join(got)
-    for what, fname, old, new, plant, words in _FIX_QUALIFIED_PLANTS:
-        planted = dict(qualified)
-        text = planted.get(fname, "")
-        assert old in text, f"qualified plant {what!r}: its text is not in {fname}"
-        planted[fname] = strip_comments(text.replace(old, new, 1) if old else text + new)
-        got = check_bearer_only_answers(planted, plant(qtables) if plant else qtables)
-        missing = [w for w in words if not any(w in p for p in got)]
-        assert not missing, (f"the bearer-only answer rule passed a qualified plant ({what}): "
-                             f"expected problems naming {missing!r}, got {got!r}")
+    for label, (qualified, qtables), qplants in (
+            ("qualified-handler", _qualified_fixture(), _FIX_QUALIFIED_PLANTS),
+            ("qualified-emitter", _qualified_emitter_fixture(), _FIX_QUALIFIED_EMITTER_PLANTS)):
+        got = check_bearer_only_answers(qualified, qtables)
+        assert got == [], f"the {label} fixture fails: " + "; ".join(got)
+        for what, fname, old, new, plant, words in qplants:
+            planted = dict(qualified)
+            text = planted.get(fname, "")
+            assert old in text, f"{label} plant {what!r}: its text is not in {fname}"
+            planted[fname] = strip_comments(text.replace(old, new, 1) if old else text + new)
+            got = check_bearer_only_answers(planted, plant(qtables) if plant else qtables)
+            missing = [w for w in words if not any(w in p for p in got)]
+            assert not missing, (f"the bearer-only answer rule passed a {label} plant ({what}): "
+                                 f"expected problems naming {missing!r}, got {got!r}")
     # A lambda's `return` leaves the lambda, not the function: a callback
     # registered between begin()'s mode raise and its softAP() is no way out.
     calm = _fixture_sources()

@@ -1502,9 +1502,11 @@ jobs:
         # any other version, and a missing module, naming the pip command.
         # scripts/tests/test_route_check_platformio_pin.py (lint.yml, no path
         # filter) fails when this pin, those two or the check's PLATFORMIO_PIN
-        # moves alone. The shared composite action (CI.md R10), on this job's
-        # own interpreter, with no cache: the check downloads nothing, it only
-        # reads.
+        # moves alone, and when a setup-platformio step, an install of
+        # PlatformIO or an upgrade of it (`pio upgrade`) in those two or in
+        # this job, above the check or below it, does not pin it. The shared
+        # composite action (CI.md R10), on this job's own interpreter, with no
+        # cache: the check downloads nothing, it only reads.
         uses: ./.github/actions/setup-platformio
         with:
           # "": pyproject.toml's, the interpreter this job's setup-python step set up
@@ -1539,7 +1541,7 @@ jobs:
         # installs it): each env's lib_deps as `pio run` resolves it, and a
         # ${sysenv.*} or a custom_component_add anywhere in the flag files
         # fails, read in their text so the environment here cannot hide one.
-        # About 14-22 s on 3.11-3.14.
+        # About 14-25 s on 3.11-3.14.
         run: |
           python3 firmware/canary/scripts/check_route_security.py
 

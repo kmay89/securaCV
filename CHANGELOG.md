@@ -631,14 +631,58 @@
   self-test and the pin test refuse all 14. The planted fixtures are 298
   (268 source, 25 table, 5 on the qualified fixture). The tree passes in
   24.4 s on Python 3.13 (PlatformIO 6.1.19).
+  The review of that repair found two more gaps, each reproduced before
+  its fix. `EMITTER_STATEMENTS` had the gap the answer rows had: an
+  emitter's rows were counted under the bare name `TOKEN_EMITTERS` keys it
+  by and pinned only under its definition's qualified name, so once a
+  refactor defined the receipt's builder as `esp_err_t
+  receipt::send_provisioning_receipt(...)` (its census home moved with it,
+  as that rule's failure asks), a row keyed bare counted and pinned
+  nothing: on the tree, a `Serial.printf` of the token and the SoftAP
+  password added to the builder passed, where the same line in the bare
+  definition fails. Both tables' rows are now read by one rule
+  (`_statement_row_problems`): found by the bare name, keyed by the
+  definition's own name (a row keyed by another fails, naming the
+  definition), pinned at every definition, and an emitter is still defined
+  once, in its home. Five plants on a fixture whose receipt builder is
+  `receipt::send_provisioning_receipt` hold it; the review's case passed
+  every rule, and the fixture itself failed. And `platformio_pin_problems`,
+  whose docstring said every invocation is held, read only `pip`, `pip3`,
+  `pipx` and `uv pip` directly followed by `install`: `pio upgrade` (which
+  PlatformIO's own CLI suggests when a release is out), `platformio
+  upgrade`, `pip3.11 install`, `pip --quiet install`, `-mpip`,
+  PlatformIO's source by URL or VCS (its documented way to install the
+  development version), a wheel of it by path, `uv tool install`, `pipx
+  upgrade`, the get-platformio.py installer and a name folded onto the next
+  line of a `run: >` block all passed, in a release workflow where nothing
+  else refuses them. Each fails now (`_PIP_INSTALL`, `_PLATFORMIO_SOURCE`,
+  `_PIO_UPGRADE`, `_PIO_INSTALLER`, over a step read as `_shell_lines`
+  joins it: a backslash continuation, a folded or plain `run:` value as
+  YAML folds it, comments dropped), and the docstrings say what is read and
+  what is not (a `-r` requirements file, `pipx run`, an installer script of
+  its own). The pin test is 19 tests: those 13 installs in each release
+  workflow and above and below the route check are 52 failing cases, every
+  one of which the old rule passed; a step with the pin twice is now
+  planted above and below the check too; and an install at the pin with `uv
+  tool`, an sdist of another package whose name starts with platformio, a
+  `pio` command that installs nothing and a comment naming an upgrade pass.
+  A handler defined under two names that answers no credential is no
+  longer told that its `ANSWER_STATEMENTS` row keys one (it has none; a
+  plant holds the wording). Of 23 checker mutants (nine of the statement
+  rows and that message, 14 of the pin rule's reading), the self-test and
+  the pin test refuse all 23. The planted fixtures are 304 (268 source, 25
+  table, 6 on the qualified handler's fixture, 5 on the qualified
+  emitter's). The tree passes in 24.3 s on Python 3.13 and 16 s on 3.11
+  (PlatformIO 6.1.19).
   The head parser names a constructor
   for its class (it named `ScvNetworkManager`'s body after its last
   initializer, `m_peers_last_browse_ms`), a member as `Class::name`, and a
   function whose head ends in `noexcept`, `override`, `final`, a member's
   `const` or a trailing return type, and a route handler is read at every
-  definition of its name, a qualified one included. 298 planted fixtures
-  (268 source, 25 table, 5 on a fixture whose `/api/status` handler is
-  qualified), with the self-test's lexer, flag-file, build-input, library, reach,
+  definition of its name, a qualified one included. 304 planted fixtures
+  (268 source, 25 table, 6 on a fixture whose `/api/status` handler is
+  qualified and 5 on one whose receipt builder is), with the self-test's
+  lexer, flag-file, build-input, library, reach,
   header, file-kind, route-form, symbol-binding and raw-literal cases, each
   fail for their named reason before the tree is read; they refuse each of
   the 60 mutants of the check that undo one of the third review's fixes, weaken a

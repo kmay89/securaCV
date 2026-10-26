@@ -2231,9 +2231,11 @@ so — see D2 below.)
   and its `#else` one) is every one of its bodies, whatever its head, in
   this rule, the route-gate rule and the Host-first rule, and a route
   handler is every definition of its name, a qualified one
-  (`Api::handle_status`) included. 298 planted fixtures (268 source edits,
-  25 table edits, 5 on a fixture whose `/api/status` handler is qualified),
-  with the self-test's lexer,
+  (`Api::handle_status`) included, and an emitter's statements are pinned
+  at its definition, a qualified one (`receipt::send_provisioning_receipt`)
+  included. 304 planted fixtures (268 source edits, 25 table edits, 6 on a
+  fixture whose `/api/status` handler is qualified, 5 on one whose receipt
+  builder is), with the self-test's lexer,
   flag-file, build-input, library, reach, header, file-kind, route-form,
   symbol-binding and raw-literal cases, each fail for their named reason
   before the tree is read (the library cases run 69 projects written into a
@@ -3168,6 +3170,59 @@ so — see D2 below.)
   list item, and a step that ends at its `uses:`), the self-test and
   the pin test refuse all 14. The planted fixtures are 298 (268 source, 25
   table, 5 qualified). The tree passes in 24.4 s on Python 3.13
+  (PlatformIO 6.1.19). Host-tested; not run on a device. No new number.
+  *Change (2026-10-26, the PR's review of the Codex repair):* two more
+  gaps, each reproduced before its fix, and three nits.
+  - `EMITTER_STATEMENTS` had the gap the answer rows had.
+    `_reader_problems` counted an emitter's rows under the bare name
+    `TOKEN_EMITTERS` keys it by and pinned them only under its
+    definition's qualified name, so once a refactor defined the receipt's
+    builder as `esp_err_t receipt::send_provisioning_receipt(...)` (its
+    census home moved with it, as that rule's failure asks), a row keyed
+    bare counted and pinned nothing. On a copy of the tree, a
+    `Serial.printf` of the token and the SoftAP password added to the
+    builder passed (`canary route security OK`), where the same line in
+    the bare definition fails. Both tables' rows are now read by
+    `_statement_row_problems`: found by the bare name, keyed by the
+    definition's own name (a row keyed by another fails, naming the
+    definition; on that copy it now fails until the row is re-keyed, and
+    then the line fails), pinned at every definition, an emitter still
+    defined once, in its home. Five plants on a fixture whose receipt
+    builder is `receipt::send_provisioning_receipt`
+    (`_FIX_QUALIFIED_EMITTER_PLANTS`): the review's case passed every
+    rule, the fixture itself failed, and two plants lacked the problem
+    they now name.
+  - `platformio_pin_problems` read only `pip`, `pip3`, `pipx` and `uv pip`
+    directly followed by `install`, while its docstring said every
+    invocation is held. `pio upgrade` (which PlatformIO's own CLI suggests
+    when a release is out), `platformio upgrade` (also as `python3 -m
+    platformio upgrade`), `pip3.11 install`, `pip --quiet install`,
+    `-mpip`, PlatformIO's source by URL or VCS (its documented way to
+    install the development version), a wheel of it by path, `uv tool
+    install`, `pipx upgrade`, the get-platformio.py installer and a name
+    folded onto the next line of a `run: >` block all passed, in a release
+    workflow where nothing else refuses them. Each fails now
+    (`_PIP_INSTALL`, `_PLATFORMIO_SOURCE`, `_PIO_UPGRADE`,
+    `_PIO_INSTALLER`, over a step read as `_shell_lines` joins it: a
+    backslash continuation, a folded or plain `run:` value as YAML folds
+    it, comments dropped), and the module and function docstrings name
+    what is read and what is not (a `-r` requirements file, `pipx run`, an
+    installer script of its own).
+  - Nits: a handler that answers no credential, defined under two names,
+    is no longer told its `ANSWER_STATEMENTS` row keys one (a plant holds
+    the wording); the pin test plants a step with the pin twice above and
+    below the route check, as its docstring says; `firmware.yml`'s
+    route-check comments say 14-25 s and name the per-install rule.
+  The pin test is 19 tests: those 13 installs in each release workflow and
+  above and below the route check are 52 failing cases, every one of which
+  the old rule passed, and an install at the pin with `uv tool`, an sdist
+  of another package whose name starts with platformio, a `pio` command
+  that installs nothing and a comment naming an upgrade pass. Of 23
+  checker mutants (seven of the statement rows' reading, two of the
+  two-names message, 14 of the pin rule's reading), the self-test and the
+  pin test refuse all 23. The planted fixtures are 304 (268 source, 25
+  table, 6 on the qualified handler's fixture, 5 on the qualified
+  emitter's). The tree passes in 24.3 s on Python 3.13 and 16 s on 3.11
   (PlatformIO 6.1.19). Host-tested; not run on a device. No new number.
 - [x] **F339 [code] canary-wap: other bearer compares stay silent beside the
   lockout.** `csi_integration.cpp`'s `CSI_AUTH_OR_RETURN`

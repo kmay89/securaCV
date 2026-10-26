@@ -28,15 +28,22 @@ What is pinned:
     and the pin twice (exactly one), its install step removed or moved below
     the check, a pin in another job only, and the check run twice or not at
     all;
-  - every invocation is held, not only the pins a workflow spells: in each
-    release workflow and in the route-check job (above the check or below
-    it), a second setup-platformio step with no platformio-version (bare, or
-    with only its extras), one with two, and a pip install of PlatformIO at
-    no pin or another one (`--upgrade platformio`, `platformio==6.2.0`, a
-    range, a name split onto a continuation line) FAIL, where the pins
-    collected across the file used to cover them (Codex, #1852); a pip
-    install at the pin passes, and firmware.yml's other jobs, which take the
-    newest PlatformIO on purpose, are not held;
+  - each invocation the rule reads is held, not only the pins a workflow
+    spells: in each release workflow and in the route-check job (above the
+    check or below it), a second setup-platformio step with no
+    platformio-version (bare, or with only its extras), one with two, and an
+    install of PlatformIO at no pin or another one FAIL, where the pins
+    collected across the file used to cover them (Codex, #1852): pip's
+    `--upgrade platformio`, `platformio==6.2.0`, a range, a name split onto
+    a continuation line or folded onto the next line of a `run: >` block,
+    `pip3.11`, an option before `install`, `-mpip`, PlatformIO's source by
+    URL or VCS and a wheel of it by path, `uv tool install` and `pipx
+    upgrade`; and so do `pio upgrade`, `platformio upgrade` (also as `python3
+    -m platformio upgrade`) and the get-platformio.py installer, which name
+    no package (the #1852 review). An install at the pin passes, as do a
+    package whose name only starts with platformio, a `pio` command that
+    installs nothing and a comment naming an upgrade; firmware.yml's other
+    jobs, which take the newest PlatformIO on purpose, are not held;
   - a pin quoted in a comment is not read as one;
   - main() refuses another PlatformIO, or none, before any rule runs, naming
     the install command (in CI its job installs the pin, so this refusal is
@@ -94,6 +101,42 @@ UNPINNED_INSTALLS = (
     "      - run: pip3 install --quiet 'platformio>=6.1'\n",
     "      - name: Tools\n        run: |\n          python3 -m pip install --quiet \\\n"
     "            intelhex==2.3.0 \\\n            platformio\n",
+    # The pip of one interpreter, an option before `install`, `-mpip`, a
+    # folded block that puts the name on the next line, and PlatformIO's own
+    # source (its documented way to install the development version) or a
+    # wheel of it, by URL.
+    "      - run: pip3.11 install -U platformio\n",
+    "      - run: pip --quiet install platformio\n",
+    "      - run: python3 -mpip install platformio\n",
+    "      - run: >\n          python3 -m pip install --quiet\n          platformio\n",
+    "      - run: pip install -U https://github.com/platformio/platformio-core/archive/"
+    "develop.zip\n",
+    "      - run: pip install git+https://github.com/platformio/platformio-core.git@develop\n",
+    "      - run: python3 -m pip install ./dist/platformio-6.2.0-py3-none-any.whl\n",
+    # Installers other than pip.
+    "      - run: uv tool install platformio\n",
+    "      - run: pipx upgrade platformio\n",
+)
+# Steps that replace PlatformIO Core with the newest release without naming
+# the package (PlatformIO's own CLI suggests the first when one is out), and
+# the words a problem names for each.
+NEWEST_INSTALLS = (
+    ("      - run: pio upgrade\n", "`pio upgrade` replaces PlatformIO Core with the newest"),
+    ("      - name: Upgrade PlatformIO\n        run: |\n          platformio upgrade --dev\n",
+     "`platformio upgrade` replaces PlatformIO Core with the newest"),
+    ("      - run: python3 -m platformio upgrade\n",
+     "`platformio upgrade` replaces PlatformIO Core with the newest"),
+    ("      - run: curl -fsSLO https://raw.githubusercontent.com/platformio/"
+     "platformio-core-installer/master/get-platformio.py && python3 get-platformio.py\n",
+     "get-platformio.py installs the newest PlatformIO Core"),
+)
+# Steps that use PlatformIO, or install another package, and pass.
+PASSING_STEPS = (
+    f"      - run: python3 -m pip install --quiet platformio=={PIN} platformio-extras==1.0\n",
+    f"      - run: uv tool install platformio=={PIN}\n",
+    "      - run: pip install https://example.com/platformio-extras-1.0.tar.gz\n",
+    "      - run: pio --version && pio pkg update -e release_ha  # not pio upgrade\n",
+    "      - run: |\n          # pip install --upgrade platformio, once\n          pio run\n",
 )
 
 
@@ -171,10 +214,23 @@ class PlatformioPinTest(unittest.TestCase):
                     got = self.doctored(name, text, text[:end] + step + text[end:])
                     self.assert_named(got, name, f"not platformio=={PIN}")
             # At the pin, it holds; a package whose name only starts with
-            # platformio is another package.
-            pinned = (f"      - run: python3 -m pip install --quiet platformio=={PIN} "
-                      f"platformio-extras==1.0\n")
-            self.assertEqual(self.doctored(name, text, text[:end] + pinned + text[end:]), [])
+            # platformio is another package, and a comment or a `pio` command
+            # that installs nothing is not an install.
+            for step in PASSING_STEPS:
+                with self.subTest(name=name, step=step):
+                    self.assertEqual(self.doctored(name, text, text[:end] + step + text[end:]),
+                                     [])
+
+    def test_every_upgrade_of_platformio_in_a_release_fails(self) -> None:
+        # `pio upgrade` and PlatformIO's installer script name no package, and
+        # take the newest PlatformIO over the pinned one.
+        for name in crs.PLATFORMIO_PIN_RELEASES:
+            text = (WORKFLOWS / name).read_text()
+            _start, end = step_bounds(text, text.index(f"          {PIN_LINE}\n"))
+            for step, words in NEWEST_INSTALLS:
+                with self.subTest(name=name, step=step):
+                    got = self.doctored(name, text, text[:end] + step + text[end:])
+                    self.assert_named(got, name, words)
 
     def test_release_pin_bumped_alone_fails(self) -> None:
         for name in crs.PLATFORMIO_PIN_RELEASES:
@@ -211,14 +267,18 @@ class PlatformioPinTest(unittest.TestCase):
 
     def test_route_check_job_second_unpinned_setup_or_install_fails(self) -> None:
         # Above the check, a setup-platformio step with no platformio-version
-        # or a pip install of PlatformIO at no pin replaces the pinned one
-        # before the check runs; below it, the job still installs it unpinned.
+        # (or with two), an install of PlatformIO at no pin or an upgrade of
+        # it replaces the pinned one before the check runs; below it, the job
+        # still installs it unpinned.
         text = (WORKFLOWS / "firmware.yml").read_text()
         check, end = step_bounds(text, text.index(f"          {CHECK_RUN}\n"))
         for at in (check, end):
             for step, words in ([(s, "a setup-platformio step hands it no platformio-version")
                                  for s in UNPINNED_STEPS]
                                 + [(s, f"not platformio=={PIN}") for s in UNPINNED_INSTALLS]
+                                + list(NEWEST_INSTALLS)
+                                + [(TWICE_PINNED_STEP, "a setup-platformio step hands it 2 "
+                                                       "platformio-version lines")]
                                 + [(STEP.format("6.2.0"), "platformio-version '6.2.0'")]
                                 * (at == end)):
                 with self.subTest(below=at == end, step=step):
@@ -232,7 +292,7 @@ class PlatformioPinTest(unittest.TestCase):
         check = text.index(f"          {CHECK_RUN}\n")
         job = text.rindex("\n  build-platformio:\n", 0, check)
         _start, end = step_bounds(text, text.index("\n      - ", job) + 1)
-        for step in UNPINNED_STEPS + UNPINNED_INSTALLS:
+        for step in UNPINNED_STEPS + UNPINNED_INSTALLS + tuple(s for s, _w in NEWEST_INSTALLS):
             with self.subTest(step=step):
                 self.assertEqual(self.doctored("firmware.yml", text,
                                                text[:end] + step + text[end:]), [])
