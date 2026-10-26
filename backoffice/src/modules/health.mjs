@@ -30,6 +30,7 @@ export function doctor(db, cfg) {
   // which this is, and what build
   const warns = envRules(cfg, db).filter(r => r.level === 'warn');
   add('environment', 'Environment', cfg.env === 'production' ? warns.length === 0 : warns.length ? false : null, `${cfg.env || 'development'} · ${describeBuild(cfg)}${warns.length ? ` · ${warns.map(w => w.text).join('; ')}` : ''}`, 'BACKOFFICE_ENV names it: production, staging, demo or development (env.mjs says what each refuses)');
+  const sc = db.schema || {}; add('schema', 'Database schema', sc.ahead?.length ? false : true, `${sc.applied ?? '?'} migrations · latest ${sc.latest || '—'}${sc.pre_migrate_copies ? ` · ${sc.pre_migrate_copies} pre-migration cop${sc.pre_migrate_copies === 1 ? 'y' : 'ies'} on disk` : ''}${sc.ahead?.length ? ` · AHEAD of this build: ${sc.ahead.join(', ')}` : ''}`, 'start the build that applied them, or restore the pre-migration copy');
   // identity & reach
   const people = db.all("SELECT role, COUNT(*) AS n FROM users WHERE status = 'active' GROUP BY role"); const locked = db.get('SELECT COUNT(*) AS n FROM users WHERE locked_until > ?', new Date().toISOString()).n;
   add('operator', 'An owner can log in', hasOperator(db), hasOperator(db) ? `password + authenticator · ${people.map(p => `${p.n} ${p.role}`).join(', ')}${locked ? ` · ${locked} locked out` : ''}` : 'no owner', 'run `backoffice setup`, or accept the invitation');
