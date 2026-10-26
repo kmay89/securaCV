@@ -722,8 +722,10 @@ hold keeps; and the per-address lockout's ways out.
   app comments said the app never holds the cookie the WAP's gate takes;
   over http the shared `URLSession` keeps the `cv_session` a claim's
   receipt sets and sends it back, which the gate takes until it expires in
-  24 h, the WAP reboots, or eight newer sessions push it out of the WAP's
-  eight session slots, and the comments say so. The vault surface's comment
+  24 h, the WAP reboots, or newer sessions push it out of the WAP's eight
+  session slots (the eighth minted after it, unless one minted in the same
+  second of uptime moves that sooner or later), and the comments say so.
+  The vault surface's comment
   ("Auth-gated like the Wi-Fi routes (Bearer)"), `device_trust.md`'s WAP row
   and the roadmap's `handle_witness_v1` line no longer call
   `api_auth_check()` routes the bearer's alone, and two ledger notes and
@@ -751,10 +753,11 @@ hold keeps; and the per-address lockout's ways out.
   claim's receipt leaves in the app's shared `URLSession` two ends, its
   24 h and a WAP reboot. The WAP keeps sessions in eight RAM slots
   (`csi_integration.cpp`'s `SESSION_SLOTS`), and once all eight are live
-  `pick_session_slot_for_issuance()` evicts the oldest, so the eighth
-  session minted after the claim's ends it (every `?cv_pair` sign-in at the
-  landing and every receipt a tap or a claim serves mints one), which can
-  be minutes after the claim. The three app comments, the round-2 entry
+  `pick_session_slot_for_issuance()` evicts the oldest, so newer sessions
+  end it, the eighth minted after the claim's when no other shares its
+  second of uptime (every `?cv_pair` sign-in at the landing and every
+  receipt a tap or a claim serves mints one), which can be minutes after
+  the claim. The three app comments, the round-2 entry
   above and the ledger name all three ends. The Lab's BOOT card said the
   10 s hold reopens the first-come Bluetooth setup door on every unit;
   `wifi_clear_credentials()` re-arms the door's carried window only on a
@@ -766,6 +769,34 @@ hold keeps; and the per-address lockout's ways out.
   `test_docs_claims.py` bans 8 more retired sentences where they stood (the
   five two-end lifetimes, the Lab's unscoped door and the two miscounts).
   Host-tested; not run on a device, in a browser or through Xcode.
+
+- **The witness page's spec no longer puts the SD log and the MQTT publish
+  behind the WAP's gate, and the session cookie's count allows for a tie
+  (#1843's sweep, sixth pass, round-4 review).** `spec/witness_api_v1.md`
+  said the uptime bucket already rides the SD witness line,
+  `GET /api/witness`, `POST /api/export` and the MQTT `chain` publish, all
+  behind `api_auth_check()`, and that the gate in front of
+  `/api/v1/witness` is the one that reads the SD log. No canary-wap route
+  reads `/WITNESS/records.jsonl` (the firmware opens it only to append and
+  to recover the chain head when the card mounts), the export answers
+  `export_time_ms` and no bucket, the `chain` publish carries `length` and
+  `latest_hash` and reaches the broker, not the gate, and the page is the
+  one canary-wap HTTP route that carries a record's `payload_hash`, so a
+  landing session any host on the network can mint (F346) reaches a hash
+  the SD line gives only to a reader of the card. Both passages now say
+  so. The three app comments, the CHANGELOG entries above and the ledger
+  said eight newer sessions end the app's cookie; sessions are stamped in
+  whole seconds of uptime and the eviction takes the lowest slot on a tie,
+  so that count holds only when no other session shares the cookie's
+  second, and each copy now says a tie can move it sooner or later. The
+  readiness TODO now says the 10 s hold reopens the setup door on a unit
+  that had Wi-Fi, unless Bluetooth was turned off, which the hold keeps.
+  `test_docs_claims.py` bans 17 more retired sentences where they stood,
+  among them four the merge of #1844 to #1873 rewrote in the hardware
+  checklist with no needle (the `cv_session` name on rows that open
+  `https://` pages, where the cookie is `__Host-cv_session`) and the Lab
+  test's "one page already asking" comment. Host-tested; not run on a
+  device, in a browser or through Xcode.
 
 ### The flagship and the canary-wap halt on a stored identity key they cannot read, instead of running on a zero key or replacing it (sweep F360, #1840)
 

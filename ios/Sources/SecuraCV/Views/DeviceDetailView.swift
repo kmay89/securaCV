@@ -151,11 +151,13 @@ struct DeviceDetailView: View {
             // (the app authenticates the stream with the bearer; a
             // `cv_session` cookie a claim's receipt set over http may ride
             // along from the shared URLSession, which the WAP's gate takes
-            // until it expires in 24 h, the WAP reboots, or eight newer
-            // sessions push it out of the WAP's eight session slots, but
-            // without the token every poll 401s once the gate stops taking
-            // it, so an unpaired row or a Keychain-lost token gets no
-            // tile — the same up-front guard verifyNow applies).
+            // until it expires in 24 h, the WAP reboots, or newer sessions
+            // push it out of the WAP's eight session slots (the eighth
+            // minted after it, though one minted in the same second of
+            // uptime can move that sooner or later), but without the token
+            // every poll 401s once the gate stops taking it, so an unpaired
+            // row or a Keychain-lost token gets no tile — the same up-front
+            // guard verifyNow applies).
             if witness.deviceType == .wap,
                let ref = store.devices.devices.first(where: { $0.id == witness.id }),
                let api = try? store.devices.api(for: ref) {

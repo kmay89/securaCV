@@ -24,10 +24,11 @@ struct SensingNowSection: View {
     /// (the app authenticates the stream with the bearer; the shared
     /// URLSession may also hold the `cv_session` cookie a claim's receipt
     /// set over http, which the WAP's gate takes until it expires in 24 h,
-    /// the WAP reboots, or eight newer sessions push it out of the WAP's
-    /// eight session slots, but once the gate stops taking it a poll
-    /// without the token 401s every time, so the guard does not count on
-    /// it).
+    /// the WAP reboots, or newer sessions push it out of the WAP's eight
+    /// session slots (the eighth minted after it, though one minted in the
+    /// same second of uptime can move that sooner or later), but once the
+    /// gate stops taking it a poll without the token 401s every time, so
+    /// the guard does not count on it).
     let api: DeviceAPI
 
     @State private var snapshot: WapStream?

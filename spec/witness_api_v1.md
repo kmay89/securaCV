@@ -101,13 +101,19 @@ reader must still know what the buckets do not hide:
   `/api/config` reports it as `time_bucket_floor_ms`). The page carries `time_bucket` and
   `time_bucket_ms` because the hash cannot be recomputed without them. The
   width is a per-record fact, so a record made at any width verifies with
-  the width it carries. This is not new exposure: the same value already
-  rides the SD witness line, `GET /api/witness`, `POST /api/export` and the
-  MQTT `chain` publish, and `uptime_s` is `/api/status`'s `uptime_sec`, all
-  behind the same gate (on canary-wap, `api_auth_check()`: the Bearer token
-  or a landing session). The bucket itself adds no precision finer
-  than ten minutes. It counts from boot, so its edges are not on the
-  wall-clock grid.
+  the width it carries. On canary-wap's HTTP routes this is not new
+  exposure: `GET /api/witness` already answers the newest record's
+  `time_bucket`, `POST /api/export` answers `export_time_ms` (the uptime in
+  milliseconds) and `uptime_s` is `/api/status`'s `uptime_sec`, each
+  behind the gate this page sits behind, `api_auth_check()`: the Bearer
+  token, or a landing session any host on the network can mint (F346).
+  Off HTTP, every record's `time_bucket` rides the SD witness line, which
+  a reader needs the card for (or, on the opt-in `canary-wap-usbdrive`
+  build, its read-only USB evidence drive and a cable), and, with a broker
+  set, the MQTT `health` publish carries the uptime in seconds to the
+  broker, whose own access rules decide who reads it. The bucket itself
+  adds no precision finer than ten minutes. It counts from boot, so its
+  edges are not on the wall-clock grid.
 * **The bucket is not the only time signal.** canary-wap writes a witness
   record every record interval (1 000 ms by default; `/api/config` reports
   it as `record_interval_ms`), and every record carries its `seq`. With
@@ -246,11 +252,18 @@ that returns what is held. The durable history is the SD log
 The old `GET /api/witness` (one record, the device's own self-check flag)
 remains for the device's dashboard and is not this contract.
 
-`payload_hash` is new on an HTTP surface (the old page sent only
-`time_bucket` and `chain_hash`). It is domain-separated but unkeyed, so a
-caller the gate admits (on canary-wap, the Bearer token or a landing session
-any host on the network can mint, F346) can confirm a guess at a
-low-entropy payload — a short state-transition string, say — by hashing the
-guess. That is the same exposure the SD line (`ph`) and the PWK export
-already carry, not a new one; the page adds no plaintext and no key, and the
-gate it sits behind is the same one that reads the SD log.
+`payload_hash` is new on an HTTP surface: the old `GET /api/witness`
+answers the newest record's `chain_hash` and no payload hash, and on
+canary-wap this page is the one HTTP route that carries a record's
+`payload_hash`. It is domain-separated but unkeyed, so a caller the gate
+admits can confirm a guess at a low-entropy payload — a short
+state-transition string, say — by hashing the guess. On canary-wap that
+gate is `api_auth_check()`: the Bearer token, or a landing session any
+host on the network can mint (F346). That is a new exposure, and it
+reaches further than the copies already on the device. The SD line's `ph`
+needs the card in hand (or, on the opt-in `canary-wap-usbdrive` build,
+its read-only USB evidence drive and a cable): no canary-wap route reads
+the SD log, which the firmware opens only to append a record and to
+recover the chain head when the card mounts. The Bluetooth witness export
+(`ble_witness_export`) serves only the newest record's `ph`, and only on
+an encrypted, authenticated link. The page adds no plaintext and no key.

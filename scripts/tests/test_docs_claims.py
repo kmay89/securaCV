@@ -2417,7 +2417,7 @@ RETIRED_IN = (
      'sd_append_record() writes the fixed path /WITNESS/records.jsonl, so its file is to be moved off, not copied'),
     ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
      'cookie, which the app never holds, ledger F346',
-     "a claim's receipt sets cv_session over http and the shared URLSession keeps it and sends it back; the gate takes it until it expires in 24 h, the WAP reboots, or eight newer sessions push it out of the store's eight slots"),
+     "a claim's receipt sets cv_session over http and the shared URLSession keeps it and sends it back; the gate takes it until it expires in 24 h, the WAP reboots, or newer sessions push it out of the store's eight slots (the eighth after it when no other session shares its second of uptime)"),
     ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
      'Auth-gated like the Wi-Fi routes (Bearer).',
      "every /api/vault/* route is api_auth_check() (download api_auth_check_or_query()), which takes a landing session's cookie first (F346)"),
@@ -2484,26 +2484,27 @@ RETIRED_IN = (
     # #1843's sixth pass, round-3 review: the app's cookie was given two
     # ends when the session store has three (csi_integration.cpp's
     # SESSION_SLOTS = 8, and pick_session_slot_for_issuance() evicts the
-    # oldest live slot, so the eighth session minted after the claim's
-    # pushes it out), the Lab's hold message reopened the door on every
-    # unit (wifi_clear_credentials() re-arms the carried window only when
+    # oldest live slot, so newer sessions push it out: the eighth minted
+    # after the claim's when no other shares its second of uptime, as the
+    # round-4 rows below say), the Lab's hold message reopened the door on
+    # every unit (wifi_clear_credentials() re-arms the carried window only when
     # credentials were stored), and two counts of the console strings the
     # old flasher needle missed were one short (five, not four).
     ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
      'expires in 24 h or the WAP reboots), decoded down to what',
-     "the gate takes it until it expires in 24 h, the WAP reboots, or eight newer sessions push it out of the store's eight slots"),
+     "the gate takes it until it expires in 24 h, the WAP reboots, or newer sessions push it out of the store's eight slots (the eighth after it when no other session shares its second of uptime)"),
     ('ios/Sources/SecuraCV/Views/Components/SensingNowSection.swift',
      'or the WAP reboots, but once that cookie is gone a poll without the',
-     "the gate takes it until it expires in 24 h, the WAP reboots, or eight newer sessions push it out of the store's eight slots"),
+     "the gate takes it until it expires in 24 h, the WAP reboots, or newer sessions push it out of the store's eight slots (the eighth after it when no other session shares its second of uptime)"),
     ('ios/Sources/SecuraCV/Views/DeviceDetailView.swift',
      'along from the shared URLSession until it expires or the WAP',
-     "the gate takes it until it expires in 24 h, the WAP reboots, or eight newer sessions push it out of the store's eight slots"),
+     "the gate takes it until it expires in 24 h, the WAP reboots, or newer sessions push it out of the store's eight slots (the eighth after it when no other session shares its second of uptime)"),
     ('CHANGELOG.md',
      'which the gate takes until it expires or the WAP reboots, and the comments say so.',
-     "the gate takes it until it expires in 24 h, the WAP reboots, or eight newer sessions push it out of the store's eight slots"),
+     "the gate takes it until it expires in 24 h, the WAP reboots, or newer sessions push it out of the store's eight slots (the eighth after it when no other session shares its second of uptime)"),
     ('docs/audit/repo_todo_sweep_2026-09.md',
      '`api_auth_check()` takes it until its 24 h run out or the WAP reboots',
-     "the gate takes it until it expires in 24 h, the WAP reboots, or eight newer sessions push it out of the store's eight slots"),
+     "the gate takes it until it expires in 24 h, the WAP reboots, or newer sessions push it out of the store's eight slots (the eighth after it when no other session shares its second of uptime)"),
     ('canary-local/assets/wap-ui.js',
      'keeps its key and token, and reopens its first-come Bluetooth setup door for half an hour',
      'wifi_clear_credentials() re-arms the carried window only on a unit that had Wi-Fi, and a software restart keeps a spent one'),
@@ -2513,6 +2514,66 @@ RETIRED_IN = (
     ('docs/audit/repo_todo_sweep_2026-09.md',
      "check's lead and three other retired strings passed it",
      "five of the eight passed /A Canary keeps a read-only Bluetooth console/: the lead and four others"),
+    # #1843's sixth pass, round-4 review. witness_api_v1.md put the SD log and
+    # the MQTT publish behind the WAP's gate (no canary-wap route reads
+    # /WITNESS/records.jsonl; the chain publish goes to the broker) and called
+    # the page's payload_hash no new exposure (it is the one HTTP route that
+    # carries it, and a landing session reaches it, F346); the readiness
+    # TODO's hold reopened the door on every unit; seven copies said eight
+    # newer sessions end the app's cookie, which a tie in one second of
+    # uptime moves; and the Lab test's comment and four hardware-checklist
+    # instructions the merge of #1844 to #1873 rewrote had no needle.
+    ('spec/witness_api_v1.md',
+     'the same value already rides the SD witness line, `GET /api/witness`, `POST /api/export` and the MQTT `chain` publish',
+     'GET /api/witness answers time_bucket; /api/export answers export_time_ms and the MQTT chain publish length and latest_hash, neither a bucket'),
+    ('spec/witness_api_v1.md',
+     'all behind the same gate (on canary-wap, `api_auth_check()`: the Bearer token or a landing session).',
+     "the SD line needs the card and the MQTT publish is the broker's to govern; neither sits behind api_auth_check()"),
+    ('spec/witness_api_v1.md',
+     'That is the same exposure the SD line (`ph`) and the PWK export already carry, not a new one',
+     "the page is the one canary-wap HTTP route with payload_hash, open to a landing session (F346); the SD line's ph needs the card"),
+    ('spec/witness_api_v1.md',
+     'it sits behind is the same one that reads the SD log.',
+     'no canary-wap route reads /WITNESS/records.jsonl; it is opened only to append and to recover the head when the card mounts'),
+    ('firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md',
+     'keeps the identity, the chain and the token, and reopens the first-come Bluetooth setup door).',
+     'wifi_clear_credentials() re-arms the carried window only on a unit that had Wi-Fi, and the hold keeps Bluetooth off'),
+    ('canary-local/tests/wap.test.js',
+     'The tap goes to the one page already asking (sweep F342)',
+     'tap_arbitrate() gives a tap no page was asking for to the first address that asks after it'),
+    ('docs/audit/hardware_verification_checklist.md',
+     "never shows **Use BOOT Tap Once**; or delete the site's `cv_session` in the developer tools",
+     'the row opens https://, where session_cookie_header() names the cookie __Host-cv_session (F337); the row names both'),
+    ('docs/audit/hardware_verification_checklist.md',
+     "with **Open dashboard**; or delete the site's `cv_session` in the developer tools",
+     'the row opens https://, where session_cookie_header() names the cookie __Host-cv_session (F337); the row names both'),
+    ('docs/audit/hardware_verification_checklist.md',
+     'the dashboard loads on the `cv_session` cookie.',
+     'the row opens https://, where session_cookie_header() names the cookie __Host-cv_session (F337); the row names both'),
+    ('docs/audit/hardware_verification_checklist.md',
+     'Delete that `cv_session` there (with a live session the page resumes it',
+     'the row opens https://, where session_cookie_header() names the cookie __Host-cv_session (F337); the row names both'),
+    ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
+     'expires in 24 h, the WAP reboots, or eight newer sessions push it',
+     'uptime_s() stamps whole seconds and a tie evicts the lowest slot, so a session minted in the same second can move the eighth sooner or later'),
+    ('ios/Sources/SecuraCV/Views/Components/SensingNowSection.swift',
+     "the WAP reboots, or eight newer sessions push it out of the WAP's",
+     'uptime_s() stamps whole seconds and a tie evicts the lowest slot, so a session minted in the same second can move the eighth sooner or later'),
+    ('ios/Sources/SecuraCV/Views/DeviceDetailView.swift',
+     'until it expires in 24 h, the WAP reboots, or eight newer',
+     'uptime_s() stamps whole seconds and a tie evicts the lowest slot, so a session minted in the same second can move the eighth sooner or later'),
+    ('CHANGELOG.md',
+     "the WAP reboots, or eight newer sessions push it out of the WAP's eight session slots, and the comments say so.",
+     'uptime_s() stamps whole seconds and a tie evicts the lowest slot, so a session minted in the same second can move the eighth sooner or later'),
+    ('CHANGELOG.md',
+     "evicts the oldest, so the eighth session minted after the claim's ends it",
+     'uptime_s() stamps whole seconds and a tie evicts the lowest slot, so a session minted in the same second can move the eighth sooner or later'),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     "Forget Wi-Fi arms none); or eight newer sessions push it out of the store's eight slots",
+     'uptime_s() stamps whole seconds and a tie evicts the lowest slot, so a session minted in the same second can move the eighth sooner or later'),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     "with any number of older sessions before the app's, the eighth session minted after it is the one that ends it",
+     'uptime_s() stamps whole seconds and a tie evicts the lowest slot, so a session minted in the same second can move the eighth sooner or later'),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -2758,7 +2819,9 @@ MUST_PASS_IN = [
      '        WAP has no factory-reset route at all (BOOT held 10 s,\n'
      '        `factory_reset_by_hold()`, is the only path; it clears the saved\n'
      '        Wi-Fi, the broker row and the name, keeps the identity, the chain and\n'
-     '        the token, and reopens the first-come Bluetooth setup door). Whether\n'
+     '        the token, and, on a unit that had Wi-Fi, reopens the first-come\n'
+     '        Bluetooth setup door, unless Bluetooth was turned off, which the hold\n'
+     '        keeps). Whether\n'
      '        `POST /api/factory-reset` may exist is the decision;'),
     ('docs/design/onboarding_shared_module.md',
      "  before 700 ms — the WAP's 2 s hold and the 10 s factory-reset hold are"),
@@ -4285,9 +4348,9 @@ MUST_PASS_IN = [
     ('docs/canary_settings_access_validation.md',
      '  until it signs in. That is not a boundary against a host on the WiFi: the'),
     ('spec/witness_api_v1.md',
-     '  behind the same gate (on canary-wap, `api_auth_check()`: the Bearer token'),
+     '  behind the gate this page sits behind, `api_auth_check()`: the Bearer'),
     ('spec/witness_api_v1.md',
-     'caller the gate admits (on canary-wap, the Bearer token or a landing session'),
+     'gate is `api_auth_check()`: the Bearer token, or a landing session any'),
     ('tvos/discovery/DISCOVERY.md',
      '  sealed evidence stays behind the gated `/api/fleet/scan` (on a WAP,'),
     ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
@@ -4403,19 +4466,59 @@ MUST_PASS_IN = [
     ('firmware/ESP32S3_OPTIMIZATION_ROADMAP.md',
      '  `CONFIG_NVS_ENCRYPTION` unset; only the ESP-IDF project `canary-ota` builds with it set, and its'),
     ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
-     '    /// expires in 24 h, the WAP reboots, or eight newer sessions push it'),
+     '    /// expires in 24 h, the WAP reboots, or newer sessions push it out of'),
     ('ios/Sources/SecuraCV/Views/Components/SensingNowSection.swift',
-     "    /// the WAP reboots, or eight newer sessions push it out of the WAP's"),
+     "    /// the WAP reboots, or newer sessions push it out of the WAP's eight"),
     ('ios/Sources/SecuraCV/Views/DeviceDetailView.swift',
-     '            // until it expires in 24 h, the WAP reboots, or eight newer'),
+     '            // until it expires in 24 h, the WAP reboots, or newer sessions'),
     ('CHANGELOG.md',
-     "which the gate takes until it expires in 24 h, the WAP reboots, or eight newer sessions push it out of the WAP's eight session slots, and the comments say so."),
+     "which the gate takes until it expires in 24 h, the WAP reboots, or newer sessions push it out of the WAP's eight session slots (the eighth minted after it, unless one minted in the same second of uptime moves that sooner or later), and the comments say so."),
     ('docs/audit/repo_todo_sweep_2026-09.md',
      '`api_auth_check()` takes it until the first of three ends: its 24 h run out; the WAP reboots'),
     ('CHANGELOG.md',
      'so the five retired strings its old needle could not see now fail it.'),
     ('docs/audit/repo_todo_sweep_2026-09.md',
      "check's lead and four other retired strings passed it"),
+    ('spec/witness_api_v1.md',
+     '  `time_bucket`, `POST /api/export` answers `export_time_ms` (the uptime in'),
+    ('spec/witness_api_v1.md',
+     "  Off HTTP, every record's `time_bucket` rides the SD witness line, which"),
+    ('spec/witness_api_v1.md',
+     'host on the network can mint (F346). That is a new exposure, and it'),
+    ('spec/witness_api_v1.md',
+     'its read-only USB evidence drive and a cable): no canary-wap route reads'),
+    ('firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md',
+     '        the token, and, on a unit that had Wi-Fi, reopens the first-come\n'
+     '        Bluetooth setup door, unless Bluetooth was turned off, which the hold\n'
+     '        keeps). Whether'),
+    ('canary-local/tests/wap.test.js',
+     '  // The tap goes to one asker (sweep F342): the card says to start the'),
+    ('docs/audit/hardware_verification_checklist.md',
+     "    resumes it and never shows **Use BOOT Tap Once**; or delete the site's\n"
+     '    session cookie, `cv_session` over plain HTTP and `__Host-cv_session`\n'
+     '    over HTTPS, in the developer tools, Application, then Cookies), the'),
+    ('docs/audit/hardware_verification_checklist.md',
+     "    dashboard**; or delete the site's session cookie, `cv_session` over\n"
+     '    plain HTTP and `__Host-cv_session` over HTTPS, in the developer tools,'),
+    ('docs/audit/hardware_verification_checklist.md',
+     '    dashboard** (the `?cv_pair=` link): the dashboard loads on the session\n'
+     '    cookie, `__Host-cv_session` over HTTPS and `cv_session` over plain HTTP'),
+    ('docs/audit/hardware_verification_checklist.md',
+     "    and the stored cookie's flags. Delete that cookie there (with a"),
+    ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
+     "    /// the WAP's eight session slots: the eighth minted after it, though"),
+    ('ios/Sources/SecuraCV/Views/Components/SensingNowSection.swift',
+     '    /// session slots (the eighth minted after it, though one minted in the'),
+    ('ios/Sources/SecuraCV/Views/DeviceDetailView.swift',
+     '            // minted after it, though one minted in the same second of'),
+    ('CHANGELOG.md',
+     "24 h, the WAP reboots, or newer sessions push it out of the WAP's eight session slots (the eighth minted after it, unless one minted in the same second of uptime moves that sooner or later), and the comments say so."),
+    ('CHANGELOG.md',
+     "`pick_session_slot_for_issuance()` evicts the oldest, so newer sessions end it, the eighth minted after the claim's when no other shares its second of uptime"),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     'oldest when all eight are live, the lowest slot on a tie, so the eighth minted after it ends it unless one minted in the same second of uptime moves that sooner or later'),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     "number of older sessions before the app's and each session minted in a second of uptime of its own, the eighth session minted after it is the one that ends it"),
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -6313,6 +6416,68 @@ MUST_FAIL_IN = [
     ('docs/audit/repo_todo_sweep_2026-09.md',
      '      case-sensitive, so the lowercase, concatenated form of the browser\n'
      "      check's lead and three other retired strings passed it; it now folds"),
+    ('spec/witness_api_v1.md',
+     '  the width it carries. This is not new exposure: the same value already\n'
+     '  rides the SD witness line, `GET /api/witness`, `POST /api/export` and the\n'
+     '  MQTT `chain` publish, and `uptime_s` is'),
+    ('spec/witness_api_v1.md',
+     "  MQTT `chain` publish, and `uptime_s` is `/api/status`'s `uptime_sec`, all\n"
+     '  behind the same gate (on canary-wap, `api_auth_check()`: the Bearer token\n'
+     '  or a landing session). The bucket itself adds no precision finer'),
+    ('spec/witness_api_v1.md',
+     'guess. That is the same exposure the SD line (`ph`) and the PWK export\n'
+     'already carry, not a new one; the page adds no plaintext and no key, and the'),
+    ('spec/witness_api_v1.md',
+     'already carry, not a new one; the page adds no plaintext and no key, and the\n'
+     'gate it sits behind is the same one that reads the SD log.'),
+    ('firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md',
+     '        Wi-Fi, the broker row and the name, keeps the identity, the chain and\n'
+     '        the token, and reopens the first-come Bluetooth setup door). Whether'),
+    ('canary-local/tests/wap.test.js',
+     '  // The tap goes to the one page already asking (sweep F342): the card says\n'
+     "  // to start the dashboard's ask first, never that the press opens a window"),
+    ('docs/audit/hardware_verification_checklist.md',
+     "    that are open, so a window opened beside an earlier row's signed-in one\n"
+     "    resumes it and never shows **Use BOOT Tap Once**; or delete the site's\n"
+     '    `cv_session` in the developer tools, Application, then Cookies), the'),
+    ('docs/audit/hardware_verification_checklist.md',
+     '    `/` then serves it the dashboard, not the landing page with **Open\n'
+     "    dashboard**; or delete the site's `cv_session` in the developer tools,\n"
+     '    Application, then Cookies), `curl`, the API token from a recovery kit.'),
+    ('docs/audit/hardware_verification_checklist.md',
+     '  - Repro: open `https://canary-<suffix>.local/` and follow **Open\n'
+     '    dashboard** (the `?cv_pair=` link): the dashboard loads on the\n'
+     "    `cv_session` cookie. From the browser's developer tools (Application,"),
+    ('docs/audit/hardware_verification_checklist.md',
+     "    and the stored cookie's flags. Delete that `cv_session` there (with a\n"
+     '    live session the page resumes it and shows the sign-in only after a'),
+    ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
+     '    /// sets and sends it back to that host, which the gate takes until it\n'
+     '    /// expires in 24 h, the WAP reboots, or eight newer sessions push it\n'
+     "    /// out of the WAP's eight session slots), decoded down to what"),
+    ('ios/Sources/SecuraCV/Views/Components/SensingNowSection.swift',
+     "    /// set over http, which the WAP's gate takes until it expires in 24 h,\n"
+     "    /// the WAP reboots, or eight newer sessions push it out of the WAP's\n"
+     '    /// eight session slots, but once the gate stops taking it a poll'),
+    ('ios/Sources/SecuraCV/Views/DeviceDetailView.swift',
+     "            // along from the shared URLSession, which the WAP's gate takes\n"
+     '            // until it expires in 24 h, the WAP reboots, or eight newer\n'
+     "            // sessions push it out of the WAP's eight session slots, but"),
+    ('CHANGELOG.md',
+     '  receipt sets and sends it back, which the gate takes until it expires in\n'
+     "  24 h, the WAP reboots, or eight newer sessions push it out of the WAP's\n"
+     "  eight session slots, and the comments say so. The vault surface's comment"),
+    ('CHANGELOG.md',
+     "  (`csi_integration.cpp`'s `SESSION_SLOTS`), and once all eight are live\n"
+     '  `pick_session_slot_for_issuance()` evicts the oldest, so the eighth\n'
+     "  session minted after the claim's ends it (every `?cv_pair` sign-in at the"),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     '      Forget Wi-Fi arms none); or eight newer sessions push it out of the\n'
+     "      store's eight slots (`pick_session_slot_for_issuance()` evicts the"),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     "      the store's own code (cut verbatim, the clock stubbed): with any\n"
+     "      number of older sessions before the app's, the eighth session\n"
+     '      minted after it is the one that ends it, with no reboot and well'),
 ]
 
 

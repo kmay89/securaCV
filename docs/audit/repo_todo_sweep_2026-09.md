@@ -3599,10 +3599,12 @@ so — see D2 below.)
       and sends it back to the same host, and `api_auth_check()` takes it
       until the first of three ends: its 24 h run out; the WAP reboots (a
       claim at first boot is followed by a reboot; a door reopened by
-      Forget Wi-Fi arms none); or eight newer sessions push it out of the
+      Forget Wi-Fi arms none); or newer sessions push it out of the
       store's eight slots (`pick_session_slot_for_issuance()` evicts the
-      oldest when all eight are live, and every `?cv_pair` sign-in and
-      every receipt a tap or a claim serves mints one). The
+      oldest when all eight are live, the lowest slot on a tie, so the
+      eighth minted after it ends it unless one minted in the same
+      second of uptime moves that sooner or later; every `?cv_pair`
+      sign-in and every receipt a tap or a claim serves mints one). The
       comments now say the app authenticates with the bearer and the
       shared session may also hold that cookie; nothing was changed in the
       app's requests. Not run in Xcode.
@@ -3658,7 +3660,8 @@ so — see D2 below.)
       eight RAM slots (`SESSION_SLOTS`), and once all eight are live
       `pick_session_slot_for_issuance()` evicts the oldest. Reproduced on
       the store's own code (cut verbatim, the clock stubbed): with any
-      number of older sessions before the app's, the eighth session
+      number of older sessions before the app's and each session
+      minted in a second of uptime of its own, the eighth session
       minted after it is the one that ends it, with no reboot and well
       inside its 24 h. Each copy now names all three ends.
     - The Lab's hold message reopened the setup door on every unit.
@@ -3680,6 +3683,56 @@ so — see D2 below.)
     - The website's `reset-and-key-claims.test.mjs` now scans
       `tv/README.md` too, and holds its retired "Bearer-gated record
       list".
+  - The sixth pass's round-4 review (#1843, 2026-10-26; the same three
+    lenses). Each finding was reproduced first.
+    - `spec/witness_api_v1.md` put the SD log and the MQTT publish behind
+      the WAP's gate. Its time section said the uptime bucket already
+      rides the SD witness line, `GET /api/witness`, `POST /api/export`
+      and the MQTT `chain` publish, all behind `api_auth_check()`; its
+      section 7 said `payload_hash` on the page is the exposure the SD
+      line already carries, behind the gate "that reads the SD log". The
+      firmware opens `/WITNESS/records.jsonl` in two places only, the
+      append and `witness_recover_from_sd()` when the card mounts, so no
+      route reads it; the export answers `export_time_ms` and no bucket;
+      the `chain` publish carries `length` and `latest_hash` to the
+      broker, whose access rules govern it; and `GET /api/witness`
+      answers no payload hash. So the page is the one
+      canary-wap HTTP route that carries a record's `payload_hash`, and a
+      landing session any host on the network can mint (F346) reaches it,
+      where the SD line's `ph` needs the card (or the opt-in
+      `canary-wap-usbdrive` build's read-only USB drive and a cable) and
+      the Bluetooth witness export serves the newest record's `ph` on an
+      encrypted, authenticated link only. Both passages now say so.
+    - The app's cookie count. Sessions are stamped with `uptime_s()`, in
+      whole seconds, and pass 2 of `pick_session_slot_for_issuance()`
+      moves to a slot only on a strictly greater age, so on a tie the
+      lowest slot is the one evicted. Reproduced on the store's own code
+      (cut verbatim, the clock stubbed): seven sessions from 950 to 956 s
+      in slots 0 to 6 and an older one in slot 7, the app's at 1000 s
+      (it takes slot 7) and one more in the same second, then mints a
+      minute apart: the ninth newer mint ends it; nine mints in one
+      second, the app's last: the next mint ends it; and in 300,000
+      random histories in which no other session shares the app's
+      second, the eighth ends it every time. The three
+      app comments, the CHANGELOG's round-2 and round-3 entries, the two
+      bullets above and the test reasons now allow for the tie.
+    - The readiness TODO said the 10 s hold reopens the setup door on
+      every unit; it now says on a unit that had Wi-Fi, unless Bluetooth
+      was turned off, which the hold keeps, as the Lab's card does.
+    - Tests: `test_docs_claims.py` bans 17 more retired sentences where
+      they stood: the spec's four, the readiness TODO's unscoped door, the
+      seven eight-session counts, the Lab test's "The tap goes to the one
+      page already asking" comment (its sibling in `recovery_kit.test.js`
+      had a row), and four hardware-checklist instructions the merge of
+      #1844 to #1873 rewrote with no needle ("delete the site's
+      `cv_session`" twice, "the dashboard loads on the `cv_session`
+      cookie" and "Delete that `cv_session` there"; those rows open
+      `https://` pages, where `session_cookie_header()` names the cookie
+      `__Host-cv_session`). Each new row's deletion fails the suite (17
+      of 17), and each needle fires on the version of its file it was
+      retired from. Totals: 41 BANNED, 710 RETIRED_IN over 210 files,
+      769 forms (MUST_FAIL's 41 and MUST_FAIL_IN's 728), 664
+      replacements, 24 tests.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),

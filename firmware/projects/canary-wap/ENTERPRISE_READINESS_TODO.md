@@ -129,7 +129,9 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
         WAP has no factory-reset route at all (BOOT held 10 s,
         `factory_reset_by_hold()`, is the only path; it clears the saved
         Wi-Fi, the broker row and the name, keeps the identity, the chain and
-        the token, and reopens the first-come Bluetooth setup door). Whether
+        the token, and, on a unit that had Wi-Fi, reopens the first-come
+        Bluetooth setup door, unless Bluetooth was turned off, which the hold
+        keeps). Whether
         `POST /api/factory-reset` may exist is the decision;
         the recommendation is yes, but only behind the Bearer credential AND
         a BOOT-tap `provisioning_gate_take()`, with a two-step confirmation in the
