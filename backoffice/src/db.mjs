@@ -46,7 +46,7 @@ function migrate(db, { path, migrationsDir, allowNewerSchema, keepPreMigrate }) 
   let preMigrate = null;
   if (pending.length && applied.size && path !== ':memory:') {
     const dir = join(dirname(path), 'backups'); mkdirSync(dir, { recursive: true });
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', 'T').slice(0, 23);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 23);
     preMigrate = join(dir, `pre-migrate-${stamp}-${basename(pending[0], '.sql')}.db`);
     db.exec(`VACUUM INTO '${preMigrate.replace(/'/g, "''")}'`);
     try { chmodSync(preMigrate, 0o600); } catch { /* not every filesystem */ }
