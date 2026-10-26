@@ -371,6 +371,14 @@ build fails without it.
 The master button won't make this mistake: same version + changed files means it
 says **"bump the version first"** and ships everything else.
 
+**An empty Flasher release counts as shipped too.** The Flasher's build job
+creates its release, and with it the tag, *before* it builds (so the release is
+never born as `releases/latest`). A run that fails after that leaves a published
+release with no installers, and the master button reads its tag as released.
+Re-run the failed jobs: the build finds the release and uploads into it. If the
+fix needs a new commit, delete the release and its tag first
+(`gh release delete flasher-v<version> --cleanup-tag`), then press again.
+
 ---
 
 ## Invariants that hold themselves up
@@ -379,7 +387,7 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
 
 | Invariant | Enforced by |
 |---|---|
-| `releases/latest` is always a `fw-v*` release — it's the URL every device polls | `.github/actions/keep-firmware-latest`, called by the app workflows + `release-latest-guard.yml` |
+| `releases/latest` is always a `fw-v*` release — it's the URL every device polls | No app release is born `latest`: the Flasher creates its release with `--latest=false` before it builds and fails the run if `latest` is not `fw-v*` afterwards; the Lab builds a draft and publishes it with `--latest=false` (`.github/scripts/test_app_releases_never_latest.py` holds both). The repair, if anything moves it anyway: `.github/actions/keep-firmware-latest`, called by the app workflows + `release-latest-guard.yml` |
 | Every OTA manifest the firmware polls is one the release publishes | `firmware/scripts/check_ota_channels.py` (Regression Guards) |
 | Each app states one version across three files | `desktop/scripts/check_app_versions.py` (lint + both app workflows) |
 | A display binary carries the identity it's published under | the product-string check in `firmware-release.yml` |
@@ -399,10 +407,17 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
   exists in DEVELOPMENT from its first write and is **rejected by
   PRODUCTION until promoted** — and `CloudSync.push` swallows that error by
   design, so an unpromoted release silently stops fleet sync for every user,
-  with nothing in any log. `ios/scripts/cloudkit_schema.sh check` must be
-  green before an iPhone/iPad release; run `ios/scripts/cloudkit_schema.sh
-  promote` from a machine with the CloudKit CLI token. A red `check` is a
-  release blocker, not a warning (`.github/RELEASE_LESSONS.md`, 2026-09-08).
+  with nothing in any log. CI cannot see this: `lint.yml`'s CloudKit step
+  only proves the script's table matches the Swift sources.
+  `ios/scripts/cloudkit_schema.sh check` exports both the development and
+  the production schema and names which one lacks what, so a green `check`
+  covers production. Run it before submitting an iPhone/iPad build for App
+  Review (TestFlight builds read production too, so sooner is better); when
+  production is short, the fix is `ios/scripts/cloudkit_schema.sh promote`,
+  from a machine with the CloudKit CLI token (or, if cktool refuses the
+  production import, CloudKit Console's Deploy Schema Changes, which is
+  Apple's documented route), then `check` again. A red `check` is a release
+  blocker, not a warning (`.github/RELEASE_LESSONS.md`, 2026-09-08).
 - **Rebuilding the emulator dist after a firmware VERSION bump.** A bump
   moves `canary-local/emulator/dist/` (the stamp is compiled in and written
   to each `meta.json`), and the toolchain that rebuilds it is pinned to an

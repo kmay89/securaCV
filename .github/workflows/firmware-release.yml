@@ -622,7 +622,26 @@ jobs:
           # awk -v passes VERSION as DATA, not spliced into the program text —
           # a tag with awk/shell metacharacters can't alter the program (repo
           # anti-injection rule). `\\[`/`\\]` are literal brackets in the regex.
-          NOTES=$(awk -v ver="$VERSION" '$0 ~ ("^## \\[" ver "\\]") {found=1; next} /^## \[/ {if (found) exit} found {print}' CHANGELOG.md | head -c 400 || true)
+          #
+          # At most 400 bytes (the device holds release_notes in a 512-byte
+          # buffer, securacv_ota.h), cut at a LINE boundary: this was
+          # `head -c 400`, which ended every 2.4.16 manifest mid-word and can
+          # split a multi-byte character. Leading blank lines are dropped, and
+          # " …" marks a cut (the manifest's release_url has the rest). The
+          # factory-image step below cuts its NOTES the same way. LC_ALL=C makes
+          # awk's length() count bytes. These are only text choices: the
+          # manifests are still signed after the notes are embedded.
+          NOTES=$(awk -v ver="$VERSION" '$0 ~ ("^## \\[" ver "\\]") {found=1; next} /^## \[/ {if (found) exit} found {print}' CHANGELOG.md \
+            | LC_ALL=C awk -v max=400 '
+                !n && /^[[:space:]]*$/ { next }
+                { add = length($0) + (n ? 1 : 0) }
+                used + add > max { cut = 1; exit }
+                { line[++n] = $0; size[n] = add; used += add }
+                END {
+                  while (n && (line[n] ~ /^[[:space:]]*$/ || (cut && used + 4 > max))) used -= size[n--]
+                  for (i = 1; i <= n; i++) printf "%s%s", (i > 1 ? "\n" : ""), line[i]
+                  if (cut && n) printf " …"
+                }' || true)
           if [ -z "$NOTES" ]; then
             NOTES="SecuraCV Canary firmware ${VERSION}."
           fi
@@ -874,6 +893,8 @@ jobs:
       - name: Extract release notes from CHANGELOG
         env:
           VERSION: ${{ steps.ver.outputs.version }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.ver.outputs.tag }}
         run: |
           # awk -v passes VERSION as data (anti-injection); see the NOTES step.
           awk -v ver="$VERSION" '$0 ~ ("^## \\[" ver "\\]") {found=1; next} /^## \[/ {if (found) exit} found {print}' CHANGELOG.md > /tmp/release_notes.md || true
@@ -886,6 +907,46 @@ jobs:
               echo "button in Home Assistant / the device dashboard."
             } > /tmp/release_notes.md
           fi
+          # GitHub keeps at most 125,000 characters of a release body and
+          # drops the rest without a word: fw-v2.4.16's [2.4.16] section ran
+          # to 318,453, and its release page ended mid-sentence with no sign
+          # anything was missing (RELEASE_LESSONS 2026-10-10). So cap it here,
+          # just before a bullet, heading or blank line (never inside a wrapped
+          # bullet or a code fence), and say where the rest is. Counted in
+          # UTF-8 bytes, never fewer than characters, so the cap holds however
+          # GitHub counts; 120,000 leaves room for the pointer.
+          python3 - /tmp/release_notes.md <<'PY'
+          import os, sys
+          path, limit = sys.argv[1], 120_000
+          text = open(path, encoding="utf-8").read()
+          if len(text.encode("utf-8")) > limit:
+              kept, used, cut, fence = [], 0, 0, False
+              for line in text.splitlines(keepends=True):
+                  size = len(line.encode("utf-8"))
+                  # Before the size test, so the entry that fills the budget
+                  # exactly is kept when the line that overflows starts a new one.
+                  if not fence and (not line.strip() or line.startswith(("- ", "* ", "#"))):
+                      cut = len(kept)  # a new entry starts here: cutting before it splits nothing
+                  if used + size > limit:
+                      break
+                  if line.lstrip().startswith("```"):
+                      fence = not fence
+                  kept.append(line)
+                  used += size
+              kept = kept[:cut]
+              while kept and (not kept[-1].strip() or kept[-1].startswith("#")):
+                  kept.pop()  # no trailing blank lines, no heading left with nothing under it
+              repo, tag, ver = os.environ["REPO"], os.environ["TAG"], os.environ["VERSION"]
+              text = "".join(kept).rstrip("\n") + (
+                  "\n\n---\n\n"
+                  f"**These notes are cut short.** The {ver} section of the changelog is longer "
+                  "than a GitHub release can hold. The rest is in "
+                  f"[CHANGELOG.md at {tag}](https://github.com/{repo}/blob/{tag}/CHANGELOG.md).\n"
+              )
+              open(path, "w", encoding="utf-8").write(text)
+              print(f"::notice::release notes capped for GitHub's body limit: "
+                    f"{len(open(path, 'rb').read())} bytes kept, the rest linked from CHANGELOG.md at {tag}")
+          PY
 
       - name: Build browser-flasher factory images + manifest
         # Additive and non-blocking: the browser flasher (canary-local/flash.html)
@@ -900,7 +961,18 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          NOTES="$(head -c 400 /tmp/release_notes.md 2>/dev/null || true)"
+          # The assemble step's cut, verbatim (its comment says why): whole
+          # lines, at most 400 bytes, never `head -c 400`'s mid-word stop.
+          NOTES="$(LC_ALL=C awk -v max=400 '
+                !n && /^[[:space:]]*$/ { next }
+                { add = length($0) + (n ? 1 : 0) }
+                used + add > max { cut = 1; exit }
+                { line[++n] = $0; size[n] = add; used += add }
+                END {
+                  while (n && (line[n] ~ /^[[:space:]]*$/ || (cut && used + 4 > max))) used -= size[n--]
+                  for (i = 1; i <= n; i++) printf "%s%s", (i > 1 ? "\n" : ""), line[i]
+                  if (cut && n) printf " …"
+                }' /tmp/release_notes.md 2>/dev/null || true)"
           python3 firmware/scripts/build_flash_manifest.py \
             --version "$VERSION" \
             --repo "${{ github.repository }}" \

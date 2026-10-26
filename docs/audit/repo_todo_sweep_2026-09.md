@@ -16496,6 +16496,44 @@ so — see D2 below.)
   release (CHANGELOG [Unreleased] names the REST change for out-of-tree
   readers). Host-tested (`figures.test.js`, `wap.test.js`); the ESP32 compile
   is CI's; nothing to bench.
+- [ ] **F366 [code+human] A Dash or Dash-modes unit installed from a flasher
+  can never update over the air.** Both release workflows build those two
+  products with arduino-cli under one `DASH_FQBN` whose partition scheme is
+  `huge_app` (`firmware-release.yml` ~line 454, `flasher-release.yml` ~line
+  397): a single app slot, no second slot to write an update into. The
+  factory image the browser flasher installs carries that table (bootloader,
+  partition table and app in one file), so every such unit polls a signed
+  `manifest-canary-display-dash.json` / `-dash-modes.json` it can never
+  install. The PlatformIO env builds the same board on `default_16MB.csv`
+  (A/B `0x640000` slots), but `flavors.json` declares no `size_guards`
+  budget for `canary-display-dash` or `-dash-modes`, so the release's
+  `check_slot_budget.py` measures neither image against any slot.
+  Pre-existing since fw-v2.4.1, the first release whose workflow carries
+  `huge_app`. Work: build both with an A/B scheme that matches the
+  PlatformIO env, in both workflows at once (the two `DASH_FQBN` lines must
+  stay identical); declare both budgets in `size_guards`; and put a notice at
+  the top of the next CHANGELOG section, as 2.4.16 did for the C3 Visions:
+  a partition table changes only over USB, so every Dash and Dash-modes unit
+  installed from a flasher needs one USB reflash. Bench (U1): one OTA on a
+  reflashed unit. Found by the 2.4.16 release audit (2026-10-10).
+- [ ] **F367 [code+decision] Three OTA images are close to filling their
+  slots.** Measured on the fw-v2.4.16 release assets against `flavors.json`'s
+  `size_guards`: `canary-display-nightstand-c6` is 2,028,784 B in a
+  `0x1F0000` (2,031,616 B) slot, 2,832 B of headroom after growing 29,856 B
+  since 2.4.15. A release that grows it by more than those 2,832 B fails
+  `check_slot_budget.py`, and the display loop in `firmware-release.yml`
+  then publishes no OTA manifest for it, so C6 nightstands stop updating
+  until a release fits. `canary-sense` (1,821,632 B, 92.65%) and
+  `canary-sense-wellbeing` (1,825,472 B, 92.85%) sit in `0x1E0000`
+  (1,966,080 B) slots, each about 373 KB larger than in 2.4.15 (2.4.16 added
+  MQTT over TLS and the Bluetooth setup door to them). A larger table is
+  no answer for units already in the field (a partition table moves only over
+  USB; see the 2.4.16 Vision notice in `CHANGELOG.md`), so the room has to
+  come from the images: decide what the C6 nightstand build drops or puts
+  behind a flag (largest contributors first, from its linker map), and make
+  the slot check warn below a headroom floor (5% free, say) so the next
+  squeeze shows up before a product is skipped. Found by the 2.4.16 release
+  audit (2026-10-10).
 
 ---
 
@@ -19166,6 +19204,95 @@ so — see D2 below.)
   (`{"docs/hardware/enclosure": [".py", ".sh"]}`); `lab_bundle.test.js`
   already parses every `find` line there and will demand the pair. A
   maintainer's call.
+- [ ] **A111 [human] Confirm `PairedDevice.tlsCertFP` in Production CloudKit,
+  then send iOS 0.7.0 and tvOS 0.3.0 to App Review.** `ios-v0.6.0` was the
+  first release to write `PairedDevice.tlsCertFP` (#1675), and nothing
+  records its promotion to Production, the environment every TestFlight and
+  App Store build talks to (`CHANGELOG.md`: the 2.4.16 section's iOS 0.7.0
+  bullet, and the correction in the 0.6.0 entry). In order, on a Mac with a
+  CloudKit management token: (1) `ios/scripts/cloudkit_schema.sh check`,
+  which reads Development and Production; if Production lacks the field,
+  `promote`, then `check` again. (2) In App Store Connect, confirm iOS 0.7.0
+  build 38.1 and tvOS 0.3.0 build 19.1 have finished processing in
+  TestFlight (tvOS only after A112). (3) Submit both for App Review. The
+  release workflows stop at the upload, so neither version reaches anyone
+  until (3). Found by the 2.4.16 release audit (2026-10-10).
+- [ ] **A112 [human, then code] Confirm the tvOS store build carries its
+  CloudKit and app-group entitlements.** Since 2026-08-13
+  (`.github/RELEASE_LESSONS.md`, the tvOS provisioning entry)
+  `tvos/scripts/release-tvos.sh` archives store builds with
+  `CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO` and leaves all signing
+  to `-exportArchive`. An unsigned archive has no entitlements in its
+  signature, and whether the export puts back
+  `com.apple.developer.icloud-services`,
+  `com.apple.developer.icloud-container-identifiers` and
+  `com.apple.security.application-groups`
+  (`tvos/WitnessWall/Support/WitnessWall.entitlements`; the Top Shelf
+  extension's app group in `TopShelf.entitlements`) is unconfirmed. Without
+  them the Wall's away wake (ResidentWatch) and the Top Shelf cache would not
+  work. Check build 19.1's entitlements in App Store Connect (the build's
+  metadata lists them) or with `codesign -d --entitlements :-` on the
+  exported app and its extension. If any is missing, the archive has to keep
+  its entitlements (a distribution-signed archive, per the same lesson's
+  constraints) before 0.3.0 goes to review. Either way, add a step after the
+  export in `release-tvos.sh` that prints both bundles' entitlements and
+  fails when one is absent, so the next build answers this itself. Found by
+  the 2.4.16 release audit (2026-10-10).
+- [ ] **A113 [code+human, bench gated by U3] `CloudSync.push` probably fails
+  every update to an existing `PairedDevice`.** It builds a fresh
+  `CKRecord(recordType:recordID:)` per device and calls `db.save(record)`
+  with the error dropped (`ios/Sources/SecuraCV/Cloud/CloudSync.swift`). A
+  save that carries no server change tag for a record id the server already
+  holds is expected to fail with `serverRecordChanged`, so a rename, a new
+  `baseURL` or a new `tlsCertFP` would reach iCloud on a device's first push
+  and never after. Bench first, on a signed build (A8): pair a device, rename
+  it on one iPhone, and read the record in the CloudKit Console or on a
+  second iPhone after a pull. If it is stale, save through
+  `CKModifyRecordsOperation` with `savePolicy = .changedKeys` (or fetch,
+  change and save), and log each record's error instead of discarding it.
+  Found by the 2.4.16 release audit (2026-10-10).
+- [ ] **A114 [code] The DMG windows still tell people to run `xattr` in
+  Terminal.** `desktop-lab/src-tauri/dmg/generate_background.py` draws "First
+  launch blocked?" over `xattr -dr com.apple.quarantine …` into the committed
+  `background.png`, and the Flasher's `desktop/src-tauri/dmg/` generator
+  draws the same panel. Both apps' macOS builds are now signed and notarized
+  (`app-v0.3.0`, `flasher-v0.12.0`), so the panel teaches people to strip
+  Gatekeeper's mark from an app that opens by itself, which
+  `desktop-release.yml`'s release-body comment calls worse than the
+  inconvenience it was meant to solve. One PNG serves signed and unsigned
+  builds alike, so redraw the panel without the command ("macOS asks once:
+  click Open", and `INSTALL.md` for an unsigned build), regenerate both PNGs
+  (Pillow and the DejaVu fonts; the PNGs are committed, CI does not draw
+  them), and update both docstrings. `desktop-lab/INSTALL.md` was rewritten
+  for signed builds alongside this item; the Flasher's `desktop/INSTALL.md`
+  macOS section still blames "the missing Apple notarization" and wants the
+  same rewrite. A13 can be re-read against these two releases. Found by the
+  2.4.16 release audit (2026-10-10).
+- [ ] **A115 [human] Paste corrected bodies into five published releases.**
+  The change that filed this item corrects text the 2.4.16 train had
+  already published, and a published release body does not follow its
+  source; the session that made the fix cannot edit releases. Once it is on
+  `main`: **`fw-v2.4.16`** — the `## [2.4.16]` section of `CHANGELOG.md`,
+  which now opens with the C3 Vision reflash notice and has the corrected
+  iOS CloudKit and Lab bundle lines, produced by the two commands in
+  `firmware-release.yml`'s "Extract release notes from CHANGELOG" step (the
+  awk extraction, then the 120,000-byte cap) with `VERSION=2.4.16`,
+  `TAG=fw-v2.4.16` and `REPO=kmay89/securaCV`. **`flasher-v0.12.0`** — its
+  footer as `desktop-flasher-release.yml` now writes it (the published one says
+  "just open it" and calls the Flasher "the SecuraCV Lab"), and the same
+  footer under **`flasher-v0.12.1`**, which shipped on 2026-10-16 with both
+  faults before the fix reached `main`. **`app-v0.3.0`**
+  — `python3 desktop/scripts/release_notes.py extract lab 0.3.0` (the
+  corrected bundle line) with the signed footer `desktop-release.yml` now
+  writes (the published one says "no quarantine warning"), and the same
+  footer under **`app-v0.3.1`**'s own notes. Then `gh release
+  edit <tag> --notes-file <file>` for each, adding `--latest=false` for the
+  two app tags only, as the Flasher's finalize edit and `lab-publish.yml` do
+  (an app release must never take `releases/latest`, the URL every Canary
+  polls; the firmware tag keeps it), and confirm `gh api
+  repos/kmay89/securaCV/releases/latest --jq .tag_name` still prints
+  `fw-v2.4.16`. The fw-v2.4.16 OTA manifests' `release_notes` are signed and
+  stay as published. Found by the 2.4.16 release audit (2026-10-10).
 
 ---
 
@@ -22111,6 +22238,39 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   common word elsewhere passes. On the integrated tree it passes (1941 names
   in 14 stylesheets, against 104 pages and scripts). Host-tested; the job has
   not run in CI yet.
+- [ ] **CI20 [code] The Flasher and Lab releases attach SBOMs that do not
+  describe the apps.** `desktop-flasher-release.yml`'s and `lab-publish.yml`'s
+  `sbom` jobs call `sbom.yml`, which builds three documents: `sbom-rust`
+  (`cargo cyclonedx` at the repo root, which is the `witness-kernel` crate
+  alone), `sbom-node` (`canary-vision/`'s npm tree) and `sbom-firmware`. None
+  lists what the downloads are built from: the Flasher's
+  `desktop/src-tauri` (its own workspace, with the `hub-core`, `hub-io` and
+  `flash-engine` path crates), the Lab's `desktop-lab/src-tauri`, or their
+  npm trees (`desktop/package-lock.json`, `desktop-lab/package-lock.json`).
+  So a Flasher or Lab release's SBOMs say nothing about the Flasher or the
+  Lab. Give `sbom.yml` an input naming the app, run `cargo cyclonedx` in that
+  app's `src-tauri` and `cdxgen` on its npm tree, attach the two as
+  app-named documents, and decide whether app releases keep the kernel and
+  firmware documents; the release notes' "attaches the project's SBOMs" then
+  says what it means. Found by the 2.4.16 release audit (2026-10-10).
+- [ ] **CI21 [code] The AppImage build fetches a tool from a moving tag.**
+  Both desktop apps bundle their AppImage with `@tauri-apps/cli` 2.12.0
+  (`desktop/package-lock.json`, `desktop-lab/package-lock.json`), whose
+  bundler (`tauri-bundler`'s `bundle/linux/appimage/linuxdeploy.rs`)
+  downloads `linuxdeploy-plugin-appimage-x86_64.AppImage` from the
+  linuxdeploy project's `continuous` release on every fresh runner, with no
+  version and no checksum. Two builds of one tag can therefore bundle with
+  different plugin bytes, and whatever that tag holds on build day runs in
+  the release job. (`linuxdeploy` itself comes from the commit-named tag
+  `linuxdeploy-07333c6` and `AppRun` from `apprun-old`; neither is
+  hash-checked either.) The bundler skips a download when the file is
+  already in its tools cache (`~/.cache/tauri/` on Linux), under the names
+  `linuxdeploy.rs` gives them, not the download names: the plugin is cached
+  as `linuxdeploy-plugin-appimage.AppImage`, linuxdeploy as
+  `linuxdeploy-07333c6-x86_64.AppImage`. So a step before `tauri build` in
+  both release workflows can place pinned copies there: fixed release
+  assets, each sha256-checked and made executable. Found by the 2.4.16
+  release audit (2026-10-10).
 
 ---
 
