@@ -65,6 +65,6 @@ jobs:
         run: |
           npm i --no-save playwright
           npx playwright install --with-deps chromium
-      - name: The browser test (skipping is a failure here)
+      - name: The browser tests — the admin as a person drives it, and on a phone and an iPad (skipping is a failure here)
         env: { BACKOFFICE_BROWSER: require }
-        run: node --disable-warning=ExperimentalWarning --test tests/browser.test.mjs
+        run: node --disable-warning=ExperimentalWarning --test tests/browser.test.mjs tests/mobile.test.mjs

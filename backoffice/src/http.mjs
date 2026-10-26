@@ -2,6 +2,13 @@
 // body parsing with a size cap, cookies, CSRF, a per-IP rate limiter and
 // HTML escaping. No framework — the whole thing is readable in one sitting.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
+
+// The one script the admin ships: on a phone, scroll the current section's link into view in the
+// top strip. Inline, so it needs no second request — and allowed by hash, so the policy stays
+// "no script" for everything else; a changed script changes the hash and allows itself.
+export const NAV_SCRIPT = '(function(){var a=document.querySelector("nav a.on");if(a&&matchMedia("(max-width:799px)").matches)a.scrollIntoView({inline:"center",block:"nearest"})})()';
+const NAV_SCRIPT_HASH = `'sha256-${createHash('sha256').update(NAV_SCRIPT).digest('base64')}'`;
 
 export const escapeHtml = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
@@ -130,7 +137,7 @@ export function send(res, status, body, headers = {}) {
   res.end(buf);
 }
 // Admin pages are never cached by a browser or a proxy; a public page passes its own Cache-Control.
-export const html = (res, body, status = 200, headers = {}) => send(res, status, body, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'", ...headers });
+export const html = (res, body, status = 200, headers = {}) => send(res, status, body, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': `default-src 'none'; script-src ${NAV_SCRIPT_HASH}; style-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`, ...headers });
 export const json = (res, obj, status = 200, headers = {}) => send(res, status, JSON.stringify(obj, null, 2), { 'Content-Type': 'application/json; charset=utf-8', ...headers });
 export const text = (res, body, status = 200, headers = {}) => send(res, status, body, { 'Content-Type': 'text/plain; charset=utf-8', ...headers });
 export const redirect = (res, to, headers = {}) => { res.writeHead(303, { Location: to, ...headers }); res.end(); };
