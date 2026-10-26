@@ -7,7 +7,9 @@
  *     unhealthy boot of a confirmed image, then stays there;
  *   · a pending (unconfirmed) image is never sent to safe mode;
  *   · every way out works: healthy, operator clear, a different build (OTA,
- *     A/B rollback or USB re-flash) — and re-flashing the SAME build does not;
+ *     A/B rollback or USB re-flash) — and re-flashing the SAME build does not
+ *     (a PlatformIO or Arduino IDE upload, which leaves NVS alone: an install
+ *     in either flasher starts NVS over, the count with it);
  *   · an A/B rollback's churn does not inflate the good image's count;
  *   · a broken NVS boots normally and says so — including one that still
  *     reads but can no longer write, even with a count at the threshold
@@ -122,7 +124,8 @@ static void test_reflash_other_build_escapes_same_build_does_not() {
   flash_build(0xA1);
   drive_into_safe_mode();
 
-  // USB re-flash of the SAME build: still the image that could not come up.
+  // USB re-flash of the SAME build that keeps NVS (a PlatformIO upload):
+  // still the image that could not come up.
   flash_build(0xA1);
   CHECK(bootguard::begin().mode == BootMode::SafeMode);
 

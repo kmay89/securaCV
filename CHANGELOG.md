@@ -1054,7 +1054,15 @@
   turns HTTPS on for every such unit and changes the pin the apps trust,
   which needs the bench (F15 stays open).
 
-### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (F342, F347)
+### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (sweep F342, F347, #1842, #1843)
+
+#1842 carries the claim, the tap, the sweeps and its first five reviews'
+fixes. It was merged before its Codex review's and its final review's
+fixes landed, and those are its follow-up, #1843, whose parts below are,
+besides wording: the companion's save that stops when its step is left,
+asks on through a rejected fetch and waits for a `403` to say press; the
+BLE OTA line named as press-first; the seizure scenario's list of what each
+hold keeps; and the per-address lockout's ways out.
 
 - **A wrong `?claim=` no longer spends the phone's setup-door claim (sweep
   F342).** `claim_ticket::take()` exchanged the claim's minted-at word to 0
@@ -1093,28 +1101,37 @@
   `409` ends once an ask finds no address other than the asker asking in
   the last 10 s (and at the closed tap's 30 s at the latest). That is 10 s
   after the other device stops, so the pages' retry works: "wait 10
-  seconds, then click Use BOOT Tap Once again, and only then short-tap
-  BOOT" (the companion: tap Save again, and press when its note says to)
-  asks first, and the next tap serves it. If the
+  seconds, then click Use BOOT Tap Once again, and short-tap BOOT when this
+  line says to" (the companion: tap Save again, and press when its note
+  says to) asks first, and the next tap serves it. If the
   other device keeps polling, its own asks end the `409` 10 s after the
   owner's page stopped: the owner's retry hears `403` and keeps asking, and
   the next tap is closed with `409` again (the poller residual below). The
   `409`'s own hint says to start the request first and keep it
   asking, then press BOOT, never a bare re-tap (a tap no client of the
   owner's is asking for goes to whoever asks first), and so does every
-  instruction a WAP page or answer gives: the `403`'s hint and button (its
-  button said "short tap, then poll within 30 seconds", and its hint "Press
+  instruction for the receipt's tap a WAP page or answer gives: the
+  `403`'s hint and button (its button said "short tap, then poll within 30 seconds", and its hint "Press
   the BOOT button on the device to reveal the provisioning receipt."), both
   pages' new `409` text (it names the click, or the tap on Save, before the
   press), the dashboard's timeout line ("Didn't see a tap. Click Use BOOT
-  Tap Once again, then short-tap BOOT."; it said "Press BOOT and click
-  above"), and the text of the companion's Home Assistant step (that step's
-  banner is not shown yet; the ledger's F342 entry notes it). The getting
-  started guide's sentence and the Lab's BOOT card said a short press lets
+  Tap Once again, and short-tap BOOT when this line says to."; it said
+  "Press BOOT and click above"), and the text of the companion's Home
+  Assistant step (that step's
+  banner is not shown yet; the ledger's F342 entry notes it). The
+  companion's BLE OTA line for a v1 manifest ("short-tap BOOT within 30 s
+  before Start") stays press-first: that tap is the break-glass, which no
+  receipt client is asking for, so a device on the network whose ask for
+  the receipt is judged between the tap and Start takes or closes it. The
+  getting started guide's sentence and the Lab's BOOT card said a short press lets
   the dashboard hand over the recovery kit for 30 seconds; they now say the
-  press hands it to the one page already asking, so click **Use BOOT Tap
-  Once** first. Both pages say to press only once the device has answered their
-  first ask ("Asking the Canary first. Don't press BOOT yet." until then),
+  press hands it to one asking page, so click **Use BOOT Tap Once** first
+  (a tap no page was asking for goes to the first address that asks after
+  it). Both pages say to press only once the device has answered
+  one of their asks with `403` ("Asking the Canary first. Don't press BOOT
+  yet." on the dashboard and "Asking your Canary first. Don't press BOOT
+  yet." on the companion until then; an ask that never reached the device
+  is asked again),
   so a press made as the instruction appears cannot land before the
   page's ask has reached the device. The dashboard's copy
   says the 10 s BOOT hold clears the Wi-Fi, the Home Assistant link and the
@@ -1124,6 +1141,20 @@
   kit", then short-press BOOT when its note says to; the old order still
   works), and its message
   banner is now on screen (the handler set its text but never showed it).
+  The save stops when its step is left (**Do this later** or **Run
+  again** while it asks): an ask in flight is aborted and no other
+  follows, so a later BOOT tap is not claimed by a page the owner has
+  moved on from, no kit downloads and the Home Assistant step does not
+  come back. An ask that never reaches the device (the phone's Wi-Fi
+  dropping for a moment, as it can once the Canary has joined the home
+  network) is asked again 2 s later, as the dashboard's sign-in does, and no longer ends the
+  save; a save the device never answers ends "Your Canary didn't
+  answer", not "Didn't see a press". Leaving the step also puts away the
+  line a save that has ended left on it (a `409`, a missed press), so Run
+  again's next result does not show it again. The iPhone app's "No
+  recovery kit?" advice to forget the WAP's Wi-Fi now says that for half
+  an hour after it, Bluetooth setup goes to the first phone or computer
+  nearby that connects.
   A sole asker is served at once, as before. The asker is the socket peer
   (`request_peer_key()`, the read the per-address lockout already keys on),
   and the serial console names
@@ -1140,13 +1171,92 @@
   and reopens the first-boot setup door for 30 minutes, and that door goes
   to whichever Bluetooth client connects first, so a host on the network
   that is also in radio range could reach it before the phone, spend the
-  claim minted for its own link and keep the token. The docs that said
-  otherwise now agree: `magic_pairing.md` §2.1 and the WAP README said no
+  claim minted for its own link and keep the token. And a host only on the
+  network can turn the WAP's Bluetooth off from a landing session before
+  the hold (F346), a saved setting the hold keeps, under which every link
+  is dropped, so no phone reaches the door: a denial, not a takeover, in
+  which the kit's token and the console still work. The dashboard's advice
+  now says, before the hold's own sentence, to check that Bluetooth Enabled
+  is on under Settings, Bluetooth, and how its sign-in, which covers the
+  page with no session, gets there (the main page, Open dashboard, then
+  Settings); the iPhone app's "No recovery kit?" advice says to check it
+  before forgetting the WAP's Wi-Fi, which leaves it as the hold does, and
+  it and the app's kit footer walk the same way there from the WAP's main
+  page (Open dashboard, then Settings; they named a Use BOOT Tap Once that
+  page does not show), and `FAQ.md`'s Forget Wi-Fi answer says to check the
+  switch first. The docs that said otherwise now agree: `magic_pairing.md` §2.1 and the WAP README said no
   button gesture factory-resets a WAP, and the 10 s hold does (it re-arms
   the setup door's window as Forget Wi-Fi does, on a unit that had
   credentials); `THREAT_MODEL.md` and `openipc_architecture_learnings.md`
   said the USB serial console is disabled in production, and release
-  images enable it.
+  images enable it; `THREAT_MODEL.md`'s seizure scenario said a factory
+  reset destroys all data, and it now says what each device's hold keeps
+  (the WAP's keeps the identity key, the chain, the SD records, the token,
+  the HTTPS certificate the iPhone app pins and its private key, the
+  Bluetooth bonds, the Opera mesh's member list and, on a board with flash
+  encryption on, the mesh's secret, id and revocations and the Beacon
+  channel's X25519 key, member set and audit ring; only the flagship's
+  30 s stage sheds the key, and NVS leaves an erased
+  entry's bytes in flash until it reuses the page, so
+  the flagship's key, and the saved Wi-Fi passwords and broker login the
+  WAP's hold removes from NVS, stay there in plaintext on every tier today,
+  since flash encryption does not cover NVS and the NVS encryption that
+  would is not available under `framework = arduino`; on the default tier an
+  install or a full erase in either flasher, each of which rewrites the
+  settings region, is what removes them).
+  The scenario's secure-tier line, which said flash encryption prevents
+  data extraction, now says it leaves NVS plaintext on the WAP and the
+  flagship. **If you provisioned the secure tier for seizure, read this:**
+  the security docs, the design notes, the bench runbook and the in-browser
+  flasher's trust card said or implied that its fuses protect the identity
+  key, the saved Wi-Fi or the mesh secret at rest, and they do not. Every
+  released tree builds with `framework = arduino`, where NVS encryption is
+  not available, so on a board with flash encryption fused the key, the
+  saved Wi-Fi and broker passwords and the Bluetooth bonds are still
+  plaintext in NVS, and the WAP's mesh secret beside them; the fuses protect
+  at most the firmware image. `SECURITY_MODEL.md` (its honest statement, its
+  physical-access paragraph, its seizure advice and its software promise's
+  limit), `THREAT_MODEL.md` (its principle scope and Scenario 8), the beacon
+  spec, `hardware_root_of_trust.md`, `vault_operator_ux_v1_1.md`,
+  `V1_BENCH_TEST_RUNBOOK.md` and the flasher's card now say so, and
+  `test_docs_claims.py` holds the build files to it. Likewise
+  `magic_pairing.md` offered a factory reset as the fix for a WAP a stranger
+  joined to its own network through the open setup door: that stranger could
+  spend the claim from that network, and the token and SoftAP password its
+  receipt carries survive the hold and Forget Wi-Fi, which also reopen the
+  first-come door (ledger F345); it now says so. The per-address
+  lockout's ways out (F343, in its entry below) offered the 10 s hold as a
+  way out from under a host striking from 9 or more addresses, and it is
+  not one while that host keeps striking: the hold empties the table, as
+  any restart does, but once the unit is set up on the same network again
+  the host's next strikes from nine addresses hold every untracked address
+  again, and the claim that pairs the phone does not clear that, so the
+  phone ends paired and held. `SECURITY_MODEL.md`, `magic_pairing.md` §3.7
+  and the ledger now say so for both trees. On the WAP the way out is
+  changing its Wi-Fi from a browser to a network that host is not on (the
+  landing page's session reaches `POST /api/wifi/connect` under the
+  lockout, F346), which needs no hold and does not reopen the first-come
+  setup door, or waiting until it stops. That holds only while that host
+  leaves it alone: it can mint sessions until the owner's is evicted, and
+  a host also in radio range can bond a Bluetooth peer of its own through
+  its session and write the WAP back to a network it is on over the bonded
+  lane. And it lasts only while the new network stays up: the WAP keeps
+  the networks it joined before, the host's among them, and goes back to
+  one on its own when the new network is not found twice running (a
+  hotspot turned off, a network out of range); no route forgets one saved
+  network, so only Forget Wi-Fi or the hold drop them, and both reopen the
+  first-come setup door. The iPhone's bonded Bluetooth lane is no way out
+  today: the iPhone app never dials a WAP's lane (ledger A65, open). Once
+  that is settled the lane holds only while that host leaves it alone and
+  the new network stays up, and taking it away needs no radio: any landing
+  session can turn the WAP's Bluetooth off, a saved setting that restarts
+  and the 10 s hold keep, under which every link is dropped, or delete
+  the phone's bond, and a host's own bonded peer can keep the owner's
+  write refused for as long as it keeps writing. On the flagship the way
+  out is waiting, or the hold followed by a setup onto a network that host
+  is not on. A
+  browser that mistyped the token signs in with Use BOOT Tap Once on the
+  WAP, since a tap clears only the address it is served to (F341).
   Host-tested (`test_provisioning_gate.cpp`, `test_receipt_grant.cpp`,
   `test_receipt_authority.cpp`, `recovery_kit.test.js`); not run on a device.
 
@@ -1167,6 +1277,387 @@
   (`test_provisioning_gate.cpp`, `test_claim_ticket.cpp`,
   `test_receipt_grant.cpp`, `test_session_cookie.cpp`); the wraps cannot be
   bench-tested, and nothing here ran on a device.
+
+- **The remaining copies of #1843's four corrections now say what the code
+  does (#1843's sweep for every copy).** A BOOT tap or the setup-door claim
+  that serves an address frees that address's own slot, never the shared
+  overflow: two sentences of `SECURITY_MODEL.md`, the WAP receipt's
+  comment, `CONSOLIDATION.md` and the flagship's page-token comment said
+  "ends that address's backoff" with no exception, and the F341 entry below
+  left the flagship out of its way-out amendment. The 10 s BOOT hold keeps
+  the identity key, the chain and the HTTPS certificate on every Canary, and
+  the token on a WAP (the flagship's hold removes its stored token and the
+  next boot derives one from the key, so a token a flasher seeded does not
+  come back: the fourth pass below); the flagship's 30 s wipe, and an install
+  or a full erase in either flasher (whose factory image starts NVS over),
+  change them. The getting started guide said a factory reset loses the witness
+  chain and makes a new certificate, the flagship's `ota_deploy.py` and
+  `ota_deploy.sh` offered a factory reset as the reason for a pin mismatch,
+  and the iPhone app's certificate-mismatch error said a reset explains it,
+  which could lead an owner to re-pair to whatever is answering; each now
+  names an install or a full erase in a flasher (or the flagship's 30 s
+  wipe; the install since the third pass below) and says the 10 s reset
+  keeps the certificate. The flagship's serial banner said BOOT
+  resets at 5 s (it warns at 3, resets at 10 with the key kept and wipes at
+  30); either flasher's "Erase the entire chip" help called the erase a
+  factory reset; and the Home Assistant integration's comments, the
+  lockout's notes, the event-id floor's note (both trees), `FEATURES.md` and
+  the WAP's readiness list said a reset gives a new identity, or that the
+  WAP has no reset path. The iPhone app's Wi-Fi rollout and Bluetooth
+  rescue no longer send the owner to "hold BOOT", which on a WAP is the 10 s
+  factory reset: they name the setup network a WAP raises on its own while
+  it is off its Wi-Fi. The WAP dashboard's Forget Wi-Fi confirm now says
+  every saved network goes and that for half an hour after, its Bluetooth
+  setup goes to the first phone or computer nearby that connects. NVS is
+  plaintext on every tier: the flagship's Bluetooth panel said paired
+  devices are "stored securely" and now says where they are kept; both
+  flashers' eFuse card said a flash-encrypted board's reads come back as
+  ciphertext, and now says the firmware image does; comments, `PARITY.md`,
+  `FIRMWARE_MAP.md`, the design, strategy and audit notes no longer offer
+  flash encryption or the secure kit as the at-rest protection (the path is
+  NVS encryption, after the arduino-as-IDF-component migration), and
+  `THREAT_MODEL.md`, `FEATURES.md`, the firmware README and
+  `secure_provisioning.md` no longer credit the opt-in tier with a working
+  Secure Boot or the secure env with running. And the getting started
+  guide's unlock banner and "whichever asks first" are the flagship's, now
+  said so, with the WAP's ask-first order beside them and no in-app BOOT-tap
+  fetch (the iPhone app has none). The Vision SPA said to short-tap BOOT in
+  the same moment as its first ask, so a press could land before the ask
+  reached a WAP and go to another asker, and read a WAP's `409
+  tap_contended` as a missed tap: it now says "Don't press BOOT yet" until
+  the device answers with `403`, and on `409` stops and says another device
+  asked, with the ways out; the reference server's comments say it models
+  the first-asker rule, not the WAP's. `test_docs_claims.py` bans every
+  retired sentence where it stood. Host-tested where code moved
+  (`canary-vision` SPA tests, the sketch's tests); not run on a device or in
+  a browser.
+
+- **The secure kit turns on neither Secure Boot nor flash encryption, and
+  the docs now say so (#1843's sweep, second pass).** The
+  provisioning kit's Phase 2 (`provision_canary.sh --phase 2`) writes the app
+  in plaintext, burns a flash-encryption key, `SECURE_BOOT_EN` with no Secure
+  Boot key digest, and the JTAG fuses, but no `SPI_BOOT_CRYPT_CNT`, and its own
+  `verify_device.py --expect-locked` then fails on three fuses it never burns.
+  So a Phase 2 board has neither protection, and what the chip's ROM does with
+  `SECURE_BOOT_EN` and no digest has not been run on a bench. `THREAT_MODEL.md`
+  (its trust-boundary diagram, the seizure scenario's secure tier, which is
+  FAIL today like the default, so the scenario's own grade is FAIL too, the
+  supply-chain mitigations and the hardware trust line), `SECURITY_MODEL.md`
+  (the opt-in tiers buy nothing yet), the in-browser flasher's trust card,
+  `secure_provisioning.md` (its Step 3 list, its lockdown check's output,
+  its eFuse table and its build step), `FEATURES.md`'s kit row, the bench
+  runbook's C0 row and the hardware checklist's preamble, the script's own
+  help, warning and summary, `secure_defaults.h`, the strategy
+  doc's evidence-grade SKU, the vault and root-of-trust design notes, the
+  intake guide and `PENTEST_SCOPE.md` said or implied otherwise; each now
+  says what the kit does (and `PENTEST_SCOPE.md`'s known-and-accepted list
+  now says the 10 s reset keeps the identity and the certificate by design,
+  and a WAP's token; the fourth pass below scopes the token). The `THREAT_MODEL.md`
+  "Firmware corrupt" row also said no tier refuses a corrupt image: every
+  tier's bootloader checks the image's checksum and SHA-256 and tries the
+  other slot (read from the pinned cores' `sdkconfig`), and what no tier
+  refuses is a well-formed unsigned image. Other copies the same pass
+  corrected:
+  - The Bluetooth setup door's rule called the door one "for a device nobody
+    owns yet" in `improv_core.h` (both copies), `magic_pairing.md`,
+    `ble_protocol.md`, `GLOSSARY.md`, `FAQ.md` and the Sense and Vision
+    READMEs. It is a door for a device with no network saved: one its owner
+    cleared with the 10 s hold (or, on a WAP, Forget Wi-Fi) still has an
+    owner, since the hold keeps the witness identity on a Sense, a Vision and
+    a WAP and a WAP's token too, and the door still goes to whichever client
+    connects first.
+  - `mesh_state.h`, the flagship's `main.cpp` and `ble_scout_key.h` (both
+    copies) said a factory reset clears the opera secret, the peers, the
+    elected hub or the scout key. The 10 s reset keeps all of them, the
+    flagship's 30 s wipe drops them with the namespace, and only
+    `POST /api/mesh/leave` and the rotation's failure path clear the secret.
+  - The flagship's receipt comment and a WAP test comment said a served tap
+    ends the address's backoff with no overflow exception.
+  - The getting started guide's recovery section gave the WAP's one-asker
+    tap to both trees (its `gen_wap.py` pin now holds the WAP-scoped
+    sentence), and `onboarding_multiple_canaries.md`, the Vision SPA's header
+    comment and `ios/README.md` gave the old press-first order.
+  - The iPhone app's Fleet Wi-Fi did-not-return copy offered a Bluetooth
+    rescue the app never reaches on a WAP (ledger A65); it now names the
+    WAP's own setup network only.
+  - The WAP dashboard's Forget Wi-Fi confirm now says the setup door opens
+    only on a build that has it, with Bluetooth on (gen_web_assets_gz.py,
+    gen_wap.py, gen_homeassistant.py and gen_csp.py run).
+  - A dated legal audit's recommended "never leaves the secure element"
+    carries an amendment (no Canary has one), the readiness list no longer
+    states as current a rule Forget Wi-Fi already breaks (F345). (This
+    pass also wrote that an ordinary re-flash keeps NVS; it does not, since
+    both flashers' installs write a factory image whose settings region is
+    blank, and the third and fourth passes below correct the copies.)
+  `viewer.yml`'s `viewer` job now runs the recorded-reads gate too, and its
+  path filter lists the witness dictionary and the break-glass page and test,
+  which its steps read and which no PR editing them alone used to run (this
+  was on `main` before #1843). `test_docs_claims.py` ties every scoped
+  retirement to its own file: each retired form and each replacement now
+  names the file it stood in, each form must trip a row of that file and
+  each row must have a form there, and each replacement must stand in its
+  file, so a row deleted beside a sibling with the same needle, or pointed at
+  another file, fails; three new tests hold the kit, the resets and the
+  iPhone's Bluetooth filter to the code. The Vision SPA's capture has behavior rows
+  (`tests/spa/receipt-capture.test.js`, run on a stub device in a VM): the
+  press line waits for the first `403`, a `409` stops the capture, and the
+  timeout says whether the device ever answered. Host-tested; not run on a
+  device or in a browser.
+
+- **An install in either flasher gives a Canary a new key, and the kit's own
+  files no longer give a recipe for "full Secure Boot" (#1843's sweep, third
+  pass).** Both flashers write a factory image from offset 0 to the end of
+  the app, and its settings region is blank (`make_factory.py`), so every
+  install starts NVS over and the next boot makes a new identity key, token
+  and certificate; an over-the-air update, a PlatformIO or Arduino IDE
+  upload and the 10 s BOOT reset keep the key and the certificate (the
+  token too, except a flasher-seeded one on the flagship: the fourth pass
+  below). The second pass had written the
+  opposite, that an ordinary re-flash keeps the key and only a full erase
+  changes it; these copies now say what the flashers do (the fourth pass
+  below corrects the ones this pass missed): the iPhone app's
+  device store and certificate-mismatch message, `auth_backoff.h`, Home
+  Assistant's comments and replay test, the ledger, `LESSONS_LEARNED.md`,
+  this file, `THREAT_MODEL.md`, `PENTEST_SCOPE.md`, `magic_pairing.md`, the
+  getting started guide, the flagship's `ota_deploy` scripts, the Sense,
+  Vision and Sentinel `witness.h`, the WAP's hostname comment, the desktop
+  Flasher's first-contact box (which said unticking it keeps the identity)
+  and the in-browser flasher's erase and chain help. Home Assistant's
+  key-mismatch notification, which named a re-flash as a cause, was right
+  about that; it now lists every cause and says to check the new key on the
+  device before rotating the pin. The provisioning kit's
+  `platformio_secure.ini`, `sdkconfig.defaults.secure` and README said its
+  four steps enable full Secure Boot or full security; they now say
+  uncommenting the sdkconfig changes nothing under `framework = arduino`,
+  and Phase 2 leaves flash encryption off and Secure Boot enabled with
+  nothing to verify against, possibly unbootable. The key generator and
+  `secure_provisioning.md` no longer say losing the signing key bricks
+  devices (the kit never uses it), and `SECURITY_MODEL.md` no longer calls
+  the opt-in key-backup-enforced. Also: the docs index and a lesson's quote
+  of the setup door's rule name a cleared unit; the iPhone companion design
+  doc no longer says the app's tokens come from a BOOT tap; the Fleet
+  Wi-Fi sheet no longer offers the Bluetooth lane the app never reaches on
+  a WAP (ledger A65); the "Firmware corrupt" row scopes the OTA signature
+  check to release images; "un-fused" reads "without flash encryption"
+  where the meaning depends on it; the WAP wizard's recovery-kit line and
+  two companion retry lines say to press BOOT when the note says to.
+  `recovery_kit.test.js` now walks every function the WAP's 10 s hold
+  reaches for the mesh's keys and the scout key, `receipt-capture.test.js`
+  holds the press line's subtitle, the unanswered timeout's advice and the
+  capture's cancel guards, and `test_docs_claims.py` bans each retired
+  sentence where it stood. Host-tested; not run on a device or in a
+  browser.
+
+- **Neither flasher promises that an install keeps a board's settings or
+  key, and the flagship's 10 s hold is no longer said to keep a token a
+  flasher seeded (#1843's sweep, fourth pass).** Both flashers' Update
+  verdict said the settings region is left alone, their Reinstall verdict
+  that installing again is harmless, and the in-browser flasher's
+  first-contact button read "it's mine — keep its data"; every install
+  writes a factory image whose settings region is blank, so a board that
+  keeps a witness key comes up with a new one either way. Every verdict for
+  a board already set up now ends on the same sentence in both flashers,
+  and the button
+  reads "it's mine — skip the full erase" and says what it keeps (the
+  partitions the install does not write). The browser's trust card said the
+  key never leaves the board and the page never reads it; its own safety
+  copy, saved to your downloads, is a full read of the flash, key included,
+  and the card now says so. Other copies corrected: the five
+  `runtime_config.h` and `firmware_ota.md` ("sticky across reflashes", "HA
+  entities survive reflashes"), the Lab Sense page's NVS policy, the
+  flagship's handle and certificate comments, `device_pseudonym.h`, the
+  WAP's SSID comment, and the key-change lists in Home Assistant's
+  `sensor.py`, `csi_event_log.h`, the hatchery and the CSI id-floor notes,
+  which left out an install. The flagship's 10 s hold removes its stored
+  token and the next boot derives one from the key, so a token either
+  flasher seeded at install does not come back; the first sweep bullet
+  above and `PENTEST_SCOPE.md` had said the hold keeps the token on every
+  Canary, and
+  a WAP's "token derived from the key" now names a seeded one too. The WAP
+  dashboard's timeout line and `409` lines say to press BOOT when the line
+  says to, the kit's `partitions_secure.csv`, `secure_provisioning.md`
+  Step 3 and the scripts' help give Phase 2 as a dry run only, a phone that
+  missed the setup-door claim is sent to the recovery kit rather than a
+  BOOT tap the iPhone app does not have, and Secure Boot on a Phase 2
+  board is described as enabled with nothing to verify against.
+  `desktop_parity.test.js` holds both flashers' verdicts to the shared
+  sentence, `recovery_kit.test.js` walks the WAP's hold for the identity
+  key, the token, the certificate and the Beacon keys, and
+  `test_docs_claims.py` holds the token claim to the code and bans each
+  retired sentence where it stood. Host-tested; not run on a device or in a
+  browser.
+
+- **"Keys never leave the device" is the firmware's promise, and every
+  remaining copy of the four corrections says what the code does (#1843's
+  sweep, fifth pass).** Both flashers' pre-flash safety copy is a full read
+  of the flash over USB, through the chip's ROM download mode, so that file
+  holds the identity key in the clear and a restore puts it back:
+  `SECURITY_MODEL.md`, `THREAT_MODEL.md` (Principle 1 and Scenario 6),
+  `PENTEST_SCOPE.md`, `secure_defaults.h` and a lesson now say so, and the
+  pentest scope no longer calls a documented flash read a Critical finding.
+  An install in either flasher starts NVS over, the crash-loop count and
+  the device's handle with it: the flagship's E6 boot line, `boot_guard.h`,
+  the multi-Canary guide (which said the handle is the same every time you
+  flash), the captive portal test plan, the onboarding evaluation, the
+  getting started guide's setup-network paragraph, both flashers' "clean
+  install" advice, and the F360 notes here, in the ledger and in a lesson
+  say what the flashers do. The provisioning kit's Phase 2 leaves flash
+  encryption off and Secure Boot enabled with nothing to verify against,
+  and is a dry run today: `THREAT_MODEL.md`, `PENTEST_SCOPE.md`, the intake
+  guide, `secure_provisioning.md`, the kit's sdkconfig, `firmware/README.md`,
+  `mesh_state.cpp` and the bench validation runbook follow. A WAP's token
+  may be one a flasher seeded, and the flagship's 10 s hold drops a seeded
+  token, which the WAP sketch's README and secrets note and both flashers'
+  token and stale-key copy now say. `TRUST_MODEL.md` names the WAP's bonded
+  lane among the ways a node takes Wi-Fi; the improvement roadmap, a lesson
+  and the hub walkthrough entry below carry amendments for the Bluetooth lane no WAP
+  fills (A65); `magic_pairing.md` no longer calls a unit with no network
+  saved one nobody owns; the FAQ, `wap_server.h` and the iPhone app's
+  receipt comment name every grant of the receipt; the Lab's WAP page says
+  the keys ride through a tap of RESET (`gen_wap.py` run). `test_docs_claims.py`
+  bans 64 more retired sentences where they stood (192 of 192 row mutants
+  fail it) and holds the safety-copy claim to both flashers' code.
+  Host-tested; not run on a device or in a browser.
+
+- **The iPhone app reads no WAP's Bluetooth console, Forget Wi-Fi is any
+  landing session's, and a flasher install gives a new key, in every
+  remaining copy (#1843's sweep, sixth pass).** The console is served by
+  the WAP alone, and the iPhone app dials only a peripheral advertising it,
+  which a WAP does not (A65): both flashers' Bluetooth notes, the browser's
+  iPhone panel, the iOS README, the app's Bluetooth permission text and the
+  WAP's `/companion` page, which no longer sends iPhone owners to Bluefy,
+  follow. Forget Wi-Fi takes `api_auth_check()`, which any landing session
+  passes (F345), and a landing session can bond a peer to the WAP's
+  Bluetooth lane (F346), so the WAP's door and wipe comments,
+  `improv_core.h`, the README and `magic_pairing.md` no longer call a
+  re-armed door, or the lane, the owner's alone. Both flashers' smart pick ("installing
+  keeps it, updated in place") and settings verdicts, the desktop change
+  map, the SD recovery comments and guides and the token's lifetime say an
+  install starts NVS over under a new key; `SECURITY_MODEL.md`,
+  `THREAT_MODEL.md`, `gen_flash.py` and the salt comments say what a flash
+  read gets; the WAP's ready banner, its gate-open line and the README stopped
+  reading press-first (`web_assets_gz.h`, `wap.json` and `flash.json`
+  regenerated). `test_docs_claims.py` banned 141 more retired sentences
+  where they stood. Host-tested; not run on a device, in a browser or
+  through Xcode.
+
+- **The receipt's BOOT tap is said to go to one asker, an unasked tap to
+  the first address that asks after it, and an old SD card to be taken out
+  after a new key (#1843's sweep, sixth pass, round-1 review).** The sixth
+  pass had written that the WAP's tap goes to the one page or address
+  "already asking" into the gate-open serial line, the boot banner and the
+  README, and the getting started guide and the Lab's BOOT card said the
+  same from #1842; `tap_arbitrate()` serves
+  the sole address seen asking from 10 s before the tap onward, so a tap no
+  page was asking for goes to the first address that asks inside its 30 s,
+  and each copy now says so. Its recovery copy said an old card's chain
+  stays verifiable off-device after a new key: left in, the flagship stops writing
+  evidence to it while its old chain is the longer one, then appends the
+  new key's records to the same file (the WAP appends at once), and
+  `tools/verify_witness_log.py` fails that file under either key, so the
+  copy says to take the old log off or use a fresh card, and the
+  flagship's log line names the fresh card beside the reboot. Copies that
+  still credited the owner with clearing a unit, or called the WAP's
+  `api_auth_check()` routes bearer-gated (the OTA routes among them, which
+  any host on the network can drive with a landing session), now say what
+  the code does, in the docs, the WAP sketch's comments and the iPhone
+  app's; the iPhone design note no longer says the `/companion` page sends
+  people to Bluefy. Both flashers now offer the Bluetooth check for the WAP
+  alone, the one board that serves the console. `PARTITIONS.md`,
+  `regression_check.sh` and the kit's partition table scope `framework =
+  arduino` to every released build, and the token's lifetime names a
+  flasher's restore. `test_docs_claims.py` bans 95 more retired sentences
+  where they stood, 16 of them the sixth pass's own, and `wap.test.js` and
+  `desktop_parity.test.js` pin the corrected copy. Host-tested; not run on
+  a device or in a browser.
+
+- **An old SD card's log is moved off, not copied, after a new key; the
+  iPhone app's shared session can hold a landing session's cookie; and the
+  WAP's fleet scan is `/api/fleet/scan` (#1843's sweep, sixth pass, round-2
+  review).** The round-1 copy said to copy `/WITNESS/records.jsonl` off the
+  card or use a fresh card; both trees append to that one fixed path and
+  nothing renames or deletes it, so a copy leaves the file where the new key
+  writes. `usb_onboard.md`, the flagship's serial recovery guide and its
+  fork guard's comment now say to move it off (copy it, then delete it from
+  the card in a card reader, since the USB drive is read-only). Three iPhone
+  app comments said the app never holds the cookie the WAP's gate takes;
+  over http the shared `URLSession` keeps the `cv_session` a claim's
+  receipt sets and sends it back, which the gate takes until it expires in
+  24 h, the WAP reboots, or newer sessions push it out of the WAP's eight
+  session slots (the eighth minted after it, unless one minted in the same
+  second of uptime moves that sooner or later), and the comments say so.
+  The vault surface's comment
+  ("Auth-gated like the Wi-Fi routes (Bearer)"), `device_trust.md`'s WAP row
+  and the roadmap's `handle_witness_v1` line no longer call
+  `api_auth_check()` routes the bearer's alone, and two ledger notes and
+  the feature-gaps row FW9 carry amendments. Three sentences named a
+  `/api/fleet-scan` route no tree registers; the captive portal test plan
+  named its setup network `SecuraCV-XXXX` beside `SecuraCV-wap-XXXX`;
+  `PARTITIONS.md`, `regression_check.sh` and the S3 roadmap said only
+  canary-ota sets (or has on) NVS encryption, when the kit's
+  `sdkconfig.defaults.secure` sets it too, inert under `framework =
+  arduino`, and canary-ota has no `nvs_keys` partition. The getting started
+  guide's first WAP tap paragraph says who gets an unasked tap, and the gate
+  comments name both cookie spellings. `test_docs_claims.py` bans 25 more
+  retired sentences where they stood, two of them sentences the merge of
+  #1844 to #1873 retired with no needle (the threat model's "asks no Host
+  question" and the guide's "A factory reset will make a new certificate"),
+  and holds the files that ask for NVS encryption to the three it names;
+  `desktop_parity.test.js` reads the flashers' Bluetooth console copy as the
+  user reads it (concatenations folded, case ignored), so the five retired
+  strings its old needle could not see now fail it. Host-tested; not run on
+  a device, in a browser or through Xcode.
+
+- **The iPhone app's session cookie has a third end, and the Lab's hold
+  message reopens the setup door only on a unit that had Wi-Fi (#1843's
+  sweep, sixth pass, round-3 review).** Round 2 gave the `cv_session` a
+  claim's receipt leaves in the app's shared `URLSession` two ends, its
+  24 h and a WAP reboot. The WAP keeps sessions in eight RAM slots
+  (`csi_integration.cpp`'s `SESSION_SLOTS`), and once all eight are live
+  `pick_session_slot_for_issuance()` evicts the oldest, so newer sessions
+  end it, the eighth minted after the claim's when no other shares its
+  second of uptime (every `?cv_pair` sign-in at the landing and every
+  receipt a tap or a claim serves mints one), which can be minutes after
+  the claim. The three app comments, the round-2 entry
+  above and the ledger name all three ends. The Lab's BOOT card said the
+  10 s hold reopens the first-come Bluetooth setup door on every unit;
+  `wifi_clear_credentials()` re-arms the door's carried window only on a
+  unit that had Wi-Fi stored, and the hold ends in a software restart,
+  which keeps a spent window, so the card now says "on a unit that had
+  Wi-Fi", as the sketch's serial line does. The round-2 entry above and the
+  ledger counted four retired console strings the flashers' old needle
+  could not see; it missed five of the eight, and both now say so.
+  `test_docs_claims.py` bans 8 more retired sentences where they stood (the
+  five two-end lifetimes, the Lab's unscoped door and the two miscounts).
+  Host-tested; not run on a device, in a browser or through Xcode.
+
+- **The witness page's spec no longer puts the SD log and the MQTT publish
+  behind the WAP's gate, and the session cookie's count allows for a tie
+  (#1843's sweep, sixth pass, round-4 review).** `spec/witness_api_v1.md`
+  said the uptime bucket already rides the SD witness line,
+  `GET /api/witness`, `POST /api/export` and the MQTT `chain` publish, all
+  behind `api_auth_check()`, and that the gate in front of
+  `/api/v1/witness` is the one that reads the SD log. No canary-wap route
+  reads `/WITNESS/records.jsonl` (the firmware opens it only to append and
+  to recover the chain head when the card mounts), the export answers
+  `export_time_ms` and no bucket, the `chain` publish carries `length` and
+  `latest_hash` and reaches the broker, not the gate, and the page is the
+  one canary-wap HTTP route that carries a record's `payload_hash`, so a
+  landing session any host on the network can mint (F346) reaches a hash
+  the SD line gives only to a reader of the card. Both passages now say
+  so. The three app comments, the CHANGELOG entries above and the ledger
+  said eight newer sessions end the app's cookie; sessions are stamped in
+  whole seconds of uptime and the eviction takes the lowest slot on a tie,
+  so that count holds only when no other session shares the cookie's
+  second, and each copy now says a tie can move it sooner or later. The
+  readiness TODO now says the 10 s hold reopens the setup door on a unit
+  that had Wi-Fi, unless Bluetooth was turned off, which the hold keeps.
+  `test_docs_claims.py` bans 17 more retired sentences where they stood,
+  among them four the merge of #1844 to #1873 rewrote in the hardware
+  checklist with no needle (the `cv_session` name on rows that open
+  `https://` pages, where the cookie is `__Host-cv_session`) and the Lab
+  test's "one page already asking" comment. Host-tested; not run on a
+  device, in a browser or through Xcode.
 
 ### The flagship and the canary-wap halt on a stored identity key they cannot read, instead of running on a zero key or replacing it (sweep F360, #1840)
 
@@ -1239,7 +1730,9 @@
   lookup of it, makes a new identity that same boot. The
   WAP's BOOT hold keeps the identity (it has no wipe stage), so a clean
   install in either flasher is its only way to a new identity on purpose,
-  halted or not. It halts, where other provisioning failures go on (sweep
+  halted or not *(amended 2026-10-22, #1843's sweep: any install in either
+  flasher, with or without its full erase, is: its factory image starts NVS
+  over)*. It halts, where other provisioning failures go on (sweep
   F336), because from there the boot record and the mesh would use the
   zeroed key and the chain would restart at seq 0 over the stored one. A
   working unit and a first boot are unchanged.
@@ -1462,7 +1955,13 @@
   the shared overflow slot runs, and a tap does not clear that; then wait,
   change Wi-Fi from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s.
   The flagship has no Bluetooth lane that changes its Wi-Fi, so there the
-  fallbacks are to wait or the 10 s hold. The dashboard now drops a token
+  fallbacks are to wait or the 10 s hold. (Amended by #1843, in the F342
+  section above: a tap clears an address only when it is served to that
+  address's ask, and the flagship's tap still goes to the first asker,
+  F354; under that host the hold is no way out unless the unit is then set
+  up on a network that host is not on, the iPhone app does not reach a
+  WAP's Bluetooth lane today, ledger A65, and that section gives the WAP's
+  ways out with their caveats.) The dashboard now drops a token
   the device refuses (a `401`, or `403 {"error":"forbidden"}`) and shows its
   unlock banner again, saying the token was refused, as the WAP's page does;
   it kept a mistyped paste and sent it on every poll, a strike each time the
@@ -1499,7 +1998,9 @@
   bearer whenever the backoff was not running held every other caller's right
   token at `429`: the F289 follow-up's replay refused 86 of 86 of the owner's
   polls over ten minutes. The likeliest such host was the owner's own phone,
-  still polling a reset unit with its old token (filed as F352). The backoff
+  still polling a re-installed unit (an install or a full erase in either
+  flasher starts NVS over and gives it a new key and token; the 10 s hold and
+  an OTA update keep the token) with its old token (filed as F352). The backoff
   is now one per source address, the request's socket peer and never a
   header, on the new pure `firmware/common/network/auth_backoff.h` (staged
   into the sketch, held by `check_improv_sync.sh`): 8 tracked addresses, each
@@ -1510,7 +2011,12 @@
   (F341). A host that strikes from 9 or more addresses within 60 s holds
   every untracked address while the shared overflow slot runs, and a tap
   does not clear that; then wait, change Wi-Fi from the iPhone's bonded
-  Bluetooth lane, or hold BOOT 10 s. Clients behind one address share a
+  Bluetooth lane, or hold BOOT 10 s. (Amended by #1843, in the F342
+  section above: a browser that mistyped the token signs in with Use BOOT
+  Tap Once, since a tap clears only the address it is served to; under that
+  host the hold is no way out, the iPhone app does not reach a WAP's
+  Bluetooth lane today, ledger A65, and that section gives the ways out
+  with their caveats.) Clients behind one address share a
   backoff, and a deliberate LAN denial is not closed (a landing session's
   `POST /api/reboot` also empties the table, kept in RAM, and with it the
   guess budget, so a guesser that reboots the unit every few seconds gets
@@ -1601,7 +2107,13 @@
   its address (F341). A host that strikes from 9 or more addresses within
   60 s holds every untracked address while the shared overflow slot runs,
   and a tap does not clear that; then wait, change Wi-Fi from the iPhone's
-  bonded Bluetooth lane, or hold BOOT 10 s. **Host-tested**
+  bonded Bluetooth lane, or hold BOOT 10 s. (Amended by #1843, in the F342
+  section above: a tap clears an address only when it is served to that
+  address's own ask, and the flagship's tap still goes to the first asker,
+  F354; under that host the hold is no way out unless the unit is then set
+  up on a network that host is not on, the iPhone app does not reach a
+  WAP's Bluetooth lane today, ledger A65, and that section gives both
+  trees' ways out with their caveats.) **Host-tested**
   (`test_receipt_grant.cpp`, 1642 checks, 25 of which fail on the sketch
   before the change: the right bearer served at once after the tap, the
   claim and a header-less tap wait; `firmware/tests_host/test_securacv_auth.cpp`,
@@ -2026,8 +2538,9 @@ All are closed here; none of the code changes is run on a device.
   at a full ceiling too. The ceiling's hour of six 10-minute buckets is
   recorded as a decision at `csi_event_set_module_ceiling()` (F132). An
   exhausted event-id space is the owner's to recover, now said at
-  `space_low()` on both trees: a factory reset on a canary, a full flash erase
-  on a canary-wap without restoring the flasher's pre-erase backup, then a
+  `space_low()` on both trees: the 30 s BOOT wipe on a canary (its 10 s reset
+  keeps the floor), a full flash erase on a canary-wap (whose 10 s hold keeps
+  it too) without restoring the flasher's pre-erase backup, then a
   re-pin in Home Assistant (F82). `wifi.channel_activity`'s three knobs are
   documented as compile-time defaults (F122). The Tuning Lab's per-row reset
   and Reset all remove the stored row instead of storing the default, so the
@@ -3437,6 +3950,12 @@ that was still running when it merged. Design: `docs/design/magic_pairing.md`.
 - **The door rule — the one that matters, and the one the first commit got
   wrong.** The door is open *for a device nobody owns yet, and for an
   owner's own tap — never for a device that has an owner and a bad day*.
+  *(Amended 2026-10-22, #1843's sweep: `improv_core.h` now reads "a device
+  with NO NETWORK SAVED (a new one nobody owns yet, or one its owner
+  cleared)". The 10 s hold, and Forget Wi-Fi on a WAP, clear the network
+  and keep the witness identity, so a cleared unit still has an owner, and
+  its door goes to whichever client connects first;
+  `docs/design/magic_pairing.md` §2.2.)*
   With **no stored credentials** it opens on its own for a first-boot
   window of **30 minutes after power-on** (`IMPROV_FIRST_BOOT_WINDOW_MS`;
   a power cycle or a factory reset re-arms it; compile-time 0 = tap-only)
@@ -3602,7 +4121,10 @@ that was still running when it merged. Design: `docs/design/magic_pairing.md`.
   or typed, the phone joining `SecuraCV-XXXX` itself (NEHotspotConfiguration,
   a new entitlement) and posting the home Wi-Fi to the portal's `/join` with
   the device's `/status` verdict shown; a WAP's bonded Bluetooth provisioning
-  service for a brand-new unit; and the Fleet tab's discovery for the
+  service for a brand-new unit *(amended 2026-10-22, #1843: that step could
+  never list a WAP, since the app dials only a peripheral advertising the
+  console service, which no WAP advertises, ledger A65; the walkthrough now
+  names the WAP's own setup page)*; and the Fleet tab's discovery for the
   appearance. Pure halves host-tested (`HubOnboardingTests`,
   `HubProvisionPlanTests`, `SetupPortalTests`, `HubDiscoveryRowsTests`,
   `SetupGuideTests`); the gated iOS CI is the compiler.
@@ -7358,7 +7880,7 @@ reverted a bad image or entered safe mode on real hardware yet; that is
   fetched `/api/v1/witness` in the canary-vision reference shape while
   canary-wap answered only `/api/witness` (one record, another shape, no
   signature). canary-wap now serves the page from a 16-record RAM ring
-  (`witness_page.h`, `handle_witness_v1`, Bearer-gated, chunked) as
+  (`witness_page.h`, `handle_witness_v1`, Bearer-gated *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)*, chunked) as
   `chain_format: wap_v1` — the firmware's own domain-separated chain hash
   and its existing per-record Ed25519 signature over the raw hash, no new
   signing scheme — with coarse ten-minute timestamps only when the device
@@ -9396,7 +9918,9 @@ someone went looking.
   New pure selection ladder `smartPick` (`flash-core.js`, 13 tests in
   `tests/flash_select.test.js`): a `?product=` ask wins outright; else the
   app descriptor already on the board ("This board already runs X —
-  installing keeps it, updated in place"); else the chip **plus the
+  installing keeps it, updated in place" *(amended 2026-10-22, #1843's sweep:
+  an install starts the settings over under a new key, and the card now says
+  so)*); else the chip **plus the
   measured flash size** — an ESP32-S3 with 16 MB flash can only be the
   Waveshare panel module, with 8 MB it's the XIAO class — with the evidence
   stated on the page; else the authored per-chip default. Where size
@@ -11557,7 +12081,7 @@ FEATURE_DATA_MGMT.
   threshold, append-only chain-hashed audit log as a ring buffer
   NVS-persisted under the flash-encryption gate. Off by default
   (`FEATURE_BEACON_CHANNEL=0`).
-- **Beacon REST API** (`beacon_api.h`): Bearer-token-gated surface —
+- **Beacon REST API** (`beacon_api.h`): Bearer-token-gated surface *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)* —
   `/api/beacon`, `/set`, `/pair/*`, `/revoke`, `/originate`, `/cosign`,
   `/cancel`, `/active`, `/audit` (paginated), `/selftest`.
 - **COSIGN_REQ/RESP encryption**: X25519 ECDH between paired device
@@ -11602,7 +12126,7 @@ FEATURE_DATA_MGMT.
   unsynced; conservative night-mode when unsynced.
 - 5-emoji session display (~1 M distinct).
 - `chirp_api.h` REST endpoints Bearer-gated via the standard
-  template-trampoline pattern; wired into `canary_wap.ino`.
+  template-trampoline pattern *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)*; wired into `canary_wap.ino`.
 - Presence requirement also gates ACK origination.
 - Per-`session_pubkey` rate limit on incoming witnesses.
 - `TPL_AUTH_FEDERAL_PRESENCE` removed; 0x04 slot reserved.

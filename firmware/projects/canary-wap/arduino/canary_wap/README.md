@@ -51,7 +51,8 @@ The sketch takes no board-pin or config header from elsewhere in the repo:
 its pins are in `canary_wap.ino` and its feature flags in `build_config.h`.
 (The script also creates a `secrets.h`, but nothing reads it — canary-wap
 takes no compile-time credentials; Wi-Fi is provisioned over the captive
-portal and the AP password and API token are derived per device. See
+portal, the AP password is derived per device, and the API token is the one
+a flasher seeded at install or, with none, one derived per device. See
 `secrets/secrets.example.h`.)
 
 ### 1. Board Installation
@@ -193,7 +194,7 @@ same way; no sketch change is needed.)
 - Tamper-evident hash chain with domain separation
 - Time coarsened to ten-minute buckets (privacy)
 - No frame storage — camera peek is positioning only
-- API token derived via HKDF (never stored in plaintext)
+- API token derived via HKDF from the private key (or seeded random by a flasher at install), stored in NVS, which is plaintext on every tier today (NVS encryption is in no released build)
 - Device-unique AP password derived from the device private key (HMAC, domain-separated)
 - Over the network, the API token and the AP password leave the device only in the provisioning receipt (a bearer, a setup-door claim or a BOOT tap) and the pairing QR (a bearer); the dashboard's session cookie buys neither. The serial console prints the same receipt at every boot, which takes physical access to the USB port
 - A wrong bearer on the provisioning receipt counts toward the same lockout as every admin route; the lockout never holds back the setup-door claim or the BOOT tap

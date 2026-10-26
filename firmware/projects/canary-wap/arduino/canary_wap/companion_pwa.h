@@ -10,10 +10,10 @@
  * ───────────────
  * - Android Chrome / Edge: native Web Bluetooth.
  * - Desktop Chrome / Edge: native Web Bluetooth.
- * - iOS: requires the Bluefy browser (App Store) — Safari and iOS Chrome
- *   deliberately omit Web Bluetooth from WebKit. Bluefy wraps WKWebView
- *   and exposes the same JS API; the user pairs the Canary in iOS
- *   Settings > Bluetooth first, then opens this page in Bluefy.
+ * - iOS: no supported path. Safari and iOS Chrome omit Web Bluetooth, and
+ *   whether a WKWebView wrapper such as Bluefy lists or bonds a WAP is
+ *   unverified (ledger A65), so the page does not send iPhone owners into
+ *   Bluetooth range: it points them at the dashboard instead.
  *
  * DEPLOYMENT PATHS (all serve the same characteristic surface)
  * ─────────────────────────────────────────────────────────────
@@ -723,8 +723,8 @@ footer a{color:var(--accent);text-decoration:none}
 </div>
 
 <footer>
-  iOS: install <a href="https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055" target="_blank" rel="noopener">Bluefy</a> for Web Bluetooth support.<br>
-  Android &amp; desktop Chrome work natively.
+  Bluetooth here needs Chrome or Edge on Android or a computer.<br>
+  On an iPhone, use this Canary's dashboard instead.
 </footer>
 
 <script>
@@ -756,7 +756,7 @@ const WizardLogic = (function () {
       return { show: true, text: 'Bluetooth features are off on this connection: Web Bluetooth needs HTTPS, and this page is served over plain http:// from the Canary itself. WiFi setup and the dashboard work fine without it.' };
     }
     if (!hasWebBluetooth) {
-      return { show: true, text: 'This browser has no Web Bluetooth. On iOS, install Bluefy from the App Store to use the Bluetooth console.' };
+      return { show: true, text: 'This browser has no Web Bluetooth: the Bluetooth console needs Chrome or Edge on Android or a computer. On an iPhone, use the dashboard instead.' };
     }
     return { show: false, text: '' };
   }
@@ -1696,12 +1696,14 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
   }
 
   function showRunning() {
+    stopKitSave();   // Run again leaves the recovery step: its save stops
     $w('wiz-step-5-running').classList.remove('hidden');
     $w('wiz-step-5-result').classList.add('hidden');
     requestAnimationFrame(() => focusActiveStepHeading());
   }
 
   function showResult(j) {
+    stopKitSave();   // a new result redraws the step, so no save outlives it
     $w('wiz-step-5-running').classList.add('hidden');
     $w('wiz-step-5-result').classList.remove('hidden');
     const v = verdict(j);
@@ -1818,6 +1820,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
   // and "Open this one's dashboard" paths both end at the same place
   // (the mDNS/IP link-row + Finish), so factor that out.
   function showFinishLinks() {
+    stopKitSave();   // this pane hides the recovery step
     $w('wiz-recovery-block').style.display = 'none';
     $w('wiz-ha-block').style.display      = 'none';
     $w('wiz-multi-block').style.display   = 'none';
@@ -1838,14 +1841,57 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
   // 10 s before it onward, so the page must already be asking). 403 means
   // the gate is still closed (no press yet), so the page asks again; 409
   // means another device asked during the same press and the device gave
-  // out nothing; the old order (press first, then Save) is served on the
-  // first ask. The banner says to press only once the device has answered
-  // an ask (sweep F342's fourth review): a press the first ask has not
+  // out nothing. The old order (press first, then Save) is served only if
+  // this page is the first asker after the press: a tap no page of the
+  // owner's was asking for goes to whichever address asks first, a poller
+  // included. The banner says to press only once the device has answered
+  // an ask with 403 (sweep F342's fourth review): a press the first ask has not
   // reached yet is one no page of the owner's is asking for. A successful
   // fetch downloads the receipt JSON and issues the session cookie that the
   // MQTT endpoints accept, which is why the Home Assistant block is only
   // revealed after a save.
+  //
+  // The save belongs to the step on screen (#1842's Codex review). Every
+  // pane change that hides the step (Do this later, Run again, a new
+  // self-test result, the finish links) calls stopKitSave() first, which
+  // aborts a running save's ask in flight and puts the step back to idle
+  // (the banner put away, Save given back), and the loop checks after every
+  // await that it is still the running save. Most pane changes come with no
+  // save running (the self-test's first showRunning(), Continue after a
+  // saved kit, I'm done for now), and a save that has ended leaves its last
+  // line (a 409, a missed press) on the banner; stopKitSave() puts that
+  // away too, so Run again's next result never shows it again. So no ask
+  // leaves a hidden step: a BOOT tap made after the owner moved on goes to
+  // no page of theirs, no kit is downloaded, and the Home Assistant block
+  // is not shown again. An ask already on the wire when the step is left
+  // may still be judged by the device (and spend a tap that has landed);
+  // the page drops its answer unread.
+  //
+  // A rejected fetch is a blip, not an answer (#1842's Codex review): the
+  // phone's Wi-Fi can drop for a moment once the Canary has joined the home
+  // network (a channel switch, a reassociation). As the dashboard's BOOT-tap
+  // sign-in does (web_ui.h requestFromDevice()), the save then waits its 2 s
+  // and asks again until its 16 asks are spent, and a save the device never
+  // answered says so instead of "Didn't see a press". Only a rejected fetch
+  // is a blip: any answer other than 403 ends the save as before (a 409, a
+  // served receipt, a 503 after the tap was spent), and so does a body read
+  // that fails once the device has answered. A rejected fetch is no answer
+  // reaching the page, not always an ask that never reached the device: an
+  // ask the device judged can lose its answer on the way back, a served tap
+  // among them. The next asks then hear 403 and the save ends "Didn't see a
+  // press"; the receipt was sent on this page's own ask, to no one else.
+  let kitSave = null;   // the running save's AbortController, or null
+  function stopKitSave() {
+    const ctl = kitSave;
+    kitSave = null;
+    if (ctl) ctl.abort();   // a running save: its ask in flight is dropped
+    const err = $w('wiz-recovery-err');
+    err.textContent = '';
+    err.classList.remove('show', 'note');
+    $w('wiz-recovery-save').disabled = false;
+  }
   function showMultiBlock() {
+    stopKitSave();   // Do this later (and the Home Assistant step's Skip) leave the step
     $w('wiz-recovery-block').style.display = 'none';
     $w('wiz-ha-block').style.display       = 'none';
     $w('wiz-multi-block').style.display    = 'block';
@@ -1864,16 +1910,33 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
       err.classList.toggle('note', !!note);
       err.classList.toggle('show', !!msg);
     };
+    const ctl = new AbortController();
+    kitSave = ctl;
+    // False once stopKitSave() has run: from then on this save asks
+    // nothing, saves nothing and writes nothing on the page.
+    const live = () => kitSave === ctl;
     say("Asking your Canary first. Don't press BOOT yet.", true);
     save.disabled = true;
     const POLL_INTERVAL_MS = 2000;
     const POLL_TICKS = 16;   // 16 asks, 2 s apart: at 0, 2, ..., 30 s, so a press up to 30 s after Save is asked for
+    let answered = false;    // the device has answered an ask with 403, so the banner says to press
     try {
       for (let i = 0; i < POLL_TICKS; i++) {
         if (i > 0) await new Promise((done) => setTimeout(done, POLL_INTERVAL_MS));
-        const r = await fetch('/api/provisioning-receipt', { cache: 'no-store' });
+        if (!live()) return;
+        let r;
+        try {
+          r = await fetch('/api/provisioning-receipt', { cache: 'no-store', signal: ctl.signal });
+        } catch (_) {
+          if (!live()) return;   // aborted because the step was left
+          continue;              // a blip: no answer reached the page, so ask again
+        }
+        if (!live()) return;
         if (r.status === 403) {   // no press yet: ask again, and now say to press
-          if (i === 0) say('Now short-press BOOT on your Canary.', true);
+          if (!answered) {
+            answered = true;
+            say('Now short-press BOOT on your Canary.', true);
+          }
           continue;
         }
         if (r.status === 409) {
@@ -1887,9 +1950,11 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
           return;
         }
         if (!r.ok) throw new Error('HTTP ' + r.status);
+        const text = await r.text();
+        if (!live()) return;
         // The same builder the dashboard's BOOT-tap sign-in saves with
         // (RECOVERY_KIT above, sweep F257): a receipt or nothing.
-        if (!RecoveryKit.save(window, await r.text())) throw new Error('not a recovery kit');
+        if (!RecoveryKit.save(window, text)) throw new Error('not a recovery kit');
         say('');
         $w('wiz-recovery-done').style.display = 'block';
         save.style.display = 'none';
@@ -1898,11 +1963,19 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
         requestAnimationFrame(() => focusActiveStepHeading());
         return;
       }
-      say("Didn't see a press. Tap Save, then short-press BOOT within 30 seconds.");
+      // A save that never said to press does not say it missed one.
+      say(answered
+        ? "Didn't see a press. Tap Save again, and short-press BOOT when this note says to (within 30 seconds)."
+        : "Your Canary didn't answer. Tap Save again, and short-press BOOT only when this note says to. " +
+          'You can also save it later from the dashboard.');
     } catch (e) {
+      if (!live()) return;
       say('Could not fetch the recovery kit: ' + (e && e.message ? e.message : 'unknown') + '. Try again, or save it later from the dashboard.');
     } finally {
-      save.disabled = false;
+      if (live()) {
+        kitSave = null;
+        save.disabled = false;
+      }
     }
   });
 
@@ -1930,7 +2003,7 @@ if (typeof module !== 'undefined' && module.exports) { module.exports = Recovery
         body: JSON.stringify(body),
       });
       if (cfg.status === 401) {
-        err.textContent = 'This needs the recovery-kit step first: go back, tap Save my recovery kit, then short-press BOOT.';
+        err.textContent = 'This needs the recovery-kit step first: go back, tap Save my recovery kit, and short-press BOOT when its note says to.';
         return;
       }
       if (!cfg.ok) {
@@ -2936,7 +3009,7 @@ async function connect(){
     return;
   }
   if(!navigator.bluetooth){
-    showErr('Web Bluetooth not supported by this browser. On iOS, install Bluefy.');
+    showErr('Web Bluetooth is not supported by this browser. Use Chrome or Edge on Android or a computer; on an iPhone, use the dashboard instead.');
     return;
   }
   try {
@@ -3148,13 +3221,14 @@ document.querySelectorAll('.tab-btn').forEach(b => {
 // Up-front capability check so the user sees the real blocker before
 // they tap Connect. Two distinct failure modes get distinct messages:
 // (1) insecure context → tell them to use HTTPS; (2) no Web Bluetooth
-// API → tell iOS users to install Bluefy.
+// API → name the browsers that have it and send an iPhone owner to the
+// dashboard (no iPhone path reaches a WAP's console, ledger A65).
 (function checkCapabilities(){
   const wizardMode = WizardLogic.isPairToken(
     new URLSearchParams(window.location.search).get('token'));
   if (wizardMode) {
     // The WiFi wizard neither needs Web Bluetooth nor should it show
-    // BLE-console chrome — hide the Bluefy footer along with the banner.
+    // BLE-console chrome — hide the browser footer along with the banner.
     const f = document.querySelector('footer');
     if (f) f.classList.add('hidden');
     return;

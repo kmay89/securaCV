@@ -1,5 +1,5 @@
 {
-  "$doc": "The Hatchery — the single source of truth for how a Canary is named and certified when it hatches. Shared verbatim by the website Lab (fetched from GitHub Pages) and the desktop flasher (embedded at build time), so the birthing moment is identical on both and stays in sync when this file changes. Pure data: the tiny assembly logic (pick a title with title_chance, first + house, Nth-of-its-name ordinal) is mirrored in both clients. Names are whimsy only — the device's functional id stays a stable slug; this is a display/certificate layer.",
+  "$doc": "The Hatchery — the single source of truth for how a Canary is named and certified when it hatches. Shared verbatim by the website Lab (fetched from GitHub Pages) and the desktop flasher (embedded at build time), so the birthing moment is identical on both and stays in sync when this file changes. Pure data: the tiny assembly logic (pick a title with title_chance, first + house, Nth-of-its-name ordinal) is mirrored in both clients. Names are whimsy only — the device's functional id stays its provisioned slug (kept across OTA updates and the 10 s hold; an install in either flasher can change it); this is a display/certificate layer.",
   "$generated_by": "hand-maintained — safe to edit; it carries no device facts, only the birthday whimsy.",
   "version": 1,
   "ring_prefix": "CNRY",

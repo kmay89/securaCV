@@ -72,7 +72,8 @@ static uint32_t g_urgent_sends = 0;
 //   - `force_reserve_beacon` is called from `emit_alert_frame` and
 //     `emit_selftest` in beacon_channel.cpp; those run from
 //     `beacon_channel::update()` (loop task) or from the
-//     `cosign_pending_request` REST path (Bearer-gated, same task).
+//     `cosign_pending_request` REST path (behind api_auth_check(): the
+//     bearer or a landing session any LAN host can mint, F346; same task).
 //   - The MQTT publish loop in canary_wap.ino reads via snapshot() and
 //     also runs on the loop task.
 // No ISR or networking-callback task mutates this state. If that

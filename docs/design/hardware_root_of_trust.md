@@ -42,8 +42,9 @@ The decision (§8, now settled) is deliberately conservative: **every Canary get
 the reversible value** (anti-rollback, boot safe-mode, flasher awareness, software
 attestation) — tamper-*evidence* and rollback safety while staying un-brickable;
 the **irreversible** tamper-*resistance* (full Secure Boot + flash encryption +
-JTAG-off) is **opt-in only** — explicit, heavily-warned, key-backup enforced — for
-the deployments that genuinely need it, and is never the default.
+JTAG-off) is **opt-in only** — explicit, heavily-warned, key-backup enforced (the
+§5.2 gating, not built yet) — for the deployments that genuinely need it, and is
+never the default.
 
 ## 2. Current state — what is already built
 
@@ -72,9 +73,14 @@ hardware root of trust closes.
 `firmware/provisioning/` ships real tooling — `generate_keys.sh` (RSA-3072 Secure
 Boot key + XTS-AES flash-encryption key), `sdkconfig.defaults.secure`,
 `partitions_secure.csv` (`nvs_keys` + `spiffs` flagged `encrypted`, `nvs` deliberately not), `provision_canary.sh`
-(virgin-verify → burn → flash → post-verify, with `--dry-run`), and
+(virgin-verify → flash → burn → post-verify, with `--dry-run`), and
 `verify_device.py` (reads the security eFuses). [`secure_provisioning.md`](../secure_provisioning.md)
-documents the eFuse target state. The firmware full audit
+documents the eFuse target state. As tooled, a Phase 2 run turns neither
+protection on: it writes a plaintext, unsigned image, burns the
+flash-encryption key but no `SPI_BOOT_CRYPT_CNT`, and burns `SECURE_BOOT_EN`
+with no Secure Boot key digest (what the ROM does then has not been run on a
+bench), and its post-verify fails on the fuses it does not burn
+([`secure_provisioning.md`](../secure_provisioning.md), Step 3). The firmware full audit
 ([`audit/esp32s3_firmware_full_audit_2026-07.md`](../audit/esp32s3_firmware_full_audit_2026-07.md))
 records these as **"exist as a reference … not wired up"** — a staged capability,
 not a live one.
@@ -103,9 +109,11 @@ honest hardware-RoT design must own this, not bury it.
 2. **No attestation.** The device can *sign*, but there's no protocol for a
    verifier to confirm genuineness + firmware integrity, and no measurement to
    sign over. "Boot attestation record" today is local and unused.
-3. **Key extraction.** The identity key is plaintext-at-rest. Without flash
-   encryption or a hardware-bound key, physical possession = key compromise,
-   which undermines both attestation and the pinned-identity model.
+3. **Key extraction.** The identity key is plaintext-at-rest. Without NVS
+   encryption (which needs flash encryption beside it and is in no released
+   build) or a hardware-bound key, physical possession = key compromise, on a
+   board with flash encryption fused too, today, which undermines both
+   attestation and the pinned-identity model.
 
 ## 4. Goals & non-goals
 
@@ -131,8 +139,11 @@ honest hardware-RoT design must own this, not bury it.
 - **A mandatory attestation *service* / phone-home.** Attestation must be
   verifiable locally and offline (Principle 2: zero phone-home). No cloud is in
   the trust path.
-- **Nation-state physical security.** Flash encryption defends key-at-rest and
-  casual readout, not decapping/fault-injection by a well-funded lab. We say so.
+- **Nation-state physical security.** Flash encryption with NVS encryption
+  (Tier 3) would defend key-at-rest and casual readout, not
+  decapping/fault-injection by a well-funded lab. We say so. Flash encryption
+  alone defends only the app image: today the key and the saved passwords stay
+  plaintext in NVS on a fused board (the Tier 3 row below).
 
 ## 5. Proposed design
 
@@ -143,7 +154,7 @@ honest hardware-RoT design must own this, not bury it.
 | **0** (default) | Ed25519 identity in NVS; signed OTA | — | **Yes** | Everyone |
 | **1** | Anti-rollback (A/B + boot self-test/safe-mode) | Yes (software) | Yes | Everyone — should become default |
 | **2** | Software **attestation** (signed challenge-response + firmware self-measurement) | Yes | Yes | Anyone wanting a signed, replay-proof health report |
-| **3** | Flash encryption (**development** mode) + NVS encryption — the identity key is protected at rest only with both, because flash encryption does not cover NVS, where the key lives; NVS encryption is not available under `framework = arduino` (the Arduino 2.0.17 core cannot build it; `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` item 9), so on a fused board the key is still plaintext today — the PIO canary image reports `key_at_rest` = `plaintext-nvs`; DS-bound key optional (§8 #4) | Partly (still reflashable) | Mostly | Physical-theft threat models |
+| **3** | Flash encryption (**development** mode) + NVS encryption — the identity key is protected at rest only with both, because flash encryption does not cover NVS, where the key lives; NVS encryption is not available under `framework = arduino` (neither pinned core's precompiled sdkconfig has it, 2.0.17's nor 3.3.8's; `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` item 9), so on a fused board the key is still plaintext today — the PIO canary image reports `key_at_rest` = `plaintext-nvs`; DS-bound key optional (§8 #4) | Partly (still reflashable) | Mostly | Physical-theft threat models |
 | **4** | Secure Boot v2 + flash encryption (**release**) + JTAG-off | **No — eFuse** | **No** | High-assurance deployments only |
 
 Tiers 1–2 are the "every Canary should have this" band — pure software, no eFuse,
@@ -153,8 +164,10 @@ un-brickable guarantee is knowingly traded away.
 ### 5.2 Reconciling with the flasher & recovery (the crux)
 
 Once Secure Boot + flash encryption are on (Tier 4), the mask-ROM download path
-still exists but the ROM **refuses to boot an unsigned image**, and flash reads
-come back ciphertext — so the browser flasher's "write any factory image and boot
+still exists but the ROM **refuses to boot an unsigned image**, and reads of the
+app image come back ciphertext (NVS does not: without NVS encryption, the Tier 3
+row, the key and saved passwords still read back in the clear) — so the browser
+flasher's "write any factory image and boot
 it" no longer works, and JTAG is gone. Recovery shifts, and the design must make
 that shift safe and legible:
 
@@ -172,11 +185,14 @@ that shift safe and legible:
   *replaces* "USB reflash — always possible." The recovery matrix gains a new last
   row for locked units: *"bad app → A/B rollback + safe-mode; the USB row is
   intentionally gone."*
-- **The point of no return is a gated ceremony.** `provision_canary.sh --phase 2`
-  stays `--dry-run`-first, refuses to proceed without a verified **offline backup
-  of the signing key** (lost key = un-updatable fleet), and prints the exact
-  guarantees being surrendered. It is operator tooling, never a one-click button
-  and never anything the browser flasher can trigger.
+- **The point of no return must be a gated ceremony.** `provision_canary.sh --phase 2`
+  stays `--dry-run`-first and must refuse to proceed without a verified **offline
+  backup of the signing key** (lost key = un-updatable fleet), and print the exact
+  guarantees being surrendered. Not built yet: today it checks only that the key
+  files exist, and it never uses the signing key, since it burns no Secure Boot
+  key digest ([`secure_provisioning.md`](../secure_provisioning.md), Step 3). It is
+  operator tooling, never a one-click button and never anything the browser
+  flasher can trigger.
 
 ### 5.3 Attestation protocol (offline-verifiable)
 
@@ -217,9 +233,10 @@ version drift (an honest device reporting an old measurement), and binds
 freshness via the nonce (no replay) — but it does **not** catch a modified image
 that lies about itself. Only once Secure Boot measures the app in the boot chain
 (Tier 4) does `fw_measure` become trustworthy and *"proves it's running trusted
-firmware"* actually hold. Tier 3's non-extractable key (§5.4) additionally stops
-the identity key being lifted out of a stolen board, closing the
-clone-with-stolen-key gap.
+firmware"* actually hold. Tier 3, once NVS encryption is buildable, would
+additionally stop the identity key being lifted out of a stolen board, closing
+the clone-with-stolen-key gap (an optional DS-bound attestation key, §5.4, is
+non-extractable but a separate key); today no tier does.
 
 ### 5.4 Hardware-bound identity via the DS peripheral (Tier 3+)
 
@@ -247,7 +264,9 @@ Mirroring the honesty of the vault RFC's §5.5
   have an ECDSA-capable ROM.
 - **Flash Encryption** — XTS-AES-128/256, key in read-protected eFuse.
   *Development* mode still allows re-flashing with the key present; *Release* mode
-  disables plaintext serial programming. Protects at-rest, **not** a live chip.
+  disables plaintext serial programming. Protects the app image and the
+  partitions flagged `encrypted` at rest, **not** NVS (that takes NVS
+  encryption) and **not** a live chip.
 - **DS + HMAC peripherals** — hardware-bound signing key as above.
 - **eFuse** — one-time-programmable. Every security bit here is a one-way door.
 - **No discrete secure element / TPM.** The root of trust is the SoC itself; there
@@ -341,9 +360,12 @@ choosing the alternative knowingly, per §5.1–5.2.
    as a future per-chip possibility for the ESP32-C6 members (canary-sense) — not
    a scheme choice now.
 3. **Flash-encryption mode — development mode at Tier 3; release mode only inside
-   full Tier 4.** Dev mode is the sweet spot: it protects WiFi/keys at rest from a
-   thief while the device stays field-recoverable. Release mode (which disables
-   plaintext re-flashing) belongs only with the full, opt-in lockdown.
+   full Tier 4.** Dev mode is the sweet spot: with NVS encryption beside it, it
+   would protect WiFi/keys at rest from a thief while the device stays
+   field-recoverable. Until NVS encryption is in the build (the Tier 3 row in
+   §5.1), dev mode protects the app image only, and the WiFi passwords and keys
+   stay plaintext in NVS. Release mode (which disables plaintext re-flashing)
+   belongs only with the full, opt-in lockdown.
 4. **Attestation key binding — Ed25519 identity key under flash/NVS encryption
    (§5.4b) is the default;** the DS-peripheral-bound RSA key (§5.4a) is added
    **only** where a deployment needs non-extractability against a full flash
@@ -363,10 +385,12 @@ choosing the alternative knowingly, per §5.1–5.2.
 **Build order that follows from these decisions** (§7): **Phase 1** — Tier 1
 (anti-rollback + boot safe-mode, pure software, no eFuse) — is underway; the
 anti-rollback floor ships and the A/B rollback engine is written (live in
-`canary-ota`, still gated on `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` in the
-shipping builds), and the crash-loop/safe-mode decision layer (`boot_policy.h`)
-is now host-tested — leaving the hardware-validated boot-path wiring plus turning
-that bootloader config on in the shipping builds. **Phase 2** — Tier 2 (the
+`canary-ota`, and in the shipping builds too: both pinned cores' precompiled
+bootloaders set `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, the §7 re-check of
+2026-09-29), and the crash-loop/safe-mode decision layer (`boot_policy.h`) is
+host-tested and wired into the PlatformIO `canary` — leaving the bench pass of
+the boot path (`V1_BENCH_TEST_RUNBOOK.md` Track E) and a counter on the Display,
+Sense, Vision and Sentinel trees. **Phase 2** — Tier 2 (the
 `securacv.attest/v1` protocol + the flasher's locked-device detection) — follows. Phases 3–4 (the eFuse-burning path) stay
 design-only until a specific deployment requests them.
 

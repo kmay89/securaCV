@@ -2,7 +2,8 @@
  * @file wap_diagnostics.h
  * @brief The body of the canary-wap's GET /api/diagnostics (sweep F149).
  *
- * The route (canary_wap.ino handle_diagnostics, token-gated,
+ * The route (canary_wap.ino handle_diagnostics, behind api_auth_check():
+ * the bearer, or a landing session any LAN host can mint, F346;
  * FEATURE_SYS_MONITOR builds) answers a heap snapshot, the degradation
  * level, the SD card's write health, the uptime and the committed-event
  * egress's counters:

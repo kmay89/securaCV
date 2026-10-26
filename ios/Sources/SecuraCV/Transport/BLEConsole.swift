@@ -10,9 +10,10 @@
 //      canary-wap/canary-display through `securacv_ble_status`. No broker, no
 //      home Wi-Fi, no pairing, no connection. Decoding is pure: Wire/FleetBeacon.
 //
-//   2. GATT CONSOLE (WAP-class enrichment). canary-wap additionally serves a
-//      connectable console with a richer JSON snapshot. We connect only when a
-//      peripheral actually advertises that service.
+//   2. GATT CONSOLE. canary-wap serves a connectable console with a richer
+//      JSON snapshot, but we connect only when a peripheral advertises that
+//      service, and a WAP does not (the service is in its GATT table only),
+//      so this layer never fills for a WAP today (ledger A65).
 //
 // WHY WE NO LONGER SCAN FILTERED BY SERVICE UUID: the firmware moved the
 // service UUIDs + device name into the SCAN RESPONSE to make room for the
@@ -49,7 +50,8 @@
 import Foundation
 import CoreBluetooth
 
-/// A compact snapshot pushed by a WAP-class device over BLE NOTIFY.
+/// A compact console snapshot over BLE NOTIFY (a WAP serves this console
+/// but does not advertise it, so the app never dials a WAP for it, A65).
 struct BLESnapshot: Codable, Hashable, Sendable {
     var id: String?
     var sev: Int?
@@ -66,7 +68,11 @@ final class BLEConsole: NSObject, ObservableObject {
     static let consoleServiceUUID = CBUUID(string: "8fc1cee0-b162-4401-9607-c8ac21383e90")
     static let snapshotUUID       = CBUUID(string: "8fc1cee1-b162-4401-9607-c8ac21383e90")
     /// canary-wap's bonded Wi-Fi provisioning service (ble_provision.h) —
-    /// the rescue path for a Canary the router password change stranded.
+    /// meant as the rescue path for a Canary the router password change
+    /// stranded. It never fills for a WAP today: the rescue uses only a
+    /// peripheral this class dialed for advertising the console service
+    /// above (the setup ceremony's dial, beginSetup, is the Improv door's),
+    /// and a WAP does not advertise it (ledger A65).
     static let provisionServiceUUID = CBUUID(string: "8fc1cef0-b162-4401-9607-c8ac21383e90")
     static let provisionCredsUUID   = CBUUID(string: "8fc1cef3-b162-4401-9607-c8ac21383e90")
     static let provisionStateUUID   = CBUUID(string: "8fc1cef4-b162-4401-9607-c8ac21383e90")
@@ -287,9 +293,10 @@ final class BLEConsole: NSObject, ObservableObject {
         })
     }
 
-    /// Fires the moment a connected console reports tamper that wasn't
-    /// there a beat ago — BLE NOTIFY is sub-second, so the alert loop gets
-    /// to run NOW instead of at the next poll. Wired by FleetStore.
+    /// Would fire when a connected console reports tamper that wasn't there
+    /// a beat ago (NOTIFY is sub-second). No Canary's console connects today
+    /// (a WAP does not advertise it, ledger A65), so in practice this never
+    /// fires. Wired by FleetStore.
     var onUrgentSnapshot: ((String) -> Void)?
 
     /// Same contract for the connectionless cry: a tamper or alert CHIRP is
@@ -509,7 +516,7 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
         // serve it (older firmware, or Bluetooth turned down in settings).
         if pendingProvision?.peripheralID == peripheral.identifier,
            !(peripheral.services ?? []).contains(where: { $0.uuid == Self.provisionServiceUUID }) {
-            resolveProvision(.failed("This Canary's firmware doesn't offer the Bluetooth rescue — use its setup portal (hold BOOT) instead."))
+            resolveProvision(.failed("This Canary's firmware doesn't offer the Bluetooth rescue — use its own setup network (SecuraCV-wap-XXXX, which it raises while it is off your Wi-Fi) instead."))
         }
     }
 
@@ -557,8 +564,9 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
             let tamperRose = (snap.tamper == true) && (snapshotsByDevice[key]?.tamper != true)
             snapshotsByDevice[key] = snap
             if snap.id != nil { peripheralIDByDevice[key] = peripheral.identifier }
-            // Tamper over BLE NOTIFY is the fastest signal the fleet has —
-            // hand it to the alert loop now, not at the next poll.
+            // A connected console's tamper NOTIFY goes to the alert loop at
+            // once. No Canary's console connects today (ledger A65), so the
+            // chirp and the 5-second sentinel carry tamper.
             if tamperRose { onUrgentSnapshot?(key) }
         case Self.provisionStateUUID:
             guard pendingProvision?.peripheralID == peripheral.identifier,

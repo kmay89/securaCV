@@ -66,7 +66,9 @@ constexpr uint32_t PROVISIONING_TIMEOUT_MS = 40000;
 #define IMPROV_FIRST_BOOT_WINDOW_MS (improv::Timing{}.first_boot_window_ms)
 #endif
 // The claim stays readable over the link that provisioned for the ticket's
-// own TTL; a phone that never reads it needs the BOOT-tap route later.
+// own TTL. A phone that never reads it pairs later from a recovery kit: the
+// WAP's own pages save one with the ask-first BOOT tap, and the iPhone app
+// opens it (PairView); the app itself has no BOOT-tap pairing.
 constexpr uint32_t CLAIM_TTL_MS = claim_ticket::TTL_MS;
 // After the provisioning link's first read of the claim, the value stays
 // readable this long — enough for the Read Blob continuations of a value
@@ -611,8 +613,9 @@ void follow_door() {
   if (bluetooth_channel::set_setup_door(open)) {
     s_door_applied = open;
     if (open) {
-      // A door that reopens (a factory reset re-armed the window) is a new
-      // provisioning: a claim from the last one is void.
+      // A door that reopens (the credentials were wiped at runtime, by
+      // Forget Wi-Fi or by the 10 s hold before its restart, re-arming the
+      // window) is a new provisioning: a claim from the last one is void.
       disarm_claim(true);
     } else if (s_session.state != State::Provisioned) {
       // Shut for any reason but the join that minted the claim (the window

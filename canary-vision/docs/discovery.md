@@ -16,7 +16,7 @@ Service:  _securacv._tcp.local.
 Host:     canary-a3f7.local.
 Port:     80
 TXT:
-  device_id=canary-a3f7      # stable device identifier
+  device_id=canary-a3f7      # device identifier (kept across OTA updates and the 10 s hold; an install in either flasher can change it)
   name=Front Porch           # user-assigned display name
   host=canary-a3f7.local     # mDNS hostname
   fw=0.4.1                   # firmware version

@@ -93,8 +93,15 @@ Vision historically compiled its WiFi/MQTT credentials and device id into
 the binary — which would make an OTA-installed generic image forget the
 unit's setup. `canary/runtime_config` fixes this:
 
-- **Identity is sticky:** `device_id` lives in NVS; the compiled value only
-  seeds the very first boot. HA entities survive OTA updates and reflashes.
+- **Identity lives in NVS:** `device_id` is stored there, and the compiled
+  value seeds only a boot that finds none. An OTA update and a PlatformIO
+  upload leave NVS alone, so the `device_id`, and with it the HA entities,
+  survive them. An install in either flasher does not: its factory image
+  starts NVS over, so the next boot takes the id the flasher seeds (both
+  suggest a new random one for every install) or, with none seeded, the
+  compiled `DEVICE_ID` (`canary_vision_001` in `config.h`). A new id is a
+  new device to Home Assistant, and the old id typed in again comes back
+  under a new key, which it reports as a key mismatch.
 - **Credentials follow the most recent real configuration:** a user-compiled
   USB flash (real `secrets/secrets.h`) wins and is persisted to NVS; the
   placeholder secrets baked into generic release builds defer to NVS.
@@ -343,7 +350,12 @@ that embeds its public half into a dev build.
 
 ## Device API
 
-All endpoints are bearer-token gated on canary and canary-wap. Since 2026-08
+All endpoints are bearer-token gated on canary. On canary-wap they take
+`api_auth_check()`, which passes the bearer token or the landing session the
+dashboard's landing page mints for any host on the network (ledger F346), so
+any LAN host can start an install of the signed release or point the device
+at another update server (it still installs only an image the release key
+signed). Since 2026-08
 canary-display serves `status`/`check`/`install` under the same contract —
 same routes, statuses, and body shapes, so the desktop Flasher's one-click
 update works on displays too — but LAN-open like the rest of the glass web
@@ -476,7 +488,7 @@ user actions through the update system that leaves a device unrecoverable.**
 | Power cycled after an update, before the boot self-test confirms it | Returns to the previous firmware (unconfirmed images don't stick). The window is product-specific — see the note above | Press Install again |
 | Wrong update server address saved | Checks fail with a clear message; firmware untouched | Clear the field (Settings) to return to the official server |
 | Wrong variant's manifest configured | Product check refuses the image | Fix the address; nothing was installed |
-| WiFi password changed at the router | canary/WAP: own AP + dashboard still up — reconfigure there. vision/sense: after a few failed joins for a fixable reason, the board raises its own `SecuraCV-XXXX` setup network (the shared setup portal); sensing continues underneath | Reconnect via dashboard (canary/WAP), or join the setup network from a phone and enter the new password (vision/sense) — a USB reflash always works too |
+| WiFi password changed at the router | canary/WAP: own AP + dashboard still up — reconfigure there. vision/sense: after a few failed joins for a fixable reason, the board raises its own `SecuraCV-XXXX` setup network (the shared setup portal); sensing continues underneath | Reconnect via dashboard (canary/WAP), or join the setup network from a phone and enter the new password (vision/sense). A USB install also works, but either flasher's install starts the board's settings over: a new witness key and, on most boards, a new device id and new Home Assistant entities (the canary-vision section above), so keep it for when neither path can be reached |
 | Absolute worst case | Device still enters ROM download mode | USB flash — always possible, OTA cannot break it |
 
 ## Adding a new variant (the recipe)
