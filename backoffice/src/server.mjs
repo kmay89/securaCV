@@ -10,6 +10,7 @@ import { attention } from './attention.mjs';
 import { customerLine, orderPromise } from './modules/promise.mjs';
 import { markSessionPaid, markSessionExpired } from './modules/recovery.mjs';
 import { newOrderNudge } from './modules/notify.mjs';
+import { applyOverrides } from './modules/listing.mjs';
 import { build, recordBoot } from './version.mjs';
 import { listFlags, setFlag, clearFlag } from './flags.mjs';
 import { orderToken, deliveryLine, trackingUrl } from './modules/delivery.mjs';
@@ -64,7 +65,8 @@ export function createApp({ db, cfg }) {
   recordBoot(db, cfg);
   // In demo mode the catalog is the demo's own, never fetched from the live site.
   setTrustedProxies(cfg.trustedProxies);
-  const app = { db, cfg, json, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), formLimiter: new RateLimiter({ limit: 5, windowMs: 10 * 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), once: new Map(), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o), shipping: cfg.demo ? async () => DEMO_SHIPPING : (o) => loadShipping(cfg, o) };
+  // app.catalog is the file (store.json, or the demo's) with the listing edited in the admin laid over it (listing.mjs).
+  const app = { db, cfg, json, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), formLimiter: new RateLimiter({ limit: 5, windowMs: 10 * 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), once: new Map(), catalog: cfg.demo ? async () => applyOverrides(db, DEMO_CATALOG) : async (o) => applyOverrides(db, await loadCatalog(cfg, o)), shipping: cfg.demo ? async () => DEMO_SHIPPING : (o) => loadShipping(cfg, o) };
   // What wants the admin, memoized for a few seconds: the sidebar badges on every page read it, and
   // it runs the doctor (an integrity check among other things), which is not a per-page cost.
   let attMemo = { at: 0, value: null };

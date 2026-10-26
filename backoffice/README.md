@@ -40,6 +40,9 @@ already chose it. Everything *around* Stripe is here.
 | A fulfillment app's pick-and-pack flow | **Pack bench / Ship bench** | one order at a time through the weekly batch: pick list, serial scan, one button; then tracking in, one button, the customer mailed |
 | Buying the label in the admin (Shopify Shipping) | **Ship bench** | with `SHIPPO_API_TOKEN`: one button buys the USPS label for the box the order was packed in, writes the tracking and postage onto the order, ships it and opens the PDF to print; refuses a bad address or a blank return address before any money moves |
 | Abandoned checkout recovery + the conversion number | **Marketing · The checkout** | every hosted checkout counted from Stripe's own events (opened, paid, abandoned, recovered — no pixel, no cookie); an abandoned one with an email gets one follow-up with Stripe's link that reopens the same cart, never a second |
+| Editing products in the admin (Shopify's product editor) | **Products** | a product's price, name, batch cap, hidden flag and sale window edited on its page and live on the site at once; the file (`store.json`) stays the base, the page prints the patch it would need, the doctor counts what is edited here |
+| Launchpad (Shopify Plus): a scheduled launch | **Products** | "on sale from" and "until" on the listing: listed today, sells from the date, the site says when it opens |
+| Sales tax nexus tracking (Avalara, TaxJar) | **Books · Where sales tax is owed** | the trailing year's orders by state against the common thresholds; the home state always; the doctor fails when nothing is collected and tax is owed |
 | Customer account self-service | **The customer's page** | no account to make: the signed link in every mail shows where it is and lets them fix the address while it is on the shelf |
 | The admin app's push notification | **Notify** | a new order mails `OPERATOR_EMAIL` the minute it lands, and pushes to an ntfy topic if you set one |
 | A purchasing module (an ERP's) | **Purchasing** | purchase orders drafted from the reorder points in one click (grouped by supplier, at the reorder quantity), marked ordered with an expected date, received into stock line by line and booked as inventory; "buildable" looks ahead to when the parts land |
@@ -413,6 +416,8 @@ bin/backoffice.mjs      the CLI — same functions as the web admin, `backoffice
 src/db.mjs              node:sqlite, migrations/, numbers (EL-, T-, WC-, INV-YYYY-), audit log, savepoint transactions
 src/http.mjs            router, body parsing, cookies, CSRF, rate limiter, escaping
 src/render.mjs          server-rendered HTML; no client JavaScript
+src/modules/listing.mjs the store listing edited here (price, name, cap, hidden, window) laid over store.json; the patch for the file
+src/modules/nexus.mjs   where sales tax is owed: the trailing year by state against the common thresholds; the doctor's sentence
 src/modules/labels.mjs  the label bought from the ship bench (Shippo), the demo's pretend one, the readable fallback
 src/modules/recovery.mjs every hosted checkout written down, the one follow-up an abandoned one gets, the conversion number
 src/modules/notify.mjs  the new-order nudge to the operator: a mail, and a push if NTFY_URL is set

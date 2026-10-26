@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### The backoffice edits the store listing without a commit, sets the phone in Settings, and watches sales-tax nexus (backoffice 0.6.0)
+
+- Price, name, batch cap, hidden and a sale window per product, live on the
+  site at once (the website reads them from the live catalog); the patch for
+  `store.json` printed for later. An ntfy topic and a test push in Settings.
+  Where sales tax is owed, from the orders, on Books and in the doctor.
+
 ### The backoffice closes the Shopify gaps (backoffice 0.5.0)
 
 - Labels bought from the ship bench (Shippo), the tracking and postage written
