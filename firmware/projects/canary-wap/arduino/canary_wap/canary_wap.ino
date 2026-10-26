@@ -367,6 +367,12 @@ static const char* OTA_PRODUCT = "securacv-canary-wap";
 static volatile bool g_ota_publish_pending = false;
 static securacv_ota_state_t g_ota_last_seen_state = SECURACV_OTA_IDLE;
 static uint32_t g_ota_next_check_ms = 0;
+#if FEATURE_POWER_MONITOR
+/* The install veto's battery fact (power_gate::ota_install_power_ok), set by
+ * the loop on each power-monitor sample. ota_can_install() runs on the OTA
+ * task, so one word crosses instead of the monitor's struct. */
+static bool g_ota_battery_low = false;
+#endif
 
 // ════════════════════════════════════════════════════════════════════════════
 // DEVICE CONFIG
@@ -12171,6 +12177,41 @@ static void ota_witness_event(const char* type, const char* version) {
   }
 }
 
+/* How the last install ended, witnessed once: the one place it is recorded.
+ * Called after securacv_ota_init() at boot, and again on the loop pass where
+ * securacv_ota_health_tick() confirms the new image. The engine hands out the
+ * install marker only once the running image is confirmed, or on a boot that
+ * is not the image the marker names (a rollback). So an image still inside
+ * its confirm dwell records nothing yet. Recording "applied" on its first
+ * boot, as before, put an update into the chain that a failed dwell then took
+ * back, and the old image found no marker left to say so. */
+static void ota_record_update_outcome() {
+  char ota_target[SECURACV_OTA_VERSION_MAX];
+  if (!securacv_ota_take_pending_version(ota_target, sizeof(ota_target))) return;
+  if (strcmp(ota_target, FIRMWARE_VERSION) == 0) {
+    ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
+    log_health(SCV_LOG_NOTICE, SCV_CAT_SYSTEM,
+               "Firmware update applied", FIRMWARE_VERSION);
+  } else {
+    ota_witness_event("fw_update_rolled_back", ota_target);
+    log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM,
+               "Firmware update rolled back", ota_target);
+  }
+}
+
+/* The confirm dwell's health signal for this pass (docs/OTA.md §2): the
+ * link this unit is set up to hold, home Wi-Fi when it joins one, else its
+ * own access point (provisioning_logic::ota_confirm_link_healthy). A
+ * standalone unit never joins a station network, yet takes updates over
+ * Bluetooth; reading the station link alone left its update unconfirmed,
+ * and the next restart reverted it. The AP is up when the radio is in an
+ * AP mode, the same test the status snapshot's setup_ap uses. */
+static bool ota_confirm_healthy_now() {
+  return provisioning_logic::ota_confirm_link_healthy(
+      g_wifi_ap_only, g_wifi_creds.configured, g_wifi_creds.enabled,
+      WiFi.status() == WL_CONNECTED, (WiFi.getMode() & WIFI_MODE_AP) != 0);
+}
+
 /* Runs on the OTA task — only flips a flag; the main loop publishes. */
 static void ota_on_progress(securacv_ota_state_t state, uint8_t percent,
                             securacv_ota_error_t error, void* user_data) {
@@ -12178,10 +12219,17 @@ static void ota_on_progress(securacv_ota_state_t state, uint8_t percent,
   g_ota_publish_pending = true;
 }
 
-/* Install-permission gate. The BLE OTA channel and the pull engine write
+/* Install-permission gate (runs on the OTA task, before the download and
+ * again before the reboot). The BLE OTA channel and the pull engine write
  * to the same inactive partition, so they strictly exclude each other
- * (ble_ota.cpp holds the mirror-image check). */
+ * (ble_ota.cpp holds the mirror-image check). And a battery at or below
+ * the monitor's low line, not charging, defers the install: lower down
+ * the power policy deep-sleeps, and a deep sleep is a restart that wastes
+ * a download or, inside the confirm dwell, reverts the update
+ * (power_gate::ota_install_power_ok). The Bluetooth channel has no such
+ * gate: the person sending that update is beside the unit. */
 static bool ota_can_install(char* reason, size_t reason_len) {
+  (void)reason; (void)reason_len;
 #if FEATURE_BLUETOOTH && __has_include(<NimBLEDevice.h>)
   const ble_ota::OtaState b = ble_ota::get_state();
   if (b == ble_ota::OTA_RECEIVING || b == ble_ota::OTA_VERIFYING ||
@@ -12189,8 +12237,12 @@ static bool ota_can_install(char* reason, size_t reason_len) {
     snprintf(reason, reason_len, "a Bluetooth update is in progress");
     return false;
   }
-#else
-  (void)reason; (void)reason_len;
+#endif
+#if FEATURE_POWER_MONITOR
+  if (__atomic_load_n(&g_ota_battery_low, __ATOMIC_RELAXED)) {
+    snprintf(reason, reason_len, "the battery is low and not charging; plug it in to update");
+    return false;
+  }
 #endif
   return true;
 }
@@ -13256,8 +13308,9 @@ void setup() {
 #endif
     // Health-gated confirmation (docs/OTA.md §2): the boot probe leaves a new
     // image pending; loop()'s securacv_ota_health_tick() confirms it after a
-    // minute of the STA link holding, so a crash loop inside that minute
-    // rolls back by the bootloader's own rule.
+    // minute of the unit's link holding (the home Wi-Fi it joins, or in
+    // standalone its own AP: ota_confirm_healthy_now), so a crash loop inside
+    // that minute rolls back by the bootloader's own rule.
     ota_cfg.confirm_dwell_ms = 60000;
     if (securacv_ota_init(&ota_cfg) == ESP_OK) {
       Serial.printf("[OK] Pull-OTA engine ready (product=%s, version=%s)\n",
@@ -13271,19 +13324,10 @@ void setup() {
 
     // Witness the outcome of an install reboot. The engine (and the BLE
     // OTA path) recorded the install target the moment the boot partition
-    // flipped; running the old version again means rollback.
-    char ota_target[SECURACV_OTA_VERSION_MAX];
-    if (securacv_ota_take_pending_version(ota_target, sizeof(ota_target))) {
-      if (strcmp(ota_target, FIRMWARE_VERSION) == 0) {
-        ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
-        log_health(SCV_LOG_NOTICE, SCV_CAT_SYSTEM,
-                   "Firmware update applied", FIRMWARE_VERSION);
-      } else {
-        ota_witness_event("fw_update_rolled_back", ota_target);
-        log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM,
-                   "Firmware update rolled back", ota_target);
-      }
-    }
+    // flipped; running the old version again means rollback. A new image
+    // still in its confirm dwell records nothing here: loop() records it on
+    // the pass that confirms it (ota_record_update_outcome).
+    ota_record_update_outcome();
   }
 
   // Print full provisioning receipt on every boot.
@@ -13686,8 +13730,12 @@ void loop() {
   #endif
 
   // The A/B confirm dwell (docs/OTA.md §2): a freshly installed image is
-  // confirmed only after a minute of the home link holding.
-  securacv_ota_health_tick(millis(), WiFi.status() == WL_CONNECTED);
+  // confirmed only after a minute of the unit's link holding (home Wi-Fi,
+  // or its own AP when it has no home network to join). The pass that
+  // confirms it is the pass that witnesses the update as applied.
+  if (securacv_ota_health_tick(millis(), ota_confirm_healthy_now())) {
+    ota_record_update_outcome();
+  }
 
   // Service the captive DNS redirector whenever it's up (it self-guards on
   // s_dns_running), so it answers AP clients in steady state too — not only
@@ -14266,7 +14314,17 @@ void loop() {
 
   // Update power monitor (ADC sample, SoC, charge state)
   #if FEATURE_POWER_MONITOR
-  power_monitor::process();
+  if (power_monitor::process()) {
+    // A new sample: refresh the pull-OTA install veto's battery fact
+    // (read by ota_can_install on the OTA task). Unclassified, charging,
+    // full or no battery reads as not low.
+    PowerState pwr_ota;
+    const bool low = power_monitor::get_state(&pwr_ota) &&
+        !power_gate::ota_install_power_ok(pwr_ota.battery_present,
+                                          pwr_ota.power_source == POWER_SOURCE_BATTERY,
+                                          pwr_ota.soc_pct, power_monitor::SOC_LOW_PCT);
+    __atomic_store_n(&g_ota_battery_low, low, __ATOMIC_RELAXED);
+  }
 
   // Persist battery health history (runtime minutes, SoC minimum,
   // brownout count, last-full-charge) every 10 minutes so the stats
