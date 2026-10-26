@@ -3745,10 +3745,11 @@ static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_l
 // browser: SameSite=Strict compares sites, and only a browser that counts
 // the scheme in the site (Chromium does) keeps the session cookie off its
 // requests; in one that does not, it can still write blind with the owner's
-// session (a reboot, or any other write a session may make). F15 narrows
-// nothing for a page served over https at that name whose certificate
-// warning the owner accepted, nor for any page during the first-boot setup
-// or on a unit whose HTTPS start failed.
+// session (any write a session may make, of which since F361 only the
+// firmware install restarts the unit, and only into a newer signed image).
+// F15 narrows nothing for a page served over https at that name whose
+// certificate warning the owner accepted, nor for any page during the
+// first-boot setup or on a unit whose HTTPS start failed.
 //
 // No SoftAP or interface exemption, unlike the flagship's: the WAP's captive
 // DNS answers every name with the device (setup_wizard.h), so an exemption

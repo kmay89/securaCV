@@ -531,7 +531,10 @@ version, use its own setup page (Settings → Wi-Fi on the dashboard, or the
 set up, changing its Wi-Fi there asks for the API token (paste it from your
 recovery kit) or one BOOT tap, on the recovery network too: a page your
 home network opened, or that network's printed key, no longer moves it on
-its own. Or tell it to forget its Wi-Fi from the dashboard (Settings → Wi-Fi
+its own (a network such a page moved it to on an older release can stay
+among its saved networks, which the WAP tries by itself when its own
+network is not found; the forget below clears every one). Or tell it to
+forget its Wi-Fi from the dashboard (Settings → Wi-Fi
 → Remove credentials, the `/api/wifi/forget` route, which also asks for the
 token or a tap), which clears the stored networks and the saved broker
 login and opens the door again for half an hour from that moment: until it

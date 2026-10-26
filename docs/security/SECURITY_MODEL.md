@@ -538,7 +538,8 @@ purpose (sweep F333): every code also chooses the network the unit joins,
 so a host compare there would protect nothing, and the road is closed
 where it opens instead. The boot scan follows the Bluetooth setup door's
 rule (`keyless_join_open()`: no network stored, not standalone), the
-phone-session scan starts only during setup (F334), and Forget Wi-Fi clears
+phone-session scan starts only during setup and stops at its next frame
+once setup ends (F334), and Forget Wi-Fi clears
 the stored broker user and password (`csi_mqtt::login_clear()`), so a
 keyless join reaches a set-up unit only after the owner's bearer Forget or
 the 10 s hold, and neither leaves a login on file. What stays: a login the
@@ -547,7 +548,8 @@ can reach whoever answers the stored broker on a plain link (the
 CA-verified mode is the defense), and the boot scan has no time window.
 
 The session also cannot make a write that grants a credential or moves the
-unit off its owner's network, and of its writes only the firmware install
+unit off its owner's network (a network one moved it to before F334 can
+stay saved, below), and of its writes only the firmware install
 restarts the unit (`POST /api/ota/install`, or automatic updates turned on
 with `POST /api/ota/config`), which installs only a newer signed image.
 These routes take the bearer alone, never the session
@@ -564,6 +566,14 @@ These routes take the bearer alone, never the session
   recovery portal's SoftAP included (F334, F345); `POST /api/wifi/qr-scan`
   answers `404` outside setup;
 - `POST /api/reboot` and `POST /api/safe-mode/retry` (F361).
+A network a session moved it to before F334 can stay among its saved
+networks: `wifi_store_note_joined()` writes every network the unit joins
+into a ring of up to four, and when the current network is not found twice
+running the unit tries the next saved one by itself
+(`wifi_store_rotate_if_due()`), with no request and no bearer. No route
+lists the saved networks or removes one (`GET /api/status` carries only
+`saved_networks`, a count); the remedy is a bearer Forget, which wipes the
+ring, then setting the unit up again.
 A Passkey Entry's digits (the one code that is the bond: the peer types
 what the WAP shows, and nothing on the WAP confirms) ride `GET
 /api/bluetooth` only with a bearer that passes the accounted grant while

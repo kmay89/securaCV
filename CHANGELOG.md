@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### canary-wap: after setup the API token alone moves its network, re-keys its vault, confirms a pairing and reboots it (the firmware install aside), and the sign-in checks a pasted token by itself; a failed provisioning says what the unit does (sweep F333, F334, F335, F336, F345, F346, F348, F349, F361, #<PR>)
+### canary-wap: after setup the API token alone moves its network (a network joined before the update can stay saved), re-keys its vault, confirms a pairing and reboots it (the firmware install aside), and the sign-in checks a pasted token by itself; a failed provisioning says what the unit does (sweep F333, F334, F335, F336, F345, F346, F348, F349, F361, #<PR>)
 
 - **canary-wap: one dashboard sign-in, which checks a pasted token by itself
   (the owner-authority items' shared sign-in).** On a page holding the
@@ -15,9 +15,10 @@
   is refused for the rest of that backoff, "Too many failed attempts. Retry
   in … seconds."). A sign-in a running dashboard brings up has a **Not
   now** button; a refused action alerts
-  nothing on top of it; every card whose action takes the token says so
-  beforehand ("… takes the API token: paste it (it is in your recovery kit),
-  or use BOOT Tap Once."); and the "another device asked" copy names
+  nothing on top of it; the Wi-Fi, vault key, reboot and pairing-QR cards
+  say beforehand that their action takes the token ("… takes the API token:
+  paste it (it is in your recovery kit), or use BOOT Tap Once."); and the
+  "another device asked" copy names
   pasting the token first. Host-tested (`dashboard_gates.test.js`,
   `recovery_kit.test.js`).
 - **canary-wap: after setup the API token alone moves the network the WAP
@@ -30,7 +31,8 @@
   token and the SoftAP password). After first-boot setup all four take the
   bearer alone, on every interface, the recovery network
   (`SecuraCV-wap-XXXX`) included, and `POST /api/wifi/qr-scan` answers
-  `404`; during setup nothing changes. On the dashboard, Settings → Wi-Fi
+  `404` (a phone's scan still running when setup ends stops at its next
+  frame); during setup nothing changes. On the dashboard, Settings → Wi-Fi
   says the token is needed and asks for it (paste it from the recovery kit,
   or use BOOT Tap Once); on the recovery network the tap is reliable, since
   the SoftAP takes one client. Forget now also clears the stored broker
@@ -46,7 +48,14 @@
   token-free way out, and works whatever the lockout is doing. Kept as
   posture: the plain broker link (`tls_mode` 0), which a host answering
   for the broker can still read; the CA-verified mode is the defense.
-  Host-tested (`test_wifi_authority`, `test_provisioning_logic`,
+  After updating: a network a session moved the unit to before this release
+  can stay among its saved networks (a ring of up to four that every join
+  writes), and the unit tries it by itself, with no token, when its own
+  network is not found twice running; the dashboard neither lists the saved
+  networks nor removes one. If the unit was ever moved to a network you did
+  not choose, use Settings → Wi-Fi → Remove credentials with the API token
+  (it wipes every saved network and the broker login), then set the unit up
+  again. Host-tested (`test_wifi_authority`, `test_provisioning_logic`,
   `test_mqtt_reinit`, `dashboard_gates.test.js`, `test_docs_claims.py`);
   not bench-tested. Filed: F353, the token cannot be rotated.
 - **canary-wap: a session neither re-keys the vault nor confirms a pairing,
@@ -272,8 +281,9 @@
   of these (it reads nothing; but `SameSite=Strict` compares sites, so in a
   browser that does not count the scheme in the site, as Chromium does, its
   requests still carry the session cookie and it can write blind with the
-  owner's session: a reboot, or any other write a session may make); a page
-  served over https at that name whose certificate warning
+  owner's session: any write a session may make, of which since F361 only
+  the firmware install restarts the unit, and only into a newer signed
+  image); a page served over https at that name whose certificate warning
   the owner accepted still does, and so does any page during the first-boot
   setup or on a unit whose HTTPS start failed, which serve plain HTTP.
   Host-tested

@@ -91,7 +91,9 @@ it the shared grammar and made it scan on its own:
   `/mqtt` instead. Forget Wi-Fi leaves a standalone unit standalone. A
   phone captive-portal session takes the camera over cleanly during
   first-boot setup; after setup `POST /api/wifi/qr-scan` answers `404`
-  (F334).
+  (F334), and a phone's window still running when setup ends (the
+  Bluetooth door's join, a second tab's standalone choice) stops at its
+  next frame, before a code read in it can act.
 - **Session vs. proximity auth:** the display-minted `SCV1` path carries
   its own expiring token, so the phone-session pair-token gates don't
   apply to it; a plain `WIFI:` code in boot-scan mode joins Wi-Fi and

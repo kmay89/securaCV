@@ -254,6 +254,26 @@ RETIRED_IN = (
      "after setup the API token alone moves the network, reboots the unit, "
      "re-keys the vault and confirms a pairing",
      "the firmware install aside, which a session may start"),
+    # The PR's second review: F344's copies of the blind-write sentence the
+    # docs retired above (the sketch's comment, its README, the CHANGELOG's
+    # F344 entry), and a CHANGELOG claim about every card that four cards
+    # hold and three do not.
+    ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+     "(a reboot, or any other write a session may make)",
+     "any write a session may make, of which since F361 only the firmware "
+     "install restarts the unit, and only into a newer signed image"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/README.md",
+     "(a reboot, or any other write a session may make)",
+     "the same"),
+    ("CHANGELOG.md",
+     "owner's session: a reboot, or any other write a session may make",
+     "the same"),
+    ("CHANGELOG.md",
+     "every card whose action takes the token says so beforehand",
+     "the Wi-Fi, vault key, reboot and pairing-QR cards say beforehand that "
+     "their action takes the token; Retry full boot, Save my recovery kit, "
+     "Start Pairing and the opera's Create/Join raise the sign-in when "
+     "pressed, with no note on the card"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -322,14 +342,24 @@ MUST_PASS_IN = [
     "it is the only post-setup authority over the network the WAP joins, its "
     "bonds, its vault key and its reboots (a session's firmware install "
     "still restarts the unit, only into a newer signed image), and",
-    "after setup the API token alone moves its network, re-keys its vault, "
-    "confirms a pairing and reboots it (the firmware install aside)",
+    "after setup the API token alone moves its network (a network joined "
+    "before the update can stay saved), re-keys its vault, confirms a pairing "
+    "and reboots it (the firmware install aside)",
     "canary-wap: the API token alone reboots the unit, the firmware install "
     "aside (sweep F361).",
     "every write that grants a credential (the vault key, the two confirms), "
     "and the two reboot routes;",
     "after setup the API token alone moves the network, re-keys the vault, "
     "confirms a pairing and, the firmware install aside, reboots the unit",
+    # The second review's replacements.
+    "it can still write blind with the owner's session (any write a session "
+    "may make, of which since F361 only the firmware install restarts the "
+    "unit, and only into a newer signed image)",
+    "owner's session: any write a session may make, of which since F361 only "
+    "the firmware install restarts the unit, and only into a newer signed "
+    "image); a page",
+    "the Wi-Fi, vault key, reboot and pairing-QR cards say beforehand that "
+    "their action takes the token",
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -414,6 +444,15 @@ MUST_FAIL_IN = [
     "  reboots the unit; `POST /api/wifi/qr-scan` answers `404` outside setup.",
     "## canary-wap: after setup the API token alone moves the network, reboots "
     "the unit, re-keys the vault and confirms a pairing (F334, F345",
+    # The second review's, as they stood.
+    "// requests; in one that does not, it can still write blind with the owner's\n"
+    "// session (a reboot, or any other write a session may make). F15 narrows",
+    "so in one that does not it can still write blind with the owner's session "
+    "(a reboot, or any other write a session may make). A page served over https",
+    "  requests still carry the session cookie and it can write blind with the\n"
+    "  owner's session: a reboot, or any other write a session may make); a page",
+    "  nothing on top of it; every card whose action takes the token says so\n"
+    "  beforehand (\"… takes the API token: paste it (it is in your recovery kit),",
 ]
 
 
@@ -620,6 +659,50 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
                       "signed image", sec)
         self.assertIn("the dashboard's firmware install, which a session may start, "
                       "restarts the unit only into a newer signed image", threat)
+
+    def test_a_network_saved_before_f334_stays_saved_and_the_docs_say_so(self):
+        # F334's decision names a known limit: a network a session moved the
+        # unit to before the update stays in the saved-networks ring, and the
+        # unit rotates to it by itself; the remedy is a bearer Forget, then
+        # setting the unit up again. The PR's second review found it written
+        # nowhere while the docs said "no longer move". The code first: every
+        # join is written into the ring ...
+        ino = (WAP / "canary_wap.ino").read_text(encoding="utf-8")
+        self.assertIn("wifi_store_note_joined(g_wifi_creds.ssid, g_wifi_creds.password);", ino)
+        note = body_after(ino, "static void wifi_store_note_joined(const char* ssid, const char* pass) {", r"\n}\n")
+        self.assertIn("canary::net::wifi_store::add(g_wifi_store, ssid, pass)", note)
+        # ... the FAILED retry rotates to the next saved network before it
+        # rejoins, asking nobody: two NotFound reads and a ring of two ...
+        retry = body_after(ino, "    case WIFI_PROV_FAILED:\n", r"\n      break;\n")
+        self.assertLess(retry.index("wifi_store_rotate_if_due();"), retry.index("wifi_connect_to_home();"))
+        rotate = body_after(ino, "static void wifi_store_rotate_if_due() {", r"\n}\n")
+        first = [ln.strip() for ln in rotate.splitlines()[1:] if ln.strip()][0]
+        self.assertEqual(first, "if (g_improv_join_pending || g_wifi_notfound_streak < 2 || g_wifi_store.count < 2) return;")
+        self.assertIn("wifi_store_adopt(next);", rotate)
+        self.assertNotIn("api_auth", rotate)
+        # ... no route removes one saved network (the API serves only the
+        # count), and Forget wipes the whole ring.
+        self.assertNotIn("wifi_store::remove(", ino)
+        self.assertIn("ns.saved_networks = g_wifi_store.count;", ino)
+        clear = body_after(ino, "static bool wifi_clear_credentials() {", r"\n}\n")
+        self.assertIn("nvs->remove(canary::net::wifi_store::NVS_KEY);", clear)
+        self.assertIn("canary::net::wifi_store::init(g_wifi_store);", clear)
+        self.assertIn("wifi_clear_credentials();",
+                      body_after(ino, "static esp_err_t handle_wifi_forget(httpd_req_t* req) {", r"\n}\n"))
+        # The docs say so where they say the session no longer moves it.
+        sec = normalized((REPO / "docs/security/SECURITY_MODEL.md").read_text(encoding="utf-8"))
+        threat = normalized((REPO / "docs/security/THREAT_MODEL.md").read_text(encoding="utf-8"))
+        log = normalized((REPO / "CHANGELOG.md").read_text(encoding="utf-8"))
+        rotates = ("when the current network is not found twice running the unit tries "
+                   "the next saved one by itself (`wifi_store_rotate_if_due()`), with no "
+                   "request and no bearer")
+        for doc in (sec, threat):
+            self.assertIn("A network a session moved it to before F334 can stay among its "
+                          "saved networks", doc)
+            self.assertIn(rotates, doc)
+            self.assertIn("the remedy is a bearer Forget, which wipes the ring", doc)
+        self.assertIn("After updating: a network a session moved the unit to before this "
+                      "release can stay among its saved networks", log)
 
     def test_the_csi_macro_answers_a_held_bearer_429(self):
         # Sweep F339: the CSI routes' bearer is compared through the accounted

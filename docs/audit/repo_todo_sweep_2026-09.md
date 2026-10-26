@@ -1771,7 +1771,19 @@ so — see D2 below.)
   readback: `stubs/mqtt/Preferences.h` gained a remove-refusal hook, and
   `test_mqtt_reinit`'s a_refused_remove_reads_back_false fails on a
   `login_clear()` or a `config_clear()` that answers true regardless.
-  Host-tested (`test_provisioning_logic`'s keyless_join_open table,
+  The second review: only a phone session's start asked about setup, so a
+  window started during setup kept running when setup ended by another
+  path (the Bluetooth door's join, a second tab's standalone choice), up to
+  60 s in which a code held to the lens joined the unit to the network it
+  named with no bearer (an SCV1 code is held to no pair token, only to its
+  own expiry). The
+  per-frame check is now `provisioning_logic::scan_window_open()`: a boot
+  window keeps `keyless_join_open()`, a phone window holds only while
+  `setup_wizard::is_active()`. `test_provisioning_logic`'s scan_window_open
+  table fails 4 of its checks with the phone half answering true, and
+  `test_wifi_authority`'s text pin 2 of its 157 on the earlier task.
+  Host-tested (`test_provisioning_logic`'s keyless_join_open and
+  scan_window_open tables,
   `test_mqtt_reinit`'s forget_drops_the_broker_login,
   login_clear_waits_for_a_save, login_clear_on_a_row_without_one and
   a_refused_remove_reads_back_false, `test_wifi_authority`'s and
@@ -1839,6 +1851,21 @@ so — see D2 below.)
   against a spoofer, who gets the CONNECT on any reconnect; the CA-verified
   mode is the defense. (The reboot routes take the bearer since F361, for the
   lockout table's sake, not the link's.)
+  Known limit, the decision's own, written down by the PR's second review
+  (it was in no doc while they said the session "can no longer move" the
+  unit): a network a session moved the unit to before this release can stay
+  in the saved-networks ring. `wifi_store_note_joined()` writes every join
+  there (the CONNECTED transition), and the FAILED retry's
+  `wifi_store_rotate_if_due()` adopts the next saved network with no request
+  once the current one reads NotFound twice and the ring holds two or more,
+  so on a plain link the stored login then goes to whoever answers the
+  broker there. No route lists the ring or removes one entry (`GET
+  /api/status` carries only `saved_networks`, a count). Remedy: a bearer
+  Forget, which wipes the ring and the login, then setting the unit up
+  again. The CHANGELOG's after-updating checks, `SECURITY_MODEL.md`,
+  `THREAT_MODEL.md`'s MQTT row and the FAQ say so, and
+  `test_docs_claims.py` holds those code facts and the first three's
+  sentences (`test_a_network_saved_before_f334_stays_saved_and_the_docs_say_so`).
   Filed: F353, the bearer token cannot be rotated. Host-tested
   (`test_wifi_authority`, `dashboard_gates.test.js`), not bench-tested (U1
   rows, plain HTTP).
@@ -1886,7 +1913,10 @@ so — see D2 below.)
     alone 401 with no strike; a wrong bearer 403 and one strike for that
     address; another host served at once; the striking host 429 with
     Retry-After until its backoff runs out, then served. It fails on the old
-    wrapper.
+    wrapper. Its `test_sketch_text` holds `POST /api/vault/key` and `POST
+    /api/mesh/pair/confirm` registered once each, on those two wrappers (the
+    PR's second review: a session wrapper registered in their place passed
+    every check; one check fails on each such sketch now).
   - `dashboard_gates.test.js` 'Credential grants ask for sign-in (F335, F346)'
     and 'The shared sign-in (F334, F335, F346)'.
   Host-tested; the ESP32 compile is CI's; not bench-tested (U1 row F335, plain
@@ -3610,7 +3640,8 @@ so — see D2 below.)
     name, and a mutant that calls the grant on every poll fails the grant
     count.
   - `test_receipt_grant.cpp` `test_credential_grants_take_the_bearer` (the
-    mesh confirm row).
+    mesh confirm row), and its `test_sketch_text`, which holds the route's
+    registration to that wrapper (F335 above).
   - `dashboard_gates.test.js` 'Credential grants ask for sign-in (F335,
     F346)'.
   Host-tested; the ESP32 compile is CI's; not bench-tested (U1 row F346, plain
@@ -3724,7 +3755,7 @@ so — see D2 below.)
   check holds the gate's place and inputs (`broker_gate_problems()`), and
   `test_mqtt_reinit.cpp` holds what it decides, as the check's docstring
   says. Measured at 3e593a01, and again on this PR's tree (2026-10-26:
-  3063 checks, 54 tests at baseline; the call-site mutations and the
+  3088 checks, 55 tests at baseline; the call-site mutations and the
   survivor below too), on 11 chosen mutations of
   `move_needs_password()`'s body: ignore the bearer, invert it, answer always
   false, always true, or `!bearer` alone, and drop each of the host, port,
@@ -4491,6 +4522,13 @@ so — see D2 below.)
   install on the bearer would be a new decision, not this one. Host-tested;
   not bench-tested (U1 row "A session's reboot restarts nothing (F361)", whose
   step 5 is that install).
+  Second review fix (same PR): F344's three other copies of the blind-write
+  sentence still said "a reboot, or any other write a session may make": the
+  comment above `request_host_names_device()`, the sketch's README and the
+  CHANGELOG's F344 entry, in the same unreleased section. Each now says only
+  the firmware install restarts the unit, and `test_docs_claims.py`'s
+  `RETIRED_IN` holds each file to it (F344's own entry above keeps the
+  sentence as it stood then).
 - [ ] **F362 [code+decision] canary-sense, canary-vision and canary-sentinel
   store a new key over a stored one they fail to read.**
   `load_or_generate_keypair()` (`src/witness.cpp:58`, the same lines in all

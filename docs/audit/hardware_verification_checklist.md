@@ -3257,7 +3257,9 @@ ships, so no stock WAP serves HTTPS (F15). An HTTPS variant of any row is
 blocked until a WAP serves HTTPS. Code: `wifi_change_authorize()`, the
 Forget, Disconnect, reboot and safe-mode-retry wrappers,
 `handle_qr_scan_start()`, `handle_wifi_forget()`,
-`ble_improv_door_should_open()`, `qr_auto_scan_tick()`,
+`ble_improv_door_should_open()`, `qr_auto_scan_tick()`, `qr_scan_task_fn()`
+(its per-frame `provisioning_logic::scan_window_open()`),
+`wifi_store_rotate_if_due()`,
 `handle_vault_key_set_auth()` and `handle_mesh_pair_confirm_auth()` in
 `canary_wap.ino`; `bt_bearer_gated` and `handle_bluetooth_status()` in
 `bluetooth_api.h`; `csi_mqtt::login_clear()`; the sign-in, the Wi-Fi,
@@ -3311,6 +3313,24 @@ vault, Bluetooth, opera and device cards in `web_ui.h`. Owner: U1.
   - Repro: `POST /api/wifi/forget` with the bearer, then show the display's code.
   - Expected: the WAP joins; `GET /api/mqtt/config` shows the display's host, user '' and `password_set:false`; the broker logs a CONNECT with no username. Type the login on /mqtt with the session: `password_set:true`, and the next CONNECT carries it.
   - Artifact: `docs/audit/repro/wap-network-authority/forget-login/`.
+- [ ] **A phone's scan ends when setup does (F334, the second review)**
+  - Setup: an unprovisioned camera WAP (`FEATURE_QR_PROVISION`) in first-boot setup, serial attached; a phone on its SoftAP with the wizard open at `http://192.168.4.1/`; a second phone showing a `WIFI:` code for a test network.
+  - Repro:
+    1. In the wizard, choose to scan a code with the camera; the scan starts.
+    2. Within 60 s, open the wizard in a second tab and choose standalone.
+    3. At once hold the `WIFI:` code to the lens for 60 s; then read serial, `GET /api/wifi` and `GET /api/logs`.
+  - Expected: the first tab's scan card says it stopped; no success chirp and no "WiFi credentials applied via QR scan" line; `GET /api/wifi` still reads AP-only with no network stored. Repeat with the window ended by a join through the Bluetooth setup door instead of step 2: the same, and the unit stays on the door's network.
+  - Artifact: `docs/audit/repro/wap-network-authority/phone-scan-after-setup/`.
+- [ ] **A network a session saved before the update (F334's known limit)**
+  - Setup: a FULL WAP on the previous release, set up on the home router (plain HTTP); a second test router `EvilNet`; a laptop; the recovery kit.
+  - Repro:
+    1. `curl -s http://<wap>/` and read `cv_pair` from the Open dashboard link.
+    2. `curl -X POST http://<wap>/api/wifi/connect -H 'Content-Type: application/json' -d '{"token":"<cv_pair>","ssid":"EvilNet","password":"<its key>"}'`, and wait for the join.
+    3. Move it back to the home router with the dashboard's Connect, then update it to this release.
+    4. Power the home router off and wait 3 minutes (two 30 s retries that find no network, then the next); from a laptop on `EvilNet`, read `GET /api/status` and `GET /api/logs` with the bearer.
+    5. Power the home router on, join the WAP again, press Remove credentials with the API token, set the unit up again on the home router, and repeat step 4.
+  - Expected: step 4: the log reads "Network not found twice - trying the next saved network" naming `EvilNet`, and the unit is on `EvilNet` with `saved_networks` 2, no request made. Step 5: `saved_networks` reads 1 after setup, and with the home router off the unit joins nothing else.
+  - Artifact: `docs/audit/repro/wap-network-authority/saved-ring/`.
 
 - [ ] **canary-wap: a session registers no vault key (F335)**
   - Setup: one canary-wap FULL build with camera and SD (FEATURE_VAULT_SNAPSHOT), set up on the home Wi-Fi (plain HTTP, the stock posture); its API token from the recovery kit; a computer browser that loaded `http://canary-<suffix>.local/` (holds `cv_session`); a second host B on the LAN with curl; an X25519 key from `unseal_snapshot.py gen-key`.
