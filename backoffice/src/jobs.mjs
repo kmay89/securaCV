@@ -72,8 +72,8 @@ export const JOBS = {
     const checked = checkBackup(b.path, { expect: liveCounts(db) });
     if (!checked.ok) { await raise(db, cfg, 'backup:check', 'backup [unchecked]: the nightly copy failed its checks', checked.errors.join('\n')); throw new Error(`backup check failed: ${checked.errors.join('; ')}`); }
     await resolve(db, cfg, 'backup:check', 'A checked backup exists again.');
-    let offsite = { skipped: 'BACKUP_S3_URL / KEY / SECRET not set' };
-    if (offsiteConfigured(cfg)) {
+    let offsite = { skipped: cfg.offsiteWrites === false ? `off-site writes are off in ${cfg.env}` : 'BACKUP_S3_URL / KEY / SECRET not set' };
+    if (offsiteConfigured(cfg) && cfg.offsiteWrites !== false) {
       try { offsite = await uploadOffsite(cfg, b.path, { fetchImpl: app.fetchImpl || timedFetch }); await resolve(db, cfg, 'backup:offsite', 'The off-site copy is current again.'); }
       catch (e) { offsite = { error: String(e.message || e) }; await raise(db, cfg, 'backup:offsite', 'backup [off-site failed]: the copy did not reach the bucket', `${e.message}\n\nThe local backup is checked; only the off-site copy is missing. Check BACKUP_S3_URL / KEY / SECRET and the bucket's permissions.`); }
     }

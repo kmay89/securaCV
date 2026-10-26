@@ -13,6 +13,11 @@ export const money = (cents, cur = 'usd') => {
 // Times show in the operator's zone (OPERATOR_TZ); storage stays UTC ISO.
 let TZ = 'UTC';
 export const currentTz = () => TZ;
+// The environment every page names (env.mjs sets it once at boot): a badge beside the company name, a
+// prefix in the title, and for staging a banner — so a production tab and a staging tab are never confused.
+let ENV = { name: 'development', badge: 'dev', banner: '' };
+export function setEnvironment(name, { badge = '', banner = '' } = {}) { ENV = { name, badge, banner }; return ENV; }
+export const currentEnv = () => ENV;
 export function setTimezone(tz) { try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); TZ = tz || 'UTC'; } catch { TZ = 'UTC'; } return TZ; }
 export const timezone = () => TZ;
 const parts = (d, tz = TZ) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: 'short' }).formatToParts(d).map(p => [p.type, p.value]));
@@ -117,9 +122,10 @@ export function layout({ title, body, path = '/', flash = null, company = 'Errer
   const on = (p) => path === p || (p !== '/' && path.startsWith(p));
   const navHtml = nav ? `<nav aria-label="Sections">${groups.map(([g, items]) => `${g ? `<div class="g">${e(g)}</div>` : ''}${items.map(([p, l]) => `<a href="${p}" class="${on(p) ? 'on' : ''}">${l}</a>`).join('')}`).join('')}</nav>` : '';
   const flashHtml = flash ? `<div class="flash ${flash.kind === 'err' ? 'err' : ''}">${escapeHtml(flash.text)}</div>` : '';
-  const side = nav ? `<aside><div class="brand">${e(company)}${demo ? ' <span class="pill warn">demo</span>' : ''}</div><form method="get" action="/search" class="search" role="search"><input type="search" name="q" value="${e(q)}" placeholder="Search anything…" aria-label="Search"></form>${navHtml}<div class="foot"><span>${user ? `<a href="/me" title="your account">${e(user.name)}</a> · ${e(user.role)}` : 'one SQLite file'}</span><form method="post" action="/logout" class="inline"><input type="hidden" name="_csrf" value="${e(csrf)}"><button class="quiet" style="padding:.25rem .6rem;font-size:12px">Log out</button></form></div></aside>` : '';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex"><title>${e(title)} · ${e(company)} backoffice</title><style>${CSS}</style></head>
-<body>${demo ? '<div class="demo">Demo — every name, order and dollar is synthetic; nothing is sent, charged or reported anywhere. <a href="/demo">Scenarios</a></div>' : ''}<div class="frame ${nav ? '' : 'solo'}">${side}<div><main>${flashHtml}${h1 ? `<h1>${e(title)}</h1>` : ''}${body}</main>${nav ? '' : `<footer>backoffice · one SQLite file, no SaaS · <a href="/api">API</a> · <a href="/status">public status</a></footer>`}</div></div>${nav ? `<script>${NAV_SCRIPT}</script>` : ''}</body></html>`;
+  const envBadge = demo ? '' : ENV.badge ? ` <span class="pill ${ENV.name === 'staging' ? 'warn' : ''}" title="BACKOFFICE_ENV=${e(ENV.name)}">${e(ENV.badge)}</span>` : '';
+  const side = nav ? `<aside><div class="brand">${e(company)}${demo ? ' <span class="pill warn">demo</span>' : ''}${envBadge}</div><form method="get" action="/search" class="search" role="search"><input type="search" name="q" value="${e(q)}" placeholder="Search anything…" aria-label="Search"></form>${navHtml}<div class="foot"><span>${user ? `<a href="/me" title="your account">${e(user.name)}</a> · ${e(user.role)}` : 'one SQLite file'}</span><form method="post" action="/logout" class="inline"><input type="hidden" name="_csrf" value="${e(csrf)}"><button class="quiet" style="padding:.25rem .6rem;font-size:12px">Log out</button></form></div></aside>` : '';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex"><title>${demo || !ENV.badge ? '' : `[${e(ENV.badge)}] `}${e(title)} · ${e(company)} backoffice</title><style>${CSS}</style></head>
+<body>${demo ? '<div class="demo">Demo — every name, order and dollar is synthetic; nothing is sent, charged or reported anywhere. <a href="/demo">Scenarios</a></div>' : ENV.banner ? `<div class="demo envbar">${e(ENV.banner)}</div>` : ''}<div class="frame ${nav ? '' : 'solo'}">${side}<div><main>${flashHtml}${h1 ? `<h1>${e(title)}</h1>` : ''}${body}</main>${nav ? '' : `<footer>backoffice · one SQLite file, no SaaS · <a href="/api">API</a> · <a href="/status">public status</a></footer>`}</div></div>${nav ? `<script>${NAV_SCRIPT}</script>` : ''}</body></html>`;
 }
 
 // Short, identifying columns never wrap (a number, a date, a status); the table scrolls sideways instead of folding them.

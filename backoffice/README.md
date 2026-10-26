@@ -110,10 +110,15 @@ Room page can carry a "try the demo" link to it.
 
 ## Going live, and staying reliable
 
-[`GO_LIVE.md`](GO_LIVE.md) is the order: a shadow fortnight in Stripe test
-mode, backups proven in two places (sealed off-site, a weekly restore
-drill), an outside monitor on `/api/health`, the morning digest, then the
-live keys. The Health page and `backoffice doctor` show the same checklist,
+[`GO_LIVE.md`](GO_LIVE.md) is the order: three copies that each say which
+they are (production, staging on last night's data, the demo), a shadow
+fortnight in Stripe test mode, backups proven in two places (sealed off-site,
+a weekly restore drill), an outside monitor on `/api/health`, the morning
+digest, then the live keys. Every merge deploys to staging; production
+changes only by the "Promote backoffice to production" button
+([`../docs/RELEASE_BUTTONS.md`](../docs/RELEASE_BUTTONS.md)), and a build
+takes a copy of the data before any migration it applies
+([`src/migrations/README.md`](src/migrations/README.md)). The Health page and `backoffice doctor` show the same checklist,
 green when each is done. [`SECURITY.md`](SECURITY.md) says what is defended
 and what is not.
 
@@ -249,11 +254,12 @@ shows once the webhook has recorded the order).
   both on its shipping option, so Stripe's page says the same thing.
 - **The sale lands by webhook as before**; a site order also gets "We have
   your order" with the batch, the ship date, the window and the status link.
-- **Tax.** `TAX_MODE=none` collects nothing, which is only right while you owe
-  sales tax nowhere; `TAX_MODE=stripe` turns on Stripe Tax (computed by the
-  shipping address at checkout, a per-transaction fee), which is the honest
-  setting from the first taxable sale. The books carry whatever Stripe
-  collected either way.
+- **Tax.** The `stripe_tax` feature flag (Settings → Feature flags, or
+  `FLAG_STRIPE_TAX=1`; `TAX_MODE=stripe` is the old spelling) turns on Stripe
+  Tax (computed by the shipping address at checkout, a per-transaction fee),
+  which is the honest setting from the first taxable sale. Off collects
+  nothing, which is only right while you owe sales tax nowhere. The books
+  carry whatever Stripe collected either way.
 - **Demo mode takes no payments**: `/store/checkout` answers 503 and the site
   falls back to its own cart; the walkthrough drives `createCheckout` against
   a stub Stripe instead. `tests/storefront.test.mjs` holds the cadence across
@@ -342,6 +348,20 @@ Three numbers show up around an order, and each has one source.
   SameSite=Lax` (Lax so a code the phone's camera scans opens the bench
   logged in; every write is a POST under the CSRF token and the cross-site
   refusal).
+
+## Feature flags
+
+A change that should exist in the code before it is on for everyone is a
+flag: declared once in `src/flags.mjs` (name, kind, default, owner, what it
+does), read at the one branch with `isOn(db, cfg, 'name')`, flipped on
+Settings or through `POST /api/flags/:name`, every flip an audit row. The
+environment can pin one (`FLAG_<NAME>=1|0`), which is how staging runs
+tomorrow's behavior on yesterday's data; Settings shows which source answers.
+Two kinds: a *rollout* carries a `remove_by` date and the doctor names it once
+that passes (a rollout is temporary — when it is on for good, delete the flag
+and the branch it guarded); a *switch* is an operator's standing choice and
+has no date. `tests/flags.test.mjs` holds the precedence, the refusals and the
+audit.
 
 ## Layout
 

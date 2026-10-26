@@ -94,6 +94,25 @@ ship without them. On the tag-push path (which has no inputs), set the
 then clear the variable. Dev-channel builds only report; they never block on
 this.
 
+### Promote backoffice to production
+
+Sends one build of the backoffice to the production app on the server. With
+the `tag` field empty it asks the server which build staging runs and promotes
+that; name a tag to promote (or roll back to) a specific build, the 12-char
+commit `kit ps` shows. The server pulls it, starts it, waits for healthy, and
+rolls back to the previous tag by itself if it is not; the workflow then proves
+from outside that production answers `ok production <tag>` on `/healthz`.
+
+**Use it:** every time a backoffice change has merged, landed on staging (that
+happens by itself, within minutes) and you have looked at it there. This is
+the only way production changes; merging alone never touches it.
+
+**Don't:** promote a tag staging has not run, or `latest` (refused — name the
+build). If the outside check fails, `kit ps` on the server says what runs and
+`kit deploy backoffice <previous>` is the way back; the backoffice took a copy
+of its data before any migration the new build applied, so a bad build is
+undone in two steps (`backoffice/src/migrations/README.md`).
+
 ### Flasher Factory Images
 
 Rebuilds *only* the browser-flasher factory images and `manifest-flash.json`, and
