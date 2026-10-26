@@ -33,6 +33,11 @@ export function loadConfig(overrides = {}) {
     backupEncryptionKey: env('BACKUP_ENCRYPTION_KEY', ''),             // a passphrase; off-site copies are sealed (AES-256-GCM) under it
     backupS3Key: env('BACKUP_S3_KEY', ''), backupS3Secret: env('BACKUP_S3_SECRET', ''), backupS3Region: env('BACKUP_S3_REGION', 'us-east-1'),
     operatorEmail: env('OPERATOR_EMAIL', env('SUPPORT_ADDR', '')),
+    notifyNewOrder: env('NOTIFY_NEW_ORDER', '1') === '1',                 // a new order mails the operator the minute it lands (and pushes, below)
+    ntfyUrl: env('NTFY_URL', ''), ntfyToken: env('NTFY_TOKEN', ''),      // optional: an ntfy topic URL for a phone push on a new order — off unless set
+    recoveryHours: Number(env('CHECKOUT_RECOVERY_HOURS', '1')),          // an abandoned checkout with an email gets its one follow-up this long after it expires
+    shippoToken: env('SHIPPO_API_TOKEN', ''),                             // labels from the ship bench (Shippo; the website's fulfill.mjs uses the same account)
+    shipFrom: { name: env('SHIP_FROM_NAME', ''), company: env('SHIP_FROM_COMPANY', env('COMPANY', '')), line1: env('SHIP_FROM_LINE1', ''), line2: env('SHIP_FROM_LINE2', ''), city: env('SHIP_FROM_CITY', ''), state: env('SHIP_FROM_STATE', 'MA'), zip: env('SHIP_FROM_ZIP', ''), phone: env('SHIP_FROM_PHONE', ''), email: env('SHIP_FROM_EMAIL', '') },   // the return address on every label
     tz: env('OPERATOR_TZ', 'UTC'),                                     // every time the admin shows, the digest hour, campaign scheduling
     shipFromState: env('SHIP_FROM_STATE', 'MA'),                        // the delivery estimate counts from here
     batchCloseDay: Number(env('BATCH_CLOSE_DAY', '0')),                 // the batch cadence the store promises: orders in by this weekday (0 = Sunday)…

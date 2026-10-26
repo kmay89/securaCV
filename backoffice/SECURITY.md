@@ -180,6 +180,12 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   request is given a minute, and every outbound call (Stripe, SMTP, IMAP,
   S3, GitHub, a probe) is abandoned after 20 seconds (two minutes for a
   backup upload), so one dead peer never pins the scheduler.
+- **Two outbound calls the operator chooses.** Shippo (`SHIPPO_API_TOKEN`)
+  receives one order's shipping address and parcel when the ship bench buys
+  its label — the same call the website's `fulfill.mjs` makes. An ntfy topic
+  (`NTFY_URL`) receives a new order's number, money, lines and ship day,
+  never a name or an address. Both are off unless set, both are muted in
+  staging and the demo, and both are named on the Health page.
 - **An outbound probe to the inside.** The Health page's "probe a URL" is
   refused for loopback, link-local and private addresses and for
   metadata hosts, so it cannot be turned on the box or its network.

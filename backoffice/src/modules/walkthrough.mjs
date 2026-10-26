@@ -44,7 +44,7 @@ const silent = (cfg) => ({ ...cfg, githubToken: '', smtpUrl: '' });
 // that is neither flagged as a demo nor empty is never wiped from here.
 export function startEmpty(db) {
   if (!isDemo(db) && !isEmpty(db)) throw new Error('refusing to empty: this database is not flagged as a demo and is not empty');
-  const tables = ['attachments', 'purchase_order_items', 'purchase_orders', 'recalls', 'ticket_messages', 'tickets', 'warranty_claims', 'order_events', 'order_items', 'orders', 'discounts', 'invoice_items', 'invoices', 'subscriptions', 'inventory_moves', 'recipes', 'inventory_items', 'devices', 'waitlist', 'contacts', 'mail_outbox', 'mail_seen', 'campaigns', 'probe_results', 'probes', 'incidents', 'ledger', 'exceptions', 'canned_replies', 'stripe_events', 'job_runs', 'audit_log'];
+  const tables = ['attachments', 'purchase_order_items', 'purchase_orders', 'recalls', 'ticket_messages', 'tickets', 'warranty_claims', 'order_events', 'order_items', 'orders', 'discounts', 'invoice_items', 'invoices', 'subscriptions', 'inventory_moves', 'recipes', 'inventory_items', 'devices', 'waitlist', 'contacts', 'mail_outbox', 'mail_seen', 'campaigns', 'probe_results', 'probes', 'incidents', 'ledger', 'exceptions', 'canned_replies', 'stripe_events', 'job_runs', 'audit_log', 'checkout_sessions'];
   for (const t of ['automation_runs']) if (db.get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", t)) tables.push(t);
   db.exec('PRAGMA foreign_keys = OFF');
   try { db.tx(() => { for (const t of tables) db.run(`DELETE FROM ${t}`); db.run("DELETE FROM settings WHERE key LIKE 'seq:%' OR key LIKE 'walkthrough:%' OR key LIKE 'backup:%' OR key LIKE 'drill:%' OR key LIKE 'reconcile:%'"); }); }

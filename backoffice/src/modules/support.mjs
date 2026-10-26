@@ -67,9 +67,9 @@ export const ticketById = (db, id) => { const t = db.get('SELECT t.*, c.email, c
 export const ticketByNumber = (db, n) => { const t = db.get('SELECT id FROM tickets WHERE number = ?', n); return t ? ticketById(db, t.id) : null; };
 export const listTickets = (db, { status = '', kind = '', q = '', limit = 300 } = {}) => db.all(
   `SELECT t.*, c.email FROM tickets t LEFT JOIN contacts c ON c.id = t.contact_id
-   WHERE (? = '' OR t.status = ?) AND (? = '' OR t.kind = ?) AND (? = '' OR t.subject LIKE ? OR c.email LIKE ? OR t.number LIKE ?)
-   ORDER BY CASE t.status WHEN 'closed' THEN 1 ELSE 0 END, CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, t.updated_at DESC LIMIT ?`,
-  status, status, kind, kind, q, `%${q}%`, `%${q}%`, `%${q}%`, limit);
+   WHERE (? = '' OR t.status = ? OR (? = 'needs' AND t.status IN ('open','waiting_on_us'))) AND (? = '' OR t.kind = ?) AND (? = '' OR t.subject LIKE ? OR c.email LIKE ? OR t.number LIKE ?)
+   ORDER BY CASE t.status WHEN 'closed' THEN 1 ELSE 0 END, CASE WHEN t.first_response_at IS NULL AND t.status IN ('open','waiting_on_us') THEN t.sla_due_at ELSE '9' END, CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, t.updated_at DESC LIMIT ?`,
+  status, status, status, kind, kind, q, `%${q}%`, `%${q}%`, `%${q}%`, limit);
 export const queue = (db) => db.all('SELECT t.*, c.email FROM tickets t LEFT JOIN contacts c ON c.id = t.contact_id WHERE t.status IN (\'open\',\'waiting_on_us\') ORDER BY t.sla_due_at');
 
 export function reply(db, ticketId, body, { cfg = {}, actor = 'web', close = false } = {}) {
@@ -222,6 +222,7 @@ export function htmlToText(html) {
   return out.replace(/&(nbsp|amp|lt|gt|quot|#39|#x27);/g, (_, e) => ({ nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", '#x27': "'" }[e]));
 }
 
+export const ticketCounts = (db) => { const out = { open: 0, waiting_on_us: 0, waiting_on_customer: 0, closed: 0 }; for (const r of db.all('SELECT status, COUNT(*) AS n FROM tickets GROUP BY status')) out[r.status] = r.n; out.needs = out.open + out.waiting_on_us; out.all = out.needs + out.waiting_on_customer + out.closed; return out; };
 export const supportStats = (db) => ({
   open: db.get('SELECT COUNT(*) AS n FROM tickets WHERE status IN (\'open\',\'waiting_on_us\')').n,
   breached: db.get('SELECT COUNT(*) AS n FROM tickets WHERE status IN (\'open\',\'waiting_on_us\') AND first_response_at IS NULL AND sla_due_at < ?', nowIso()).n,

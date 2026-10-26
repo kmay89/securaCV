@@ -12,6 +12,7 @@ import { raise, resolve } from './modules/exceptions.mjs';
 import { backup, checkBackup, liveCounts, uploadOffsite, restoreDrill, offsiteConfigured } from './modules/backup.mjs';
 import { reconcile } from './modules/reconcile.mjs';
 import { pollTracking } from './modules/shipping.mjs';
+import { runRecovery } from './modules/recovery.mjs';
 import { hourIn } from './render.mjs';
 import { enqueue } from './modules/mail.mjs';
 import { unreconciledStripeCents } from './modules/ledger.mjs';
@@ -92,6 +93,8 @@ export const JOBS = {
   reconcile: [86400, async (app) => reconcile(app.db, app.cfg, { fetchImpl: app.fetchImpl || timedFetch })],
   // Hourly, with USPS credentials: where every open shipment is; delivered when the carrier says so.
   tracking: [3600, async (app) => pollTracking(app.db, app.cfg, { fetchImpl: app.fetchImpl || timedFetch })],
+  // An abandoned checkout with an email gets its one follow-up, CHECKOUT_RECOVERY_HOURS after it expired (recovery.mjs).
+  recovery: [600, async ({ db, cfg }) => runRecovery(db, cfg)],
   // Once a day at DIGEST_HOUR (UTC): today's list, the numbers, the health checklist, to the operator.
   digest:   [600, async ({ db, cfg }) => {
     if (!cfg.operatorEmail) return { skipped: 'OPERATOR_EMAIL not set' };

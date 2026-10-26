@@ -2,6 +2,8 @@
 // a person can read — configuration, backups and their proofs, the books,
 // probes, jobs, disk — with what to do about each. The same list is the
 // Health page, `backoffice doctor`, and the top of the morning digest.
+import { attention } from '../attention.mjs';
+import { shipFromIssues } from './labels.mjs';
 import { statfsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { hasOperator } from '../auth.mjs';
@@ -42,6 +44,7 @@ export function doctor(db, cfg) {
   const defaultUrl = /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(cfg.baseUrl);
   add('base_url', 'The codes on slips and labels point here', demo ? null : !defaultUrl, demo ? 'demo mode' : defaultUrl ? `BACKOFFICE_BASE_URL is ${cfg.baseUrl} — a phone scanning a slip lands nowhere` : cfg.baseUrl, 'set BACKOFFICE_BASE_URL to the address the phone reaches');
   const sh = shippingStatus();
+  add('labels', 'Labels from the ship bench', demo ? null : cfg.shippoToken ? shipFromIssues(cfg).length === 0 : null, demo ? 'demo labels (pretend, printable)' : cfg.shippoToken ? (shipFromIssues(cfg).length ? `SHIPPO_API_TOKEN set, return address incomplete: ${shipFromIssues(cfg).join(', ')}` : `SHIPPO_API_TOKEN set · from ${cfg.shipFrom.city}, ${cfg.shipFrom.state}`) : 'no SHIPPO_API_TOKEN — labels come from the website\'s fulfill.mjs and the manifest', 'set SHIPPO_API_TOKEN and SHIP_FROM_NAME/LINE1/CITY/STATE/ZIP');
   add('shipping_data', 'Box data (shipping.json) for the pack bench', demo ? null : sh.loaded_at ? !sh.error || hoursSince(sh.loaded_at) < 24 : sh.error ? false : null, demo ? 'demo boxes' : sh.loaded_at ? `${sh.boxes} boxes, ${sh.parcels} parcels · loaded ${fmtH(hoursSince(sh.loaded_at))}${sh.error ? ` · last refresh failed: ${sh.error}` : ''}` : sh.error ? sh.error : 'not asked for yet — opens with the first order page', 'set SHIPPING_JSON (or put shipping.json beside store.json) so boxes are planned, not guessed');
   add('smtp', 'Outbound mail relay', demo ? null : !!cfg.smtpUrl, demo ? 'demo transport' : cfg.smtpUrl ? 'SMTP_URL set' : 'mail is queued, never sent', 'set SMTP_URL to a relay with SPF/DKIM for your domain');
   add('imap', 'Support mailbox read', demo ? null : !!cfg.imapUrl, demo ? 'demo mode' : cfg.imapUrl ? 'IMAP_URL set' : 'inbound mail is not read', 'set IMAP_URL and SUPPORT_ADDR');
@@ -82,17 +85,9 @@ export function doctor(db, cfg) {
 
 // What needs doing today, as lines — the Home page's list and the digest's.
 export function todayLines(db, cfg, { base = '' } = {}) {
-  const o = orderStats(db), s = supportStats(db), low = lowStock(db), ex = openExceptions(db);
-  const w = db.get('SELECT COUNT(*) AS n FROM warranty_claims WHERE status IN (\'open\',\'shipping\')').n;
-  const inv = db.get('SELECT COALESCE(SUM(total_cents),0) AS c, COUNT(*) AS n FROM invoices WHERE status IN (\'sent\',\'overdue\')');
-  const lines = [];
-  if (o.open) lines.push({ n: o.open, what: `order${o.open === 1 ? '' : 's'} to pack or ship`, href: `${base}/pack`, action: 'Open the pack bench' });
-  if (s.open) lines.push({ n: s.open, what: `support ticket${s.open === 1 ? '' : 's'} waiting on us${s.breached ? ` (${s.breached} past SLA)` : ''}`, href: `${base}/tickets?status=open`, action: 'Answer', urgent: s.breached > 0 });
-  if (low.length) lines.push({ n: low.length, what: `part${low.length === 1 ? '' : 's'} at or under the reorder point: ${low.map(i => i.sku).join(', ')}`, href: `${base}/inventory`, action: 'Reorder' });
-  if (w) lines.push({ n: w, what: `warranty claim${w === 1 ? '' : 's'} open`, href: `${base}/warranty`, action: 'Resolve' });
-  if (inv.n) lines.push({ n: inv.n, what: `invoice${inv.n === 1 ? '' : 's'} outstanding, $${(inv.c / 100).toFixed(2)}`, href: `${base}/invoices`, action: 'Chase' });
-  if (ex.length) lines.push({ n: ex.length, what: `exception${ex.length === 1 ? '' : 's'} need a decision: ${ex.map(e => e.key).join(', ')}`, href: `${base}/exceptions`, action: 'Decide', urgent: true });
-  return lines;
+  // One list for the home page, the sidebar and this mail: attention.mjs ranks it by deadline (the
+  // health row is left out here; the digest has its own HEALTH section and the home its pill).
+  return attention(db, cfg).items.filter(i => i.key !== 'health').map(i => ({ n: i.n, what: i.what, href: `${base}${i.href}`, action: i.action, urgent: i.level === 'now', level: i.level, due: i.due }));
 }
 
 // The morning mail: today's list, the thirty-day numbers, the health checklist. Plain text, one screen.
