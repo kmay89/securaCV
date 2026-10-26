@@ -48,7 +48,7 @@ export function envRules(cfg, db) {
     if (cfg.smtpUrl && !cfg.stagingAllowMail) warn('SMTP_URL is set but staging mutes mail (STAGING_ALLOW_MAIL=1 to send from a throwaway relay)');
   }
   if (env === 'demo') {
-    for (const [k, v] of [['SMTP_URL', cfg.smtpUrl], ['IMAP_URL', cfg.imapUrl], ['STRIPE_API_KEY', cfg.stripeApiKey], ['GITHUB_TOKEN', cfg.githubToken]]) if (v) warn(`${k} is set but the demo never uses it (ignored)`);
+    for (const [k, v] of [['SMTP_URL', cfg.smtpUrl], ['IMAP_URL', cfg.imapUrl], ['STRIPE_API_KEY', cfg.stripeApiKey], ['GITHUB_TOKEN', cfg.githubToken], ['SHIPPO_API_TOKEN', cfg.shippoToken], ['NTFY_URL', cfg.ntfyUrl]]) if (v) warn(`${k} is set but the demo never uses it (ignored)`);
   }
   if (env === 'development' && cfg.secure && !/^https:\/\/(localhost|127\.0\.0\.1)/.test(cfg.baseUrl)) warn(`BACKOFFICE_BASE_URL is public (${cfg.baseUrl}) but BACKOFFICE_ENV is not set — set it to production, staging or demo so the pages say which this is`);
   return out;
@@ -64,6 +64,7 @@ export function applyEnv(cfg, db) {
   if (env === 'staging') {
     // what staging may never do: post issues, reach the real mailbox, write to the backup bucket
     cfg.githubToken = ''; cfg.githubRepo = '';
+    cfg.shippoToken = ''; cfg.ntfyUrl = '';   // staging buys no postage and pushes to no phone
     if (!cfg.stagingAllowMail) { cfg.smtpUrl = ''; cfg.imapUrl = ''; }
     cfg.offsiteWrites = false;
   }

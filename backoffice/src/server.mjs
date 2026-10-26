@@ -8,6 +8,8 @@ import { layout, setTimezone, setEnvironment, dt as fmtDt, day as fmtDay , setAt
 import { applyEnv, ENV_TEXT } from './env.mjs';
 import { attention } from './attention.mjs';
 import { customerLine, orderPromise } from './modules/promise.mjs';
+import { markSessionPaid, markSessionExpired } from './modules/recovery.mjs';
+import { newOrderNudge } from './modules/notify.mjs';
 import { build, recordBoot } from './version.mjs';
 import { listFlags, setFlag, clearFlag } from './flags.mjs';
 import { orderToken, deliveryLine, trackingUrl } from './modules/delivery.mjs';
@@ -18,7 +20,7 @@ import { registerUsers } from './admin_users.mjs';
 import { loadCatalog, loadShipping } from './modules/catalog.mjs';
 import { verifyStripeSignature, eventToOrder, fetchLineItems, resolveDiscountCode } from './modules/stripe.mjs';
 import { storefrontCatalog, estimateForZip, createCheckout, sessionStatus, StoreError, oversoldLines } from './modules/storefront.mjs';
-import { recordOrder, refund, orderByNumber, transition, listOrders, timeline, addNote, addEvent, setTags, batches, statusCounts } from './modules/orders.mjs';
+import { recordOrder, refund, orderByNumber, transition, updateShipping, listOrders, timeline, addNote, addEvent, setTags, batches, statusCounts } from './modules/orders.mjs';
 import { listCustomers, contactById, customerStats, setContactTags } from './modules/contacts.mjs';
 import { listDiscounts, createDiscount, setDiscountStatus, evaluate as evaluateDiscount } from './modules/discounts.mjs';
 import { analytics } from './modules/analytics.mjs';
@@ -49,7 +51,7 @@ export function createApp({ db, cfg }) {
   cfg.secret = cfg.secret || db.setting('app:secret') || (() => { const s = randomBytes(32).toString('base64url'); db.setSetting('app:secret', s); return s; })();
   // Demo mode: synthetic data, and a hard rule that nothing reaches a real service.
   if (cfg.demo || isDemo(db)) {
-    cfg.demo = true; cfg.githubToken = ''; cfg.imapUrl = ''; cfg.smtpUrl = ''; cfg.stripeApiKey = '';
+    cfg.demo = true; cfg.githubToken = ''; cfg.imapUrl = ''; cfg.smtpUrl = ''; cfg.stripeApiKey = ''; cfg.shippoToken = ''; cfg.ntfyUrl = '';
     cfg.stripeWebhookSecret = DEMO_WEBHOOK_SECRET;
     cfg.mailFrom = cfg.mailFrom || 'Errer Labs (demo) <demo@backoffice.example.test>';
     cfg.baseUrl = localBase(cfg); cfg.siteOrigin = cfg.baseUrl;   // every link, probe and scenario stays on this machine
@@ -98,8 +100,22 @@ export function createApp({ db, cfg }) {
   router.get('/o/:number/:token', (c) => {
     const o = orderByNumber(db, c.params.number);
     if (!o || !safeEqual(orderToken(cfg.secret, o.number), c.params.token)) throw new HttpError(404, 'no such order');
-    html(c.res, orderStatusPage(cfg, o), 200, { 'Cache-Control': 'private, no-store' });
+    html(c.res, orderStatusPage(cfg, o, { flash: c.query.get('ok') === 'address' ? { text: 'Address updated — the label will carry it.' } : null }), 200, { 'Cache-Control': 'private, no-store' });
   });
+  // The customer fixes their own address while the order is still on the shelf: the same signed link, the same
+  // validation the label uses, a line on the timeline under "customer". Once a label exists the label is the address.
+  router.post('/o/:number/:token/address', (c) => {
+    const o = orderByNumber(db, c.params.number);
+    if (!o || !safeEqual(orderToken(cfg.secret, o.number), c.params.token)) throw new HttpError(404, 'no such order');
+    if (!app.formLimiter.allow(`addr:${o.number}`)) throw new HttpError(429, 'that order\'s address has been changed enough for now — reply to any of our mails instead');
+    const page = (err) => html(c.res, orderStatusPage(cfg, orderByNumber(db, o.number), { flash: { kind: 'err', text: err } }), 400, { 'Cache-Control': 'private, no-store' });
+    if (!['paid', 'packed'].includes(o.status) || o.label_url) return page('This order already has its label; the address on it is the address. Reply to any of our mails if it must change.');
+    const b = c.body || {};
+    try { updateShipping(db, o.id, { name: b.name, line1: b.line1, line2: b.line2, city: b.city, state: b.state, zip: b.zip }, { actor: 'customer' }); }
+    catch (err) { return page(String(err.message || err)); }
+    db.audit('customer', 'order.address', 'order', o.number, { by: 'the customer, on their page' });
+    redirect(c.res, `/o/${encodeURIComponent(o.number)}/${encodeURIComponent(c.params.token)}?ok=address`);
+  }, { public: true });
 
   router.post('/webhooks/stripe', async (c) => {
     if (!cfg.stripeWebhookSecret) throw new HttpError(503, 'STRIPE_WEBHOOK_SECRET not set');
@@ -342,9 +358,11 @@ export async function applyStripeEvent(app, m, event = null) {
         await raiseException(db, cfg, `oversold:${order.number}`, `orders [oversold]: ${order.number} needs more than is there`, `${why}\n\nThe customer has paid. Make or receive the parts and pack it late (tell them the new date), raise the week's cap if it was wrong, or refund it in Stripe: ${cfg.baseUrl}/orders/${order.id}`);
       }
     }
+    if (created) { markSessionPaid(db, { id: m.external_id, order_number: order.number, recovered_from: m.recovered_from || null, at: order.paid_at }); await newOrderNudge(db, cfg, order, { fetchImpl: app.fetchImpl || timedFetch, promise: { ship_on: est.ships.ships_on } }); }
     if (created && !order.items.length) await raiseException(db, cfg, `stripe:line-items:${order.number}`, `orders [no line items]: ${order.number}`, `Stripe's webhook carried no line_items for ${m.external_id} and they could not be fetched${cfg.stripeApiKey ? '' : ' (STRIPE_API_KEY is not set)'}. The order is recorded with no items and cannot be packed until they are added — see ${cfg.baseUrl}/orders/${order.id}.`);
     return { order: order.number, created, items: order.items.length };
   }
+  if (m.kind === 'expired') { markSessionExpired(db, { id: m.external_id, email: m.email || null, recovery_url: m.recovery_url, recovery_expires_at: m.recovery_expires_at, amount_cents: m.amount_cents }); return { expired: m.external_id, recoverable: !!(m.email && m.recovery_url) }; }
   if (m.kind === 'refund') {
     // A refund names the PaymentIntent (or the charge); a Checkout order is stored under its session id too.
     const o = db.get('SELECT * FROM orders WHERE payment_intent = ? OR external_id = ? OR external_id = ?', m.external_id, m.external_id, m.charge || '');
@@ -432,16 +450,18 @@ function loginPage(cfg, err, ready, ok = null, demo = null) {
     : '<p>No operator yet. On the server, run <code>backoffice setup</code> to set the password and get the authenticator QR.</p>') });
 }
 
-function orderStatusPage(cfg, o) {
+const fieldHtml = (name, label, value) => `<div><label for="a_${name}">${e(label)}</label><input id="a_${name}" name="${name}" value="${e(value || '')}" ${name === 'line2' ? '' : 'required'} ${name === 'zip' ? 'inputmode="numeric"' : ''}></div>`;
+function orderStatusPage(cfg, o, { flash = null } = {}) {
   const steps = ['paid', 'packed', 'shipped', 'delivered']; const i = steps.indexOf(o.status); const at = { paid: o.paid_at, packed: o.packed_at, shipped: o.shipped_at, delivered: o.delivered_at };
   // One honest line for the state it is in (promise.mjs): the batch it ships in and the window, "running late", the carrier's word, the refund on its way.
   const line = customerLine(o, cfg); const turl = trackingUrl(o.carrier, o.tracking); const p = orderPromise(o, cfg);
   const stepper = ['canceled', 'refunded'].includes(o.status) ? `<p><span class="pill">${e(o.status)}</span></p>` : `<ol class="steps">${steps.map((st, j) => `<li class="${j < i ? 'done' : j === i ? 'now' : ''}">${st[0].toUpperCase() + st.slice(1)}${at[st] && j <= i ? `<span class="when">${e(fmtDay(at[st]))}</span>` : j > i && st === 'shipped' && p.ship_on && !p.late ? `<span class="when">${e(p.ships_label)}</span>` : ''}</li>`).join('')}</ol>`;
   const tone = line.state === 'late' || line.state === 'alert' ? 'var(--warn)' : line.state === 'delivered' ? 'var(--ok)' : 'inherit';
-  return layout({ title: `Order ${o.number}`, company: cfg.company, nav: false, demo: cfg.demo, body: `${stepper}
+  return layout({ title: `Order ${o.number}`, company: cfg.company, nav: false, demo: cfg.demo, flash, body: `${stepper}
 <div class="card" style="max-width:720px"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Where it is</div><p style="font-size:1.15rem;margin:.3rem 0 .2rem;color:${tone}"><b>${e(line.text)}</b></p>${line.detail ? `<p class="muted" style="margin:0">${e(line.detail)}</p>` : ''}${turl ? `<p style="margin:.6rem 0 0">${e(o.carrier || 'USPS')} <a href="${e(turl)}" rel="noopener">${e(o.tracking)}</a> <span class="muted">(opens the carrier's site)</span></p>` : ''}</div>
 <h2>In the box</h2><table style="max-width:720px"><thead><tr><th>Item</th><th class="num">Qty</th></tr></thead><tbody>${o.items.map(it => `<tr><td>${e(it.name)}</td><td class="num">${it.qty}</td></tr>`).join('')}</tbody></table>
 <h2>Shipping to</h2><p>${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)}</p>
+${['paid', 'packed'].includes(o.status) && !o.label_url ? `<details class="fix" ${flash?.kind === 'err' ? 'open' : ''}><summary>Need to change the address?</summary><form method="post" action="/o/${encodeURIComponent(o.number)}/${encodeURIComponent(orderToken(cfg.secret, o.number))}/address" class="box" style="max-width:720px"><p class="muted" style="margin:0 0 .3rem">It has not shipped yet, so the label is not printed: change it here and it goes out to the new address. Once the label exists, reply to any of our mails instead.</p><div class="row">${fieldHtml('name', 'Name', o.ship_name)}${fieldHtml('line1', 'Address line 1', o.ship_line1)}</div><div class="row">${fieldHtml('line2', 'Line 2', o.ship_line2)}${fieldHtml('city', 'City', o.ship_city)}${fieldHtml('state', 'State', o.ship_state)}${fieldHtml('zip', 'ZIP', o.ship_zip)}</div><div style="margin-top:.8rem"><button>Save the new address</button></div></form></details>` : ''}
 <p class="muted">Anything wrong, missing or broken: reply to any email from us${cfg.supportAddr ? `, or write to <a href="mailto:${e(cfg.supportAddr)}?subject=${encodeURIComponent(`Order ${o.number}`)}">${e(cfg.supportAddr)}</a>` : ''} — a person reads every one, and we fix rather than ask you to send things back. Your Canary provisions itself at home: power it on and point your phone's camera at the QR card in the box.</p><p><a href="${e(cfg.siteOrigin)}">← ${e(cfg.product || 'the site')}</a></p>` });
 }
 

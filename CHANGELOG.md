@@ -1,6 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+### The backoffice closes the Shopify gaps (backoffice 0.5.0)
+
+- Labels bought from the ship bench (Shippo), the tracking and postage written
+  back, the customer mailed, the PDF to print; the customer fixes their own
+  address on their signed page while the order is on the shelf; every hosted
+  checkout counted (opened, paid, abandoned, recovered — conversion without a
+  pixel) and an abandoned one followed up once with Stripe's recovery link; a
+  new order mails and, by choice, pushes to the operator's phone.
+
 ### The customer always knows where their order is (backoffice 0.4.0)
 
 - The promise made at checkout (ships on, arrives by) is written on the order

@@ -3,6 +3,7 @@
 // probes, jobs, disk — with what to do about each. The same list is the
 // Health page, `backoffice doctor`, and the top of the morning digest.
 import { attention } from '../attention.mjs';
+import { shipFromIssues } from './labels.mjs';
 import { statfsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { hasOperator } from '../auth.mjs';
@@ -43,6 +44,7 @@ export function doctor(db, cfg) {
   const defaultUrl = /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(cfg.baseUrl);
   add('base_url', 'The codes on slips and labels point here', demo ? null : !defaultUrl, demo ? 'demo mode' : defaultUrl ? `BACKOFFICE_BASE_URL is ${cfg.baseUrl} — a phone scanning a slip lands nowhere` : cfg.baseUrl, 'set BACKOFFICE_BASE_URL to the address the phone reaches');
   const sh = shippingStatus();
+  add('labels', 'Labels from the ship bench', demo ? null : cfg.shippoToken ? shipFromIssues(cfg).length === 0 : null, demo ? 'demo labels (pretend, printable)' : cfg.shippoToken ? (shipFromIssues(cfg).length ? `SHIPPO_API_TOKEN set, return address incomplete: ${shipFromIssues(cfg).join(', ')}` : `SHIPPO_API_TOKEN set · from ${cfg.shipFrom.city}, ${cfg.shipFrom.state}`) : 'no SHIPPO_API_TOKEN — labels come from the website\'s fulfill.mjs and the manifest', 'set SHIPPO_API_TOKEN and SHIP_FROM_NAME/LINE1/CITY/STATE/ZIP');
   add('shipping_data', 'Box data (shipping.json) for the pack bench', demo ? null : sh.loaded_at ? !sh.error || hoursSince(sh.loaded_at) < 24 : sh.error ? false : null, demo ? 'demo boxes' : sh.loaded_at ? `${sh.boxes} boxes, ${sh.parcels} parcels · loaded ${fmtH(hoursSince(sh.loaded_at))}${sh.error ? ` · last refresh failed: ${sh.error}` : ''}` : sh.error ? sh.error : 'not asked for yet — opens with the first order page', 'set SHIPPING_JSON (or put shipping.json beside store.json) so boxes are planned, not guessed');
   add('smtp', 'Outbound mail relay', demo ? null : !!cfg.smtpUrl, demo ? 'demo transport' : cfg.smtpUrl ? 'SMTP_URL set' : 'mail is queued, never sent', 'set SMTP_URL to a relay with SPF/DKIM for your domain');
   add('imap', 'Support mailbox read', demo ? null : !!cfg.imapUrl, demo ? 'demo mode' : cfg.imapUrl ? 'IMAP_URL set' : 'inbound mail is not read', 'set IMAP_URL and SUPPORT_ADDR');

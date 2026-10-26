@@ -5,6 +5,36 @@ the build hash on `/healthz`, the Health page and `backoffice version` is the co
 CI stamped into the image. `tests/environment.test.mjs` holds the top entry here to
 the package version, so neither moves without the other.
 
+## 0.5.0
+
+- **Labels from the ship bench.** With `SHIPPO_API_TOKEN` and a `SHIP_FROM_*`
+  return address set, the bench has one more button: buy the USPS label for
+  the box the order was packed in, write the tracking number and the postage
+  onto the order, ship it (the customer gets their mail) and open the PDF to
+  print. It refuses an address that would not make a label and a blank return
+  address before any money moves. The demo draws a pretend label
+  (`/orders/:id/label`, also the readable fallback for any shipped order).
+  The doctor has a row for it. `src/modules/labels.mjs`.
+- **The customer fixes their own address.** On their signed page, while the
+  order is on the shelf and no label exists: the same validation the label
+  uses, a line on the timeline under "customer", rate-limited per order.
+  Once the label exists, the label is the address.
+- **Abandoned checkouts, counted and followed up once.** Every hosted
+  Checkout Session is written down (`checkout_sessions`, migration 012);
+  Stripe's events move it to paid, expired (with the recovery link Stripe
+  mints, which reopens the same cart for 30 days) or recovered. An expired
+  session with an email gets one mail, `CHECKOUT_RECOVERY_HOURS` later,
+  unless an order from that address has arrived since; never a second.
+  Marketing shows the checkout: opened, paid and the conversion, abandoned
+  and what it was worth, written to, came back. Home's "All the numbers"
+  has the conversion. No pixel, no cookie, nothing recorded about a visitor.
+  `src/modules/recovery.mjs`, the `recovery` job.
+- **A new order reaches your phone.** The minute the webhook lands: a mail
+  to `OPERATOR_EMAIL` (on unless `NOTIFY_NEW_ORDER=0`) and, only if
+  `NTFY_URL` is set, one push to that ntfy topic — number, money, lines,
+  ship day, never the address. `src/modules/notify.mjs`.
+- Staging and the demo buy no postage and push to no phone.
+
 ## 0.4.0
 
 - **The customer always knows where their order is.** The promise the store

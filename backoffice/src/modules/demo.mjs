@@ -367,6 +367,16 @@ export async function seedDemo(db, cfg) {
   db.run(`UPDATE audit_log SET at = COALESCE((SELECT CASE audit_log.action WHEN 'warranty.resolve' THEN w.resolved_at ELSE w.created_at END FROM warranty_claims w WHERE w.number = audit_log.entity_id), at) WHERE entity = 'warranty'`);
   db.run('DELETE FROM audit_log WHERE action IN (\'auth.setup\')');
   const n = { orders: db.get('SELECT COUNT(*) AS n FROM orders').n, tickets: db.get('SELECT COUNT(*) AS n FROM tickets').n, contacts: db.get('SELECT COUNT(*) AS n FROM contacts').n, items: db.get('SELECT COUNT(*) AS n FROM inventory_items').n, discounts: db.get('SELECT COUNT(*) AS n FROM discounts').n };
+  // The checkout funnel: every seeded Stripe order was a hosted session that paid; a few more timed out — two with an
+  // email typed (one written to and back to buy, one written to and quiet), the rest with nobody to write to.
+  for (const o of db.all("SELECT external_id, number, paid_at, total_cents FROM orders WHERE source = 'stripe' AND external_id LIKE 'cs_%'")) db.run("INSERT OR IGNORE INTO checkout_sessions (id, created_at, status, amount_cents, lines, order_number, paid_at) VALUES (?, ?, 'paid', ?, ?, ?, ?)", o.external_id, new Date(Date.parse(o.paid_at) - 9 * 60000).toISOString(), o.total_cents, db.all('SELECT qty, sku FROM order_items WHERE order_id = (SELECT id FROM orders WHERE number = ?)', o.number).map(i => `${i.qty}x ${i.sku}`).join(', '), o.number, o.paid_at);
+  const abandoned = [[2, 13444, '1x vision-kit', 'MA', 'casey@customer.example.test', true, 'cs_demo_recovered'], [5, 8131, '1x wap-kit', 'TX', 'quinn@customer.example.test', true, null], [9, 16262, '2x wap-kit', 'OR', null, false, null], [12, 2819, '1x vision-parts', 'NY', null, false, null], [20, 13444, '1x vision-kit', 'CT', null, false, null]];
+  abandoned.forEach(([d, cents, lines, st, email, mailed, recoveredBy], i) => {
+    const id = `cs_demo_abandoned_${i + 1}`; const at = daysAgo(d, 14); const exp = new Date(Date.parse(at) + 30 * 60000).toISOString();
+    db.run("INSERT OR IGNORE INTO checkout_sessions (id, created_at, status, amount_cents, lines, state, email, expired_at, recovery_url, recovery_expires_at, recovery_mailed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, at, recoveredBy ? 'recovered' : 'expired', cents, lines, st, email, exp, `https://checkout.stripe.com/c/pay/demo_recover_${i + 1}`, new Date(Date.parse(exp) + 30 * 86400000).toISOString(), mailed ? new Date(Date.parse(exp) + 3600000).toISOString() : null);
+    if (mailed) db.run("INSERT OR IGNORE INTO mail_outbox (to_addr, subject, body_text, kind, ref, status, created_at, sent_at) VALUES (?, ?, ?, 'transactional', ?, 'sent', ?, ?)", email, 'Your SecuraCV cart is still here', `(demo) the one follow-up with the link that reopens the cart: ${lines}`, `recovery:${id}`, new Date(Date.parse(exp) + 3600000).toISOString(), new Date(Date.parse(exp) + 3600000 + 60000).toISOString());
+    if (recoveredBy) db.run("INSERT OR IGNORE INTO checkout_sessions (id, created_at, status, amount_cents, lines, state, email, paid_at, recovered_from, order_number) VALUES (?, ?, 'paid', ?, ?, ?, ?, ?, ?, ?)", recoveredBy, daysAgo(d - 1, 9), cents, lines, st, email, daysAgo(d - 1, 9), id, db.get("SELECT number FROM orders WHERE source = 'stripe' ORDER BY paid_at DESC LIMIT 1")?.number || null);
+  });
   db.audit('demo', 'demo.seed', null, null, n);
   return n;
 }
@@ -396,7 +406,7 @@ export async function ensureDemo(db, cfg) {
 export async function resetDemo(db, cfg) {
   // A stale BACKOFFICE_DATA_DIR must never turn this into a wipe of real data.
   if (!isDemo(db) && !isEmpty(db)) throw new Error('refusing to reset: this database is not flagged as a demo and is not empty — point BACKOFFICE_DATA_DIR at the demo directory (npm run demo uses ./data-demo)');
-  const tables = ['attachments', 'purchase_order_items', 'purchase_orders', 'recalls', 'ticket_messages', 'tickets', 'warranty_claims', 'order_events', 'order_items', 'orders', 'discounts', 'invoice_items', 'invoices', 'subscriptions', 'inventory_moves', 'recipes', 'inventory_items', 'devices', 'waitlist', 'contacts', 'mail_outbox', 'mail_seen', 'campaigns', 'probe_results', 'probes', 'incidents', 'ledger', 'exceptions', 'canned_replies', 'stripe_events', 'job_runs', 'audit_log'];
+  const tables = ['attachments', 'purchase_order_items', 'purchase_orders', 'recalls', 'ticket_messages', 'tickets', 'warranty_claims', 'order_events', 'order_items', 'orders', 'discounts', 'invoice_items', 'invoices', 'subscriptions', 'inventory_moves', 'recipes', 'inventory_items', 'devices', 'waitlist', 'contacts', 'mail_outbox', 'mail_seen', 'campaigns', 'probe_results', 'probes', 'incidents', 'ledger', 'exceptions', 'canned_replies', 'stripe_events', 'job_runs', 'audit_log', 'checkout_sessions'];
   db.exec('PRAGMA foreign_keys = OFF');
   try { db.tx(() => { for (const t of tables) db.run(`DELETE FROM ${t}`); db.run('DELETE FROM settings WHERE key LIKE \'seq:%\''); }); }
   finally { db.exec('PRAGMA foreign_keys = ON'); }
