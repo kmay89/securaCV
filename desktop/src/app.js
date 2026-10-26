@@ -465,7 +465,7 @@ function usbBridgeInfo(vid, pid) {
 // Inlined from canary-local/assets/flash-core.js (ABOUT_CANNOT, sizeWords,
 // chipRevisionFromDesc, CHIP_SHEETS, aboutBoardGroups, aboutBoardSummary,
 // aboutBoardText, localDay, fileStamp, backupFileName, reportFileName,
-// SHARE_REPORT_NOTE, FULL_REPORT_NOTE, reportShareProjection,
+// SHARE_REPORT_NOTE, FULL_REPORT_NOTE, buildDay, reportShareProjection,
 // reportFullProjection, maskHardwareAddress) and intake.js (decodeChipFuses
 // and its tables) — this bundle cannot import canary-local.
 // desktop_parity.test.js cuts this block
@@ -717,6 +717,14 @@ const SHARE_REPORT_NOTE =
 const FULL_REPORT_NOTE =
   "Describes this one board: its boot and witness counters, crash record and update state. " +
   "For your own records, not for posting. It carries no hardware address.";
+// A slot's "<date> <time>" (lib.rs health_check) cut to its day: the time of
+// a locally built image is the second someone compiled it.
+function buildDay(built) {
+  const day = String(built == null ? "" : built).split(/\s+/)
+    .map((t) => (t.includes(":") ? ((/^(\d{4}-\d{2}-\d{2})T/.exec(t) || [])[1] || "") : t))
+    .filter(Boolean).join(" ");
+  return day || null;
+}
 function reportShareProjection(r = {}, when = Date.now()) {
   const out = { report: "securacv-board-report", scope: "share", note: SHARE_REPORT_NOTE, day: localDay(when) };
   if (r.chip) out.chip = r.chip;
@@ -728,7 +736,10 @@ function reportShareProjection(r = {}, when = Date.now()) {
   if (Array.isArray(r.slots)) {
     out.slots = r.slots.map((s) => {
       const o = { label: s.label, subtype: s.subtype, empty: !!s.empty };
-      for (const k of ["project", "version", "built", "idf"]) if (s[k] != null) o[k] = s[k];
+      for (const k of ["project", "version", "built", "idf"]) {
+        const v = k === "built" ? buildDay(s.built) : s[k];
+        if (v != null) o[k] = v;
+      }
       if (s.active) o.active = true;
       return o;
     });
@@ -776,6 +787,8 @@ const TAIL_REDACT = [
 const TAIL_IDENTITY = [
   /hardware\s*id\b/i,
   /securacv\.canary\.manifest\//,
+  /\bdevice[\s_-]*id\b/i,
+  /\bkey[\s_-]*fp\b|\bfp8\b|\bkey\s+fingerprint\b|\bpubkey\b/i,
   /\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b/i,
 ];
 function sanitizeLogTail(text) {
@@ -2839,6 +2852,15 @@ async function identify(portInfo) {
   const port = portInfo.name;
   const label = portInfo.product ? `${port} (${portInfo.product})` : port;
   state.detecting = true;
+  // What was read off the last board goes before this one is read: its
+  // passport (the installed image and its bootloader header) and its fuse
+  // fields. The card is drawn again once this board's chip answers, seconds
+  // before its passport does, and must say "Not checked yet" then — never the
+  // last board's image under this board's chip.
+  state.passport = null;
+  state.resident = null;
+  state.chipFuses = undefined;
+  renderPassport();
   renderThisBoard(); // the last board's card goes before this one is read
   if (Number(portInfo.vid) === WE2_VID && Number(portInfo.pid) === WE2_PID) {
     state.portKind = "we2";
@@ -2858,7 +2880,6 @@ async function identify(portInfo) {
     state.chip = info.chip;
     state.chipDesc = info.chip_desc || null;
     state.chipTool = { crystal_mhz: info.crystal_mhz ?? null, features: info.features || [] };
-    state.chipFuses = undefined;
     state.flashBytes = info.flash_bytes; // may be null if board-info didn't report it
     state.mac = info.mac; // may be null — kept, never drawn unless asked
     // The read-only MAC intake check, straight off the connect read.
@@ -3122,6 +3143,7 @@ async function readPassport(port) {
       state.passportPending = false;
       state.resident = state.resident || { unknown: true };
       renderPassport();
+      renderThisBoard(); // "Not checked", not a "Not checked yet" that never ends
       renderProducts();
     }
   }, 25000);
@@ -4536,17 +4558,17 @@ async function onFlashModule() {
 // mountBench): the same protocol — continuous INVOKE=-1,0,0 for frames with
 // boxes, BREAK to stop, TSCORE/TIOU set-then-read-back so the sliders never
 // lie — and the same honesty: labels read "person" only when the module's own
-// model card pins that class. Frames arrive over the we2:bench Tauri event
+// model card lists that class. Frames arrive over the we2:bench Tauri event
 // and go nowhere but this window.
 const liveBench = {
-  running: false, pinned: false, seen: false,
+  running: false, personClass: false, seen: false,
   thr: { tscore: 50, tiou: 45 },
   lastFrame: null, frames: 0, fpsT0: 0,
   unlisten: null,
   session: null, // the backend worker's id — a dead worker's tail is ignored
 };
 
-function benchClasses() { return liveBench.pinned ? ["person"] : []; }
+function benchClasses() { return liveBench.personClass ? ["person"] : []; }
 
 function syncSlider(key) {
   $("bench-" + key).value = String(liveBench.thr[key]);
@@ -4584,7 +4606,7 @@ function benchGuide() {
 }
 
 function benchReset() {
-  liveBench.running = false; liveBench.pinned = false; liveBench.seen = false;
+  liveBench.running = false; liveBench.personClass = false; liveBench.seen = false;
   liveBench.lastFrame = null; liveBench.frames = 0; liveBench.fpsT0 = 0;
   $("bench-start").disabled = false;
   $("bench-stop").disabled = true;
@@ -4627,7 +4649,7 @@ function benchRender(boxes) {
   if (dets.length && !liveBench.seen) {
     liveBench.seen = true;
     const seen = $("bench-seen");
-    seen.textContent = liveBench.pinned
+    seen.textContent = liveBench.personClass
       ? "👁 It sees you — the model is live and working ✓"
       : "👁 It sees something — the model is live and working ✓";
     seen.className = "status ok";
@@ -4644,13 +4666,16 @@ function onBenchEvent(ev) {
   if (p.kind === "log") {
     appendConsole("console", p.line + "\n");
   } else if (p.kind === "id") {
-    liveBench.pinned = !!p.pinned;
-    // Never the card's own text (we2_bench.rs model_card returns none):
-    // only whether a card is there and whether it pins the person class.
+    liveBench.personClass = !!p.person_class;
+    // Never the card's own text (we2_bench.rs model_card returns none): only
+    // whether a card is there and whether it lists the person class. The card
+    // is the module's own claim, so it picks the label map and never names the
+    // model; only onFlashModule names one, after a SHA-256-matched write.
     $("bench-id").textContent =
       "SSCMA firmware " + (p.software || "?") +
-      (p.pinned ? " · a model card for person detection (its text isn’t shown)"
-        : p.has_card ? " · a model card for something else — labels will read “object”"
+      (p.person_class
+        ? " · its model card lists a person class — labels will read “person” (the card is the module’s own claim; its text isn’t shown)"
+        : p.has_card ? " · its model card lists no person class — labels will read “object”"
           : " · no model card — labels will read “object”");
     $("bench-tscore").disabled = false;
     $("bench-tiou").disabled = false;

@@ -311,6 +311,27 @@ test("modelInfoJson names exactly what we flash (person, one class)", async () =
   assert.strictEqual(info.sha256.length, 64);
 });
 
+test("modelInfoBase64: the card goes out as base64 of its UTF-8 bytes, as we2.rs sends it", async () => {
+  const { modelInfoJson, modelInfoBase64 } = await core();
+  const opts = { version: "1.0.0", sha256: "ab".repeat(32) };
+  const json = JSON.stringify(modelInfoJson(opts));
+  // The card's text is not Latin-1 (its source line carries an em dash), so
+  // btoa() of the JSON itself throws in every browser — the post-burn card
+  // write and the proof inference after it would never run.
+  assert.ok([...json].some((c) => c.charCodeAt(0) > 0xff), "the card is plain Latin-1 now; this test proves less");
+  assert.throws(() => btoa(json), /Invalid character/i);
+  const b64 = modelInfoBase64(opts);
+  assert.strictEqual(b64, Buffer.from(json, "utf8").toString("base64"));
+  assert.deepStrictEqual(JSON.parse(Buffer.from(b64, "base64").toString("utf8")), modelInfoJson(opts));
+  // we2.rs writes base64 of the JSON string's UTF-8 bytes the same way.
+  const we2Rs = readFileSync(join(__dirname, "..", "..", "desktop", "src-tauri", "src", "we2.rs"), "utf8");
+  assert.match(we2Rs, /STANDARD\.encode\(info\.to_string\(\)\)/);
+  // …and the browser's post-burn step sends it that way, never btoa(JSON…).
+  const we2Flash = readFileSync(join(__dirname, "..", "assets", "we2-flash.js"), "utf8");
+  assert.ok(!/btoa\(JSON\.stringify\(modelInfoJson/.test(we2Flash), "the burn path base64s the card with btoa() again");
+  assert.match(we2Flash, /modelInfoBase64\(\{ version: job\.version, sha256: job\.sha256 \}\)/);
+});
+
 // ── anti-rot: the catalog, the engine, and the release pipeline agree ───────
 // The burn address, USB ids and baud live in exactly one place — we2-core.js.
 // gen_flash.py copies them into flash.json (drift-gated in canary-local.yml)

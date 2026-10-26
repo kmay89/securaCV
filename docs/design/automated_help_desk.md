@@ -48,7 +48,7 @@ Two rules make it safe to run without a human per ticket:
 | Crash evidence without a cable | `canary-wap` `hardware_state.h` (`safe_mode_check`, RTC breadcrumb) | "Why is it in recovery?" answered on the dashboard |
 | Flash-error classifier (7 kinds) + boot-log signatures (power vs clean-install) | `canary-local/assets/flash-core.js` (browser) + `desktop/flash-engine/src/health.rs` and friends (desktop; parity CI-gated) | The catalog's flashing entries restate these verbatim |
 | LED grammar, count-coded | `docs/hardware/canary_qr_onboarding.md` | The website's blink decoder; groups of 2/3/4/5 are pinned by test |
-| Diagnostic report (copy-paste, user-reviewed before sending) | `flash-core.js buildDiagnosticReport()` | The claims lane's proof-before-dispatch artifact — **after the Phase 3 tightening below**; as shipped it includes the MAC and an unfiltered serial tail |
+| Diagnostic report (copy-paste, user-reviewed before sending) | `flash-core.js buildDiagnosticReport()` | The claims lane's proof-before-dispatch artifact — tightened as Phase 3 below says: no hardware address, and a serial tail scrubbed of credential and identity lines |
 | Fix-it flows + physics bench on the real firmware in WASM | `canary-local/emulator/`, `canary-local/assets/guides.js` | The rehearsal layer |
 | Coarse fleet/hub health | `firmware/common/fleet_selfreport/fleet_selfreport.h` | The "hub unreachable vs no hub" distinction, address-free |
 | Fix-not-return remedies, in code | website `scripts/fulfill.mjs` + terms-of-sale | The no-wasted-shipping gate |
@@ -122,12 +122,16 @@ Two rules make it safe to run without a human per ticket:
     form, and filter the log tail against known-sensitive lines (the AP
     password print above all). "Public-only by construction" has to be true
     of the required artifact, not just intended by the voluntary one.
-    **Status: DONE in both flashers** — `buildDiagnosticReport()` now
-    truncates the MAC to the nursery's non-stable tail (one truncation, one
-    behavior — `macTail()`) and scrubs the serial tail with visible
-    redaction markers before inclusion; `desktop_parity.test.js` item 12
-    pins both frontends so neither can regress alone. What remains for the
-    claims lane is the intake itself (Phase 3 proper), not the report.
+    **Status: DONE in both flashers** — `buildDiagnosticReport()` carries
+    no hardware address at all, not even a tail: the base MAC is the
+    station address in every Wi-Fi frame, so any part of it matches the
+    board in radio range. Its serial tail is scrubbed with visible markers
+    before inclusion: credential lines (`TAIL_REDACT`) and identity lines
+    (`TAIL_IDENTITY`: the Hardware ID, the self-manifest, the device id and
+    key-fingerprint lines, and any MAC-shaped token).
+    `desktop_parity.test.js` item 12 pins both frontends to one list each,
+    so neither can regress alone. What remains for the claims lane is the
+    intake itself (Phase 3 proper), not the report.
 
 - **Phase 4 — the loop.** "This didn't help" buttons (shipped in Phase 1)
   feed batched catalog curation; a human tends the corpus, never a ticket.

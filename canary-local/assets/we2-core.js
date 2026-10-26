@@ -279,6 +279,15 @@ export function modelInfoJson({ version, sha256 }) {
   };
 }
 
+// The card as AT+INFO= carries it: base64 of the JSON's UTF-8 bytes, which is
+// what we2.rs sends. btoa() takes Latin-1 only and throws on the card's em
+// dash, so the bytes are encoded first.
+export function modelInfoBase64(opts) {
+  let bin = "";
+  for (const b of new TextEncoder().encode(JSON.stringify(modelInfoJson(opts)))) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
 // ── live-preview detection formatting (the bench "wow") ─────────────────────
 // The pinned Vision model detects one class; single source for the label map so
 // the bench preview reads "person · 92%", not "class 0 · 85".

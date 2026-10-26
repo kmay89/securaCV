@@ -5294,6 +5294,27 @@ test("both flashers name a saved file by the day and a counter, and the engine's
       assert.strictEqual(desk.reportFileName(stamp, false), core.reportFileName(stamp, false));
     }
   }
+  // The day is the local one in any zone, not UTC's: two instants, run in a
+  // child in a zone far from UTC on each side (CI's own zone is UTC, where
+  // local and UTC getters agree and a slip to UTC would pass unseen).
+  const probe = `
+    const core = await import(${JSON.stringify(pathToFileURL(join(CANARY, "assets/flash-core.js")).href)});
+    const app = (await import("node:fs")).readFileSync(${JSON.stringify(join(ROOT, "desktop/src/app.js"))}, "utf8");
+    const block = app.match(/\\/\\/ BEGIN ABOUT-BOARD\\n([\\s\\S]*?)\\/\\/ END ABOUT-BOARD/)[1];
+    const desk = new Function(block + "; return { localDay, fileStamp };")();
+    const out = [];
+    for (const when of [new Date(Date.UTC(2026, 9, 22, 20, 30)), new Date(Date.UTC(2026, 9, 22, 5, 0))]) {
+      out.push(core.localDay(when), desk.localDay(when), core.fileStamp(when, 1), desk.fileStamp(when, 1));
+    }
+    console.log(JSON.stringify(out));`;
+  for (const [tz, a, b] of [["Pacific/Kiritimati", "2026-10-23", "2026-10-22"],
+    ["Pacific/Pago_Pago", "2026-10-22", "2026-10-21"], ["UTC", "2026-10-22", "2026-10-22"]]) {
+    const r = spawnSync(process.execPath, ["--input-type=module", "-e", probe],
+      { env: { ...process.env, TZ: tz }, encoding: "utf8" });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.deepStrictEqual(JSON.parse(r.stdout), [a, a, `${a}-1`, `${a}-1`, b, b, `${b}-1`, `${b}-1`],
+      `${tz}: a saved file's day is not the local day`);
+  }
   // The automatic safety copy is named by the engine's helper — the same
   // `canary-<day>-<n>-backup.bin`, its counter the next one free in the
   // backups folder — from the day the frontend computes in the local zone.
@@ -5464,7 +5485,7 @@ function aboutBlock() {
   assert.ok(m, "desktop/src/app.js lost its ABOUT-BOARD block markers");
   return new Function(`${m[1]}; return { ABOUT_CANNOT, sizeWords, chipRevisionFromDesc, CHIP_FUSE_KEYS,
     decodeChipFuses, aboutBoardGroups, aboutBoardSummary, aboutBoardText, localDay, fileStamp, backupFileName,
-    reportFileName, SHARE_REPORT_NOTE, FULL_REPORT_NOTE, reportShareProjection, reportFullProjection,
+    reportFileName, SHARE_REPORT_NOTE, FULL_REPORT_NOTE, buildDay, reportShareProjection, reportFullProjection,
     maskHardwareAddress };`)();
 }
 
@@ -5536,7 +5557,9 @@ test("About this board: the desktop's rows are the browser's, fact for fact", as
   const report = {
     generatedAt: "2026-10-22T21:14:09.123Z", chip: "ESP32-S3", mac: "dc:54:75:c1:22:30", flashBytes: 8 << 20,
     partitions: [{ label: "nvs", kind: "data · nvs", offset: 0x9000, size: 0x5000 }],
-    slots: [{ label: "app0", subtype: 0x10, empty: false, project: "canary", version: "2.4.16", built: "x", idf: "v5", active: true }],
+    slots: [{ label: "app0", subtype: 0x10, empty: false, project: "canary", version: "2.4.16",
+      built: "Oct 22 2026 14:33:12", idf: "v5", active: true },
+    { label: "app1", subtype: 0x11, empty: false, project: "canary", version: "2.4.15", built: "Oct  2 2026 09:05:01" }],
     ota: { updatesSeen: 3, pendingVerify: true }, coredump: { present: true, size: 1 },
     witness: { boots: 9, seq: 4, chainHeadFp: "abcd" }, witnessLog: { label: "witness_log", size: 4096 },
     verdict: { level: "attn", headline: "a crash is stored", findings: [] },
@@ -5547,6 +5570,18 @@ test("About this board: the desktop's rows are the browser's, fact for fact", as
   assert.deepStrictEqual(desk.reportFullProjection(report), core.reportFullProjection(report));
   assert.ok(!JSON.stringify(desk.reportShareProjection(report, when)).includes("verdict"),
     "the desktop's verdict (a crash, a pending update) is posture and stays out of the shared save");
+  // A build day, never a build time: lib.rs's health_check stamps each slot
+  // "<date> <time>" from the descriptor, the way flash.js does.
+  const deskShare = JSON.stringify(desk.reportShareProjection(report, when));
+  for (const t of ["14:33", "09:05", ":12", ":01"]) {
+    assert.ok(!deskShare.includes(t), `the desktop's shared save keeps an image's build time (${t})`);
+  }
+  assert.deepStrictEqual(desk.reportShareProjection(report, when).slots.map((x) => x.built), ["Oct 22 2026", "Oct 2 2026"]);
+  assert.match(libRs, /let built = format!\("\{\} \{\}", d\.date, d\.time\)/,
+    "the desktop's slot stamp changed shape; re-check that buildDay still cuts it to the day");
+  for (const stamp of ["Oct 22 2026 14:33:12", "2026-10-22T14:33:12", "14:33", "", null, undefined, "Oct 22 2026"]) {
+    assert.strictEqual(desk.buildDay(stamp), core.buildDay(stamp), `buildDay drifted for ${JSON.stringify(stamp)}`);
+  }
   assert.strictEqual(desk.SHARE_REPORT_NOTE, core.SHARE_REPORT_NOTE);
   assert.strictEqual(desk.FULL_REPORT_NOTE, core.FULL_REPORT_NOTE);
 
@@ -5689,6 +5724,8 @@ test("About this board reaches every frontend: ChipInfo's chip line, the passpor
   assert.match(libRs, /"secureVersion": d\.secure_version,\s*"elfSha256Prefix": d\.elf_sha256_prefix,/);
   assert.match(appJs, /invoke\("board_passport", \{\s*port,\s*chip: state\.chip,/);
   assert.match(flashJs, /core\.parseBootloaderHeader\(hb, state\.chip\)/);
+  // … where the chip puts it: 0x1000 on the classic ESP32, 0x0 on the rest.
+  assert.match(flashJs, /readFlashChunked\(esploader, core\.bootloaderOffset\(state\.chip\), 0x20\)/);
   // The rows are drawn from the shared model on all three.
   assert.match(flashJs, /core\.aboutBoardGroups\(aboutFacts\(\)\)/);
   assert.match(nativeJs, /core\.aboutBoardGroups\(aboutFacts\(\)\)/);
@@ -5707,10 +5744,331 @@ test("the Grove module: neither flasher asks for its id, and neither shows its o
   assert.ok(!/model: " \+/.test(we2Flash), "the browser shows the module's model name again");
   assert.ok(!/decoded\.name/.test(we2Flash), "the browser reads the card's name again");
   assert.match(benchRs, /fn model_card\(reply: &Value\) -> \(bool, bool\)/, "the bench's card reader returns text again");
-  assert.match(benchRs, /"kind": "id", "software": software, "has_card": has_card, "pinned": pinned/);
+  assert.match(benchRs, /"kind": "id", "software": software, "has_card": has_card, "person_class": person_class/);
   assert.ok(!/p\.model\b/.test(appJs), "the desktop draws the module's model text again");
   // … and a model is named only where the flasher just wrote one whose
-  // SHA-256 matched the pinned release.
-  assert.match(we2Flash, /job\.pinned \? "SecuraCV person detection, installed and checked\. "/);
+  // SHA-256 matched the pinned release (run, not read, in the test below).
   assert.match(appJs, /SecuraCV person detection, installed and checked/);
+});
+
+// ── each frontend's own drawing code, run on a fake page ───────────────────
+// Regexes over the source say what a line looks like; these say what a
+// person sees. Cut a frontend's real functions out of its file and run them
+// against fakeDocument(). `real` holds what the test means to exercise: the
+// functions it cut (declared inside the scope), the state they read, the
+// lookups and answers it controls. Every other free name the cut code reaches
+// is inert — a call draws an empty element, a property is inert again — so
+// what the page shows is exactly what the cut functions drew. Runtime globals
+// (String, JSON, atob …) stay real unless `real` shadows them.
+function pageDoc() {
+  const doc = fakeDocument();
+  const proto = Object.getPrototypeOf(doc.createElement("i"));
+  const append = proto.append;
+  proto.append = function (...nodes) {
+    append.apply(this, nodes.map((n) => (typeof n === "string" ? doc.createTextNode(n) : n)));
+  };
+  proto.appendChild = function (n) { this.append(n); return n; };
+  proto.insertBefore = function (n) { this.append(n); return n; };
+  proto.replaceWith = function (n) { if (this.parent) { this.parent.append(n); this.remove(); } };
+  proto.focus = proto.select = function () {};
+  return doc;
+}
+function runCut(sources, names, real) {
+  const doc = real.document;
+  const inert = new Proxy(function () {}, {
+    apply: () => doc.createElement("i"),
+    construct: () => doc.createElement("i"),
+    get: (_, k) => (k === Symbol.toPrimitive ? () => "" : k === "then" ? undefined : inert),
+  });
+  const scope = new Proxy(real, {
+    has: (t, k) => k in t || (typeof k === "string" && !(k in globalThis)),
+    get: (t, k) => (k in t ? t[k] : k === Symbol.unscopables ? undefined : inert),
+    set: (t, k, v) => { t[k] = v; return true; },
+  });
+  return new Function("scope", `with (scope) {\n${sources.join("\n")}\nreturn { ${names.join(", ")} };\n}`)(scope);
+}
+const ticks = async (n = 8) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
+const nodesOf = (root) => [...root.walk()];
+const flashJsEl = (src) => {
+  const m = src.match(/const el = \(tag, cls, text\) => \{[\s\S]*?\n\};/);
+  assert.ok(m, "couldn't cut the el() helper");
+  return m[0];
+};
+
+// A hardware address whose bytes no other text on these cards contains, and
+// a test that matches any two neighboring octets in any case, with or
+// without a separator — a tail, a raw copy, an upper-cased copy all count.
+const HW = "a7:3e:5b:c1:9d:f4";
+const HW_SHOWN = "A7:3E:5B:C1:9D:F4";
+const HW_BYTES = /a7[^0-9a-z]?3e|3e[^0-9a-z]?5b|5b[^0-9a-z]?c1|c1[^0-9a-z]?9d|9d[^0-9a-z]?f4/i;
+
+function holdsTheAddressBack(label, root, copied) {
+  assert.ok(!HW_BYTES.test(root.textContent), `${label}: hardware-address bytes are on screen before Show`);
+  const shows = nodesOf(root).filter((n) => n.tagName === "button" && n.textContent === "Show");
+  assert.strictEqual(shows.length, 1, `${label}: the address has one Show, and only one`);
+  // Copy what can be copied first: never the address, before or after Show.
+  const copyAll = () => {
+    for (const b of nodesOf(root).filter((n) => n.tagName === "button" && /^Copy/.test(n.textContent))) b.fire("click");
+  };
+  copyAll();
+  shows[0].fire("click");
+  copyAll();
+  assert.ok(root.textContent.includes(HW_SHOWN), `${label}: Show must reveal the whole address`);
+  const addr = nodesOf(root).find((n) => n.children.length === 0 && n._text === HW_SHOWN);
+  assert.ok(addr && /no-?copy/.test(addr.className), `${label}: the revealed address must be marked no-copy`);
+  for (const t of copied) assert.ok(!HW_BYTES.test(t), `${label}: a copy carries the hardware address`);
+}
+
+test("the hardware address: each flasher's own drawing code shows no byte of it until Show, and copies none", async () => {
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const facts = { chip: "ESP32-S3", chipDesc: "esp32s3 (revision v0.2)", flashBytes: 8 << 20 };
+
+  // The browser: the hello card (L1) and the Board report.
+  {
+    const doc = pageDoc();
+    const copied = [];
+    const real = {
+      document: doc, core, navigator: { clipboard: { writeText: async (t) => { copied.push(t); } } },
+      localStorage: { getItem: () => null, setItem() {} },
+      state: { catalog, chip: "ESP32-S3", chipDesc: facts.chipDesc, flashBytes: 8 << 20, mac: HW,
+        chipFuses: undefined, current: null, passport: null, roster: [], ptRead: "ok", bootHeader: undefined },
+    };
+    const page = runCut([flashJsEl(flashJs), ...["fact", "macRevealFact", "aboutFacts", "renderAboutBoard",
+      "phaseConnected", "renderReport"].map((n) => fnSource(flashJs, n))], ["phaseConnected", "renderReport"], real);
+    holdsTheAddressBack("browser hello card", page.phaseConnected(), copied);
+    await ticks();
+    copied.length = 0;
+    const report = page.renderReport({ chip: "ESP32-S3", flashBytes: 8 << 20, partitions: [],
+      slots: [{ label: "app0", subtype: 0x10, empty: false, project: "canary_wap", version: "2.4.16", active: true }],
+      about: core.aboutBoardGroups(facts) });
+    holdsTheAddressBack("browser Board report", report, copied);
+    await ticks();
+  }
+
+  // The desktop: the This Board card (L1) and the health report.
+  {
+    const doc = pageDoc();
+    const copied = [];
+    const nodes = { "this-board": doc.createElement("section"), "health-report": doc.createElement("section") };
+    const m = appJs.match(/\/\/ BEGIN ABOUT-BOARD\n([\s\S]*?)\/\/ END ABOUT-BOARD/);
+    const real = {
+      document: doc, $: (id) => nodes[id] || null, prefs: {}, savePrefs() {},
+      navigator: { clipboard: { writeText: async (t) => { copied.push(t); } } },
+      state: { chip: "ESP32-S3", portKind: "esp32", chipDesc: facts.chipDesc, flashBytes: 8 << 20, mac: HW,
+        chipFuses: undefined, passport: null, resident: null, passportPending: false, appInfo: { version: "0" } },
+    };
+    const page = runCut([m[1], ...["aboutFacts", "macRevealRow", "renderThisBoard", "renderHealthReport"]
+      .map((n) => fnSource(appJs, n))], ["renderThisBoard", "renderHealthReport"], real);
+    page.renderThisBoard();
+    holdsTheAddressBack("desktop This Board card", nodes["this-board"], copied);
+    await ticks();
+    page.renderHealthReport({ chip: "ESP32-S3", flashBytes: 8 << 20,
+      slots: [{ label: "app0", subtype: 0x10, empty: false, project: "canary_wap", version: "2.4.16", active: true }] });
+    holdsTheAddressBack("desktop health report", nodes["health-report"], []);
+  }
+});
+
+test("the desktop's This Board card: a new board never wears the last board's image or fuses", async () => {
+  const intake = await import(pathToFileURL(join(CANARY, "assets/intake.js")).href);
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const doc = pageDoc();
+  const nodes = { "this-board": doc.createElement("section"), passport: doc.createElement("div") };
+  const A = "/dev/ttyACM0", B = "/dev/ttyACM1";
+  const boards = {
+    [A]: { chip: "ESP32-S3", chip_desc: "esp32s3 (revision v0.2)", flash_bytes: 8 << 20, mac: "aa:bb:cc:00:00:01" },
+    [B]: { chip: "ESP32-C3", chip_desc: "esp32c3 (revision v0.4)", flash_bytes: 4 << 20, mac: "aa:bb:cc:00:00:02" },
+  };
+  // Board A's passport answers at once; board B's is still being read (8-25 s on hardware).
+  const passports = {
+    [A]: { blank: false, resident: { version: "2.4.16-wap", projectName: "canary_wap", idf: "v5.5.1", secureVersion: 0,
+      elfSha256Prefix: "a0a1a2a3a4a5a6a7" },
+    bootloader: { flashMode: "DIO", flashMhz: 80, flashMhzEither: null, flashBytes: 8 << 20, codes: { mode: 2, size: 3, freq: 15 } } },
+  };
+  const timers = [];
+  const state = { port: A, catalog: { flash_baud: 921600 }, chip: null, passport: null, resident: null,
+    passportPending: false };
+  const real = {
+    document: doc, state, $: (id) => nodes[id] || doc.createElement("div"), prefs: {}, savePrefs() {},
+    WE2_VID: 0x1a86, WE2_PID: 0x55d3,
+    setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout() {},
+    invoke: async (cmd, args) => {
+      if (cmd === "detect_chip") return boards[args.port];
+      if (cmd === "board_passport") return passports[args.port] || new Promise(() => {});
+      throw new Error(`unexpected ${cmd}`);
+    },
+  };
+  const m = appJs.match(/\/\/ BEGIN ABOUT-BOARD\n([\s\S]*?)\/\/ END ABOUT-BOARD/);
+  const page = runCut([m[1], ...["aboutFacts", "macRevealRow", "renderThisBoard"].map((n) => fnSource(appJs, n)),
+    "async " + fnSource(appJs, "readPassport"), "async " + fnSource(appJs, "identify")], ["identify"], real);
+  const card = () => nodes["this-board"].textContent;
+
+  await page.identify({ name: A, vid: 0x303a, pid: 0x1001 });
+  await ticks();
+  assert.match(card(), /canary_wap 2\.4\.16-wap/, "board A's image should be on its card");
+  // Board A's fuses were read (the "Read the chip's fuses" button).
+  state.chipFuses = intake.decodeChipFuses("ESP32-S3", { PKG_VERSION: 0, FLASH_CAP: 1, FLASH_VENDOR: 2, BLK_VERSION_MAJOR: 1 });
+  timers.length = 0;
+
+  // The picker switches to board B (the port-select handler's resets).
+  Object.assign(state, { port: B, portInfo: null, portKind: null, chip: null, failedPort: null });
+  page.identify({ name: B, vid: 0x303a, pid: 0x1001 });
+  await ticks();
+  const text = card();
+  assert.match(text, /ESP32-C3 · v0\.4/, "board B's chip should be on the card");
+  for (const stale of ["canary_wap", "2.4.16", "a0a1a2a3", "v5.5.1", "the chip has", "DIO", "QFN56", "Present"]) {
+    assert.ok(!text.includes(stale), `board B's card shows board A's "${stale}" while B's passport is read`);
+  }
+  assert.match(text, /Installed imageNot checked yet/, "B's image is not read yet, and the card says so");
+  assert.match(text, /PackageNot checked yet/, "B's fuses are not read yet, and the card says so");
+
+  // B's passport read never answers: the 25 s settle gives up, and the card
+  // says the image was not checked rather than "not checked yet" for good.
+  assert.strictEqual(timers.length, 1, "B's passport read should arm one settle timer");
+  timers[0]();
+  assert.match(card(), /Installed imageNot checked(?! yet)/, "the settle timer must redraw the card");
+});
+
+test("the Grove module: a model is named only after this flasher's SHA-256-matched write, never from the module's card", async () => {
+  const we2Flash = read(join(CANARY, "assets/we2-flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const we2 = await import(pathToFileURL(join(CANARY, "assets/we2-core.js")).href);
+  const card = (c) => (c ? { data: Buffer.from(JSON.stringify(c)).toString("base64") } : { code: 0 });
+  const CARDS = {
+    none: null,
+    other: { name: "Traffic", classes: ["car", "bus"] },
+    // A card's own text can say anything, including a capability this
+    // project refuses; it must never reach the screen.
+    person: { name: "Face Recognition v2", description: "identify who is at the door", classes: ["person"] },
+  };
+  const at = (info) => ({ start() {}, stop() {}, cmd: async (c) => (c === "INFO?" ? info : { code: 0 }) });
+  const browserPage = (info) => {
+    const doc = pageDoc();
+    return { doc, page: runCut([flashJsEl(we2Flash), fnSource(we2Flash, "phaseModuleDone"),
+      fnSource(we2Flash, "phaseModuleBench")], ["phaseModuleDone", "phaseModuleBench"], {
+      document: doc, modelInfoBase64: we2.modelInfoBase64, makeAtClient: () => at(info),
+      wakeModule: async () => ({ data: { software: "2025.01.02" } }), sleep: async () => {},
+      visionSession: { parts: () => ({ esp32: false, we2: true }) },
+      mountBench: () => ({ node: doc.createElement("div"), stop: async () => {} }),
+    }) };
+  };
+  const ctx = { catalog: { products: [] }, back() {} };
+  const s = { t: { close: async () => {} } };
+
+  // After the burn: the pinned release is named, a file the person picked is not.
+  for (const pinned of [true, false]) {
+    const { page } = browserPage({ code: 0 });
+    const box = page.phaseModuleDone(ctx, s, { pinned, version: "1", sha256: "ab".repeat(32) });
+    await ticks();
+    const proof = nodesOf(box).find((n) => n.tagName === "p" && /^✓ /.test(n._text));
+    assert.ok(proof, `pinned=${pinned}: the proof line never landed`);
+    if (pinned) assert.match(proof._text, /^✓ SecuraCV person detection, installed and checked\. /);
+    else {
+      assert.match(proof._text, /^✓ Your model file, installed\. /);
+      assert.ok(!/person|SecuraCV/i.test(proof._text), "a local file must never be named for the person");
+    }
+  }
+
+  // The bench reads a card it did not write: it picks the label map and
+  // names nothing. The desktop's line is the browser's, word for word.
+  const desk = (p) => {
+    const doc = pageDoc();
+    const nodes = { "bench-id": doc.createElement("p") };
+    const liveBench = { session: null };
+    const page = runCut([fnSource(appJs, "onBenchEvent")], ["onBenchEvent"],
+      { document: doc, $: (id) => nodes[id] || doc.createElement("i"), liveBench });
+    page.onBenchEvent({ payload: { kind: "id", software: "2025.01.02", ...p } });
+    return { line: nodes["bench-id"].textContent, liveBench };
+  };
+  for (const [kind, c] of Object.entries(CARDS)) {
+    const { page } = browserPage(card(c));
+    const box = page.phaseModuleBench(ctx, s);
+    await ticks();
+    const idLine = nodesOf(box).find((n) => n.tagName === "p" && /^SSCMA firmware /.test(n._text));
+    assert.ok(idLine, `${kind}: the bench's id line never landed`);
+    const line = idLine._text;
+    assert.ok(!/person detection|SecuraCV|Face|identify|Traffic/i.test(line), `${kind}: the bench names a model: ${line}`);
+    assert.match(line, kind === "person" ? /labels will read “person”/ : /labels will read “object”/);
+    if (kind === "person") assert.match(line, /module’s own claim/);
+    const d = desk({ has_card: !!c, person_class: kind === "person" });
+    assert.strictEqual(d.line + ". Start the preview below.", line, `${kind}: the desktop's bench line drifted`);
+    assert.strictEqual(d.liveBench.personClass, kind === "person");
+  }
+  // The desktop names a model in one place, after flash_vision_module, which
+  // takes only the pinned manifest and refuses any other bytes.
+  assert.strictEqual(appJs.split("SecuraCV person detection").length - 1, 1);
+  assert.match(fnSource(appJs, "onFlashModule"),
+    /invoke\("flash_vision_module", \{\s*port: state\.port,\s*manifestUrl: state\.catalog\.we2_module\.manifest_url,\s*\}\)/);
+});
+
+test("each frontend's About facts: a read that failed is never an empty board", async () => {
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const installed = (facts) => core.aboutBoardGroups(facts)[1].rows.map((r) => `${r.label}: ${r.value}`).join(" | ");
+  const browser = (state) => runCut([fnSource(flashJs, "aboutFacts")], ["aboutFacts"], { state }).aboutFacts();
+  const desktop = (state) => runCut([fnSource(appJs, "aboutFacts")], ["aboutFacts"], { state }).aboutFacts();
+  const IMG = { version: "2.4.16", projectName: "canary_wap", idf: "v5.5.1", secureVersion: 0, elfSha256Prefix: "a0a1" };
+
+  // The browser: undefined until read, false when a read threw, null only
+  // when the reads worked and found nothing.
+  assert.strictEqual(browser({ current: null, ptRead: "failed" }).image, false);
+  assert.strictEqual(browser({ current: { unknown: true }, ptRead: "failed" }).image, false);
+  assert.strictEqual(browser({ current: { unknown: true, readFailed: true }, ptRead: "ok" }).image, false);
+  assert.strictEqual(browser({ current: { unknown: true }, ptRead: "ok" }).image, null);
+  assert.strictEqual(browser({ current: null, ptRead: "ok" }).image, undefined);
+  assert.deepStrictEqual(browser({ current: { ...IMG, built: "x" }, ptRead: "ok" }).image,
+    { projectName: "canary_wap", version: "2.4.16", idf: "v5.5.1", secureVersion: 0, elfSha256Prefix: "a0a1" });
+  // A descriptor read that threw after a good partition read, with the
+  // bootloader header's read failed too, reads "Not checked", never "None found".
+  assert.strictEqual(installed({ chip: "ESP32-S3", ...browser({ current: { unknown: true, readFailed: true },
+    ptRead: "ok", bootHeader: false }) }), "Installed image: Not checked");
+  // readCurrentFirmware marks the throw so (the descriptor read is inside the try).
+  assert.match(fnSource(flashJs, "readCurrentFirmware"),
+    /\} catch \{[\s\S]*state\.current = \{ unknown: true, readFailed: true \};\s*\}\s*\}$/);
+
+  // The desktop: the passport read decides; pending is "not yet", a failed
+  // or unknown read is "not checked", a blank board is "none found".
+  assert.strictEqual(desktop({ resident: null, passport: null }).image, undefined);
+  assert.strictEqual(desktop({ resident: { ...IMG }, passportPending: true }).image, undefined);
+  assert.strictEqual(desktop({ resident: { unknown: true } }).image, false);
+  assert.strictEqual(desktop({ resident: { unknown: false, blank: true } }).image, null);
+  assert.deepStrictEqual(desktop({ resident: { ...IMG, slot: "app0" } }).image,
+    { projectName: "canary_wap", version: "2.4.16", idf: "v5.5.1", secureVersion: 0, elfSha256Prefix: "a0a1" });
+  assert.strictEqual(installed({ chip: "ESP32-S3", ...desktop({ resident: { unknown: true }, passport: { bootloader: false } }) }),
+    "Installed image: Not checked");
+  assert.strictEqual(desktop({ passport: { bootloader: null } }).bootloader, null);
+  assert.strictEqual(desktop({ passport: {} }).bootloader, undefined);
+
+  // The desktop's fuse read, run through its own button: fields decode to
+  // rows; an unsupported chip, a scan with no fields and a read that threw
+  // all read "Not checked" — never "Not checked yet", never a value.
+  const m = appJs.match(/\/\/ BEGIN ABOUT-BOARD\n([\s\S]*?)\/\/ END ABOUT-BOARD/);
+  for (const [answer, want] of [
+    [{ supported: true, chip_fields: { PKG_VERSION: 0, BLK_VERSION_MAJOR: 1 } }, "ESP32-S3 (QFN56)"],
+    [{ supported: false }, "Not checked"],
+    [{ supported: true }, "Not checked"],
+    ["the port went away", "Not checked"],
+  ]) {
+    const doc = pageDoc();
+    const nodes = { "efuse-read": doc.createElement("button"), "efuse-result": doc.createElement("p"),
+      "this-board": doc.createElement("section") };
+    const state = { port: "/dev/ttyACM0", chip: "ESP32-S3", portKind: "esp32", busy: false, chipFuses: undefined,
+      flashBytes: 8 << 20 };
+    const page = runCut([m[1], ...["aboutFacts", "macRevealRow", "renderThisBoard", "wireEfuseRead"]
+      .map((n) => fnSource(appJs, n))], ["wireEfuseRead"], {
+      document: doc, state, $: (id) => nodes[id] || null, prefs: {}, savePrefs() {},
+      invoke: async (cmd) => {
+        assert.strictEqual(cmd, "read_security_efuses");
+        if (typeof answer === "string") throw answer;
+        return answer;
+      },
+    });
+    page.wireEfuseRead();
+    nodes["efuse-read"].fire("click");
+    await ticks();
+    assert.match(nodes["this-board"].textContent, new RegExp(`Package${want.replace(/[()]/g, "\\$&")}(?! yet)`),
+      `a fuse read answering ${JSON.stringify(answer)} should read ${want}`);
+  }
 });

@@ -1426,6 +1426,41 @@ test("sanitizeLogTail: the boot banner's Hardware ID and the self-manifest never
   assert.strictEqual(sanitizeLogTail("[HW] hardware revision 2"), "[HW] hardware revision 2");
 });
 
+test("sanitizeLogTail: the device id and the key fingerprint lines never reach a report", async () => {
+  // The same handles the self-manifest line is scrubbed for (design §6.4):
+  // the device id (often a name the person typed) and the key fingerprint.
+  // Rendered from the firmware's own format strings, like the test above.
+  const { buildDiagnosticReport } = await core();
+  const fw = (p) => readFileSync(join(ROOT, "..", p), "utf8");
+  const kv = /void boot_kv\(const char\* key, const char\* value\) \{\s*out\("([^"]+)\\n"/.exec(
+    fw("firmware/common/boot/boot_banner.cpp"));
+  assert.ok(kv, "boot_kv's format string moved — re-point this test");
+  for (const main of ["firmware/projects/canary-display/src/main.cpp", "firmware/projects/canary-sense/src/main.cpp",
+                      "firmware/projects/canary-vision/src/main.cpp", "firmware/projects/canary-sentinel/src/main.cpp"]) {
+    assert.match(fw(main), /boot_kv\("Device ID", canary::cfg::get\(\)\.device_id\)/,
+      `${main} no longer prints its device id through boot_kv`);
+  }
+  const ino = fw("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino");
+  const flagship = fw("firmware/canary/src/main.cpp");
+  const fmt = (src, re, what) => { const m = re.exec(src); assert.ok(m, `${what} moved — re-point this test`); return m[1]; };
+  const id = "canary-kids-room";
+  const fp = "aabbccddeeff0011";
+  const lines = [
+    printf(kv[1], "Device ID", id),                                                        // display, Sense, Vision, Sentinel, WAP
+    printf(fmt(ino, /Serial\.printf\("(\[PROV\] Device ID: %s)\\n", g_device\.device_id\)/, "the WAP's [PROV] line"), id),
+    printf(fmt(ino, /Serial\.printf\("(\[PROV\] Public key fingerprint: %s)\\n"/, "the WAP's fingerprint line"), fp),
+    printf(fmt(ino, /Serial\.printf\("(│ Device ID  : %s)\\n"/, "the WAP's identity box"), id),
+    printf(fmt(ino, /Serial\.printf\("(│ FP8        : %s)\\n"/, "the WAP's identity box"), fp),
+    printf(fmt(ino, /Serial\.printf\("(│ Pubkey     : %s)\.\.\.\\n"/, "the WAP's identity box"), fp),
+    fmt(flagship, /Serial\.print\("(  Key FP    : )"\);\s*print_hex\(dev\.pubkey_fp, 8\)/, "the flagship's f card") + fp,
+    printf(fmt(flagship, /Serial\.printf\("(\[OK\] Device ID: %s)\\n", device\.device_id\)/, "the flagship's boot line"), id),
+  ];
+  const r = buildDiagnosticReport({ logTail: [...lines, "Brownout detector was triggered"].join("\n") });
+  for (const leak of [id, fp, fp.slice(0, 8)]) assert.ok(!r.includes(leak), `"${leak}" survived into the report:\n${r}`);
+  assert.strictEqual((r.match(/\[identity line: shown in the flasher, not in reports\]/g) || []).length, lines.length);
+  assert.ok(r.includes("Brownout detector was triggered"), "diagnosis survives");
+});
+
 test("the ROM tools' own MAC lines are masked where drawn, and never reach a report", async () => {
   // esptool-js's connect logs "MAC: …" unasked (the vendored bundle's main()),
   // and espflash prints "MAC address: …" in its board info before every
@@ -1487,6 +1522,11 @@ test("parseBootloaderHeader reads what flash the installed image was built for",
   // No image there (erased, or ciphertext) → null, never a guess.
   assert.strictEqual(parseBootloaderHeader(new Uint8Array(32).fill(0xff), "ESP32-S3"), null);
   assert.strictEqual(parseBootloaderHeader(Uint8Array.from([0xe9, 1]), "ESP32-S3"), null);
+  // Every size code esptool writes, 1 MB (0x0) to 128 MB (0x7); past it, no size.
+  for (const [code, mb] of [[0, 1], [4, 16], [5, 32], [6, 64], [7, 128], [8, null], [0xf, null]]) {
+    const h = parseBootloaderHeader(Uint8Array.from([0xe9, 3, 2, (code << 4) | 0x0f]), "ESP32-S3");
+    assert.strictEqual(h.flashBytes, mb == null ? null : mb * 1024 * 1024, `size code ${code}`);
+  }
   assert.strictEqual(bootloaderOffset("ESP32"), 0x1000);
   assert.strictEqual(bootloaderOffset("ESP32-S3"), 0);
   // The revision off a ROM tool's chip line, both tools' spellings.
@@ -1556,6 +1596,17 @@ test("aboutBoardGroups: every row says where it came from, and a gap is a phrase
   assert.strictEqual(row({ chip: "ESP32-S3", image: { projectName: "x" }, bootloader: false }, "built_for_flash"), C.notChecked);
   assert.strictEqual(row({}, "chip"), C.notReported);
   assert.strictEqual(row({ chip: "ESP32-S3" }, "flash"), C.notReported);
+  // With no revision on the ROM tool's chip line, the fuses' wafer version
+  // says it; with neither, the chip row names the chip alone.
+  assert.strictEqual(row({ chip: "ESP32-S3", fuses: intake.decodeChipFuses("ESP32-S3", S3_FUSES) }, "chip"),
+    "ESP32-S3 · v0.2");
+  assert.strictEqual(row({ chip: "ESP32-S3", chipDesc: "esp32s3 (revision v0.1)",
+    fuses: intake.decodeChipFuses("ESP32-S3", S3_FUSES) }, "chip"), "ESP32-S3 · v0.1", "the ROM tool's line comes first");
+  assert.strictEqual(row({ chip: "ESP32-S3", fuses: null }, "chip"), "ESP32-S3");
+  // The C6's header cannot tell 40 from 80 MHz, and the row says both.
+  const c6boot = c.parseBootloaderHeader(Uint8Array.from([0xe9, 3, 2, 0x20]), "ESP32-C6");
+  assert.strictEqual(row({ chip: "ESP32-C6", image: { projectName: "x" }, bootloader: c6boot }, "flash_mode"),
+    "DIO · 40 or 80 MHz");
   // Never a number standing in for a missing fact.
   for (const g of c.aboutBoardGroups({ chip: "ESP32-S3" })) {
     for (const r of g.rows) if (!r.reveal) assert.ok(r.value && !/^0+$/.test(r.value), `${r.id}: ${r.value}`);
@@ -1597,13 +1648,34 @@ test("a saved report is a share projection unless the full local save is asked f
   };
   const share = c.reportShareProjection(r, new Date(2026, 9, 22, 12));
   const sj = JSON.stringify(share);
+  // An About row goes out as its label and value only: no technical name, no
+  // raw field values (the allowlisted eFuse fields stay on the page).
+  const withRaw = { about: c.aboutBoardGroups({ chip: "ESP32-S3", flashBytes: 8 << 20, fuses: { supported: true,
+    chip: "ESP32-S3", fields: { PKG_VERSION: 0, BLK_VERSION_MAJOR: 1 }, wafer: "v0.2", package: "ESP32-S3 (QFN56)",
+    flash: { present: false }, psram: { present: false }, blockVersion: "v1.0", calibration: true } }) };
+  assert.ok(withRaw.about.some((g) => g.rows.some((x) => x.raw)), "the fixture should carry raw values to drop");
+  for (const g of c.reportShareProjection(withRaw).about) {
+    for (const row of g.rows) assert.deepStrictEqual(Object.keys(row).sort(), ["label", "value"]);
+  }
   for (const leak of ["DC:54", "dc:54", "412", "1234", "deadbeef", "pendingVerify", "pending verify", "coredump",
-                      "61440", "tamper", "provisioned", "wifiConfigured", "updatesSeen", "21:14", "generatedAt"]) {
+                      "61440", "tamper", "provisioned", "wifiConfigured", "updatesSeen", "21:14", "generatedAt",
+                      "10:00:00", "10:00"]) {
     assert.ok(!sj.includes(leak), `the share projection carries "${leak}"`);
   }
   assert.strictEqual(share.scope, "share");
   assert.strictEqual(share.day, "2026-10-22");
   assert.strictEqual(share.slots[0].version, "2.4.16");
+  // Each image's build stamp is cut to its day: the time of day is the second
+  // a local image was compiled, which the share save promises to leave out.
+  assert.strictEqual(share.slots[0].built, "Oct 20 2026");
+  assert.strictEqual(c.reportFullProjection(r).slots[0].built, "Oct 20 2026 10:00:00", "the full save keeps the time");
+  for (const [stamp, day] of [["Oct 22 2026 14:33:12", "Oct 22 2026"], ["Oct  2 2026 09:05:01", "Oct 2 2026"],
+    ["Oct 22 2026", "Oct 22 2026"], ["2026-10-22T14:33:12", "2026-10-22"], ["2026-10-22 14:33", "2026-10-22"],
+    ["14:33:12", null], ["", null], [null, null], [undefined, null]]) {
+    assert.strictEqual(c.buildDay(stamp), day, `buildDay(${JSON.stringify(stamp)})`);
+  }
+  const timeOnly = c.reportShareProjection({ slots: [{ label: "app1", subtype: 0x11, built: "14:33:12" }] });
+  assert.ok(!("built" in timeOnly.slots[0]), "a stamp with no day leaves no built field");
   assert.strictEqual(share.partitions[0].label, "nvs");
   assert.ok(share.about.every((g) => g.rows.every((x) => x.label !== "Hardware address")));
   const full = c.reportFullProjection(r);

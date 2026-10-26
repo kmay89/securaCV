@@ -224,9 +224,10 @@ pub fn parse_app_descriptor(bytes: &[u8]) -> Option<AppDesc> {
 /// The second-stage bootloader is an ESP image: magic 0xE9, the segment
 /// count, the SPI mode byte, then a byte whose high nibble is the flash size
 /// and low nibble the flash frequency the image was built for (esptool
-/// bin_image.py; esptool 5.6.0 targets/<chip>.py FLASH_FREQUENCY). The image's
-/// claim about the board, which the chip's JEDEC reading can contradict —
-/// flash-core.js parseBootloaderHeader reads the same bytes the same way.
+/// `bin_image.py`; esptool 5.6.0 `targets/<chip>.py` `FLASH_FREQUENCY`). The
+/// image's claim about the board, which the chip's JEDEC reading can
+/// contradict — flash-core.js parseBootloaderHeader reads the same bytes the
+/// same way.
 pub const IMAGE_HEADER_MAGIC: u8 = 0xe9;
 
 /// Where the bootloader sits: 0x1000 on the classic ESP32, 0x0 on the S3, C3
@@ -842,6 +843,23 @@ mod tests {
         // No image there (an erased chip, or ciphertext) → None, not a guess.
         assert!(parse_bootloader_header(&[0xff; 32], "ESP32-S3").is_none());
         assert!(parse_bootloader_header(&[0xe9, 0x03], "ESP32-S3").is_none());
+        // Every size code esptool writes, 1 MB (0x0) to 128 MB (0x7); past it, no size.
+        for (code, mb) in [
+            (0u8, Some(1u64)),
+            (4, Some(16)),
+            (5, Some(32)),
+            (6, Some(64)),
+            (7, Some(128)),
+            (8, None),
+        ] {
+            let h = parse_bootloader_header(&[0xe9, 0x03, 0x02, (code << 4) | 0x0f], "ESP32-S3")
+                .unwrap();
+            assert_eq!(
+                h.flash_bytes,
+                mb.map(|m| m * 1024 * 1024),
+                "size code {code}"
+            );
+        }
         assert_eq!(bootloader_offset("ESP32"), 0x1000);
         assert_eq!(bootloader_offset("ESP32-S3"), 0x0);
         assert_eq!(bootloader_offset("ESP32-C6"), 0x0);

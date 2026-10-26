@@ -2963,7 +2963,7 @@
     },
     "roster": {
       "label": "The session roster",
-      "what": "Every board hatched in this tab, in order — so a batch never loses its place. Public facts only (which firmware, which dials, a MAC tail), kept only until the tab closes."
+      "what": "Every board hatched in this tab, in order — so a batch never loses its place. It shows which firmware and which dials. It also keeps each board's hardware address, only to recognize the board if it comes back, and never shows it. All of it is kept only until the tab closes."
     },
     "chirps": {
       "label": "Chirps",

@@ -573,6 +573,14 @@ test("the decode names the package, the in-package parts and calibration the way
     WAFER_VERSION_MINOR_LO: 0, WAFER_VERSION_MINOR_HI: 0, WAFER_VERSION_MAJOR: 1,
     BLK_VERSION_MAJOR: 1, BLK_VERSION_MINOR: 1 }).wafer, "v0.0");
   assert.equal(decodeChipFuses("ESP32-S3", { BLK_VERSION_MAJOR: 0 }).calibration, false);
+  // The S3 and C3 ask for major version 1 exactly, not the C6's "v0.1 or
+  // later": a block version of v0.3 or v2.0 is no calibration on either.
+  for (const chip of ["ESP32-S3", "ESP32-C3"]) {
+    for (const [major, minor] of [[0, 3], [2, 0]]) {
+      assert.equal(decodeChipFuses(chip, { BLK_VERSION_MAJOR: major, BLK_VERSION_MINOR: minor }).calibration, false,
+        `${chip} block v${major}.${minor}`);
+    }
+  }
 
   // A C3 with 4 MB of GD flash in the package, rated to 85 °C; no PSRAM fields.
   const c3 = decodeChipFuses("ESP32-C3", { PKG_VERSION: 0, FLASH_CAP: 1, FLASH_VENDOR: 2, FLASH_TEMP: 2,

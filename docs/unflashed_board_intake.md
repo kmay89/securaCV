@@ -176,7 +176,10 @@ its last two bytes match the board in radio range. Both flashers draw a
 only, never copy it, and never write it into a saved report, a diagnostic
 report or a file name (saved files are named by the local date and a counter).
 The Lab's native bench keeps the address detect_chip returns and shows none of
-it. `canary-local/tests/desktop_parity.test.js` holds all three to that.
+it. `canary-local/tests/desktop_parity.test.js` holds all three to that: it
+runs each flasher's own drawing code for its connect card and its report on a
+stand-in page (no byte of the address before Show, the whole address after,
+none in a copy) and drives the Lab bench's whole page.
 
 ### 3b. What the chip is
 
@@ -274,14 +277,15 @@ So the app speaks the read-only sliver of the ROM serial protocol itself
 over the same `serialport` link the WE2 flasher and the monitor use: reset
 into the bootloader with the sequences the vendored esptool-js uses (the
 classic bridge sequence first, the USB-Serial/JTAG sequence if that finds
-nothing), `SYNC`, six `READ_REG`s at eFuse block 0, then the three or four
-block-1/2 words the field allowlist above names (each reduced to its allowed
-fields as it arrives), then a hard reset back into the firmware. Those are
-the only two commands the module can send — nothing in it writes, burns or
-uploads a stub — and a probe that cannot reach the ROM reports "not checked",
-never "clean"; a block-1/2 word that does not answer leaves the About rows at
-"Not checked" without touching the security verdict. The flash engine stays
-espflash-the-CLI; this is ten register reads at most, not a second flasher.
+nothing), `SYNC`, six `READ_REG`s at eFuse block 0, then the block-1/2 words
+the field allowlist above names — four on the S3 and the C3, two on the C6 —
+each reduced to its allowed fields as it arrives, then a hard reset back into
+the firmware. Those are the only two commands the module can send — nothing
+in it writes, burns or uploads a stub — and a probe that cannot reach the ROM
+reports "not checked", never "clean"; a block-1/2 word that does not answer
+leaves the About rows at "Not checked" without touching the security verdict.
+The flash engine stays espflash-the-CLI; this is ten register reads at most,
+not a second flasher.
 
 The decode is a port of the browser's `intake.js`: the same fields, bit
 offsets and widths, the same parity rule for `SPI_BOOT_CRYPT_CNT`, the same
@@ -311,11 +315,12 @@ The desktop app **can** now read what firmware is resident: `board_passport`
 reads the bootloader's image header, the partition table, otadata and the
 booted slot's `esp_app_desc_t` over the same serial link, so the connect step
 names the firmware, its version and the slot it boots from, and the This Board
-card shows what flash the image was built for beside the chip's own reading. (Superseded claim: this section used to say it could
-not, because `espflash board-info` reports only chip, revision, crystal and
-MAC.) The first-contact decision remains a **checkbox that defaults to on**
-rather than an inference — the safe default for a board of unknown provenance
-is to wipe it, and the passport tells you what you would be wiping.
+card shows what flash the image was built for beside the chip's own reading.
+(Superseded claim: this section used to say it could not, because `espflash
+board-info` reports only chip, revision, crystal and MAC.) The first-contact
+decision remains a **checkbox that defaults to on** rather than an inference —
+the safe default for a board of unknown provenance is to wipe it, and the
+passport tells you what you would be wiping.
 
 The desktop app also checks the flash **capacity** claim during its automatic
 safety copy: the whole chip is already in memory at that moment, so it compares

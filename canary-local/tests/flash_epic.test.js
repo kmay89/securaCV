@@ -612,6 +612,13 @@ test("roster: add, find, and the progression lines", async () => {
   // never store credentials — the entry shape is public facts only
   assert.deepStrictEqual(Object.keys(found).sort(),
     ["mac", "n", "preset", "product", "t", "version", "wifi"]);
+  // The roster's help dot (flash.js helpDot("roster")) says the same: what
+  // the strip shows, and that the address it keeps is never shown.
+  const help = catalog.settings_help.roster.what;
+  assert.ok(!/\btail\b/i.test(help), `the roster's help still promises a MAC tail: ${help}`);
+  assert.match(help, /hardware address/);
+  assert.match(help, /never shows? it|never shown/);
+  assert.match(help, /until the tab closes/);
 });
 
 test("parseWapLine: the field bench reads the WAP's transition lines", async () => {

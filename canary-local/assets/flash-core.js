@@ -2259,6 +2259,8 @@ const TAIL_REDACT = [
 const TAIL_IDENTITY = [
   /hardware\s*id\b/i,               // "    Hardware ID 3f7a9e21b4c5d6e8", "  Hardware ID    : …"
   /securacv\.canary\.manifest\//,   // {"schema":"securacv.canary.manifest/v1",…}
+  /\bdevice[\s_-]*id\b/i,           // every family's Device ID boot line (often a name the person typed)
+  /\bkey[\s_-]*fp\b|\bfp8\b|\bkey\s+fingerprint\b|\bpubkey\b/i, // the flagship's Key FP line; the WAP's FP8, Pubkey and fingerprint lines
   /\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b/i, // a ROM tool's "MAC: …" / "MAC address: …", any MAC-shaped token
 ];
 
@@ -2521,12 +2523,25 @@ export const FULL_REPORT_NOTE =
   "Describes this one board: its boot and witness counters, crash record and update state. " +
   "For your own records, not for posting. It carries no hardware address.";
 
+// An image's build stamp cut to its day. Both flashers build a slot's
+// `built` from the app descriptor's date and time ("Oct 22 2026 14:33:12");
+// the time of day is dropped (any token holding a colon, or the time after an
+// ISO "T"), because for an image compiled locally it is the second someone
+// built it. null when no day is left.
+export function buildDay(built) {
+  const day = String(built == null ? "" : built).split(/\s+/)
+    .map((t) => (t.includes(":") ? ((/^(\d{4}-\d{2}-\d{2})T/.exec(t) || [])[1] || "") : t))
+    .filter(Boolean).join(" ");
+  return day || null;
+}
+
 // "Save report": the share projection. What it keeps is listed, not what it
 // drops, so a field added to the health report later stays out until someone
 // decides it is shareable. No counter (lifetime boots, witness records,
 // updates seen), no posture (a crash record, OTA pending-verify, a tamper
 // flag, whether a key or Wi-Fi is stored, the eFuse security scan), no
-// chain-head prefix, no hardware address, and the date as a day.
+// chain-head prefix, no hardware address, and every date as a day: the save's
+// own, and each image's build day (buildDay), never a time.
 export function reportShareProjection(r = {}, when = Date.now()) {
   const out = { report: "securacv-board-report", scope: "share", note: SHARE_REPORT_NOTE, day: localDay(when) };
   if (r.chip) out.chip = r.chip;
@@ -2538,7 +2553,10 @@ export function reportShareProjection(r = {}, when = Date.now()) {
   if (Array.isArray(r.slots)) {
     out.slots = r.slots.map((s) => {
       const o = { label: s.label, subtype: s.subtype, empty: !!s.empty };
-      for (const k of ["project", "version", "built", "idf"]) if (s[k] != null) o[k] = s[k];
+      for (const k of ["project", "version", "built", "idf"]) {
+        const v = k === "built" ? buildDay(s.built) : s[k];
+        if (v != null) o[k] = v;
+      }
       if (s.active) o.active = true;
       return o;
     });

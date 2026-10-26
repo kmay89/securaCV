@@ -245,9 +245,10 @@ pub fn parse_revision(board_info: &str) -> Option<String> {
     (!major.is_empty() && !minor.is_empty()).then_some(rev)
 }
 
-/// "Crystal frequency: 40 MHz" → 40. For the S3, C3 and C6 espflash prints a
-/// fixed value rather than measuring (targets/<chip>.rs crystal_freq), which
-/// is why the frontends draw the crystal from the datasheet, not from this.
+/// "Crystal frequency: 40 MHz" → 40, the leading number only. For the S3, C3
+/// and C6 espflash prints a fixed value rather than measuring
+/// (`targets/<chip>.rs` `crystal_freq`), which is why the frontends draw the
+/// crystal from the datasheet, not from this.
 pub fn parse_crystal_mhz(board_info: &str) -> Option<u32> {
     let v = board_info_value(board_info, "crystal frequency")?;
     let digits: String = v.chars().take_while(char::is_ascii_digit).collect();
@@ -362,6 +363,14 @@ mod tests {
         assert_eq!(parse_chip_desc("no chip here"), None);
         assert!(parse_features("").is_empty());
         assert_eq!(parse_revision("Chip type: esp32s3 (revision v)"), None);
+        // A revision missing either half is no revision.
+        assert_eq!(parse_revision("Chip type: esp32s3 (revision v.2)"), None);
+        assert_eq!(parse_revision("Chip type: esp32s3 (revision v1.)"), None);
+        // The crystal is the leading number; a later one is not appended.
+        assert_eq!(
+            parse_crystal_mhz("Crystal frequency: 26 MHz (not 40)"),
+            Some(26)
+        );
     }
 
     #[test]

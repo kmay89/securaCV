@@ -107,13 +107,14 @@ fn do_cmd(
 /// Pull the model card out of an `INFO?` reply: the data is a base64 JSON
 /// card, either bare or nested as `data.info` (both shapes exist in the
 /// field — the browser bench documents the same). Returns whether a card is
-/// there and whether it pins the `person` class (which is what earns "person"
+/// there and whether it lists the `person` class (which is what earns "person"
 /// labels — honesty about an unknown model's classes, mirroring the browser).
 /// The card's own text (its name, its description) is never returned: the
 /// module's stock catalog includes models that would name a capability this
 /// project refuses (docs/hardware/grove_vision_ai_v2_guide.md), and a card is
-/// the module's say-so. A model is named only by the flash path, right after
-/// a write whose SHA-256 matched the pinned release (we2.rs, app.js).
+/// the module's say-so, so it picks the label map and never names the model.
+/// A model is named only by the flash path, right after a write whose SHA-256
+/// matched the pinned release (we2.rs, app.js).
 fn model_card(reply: &Value) -> (bool, bool) {
     let raw = match reply.get("data") {
         Some(Value::String(s)) => Some(s.as_str()),
@@ -129,12 +130,12 @@ fn model_card(reply: &Value) -> (bool, bool) {
     let Ok(card) = serde_json::from_slice::<Value>(&bytes) else {
         return (false, false);
     };
-    let pinned = card
+    let person_class = card
         .get("classes")
         .and_then(Value::as_array)
         .map(|c| c.iter().any(|v| v.as_str() == Some("person")))
         .unwrap_or(false);
-    (true, pinned)
+    (true, person_class)
 }
 
 struct Pending {
@@ -231,8 +232,10 @@ fn bench_thread(
     let info = do_cmd(&mut port, "INFO?", Duration::from_millis(2000))
         .ok()
         .flatten();
-    let (has_card, pinned) = info.as_ref().map(model_card).unwrap_or((false, false));
-    emit(json!({ "kind": "id", "software": software, "has_card": has_card, "pinned": pinned }));
+    let (has_card, person_class) = info.as_ref().map(model_card).unwrap_or((false, false));
+    emit(
+        json!({ "kind": "id", "software": software, "has_card": has_card, "person_class": person_class }),
+    );
 
     // Continuous invoke, with frames (result_only=0). The stream arrives as
     // type-1 INVOKE events; a type-0 ack may or may not precede it depending
@@ -453,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn model_card_without_person_class_is_not_pinned() {
+    fn model_card_without_person_class_lists_none() {
         let card = json!({ "name": "Traffic", "classes": ["car", "bus"] });
         assert_eq!(model_card(&card_reply(card, false)), (true, false));
     }

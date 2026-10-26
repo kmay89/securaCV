@@ -44,8 +44,10 @@
   read-flash — so every console that draws their output (the browser's
   technical log, the desktop's consoles, the Lab bench's log) masks a
   MAC-shaped token. The diagnostic report carries none of it (it kept a
-  two-byte tail), and its log-tail scrubber drops any line still holding one. "Save report" writes the share projection — chip, image and
-  partition facts and the day, no counters, crash or update state, chain head
+  two-byte tail), and its log-tail scrubber replaces any line still holding
+  one with a visible marker. "Save report" writes the share projection —
+  chip, image and partition facts, each image's build day and the day of the
+  save, never a time of day; no counters, crash or update state, chain head
   or hardware address — and a second button, "Save full report for your own
   records", keeps the rest and says it describes this one board; the
   desktop's `health_check` no longer takes or returns the MAC. Reports and
@@ -56,18 +58,31 @@
   is corrected.
 - **The diagnostic report's log tail drops identity lines too (P14).** The
   boot banner's Hardware ID (the WAP's line and `boot_kv` on the display,
-  Sense, Vision and Sentinel) and the self-manifest line (key fingerprint,
-  device id, boot count) are replaced by a visible marker, in both flashers;
-  the test renders the lines from the firmware's own format strings.
+  Sense, Vision and Sentinel), the self-manifest line (key fingerprint,
+  device id, boot count), every Device ID line (`boot_kv` on the WAP,
+  display, Sense, Vision and Sentinel, the WAP's `[PROV]` line and identity
+  box, the flagship's `[OK]` line) and every key-fingerprint line (the
+  flagship's `Key FP`, the WAP's `Public key fingerprint`, `FP8` and `Pubkey`)
+  are replaced by a visible marker, in both flashers; the tests render the
+  lines from the firmware's own format strings.
 - **The Grove Vision module's id and text stay off screen (P13).** Neither
   flasher sends `ID?` any more, and the desktop's module receipt drops the id
-  it carried. Neither bench shows the module's own model-card text; a model
-  is named only right after a flasher wrote one whose SHA-256 matched the
-  pinned release: "SecuraCV person detection, installed and checked".
+  it carried. Neither bench shows the module's own model-card text, or names
+  a model from it: the card is the module's own claim, so the bench says only
+  whether it lists a person class, which picks the labels. A model is named
+  only right after a flasher wrote one whose SHA-256 matched the pinned
+  release: "SecuraCV person detection, installed and checked"; a file the
+  person picked reads "Your model file, installed".
+- **The browser's Grove proof runs again.** After a burn the browser stores
+  the model card on the module and runs one inference as proof, but it
+  base64'd the card with `btoa()`, which takes Latin-1 only and threw on the
+  card's em dash, so neither step ran. The card now goes out as base64 of its
+  UTF-8 bytes, as the desktop sends it.
 - Host-tested (`flash.test.js`, `intake.test.mjs`, `desktop_parity.test.js`,
-  `cargo test` in `desktop/flash-engine`; the `efuse.rs`, `we2.rs` and
-  `we2_bench.rs` tests through a stub harness); not run on a device. No
-  firmware change.
+  `we2.test.js`, `cargo test` in `desktop/flash-engine`; the `efuse.rs`,
+  `we2.rs` and `we2_bench.rs` tests through a stub harness); the flashers'
+  cards, reveals and benches run as their own functions on a stand-in page in
+  `desktop_parity.test.js`; not run on a device. No firmware change.
 ### Dependency advisories of 2026-10-19 to -23: the TLS roots and verifier, two constant-time crates, and body-parser (Dependency Audit #330)
 
 - **Five advisories, every one with a reachable fix, so none is ignored.**

@@ -21,7 +21,7 @@
 // Same failure posture as the ESP32 flow: every error names the fix, and
 // nothing here can brick the module — the burn menu lives in mask ROM.
 
-import { WE2, We2Flasher, makeAtParser, atCommand, modelInfoJson,
+import { WE2, We2Flasher, makeAtParser, atCommand, modelInfoBase64,
          stylizeDetections, meterModel, WE2_CLASSES } from "./we2-core.js";
 import { helpTopic, hatchMoment, isVisionBoard, verifyPinnedModelAsset } from "./flash-core.js";
 import { chirp } from "./chirp.js";
@@ -452,7 +452,7 @@ function benchHelpDot(ctx, topicId) {
 function mountBench(ctx, at, opts = {}) {
   const m = ctx.catalog.we2_module;
   const guide = m.bench || { defaults: { tscore: 50, tiou: 45 }, steps: [], troubleshooting: [] };
-  const classes = opts.pinned ? WE2_CLASSES : [];
+  const classes = opts.personClass ? WE2_CLASSES : [];
 
   const bench = el("div", "we2-bench");
   bench.append(el("h3", "wap-col-h", "Bench check — see what it sees"));
@@ -610,7 +610,7 @@ function mountBench(ctx, at, opts = {}) {
     if (dets.length && !seen) {
       seen = true;
       chirp("seen");
-      seenBanner.textContent = opts.pinned
+      seenBanner.textContent = opts.personClass
         ? "👁 It sees you — the model is live and working ✓"
         : "👁 It sees something — the model is live and working ✓";
       seenBanner.classList.remove("flash-hidden");
@@ -695,29 +695,31 @@ function phaseModuleBench(ctx, s) {
         "refusing, burn the model first (one click back).";
       return;
     }
-    // What model is on it? The stored model card decides the label map: only a
-    // card naming the person class earns "person" labels. Its text is never
-    // shown — the module's own catalog includes models that would name a
-    // capability this project refuses (grove_vision_ai_v2_guide.md), and a
-    // card is the module's say-so, not a check. A model is NAMED only by
-    // this flasher, right after it wrote one whose SHA-256 matched the
-    // pinned release (phaseModuleDone).
+    // What model is on it? This flasher cannot say: it wrote nothing here,
+    // and the stored model card is the module's own claim, not a check. The
+    // card decides only the label map (a card listing the person class earns
+    // "person" labels) and never names the model. Its text is never shown —
+    // the module's own catalog includes models that would name a capability
+    // this project refuses (grove_vision_ai_v2_guide.md). A model is NAMED
+    // only by this flasher, right after it wrote one whose SHA-256 matched
+    // the pinned release (phaseModuleDone).
     const info = await at.cmd("INFO?", { timeoutMs: 2000 });
-    let pinned = false, hasCard = false;
+    let personClass = false, hasCard = false;
     try {
       // the reply's data is the base64 card — bare, or nested as data.info
       const raw = info && (typeof info.data === "string" ? info.data
         : info.data && typeof info.data.info === "string" ? info.data.info : null);
       const decoded = raw ? JSON.parse(atob(raw)) : null;
       hasCard = !!decoded;
-      pinned = !!(decoded && Array.isArray(decoded.classes) && decoded.classes.includes("person"));
+      personClass = !!(decoded && Array.isArray(decoded.classes) && decoded.classes.includes("person"));
     } catch { /* no card or not ours — generic labels */ }
     idLine.textContent = "SSCMA firmware " + ((ver.data && ver.data.software) || "?") +
-      (pinned ? " · a model card for person detection (its text isn’t shown)"
-        : hasCard ? " · a model card for something else — labels will read “object”"
+      (personClass
+        ? " · its model card lists a person class — labels will read “person” (the card is the module’s own claim; its text isn’t shown)"
+        : hasCard ? " · its model card lists no person class — labels will read “object”"
           : " · no model card — labels will read “object”") +
       ". Start the preview below.";
-    bench = mountBench(ctx, at, { pinned });
+    bench = mountBench(ctx, at, { personClass });
     box.insertBefore(bench.node, backBtn);
   })();
 
@@ -777,7 +779,7 @@ function phaseModuleDone(ctx, s, job) {
     if (ver) {
       // store our model card on-device (what SenseCraft does after a flash),
       // then a one-shot invoke as the "it actually runs" proof
-      const info = btoa(JSON.stringify(modelInfoJson({ version: job.version, sha256: job.sha256 })));
+      const info = modelInfoBase64({ version: job.version, sha256: job.sha256 });
       await at.cmd('INFO="' + info + '"', { timeoutMs: 3000 });
       const inv = await at.cmd("INVOKE=1,0,1", { timeoutMs: 8000 });
       // The one place a model is named: this flasher just wrote it, and its
@@ -798,7 +800,7 @@ function phaseModuleDone(ctx, s, job) {
   })();
 
   // ── the bench: shared with phaseModuleBench — video, boxes, meter, guide ──
-  const bench = mountBench(ctx, at, { pinned: job.pinned });
+  const bench = mountBench(ctx, at, { personClass: job.pinned });
   box.append(bench.node);
 
   const done = el("button", "ghost", "Disconnect — I’m done");

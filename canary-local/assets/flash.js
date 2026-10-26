@@ -1471,7 +1471,10 @@ async function readCurrentFirmware() {
       elfSha256Prefix: d.elfSha256Prefix,
     };
   } catch {
-    state.current = { unknown: true };
+    // A read that threw — the partition table's, or the descriptor's after a
+    // good table — is not an empty board: About this board says "Not checked"
+    // for it (aboutFacts), as the desktop does for a passport read that failed.
+    state.current = { unknown: true, readFailed: true };
   }
 }
 
@@ -6711,8 +6714,9 @@ function nextFileStamp() {
 
 // ── About this board ────────────────────────────────────────────────────────
 // What the flasher read, in the one shape core.aboutBoardGroups draws. The
-// image is undefined until read, false when the read failed and null when
-// there is nothing installed — three different answers, never one.
+// image is undefined until read, false when the read failed (the partition
+// table's, or the descriptor's after it) and null when there is nothing
+// installed — three different answers, never one.
 function aboutFacts() {
   const cur = state.current;
   return {
@@ -6720,7 +6724,7 @@ function aboutFacts() {
     chipDesc: state.chipDesc,
     flashBytes: state.flashBytes,
     fuses: state.chipFuses,
-    image: state.ptRead === "failed" ? false
+    image: state.ptRead === "failed" || (cur && cur.readFailed) ? false
       : cur && !cur.unknown ? {
         projectName: cur.projectName, version: cur.version, idf: cur.idf,
         secureVersion: cur.secureVersion, elfSha256Prefix: cur.elfSha256Prefix,
