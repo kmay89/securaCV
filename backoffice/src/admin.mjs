@@ -36,6 +36,16 @@ import { SCENARIOS, resetDemo, PEOPLE } from './modules/demo.mjs';
 import { STEPS, walkthroughState, nextStep, runStep, runAll, resetWalkthrough } from './modules/walkthrough.mjs';
 import { join } from 'node:path';
 
+// A probe URL may not point at the box itself, a container beside it, a private network or the cloud
+// metadata address: an ops login is not a port scanner.
+function isInternalHost(url) {
+  let h; try { h = new URL(url).hostname.replace(/^\[|\]$/g, '').toLowerCase(); } catch { return true; }
+  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.internal') || h.endsWith('.local') || h === '::1' || h.startsWith('fe80:') || /^f[cd][0-9a-f]{2}:/.test(h)) return true;
+  const m = /^(?:::ffff:)?(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(h); if (!m) return false;
+  const [a, b] = [+m[1], +m[2]];
+  return a === 127 || a === 10 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
+}
+
 export function registerAdmin(app) {
   const { db, cfg, router } = app;
   const page = (c, title, body) => html(c.res, layout({ title, body, path: c.url.pathname, company: cfg.company, csrf: c.csrf, user: c.user, demo: cfg.demo, demoResetMinutes: cfg.demoResetMinutes, q: c.url.pathname === '/search' ? c.query.get('q') || '' : '', flash: c.query.get('ok') ? { text: c.query.get('ok') } : c.query.get('err') ? { kind: 'err', text: c.query.get('err') } : null }));
@@ -312,7 +322,7 @@ ${form('/books/payout', c.csrf, `<b>Record a Stripe payout</b><p class="muted">A
     form('/status-admin/probe', c.csrf, `<b>Add / edit a probe</b><div class="row">${field('name', 'Name', { required: true })}${field('url', 'URL', { required: true })}</div><div class="row">${field('expect_status', 'Expect status', { type: 'number', value: 200 })}${field('expect_text', 'Expect text (optional)')}${field('interval_s', 'Interval (s)', { type: 'number', value: 300 })}${field('public', 'Public', { options: [['1', 'yes'], ['0', 'no']] })}</div>`, { submit: 'Save probe' }) +
     `<h2>Incidents</h2>${table(listIncidents(db), [{ label: 'Started', get: r => dt(r.started_at) }, { label: 'Title', key: 'title' }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Body', key: 'body' }, { label: '', html: r => r.status !== 'resolved' ? `<form method="post" action="/status-admin/incident/${r.id}" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="status" value="resolved"><button class="quiet">resolve</button></form>` : '' }])}` +
     form('/status-admin/incident', c.csrf, `<b>Open an incident</b>${field('title', 'Title', { required: true })}${field('body', 'What is happening, for the public page', { type: 'textarea', rows: 3 })}`, { submit: 'Post incident' })));
-  router.post('/status-admin/probe', (c) => { if (!/^https?:\/\//.test(String(c.body.url || ''))) throw new HttpError(400, 'a probe URL starts with http:// or https://'); upsertProbe(db, { ...c.body, name: String(c.body.name || '').trim().slice(0, 80), expect_status: int(c.body.expect_status, { name: 'expected status', min: 100, max: 599, fallback: 200 }), interval_s: int(c.body.interval_s, { name: 'interval (s)', min: 30, max: 86400, fallback: 300 }), public: c.body.public === '1' ? 1 : 0 }); back(c, '/status-admin', 'probe saved'); });
+  router.post('/status-admin/probe', (c) => { if (!/^https?:\/\//.test(String(c.body.url || ''))) throw new HttpError(400, 'a probe URL starts with http:// or https://'); if (isInternalHost(String(c.body.url))) throw new HttpError(400, 'a probe watches a public address — not this box, a container beside it, or a private network'); upsertProbe(db, { ...c.body, name: String(c.body.name || '').trim().slice(0, 80), expect_status: int(c.body.expect_status, { name: 'expected status', min: 100, max: 599, fallback: 200 }), interval_s: int(c.body.interval_s, { name: 'interval (s)', min: 30, max: 86400, fallback: 300 }), public: c.body.public === '1' ? 1 : 0 }); back(c, '/status-admin', 'probe saved'); });
   router.post('/status-admin/probe/:id/delete', (c) => { deleteProbe(db, c.params.id); back(c, '/status-admin', 'deleted'); });
   router.post('/status-admin/run', async (c) => { const r = await runDueProbes(db, { cfg, force: true }); back(c, '/status-admin', `ran ${r.length}: ${r.map(p => `${p.name}=${p.ok ? 'up' : 'down'}`).join(', ')}`); });
   router.post('/status-admin/incident', (c) => { openIncident(db, c.body); back(c, '/status-admin', 'incident posted'); });
@@ -372,9 +382,9 @@ ${!next && s.done.length ? `<p class="ok" style="margin:0"><b>The chain ran end 
   router.post('/demo/first-order/reset', (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); resetWalkthrough(db); back(c, '/demo/first-order', 'emptied: no orders, no customers, no parts — the people stay'); });
   router.post('/demo/first-order/next', async (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); const st = nextStep(db); if (!st) return back(c, '/demo/first-order', 'every step has run'); const r = await runStep(app, st.id); back(c, '/demo/first-order', `${st.title}: ${r.ok ? 'every check green' : 'a check failed — see the step'}`); });
   router.post('/demo/first-order/all', async (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); const rs = await runAll(app); back(c, '/demo/first-order', `${rs.length} step${rs.length === 1 ? '' : 's'} ran, ${rs.filter(r => r.ok).length} green`); });
-  router.post('/demo/reset', async (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); const r = await resetDemo(db, cfg); back(c, '/demo', `reseeded: ${JSON.stringify(r)}`); });
+  router.post('/demo/reset', async (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); app.resetting = true; let r; try { r = await resetDemo(db, cfg); } finally { app.resetting = false; } back(c, '/demo', `reseeded: ${JSON.stringify(r)}`); });
   router.post('/demo/:scenario', async (c) => {
-    if (!cfg.demo) throw new HttpError(404, 'not in demo mode');
+    if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); if (app.resetting) throw new HttpError(503, 'the demo is resetting — retry in a moment');
     const sc = SCENARIOS[c.params.scenario]; if (!sc) throw new HttpError(404, 'unknown scenario');
     const r = await sc.run(app);
     redirect(c.res, `/demo?ok=${encodeURIComponent(sc.label)}&result=${encodeURIComponent(JSON.stringify(r, null, 1).slice(0, 1500))}`);

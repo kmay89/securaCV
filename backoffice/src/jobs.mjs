@@ -29,6 +29,7 @@ export const JOBS = {
     let created = 0, appended = 0, dup = 0;
     for (const m of msgs) {
       if (db.get('SELECT uid FROM mail_seen WHERE uid = ?', m.uid)) { dup++; continue; }
+      if (!m.raw) { db.audit('system', 'mail.inbox.skipped', 'mail', m.uid, { why: m.skipped }); continue; }   // over the size cap: left on the server, marked seen
       const r = ingestEmail(db, parseEmail(m.raw), { cfg });
       db.run('INSERT INTO mail_seen (uid, seen_at) VALUES (?, ?)', m.uid, nowIso());
       if (r.created) created++; else if (r.ticket) appended++; else dup++;
@@ -103,12 +104,14 @@ export const JOBS = {
     return { queued: m.id, to: cfg.operatorEmail };
   }],
   // A public demo starts over on a cadence so visitors always find the seeded week. Never runs outside demo mode.
-  demo_reset: [60, async ({ db, cfg }) => {
+  demo_reset: [60, async (app) => {
+    const { db, cfg } = app;
     if (!cfg.demo || !isDemo(db) || !cfg.demoResetMinutes) return { skipped: 'not a timed public demo' };
     const last = db.setting('demo:last_reset', db.setting('demo:seeded_at', ''));
     if (last && Date.now() - Date.parse(last) < cfg.demoResetMinutes * 60_000) return { next_in_s: Math.round((cfg.demoResetMinutes * 60_000 - (Date.now() - Date.parse(last))) / 1000) };
-    const r = await resetDemo(db, cfg); db.setSetting('demo:last_reset', nowIso());
-    return { reset: true, ...r };
+    app.resetting = true;
+    try { const r = await resetDemo(db, cfg); db.setSetting('demo:last_reset', nowIso()); return { reset: true, ...r }; }
+    finally { app.resetting = false; }
   }],
 };
 
@@ -127,10 +130,12 @@ export async function runJob(app, name) {
 }
 
 export function startScheduler(app, { tickMs = 10_000 } = {}) {
-  const last = {};
+  // Seeded from the last run on record, so a process that restarts does not run every job again at
+  // once: fourteen crash-restarts used to replace two weeks of nightly backups with fourteen copies of
+  // the same hour, and each boot uploaded and drilled.
+  const last = {}; for (const r of jobRuns(app.db)) { const t = Date.parse(r.last_run_at); if (Number.isFinite(t)) last[r.name] = t; }
   let running = false;
   const tick = async () => {
-    app.schedulerTick = Date.now();
     if (running) return; running = true;
     try {
       for (const [name, [interval]] of Object.entries(JOBS)) {
@@ -139,7 +144,7 @@ export function startScheduler(app, { tickMs = 10_000 } = {}) {
         const r = await runJob(app, name);
         if (r.ok) { const ex = app.db.get('SELECT key FROM exceptions WHERE key = ? AND resolved_at IS NULL', `job:${name}`); if (ex) await resolve(app.db, app.cfg, `job:${name}`, 'Ran clean.'); }
       }
-    } finally { running = false; }
+    } finally { running = false; app.schedulerTick = Date.now(); }   // stamped when a loop completes: a loop stuck on a job never stamps, and /healthz says so
   };
   const timer = setInterval(tick, tickMs); timer.unref();
   setTimeout(tick, 1500).unref();

@@ -6,7 +6,7 @@
 // to confirm the bytes landed, and a weekly drill pulls the latest copy
 // back down and proves it boots. Restore is one command. Zero dependencies:
 // the AWS Signature V4 is ~40 lines of node:crypto.
-import { mkdirSync, readdirSync, unlinkSync, statSync, copyFileSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdirSync, readdirSync, unlinkSync, statSync, copyFileSync, readFileSync, writeFileSync, chmodSync, renameSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash, createHmac, scryptSync, randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
@@ -14,10 +14,14 @@ import { DatabaseSync } from 'node:sqlite';
 import { timedFetch } from '../net.mjs';
 
 export function backup(db, dir, { keep = 14, now = new Date() } = {}) {
+  keep = Math.max(1, Number(keep) || 14);   // zero would delete the copy just written
   mkdirSync(dir, { recursive: true });
   const name = `backoffice-${now.toISOString().replace(/[:.]/g, '-').slice(0, 23)}.db`;   // to the millisecond: two "back up now" presses never collide
   const path = join(dir, name);
-  db.raw.exec(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
+  // written under a name the pruner and the drill ignore, renamed only once complete: a process killed
+  // mid-copy leaves a .partial file behind, never a truncated "latest"
+  const partial = `${path}.partial`; try { unlinkSync(partial); } catch { /* none */ }
+  db.raw.exec(`VACUUM INTO '${partial.replace(/'/g, "''")}'`); renameSync(partial, path);
   try { chmodSync(path, 0o600); } catch { /* not every filesystem */ }
   const files = readdirSync(dir).filter(f => /^backoffice-.*\.db$/.test(f)).sort();
   for (const f of files.slice(0, Math.max(0, files.length - keep))) unlinkSync(join(dir, f));
@@ -73,7 +77,7 @@ export function signS3({ method, url, headers = {}, payloadHash, key, secret, re
   const toSign = ['AWS4-HMAC-SHA256', amzDate, scope, sha256(canonical)].join('\n');
   const kSigning = hmac(hmac(hmac(hmac(`AWS4${secret}`, day), region), service), 'aws4_request');
   const signature = createHmac('sha256', kSigning).update(toSign).digest('hex');
-  return { ...h, authorization: `AWS4-HMAC-SHA256 Credential=${key}/${scope}, SignedHeaders=${signed.join(';')}, Signature=${signature}`, signature };
+  return { ...h, authorization: `AWS4-HMAC-SHA256 Credential=${key}/${scope}, SignedHeaders=${signed.join(';')}, Signature=${signature}` };
 }
 export const offsiteConfigured = (cfg) => !!(cfg.backupS3Url && cfg.backupS3Key && cfg.backupS3Secret);
 export const offsiteEncrypted = (cfg) => !!cfg.backupEncryptionKey;

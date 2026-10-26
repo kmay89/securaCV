@@ -2,7 +2,7 @@
 // API for the CLI / an AI operator, and the server-rendered admin.
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { Router, HttpError, parseCookies, cookie, readBody, parseBody, RateLimiter, Lockout, html, json, text, redirect, clientIp, escapeHtml, safeEqual, int, asArray } from './http.mjs';
+import { Router, HttpError, parseCookies, cookie, readBody, parseBody, RateLimiter, Lockout, html, json, text, redirect, clientIp, setTrustedProxies, escapeHtml, safeEqual, int, asArray } from './http.mjs';
 const e = escapeHtml;
 import { layout, setTimezone, dt as fmtDt, day as fmtDay } from './render.mjs';
 import { orderToken, deliveryLine, trackingUrl } from './modules/delivery.mjs';
@@ -51,6 +51,7 @@ export function createApp({ db, cfg }) {
     if (isDemo(db)) seedDemoUsers(db);
   }
   // In demo mode the catalog is the demo's own, never fetched from the live site.
+  setTrustedProxies(cfg.trustedProxies);
   const app = { db, cfg, json, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), formLimiter: new RateLimiter({ limit: 5, windowMs: 10 * 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), once: new Map(), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o), shipping: cfg.demo ? async () => DEMO_SHIPPING : (o) => loadShipping(cfg, o) };
   // The website's fulfillment block knows where parcels leave from and how far a scale may drift; the environment can override either.
   app.catalog().then(cat => { const f = cat?.fulfillment || {}; if (f.ship_from?.state && !process.env.SHIP_FROM_STATE) cfg.shipFromState = String(f.ship_from.state).toUpperCase(); if (Number.isFinite(Number(f.weight_tolerance_oz)) && cfg.weightToleranceOz == null) cfg.weightToleranceOz = Number(f.weight_tolerance_oz); }).catch(() => {});
@@ -60,7 +61,7 @@ export function createApp({ db, cfg }) {
   // Docker and the kit poll this: it fails when the database cannot answer or the scheduler has not ticked in
   // five minutes (a hung job), so a container that is up but not working is restarted rather than trusted.
   router.get('/healthz', (c) => {
-    try { db.get('SELECT 1 AS one'); } catch (err) { throw new HttpError(503, `database: ${err.message}`); }
+    try { db.get('SELECT key FROM settings LIMIT 1'); } catch (err) { throw new HttpError(503, `database: ${err.message}`); }
     if (app.schedulerTick && Date.now() - app.schedulerTick > 5 * 60_000) throw new HttpError(503, 'scheduler stalled');
     text(c.res, 'ok');
   });
@@ -90,12 +91,24 @@ export function createApp({ db, cfg }) {
     // insert that only one delivery wins) and marked applied AFTER it; a failure releases the
     // claim, and a claim left in flight (the process died mid-way) is taken over by the next
     // redelivery once it is a minute old. Only an applied event answers "duplicate".
-    if (event.id && !claimStripeEvent(db, event)) return json(c.res, { received: true, duplicate: true });
+    if (app.resetting) throw new HttpError(503, 'the demo is resetting — retry in a moment');
+    if (event.id) {
+      const claim = claimStripeEvent(db, event);
+      if (claim === 'applied') return json(c.res, { received: true, duplicate: true });
+      // another delivery of the same event is mid-way: a 2xx here would make Stripe stop retrying while the first attempt may yet fail
+      if (claim === 'inflight') throw new HttpError(409, 'this event is being applied by another delivery — retry it shortly');
+    }
     const mapped = eventToOrder(event);
     let result;
     try { result = await applyStripeEvent(app, mapped, event); }
-    catch (err) { if (event.id) db.run('DELETE FROM stripe_events WHERE id = ? AND applied_at IS NULL', event.id); throw err; }
-    if (event.id) db.run('UPDATE stripe_events SET applied_at = ? WHERE id = ?', nowIso(), event.id);
+    catch (err) {
+      if (event.id) db.run('DELETE FROM stripe_events WHERE id = ? AND applied_at IS NULL', event.id);
+      // A business-rule failure (an unknown SKU on a new Payment Link, a currency the books refuse) is a 4xx Stripe retries for three
+      // days and then drops; it is raised here so a person sees it the first time, and resolved below when the event finally applies.
+      if (event.id) await raiseException(db, cfg, `stripe:failed:${event.id}`, `stripe [webhook failed]: ${event.type || 'event'} ${event.id}`, `${err.message}\n\nStripe retries this event for up to three days; fix the cause (the message names it) and it applies on the next delivery, or resend it from the Stripe dashboard.`).catch(() => {});
+      throw err;
+    }
+    if (event.id) { db.run('UPDATE stripe_events SET applied_at = ? WHERE id = ?', nowIso(), event.id); if (db.get('SELECT key FROM exceptions WHERE key = ? AND resolved_at IS NULL', `stripe:failed:${event.id}`)) await resolveException(db, cfg, `stripe:failed:${event.id}`, 'The event applied on a later delivery.').catch(() => {}); }
     json(c.res, { received: true, ...result });
   }, { public: true, raw: true });
 
@@ -202,22 +215,24 @@ export function createApp({ db, cfg }) {
   router.get('/api/jobs', (c) => json(c.res, Object.keys(JOBS)));
   router.post('/api/jobs/:name', async (c) => json(c.res, await runJob(app, c.params.name)));
   router.get('/api/demo/scenarios', (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); json(c.res, Object.fromEntries(Object.entries(SCENARIOS).map(([k, v]) => [k, v.label]))); });
-  router.post('/api/demo/:scenario', async (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); const sc = SCENARIOS[c.params.scenario]; if (!sc) throw new HttpError(404, 'unknown scenario'); json(c.res, await sc.run(app)); });
+  router.post('/api/demo/:scenario', async (c) => { if (!cfg.demo) throw new HttpError(404, 'not in demo mode'); if (app.resetting) throw new HttpError(503, 'the demo is resetting — retry in a moment'); const sc = SCENARIOS[c.params.scenario]; if (!sc) throw new HttpError(404, 'unknown scenario'); json(c.res, await sc.run(app)); });
 
   registerAdmin(app);
   registerUsers(app);
 
   // ---------- the pipeline
   const server = createServer(async (req, res) => {
-    const url = new URL(req.url, 'http://x');
-    const route = router.match(req.method, url.pathname);
-    let onceKey = null;
+    let url = null, route = null, onceKey = null;
     try {
+      // inside the try: a request line or a path segment that does not parse is a 400, not a request that never gets an answer
+      try { url = new URL(req.url, 'http://x'); } catch { throw new HttpError(400, 'bad request URL'); }
+      route = router.match(req.method, url.pathname);
       if (!route) throw new HttpError(404, 'not found');
       if (cfg.secure) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
       // A browser says where a request came from; a state change from another site is refused before the body is read.
       const site = req.headers['sec-fetch-site'];
-      if (site && !['same-origin', 'same-site', 'none'].includes(site) && req.method !== 'GET' && req.method !== 'HEAD' && !route.opts.public) throw new HttpError(403, 'cross-site request refused');
+      // The admin is one origin; a sibling host (the website, a future subdomain) has no business writing here, so same-site is not enough.
+      if (site && !['same-origin', 'none'].includes(site) && req.method !== 'GET' && req.method !== 'HEAD' && !route.opts.public) throw new HttpError(403, 'cross-site request refused');
       const cookies = parseCookies(req);
       const session = sessionFor(db, cookies.bo_session);
       const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
@@ -229,6 +244,11 @@ export function createApp({ db, cfg }) {
         else if (!session) return redirect(res, '/login');
         // A person's role decides, by path and method; an owner-made API token is not bound to a role.
         if (session && !tokenRow && !can(session.role, req.method, url.pathname)) throw new HttpError(403, `your role (${session.role}) cannot do this — an owner can`);
+        // A session writing through the API carries the same token a form does (in the body or an X-CSRF header): a cookie alone never writes. A bearer token needs none.
+        if (session && !tokenRow && !['GET', 'HEAD'].includes(req.method) && url.pathname.startsWith('/api')) {
+          const t = String((c.body && c.body._csrf) || req.headers['x-csrf'] || '');
+          if (!safeEqual(t, session.csrf)) throw new HttpError(403, 'a session-authenticated API write needs the session CSRF token (_csrf in the body or an X-CSRF header); a bearer token needs none');
+        }
         if (session && !tokenRow && req.method === 'POST' && route.opts.csrf !== false && !url.pathname.startsWith('/api')) {
           if (!safeEqual(c.body._csrf || '', session.csrf)) throw new HttpError(403, 'bad CSRF token');
           // A form carries a one-time token: the first POST with it runs, a second (a double click, a
@@ -310,12 +330,13 @@ export async function applyStripeEvent(app, m, event = null) {
   return { ignored: m.type || m.kind };
 }
 
-// True when this delivery owns the event: a fresh id, or a claim another delivery left in flight
-// for over a minute. An applied event, or a claim younger than that, belongs to someone else.
+// true: this delivery owns the event (a fresh id, or a claim another delivery left in flight for over
+// a minute). 'applied': it is done, answer duplicate. 'inflight': another delivery is on it right now.
 export function claimStripeEvent(db, event, { staleMs = 60_000, now = Date.now() } = {}) {
   const at = new Date(now).toISOString();
   if (db.run('INSERT OR IGNORE INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)', event.id, event.type || '', at).changes) return true;
-  return db.run('UPDATE stripe_events SET received_at = ? WHERE id = ? AND applied_at IS NULL AND received_at < ?', at, event.id, new Date(now - staleMs).toISOString()).changes > 0;
+  if (db.run('UPDATE stripe_events SET received_at = ? WHERE id = ? AND applied_at IS NULL AND received_at < ?', at, event.id, new Date(now - staleMs).toISOString()).changes > 0) return true;
+  return db.get('SELECT applied_at FROM stripe_events WHERE id = ?', event.id)?.applied_at ? 'applied' : 'inflight';
 }
 
 // A redirect target is accepted only when it parses and its origin IS the site's.

@@ -148,9 +148,14 @@ test('Stripe: a delayed payment and a free checkout are orders; a redelivered ev
     const body = JSON.stringify({ id: 'evt_twice', type: 'checkout.session.completed', data: { object: base({ payment_status: 'paid' }) } });
     const h = { 'content-type': 'application/json', 'stripe-signature': signStripePayload(body, 'whsec_test') };
     const [r1, r2] = await Promise.all([fetch(url, { method: 'POST', body, headers: h }), fetch(url, { method: 'POST', body, headers: h })]);
-    const outs = [await r1.json(), await r2.json()];
-    assert.equal(outs.filter(o => o.duplicate).length, 1, 'one delivery is told it is the duplicate'); assert.equal(outs.filter(o => o.created).length, 1);
+    const outs = [await r1.json(), await r2.json()]; const codes = [r1.status, r2.status].sort();
+    // the two deliveries race: one records the order; the other is told either "duplicate" (it arrived after the
+    // first finished) or 409 "being applied, retry shortly" (it arrived while the first was still at work) — never a second order
+    assert.equal(outs.filter(o => o.created).length, 1, 'exactly one delivery records the order');
+    assert.ok(outs.some(o => o.duplicate) || codes[1] === 409, `the other is a duplicate or a retry-shortly: ${JSON.stringify(outs)} ${codes}`);
     assert.equal(db.get('SELECT COUNT(*) AS n FROM orders').n, 1);
+    // once the first is applied, a redelivery is simply the duplicate
+    const r3 = await fetch(url, { method: 'POST', body, headers: h }); assert.equal(r3.status, 200); assert.equal((await r3.json()).duplicate, true);
     const bad = JSON.stringify({ id: 'evt_bad', type: 'checkout.session.completed', data: { object: base({ id: 'cs_bad', payment_status: 'paid', line_items: { data: [{ description: 'Mystery', quantity: 1, price: { unit_amount: 1, product: { metadata: { sku: 'mystery' } } } }] } }) } });
     const rb = await fetch(url, { method: 'POST', body: bad, headers: { 'content-type': 'application/json', 'stripe-signature': signStripePayload(bad, 'whsec_test') } });
     assert.equal(rb.status, 400); assert.equal(db.get('SELECT COUNT(*) AS n FROM stripe_events WHERE id = ?', 'evt_bad').n, 0, 'a failed event is released for Stripe to retry');
@@ -163,7 +168,8 @@ test('Stripe: a delayed payment and a free checkout are orders; a redelivered ev
     // a claim seconds old is another delivery still working: this one steps back
     db.run("INSERT INTO stripe_events (id, type, received_at) VALUES ('evt_live', 'checkout.session.completed', ?)", new Date().toISOString());
     const live = JSON.stringify({ id: 'evt_live', type: 'checkout.session.completed', data: { object: base({ id: 'cs_live9', payment_intent: 'pi_live9', payment_status: 'paid' }) } });
-    assert.equal((await (await fetch(url, { method: 'POST', body: live, headers: { 'content-type': 'application/json', 'stripe-signature': signStripePayload(live, 'whsec_test') } })).json()).duplicate, true);
+    const rl = await fetch(url, { method: 'POST', body: live, headers: { 'content-type': 'application/json', 'stripe-signature': signStripePayload(live, 'whsec_test') } });
+    assert.equal(rl.status, 409, 'told to retry shortly, so a delivery that is still at work is not doubled and one that died is retaken a minute later'); assert.match((await rl.json()).error, /being applied/);
     assert.equal(db.get('SELECT COUNT(*) AS n FROM orders').n, 2);
   } finally { await app.close(); db.close(); }
 });

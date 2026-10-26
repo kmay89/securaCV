@@ -31,8 +31,13 @@ function migrate(db) {
   const files = readdirSync(join(here, 'migrations')).filter(f => f.endsWith('.sql')).sort();
   for (const f of files) {
     if (applied.has(f)) continue;
-    db.exec(readFileSync(join(here, 'migrations', f), 'utf8'));
-    db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)').run(f, nowIso());
+    // One file, one transaction: a crash halfway (docker's ten seconds, a full disk) leaves nothing
+    // applied, so the next boot runs the file again instead of failing on a column that already exists.
+    // PRAGMAs cannot run inside it (openDb sets the journal mode itself), so they are left out here.
+    const sql = readFileSync(join(here, 'migrations', f), 'utf8').replace(/^\s*PRAGMA[^;]*;[^\n]*$/gm, '');
+    db.exec('BEGIN');
+    try { db.exec(sql); db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)').run(f, nowIso()); db.exec('COMMIT'); }
+    catch (e) { try { db.exec('ROLLBACK'); } catch { /* nothing to roll back */ } throw new Error(`migration ${f}: ${e.message}`); }
   }
 }
 
@@ -49,11 +54,19 @@ function wrap(db) {
     run: (sql, ...p) => stmt(sql).run(...fix(p)),
     exec: (sql) => db.exec(sql),
     // Nested calls become savepoints, so a module can wrap another's work.
+    // BEGIN IMMEDIATE takes the write lock up front, so a second writer (the CLI beside serve) waits
+    // out busy_timeout instead of failing at commit. The depth counter is restored on every path: a
+    // COMMIT that fails (disk full) used to leave it at -1 and every later transaction broken until restart.
     tx(fn) {
       const outer = depth === 0; const sp = `sp${depth}`;
-      db.exec(outer ? 'BEGIN' : `SAVEPOINT ${sp}`); depth++;
-      try { const r = fn(api); depth--; db.exec(outer ? 'COMMIT' : `RELEASE ${sp}`); return r; }
-      catch (e) { depth--; db.exec(outer ? 'ROLLBACK' : `ROLLBACK TO ${sp}; RELEASE ${sp}`); throw e; }
+      db.exec(outer ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${sp}`); depth++;
+      let r;
+      try { r = fn(api); }
+      catch (e) { depth--; try { db.exec(outer ? 'ROLLBACK' : `ROLLBACK TO ${sp}; RELEASE ${sp}`); } catch { /* the transaction is already gone */ } throw e; }
+      depth--;
+      try { db.exec(outer ? 'COMMIT' : `RELEASE ${sp}`); }
+      catch (e) { if (outer) { try { db.exec('ROLLBACK'); } catch { /* already rolled back */ } } throw e; }
+      return r;
     },
     setting: (key, fallback = null) => api.get('SELECT value FROM settings WHERE key = ?', key)?.value ?? fallback,
     setSetting: (key, value) => api.run(

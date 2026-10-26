@@ -11,9 +11,12 @@ export async function raise(db, cfg, key, title, body, { fetchImpl = timedFetch 
   const existing = db.get('SELECT * FROM exceptions WHERE key = ?', key);
   if (existing && !existing.resolved_at) { db.run('UPDATE exceptions SET last_seen_at = ?, body = ? WHERE key = ?', now, body, key); return { ...existing, bumped: true }; }
   let issue = null;
-  if (cfg.githubToken) {
+  // The issue is a summons, not a record: customer emails are redacted before the body leaves the box (the full
+  // text stays in the exceptions table here), and nothing is posted unless a repository is named.
+  if (cfg.githubToken && cfg.githubRepo) {
+    const redact = (s) => String(s).replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, '[email]');
     try {
-      const r = await fetchImpl(`https://api.github.com/repos/${cfg.githubRepo}/issues`, { method: 'POST', headers: gh(cfg), body: JSON.stringify({ title, body: `${body}\n\n---\n_Opened by the backoffice (\`${key}\`). It closes itself when the condition clears._`, labels: ['backoffice', 'exception'] }) });
+      const r = await fetchImpl(`https://api.github.com/repos/${cfg.githubRepo}/issues`, { method: 'POST', headers: gh(cfg), body: JSON.stringify({ title: redact(title), body: `${redact(body)}\n\n---\n_Opened by the backoffice (\`${key}\`). It closes itself when the condition clears._`, labels: ['backoffice', 'exception'] }) });
       if (r.ok) issue = (await r.json()).number; else db.audit('system', 'exception.github.failed', 'exception', key, { status: r.status });
     } catch (e) { db.audit('system', 'exception.github.failed', 'exception', key, { error: String(e.message || e) }); }
   }

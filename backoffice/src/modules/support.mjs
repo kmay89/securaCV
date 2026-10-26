@@ -44,9 +44,12 @@ export function openTicket(db, { email, name = null, subject, body, kind = null,
   });
 }
 
-export const inReplyToHeaders = (mid) => mid ? { 'In-Reply-To': mid, References: mid } : {};
+// A Message-ID is one bracketed token with no whitespace, or nothing: anything else (a CRLF, a second header) is dropped before it can reach a mail header.
+export const messageIdOrNull = (s) => (typeof s === 'string' && /^<[^\s<>]{1,500}>$/.test(s.trim())) ? s.trim() : null;
+export const inReplyToHeaders = (mid) => { const m = messageIdOrNull(mid); return m ? { 'In-Reply-To': m, References: m } : {}; };
 
 export function addMessage(db, ticketId, { direction, body, from_addr = null, to_addr = null, message_id = null, in_reply_to = null }) {
+  message_id = messageIdOrNull(message_id); in_reply_to = messageIdOrNull(in_reply_to);
   const now = nowIso();
   if (message_id && db.get('SELECT id FROM ticket_messages WHERE message_id = ?', message_id)) return null;
   const r = db.run('INSERT INTO ticket_messages (ticket_id, direction, from_addr, to_addr, message_id, in_reply_to, body, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',

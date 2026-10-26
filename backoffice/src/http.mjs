@@ -51,7 +51,7 @@ export function readBody(req) {
 export function parseBody(raw, contentType = '') {
   if (!raw || !raw.length) return {};
   const ct = contentType.split(';')[0].trim().toLowerCase();
-  if (ct === 'application/json') { try { return JSON.parse(raw.toString('utf8')); } catch { throw new HttpError(400, 'bad JSON'); } }
+  if (ct === 'application/json') { let v; try { v = JSON.parse(raw.toString('utf8')); } catch { throw new HttpError(400, 'bad JSON'); } return v && typeof v === 'object' ? v : {}; }   // `null`, a number or a string is not a body a handler can read fields from
   if (ct === 'application/x-www-form-urlencoded' || ct === '') {
     const out = Object.create(null);
     for (const [k, v] of new URLSearchParams(raw.toString('utf8'))) {
@@ -121,7 +121,7 @@ export class Router {
     for (const r of this.routes) {
       if (r.method !== method && !(r.method === 'GET' && method === 'HEAD')) continue;
       const m = r.re.exec(path); if (!m) continue;
-      const params = {}; r.keys.forEach((k, i) => { params[k] = decodeURIComponent(m[i + 1]); });
+      const params = {}; try { r.keys.forEach((k, i) => { params[k] = decodeURIComponent(m[i + 1]); }); } catch { throw new HttpError(400, 'a path segment is not valid percent-encoding'); }
       return { ...r, params };
     }
     return null;
@@ -142,10 +142,28 @@ export const json = (res, obj, status = 200, headers = {}) => send(res, status, 
 export const text = (res, body, status = 200, headers = {}) => send(res, status, body, { 'Content-Type': 'text/plain; charset=utf-8', ...headers });
 export const redirect = (res, to, headers = {}) => { res.writeHead(303, { Location: to, ...headers }); res.end(); };
 
+// X-Forwarded-For is believed only from a proxy we run: loopback (Caddy on the same box), or the
+// private ranges (Caddy in its own container on the compose network — the kit's shape; the app
+// publishes no port, so nothing else can reach it from there). TRUSTED_PROXIES narrows or widens it:
+// a comma list of `loopback`, `private`, exact addresses or v4 CIDRs. Without this every visitor
+// behind the kit's Caddy shared one address, and one bad actor's failures locked everyone out.
+let TRUSTED = ['loopback', 'private'];
+export const setTrustedProxies = (list) => { TRUSTED = Array.isArray(list) ? list : String(list || '').split(',').map(s => s.trim()).filter(Boolean); };
+const v4 = (ip) => { const m = /^(?:::ffff:)?(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(ip); return m ? ((+m[1] << 24) | (+m[2] << 16) | (+m[3] << 8) | +m[4]) >>> 0 : null; };
+export function isTrustedProxy(peer, list = TRUSTED) {
+  const n = v4(peer);
+  for (const rule of list) {
+    if (rule === 'loopback' && (peer === '::1' || (n != null && n >>> 24 === 127))) return true;
+    if (rule === 'private' && (n != null ? (n >>> 24 === 10 || (n >>> 20) === 0xac1 || (n >>> 16) === 0xc0a8) : /^f[cd]/i.test(peer))) return true;
+    if (rule === peer || rule === peer.replace(/^::ffff:/, '')) return true;
+    const cidr = /^(\d+\.\d+\.\d+\.\d+)\/(\d+)$/.exec(rule);
+    if (cidr && n != null) { const base = v4(cidr[1]); const bits = +cidr[2]; const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0; if (base != null && (n & mask) === (base & mask)) return true; }
+  }
+  return false;
+}
 export function clientIp(req) {
-  // Trust X-Forwarded-For only from a loopback proxy (Caddy/nginx on the same box).
   const peer = req.socket?.remoteAddress || '';
   const fwd = req.headers['x-forwarded-for'];
-  if (fwd && (peer === '127.0.0.1' || peer === '::1' || peer === '::ffff:127.0.0.1')) return String(fwd).split(',')[0].trim();
+  if (fwd && isTrustedProxy(peer)) return String(fwd).split(',')[0].trim() || peer;
   return peer;
 }
