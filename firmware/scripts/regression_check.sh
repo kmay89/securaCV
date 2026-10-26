@@ -842,6 +842,61 @@ fi
 
 echo ""
 
+# ── Check: the OTA confirm tick runs broker or no broker (2.4.17) ──
+# PR #1816 made a new image confirm itself only after a healthy minute: the
+# boot probe leaves it pending and ota_health_tick() confirms it. On the
+# display, Sense, Vision and Sentinel that tick sat behind the MQTT gate
+# (`if (broker)`, or after the loop's broker early-return), so an image that
+# booted to a dark broker — or a hub-less display that installed from its
+# own Settings — never confirmed, and the next restart quietly returned it
+# to the previous firmware. This holds each loop() to one tick, fed the
+# Wi-Fi station link, ahead of the loop's first broker gate.
+section "Reliability: OTA confirm tick runs without the broker"
+
+OTA_TICK_LOOPS=(
+  "$PROJECTS_DIR/canary-display/src/main.cpp"
+  "$PROJECTS_DIR/canary-display/arduino/canary_display/canary_display.ino"
+  "$PROJECTS_DIR/canary-sense/src/main.cpp"
+  "$PROJECTS_DIR/canary-vision/src/main.cpp"
+  "$PROJECTS_DIR/canary-sentinel/src/main.cpp"
+)
+for f in "${OTA_TICK_LOOPS[@]}"; do
+  rel="${f#"$FIRMWARE_DIR"/}"
+  if [ ! -f "$f" ]; then
+    check_fail "$rel missing — update OTA_TICK_LOOPS in $0"
+    continue
+  fi
+  # In loop(), comments dropped: the tick calls, the one with the Wi-Fi
+  # argument, and the first broker gate (`if (broker)`,
+  # `if (!mqtt_supervise(`, `if (!canary::net::mqtt_connected())`).
+  OTA_TICK_VERDICT=$(awk '
+    /^void loop\(\) \{/ { inl = 1; next }
+    inl && /^\}/ { inl = 0 }
+    inl {
+      s = $0; sub(/\/\/.*/, "", s)
+      if (s ~ /ota_health_tick\(/) {
+        ticks++
+        if (s ~ /wifi_connected\(\)/ && !tick_at) tick_at = NR
+      }
+      if (!gate_at && s ~ /if \(!?(broker\)|mqtt_supervise\(|canary::net::mqtt_connected\(\)\))/) gate_at = NR
+    }
+    END {
+      if (ticks != 1) { print "ticks " ticks + 0; exit }
+      if (!tick_at) { print "noarg"; exit }
+      if (!gate_at) { print "nogate"; exit }
+      print (tick_at < gate_at) ? "ok" : "gated (tick at line " tick_at ", broker gate at line " gate_at ")"
+    }' "$f")
+  case "$OTA_TICK_VERDICT" in
+    ok)     check_pass "$rel: loop() runs ota_health_tick(wifi_connected()) ahead of the broker gate" ;;
+    nogate) check_fail "$rel: no broker gate found in loop() — the guard's pattern is stale; update it in $0" ;;
+    noarg)  check_fail "$rel: loop()'s ota_health_tick() is not fed the Wi-Fi station link (wifi_connected())" ;;
+    ticks*) check_fail "$rel: loop() must call ota_health_tick() exactly once (found ${OTA_TICK_VERDICT#ticks })" ;;
+    *)      check_fail "$rel: ota_health_tick() sits behind the broker ${OTA_TICK_VERDICT#gated } — a new image waits on MQTT to confirm and reverts on the next restart" ;;
+  esac
+done
+
+echo ""
+
 # ── Check: canary-wap loop-task ownership (sweep F96, F106, F110-F112, F138, F143) ──
 # The mesh's, Chirp's and Bluetooth's owner commands (pair, confirm, cancel,
 # send, mute, enable, settings and the rest) and the MQTT client's teardown

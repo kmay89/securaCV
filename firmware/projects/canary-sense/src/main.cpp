@@ -1331,6 +1331,13 @@ void loop() {
           canary::net::setup_portal_active());
 #endif
 
+  // Confirm a new image only after a healthy minute — before the broker
+  // early-return below, so it runs on EVERY pass. Behind it, a new image that
+  // booted to a dark broker waited on the broker to confirm, and a restart
+  // before the broker came back returned it to the previous firmware.
+  // Healthy is the Wi-Fi station link, the same thing the boot probe asserts.
+  canary::net::ota_health_tick(now, canary::net::wifi_connected());
+
   // Bounded, backoff-scheduled broker supervision: while the broker is
   // unreachable the witness keeps sensing (we already drove the FSMs above)
   // and simply skips the publish phase.
@@ -1341,7 +1348,6 @@ void loop() {
 
   canary::net::mqtt_loop();
   canary::net::ota_loop(now);
-  canary::net::ota_health_tick(now, canary::net::wifi_connected());  // confirm a new image only after a healthy minute
 
   // Identify: drain the button press and open the blink window.
   if (canary::net::take_pending_identify()) identify_start(now);
