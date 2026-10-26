@@ -182,6 +182,19 @@ inline bool keyless_join_open(bool has_credentials, bool ap_only) {
   return !has_credentials && !ap_only;
 }
 
+// Whether a running QR scan window may still act on a code it reads, asked
+// after every frame (canary_wap.ino qr_scan_task_fn). A boot window
+// (auto_scan) holds the keyless-join rule above for its whole run, not only
+// at its start (F333's review). A phone session's window, which POST
+// /api/wifi/qr-scan starts only during first-boot setup (F334), holds only
+// while setup does: setup can end by another path while it runs (the
+// Bluetooth door's join, a second tab's standalone choice), and after setup
+// a network move takes the bearer.
+inline bool scan_window_open(bool auto_scan, bool has_credentials, bool ap_only,
+                             bool setup_active) {
+  return auto_scan ? keyless_join_open(has_credentials, ap_only) : setup_active;
+}
+
 // The Bluetooth setup door's first-boot window is re-armed by a POWER CYCLE,
 // not by a reboot: a never-provisioned unit restarts itself every 15 minutes
 // (the wizard's abandonment timer), and if each restart re-armed the window

@@ -54,8 +54,10 @@
 //   - the sketch's text (CANARY_WAP_INO, comments stripped): POST
 //     /api/wifi/qr-scan answers 404 outside setup before it reads anything;
 //     Connect and AP-only ask the gate before any write; the boot scan asks
-//     the keyless-join rule first, and a running window asks it again after
-//     every frame, before a code can act; Forget clears the broker login
+//     the keyless-join rule first, and a running window asks after every
+//     frame, before a code can act, whether it may still act (a boot window
+//     that rule, a phone session's window whether setup still runs:
+//     scan_window_open()); Forget clears the broker login
 //     after the networks and reports it; the six routes are registered on
 //     these handlers.
 //
@@ -572,19 +574,24 @@ void test_sketch_text() {
   CHECK(!tick.empty() &&
         tick[0] == "if (!provisioning_logic::keyless_join_open(g_wifi_creds.configured, g_wifi_ap_only)) return;");
 
-  // And a boot window already running asks it again after every frame,
-  // before a code read in that frame can act (F333's review: the wizard's
-  // standalone choice, or any stored network, used to leave the running
-  // window up to 60 s in which a WIFI: code held to the lens took the unit
-  // off standalone or replaced the network).
+  // And a window already running asks after every frame, before a code read
+  // in that frame can act, whether it may still act: a boot window the
+  // keyless-join rule (F333's review: the wizard's standalone choice, or any
+  // stored network, used to leave the running window up to 60 s in which a
+  // WIFI: code held to the lens took the unit off standalone or replaced the
+  // network), a phone session's window whether setup still runs (the
+  // owner-authority PR's second review: setup ending by another path, the
+  // Bluetooth door's join or a second tab's standalone choice, left the
+  // phone's window up to 60 s in which a code joined the unit to the network
+  // it named, no bearer asked). provisioning_logic::scan_window_open() is
+  // the one predicate; test_provisioning_logic holds its table.
   const auto task = statements_of(code, "static void qr_scan_task_fn(void* param) {");
   const int loop = first_with(task, "while (g_qr_scan_active) {");
   const int frame = first_with(task, "esp_camera_fb_return(fb);");
   CHECK(loop >= 0 && frame > loop && (size_t)frame + 4 < task.size());
   if (loop >= 0 && frame > loop && (size_t)frame + 4 < task.size()) {
-    CHECK(task[frame + 1] == "if (g_qr_auto_scan &&");
-    CHECK(task[frame + 2] ==
-          "!provisioning_logic::keyless_join_open(g_wifi_creds.configured, g_wifi_ap_only)) {");
+    CHECK(task[frame + 1] == "if (!provisioning_logic::scan_window_open(g_qr_auto_scan, g_wifi_creds.configured,");
+    CHECK(task[frame + 2] == "g_wifi_ap_only, setup_wizard::is_active())) {");
     CHECK(task[frame + 3] == "memset(payload, 0, sizeof(payload));");
     CHECK(task[frame + 4] == "break;");
     const int code_read = first_with(task, "if (result == 1) {");

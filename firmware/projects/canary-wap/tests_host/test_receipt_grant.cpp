@@ -192,7 +192,9 @@
 //     serial console or the boot banner, or sits inside
 //     send_provisioning_receipt() or handle_pairing_qr() — the only two
 //     writers of either secret into an HTTP answer — and the receipt writer
-//     is called from handle_provisioning_receipt() alone.
+//     is called from handle_provisioning_receipt() alone; POST /api/vault/key
+//     and POST /api/mesh/pair/confirm are registered once each, on the two
+//     wrappers the grant test above drives.
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host run-receipt-grant
 
@@ -3183,6 +3185,28 @@ void test_sketch_text() {
             "the pairing QR takes the cookie again");
   CHECK(!has(qr_fn, "cv_session_validate"));
   CHECK(!has(qr_fn, "session_validate_cookie"));
+
+  // POST /api/vault/key and POST /api/mesh/pair/confirm are registered once
+  // each, on the two wrappers test_credential_grants_take_the_bearer drives
+  // (F335, F346). Without this, a session wrapper registered in their place
+  // passed every check here (the owner-authority PR's second review).
+  {
+    struct Reg { const char* uri_method; const char* line; };
+    const Reg regs[] = {
+        {"\"/api/vault/key\", .method = HTTP_POST,",
+         "httpd_uri_t vault_key_set = { .uri = \"/api/vault/key\", .method = HTTP_POST, .handler = handle_vault_key_set_auth };"},
+        {"\"/api/mesh/pair/confirm\", .method = HTTP_POST,",
+         "httpd_uri_t mesh_pair_confirm = { .uri = \"/api/mesh/pair/confirm\", .method = HTTP_POST, .handler = handle_mesh_pair_confirm_auth };"},
+    };
+    for (const Reg& g : regs) {
+      size_t registered = 0, on_wrapper = 0;
+      for (const auto& l : lines) {
+        if (l.find(std::string(".uri = ") + g.uri_method) != std::string::npos) ++registered;
+        if (rtrim(l).find(g.line) != std::string::npos) ++on_wrapper;
+      }
+      CHECK_MSG(registered == 1 && on_wrapper == 1, std::string("not registered once, on its bearer wrapper: ") + g.line);
+    }
+  }
 
   // The receipt writer is called from the receipt handler and nowhere else.
   size_t writer_calls = 0, in_handler = 0;
