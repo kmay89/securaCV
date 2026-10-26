@@ -18,6 +18,7 @@ import { lowStock } from './inventory.mjs';
 import { analytics } from './analytics.mjs';
 import { envRules } from '../env.mjs';
 import { describeBuild } from '../version.mjs';
+import { listFlags } from '../flags.mjs';
 
 const hoursSince = (iso) => iso ? (Date.now() - Date.parse(iso)) / 3600000 : null;
 const fmtH = (h) => h == null ? 'never' : h < 1 ? `${Math.round(h * 60)} min ago` : h < 48 ? `${Math.round(h)} h ago` : `${Math.round(h / 24)} d ago`;
@@ -31,6 +32,8 @@ export function doctor(db, cfg) {
   const warns = envRules(cfg, db).filter(r => r.level === 'warn');
   add('environment', 'Environment', cfg.env === 'production' ? warns.length === 0 : warns.length ? false : null, `${cfg.env || 'development'} · ${describeBuild(cfg)}${warns.length ? ` · ${warns.map(w => w.text).join('; ')}` : ''}`, 'BACKOFFICE_ENV names it: production, staging, demo or development (env.mjs says what each refuses)');
   const sc = db.schema || {}; add('schema', 'Database schema', sc.ahead?.length ? false : true, `${sc.applied ?? '?'} migrations · latest ${sc.latest || '—'}${sc.pre_migrate_copies ? ` · ${sc.pre_migrate_copies} pre-migration cop${sc.pre_migrate_copies === 1 ? 'y' : 'ies'} on disk` : ''}${sc.ahead?.length ? ` · AHEAD of this build: ${sc.ahead.join(', ')}` : ''}`, 'start the build that applied them, or restore the pre-migration copy');
+  const flags = listFlags(db, cfg); const overdue = flags.filter(f => f.overdue); const on = flags.filter(f => f.on);
+  add('flags', 'Feature flags', overdue.length ? false : true, `${flags.length} declared · ${on.length ? `on: ${on.map(f => `${f.name} (${f.source})`).join(', ')}` : 'none on'}${overdue.length ? ` · past their date: ${overdue.map(f => f.name).join(', ')}` : ''}`, 'a rollout flag past remove_by is on for good or dead: delete it and the branch it guarded (src/flags.mjs)');
   // identity & reach
   const people = db.all("SELECT role, COUNT(*) AS n FROM users WHERE status = 'active' GROUP BY role"); const locked = db.get('SELECT COUNT(*) AS n FROM users WHERE locked_until > ?', new Date().toISOString()).n;
   add('operator', 'An owner can log in', hasOperator(db), hasOperator(db) ? `password + authenticator · ${people.map(p => `${p.n} ${p.role}`).join(', ')}${locked ? ` · ${locked} locked out` : ''}` : 'no owner', 'run `backoffice setup`, or accept the invitation');

@@ -38,7 +38,10 @@ export function loadConfig(overrides = {}) {
     batchCloseDay: Number(env('BATCH_CLOSE_DAY', '0')),                 // the batch cadence the store promises: orders in by this weekday (0 = Sunday)…
     batchCloseHour: Number(env('BATCH_CLOSE_HOUR', '23')),              // …at this hour (operator time, 23 = 11 pm)…
     batchShipDay: Number(env('BATCH_SHIP_DAY', '2')),                   // …ship on this weekday (2 = Tuesday)
-    taxMode: env('TAX_MODE', 'none'),                                   // none | stripe — see README "Tax"
+    taxMode: env('TAX_MODE', 'none'),                                   // none | stripe — the old spelling of the stripe_tax flag (flags.mjs); FLAG_STRIPE_TAX is the new one
+    // FLAG_<NAME>=1|0 pins a feature flag from the environment (staging turns tomorrow's behavior on without touching
+    // the database); flags.mjs declares the names, Settings shows which source answers
+    flagOverrides: Object.fromEntries(Object.entries(process.env).filter(([k, v]) => k.startsWith('FLAG_') && String(v).trim() !== '').map(([k, v]) => [k.slice(5).toLowerCase(), /^(1|true|on|yes)$/i.test(String(v).trim())])),
     checkoutSuccessPath: env('CHECKOUT_SUCCESS_PATH', '/store/thanks'), // on the website, where Stripe sends a paid shopper
     uspsClientId: env('USPS_CLIENT_ID', ''), uspsClientSecret: env('USPS_CLIENT_SECRET', ''), uspsApiBase: env('USPS_API_BASE', 'https://apis.usps.com'),       // the morning digest goes here
     digestHour: Number(env('DIGEST_HOUR', '7')),                       // UTC hour the digest is sent

@@ -18,6 +18,7 @@ import { estimateDelivery, orderStatusUrl } from './delivery.mjs';
 import { weekLabel, orderByNumber } from './orders.mjs';
 import { buildable } from './inventory.mjs';
 import { currentTz } from '../render.mjs';
+import { isOn } from '../flags.mjs';
 import { timedFetch } from '../net.mjs';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -164,7 +165,7 @@ export async function createCheckout(db, cfg, catalog, { items, zip = null, emai
     expires_at: Math.floor(now.getTime() / 1000) + 30 * 60,
     metadata: { source: 'site', skus: lines.map(l => `${l.qty}x ${l.sku}`).join(', '), ships_on: est.ships.ships_on, batch: weekLabel(now, cfg.tz) },
     payment_intent_data: { metadata: { skus: lines.map(l => `${l.qty}x ${l.sku}`).join(', ') } },
-    ...(cfg.taxMode === 'stripe' ? { automatic_tax: { enabled: 'true' } } : {}),
+    ...(isOn(db, cfg, 'stripe_tax') ? { automatic_tax: { enabled: 'true' } } : {}),
     ...(email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? { customer_email: email } : {}),
   };
   const r = await fetchImpl('https://api.stripe.com/v1/checkout/sessions', { method: 'POST', headers: { authorization: `Bearer ${cfg.stripeApiKey}`, 'content-type': 'application/x-www-form-urlencoded', 'idempotency-key': `cart-${now.getTime()}-${Math.random().toString(36).slice(2, 10)}` }, body: formEncode(session) });

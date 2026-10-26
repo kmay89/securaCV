@@ -7,6 +7,7 @@ const e = escapeHtml;
 import { layout, setTimezone, setEnvironment, dt as fmtDt, day as fmtDay } from './render.mjs';
 import { applyEnv, ENV_TEXT } from './env.mjs';
 import { build, recordBoot } from './version.mjs';
+import { listFlags, setFlag, clearFlag } from './flags.mjs';
 import { orderToken, deliveryLine, trackingUrl } from './modules/delivery.mjs';
 import { editItems } from './modules/orders.mjs';
 import { sessionFor, login, logout, apiTokenFor, hasOperator, carryLegacyOperator, can } from './auth.mjs';
@@ -184,6 +185,8 @@ export function createApp({ db, cfg }) {
 
   // ---------- JSON API (bearer token or a logged-in session)
   router.get('/api', (c) => json(c.res, { name: 'securacv-backoffice', endpoints: API_INDEX }));
+  router.get('/api/flags', (c) => json(c.res, listFlags(db, cfg)));
+  router.post('/api/flags/:name', (c) => json(c.res, c.body.on === null || c.body.on === undefined ? clearFlag(db, cfg, c.params.name, { actor: c.actor }) : setFlag(db, cfg, c.params.name, c.body.on === true || c.body.on === 1 || c.body.on === '1' || c.body.on === 'true', { actor: c.actor })));
   router.get('/api/snapshot', (c) => json(c.res, snapshot(db)));
   router.get('/api/orders', (c) => json(c.res, listOrders(db, Object.fromEntries(['status', 'batch', 'q', 'tag', 'from', 'to', 'discount', 'sku'].map(k => [k, c.query.get(k) || ''])))));
   router.get('/api/orders/:number', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, o); });
@@ -401,7 +404,7 @@ export function safeLocalPath(referer) {
 
 const corsHeaders = (cfg) => ({ 'Access-Control-Allow-Origin': cfg.siteOrigin, 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type', Vary: 'Origin' });
 
-const API_INDEX = ['GET /api/snapshot', 'GET /api/analytics?days=7|30|90|365', 'GET /api/search?q=', 'GET /api/orders?status=&batch=&q=&tag=&from=&to=&discount=&sku=', 'GET /api/orders/:number', 'POST /api/orders {…, discount_code, tags}', 'POST /api/orders/:number/transition {to, carrier, tracking}', 'POST /api/orders/:number/refund {cents, reason}',
+const API_INDEX = ['GET /api/flags', 'POST /api/flags/:name {on: true|false, or null for the default} (owner)', 'GET /api/snapshot', 'GET /api/analytics?days=7|30|90|365', 'GET /api/search?q=', 'GET /api/orders?status=&batch=&q=&tag=&from=&to=&discount=&sku=', 'GET /api/orders/:number', 'POST /api/orders {…, discount_code, tags}', 'POST /api/orders/:number/transition {to, carrier, tracking}', 'POST /api/orders/:number/refund {cents, reason}',
   'GET /api/orders/:number/events', 'POST /api/orders/:number/note {body}', 'POST /api/orders/:number/tags {tags}', 'GET /api/batches', 'GET /api/customers?q=&tag=&segment=&sort=', 'GET /api/customers/:id', 'POST /api/customers/:id/tags {tags}',
   'GET /api/products?days=', 'GET /api/products/:sku', 'GET /api/discounts', 'POST /api/discounts {code, kind, value, min_subtotal_cents, starts_at, ends_at, max_uses, note}', 'POST /api/discounts/:code/status {status}', 'GET /api/discounts/:code/evaluate?subtotal=&shipping=',
   'GET /api/tickets?status=&kind=&q=', 'GET /api/tickets/:number', 'POST /api/tickets {email, subject, body}', 'POST /api/tickets/:number/reply {body, close}', 'POST /api/mail/ingest {from, subject, text, messageId, inReplyTo}',
