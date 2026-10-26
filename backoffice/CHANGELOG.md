@@ -5,6 +5,35 @@ the build hash on `/healthz`, the Health page and `backoffice version` is the co
 CI stamped into the image. `tests/environment.test.mjs` holds the top entry here to
 the package version, so neither moves without the other.
 
+## 0.7.0
+
+- **Sign-in links.** "Email me a sign-in link" on the login page (with a mail
+  relay): the link stands in for the password, never for the authenticator.
+  Good for `SIGNIN_LINK_MINUTES` (15), once, and only in the browser that
+  asked for it — that browser holds a nonce cookie the link checks, so a link
+  read out of a mailbox somewhere else opens nothing. Token and nonce are
+  stored hashed. The answer to a request is the same for any address, so
+  there is nothing to enumerate; a wrong code counts like a wrong password.
+  `login_links`, migration 014.
+- **The watch** (`src/guard.mjs`). A scanner — sixty missing or refused pages
+  from one address in ten minutes — is blocked for ten minutes (never a
+  session, never the store, the webhook or a customer's page) and the phone
+  hears. An address locked out after eight failed logins: the phone hears,
+  once an hour per address. A sign-in from a network the person has not used
+  in thirty days: the person is mailed, the phone hears, the audit log says.
+  `ADMIN_ALLOW_CIDRS` makes the admin and its door exist only for your
+  networks (everything else sees a 404; the store, the webhook and the
+  customers' pages are untouched). `SESSION_BIND_IP=1` ends a session that
+  turns up from another network than it was opened on. Four doctor rows.
+- **The boundary.** Every text an outsider writes — a ticket's subject and
+  body, a reply by mail, a form, a buyer's name and notes from Stripe — is
+  scrubbed of zero-width, bidi-override and control characters on the way
+  in, so nothing can hide an instruction or spoof a name. The JSON API marks
+  those fields as data, not instructions (`_untrusted`, `_notice`, and the
+  same in headers) for the AI operator the API is built for.
+- **Crawler hygiene.** `X-Robots-Tag: noindex, nofollow, noarchive, noai,
+  noimageai` on every answer; `/robots.txt` disallows all.
+
 ## 0.6.0
 
 - **The store listing, edited here.** A product's price, name, this batch's
