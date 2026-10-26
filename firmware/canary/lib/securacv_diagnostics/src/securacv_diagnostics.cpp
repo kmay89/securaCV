@@ -312,17 +312,14 @@ static bool test_chain() {
   return witness_verify_record(&last);
 }
 
-typedef bool (*test_fn_t)(void);
+/* The runner's clock: millis(), as the uint32_t selftest_run() times with. */
+static uint32_t selftest_clock_ms(void) { return (uint32_t)millis(); }
 
-/* A row with no function is listed and not probed: its result reads "not a
- * probe" (selftest_result_t.not_a_probe) and it counts toward neither the
- * passes nor the score. */
-struct TestDef {
-  const char* name;
-  test_fn_t   fn;
-};
-
-static const TestDef TESTS[SELFTEST_COUNT] = {
+/* The suite, run by selftest_run() (securacv_diagnostics.h). A row with no
+ * probe is listed and not called: its result reads "not a probe"
+ * (selftest_result_t.not_a_probe) and it counts toward neither the passes
+ * nor the score. */
+static const selftest_def_t TESTS[SELFTEST_COUNT] = {
   {"nvs_rw",     test_nvs},
   {"heap_ok",    test_heap},
   {"psram_ok",   test_psram},
@@ -415,29 +412,8 @@ void diag_record_sd_write_bytes(size_t bytes, bool success) {
 
 uint8_t diag_run_selftest(void) {
   using namespace diag;
-  s_selftest.passed_count = 0;
-  s_selftest.total_count = SELFTEST_COUNT;
-  s_selftest.run_at_ms = millis();
-  s_selftest.has_run = true;
-
-  uint8_t probes = 0;
-  for (int i = 0; i < SELFTEST_COUNT; i++) {
-    s_selftest.tests[i].name = TESTS[i].name;
-    s_selftest.tests[i].not_a_probe = (TESTS[i].fn == nullptr);
-    if (s_selftest.tests[i].not_a_probe) {
-      s_selftest.tests[i].passed = false;
-      s_selftest.tests[i].duration_ms = 0;
-      continue;
-    }
-    probes++;
-    uint32_t start = millis();
-    s_selftest.tests[i].passed = TESTS[i].fn();
-    s_selftest.tests[i].duration_ms = (uint16_t)(millis() - start);
-    if (s_selftest.tests[i].passed) s_selftest.passed_count++;
-  }
-
-  s_selftest.health_score = probes == 0 ? 0 : (uint8_t)(
-      (uint32_t)s_selftest.passed_count * 100 / probes);
+  /* The scoring is selftest_run()'s, host-tested over stub probes. */
+  const uint8_t probes = selftest_run(TESTS, SELFTEST_COUNT, selftest_clock_ms, &s_selftest);
 
   char detail[32];
   snprintf(detail, sizeof(detail), "%u/%u (%u%%)",

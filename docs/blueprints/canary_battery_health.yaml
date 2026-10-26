@@ -18,7 +18,8 @@
 #   2. Worn-out cell — battery_health_pct (cycle-fade estimate) dropped below
 #                      the threshold: plan a replacement cell.
 #   3. Recovered     — battery back to healthy or charging again: clears the
-#                      persistent notification.
+#                      persistent notification (a Canary with a battery only;
+#                      a mains Canary recovering from low memory sends none).
 
 blueprint:
   name: "SecuraCV — Canary battery health"
@@ -189,9 +190,15 @@ action:
                 resets on reboot.
 
       # Recovered — clears the low-battery notification once power is back.
+      # Only on a Canary with a battery: the Health sensor also leaves
+      # "warning" when low memory clears, and a mains Canary reports no
+      # battery_percent, so the push would name a charge nothing measured.
       - conditions:
           - condition: trigger
             id: recovered
+          - condition: template
+            value_template: >-
+              {{ state_attr(health_sensor, 'battery_present') == true }}
         sequence:
           - service: persistent_notification.dismiss
             data:

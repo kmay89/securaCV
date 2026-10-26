@@ -151,6 +151,49 @@ static inline uint8_t selftest_probe_count(const selftest_report_t* r) {
   return n;
 }
 
+/* One row of the suite: its name, and the probe that checks it, or NULL for
+ * a row the suite lists and does not check (it reads "not a probe"). */
+typedef bool (*selftest_probe_fn_t)(void);
+typedef struct {
+  const char*         name;
+  selftest_probe_fn_t fn;
+} selftest_def_t;
+
+/* Run a suite into `out`: its first `n` rows (at most SELFTEST_COUNT), in
+ * order. A row with a probe calls it once, timed with `now_ms`; a row with
+ * none is marked not_a_probe and never called. passed_count counts the
+ * probes that passed and health_score is passed_count over the probes (0
+ * when there are none), so a listed row that checks nothing cannot raise
+ * it. Returns the number of probes. diag_run_selftest() runs the device's
+ * table through it, and the host test (test_canary_diagnostics.cpp) runs it
+ * over stubs, so the scoring is tested rather than read. */
+static inline uint8_t selftest_run(const selftest_def_t* defs, uint8_t n,
+                                   uint32_t (*now_ms)(void), selftest_report_t* out) {
+  if (out == NULL) return 0;
+  if (defs == NULL) n = 0;
+  if (n > SELFTEST_COUNT) n = SELFTEST_COUNT;
+  out->passed_count = 0;
+  out->total_count = n;
+  out->run_at_ms = now_ms != NULL ? now_ms() : 0;
+  out->has_run = true;
+  uint8_t probes = 0;
+  for (uint8_t i = 0; i < n; i++) {
+    selftest_result_t* t = &out->tests[i];
+    t->name = defs[i].name;
+    t->not_a_probe = (defs[i].fn == NULL);
+    t->passed = false;
+    t->duration_ms = 0;
+    if (t->not_a_probe) continue;
+    probes++;
+    const uint32_t start = now_ms != NULL ? now_ms() : 0;
+    t->passed = defs[i].fn();
+    t->duration_ms = (uint16_t)((now_ms != NULL ? now_ms() : 0) - start);
+    if (t->passed) out->passed_count++;
+  }
+  out->health_score = probes == 0 ? 0 : (uint8_t)((uint32_t)out->passed_count * 100u / probes);
+  return probes;
+}
+
 /* ────────────────────────────────────────────────────────────────────────── */
 /*  FULL DIAGNOSTIC SNAPSHOT                                                 */
 /* ────────────────────────────────────────────────────────────────────────── */

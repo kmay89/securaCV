@@ -6,7 +6,8 @@
  * health check. It reveals the REAL per-probe results (name + pass/fail +
  * duration) from diag_get_selftest(), then converges to the static identity
  * card. A row the suite lists but does not check (the watchdog's, until it has
- * a real probe) reads [--] "not a probe" and is counted as neither. On a confirmed ANSI terminal each reveal repaints the fixed-height block
+ * a real probe) reads [--] "not a probe" and is counted as neither. On a
+ * confirmed ANSI terminal each reveal repaints the fixed-height block
  * in place (cursor-up + overwrite — every row is a fixed width, so no clearing
  * is needed and nothing tears). On the ASCII floor there is no cursor control,
  * so it degrades to printing the finished checklist once. Both end identically.
@@ -27,6 +28,16 @@ namespace scene {
 // NotProbe: a row listed but not checked. It never passes or fails, and the
 // status row's counts leave it out.
 enum class ProbeState : uint8_t { Pending = 0, Running, Pass, Fail, NotProbe };
+
+// The state a self-test row is drawn in, from its report: a row the suite
+// lists but does not check is NotProbe from the first frame on; a probe is
+// Pending until it is revealed, then Pass or Fail. The flagship's wake
+// (main.cpp run_wake) sets every row through this.
+inline ProbeState probe_state(bool not_a_probe, bool revealed, bool passed) {
+  if (not_a_probe) return ProbeState::NotProbe;
+  if (!revealed) return ProbeState::Pending;
+  return passed ? ProbeState::Pass : ProbeState::Fail;
+}
 
 struct WakeProbe {
   const char* label;

@@ -8,9 +8,13 @@ measured. The health sensor's ``battery_percent`` attribute then turned every
 ``None`` (unknown) whenever the health reports no battery, the way
 ``health_metrics.battery_percent`` already read it for the thresholds.
 
-The monorepo-only test holds the three firmware bodies to the same rule: each
-says ``battery_present`` and names no ``battery`` value. The HACS mirror
-carries no firmware source, so it skips there.
+The monorepo-only tests hold the three firmware bodies to the same rule (each
+says ``battery_present`` and names no ``battery`` value), and the battery
+blueprint's "recovered" push to a Canary that has a battery: its Health
+sensor also leaves "warning" when low memory clears, and on a mains Canary
+that push read "Battery back to 0%" once the attribute stopped saying 100.
+The HACS mirror carries neither firmware source nor docs/, so they skip
+there.
 """
 
 from __future__ import annotations
@@ -20,13 +24,16 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 from .test_mqtt_payload_hardening import _entity, _msg
 
 from .. import sensor as sensor_platform
 from ..health_metrics import battery_percent
 
-_FW = Path(__file__).resolve().parents[3] / "firmware" / "projects"
+_REPO = Path(__file__).resolve().parents[3]
+_FW = _REPO / "firmware" / "projects"
+_BATTERY_BLUEPRINT = _REPO / "docs" / "blueprints" / "canary_battery_health.yaml"
 _TRIO = ("canary-sense", "canary-vision", "canary-sentinel")
 
 monorepo_only = pytest.mark.skipif(
@@ -84,3 +91,28 @@ def test_the_trio_health_names_no_battery_value(product: str) -> None:
     assert '\\"battery_present\\":false,' in body, f"{product}: says it has no battery"
     assert not re.search(r'\\"battery\\":', body), (
         f"{product}: publishes a battery value beside battery_present false")
+
+
+class _BlueprintLoader(yaml.SafeLoader):
+    """Reads a blueprint's ``!input name`` tags as the name."""
+
+
+_BlueprintLoader.add_constructor("!input", lambda loader, node: loader.construct_scalar(node))
+
+
+@pytest.mark.skipif(not _BATTERY_BLUEPRINT.is_file(),
+                    reason="monorepo-only: the HACS mirror carries no docs/")
+def test_the_battery_blueprint_says_no_charge_of_a_canary_without_one() -> None:
+    blueprint = yaml.load(_BATTERY_BLUEPRINT.read_text(encoding="utf-8"), Loader=_BlueprintLoader)
+    options = blueprint["action"][0]["choose"]
+    by_trigger = {}
+    for option in options:
+        ids = [c.get("id") for c in option["conditions"] if c.get("condition") == "trigger"]
+        templates = " ".join(c.get("value_template", "") for c in option["conditions"]
+                             if c.get("condition") == "template")
+        for trigger_id in ids:
+            by_trigger[trigger_id] = templates
+    present = "state_attr(health_sensor, 'battery_present') == true"
+    assert present in by_trigger["low"], "the low-battery push needs a battery"
+    assert present in by_trigger["recovered"], (
+        "the recovered push names a charge, so it fires only for a Canary with a battery")

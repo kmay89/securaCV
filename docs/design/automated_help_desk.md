@@ -43,7 +43,7 @@ Two rules make it safe to run without a human per ticket:
 
 | Surface | Where | What it gives the desk |
 |---|---|---|
-| Boot self-test, 10 probes with per-probe fixes | firmware `diag_run_selftest()` → mirrored into the website's `onboarding-spec.json` (`selftest.probes[].fix`) | The fix a user reads is byte-pinned to the firmware; `/checkup` and `/help` render it, never copy it |
+| Boot self-test, nine probes with per-probe fixes (and the watchdog row, listed and not a probe) | firmware `diag_run_selftest()` → mirrored into the website's `onboarding-spec.json` (`selftest.probes[].fix`) | The fix a user reads is byte-pinned to the firmware; `/checkup` and `/help` render it, never copy it |
 | `GET /api/selftest` | `canary-wap` `selftest_api.h` | One-shot verdict, reachable on the captive-portal AP; optional peripherals can never FAIL |
 | Crash evidence without a cable | `canary-wap` `hardware_state.h` (`safe_mode_check`, RTC breadcrumb) | "Why is it in recovery?" answered on the dashboard |
 | Flash-error classifier (7 kinds) + boot-log signatures (power vs clean-install) | `canary-local/assets/flash-core.js` (browser) + `desktop/flash-engine/src/health.rs` and friends (desktop; parity CI-gated) | The catalog's flashing entries restate these verbatim |

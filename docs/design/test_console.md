@@ -53,7 +53,7 @@ nothing and leak no secret. They're declared in one auditable table
 
 | Key | Command | What it does |
 |-----|---------|--------------|
-| `t` | run all tests | `diag_run_selftest()` (10 probes) + SD/GPS/battery/MQTT + the **Bluetooth ladder** (below). |
+| `t` | run all tests | `diag_run_selftest()` (nine probes, scored over nine; the watchdog row is listed and is not a probe) + SD/GPS/battery/MQTT + the **Bluetooth ladder** (below). |
 | `c` | **chain attestation** | Signs a challenger nonce + the current chain head with the device key — proof, at the port, that the witness log hasn't been rewritten. See below. |
 | `f` | fingerprint / provenance | Firmware version + git hash + build time, key fingerprint, OTA partition, **secure-boot / flash-encryption** status, boot counter, and the console policy verdict. "Is this the device and build it claims?" |
 | `e` | explain last boot | `esp_reset_reason()` (brownout / panic / watchdog…), degrade level, and the last few health-ring events. Field-debug without a laptop. |

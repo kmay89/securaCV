@@ -43,6 +43,12 @@ on:
       - 'firmware/projects/canary-sentinel/src/witness.cpp'
       - 'firmware/projects/canary-sense/src/main.cpp'
       - 'firmware/projects/canary-sentinel/src/main.cpp'
+      # test_absent_battery.py holds the three retained health bodies
+      # (publish_health_retained) to battery_present with no battery value,
+      # so a firmware-only edit that puts "battery":100 back runs it.
+      - 'firmware/projects/canary-sense/src/net/mqtt_mgr.cpp'
+      - 'firmware/projects/canary-vision/src/net/mqtt_mgr.cpp'
+      - 'firmware/projects/canary-sentinel/src/net/mqtt_mgr.cpp'
       # test_canary_health_trust.py holds the canary's health publish
       # (main.cpp) to its MQTT buffer (securacv_mqtt.h, the topic size in
       # securacv_mqtt.cpp), its egress counters to the canary-wap's Stats and
@@ -103,6 +109,12 @@ on:
       - 'firmware/projects/canary-sentinel/src/witness.cpp'
       - 'firmware/projects/canary-sense/src/main.cpp'
       - 'firmware/projects/canary-sentinel/src/main.cpp'
+      # test_absent_battery.py holds the three retained health bodies
+      # (publish_health_retained) to battery_present with no battery value,
+      # so a firmware-only edit that puts "battery":100 back runs it.
+      - 'firmware/projects/canary-sense/src/net/mqtt_mgr.cpp'
+      - 'firmware/projects/canary-vision/src/net/mqtt_mgr.cpp'
+      - 'firmware/projects/canary-sentinel/src/net/mqtt_mgr.cpp'
       # test_canary_health_trust.py holds the canary's health publish
       # (main.cpp) to its MQTT buffer (securacv_mqtt.h, the topic size in
       # securacv_mqtt.cpp), its egress counters to the canary-wap's Stats and

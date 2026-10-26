@@ -26,12 +26,19 @@
   checked: a tenth of the health score that the fleet beacon's health byte,
   the BLE health characteristic, the boot's low-score warning and the OTA
   confirm gate (50%) read. The row stays in the table with no probe
-  function: `GET /api/diagnostics` spells it `{"name":"watchdog","probe":false}`
-  (no `passed`, no `ms`), `total` counts the probes (9), the score is the
-  passes over the probes, the console's `t` prints "x/9 probes", and the
-  wake scene draws `[--] watchdog ... not a probe`. A unit with every probe
-  passing still scores 100; one with exactly four of nine passing now
-  scores 44, under the OTA gate's 50, where the free pass made it 50.
+  function, and the runner moved into `securacv_diagnostics.h`
+  (`selftest_run()`, which `diag_run_selftest()` calls with the table), so
+  the scoring is host-tested over stub probes: a row with no probe is marked
+  `not_a_probe` and never called, and the score is the passes over the
+  probes. `GET /api/diagnostics` and `GET /api/selftest` spell the row
+  `{"name":"watchdog","probe":false}` (no `passed`, no `ms`) and count
+  `total` over the probes (9); `/api/selftest` now builds its body with the
+  same row writer (`diagnostics_json::selftest()`) in place of its own
+  `snprintf` chain, which gave every row `passed` and counted every row. The
+  console's `t` and `d` print "x/9", and the wake scene draws `[--] watchdog
+  ... not a probe` (`scene::probe_state()`). A unit with every probe passing
+  still scores 100; one with exactly four of nine passing now scores 44,
+  under the OTA gate's 50, where the free pass made it 50.
 - **The dashboards show no version they were not told.** The flagship's
   Firmware row read "2.0.1" until `GET /api/status` answered and fell back
   to it; the WAP's `/admin` read "3.1.0" and fell back to "3.0.0", printed
@@ -45,16 +52,21 @@
   defines `HARDWARE_BOARD_NAME` ("XIAO ESP32-S3 Sense" or "XIAO ESP32-C3")
   and `HARDWARE_CHIP_NAME` per target, and every one of those reads them;
   Improv's hardware string on the S3 becomes "XIAO ESP32-S3 Sense" (was
-  "XIAO ESP32-S3"). The chip model fallback is empty, not "ESP32-S3": the
-  serial monitor prints "not reported" and `/admin` "--". The S3 target
-  defines `CANARY_FIGURE_HARDWARE "board:seeed_xiao_esp32s3"`, the key
-  `canary-local/devices/figures.json` maps to the WAP's figure, so `GET
-  /api/status` (`hardware`) and the `GET /api/fleet` self row (`hw`) carry it;
-  the C3 defines none and both omit it. The WAP's OTA engine reads no board
-  token, so no update binding changes. The Lab's WAP serial preview
-  (`canary-local/devices/wap.json`) reads the banner's Model and Board from
-  `build_config.h` and `setup()` too (`gen_wap.py`); its Model line had been
-  typed as "Seeed XIAO ESP32-S3 Sense", which the firmware never printed.
+  "XIAO ESP32-S3"), and its three mDNS adverts' `model` reads
+  `HARDWARE_BOARD_NAME` too ("XIAO ESP32-S3 Sense" or "XIAO ESP32-C3"; it
+  was the literal "XIAO ESP32S3" or "XIAO ESP32C3"), so one device names its
+  board one way everywhere. The chip model fallback is empty, not
+  "ESP32-S3": the serial monitor prints "not reported" and `/admin` "--".
+  The S3 target defines `CANARY_FIGURE_HARDWARE "board:seeed_xiao_esp32s3"`,
+  the key `canary-local/devices/figures.json` maps to the WAP's figure, so
+  `GET /api/status` (as `node_status.hw`) and the `GET /api/fleet` self row
+  (`hw`) carry it; the C3 defines none and both omit it. The WAP's OTA
+  engine reads no board token, so no update binding changes. The Lab's WAP
+  serial preview and board row (`canary-local/devices/wap.json`) read the
+  banner's Model and Board from `build_config.h` and `setup()` too
+  (`gen_wap.py`); its Model line had been typed as "Seeed XIAO ESP32-S3
+  Sense", which the firmware never printed, and its board row said "XIAO
+  ESP32S3".
 - **The display mirror page names its kind and its signal honestly.** It
   called every display but the watch a "wall panel" (a nightstand, the
   nightlight, the 7" nightstand) and printed the Wi-Fi reading, a dBm value,
@@ -71,24 +83,49 @@
 - **Sense, Vision and Sentinel name their boards, and stop reporting a
   battery they do not read.** `esp32c3-super-mini`, `xiao-esp32c6-sentinel`
   and `xiao-esp32c3-sentinel-lite` define their `CANARY_FIGURE_HARDWARE`, so
-  `/api/status`, `/api/fleet` and the mDNS TXT name the board (none of them
-  has a figure yet). The OTA board binding it also turns on is inert: the
-  release workflows write version-1 manifests, which bind no board. Their
-  retained health drops `"battery":100` and keeps `"battery_present":false`,
-  and Home Assistant's health sensor reads `battery_percent` as unknown
-  (`None`), never 100, whenever the health reports no battery present (a WAP
-  on mains power, which still sends 100 beside it, included). The display's
-  health still sends 100: its `mqtt_mgr.cpp` is emulator-compiled, so that
-  fix rides the display dist PR.
+  `GET /api/status` and the `GET /api/fleet` row carry it as `hw` (none of
+  them has a figure yet). The token is defined in the board's `pins.h`, and
+  only each trio project's `main.cpp` included that header: its
+  `mdns_mgr.cpp` and `ota_mgr.cpp` test the token and never saw it, so on no
+  Sense, Vision or Sentinel board (the four that already had a token
+  included) did the mDNS TXT carry `hw`, or the OTA engine get the board it
+  binds a version-2 manifest to; the display's `ota_mgr.cpp` had the same
+  gap. Each now includes `pins.h`: the mDNS TXT gains `hw` on every Sense,
+  Vision and Sentinel env, and the OTA engine is told the board on those and
+  on every display env. The binding is inert today: the release workflows
+  write version-1 manifests, which bind no board. Their retained health
+  drops `"battery":100` and keeps `"battery_present":false`, and Home
+  Assistant's health sensor reads `battery_percent` as unknown (`None`),
+  never 100, whenever the health reports no battery present (a WAP on mains
+  power, which still sends 100 beside it, included). The Lab's Sense and
+  Vision MQTT panes (`gen_sense.py`, `gen_vision.py`) show the health
+  without it too, and `gen_sense.py` now holds its typed health example to
+  `publish_health_retained()`'s keys the way `gen_vision.py` already did. The
+  battery blueprint (`docs/blueprints/canary_battery_health.yaml`) sends its
+  "battery recovered" push only for a Canary with a battery: the Health
+  sensor also leaves "warning" when low memory clears, and on a mains Canary
+  that push would have read "Battery back to 0%". The display's health still
+  sends 100: its `mqtt_mgr.cpp` is emulator-compiled, so that fix rides the
+  display dist PR.
 - **Held by tests that fail on the old code:**
   `firmware/scripts/check_board_registry.py` check 10 (each name and token
   from the board's `pins.h`, the flagship's ports and the WAP's targets
-  included; ten errors on the old tree), `test_mdns_txt.cpp`,
-  `test_canary_diagnostics.cpp`, `test_console_scene.cpp`,
-  `firmware/tests_host/test_honest_names.test.js` (the mirror's receipt run
-  against stubbed answers, and both dashboards' Firmware rows) and
-  `custom_components/securacv/tests/test_absent_battery.py`. No
-  `FIRMWARE_VERSION` bump. Host-tested; not run on a device.
+  included, and each surface that shows one reading its macro: the mDNS
+  `model`, Home Assistant's Model and Hardware, Improv's hardware string, the
+  WAP's mDNS `model`, monitor and chip fallback, and its `/api/status` and
+  `/api/fleet` tokens) and check 11 (every file that tests the token
+  includes the header that defines it); 37 errors on the tree before this
+  change. `test_canary_diagnostics.cpp` (the runner over stub probes, the
+  `/api/selftest` body and its handler, and the console's counts and the
+  wake's row states read from `main.cpp`), `test_mdns_txt.cpp`,
+  `test_console_scene.cpp`, `firmware/tests_host/test_honest_names.test.js`
+  (the mirror's receipt run against stubbed answers, and both dashboards'
+  Firmware rows), `gen_sense.py`'s key check, and
+  `custom_components/securacv/tests/test_absent_battery.py` (the HA
+  attribute, the three health bodies and the blueprint), which
+  `.github/workflows/python.yml` now also runs on an edit to any of the
+  three `mqtt_mgr.cpp` files it reads. No `FIRMWARE_VERSION` bump.
+  Host-tested; not run on a device.
 ### Dependency advisories of 2026-10-19 to -23: the TLS roots and verifier, two constant-time crates, and body-parser (Dependency Audit #330)
 
 - **Five advisories, every one with a reachable fix, so none is ignored.**

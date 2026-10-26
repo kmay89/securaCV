@@ -57,11 +57,14 @@ firmware/boards/<board-id>/
   ```
 
 - The board token, when a build compiles against the header: define
-  `CANARY_FIGURE_HARDWARE` as the board id. It is what `GET /api/status`
-  (`hardware`), the `GET /api/fleet` row and the mDNS TXT (`hw`) name, and
-  without it they name no board. CI requires it for every board a
-  canary-sense, -vision or -sentinel env compiles against, and refuses any
-  other value (check 10 of `scripts/check_board_registry.py`):
+  `CANARY_FIGURE_HARDWARE` as the board id. It is the `hw` that
+  `GET /api/status`, the `GET /api/fleet` row and the mDNS TXT carry, and the
+  board a version-2 OTA manifest binds to; without it they name no board. CI
+  requires it for every board a canary-sense, -vision or -sentinel env
+  compiles against, and refuses any other value (check 10 of
+  `scripts/check_board_registry.py`). Every source file that tests the token
+  must include this header first, or the test is silently false there
+  (check 11):
 
   ```cpp
   #ifndef CANARY_FIGURE_HARDWARE

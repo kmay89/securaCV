@@ -287,6 +287,20 @@ static void test_wake_not_a_probe_is_worded_and_not_counted() {
     CHECK(sk.s.find("not a probe") != std::string::npos); }
 }
 
+// The state each row is drawn in (scene::probe_state, which the flagship's
+// run_wake sets every row through): a row that is not a probe is NotProbe
+// before and after the reveal, whatever its `passed` says; a probe is
+// Pending until revealed, then its own result.
+static void test_wake_probe_state_by_row() {
+  for (bool revealed : {false, true})
+    for (bool passed : {false, true})
+      CHECK(probe_state(true, revealed, passed) == ProbeState::NotProbe);
+  CHECK(probe_state(false, false, true) == ProbeState::Pending);
+  CHECK(probe_state(false, false, false) == ProbeState::Pending);
+  CHECK(probe_state(false, true, true) == ProbeState::Pass);
+  CHECK(probe_state(false, true, false) == ProbeState::Fail);
+}
+
 static void test_wake_cursor_control_is_gated() {
   // ANSI tier: cursor moves are emitted; ASCII tier: nothing (can't reposition).
   { Sink sk; Renderer r{collect, &sk, caps_full(90, 30)};
@@ -376,6 +390,7 @@ int main() {
   test_wake_ascii_tier_is_safe_and_aligned();
   test_wake_running_frame_does_not_spoil_score();
   test_wake_not_a_probe_is_worded_and_not_counted();
+  test_wake_probe_state_by_row();
   test_wake_cursor_control_is_gated();
   test_wake_full_tier_lights_up();
 

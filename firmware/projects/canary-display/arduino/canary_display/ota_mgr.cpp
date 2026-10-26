@@ -13,6 +13,7 @@
 
 #include "securacv_ota.h"     // shared engine (firmware/common/ota, via lib_extra_dirs)
 #include "ota_release_key.h"  // shared Ed25519 release public key
+#include "pins.h"           // CANARY_FIGURE_HARDWARE: cfg.board (check_board_registry.py check 11)
 
 namespace canary::net {
 

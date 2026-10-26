@@ -1298,7 +1298,8 @@ out = {
         "device_type": DEVICE_TYPE,
         "tagline": wap_reg.get("tagline", ""),
         "model": BOARD_NAME_FULL or "Seeed XIAO ESP32-S3 Sense",
-        "board_short": "XIAO ESP32S3",
+        # The board as the firmware names it (banner, Improv, mDNS `model`).
+        "board_short": S3_BOARD_NAME,
         "board_id": BOARD_ID,
         "fw_version": FW_VERSION,
         "fw_train": FW_TRAIN,

@@ -44,7 +44,31 @@ Checks:
        - every pins.h that defines CANARY_FIGURE_HARDWARE defines its own
          BOARD_ID, and every board a canary-sense, -vision or -sentinel env
          compiles against defines one (absent, its /api/status, /api/fleet
-         and mDNS name no board).
+         and mDNS name no board);
+       - and each surface reads the name from that macro, never a literal of
+         its own: the canary tree's default board name is guarded by the
+         macro its base env's PlatformIO board defines (ARDUINO_XIAO_ESP32S3
+         for seeed_xiao_esp32s3, read from the board definition when the
+         platform is installed), CANARY_PRODUCT_NAME is
+         devices/canary/device.json's name, the mDNS `model`
+         (start_mdns) and Home Assistant's Hardware (`hw`, add_device_info)
+         are CANARY_BOARD_NAME and its Model (`mdl`) CANARY_PRODUCT_NAME;
+         on the canary-wap sketch each target's HARDWARE_CHIP_NAME is its
+         board's registered mcu, and Improv's hardware string, every mDNS
+         `model`, the system monitor's title and chip line, the chip
+         fallback, and the /api/status and /api/fleet board tokens read the
+         target's macros.
+ 11. The board token reaches every place that tests it. CANARY_FIGURE_HARDWARE
+     is defined in a header (the board's pins.h on canary-sense, -vision,
+     -sentinel and -display; build_config.h in the canary-wap sketch), so a
+     source file that tests it (#ifdef, #ifndef, defined()) and does not
+     include that header compiles as if the board had none, silently: the
+     trio's mdns_mgr.cpp and ota_mgr.cpp and the display's ota_mgr.cpp did,
+     so the trio's mDNS `hw` and all four families' OTA board binding were
+     never built. Every such file includes the defining header before its
+     first test. (The canary tree defines no token, by decision, until a
+     flagship figure exists; a -D flag would reach every file, so it needs
+     no check.)
 
 Run from the repo root (CI) or anywhere inside the repo:
     python3 firmware/scripts/check_board_registry.py
@@ -409,6 +433,186 @@ def check_names_from_the_board():
                 "its /api/status, /api/fleet and mDNS name no board")
 
 
+# Check 10, the surfaces: each place a name is shown reads its macro.
+CANARY_NETWORK = REPO_ROOT / "firmware/canary/lib/securacv_network/src/securacv_network.cpp"
+CANARY_MQTT = REPO_ROOT / "firmware/canary/lib/securacv_mqtt/src/securacv_mqtt.cpp"
+CANARY_DEVICE_JSON = DEVICES_DIR / "canary" / "device.json"
+WAP_DIR = REPO_ROOT / "firmware/projects/canary-wap/arduino/canary_wap"
+# The macro each PlatformIO board's definition defines (its build.extra_flags
+# -DARDUINO_*). Read from the installed board definition where there is one;
+# CI's lint job installs no platform, so the table is the floor.
+PIO_BOARD_MACRO = {"seeed_xiao_esp32s3": "ARDUINO_XIAO_ESP32S3"}
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"\s+", "", strip_comments(text))
+
+
+def _fn(text: str, signature: str):
+    """The body of the function opening with `signature` (to its closing
+    brace at column 0), or None."""
+    at = text.find(signature)
+    if at < 0:
+        return None
+    end = text.find("\n}\n", at)
+    return text[at:end if end >= 0 else len(text)]
+
+
+def _installed_board_macros(pio_board: str):
+    """The -DARDUINO_* flags an installed PlatformIO board definition sets, or
+    None when no platform with that board is installed here."""
+    for core in (Path.home() / ".platformio", Path.home() / ".platformio-core2"):
+        for f in sorted(core.glob(f"platforms/espressif32*/boards/{pio_board}.json")):
+            try:
+                flags = json.loads(f.read_text()).get("build", {}).get("extra_flags", [])
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(flags, str):
+                flags = flags.split()
+            return {x[2:] for x in flags if x.startswith("-DARDUINO_")}
+    return None
+
+
+def _surface(path: Path, where: str, body, want: list, refuse: list):
+    """`want`: snippets the (squashed) body must hold, each exactly once;
+    `refuse`: regexes it must not match (on the squashed body)."""
+    rel = path.relative_to(REPO_ROOT)
+    if body is None:
+        err(f"{rel}: {where} not found — check 10 cannot read where it names the board")
+        return
+    flat = _squash(body)
+    for snippet in want:
+        n = flat.count(_squash(snippet))
+        if n != 1:
+            err(f"{rel} {where}: wants `{snippet}` once, has it {n} time(s): the name must "
+                "come from the build's macro, never a literal of its own")
+    for rx, why in refuse:
+        if re.search(rx, flat):
+            err(f"{rel} {where}: {why}")
+
+
+def check_names_reach_their_surfaces():
+    # The canary tree: the default name's guard is the base board's own macro.
+    registry = {e.get("id"): e for e in json.loads(REGISTRY.read_text()) if isinstance(e, dict)}
+    pio_board = registry.get(TAMPER_DEFAULT_BOARD, {}).get("pio_board")
+    ini = CANARY_INI.read_text() if CANARY_INI.is_file() else ""
+    base = re.search(r"^\[env\]\s*$(.*?)(?=^\[)", ini, re.M | re.S)
+    base_board = re.search(r"^board\s*=\s*(\S+)", base.group(1), re.M) if base else None
+    if not base_board or base_board.group(1) != pio_board:
+        err(f"firmware/canary/platformio.ini [env] builds on "
+            f"{base_board.group(1) if base_board else 'no board'}, not {TAMPER_DEFAULT_BOARD}'s "
+            f"pio_board {pio_board}: check 10 cannot say which board the default name is")
+    macro = PIO_BOARD_MACRO.get(pio_board)
+    if macro is None:
+        err(f"check 10 knows no ARDUINO_* macro for PlatformIO board {pio_board}; add it to "
+            "PIO_BOARD_MACRO from the board definition's build.extra_flags")
+    else:
+        installed = _installed_board_macros(pio_board)
+        if installed is not None and macro not in installed:
+            err(f"the installed {pio_board}.json defines {sorted(installed)}, not {macro}: "
+                "correct PIO_BOARD_MACRO and canary_config.h's guard")
+        cfg = strip_comments(CANARY_CONFIG.read_text()) if CANARY_CONFIG.is_file() else ""
+        guard = re.search(r"#\s*ifndef\s+CANARY_BOARD_NAME\s*\n\s*#\s*if\s+defined\((\w+)\)\s*\n"
+                          r"\s*#\s*define\s+CANARY_BOARD_NAME\b", cfg)
+        if not guard or guard.group(1) != macro:
+            err(f"firmware/canary/include/canary_config.h: the default CANARY_BOARD_NAME is "
+                f"guarded by {guard.group(1) if guard else 'nothing check 10 can read'}; it is "
+                f"defined(" + macro + f"), the macro {pio_board} builds with, or the base envs "
+                "name no board")
+    try:
+        product = json.loads(CANARY_DEVICE_JSON.read_text()).get("name")
+    except (OSError, json.JSONDecodeError):
+        product = None
+    got = _string_define(CANARY_CONFIG.read_text(), "CANARY_PRODUCT_NAME") if CANARY_CONFIG.is_file() else []
+    if not product or got != [product]:
+        err(f"firmware/canary/include/canary_config.h: CANARY_PRODUCT_NAME is {got or 'undefined'}; "
+            f'it is devices/canary/device.json\'s name "{product}"')
+    net = CANARY_NETWORK.read_text() if CANARY_NETWORK.is_file() else ""
+    _surface(CANARY_NETWORK, "start_mdns()", _fn(net, "static void start_mdns("),
+             ["#ifdef CANARY_BOARD_NAME\n f.model = CANARY_BOARD_NAME;\n#endif"],
+             [(r"f\.model=\"", "the mDNS `model` is a literal")])
+    mq = CANARY_MQTT.read_text() if CANARY_MQTT.is_file() else ""
+    _surface(CANARY_MQTT, "add_device_info()", _fn(mq, "static void add_device_info("),
+             ['device["mdl"] = CANARY_PRODUCT_NAME;',
+              '#ifdef CANARY_BOARD_NAME\n device["hw"] = CANARY_BOARD_NAME;\n#endif'],
+             [(r'device\["(mdl|hw)"\]=\"', "Home Assistant's Model or Hardware is a literal")])
+
+    # The canary-wap sketch: each target's chip is its board's.
+    cfg = WAP_BUILD_CONFIG.read_text() if WAP_BUILD_CONFIG.is_file() else ""
+    chips = _defines_by_target(cfg, "HARDWARE_CHIP_NAME")
+    for target, bid in WAP_TARGET_BOARDS.items():
+        mcu = registry.get(bid, {}).get("mcu")
+        if chips.get(target) != [mcu]:
+            err(f"canary-wap build_config.h: {target}'s HARDWARE_CHIP_NAME is "
+                f"{chips.get(target) or 'undefined'}; it is {bid}'s registered mcu \"{mcu}\"")
+    improv = WAP_DIR / "ble_improv.cpp"
+    _surface(improv, "answer_device_info()",
+             _fn(improv.read_text(), "void answer_device_info(") if improv.is_file() else None,
+             ['{ "canary-wap", ble_improv_firmware_version(), HARDWARE_BOARD_NAME, s_adv_name }'], [])
+    ino = WAP_DIR / "canary_wap.ino"
+    src = ino.read_text() if ino.is_file() else ""
+    models = re.findall(r'MDNS\.addServiceTxt\("securacv",\s*"tcp",\s*"model",\s*([^)]*)\)', strip_comments(src))
+    if not models or any(m.strip() != "HARDWARE_BOARD_NAME" for m in models):
+        err(f"canary-wap canary_wap.ino: the mDNS `model` is advertised as {models or 'nothing'}; "
+            "every advert passes HARDWARE_BOARD_NAME, the target's board")
+    _surface(ino, "handle_status()", _fn(src, "static esp_err_t handle_status("),
+             ["#ifdef CANARY_FIGURE_HARDWARE\n ns.hardware = CANARY_FIGURE_HARDWARE;"], [])
+    _surface(ino, "handle_fleet()", _fn(src, "static esp_err_t handle_fleet("),
+             ["#ifdef CANARY_FIGURE_HARDWARE\n self.hardware = CANARY_FIGURE_HARDWARE;\n#endif"], [])
+    mon = WAP_DIR / "sys_monitor.h"
+    msrc = mon.read_text() if mon.is_file() else None
+    _surface(mon, "init()", _fn(msrc, "void init() {") if msrc else None,
+             ['snprintf(g_sys_metrics.chip_model, sizeof(g_sys_metrics.chip_model), "%s", model ? model : "");'],
+             [(r"chip_model[^;]*\"ESP32", "the chip model falls back to a chip's name")])
+    _surface(mon, "print_status()", _fn(msrc, "void print_status() {") if msrc else None,
+             ['Serial.println(" SYSTEM MONITOR - " HARDWARE_CHIP_NAME);',
+              'g_sys_metrics.chip_model[0] ? g_sys_metrics.chip_model : "not reported",',
+              'Serial.println(" * The " HARDWARE_CHIP_NAME " has NO built-in humidity sensor");'],
+             [(r"\"[^\"]*ESP32-[SC]3[^\"]*\"", "it prints a chip's name as a literal")])
+
+
+# Check 11: the token reaches every place that tests it. Each tree, and the
+# header that defines CANARY_FIGURE_HARDWARE for it.
+TOKEN_TREES = (
+    ("firmware/projects/canary-sense/src", "pins.h"),
+    ("firmware/projects/canary-vision/src", "pins.h"),
+    ("firmware/projects/canary-sentinel/src", "pins.h"),
+    ("firmware/projects/canary-display/src", "pins.h"),
+    ("firmware/projects/canary-wap/arduino/canary_wap", "build_config.h"),
+)
+_TOKEN_TEST = re.compile(
+    r"^[ \t]*#[ \t]*(?:ifn?def[ \t]+CANARY_FIGURE_HARDWARE\b"
+    r"|(?:el)?if\b[^\n]*\bdefined[ \t]*\(?[ \t]*CANARY_FIGURE_HARDWARE\b)", re.M)
+_TOKEN_DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+CANARY_FIGURE_HARDWARE\b", re.M)
+
+
+def check_token_reaches_its_tests():
+    for tree, header in TOKEN_TREES:
+        root = REPO_ROOT / tree
+        if not root.is_dir():
+            err(f"{tree}/ is gone — check 11 cannot read the files that test the board token")
+            continue
+        include = re.compile(r'^[ \t]*#[ \t]*include[ \t]*[<"]' + re.escape(header) + r'[>"]', re.M)
+        testers = 0
+        for f in sorted(root.rglob("*")):
+            if f.suffix not in (".cpp", ".h", ".ino") or not f.is_file():
+                continue
+            src = strip_comments(f.read_text(errors="replace"))
+            first = _TOKEN_TEST.search(src)
+            if first is None or _TOKEN_DEFINE.search(src):
+                continue  # tests nothing, or is the header that defines it
+            testers += 1
+            inc = include.search(src)
+            if inc is None or inc.start() > first.start():
+                line = src.count("\n", 0, first.start()) + 1
+                err(f"{f.relative_to(REPO_ROOT)}:{line} tests CANARY_FIGURE_HARDWARE but does not "
+                    f'include "{header}" before it, which defines it: the test is always false, so '
+                    "what it guards (the mDNS `hw`, the OTA board binding, a status row) is never built")
+        if testers == 0:
+            err(f"check 11 found no file under {tree}/ that tests CANARY_FIGURE_HARDWARE "
+                "(moved? the check would prove nothing)")
+
+
 def main() -> int:
     try:
         entries = json.loads(REGISTRY.read_text())
@@ -430,6 +634,8 @@ def main() -> int:
     check_readme_mentions(registry_ids)
     check_tamper_pin_canon()
     check_names_from_the_board()
+    check_names_reach_their_surfaces()
+    check_token_reaches_its_tests()
 
     if errors:
         for e in errors:
