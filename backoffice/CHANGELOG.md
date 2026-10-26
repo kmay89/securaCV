@@ -5,6 +5,30 @@ the build hash on `/healthz`, the Health page and `backoffice version` is the co
 CI stamped into the image. `tests/environment.test.mjs` holds the top entry here to
 the package version, so neither moves without the other.
 
+## 0.3.0
+
+- **One scale of urgency, everywhere.** `src/attention.mjs` ranks everything that
+  wants the admin by its deadline into three levels — *now* (a clock has run out
+  or a person is already being failed), *soon* (inside a stated window), *calm* —
+  and every surface reads it from there: a count on the sidebar section colored by
+  the worst thing inside it, the home page's focus strip (the single most pressing
+  thing, full width, with its clock) and cards, the Decide queue ranked by the
+  clock each card is against, a mark on a table row's left edge, a due date in a
+  cell ("overdue 15 h", "waiting 4 d", "due in 24 h"). The windows are stated once
+  (`WINDOWS`: two days to ship, six hours before an SLA, a week on a claim) and the
+  morning digest's TODAY list is the same list, so no two views disagree.
+- **Support opens on what needs us.** The ticket list's default tab is open +
+  waiting on us, ordered by SLA, with the subject the widest column; the other
+  states are tabs. A ticket's fact strip says "first reply overdue 15 h" rather
+  than two timestamps to subtract.
+- **Orders name the late ones.** A line above the list counts the orders past the
+  shipping promise and the oldest; each unshipped row shows how long it has waited.
+- **The home activity feed** no longer runs its time column into the text, names
+  the person not their whole address, and lets routine system rows (a backup
+  taken, a drill passed) sit back so what a person did stands out. The sales
+  chart wears a series color, so the brand gold means "an action" and nothing
+  else on the page.
+
 ## 0.2.0
 
 - **Every page says which environment it is.** `BACKOFFICE_ENV` (production,

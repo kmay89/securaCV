@@ -317,6 +317,18 @@ Three numbers show up around an order, and each has one source.
 
 ## How each piece behaves (the rules it keeps)
 
+- **Where to look is computed, never typed.** `src/attention.mjs` turns every
+  deadline into one of three levels — *now* (red: a clock has run out, or a
+  person is already being failed), *soon* (amber: inside a stated window), *calm*
+  (no mark) — and every page reads it from there: a count on the sidebar section
+  colored by the worst thing inside it, the home page's focus strip and cards, the
+  Decide queue ranked by the clock each card is against, the mark on a table
+  row's left edge, a due date in a cell. The windows are the operator's promises,
+  stated once in `WINDOWS` (two days to ship an order, six hours before an SLA,
+  a week on a warranty claim); a new kind of work gets a level by stating its
+  deadline, not by picking a color. The brand gold means "an action" and nothing
+  else — a chart series never wears it.
+
 - **Orders** — one row per shipment; an unknown SKU is a refused order, not a
   guessed one; idempotent on Stripe's event id, so redelivery is safe;
   `packed` consumes inventory through recipes; `shipped` mails tracking;
@@ -370,6 +382,7 @@ bin/backoffice.mjs      the CLI — same functions as the web admin, `backoffice
 src/db.mjs              node:sqlite, migrations/, numbers (EL-, T-, WC-, INV-YYYY-), audit log, savepoint transactions
 src/http.mjs            router, body parsing, cookies, CSRF, rate limiter, escaping
 src/render.mjs          server-rendered HTML; no client JavaScript
+src/attention.mjs       the one scale of urgency (now / soon / calm) from stated deadlines; the sidebar badges, the home page, the Decide queue, every table row and the digest read it
 src/auth.mjs            scrypt password, TOTP (RFC 6238), sessions, API tokens
 src/server.mjs          public endpoints, the JSON API, the request pipeline
 src/admin.mjs           one page per module; src/admin_shop.mjs the storefront half (products, customers, discounts, analytics, batches, search, packing slips);

@@ -1,6 +1,7 @@
 // The admin: one page per module, plain forms, no client JavaScript.
 import { html, redirect, text, HttpError, escapeHtml as e, int, csvLine } from './http.mjs';
-import { layout, table, money, dt, day, statusPill, field, form, button, cards, tags as tagsHtml, tabs, meta } from './render.mjs';
+import { layout, table, money, dt, day, statusPill, field, form, button, cards, tags as tagsHtml, tabs, meta, rel } from './render.mjs';
+import { ago, dueIn, waiting, ticketLevel, orderLevel, WINDOWS } from './attention.mjs';
 import { snapshot } from './modules/dashboard.mjs';
 import { listOrders, orderById, transition, refund, recordOrder, fulfillCsv, weekLabel, STATUSES, timeline, addNote, setTags, updateShipping, resendTracking, statusCounts, addressIssues, packPlanOf } from './modules/orders.mjs';
 import { packOrder } from './modules/packing.mjs';
@@ -13,11 +14,10 @@ import { attachmentsFor } from './modules/support.mjs';
 import { deliveryLine, trackingUrl, orderStatusUrl } from './modules/delivery.mjs';
 import { onOrder, buildableAhead } from './modules/purchasing.mjs';
 import { trackingConfigured } from './modules/shipping.mjs';
-import { doctor, todayLines } from './modules/health.mjs';
 import { line, tile } from './charts.mjs';
 import { analytics } from './modules/analytics.mjs';
 import { parseCsv, detectColumns, csvRowToOrder } from './modules/stripe.mjs';
-import { listTickets, ticketById, reply, setStatus, update as updateTicket, openTicket, STATUSES as TSTATUS, KINDS, PRIORITIES } from './modules/support.mjs';
+import { listTickets, ticketCounts, ticketById, reply, setStatus, update as updateTicket, openTicket, STATUSES as TSTATUS, KINDS, PRIORITIES } from './modules/support.mjs';
 import { contactById, upsertContact, setContactTags as setContactTagsFn } from './modules/contacts.mjs';
 import { sendConsentRequest, notifyWaitlist } from './modules/campaigns.mjs';
 import { listItems, upsertItem, move, setRecipe, recipes, moves, buildable, item as invItem } from './modules/inventory.mjs';
@@ -47,6 +47,8 @@ function isInternalHost(url) {
   return a === 127 || a === 10 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
 }
 
+const pillWarn = (t) => `<span class="pill warn">${e(String(t))}</span>`;
+
 export function registerAdmin(app) {
   const { db, cfg, router } = app;
   const page = (c, title, body) => html(c.res, layout({ title, body, path: c.url.pathname, company: cfg.company, csrf: c.csrf, user: c.user, demo: cfg.demo, demoResetMinutes: cfg.demoResetMinutes, q: c.url.pathname === '/search' ? c.query.get('q') || '' : '', flash: c.query.get('ok') ? { text: c.query.get('ok') } : c.query.get('err') ? { kind: 'err', text: c.query.get('err') } : null }));
@@ -66,13 +68,18 @@ export function registerAdmin(app) {
     const s = snapshot(db);
     const m = s.books.months.at(-1) || { income_cents: 0, expenses_cents: 0, net_cents: 0 };
     const a = analytics(db, { days: 30 }); const t = a.totals, pv = a.previous;
-    const h = doctor(db, cfg); const todo = todayLines(db, cfg);
+    const att = app.attention(); const h = att.health; const todo = att.items.filter(i => i.key !== 'health');
     const date = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
     const lead = todo.length ? todo.slice(0, 3).map(l => `${l.n} ${l.what.replace(/:.*$/, '')}`).join(' · ') : 'Nothing is waiting on you.';
-    const hero = `<div class="hero"><div><h1>${e(date)}</h1><p class="lead">${e(lead)}</p></div><a class="hp ${h.ok ? '' : h.failing.some(k => ['integrity', 'books', 'backup'].includes(k)) ? 'bad' : 'warn'}" href="/health">${h.ok ? 'All checks pass' : `${h.failing.length} health check${h.failing.length === 1 ? '' : 's'} need attention`}</a></div>`;
-    const acts = todo.length ? `<div class="actions">${todo.map(l => `<a class="act ${l.urgent ? 'urgent' : ''}" href="${e(l.href)}"><span class="n">${l.n}</span><span class="w">${e(l.what)}</span><span class="go">${e(l.action)} →</span></a>`).join('')}</div>` : '<div class="actions"><div class="act calm"><span class="w">Silence means healthy. The next order, email or probe result will show up here.</span></div></div>';
+    const hero = `<div class="hero"><div><h1>${e(date)}</h1><p class="lead">${e(lead)}</p></div><a class="hp ${h.ok ? '' : h.failing.some(k => WINDOWS.fatalChecks.includes(k)) ? 'bad' : 'warn'}" href="/health">${h.ok ? 'All checks pass' : `${h.failing.length} health check${h.failing.length === 1 ? '' : 's'} need attention`}</a></div>`;
+    // The one most pressing thing stands alone, full width, with its clock; the rest are cards ranked
+    // by level (attention.mjs), each wearing the same mark it has in the sidebar.
+    const top = todo[0]?.level === 'now' ? todo[0] : null; const rest = top ? todo.slice(1) : todo;
+    const focus = top ? `<div class="focus now"><span class="n">${top.n}</span><span class="w"><b>${e(top.what)}</b><span class="due now">${e(top.due || 'needs you now')}</span></span><a class="btn" href="${e(top.href)}">${e(top.action)} →</a></div>` : '';
+    const card = (l) => `<a class="act ${l.level === 'calm' ? '' : e(l.level)}" href="${e(l.href)}"><span class="n">${l.n}</span><span class="w">${e(l.what)}</span>${l.due ? `<span class="due ${e(l.level)}">${e(l.due)}</span>` : ''}<span class="go">${e(l.action)} →</span></a>`;
+    const acts = rest.length ? `<div class="actions">${rest.map(card).join('')}</div>` : top ? '' : '<div class="actions"><div class="act calm"><span class="w">Silence means healthy. The next order, email or probe result will show up here.</span></div></div>';
     const kpis = `<div class="kpis">${tile('Total sales, 30 days', money(t.total_cents), { prev: pv.total_cents, cur: t.total_cents })}${tile('Orders', t.orders, { prev: pv.orders, cur: t.orders })}${tile('Average order', money(t.aov_cents), { prev: pv.aov_cents, cur: t.aov_cents })}${tile('Returning customers', `${Math.round(t.returning_rate * 100)}%`, { prev: pv.returning_rate, cur: t.returning_rate })}${tile('This month net', money(m.net_cents))}</div>`;
-    const chart = line({ points: a.series.buckets.map(b => ({ label: b.label, value: b.net_cents })), title: 'Net sales per day, 30 days', money: true, height: 150 });
+    const chart = line({ points: a.series.buckets.map(b => ({ label: b.label, value: b.net_cents })), title: 'Net sales per day, 30 days', money: true, height: 150, color: 'var(--s2)' });
     const more = `<details class="more"><summary>All the numbers</summary>` + cards([
       ['This batch', `${s.orders.thisBatch} <span class="muted" style="font-size:.8rem">${weekLabel()}</span>`], ['Units, 30 days', s.orders.units30],
       ['SLA breaches', s.support.breached, s.support.breached ? 'bad' : 'ok'], ['Warranty rate, 90 d', `${(s.warranty.rate90 * 100).toFixed(1)}%`],
@@ -83,20 +90,23 @@ export function registerAdmin(app) {
     ]) + `<p class="muted">${link('/analytics', 'Full analytics')} · ${link('/batches', 'Batches')} · ${link('/products', 'Products')} · ${link('/books', 'Books')}</p></details>`;
     const activity = db.all('SELECT * FROM audit_log WHERE action NOT IN (\'demo.seed\') ORDER BY at DESC, id DESC LIMIT 10').map(describeAudit).filter(Boolean);
     const decide = decideCards(db, cfg, c.csrf);
-    const body = `${hero}${acts}${decide}${kpis}${chart}${more}<h2>Activity <span class="muted" style="font-weight:400;font-size:13px">· ${link('/audit', 'the whole log')}</span></h2><ul class="feed">${activity.map(x => `<li><span class="meta">${e(dt(x.at))} · ${e(x.actor)}</span><span>${x.html}</span></li>`).join('') || '<li class="muted">Nothing yet.</li>'}</ul>`;
+    const body = `${hero}${focus}${acts}${decide}${kpis}${chart}${more}<h2>Activity <span class="muted" style="font-weight:400;font-size:13px">· ${link('/audit', 'the whole log')}</span></h2><ul class="feed">${activity.map(x => `<li${x.sys ? ' class="sys"' : ''}><span class="meta" title="${e(x.actor)}">${rel(x.at, ago(x.at))} · ${e(String(x.actor).replace(/@.*$/, ''))}</span><span>${x.html}</span></li>`).join('') || '<li class="muted">Nothing yet.</li>'}</ul>`;
     html(c.res, layout({ title: 'Home', body, path: '/', company: cfg.company, csrf: c.csrf, user: c.user, demo: cfg.demo, demoResetMinutes: cfg.demoResetMinutes, h1: false, flash: c.query.get('ok') ? { text: c.query.get('ok') } : c.query.get('err') ? { kind: 'err', text: c.query.get('err') } : null }));
   });
 
   // ---------- orders
   router.get('/orders', (c) => {
     const f = { status: c.query.get('status') || '', batch: c.query.get('batch') || '', q: c.query.get('q') || '', tag: c.query.get('tag') || '', from: c.query.get('from') || '', to: c.query.get('to') || '', discount: c.query.get('discount') || '', sku: c.query.get('sku') || '' };
-    const rows = listOrders(db, f); const n = statusCounts(db);
+    const rows = listOrders(db, f); const n = statusCounts(db); const now = Date.now();
     const qs = (o) => '/orders?' + new URLSearchParams({ ...f, ...o }).toString();
-    const body = tabs([[qs({ status: '' }), 'All', n.all, ''], [qs({ status: 'open' }), 'Open', n.open, 'open'], [qs({ status: 'paid' }), 'To pack', n.paid, 'paid'], [qs({ status: 'packed' }), 'To ship', n.packed, 'packed'], [qs({ status: 'shipped' }), 'Shipped', n.shipped, 'shipped'], [qs({ status: 'delivered' }), 'Delivered', n.delivered, 'delivered'], [qs({ status: 'refunded' }), 'Refunded', n.refunded, 'refunded'], [qs({ status: 'canceled' }), 'Canceled', n.canceled, 'canceled']], f.status) +
+    // the shipping promise, stated once (attention.mjs): orders paid longer ago than it are named here, not found by scrolling
+    const late = db.get("SELECT COUNT(*) AS n, MIN(paid_at) AS t FROM orders WHERE status IN ('paid','packed') AND paid_at < ?", new Date(now - WINDOWS.orderShipHours * 3600000).toISOString());
+    const lateLine = late.n ? `<p class="due ${e(orderLevel({ status: 'paid', paid_at: late.t }, now))}" style="white-space:normal">${late.n} order${late.n === 1 ? ' has' : 's have'} waited longer than ${WINDOWS.orderShipHours / 24} days since payment · oldest ${e(waiting(late.t, { now, soonMs: 0 }).text)} · ${link(qs({ status: 'open' }), 'show the unshipped ones')}</p>` : '';
+    const body = lateLine + tabs([[qs({ status: '' }), 'All', n.all, ''], [qs({ status: 'open' }), 'Open', n.open, 'open'], [qs({ status: 'paid' }), 'To pack', n.paid, 'paid'], [qs({ status: 'packed' }), 'To ship', n.packed, 'packed'], [qs({ status: 'shipped' }), 'Shipped', n.shipped, 'shipped'], [qs({ status: 'delivered' }), 'Delivered', n.delivered, 'delivered'], [qs({ status: 'refunded' }), 'Refunded', n.refunded, 'refunded'], [qs({ status: 'canceled' }), 'Canceled', n.canceled, 'canceled']], f.status) +
       filters(c, [['q', 'Search # / name / email / tracking'], ['batch', 'Batch (e.g. ' + weekLabel() + ')'], ['tag', 'Tag'], ['from', 'Paid from (YYYY-MM-DD)'], ['to', 'Paid to'], ['discount', 'Discount code'], ['sku', 'SKU']]) +
       `<p>${rows.length} shown · ${['', 'open', 'paid', 'packed'].includes(f.status) ? link(`/orders.csv?batch=${e(f.batch)}&status=${e(f.status || 'open')}`, `fulfill.mjs CSV (${f.status === 'paid' ? 'to pack' : f.status === 'packed' ? 'to ship' : 'every unshipped order'}${f.batch ? ` in ${f.batch}` : ''})`) + ' · ' : ''}${link('/batches', 'Batches')} · ${link('/orders/import', 'Import a Stripe CSV')} · ${link('/orders/new', 'Manual order')}</p>` +
       `<form method="post" action="/orders/bulk"><input type="hidden" name="_csrf" value="${e(c.csrf)}">` +
-      table(rows, [{ label: '', html: r => `<input type="checkbox" name="ids[]" value="${r.id}" style="width:auto" aria-label="select ${e(r.number)}">` }, { label: '#', html: r => link(`/orders/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Paid', get: r => day(r.paid_at) }, { label: 'Batch', key: 'batch' }, { label: 'Customer', html: r => `${r.contact_id ? link(`/contacts/${r.contact_id}`, r.ship_name || r.email) : e(r.ship_name || '')}${r.email ? `<br><span class="muted">${e(r.email)}</span>` : ''}` }, { label: 'Items', html: r => `${r.units} unit${r.units === 1 ? '' : 's'}<br><span class="muted" style="font-size:12.5px">${e(r.items_text || '')}</span>`, nowrap: true }, { label: 'Total', html: r => `${money(r.total_cents, r.currency)}${r.discount_code ? `<br><span class="muted">${e(r.discount_code)}</span>` : ''}${r.refunded_cents ? `<br><span class="bad">−${money(r.refunded_cents)}</span>` : ''}`, num: true }, { label: 'Tags', html: r => tagsHtml(r.tags) }, { label: 'Tracking', key: 'tracking' }]) +
+      table(rows, [{ label: '', html: r => `<input type="checkbox" name="ids[]" value="${r.id}" style="width:auto" aria-label="select ${e(r.number)}">` }, { label: '#', html: r => link(`/orders/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Paid', html: r => { const lv = orderLevel(r, now); return `${e(day(r.paid_at))}${['paid', 'packed'].includes(r.status) ? `<br><span class="due ${e(lv)}">${e(waiting(r.paid_at, { now, soonMs: 0 }).text)}</span>` : ''}`; } }, { label: 'Batch', key: 'batch' }, { label: 'Customer', html: r => `${r.contact_id ? link(`/contacts/${r.contact_id}`, r.ship_name || r.email) : e(r.ship_name || '')}${r.email ? `<br><span class="muted">${e(r.email)}</span>` : ''}` }, { label: 'Items', html: r => `${r.units} unit${r.units === 1 ? '' : 's'}<br><span class="muted" style="font-size:12.5px">${e(r.items_text || '')}</span>`, nowrap: true }, { label: 'Total', html: r => `${money(r.total_cents, r.currency)}${r.discount_code ? `<br><span class="muted">${e(r.discount_code)}</span>` : ''}${r.refunded_cents ? `<br><span class="bad">−${money(r.refunded_cents)}</span>` : ''}`, num: true }, { label: 'Tags', html: r => tagsHtml(r.tags) }, { label: 'Tracking', key: 'tracking' }], { rowClass: r => orderLevel(r, now) }) +
       (rows.length ? `<div class="row" style="margin:.6rem 0;align-items:end"><div>${field('action', 'With the selected orders', { options: [['delivered', 'mark delivered'], ['slips', 'print packing slips'], ['tag', 'add a tag'], ['canceled', 'cancel (only paid, unpacked orders)']] })}</div><div>${field('tag', 'Tag (for "add a tag")')}</div><div><label>&nbsp;</label><button>Apply</button></div></div>` : '') + '</form>';
     page(c, 'Orders', body);
   });
@@ -175,9 +185,14 @@ ${o.notes ? `<p class="muted">Order notes: ${e(o.notes)}</p>` : ''}`;
 
   // ---------- support
   router.get('/tickets', (c) => {
-    const rows = listTickets(db, { status: c.query.get('status') || '', kind: c.query.get('kind') || '', q: c.query.get('q') || '' });
-    page(c, 'Support', filters(c, [['status', 'Status', TSTATUS.map(s => [s, s])], ['kind', 'Kind', KINDS.map(k => [k, k])], ['q', 'Search']]) + `<p>${link('/tickets/new', 'Open a ticket by hand')} · ${link('/canned', 'Canned replies')}</p>` +
-      table(rows, [{ label: '#', html: r => link(`/tickets/${r.id}`, r.number) }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Pri', key: 'priority' }, { label: 'Kind', key: 'kind' }, { label: 'From', key: 'email' }, { label: 'Subject', key: 'subject' }, { label: 'Updated', get: r => dt(r.updated_at) }, { label: 'SLA due', html: r => `<span class="${!r.first_response_at && r.sla_due_at < new Date().toISOString() && r.status !== 'closed' ? 'bad' : 'muted'}">${e(dt(r.sla_due_at))}</span>` }]));
+    // The default view is what needs us (open + waiting on us), ranked by SLA; the other states are a tab away.
+    const st = c.query.get('status') ?? 'needs'; const n = ticketCounts(db); const now = Date.now();
+    const rows = listTickets(db, { status: st, kind: c.query.get('kind') || '', q: c.query.get('q') || '' });
+    const qs = (o) => '/tickets?' + new URLSearchParams({ status: st, kind: c.query.get('kind') || '', q: c.query.get('q') || '', ...o }).toString();
+    const sla = (r) => { if (r.status === 'closed') return '<span class="muted">—</span>'; if (r.first_response_at) return `<span class="muted">answered ${e(ago(r.first_response_at, now))}</span>`; if (r.status === 'waiting_on_customer') return '<span class="muted">on them</span>'; const d = dueIn(r.sla_due_at, { now }); return `<span class="due ${e(d.level)}">${e(d.text || '—')}</span>`; };
+    page(c, 'Support', tabs([[qs({ status: 'needs' }), 'Needs us', n.needs, 'needs'], [qs({ status: 'waiting_on_customer' }), 'Waiting on customer', n.waiting_on_customer, 'waiting_on_customer'], [qs({ status: 'closed' }), 'Closed', n.closed, 'closed'], [qs({ status: '' }), 'All', n.all, '']], st) +
+      filters(c, [['kind', 'Kind', KINDS.map(k => [k, k])], ['q', 'Search']]) + `<p>${link('/tickets/new', 'Open a ticket by hand')} · ${link('/canned', 'Canned replies')}</p>` +
+      table(rows, [{ label: '#', html: r => link(`/tickets/${r.id}`, r.number) }, { label: 'Subject', html: r => `${e(r.subject)}<br><span class="muted">${e(r.email || 'no email')}</span>`, wide: true }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Pri', html: r => r.priority === 'urgent' ? statusPill(r.priority) : r.priority === 'high' ? pillWarn(r.priority) : `<span class="muted">${e(r.priority)}</span>` }, { label: 'Kind', key: 'kind' }, { label: 'Updated', html: r => rel(r.updated_at, ago(r.updated_at, now)) }, { label: 'SLA', html: sla }], { rowClass: r => ticketLevel(r, now), empty: st === 'needs' ? 'Nothing is waiting on us.' : 'Nothing here.' }));
   });
   router.get('/tickets/new', (c) => page(c, 'New ticket', form('/tickets/new', c.csrf, `<div class="row">${field('email', 'Email', { type: 'email' })}${field('name', 'Name')}</div>${field('subject', 'Subject', { required: true })}${field('body', 'Message', { type: 'textarea', required: true })}${field('kind', 'Kind', { options: KINDS })}`, { submit: 'Open' })));
   router.post('/tickets/new', (c) => { const t = openTicket(db, { email: c.body.email, name: c.body.name, subject: c.body.subject, body: c.body.body, kind: c.body.kind, channel: 'manual', cfg, autoAck: false }); back(c, `/tickets/${t.id}`, `opened ${t.number}`); });
@@ -187,7 +202,8 @@ ${o.notes ? `<p class="muted">Order notes: ${e(o.notes)}</p>` : ''}`;
     const orders = t.email ? db.all('SELECT o.* FROM orders o JOIN contacts c ON c.id = o.contact_id WHERE c.email = ? ORDER BY o.id DESC LIMIT 5', t.email) : [];
     const atts = attachmentsFor(db, t.id); const attHtml = (mid) => { const list = atts.filter(a => a.ticket_message_id === mid); return list.length ? `<div class="atts">${list.map(a => /^image\//.test(a.mime) ? `<a href="/tickets/${t.id}/att/${a.id}" class="att"><img src="/tickets/${t.id}/att/${a.id}" alt="${e(a.filename)}" loading="lazy"><span>${e(a.filename)} · ${Math.round(a.size / 1024)} KB</span></a>` : `<a href="/tickets/${t.id}/att/${a.id}" class="att file">📎 ${e(a.filename)} <span class="muted">${e(a.mime)} · ${Math.round(a.size / 1024)} KB</span></a>`).join('')}</div>` : ''; };
     const msgs = t.messages.map(m => `<div class="msg ${m.direction}"><div class="meta">${m.direction === 'in' ? '← ' + e(m.from_addr || t.email || '') : m.direction === 'out' ? '→ ' + e(m.to_addr || '') : 'note'} · ${e(dt(m.created_at))}</div>${e(m.body)}${attHtml(m.id)}</div>`).join('');
-    const body = meta([['Status', `${statusPill(t.status)} ${statusPill(t.priority)} ${statusPill(t.kind)}`], ['From', t.email ? link(`/contacts?q=${encodeURIComponent(t.email)}`, t.email) : 'no email'], ['Opened', dt(t.created_at)], ['First response', dt(t.first_response_at)], ['Thread token', `<code>[${e(t.number)} ${e(t.thread_token)}]</code>`]]) + `
+    const tl = ticketLevel(t); const slaCell = t.first_response_at ? `${dt(t.first_response_at)} <span class="muted">(${e(ago(t.first_response_at))})</span>` : t.status === 'closed' ? '—' : `<span class="due ${e(tl)}">${e(dueIn(t.sla_due_at).text || '—')}</span>`;
+    const body = meta([['Status', `${statusPill(t.status)} ${t.priority === 'high' ? pillWarn(t.priority) : statusPill(t.priority)} ${statusPill(t.kind)}`], ['From', t.email ? link(`/contacts?q=${encodeURIComponent(t.email)}`, t.email) : 'no email'], ['Opened', `${dt(t.created_at)} <span class="muted">(${e(ago(t.created_at))})</span>`], [t.first_response_at ? 'First response' : 'First reply', slaCell], ['Thread token', `<code>[${e(t.number)} ${e(t.thread_token)}]</code>`]]) + `
 ${orders.length ? `<p>Orders: ${orders.map(o => link(`/orders/${o.id}`, `${o.number} (${o.status})`)).join(', ')}</p>` : ''}
 ${msgs}
 ${form(`/tickets/${t.id}/reply`, c.csrf, `${canned.length ? field('canned', 'Start from a canned reply', { options: [['', '—'], ...canned.map(r => [r.slug, r.title])] }) : ''}${field('body', 'Reply (plain text; goes out from the support address — leave empty to send the canned reply as is)', { type: 'textarea' })}<label><input type="checkbox" name="close" value="1" style="width:auto"> close after sending</label>`, { submit: 'Send reply' })}
@@ -433,7 +449,10 @@ function describeAudit(r) {
     'exception.raise': `<span class="warn">Exception raised: ${ent}</span>`, 'exception.resolve': `Exception resolved: ${ent}`, 'ticket.waiting_on_customer': 'Ticket waiting on the customer', 'ticket.open': `Ticket ${ent} opened (${e(d.kind || '')} via ${e(d.channel || '')})`,
     'po.create': `Purchase order ${ent} drafted`, 'po.order': `Purchase order ${ent} placed with the supplier`, 'po.receive': `Purchase order ${ent} received into stock`, 'po.cancel': `Purchase order ${ent} canceled`,
     'recall.create': `Safety notice ${ent} drafted`, 'recall.send': `<span class="warn">Safety notice ${ent} sent to ${d.customers ?? '?'} customers</span>`, 'contact.forget': 'A customer was forgotten at their request', 'invoice.remind': `Reminder sent for ${ent}`, 'order.items': `Lines changed on ${ent}`, 'order.tracking': `Carrier update on ${ent}`,
+    'backup.taken': `Backup taken${d.checked?.ok ? ', opened and checked' : ''}`, 'backup.drill': `Restore drill ${d.ok === false ? '<span class="bad">failed</span>' : 'passed'}`, 'auth.login.failed': `<span class="warn">A login attempt failed${d.ip ? ` from ${e(d.ip)}` : ''}</span>`,
     'inventory.move': `Stock moved: ${ent}`, 'campaign.queue': `Campaign ${ent} queued`, 'waitlist.notify': `In-stock mail sent for ${ent}`, 'contact.consent.request': 'Opt-in mail sent',
   }[r.action];
-  return { at: r.at, actor: r.actor, html: text || `${e(r.action)} ${ent}` };
+  // routine system rows (a backup taken, a job run) sit back in the feed; anything a person did, or anything raised, stands at full weight
+  const sys = r.actor === 'system' && !/exception|bounce|recall|fail|alert/.test(r.action);
+  return { at: r.at, actor: r.actor, html: text || `${e(r.action)} ${ent}`, sys };
 }

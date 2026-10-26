@@ -1,6 +1,22 @@
 # Changelog
 
 ## [Unreleased]
+### The backoffice shows where attention goes: one urgency scale from stated deadlines, the same on every page (backoffice 0.3.0)
+
+- **`backoffice/src/attention.mjs`** ranks everything that wants the admin into
+  *now* (a clock has run out, or a person is already being failed), *soon*
+  (inside a stated window) and *calm*, from windows stated once (`WINDOWS`: two
+  days to ship, six hours before an SLA, a week on a claim). The sidebar count
+  on each section, the home page's focus strip and cards, the Decide queue's
+  order, a table row's left edge, a due date in a cell ("overdue 15 h",
+  "waiting 4 d") and the morning digest's TODAY list all read that one list.
+- Support opens on what needs us, ordered by SLA, subject widest; Orders names
+  the orders past the shipping promise above the list and how long each has
+  waited; the home feed names the person, sits routine system rows back, and
+  the sales chart wears a series color so the brand gold means "an action".
+- `tests/attention.test.mjs` holds the levels to the clock and every surface
+  to the same marks, over HTTP.
+
 ### The backoffice says which environment and build it is, guards its migrations, carries feature flags, and reaches production only through a promote button (backoffice 0.2.0)
 
 - **Environment label and build** (`backoffice/src/env.mjs`, `version.mjs`):

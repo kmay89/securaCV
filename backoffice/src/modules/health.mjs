@@ -2,6 +2,7 @@
 // a person can read — configuration, backups and their proofs, the books,
 // probes, jobs, disk — with what to do about each. The same list is the
 // Health page, `backoffice doctor`, and the top of the morning digest.
+import { attention } from '../attention.mjs';
 import { statfsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { hasOperator } from '../auth.mjs';
@@ -82,17 +83,9 @@ export function doctor(db, cfg) {
 
 // What needs doing today, as lines — the Home page's list and the digest's.
 export function todayLines(db, cfg, { base = '' } = {}) {
-  const o = orderStats(db), s = supportStats(db), low = lowStock(db), ex = openExceptions(db);
-  const w = db.get('SELECT COUNT(*) AS n FROM warranty_claims WHERE status IN (\'open\',\'shipping\')').n;
-  const inv = db.get('SELECT COALESCE(SUM(total_cents),0) AS c, COUNT(*) AS n FROM invoices WHERE status IN (\'sent\',\'overdue\')');
-  const lines = [];
-  if (o.open) lines.push({ n: o.open, what: `order${o.open === 1 ? '' : 's'} to pack or ship`, href: `${base}/pack`, action: 'Open the pack bench' });
-  if (s.open) lines.push({ n: s.open, what: `support ticket${s.open === 1 ? '' : 's'} waiting on us${s.breached ? ` (${s.breached} past SLA)` : ''}`, href: `${base}/tickets?status=open`, action: 'Answer', urgent: s.breached > 0 });
-  if (low.length) lines.push({ n: low.length, what: `part${low.length === 1 ? '' : 's'} at or under the reorder point: ${low.map(i => i.sku).join(', ')}`, href: `${base}/inventory`, action: 'Reorder' });
-  if (w) lines.push({ n: w, what: `warranty claim${w === 1 ? '' : 's'} open`, href: `${base}/warranty`, action: 'Resolve' });
-  if (inv.n) lines.push({ n: inv.n, what: `invoice${inv.n === 1 ? '' : 's'} outstanding, $${(inv.c / 100).toFixed(2)}`, href: `${base}/invoices`, action: 'Chase' });
-  if (ex.length) lines.push({ n: ex.length, what: `exception${ex.length === 1 ? '' : 's'} need a decision: ${ex.map(e => e.key).join(', ')}`, href: `${base}/exceptions`, action: 'Decide', urgent: true });
-  return lines;
+  // One list for the home page, the sidebar and this mail: attention.mjs ranks it by deadline (the
+  // health row is left out here; the digest has its own HEALTH section and the home its pill).
+  return attention(db, cfg).items.filter(i => i.key !== 'health').map(i => ({ n: i.n, what: i.what, href: `${base}${i.href}`, action: i.action, urgent: i.level === 'now', level: i.level, due: i.due }));
 }
 
 // The morning mail: today's list, the thirty-day numbers, the health checklist. Plain text, one screen.

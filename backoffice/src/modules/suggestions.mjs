@@ -1,3 +1,5 @@
+// Each card may carry `due_at`: the clock the admin is deciding against (an SLA, an invoice's
+// date, a send time); the home page ranks and colors the queue by it (attention.mjs).
 // The Decide queue: the system drafts the next move and says why; a person
 // approves it with one click or ignores it. Nothing here acts on its own.
 // Every suggestion is recomputed from the data each time, so there is no
@@ -25,16 +27,16 @@ export function suggestions(db, cfg, { now = Date.now() } = {}) {
     const first = db.get('SELECT body FROM ticket_messages WHERE ticket_id = ? AND direction = \'in\' ORDER BY id LIMIT 1', t.id)?.body || '';
     const rule = CANNED_RULES.find(([re]) => re.test(`${t.subject} ${first}`)); if (!rule || !canned.has(rule[1])) continue;
     const title = db.get('SELECT title FROM canned_replies WHERE slug = ?', rule[1]).title;
-    out.push({ key: `reply:${t.number}`, kind: 'support', title: `Answer ${t.number} with "${title}"`, detail: `${t.name || t.email || 'someone'}: ${t.subject}`, why: `the question matches the canned reply; ${classify(t.subject, first).kind} ticket, SLA ${t.sla_due_at.slice(0, 16).replace('T', ' ')}`, action: { href: `/tickets/${t.id}/reply`, label: 'Send it', fields: { canned: rule[1], body: '', _back: '/' } }, link: `/tickets/${t.id}` });
+    out.push({ key: `reply:${t.number}`, kind: 'support', title: `Answer ${t.number} with "${title}"`, detail: `${t.name || t.email || 'someone'}: ${t.subject}`, why: `the question matches the canned reply; ${classify(t.subject, first).kind} ticket`, due_at: t.sla_due_at, action: { href: `/tickets/${t.id}/reply`, label: 'Send it', fields: { canned: rule[1], body: '', _back: '/' } }, link: `/tickets/${t.id}` });
   }
   // shipped long ago, carrier not consulted: probably delivered
   for (const o of db.all("SELECT id, number, ship_name, shipped_at FROM orders WHERE status = 'shipped' AND tracking_status IS NULL AND shipped_at < ? ORDER BY shipped_at LIMIT 5", new Date(now - 7 * 86400000).toISOString())) out.push({ key: `delivered:${o.number}`, kind: 'orders', title: `Mark ${o.number} delivered?`, detail: `${o.ship_name} · shipped ${o.shipped_at.slice(0, 10)}, ${Math.floor((now - Date.parse(o.shipped_at)) / 86400000)} days ago`, why: 'no carrier lookup is configured; after a week a USPS parcel has almost always landed, and "delivered" starts the settled-in note', action: { href: `/orders/${o.id}/transition`, label: 'Mark delivered', fields: { to: 'delivered', _back: '/' } }, link: `/orders/${o.id}` });
   // an invoice past due with no reminder in a week
   for (const i of db.all("SELECT i.*, c.email FROM invoices i LEFT JOIN contacts c ON c.id = i.contact_id WHERE i.status IN ('sent','overdue') AND i.due_at < ? ORDER BY i.due_at LIMIT 5", new Date(now).toISOString().slice(0, 10))) {
     const reminded = db.get("SELECT created_at FROM mail_outbox WHERE ref = ? AND created_at > ?", `invoice-reminder:${i.number}`, new Date(now - 7 * 86400000).toISOString()); if (reminded) continue;
-    out.push({ key: `invoice:${i.number}`, kind: 'books', title: `Remind ${i.email || 'the buyer'} about ${i.number}`, detail: `${money(i.total_cents)} was due ${i.due_at}`, why: 'overdue, and no reminder went out this week', action: { href: `/invoices/${i.id}/remind`, label: 'Send a reminder', fields: { _back: '/' } }, link: `/invoices/${i.id}` });
+    out.push({ key: `invoice:${i.number}`, kind: 'books', title: `Remind ${i.email || 'the buyer'} about ${i.number}`, detail: `${money(i.total_cents)} was due ${i.due_at}`, why: 'overdue, and no reminder went out this week', due_at: `${i.due_at}T23:59:59Z`, action: { href: `/invoices/${i.id}/remind`, label: 'Send a reminder', fields: { _back: '/' } }, link: `/invoices/${i.id}` });
   }
   // a campaign about to go out
-  for (const cp of db.all("SELECT slug, subject, scheduled_at, segment FROM campaigns WHERE status = 'scheduled' AND scheduled_at < ?", new Date(now + 36 * 3600000).toISOString())) out.push({ key: `campaign:${cp.slug}`, kind: 'mail', title: `"${cp.subject}" goes out ${cp.scheduled_at.slice(0, 16).replace('T', ' ')} UTC`, detail: `to ${cp.segment} — last chance to read it once more`, why: 'scheduled within the next day and a half', link: `/campaigns/${cp.slug}` });
+  for (const cp of db.all("SELECT slug, subject, scheduled_at, segment FROM campaigns WHERE status = 'scheduled' AND scheduled_at < ?", new Date(now + 36 * 3600000).toISOString())) out.push({ key: `campaign:${cp.slug}`, kind: 'mail', title: `"${cp.subject}" goes out ${cp.scheduled_at.slice(0, 16).replace('T', ' ')} UTC`, detail: `to ${cp.segment} — last chance to read it once more`, why: 'scheduled within the next day and a half', due_at: cp.scheduled_at, link: `/campaigns/${cp.slug}` });
   return out;
 }

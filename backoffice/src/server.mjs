@@ -4,8 +4,9 @@ import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { Router, HttpError, parseCookies, cookie, readBody, parseBody, RateLimiter, Lockout, html, json, text, redirect, clientIp, setTrustedProxies, escapeHtml, safeEqual, int, asArray } from './http.mjs';
 const e = escapeHtml;
-import { layout, setTimezone, setEnvironment, dt as fmtDt, day as fmtDay } from './render.mjs';
+import { layout, setTimezone, setEnvironment, dt as fmtDt, day as fmtDay , setAttention } from './render.mjs';
 import { applyEnv, ENV_TEXT } from './env.mjs';
+import { attention } from './attention.mjs';
 import { build, recordBoot } from './version.mjs';
 import { listFlags, setFlag, clearFlag } from './flags.mjs';
 import { orderToken, deliveryLine, trackingUrl } from './modules/delivery.mjs';
@@ -61,6 +62,12 @@ export function createApp({ db, cfg }) {
   // In demo mode the catalog is the demo's own, never fetched from the live site.
   setTrustedProxies(cfg.trustedProxies);
   const app = { db, cfg, json, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), formLimiter: new RateLimiter({ limit: 5, windowMs: 10 * 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), once: new Map(), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o), shipping: cfg.demo ? async () => DEMO_SHIPPING : (o) => loadShipping(cfg, o) };
+  // What wants the admin, memoized for a few seconds: the sidebar badges on every page read it, and
+  // it runs the doctor (an integrity check among other things), which is not a per-page cost.
+  let attMemo = { at: 0, value: null };
+  app.attention = () => { const ttl = cfg.attentionTtlMs ?? 5000; if (!attMemo.value || Date.now() - attMemo.at > ttl) attMemo = { at: Date.now(), value: attention(db, cfg) }; return attMemo.value; };
+  app.forgetAttention = () => { attMemo = { at: 0, value: null }; };
+  setAttention(app.attention);
   // The website's fulfillment block knows where parcels leave from and how far a scale may drift; the environment can override either.
   app.catalog().then(cat => { const f = cat?.fulfillment || {}; if (f.ship_from?.state && !process.env.SHIP_FROM_STATE) cfg.shipFromState = String(f.ship_from.state).toUpperCase(); if (Number.isFinite(Number(f.weight_tolerance_oz)) && cfg.weightToleranceOz == null) cfg.weightToleranceOz = Number(f.weight_tolerance_oz); }).catch(() => {});
   const { router } = app;
@@ -274,6 +281,8 @@ export function createApp({ db, cfg }) {
         }
       }
       await actorStore.run({ actor: c.actor }, () => route.handler(c));
+      // A write may have changed what wants the admin; the next page's badges start fresh.
+      if (req.method === 'POST') app.forgetAttention();
     } catch (err) {
       if (onceKey) app.once.delete(onceKey);   // a refused submission may be corrected and sent again
       // A business rule ("cannot move", "unknown SKU") is the caller's mistake: 400. A thrown
