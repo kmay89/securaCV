@@ -155,7 +155,7 @@ PUBLIC_ALLOWLIST = {
     # the fleet already tells anyone in radio range over the BLE v2 beacon,
     # words only, absent unless honestly known. Nothing finer rides here: no
     # range, no lux, no vital-sign numbers, no secrets, no media, no evidence
-    # (that stays behind the api_auth_check()-gated /api/fleet-scan, which a
+    # (that stays behind the api_auth_check()-gated /api/fleet/scan, which a
     # landing session passes too, F346, and the break-glass evidence paths).
     # The WAP itself never fills the wellbeing keys.
     ("GET", "/api/fleet"): "public coarse fleet presence/health/wellbeing words (DISCOVERY.md); no secrets/media",

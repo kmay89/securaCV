@@ -20,8 +20,11 @@
 // receipt's one-asker take of the BOOT tap, provisioning_gate_take_for(),
 // beside the BLE OTA break-glass take of the same tap,
 // provisioning_gate_take(), the receipt's Host question,
-// request_host_names_device(), and the cookie writer the receipt sends,
-// session_cookie_header; firmware/tests_host/cut_functions.awk) over
+// request_host_names_device(), the cookie writer the receipt sends,
+// session_cookie_header, the lockout's source read, auth_request_source(),
+// and the QR scan's status and stop gate, qr_scan_request_allowed();
+// firmware/tests_host/cut_functions.awk; a second cut carries
+// csi_integration.cpp's CSI_AUTH_OR_RETURN) over
 // stubs/receipt_grant (a request with headers and a query string, a
 // response the test reads) and stand-ins for what else they
 // call: the receipt writer (recording the grant that admitted the request

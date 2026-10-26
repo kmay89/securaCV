@@ -346,7 +346,10 @@ actor DeviceAPI {
 
     /// `GET /api/status` — the WAP's gated status body (the app sends the
     /// bearer; the WAP's api_auth_check() also passes a landing session's
-    /// cookie, which the app never holds, ledger F346), decoded down to what
+    /// cookie, ledger F346, and over http the shared URLSession, by its
+    /// default cookie handling, keeps the `cv_session` a claim's receipt
+    /// sets and sends it back to that host, which the gate takes until it
+    /// expires in 24 h or the WAP reboots), decoded down to what
     /// the poll needs. This is the liveness-plus-identity read for
     /// WAP-class devices: no firmware in this repo serves `/api/v1/info`,
     /// so a poll that insists on the v1 contract marks every real WAP dark.
@@ -502,7 +505,10 @@ actor DeviceAPI {
 
     // MARK: - the sealed-snapshot surface (/api/vault/*, canary-wap only)
     //
-    // Auth-gated like the Wi-Fi routes (Bearer). The Canary holds only the
+    // Gated like the Wi-Fi routes: api_auth_check(), which takes the bearer
+    // the app sends or a landing session's cookie (ledger F346), so a host
+    // that mints one can replace the registered key too (POST /api/vault/key;
+    // download takes ?token= as well). The Canary holds only the
     // operator's PUBLIC key and serves back files it cannot open itself; the
     // private key never travels (VaultKeyStore, SnapshotSealer). A 404 on a
     // route is "this firmware has no sealed snapshots" — the display family

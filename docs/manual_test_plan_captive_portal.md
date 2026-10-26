@@ -1,7 +1,7 @@
 # Manual Test Plan: Canary WAP Captive Portal / `canary.local` Onboarding
 
 ## Purpose
-Validate that a phone joining the Canary's `SecuraCV-XXXX` AP **stays
+Validate that a phone joining the Canary's `SecuraCV-wap-XXXX` AP **stays
 connected** (never flagged "no internet") and can reach the dashboard via
 `canary.local` or the `192.168.4.1` fallback — across iOS/macOS, Android, and
 Windows, during first-boot setup, in steady state after provisioning, and over
@@ -72,7 +72,7 @@ exercise.
 
 #### A1) Apple (iOS/macOS)
 **Action**
-- Factory-fresh device (or after NVS `setup_ok` cleared). Join `SecuraCV-XXXX`.
+- Factory-fresh device (or after NVS `setup_ok` cleared). Join `SecuraCV-wap-XXXX`.
 
 **Expected**
 - A "Sign in to network" sheet appears showing the instruction page.
@@ -83,7 +83,7 @@ exercise.
 
 #### A2) Android (Chrome)
 **Action**
-- Join `SecuraCV-XXXX`.
+- Join `SecuraCV-wap-XXXX`.
 
 **Expected**
 - **No** captive sign-in sheet (this is correct — the `204` is what keeps
@@ -96,7 +96,7 @@ exercise.
 
 #### A3) Windows
 **Action**
-- Join `SecuraCV-XXXX`.
+- Join `SecuraCV-wap-XXXX`.
 
 **Expected**
 - Network shows connected (may show limited connectivity, but not flapping).
@@ -115,9 +115,9 @@ exercise.
 **Action**
 - After provisioning (NVS `setup_ok` set), disable the home Wi-Fi network so
   the device's STA link drops (the real trigger: a joined unit drops
-  `SecuraCV-XXXX` 120 s after the join and raises it again on STA loss), or
+  `SecuraCV-wap-XXXX` 120 s after the join and raises it again on STA loss), or
   use a unit in standalone (AP-only) mode. Then forget/rejoin
-  `SecuraCV-XXXX` from each platform.
+  `SecuraCV-wap-XXXX` from each platform.
 
 **Expected**
 - Same connected behavior as Section A on every platform — the AP is **not**

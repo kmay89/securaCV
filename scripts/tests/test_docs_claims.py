@@ -2261,7 +2261,7 @@ RETIRED_IN = (
      'secureFetch sends a bearer only when the page holds a token (F346)'),
     ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
      'Bearer-gated mDNS browser for the operator UI; this one is presence-only and',
-     '/api/fleet-scan takes api_auth_check(), which a landing session passes (F346)'),
+     '/api/fleet/scan takes api_auth_check(), which a landing session passes (F346)'),
     ('firmware/projects/canary-wap/arduino/canary_wap/airtime_governor.cpp',
      '`cosign_pending_request` REST path (Bearer-gated, same task).',
      'bcn_auth_gated runs api_auth_check(), which a landing session passes (F346)'),
@@ -2285,7 +2285,7 @@ RETIRED_IN = (
      'handle_diagnostics_auth runs api_auth_check(), which a landing session passes (F346)'),
     ('firmware/projects/canary-wap/tests_host/check_route_security.py',
      '(that stays behind the Bearer-gated /api/fleet-scan and the break-glass',
-     '/api/fleet-scan takes api_auth_check(), which a landing session passes (F346)'),
+     '/api/fleet/scan takes api_auth_check(), which a landing session passes (F346)'),
     ('docs/FIRMWARE_MAP.md',
      'bearer-gated `/api/ota/{status,check,install,config}` on canary and WAP',
      "the WAP's take api_auth_check(), which a landing session passes (F346)"),
@@ -2318,10 +2318,10 @@ RETIRED_IN = (
      'gated like /api/status: a landing session passes too (F346)'),
     ('ios/Sources/SecuraCV/Views/Components/SensingNowSection.swift',
      '(the stream is Bearer-gated; it would only 401 forever).',
-     'the app reaches it only with the bearer; the gate also takes a landing session (F346)'),
+     "the app sends the bearer; the gate also takes a landing session's cookie, which the shared URLSession can hold from a claim's receipt (F346)"),
     ('ios/Sources/SecuraCV/Views/DeviceDetailView.swift',
      '(the stream is Bearer-gated; an unpaired row or a Keychain-',
-     'the app reaches it only with the bearer; the gate also takes a landing session (F346)'),
+     "the app sends the bearer; the gate also takes a landing session's cookie, which the shared URLSession can hold from a claim's receipt (F346)"),
     ('ios/Sources/SecuraCV/Wire/WapEvents.swift',
      '64 rows, Bearer-token-gated (csi_integration.cpp:handle_events_today).',
      "CSI_AUTH_OR_RETURN takes a landing session's cookie first (F346)"),
@@ -2360,7 +2360,7 @@ RETIRED_IN = (
      "left in, the card takes the new key's records in the same file, which the verifier fails"),
     ('firmware/canary/lib/securacv_usb_onboard/src/securacv_usb_onboard.cpp',
      'device has a new key: the old card is kept, not adopted.',
-     'copy the old log off or use a fresh card: new-key records join the old file'),
+     'move the old log off (copy, then delete) or use a fresh card: new-key records join the old file'),
     ('firmware/canary/lib/securacv_witness/src/securacv_witness.cpp',
      'history is ahead of ours is refused for the same reason, instead of',
      'refused only while its tail is ahead; then a later mount appends to that file'),
@@ -2369,7 +2369,7 @@ RETIRED_IN = (
      'a reboot never reconciles a card another key signed'),
     ('firmware/PARTITIONS.md',
      '(every one is `framework = arduino`)',
-     'every released build; the canary-ota sample is ESP-IDF with NVS encryption on'),
+     'every released build; the canary-ota sample is ESP-IDF and builds with CONFIG_NVS_ENCRYPTION set, no nvs_keys partition'),
     ('firmware/scripts/regression_check.sh',
      'no Canary build has (every one is framework = arduino',
      'every released build; the canary-ota sample sets CONFIG_NVS_ENCRYPTION'),
@@ -2400,6 +2400,87 @@ RETIRED_IN = (
     ('docs/design/magic_pairing.md',
      'is installed again or fully erased in a flasher: OTA updates',
      "or a flasher restores a safety copy over it, putting back that copy's token"),
+    # #1843's sixth pass, round-2 review: sentences the round-1 repair wrote
+    # that do not hold (a copy that leaves the old log where the new key
+    # writes, an app that "never holds" the cookie its shared URLSession
+    # keeps, a route name no tree registers, an "only" the kit's sdkconfig
+    # contradicts), copies of the corrected positions it missed, and two
+    # sentences the merge of #1844-#1873 retired with no needle.
+    ('docs/design/usb_onboard.md',
+     'copy `/WITNESS/records.jsonl` off the card first, or put in a fresh card.',
+     'a copy leaves the file at the fixed path the new chain appends to: move it off (copy, then delete it from the card in a card reader) or use a fresh card'),
+    ('firmware/canary/lib/securacv_usb_onboard/src/securacv_usb_onboard.cpp',
+     'which never adopts the old card: copy records.jsonl',
+     'move it off (copy, then delete it from the card; the USB drive is read-only): a copy leaves new-key records joining the old file'),
+    ('firmware/canary/lib/securacv_witness/src/securacv_witness.cpp',
+     'Such a card is to be copied off, or swapped for',
+     'sd_append_record() writes the fixed path /WITNESS/records.jsonl, so its file is to be moved off, not copied'),
+    ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
+     'cookie, which the app never holds, ledger F346',
+     "a claim's receipt sets cv_session over http and the shared URLSession keeps it and sends it back; the gate takes it until it expires or the WAP reboots"),
+    ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
+     'Auth-gated like the Wi-Fi routes (Bearer).',
+     "every /api/vault/* route is api_auth_check() (download api_auth_check_or_query()), which takes a landing session's cookie first (F346)"),
+    ('ios/Sources/SecuraCV/Views/Components/SensingNowSection.swift',
+     'the app reaches the stream only with the bearer — it never holds',
+     "the shared URLSession keeps the cv_session a claim's receipt sets over http, which the gate takes (F346)"),
+    ('ios/Sources/SecuraCV/Views/DeviceDetailView.swift',
+     'the app reaches the stream only with the bearer, never a',
+     "the shared URLSession keeps the cv_session a claim's receipt sets over http, which the gate takes (F346)"),
+    ('ios/Tests/SecuraCVTests/WapEventsTests.swift',
+     'live room sense must stay token-gated',
+     'CSI_AUTH_OR_RETURN takes a landing session too (F346)'),
+    ('docs/IMPROVEMENT_ROADMAP.md',
+     'Bearer-gated like `/api/witness`, in the route-security',
+     'the row carries its amendment: api_auth_check() takes a landing session (F346)'),
+    ('docs/device_trust.md',
+     "plain HTTP on the setup network. `GET /api/status` also returns `pubkey` and `fingerprint`, but only with the device's bearer token.",
+     "the WAP's handle_status_auth is api_auth_check(), which a landing session passes (F346); the flagship row's bearer-only sentence stands"),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     '(fingerprint) and bearer-gated `/api/status`; USB serial',
+     'the note carries its amendment: api_auth_check() takes a landing session (F346)'),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     'bearer-gated API routes read no Host, so a rebinding page that holds the',
+     "the note carries its amendment: those routes take a landing session's cookie first, and the cookie path asks the Host (F346)"),
+    ('docs/audit/feature_gaps_2026-09.md',
+     'on its receipt route or bearer-gated API; needs a decision on the captive-portal exemption first. | human decision',
+     'the row carries its correction: #1848 refuses a foreign Host on the receipt first; the API is api_auth_check() (F344, F346)'),
+    ('docs/security/THREAT_MODEL.md',
+     "The WAP asks no Host question on this route yet (the ledger's F344).",
+     "#1848: handle_provisioning_receipt's step 1 answers a Host that cannot name the device 403 {\"error\":\"host\"} before the bearer, the claim and the tap"),
+    ('docs/getting_started_canary.md',
+     'factory reset will make a new certificate, so you pair the iPhone app again',
+     'reset_scope_keys.h keeps tls_cert and tls_key across the 10 s reset; the 30 s wipe or a flasher install makes a new one'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     'Distinct from /api/fleet-scan above',
+     'the route is registered as /api/fleet/scan (handle_fleet_scan_auth)'),
+    ('firmware/projects/canary-wap/tests_host/check_route_security.py',
+     'api_auth_check()-gated /api/fleet-scan',
+     'the route is registered as /api/fleet/scan (handle_fleet_scan_auth)'),
+    ('tvos/discovery/DISCOVERY.md',
+     'stays behind the gated `/api/fleet-scan`',
+     "the WAP's route is /api/fleet/scan (handle_fleet_scan_auth)"),
+    ('docs/manual_test_plan_captive_portal.md',
+     "a phone joining the Canary's `SecuraCV-XXXX` AP",
+     'generate_ap_ssid() names it SecuraCV-wap-<4> (onboarding_fsm.h ap_ssid)'),
+    ('docs/manual_test_plan_captive_portal.md',
+     'Join `SecuraCV-XXXX`.',
+     'no network of that name: the setup network is SecuraCV-wap-<4>'),
+    ('docs/manual_test_plan_captive_portal.md',
+     'a joined unit drops `SecuraCV-XXXX` 120 s after the join',
+     'the network it drops is SecuraCV-wap-<4>'),
+    ('docs/manual_test_plan_captive_portal.md',
+     'forget/rejoin `SecuraCV-XXXX` from each platform',
+     'the network to rejoin is SecuraCV-wap-<4>'),
+    ('firmware/PARTITIONS.md',
+     'only the unreleased canary-ota ESP-IDF harness sets `CONFIG_NVS_ENCRYPTION`',
+     "the kit's sdkconfig.defaults.secure sets it too, inert under framework = arduino"),
+    ('firmware/scripts/regression_check.sh',
+     'NVS is plaintext on every tier; only the unreleased canary-ota ESP-IDF harness',
+     "the kit's sdkconfig.defaults.secure sets it too, inert under framework = arduino"),
+    ('firmware/ESP32S3_OPTIMIZATION_ROADMAP.md',
+     'only the ESP-IDF project `canary-ota` has NVS encryption on',
+     'canary-ota sets CONFIG_NVS_ENCRYPTION, but its partition table has no nvs_keys partition'),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -4162,7 +4243,7 @@ MUST_PASS_IN = [
     ('firmware/projects/canary-wap/arduino/canary_wap/wap_diagnostics.h',
      ' * The route (canary_wap.ino handle_diagnostics, behind api_auth_check():'),
     ('firmware/projects/canary-wap/tests_host/check_route_security.py',
-     '    # (that stays behind the api_auth_check()-gated /api/fleet-scan, which a'),
+     '    # (that stays behind the api_auth_check()-gated /api/fleet/scan, which a'),
     ('docs/FIRMWARE_MAP.md',
      '  on canary (the bearer) and WAP (`api_auth_check()`: the bearer, or a landing'),
     ('docs/homeassistant_setup.md',
@@ -4176,7 +4257,7 @@ MUST_PASS_IN = [
     ('spec/witness_api_v1.md',
      'caller the gate admits (on canary-wap, the Bearer token or a landing session'),
     ('tvos/discovery/DISCOVERY.md',
-     '  sealed evidence stays behind the gated `/api/fleet-scan` (on a WAP,'),
+     '  sealed evidence stays behind the gated `/api/fleet/scan` (on a WAP,'),
     ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
      "    /// `GET /api/status` — the WAP's gated status body (the app sends the"),
     ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
@@ -4184,9 +4265,9 @@ MUST_PASS_IN = [
     ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
      '    /// SSE; gated like `/api/status`; Wire/WapEvents.swift documents its'),
     ('ios/Sources/SecuraCV/Views/Components/SensingNowSection.swift',
-     '    /// (the app reaches the stream only with the bearer — it never holds'),
+     '    /// (the app authenticates the stream with the bearer; the shared'),
     ('ios/Sources/SecuraCV/Views/DeviceDetailView.swift',
-     '            // (the app reaches the stream only with the bearer, never a'),
+     '            // (the app authenticates the stream with the bearer; a'),
     ('ios/Sources/SecuraCV/Wire/WapEvents.swift',
      '// 64 rows, behind CSI_AUTH_OR_RETURN (csi_integration.cpp:handle_events_today:'),
     ('ios/Sources/SecuraCV/Wire/WapEvents.swift',
@@ -4210,15 +4291,15 @@ MUST_PASS_IN = [
     ('docs/design/iphone_companion_app.md',
      "> Bluetooth, so the device's own `/companion` PWA sends an iPhone owner to the"),
     ('docs/design/usb_onboard.md',
-     '  or put in a fresh card. Left in, that card takes no evidence while its old'),
+     "  adopts the old card's: move `/WITNESS/records.jsonl` off the card first"),
     ('firmware/canary/lib/securacv_usb_onboard/src/securacv_usb_onboard.cpp',
-     '  Serial.println("     new key, which never adopts the old card: copy records.jsonl");'),
+     '  Serial.println("     new key, which never adopts the old card: move records.jsonl");'),
     ('firmware/canary/lib/securacv_witness/src/securacv_witness.cpp',
      '// history is ahead of ours is refused for the same reason, but only while'),
     ('firmware/canary/lib/securacv_witness/src/securacv_witness.cpp',
      '    return sd_append_fail("SD log ahead of chain: reboot or use new card");'),
     ('firmware/PARTITIONS.md',
-     '  build has it (every released build is `framework = arduino`; only the unreleased canary-ota'),
+     "  build has it (every released build is `framework = arduino`; the kit's"),
     ('firmware/scripts/regression_check.sh',
      '# no released Canary build has (every released build is framework = arduino, so'),
     ('firmware/scripts/regression_check.sh',
@@ -4239,6 +4320,56 @@ MUST_PASS_IN = [
      "- **Session Rotation:** the RF presence detector's ephemeral session tokens rotate every 4 hours. The API token does not rotate: the 10 s hold and Forget Wi-Fi keep it, an install or a full erase in a flasher replaces it, and a flasher's restore of a safety copy puts back the token that copy holds"),
     ('docs/design/magic_pairing.md',
      'safety copy over it, which puts back the token (and the key) that copy holds:'),
+    ('docs/design/usb_onboard.md',
+     "  device's USB drive is read-only), or put in a fresh card. A copy alone"),
+    ('firmware/canary/lib/securacv_usb_onboard/src/securacv_usb_onboard.cpp',
+     '  Serial.println("     off it first (in a card reader, copy it, then delete it from");'),
+    ('firmware/canary/lib/securacv_witness/src/securacv_witness.cpp',
+     "// fails under either key. Such a card's records.jsonl is to be moved off"),
+    ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
+     '    /// cookie, ledger F346, and over http the shared URLSession, by its'),
+    ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
+     '    // Gated like the Wi-Fi routes: api_auth_check(), which takes the bearer'),
+    ('ios/Sources/SecuraCV/Views/Components/SensingNowSection.swift',
+     "    /// URLSession may also hold the `cv_session` cookie a claim's receipt"),
+    ('ios/Sources/SecuraCV/Views/DeviceDetailView.swift',
+     "            // `cv_session` cookie a claim's receipt set over http may ride"),
+    ('ios/Tests/SecuraCVTests/WapEventsTests.swift',
+     '                      "the stream lost its auth gate — live room sense must stay gated")'),
+    ('docs/IMPROVEMENT_ROADMAP.md',
+     "`handle_witness_v1`, Bearer-gated like `/api/witness` *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)*, in the route-security"),
+    ('docs/device_trust.md',
+     "but only to a caller its gate (`api_auth_check()`) admits: one with the device's bearer token, or a landing session, which the landing page mints for any host on the network (F346)"),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     "  (fingerprint) and bearer-gated `/api/status` *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)*; USB serial"),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     "  bearer-gated API routes read no Host *(amended 2026-10-26, #1843's sweep:\n"
+     "  those routes are behind `api_auth_check()`, which takes a landing\n"
+     "  session's cookie before the bearer, F346; the cookie path asks the Host,\n"
+     "  the bearer path does not)*, so a rebinding page that holds the"),
+    ('docs/audit/feature_gaps_2026-09.md',
+     '*Correction 2026-10-26 (F344, F346):* since #1848 the receipt route asks the Host first and refuses a foreign one'),
+    ('docs/security/THREAT_MODEL.md',
+     'Before all of these it asks the Host (F344): a Host that cannot name the device (`host_guard.h`), or none, gets `403 {"error":"host"}` in every mode'),
+    ('docs/getting_started_canary.md',
+     '10-second BOOT reset and an over-the-air update will keep the certificate,'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     ' * per-board edit. Distinct from /api/fleet/scan above, which is the rich'),
+    ('docs/manual_test_plan_captive_portal.md',
+     "Validate that a phone joining the Canary's `SecuraCV-wap-XXXX` AP **stays"),
+    ('docs/manual_test_plan_captive_portal.md',
+     '- Join `SecuraCV-wap-XXXX`.'),
+    ('docs/manual_test_plan_captive_portal.md',
+     '  the device\'s STA link drops (the real trigger: a joined unit drops\n'
+     '  `SecuraCV-wap-XXXX` 120 s after the join and raises it again on STA loss), or'),
+    ('docs/manual_test_plan_captive_portal.md',
+     '  `SecuraCV-wap-XXXX` from each platform.'),
+    ('firmware/PARTITIONS.md',
+     "  `sdkconfig.defaults.secure` names `CONFIG_NVS_ENCRYPTION`, but under that framework no build"),
+    ('firmware/scripts/regression_check.sh',
+     "# NVS is plaintext on every tier; the kit's sdkconfig.defaults.secure names"),
+    ('firmware/ESP32S3_OPTIMIZATION_ROADMAP.md',
+     '  `CONFIG_NVS_ENCRYPTION` unset; only the ESP-IDF project `canary-ota` builds with it set, and its'),
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -6047,6 +6178,71 @@ MUST_FAIL_IN = [
      "- **Session Rotation:** the RF presence detector's ephemeral session tokens rotate every 4 hours. The API token does not rotate: the 10 s hold and Forget Wi-Fi keep it, and only an install or a full erase in a flasher replaces it"),
     ('docs/design/magic_pairing.md',
      'is installed again or fully erased in a flasher: OTA updates, the 10 s hold'),
+    ('docs/design/usb_onboard.md',
+     "  adopts the old card's: copy `/WITNESS/records.jsonl` off the card first,\n"
+     '  or put in a fresh card. Left in, that card takes no evidence while its old'),
+    ('firmware/canary/lib/securacv_usb_onboard/src/securacv_usb_onboard.cpp',
+     '  Serial.println("     new key, which never adopts the old card: copy records.jsonl");\n'
+     '  Serial.println("     off it first, or use a fresh card. Left in, it takes no new");'),
+    ('firmware/canary/lib/securacv_witness/src/securacv_witness.cpp',
+     '// fails under either key. Such a card is to be copied off, or swapped for\n'
+     '// a fresh one.'),
+    ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
+     "    /// bearer; the WAP's api_auth_check() also passes a landing session's\n"
+     '    /// cookie, which the app never holds, ledger F346), decoded down to what'),
+    ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
+     '    // Auth-gated like the Wi-Fi routes (Bearer). The Canary holds only the'),
+    ('ios/Sources/SecuraCV/Views/Components/SensingNowSection.swift',
+     '    /// (the app reaches the stream only with the bearer — it never holds\n'
+     "    /// the landing-session cookie the WAP's gate also takes — so it would"),
+    ('ios/Sources/SecuraCV/Views/DeviceDetailView.swift',
+     '            // (the app reaches the stream only with the bearer, never a\n'
+     '            // landing-session cookie; an unpaired row or a Keychain-'),
+    ('ios/Tests/SecuraCVTests/WapEventsTests.swift',
+     '                      "the stream lost its auth gate — live room sense must stay token-gated")'),
+    ('docs/IMPROVEMENT_ROADMAP.md',
+     '16-record RAM ring (`witness_page.h`, pure; `handle_witness_v1`, Bearer-gated like `/api/witness`, in the route-security and handler-budget checks)'),
+    ('docs/device_trust.md',
+     "during first-boot setup it is plain HTTP on the setup network. `GET /api/status` also returns `pubkey` and `fingerprint`, but only with the device's bearer token. On USB serial"),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     '  `/enroll` page and `/api/device/enroll`, plus `/api/device-info`\n'
+     '  (fingerprint) and bearer-gated `/api/status`; USB serial `i` / `j` on the'),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     '  this item still leaves open is the bearer: outside the receipt, the\n'
+     '  bearer-gated API routes read no Host, so a rebinding page that holds the'),
+    ('docs/audit/feature_gaps_2026-09.md',
+     '| FW9 | **canary-wap does not refuse a foreign `Host`** on its receipt route or bearer-gated API; needs a decision on the captive-portal exemption first. | human decision, then code | sweep F57 | ledger |'),
+    ('docs/security/THREAT_MODEL.md',
+     "press only once the device has answered one of their asks with `403` (F342). The WAP asks no Host question on this route yet (the ledger's F344). The asker is the socket peer"),
+    ('docs/getting_started_canary.md',
+     'app checks it against the fingerprint in your recovery kit instead. A\n'
+     'factory reset will make a new certificate, so you pair the iPhone app again\n'
+     'afterwards.'),
+    ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
+     ' * per-board edit. Distinct from /api/fleet-scan above, which is the rich'),
+    ('firmware/projects/canary-wap/tests_host/check_route_security.py',
+     '    # (that stays behind the api_auth_check()-gated /api/fleet-scan, which a'),
+    ('tvos/discovery/DISCOVERY.md',
+     '  sealed evidence stays behind the gated `/api/fleet-scan` (on a WAP,'),
+    ('docs/manual_test_plan_captive_portal.md',
+     "Validate that a phone joining the Canary's `SecuraCV-XXXX` AP **stays"),
+    ('docs/manual_test_plan_captive_portal.md',
+     '- Factory-fresh device (or after NVS `setup_ok` cleared). Join `SecuraCV-XXXX`.'),
+    ('docs/manual_test_plan_captive_portal.md',
+     '  the device\'s STA link drops (the real trigger: a joined unit drops\n'
+     '  `SecuraCV-XXXX` 120 s after the join and raises it again on STA loss), or'),
+    ('docs/manual_test_plan_captive_portal.md',
+     '  use a unit in standalone (AP-only) mode. Then forget/rejoin\n'
+     '  `SecuraCV-XXXX` from each platform.'),
+    ('firmware/PARTITIONS.md',
+     '  build has it (every released build is `framework = arduino`; only the unreleased canary-ota\n'
+     '  ESP-IDF harness sets `CONFIG_NVS_ENCRYPTION`), so NVS is plaintext on every tier.'),
+    ('firmware/scripts/regression_check.sh',
+     '# no released Canary build has (every released build is framework = arduino, so\n'
+     '# NVS is plaintext on every tier; only the unreleased canary-ota ESP-IDF harness\n'
+     '# sets CONFIG_NVS_ENCRYPTION); and with flash encryption on, IDF v4.3+ refuses to open an nvs partition flagged'),
+    ('firmware/ESP32S3_OPTIMIZATION_ROADMAP.md',
+     '  `CONFIG_NVS_ENCRYPTION` unset; only the ESP-IDF project `canary-ota` has NVS encryption on). It needs'),
 ]
 
 
@@ -6346,8 +6542,25 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
         self.assertEqual(set(frameworks.values()), {"arduino"}, frameworks)
         ota = (REPO / "firmware/projects/canary-ota/README.md").read_text(encoding="utf-8")
         self.assertIn("**This is a teaching sample, not the production OTA path.**", ota)
-        # The secure env's sdkconfig, the only place NVS encryption is asked
-        # for, is marked inert under that framework ...
+        # Which files ask for NVS encryption: the canary-ota sample's two
+        # sdkconfigs (ESP-IDF, but with no nvs_keys partition in its table)
+        # and the kit's sdkconfig.defaults.secure. PARTITIONS.md and
+        # regression_check.sh name exactly these two sources (the harness
+        # and the kit); a new file that asks for it fails here until they
+        # follow. (The plain `sdkconfig` an IDF build writes, and anything
+        # under a build or .pio directory, are build output, not inputs.)
+        asks = sorted(
+            str(f.relative_to(REPO)) for f in (REPO / "firmware").rglob("sdkconfig*")
+            if f.is_file() and f.name != "sdkconfig" and f.suffix != ".old"
+            and not {".pio", "build", "managed_components"} & set(f.parts)
+            and re.search(r"^CONFIG_NVS_ENCRYPTION=y\s*$", f.read_text(encoding="utf-8"), re.M))
+        self.assertEqual(asks, ["firmware/projects/canary-ota/sdkconfig.defaults",
+                                "firmware/projects/canary-ota/sdkconfig.production",
+                                "firmware/provisioning/sdkconfig.defaults.secure"], asks)
+        ota_table = (REPO / "firmware/projects/canary-ota/partitions.csv").read_text(encoding="utf-8")
+        self.assertNotIn("nvs_keys", ota_table)
+        # The secure env's sdkconfig, the one Canary build file that names
+        # NVS encryption, is marked inert under that framework ...
         secure = (REPO / "firmware/provisioning/platformio_secure.ini").read_text(encoding="utf-8")
         self.assertIn("; KNOWN INERT under `framework = arduino`", secure)
         self.assertIn("So this image has flash encryption at most, never NVS\n; encryption", secure)

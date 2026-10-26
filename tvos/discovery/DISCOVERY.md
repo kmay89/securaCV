@@ -426,7 +426,7 @@ one-header change instead of a per-board copy-paste.
 - It is **coarse and unauthenticated-read** by design — presence, health,
   and the optional coarse wellbeing WORDS above, nothing finer — documented
   public in the canary-wap route-security allowlist. Anything that touches
-  sealed evidence stays behind the gated `/api/fleet-scan` (on a WAP,
+  sealed evidence stays behind the gated `/api/fleet/scan` (on a WAP,
   `api_auth_check()`: the bearer, or a landing session any host on its
   network can mint, ledger F346) and break-glass paths, never here. On the
   hub, "coarse" now spans every Canary the bridge heard, room words

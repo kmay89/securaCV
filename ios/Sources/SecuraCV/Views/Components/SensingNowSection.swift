@@ -21,9 +21,11 @@ struct SensingNowSection: View {
     /// The paired device's authenticated client — resolved by the parent
     /// (DeviceDetailView) with the same guard verifyNow uses, so an
     /// unpaired row or a Keychain-lost token never mounts this section
-    /// (the app reaches the stream only with the bearer — it never holds
-    /// the landing-session cookie the WAP's gate also takes — so it would
-    /// only 401 forever).
+    /// (the app authenticates the stream with the bearer; the shared
+    /// URLSession may also hold the `cv_session` cookie a claim's receipt
+    /// set over http, which the WAP's gate takes until it expires in 24 h
+    /// or the WAP reboots, but once that cookie is gone a poll without the
+    /// token 401s every time, so the guard does not count on it).
     let api: DeviceAPI
 
     @State private var snapshot: WapStream?

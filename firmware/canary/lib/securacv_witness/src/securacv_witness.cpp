@@ -502,8 +502,9 @@ static bool sd_append_fail(const char* why) {
 // install) or another device's never reconciles (witness_recover_from_sd()
 // refuses its signature), and once our seq passes its tail, a later mount
 // appends our records to that same file, which the offline verifier then
-// fails under either key. Such a card is to be copied off, or swapped for
-// a fresh one.
+// fails under either key. Such a card's records.jsonl is to be moved off
+// it (copied, then deleted from the card: this path is fixed, so a copy
+// alone leaves the file here), or the card swapped for a fresh one.
 //
 // Torn tail: a power cut mid-append leaves the in-flight line without its
 // '\n'. Boot recovery skips it (witness_store::tail_parse), which is right,

@@ -871,7 +871,10 @@ so — see D2 below.)
   own name with `document.cookie`), so the cookie validator behind every
   cookie gate (`session_validate_cookie()`) now asks the Host too. What
   this item still leaves open is the bearer: outside the receipt, the
-  bearer-gated API routes read no Host, so a rebinding page that holds the
+  bearer-gated API routes read no Host *(amended 2026-10-26, #1843's sweep:
+  those routes are behind `api_auth_check()`, which takes a landing
+  session's cookie before the bearer, F346; the cookie path asks the Host,
+  the bearer path does not)*, so a rebinding page that holds the
   bearer token itself is not refused (and a pair token's value carried off
   the LAN works on `/api/wifi/connect` with no Host question for its ten
   minutes, until F334 removes that road after setup). Left open for the
@@ -3504,8 +3507,9 @@ so — see D2 below.)
       at once. `tools/verify_witness_log.py` fails both mixed files under
       the old key and under the new one (reproduced with its own chain
       builder). `usb_onboard.md`, the serial recovery guide and the fork
-      guard's comment now say to copy the old log off or use a fresh card,
-      and the log line reads "SD log ahead of chain: reboot or use new
+      guard's comment now say to copy the old log off or use a fresh card
+      *(amended 2026-10-26, round 2: to move it off, since a copy leaves
+      the file at the path the new key appends to)*, and the log line reads "SD log ahead of chain: reboot or use new
       card" (it fits the 48-byte detail field; the old one was cut off).
     - A cleared unit. `magic_pairing.md` (the rule's quote, "a unit its
       owner cleared", "the owner re-arms it with Forget Wi-Fi", the open
@@ -3573,6 +3577,75 @@ so — see D2 below.)
       public key" and how-it-works' "take the device itself and read the
       key"; how-it-works names a flasher's safety backup and scopes "we
       never have either" to a Canary you flash yourself.
+  - The sixth pass's round-2 review (#1843, 2026-10-26; the same three
+    lenses). Each finding was reproduced first.
+    - The old card, again. Round 1 said to copy the old log off or use a
+      fresh card. Both trees append to the one fixed path
+      `/WITNESS/records.jsonl` (the flagship's `sd_append_record()`, the
+      WAP's `sd_append_witness_record()`), and no code in either renames
+      or deletes it (rotation never touches `/WITNESS`), so after a copy a
+      card left in behaves as the uncopied one did. `usb_onboard.md`, the
+      serial recovery guide and the fork guard's comment now say to move it
+      off: copy it, then delete it from the card in a card reader, since
+      the device's USB drive is read-only. The website says the same in
+      four places.
+    - The iPhone app's cookie. Round 1 wrote that the app "never holds"
+      the landing session's cookie (`DeviceAPI.swift`,
+      `SensingNowSection.swift`, `DeviceDetailView.swift`). A claim-served
+      receipt mints a session and sets `cv_session` (over plain HTTP, every
+      stock WAP, F15); the app spends the claim, and makes every later
+      http call, with `URLSession.shared`, and nothing in `ios/` turns its
+      default cookie handling off. So the shared session keeps that cookie
+      and sends it back to the same host, and `api_auth_check()` takes it
+      until its 24 h run out or the WAP reboots (a claim at first boot is
+      followed by a reboot; a door reopened by Forget Wi-Fi arms none). The
+      comments now say the app authenticates with the bearer and the
+      shared session may also hold that cookie; nothing was changed in the
+      app's requests. Not run in Xcode.
+    - Copies of F346 still bearer-only: the vault surface's comment in
+      `DeviceAPI.swift` (every `/api/vault/*` route is `api_auth_check()`,
+      so a landing session can also replace the registered key), the
+      roadmap's `handle_witness_v1` line, `device_trust.md`'s WAP row,
+      this ledger's two notes (the key-table note and F57's "the
+      bearer-gated API routes read no Host") and the feature-gaps row FW9,
+      which also still said the receipt takes a foreign Host. The live
+      ones say what the gate takes; the dated ones carry amendments.
+    - Three sentences round 1 rewrote named `/api/fleet-scan`; the WAP
+      registers `/api/fleet/scan` (`handle_fleet_scan_auth`). The captive
+      portal test plan named its network `SecuraCV-XXXX` on six lines
+      beside its own `SecuraCV-wap-XXXX` reference; `generate_ap_ssid()`
+      builds `SecuraCV-wap-<4>`. `PARTITIONS.md` and `regression_check.sh`
+      said only canary-ota sets `CONFIG_NVS_ENCRYPTION`, and the S3
+      roadmap that canary-ota has it on: the kit's
+      `sdkconfig.defaults.secure` sets it too (inert under `framework =
+      arduino`), and canary-ota's table has no `nvs_keys` partition.
+    - Nits carried: the guide's first WAP tap paragraph says who gets an
+      unasked tap; `api_auth.h` and the wrappers' comment name both cookie
+      spellings (`__Host-cv_session` over HTTPS, F337);
+      `test_receipt_grant.cpp`'s header names the whole cut
+      (`auth_request_source()`, `qr_scan_request_allowed()` and the
+      `CSI_AUTH_OR_RETURN` cut too).
+    - Tests: `test_docs_claims.py` bans 25 more retired sentences where
+      they stood, among them `WapEventsTests.swift`'s "live room sense must
+      stay token-gated" and two the merge of #1844 to #1873 retired with
+      no needle: the threat model's "The WAP asks no Host question on this
+      route yet" (fires on 9d95752a's copy) and the guide's "A factory
+      reset will make a new certificate" (fires on 377bbc6f's). Its
+      NVS-encryption test now holds the files that ask for it to the three
+      named above. Each new row's deletion fails the suite (25 of 25).
+      Totals: 41 BANNED, 685 RETIRED_IN over 209 files, 744 forms
+      (MUST_FAIL's 41 and MUST_FAIL_IN's 703), 640 replacements, 24 tests.
+      `desktop_parity.test.js`'s console-copy guard read raw source,
+      case-sensitive, so the lowercase, concatenated form of the browser
+      check's lead and three other retired strings passed it; it now folds
+      concatenations and ignores case, with needles for the check's
+      heading, the "Skip the cable" line and both summaries, and each of
+      the eight retired strings, put back alone, fails it.
+    - The website (`reset-and-key-claims.test.mjs`) retires "and we never
+      hold a copy." and "own chip and never shares it", which 015d8f1
+      scoped and corrected without a needle, and the copy-only advice, and
+      pins the move-off wording on the help page, the recover deck and the
+      self-test fix.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),
@@ -19296,7 +19369,7 @@ so — see D2 below.)
   band, as read from source, in a new "Where each product shows its key"
   table. The table covers each product: canary-wap's unauthenticated
   `/enroll` page and `/api/device/enroll`, plus `/api/device-info`
-  (fingerprint) and bearer-gated `/api/status`; USB serial `i` / `j` on the
+  (fingerprint) and bearer-gated `/api/status` *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)*; USB serial `i` / `j` on the
   `firmware/canary` build; serial `j` on canary-vision. canary-sense and
   canary-sentinel show only a boot-log fingerprint (their setup portal shows
   no key), so owners compare it with `pinned_fingerprint` on the Health

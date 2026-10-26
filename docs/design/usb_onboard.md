@@ -114,8 +114,11 @@ The `v`/`k` guides and the website describe behavior that already exists:
   strictly ahead and its signature verifies under this device's key. The 10 s
   reset keeps the key and the head. The 30 s wipe, or an install in either
   flasher, gives a new key, and the device starts a new chain that never
-  adopts the old card's: copy `/WITNESS/records.jsonl` off the card first,
-  or put in a fresh card. Left in, that card takes no evidence while its old
+  adopts the old card's: move `/WITNESS/records.jsonl` off the card first
+  (in a card reader: copy it, then delete it from the card, since the
+  device's USB drive is read-only), or put in a fresh card. A copy alone
+  leaves the old file at the one fixed path the new chain appends to. Left
+  in with the old file on it, that card takes no evidence while its old
   tail's sequence number is ahead of the new chain (the fork guard refuses
   every append, and its log line's "reboot" does not reconcile a card the
   new key never signed), then, from a mount after the new chain passes that

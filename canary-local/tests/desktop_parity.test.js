@@ -5178,8 +5178,25 @@ test("rule 7: the desktop offers the browser's Bluetooth 'is it on?' check — a
   const consoleFirmware = grep.stdout.split("\n").filter(Boolean);
   assert.ok(consoleFirmware.length > 0 && consoleFirmware.every((f) => f.startsWith("firmware/projects/canary-wap/")),
     "the Bluetooth console's service UUID is served outside the WAP now: widen the check to that board: " + consoleFirmware.join(", "));
-  for (const text of [flashJs, appJs, html]) {
-    assert.doesNotMatch(text, /A Canary keeps a read-only Bluetooth console/, "the console note names the WAP, the one board that serves it");
+  // The console copy names the WAP, the one board that serves it. Read as
+  // the user reads it: string concatenations folded (a sentence split
+  // across `" + "` is one sentence), whitespace collapsed, case ignored and
+  // the quotes optional, so phaseBluetoothCheck's lowercase "a Canary keeps
+  // a read-only Bluetooth " + "“console”" is caught as well as the one-line
+  // notes. Each needle is a sentence the flashers carried before the WAP was
+  // named, which sent a flagship owner to a console it does not serve.
+  const RETIRED_CONSOLE_COPY = [
+    /a Canary keeps a read-only Bluetooth [“"]?console/i,   // both flashers' notes, the check's lead
+    /Reach a Canary over Bluetooth/i,                       // the browser check's heading
+    /running Canary(?:’|'|&rsquo;)s Bluetooth console/i,    // the browser's "Skip the cable" line
+    /Already have a Canary\?/i,                             // both flashers' summary lines
+  ];
+  const folded = (s) => s.replace(/["'`]\s*\+\s*["'`]/g, "").replace(/\s+/g, " ");
+  for (const [label, text] of [["browser flash.js", flashJs], ["desktop app.js", appJs], ["desktop index.html", html]]) {
+    const flatText = folded(text);
+    for (const re of RETIRED_CONSOLE_COPY) {
+      assert.doesNotMatch(flatText, re, `${label}: the console copy names the WAP, the one board that serves it`);
+    }
   }
   for (const p of catalog.products) {
     assert.strictEqual(p.role, core.productRole(p), `${p.id}: the catalog's role and the browser's productRole disagree`);

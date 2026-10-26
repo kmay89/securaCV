@@ -8203,7 +8203,7 @@ static esp_err_t handle_fleet_scan_auth(httpd_req_t* req) {
  * The wire shape is built by the ONE shared builder (fleet_selfreport.h, in
  * firmware/common, host-tested), so EVERY networked board answers byte-for-byte
  * identically — a change to the shape is a change to that one header, never a
- * per-board edit. Distinct from /api/fleet-scan above, which is the rich
+ * per-board edit. Distinct from /api/fleet/scan above, which is the rich
  * mDNS browser for the operator UI behind api_auth_check() (the bearer, or a
  * landing session any LAN host can mint, F346); this one is presence-only and
  * carries no secrets and no media, safe to read anonymously.
@@ -9549,8 +9549,9 @@ static esp_err_t handle_device_name(httpd_req_t* req) {
 
 // ── Auth-wrapped handler helpers ──
 // These wrappers put api_auth_check() in front of existing handlers: the
-// cv_session cookie first, which the landing page mints for any host on the
-// network (ledger F346), then the bearer token under the lockout.
+// session cookie first (__Host-cv_session over HTTPS, cv_session over plain
+// HTTP, F337), which the landing page mints for any host on the network
+// (ledger F346), then the bearer token under the lockout.
 
 static esp_err_t handle_status_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;

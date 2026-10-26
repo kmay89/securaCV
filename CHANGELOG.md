@@ -710,6 +710,40 @@ hold keeps; and the per-address lockout's ways out.
   `desktop_parity.test.js` pin the corrected copy. Host-tested; not run on
   a device or in a browser.
 
+- **An old SD card's log is moved off, not copied, after a new key; the
+  iPhone app's shared session can hold a landing session's cookie; and the
+  WAP's fleet scan is `/api/fleet/scan` (#1843's sweep, sixth pass, round-2
+  review).** The round-1 copy said to copy `/WITNESS/records.jsonl` off the
+  card or use a fresh card; both trees append to that one fixed path and
+  nothing renames or deletes it, so a copy leaves the file where the new key
+  writes. `usb_onboard.md`, the flagship's serial recovery guide and its
+  fork guard's comment now say to move it off (copy it, then delete it from
+  the card in a card reader, since the USB drive is read-only). Three iPhone
+  app comments said the app never holds the cookie the WAP's gate takes;
+  over http the shared `URLSession` keeps the `cv_session` a claim's
+  receipt sets and sends it back, which the gate takes until it expires or
+  the WAP reboots, and the comments say so. The vault surface's comment
+  ("Auth-gated like the Wi-Fi routes (Bearer)"), `device_trust.md`'s WAP row
+  and the roadmap's `handle_witness_v1` line no longer call
+  `api_auth_check()` routes the bearer's alone, and two ledger notes and
+  the feature-gaps row FW9 carry amendments. Three sentences named a
+  `/api/fleet-scan` route no tree registers; the captive portal test plan
+  named its setup network `SecuraCV-XXXX` beside `SecuraCV-wap-XXXX`;
+  `PARTITIONS.md`, `regression_check.sh` and the S3 roadmap said only
+  canary-ota sets (or has on) NVS encryption, when the kit's
+  `sdkconfig.defaults.secure` sets it too, inert under `framework =
+  arduino`, and canary-ota has no `nvs_keys` partition. The getting started
+  guide's first WAP tap paragraph says who gets an unasked tap, and the gate
+  comments name both cookie spellings. `test_docs_claims.py` bans 25 more
+  retired sentences where they stood, two of them sentences the merge of
+  #1844 to #1873 retired with no needle (the threat model's "asks no Host
+  question" and the guide's "A factory reset will make a new certificate"),
+  and holds the files that ask for NVS encryption to the three it names;
+  `desktop_parity.test.js` reads the flashers' Bluetooth console copy as the
+  user reads it (concatenations folded, case ignored), so the four retired
+  strings its old needle could not see now fail it. Host-tested; not run on
+  a device, in a browser or through Xcode.
+
 ### The flagship and the canary-wap halt on a stored identity key they cannot read, instead of running on a zero key or replacing it (sweep F360, #1840)
 
 - **The `firmware/canary` flagship's key load tells "no key stored" from

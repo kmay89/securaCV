@@ -657,8 +657,9 @@ echo ""
 # NVS is not compatible with flash encryption: ESP-IDF's protection for NVS is
 # NVS encryption (CONFIG_NVS_ENCRYPTION, keys in an nvs_keys partition), which
 # no released Canary build has (every released build is framework = arduino, so
-# NVS is plaintext on every tier; only the unreleased canary-ota ESP-IDF harness
-# sets CONFIG_NVS_ENCRYPTION); and with flash encryption on, IDF v4.3+ refuses to open an nvs partition flagged
+# NVS is plaintext on every tier; the kit's sdkconfig.defaults.secure names
+# CONFIG_NVS_ENCRYPTION but no build reads it, and only the unreleased canary-ota
+# ESP-IDF harness builds with it set); and with flash encryption on, IDF v4.3+ refuses to open an nvs partition flagged
 # `encrypted` (nvs_partition_lookup.cpp -> ESP_ERR_NVS_WRONG_ENCRYPTION). The
 # provisioning kit's partitions_secure.csv carried that flag, so its image
 # could not have opened NVS — the identity key's home — on a fused board

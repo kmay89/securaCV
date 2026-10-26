@@ -556,10 +556,12 @@ those 30 seconds: one page load, or one browser fetching the recovery kit —
 whichever asks first. A page you unlocked with the tap can save the
 recovery kit without a second tap: that is how you get the kit back later
 without a USB cable. On a WAP the tap unlocks no page load: it hands the
-recovery kit only to the one device asking for it, so click **Use BOOT Tap
-Once** (or **Save my recovery kit**) first and press BOOT when the page says
-to; if another device on your network asks during the same tap, the WAP
-hands out nothing and the page says so. The iPhone app never fetches the
+recovery kit to one asking address, so click **Use BOOT Tap Once** (or
+**Save my recovery kit**) first and press BOOT when the page says to. If a
+second address on your network asks between 10 seconds before the tap and
+the kit going out, the WAP hands out nothing and the page says so, and a
+tap no page was asking for goes to the first address that asks within its
+30 seconds. The iPhone app never fetches the
 kit with a tap: it pairs during setup, or from a kit you open in it. *(New in 2026-09; checked by automated tests, with its first automated build pending; not
 yet on a bench device.)*
 
