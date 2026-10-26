@@ -4262,7 +4262,8 @@ so — see D2 below.)
   provisioning runs. Found by F359's review (#1840).
 - [ ] **F384 [code] canary-vision's `module_id` is a RAM address, so the
   desktop's live-boot-line proof passes a dead module, and the obvious fix
-  would publish a per-unit module id.** `vision_mgr.cpp` sets `g_module_id =
+  would publish a per-unit module id.** Line numbers in this paragraph are
+  the files as filed, before the fix. `vision_mgr.cpp` sets `g_module_id =
   (int)AI.ID()` (`:31`). Seeed_Arduino_SSCMA 1.0.3, the version the Vision
   envs pin (`firmware/envs/platformio/canary-vision.ini:57`), declares `char*
   ID(bool cache = true)` and returns its `_ID` buffer whenever `cache && _ID`,
@@ -4285,8 +4286,8 @@ so — see D2 below.)
   `desktop/src/app.js:1127-1130`); `ID?` is never sent; and the inversion is
   fixed (device-details PR 7); the identifier lint denies `AI.ID(`
   (device-details PR 4). From code and the library source; not run on a
-  device. Found by the device-details design's privacy review
-  (`docs/design/device_details.md` §11, P11); filed by #<PR>, 2026-10-22.
+  device. Found by the device-details design's privacy review (its finding
+  P11); filed by #<PR>, 2026-10-22.
   *Partly done (#<PR>), device-details PR 7; the item stays open for the
   identifier lint (device-details PR 4):* `vision_mgr.cpp`'s `init()` keeps
   one verdict, `g_module_ok = began && AI.name(false) != nullptr`: a fresh
@@ -4300,9 +4301,18 @@ so — see D2 below.)
   sample, empty or not (before, one that found no box yielded none, so with a
   working module and an empty room the presence FSM was never ticked to time
   a person out), and a failed one yields none, never a sample from the boxes
-  the library still holds from the last good frame. Nothing in the
-  firmware calls the library's id accessor. One part of "`ID?` is never
-  sent" this library does not allow: SSCMA 1.0.3's I2C `begin()` is
+  the library still holds from the last good frame. The FSM's presence
+  reaches past it: `vision_tick()` mirrors it onto the fleet beacon's alert
+  flag and class, compiled in by default (canary-vision's
+  `include/canary/config.h`) and turned off by no Vision env, and the beacon
+  is readable by anything in radio range or on the LAN, unsigned by design
+  (`docs/TRUST_MODEL.md`). With a working module the flag used to stay as it
+  was after the room emptied, since only a box or a failed invoke ticked the
+  FSM; now it clears when the FSM times the person out. That is the surface
+  the design already lists for the class word (its §7.3, the `nearby` tier),
+  not a new one. Nothing in the firmware calls the library's id accessor.
+  One part of "`ID?` is never sent" this library does not allow: SSCMA
+  1.0.3's I2C `begin()` is
   `ID(false) && name(false)` (`Seeed_Arduino_SSCMA.cpp:117`), so the library
   itself sends `ID?` once at boot and keeps the answer in its private `_ID`
   buffer, which nothing reads, prints or stores; not sending it at all would
@@ -4320,10 +4330,12 @@ so — see D2 below.)
   all of it in 55 checks; the old file does not compile there (a pointer
   cast to `int`), and the old logic shimmed in, or the inversion alone
   restored, fails it. Six new `monitor.rs` tests cover old and new proof
-  records and both images' boot lines (three fail on the old rules), and a
-  `desktop_parity.test.js` case holds the firmware's two boot lines to the
-  engine's constants, the proof record's `module_ok` and the frontend's rule
-  to the engine's, denies `AI.ID(` in `vision_mgr.cpp`, and holds the
+  records, both images' boot lines and blank lines between the ERROR line
+  and the ID line, which keep the refusal (three fail on the old rules), and
+  a `desktop_parity.test.js` case holds the firmware's two boot lines to the
+  engine's constants, the proof record's `module_ok` field and its value
+  (`canary::vision::module_ok()`, not a constant) and the frontend's rule to
+  the engine's, denies `AI.ID(` in `vision_mgr.cpp`, and holds the
   browser flasher to having no such path. Host-tested; not run on a device.
 
 ### Parity & sub-projects
@@ -4435,23 +4447,46 @@ so — see D2 below.)
   what the Sentinel says about its own sensors, fixed. Its retained health
   never carried the `radar` object: `publish_health_retained()` takes one
   (carried from canary-sense), and `main.cpp` passed none, so a Standard
-  build's radar link reached Home Assistant nowhere. It now passes
-  `radar_link_health()`, judged by the stall rule the radar's fusion vote
-  uses (`include/canary/sentinel_links.h`): no object before a frame or a
-  whole stall window, and none on Lite. The integration gives a Canary the
-  radar-link sensor when its health reports the object
-  (`sensor.py` `_wants_radar_link()`). And the BH1750's `begin()` result was
-  ignored, so a unit with no light sensor voted `Denied` on every read: a
-  blinded channel for good, and on a preset with the radar an `Anomaly`
-  whenever the radar saw a body. A sensor that did not answer at boot is now
-  absent (the channel never votes; the boot console prints `BH1750 not
-  found`), and one that answered and then fails a read is blinded
-  (`Denied`). `firmware/tests_host/test_sentinel_links.cpp` (new, 27 checks,
-  the door preset through the real engine; the old light rule fails it) and
-  two new Home Assistant tests (both fail on the old gate). Host-tested; not
-  run on hardware. Left: a sensor removed while the unit is off boots as
-  absent, which only the boot console says until the device-details record
-  carries the part's status (device-details PR 15).
+  build's radar link reached Home Assistant nowhere. Both health publishes
+  now pass `radar_link_health()`, judged by the stall rule the radar's
+  fusion vote uses (`include/canary/sentinel_links.h`): no object before a
+  frame or a whole stall window, and none on Lite. Once the radar has
+  spoken, the object reads down exactly when the radar votes `Denied`; a
+  radar silent since boot reads down there while its channel never votes,
+  as an unwired one does, so the object is the only place it shows. The
+  integration gives a Canary the radar-link sensor when its health reports
+  the object (`sensor.py` `_wants_radar_link()`). The object's frame age and
+  error count are activity in the device-details design's classes, which
+  that design keeps off the broker tier; they ride the owner's broker as
+  canary-sense's already do, a legacy exception its PR 7 asks for, and Home
+  Assistant's diagnostics redaction lacks `last_frame_age_ms` until its
+  PR 16. And the BH1750's `begin()` result was ignored, so a unit with no
+  light sensor voted `Denied` on every read: a blinded channel for good, and
+  on a preset with the radar an `Anomaly` whenever the radar saw a body. A
+  sensor that did not answer at boot is now absent: the channel never votes,
+  so it adds no suspicion, but the state topic's `channel_denied` is true
+  for it (requirement R6, never a silent gap), so Home Assistant's
+  Channel-blinded problem sensor stays on, as it did when the sensor voted
+  `Denied`, and the boot console's `BH1750` row reads `not found: absent,
+  never votes, reported as channel_denied`. One that answered and then fails
+  a read is blinded (`Denied`). R2's text in `sentinel_requirements.h` says
+  which sensors raise suspicion and which are reported instead.
+  `firmware/tests_host/test_sentinel_links.cpp` (new, 55 checks) runs the
+  rules alone and the door preset through the real engine, and holds
+  `main.cpp`, which no host suite compiles, to calling them: the bodies of
+  `radar_link_health()`, `read_light()` and `light_absent_at_boot()`, the
+  snapshot's `channel_denied` and both health publishes are compared with
+  their source text, comments and spacing aside. The old light rule fails it
+  whether restored in the header or in `main.cpp`, as do a radar object
+  dropped from either publish and an absent sensor dropped from
+  `channel_denied`. Two new Home Assistant tests hold the gate (both fail on
+  the old one). Host-tested; not run on hardware. Left: a sensor unplugged
+  while the unit is off boots as absent, so it reaches the owner as a denied
+  channel but not as suspicion; until the device-details record carries the
+  part's status (device-details PR 15), only the anomaly score, and the
+  level that score can lift to `Anomaly` (on every preset with the radar,
+  it does while the radar sees a body), tell it from a blinded one on the
+  wire.
 - [x] **F23 [code] canary-ota reference project lags the main trees** — done
   via the label option (its README already declared the engine promoted to
   `common/ota/`; lifting a frozen demo to parity would duplicate the

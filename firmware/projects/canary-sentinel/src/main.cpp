@@ -39,9 +39,9 @@
   the radar UART's link health, as canary-sense's does (radar_link_health():
   link up or down, the age of the last frame, the parser's error count),
   never a reading. The device-details design classes that age and that count
-  as activity, which its policy keeps off the broker tier: they are not
-  allowed here by that design, but carried as a legacy exception, the health
-  object canary-sense already publishes, which the design's PR 7 asks this
+  as activity, and its tier policy keeps activity off the broker; they reach
+  the owner's broker here anyway, as a legacy exception: the same health
+  object canary-sense already publishes, which that design's PR 7 asks this
   file to publish too. Home Assistant's diagnostics redaction does not list
   `last_frame_age_ms` yet; device-details PR 16 adds it.
 */

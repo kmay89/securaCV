@@ -25,7 +25,7 @@ constexpr uint8_t kMinConfirmModalities = 2;  // mirrors FusionConfig default
 // an unwired channel does, so it adds no suspicion: a BH1750 that did not
 // acknowledge begin() is reported as a denied channel on the state topic
 // instead, and a radar that has never sent a frame as a down link in the
-// health payload (R6; canary/sentinel_links.h).
+// health payload once a stall window has passed (R6; canary/sentinel_links.h).
 constexpr bool kDeniedChannelIsSuspicion = true;
 
 // R3 — An uncorroborated dwelling body is surfaced, never dismissed. A

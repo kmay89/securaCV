@@ -152,9 +152,10 @@ the evasion R2 flags; `test_sentinel_links.cpp` shows it under the `door`
 preset). Now it shows the problem sensor and no `Anomaly`. A sensor removed
 while the unit is off therefore boots as absent: it reaches the owner as a
 denied channel, but no longer as suspicion. On the wire only the anomaly
-score (a blinded sensor raises it, an absent one does not) and, with a body
-present, the level tell the two apart, until the device-details record
-carries the part's status (device-details PR 15).
+score (a blinded sensor raises it, an absent one does not), and the level
+that score can lift to `Anomaly` (on every preset with the radar, it does
+while the radar sees a body), tell the two apart, until the device-details
+record carries the part's status (device-details PR 15).
 
 ## Build & test
 

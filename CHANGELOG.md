@@ -32,12 +32,12 @@
   Vision mirrors that presence onto the fleet beacon's alert flag and class
   (`vision_tick()`), on by default and turned off by no Vision env, and the
   beacon is readable by anything in radio range or on the LAN, unsigned by
-  design (`docs/TRUST_MODEL.md`). Before, with a working module the flag kept
-  its last value after the room emptied, until a later invoke found a box or
-  failed; now it clears when the FSM times the person out, which is what the
-  device-details design lists for that surface (§7.3, the `nearby` tier), not
-  a new one. (Read from the code and the library source; not run on a
-  device.)
+  design (`docs/TRUST_MODEL.md`). Before, with a working module the flag
+  stayed as it was after the room emptied, since only a box or a failed
+  invoke ticked the FSM; now it clears when the FSM times the person out,
+  which is what the device-details design lists for that surface (§7.3, the
+  `nearby` tier), not a new one. (Read from the code and the library source;
+  not run on a device.)
 - **The desktop Flasher reads `module_ok`.** The flash engine's receipt
   (`monitor.rs`, shared with the Lab app's native bench) requires `module_ok`
   to be `true` when a proof carries it, beside `i2c_ready` and a positive
@@ -81,10 +81,11 @@
   sensor unplugged while the unit is off still reaches the owner, as a
   denied channel rather than as suspicion; R2's text in
   `sentinel_requirements.h` now says that. On the wire only the anomaly
-  score (a blinded sensor raises it, an absent one does not) and, with a body
-  present, the level tell the two apart, until the device-details record
-  carries the part's status (device-details PR 15). The vote and the report
-  are one rule each in `sentinel_links.h` (`light_sample()`,
+  score (a blinded sensor raises it, an absent one does not), and the level
+  that score can lift to `Anomaly` (on every preset with the radar, it does
+  while the radar sees a body), tell the two apart, until the device-details
+  record carries the part's status (device-details PR 15). The vote and the
+  report are one rule each in `sentinel_links.h` (`light_sample()`,
   `channel_denied_reported()`), which `main.cpp` calls.
 - **Docs.** The Vision README and both Grove guides say what `ID=1` and
   `ID=0` mean, and that any other number is an older image whose ERROR line is
@@ -113,9 +114,9 @@
   PlatformIO here: the four Vision build envs (`flavors.json`) and all five
   Sentinel envs compile. Against the same envs built at the base commit,
   the Vision images grow by 32 to 96 bytes and the Sentinel door and Lite
-  images by 224 and 128 bytes, and the guarded images stay inside their
+  images by 256 and 128 bytes, and the guarded images stay inside their
   slots: `canary-vision-default` 1,438,528 of 1,966,080 bytes,
-  `canary-sentinel-door` 1,450,416 of 1,966,080, `canary-sentinel-lite`
+  `canary-sentinel-door` 1,450,448 of 1,966,080, `canary-sentinel-lite`
   1,159,776 of 1,310,720. Neither change is compiled into the emulator, so
   its dist does not move. Host-tested; not run on a device.
 ### Dependency advisories of 2026-10-19 to -23: the TLS roots and verifier, two constant-time crates, and body-parser (Dependency Audit #330)
