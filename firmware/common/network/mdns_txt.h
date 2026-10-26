@@ -17,10 +17,11 @@
  *   host        the per-unit mDNS hostname the Wall dials (`<label>.local`)
  *   fw          firmware version
  *   model       the hardware the build was made for, in the build's own
- *               words: the canary tree's names its board (CANARY_BOARD_NAME),
- *               Sense, Vision and Sentinel their product and module (MODEL).
- *               Omitted when the build names none — absent means "cannot
- *               say", never a default board's name
+ *               words: a canary-tree build names its board
+ *               (CANARY_BOARD_NAME); Sense, Vision and Sentinel name their
+ *               product and module (MODEL). Omitted when the build names
+ *               none — absent means "cannot say", never a default board's
+ *               name
  *   dt          canonical device type: "canary-sense", "canary-wap", …
  *   role        witness | display | hub
  *   hw          the pins header's CANARY_FIGURE_HARDWARE token (omitted when

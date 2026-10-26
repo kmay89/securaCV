@@ -92,8 +92,10 @@
   binds a version-2 manifest to; the display's `ota_mgr.cpp` had the same
   gap. Each now includes `pins.h`: the mDNS TXT gains `hw` on every Sense,
   Vision and Sentinel env, and the OTA engine is told the board on those and
-  on every display env. The binding is inert today: the release workflows
-  write version-1 manifests, which bind no board. Their retained health
+  on every display env whose board header defines a token (all but the ten
+  built on the 4.3B and 4.3C boards, whose `pins.h` defines none). The
+  binding is inert today: the release workflows write version-1 manifests,
+  which bind no board. Their retained health
   drops `"battery":100` and keeps `"battery_present":false`, and Home
   Assistant's health sensor reads `battery_percent` as unknown (`None`),
   never 100, whenever the health reports no battery present (a WAP on mains

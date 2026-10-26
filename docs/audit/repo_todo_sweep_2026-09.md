@@ -15191,11 +15191,12 @@ so — see D2 below.)
   readers). Host-tested (`figures.test.js`, `wap.test.js`); the ESP32 compile
   is CI's; nothing to bench.
 - [x] **F398 [code] Names every surface already shows were wrong on some
-  or all builds.** The device-details design (`docs/design/device_details.md`
-  §1.4) found them while asking what a Details screen could show, and fixes
-  them before any screen does (its PR 6; PR 5 depends on it). At the time:
-  the flagship's mDNS `model` was "XIAO ESP32S3" on every env, the
-  ESP32-CAM, WROOM and Freenove ports included
+  or all builds.** The device-details design (§1.4 of
+  `docs/design/device_details.md`, which the design PR adds; this entry
+  assumes it lands first) found them while asking what a Details screen
+  could show, and fixes them before any screen does (its PR 6; PR 5 depends
+  on it). At the time: the flagship's mDNS `model` was "XIAO ESP32S3" on
+  every env, the ESP32-CAM, WROOM and Freenove ports included
   (`securacv_network.cpp` `start_mdns`), and its Home Assistant Model was
   "Canary v1" (`securacv_mqtt.cpp` `add_device_info`); its watchdog self-test
   returned `true` on both branches of its `#if` (`securacv_diagnostics.cpp`),
@@ -15212,9 +15213,19 @@ so — see D2 below.)
   published `"battery":100` beside `"battery_present":false`, and Home
   Assistant's health attribute showed every unread battery as 100; three of
   their boards (`esp32c3-super-mini`, `xiao-esp32c6-sentinel`,
-  `xiao-esp32c3-sentinel-lite`) defined no board token, so their status,
-  fleet row and advert named none. Found by the device-details survey; filed
-  and fixed by #<PR>, 2026-10-22.
+  `xiao-esp32c3-sentinel-lite`) defined no board token, so their status and
+  fleet row named none. Found by the device-details survey; filed and fixed
+  by #<PR>, 2026-10-22. Review found more of the same kind, fixed here too:
+  no trio `mdns_mgr.cpp` or `ota_mgr.cpp`, and not the display's
+  `ota_mgr.cpp`, included the `pins.h` that defines the token they test, so
+  no trio advert carried `hw` and no trio or display OTA engine was told its
+  board, on the boards that already had a token as well; the bearer-gated
+  `GET /api/selftest` built its own body, so once the watchdog row stopped
+  passing it read there as a failed probe, and the console's `d` as 9 of 10;
+  and the Lab's Vision generator still typed `"battery":100` into its health
+  example, which its own key check refused (`gen_vision.py` exited 1 and
+  `vision.test.js` failed), while the Sense generator, which checked no
+  keys, showed it on the Lab's Sense page.
   *Done (#<PR>):* every one of those names now comes from the build and the
   board. The flagship's `canary_config.h` defines `CANARY_PRODUCT_NAME`
   ("Canary") and `CANARY_BOARD_NAME` ("XIAO ESP32-S3 Sense" on the
@@ -15223,42 +15234,103 @@ so — see D2 below.)
   a build that names no board omits both (`mdns_txt.h` now leaves `model`
   out, as it leaves out `hw`). The flagship sends no `hw` token, by decision,
   until a flagship figure exists. The watchdog row is listed with no probe
-  function: it says `"probe":false` in `GET /api/diagnostics`, `[--] ... not
-  a probe` in the wake scene, and counts toward neither the passes nor the
-  score, which is now over the nine probes (a unit with four of nine passing
-  scores 44 where it scored 50). The two dashboards read "--" for a
-  firmware or chip they were not told, and `/admin`'s footer version is gone
-  (its gzip 64,938 B to 64,910 B). The WAP's `build_config.h` names each
-  target's board and chip, and the S3 target's token,
-  `board:seeed_xiao_esp32s3` (the key `figures.json` maps to the WAP),
-  reaches `/api/status` `hardware` and the `/api/fleet` row's `hw`; the C3
-  has none. The Lab's WAP serial preview (`gen_wap.py`, `wap.json`) reads the
-  banner's Model and Board from the same source. The mirror page takes its Kind from the device type `/api/status`
-  names and shows the signal as the glass's own word: `microcopy_lint.sh`'s
-  plain-words audit keeps "dBm" out of that page, so the unit the design
-  asked for is not the fix. The three boards define their tokens (the OTA
-  board binding they turn on is inert under the version-1 release
-  manifests), the trio's health drops the `battery` value, and Home
-  Assistant reads `battery_percent` as unknown whenever no battery is
-  present. `firmware/scripts/check_board_registry.py` check 10 holds every
-  name and token to the board's `pins.h` (ten errors on the old tree). Held
-  also by `test_mdns_txt.cpp`, `test_canary_diagnostics.cpp`,
-  `test_console_scene.cpp`, `test_honest_names.test.js` and
+  function, and the runner is `selftest_run()` in `securacv_diagnostics.h`
+  (host-tested over stub probes): the row is never called, says
+  `"probe":false` in `GET /api/diagnostics` and in `GET /api/selftest`
+  (which now builds its body with the same row writer,
+  `diagnostics_json::selftest()`), reads `[--] ... not a probe` in the wake
+  scene, and counts toward neither the passes nor the score, which is over
+  the nine probes everywhere it is printed (`t`, `d`, both routes; a unit
+  with four of nine passing scores 44 where it scored 50). The two
+  dashboards read "--" for a firmware or chip they were not told, and
+  `/admin`'s footer version is gone (its gzip 64,938 B to 64,910 B). The
+  WAP's `build_config.h` names each target's board and chip, which its
+  banner, Improv, system monitor and three mDNS adverts read, and the S3
+  target's token, `board:seeed_xiao_esp32s3` (the key `figures.json` maps
+  to the WAP), reaches `GET /api/status` as `node_status.hw` and the
+  `/api/fleet` row's `hw`; the C3 has none. The Lab's WAP serial preview and
+  board row (`gen_wap.py`, `wap.json`) read the same source. The mirror page
+  takes its Kind from the device type `/api/status` names and shows the
+  signal as the glass's own word: `microcopy_lint.sh`'s plain-words audit
+  keeps "dBm" out of that page, so the unit the design asked for is not the
+  fix. The three boards define their tokens, and the trio's `mdns_mgr.cpp`
+  and `ota_mgr.cpp` and the display's `ota_mgr.cpp` include `pins.h`, so
+  `/api/status` and `/api/fleet` carry `hw`, every Sense, Vision and
+  Sentinel advert carries it, and each of those, and every display env
+  whose board header defines a token, tells its OTA engine the board (a
+  binding that is inert under the version-1 release manifests, which bind
+  none). The trio's health drops the `battery` value, the Lab's Sense and
+  Vision panes with it (`gen_sense.py` now checks its health example's keys
+  against the firmware, as `gen_vision.py` did), Home Assistant reads
+  `battery_percent` as unknown whenever no battery is present, and the
+  battery blueprint's "recovered" push needs a battery (on a mains Canary
+  leaving a low-memory warning it would have said "Battery back to 0%").
+  The docs that counted ten probes count nine and the watchdog row
+  (`docs/design/test_console.md`, `serial_console_theming.md`,
+  `automated_help_desk.md`, `firmware/build_matrix.json`'s selftest note,
+  and the self-test row of `firmware/FEATURES.md`'s dashboard, whose label
+  now names no count, no cell changed), and `build_matrix.json`'s Sense
+  provenance no longer says the health sends `"battery":100`.
+  `firmware/scripts/check_board_registry.py` check 10 holds every name and
+  token to the board's `pins.h` and every surface named above to its macro,
+  and check 11 holds every file that tests the token to including the
+  header that defines it (37 errors on `origin/main`). Held also by
+  `test_canary_diagnostics.cpp` (the runner, `/api/selftest`'s body and
+  handler, the console's counts and the wake's row states; run over the
+  flagship sources as they stood before this review, with the new headers
+  it compiles against, 9 of its 70 checks fail), `test_mdns_txt.cpp`,
+  `test_console_scene.cpp`, `test_honest_names.test.js`, `gen_sense.py`'s
+  and `gen_vision.py`'s key checks and
   `custom_components/securacv/tests/test_absent_battery.py`, each of which
-  fails on the old code. Not changed here: the display's own health still
-  sends `"battery":100` (its `mqtt_mgr.cpp` is emulator-compiled; the display
-  dist PR, device-details PR 17), and the Touch 1.69 banner's glass line
-  (`main.cpp`, emulator-compiled; same PR). Compiled on the core-3
-  platform with PlatformIO, each beside the same env built from `origin/main`:
-  `canary-wap-default` (+80 B), `canary-display-nightstand-c6` (+608 B, the
-  mirror page's script; 48,000 B under its 0x1F0000 guard),
-  `canary-sense-default` (-16 B), `canary-sense-wellbeing` (+0 B),
-  `canary-sentinel-door` (+32 B) and the flagship's `[env:full]` (+496 B),
-  every guarded one inside its `flavors.json` size guard. Not built here: the
-  core-2.0.17 envs (the flagship's `dev`, `release`, `release_ha` and its
-  three board ports, every Vision env, Sentinel Lite), whose platform this
-  machine does not have, and the WAP's C3 target, whose only build is CI's
-  arduino-cli leg. Host-tested; not run on a device.
+  fails on the old code. 30 mutants of this change (the names' macros and
+  their readers, the runner, both routes' row writer, the console and wake
+  readers, the `pins.h` includes, the two Lab examples, a health body and
+  the blueprint), each run against check 10/11 and the two host suites and,
+  where they apply, the two Lab generators and `test_absent_battery.py`,
+  were all caught. `python.yml` now runs the HA suite on an edit to the
+  three `mqtt_mgr.cpp` files it reads. Not changed here: the display's own
+  health still sends `"battery":100` (its `mqtt_mgr.cpp` is
+  emulator-compiled; the display dist PR, device-details PR 17); the Touch
+  1.69 banner's glass line (`main.cpp`, emulator-compiled; same PR); and
+  the ten display envs built on the 4.3B and 4.3C boards (the eight
+  `canary-display-dash-*` envs on the 4.3B, the playground and
+  `canary-display-dash-mic`), whose `pins.h` defines no token, so their
+  status, fleet row, advert and OTA engine still name no board.
+  Follow-up for the website repo (`securacv_website`, read at its `main`
+  39c364c), not changed here: its `onboarding-spec.json` `selftest` block
+  (website-authored, not carried) still lists `watchdog` as a probe that
+  "checks configured", with a "Reboot to re-arm it." fix, says
+  `healthPerProbe` 10, and gives the provenance "TESTS[] (10 probes) ...
+  health_score = passed*100/10"; `tests/plugin-facts.test.mjs` pins
+  `healthPerProbe` 10 beside the ten row ids; `checkup.html` heads the boot
+  self-test "10 probes". Each moves to nine probes and the watchdog row's
+  "not a probe". `help.html`'s maker line, "GET /api/selftest — the 10
+  probes ... reachable even on the setup network", wants checking with them:
+  it sits under the flagship's probe chips, and the route it describes as
+  open on the setup network is the WAP's, whose suite is its own.
+  Built here (PlatformIO at `-j 1` on this machine's offline library
+  store, so CI's builds of the same envs can differ by some bytes), each
+  beside the same env built here from `origin/main` 377bbc6f, on the core
+  its env pins: on Arduino core 2.0.17, the flagship's `release` +704 B and
+  `release_ha` +832 B, `canary-vision-default` +16 B,
+  `canary-vision-c3-super-mini` +64 B, `canary-sentinel-lite` +64 B,
+  `canary-display-watch` +608 B and `canary-display-nightlight-c3` +608 B;
+  on core 3.3.8, `canary-wap-default` +48 B, `canary-sense-default` +16 B,
+  `canary-sense-wellbeing` +32 B, `canary-sentinel-door` +64 B,
+  `canary-display-nightstand-c6` +624 B (47,984 B under its 0x1F0000
+  guard, the least headroom of these) and the flagship's `[env:full]`
+  +592 B. Every guarded one is inside its `flavors.json` size guard
+  (`check_slot_budget.py`). The flagship's `esp32cam` (core 2.0.17) builds
+  and carries "AI-Thinker ESP32-CAM"; no flagship image built carries
+  "Canary v1", and the only "XIAO ESP32S3" left in one is inside core
+  3.3.8's own board string ("Seeed Studio XIAO ESP32S3"), in `[env:full]`.
+  In every trio and display env built, the board token is in the
+  `ota_mgr.cpp` object, and in the trio's `mdns_mgr.cpp` object too; at
+  `origin/main` neither object had it (the trio's was in `main.cpp`'s
+  only, on the boards that defined one). Not built here: the WAP's C3
+  target, whose only build is CI's arduino-cli leg, and the other flagship,
+  display, Vision, Sense and Sentinel envs. Host-tested; not run on a
+  device.
 
 ---
 
