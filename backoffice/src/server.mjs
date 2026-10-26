@@ -4,7 +4,9 @@ import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { Router, HttpError, parseCookies, cookie, readBody, parseBody, RateLimiter, Lockout, html, json, text, redirect, clientIp, setTrustedProxies, escapeHtml, safeEqual, int, asArray } from './http.mjs';
 const e = escapeHtml;
-import { layout, setTimezone, dt as fmtDt, day as fmtDay } from './render.mjs';
+import { layout, setTimezone, setEnvironment, dt as fmtDt, day as fmtDay } from './render.mjs';
+import { applyEnv, ENV_TEXT } from './env.mjs';
+import { build, recordBoot } from './version.mjs';
 import { orderToken, deliveryLine, trackingUrl } from './modules/delivery.mjs';
 import { editItems } from './modules/orders.mjs';
 import { sessionFor, login, logout, apiTokenFor, hasOperator, carryLegacyOperator, can } from './auth.mjs';
@@ -51,6 +53,10 @@ export function createApp({ db, cfg }) {
     // A demo database from before people existed (or between resets) must have the demo people the login page names, on every boot.
     if (isDemo(db)) seedDemoUsers(db);
   }
+  // The environment: its label on every page, its rules enforced (a fatal one stops here, before the app
+  // listens), its mutes applied, the database labeled; then the build is written down if it is new here.
+  const { env } = applyEnv(cfg, db); setEnvironment(env, ENV_TEXT[env]);
+  recordBoot(db, cfg);
   // In demo mode the catalog is the demo's own, never fetched from the live site.
   setTrustedProxies(cfg.trustedProxies);
   const app = { db, cfg, json, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), formLimiter: new RateLimiter({ limit: 5, windowMs: 10 * 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), once: new Map(), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o), shipping: cfg.demo ? async () => DEMO_SHIPPING : (o) => loadShipping(cfg, o) };
@@ -64,7 +70,9 @@ export function createApp({ db, cfg }) {
   router.get('/healthz', (c) => {
     try { db.get('SELECT key FROM settings LIMIT 1'); } catch (err) { throw new HttpError(503, `database: ${err.message}`); }
     if (app.schedulerTick && Date.now() - app.schedulerTick > 5 * 60_000) throw new HttpError(503, 'scheduler stalled');
-    text(c.res, 'ok');
+    // "ok <environment> <build>": a monitor reads the first word; the promote workflow reads the rest to prove the
+    // server runs the build it just sent (a public commit hash of a public repository; no secret in it)
+    text(c.res, `ok ${cfg.env} ${build(cfg).sha}`);
   });
   router.get('/status', (c) => html(c.res, statusPage(db, cfg), 200, { 'Cache-Control': 'public, max-age=60' }));
   router.get('/status.json', (c) => json(c.res, publicStatus(db), 200, { 'Cache-Control': 'public, max-age=60', 'Access-Control-Allow-Origin': '*' }));

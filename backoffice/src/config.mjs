@@ -43,6 +43,11 @@ export function loadConfig(overrides = {}) {
     uspsClientId: env('USPS_CLIENT_ID', ''), uspsClientSecret: env('USPS_CLIENT_SECRET', ''), uspsApiBase: env('USPS_API_BASE', 'https://apis.usps.com'),       // the morning digest goes here
     digestHour: Number(env('DIGEST_HOUR', '7')),                       // UTC hour the digest is sent
     secure: env('BACKOFFICE_BASE_URL', '').startsWith('https://'),
+    env: env('BACKOFFICE_ENV', ''),                                 // production | staging | demo | development — the label every page, /healthz and the doctor carry; rules in env.mjs
+    stagingAllowMail: env('STAGING_ALLOW_MAIL', '') === '1',          // staging mutes SMTP/IMAP unless the operator points it at a throwaway relay and says so
+    offsiteWrites: true,                                               // staging turns this off: it reads production's off-site copies and never adds its own
+    buildSha: env('BUILD_SHA', 'dev'),                                 // stamped into the image by CI (backoffice-image.yml); 'dev' on a laptop
+    buildDate: env('BUILD_DATE', ''),
     demo: env('BACKOFFICE_DEMO', '') === '1',                       // also set by a database the demo seeded
     demoResetMinutes: Number(env('BACKOFFICE_DEMO_RESET_MINUTES', '0')), // a public demo wipes and reseeds itself on this cadence; 0 = never
     ...overrides,

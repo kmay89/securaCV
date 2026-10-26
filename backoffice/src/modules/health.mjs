@@ -16,6 +16,8 @@ import { shippingStatus } from './catalog.mjs';
 import { supportStats } from './support.mjs';
 import { lowStock } from './inventory.mjs';
 import { analytics } from './analytics.mjs';
+import { envRules } from '../env.mjs';
+import { describeBuild } from '../version.mjs';
 
 const hoursSince = (iso) => iso ? (Date.now() - Date.parse(iso)) / 3600000 : null;
 const fmtH = (h) => h == null ? 'never' : h < 1 ? `${Math.round(h * 60)} min ago` : h < 48 ? `${Math.round(h)} h ago` : `${Math.round(h / 24)} d ago`;
@@ -25,6 +27,9 @@ export function doctor(db, cfg) {
   const runs = Object.fromEntries(jobRuns(db).map(r => [r.name, r]));
   const parse = (s) => { try { return JSON.parse(s || 'null'); } catch { return null; } };
   const demo = !!cfg.demo;
+  // which this is, and what build
+  const warns = envRules(cfg, db).filter(r => r.level === 'warn');
+  add('environment', 'Environment', cfg.env === 'production' ? warns.length === 0 : warns.length ? false : null, `${cfg.env || 'development'} · ${describeBuild(cfg)}${warns.length ? ` · ${warns.map(w => w.text).join('; ')}` : ''}`, 'BACKOFFICE_ENV names it: production, staging, demo or development (env.mjs says what each refuses)');
   // identity & reach
   const people = db.all("SELECT role, COUNT(*) AS n FROM users WHERE status = 'active' GROUP BY role"); const locked = db.get('SELECT COUNT(*) AS n FROM users WHERE locked_until > ?', new Date().toISOString()).n;
   add('operator', 'An owner can log in', hasOperator(db), hasOperator(db) ? `password + authenticator · ${people.map(p => `${p.n} ${p.role}`).join(', ')}${locked ? ` · ${locked} locked out` : ''}` : 'no owner', 'run `backoffice setup`, or accept the invitation');

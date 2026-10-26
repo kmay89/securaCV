@@ -415,6 +415,7 @@ function describeAudit(r) {
   const ent = r.entity_id ? `<b>${e(r.entity_id)}</b>` : '';
   const text = {
     'order.create': `Order ${ent} placed${d.total_cents != null ? ` · $${(d.total_cents / 100).toFixed(2)}` : ''}${d.discount_code ? ` · code ${e(d.discount_code)}` : ''}`,
+    'deploy.boot': `Build ${ent} started${d.from ? ` (was ${e(d.from)})` : ' (first boot here)'}${d.version ? ` · ${e(d.version)}` : ''}${d.env ? ` · ${e(d.env)}` : ''}`,
     'order.packed': `Order ${ent} packed`, 'order.shipped': `Order ${ent} shipped${d.tracking ? ` · ${e(d.carrier || '')} ${e(d.tracking)}` : ''}`, 'order.delivered': `Order ${ent} delivered`, 'order.canceled': `Order ${ent} canceled`,
     'order.refund': `Refund of $${((d.cents || 0) / 100).toFixed(2)} on ${ent}`, 'order.note': `Note added to ${ent}`, 'order.tags': `Tags on ${ent}: ${e(d.tags || '')}`, 'order.address': `Address changed on ${ent}`, 'order.resend_tracking': `Tracking re-sent for ${ent}`,
     'ticket.open': `Ticket ${ent} opened (${e(d.kind || '')} via ${e(d.channel || '')})`, 'ticket.reply': `Replied on ${ent}`, 'ticket.closed': 'Ticket closed', 'device.assign': `Board ${ent} scanned into an order`,

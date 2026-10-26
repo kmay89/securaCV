@@ -4,6 +4,7 @@
 // exportable). Same conventions: server-rendered, plain forms, no script.
 import { text, redirect, HttpError, escapeHtml as e, csvLine, cookie, parseCookies } from './http.mjs';
 import { table, money, dt, day, statusPill, field, form, button } from './render.mjs';
+import { build, describeBuild } from './version.mjs';
 import { listOrders, orderById, orderByNumber, weekLabel, statusCounts, addressIssues, packPlanOf, boardsNeeded, boardsOn, importLabels } from './modules/orders.mjs';
 import { deviceBySerial, canAssign, listDevices } from './modules/devices.mjs';
 import { qrSvg } from './qr.mjs';
@@ -134,7 +135,7 @@ ${boxCards(plan)}
   router.get('/health', (c) => {
     const h = doctor(db, cfg); const runs = Object.fromEntries(jobRuns(db).map(r => [r.name, r]));
     const ic = (ok) => ok === true ? '<span class="ic ok">✓</span>' : ok === false ? '<span class="ic bad">✗</span>' : '<span class="ic muted">–</span>';
-    const body = `<p><span class="hp ${h.ok ? '' : 'bad'}">${h.ok ? 'Every check passes' : `${h.failing.length} check${h.failing.length === 1 ? '' : 's'} failing`}</span> <span class="muted">checked ${dt(h.at)} · the same list is <code>backoffice doctor</code> and the top of the morning digest</span></p>
+    const body = `<p><span class="hp ${h.ok ? '' : 'bad'}">${h.ok ? 'Every check passes' : `${h.failing.length} check${h.failing.length === 1 ? '' : 's'} failing`}</span> <span class="muted">${e(cfg.env)} · ${e(describeBuild(cfg))} · checked ${dt(h.at)} · the same list is <code>backoffice doctor</code> and the top of the morning digest</span></p>
 <ul class="checks">${h.checks.map(x => `<li>${ic(x.ok)}<b>${e(x.label)}</b><span>${e(x.detail)}${x.ok === false && x.fix ? `<br><span class="fix">→ ${e(x.fix)}</span>` : ''}</span></li>`).join('')}</ul>
 <h2>Prove it now</h2><p>${button('/health/backup', c.csrf, 'Back up now (and check it)')} ${button('/health/job/restore_drill', c.csrf, 'Run the restore drill', { quiet: true })} ${button('/health/job/reconcile', c.csrf, 'Reconcile with Stripe', { quiet: true })} ${button('/health/job/digest', c.csrf, 'Queue the digest now', { quiet: true })} ${button('/health/job/probes', c.csrf, 'Run the probes', { quiet: true })}</p>
 <div class="two"><div><h2>Backups on disk</h2>${table(listBackups(join(cfg.dataDir, 'backups')).slice(0, 10), [{ label: 'File', key: 'name' }, { label: 'Bytes', key: 'bytes', num: true }, { label: '', html: r => `<form method="post" action="/health/check" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="name" value="${e(r.name)}"><button class="quiet">check</button></form>` }], { empty: 'No backup yet — press the button above.' })}
@@ -163,7 +164,7 @@ ${filters(c, [['actor', 'Actor', actors.map(a => [a, a])], ['action', 'Action st
   router.get('/audit.csv', (c) => { const { rows } = auditQuery(c, 100000); text(c.res, ['id,at,actor,action,entity,entity_id,detail', ...rows.map(r => csvLine([r.id, r.at, r.actor, r.action, r.entity, r.entity_id, r.detail]))].join('\n') + '\n', 200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="audit.csv"' }); });
 
   // ---------- a checked backup from the CLI's point of view is also an API call
-  router.get('/api/health', (c) => { const h = doctor(db, cfg); c.res.statusCode = h.ok ? 200 : 503; c.res.setHeader('Content-Type', 'application/json; charset=utf-8'); c.res.end(JSON.stringify(h, null, 2)); });
+  router.get('/api/health', (c) => { const h = { env: cfg.env, build: build(cfg), ...doctor(db, cfg) }; c.res.statusCode = h.ok ? 200 : 503; c.res.setHeader('Content-Type', 'application/json; charset=utf-8'); c.res.end(JSON.stringify(h, null, 2)); });
   router.get('/api/backups', (c) => c.app.json(c.res, { backups: listBackups(join(cfg.dataDir, 'backups')), live: liveCounts(db) }));
   router.post('/api/backups', async (c) => { const r = await runJob(app, 'backup'); c.app.json(c.res, r, r.ok ? 201 : 500); });
   router.get('/api/audit', (c) => c.app.json(c.res, auditQuery(c, Number(c.query.get('limit')) || 200).rows));
