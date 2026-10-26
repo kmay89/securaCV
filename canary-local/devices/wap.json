@@ -445,7 +445,7 @@
       "",
       "    Commands: h=help i=id s=stat t=time g=gps c=cam m=sys r=data b=bat",
       "    Token + WiFi credentials are printed above on every boot",
-      "    Press BOOT (<2s)   = receipt to the one page already asking (30s); hold 2-3s = print identity",
+      "    Press BOOT (<2s)   = receipt to one asker: ask first, or the first to ask gets it (30s); hold 2-3s = print identity",
       "    Hold BOOT 10s      = factory reset (Wi-Fi, broker, name; identity kept)",
       "    ------------------------------------------------"
     ],
@@ -1156,7 +1156,7 @@
         "gpio": 0,
         "what": "GPIO0, a strapping pin \u2014 the ROM samples it only at reset. While the app runs, the firmware reads it for its own gestures:",
         "gestures": [
-          "short press (under 2 s): opens the provisioning gate for 30 s and hands the recovery kit to the one page already asking for it (click Use BOOT Tap Once on the dashboard first; it prints no key)",
+          "short press (under 2 s): opens the provisioning gate for 30 s and hands the recovery kit to one asking page (click Use BOOT Tap Once on the dashboard first, then press; a tap no page was asking for goes to the first address that asks after it; it prints no key)",
           "hold 2\u20133 s: prints the identity block (device ID, fingerprint, firmware) on serial",
           "hold 10 s: factory reset \u2014 Wi-Fi, broker and name are cleared, the identity is kept, so the setup network's name and key do not change (\"keep holding\" at 3 s; released before 10 s, nothing is reset)",
           "held LOW through a reset: the mask ROM parks in download mode and waits for a flasher"

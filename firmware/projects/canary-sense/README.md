@@ -233,8 +233,9 @@ encryption again) into the portal's own join path
 teardown). Door shut: today's beacon bytes, not connectable.
 
 **When the door is open** (the header's rule: for a device with no network
-saved — a new one nobody owns yet, or one its owner cleared — and for an
-owner's own tap; never for a device that has an owner and a bad day):
+saved — a new one nobody owns yet, or one whose network was cleared — and
+for an owner's own tap; never for a device that has an owner and a bad
+day):
 
 - **No credentials stored:** for **30 minutes after power-on**
   (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle or the 10 s factory-reset

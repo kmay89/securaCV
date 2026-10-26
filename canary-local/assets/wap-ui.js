@@ -888,7 +888,7 @@ function buildStrapTrainer() {
     boot.querySelector(".bench-chip-state").textContent = held ? "held" : "released";
     status.textContent = !plugged ? "⏚ no power — plug the cable in"
       : mode === "download" ? "ROM: waiting for download (flash now, then tap RESET)"
-        : "app running — the ROM ignores BOOT until the next reset, but the firmware reads it (a tap opens the receipt gate, 10 s held is a factory reset)";
+        : "app running — the ROM ignores BOOT until the next reset, but the firmware reads it (a tap hands the receipt to one asking page, so the page asks first; 10 s held is a factory reset)";
   };
   usb.addEventListener("click", () => {
     plugged = !plugged;
@@ -898,7 +898,7 @@ function buildStrapTrainer() {
   });
   boot.addEventListener("click", () => {
     held = !held;
-    if (held && plugged && mode === "run") say("(BOOT held — the ROM only samples it at reset, but the running WAP counts it: kept 10 s, it clears Wi-Fi, broker and name and reopens its first-come Bluetooth setup door for half an hour)");
+    if (held && plugged && mode === "run") say("(BOOT held — the ROM only samples it at reset, but the running WAP counts it: kept 10 s, it clears Wi-Fi, broker and name, keeps its key and token, and reopens its first-come Bluetooth setup door for half an hour, unless a landing session turned its Bluetooth off, which the hold keeps)");
     paint();
   });
   reset.addEventListener("click", () => {

@@ -497,8 +497,13 @@ static bool sd_append_fail(const char* why) {
 // generation: reads the tail line and compares seqs. On a fork the card is
 // left untouched (records keep chaining in RAM/NVS; the verifier reports
 // the gap honestly) until a reboot reconciles — and a foreign card whose
-// history is ahead of ours is refused for the same reason, instead of
-// having our chain interleaved into someone else's file.
+// history is ahead of ours is refused for the same reason, but only while
+// its tail is ahead: a card from before a new key (the 30 s wipe, a flasher
+// install) or another device's never reconciles (witness_recover_from_sd()
+// refuses its signature), and once our seq passes its tail, a later mount
+// appends our records to that same file, which the offline verifier then
+// fails under either key. Such a card is to be copied off, or swapped for
+// a fresh one.
 //
 // Torn tail: a power cut mid-append leaves the in-flight line without its
 // '\n'. Boot recovery skips it (witness_store::tail_parse), which is right,
@@ -555,7 +560,7 @@ static bool sd_append_record(const WitnessRecord* rec) {
     s_fork_blocked = sd_tail_forks_chain(rec->seq, &s_tail_torn);
   }
   if (s_fork_blocked)
-    return sd_append_fail("SD history ahead of this chain - reboot to reconcile");
+    return sd_append_fail("SD log ahead of chain: reboot or use new card");
 
   // A torn tail is sealed by a leading '\n' in the SAME write as the record,
   // so a second power cut cannot leave the terminator without its line: if

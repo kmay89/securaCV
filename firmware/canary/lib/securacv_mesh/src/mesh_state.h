@@ -162,10 +162,11 @@ bool clear_opera_secret();
  * Same flash-encryption gate as opera_secret: the pubkeys themselves
  * aren't secret, but the bond between this device and its set of
  * trusted peers IS household-graph metadata. The gate keeps it off a
- * board without flash encryption only: on a board with FE on it is
- * still plaintext NVS (FE does not cover NVS), so anyone who reads the
- * flash learns the household graph either way. canary-wap's
- * opera_config persistence applies the same posture.
+ * board without flash encryption (every released board), where a flash
+ * read learns nothing of it; on a board with FE on it is still
+ * plaintext NVS (FE does not cover NVS), so a flash read there still
+ * learns the household graph. canary-wap's opera_config persistence
+ * applies the same posture.
  * ────────────────────────────────────────────────────────────────────────── */
 
 constexpr size_t MAX_TRUSTED_PEERS = 8;   /* mirrors mesh_session value */

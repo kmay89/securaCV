@@ -46,9 +46,11 @@ namespace household_api {
 // happened), so there's no captive-portal flow that needs to reach these
 // routes without an API token. The doc block above promised
 // `api_auth_check` gating; this section is what makes the promise true.
-// The dashboard's secureFetch already attaches `Authorization: Bearer
-// <api_token>` on every call, so wrapping handlers is a plumbing-only fix
-// that matches the pattern used in bluetooth_api.h (#437).
+// The dashboard reaches these with its session cookie (secureFetch sends
+// `Authorization: Bearer` only when the page holds a token), so wrapping
+// handlers is a plumbing-only fix that matches the pattern used in
+// bluetooth_api.h (#437). api_auth_check() takes the landing session any
+// LAN host can mint, so the gate is not the owner's alone (F346).
 //
 // Mechanism: register_routes() stashes the API token pointer in a
 // module-local static, then wraps every real handler in the auth_gated

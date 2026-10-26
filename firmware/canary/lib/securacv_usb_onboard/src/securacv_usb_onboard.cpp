@@ -333,8 +333,11 @@ void print_recovery_guide() {
   Serial.println("     signature verifies under this device's key (SD-wins recovery).");
   Serial.println("  3. If the cached head fell behind the card (a power cut between");
   Serial.println("     persists), re-seat the SD and reboot; the head is rebuilt from");
-  Serial.println("     the SD tail. After the 30 s wipe or an install in a flasher the");
-  Serial.println("     device has a new key: the old card is kept, not adopted.");
+  Serial.println("     the SD tail. The 30 s wipe or an install in a flasher gives a");
+  Serial.println("     new key, which never adopts the old card: copy records.jsonl");
+  Serial.println("     off it first, or use a fresh card. Left in, it takes no new");
+  Serial.println("     evidence while its old chain is longer, then takes new-key");
+  Serial.println("     records in the same file, which the verifier then fails.");
   Serial.println("  4. To verify off-device, browse the read-only drive (console 'v'");
   Serial.println("     exposes it) and run tools/verify_witness_log.py on records.jsonl.");
   Serial.println("  Full walkthrough: https://securacv.com/canary\n");

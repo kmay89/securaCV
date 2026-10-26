@@ -656,8 +656,9 @@ echo ""
 # ── Check: no partition table flags nvs `encrypted` ──────────────
 # NVS is not compatible with flash encryption: ESP-IDF's protection for NVS is
 # NVS encryption (CONFIG_NVS_ENCRYPTION, keys in an nvs_keys partition), which
-# no Canary build has (every one is framework = arduino, so NVS is plaintext on
-# every tier); and with flash encryption on, IDF v4.3+ refuses to open an nvs partition flagged
+# no released Canary build has (every released build is framework = arduino, so
+# NVS is plaintext on every tier; only the unreleased canary-ota ESP-IDF harness
+# sets CONFIG_NVS_ENCRYPTION); and with flash encryption on, IDF v4.3+ refuses to open an nvs partition flagged
 # `encrypted` (nvs_partition_lookup.cpp -> ESP_ERR_NVS_WRONG_ENCRYPTION). The
 # provisioning kit's partitions_secure.csv carried that flag, so its image
 # could not have opened NVS — the identity key's home — on a fused board
@@ -669,7 +670,7 @@ NVS_ENC_HITS=$(find "$FIRMWARE_DIR" -name "*.csv" -not -path "*/.pio/*" -print0 
 if [ -n "$NVS_ENC_HITS" ]; then
   check_fail "An nvs partition is flagged 'encrypted' — IDF refuses to open it once flash encryption is on:"
   echo "$NVS_ENC_HITS" | while read -r line; do blue "  ${line#"$FIRMWARE_DIR"/}"; done
-  blue "  Fix: drop the flag; only NVS encryption (nvs_keys) could protect NVS, and it is unavailable under framework = arduino, so NVS stays plaintext either way"
+  blue "  Fix: drop the flag; only NVS encryption (nvs_keys) could protect NVS, and it is unavailable under framework = arduino, which every released build uses, so NVS stays plaintext on those either way"
 else
   check_pass "No partition table flags an nvs partition 'encrypted'"
 fi

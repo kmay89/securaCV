@@ -537,7 +537,7 @@ static const uint32_t BOOT_SHORT_PRESS_MS  = 50;
 static const uint32_t BOOT_LONG_PRESS_MS   = 3000;
 static_assert(BOOT_LONG_PRESS_MS == canary::io::ResetHold{}.warn_ms,
               "the 3 s diagnostic hold and ResetHold's Warn stage share one threshold");
-// The BOOT tap stays open this long for the one page already asking:
+// The BOOT tap stays open this long for one asker:
 // provisioning_gate.h tap_arbitrate() serves it only to the sole address
 // seen asking from TAP_LOOKBACK_MS before the tap onward (sweep F342), so
 // the owner's page asks first and says when to press. A second address
@@ -8203,8 +8203,9 @@ static esp_err_t handle_fleet_scan_auth(httpd_req_t* req) {
  * The wire shape is built by the ONE shared builder (fleet_selfreport.h, in
  * firmware/common, host-tested), so EVERY networked board answers byte-for-byte
  * identically — a change to the shape is a change to that one header, never a
- * per-board edit. Distinct from /api/fleet-scan above, which is the rich,
- * Bearer-gated mDNS browser for the operator UI; this one is presence-only and
+ * per-board edit. Distinct from /api/fleet-scan above, which is the rich
+ * mDNS browser for the operator UI behind api_auth_check() (the bearer, or a
+ * landing session any LAN host can mint, F346); this one is presence-only and
  * carries no secrets and no media, safe to read anonymously.
  */
 static esp_err_t handle_fleet(httpd_req_t* req) {
@@ -9547,7 +9548,9 @@ static esp_err_t handle_device_name(httpd_req_t* req) {
 }
 
 // ── Auth-wrapped handler helpers ──
-// These wrappers add Bearer token authentication to existing handlers.
+// These wrappers put api_auth_check() in front of existing handlers: the
+// cv_session cookie first, which the landing page mints for any host on the
+// network (ledger F346), then the bearer token under the lockout.
 
 static esp_err_t handle_status_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
@@ -9668,9 +9671,11 @@ static esp_err_t handle_wifi_reconnect_auth(httpd_req_t* req) {
 // the mesh service doesn't start until WiFi is up — so none of them
 // have a "must work pre-token" exception like /api/wifi/scan does, and
 // none of them have a pre-credential gate like /api/wifi/connect's
-// pair_token_valid. The dashboard's secureFetch already supplies the
-// Bearer token on every call (web_ui.h:3063-3170), so wrapping mirrors
-// the same plumbing-only fix as #435 for the WiFi-mgmt handlers.
+// pair_token_valid. The dashboard reaches them with its session cookie
+// (secureFetch sends a bearer only when the page holds a token), so
+// wrapping mirrors the same plumbing-only fix as #435 for the WiFi-mgmt
+// handlers; api_auth_check() takes the landing session any LAN host can
+// mint, so these are not owner-only (F346).
 // Fenced like the handlers and registrations they bridge: with the mesh
 // off (DEV/MINIMAL profiles) the wrapped handle_mesh_* symbols don't
 // exist, and an unfenced wrapper is a build break the FULL-only CI of
@@ -10130,7 +10135,8 @@ static void register_api_routes(httpd_handle_t server) {
   httpd_uri_t prov = { .uri = "/api/provisioning-receipt", .method = HTTP_GET, .handler = handle_provisioning_receipt };
   httpd_register_uri_handler(server, &prov);
 
-  // Authenticated API endpoints (Bearer token required)
+  // Authenticated API endpoints (api_auth_check(): a landing session or the
+  // bearer token, F346)
   httpd_uri_t status = { .uri = "/api/status", .method = HTTP_GET, .handler = handle_status_auth };
   httpd_register_uri_handler(server, &status);
 
@@ -10532,7 +10538,8 @@ register_extra_routes:
   httpd_uri_t identify = { .uri = "/api/identify", .method = HTTP_POST, .handler = handle_identify };
   httpd_register_uri_handler(active_server, &identify);
 
-  // Rename this device → canary-<name>.local (Bearer-gated).
+  // Rename this device → canary-<name>.local (api_auth_check(): the bearer,
+  // or a landing session any LAN host can mint, F346).
   httpd_uri_t device_name = { .uri = "/api/device-name", .method = HTTP_POST, .handler = handle_device_name };
   httpd_register_uri_handler(active_server, &device_name);
 
@@ -13357,7 +13364,7 @@ void setup() {
   boot_blank();
   boot_line("    Commands: h=help i=id s=stat t=time g=gps c=cam m=sys r=data b=bat");
   boot_line("    Token + WiFi credentials are printed above on every boot");
-  boot_line("    Press BOOT (<2s)   = receipt to the one page already asking (30s); hold 2-3s = print identity");
+  boot_line("    Press BOOT (<2s)   = receipt to one asker: ask first, or the first to ask gets it (30s); hold 2-3s = print identity");
   boot_line("    Hold BOOT 10s      = factory reset (Wi-Fi, broker, name; identity kept)");
   boot_separator();
   Serial.println();
@@ -13988,7 +13995,7 @@ void loop() {
       // open() stores a millis() of 0 as 1 (0 is "closed"), with a release
       // store.
       canary::net::provisioning_gate::open(g_provisioning_gate, millis());
-      Serial.printf("[AUTH] Provisioning gate OPENED for %lu seconds: the receipt goes only to the one address already asking (ask first, then tap)\n",
+      Serial.printf("[AUTH] Provisioning gate OPENED for %lu seconds: the receipt goes to one asker; with no page asking, the first address to ask gets it (ask first, then tap)\n",
                     (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000));
       log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning gate opened", "BOOT button");
       // Blink LED 3x to confirm. Skipped while an SD mount attempt is in

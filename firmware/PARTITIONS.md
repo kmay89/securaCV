@@ -71,8 +71,9 @@ Choose by what you are shipping:
   regions that **survive OTA** — never inside an app slot.
 - The `encrypted` flag takes effect only on a board with flash encryption on (`SPI_BOOT_CRYPT_CNT`
   burned), which no tool here does today: the Phase‑2 burn leaves flash encryption off. `nvs` is
-  never flagged: NVS encryption, not flash encryption, would protect it, and no Canary build has it
-  (every one is `framework = arduino`), so NVS is plaintext on every tier.
+  never flagged: NVS encryption, not flash encryption, would protect it, and no released Canary
+  build has it (every released build is `framework = arduino`; only the unreleased canary-ota
+  ESP-IDF harness sets `CONFIG_NVS_ENCRYPTION`), so NVS is plaintext on every tier.
 - **Growing a slot reaches only boards that get a USB factory flash.** OTA ships app‑only
   images; a fielded board keeps the table it was flashed with, so an image bigger than the
   *old* slot strands every old‑table board (its OTA install fails, forever) until someone

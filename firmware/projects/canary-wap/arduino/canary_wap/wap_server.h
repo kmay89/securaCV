@@ -17,7 +17,8 @@
  *   HTTPS server); plain HTTP during setup, and if the certificate fails
  * - While HTTPS is up, port 80 serves the probes and /api/fleet and redirects
  *   the rest to HTTPS (301)
- * - Bearer token authentication on protected endpoints
+ * - api_auth_check() on protected endpoints: the session cookie the landing
+ *   page mints for any host on the network (F346), or the bearer token
  * - Constant-time token comparison (timing attack mitigation)
  * - Exponential backoff on auth failures (brute-force mitigation)
  * - Provisioning receipt only for the bearer token, the setup door's claim, or

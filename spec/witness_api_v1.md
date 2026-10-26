@@ -33,8 +33,11 @@ GET /api/v1/witness?last=N
 Authentication is the device's own: the reference device-api reads
 `X-Canary-Token`, canary-wap reads `Authorization: Bearer <token>` (the
 same token the pairing receipt carried). A client that sends both speaks to
-both. The route is never public: it is in canary-wap's route-security
-allowlist only as a *gated* route (`tests_host/check_route_security.py`).
+both. canary-wap's gate is `api_auth_check()`, which also takes the session
+cookie its landing page mints for any host on the network (ledger F346), so
+on a WAP the page is not the token holder's alone. The route is never
+public: it is in canary-wap's route-security allowlist only as a *gated*
+route (`tests_host/check_route_security.py`).
 
 ## 2. Response
 
@@ -101,7 +104,8 @@ reader must still know what the buckets do not hide:
   the width it carries. This is not new exposure: the same value already
   rides the SD witness line, `GET /api/witness`, `POST /api/export` and the
   MQTT `chain` publish, and `uptime_s` is `/api/status`'s `uptime_sec`, all
-  behind the same Bearer token. The bucket itself adds no precision finer
+  behind the same gate (on canary-wap, `api_auth_check()`: the Bearer token
+  or a landing session). The bucket itself adds no precision finer
   than ten minutes. It counts from boot, so its edges are not on the
   wall-clock grid.
 * **The bucket is not the only time signal.** canary-wap writes a witness
@@ -244,8 +248,9 @@ remains for the device's dashboard and is not this contract.
 
 `payload_hash` is new on an HTTP surface (the old page sent only
 `time_bucket` and `chain_hash`). It is domain-separated but unkeyed, so a
-holder of the Bearer token can confirm a guess at a low-entropy payload — a
-short state-transition string, say — by hashing the guess. That is the same
-exposure the SD line (`ph`) and the PWK export already carry, not a new one;
-the page adds no plaintext and no key, and the token it sits behind is the
-same one that reads the SD log.
+caller the gate admits (on canary-wap, the Bearer token or a landing session
+any host on the network can mint, F346) can confirm a guess at a
+low-entropy payload — a short state-transition string, say — by hashing the
+guess. That is the same exposure the SD line (`ph`) and the PWK export
+already carry, not a new one; the page adds no plaintext and no key, and the
+gate it sits behind is the same one that reads the SD log.

@@ -66,6 +66,9 @@
 > - C11: Emoji display only 12 bits of entropy. Closed (5 emojis, ~20 bits).
 > - C12: REST API unwired and un-Bearer-gated. Closed (`chirp_api.h` now
 >   requires Bearer gate before registration in `canary_wap.ino`).
+>   *(Amended 2026-10-26, #1843's sweep: that gate is `api_auth_check()`,
+>   which also takes the landing session any host on the network can mint,
+>   ledger F346, so the chirp routes are not the bearer's alone.)*
 > - C13: Presence requirement gated only `send_chirp`, not ACK origination.
 >   Closed.
 > - C14: No per-pubkey rate limit on incoming witnesses. Closed.

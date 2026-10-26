@@ -344,14 +344,17 @@ actor DeviceAPI {
 
     // MARK: - the WAP dialect (the device-api this repo's firmware actually serves)
 
-    /// `GET /api/status` — the WAP's Bearer-gated status body, decoded down
-    /// to what the poll needs. This is the liveness-plus-identity read for
+    /// `GET /api/status` — the WAP's gated status body (the app sends the
+    /// bearer; the WAP's api_auth_check() also passes a landing session's
+    /// cookie, which the app never holds, ledger F346), decoded down to what
+    /// the poll needs. This is the liveness-plus-identity read for
     /// WAP-class devices: no firmware in this repo serves `/api/v1/info`,
     /// so a poll that insists on the v1 contract marks every real WAP dark.
     func wapStatus() async throws -> WapStatus { try await get("/api/status") }
 
     /// `GET /api/events/today` — the WAP's sensing-event feed (open bundles
-    /// first, then committed ring rows newest-first, ≤72 rows, Bearer-gated;
+    /// first, then committed ring rows newest-first, ≤72 rows, gated like
+    /// `/api/status`;
     /// Wire/WapEvents.swift documents the row). An empty array is normal —
     /// the ring is RAM-only and empties on reboot.
     func wapEventsToday() async throws -> WapEventsToday {
@@ -359,8 +362,8 @@ actor DeviceAPI {
     }
 
     /// `GET /api/csi/stream` — the 1 Hz sensing snapshot (a plain GET, not
-    /// SSE; Bearer-gated; Wire/WapEvents.swift documents its three variant
-    /// bodies). The Sensing-now tile polls this while visible.
+    /// SSE; gated like `/api/status`; Wire/WapEvents.swift documents its
+    /// three variant bodies). The Sensing-now tile polls this while visible.
     func wapStream() async throws -> WapStream { try await get("/api/csi/stream") }
 
     // MARK: - the fleet-wide surface

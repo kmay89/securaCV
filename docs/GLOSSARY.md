@@ -212,13 +212,14 @@ its Wi-Fi from a phone with one tap: the open Improv Wi-Fi standard over
 BLE (`firmware/common/network/improv_core.h`, the pure half; `improv_ble`,
 the NimBLE glue; the WAP's `ble_improv`), on an encrypted Just Works link
 with no bond kept. **When it is open**, in the header's own words: for a
-device with no network saved (a new one nobody owns yet, or one its owner
-cleared), and for an owner's own tap — never for a device that has an owner
-and a bad day. So: with **no stored credentials**, for **30 minutes after
-power-on** (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle re-arms it, and so
-does the owner clearing the credentials with the 10 s factory-reset hold
-or, on a WAP, Forget Wi-Fi — a software restart does not, the spent time
-rides across it in RTC memory); or for **60 s after a short BOOT tap** on a
+device with no network saved (a new one nobody owns yet, or one whose
+network was cleared), and for an owner's own tap — never for a device that
+has an owner and a bad day. So: with **no stored credentials**, for **30
+minutes after power-on** (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle
+re-arms it, and so does clearing the credentials with the 10 s
+factory-reset hold or, on a WAP, Forget Wi-Fi, which any landing session
+can send, ledger F345 — a software restart does not, the spent time rides
+across it in RTC memory); or for **60 s after a short BOOT tap** on a
 Sense or Vision (the WAP has no tap door yet). A cleared unit still has an
 owner (the hold keeps the witness identity, and a WAP's hold and Forget
 Wi-Fi keep its token), but the door goes to whichever client connects

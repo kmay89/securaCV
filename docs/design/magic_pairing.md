@@ -50,11 +50,12 @@ person, and it is not open to whoever walks past. The whole design is the
 sentence from `improv_core.h`:
 
 > the door is open for a device with NO NETWORK SAVED (a new one nobody owns
-> yet, or one its owner cleared), and for an owner's own tap — never for a
-> device that has an owner and a bad day.
+> yet, or one whose network was cleared), and for an owner's own tap — never
+> for a device that has an owner and a bad day.
 
-A unit its owner cleared (the 10 s hold, or Forget Wi-Fi on a WAP) still has
-an owner, and its door goes to whichever client connects first (§2.2).
+A cleared unit (the 10 s hold, or Forget Wi-Fi on a WAP, which any landing
+session can send, ledger F345) still has an owner, and its door goes to
+whichever client connects first (§2.2).
 
 ---
 
@@ -72,14 +73,18 @@ an owner, and its door goes to whichever client connects first (§2.2).
 | The 11th `WIFI_SETTINGS` attempt on one open door | Shut, until a tap or a power cycle | `Timing::wifi_settings_cap` = 10. A no-credentials door shut this way marks its window spent. |
 
 The WAP has **no tap door in this version**: its BOOT button keeps the
-sketch's own gestures. A short press opens the 30 s receipt gate, a 2 s hold
-prints the identity on serial, and a **10 s hold factory-resets the WAP**
+sketch's own gestures. A short press hands the receipt to one asker for 30 s
+(the page asks first and the press comes second: a second address asking
+from 10 s before the tap closes it, and a tap no page was asking for goes to
+the first address that asks after it, sweep F342), a 2 s hold prints the
+identity on serial, and a **10 s hold factory-resets the WAP**
 (`factory_reset_by_hold()`): it clears the saved Wi-Fi networks, the broker
 row, the device name and the first-boot flag, keeps the identity key and the
 API token (the one the WAP derived from the key, or the one a flasher
-seeded), and restarts into first-boot setup when BOOT is released. A WAP's door is the first-boot window alone. The owner re-arms it
-with **Forget Wi-Fi** on the dashboard (`POST /api/wifi/forget`) or with the
-10 s hold: both clear the credentials through `wifi_clear_credentials()`,
+seeded), and restarts into first-boot setup when BOOT is released. A WAP's door is the first-boot window alone. **Forget Wi-Fi** on the
+dashboard (`POST /api/wifi/forget`, which any landing session can send,
+ledger F345, so it is not the owner's act alone) and the 10 s hold re-arm
+it: both clear the credentials through `wifi_clear_credentials()`,
 which on a unit that had credentials also zeroes the carried window record,
 so the door gets a fresh 30 minutes (after the hold, from the restart on
 release).
@@ -96,8 +101,9 @@ While the door is **shut** (the steady state of every owned Canary):
   authorization** (`0x01`) on the state characteristic. A `WIFI_SETTINGS`
   write earns `NotAuthorized` (`0x04`) and starts nothing.
 
-While the door is **open** (a new unit, one its owner cleared with the hold
-or Forget Wi-Fi, or the owner tapped it):
+While the door is **open** (a new unit, one cleared with the hold or with
+Forget Wi-Fi, which on a WAP any landing session can send, or the owner
+tapped it):
 
 - They can connect and, after the Just Works pairing, write credentials for
   *their* network. That is the inherent exposure of any "no network saved"
@@ -145,7 +151,7 @@ password, a router that rebooted, an SSID that went away). That turned "my
 router is down" into "anyone in radio range can re-point my Canary at their
 network." The two cases look alike from the portal's side and are opposite
 from the owner's: the first is a device with no network saved (a new one, or
-one its owner cleared, §2.2), the second is a device that has an owner and a
+one whose network was cleared, §2.2), the second is a device that has an owner and a
 bad day.
 
 So the door takes the **stored-credentials fact**, never the portal's. The
@@ -162,8 +168,9 @@ A Just Works pairing is the only kind a phone with no prior bond can open in
 one tap, and it yields an encrypted but **unauthenticated** link: it resists
 a passive listener, not an active one who was there first. Nothing that
 *lasts* belongs on such a link. The WAP's bearer token lasts until the board
-is installed again or fully erased in a flasher: OTA updates, the 10 s hold
-and Forget Wi-Fi keep it, and nothing rotates it. The first version put the whole pairing receipt — token
+is installed again or fully erased in a flasher, or a flasher restores a
+safety copy over it, which puts back the token (and the key) that copy holds:
+OTA updates, the 10 s hold and Forget Wi-Fi keep it, and nothing rotates it. The first version put the whole pairing receipt — token
 included — on that link, and its `base_url` pointed at a SoftAP address that
 is dead the moment the AP drops after a join.
 

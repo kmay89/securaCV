@@ -264,8 +264,9 @@ hold keeps; and the per-address lockout's ways out.
   the receipt is judged between the tap and Start takes or closes it. The
   getting started guide's sentence and the Lab's BOOT card said a short press lets
   the dashboard hand over the recovery kit for 30 seconds; they now say the
-  press hands it to the one page already asking, so click **Use BOOT Tap
-  Once** first. Both pages say to press only once the device has answered
+  press hands it to one asking page, so click **Use BOOT Tap Once** first
+  (a tap no page was asking for goes to the first address that asks after
+  it). Both pages say to press only once the device has answered
   one of their asks with `403` ("Asking the Canary first. Don't press BOOT
   yet." on the dashboard and "Asking your Canary first. Don't press BOOT
   yet." on the companion until then; an ask that never reached the device
@@ -656,6 +657,58 @@ hold keeps; and the per-address lockout's ways out.
   bans 64 more retired sentences where they stood (192 of 192 row mutants
   fail it) and holds the safety-copy claim to both flashers' code.
   Host-tested; not run on a device or in a browser.
+
+- **The iPhone app reads no WAP's Bluetooth console, Forget Wi-Fi is any
+  landing session's, and a flasher install gives a new key, in every
+  remaining copy (#1843's sweep, sixth pass).** The console is served by
+  the WAP alone, and the iPhone app dials only a peripheral advertising it,
+  which a WAP does not (A65): both flashers' Bluetooth notes, the browser's
+  iPhone panel, the iOS README, the app's Bluetooth permission text and the
+  WAP's `/companion` page, which no longer sends iPhone owners to Bluefy,
+  follow. Forget Wi-Fi takes `api_auth_check()`, which any landing session
+  passes (F345), and a landing session can bond a peer to the WAP's
+  Bluetooth lane (F346), so the WAP's door and wipe comments,
+  `improv_core.h`, the README and `magic_pairing.md` no longer call a
+  re-armed door, or the lane, the owner's alone. Both flashers' smart pick ("installing
+  keeps it, updated in place") and settings verdicts, the desktop change
+  map, the SD recovery comments and guides and the token's lifetime say an
+  install starts NVS over under a new key; `SECURITY_MODEL.md`,
+  `THREAT_MODEL.md`, `gen_flash.py` and the salt comments say what a flash
+  read gets; the WAP's ready banner, its gate-open line and the README stopped
+  reading press-first (`web_assets_gz.h`, `wap.json` and `flash.json`
+  regenerated). `test_docs_claims.py` banned 141 more retired sentences
+  where they stood. Host-tested; not run on a device, in a browser or
+  through Xcode.
+
+- **The receipt's BOOT tap is said to go to one asker, an unasked tap to
+  the first address that asks after it, and an old SD card to be taken out
+  after a new key (#1843's sweep, sixth pass, round-1 review).** The sixth
+  pass had written that the WAP's tap goes to the one page or address
+  "already asking" into the gate-open serial line, the boot banner and the
+  README, and the getting started guide and the Lab's BOOT card said the
+  same from #1842; `tap_arbitrate()` serves
+  the sole address seen asking from 10 s before the tap onward, so a tap no
+  page was asking for goes to the first address that asks inside its 30 s,
+  and each copy now says so. Its recovery copy said an old card's chain
+  stays verifiable off-device after a new key: left in, the flagship stops writing
+  evidence to it while its old chain is the longer one, then appends the
+  new key's records to the same file (the WAP appends at once), and
+  `tools/verify_witness_log.py` fails that file under either key, so the
+  copy says to take the old log off or use a fresh card, and the
+  flagship's log line names the fresh card beside the reboot. Copies that
+  still credited the owner with clearing a unit, or called the WAP's
+  `api_auth_check()` routes bearer-gated (the OTA routes among them, which
+  any host on the network can drive with a landing session), now say what
+  the code does, in the docs, the WAP sketch's comments and the iPhone
+  app's; the iPhone design note no longer says the `/companion` page sends
+  people to Bluefy. Both flashers now offer the Bluetooth check for the WAP
+  alone, the one board that serves the console. `PARTITIONS.md`,
+  `regression_check.sh` and the kit's partition table scope `framework =
+  arduino` to every released build, and the token's lifetime names a
+  flasher's restore. `test_docs_claims.py` bans 95 more retired sentences
+  where they stood, 16 of them the sixth pass's own, and `wap.test.js` and
+  `desktop_parity.test.js` pin the corrected copy. Host-tested; not run on
+  a device or in a browser.
 
 ### The flagship and the canary-wap halt on a stored identity key they cannot read, instead of running on a zero key or replacing it (sweep F360, #1840)
 
@@ -6854,7 +6907,7 @@ reverted a bad image or entered safe mode on real hardware yet; that is
   fetched `/api/v1/witness` in the canary-vision reference shape while
   canary-wap answered only `/api/witness` (one record, another shape, no
   signature). canary-wap now serves the page from a 16-record RAM ring
-  (`witness_page.h`, `handle_witness_v1`, Bearer-gated, chunked) as
+  (`witness_page.h`, `handle_witness_v1`, Bearer-gated *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)*, chunked) as
   `chain_format: wap_v1` — the firmware's own domain-separated chain hash
   and its existing per-record Ed25519 signature over the raw hash, no new
   signing scheme — with coarse ten-minute timestamps only when the device
@@ -11055,7 +11108,7 @@ FEATURE_DATA_MGMT.
   threshold, append-only chain-hashed audit log as a ring buffer
   NVS-persisted under the flash-encryption gate. Off by default
   (`FEATURE_BEACON_CHANNEL=0`).
-- **Beacon REST API** (`beacon_api.h`): Bearer-token-gated surface —
+- **Beacon REST API** (`beacon_api.h`): Bearer-token-gated surface *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)* —
   `/api/beacon`, `/set`, `/pair/*`, `/revoke`, `/originate`, `/cosign`,
   `/cancel`, `/active`, `/audit` (paginated), `/selftest`.
 - **COSIGN_REQ/RESP encryption**: X25519 ECDH between paired device
@@ -11100,7 +11153,7 @@ FEATURE_DATA_MGMT.
   unsynced; conservative night-mode when unsynced.
 - 5-emoji session display (~1 M distinct).
 - `chirp_api.h` REST endpoints Bearer-gated via the standard
-  template-trampoline pattern; wired into `canary_wap.ino`.
+  template-trampoline pattern *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)*; wired into `canary_wap.ino`.
 - Presence requirement also gates ACK origination.
 - Per-`session_pubkey` rate limit on incoming witnesses.
 - `TPL_AUTH_FEDERAL_PRESENCE` removed; 0x04 slot reserved.

@@ -222,7 +222,9 @@ The shared core is `firmware/common/network/onboarding_fsm.h` (host-tested);
 every case below holds on a Sense, a Vision, a Sentinel, a WAP, a display and a
 PIO canary unless the row says otherwise. `GET /api/status` is the oracle: its
 `onboarding` word is the state (the WAP and the PIO canary answer it inside
-their bearer-gated `/api/status` under `node_status`).
+their gated `/api/status` under `node_status`: the canary's takes the bearer,
+the WAP's `api_auth_check()`, which a landing session passes too, ledger
+F346).
 
 | # | Step | Expect |
 |---|------|--------|

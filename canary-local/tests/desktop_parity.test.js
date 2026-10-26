@@ -5165,10 +5165,22 @@ test("rule 7: the desktop offers the browser's Bluetooth 'is it on?' check — a
   }
   assert.match(appJs, /\$\("ble-check-open"\)\.addEventListener\("click", openBleCheck\)/);
   assert.match(appJs, /\$\("prove-ble"\)\.addEventListener\("click", openBleCheck\)/);
-  // For whom: the boards that run the read-only console — the browser's rule,
-  // read off the catalog's role (which IS the browser's productRole).
-  assert.match(flashJs, /core\.productRole\(p\) === "wap" \|\| p\.provisioning === "ap"/);
-  assert.match(fnSource(appJs, "bleCheckable"), /product\.role === "wap" \|\| product\.provisioning === "ap"/);
+  // For whom: the boards that run the read-only console — the WAP alone
+  // (ble_console.h is the only firmware serving it; an AP-provisioned
+  // flagship serves none, so offering it there is a dead end) — the
+  // browser's rule, read off the catalog's role (which IS the browser's
+  // productRole).
+  assert.match(flashJs, /const bleCapable = p && !opts\.isBackup && core\.productRole\(p\) === "wap";/);
+  assert.match(fnSource(appJs, "bleCheckable"), /return !!product && product\.role === "wap";/);
+  assert.doesNotMatch(fnSource(appJs, "bleCheckable"), /provisioning/, "the desktop offers the console check to a board that serves none");
+  const grep = spawnSync("git", ["grep", "-l", "-i", "8fc1cee0", "--", "firmware"], { cwd: ROOT, encoding: "utf8" });
+  assert.strictEqual(grep.status, 0, "git grep for the console's service UUID found nothing: " + (grep.stderr || ""));
+  const consoleFirmware = grep.stdout.split("\n").filter(Boolean);
+  assert.ok(consoleFirmware.length > 0 && consoleFirmware.every((f) => f.startsWith("firmware/projects/canary-wap/")),
+    "the Bluetooth console's service UUID is served outside the WAP now: widen the check to that board: " + consoleFirmware.join(", "));
+  for (const text of [flashJs, appJs, html]) {
+    assert.doesNotMatch(text, /A Canary keeps a read-only Bluetooth console/, "the console note names the WAP, the one board that serves it");
+  }
   for (const p of catalog.products) {
     assert.strictEqual(p.role, core.productRole(p), `${p.id}: the catalog's role and the browser's productRole disagree`);
   }

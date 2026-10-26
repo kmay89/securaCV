@@ -3432,6 +3432,147 @@ so — see D2 below.)
       `README.md` and a dead needle each fail the suite (192 of 192).
       Totals: 41 BANNED, 424 RETIRED_IN over 145 files, 480 forms
       (MUST_FAIL's 41 and MUST_FAIL_IN's 439), 403 replacements, 24 tests.
+  - The sweep for every remaining copy, sixth pass (#1843, 2026-10-22): the
+    sixth search's hits, each read against the code, with every copy of the
+    same sentence in the same files.
+    - The Bluetooth console is the WAP's (`ble_console.h`), and the iPhone
+      app dials only a peripheral that advertises it, which a WAP does not
+      (A65): both flashers' Bluetooth notes, the browser's iPhone panel, the
+      WAP's `/companion` page (its footer, banner, connect error and header
+      no longer send an iPhone owner to Bluefy), `BLEConsole.swift`,
+      `FleetStore.swift`, the rollout runner and its tests, the app's
+      Bluetooth permission text, the iOS README and the companion-app
+      design note.
+    - Forget Wi-Fi takes `api_auth_check()`, which any landing session
+      passes (F345), so a re-armed first-come door is not the owner's act;
+      the bonded lane is no owner gate either (F346): `improv_core.h` (both
+      copies), the WAP's wipe comments, `ble_improv.cpp`, the README,
+      `magic_pairing.md`'s table rows, `bluetooth_api.h`, `ble_console.h`,
+      `ble_provision.h`, `household_api.h`, the beacon and chirp
+      registration comments, the beacon spec, `THREAT_MODEL.md`'s Chirp and
+      Beacon rows and the FAQ.
+    - An install in either flasher starts NVS over under a new key: both
+      flashers' smart pick and settings verdicts, the desktop change map,
+      the SD-wins comments, the flagship's serial recovery guide, the SD
+      card health note, the OTA recovery matrix and the token's lifetime.
+      No tier protects the key at rest: `SECURITY_MODEL.md`,
+      `THREAT_MODEL.md`'s Principle 6, `gen_flash.py` (`flash.json`
+      regenerated), `familiar.cpp`/`.h` and every "dev board" without flash
+      encryption, which is every released board.
+    - The tap: the WAP's ready banner (`gen_wap.py` and `wap.json` with it),
+      the gate-open serial line, the TTL's comment, the README and the
+      dashboard's and companion's poll comments stopped reading
+      press-first.
+    - Regenerated `web_assets_gz.h` (the dashboard's gzip 65,348 bytes),
+      `wap.json` and `flash.json`. `test_docs_claims.py` banned 141 more
+      retired sentences where they stood. Totals: 41 BANNED, 565 RETIRED_IN
+      over 191 files, 624 forms (MUST_FAIL's 41 and MUST_FAIL_IN's 583),
+      547 replacements, 24 tests.
+  - The sixth pass's round-1 review (#1843, 2026-10-26; three lenses:
+    security, tests, docs and guards). Each finding was reproduced first.
+    - The tap. The pass wrote "the receipt goes only to the one address
+      already asking" into the WAP's gate-open serial line and "receipt to
+      the one page already asking" into its boot banner and the README,
+      and the getting started guide and the Lab's BOOT card had said the
+      same since #1842.
+      `tap_arbitrate()` (`provisioning_gate.h`) serves the sole address
+      seen asking from 10 s before the tap onward, and that window runs
+      past the tap: a tap no page was asking for goes to the first address
+      that asks inside its 30 s. Reproduced on the header: an unasked tap
+      and one stranger asking 5 s later is `TAKE`; a second address asking
+      after the tap, before the owner's next poll, closes it for both; an
+      ask 31 s after it is `NO_TAP`. The serial line now says "the receipt
+      goes to one asker; with no page asking, the first address to ask
+      gets it", the banner "receipt to one asker: ask first, or the first
+      to ask gets it", and the guide, the README, `magic_pairing.md` (which
+      still said a short press opens the receipt gate) and the Lab's BOOT
+      card say who gets an unasked tap; the Lab's strap trainer says the
+      tap goes to one asking page, so the page asks first. The trainer's
+      held message adds that a landing session can turn Bluetooth off,
+      which the hold keeps, so no phone reaches the reopened door.
+    - The old card. The pass's recovery copy said that after a new key the
+      old card's chain stays verifiable off-device (`usb_onboard.md`) or is
+      kept, not adopted (the serial guide), and the website's said its log
+      still checks out offline against the old public key. With the card
+      left in, the flagship's fork guard
+      (`sd_tail_forks_chain()`, once per mount) refuses every append while
+      the old tail's sequence number is ahead of the new chain, and its
+      log line's "reboot to reconcile" never reconciles a card the new key
+      did not sign; from a mount after the new chain passes that tail it
+      appends the new key's records to the same `/WITNESS/records.jsonl`.
+      The WAP's `sd_append_witness_record()` has no fork guard and appends
+      at once. `tools/verify_witness_log.py` fails both mixed files under
+      the old key and under the new one (reproduced with its own chain
+      builder). `usb_onboard.md`, the serial recovery guide and the fork
+      guard's comment now say to copy the old log off or use a fresh card,
+      and the log line reads "SD log ahead of chain: reboot or use new
+      card" (it fits the 48-byte detail field; the old one was cut off).
+    - A cleared unit. `magic_pairing.md` (the rule's quote, "a unit its
+      owner cleared", "the owner re-arms it with Forget Wi-Fi", the open
+      door's list, §2.3), `ble_protocol.md`, the glossary, the FAQ's quote,
+      `TRUST_MODEL.md`, the docs index, a lesson's quote, the Sense and
+      Vision READMEs and `improv_core.h` (both copies) still credited the
+      owner with clearing it; on a WAP any landing session can send Forget
+      Wi-Fi (`handle_wifi_forget_auth()` is `api_auth_check()`, which takes
+      the `cv_session` cookie before the bearer, F345). The header's rule
+      now reads "a new one nobody owns yet, or one whose network was
+      cleared", and each copy follows it.
+    - The WAP's gate. Copies still called routes behind `api_auth_check()`
+      bearer-gated: `firmware_ota.md` ("all endpoints are bearer-token gated
+      on canary and canary-wap": the WAP's four OTA routes take a landing
+      session, so any host on the network can start an install of the
+      signed release or point the device at another update server; the
+      engine still installs only a newer image the release key signed),
+      `node_status.h` (all three copies),
+      `PARITY.md`, `FIRMWARE_MAP.md`, the captive portal test plan, the
+      Home Assistant setup's diagnostics note, the witness API spec,
+      `DISCOVERY.md`, the iPhone app's `DeviceAPI.swift`,
+      `SensingNowSection.swift`, `DeviceDetailView.swift`, `WapEvents.swift`
+      and `WapEventsTests.swift`, and in the WAP sketch `api_auth.h`,
+      `wap_server.h`, `wap_diagnostics.h`, `airtime_governor.cpp`,
+      `chirp_api.h`, the rename route, the wrappers' comments and the route
+      check's allow-list note. Two comments said the dashboard's
+      `secureFetch` sends the bearer on every call; it sends one only when
+      the page holds a token (`household_api.h`, the mesh wrappers). The
+      settings test plan's goal ("WiFi access alone does not authorize
+      settings API calls") now says the landing page mints a session for
+      any host on the network. Dated notes (three CHANGELOG lines, the
+      mesh and Chirp audit's C12 fix, two lines of the v0.3 closeout and
+      `SECURITY-AUDIT.md`'s C12) carry amendments.
+    - The iPhone design note still said the `/companion` page has to tell
+      people to install Bluefy; the pass had taken every such pointer out
+      of the page, which now sends an iPhone owner to the dashboard.
+    - Nits carried: `PARTITIONS.md`, `regression_check.sh` and
+      `partitions_secure.csv` said every Canary build is `framework =
+      arduino`; every released one is, and the canary-ota teaching sample
+      is ESP-IDF with `CONFIG_NVS_ENCRYPTION=y` and no `nvs_keys`
+      partition. `mesh_state.h`'s "either way" now says a flash read learns
+      the peer list only on a board with flash encryption on. The
+      Bluetooth check was offered after flashing a flagship, which serves
+      no console (`ble_console.h` is the WAP's alone): both flashers now
+      offer it for the WAP only and name the WAP in its copy, and
+      `desktop_parity.test.js` holds the console's service UUID to the WAP
+      tree. The token's lifetime (the WAP README, `magic_pairing.md` §2.4)
+      names a flasher's restore of a safety copy, which puts back the token
+      and key that copy holds.
+    - Tests: `test_docs_claims.py` bans 95 more retired sentences where
+      they stood, 16 of them replacements the sixth pass wrote, and five of
+      its reasons that said "already asking" now say who gets the tap.
+      Every new row's deletion, the row pointed at `README.md` and a dead
+      needle each fail the suite (285 of 285). Totals: 41 BANNED, 660
+      RETIRED_IN over 207 files, 719 forms (MUST_FAIL's 41 and
+      MUST_FAIL_IN's 678), 617 replacements, 24 tests. `wap.test.js`
+      holds the Lab's BOOT card to the one-asker wording. `gen_wap.py` run
+      (`wap.json` only); `gen_csp.py --check` passes.
+    - The website (`reset-and-key-claims.test.mjs`) now also scans a page's
+      meta descriptions and alt and title text, and retires the sticker
+      page's "This is not the Canary this sticker was made for", the
+      recovery deck's "just re-seat the card and reboot", the verify page's
+      "copy-able sticker still can't be faked", the safety page's "close
+      the door behind you", "still checks out offline against the old
+      public key" and how-it-works' "take the device itself and read the
+      key"; how-it-works names a flasher's safety backup and scopes "we
+      never have either" to a Canary you flash yourself.
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),

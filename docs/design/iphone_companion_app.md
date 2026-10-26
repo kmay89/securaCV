@@ -115,10 +115,11 @@ you *raise slowly* beats chasing every new API.
 > already scaffolds a Tauri v2 wrapper of the web Lab, and that is the right call
 > for *reusing the Lab* on a tablet. But the living-with-it app wants three
 > things a WebView fights you on: **CoreBluetooth** (iOS Safari has no Web
-> Bluetooth — the device's own `/companion` PWA has to tell people to install
-> Bluefy; a native app could erase that footnote, but today it reaches only the
-> Bluetooth setup door and the beacons, not a WAP's console or bonded lane,
-> ledger A65), **Secure Enclave key custody**,
+> Bluetooth, so the device's own `/companion` PWA sends an iPhone owner to the
+> WAP's dashboard instead of its Bluetooth console; a native app has
+> CoreBluetooth, but today it reaches only the Bluetooth setup door and the
+> beacons, not a WAP's console or bonded lane, ledger A65), **Secure Enclave
+> key custody**,
 > and **reliable background notifications**. Those are exactly the native
 > capabilities the `desktop-lab` `native_capabilities()` seam marks as "Phase
 > 2." This app *is* Phase 2.

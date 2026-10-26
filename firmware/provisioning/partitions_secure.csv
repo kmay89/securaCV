@@ -36,8 +36,10 @@
 #   (common/identity/key_at_rest.h reports it; docs/design/
 #   hardware_root_of_trust.md).
 # - nvs_keys is where ESP-IDF's NVS encryption would keep its keys; no
-#   Canary build reads it (every one is framework = arduino, where NVS
-#   encryption is not available). ESP-IDF says to flag it 'encrypted'
+#   Canary build reads it (every released build is framework = arduino,
+#   where NVS encryption is not available, and the ESP-IDF canary-ota
+#   teaching sample has no nvs_keys partition). ESP-IDF says to flag it
+#   'encrypted'
 # - spiffs may contain configuration (encrypt for safety)
 #
 # Phase 1 (development):

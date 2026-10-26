@@ -63,7 +63,7 @@ Witness Wall** is the Apple TV app that polls `GET /api/fleet`.
 | **canary-sense** | ✅ | ✅ open on :80 | ✅ | ✅ ⁸ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ ⁹ |
 | **canary-vision** | ✅ | ✅ open on :80 | ✅ | ✅ ⁸ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ ⁹ |
 | **canary-sentinel** | ✅ | ✅ open on :80 | ✅ | ✅ ⁸ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ ⁹ |
-| **canary-wap** | ✅ | ✅ bearer-gated ¹⁰ | ⚠️ ¹¹ | ⚠️ ¹² | ❌ ¹³ | ❌ ¹³ | ✅ | ✅ | ✅ | ✅ |
+| **canary-wap** | ✅ | ✅ gated ¹⁰ | ⚠️ ¹¹ | ⚠️ ¹² | ❌ ¹³ | ❌ ¹³ | ✅ | ✅ | ✅ | ✅ |
 | **canary (PIO)** | ✅ (30 s wipe opt-in) | ✅ bearer-gated ¹⁰ | ✅ | ⚠️ ¹² | ❌ ¹³ | ❌ ¹³ | ✅ | ✅ | ✅ | ⚠️ ⁹ |
 | **canary-display** | ⚠️ ¹⁴ | ✅ open on :80 | ⚠️ ¹¹ | ✅ | ⚠️ ¹⁵ | ❌ ¹⁵ | ✅ | ✅ (direct) ¹⁶ | ✅ | ⚠️ ⁹ |
 
@@ -126,9 +126,11 @@ Witness Wall** is the Apple TV app that polls `GET /api/fleet`.
    file-upload route (the PIO canary's `POST /api/ota` is the dev-only,
    unsigned one). `OTA.md` §4 names the URL-install alternative a signed
    manifest on any HTTP server gives you.
-10. **Gated, with the same body.** The WAP and the PIO canary answer
-    `/api/status` behind their bearer token (they also serve a rich, gated
-    status and carry more than the coarse body); the shared `node_status`
+10. **Gated, with the same body.** The PIO canary answers `/api/status`
+    behind its bearer token, and the WAP behind `api_auth_check()`, which
+    takes the bearer or the landing session any host on its network can
+    mint (ledger F346), so the WAP's status is not the owner's alone (both
+    serve a rich, gated status and carry more than the coarse body); the shared `node_status`
     body rides inside it. The three headless boards and the display answer it
     open on port 80, coarse by construction.
 11. **Own TXT, same essentials.** The WAP (`device_id fw host name model dt
@@ -345,7 +347,7 @@ These are the calls.
   phone-home scan matches them, and `docs/security/SECURITY_MODEL.md`
   discloses the new path. Their records still stamp `ts_ms` from uptime.
 - **`/api/status` is open and coarse on nodes that had no HTTP server**, and
-  rides inside the bearer-gated status on the two that already had one. The
+  rides inside the gated status on the two that already had one. The
   body never carries a MAC, a key or the broker address, so it is safe to be
   open; the roll-call the Wall polls was already open on the same terms.
 - **The fleet key is derived, not provisioned.** HKDF of the Wi-Fi credentials

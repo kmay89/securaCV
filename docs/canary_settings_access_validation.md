@@ -6,7 +6,11 @@ Manual test pass for the `canary.local/settings` flow on Canary WAP firmware.
 
 Confirm that Settings is easy to reach without weakening the threat model:
 
-- WiFi access alone does not authorize settings API calls.
+- A browser with no session for the device gets no settings data or actions
+  until it signs in. That is not a boundary against a host on the WiFi: the
+  landing page at `/` mints a session for any host on the network with one
+  tap ("Open dashboard"), and that session reaches the settings API (ledger
+  F346).
 - A valid dashboard session opens Settings without another BOOT tap.
 - API token and BOOT-tap fallback remain clear and usable.
 

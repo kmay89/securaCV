@@ -350,7 +350,12 @@ that embeds its public half into a dev build.
 
 ## Device API
 
-All endpoints are bearer-token gated on canary and canary-wap. Since 2026-08
+All endpoints are bearer-token gated on canary. On canary-wap they take
+`api_auth_check()`, which passes the bearer token or the landing session the
+dashboard's landing page mints for any host on the network (ledger F346), so
+any LAN host can start an install of the signed release or point the device
+at another update server (it still installs only an image the release key
+signed). Since 2026-08
 canary-display serves `status`/`check`/`install` under the same contract —
 same routes, statuses, and body shapes, so the desktop Flasher's one-click
 update works on displays too — but LAN-open like the rest of the glass web

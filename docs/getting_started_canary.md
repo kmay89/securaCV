@@ -804,9 +804,11 @@ line at boot, and its serial command `w` prints both at any time. A short
 BOOT press prints neither: it opens the provisioning gate for 30 seconds.
 On the all-rounder Canary that unlocks one home-network page load or one
 recovery-kit fetch, whichever asks first, so tap BOOT and then reload the
-dashboard within the 30 seconds. On a WAP it hands the recovery kit only
-to the one page already asking for it, so click **Use BOOT Tap Once** on the
-dashboard first and press when the page says to.
+dashboard within the 30 seconds. On a WAP it hands the recovery kit to one
+asking address: click **Use BOOT Tap Once** on the dashboard first and press
+when the page says to. A second address asking from 10 seconds before the
+tap closes it, and a tap no page was asking for goes to the first address
+that asks after it.
 
 Either flasher's done card shows the same pair after a flash, and a
 recovery kit saved from the dashboard carries the key as `ap_password`

@@ -498,10 +498,10 @@ function renderReassurance({ nativeShell = false } = {}) {
   // check that stands apart from flashing (it writes nothing), reachable any
   // time, not just after a flash.
   const bt = el("details", "flash-card flash-ble-entry");
-  bt.append(el("summary", null, "🔵 Already have a Canary? Test it over Bluetooth →"));
+  bt.append(el("summary", null, "🔵 Already have a Canary WAP? Test it over Bluetooth →"));
   if (nativeShell) {
     bt.append(el("p", "muted",
-      "A Canary keeps a read-only Bluetooth console alive even when Wi-Fi is down — " +
+      "A Canary WAP keeps a read-only Bluetooth console alive even when Wi-Fi is down — " +
       "reading its live snapshot proves it’s on, healthy and reachable, and writes " +
       "nothing. This app’s window has no Bluetooth of its own, so the check runs in " +
       "the browser Lab in Chrome or Edge on this computer (the iPhone app does not " +
@@ -519,7 +519,7 @@ function renderReassurance({ nativeShell = false } = {}) {
     }
   } else {
     bt.append(el("p", "muted",
-      "Skip the cable: connect to a running Canary’s Bluetooth console and read " +
+      "Skip the cable: connect to a running Canary WAP’s Bluetooth console and read " +
       "its live snapshot — proof it’s powered, healthy, and reachable even when " +
       "WiFi is down. Chromium browser on a computer or Android."));
     const btBtn = el("button", "ghost small", "Open the Bluetooth check");
@@ -4980,15 +4980,15 @@ function phaseDone(opts) {
     twin.title = proveSpec.emulated.how;
     row.append(twin);
   }
-  // AP-based Canaries (canary / WAP) run the read-only Bluetooth console, so
-  // offer the over-the-air "it's on" check right after the USB flash — the same
+  // The WAP runs the read-only Bluetooth console (ble_console.h is the only
+  // firmware that serves it; the flagship canary boards serve none), so offer
+  // the over-the-air "it's on" check right after its USB flash — the same
   // proof, on the path that survives a WiFi outage.
   const p = opts.product;
-  const bleCapable = p && !opts.isBackup &&
-    (core.productRole(p) === "wap" || p.provisioning === "ap");
+  const bleCapable = p && !opts.isBackup && core.productRole(p) === "wap";
   if (bleCapable) {
     const bt = el("button", "ghost", "Check over Bluetooth →");
-    bt.title = "Reach this Canary's read-only Bluetooth console and read its live snapshot";
+    bt.title = "Reach this WAP's read-only Bluetooth console and read its live snapshot";
     bt.addEventListener("click", () => setPhase(phaseBluetoothCheck(() => setPhase(phaseDone(opts)))));
     row.append(bt);
   }
@@ -5032,9 +5032,9 @@ function phaseBluetoothCheck(back) {
   const goBack = back || (() => setPhase(phaseConnect()));
   const box = el("section", "flash-card flash-ble");
   box.append(el("div", "flash-big-emoji", "🔵"));
-  box.append(el("h2", null, "Is it on? Reach a Canary over Bluetooth"));
+  box.append(el("h2", null, "Is it on? Reach a Canary WAP over Bluetooth"));
   box.append(el("p", "muted",
-    "A separate check from flashing: a Canary keeps a read-only Bluetooth " +
+    "A separate check from flashing: a Canary WAP keeps a read-only Bluetooth " +
     "“console” alive even when WiFi is down. This asks your browser to find " +
     "one, connect, and read its live snapshot — proof it’s on and talking. " +
     "Nothing is written to the board."));

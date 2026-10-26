@@ -201,10 +201,11 @@ dashboard, the SoftAP recovery portal with its printed key, and the BOOT-tap
 receipt are the owner's paths; the bonded rescue service is there too, but
 the iPhone app never reaches it on a WAP, and whether the companion page's
 Bluetooth chooser lists a WAP waits on a bench, ledger A65). **There is no tap door on the WAP in this version:** the
-BOOT button keeps the sketch's own gestures: a short press opens the 30 s
-receipt gate for the one page already asking for it (click Use BOOT Tap Once
-first and press when the page says to; a second address asking closes the
-tap, sweep F342), a 2 s hold prints the identity on serial, and a 10 s hold is
+BOOT button keeps the sketch's own gestures: a short press hands the
+receipt to one asker for 30 s (click Use BOOT Tap Once first and press when
+the page says to; a second address asking from 10 s before the tap closes
+it, and a tap no page was asking for goes to the first address that asks
+after it, sweep F342), a 2 s hold prints the identity on serial, and a 10 s hold is
 the factory reset (`factory_reset_by_hold()`). The hold clears the saved
 Wi-Fi networks, the broker row, the device name and the first-boot flag,
 keeps the identity key and the API token (derived from the key, or the
@@ -393,7 +394,7 @@ any host on the home network: `/api/pairing-qr` (it carries the token). The
 - **No MAC Addresses Stored:** RF detection counts devices, not identities
 - **Time Buckets:** Coarsened timestamps (ten-minute buckets in every build profile)
 - **Local-First:** All data stays on device unless explicitly exported
-- **Session Rotation:** the RF presence detector's ephemeral session tokens rotate every 4 hours. The API token does not rotate: the 10 s hold and Forget Wi-Fi keep it, and only an install or a full erase in a flasher replaces it
+- **Session Rotation:** the RF presence detector's ephemeral session tokens rotate every 4 hours. The API token does not rotate: the 10 s hold and Forget Wi-Fi keep it, an install or a full erase in a flasher replaces it, and a flasher's restore of a safety copy puts back the token that copy holds
 
 ## Project Structure
 

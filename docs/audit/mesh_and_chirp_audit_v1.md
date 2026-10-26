@@ -224,7 +224,7 @@ The file's own header warns:
 
 If wired naively, `POST /api/chirp/send` becomes a free origination endpoint accessible by anyone on the LAN. Comparable risk to a smart bulb that auto-pairs without challenge.
 
-**Fix in this branch:** register `chirp_api::register_routes()` in `canary_wap.ino` using the same Bearer-token template trampoline as `bluetooth_api.h` (PR #437) and `household_api.h` (PR #438). `POST /api/chirp/send` additionally requires a 2-second hold timestamp from the UI per `spec/chirp_channel_v0.md` §4.1.
+**Fix in this branch:** register `chirp_api::register_routes()` in `canary_wap.ino` using the same Bearer-token template trampoline as `bluetooth_api.h` (PR #437) and `household_api.h` (PR #438) *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)*. `POST /api/chirp/send` additionally requires a 2-second hold timestamp from the UI per `spec/chirp_channel_v0.md` §4.1.
 
 ### C13 — Presence requirement gates only `send_chirp` (High)
 

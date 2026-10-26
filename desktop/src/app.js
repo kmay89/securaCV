@@ -5308,16 +5308,17 @@ function proveSpecFor(product) {
   return (p && p.prove) || null;
 }
 
-// The read-only Bluetooth console runs on the AP-provisioned Canaries and the
-// WAP (the browser offers its check for exactly these). This window has no
+// The read-only Bluetooth console runs on the WAP alone (ble_console.h is the
+// only firmware that serves it; the flagship boards serve none, and the
+// browser offers its check for the WAP alone too). This window has no
 // Bluetooth of its own, so the check is a pointer to the browser Lab in a
 // Chromium browser (the iPhone app does not reach a WAP's console, ledger
 // A65), never a dead end.
 function bleCheckable(product) {
-  return !!product && (product.role === "wap" || product.provisioning === "ap");
+  return !!product && product.role === "wap";
 }
 const BLE_CHECK_NOTE =
-  "A Canary keeps a read-only Bluetooth console alive even when Wi-Fi is down — " +
+  "A Canary WAP keeps a read-only Bluetooth console alive even when Wi-Fi is down — " +
   "reading its live snapshot proves it’s on, healthy and reachable, and writes " +
   "nothing. This app’s window has no Bluetooth of its own, so the check runs in " +
   "the browser Lab in Chrome or Edge on this computer (the iPhone app does not " +

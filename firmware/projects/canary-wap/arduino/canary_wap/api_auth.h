@@ -1,7 +1,9 @@
 /*
  * SecuraCV Canary — API Authentication Module
  *
- * Provides Bearer token authentication for the REST API with:
+ * Provides the REST API's authentication with (api_auth_check() takes the
+ * landing session's cv_session cookie first, which the landing page mints
+ * for any host on the network, ledger F346, and then the bearer token):
  * - Constant-time token comparison (prevents timing side-channel attacks)
  * - Exponential backoff on failed attempts (brute-force mitigation), one
  *   backoff per source address (sweep F343): 8 tracked addresses plus one

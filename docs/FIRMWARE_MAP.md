@@ -308,8 +308,9 @@ canary-vision, canary-sense and canary-sentinel. Facts:
   bench-verified** (`V1_BENCH_TEST_RUNBOOK.md` Track E unchecked).
 - **Delivery**: daily jittered manifest pull (first check ~2 min after boot)
   on every linked target; HA update entity + Auto Update switch via
-  device-published discovery; bearer-gated `/api/ota/{status,check,install,config}`
-  on canary and WAP; LAN-open `/api/ota/{status,check,install}` on the
+  device-published discovery; `/api/ota/{status,check,install,config}` gated
+  on canary (the bearer) and WAP (`api_auth_check()`: the bearer, or a landing
+  session any host on the network can mint, ledger F346); LAN-open `/api/ota/{status,check,install}` on the
   display; BLE OTA and USB drop-file (both signed) on the WAP only; the dev-only
   unsigned `POST /api/ota` on canary dev builds. **No signed manual web
   upload on any release build; no hub push; no staged rollout; no OTA state

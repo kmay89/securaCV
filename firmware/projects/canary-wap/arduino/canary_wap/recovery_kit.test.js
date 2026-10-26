@@ -664,8 +664,9 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
   });
 
   it("the line says to press only once the device has answered an ask (sweep F342's fourth review)", async () => {
-    // The tap goes to an address that is already asking, and the page's
-    // first ask can still be on its way when the line appears (a TLS
+    // The tap goes to the one address asking from 10 s before it on (a tap
+    // no page was asking for goes to the first asker after it), and the
+    // page's first ask can still be on its way when the line appears (a TLS
     // handshake, a blip the page swallows, a busy server). A press made as
     // the old line appeared ("Now short-tap BOOT", set before the first
     // fetch) could land before any ask of the page's had reached the

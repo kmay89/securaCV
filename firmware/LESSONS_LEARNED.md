@@ -1943,8 +1943,9 @@
   a device nobody owns yet, and for an owner's own tap — never for a device
   that has an owner and a bad day.* *(Amended 2026-10-22, #1843: the header's
   sentence now reads "the door is open for a device with NO NETWORK SAVED (a
-  new one nobody owns yet, or one its owner cleared), and for an owner's own
-  tap". The 10 s hold, and Forget Wi-Fi on a WAP, clear the network but keep
+  new one nobody owns yet, or one whose network was cleared), and for an
+  owner's own tap". The 10 s hold, and Forget Wi-Fi on a WAP (which any
+  landing session can send, ledger F345), clear the network but keep
   the witness identity on a Sense, a Vision and a WAP, and a WAP's token, so
   a cleared unit still has an owner, and its door goes to whichever client
   connects first (`docs/design/magic_pairing.md` §2.2). The "no owner yet"
