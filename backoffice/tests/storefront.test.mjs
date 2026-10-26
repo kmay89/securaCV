@@ -43,7 +43,8 @@ test('the estimate before paying: ship date from the cadence, arrival window fro
 });
 
 test('what is sellable now: the batch cap minus this batch\'s orders, never more than the shelf builds; pending-FCC never', () => {
-  const db = testDb(); const cat = DEMO_CATALOG; const cfg = { ...boston, tz: 'UTC' }; const now = new Date();
+  // `now` sits in the same ISO week as sampleOrder's paid date, so "this batch" is the batch the sample order lands in whatever day the test runs
+  const db = testDb(); const cat = DEMO_CATALOG; const cfg = { ...boston, tz: 'UTC' }; const now = new Date('2026-10-21T12:00:00Z');
   const parts = cat.products.get('wap-parts'); assert.equal(parts.stock, 15);
   assert.equal(availableNow(db, parts, { now, tz: 'UTC' }), 15, 'the cap, with nothing sold and no recipe');
   recordOrder(db, sampleOrder({ external_id: 'a', items: [{ sku: 'wap-parts', name: 'p', qty: 4, unit_cents: 1500 }] }), { catalog: cat });

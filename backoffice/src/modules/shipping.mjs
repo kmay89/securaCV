@@ -7,6 +7,7 @@
 import { nowIso } from '../db.mjs';
 import { transition, addEvent } from './orders.mjs';
 import { raise, resolve } from './exceptions.mjs';
+import { timedFetch } from '../net.mjs';
 
 export const trackingConfigured = (cfg) => !!(cfg.uspsClientId && cfg.uspsClientSecret);
 let tokenCache = { token: null, until: 0 };
@@ -29,7 +30,7 @@ export function mapUsps(body) {
   return { status, detail, expected, deliveredAt };
 }
 
-export async function pollTracking(db, cfg, { fetchImpl = fetch, now = Date.now(), limit = 50, minAgeH = 4 } = {}) {
+export async function pollTracking(db, cfg, { fetchImpl = timedFetch, now = Date.now(), limit = 50, minAgeH = 4 } = {}) {
   if (!trackingConfigured(cfg)) return { skipped: 'USPS_CLIENT_ID / USPS_CLIENT_SECRET not set — customers see the estimate' };
   const since = new Date(now - minAgeH * 3600000).toISOString();
   const open = db.all("SELECT * FROM orders WHERE status = 'shipped' AND tracking IS NOT NULL AND tracking != '' AND (carrier IS NULL OR carrier LIKE '%USPS%') AND (tracking_checked_at IS NULL OR tracking_checked_at < ?) ORDER BY shipped_at LIMIT ?", since, limit);

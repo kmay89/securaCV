@@ -22,7 +22,8 @@ export function loadConfig(overrides = {}) {
     stripeWebhookSecret: env('STRIPE_WEBHOOK_SECRET', ''),
     stripeApiKey: env('STRIPE_API_KEY', ''),                        // optional, read-only uses (payout list)
     githubToken: env('GITHUB_TOKEN', ''),
-    githubRepo: env('GITHUB_REPO', 'kmay89/securaCV'),
+    githubRepo: env('GITHUB_REPO', ''),                             // exceptions open issues here when GITHUB_TOKEN is set — a PRIVATE repo: the bodies describe customers' orders
+    trustedProxies: env('TRUSTED_PROXIES', 'loopback,private'),      // whose X-Forwarded-For to believe: loopback, private, exact addresses, v4 CIDRs
     storeJson: env('STORE_JSON', 'https://securacv.com/store.json'), // catalog: path or URL
     shippingJson: env('SHIPPING_JSON', ''),                           // boxes + parcels: path or URL; blank = next to store.json
     slaHours: Number(env('SUPPORT_SLA_HOURS', '24')),

@@ -30,8 +30,11 @@ test('operator setup, login with password + code, sessions and API tokens', () =
   assert.equal(login(db, { password: 'wrong', code: totp(secret) }), null, 'wrong password fails');
   const s = login(db, { password: 'a very long password', code: totp(secret) });
   assert.ok(s && s.id && s.csrf && s.role === 'owner', 'the only person can log in without typing an email');
-  assert.ok(login(db, { email: 'owner@localhost', password: 'a very long password', code: totp(secret) }), 'and with it');
-  assert.equal(login(db, { email: 'nobody@localhost', password: 'a very long password', code: totp(secret) }), null);
+  // a code is good for one login: the same one again is refused, the next step's is not
+  assert.equal(login(db, { email: 'owner@localhost', password: 'a very long password', code: totp(secret) }), null, 'the code just used is spent');
+  const later = Date.now() + 30_000;
+  assert.ok(login(db, { email: 'owner@localhost', password: 'a very long password', code: totp(secret, { time: later }) }, { now: later }), 'and with the email');
+  assert.equal(login(db, { email: 'nobody@localhost', password: 'a very long password', code: totp(secret, { time: later }) }, { now: later }), null);
   assert.ok(sessionFor(db, s.id));
   assert.equal(sessionFor(db, 'nope'), null);
   const t = createApiToken(db, 'cli');

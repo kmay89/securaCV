@@ -31,7 +31,7 @@ already chose it. Everything *around* Stripe is here.
 | A status page + uptime monitor (Statuspage, UptimeRobot) | **Status** | HTTP probes, 90-day uptime, incidents, public `/status` and `/status.json` |
 | Form backends (Formspree) | **Forms** | `/forms/contact`, `/waitlist`, `/request`, `/feedback`, `/press`, `/wholesale` — honeypot + rate limit, straight into tickets and the waitlist |
 | An ops dashboard (Metabase, Baremetrics) | **Home** | what needs doing today, the last 30 days against the 30 before, a sales chart, the activity feed. **Not** visitor analytics — the site has none and never will |
-| Order management (Shopify's order admin) | **Orders** | status tabs with counts, filters by batch / tag / date / code / SKU, a timeline per order (placed, packed, shipped, refund, notes, tags, address changes, boards scanned), bulk pack / tag / print, packing slips, re-send tracking, the weekly **Batches** page, one search box over everything |
+| Order management (Shopify's order admin) | **Orders** | status tabs with counts, filters by batch / tag / date / code / SKU, a timeline per order (placed, packed, shipped, refund, notes, tags, address changes, boards scanned), bulk tag / print / deliver / cancel (never bulk pack — the bench ticks each line), packing slips, re-send tracking, the weekly **Batches** page, one search box over everything |
 | Alerting (PagerDuty) | **Exceptions** | doc 20, principle 4: thresholds open one deduplicated GitHub issue and close it themselves. Silence means healthy |
 | Backups you can trust | **Backups** | every copy is opened and proven (integrity, row counts, the books balanced); an off-site copy to any S3-compatible bucket, sealed with AES-256-GCM before it leaves, read back with a HEAD; a weekly drill pulls the latest copy down and proves it boots; `backoffice restore` is one command |
 | Reconciliation | **Reconcile** | daily, with a restricted Stripe key: every paid payout is in the books (posted automatically), every successful charge has an order — a gap is an exception with the ids |
@@ -134,8 +134,9 @@ Node 22.13 or newer is the only requirement.
 Then, once each:
 
 1. **Stripe → Developers → Webhooks** → endpoint `BASE_URL/webhooks/stripe`,
-   events `checkout.session.completed`, `charge.refunded`, `payout.paid`,
-   `customer.subscription.*`, `invoice.paid`. Paste the signing secret into
+   events `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+   `charge.refunded`, `charge.dispute.created`, `charge.dispute.closed`,
+   `payout.paid`, `customer.subscription.*`, `invoice.paid`. Paste the signing secret into
    `.env`. Put the store SKU in each Payment Link product's **metadata** as
    `sku` — that is how a line item resolves to `store.json` without guessing.
 2. **The support mailbox**: an app password for SMTP and IMAP on the address
@@ -371,7 +372,7 @@ the business logic, the HTTP surface or a form cannot merge.
 |---|---|---|
 | Unit + module tests | every rule in every module: books balance, SKUs resolve, consent is enforced, TOTP matches RFC 6238, mail threads, probes raise and resolve. Fakes stand in for SMTP, IMAP, Stripe and GitHub, so no network, no credentials | `npm test` (under a second) |
 | End-to-end over HTTP | the server as a client sees it: login + CSRF, public forms, a signed Stripe webhook creating an order, the bearer API driving it to shipped, unsubscribe, invoice links | part of `npm test` (`tests/server.test.mjs`) |
-| The admin in a real browser | the forms as a person submits them — log in, ship an order, answer a ticket from a canned reply, receive stock, post an expense, note and tag an order, create and try a discount code, tag a customer, read a product, the analytics charts, the header search, bulk-pack a batch, log out — with zero page or console errors. This is the layer that catches a button whose form is missing a field | `npm i --no-save playwright && npx playwright install chromium`, then `npm test`; it skips (and says so) when Playwright is absent, and CI makes a skip a failure |
+| The admin in a real browser | the forms as a person submits them — log in, ship an order, answer a ticket from a canned reply, receive stock, post an expense, note and tag an order, create and try a discount code, tag a customer, read a product, the analytics charts, the header search, bulk-tag a batch, log out — with zero page or console errors. This is the layer that catches a button whose form is missing a field | `npm i --no-save playwright && npx playwright install chromium`, then `npm test`; it skips (and says so) when Playwright is absent, and CI makes a skip a failure |
 | You, on the demo | anything the tests did not think of | `backoffice demo` → `serve` → click around |
 
 The pattern for adding coverage: a bug found by hand becomes an assertion

@@ -225,7 +225,7 @@ export const boardsOn = (db, orderId) => db.all('SELECT id, serial, board, produ
 export function transition(db, id, to, { actor = 'web', carrier = null, tracking = null, cfg = null, at = null, shipping = null, measuredOz = null, postageCents = 0, shipAnyway = false, check = null } = {}) {
   const o = orderById(db, id); if (!o) throw new Error('no such order');
   if (typeof to !== 'string' || !STATUSES.includes(to)) throw new Error(`"${String(to).slice(0, 30)}" is not an order status (${STATUSES.join(', ')})`);
-  const allowed = { paid: ['packed', 'canceled'], pending: ['paid', 'canceled'], packed: ['shipped', 'paid'], shipped: ['delivered'], delivered: [] };
+  const allowed = { paid: ['packed', 'canceled'], pending: ['paid', 'canceled'], packed: ['shipped', 'paid', 'canceled'], shipped: ['delivered'], delivered: [] };
   // "Refunded" is what a recorded refund makes an order, never a status someone sets: setting it
   // by hand would leave the books showing a sale the customer no longer paid for.
   if (to === 'refunded') throw new Error(`record the refund instead (the order becomes refunded when the full amount is recorded) — ${o.number} stays ${o.status}`);
@@ -254,7 +254,8 @@ export function transition(db, id, to, { actor = 'web', carrier = null, tracking
     scale = weightCheck(plan, packedOz, { tolerance: cfg?.weightToleranceOz ?? 1.5 });
     if (scale.checked && !scale.ok) { if (!anyway) throw new Error(`the scale reads ${scale.measured} oz, the plan expects ${scale.expected} oz (${scale.delta > 0 ? '+' : ''}${scale.delta} oz, over the ${scale.tolerance} oz tolerance) — recount the box, or tick "pack anyway" and say why`); skipped.push(`scale ${scale.delta > 0 ? '+' : ''}${scale.delta} oz`); }
     if (anyway) skipped.push(`packed anyway: ${reason}`);
-  }
+  } else if (to === 'packed') skipped.push('bench check not run');   // packed from the API or a seed: the timeline says no line was ticked and no board scanned
+
   return db.tx(() => {
     const now = at || nowIso();
     db.run(`UPDATE orders SET status = ?, paid_at = CASE WHEN ? = 'paid' THEN ? ELSE paid_at END, packed_at = CASE WHEN ? = 'packed' THEN ? ELSE packed_at END,
@@ -263,6 +264,8 @@ export function transition(db, id, to, { actor = 'web', carrier = null, tracking
     if (to === 'packed') { if (!o.items.length) throw new Error(`${o.number} has no line items — fetch them from Stripe (STRIPE_API_KEY) or add them before packing`); consumeForOrder(db, o); db.run('UPDATE orders SET pack_plan = ?, measured_oz = COALESCE(?, measured_oz) WHERE id = ?', shipping ? JSON.stringify(plan) : null, packedOz, id); }
     // Unpacking frees the lines for editing, so the plan made for the old lines goes with it; the next pack plans afresh.
     if (to === 'paid' && o.status === 'packed') { releaseForOrder(db, o); db.run('UPDATE orders SET pack_plan = NULL WHERE id = ?', id); }
+    // Canceled: the boards scanned into it are not going anywhere; free them for the next order (a shipped one stays on its record).
+    if (to === 'canceled') { const freed = db.run("UPDATE devices SET order_id = NULL WHERE order_id = ? AND status != 'shipped'", id).changes; if (freed) addEvent(db, id, { kind: 'note', actor, at: now, text: `${freed} board${freed === 1 ? '' : 's'} released back to stock` }); if (o.status === 'packed') { const back = releaseForOrder(db, o); if (back.length) addEvent(db, id, { kind: 'unpacked', actor, at: now, text: `Canceled after packing — parts returned to stock: ${back.map(([sku, n]) => `${n}× ${sku}`).join(', ')}` }); } }
     if (to === 'shipped') {
       db.run('UPDATE orders SET carrier = ?, tracking = ?, measured_oz = ?, postage_cents = postage_cents + ? WHERE id = ?', carrier, tracking || null, measuredOz, postageCents, id);
       db.run('UPDATE devices SET status = \'shipped\' WHERE order_id = ?', id);
@@ -272,7 +275,7 @@ export function transition(db, id, to, { actor = 'web', carrier = null, tracking
     }
     const boxLine = plan?.boxes?.length ? ` · ${plan.boxes.map(b => `${b.box_name.replace(/ \(.*\)$/, '')} ${b.weight_oz} oz`).join(' + ')}${plan.total_cost_est != null ? ` · postage ≈ ${usd(Math.round(plan.total_cost_est * 100))}` : ''}` : plan?.warnings?.length ? ` · box: ${plan.warnings[0]}` : '';
     const scaleLine = scale.checked ? ` · scale ${scale.measured} oz vs ${scale.expected} oz${scale.ok ? ' ✓' : ` (${scale.delta > 0 ? '+' : ''}${scale.delta} oz, ${to === 'packed' ? 'packed' : 'shipped'} anyway)`}` : (to === 'shipped' ? measuredOz : packedOz) != null ? ` · scale ${to === 'shipped' ? measuredOz : packedOz} oz` : '';
-    const checkLine = check ? (skipped.length ? ` · ${skipped.join(', ')}` : ' · every line ticked') + (boards.length ? ` · boards ${boards.map(b => b.serial).join(', ')}` : '') + scaleLine : '';
+    const checkLine = check || skipped.length ? (skipped.length ? ` · ${skipped.join(', ')}` : ' · every line ticked') + (boards.length ? ` · boards ${boards.map(b => b.serial).join(', ')}` : '') + scaleLine : '';
     const line = { packed: `Packed${o.items.length ? ` · ${o.items.map(i => `${i.qty}× ${i.sku}`).join(', ')} pulled from stock` : ''}${boxLine}${checkLine}`, shipped: `Shipped via ${carrier || 'USPS'}${tracking ? ` · ${tracking}` : ''}${scaleLine}${postageCents ? ` · label ${usd(postageCents)}` : ''}${o.email ? ` · tracking emailed to ${o.email}` : ''}`, delivered: 'Delivered', canceled: `Canceled${o.total_cents - o.refunded_cents > 0 ? ` — ${usd(o.total_cents - o.refunded_cents)} was paid: refund it in Stripe, and the webhook (or "Record refund") writes it here` : ''}`, paid: o.status === 'packed' ? 'Unpacked — parts returned to stock' : 'Marked paid' }[to] || `Now ${to}`;
     addEvent(db, id, { kind: to === 'paid' && o.status === 'packed' ? 'unpacked' : to, actor, at: now, text: line });
     db.audit(actor, `order.${to}`, 'order', o.number, { carrier, tracking, boxes: plan?.boxes?.map(b => b.box) || undefined, measured_oz: measuredOz ?? packedOz ?? undefined, postage_cents: postageCents || undefined, scale: scale.checked ? (scale.ok ? 'ok' : 'off, went anyway') : undefined, skipped: skipped.length ? skipped : undefined });
@@ -314,6 +317,7 @@ export function refund(db, id, amountCents, { actor = 'web', reason = '', at = n
     db.run('UPDATE orders SET refunded_cents = ?, status = CASE WHEN ? >= total_cents THEN \'refunded\' ELSE status END WHERE id = ?', total, total, id);
     // Refunded in full before it shipped: the box is not going out, so the parts pulled for it go back on the shelf.
     if (total >= o.total_cents && o.status === 'packed') { const back = releaseForOrder(db, o); if (back.length) addEvent(db, id, { kind: 'unpacked', actor, at: at || nowIso(), text: `Refunded before shipping — parts returned to stock: ${back.map(([sku, n]) => `${n}× ${sku}`).join(', ')}` }); }
+    if (total >= o.total_cents && ['paid', 'packed'].includes(o.status)) { const freed = db.run("UPDATE devices SET order_id = NULL WHERE order_id = ? AND status != 'shipped'", id).changes; if (freed) addEvent(db, id, { kind: 'note', actor, at: at || nowIso(), text: `${freed} board${freed === 1 ? '' : 's'} released back to stock` }); }
     postRefund(db, o, amt, reason, (at || nowIso()).slice(0, 10));
     addEvent(db, id, { kind: 'refund', actor, at: at || nowIso(), text: `${total >= o.total_cents ? 'Full' : 'Partial'} refund of ${usd(amt)}${reason ? ` — ${reason}` : ''}${actor === 'stripe' ? ' (reported by Stripe)' : ' (record only — issue it in Stripe)'}` });
     db.audit(actor, 'order.refund', 'order', o.number, { cents: amt, reason });

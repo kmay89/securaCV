@@ -6,7 +6,7 @@ import { columns } from './charts.mjs';
 import { listCampaigns, campaign, createCampaign, updateCampaign, duplicateCampaign, queueCampaign, scheduleCampaign, sendTest, previewHtml, campaignReport } from './modules/campaigns.mjs';
 import { SEGMENTS, segmentCount, audienceStats, clearBounce } from './modules/contacts.mjs';
 import { listAutomations, automation, upsertAutomation, setAutomationEnabled, runsFor, runAutomations, automationReport, TRIGGERS } from './modules/automations.mjs';
-import { outboxStats } from './modules/mail.mjs';
+import { outboxStats, retryFailedMail } from './modules/mail.mjs';
 import { runJob } from './jobs.mjs';
 
 export function registerMail(app, { page, back, link }) {
@@ -23,7 +23,8 @@ export function registerMail(app, { page, back, link }) {
       form('/campaigns/new', c.csrf, `<b>New campaign</b><p class="muted">Plain text in, a designed mail out (the preview shows it). <code>{{first_name}}</code>, <code>{{name}}</code>, <code>{{city}}</code>, <code>{{site}}</code>, <code>{{unsubscribe}}</code> are filled in. <code># Heading</code>, <code>- bullets</code>, <code>**bold**</code> and bare links survive. Only people who confirmed the double opt-in receive it; every mail carries one-click unsubscribe; no pixels, ever.</p><div class="row">${field('slug', 'Slug', { required: true, placeholder: 'november-from-the-bench' })}${field('subject', 'Subject', { required: true })}</div><div class="row">${field('preheader', 'Preheader (the line inbox previews show after the subject)')}${field('segment', 'Who', { options: segOptions() })}</div>${field('body_text', 'Body', { type: 'textarea', required: true, rows: 12, placeholder: 'Hi {{first_name}},\n\nTwo things from the bench this month…' })}`, { submit: 'Save draft' }));
   });
   router.post('/campaigns/new', (c) => { const cp = createCampaign(db, c.body); back(c, `/campaigns/${cp.slug}`, 'draft saved'); });
-  router.get('/campaigns/outbox', (c) => page(c, 'Mail', mailTabs('outbox') + `<p>${button('/campaigns/flush', c.csrf, 'Send queued now', { quiet: true })}</p>` + table(db.all('SELECT * FROM mail_outbox ORDER BY id DESC LIMIT 200'), [{ label: 'When', get: r => dt(r.created_at) }, { label: 'To', key: 'to_addr' }, { label: 'Subject', key: 'subject' }, { label: 'Kind', key: 'kind' }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Error', key: 'last_error' }])));
+  router.get('/campaigns/outbox', (c) => page(c, 'Mail', mailTabs('outbox') + `<p>${button('/campaigns/flush', c.csrf, 'Send queued now', { quiet: true })} ${button('/campaigns/outbox/retry', c.csrf, 'Retry failed mail', { quiet: true })}</p>` + table(db.all('SELECT * FROM mail_outbox ORDER BY id DESC LIMIT 200'), [{ label: 'When', get: r => dt(r.created_at) }, { label: 'To', key: 'to_addr' }, { label: 'Subject', key: 'subject' }, { label: 'Kind', key: 'kind' }, { label: 'Status', html: r => statusPill(r.status) }, { label: 'Error', key: 'last_error' }])));
+  router.post('/campaigns/outbox/retry', (c) => { const n = retryFailedMail(db); db.audit('web', 'mail.retry_failed', 'outbox', String(n), {}); back(c, '/campaigns/outbox', `${n} failed mail${n === 1 ? '' : 's'} back in the queue`); });
   router.post('/campaigns/flush', async (c) => { const r = await runJob(app, 'outbox'); back(c, '/campaigns/outbox', JSON.stringify(r.result || r.error)); });
 
   // ---------- automations

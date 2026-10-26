@@ -40,9 +40,15 @@ export function totp(secretB32, { time = Date.now(), step = 30, digits = 6 } = {
   const code = ((h[off] & 0x7f) << 24 | h[off + 1] << 16 | h[off + 2] << 8 | h[off + 3]) % 10 ** digits;
   return String(code).padStart(digits, '0');
 }
-export function verifyTotp(secretB32, code, { time = Date.now(), window = 1 } = {}) {
+// Returns the 30-second step the code matched (a number, truthy) or false. A caller that remembers
+// the last accepted step passes it, and a code at or before it is refused: a code seen over someone's
+// shoulder is good for one login, not two.
+export function verifyTotp(secretB32, code, { time = Date.now(), window = 1, lastStep = null } = {}) {
   if (!/^\d{6}$/.test(String(code))) return false;
-  for (let w = -window; w <= window; w++) if (safeEqual(totp(secretB32, { time: time + w * 30_000 }), String(code))) return true;
+  for (let w = -window; w <= window; w++) {
+    const t = time + w * 30_000; const step = Math.floor(t / 30_000);
+    if (safeEqual(totp(secretB32, { time: t }), String(code))) return lastStep != null && step <= lastStep ? false : step;
+  }
   return false;
 }
 export const totpUri = (secret, account, issuer) => `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
@@ -57,7 +63,7 @@ export const ROLE_TEXT = {
 };
 // Id segments match any one segment, never only digits: the handler coerces whatever the
 // router decoded (`%31`, `+1`), so the rule must refuse by position, not by spelling.
-const OWNER_ONLY = /^\/(settings|users|books|api\/books|api\/jobs|api\/exceptions|settings\.json)(\/|$|\?)|^\/contacts\/[^/]+\/(forget|export\.json)(\/|$)|^\/api\/customers\/[^/]+\/(forget|export)(\/|$)/;
+const OWNER_ONLY = /^\/(settings|users|books|books\.csv|api\/books|api\/jobs|api\/exceptions|settings\.json)(\/|$|\?)|^\/contacts\/[^/]+\/(forget|export\.json)(\/|$)|^\/api\/customers\/[^/]+\/(forget|export)(\/|$)/;
 const SUPPORT_WRITES = /^\/(tickets|canned|warranty|waitlist|contacts\/(new|[^/]+\/(tags|notes|consent)))(\/|$)|^\/orders\/[^/]+\/(note|tags)\/?$|^\/api\/(tickets|mail\/ingest|customers\/[^/]+\/tags|orders\/[^/]+\/(note|tags))(\/|$)/;
 // The path is checked decoded (what the handler will see), and a path that does not decode is refused.
 export function can(role, method, rawPath) {
@@ -150,18 +156,40 @@ export function removeUser(db, userId, { actor = 'web' } = {}) {
   db.audit(actor, 'user.remove', 'user', u.email, { role: u.role }); return u;
 }
 
-// --- login: email (optional while there is one person), password, code. Eight wrong tries lock the person for fifteen minutes.
-export function login(db, { email = '', password, code }, { sessionHours = 12, ip = null } = {}) {
+// --- login: email (optional while there is one person), password, code.
+// Eight wrong tries from one address lock that person for fifteen minutes — for that address. The
+// lock lives in memory keyed by (person, address): a stranger guessing from anywhere cannot keep the
+// owner out of their own backoffice (the old database-wide lock re-armed on every wrong try, forever),
+// and the per-address limiter in the pipeline still slows the guesser down. The counter and the
+// lock time in the users table stay as a record (the people page shows them); a restart clears
+// the locks themselves, and the key carries the email so a fresh database's first person does not
+// inherit a lock armed against a previous one. A password check is run even for an unknown email, so the answer
+// takes the same time either way and the list of emails cannot be read off the clock.
+const LOCKS = new Map();
+const DUMMY_HASH = hashPassword('the same work for a name nobody has');
+const lockKey = (u, ip) => `${u.id}:${u.email}|${ip || '-'}`;
+export function lockState(user, ip, now = Date.now()) { const k = lockKey(user, ip); const l = LOCKS.get(k); if (l && l.until && l.until <= now) { LOCKS.delete(k); return null; } return l || null; }
+export const clearLocks = () => LOCKS.clear();
+export function login(db, { email = '', password, code }, { sessionHours = 12, ip = null, now = Date.now() } = {}) {
   const em = normEmail(email);
   const r = em ? db.get('SELECT * FROM users WHERE email = ?', em) : (() => { const rows = db.all("SELECT * FROM users WHERE status = 'active' AND password_hash IS NOT NULL LIMIT 2"); return rows.length === 1 ? rows[0] : null; })();
-  const fail = (why) => { if (r) db.run('UPDATE users SET failed_logins = failed_logins + 1, locked_until = CASE WHEN failed_logins + 1 >= 8 THEN ? ELSE locked_until END WHERE id = ?', new Date(Date.now() + 15 * 60000).toISOString(), r.id); db.audit('web', 'auth.login.failed', 'user', r?.email || em || null, { ip, why }); return null; };
-  if (!r || r.status !== 'active' || !r.password_hash || !r.totp_secret) return fail(!r ? (em ? 'unknown' : 'email required') : r.status);
-  if (r.locked_until && r.locked_until > nowIso()) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
+  const fail = (why) => {
+    if (r) {
+      db.run('UPDATE users SET failed_logins = failed_logins + 1 WHERE id = ?', r.id);
+      const l = lockState(r, ip, now) || { n: 0, until: null }; l.n++; if (l.n >= 8) { l.until = now + 15 * 60_000; db.run('UPDATE users SET locked_until = ? WHERE id = ?', new Date(l.until).toISOString(), r.id); } LOCKS.set(lockKey(r, ip), l);
+      if (LOCKS.size > 10_000) for (const [kk, v] of LOCKS) if (!v.until || v.until <= now) LOCKS.delete(kk);
+    }
+    db.audit('web', 'auth.login.failed', 'user', r?.email || em || null, { ip, why }); return null;
+  };
+  if (!r || r.status !== 'active' || !r.password_hash || !r.totp_secret) { verifyPassword(String(password || ''), DUMMY_HASH); return fail(!r ? (em ? 'unknown' : 'email required') : r.status); }
+  if (lockState(r, ip, now)?.until) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
   if (!verifyPassword(password, r.password_hash)) return fail('password');
-  if (!verifyTotp(r.totp_secret, code)) return fail('code');
-  const id = token(32); const csrf = token(24); const exp = new Date(Date.now() + sessionHours * 3600_000).toISOString();
+  const step = verifyTotp(r.totp_secret, code, { time: now, lastStep: r.totp_last_step ?? null });
+  if (!step) return fail('code');
+  const id = token(32); const csrf = token(24); const exp = new Date(now + sessionHours * 3600_000).toISOString();
   db.run('INSERT INTO sessions (id, created_at, expires_at, csrf, user_id) VALUES (?, ?, ?, ?, ?)', id, nowIso(), exp, csrf, r.id);
-  db.run('DELETE FROM sessions WHERE expires_at < ?', nowIso()); db.run('UPDATE users SET last_login_at = ?, failed_logins = 0, locked_until = NULL WHERE id = ?', nowIso(), r.id);
+  LOCKS.delete(lockKey(r, ip));
+  db.run('DELETE FROM sessions WHERE expires_at < ?', nowIso()); db.run('UPDATE users SET last_login_at = ?, failed_logins = 0, locked_until = NULL, totp_last_step = ? WHERE id = ?', nowIso(), step, r.id);
   db.audit(r.email, 'auth.login', 'user', r.email, { ip });
   return { id, csrf, expires_at: exp, user_id: r.id, email: r.email, name: r.name, role: r.role };
 }

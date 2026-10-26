@@ -3,6 +3,7 @@
 // and what it cost (the `income:discounts` contra account). A manual order
 // or the API can apply one too, with the same rules.
 import { nowIso } from '../db.mjs';
+import { currentTz } from '../render.mjs';
 
 export const KINDS = ['percent', 'fixed', 'free_shipping'];
 export const normCode = (s) => String(s || '').trim().toUpperCase();
@@ -36,12 +37,18 @@ export const describe = (d) => d.kind === 'percent' ? `${d.value}% off` : d.kind
 // The rules, in one place: a code counts only while active, inside its window,
 // over its minimum and under its use cap. The answer carries the reason, so
 // the form can say why — never a silent zero.
-export function evaluate(db, code, { subtotal_cents = 0, shipping_cents = 0, at = nowIso() } = {}) {
+// A window given as a date ("ends 2026-11-30") is that whole calendar day where the operator is: the code
+// works through the last minute of the 30th in OPERATOR_TZ, not until midnight UTC the night before. A
+// window given with a time is compared as the instant it names.
+const localDay = (iso, tz) => { try { const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(iso)).map(x => [x.type, x.value])); return `${p.year}-${p.month}-${p.day}`; } catch { return String(iso).slice(0, 10); } };
+const dateOnly = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v));
+export function evaluate(db, code, { subtotal_cents = 0, shipping_cents = 0, at = nowIso(), tz = currentTz() } = {}) {
   const d = discountByCode(db, code);
   if (!d) return { ok: false, reason: 'unknown code', discount_cents: 0 };
   if (d.status !== 'active') return { ok: false, reason: 'code is disabled', discount_cents: 0, discount: d };
-  if (d.starts_at && at < d.starts_at) return { ok: false, reason: `starts ${d.starts_at.slice(0, 10)}`, discount_cents: 0, discount: d };
-  if (d.ends_at && at > d.ends_at) return { ok: false, reason: `ended ${d.ends_at.slice(0, 10)}`, discount_cents: 0, discount: d };
+  const day = localDay(at, tz);
+  if (d.starts_at && (dateOnly(d.starts_at) ? day < d.starts_at : at < d.starts_at)) return { ok: false, reason: `starts ${d.starts_at.slice(0, 10)}`, discount_cents: 0, discount: d };
+  if (d.ends_at && (dateOnly(d.ends_at) ? day > d.ends_at : at > d.ends_at)) return { ok: false, reason: `ended ${d.ends_at.slice(0, 10)}`, discount_cents: 0, discount: d };
   if (subtotal_cents < d.min_subtotal_cents) return { ok: false, reason: `needs a subtotal of $${(d.min_subtotal_cents / 100).toFixed(2)}`, discount_cents: 0, discount: d };
   if (d.max_uses != null) { const used = db.get('SELECT COUNT(*) AS n FROM orders WHERE discount_code = ? AND status != \'canceled\'', d.code).n; if (used >= d.max_uses) return { ok: false, reason: `used ${used} of ${d.max_uses} times`, discount_cents: 0, discount: d }; }
   const cents = d.kind === 'percent' ? Math.round(subtotal_cents * d.value / 100) : d.kind === 'fixed' ? Math.min(d.value, subtotal_cents) : shipping_cents;

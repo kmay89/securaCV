@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { testDb, testCfg, catalog, sampleOrder, fixture } from './helpers.mjs';
-import { setupOperator, login, sessionFor, inviteUser, inviteFor, acceptInvite, confirmTotp, pendingTotp, beginTotpRotation, changePassword, setRole, setStatus, removeUser, listUsers, userByEmail, can, ROLES, totp, carryLegacyOperator, hashPassword, base32Encode, endOtherSessions } from '../src/auth.mjs';
+import { setupOperator, login, clearLocks, sessionFor, inviteUser, inviteFor, acceptInvite, confirmTotp, pendingTotp, beginTotpRotation, changePassword, setRole, setStatus, removeUser, listUsers, userByEmail, can, ROLES, totp, carryLegacyOperator, hashPassword, base32Encode, endOtherSessions } from '../src/auth.mjs';
 import { qrMatrix, qrSvg } from '../src/qr.mjs';
 import { createApp } from '../src/server.mjs';
 import { recordOrder, timeline, addNote } from '../src/modules/orders.mjs';
@@ -18,9 +18,11 @@ const form = (o) => new URLSearchParams(o).toString();
 async function boot(cfgOver = {}) {
   const db = testDb(); const cfg = testCfg(cfgOver); const app = createApp({ db, cfg }); const addr = await app.listen(); const base = `http://127.0.0.1:${addr.port}`; cfg.baseUrl = base;
   const secret = setupOperator(db, 'owner password 1234', { email: 'owner@errer.test', name: 'Olive Owner' });
-  const signIn = async (email, password, code) => { const r = await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ email, password, code }) }); const sc = r.headers.get('set-cookie'); if (!sc || r.headers.get('location') !== '/') return null; const cookie = sc.split(';')[0]; const csrf = db.get('SELECT csrf FROM sessions WHERE id = ?', cookie.split('=')[1]).csrf; return { cookie, csrf }; };
+  // a code is good for one login per person; a test that signs the same person in twice in one 30 s step starts a fresh step first (the replay rule has its own test in auth.test.mjs)
+  const fresh = () => db.run('UPDATE users SET totp_last_step = NULL');
+  const signIn = async (email, password, code) => { fresh(); const r = await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ email, password, code }) }); const sc = r.headers.get('set-cookie'); if (!sc || r.headers.get('location') !== '/') return null; const cookie = sc.split(';')[0]; const csrf = db.get('SELECT csrf FROM sessions WHERE id = ?', cookie.split('=')[1]).csrf; return { cookie, csrf }; };
   const as = (s) => ({ get: (p) => fetch(base + p, { headers: { cookie: s.cookie }, redirect: 'manual' }), post: (p, body = {}) => fetch(base + p, { method: 'POST', redirect: 'manual', headers: { cookie: s.cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: form({ _csrf: s.csrf, ...body }) }) });
-  return { db, cfg, app, base, secret, signIn, as, close: async () => { await app.close(); db.close(); } };
+  return { db, cfg, app, base, secret, signIn, as, fresh, close: async () => { await app.close(); db.close(); } };
 }
 
 test('the permission rule: owner everything, ops the shop, support the people, viewer reads', () => {
@@ -102,7 +104,7 @@ test('roles are enforced on every request: the sidebar shrinks, a forbidden POST
     // disabling ends the person's sessions at once; the last owner cannot be demoted, disabled or removed
     const vid = userByEmail(b.db, 'vw@errer.test').id; r = await b.as(owner).post(`/users/${vid}/status`, { status: 'disabled' }); assert.equal(r.status, 303);
     assert.equal((await b.as(S.vw).get('/orders')).status, 303, 'bounced to login'); assert.equal(login(b.db, { email: 'vw@errer.test', password: vw.pw, code: totp(vw.secret) }), null);
-    setStatus(b.db, vid, 'active'); assert.ok(login(b.db, { email: 'vw@errer.test', password: vw.pw, code: totp(vw.secret) }));
+    setStatus(b.db, vid, 'active'); b.fresh(); assert.ok(login(b.db, { email: 'vw@errer.test', password: vw.pw, code: totp(vw.secret) }));
     const oid = userByEmail(b.db, 'owner@errer.test').id; assert.throws(() => setRole(b.db, oid, 'ops'), /last owner/); assert.throws(() => setStatus(b.db, oid, 'disabled'), /last owner/); assert.throws(() => removeUser(b.db, oid), /last owner/);
     assert.equal((await b.as(owner).post(`/users/${oid}/role`, { role: 'ops' })).status, 400, 'nor can an owner change their own role');
     setRole(b.db, userByEmail(b.db, 'ops@errer.test').id, 'owner'); setRole(b.db, oid, 'support'); assert.equal(userByEmail(b.db, 'owner@errer.test').role, 'support');
@@ -118,21 +120,25 @@ test('lockout per person, password change, a new authenticator confirmed before 
   try {
     const me = userByEmail(b.db, 'owner@errer.test');
     for (let i = 0; i < 8; i++) assert.equal(login(b.db, { email: 'owner@errer.test', password: 'wrong wrong wrong', code: '000000' }), null);
-    assert.ok(userByEmail(b.db, 'owner@errer.test').locked_until > new Date().toISOString(), 'eight failures lock the person');
+    assert.ok(userByEmail(b.db, 'owner@errer.test').locked_until > new Date().toISOString(), 'eight failures lock the person, and the people page can say so');
     assert.equal(login(b.db, { email: 'owner@errer.test', password: 'owner password 1234', code: totp(b.secret) }), null, 'even with the right password');
     assert.equal(b.db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'auth.login.locked'").n, 1);
-    b.db.run('UPDATE users SET locked_until = NULL, failed_logins = 0 WHERE id = ?', me.id);
-    const s = await b.signIn('owner@errer.test', 'owner password 1234', totp(b.secret)); assert.ok(s);
+    // the lock is per address: the guesses came from nowhere in particular, so the owner's own browser still gets in
+    const s = await b.signIn('owner@errer.test', 'owner password 1234', totp(b.secret)); assert.ok(s, 'a lock armed from one address does not keep the person out from another');
+    assert.equal(userByEmail(b.db, 'owner@errer.test').locked_until, null, 'and a login clears the record');
+    assert.equal(login(b.db, { email: 'owner@errer.test', password: 'owner password 1234', code: totp(b.secret, { time: Date.now() + 30_000 }) }, { now: Date.now() + 30_000 }), null, 'the guessed-from address stays locked');
+    assert.equal(login(b.db, { email: 'owner@errer.test', password: 'owner password 1234', code: totp(b.secret, { time: Date.now() + 16 * 60_000 }) }, { now: Date.now() + 16 * 60_000 })?.role, 'owner', 'for fifteen minutes');
+    clearLocks();
     assert.throws(() => changePassword(b.db, me.id, 'nope', 'a brand new password 9'), /current password is wrong/); assert.throws(() => changePassword(b.db, me.id, 'owner password 1234', 'short'), /12 characters/);
     let r = await b.as(s).post('/me/password', { current: 'owner password 1234', next: 'a brand new password 9' }); assert.equal(r.status, 303);
-    assert.equal(login(b.db, { email: 'owner@errer.test', password: 'owner password 1234', code: totp(b.secret) }), null); assert.ok(login(b.db, { email: 'owner@errer.test', password: 'a brand new password 9', code: totp(b.secret) }));
+    b.fresh(); assert.equal(login(b.db, { email: 'owner@errer.test', password: 'owner password 1234', code: totp(b.secret) }), null); assert.ok(login(b.db, { email: 'owner@errer.test', password: 'a brand new password 9', code: totp(b.secret) }));
     r = await b.as(s).post('/me/totp'); assert.equal(r.status, 303); const next = pendingTotp(b.db, me.id); assert.ok(next && next !== b.secret);
-    assert.ok(login(b.db, { email: 'owner@errer.test', password: 'a brand new password 9', code: totp(b.secret) }), 'the old authenticator works until the new one is confirmed');
+    b.fresh(); assert.ok(login(b.db, { email: 'owner@errer.test', password: 'a brand new password 9', code: totp(b.secret) }), 'the old authenticator works until the new one is confirmed');
     assert.ok((await (await b.as(s).get('/me')).text()).includes(next), 'the new secret and its QR are on the page');
     r = await b.as(s).post('/me/totp/confirm', { code: '000000' }); assert.equal(r.status, 400);
     r = await b.as(s).post('/me/totp/confirm', { code: totp(next) }); assert.equal(r.status, 303);
-    assert.equal(login(b.db, { email: 'owner@errer.test', password: 'a brand new password 9', code: totp(b.secret) }), null, 'the old one is gone'); assert.ok(login(b.db, { email: 'owner@errer.test', password: 'a brand new password 9', code: totp(next) }));
-    assert.equal(b.db.get('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?', me.id).n, 4); r = await b.as(s).post('/me/sessions/end'); assert.equal(r.status, 303); assert.equal(b.db.get('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?', me.id).n, 1); assert.equal((await b.as(s).get('/me')).status, 200, 'this one stays');
+    b.fresh(); assert.equal(login(b.db, { email: 'owner@errer.test', password: 'a brand new password 9', code: totp(b.secret) }), null, 'the old one is gone'); assert.ok(login(b.db, { email: 'owner@errer.test', password: 'a brand new password 9', code: totp(next) }));
+    assert.equal(b.db.get('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?', me.id).n, 5); r = await b.as(s).post('/me/sessions/end'); assert.equal(r.status, 303); assert.equal(b.db.get('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?', me.id).n, 1); assert.equal((await b.as(s).get('/me')).status, 200, 'this one stays');
     const h = doctor(b.db, b.cfg); const by = Object.fromEntries(h.checks.map(c => [c.key, c])); assert.ok(by.operator.ok); assert.match(by.operator.detail, /1 owner/); assert.ok(by.password_age.ok); assert.ok(by.invites.ok);
   } finally { await b.close(); }
 });

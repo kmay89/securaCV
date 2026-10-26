@@ -29,16 +29,36 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
 - **Every action under a name.** The audit log and every order timeline
   record the person's email (or `token:<name>` for the API), set by the
   pipeline for the request, so no handler can forget to say who.
-- **Lockout, twice.** Eight failed logins from one address in fifteen
-  minutes and that address waits the window out; eight failures against one
-  person and that person waits, the right password included. Every attempt,
-  locked or not, is in the audit log with its address; the Health page
-  counts the last 24 hours and names anyone locked out.
+- **Lockout, twice, both per address.** Eight failed logins from one
+  address in fifteen minutes and that address waits the window out; eight
+  failures against one person *from one address* and that pair waits, the
+  right password included. A stranger guessing from anywhere cannot keep
+  the owner out of their own backoffice: the person's own browser still
+  gets in. The lock lives in memory (a restart clears it); the users table
+  keeps the count and the time as a record, so the People page can say
+  "locked out". Every attempt, locked or not, is in the audit log with its
+  address; the Health page counts the last 24 hours and names anyone locked
+  out. An unknown email runs the same password work as a known one, so the
+  answer takes the same time either way.
+- **A code is good for one login.** The 30-second step an authenticator
+  code matched is remembered per person; the same code presented again, at
+  or before that step, is refused. A code read over a shoulder or off a
+  screenshot is one login, not two. The step after is accepted as usual.
 - **Sessions.** A random 256-bit id in an `HttpOnly; SameSite=Lax`
   cookie (`Secure` when the base URL is https), 12 hours absolute, a new id
   on every login, deleted on logout. A CSRF token per session rides in every
   form; a POST whose browser says it came from another site
-  (`Sec-Fetch-Site`) is refused before the body is read.
+  (`Sec-Fetch-Site` other than `same-origin` or `none`) is refused before
+  the body is read. A session cookie on an `/api` write needs the same
+  token (an `x-csrf` header or `_csrf` in the body); only a bearer token
+  writes to the API without one.
+- **Which address is "the address".** The limiter, the lockout and the
+  audit log use the peer's address unless the peer is a trusted proxy, in
+  which case the last `X-Forwarded-For` hop it appended is used.
+  `TRUSTED_PROXIES` names the trusted peers (`loopback,private` by default:
+  Caddy on the same box or network; add a CIDR or an address, or set it
+  empty when nothing sits in front). A forged header from the open internet
+  never moves the count onto somebody else.
 - **API tokens.** `bo_<id>.<secret>`; the secret is scrypt-hashed, so a copy
   of the table verifies nothing. A token can be read-only (`--read-only`,
   or the Scope choice on Settings): GET only, for a dashboard or a monitor.
@@ -75,6 +95,24 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   third party's inbox), the status page, confirm/unsubscribe links (random
   144-bit tokens), invoice and order links (HMAC of the number, compared in
   constant time).
+- What Stripe sends in the wrong order is refused, not lost: a refund whose
+  order is not here yet (the session's own event failed or is still on the
+  way) is a 400, Stripe retries it for three days, and the retry applies once
+  the order exists. A chargeback tags the order, raises an exception with the
+  evidence deadline, and resolves when Stripe closes it (a loss is recorded
+  as the refund it is). A Checkout in subscription or setup mode is never a
+  shop order; a charge on an invoice is never a missing one.
+- An order sold past the week's cap or the shelf (two checkouts for the last
+  unit in the same minute, a Payment Link outside the store) is recorded as
+  paid, tagged `oversold`, and raised as an exception that says by how much;
+  the fix (parts, a date, a refund) is a person's call, never a silent refusal
+  of money already taken.
+- Packing is one order at a time at the bench: every line ticked, the boards
+  scanned, the scale read. There is no bulk "packed", and a pack from the
+  API without the check says "bench check not run" on the timeline.
+- A canceled or fully refunded order lets its boards and its parts go back
+  to stock; a shipped one keeps its record. A refund reverses its share of
+  the sales tax off the liability, so the tax table is net of refunds.
 - A Stripe event id is claimed before the work, marked applied after it,
   and released if the work fails: two deliveries at the same instant apply
   once, a delivery that failed is left for Stripe to retry, and a claim the
@@ -86,7 +124,10 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   submit frees its token so the corrected form goes through.
 - A bug (a 500) is logged, answered with a generic line, and raised as an
   exception keyed on the route, so it shows on Home and, with a GitHub
-  token, as an issue. A row that would collide with one that exists is a
+  token **and** `GITHUB_REPO` set, as an issue. An issue body describes a
+  customer's order or ticket, so the repository must be private; email
+  addresses are redacted before the body leaves the box, and the full text
+  stays in the exceptions table here. A row that would collide with one that exists is a
   409 that names the constraint, never a 500.
 - Numbers arrive whole or not at all: quantities, cents, stock moves,
   reorder points, receipts and intervals are checked at the route and again
@@ -133,7 +174,15 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   browser is a session until it expires or you log out. Keep the session
   short (`SESSION_HOURS`) and log out on shared machines.
 - **Denial of service.** The rate limiter is per-address and in memory; a
-  distributed flood needs the reverse proxy (Caddy, Fly) to absorb it.
+  distributed flood needs the reverse proxy (Caddy, Fly) to absorb it. What
+  the process does hold on its own: a request body over 1 MiB is cut, a
+  connection that opens and sends nothing is dropped after 15 seconds, a
+  request is given a minute, and every outbound call (Stripe, SMTP, IMAP,
+  S3, GitHub, a probe) is abandoned after 20 seconds (two minutes for a
+  backup upload), so one dead peer never pins the scheduler.
+- **An outbound probe to the inside.** The Health page's "probe a URL" is
+  refused for loopback, link-local and private addresses and for
+  metadata hosts, so it cannot be turned on the box or its network.
 - **A malicious reviewer.** Nobody outside this repository has audited the
   code. The tests pin every control above; read them before trusting it
   with real orders, and send findings to the support address.

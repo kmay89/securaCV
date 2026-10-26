@@ -95,11 +95,12 @@ test('a person can log in, ship an order, answer a ticket, move stock, post an e
     await page.fill('input[name="q"]', shipped.number); await page.press('input[name="q"]', 'Enter'); await page.waitForURL(/\/search\?q=/);
     assert.ok((await page.textContent('body')).includes(shipped.number), 'the header search finds the order');
     await page.goto(base + '/batches'); assert.ok((await page.textContent('body')).includes('this week'));
-    // bulk: select every "to pack" order and pack it
+    // bulk: select every "to pack" order and tag it — packing is never bulk (the bench ticks each line), and the menu does not offer it
     await page.goto(base + '/orders?status=paid'); const boxes = await page.$$('input[name="ids[]"]'); assert.ok(boxes.length >= 1);
     for (const b of boxes) await b.check();
-    await page.selectOption('#f_action', 'packed'); await page.click('button:has-text("Apply")'); await page.waitForURL(/\/orders\?ok=/);
-    assert.equal(db.get('SELECT COUNT(*) AS n FROM orders WHERE status = \'paid\'').n, 0, 'every paid order is packed');
+    assert.ok(!(await page.$$eval('#f_action option', os => os.map(o => o.value))).includes('packed'), 'no bulk "packed"');
+    await page.fill('form[action="/orders/bulk"] input[name="tag"]', 'rush'); await page.selectOption('#f_action', 'tag'); await page.click('button:has-text("Apply")'); await page.waitForURL(/\/orders\?ok=/);
+    assert.equal(db.get("SELECT COUNT(*) AS n FROM orders WHERE status = 'paid' AND tags NOT LIKE '%rush%'").n, 0, 'every paid order carries the tag');
 
     // the loop closes: a Decide card approves a drafted purchase order in one click and lands back on Home
     await page.goto(base + '/'); assert.ok(await page.$('.decide'), 'Home shows the Decide queue');

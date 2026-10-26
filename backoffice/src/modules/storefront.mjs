@@ -18,6 +18,7 @@ import { estimateDelivery, orderStatusUrl } from './delivery.mjs';
 import { weekLabel, orderByNumber } from './orders.mjs';
 import { buildable } from './inventory.mjs';
 import { currentTz } from '../render.mjs';
+import { timedFetch } from '../net.mjs';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -88,6 +89,23 @@ export function availableNow(db, product, { now = new Date(), tz = currentTz() }
   return limits.length ? Math.min(...limits) : null;
 }
 
+// After an order is recorded: each line whose SKU is now committed past what the week's cap or the
+// shelf can cover. The store refuses a checkout for more than availableNow() says, but two checkouts
+// can pay for the last unit in the same minute, and a Payment Link bypasses the store entirely.
+export function oversoldLines(db, order, catalog, { now = new Date(), tz = currentTz() } = {}) {
+  const out = [];
+  for (const it of order.items || []) {
+    const p = catalog?.products?.get?.(it.sku); if (!p) continue;
+    if (p.stock != null && Number.isFinite(Number(p.stock))) {
+      const taken = db.get("SELECT COALESCE(SUM(i.qty), 0) AS n FROM order_items i JOIN orders o ON o.id = i.order_id WHERE i.sku = ? AND o.batch = ? AND o.status IN ('paid', 'packed', 'shipped', 'delivered')", it.sku, order.batch || weekLabel(now, tz)).n;
+      if (taken > Number(p.stock)) { out.push({ sku: it.sku, short: taken - Number(p.stock), why: `${taken} sold this week against a cap of ${Number(p.stock)}` }); continue; }
+    }
+    const b = buildable(db, it.sku);
+    if (b != null) { const committed = db.get("SELECT COALESCE(SUM(i.qty), 0) AS n FROM order_items i JOIN orders o ON o.id = i.order_id WHERE i.sku = ? AND o.status = 'paid'", it.sku).n; if (committed > b) out.push({ sku: it.sku, short: committed - b, why: `${committed} paid and waiting, parts on the shelf for ${b}` }); }
+  }
+  return out;
+}
+
 export function storefrontCatalog(db, catalog, { now = new Date(), cfg = {} } = {}) {
   const ships = nextShipDate(now, { tz: cfg.tz, closeDay: cfg.batchCloseDay, closeHour: cfg.batchCloseHour, shipDay: cfg.batchShipDay });
   const products = [];
@@ -113,7 +131,7 @@ export function formEncode(obj, prefix = '', out = []) {
 // is pending authorization, or more than the batch can take, is refused by name), the shipping
 // option carries the batch's ship date and the arrival window for the ZIP as Stripe's own
 // delivery estimate, and the success page gets the session id to look its order up.
-export async function createCheckout(db, cfg, catalog, { items, zip = null, email = null } = {}, { fetchImpl = fetch, now = new Date() } = {}) {
+export async function createCheckout(db, cfg, catalog, { items, zip = null, email = null } = {}, { fetchImpl = timedFetch, now = new Date() } = {}) {
   if (!cfg.stripeApiKey) throw new StoreError(503, 'checkout is not configured (STRIPE_API_KEY)');
   if (!Array.isArray(items) || !items.length) throw new StoreError(400, 'the cart is empty');
   if (items.length > 20) throw new StoreError(400, 'that is more lines than one order carries');

@@ -43,7 +43,8 @@ test('a backup is opened and proven; a damaged copy fails; restore puts a checke
 
 test('Signature V4 matches the AWS published example; upload PUTs, HEADs and writes the pointer; the drill pulls the latest copy back and proves it', async () => {
   const h = signS3({ method: 'GET', url: 'https://examplebucket.s3.amazonaws.com/test.txt', headers: { range: 'bytes=0-9' }, payloadHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', key: 'AKIAIOSFODNN7EXAMPLE', secret: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', region: 'us-east-1', date: new Date('2013-05-24T00:00:00Z') });
-  assert.equal(h.signature, 'f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41');
+  assert.equal(h.authorization.split('Signature=')[1], 'f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41');
+  assert.ok(!('signature' in h), 'the bare signature is not a header, so it never leaks into a request');
   assert.match(h.authorization, /^AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE\/20130524\/us-east-1\/s3\/aws4_request, SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, Signature=/);
   // a fake bucket: PUT stores, HEAD answers with the stored length, GET returns the bytes
   const store = new Map(); const calls = [];

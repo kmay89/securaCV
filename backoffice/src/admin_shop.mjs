@@ -95,7 +95,7 @@ export function registerShop(app, { page, back, link, filters }) {
     const rows = batches(db); const cur = weekLabel();
     page(c, 'Batches', `<p class="muted">Orders in by Sunday night ship the following week in one batch (the ISO week of payment). This week is <b>${e(cur)}</b>. ${link('/orders', 'All orders')}</p>` +
       table(rows, [{ label: 'Batch', html: r => `${link(`/orders?batch=${e(r.batch)}`, r.batch)}${r.batch === cur ? ' <span class="pill warn">this week</span>' : ''}` }, { label: 'Orders', key: 'orders', num: true }, { label: 'Units', key: 'units', num: true }, { label: 'To pack', html: r => `<span class="${r.to_pack ? 'warn' : 'muted'}">${r.to_pack}</span>`, num: true }, { label: 'To ship', html: r => `<span class="${r.to_ship ? 'warn' : 'muted'}">${r.to_ship}</span>`, num: true }, { label: 'Shipped', key: 'shipped', num: true }, { label: 'Dropped', get: r => r.dropped || '', num: true }, { label: 'Sales', get: r => money(r.sales_cents), num: true }, { label: 'First paid', get: r => day(r.first_paid_at) }, { label: 'Last shipped', get: r => day(r.last_shipped_at) },
-        { label: '', html: r => `${link(`/orders.csv?batch=${e(r.batch)}&status=paid`, 'fulfill CSV')} · ${link(`/orders/packing-slips?batch=${e(r.batch)}`, 'packing slips')}${r.to_pack ? ` · <form method="post" action="/orders/bulk" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="batch" value="${e(r.batch)}"><input type="hidden" name="action" value="packed"><button class="quiet">pack all ${r.to_pack}</button></form>` : ''}` }], { empty: 'No orders yet.' }));
+        { label: '', html: r => `${link(`/orders.csv?batch=${e(r.batch)}&status=paid`, 'fulfill CSV')} · ${link(`/orders/packing-slips?batch=${e(r.batch)}`, 'packing slips')}${r.to_pack ? ` · ${link(`/pack?batch=${e(r.batch)}`, `pack ${r.to_pack} at the bench`)}` : ''}` }], { empty: 'No orders yet.' }));
   });
 
   // ---------- packing slips (one page per order; print = PDF)
@@ -117,12 +117,15 @@ ${o.notes ? `<div class="box"><b>Notes</b><br>${e(o.notes)}</div>` : ''}${o.tags
   // ---------- bulk actions on the orders list
   router.post('/orders/bulk', (c) => {
     let ids = [].concat(c.body.ids || []).map(Number).filter(Boolean);
-    if (!ids.length && c.body.batch) ids = listOrders(db, { batch: c.body.batch, status: c.body.action === 'packed' ? 'paid' : '', limit: 500 }).map(o => o.id);
+    if (!ids.length && c.body.batch) ids = listOrders(db, { batch: c.body.batch, status: '', limit: 500 }).map(o => o.id);
     if (!ids.length) throw new HttpError(400, 'select at least one order');
     const action = c.body.action;
     if (action === 'slips') return redirect(c.res, `/orders/packing-slips?ids=${ids.join(',')}`);
     if (action === 'tag') { for (const id of ids) { const o = orderById(db, id); if (o) setTags(db, id, `${o.tags},${c.body.tag || ''}`); } return back(c, '/orders', `tagged ${ids.length}`); }
-    if (!['packed', 'delivered', 'canceled'].includes(action)) throw new HttpError(400, 'unknown bulk action');
+    // Packing is one order at a time at the bench: every line ticked, the boards scanned, the scale read. A bulk
+    // "packed" would write a checked box nobody checked.
+    if (action === 'packed') throw new HttpError(400, 'orders are packed one at a time at the Pack bench (every line ticked, the boards scanned) — there is no bulk pack');
+    if (!['delivered', 'canceled'].includes(action)) throw new HttpError(400, 'unknown bulk action');
     const r = bulkTransition(db, ids, action, { actor: 'web', cfg });
     const ok = r.filter(x => !x.error).length, bad = r.filter(x => x.error);
     back(c, c.body.batch ? '/batches' : '/orders', `${ok} marked ${action}${bad.length ? `; ${bad.map(x => `${x.number || x.id}: ${x.error}`).join('; ')}` : ''}`);

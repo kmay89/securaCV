@@ -37,13 +37,14 @@ test('every admin page fits a phone and an iPad: no sideways page, 40px targets,
   const contact = db.get('SELECT id FROM contacts ORDER BY id LIMIT 1');
   const pages = [...NAV.map(([p]) => p), `/orders/${order.id}`, `/tickets/${ticket.id}`, `/contacts/${contact.id}`, '/orders/new', '/tickets/new', '/search?q=canary', '/me', '/login'];
   const browser = await pw.chromium.launch();
-  const problems = [];
+  const problems = []; let cookies = null;   // one login, its session carried to the second device: a code is good for one login
   try {
     for (const [name, width, height] of DEVICES) {
       const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
       const page = await ctx.newPage();
       page.on('pageerror', e => problems.push(`${name}: pageerror ${e.message}`));
-      await page.goto(base + '/login'); await page.fill('#email', DEMO_USERS[0].email); await page.fill('#pw', DEMO_PASSWORD); await page.fill('#code', totp(DEMO_TOTP_SECRET)); await page.click('button:has-text("Log in")'); await page.waitForURL(base + '/');
+      if (cookies) await ctx.addCookies(cookies);
+      else { await page.goto(base + '/login'); await page.fill('#email', DEMO_USERS[0].email); await page.fill('#pw', DEMO_PASSWORD); await page.fill('#code', totp(DEMO_TOTP_SECRET)); await page.click('button:has-text("Log in")'); await page.waitForURL(base + '/'); cookies = await ctx.cookies(); }
       for (const p of pages) {
         const r = await page.goto(base + p, { waitUntil: 'load' });
         if (!r.ok()) { problems.push(`${name} ${p}: HTTP ${r.status()}`); continue; }
