@@ -26,8 +26,11 @@ const intOrNull = (v, what, { min = 0, max = 10_000_000 } = {}) => {
 
 // Save what differs from the file; a row with nothing in it is removed.
 export function setOverride(db, sku, fields, { actor = 'web', catalog = null } = {}) {
-  const base = catalog?.products?.get(sku) || null;
-  if (catalog && !base) throw new Error(`${sku} is not in the catalog`);
+  // The catalog handed in is usually the live one, with this product's own edit already laid over it; the file's
+  // values are what the overlay remembered, and they are the baseline — not the edit a second save would otherwise erase.
+  const live = catalog?.products?.get(sku) || null;
+  if (catalog && !live) throw new Error(`${sku} is not in the catalog`);
+  const base = live?.listing?.file ? { ...live, ...live.listing.file } : live;
   const name = String(fields.name ?? '').trim().slice(0, 120) || null;
   const priceUsd = String(fields.price ?? '').trim();
   const price_cents = fields.price_cents != null && String(fields.price_cents).trim() !== '' ? intOrNull(fields.price_cents, 'price (cents)') : priceUsd === '' ? null : (() => { const n = Number(priceUsd); if (!Number.isFinite(n) || n < 0 || n > 100000) throw new Error('price is dollars, 0 to 100000'); return Math.round(n * 100); })();

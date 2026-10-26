@@ -26,6 +26,11 @@ test('a listing edited here lays over the file: price, name, cap, hidden, a wind
   assert.equal(p.price_cents, 7950); assert.equal(p.name, 'Canary Kit, second run'); assert.equal(p.stock, 12); assert.equal(p.hidden, false); assert.equal(p.listing.edited, true); assert.equal(p.listing.file.price_cents, base.price_cents);
   assert.equal(cat.products.get(sku).price_cents, base.price_cents, 'the loader\'s cache is not touched');
   assert.deepEqual(overridesPatch(db, cat)[sku], { name: 'Canary Kit, second run', price: 79.5, stock: 12 });
+  // a second save from the live catalog (the edit already laid over it), changing only "hidden": the edit stays
+  const again = setOverride(db, sku, { name: 'Canary Kit, second run', price: '79.50', stock: '12', hidden: '1', note: 'same form, hide ticked' }, { actor: 'test', catalog: applyOverrides(db, cat) });
+  assert.equal(again.price_cents, 7950); assert.equal(again.stock, 12); assert.equal(again.name, 'Canary Kit, second run'); assert.equal(again.hidden, 1);
+  const kept = applyOverrides(db, cat).products.get(sku); assert.equal(kept.price_cents, 7950); assert.equal(kept.listing.file.price_cents, base.price_cents, 'the file baseline survives the second save');
+  setOverride(db, sku, { name: 'Canary Kit, second run', price: '79.50', stock: '12', hidden: '', note: '' }, { actor: 'test', catalog: applyOverrides(db, cat) });
   assert.ok(db.get("SELECT id FROM audit_log WHERE action = 'product.listing' AND entity_id = ?", sku));
   // a window: not yet, then open, then ended; hidden beats all
   const now = Date.parse('2026-11-01T12:00:00Z');
