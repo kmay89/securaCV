@@ -19,6 +19,7 @@ import { unreconciledStripeCents } from './modules/ledger.mjs';
 import { resetDemo, isDemo } from './modules/demo.mjs';
 import { join } from 'node:path';
 import { timedFetch } from './net.mjs';
+import { verifyChain } from './integrity.mjs';
 
 export const JOBS = {
   // name: [interval seconds, fn(app)]
@@ -95,6 +96,14 @@ export const JOBS = {
   tracking: [3600, async (app) => pollTracking(app.db, app.cfg, { fetchImpl: app.fetchImpl || timedFetch })],
   // An abandoned checkout with an email gets its one follow-up, CHECKOUT_RECOVERY_HOURS after it expired (recovery.mjs).
   recovery: [600, async ({ db, cfg }) => runRecovery(db, cfg)],
+  // Daily: the whole audit chain walked under the key outside the database; a break is an exception and a push.
+  verify:   [86400, async (app) => {
+    const { db, cfg } = app;
+    const v = verifyChain(db); db.setSetting('chain:last', JSON.stringify({ at: nowIso(), ok: v.ok, rows: v.rows, chained: v.chained, unchained: v.unchained, head: v.head, broken_at: v.broken_at, reason: v.reason }));
+    if (!v.ok) { await raise(db, cfg, 'audit:chain', 'security [audit chain broken]: the record has been altered', `Row ${v.broken_at}: ${v.reason}.\n\nThe audit log no longer matches what was written. Read SECURITY.md "Knowing it has not been breached": compare the anchor in the last digest, consider \`backoffice lockdown\`, restore from a backup whose chain verifies.`); const { securityPush } = await import('./modules/notify.mjs'); await securityPush(db, cfg, 'chain', { title: 'Backoffice: the audit chain is BROKEN', body: `row ${v.broken_at}: ${v.reason}` }, { fetchImpl: app.fetchImpl || timedFetch }); throw new Error(`audit chain broken at row ${v.broken_at}: ${v.reason}`); }
+    await resolve(db, cfg, 'audit:chain', 'The chain verifies again.');
+    return { ok: true, chained: v.chained, unchained: v.unchained, head: v.head?.id ?? null };
+  }],
   // Once a day at DIGEST_HOUR (UTC): today's list, the numbers, the health checklist, to the operator.
   digest:   [600, async ({ db, cfg }) => {
     if (!cfg.operatorEmail) return { skipped: 'OPERATOR_EMAIL not set' };

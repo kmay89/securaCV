@@ -187,6 +187,55 @@ mechanical:
   noarchive, noai, noimageai` and `/robots.txt` disallows everything; the
   admin and the customers' pages are nobody's training data.
 
+## Knowing it has not been breached
+
+A breach you cannot see is the one that costs you. Three things make one
+visible here, and each is a mechanism, not a promise:
+
+- **The audit log is a chain.** Every row carries `prev` (the mark of the
+  row before it, or `genesis`) and `mac`, an HMAC-SHA256 over the row's
+  fields and `prev`, under a key that lives *outside* the database:
+  `audit.key` beside it (written on first open, mode 0600) or
+  `BACKOFFICE_AUDIT_KEY`. A row changed after the fact fails its mark; a row
+  removed breaks the next row's `prev`; a row slipped in without a mark, or a
+  second `genesis`, is named. `backoffice verify` walks the whole log and
+  exits 1 on a break; the `verify` job does it daily, raises an exception and
+  pushes to the phone. The database's own `app:secret` is deliberately not the
+  key: anyone who can write the file can read that. Rows from before 0.8.0
+  have no mark and are counted as "from before the chain".
+- **The anchor leaves the box.** Each morning digest ends with the chain's
+  head, `id:mac`. That line in your inbox is the copy of the record an
+  intruder on the server cannot reach. `backoffice verify --anchor <line>`
+  proves the log still passes through it: if the whole file and the key were
+  rewritten together, the walk would be clean and the anchor would not be on
+  it. Keep a week of digests.
+- **The last 24 hours, as questions.** The SECURITY block (the digest, the
+  Health page, `backoffice verify`) answers: who signed in, from where, by
+  password or by link; what failed and from which addresses; who was locked
+  out or blocked and why; a sign-in from a network the person had not used;
+  a session ended for moving; what changed about people, tokens, flags and
+  settings and by whom; which sessions and tokens are open now. "Quiet" is
+  one word when none of it happened. The doctor says the same in one row.
+
+Two more that shorten the day it goes wrong:
+
+- **Lockdown** (`backoffice lockdown`, or the button on Settings) ends every
+  session, revokes every API token and spends every live sign-in link in one
+  transaction, audited with the reason given. Nothing else changes. Then
+  change the passwords, rotate the authenticators, read the SECURITY block
+  and the audit log, and restore from a backup whose chain verifies if the
+  record itself was touched. `MAINTENANCE.md` has the order.
+- **Tripwires.** A request for `/.env`, `/wp-login.php`, `/.git/…`,
+  `/phpmyadmin`, `/.aws/…` and the rest of the scanner's list blocks the
+  address for ten minutes at the first hit, writes `guard.tripwire` and
+  pushes once; the caller sees the same 404 as for any unknown path. Blocks
+  — from a tripwire or from sixty misses — are written to `guard_blocks` and
+  read back at boot, so a restart forgets none.
+
+What this does not do: it does not stop a root on the box from doing
+anything; it makes it impossible to do it *silently*, as long as the digest
+reaches an inbox the box does not control.
+
 ## The data
 
 - The database file and every backup are mode `0600`.
@@ -220,7 +269,10 @@ mechanical:
 
 - **A compromised host.** Root on the box reads everything; the database is
   not encrypted at rest beyond file permissions. Full-disk encryption is the
-  host's job (Fly volumes and most VPS images do it).
+  host's job (Fly volumes and most VPS images do it). What root cannot do is
+  alter the record quietly: the audit chain and the anchor in your inbox
+  (above) show the edit, and the self-check at boot names a data directory
+  or key readable by other accounts on the box.
 - **A compromised operator device.** A session cookie stolen from a logged-in
   browser is a session until it expires or you log out. Keep the session
   short (`SESSION_HOURS`) and log out on shared machines.

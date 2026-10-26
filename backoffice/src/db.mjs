@@ -1,9 +1,10 @@
 // One SQLite file is the company. node:sqlite (Node ≥ 22.13), no driver.
 import { DatabaseSync } from 'node:sqlite';
-import { readdirSync, readFileSync, mkdirSync, chmodSync, unlinkSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, mkdirSync, chmodSync, unlinkSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHmac, randomBytes } from 'node:crypto';
 
 // Who is acting right now. The HTTP pipeline runs each request inside this store with the
 // logged-in person's email, so a handler that says actor 'web' is written down under their name.
@@ -17,16 +18,32 @@ export function today() { return new Date().toISOString().slice(0, 10); }
 
 // migrationsDir and allowNewerSchema are for tests and for a rescue: BACKOFFICE_ALLOW_NEWER_SCHEMA=1 lets an
 // older build open a database a newer one migrated (to read or back it up), which is otherwise refused.
-export function openDb(path = ':memory:', { migrationsDir = join(here, 'migrations'), allowNewerSchema = process.env.BACKOFFICE_ALLOW_NEWER_SCHEMA === '1', keepPreMigrate = 5 } = {}) {
+export function openDb(path = ':memory:', { migrationsDir = join(here, 'migrations'), allowNewerSchema = process.env.BACKOFFICE_ALLOW_NEWER_SCHEMA === '1', keepPreMigrate = 5, auditKey = process.env.BACKOFFICE_AUDIT_KEY || null } = {}) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   if (path !== ':memory:') { try { chmodSync(path, 0o600); } catch { /* not every filesystem */ } }   // the company's data is the operator's alone
   db.exec('PRAGMA busy_timeout = 5000');
   if (path !== ':memory:') { db.exec('PRAGMA journal_mode = WAL'); db.exec('PRAGMA synchronous = FULL'); }
   const schema = migrate(db, { path, migrationsDir, allowNewerSchema, keepPreMigrate });
-  const api = wrap(db); api.schema = schema;
+  const api = wrap(db, { auditKey: loadAuditKey(path, auditKey) }); api.schema = schema;
   return api;
 }
+
+// The audit chain's key lives OUTSIDE the database — BACKOFFICE_AUDIT_KEY, or audit.key beside the file
+// (made on first open, mode 0600) — so a copy of the database, edited and put back, cannot re-mark its own rows.
+// An in-memory database (the tests) gets a random key. Returned as the Buffer the HMAC takes, plus where it came from.
+export function loadAuditKey(path, given = null) {
+  if (given) return { key: Buffer.from(String(given)), source: 'BACKOFFICE_AUDIT_KEY' };
+  if (path === ':memory:') return { key: randomBytes(32), source: 'memory' };
+  const file = join(dirname(path), 'audit.key');
+  try { const k = readFileSync(file, 'utf8').trim(); if (k) return { key: Buffer.from(k), source: file }; } catch { /* not yet */ }
+  const k = randomBytes(32).toString('hex');
+  writeFileSync(file, k + '\n', { mode: 0o600 }); try { chmodSync(file, 0o600); } catch { /* not every filesystem */ }
+  return { key: Buffer.from(k), source: file, created: true };
+}
+// One row's mark: HMAC-SHA256 over its fields and the previous mark. Stated once; integrity.mjs verifies with the same function.
+export const auditMac = (key, row, prev) => createHmac('sha256', key).update([row.at, row.actor, row.action, row.entity ?? '', row.entity_id ?? '', row.detail ?? '', prev ?? ''].join('\u001f')).digest('base64url');
+export const CHAIN_GENESIS = 'genesis';
 
 // Migrations are forward-only and additive by rule (migrations/README.md). Two guards make a deploy that
 // goes wrong recoverable instead of silent:
@@ -69,7 +86,7 @@ function migrate(db, { path, migrationsDir, allowNewerSchema, keepPreMigrate }) 
 
 // A thin convenience layer: db.get/all/run with positional or named params,
 // plus transactions and settings. Everything else is plain SQL.
-function wrap(db) {
+function wrap(db, { auditKey = { key: randomBytes(32), source: 'memory' } } = {}) {
   const cache = new Map(); let depth = 0;
   const stmt = (sql) => { let s = cache.get(sql); if (!s) { s = db.prepare(sql); cache.set(sql, s); } return s; };
   const fix = (p) => p.map(v => (v === undefined ? null : typeof v === 'boolean' ? (v ? 1 : 0) : v));
@@ -105,9 +122,16 @@ function wrap(db) {
       api.setSetting(key, n);
       return year ? `${prefix}-${new Date().getUTCFullYear()}-${String(n).padStart(4, '0')}` : `${prefix}-${String(n).padStart(width, '0')}`;
     },
-    audit: (actor, action, entity = null, entityId = null, detail = null) => api.run(
-      'INSERT INTO audit_log (at, actor, action, entity, entity_id, detail) VALUES (?, ?, ?, ?, ?, ?)',
-      nowIso(), actor === 'web' ? currentActor('web') : actor, action, entity, entityId == null ? null : String(entityId), detail == null ? null : (typeof detail === 'string' ? detail : JSON.stringify(detail))),
+    // Every row is chained to the one before it (prev = the last row's mark, or 'genesis'); the mark is an HMAC
+    // under the key outside the database. The last row is read fresh each time: the CLI writes beside serve.
+    audit: (actor, action, entity = null, entityId = null, detail = null) => {
+      const row = { at: nowIso(), actor: actor === 'web' ? currentActor('web') : actor, action, entity, entity_id: entityId == null ? null : String(entityId), detail: detail == null ? null : (typeof detail === 'string' ? detail : JSON.stringify(detail)) };
+      const last = api.get('SELECT mac FROM audit_log ORDER BY id DESC LIMIT 1');
+      const prev = last ? (last.mac || CHAIN_GENESIS) : CHAIN_GENESIS;   // rows from before the chain began end at 'genesis' too
+      return api.run('INSERT INTO audit_log (at, actor, action, entity, entity_id, detail, prev, mac) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        row.at, row.actor, row.action, row.entity, row.entity_id, row.detail, prev, auditMac(auditKey.key, row, prev));
+    },
+    auditKey,
     close: () => db.close(),
   };
   return api;

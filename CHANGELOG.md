@@ -1,6 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+### The backoffice can say it has not been breached (backoffice 0.8.0)
+
+- The audit log is an HMAC chain under a key outside the database, verified
+  daily and on demand, anchored off the box by the morning digest; a SECURITY
+  block that answers the questions a person asks about the last 24 hours;
+  lockdown in one step; tripwire paths; blocks that survive a restart; a
+  self-check at boot; `MAINTENANCE.md`.
+
 ### The backoffice guards its door (backoffice 0.7.0)
 
 - Sign-in links that stand in for the password, never the authenticator,

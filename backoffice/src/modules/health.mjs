@@ -5,6 +5,7 @@
 import { attention } from '../attention.mjs';
 import { shipFromIssues } from './labels.mjs';
 import { pushConfigured, newOrderOn, ntfyUrlFor } from './notify.mjs';
+import { lastVerify, chainHead, securityText, securitySummary, nodeSupport } from '../integrity.mjs';
 import { taxVerdict } from './nexus.mjs';
 import { statfsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -88,6 +89,14 @@ export function doctor(db, cfg) {
   const ex = openExceptions(db); add('exceptions', 'Open exceptions', ex.length === 0, ex.length ? ex.map(e => e.key).join(', ') : 'none — silence means healthy', 'decide each on the Exceptions page');
   const failed = Object.values(runs).filter(r => r.last_ok === 0); add('jobs', 'Scheduled jobs', failed.length === 0, failed.length ? `failed: ${failed.map(r => r.name).join(', ')}` : `${Object.keys(runs).length} ran clean`, 'Settings → Jobs → run, read the detail');
   try { const s = statfsSync(cfg.dataDir); const free = s.bavail * s.bsize; const size = (() => { try { return statSync(cfg.dbPath).size; } catch { return 0; } })(); add('disk', 'Disk', free > 500 * 1024 * 1024, `${(free / 1048576 / 1024).toFixed(1)} GB free · database ${(size / 1048576).toFixed(1)} MB`, 'free space or move BACKOFFICE_DATA_DIR'); } catch { add('disk', 'Disk', null, 'not measurable here'); }
+  // knowing it has not been breached
+  const cv = lastVerify(db); const head = chainHead(db);
+  add('audit_chain', 'Audit chain', cv ? cv.ok && hoursSince(cv.at) < 48 : (head ? null : null), cv ? `${cv.ok ? 'verified' : `BROKEN at row ${cv.broken_at}: ${cv.reason}`} ${fmtH(hoursSince(cv.at))} · ${cv.chained} rows chained${cv.unchained ? `, ${cv.unchained} from before the chain` : ''}${head ? ` · anchor ${head.id}:${String(head.mac).slice(0, 12)}…` : ''}` : head ? `not yet verified · ${head.id} rows marked` : 'no marked rows yet', '`backoffice verify`; the job runs daily; a break: SECURITY.md "Knowing it has not been breached"');
+  const pf = parse(db.setting('boot:preflight')); const pfBad = (pf?.rows || []).filter(r => r.ok === false);
+  add('preflight', 'Boot self-check', pf ? pfBad.length === 0 : null, pf ? (pfBad.length ? `failing: ${pfBad.map(r => `${r.key} (${r.text})`).join('; ')}` : `${pf.rows.length} checks passed at boot${db.auditKey?.source && db.auditKey.source !== 'memory' ? ` · audit key ${db.auditKey.source === 'BACKOFFICE_AUDIT_KEY' ? 'from the environment' : 'beside the database'}` : ''}`) : 'the server has not booted on this database', pfBad[0]?.fix || 'restart the server and read its first lines');
+  const ns = nodeSupport(); add('node', 'Node is maintained', ns.ok, ns.text, 'move to the current LTS before the date');
+  const ss = securitySummary(db, cfg, { hours: 24 });
+  add('security_day', 'The last 24 hours', ss.quiet ? true : (ss.blocks.length || ss.lockouts.length || ss.newNets.length || ss.changes.filter(c => c.what !== 'deploy.boot').length) ? null : true, ss.quiet ? `quiet · ${ss.logins.length} sign-in${ss.logins.length === 1 ? '' : 's'} · ${ss.sessions.length} session${ss.sessions.length === 1 ? '' : 's'} open` : `${ss.failed} failed sign-ins · ${ss.blocks.length} blocked · ${ss.newNets.length} new network${ss.newNets.length === 1 ? '' : 's'} · ${ss.changes.filter(c => c.what !== 'deploy.boot').length} change${ss.changes.length === 1 ? '' : 's'} to people/tokens/settings — the Health page's Security block names each`, 'read the Security block; `backoffice lockdown` if any of it is not yours');
   if (demo) add('demo', 'Demo mode', null, 'synthetic data; nothing reaches a real service; the database reseeds on its cadence', '');
   const bad = checks.filter(c => c.ok === false);
   return { ok: bad.length === 0, checks, failing: bad.map(c => c.key), at: new Date().toISOString() };
@@ -117,6 +126,8 @@ LAST 30 DAYS (vs the 30 before)
 
 HEALTH ${h.ok ? '— all checks pass' : `— ${h.failing.length} failing: ${h.failing.join(', ')}`}
 ${h.checks.map(c => `  ${c.ok === true ? 'ok ' : c.ok === false ? '!! ' : '-- '} ${c.label}: ${c.detail}`).join('\n')}
+
+${securityText(db, cfg, { hours: 24 })}
 
 ${cfg.baseUrl}/health
 `;
