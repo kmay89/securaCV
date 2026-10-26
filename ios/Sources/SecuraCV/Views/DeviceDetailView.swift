@@ -150,9 +150,11 @@ struct DeviceDetailView: View {
             // only when this row is a paired WAP whose token still resolves
             // (the app authenticates the stream with the bearer; a
             // `cv_session` cookie a claim's receipt set over http may ride
-            // along from the shared URLSession until it expires or the WAP
-            // reboots, but without the token every poll 401s once it is
-            // gone, so an unpaired row or a Keychain-lost token gets no
+            // along from the shared URLSession, which the WAP's gate takes
+            // until it expires in 24 h, the WAP reboots, or eight newer
+            // sessions push it out of the WAP's eight session slots, but
+            // without the token every poll 401s once the gate stops taking
+            // it, so an unpaired row or a Keychain-lost token gets no
             // tile — the same up-front guard verifyNow applies).
             if witness.deviceType == .wap,
                let ref = store.devices.devices.first(where: { $0.id == witness.id }),

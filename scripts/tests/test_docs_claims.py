@@ -2417,7 +2417,7 @@ RETIRED_IN = (
      'sd_append_record() writes the fixed path /WITNESS/records.jsonl, so its file is to be moved off, not copied'),
     ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
      'cookie, which the app never holds, ledger F346',
-     "a claim's receipt sets cv_session over http and the shared URLSession keeps it and sends it back; the gate takes it until it expires or the WAP reboots"),
+     "a claim's receipt sets cv_session over http and the shared URLSession keeps it and sends it back; the gate takes it until it expires in 24 h, the WAP reboots, or eight newer sessions push it out of the store's eight slots"),
     ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
      'Auth-gated like the Wi-Fi routes (Bearer).',
      "every /api/vault/* route is api_auth_check() (download api_auth_check_or_query()), which takes a landing session's cookie first (F346)"),
@@ -2481,6 +2481,38 @@ RETIRED_IN = (
     ('firmware/ESP32S3_OPTIMIZATION_ROADMAP.md',
      'only the ESP-IDF project `canary-ota` has NVS encryption on',
      'canary-ota sets CONFIG_NVS_ENCRYPTION, but its partition table has no nvs_keys partition'),
+    # #1843's sixth pass, round-3 review: the app's cookie was given two
+    # ends when the session store has three (csi_integration.cpp's
+    # SESSION_SLOTS = 8, and pick_session_slot_for_issuance() evicts the
+    # oldest live slot, so the eighth session minted after the claim's
+    # pushes it out), the Lab's hold message reopened the door on every
+    # unit (wifi_clear_credentials() re-arms the carried window only when
+    # credentials were stored), and two counts of the console strings the
+    # old flasher needle missed were one short (five, not four).
+    ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
+     'expires in 24 h or the WAP reboots), decoded down to what',
+     "the gate takes it until it expires in 24 h, the WAP reboots, or eight newer sessions push it out of the store's eight slots"),
+    ('ios/Sources/SecuraCV/Views/Components/SensingNowSection.swift',
+     'or the WAP reboots, but once that cookie is gone a poll without the',
+     "the gate takes it until it expires in 24 h, the WAP reboots, or eight newer sessions push it out of the store's eight slots"),
+    ('ios/Sources/SecuraCV/Views/DeviceDetailView.swift',
+     'along from the shared URLSession until it expires or the WAP',
+     "the gate takes it until it expires in 24 h, the WAP reboots, or eight newer sessions push it out of the store's eight slots"),
+    ('CHANGELOG.md',
+     'which the gate takes until it expires or the WAP reboots, and the comments say so.',
+     "the gate takes it until it expires in 24 h, the WAP reboots, or eight newer sessions push it out of the store's eight slots"),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     '`api_auth_check()` takes it until its 24 h run out or the WAP reboots',
+     "the gate takes it until it expires in 24 h, the WAP reboots, or eight newer sessions push it out of the store's eight slots"),
+    ('canary-local/assets/wap-ui.js',
+     'keeps its key and token, and reopens its first-come Bluetooth setup door for half an hour',
+     'wifi_clear_credentials() re-arms the carried window only on a unit that had Wi-Fi, and a software restart keeps a spent one'),
+    ('CHANGELOG.md',
+     'so the four retired strings its old needle could not see now fail it.',
+     "five of the eight passed /A Canary keeps a read-only Bluetooth console/: flash.js's summary, Skip the cable line, heading and lowercase lead, and index.html's summary"),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     "check's lead and three other retired strings passed it",
+     "five of the eight passed /A Canary keeps a read-only Bluetooth console/: the lead and four others"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -4154,7 +4186,7 @@ MUST_PASS_IN = [
     ('canary-local/assets/wap-ui.js',
      '        : "app running — the ROM ignores BOOT until the next reset, but the firmware reads it (a tap hands the receipt to one asking page, so the page asks first; 10 s held is a factory reset)";'),
     ('canary-local/assets/wap-ui.js',
-     '    if (held && plugged && mode === "run") say("(BOOT held — the ROM only samples it at reset, but the running WAP counts it: kept 10 s, it clears Wi-Fi, broker and name, keeps its key and token, and reopens its first-come Bluetooth setup door for half an hour, unless a landing session turned its Bluetooth off, which the hold keeps)");'),
+     '    if (held && plugged && mode === "run") say("(BOOT held — the ROM only samples it at reset, but the running WAP counts it: kept 10 s, it clears Wi-Fi, broker and name, keeps its key and token, and, on a unit that had Wi-Fi, reopens its first-come Bluetooth setup door for half an hour, unless a landing session turned its Bluetooth off, which the hold keeps)");'),
     ('firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js',
      '    // no page was asking for goes to the first asker after it), and the'),
     ('CHANGELOG.md',
@@ -4370,6 +4402,20 @@ MUST_PASS_IN = [
      "# NVS is plaintext on every tier; the kit's sdkconfig.defaults.secure names"),
     ('firmware/ESP32S3_OPTIMIZATION_ROADMAP.md',
      '  `CONFIG_NVS_ENCRYPTION` unset; only the ESP-IDF project `canary-ota` builds with it set, and its'),
+    ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
+     '    /// expires in 24 h, the WAP reboots, or eight newer sessions push it'),
+    ('ios/Sources/SecuraCV/Views/Components/SensingNowSection.swift',
+     "    /// the WAP reboots, or eight newer sessions push it out of the WAP's"),
+    ('ios/Sources/SecuraCV/Views/DeviceDetailView.swift',
+     '            // until it expires in 24 h, the WAP reboots, or eight newer'),
+    ('CHANGELOG.md',
+     "which the gate takes until it expires in 24 h, the WAP reboots, or eight newer sessions push it out of the WAP's eight session slots, and the comments say so."),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     '`api_auth_check()` takes it until the first of three ends: its 24 h run out; the WAP reboots'),
+    ('CHANGELOG.md',
+     'so the five retired strings its old needle could not see now fail it.'),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     "check's lead and four other retired strings passed it"),
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -6243,6 +6289,30 @@ MUST_FAIL_IN = [
      '# sets CONFIG_NVS_ENCRYPTION); and with flash encryption on, IDF v4.3+ refuses to open an nvs partition flagged'),
     ('firmware/ESP32S3_OPTIMIZATION_ROADMAP.md',
      '  `CONFIG_NVS_ENCRYPTION` unset; only the ESP-IDF project `canary-ota` has NVS encryption on). It needs'),
+    ('ios/Sources/SecuraCV/Transport/DeviceAPI.swift',
+     '    /// sets and sends it back to that host, which the gate takes until it\n'
+     '    /// expires in 24 h or the WAP reboots), decoded down to what'),
+    ('ios/Sources/SecuraCV/Views/Components/SensingNowSection.swift',
+     "    /// set over http, which the WAP's gate takes until it expires in 24 h\n"
+     '    /// or the WAP reboots, but once that cookie is gone a poll without the'),
+    ('ios/Sources/SecuraCV/Views/DeviceDetailView.swift',
+     "            // `cv_session` cookie a claim's receipt set over http may ride\n"
+     '            // along from the shared URLSession until it expires or the WAP\n'
+     '            // reboots, but without the token every poll 401s once it is'),
+    ('CHANGELOG.md',
+     "  receipt sets and sends it back, which the gate takes until it expires or\n"
+     "  the WAP reboots, and the comments say so. The vault surface's comment"),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     '      and sends it back to the same host, and `api_auth_check()` takes it\n'
+     '      until its 24 h run out or the WAP reboots (a claim at first boot is'),
+    ('canary-local/assets/wap-ui.js',
+     '    if (held && plugged && mode === "run") say("(BOOT held — the ROM only samples it at reset, but the running WAP counts it: kept 10 s, it clears Wi-Fi, broker and name, keeps its key and token, and reopens its first-come Bluetooth setup door for half an hour, unless a landing session turned its Bluetooth off, which the hold keeps)");'),
+    ('CHANGELOG.md',
+     '  user reads it (concatenations folded, case ignored), so the four retired\n'
+     '  strings its old needle could not see now fail it. Host-tested; not run on'),
+    ('docs/audit/repo_todo_sweep_2026-09.md',
+     '      case-sensitive, so the lowercase, concatenated form of the browser\n'
+     "      check's lead and three other retired strings passed it; it now folds"),
 ]
 
 

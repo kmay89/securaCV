@@ -3597,8 +3597,12 @@ so — see D2 below.)
       http call, with `URLSession.shared`, and nothing in `ios/` turns its
       default cookie handling off. So the shared session keeps that cookie
       and sends it back to the same host, and `api_auth_check()` takes it
-      until its 24 h run out or the WAP reboots (a claim at first boot is
-      followed by a reboot; a door reopened by Forget Wi-Fi arms none). The
+      until the first of three ends: its 24 h run out; the WAP reboots (a
+      claim at first boot is followed by a reboot; a door reopened by
+      Forget Wi-Fi arms none); or eight newer sessions push it out of the
+      store's eight slots (`pick_session_slot_for_issuance()` evicts the
+      oldest when all eight are live, and every `?cv_pair` sign-in and
+      every receipt a tap or a claim serves mints one). The
       comments now say the app authenticates with the bearer and the
       shared session may also hold that cookie; nothing was changed in the
       app's requests. Not run in Xcode.
@@ -3637,7 +3641,7 @@ so — see D2 below.)
       (MUST_FAIL's 41 and MUST_FAIL_IN's 703), 640 replacements, 24 tests.
       `desktop_parity.test.js`'s console-copy guard read raw source,
       case-sensitive, so the lowercase, concatenated form of the browser
-      check's lead and three other retired strings passed it; it now folds
+      check's lead and four other retired strings passed it; it now folds
       concatenations and ignores case, with needles for the check's
       heading, the "Skip the cable" line and both summaries, and each of
       the eight retired strings, put back alone, fails it.
@@ -3646,6 +3650,36 @@ so — see D2 below.)
       scoped and corrected without a needle, and the copy-only advice, and
       pins the move-off wording on the help page, the recover deck and the
       self-test fix.
+  - The sixth pass's round-3 review (#1843, 2026-10-26; the same three
+    lenses). Each finding was reproduced first.
+    - The app's cookie had a third end. Round 2 named two (its 24 h, a
+      WAP reboot) in the three app comments, the CHANGELOG, the round-2
+      bullet above and a test reason. `csi_integration.cpp` keeps sessions in
+      eight RAM slots (`SESSION_SLOTS`), and once all eight are live
+      `pick_session_slot_for_issuance()` evicts the oldest. Reproduced on
+      the store's own code (cut verbatim, the clock stubbed): with any
+      number of older sessions before the app's, the eighth session
+      minted after it is the one that ends it, with no reboot and well
+      inside its 24 h. Each copy now names all three ends.
+    - The Lab's hold message reopened the setup door on every unit.
+      `wifi_clear_credentials()` re-arms the door's carried window only
+      when Wi-Fi was stored (`door_had_credentials`), and the hold's
+      release is a software restart, which keeps a spent window
+      (`improv_window_reset_is_power_cycle()` does not count `ESP_RST_SW`
+      as a power cycle), so a unit that never had Wi-Fi and has run past
+      its half hour keeps the door shut. The card now says "on a unit that had Wi-Fi", as the
+      sketch's serial line does.
+    - Counts: the old flasher needle (case-sensitive, raw source) caught
+      three of the eight retired console strings and missed five, so the
+      round-2 bullet now says the lead and four others, and the CHANGELOG
+      five.
+    - Tests: `test_docs_claims.py` bans 8 more retired sentences where
+      they stood; each new row's deletion fails the suite (8 of 8).
+      Totals: 41 BANNED, 693 RETIRED_IN over 209 files, 752 forms
+      (MUST_FAIL's 41 and MUST_FAIL_IN's 711), 647 replacements, 24 tests.
+    - The website's `reset-and-key-claims.test.mjs` now scans
+      `tv/README.md` too, and holds its retired "Bearer-gated record
+      list".
   Host-tested, counts at the tap commit (the review bullets above give the
   final ones): `firmware/tests_host/test_claim_ticket.cpp` (the old header
   fails 9 checks, and the seam row does not compile),

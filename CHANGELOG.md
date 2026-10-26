@@ -721,8 +721,9 @@ hold keeps; and the per-address lockout's ways out.
   the card in a card reader, since the USB drive is read-only). Three iPhone
   app comments said the app never holds the cookie the WAP's gate takes;
   over http the shared `URLSession` keeps the `cv_session` a claim's
-  receipt sets and sends it back, which the gate takes until it expires or
-  the WAP reboots, and the comments say so. The vault surface's comment
+  receipt sets and sends it back, which the gate takes until it expires in
+  24 h, the WAP reboots, or eight newer sessions push it out of the WAP's
+  eight session slots, and the comments say so. The vault surface's comment
   ("Auth-gated like the Wi-Fi routes (Bearer)"), `device_trust.md`'s WAP row
   and the roadmap's `handle_witness_v1` line no longer call
   `api_auth_check()` routes the bearer's alone, and two ledger notes and
@@ -740,9 +741,31 @@ hold keeps; and the per-address lockout's ways out.
   question" and the guide's "A factory reset will make a new certificate"),
   and holds the files that ask for NVS encryption to the three it names;
   `desktop_parity.test.js` reads the flashers' Bluetooth console copy as the
-  user reads it (concatenations folded, case ignored), so the four retired
+  user reads it (concatenations folded, case ignored), so the five retired
   strings its old needle could not see now fail it. Host-tested; not run on
   a device, in a browser or through Xcode.
+
+- **The iPhone app's session cookie has a third end, and the Lab's hold
+  message reopens the setup door only on a unit that had Wi-Fi (#1843's
+  sweep, sixth pass, round-3 review).** Round 2 gave the `cv_session` a
+  claim's receipt leaves in the app's shared `URLSession` two ends, its
+  24 h and a WAP reboot. The WAP keeps sessions in eight RAM slots
+  (`csi_integration.cpp`'s `SESSION_SLOTS`), and once all eight are live
+  `pick_session_slot_for_issuance()` evicts the oldest, so the eighth
+  session minted after the claim's ends it (every `?cv_pair` sign-in at the
+  landing and every receipt a tap or a claim serves mints one), which can
+  be minutes after the claim. The three app comments, the round-2 entry
+  above and the ledger name all three ends. The Lab's BOOT card said the
+  10 s hold reopens the first-come Bluetooth setup door on every unit;
+  `wifi_clear_credentials()` re-arms the door's carried window only on a
+  unit that had Wi-Fi stored, and the hold ends in a software restart,
+  which keeps a spent window, so the card now says "on a unit that had
+  Wi-Fi", as the sketch's serial line does. The round-2 entry above and the
+  ledger counted four retired console strings the flashers' old needle
+  could not see; it missed five of the eight, and both now say so.
+  `test_docs_claims.py` bans 8 more retired sentences where they stood (the
+  five two-end lifetimes, the Lab's unscoped door and the two miscounts).
+  Host-tested; not run on a device, in a browser or through Xcode.
 
 ### The flagship and the canary-wap halt on a stored identity key they cannot read, instead of running on a zero key or replacing it (sweep F360, #1840)
 

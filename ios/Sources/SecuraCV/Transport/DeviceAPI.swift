@@ -349,7 +349,8 @@ actor DeviceAPI {
     /// cookie, ledger F346, and over http the shared URLSession, by its
     /// default cookie handling, keeps the `cv_session` a claim's receipt
     /// sets and sends it back to that host, which the gate takes until it
-    /// expires in 24 h or the WAP reboots), decoded down to what
+    /// expires in 24 h, the WAP reboots, or eight newer sessions push it
+    /// out of the WAP's eight session slots), decoded down to what
     /// the poll needs. This is the liveness-plus-identity read for
     /// WAP-class devices: no firmware in this repo serves `/api/v1/info`,
     /// so a poll that insists on the v1 contract marks every real WAP dark.

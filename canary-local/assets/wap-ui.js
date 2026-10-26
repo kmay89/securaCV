@@ -898,7 +898,7 @@ function buildStrapTrainer() {
   });
   boot.addEventListener("click", () => {
     held = !held;
-    if (held && plugged && mode === "run") say("(BOOT held — the ROM only samples it at reset, but the running WAP counts it: kept 10 s, it clears Wi-Fi, broker and name, keeps its key and token, and reopens its first-come Bluetooth setup door for half an hour, unless a landing session turned its Bluetooth off, which the hold keeps)");
+    if (held && plugged && mode === "run") say("(BOOT held — the ROM only samples it at reset, but the running WAP counts it: kept 10 s, it clears Wi-Fi, broker and name, keeps its key and token, and, on a unit that had Wi-Fi, reopens its first-come Bluetooth setup door for half an hour, unless a landing session turned its Bluetooth off, which the hold keeps)");
     paint();
   });
   reset.addEventListener("click", () => {
