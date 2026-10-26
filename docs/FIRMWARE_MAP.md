@@ -129,6 +129,10 @@ captive portal, the AP-password mint, the `wl_status_t → JoinFailure` switch
 > `common/network/wifi_supervisor.cpp`; the SSID is `SecuraCV-<type>-XXXX`
 > everywhere; the AP hold is 120 s / 1.6 s; the saved-network ring holds four;
 > a 10 s hold resets credentials and keeps identity. Cells: `PARITY.md` C1–C12.
+> Since then, on the WAP: the 10 s hold is `factory_reset_by_hold()` (the
+> table's "none" below is the snapshot), and after setup `POST
+> /api/wifi/forget` takes the API token (F345) and also clears the stored
+> broker login (F333), as every Wi-Fi change there takes it (F334).
 
 Four portal implementations exist. All four raise a device-unique
 `SecuraCV-XXXX` WPA2 network, hijack DNS for A queries only, answer the

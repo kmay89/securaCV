@@ -296,7 +296,7 @@ stating once. The design is
 
 | Link | How it is made | What it may touch on a WAP |
 |---|---|---|
-| **A bond** (the steady state) | LE Secure Connections with **Numeric Comparison** from the dashboard, the bond kept; the key is *authenticated* | everything the pairing channel serves: the console, BLE OTA, the witness export, the bonded provisioning (rescue) service — all `READ_AUTHEN` / `WRITE_AUTHEN` |
+| **A bond** (the steady state) | LE Secure Connections with **Numeric Comparison** confirmed from a dashboard signed in with the API token (F346: `POST /api/bluetooth/pair/confirm` takes the bearer alone), the bond kept; the key is *authenticated* | everything the pairing channel serves: the console, BLE OTA, the witness export, the bonded provisioning (rescue) service — all `READ_AUTHEN` / `WRITE_AUTHEN` |
 | **A Just Works link** (the setup door) | LE Secure Connections **Just Works**, no bond kept — the only pairing a phone with no prior bond can open in one tap; the key is *unauthenticated* (it resists a passive listener, not an active one who paired first) | the Improv Wi-Fi command and result characteristics (credentials in, verdict out) and, once the join the phone asked for succeeded, **one read of the claim ticket**. Nothing else: every `*_AUTHEN` characteristic refuses the unauthenticated key |
 
 The channel's security profile is swapped to Just Works only while the door
@@ -305,6 +305,13 @@ or bonded link is up — and restored when it shuts. The door itself is open
 only for a device with **no stored credentials**, for 30 minutes after
 power-on; a WAP on its own Wi-Fi (even one whose Wi-Fi is failing) offers
 nothing here.
+
+To pair a phone for the bond: on the dashboard, press Start Pairing (it
+asks for the API token first when the page holds none: paste it from the
+recovery kit, or use BOOT Tap Once), then compare the six digits and press
+"Numbers match" while the phone still waits. Confirm from a computer's
+browser when the phone being paired also shows the dashboard: a mobile
+browser that reloads a backgrounded tab drops the token the page held.
 
 **The claim's two factors.** The bearer token — the thing this page's
 iPhone-app paragraph says the app pins a key from — never rides the Just

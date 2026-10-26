@@ -190,14 +190,19 @@ re-opened the door forever: the spent time rides in RTC-noinit memory
 (`provisioning_logic::door_window_record_valid`, host-tested; cleared after
 a power-on, brownout, power-glitch, USB / JTAG-asserted or unknown reset,
 and by **Forget Wi-Fi** or the 10 s BOOT hold on a unit that had
-credentials, which are the owner's ways to re-arm the window), a phone at the door is a sign of life
+credentials, which are the owner's ways to re-arm the window: after setup
+Forget takes the API token, so a home-network session cannot re-arm it,
+F345), a phone at the door is a sign of life
 for that wizard timer, and the restart waits while the door is open at all
 (`provisioning_logic::wizard_restart_due`, host-tested: a person watching the
 door's card on their phone has touched nothing yet) — so it cannot land
 mid-provisioning or under the card. A WAP on its own
 Wi-Fi offers nothing here — not even when that Wi-Fi is failing (the
 dashboard, the bonded rescue service and the BOOT-tap receipt are the
-owner's paths). **There is no tap door on the WAP in this version:** the
+owner's paths; after setup a Wi-Fi change on the dashboard, on the home
+network or on the `SecuraCV-wap-XXXX` recovery network, takes the API token
+or one BOOT tap, so the recovery network's key alone opens the dashboard
+and does not re-point the unit, F334). **There is no tap door on the WAP in this version:** the
 BOOT button keeps the sketch's own gestures: a short press opens the 30 s
 receipt gate, a 2 s hold prints the identity on serial, and a 10 s hold is
 the factory reset (`factory_reset_by_hold()`). The hold clears the saved
@@ -355,10 +360,17 @@ curl -H "Authorization: Bearer <api-token>" http://192.168.4.1/api/status
 ```
 
 Every `/api/` route above except `/api/fleet` needs the device's API token,
-as a bearer header or the dashboard's session cookie, with one exception that
-takes the bearer header alone, because the landing page mints that session for
-any host on the home network: `/api/pairing-qr` (it carries the token). The
-`/api/mqtt/config` row names the one save the session alone cannot make.
+as a bearer header or the dashboard's session cookie, except where the
+bearer header alone is taken, because the landing page mints that session
+for any host on the home network: `/api/pairing-qr` (it carries the token)
+here, and among the routes not listed `POST /api/vault/key` (F335), `POST
+/api/bluetooth/pair/confirm` and `POST /api/mesh/pair/confirm` (F346), after
+setup `POST /api/wifi/connect`, `/ap-only`, `/disconnect` and `/forget`
+(F334, F345; `POST /api/wifi/qr-scan` answers `404` after setup), and `POST
+/api/reboot` and `POST /api/safe-mode/retry` (F361). The
+`/api/mqtt/config` row names the one save the session alone cannot make
+there. The dashboard asks for the token before those actions; paste it from
+the recovery kit, or use BOOT Tap Once.
 
 ```json
 {

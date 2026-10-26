@@ -77,15 +77,28 @@ it the shared grammar and made it scan on its own:
   any join attempt — when the clock is valid.
 - **Boot scan-to-join:** an unprovisioned canary with a usable camera
   runs 60 s scan windows with a short breather, forever — power it on,
-  point it at the display's code, done. No phone, no session. A phone
-  captive-portal session takes the camera over cleanly at any time.
+  point it at the display's code, done. No phone, no session. It follows
+  the Bluetooth setup door's rule (`provisioning_logic::keyless_join_open()`,
+  sweep F333): no network stored and not standalone, so a unit set
+  standalone in the wizard no longer scans (any code held to its lens used
+  to take it off standalone). To add a standalone unit to a display's
+  fleet, change its Wi-Fi from the dashboard (the API token or one BOOT
+  tap), or hold BOOT 10 s, then show the code. A phone captive-portal
+  session takes the camera over cleanly during first-boot setup; after
+  setup `POST /api/wifi/qr-scan` answers `404` (F334).
 - **Session vs. proximity auth:** the display-minted `SCV1` path carries
   its own expiring token, so the phone-session pair-token gates don't
   apply to it; a plain `WIFI:` code in boot-scan mode joins Wi-Fi and
   leaves trust to the display's blessing.
 - **Hub handoff:** `h=`/`o=` from the code point the canary's MQTT
   bridge at the hub immediately (config saved + re-init), so the fleet —
-  and the display's celebration — sees it the moment Wi-Fi comes up.
+  and the display's celebration — sees it the moment Wi-Fi comes up. The
+  code carries no broker login and keeps the row's. A keyless join reaches
+  a set-up unit only after the owner's bearer Forget Wi-Fi, which clears
+  the stored user and password (`csi_mqtt::login_clear()`, F333), or the
+  10 s hold, which clears the whole broker row; so a forgotten WAP joins
+  the display's hub with no login, and the owner retypes one on `/mqtt` if
+  the broker needs it.
 - **It answers out loud:** credentials accepted = ascending chirp (LED
   blink on silent hardware); stale code = error buzz. Garbled or foreign
   codes never end the scan — it says so and keeps watching.

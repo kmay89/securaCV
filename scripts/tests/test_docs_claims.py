@@ -146,6 +146,38 @@ BANNED = (
      "not a move there); the WAP's 403 password_needed is for the session "
      "alone and counts the TLS mode and the CA as moves — each device's rule "
      "is stated under its own name"),
+    # Retired by the owner-authority PR (sweep F333, F334, F346, F361): what
+    # the landing page's session, or a code held to the camera, could still
+    # do on the WAP after setup.
+    ("The QR hub-provision path is the road that rule leaves open",
+     "F333 closes that road where it opens: the boot scan asks the setup "
+     "door's rule (keyless_join_open()), POST /api/wifi/qr-scan answers 404 "
+     "after setup (F334), and Forget clears the stored broker login "
+     "(csi_mqtt::login_clear())"),
+    ("accepted as proximity-bound in the ledger's F289, with F333 keeping the "
+     "smallest fix",
+     "F333 is decided and done: the hub re-point stays outside the move gate "
+     "on purpose, and the keyless joins reach a set-up unit only after the "
+     "owner's bearer Forget (which clears the login) or the 10 s hold"),
+    ("F334, still open, asks whether Wi-Fi changes after setup take a bearer",
+     "F334 is done: after setup POST /api/wifi/connect, /ap-only, /disconnect "
+     "and /forget take the bearer alone, on every interface"),
+    ("a standalone unit with a camera keeps scanning for a Wi-Fi QR code "
+     "after setup",
+     "since F333 the boot scan runs only while no network is stored and the "
+     "unit is not standalone"),
+    ("needs the six digits the WAP shows in the PIN box and writes to the "
+     "health log",
+     "since F346 a Passkey Entry's digits reach only a page signed in with "
+     "the API token and are no longer written to the health log"),
+    ("a landing session can still reboot the unit",
+     "since F361 POST /api/reboot and POST /api/safe-mode/retry take the "
+     "bearer alone"),
+    ("on the WAP any landing session can reboot the unit",
+     "since F361 the WAP's reboot routes take the bearer alone, as the "
+     "flagship's does"),
+    ("owner's session: a reboot, or any other write a session may make",
+     "any write a session may make, which since F361 is no longer a reboot"),
 )
 
 # Sentences retired from documents the gate above does not scan whole (the
@@ -219,6 +251,18 @@ MUST_PASS = [
     "On the WAP, the same save from the dashboard session alone is refused "
     "`403 password_needed` when it moves the host, port, TLS mode or CA; the "
     "bearer, or the password typed again, moves it (sweep F289).",
+    # The owner-authority PR's replacements.
+    "The camera's QR hub re-point stays outside that rule on purpose (sweep "
+    "F333): every code also chooses the network the unit joins",
+    "Since F334 the pair token serves only the first-boot wizard: after setup "
+    "the first two take the bearer alone and the scan's start answers `404`.",
+    "pairs by Passkey Entry, which needs the six digits the WAP shows in the "
+    "PIN box of a page signed in with the API token (since F346 no longer in "
+    "the health log)",
+    "Until F361 a landing session could reboot the unit at will",
+    "Until F361 any landing session could reboot the WAP",
+    "owner's session: any write a session may make, which since F361 is no "
+    "longer a reboot",
 ]
 # The replacements of the RETIRED_IN sentences, which share most of their
 # words with what they replaced.
@@ -262,6 +306,26 @@ MUST_FAIL = [
     "re-point the bridge at another host, port, TLS mode or CA while keeping the\n"
     "stored password; that save needs the bearer or the password typed again\n"
     "(sweep F289). This is compile-tested, host-tested, not yet bench-tested.",
+    # The owner-authority PR's retirements, as they stood (SECURITY_MODEL,
+    # THREAT_MODEL).
+    "(host-tested). The QR hub-provision path is the road that rule leaves open:\n"
+    "a scanned hub code re-points the broker with the stored password, in a scan",
+    "and the code has to be held in the camera's view: accepted as "
+    "proximity-bound in the ledger's F289, with F333 keeping the smallest fix |",
+    "its ten minutes. F334, still open, asks whether Wi-Fi changes after setup\n"
+    "take a bearer, so that the pair token serves only the first-boot wizard; its",
+    "ledger entry names connect and ap-only, not the scan. And a standalone unit\n"
+    "with a camera keeps scanning for a Wi-Fi QR code after setup\n"
+    "(`qr_auto_scan_tick()` runs whenever no Wi-Fi is saved)",
+    "a keyboard-only initiator pairs by Passkey Entry, which needs the six "
+    "digits the WAP shows in the PIN box and writes to the health log, in or "
+    "out of pairing mode (filed in the 2026-09 sweep).",
+    "deliberate denial from the LAN: a landing session can still reboot the unit\n"
+    "(`POST /api/reboot`, `POST /api/safe-mode/retry`), and ARP spoofing, httpd's",
+    "table lives in RAM, and on the WAP any landing session can reboot the unit\n"
+    "(`POST /api/reboot`, `POST /api/safe-mode/retry`), which empties it: a",
+    "requests still carry the session cookie and it can write blind with the\n"
+    "owner's session: a reboot, or any other write a session may make); a page",
 ]
 # And the RETIRED_IN sentences as they stood, wrapped.
 MUST_FAIL_IN = [

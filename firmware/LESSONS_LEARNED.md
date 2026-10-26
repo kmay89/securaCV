@@ -3361,6 +3361,52 @@
   Host-tested; the wraps cannot be bench-tested.
 - **Date learned:** 2026-10
 
+### A setup-window grant outlived setup, and a pasted token passed on the cookie beside it (canary-wap, F334, F335, F345, F346, F361)
+- **What happened:** after first-boot setup any host on a WAP's home network
+  could move it to another network, Forget it (which re-opened the
+  Bluetooth setup door, whose claim buys the receipt), confirm its own
+  phone's Bluetooth bond or its own radio's opera pairing, re-key the
+  sealed-snapshot vault and reboot the unit at will. Separately, the
+  dashboard's sign-in accepted any mistyped `cv_` token on a page that held
+  a session, and the owner met the refusal one step later, with a strike, at
+  whatever needed the bearer (inside a phone's 30 s pairing window, at a
+  Bluetooth confirm).
+- **Root cause:** three things, each reasonable alone. Two consumers shared
+  one pair-token pool: the wizard's validate-only token (a first-boot grant
+  for a phone on the SoftAP) and the landing page's `?cv_pair` link (minted
+  for any caller on the home network), with no token kind between them, so
+  the wizard's grant on `/api/wifi/connect` became every caller's. A comment
+  said "the AP itself is the gate", true during setup and stated as if it
+  were true forever; `wifi_change_authorize()` took the pair token and then
+  `api_auth_check()`, which takes the session cookie before it compares
+  anything, and the Forget, Disconnect, reboot, vault-key and two pairing
+  confirm wrappers were `api_auth_check()` too. And the sign-in checked a
+  pasted token on `GET /api/status` with the cookie attached, so the cookie
+  answered the check the token was meant to pass.
+- **Fix:** after setup the bearer alone (`api_auth_check_bearer()`) gates
+  every change to the network the unit joins, on every interface, and every
+  write that grants a credential (the vault key, the two confirms) or
+  reboots the unit; `POST /api/wifi/qr-scan` answers `404` outside setup.
+  The setup window is a branch in code (`setup_wizard::is_active()`), not a
+  comment. The setup door and the camera's boot scan, two doors to one act
+  (a join that asks for no credential), share one predicate,
+  `provisioning_logic::keyless_join_open()`, where the scan had asked only
+  half of the door's question. The sign-in sends a pasted token with
+  `credentials: 'omit'`. Rules: state a setup-window grant in code, at the
+  gate; give two doors to one act one predicate; and a check of a credential
+  must not pass on another credential the request carries beside it.
+- **Regression check:** `tests_host/test_wifi_authority.cpp` (the gate and
+  the wrappers cut from the sketch over the real `api_auth.h` and
+  `provisioning_logic.h`: after setup the landing's pair token and session
+  are `401`, Forget by a session leaves the door shut, a session's reboot
+  restarts nothing; text pins for the scan's `404` and the boot scan's
+  predicate), `test_receipt_grant.cpp`'s
+  `test_credential_grants_take_the_bearer`, `test_bluetooth_commands_wap.cpp`
+  (the bond confirm through the route `register_routes()` registers, the
+  Passkey Entry field) and `dashboard_gates.test.js` ('The shared sign-in':
+  `cv_wrong` stays refused on a page whose cookie answers 200).
+- **Date learned:** 2026-10
+
 ## Build profiles: a configuration nobody compiles is a configuration that rots
 
 ### Every offered BUILD_PROFILE and hardware target needs its own CI leg

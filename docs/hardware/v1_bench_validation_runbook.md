@@ -155,7 +155,9 @@ Then enable flash encryption on all fleet boards and proceed.
 1. Board 1: `POST /api/mesh/enable` with `{"enabled": true}`, then `/api/mesh/pair/start`.
    A board with no opera founds one here (both trees; PlatformIO since F33,
    answering `created: true` — the web UI's "Create Opera" button).
-2. Board 2: `/api/mesh/pair/join`; confirm on both (`/api/mesh/pair/confirm`).
+2. Board 2: `/api/mesh/pair/join`; confirm on both (`/api/mesh/pair/confirm`
+   with `Authorization: Bearer <token>`, over `http://`; on canary-wap a
+   session is refused, F346).
 3. `GET /api/mesh/peers` on each — both list the other with fresh heartbeats.
 
 **Pass:** pairing completes (Ed25519 challenge-response + X25519 session per

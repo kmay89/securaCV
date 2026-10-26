@@ -63,7 +63,7 @@ sentence from `improv_core.h`:
 | No credentials stored (first boot, after a factory reset), within **30 minutes** of power-on | **Open** (`Door::NoCredentials`) | A device nobody owns yet. The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, a factory reset re-arms it from the moment the credentials vanish; compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on, a brownout, a power glitch or a reset a host asserted from the USB / JTAG port — the Flasher's, so a re-flashed unit never inherits the old image's spent window (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |
 | No credentials stored, the window has run out | Shut | "A unit forgotten in a drawer is not claimable from the street for the rest of its life." A power cycle or a tap reopens it; a software restart does not. |
 | Credentials stored, the network is fine | Shut | A device that has an owner offers nothing. |
-| Credentials stored, the saved network is **failing** (the SoftAP recovery portal is up) | **Shut** | The recovery portal has a key printed on the unit; this door does not. See §2.3. |
+| Credentials stored, the saved network is **failing** (the SoftAP recovery portal is up) | **Shut** | The recovery portal has a key printed on the unit; this door does not. See §2.3. On a WAP after setup that key opens the dashboard and nothing more: Connect there takes the recovery kit's API token or one BOOT tap (F334), so the key alone no longer re-points the unit. |
 | A short **BOOT tap** on a board whose firmware reads one (Sense, Vision), with or without credentials | **Open for 60 s** (`Door::Tap`, `Timing::tap_ttl_ms`) | The owner's own act, the same trust the BOOT-tap receipt already expresses. No effect while the no-credentials door is already open (that one has its own window). On a witness that already has a network the tap also raises the SoftAP setup portal underneath the door for that minute — the door's join path is the portal's — with no quiet retry of the saved network under it, and lowers it again when the door shuts without a join (`wifi_open_tap_portal` / `wifi_close_tap_portal`). |
 | The 11th `WIFI_SETTINGS` attempt on one open door | Shut, until a tap or a power cycle | `Timing::wifi_settings_cap` = 10. A no-credentials door shut this way marks its window spent. |
 
@@ -74,11 +74,13 @@ prints the identity on serial, and a **10 s hold factory-resets the WAP**
 row, the device name and the first-boot flag, keeps the identity key and the
 API token derived from it, and restarts into first-boot setup when BOOT is
 released. A WAP's door is the first-boot window alone. The owner re-arms it
-with **Forget Wi-Fi** on the dashboard (`POST /api/wifi/forget`) or with the
-10 s hold: both clear the credentials through `wifi_clear_credentials()`,
-which on a unit that had credentials also zeroes the carried window record,
-so the door gets a fresh 30 minutes (after the hold, from the restart on
-release).
+with **Forget Wi-Fi** on the dashboard (`POST /api/wifi/forget`, which after
+setup takes the API token, F345: the dashboard asks for it, or for one BOOT
+tap) or with the 10 s hold, which needs neither and works whatever the
+lockout or the tap is doing: both clear the credentials through
+`wifi_clear_credentials()`, which on a unit that had credentials also zeroes
+the carried window record, so the door gets a fresh 30 minutes (after the
+hold, from the restart on release). A home-network session cannot re-arm it.
 
 ### 2.2 What a stranger in radio range can and cannot do
 
@@ -135,7 +137,14 @@ So the door takes the **stored-credentials fact**, never the portal's. The
 glue passes `no_credentials` as what NVS holds; `session_set_no_credentials`
 documents that "a recovery portal is NOT 'no credentials'." The recovery
 portal remains exactly what it was: a SoftAP with a device-unique key printed
-on the unit — a door with a key. The lesson is written down in
+on the unit — a door with a key. On a WAP after first-boot setup that key
+opens the dashboard and nothing more (F334): the key is shown on serial, in
+the flashers' done cards, in the receipt and on any card the owner printed,
+so anyone who could also break the home link could otherwise re-point the
+unit. Connect there takes the recovery kit's API token or one BOOT tap, and
+the tap is reliable on the portal: the station link is down and the SoftAP
+takes one client, so no other host can contend the tap (F342) or arm the
+lockout. The iPhone's bonded Bluetooth lane works there too. The lesson is written down in
 [`firmware/LESSONS_LEARNED.md`](../../firmware/LESSONS_LEARNED.md) ("a jammed
 router is not a claim window") so it is not re-learned.
 
@@ -481,7 +490,14 @@ token, takes the bearer alone the same way; and a `POST /api/mqtt/config`
 that moves the broker (host, port, TLS mode or CA) while keeping the stored
 broker password — no `password` in the body — takes the bearer too, or the
 password typed again, so the session cannot send that password to a host it
-names (`403 password_needed`). The receipt's row 2 is also under the lockout
+names (`403 password_needed`). Nor does the session buy the writes that
+grant a credential or move the unit off its network: `POST /api/vault/key`
+(the vault's recipient key, F335), `POST /api/bluetooth/pair/confirm` and
+`POST /api/mesh/pair/confirm` (a lasting bond, an opera's secret, F346),
+after setup the four Wi-Fi changes (connect, ap-only, disconnect, forget;
+F334, F345), and `POST /api/reboot` and `POST /api/safe-mode/retry` (F361)
+take the bearer alone, and a Passkey Entry's digits ride `GET
+/api/bluetooth` only with a bearer (F346). The receipt's row 2 is also under the lockout
 every admin route keeps (`api_auth_bearer_grant()` in `api_auth.h`, F289's
 follow-up): a wrong or malformed bearer is one strike against the address
 that sent it, the right one clears that address's count, and while that
@@ -564,14 +580,14 @@ most nine backoffs run at once, so a host with many addresses gets about 30
 guesses a minute between reboots, against a token of about 184 bits on a WAP
 (32 random characters of a 54-character alphabet; about 155 on the flagship,
 whose encoder takes 32 HMAC bytes, and fewer on a WAP whose token predates
-the 64-byte encoder: `THREAT_MODEL.md` scenario 10). Not closed by it:
-`POST /api/reboot` and `POST /api/safe-mode/retry` from any landing session,
-which reboot the WAP and so empty the table (it lives in RAM), and with it
-the guess budget: a guesser that reboots the unit after every few seconds
-of guessing gets about 37 guesses a minute if the unit is back on the LAN
-45 s later, about 100 at 10 s, about 155 at 5 s (modeled in
-`test_auth_backoff.cpp`; the boot time is not measured; the flagship's
-reboot needs the bearer); ARP spoofing; httpd's LRU purge (a host that opens
+the 64-byte encoder: `THREAT_MODEL.md` scenario 10). A reboot empties the
+table (it lives in RAM), and with it the guess budget. Until F361 any
+landing session could reboot the WAP (`POST /api/reboot`, `POST
+/api/safe-mode/retry`): a guesser that rebooted the unit after every few
+seconds of guessing got about 37 guesses a minute if the unit was back on
+the LAN 45 s later, about 100 at 10 s, about 155 at 5 s (modeled in
+`test_auth_backoff.cpp`; the boot time is not measured). Both routes take
+the bearer alone now, as the flagship's reboot does. Not closed by it: ARP spoofing; httpd's LRU purge (a host that opens
 enough connections closes the owner's); nine or more striking addresses (the
 overflow, above); and a cross-site `<img src=...?token=x>`, which holds the
 visiting browser's own address. A phone that still holds a pairing for a
@@ -740,7 +756,7 @@ portal).
 | Stack | NimBLE-Arduino 2.x (core 3.x) | NimBLE-Arduino 1.4.x (core 2.x) | the pairing channel's NimBLE server | — | — |
 | Flag | `FEATURE_IMPROV` in `include/canary/config.h` (default 1; `-DFEATURE_IMPROV=0` compiles it out) | same | `FEATURE_IMPROV` = `FEATURE_BLUETOOTH && FEATURE_BLE` in `build_config.h` (FULL; 0 in DEV and MINIMAL) | — | — |
 | First-boot window | 30 min (`IMPROV_FIRST_BOOT_WINDOW_MS`) | 30 min | 30 min | — | — |
-| Tap door | ✅ 60 s, `BOOT_BUTTON_PIN` from the board's `pins.h` (XIAO ESP32-C6: GPIO9); on an installed witness the tap raises the setup portal under the door for the minute | ✅ 60 s (XIAO ESP32-C3 hosts: GPIO9; XIAO ESP32-S3: GPIO0); same | ❌ none in this version (a short BOOT press stays the receipt gate; Forget Wi-Fi or the 10 s BOOT hold re-arms the window) | — | — |
+| Tap door | ✅ 60 s, `BOOT_BUTTON_PIN` from the board's `pins.h` (XIAO ESP32-C6: GPIO9); on an installed witness the tap raises the setup portal under the door for the minute | ✅ 60 s (XIAO ESP32-C3 hosts: GPIO9; XIAO ESP32-S3: GPIO0); same | ❌ none in this version (a short BOOT press stays the receipt gate; Forget Wi-Fi, with the API token after setup, or the 10 s BOOT hold re-arms the window) | — | — |
 | Window across a software restart | the glue's RTC record (`improv_ble.cpp`) | same | the sketch's RTC record (`provisioning_logic::door_window_record_valid`); door activity restarts the first-boot wizard's 15-minute idle timer | — | — |
 | Network list (`GET_WIFI_NETWORKS`) | ✅ the glue's own scan | ✅ same | ✅ the sketch's scan cache — the wizard's picker's list, under one lock | — | — |
 | Connectable with the door shut | no | no | yes (the channel's bonded services) | — | — |
@@ -988,6 +1004,18 @@ a user.
   — by design. It also means the standard's own weaknesses (no
   authentication beyond the device's rule) are ours; the rule is the
   mitigation.
+- **A home-network session cannot re-arm the WAP's door.** Forget Wi-Fi
+  takes the API token after setup (F345), so the landing page's session can
+  no longer wipe the networks and buy the receipt with the door's claim.
+  After the owner's own Forget or the 10 s hold the unit is in first-boot
+  trust again: the door's claim, and so the receipt, goes to the first
+  phone in range for 30 minutes, and a camera unit's boot scan takes the
+  first code held to its lens. Forget also clears the stored broker login
+  (F333), and the hold clears the whole broker row. The door's winner keeps
+  the permanent bearer token, which cannot be rotated today (F353).
+- **When BOOT taps keep closing because another device asks (F342),** the
+  token-free way out is the 10 s hold, then setting the unit up again from
+  the iPhone through the setup door, whose claim is spent only by a match.
 - **Radio coexistence** on the C3 / C6 of one BLE link beside a SoftAP and
   a candidate join is unproven on a bench (§9).
 - **The display never opens a door**, which also means a display can only
@@ -1068,6 +1096,13 @@ cannot speak to.
       banner says how much of the window the reset carried); a phone at the
       door during minute 14 does not get restarted under; pulling the plug
       reopens the door; Forget Wi-Fi reopens it.
+- [ ] After setup a session cannot re-open the door (F345): `POST
+      /api/wifi/forget` over `http://` with the landing cookie alone answers
+      `401`, the unit stays joined, no "Setup door open" line appears and
+      nRF Connect shows no Improv service; the same POST with `Authorization:
+      Bearer <token>` answers `200` with `broker_login_cleared:true`, and the
+      door opens; a 10 s BOOT hold with no token restarts into first-boot
+      setup with the door open.
 - [ ] The picker: `GET_WIFI_NETWORKS` lists the networks the wizard's own
       picker lists; asked during a join it answers the empty list at once.
 - [ ] The security profile swaps to Just Works only with the door open; it

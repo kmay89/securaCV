@@ -527,20 +527,31 @@ yourself: on a **Sense or Vision**, tap its BOOT button once (a short press
 — under a second) and the door opens for 60 seconds; or power-cycle a unit
 that has no Wi-Fi saved. On a **WAP**, which has no tap door in this
 version, use its own setup page (Settings → Wi-Fi on the dashboard, or the
-`SecuraCV-wap-XXXX` network when it is off your home network) — or tell it to
-forget its Wi-Fi from the dashboard (Settings → Wi-Fi → Forget, the
-`/api/wifi/forget` route), which clears the stored network and opens the
-door again for half an hour from that moment. Holding a WAP's BOOT button
+`SecuraCV-wap-XXXX` network when it is off your home network). Once a WAP is
+set up, changing its Wi-Fi there asks for the API token (paste it from your
+recovery kit) or one BOOT tap, on the recovery network too: a page your
+home network opened, or that network's printed key, no longer moves it on
+its own. Or tell it to forget its Wi-Fi from the dashboard (Settings → Wi-Fi
+→ Remove credentials, the `/api/wifi/forget` route, which also asks for the
+token or a tap), which clears the stored networks and the saved broker
+login and opens the door again for half an hour from that moment: until it
+is set up again the door, and the receipt its claim buys, goes to the first
+phone nearby, and a camera unit takes a Wi-Fi code shown to its lens. To
+change networks and keep the broker login, use Connect instead. Holding a WAP's BOOT button
 for 10 seconds (the serial console says "keep holding" at 3 s) is its
 factory reset: the saved Wi-Fi networks, the broker settings, the device
 name and the first-boot flag are cleared and the setup wizard runs again;
 the Ed25519 identity key, the witness chain and the sealed records are
 kept, so every hub and display that pinned the key still recognizes it
 (every Canary with a BOOT button has the same 10-second hold —
-`docs/OTA.md` and `docs/TRUST_MODEL.md` say why the key survives). A
-Canary whose saved network is just
+`docs/OTA.md` and `docs/TRUST_MODEL.md` say why the key survives). The
+hold needs no token and no tap and works whatever the lockout is doing, so
+it is the way out when BOOT taps keep closing because another device is
+asking: hold BOOT 10 s, then set it up again from the iPhone through the
+setup door. A Canary whose saved network is just
 down right now keeps the door shut and raises its recovery network
-instead; fix the router, or use that network's printed key.
+instead; fix the router, or use that network's printed key (on a WAP, then
+the API token or one BOOT tap to change its Wi-Fi there).
 
 ### Can Home Assistant's app set a new Canary up?
 

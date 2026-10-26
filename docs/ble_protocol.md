@@ -226,7 +226,7 @@ The open [Improv Wi-Fi](https://www.improv-wifi.com/) standard — the one Home 
 From `improv_core.h`: the door is open for a device NOBODY OWNS YET, and for an owner's own tap — never for a device that has an owner and a bad day.
 
 - **No credentials stored** (first boot, factory reset): open for a first-boot window of **30 minutes** after power-on (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle or a factory reset re-arms it; compile-time 0 = tap-only).
-- **Credentials stored:** shut, whatever the network is doing. A saved network that stopped working raises the SoftAP recovery portal (a door with a key printed on the unit) — it does **not** open this one.
+- **Credentials stored:** shut, whatever the network is doing. A saved network that stopped working raises the SoftAP recovery portal (a door with a key printed on the unit) — it does **not** open this one. On a WAP after setup that key opens the dashboard only: changing the Wi-Fi there takes the API token or one BOOT tap (F334), and Forget Wi-Fi, which re-arms this door's window, takes the API token too (F345).
 - **A short BOOT tap** (Sense and Vision; the WAP has no tap door in this version) opens it for **60 s**.
 - Bounds while open: accepted `WIFI_SETTINGS` writes at least **3 s** apart; **10 attempts** per open door, then it shuts until a tap or a power cycle; a connected client silent for **3 minutes** is dropped; ~**20 s** linger after a successful join, then back to the beacon.
 

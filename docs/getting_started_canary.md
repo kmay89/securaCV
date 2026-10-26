@@ -534,6 +534,15 @@ the device ID, the dashboard's access token, and the Canary's own Wi-Fi
 name and password. Keep it somewhere private — anyone holding it can use
 the dashboard, and the iPhone app pairs from it.
 
+**On a WAP, changing its Wi-Fi after setup takes that token.** No WAP page
+carries the token: the landing page signs your browser in with a session
+that opens the dashboard but no longer moves the Canary's network. So
+**Settings → Wi-Fi** (Connect, Remove credentials, Disconnect) brings up the
+sign-in for the token — paste it from the recovery kit, or use **BOOT Tap
+Once**, then press the button again — on your home network and on the
+Canary's own `SecuraCV-wap-XXXX` network alike.
+That is why the kit comes first.
+
 **Why the dashboard asks to be unlocked on your home network.** The page
 you load carries the key that every button on it uses. Over the Canary's
 own Wi-Fi only your phone can reach it, so the key comes with the page.

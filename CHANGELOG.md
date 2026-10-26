@@ -3,6 +3,79 @@
 ## [Unreleased]
 ### canary-wap: after setup the API token alone moves its network, reboots it, re-keys its vault and confirms a pairing, and the sign-in checks a pasted token by itself; a failed provisioning says what the unit does (sweep F333, F334, F335, F336, F345, F346, F348, F349, F361, #<PR>)
 
+- **canary-wap: one dashboard sign-in, which checks a pasted token by itself
+  (the owner-authority items' shared sign-in).** On a page holding the
+  landing page's session, the sign-in checked a pasted token on `GET
+  /api/status` with the cookie attached, and `api_auth_check()` takes the
+  cookie before it compares anything, so any `cv_` string was taken as the
+  token and refused one step later, at whatever needed the bearer. It now
+  sends the pasted token without the cookie (`credentials: 'omit'`), so a
+  mistype reads "Invalid or expired token. Please re-enter." at the sign-in
+  (and costs that browser's address one strike: a re-paste within 2 s reads
+  "Too many failed attempts. Retry in 2 seconds."). A sign-in a running
+  dashboard brings up has a **Not now** button; a refused action alerts
+  nothing on top of it; every card whose action takes the token says so
+  beforehand ("… takes the API token: paste it (it is in your recovery kit),
+  or use BOOT Tap Once."); and the "another device asked" copy names
+  pasting the token first. Host-tested (`dashboard_gates.test.js`,
+  `recovery_kit.test.js`).
+- **canary-wap: after setup the API token alone moves the network the WAP
+  joins (sweep F334, F345, F333).** The landing page hands any caller on the
+  home network a pair token and a 24-hour session, and both moved the
+  network: `POST /api/wifi/connect` and `/api/wifi/ap-only` went ahead on
+  the pair token or the cookie, and `/api/wifi/disconnect` and
+  `/api/wifi/forget` on the cookie. Forget also wiped every saved network and
+  re-opened the Bluetooth setup door, whose claim buys the receipt (the
+  token and the SoftAP password). After first-boot setup all four take the
+  bearer alone, on every interface, the recovery network
+  (`SecuraCV-wap-XXXX`) included, and `POST /api/wifi/qr-scan` answers
+  `404`; during setup nothing changes. On the dashboard, Settings → Wi-Fi
+  says the token is needed and asks for it (paste it from the recovery kit,
+  or use BOOT Tap Once); on the recovery network the tap is reliable, since
+  the SoftAP takes one client. Forget now also clears the stored broker
+  username and password (keeping the host, port, TLS mode, CA, prefix and
+  discovery): retype the login on `/mqtt` afterwards, or use Connect, which
+  keeps it. Its confirm says what it re-opens. A camera unit set standalone
+  no longer scans Wi-Fi codes (the boot scan asks the setup door's rule,
+  `keyless_join_open()`); to add one to a display's fleet, change its Wi-Fi
+  from the dashboard, or hold BOOT 10 s, then show the code. The 10 s hold
+  is the token-free way out, and works whatever the lockout is doing. Kept
+  as posture: the plain broker link (`tls_mode` 0), which a host answering
+  for the broker can still read; the CA-verified mode is the defense.
+  Host-tested (`test_wifi_authority`, `test_provisioning_logic`,
+  `test_mqtt_reinit`, `dashboard_gates.test.js`, `test_docs_claims.py`);
+  not bench-tested. Filed: F353, the token cannot be rotated.
+- **canary-wap: a session neither re-keys the vault nor confirms a pairing,
+  and a Passkey Entry's digits reach only the token (sweep F335, F346).**
+  `POST /api/vault/key` (who can open every frame sealed from then on), `POST
+  /api/bluetooth/pair/confirm` (a lasting bond to the authenticated
+  characteristics, the Wi-Fi credentials write among them) and `POST
+  /api/mesh/pair/confirm` (an opera's secret) took the landing page's
+  session; each takes the bearer alone now, and a session is refused `401`.
+  A Passkey Entry's six digits ride `GET /api/bluetooth` only to a bearer
+  that passes the accounted grant while the passkey is shown (`pin_hidden`
+  to a session) and are no longer written to the health log (F191's log
+  half). Numeric Comparison digits and the mesh code stay visible: both ends
+  compute them. The dashboard asks for the token at Start Pairing and at the
+  opera's Create/Join, before the phone's or the opera's clock runs; a
+  comparison the page did not start leads with "Don't match"; a finished
+  pairing shows no digits. The other vault routes stay on the session (a
+  session can destroy sealed frames but not redirect them). Host-tested
+  (`test_bluetooth_commands_wap`, `test_receipt_grant`,
+  `dashboard_gates.test.js`); not bench-tested. After updating: compare the
+  key id on the vault card with your own key's id once; a key a session
+  registered before this release stays the recipient (Remove, then Register
+  yours). After updating: check Settings > Bluetooth > Paired devices and the
+  Opera peers for anything you do not recognize, and remove it; a bond or
+  peer a session made before this release persists.
+- **canary-wap: the API token alone reboots the unit (sweep F361).** `POST
+  /api/reboot` and `POST /api/safe-mode/retry` took the landing page's
+  session, so any host on the home network could reboot the unit at will,
+  and each reboot emptied the RAM lockout table, resetting a token guesser's
+  budget. Both take the bearer alone now, as the flagship's reboot does.
+  Reboot Device and Retry full boot on the dashboard ask for the token
+  through the same sign-in. Host-tested (`test_wifi_authority`,
+  `dashboard_gates.test.js`); not bench-tested.
 - **canary-wap: a failed provisioning says what the unit does (sweep F336,
   decision).** `setup()` no longer prints "HALTING" (it never halted) or says
   it still serves HTTP. A release build prints `[!!] PROVISIONING FAILED -

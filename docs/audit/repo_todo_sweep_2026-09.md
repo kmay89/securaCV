@@ -1446,7 +1446,10 @@ so — see D2 below.)
   Accepted as it is — proximity-bound, the display's "it's in the fleet"
   flow; owed, if it ever opens wider (a code the camera need not see), the
   same question (a display-minted code could carry the password, or the WAP
-  could refuse a host move with a stored password from a code). (The second
+  could refuse a host move with a stored password from a code). (Superseded
+  2026-10-26, #<PR>: F333 closes this road where it opens — the boot scan
+  asks the setup door's rule, the phone-session scan answers `404` after
+  setup (F334), and Forget clears the stored login.) (The second
   review found this paragraph, LESSONS_LEARNED and the CHANGELOG calling the
   grant "not the session's" / "never the cookie": true of the scan route's
   own check, not of the chain, whose gate is its token minter's.) And the
@@ -1518,7 +1521,9 @@ so — see D2 below.)
   `wizard_logic.test.js` block tested F325's answer shape, so it was not
   ported. Not covered: a QR code shown to the camera (F333, the road F289's
   amendment names) and a broker link a host on the network answers for
-  (F334).
+  (F334). Both decided 2026-10-26 (#<PR>): F333 closes the QR road where it
+  opens, and F334 moves the Wi-Fi onto the bearer after setup and keeps the
+  plain link as posture.
 - [x] **F326 [code] canary-wap: the session cookie carries no `Secure` over
   HTTPS.** Both `cv_session` mints, `handle_ui()`'s `/?cv_pair=` exchange and
   the receipt's tap and claim, spelled `cv_session=%s; HttpOnly;
@@ -1699,7 +1704,7 @@ so — see D2 below.)
   earlier `api_auth.h`), and checks a running backoff's count. Host-tested;
   the ESP32 compile is CI's; nothing ran on a device (U1: the second row of
   the "canary-wap: F289's follow-up" section reads the `Retry-After`).
-- [ ] **F333 [code+decision] canary-wap: a QR code shown to the camera moves
+- [x] **F333 [code+decision] canary-wap: a QR code shown to the camera moves
   the MQTT broker and keeps the stored password.** `qr_scan_task_fn()`
   (`canary_wap.ino`): an SCV1 code with a host (not `wifi_only`) runs
   `config_load()`, overwrites `mc.host` and `mc.port`, sets `enabled`, then
@@ -1732,7 +1737,34 @@ so — see D2 below.)
   does not change what the code's save sends. So the call this item asks
   for is taken there for now; it stays filed with the smallest fix above for
   the day that changes.
-- [ ] **F334 [decision] canary-wap: the broker gate covers the save, not the
+  *Decided (2026-10-19, under the maintainer's instruction to fix the
+  remaining open items in best engineering practice and best value for the
+  user and security), superseding F289's 'accepted as proximity-bound'; done
+  (2026-10-26, #<PR>):* three changes.
+  - (1) The camera's boot scan follows the setup door's rule through
+    `provisioning_logic::keyless_join_open()`, the one predicate both keyless
+    joins ask. A standalone unit no longer scans; until now any code held to
+    its lens took it off standalone.
+  - (2) POST /api/wifi/forget clears the stored broker user and password
+    (`csi_mqtt::login_clear()` under the writer lock, then a re-init; its
+    answer says `broker_login_cleared`), and keeps host, port, TLS mode, CA,
+    prefix and discovery. After F334 the owner's own Forget is the one
+    post-setup road to a keyless join on a unit that holds a login.
+  - (3) POST /api/wifi/qr-scan answers only during setup (F334).
+  Not taken: the host-compare helper. Every code chooses the network, so it
+  protects nothing the Forget clear leaves. The hub branch stays outside
+  move_needs_password() on purpose, and F348's text is restated to say so.
+  Kept, documented: a login typed after a Forget, before setup, can reach
+  whoever answers the stored broker on a plain link (the CA-verified mode is
+  the defense); the boot scan has no time window.
+  Owner cost: retype the login on /mqtt after a Forget; Connect keeps it.
+  Host-tested (`test_provisioning_logic`'s keyless_join_open table,
+  `test_mqtt_reinit`'s forget_drops_the_broker_login,
+  login_clear_waits_for_a_save and login_clear_on_a_row_without_one,
+  `test_wifi_authority`'s and `test_docs_claims.py`'s text pins), not
+  bench-tested (the U1 rows "A standalone camera unit takes no code (F333)"
+  and "After Forget a code carries no login (F333)").
+- [x] **F334 [decision] canary-wap: the broker gate covers the save, not the
   link.** #1835's move gate (F325) refuses a session's save that moves the
   kept password, and the password still reaches a listener without one. (1) A host on the network
   that answers for the stored broker's address or name (ARP, mDNS or DNS)
@@ -1756,7 +1788,47 @@ so — see D2 below.)
   superseded F289 port's second review (#1832). Read against #1835
   (2026-10-19): still open, since its gate and its row lock cover the save,
   not the link, and a body that carries `password` passes the gate.
-- [ ] **F335 [decision] canary-wap: a session re-keys the vault.** `POST
+  *Decided (2026-10-19, under the maintainer's instruction to fix the
+  remaining open items in best engineering practice and best value for the
+  user and security); done (2026-10-26, #<PR>):* after first-boot setup, the
+  network the WAP joins moves on the bearer alone, on every interface, the
+  SoftAP recovery portal included.
+  - `wifi_change_authorize()` answers `api_auth_check_bearer()` whenever
+    `setup_wizard::is_active()` is false (connect, ap-only).
+  - The forget and disconnect wrappers take `api_auth_check_bearer()`;
+    reconnect, which only rejoins the stored network, stays on the session.
+  - POST /api/wifi/qr-scan answers 404 outside setup.
+  The ledger named only the pair token, but the session cookie moved the
+  network too, through `api_auth_check`. The Bluetooth bond was a second road,
+  closed by F346's gate in the same PR.
+  During setup nothing changes: no session exists then, and the wizard's pair
+  token works as before. After setup the landing's pair token and session
+  still open the dashboard, but no longer move the device. On the recovery
+  portal the AP key opens the dashboard, and Connect then takes the recovery
+  kit's token or one BOOT tap. There the STA is down and the SoftAP takes one
+  client, so nobody else can contend the tap.
+  The sign-in was fixed first, in the same PR:
+  - `connectWithToken` checked a pasted token on `/api/status` with the cookie
+    attached, so `api_auth_check` accepted any string. It now omits the
+    cookie.
+  - One `signInRaised()` helper keeps the page quiet under the sign-in; a
+    refused Connect or Forget alerts nothing and keeps the typed network.
+  - The Wi-Fi card says the token is needed, and the sign-in has Not now.
+  Lockout: A host's wrong bearers hold only that host's address (F343). A
+  browser that mistyped the token waits at most about 60 s, or taps BOOT,
+  which clears its address (F341). A host that strikes from 9 or more
+  addresses within 60 s holds every untracked address while the shared
+  overflow slot runs, and a tap does not clear that; then wait, change Wi-Fi
+  from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s. The 5-minute
+  figure was never reached.
+  Kept, documented: the plain broker link. Gating /api/mqtt/test buys nothing
+  against a spoofer, who gets the CONNECT on any reconnect; the CA-verified
+  mode is the defense. (The reboot routes take the bearer since F361, for the
+  lockout table's sake, not the link's.)
+  Filed: F353, the bearer token cannot be rotated. Host-tested
+  (`test_wifi_authority`, `dashboard_gates.test.js`), not bench-tested (U1
+  rows, plain HTTP).
+- [x] **F335 [decision] canary-wap: a session re-keys the vault.** `POST
   /api/vault/key` (`api_auth_check`, so any session) replaces the X25519
   unlock key that future snapshots are sealed to, and `GET
   /api/vault/download` takes the cookie too (`api_auth_check_or_query`), so a
@@ -1766,6 +1838,45 @@ so — see D2 below.)
   decide whether setting or clearing the key takes a bearer, or stays posture
   and `THREAT_MODEL.md` says so. From code; not probed. Found by the F289
   follow-up (#1832).
+  *Decided (2026-10-19, under the maintainer's instruction to fix the
+  remaining open items in best engineering practice and best value for the
+  user and security); done (2026-10-26, #<PR>).* `POST /api/vault/key` takes
+  the bearer alone (`api_auth_check_bearer()`, the pairing QR's gate), never
+  the landing page's session. The recipient key decides who can open every
+  frame sealed from then on, so a session must not name it: the rule #1835
+  applies to the broker move.
+  Kept on the session, as posture: `GET /api/vault/status`, `DELETE
+  /api/vault/key`, `POST /api/vault/config`, `DELETE /api/vault/item`, `POST
+  /api/vault/test`, `GET /api/vault/list` and `GET /api/vault/download`. They
+  read, disarm, delete or fetch ciphertext sealed to the owner's key. A key
+  clear and an item delete are health-logged, `frame_sealed` survives a
+  delete, clearing the key turns every trigger off, and the session already
+  sees the live camera. A LAN session can destroy sealed frames but no longer
+  redirect them.
+  Owner's path: the dashboard registers after the token pasted from the
+  recovery kit, or BOOT Tap Once. A pasted token is now checked by itself
+  (without the cookie), so a mistype is refused at the sign-in, not at
+  Register. The refusal no longer alerts on top of the sign-in, the sign-in
+  gained Not now, and the vault card says the token is needed. The iPhone app
+  always sends its bearer.
+  A key a session registered before this release stays the recipient. The
+  CHANGELOG tells owners to compare the vault card's key id with their own
+  once.
+  Written into `THREAT_MODEL.md`'s new vault row: the post-F345 residual (only
+  the owner's bearer Forget or the 10 s hold re-arms the setup door), the one
+  lockout sentence, and that for the vault key the lockout is availability
+  only. `SECURITY_MODEL.md` lists the bearer-only routes `api_auth.h` points
+  to.
+  Pinned by:
+  - `test_receipt_grant.cpp` `test_credential_grants_take_the_bearer`: cookie
+    alone 401 with no strike; a wrong bearer 403 and one strike for that
+    address; another host served at once; the striking host 429 with
+    Retry-After until its backoff runs out, then served. It fails on the old
+    wrapper.
+  - `dashboard_gates.test.js` 'Credential grants ask for sign-in (F335, F346)'
+    and 'The shared sign-in (F334, F335, F346)'.
+  Host-tested; the ESP32 compile is CI's; not bench-tested (U1 row F335, plain
+  HTTP).
 - [x] **F336 [decision] canary-wap starts its servers after its provisioning
   failed.** `provision_device()` returns before it mints the bearer token when
   `generate_keypair()` or `nvs_store_key()` fails, and `setup()` carries on to
@@ -2725,7 +2836,8 @@ so — see D2 below.)
   docs follow. The WAP's boot time is not measured. No code changed: the
   token's entropy stays the bound, and holding the guess budget across a
   reboot (the bearer for the reboot routes, or a persisted or rate-limited
-  reset) would be its own item, not filed here. Tests added to
+  reset) would be its own item: F361, filed and decided by the
+  owner-authority PR (#<PR>; both routes take the bearer alone). Tests added to
   `test_receipt_grant.cpp` (`test_qr_bearer_shapes`, through the pairing QR,
   which is `api_auth_check_bearer()`, the gate behind every admin route):
   a `Basic` or lowercase `bearer` header and one too long for the 128-byte
@@ -3383,7 +3495,7 @@ so — see D2 below.)
   - Review 8's runbook bullet said D2 to D4 are blocked by F15; D5 (the
     dashboard and MJPEG over TLS) needs the same certificate, so the runbook
     now says D2 to D5. Docs and comments only.
-- [ ] **F345 [decision] canary-wap: Forget Wi-Fi from any session re-arms the
+- [x] **F345 [decision] canary-wap: Forget Wi-Fi from any session re-arms the
   Bluetooth setup door, whose claim buys the receipt.** `POST
   /api/wifi/forget` takes `api_auth_check` (any session, the landing page's
   included), and `wifi_clear_credentials()` re-arms the door's first-boot
@@ -3401,7 +3513,31 @@ so — see D2 below.)
   bearer asked for leaves the door shut, or whether this stays posture. From
   code; not probed. Found by the superseded F289 port's review, filed by
   #1832.
-- [ ] **F346 [decision] canary-wap: a session reads the Bluetooth passkey and
+  *Decided (2026-10-19, under the maintainer's instruction to fix the
+  remaining open items in best engineering practice and best value for the
+  user and security), with F334; done (2026-10-26, #<PR>):* POST
+  /api/wifi/forget takes the bearer alone after setup
+  (`api_auth_check_bearer()`). The landing page's session can no longer wipe
+  the stored networks, re-open the Bluetooth setup door and buy the receipt
+  with the door's claim. With F346's bond gate, it cannot move the device
+  through a bond either.
+  The re-arm stays the owner's act: a Forget with the API token, or the 10 s
+  BOOT hold. The hold needs no token and no tap, and works whatever the
+  lockout is doing. It is the way out when BOOT taps keep closing because
+  another device asks (F342): hold BOOT 10 s, then set up again from the
+  iPhone through the setup door. improv_core.h and wifi_clear_credentials()
+  are unchanged.
+  Forget also clears the stored broker login (F333). Its confirm says the unit
+  goes back to first-boot trust (the setup door open for 30 minutes to the
+  first phone nearby, a camera unit taking a code shown to its lens), and a
+  Forget whose login clear did not hold says to clear it on the MQTT page. The
+  wizard does not run after a Forget, so a dashboard re-setup over the SoftAP
+  asks for the token or a tap again.
+  Disconnect is not part of this chain, though it takes the bearer too (F334).
+  Host-tested (`test_wifi_authority`: a session's Forget is 401, never runs
+  and leaves the door shut; the bearer's opens it), not bench-tested (U1 row,
+  and a §9 row in `magic_pairing.md`).
+- [x] **F346 [decision] canary-wap: a session reads the Bluetooth passkey and
   the mesh confirmation code.** `GET /api/bluetooth` (`bt_auth_gated`,
   `api_auth_check`) answers `pairing.pin` while a passkey is displayed, and
   `GET /api/mesh` (`handle_mesh_status_auth`, `api_auth_check`) answers
@@ -3411,6 +3547,57 @@ so — see D2 below.)
   needs nobody to read the code to it. Decide whether these codes take a
   bearer or stay posture. From code; not probed. Found by the superseded F289
   port, filed by #1832.
+  *Decided (2026-10-19, under the maintainer's instruction to fix the
+  remaining open items in best engineering practice and best value for the
+  user and security); done (2026-10-26, #<PR>).* Reading the codes was not the
+  path. A Numeric Comparison's six digits and the mesh code are computed by
+  both ends; the step that grants is the confirm. Two confirms were session
+  POSTs:
+  - `POST /api/bluetooth/pair/confirm`: a lasting bond to the authenticated
+    characteristics, the Wi-Fi credentials write among them;
+  - `POST /api/mesh/pair/confirm`: the opera secret sealed to the partner, or
+    this WAP taking the partner's opera.
+  Both now take the bearer alone (`api_auth_check_bearer()`; for Bluetooth
+  through the new `bt_bearer_gated` trampoline).
+  A Passkey Entry's digits are the one code that is the bond: the peer types
+  it and nothing on the WAP confirms. They now ride `GET /api/bluetooth` only
+  with a bearer that passes the accounted grant `api_auth_bearer_grant()`
+  while the passkey is live. A session gets `pin_hidden: true`, and a finished
+  or failed pairing gets neither. The compare runs only then, never on an
+  ordinary poll, so F339's one-accounted-compare rule holds. The digits are no
+  longer written to the health log, which closes F191's log half.
+  Kept on the session: the Numeric Comparison digits and `GET /api/mesh`'s
+  `pairing_code`, and every other Bluetooth and mesh route.
+  Owner's path:
+  - The dashboard asks for the token at Start Pairing and at the opera's
+    Create/Join, before the phone's clock runs.
+  - A pasted token is checked by itself (without the cookie), so a mistype is
+    refused at the sign-in, not at the confirm.
+  - A comparison the page did not start leads with "Don't match".
+  - The sign-in gained Not now.
+  - The kernel wizard already sends the bearer.
+  Written into `THREAT_MODEL.md` (the BLE pairing row and a bullet in the
+  opera section) and `SECURITY_MODEL.md`:
+  - the post-F345 residual and the one lockout sentence;
+  - the BOOT tap goes to the one address asking (F342);
+  - `POST /api/beacon/pair/confirm` is a stub behind `FEATURE_BEACON_CHANNEL`
+    (off) and takes the bearer when it becomes real;
+  - the flagship needs no parity item: no `cv_session`, and its confirm goes
+    through the bearer-only `auth_gate()`.
+  Pinned by:
+  - `test_bluetooth_commands_wap.cpp`: `a_passkey_to_show_reaches_the_owner`,
+    `a_passkey_rides_only_with_the_bearer`,
+    `a_finished_pairing_shows_no_digits` and
+    `the_bond_confirm_takes_the_bearer` (the last drives the route
+    `register_routes()` registers). Each fails on the old sources when run by
+    name, and a mutant that calls the grant on every poll fails the grant
+    count.
+  - `test_receipt_grant.cpp` `test_credential_grants_take_the_bearer` (the
+    mesh confirm row).
+  - `dashboard_gates.test.js` 'Credential grants ask for sign-in (F335,
+    F346)'.
+  Host-tested; the ESP32 compile is CI's; not bench-tested (U1 row F346, plain
+  HTTP, including the SMP window after a sign-in at Start Pairing).
 - [x] **F347 [code] canary-wap: the BOOT tap, the setup-door claim, sessions
   and pair tokens age on 32-bit `millis()`.** `provisioning_gate_take()`
   compares `(millis() - opened) < PROVISIONING_GATE_TTL_MS`,
@@ -3760,6 +3947,20 @@ so — see D2 below.)
   neither is marked `.lost` (the same file). The fix is to stop
   polling a row that answers `403` and offer re-pair or remove. From code;
   not run. Found by the F343 decision's owner review, 2026-10-19.
+- [ ] **F353 [decision] canary-wap: the bearer token cannot be rotated.**
+  `derive_api_token()` derives the token from the identity key, and the 10 s
+  BOOT hold keeps both (`factory_reset_by_hold()`), so the token a unit was
+  set up with is its token for life. After F334, F345, F346 and F361 it is the
+  only post-setup authority over the network the WAP joins, its bonds, its
+  vault key and its reboots, and the setup door's winner after the owner's own
+  Forget or hold keeps it (magic_pairing.md §8). Options: a rotation counter
+  in the derivation (the iPhone and Home Assistant pairings then run again),
+  or keep, documented. Whoever implements it must make `nvs_load_token()`
+  answer Loaded, Absent or Refused, as F360 did for the key (reuse
+  `stored_key_length()`'s IDF probe shape), and close F365 in the same PR,
+  with a test that a rotated token survives a failed read. Filed by the
+  owner-authority PR (#<PR>), allocated by the network-authority decisions
+  (2026-10-20).
 - [ ] **F354 [code] The flagship's BOOT tap still goes to the first asker.**
   The WAP's receipt hands its tap only to the sole address asking for it
   (F342, `provisioning_gate.h`'s `tap_arbitrate()`). The flagship's receipt
@@ -4235,6 +4436,33 @@ so — see D2 below.)
   answer or read a failed read as nothing stored (F363, F364, F365).
   Host-tested; the PlatformIO and ESP32 compiles are CI's; not run on a
   device.
+- [x] **F361 [decision] canary-wap: any landing session reboots the unit.**
+  `POST /api/reboot` (`handle_reboot_auth`) and `POST /api/safe-mode/retry`
+  (`handle_safe_mode_retry_auth`) were `api_auth_check()` wrappers, so any
+  landing session could reboot the unit at will: a denial from the LAN, and
+  each reboot emptied the in-RAM per-address lockout table (#1838's
+  `auth_backoff.h`), lifting a guesser from about 30 to about 155 tries a
+  minute (the token's entropy remains the bound). The flagship's
+  `handle_reboot` already takes the bearer (`auth_gate()`). Found by the third
+  review of the lockout PR (#1838), allocated to the network-authority
+  decisions (2026-10-20).
+  *Decided and done (2026-10-26, #<PR>), under the maintainer's instruction to
+  fix the remaining open items in best engineering practice and best value for
+  the user and security, by F334's post-setup authority rule:* both wrappers
+  are `api_auth_check_bearer()`, as the Wi-Fi routes are after setup. No
+  session exists during setup, so the rule needs no setup branch. The
+  dashboard's Reboot Device and Retry full boot go through the same sign-in: a
+  session-only page's refusal raises it and says "Rebooting…" to nobody, and
+  the device card says "Rebooting this Canary takes the API token…". A
+  session's other road to a restart, the dashboard's firmware install,
+  restarts the unit only into a newer signed image. Pinned by
+  `test_wifi_authority.cpp`'s `the_reboot_routes_take_the_bearer` (after and
+  during setup: a session alone 401 with no strike and nothing restarted, a
+  wrong bearer 403 and a strike, the bearer restarts once; 20 of its checks
+  fail on the old wrappers) and `dashboard_gates.test.js` 'The reboot takes
+  the API token (F361)'. `THREAT_MODEL.md` scenario 10, `SECURITY_MODEL.md`
+  and `magic_pairing.md` §3.7 now say the reboot loop was closed. Host-tested;
+  not bench-tested (U1 row "A session reboots nothing (F361)").
 - [ ] **F362 [code+decision] canary-sense, canary-vision and canary-sentinel
   store a new key over a stored one they fail to read.**
   `load_or_generate_keypair()` (`src/witness.cpp:58`, the same lines in all
@@ -8397,6 +8625,11 @@ so — see D2 below.)
   pairing mode, and by keeping the digits out of the health log. From NimBLE
   2.3.8 source and the host harness; not probed. Found by F171's security
   review (#1762).
+  *Note (2026-10-26, #<PR>):* its log half (keep the digits out of the health
+  log) is done by F346; deleting Just Works bonds and refusing a passkey
+  display outside pairing mode stay open here. Since F346 a Passkey Entry's
+  digits also reach only a page holding the API token (`pin_hidden` to a
+  session).
 - [ ] **F207 [decision] canary-wap Bluetooth: NimBLE's bond store holds 3
   phones and the paired list 8.** NimBLE-Arduino 2.3.8 and 2.5.0 keep
   `CONFIG_BT_NIMBLE_MAX_BONDS` = 3 (the nimconfig.h default; no build

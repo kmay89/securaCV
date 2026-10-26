@@ -857,7 +857,8 @@ are not something a host test can run. Compile is CI's. Owner: U1.
 
 - [ ] **Pairing, removal and the other mesh routes still answer as before**
   - Setup: two canary-wap boards on this firmware, each with the web UI
-    open.
+    open and signed in with its API token (Create/Join ask for it first,
+    and the confirm takes it alone since F346).
   - Repro: pair them from the web UI (Create Opera on one, Join on the
     other), confirming the code on the joiner first; rename the opera;
     clear the alerts; turn the mesh off and on again; remove the other
@@ -907,8 +908,9 @@ are not something a host test can run. Compile is CI's. Owner: U1.
 - [ ] **A reboot from the dashboard still saves the mesh's replay counters**
   - Setup: two paired canary-wap boards exchanging heartbeats for a few
     minutes.
-  - Repro: press Reboot on one (POST /api/reboot); repeat with the safe-mode
-    Retry button if a board is in safe mode.
+  - Repro: press Reboot on one (POST /api/reboot; the dashboard signed in
+    with the API token, which both reboot routes take alone since F361);
+    repeat with the safe-mode Retry button if a board is in safe mode.
   - Expected: the board answers `Rebooting...` and restarts within about
     3 s; after it boots, the pair keeps exchanging frames (the peer stays
     `connected`), with no fault on either board.
@@ -1430,7 +1432,8 @@ without Opera's re-advertising after a connect.
   - Setup: one canary-wap (FULL or DEV profile); two phones with nRF
     Connect.
   - Repro: Bluetooth > Pair; pair the first phone (confirm the six digits in
-    the web UI); while it is paired, start a scan in a room with many BLE
+    the web UI signed in with the API token first: paste it, or BOOT Tap
+    Once; F346); while it is paired, start a scan in a room with many BLE
     devices; pair the second phone and let the pairing time out without
     confirming; reject a third attempt; disconnect from the phone side.
     Then Pair again, let the first phone reach its six digits, walk it out
@@ -1497,7 +1500,8 @@ are not something a host test can run. Compile is CI's. Owner: U1.
   - Setup: one canary-wap flashed with the default FULL profile; a phone
     with nRF Connect (or the system Bluetooth pane: a phone offers a
     display and a yes/no, so it gets a Numeric Comparison); the web UI's
-    Bluetooth tab open.
+    Bluetooth tab open, signed in with the API token first (paste it, or
+    BOOT Tap Once; F346).
   - Repro: Bluetooth > Pair; connect from the phone and start bonding.
     When both screens show six digits, wait 20 s without pressing
     anything; then press "Numbers match". Repeat with a second attempt and
@@ -3242,6 +3246,131 @@ the compile is CI's; nothing here ran on a device or in a browser. Owner: U1.
     `docs/audit/repro/F341/flagship-receipt/`; step 7:
     `docs/audit/repro/F340/refused-token/`).
 
+## canary-wap: after setup the API token alone moves the network, reboots the unit, re-keys the vault and confirms a pairing (F334, F345, F333, F335, F346, F361) — on-device verification
+
+Host-tested (`test_wifi_authority`, `test_receipt_grant`,
+`test_bluetooth_commands_wap`, `test_mqtt_reinit`, `test_provisioning_logic`,
+`dashboard_gates.test.js`); nothing here has run on a device. Every row runs
+over plain HTTP, the stock WAP's posture after setup: `canary_wap.ino`'s
+certgen guard tests for `mbedtls/x509write_crt.h`, which no installed core
+ships, so no stock WAP serves HTTPS (F15). An HTTPS variant of any row is
+blocked until a WAP serves HTTPS. Code: `wifi_change_authorize()`, the
+Forget, Disconnect, reboot and safe-mode-retry wrappers,
+`handle_qr_scan_start()`, `handle_wifi_forget()`,
+`ble_improv_door_should_open()`, `qr_auto_scan_tick()`,
+`handle_vault_key_set_auth()` and `handle_mesh_pair_confirm_auth()` in
+`canary_wap.ino`; `bt_bearer_gated` and `handle_bluetooth_status()` in
+`bluetooth_api.h`; `csi_mqtt::login_clear()`; the sign-in, the Wi-Fi,
+vault, Bluetooth, opera and device cards in `web_ui.h`. Owner: U1.
+
+- [ ] **A session moves no network**
+  - Setup: a FULL WAP on the home Wi-Fi, setup complete; a laptop on the LAN; the API token from the recovery kit.
+  - Repro:
+    1. `curl -s http://<wap>/` and read `cv_pair` from the Open dashboard link.
+    2. `curl -X POST http://<wap>/api/wifi/connect -H 'Content-Type: application/json' -d '{"token":"<cv_pair>","ssid":"TEST","password":"testtest"}'`.
+    3. Repeat with the `cv_session` cookie and with `-H 'Authorization: Bearer <token>'`.
+    4. Repeat for `/api/wifi/ap-only`, `/disconnect` and `/forget`.
+    5. `POST /api/wifi/qr-scan` with a pair token.
+  - Expected: the pair token and the cookie get 401 with `WWW-Authenticate`, and `GET /api/wifi` still shows the home network; the bearer gets 200; qr-scan answers 404 `{"ok":false}` (on a camera build; without `FEATURE_QR_PROVISION` the route is not registered and IDF answers its own 404).
+  - Artifact: `docs/audit/repro/wap-network-authority/http/`.
+- [ ] **The dashboard asks for the token once, and catches a mistyped one**
+  - Setup: a browser signed in only by the landing.
+  - Repro: Settings → Wi-Fi shows the token note. Type a network and press Connect. In the sign-in, paste a wrong `cv_` token, then the kit's token, then press Connect again.
+  - Expected: the sign-in overlay with no 'Failed:' alert and the SSID kept; the wrong token reads 'Invalid or expired token. Please re-enter.'; the right one signs in; Connect joins.
+  - Artifact: a screen recording.
+- [ ] **On the recovery portal, Connect asks for the token or one BOOT tap**
+  - Setup: a FULL WAP set up on a test router; a phone; the recovery kit.
+  - Repro:
+    1. Power the test router off until the WAP raises `SecuraCV-wap-XXXX`.
+    2. Join it with its key, open `http://192.168.4.1/`, then Open dashboard, then Settings → Wi-Fi.
+    3. Pick a reachable network and press Connect.
+    4. Choose Use BOOT Tap Once, short-tap BOOT, and press Connect again.
+    5. Repeat with the kit's token pasted.
+    6. From the phone, `curl` `/api/wifi/connect` with the landing cookie.
+  - Expected: the first Connect brings the sign-in; the tap signs in within about 2 s; the second Connect joins; the cookie-only curl gets 401.
+  - Artifact: `docs/audit/repro/wap-network-authority/recovery-portal/`.
+
+- [ ] **A session cannot re-open the setup door (F345)**
+  - Setup: a FULL WAP on the home Wi-Fi with a broker login saved; nRF Connect on a phone; the landing cookie and the API token on a laptop.
+  - Repro:
+    1. `curl -X POST http://<wap>/api/wifi/forget` with the cookie, then `GET /api/logs`.
+    2. The same POST with `-H 'Authorization: Bearer <token>'`, then `GET /api/logs` and `GET /api/mqtt/config`.
+    3. On a second unit, hold BOOT 10 s with no token.
+  - Expected, cookie: 401; the device stays joined; no 'Setup door open' line; no Improv service in nRF Connect.
+  - Expected, bearer: 200 with `broker_login_cleared:true`; the 'Setup door open' line appears and the Improv service shows; user '' and `password_set:false`, with the host kept.
+  - Expected, the hold: it restarts into first-boot setup with the door open.
+  - Artifact: `docs/audit/repro/wap-network-authority/forget/`.
+
+- [ ] **A standalone camera unit takes no code (F333)**
+  - Setup: a camera WAP set standalone in the wizard; serial attached; a phone showing a `WIFI:` code.
+  - Repro: hold the code to the lens for 3 minutes; read serial and `GET /api/wifi`.
+  - Expected: no scan window, no chirp, still ap_only. Hold BOOT 10 s and show the code again: it joins.
+  - Artifact: `docs/audit/repro/wap-network-authority/standalone-scan/`.
+- [ ] **After Forget a code carries no login (F333)**
+  - Setup: a camera WAP with a broker login saved; a display minting an add-a-canary code for another broker; that broker's log open.
+  - Repro: `POST /api/wifi/forget` with the bearer, then show the display's code.
+  - Expected: the WAP joins; `GET /api/mqtt/config` shows the display's host, user '' and `password_set:false`; the broker logs a CONNECT with no username. Type the login on /mqtt with the session: `password_set:true`, and the next CONNECT carries it.
+  - Artifact: `docs/audit/repro/wap-network-authority/forget-login/`.
+
+- [ ] **canary-wap: a session registers no vault key (F335)**
+  - Setup: one canary-wap FULL build with camera and SD (FEATURE_VAULT_SNAPSHOT), set up on the home Wi-Fi (plain HTTP, the stock posture); its API token from the recovery kit; a computer browser that loaded `http://canary-<suffix>.local/` (holds `cv_session`); a second host B on the LAN with curl; an X25519 key from `unseal_snapshot.py gen-key`.
+  - Repro:
+    1. `curl -s -w '%{http_code}\n' -H "Cookie: cv_session=<hex>" -H 'Content-Type: application/json' -d '{"pubkey":"<64 hex>"}' http://<sta-ip>/api/vault/key`.
+    2. Read `GET /api/vault/status` with the cookie.
+    3. Repeat the POST with `-H "Authorization: Bearer <token>"`.
+    4. On the session-only dashboard: Camera, vault card, paste the key, Register. Press Not now. Then sign in by pasting a wrong `cv_` token, then the right one 3 s later, and Register again.
+    5. From the laptop, send one wrong bearer to the POST, then at once the right bearer from the laptop and from host B.
+  - Expected:
+    - Step 1 answers 401, and has_key/key_id are unchanged.
+    - The bearer answers 200 with a new key_id.
+    - The dashboard opens the sign-in with no 'Key registration failed' alert and the key still in the box; Not now returns to the dashboard.
+    - The wrong token is refused at the sign-in ('Invalid or expired token'); the right one signs in, and Register answers ok.
+    - Step 5: the laptop's right bearer answers 429 with Retry-After for about 2 s; host B answers 200 at once (F343).
+  - An HTTPS variant is blocked until a WAP serves HTTPS (no stock core ships mbedtls/x509write_crt.h).
+  - Artifact: `docs/audit/repro/F335/`.
+
+- [ ] **canary-wap: a session confirms no pairing and reads no passkey (F346)**
+  - Setup:
+    - two canary-wap FULL units on one LAN, set up, plain HTTP (the stock posture);
+    - a phone with the system Bluetooth pane (Numeric Comparison);
+    - a second phone or computer with nRF Connect set to IO capability KeyboardOnly (Passkey Entry);
+    - a computer browser that loaded `http://canary-<suffix>.local/`;
+    - the API token from the recovery kit; curl on the laptop and on a second host B.
+  - Repro:
+    1. On the session-only dashboard, Bluetooth: press Start Pairing (the sign-in comes up first), press Not now, press Start Pairing again, paste a mistyped `cv_` token (refused), wait 3 s, paste the right token, then press Start Pairing. Pair the phone and press Numbers match while the phone still waits.
+    2. Reload the page (session only) and pair again from the phone. While the digits show, send `curl -s -w '%{http_code}\n' -H "Cookie: cv_session=<hex>" -H 'Content-Type: application/json' -d '{"pin":<digits>}' http://<sta-ip>/api/bluetooth/pair/confirm`. On a fresh attempt, repeat with `-H "Authorization: Bearer <token>"`.
+    3. With the KeyboardOnly peer: read `GET /api/bluetooth` with the cookie and with the bearer, then `GET /api/logs`, and the SD /HEALTH file after a reboot.
+    4. Opera: Create on WAP 1 and Join on WAP 2 (each asks for its token first). Send a cookie-only `POST /api/mesh/pair/confirm` to each, then confirm from both signed-in dashboards.
+    5. After a completed pairing, read the session-only page's PIN box.
+    6. From the laptop, send one wrong bearer to a confirm, then at once the right one from the laptop and from host B.
+  - Expected:
+    - Step 1: the mistyped token is refused at the sign-in ('Invalid or expired token'); the pairing bonds and the phone is listed.
+    - Step 2: the page shows the digits with the "Don't match" copy. The cookie-only confirm answers 401, the phone's pairing does not complete, and the paired list is unchanged. The bearer's confirm bonds.
+    - Step 3: the cookie answer has `"pin_hidden":true` and no digits; the bearer's answer has `pin`. 'Pairing PIN displayed' has an empty detail in both logs.
+    - Step 4: the cookie-only confirm answers 401, with no peer added and no 'Completing…'. The signed-in confirms list both peers.
+    - Step 5: '------' and 'Paired.', with no PIN prompt.
+    - Step 6: the laptop gets 429 with Retry-After for about 2 s, and host B gets 200 (F343).
+  - An HTTPS variant is blocked until a WAP serves HTTPS.
+  - Artifact: `docs/audit/repro/F346/`.
+
+- [ ] **A session reboots nothing (F361)**
+  - Setup: a FULL WAP set up on the home Wi-Fi (plain HTTP); a laptop with
+    the landing cookie and the API token; a browser that loaded
+    `http://canary-<suffix>.local/` (a session only).
+  - Repro:
+    1. `curl -s -w '%{http_code}\n' -X POST -H "Cookie: cv_session=<hex>" http://<sta-ip>/api/reboot`,
+       then `GET /api/status` with the cookie (its uptime).
+    2. The same POST with `-H "Authorization: Bearer <token>"`.
+    3. Repeat both against `http://<sta-ip>/api/safe-mode/retry`.
+    4. On the session-only dashboard: Settings → Device, Reboot Device,
+       confirm. Paste the token in the sign-in, then Reboot Device again.
+  - Expected: the cookie-only POSTs answer 401 and the uptime keeps
+    counting; the bearer's answer 200 and the unit restarts; the device
+    card shows "Rebooting this Canary takes the API token…"; the first
+    dashboard press brings the sign-in with no "Rebooting…" alert, and the
+    second says "Rebooting…" and the unit restarts.
+  - Artifact: `docs/audit/repro/F361/`.
+
 ## canary-wap after a failed provisioning (F336) — on-device verification
 
 Code: `provision_device()`, the `if (!provision_device())` block in
@@ -3544,7 +3673,9 @@ WAP it would most likely mean a session somewhere never ended.
   - Setup: the same image (the vault is compiled in with the camera and the
     PDM mic), on USB power as in the first row; a vault recipient public
     key.
-  - Repro: `POST /api/vault/key` with the key, `POST /api/vault/config`
+  - Repro: `POST /api/vault/key` with the key and `-H "Authorization: Bearer
+    <token>"` over `http://` (a session alone is refused since F335),
+    `POST /api/vault/config`
     turning `t3_smoke` on, then `DELETE /api/vault/key`. Wait a minute after
     each (the loop keeps persisting the chain meanwhile), then reboot as in
     the first row.
