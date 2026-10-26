@@ -952,10 +952,7 @@ async fn read_region(
     )
     .await?;
     if code != 0 {
-        return Err(format!(
-            "espflash exited with code {code} reading 0x{offset:x}: {}",
-            log.trim()
-        ));
+        return Err(rescue::read_failure(code, offset, &log));
     }
     let data = std::fs::read(tmp.path())
         .map_err(|e| format!("couldn't read back region 0x{offset:x}: {e}"))?;

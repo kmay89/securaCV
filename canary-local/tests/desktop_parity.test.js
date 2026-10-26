@@ -5802,8 +5802,14 @@ const HW = "a7:3e:5b:c1:9d:f4";
 const HW_SHOWN = "A7:3E:5B:C1:9D:F4";
 const HW_BYTES = /a7[^0-9a-z]?3e|3e[^0-9a-z]?5b|5b[^0-9a-z]?c1|c1[^0-9a-z]?9d|9d[^0-9a-z]?f4/i;
 
+// Everything a page puts in front of a person: its text, and every node's
+// attributes and title (a hover tooltip, a label a screen reader speaks).
+const drawnText = (root) => [root.textContent, ...nodesOf(root).flatMap((n) =>
+  [n.title, n.ariaLabel, ...Object.values(n.attrs || {}), ...Object.values(n.dataset || {})])]
+  .filter((v) => v != null).map(String).join("\n");
+
 function holdsTheAddressBack(label, root, copied) {
-  assert.ok(!HW_BYTES.test(root.textContent), `${label}: hardware-address bytes are on screen before Show`);
+  assert.ok(!HW_BYTES.test(drawnText(root)), `${label}: hardware-address bytes are on screen before Show`);
   const shows = nodesOf(root).filter((n) => n.tagName === "button" && n.textContent === "Show");
   assert.strictEqual(shows.length, 1, `${label}: the address has one Show, and only one`);
   // Copy what can be copied first: never the address, before or after Show.
@@ -5870,6 +5876,147 @@ test("the hardware address: each flasher's own drawing code shows no byte of it 
   }
 });
 
+test("the hardware address: both nursery strips draw no byte of it, though both keep it", async () => {
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const now = Date.now();
+
+  // The browser's roster: each entry keeps the address to recognize the
+  // board if it comes back (flash.js, core.rosterAdd); the strip shows none.
+  {
+    const doc = pageDoc();
+    const roster = core.rosterAdd([], { t: now, mac: core.formatMac(HW.replace(/:/g, "")), product: "Canary Sense",
+      version: "2.4.16", preset: "Porch", wifi: true });
+    assert.ok(HW_BYTES.test(JSON.stringify(roster)), "the roster no longer keeps the address; this test proves less");
+    const page = runCut([flashJsEl(flashJs), fnSource(flashJs, "renderRosterStrip")], ["renderRosterStrip"],
+      { document: doc, core, state: { roster } });
+    const strip = page.renderRosterStrip();
+    assert.match(strip.textContent, /#1Canary Sense v2\.4\.16 · dialed: Porch · WiFi baked ✓/, "the strip never drew its row");
+    assert.ok(!HW_BYTES.test(drawnText(strip)), `the browser's nursery strip draws the address: ${drawnText(strip)}`);
+    // Its fineprint says what the strip keeps, the way its help dot does.
+    assert.ok(!/only public facts/.test(strip.textContent), "the strip still calls what it keeps only public facts");
+    assert.match(strip.textContent, /hardware address, only to recognize it if it comes back — never shown/);
+  }
+
+  // The desktop's strip draws its rows as one HTML string; the stand-in page
+  // keeps that string to read, attributes and all.
+  {
+    const doc = pageDoc();
+    const box = doc.createElement("div");
+    Object.defineProperty(box, "innerHTML", { get() { return this._html || ""; }, set(v) { this._html = String(v); } });
+    const book = { [HW]: { mac: HW, deviceId: "front-door", productLabel: "Canary Sense", fw: "2.4.16", flashedAt: now,
+      wifiBaked: true, hasToken: true } };
+    const page = runCut([fnSource(appJs, "esc"), fnSource(appJs, "renderNurseryStrip")], ["renderNurseryStrip"],
+      { document: doc, $: (id) => (id === "nursery-strip" ? box : null), state: { sessionStart: now - 1000 }, bookAll: () => book });
+    page.renderNurseryStrip();
+    assert.match(box.innerHTML, /front-door/, "the desktop's strip never drew its row");
+    assert.ok(!HW_BYTES.test(box.innerHTML), `the desktop's nursery strip draws the address: ${box.innerHTML}`);
+  }
+});
+
+// The desktop's report builder and its scrubbers, cut from app.js as one run:
+// the hardware-address mask, the tail lists, sanitizeLogTail and the builder.
+function deskReportBlock(appJs) {
+  const builder = fnSource(appJs, "buildDiagnosticReport");
+  const from = appJs.indexOf("const HW_ADDRESS_RE");
+  assert.ok(from >= 0 && from < appJs.indexOf(builder), "app.js moved its address mask away from the report builder");
+  return appJs.slice(from, appJs.indexOf(builder) + builder.length);
+}
+
+test("an espflash failure: the address its board info printed reaches no screen, event log or report", async () => {
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  // espflash 3.3.0 prints its board info, "MAC address: …" included, right
+  // after connecting on write-bin and read-flash, and a failure prints only a
+  // few lines after it. The engine masks the errors it builds from that
+  // output (flash.rs and rescue.rs, cargo test); this holds each frontend's
+  // own layer to the same rule, for an error that reaches it unmasked. The
+  // errors are written from the engine's own format strings.
+  const writeFmt = /pub fn write_failure\(code: i32, tail: &\[String\]\) -> String \{\s*format!\(\s*"([^"]+)",/
+    .exec(engineRs("flash"));
+  const readFmt = /pub fn read_failure\(code: i32, offset: u32, log: &str\) -> String \{\s*format!\(\s*"([^"]+)",/
+    .exec(engineRs("rescue"));
+  assert.ok(writeFmt && readFmt, "write_failure's or read_failure's format string moved");
+  const tail = [`MAC address:       ${HW}`,
+    "[00:00:00] [========================================]      18/18      0x0",
+    "[00:00:01] [========================================]     236/236     0x8000",
+    "Error: espflash::timeout", "  × Error while running FlashData command",
+    "  ╰─▶ Timeout while running FlashData command"];
+  const writeErr = writeFmt[1].replace("{code}", "1").replace("\\n{}", "\n" + tail.join("\n"));
+  const readErr = readFmt[1].replace("{code}", "1").replace("{offset:x}", "8000")
+    .replace("{}", ["Chip type:         esp32s3 (revision v0.2)", `MAC address:       ${HW}`, "Error: espflash::timeout"].join("\n"));
+  for (const e of [writeErr, readErr]) assert.ok(HW_BYTES.test(e) && e.includes("Error: espflash::timeout"), e);
+
+  // 1. Both report builders: the address masked, espflash's words kept, and
+  //    the error scrubbed the way the serial tail is, the same on both sides.
+  const deskBuild = new Function(`${deskReportBlock(appJs)}\nreturn buildDiagnosticReport;`)();
+  const errorOf = (r) => r.slice(r.indexOf("\nerror: ") + 8).split("\n--- ")[0];
+  for (const error of [writeErr, readErr, `write failed\n[PROV]   API TOKEN : 0123456789abcdef\nDevice ID: front-door-${HW}`]) {
+    const reports = { desktop: deskBuild({ stage: "install", error }), browser: core.buildDiagnosticReport({ stage: "install", error }) };
+    for (const [who, r] of Object.entries(reports)) {
+      assert.ok(!HW_BYTES.test(r), `${who}'s diagnostic report carries the hardware address:\n${r}`);
+      assert.ok(!r.includes("0123456789abcdef"), `${who}'s diagnostic report carries a credential from the error`);
+      if (error !== writeErr) continue;
+      assert.ok(r.includes(`MAC address:       ${core.HW_ADDRESS_MASK}`), `${who}: the masked line should stay readable`);
+      assert.ok(r.includes("Error: espflash::timeout") && r.includes("espflash exited with code 1"),
+        `${who} lost espflash's own words`);
+    }
+    assert.strictEqual(errorOf(reports.desktop), errorOf(reports.browser), "the two builders scrub an error differently");
+  }
+
+  // 2. The desktop: a failed install, the report copied from its card, and a
+  //    failed health check — each drawn, and kept in the event log the About
+  //    view lists (prefs, saved in the webview's storage).
+  const doc = pageDoc();
+  const nodes = {};
+  const copied = [];
+  const prefs = {};
+  const strip = { begin() {}, stage() {}, frac() {}, indet() {}, fail() {}, end() {} };
+  const answers = { flash: writeErr, health_check: readErr };
+  const real = {
+    document: doc, $: (id) => (nodes[id] = nodes[id] || doc.createElement("div")), prefs, savePrefs() {}, renderAbout() {},
+    state: { product: { id: "securacv-canary" }, flashBytes: 0, chip: "ESP32-S3", portKind: "esp32", port: "/dev/ttyACM0",
+      catalog: {}, vision: {}, appInfo: { version: "0" }, busy: false },
+    flashFitVerdict: () => ({ fits: true }), efuseStopFindings: () => [], readProvisioning: () => null,
+    opFor: () => strip, listen: async () => () => {}, withBaudLadder: (fn) => fn(921600),
+    // Tauri rejects an invoke with the command's Err text, a plain string.
+    invoke: async (cmd) => { if (answers[cmd]) throw answers[cmd]; return null; },
+    navigator: { platform: "test", userAgent: "test", clipboard: { writeText: async (t) => { copied.push(t); } } },
+  };
+  const page = runCut([deskReportBlock(appJs), ...["setStatus", "logEvent", "classifyFlashError"].map((n) => fnSource(appJs, n)),
+    ...["onFlash", "copyDiagnosticReport", "onHealthCheck"].map((n) => "async " + fnSource(appJs, n))],
+  ["onFlash", "copyDiagnosticReport", "onHealthCheck", "logEvent"], real);
+  // The event log keeps an entry's first 160 characters, which reach into
+  // espflash's tail for this failure: an unmasked entry would keep the address.
+  assert.ok(HW_BYTES.test(`Flash failed [not-in-download]: ${writeErr}`.slice(0, 160)), "this failure proves less of the event log");
+  await page.onFlash();
+  assert.match(nodes["flash-result"].textContent, /espflash::timeout/, "the install never failed on the stand-in page");
+  assert.ok(!HW_BYTES.test(nodes["flash-result"].textContent), `the install's failure line draws the address: ${nodes["flash-result"].textContent}`);
+  await page.copyDiagnosticReport("install");
+  assert.strictEqual(copied.length, 1, "the failed install's report was not copied");
+  assert.match(copied[0], /espflash::timeout/);
+  assert.ok(!HW_BYTES.test(copied[0]), `the copied diagnostic report carries the address:\n${copied[0]}`);
+  real.state.chip = "ESP32-S3"; // the install's finally lets the watcher re-read the board
+  await page.onHealthCheck();
+  assert.match(nodes["health-result"].textContent, /reading 0x8000/, "the health check never failed on the stand-in page");
+  assert.ok(!HW_BYTES.test(nodes["health-result"].textContent), `the health check's failure draws the address: ${nodes["health-result"].textContent}`);
+  page.logEvent("err", `espflash said: MAC address: ${HW}`);
+  assert.strictEqual(prefs.log.length, 3, "the install, the health check and the direct entry should each be logged");
+  for (const entry of prefs.log) assert.ok(!HW_BYTES.test(entry.msg), `the event log keeps the address: ${entry.msg}`);
+
+  // 3. The Lab's native bench: its failure card's Details, as well as its log.
+  const run = await runNativeBench({ flashAnswers: Array(8).fill(writeErr) });
+  try {
+    await run.pick("securacv-canary");
+    const details = run.mount.find((n) => n.tagName === "details" && n.textContent.startsWith("Details"));
+    assert.ok(details && /espflash::timeout/.test(details.textContent), "the bench's failure card lost its Details");
+    assert.ok(!HW_BYTES.test(run.text()), "the Lab bench's failure card draws the hardware address");
+  } finally {
+    run.close();
+  }
+});
+
 test("the desktop's This Board card: a new board never wears the last board's image or fuses", async () => {
   const intake = await import(pathToFileURL(join(CANARY, "assets/intake.js")).href);
   const appJs = read(join(ROOT, "desktop/src/app.js"));
@@ -5891,7 +6038,7 @@ test("the desktop's This Board card: a new board never wears the last board's im
     passportPending: false };
   const real = {
     document: doc, state, $: (id) => nodes[id] || doc.createElement("div"), prefs: {}, savePrefs() {},
-    WE2_VID: 0x1a86, WE2_PID: 0x55d3,
+    WE2_VID: 0x1a86, WE2_PID: 0x55d3, matchProjectToProduct: () => null,
     setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout() {},
     invoke: async (cmd, args) => {
       if (cmd === "detect_chip") return boards[args.port];
@@ -5900,13 +6047,15 @@ test("the desktop's This Board card: a new board never wears the last board's im
     },
   };
   const m = appJs.match(/\/\/ BEGIN ABOUT-BOARD\n([\s\S]*?)\/\/ END ABOUT-BOARD/);
-  const page = runCut([m[1], ...["aboutFacts", "macRevealRow", "renderThisBoard"].map((n) => fnSource(appJs, n)),
+  const page = runCut([m[1], ...["aboutFacts", "macRevealRow", "renderThisBoard", "renderPassport"].map((n) => fnSource(appJs, n)),
     "async " + fnSource(appJs, "readPassport"), "async " + fnSource(appJs, "identify")], ["identify"], real);
   const card = () => nodes["this-board"].textContent;
+  const strip = () => nodes.passport.textContent;
 
   await page.identify({ name: A, vid: 0x303a, pid: 0x1001 });
   await ticks();
   assert.match(card(), /canary_wap 2\.4\.16-wap/, "board A's image should be on its card");
+  assert.match(strip(), /Running canary_wap 2\.4\.16-wap/, "board A's passport strip should name its image");
   // Board A's fuses were read (the "Read the chip's fuses" button).
   state.chipFuses = intake.decodeChipFuses("ESP32-S3", { PKG_VERSION: 0, FLASH_CAP: 1, FLASH_VENDOR: 2, BLK_VERSION_MAJOR: 1 });
   timers.length = 0;
@@ -5921,6 +6070,8 @@ test("the desktop's This Board card: a new board never wears the last board's im
     assert.ok(!text.includes(stale), `board B's card shows board A's "${stale}" while B's passport is read`);
   }
   assert.match(text, /Installed imageNot checked yet/, "B's image is not read yet, and the card says so");
+  // The passport strip beside the card lets go of board A too.
+  assert.ok(!/canary_wap|2\.4\.16/.test(strip()), `the passport strip shows board A's image under board B: ${strip()}`);
   assert.match(text, /PackageNot checked yet/, "B's fuses are not read yet, and the card says so");
 
   // B's passport read never answers: the 25 s settle gives up, and the card
@@ -5942,12 +6093,13 @@ test("the Grove module: a model is named only after this flasher's SHA-256-match
     // project refuses; it must never reach the screen.
     person: { name: "Face Recognition v2", description: "identify who is at the door", classes: ["person"] },
   };
-  const at = (info) => ({ start() {}, stop() {}, cmd: async (c) => (c === "INFO?" ? info : { code: 0 }) });
-  const browserPage = (info) => {
+  const at = (info, sent) => ({ start() {}, stop() {},
+    cmd: async (c) => { sent.push(c); return c === "INFO?" ? info : { code: 0 }; } });
+  const browserPage = (info, sent = []) => {
     const doc = pageDoc();
     return { doc, page: runCut([flashJsEl(we2Flash), fnSource(we2Flash, "phaseModuleDone"),
       fnSource(we2Flash, "phaseModuleBench")], ["phaseModuleDone", "phaseModuleBench"], {
-      document: doc, modelInfoBase64: we2.modelInfoBase64, makeAtClient: () => at(info),
+      document: doc, burnCardBase64: we2.burnCardBase64, makeAtClient: () => at(info, sent),
       wakeModule: async () => ({ data: { software: "2025.01.02" } }), sleep: async () => {},
       visionSession: { parts: () => ({ esp32: false, we2: true }) },
       mountBench: () => ({ node: doc.createElement("div"), stop: async () => {} }),
@@ -5956,17 +6108,40 @@ test("the Grove module: a model is named only after this flasher's SHA-256-match
   const ctx = { catalog: { products: [] }, back() {} };
   const s = { t: { close: async () => {} } };
 
-  // After the burn: the pinned release is named, a file the person picked is not.
+  // After the burn: the pinned release is named, a file the person picked is
+  // not — on screen, and in the card the burn stores on the module, which
+  // every later reader of AT+INFO? (both benches, SenseCraft) takes as the
+  // module's claim about its model.
   for (const pinned of [true, false]) {
-    const { page } = browserPage({ code: 0 });
+    const sent = [];
+    const { page } = browserPage({ code: 0 }, sent);
     const box = page.phaseModuleDone(ctx, s, { pinned, version: "1", sha256: "ab".repeat(32) });
     await ticks();
     const proof = nodesOf(box).find((n) => n.tagName === "p" && /^✓ /.test(n._text));
     assert.ok(proof, `pinned=${pinned}: the proof line never landed`);
-    if (pinned) assert.match(proof._text, /^✓ SecuraCV person detection, installed and checked\. /);
-    else {
+    // The burn always replaces the card, so one left by an earlier pinned
+    // burn can never speak for a file the person picked.
+    const writes = sent.filter((c) => c.startsWith("INFO="));
+    assert.strictEqual(writes.length, 1, `pinned=${pinned}: the burn should write exactly one card`);
+    const stored = /^INFO="([A-Za-z0-9+/=]+)"$/.exec(writes[0]);
+    assert.ok(stored, `pinned=${pinned}: the card write is not INFO="<base64>": ${writes[0]}`);
+    const written = JSON.parse(Buffer.from(stored[1], "base64").toString("utf8"));
+    assert.strictEqual(written.sha256, "ab".repeat(32), "the card should carry the bytes' own SHA-256");
+    if (pinned) {
+      assert.match(proof._text, /^✓ SecuraCV person detection, installed and checked\. /);
+      assert.match(proof._text, /carries our model card/);
+      assert.deepStrictEqual(written, we2.modelInfoJson({ version: "1", sha256: "ab".repeat(32) }));
+    } else {
       assert.match(proof._text, /^✓ Your model file, installed\. /);
-      assert.ok(!/person|SecuraCV/i.test(proof._text), "a local file must never be named for the person");
+      assert.ok(!/person|SecuraCV|model card/i.test(proof._text), "a local file must never be named for the person");
+      assert.ok(!written.name, `a local file's card names a model: ${written.name}`);
+      assert.deepStrictEqual(written.classes, [], "a local file's card must list no class");
+      assert.ok(!/person|SecuraCV/i.test(JSON.stringify(written)), `a local file's card claims our model: ${JSON.stringify(written)}`);
+      // A later bench on the same module reads that card back: "object" labels.
+      const later = browserPage({ data: stored[1] }).page.phaseModuleBench(ctx, s);
+      await ticks();
+      const idLine = nodesOf(later).find((n) => n.tagName === "p" && /^SSCMA firmware /.test(n._text));
+      assert.match(idLine._text, /lists no person class — labels will read “object”/);
     }
   }
 
@@ -6000,6 +6175,76 @@ test("the Grove module: a model is named only after this flasher's SHA-256-match
   assert.strictEqual(appJs.split("SecuraCV person detection").length - 1, 1);
   assert.match(fnSource(appJs, "onFlashModule"),
     /invoke\("flash_vision_module", \{\s*port: state\.port,\s*manifestUrl: state\.catalog\.we2_module\.manifest_url,\s*\}\)/);
+});
+
+test("the Grove bench draws the labels its id line promised, on both flashers", async () => {
+  // The id line (and, after a burn, the proof line) says which labels the
+  // bench will draw; this runs the bench's own drawing code on a detection
+  // and holds what it draws to that promise.
+  const we2Flash = read(join(CANARY, "assets/we2-flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const we2 = await import(pathToFileURL(join(CANARY, "assets/we2-core.js")).href);
+  const box = [120, 120, 40, 60, 92, 0];
+  const canvasCtx = new Proxy({}, { get: (_, k) => (k === "measureText" ? () => ({ width: 10 }) : () => {}), set: () => true });
+  const withCanvas = (doc) => {
+    const make = doc.createElement;
+    doc.createElement = (tag) => { const n = make(tag); if (tag === "canvas") n.getContext = () => canvasCtx; return n; };
+    return doc;
+  };
+  const card = (c) => (c ? { data: Buffer.from(JSON.stringify(c)).toString("base64") } : { code: 0 });
+
+  // The browser: the bench behind each phase, started, then one detection.
+  const browser = async (phase, info, job) => {
+    const doc = withCanvas(pageDoc());
+    const handlers = [];
+    const at = { start() {}, stop() {}, onEvent: (fn) => handlers.push(fn),
+      cmd: async (c) => (c === "INFO?" ? info : c === "TSCORE?" || c === "TIOU?" ? { code: 0, data: 50 } : { code: 0 }) };
+    const page = runCut([flashJsEl(we2Flash), ...["mountBench", phase].map((n) => fnSource(we2Flash, n))], [phase], {
+      document: doc, burnCardBase64: we2.burnCardBase64, WE2_CLASSES: we2.WE2_CLASSES,
+      stylizeDetections: we2.stylizeDetections, meterModel: we2.meterModel, makeAtClient: () => at,
+      wakeModule: async () => ({ data: { software: "2025.01.02" } }), sleep: async () => {},
+      visionSession: { parts: () => ({ esp32: false, we2: true }) },
+    });
+    const root = page[phase]({ catalog: { products: [], we2_module: {} }, back() {} }, { t: { close: async () => {} } }, job);
+    await ticks();
+    const promise = nodesOf(root).find((n) => n.tagName === "p" && /^(SSCMA firmware |✓ )/.test(n._text));
+    assert.ok(promise, `${phase}: neither the id line nor the proof line landed`);
+    const start = nodesOf(root).find((n) => n.tagName === "button" && n.textContent === "Start live preview");
+    start.fire("click");
+    await ticks();
+    for (const fn of handlers) fn({ data: { boxes: [box] } });
+    const drawn = nodesOf(root).find((n) => /we2-meter-label/.test(n.className)).textContent;
+    return { promise: promise._text, drawn };
+  };
+  const label = (drawn) => (/\bperson\b/.test(drawn) ? "person" : /\bobject\b/.test(drawn) ? "object" : `neither: ${drawn}`);
+  for (const [kind, c] of Object.entries({ none: null, other: { classes: ["car"] }, person: { classes: ["person"] } })) {
+    const { promise, drawn } = await browser("phaseModuleBench", card(c), undefined);
+    const promised = /labels will read “(\w+)”/.exec(promise)[1];
+    assert.strictEqual(label(drawn), promised, `browser bench, ${kind} card: promised "${promised}", drew "${drawn}"`);
+  }
+  // After a burn: the pinned release is the person model; a file the person
+  // picked is not known to be one, so its detections are "object".
+  for (const pinned of [true, false]) {
+    const { drawn } = await browser("phaseModuleDone", { code: 0 }, { pinned, version: "1", sha256: "ab".repeat(32) });
+    assert.strictEqual(label(drawn), pinned ? "person" : "object", `browser, after a burn (pinned=${pinned}): drew "${drawn}"`);
+  }
+
+  // The desktop: the id event, then a detection event, through its own handler.
+  for (const personClass of [true, false]) {
+    const doc = pageDoc();
+    const nodes = {};
+    const canvas = doc.createElement("canvas");
+    canvas.getContext = () => canvasCtx;
+    const liveBench = { session: null, personClass: false, seen: false, thr: { tscore: 50, tiou: 45 }, lastFrame: null };
+    const page = runCut(["const MODULE_CLASSES = [\"person\"];",
+      ...["onBenchEvent", "benchClasses", "benchRender", "moduleDetections", "moduleSummary"].map((n) => fnSource(appJs, n))],
+    ["onBenchEvent"], { document: doc, liveBench, $: (id) => (id === "bench-canvas" ? canvas : (nodes[id] = nodes[id] || doc.createElement("div"))) });
+    page.onBenchEvent({ payload: { kind: "id", software: "2025.01.02", has_card: true, person_class: personClass } });
+    page.onBenchEvent({ payload: { kind: "event", data: { boxes: [box] } } });
+    const promised = /labels will read “(\w+)”/.exec(nodes["bench-id"].textContent)[1];
+    const drawn = nodes["bench-meter-label"].textContent;
+    assert.strictEqual(label(drawn), promised, `desktop bench (person_class=${personClass}): promised "${promised}", drew "${drawn}"`);
+  }
 });
 
 test("each frontend's About facts: a read that failed is never an empty board", async () => {

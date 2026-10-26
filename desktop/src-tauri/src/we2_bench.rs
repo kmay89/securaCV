@@ -462,6 +462,25 @@ mod tests {
     }
 
     #[test]
+    fn model_card_without_a_class_list_is_no_person_card() {
+        // Only a card that lists the person class earns "person" labels: not a
+        // card with no class list, nor one whose list is not a list, nor the
+        // card the browser writes after burning a file the person picked (no
+        // name, no classes: we2-core.js localModelInfoJson).
+        for card in [
+            json!({ "name": "Person Detection" }),
+            json!({ "name": "Person Detection", "classes": "person" }),
+            json!({ "name": "", "classes": [], "sha256": "ab".repeat(32) }),
+        ] {
+            assert_eq!(
+                model_card(&card_reply(card.clone(), false)),
+                (true, false),
+                "{card}"
+            );
+        }
+    }
+
+    #[test]
     fn model_card_text_never_leaves_the_parser() {
         // A card's name is the module's own text. Whatever it says, the
         // bench's answer is the same two booleans: the name is not a field

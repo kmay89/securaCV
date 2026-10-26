@@ -328,8 +328,26 @@ test("modelInfoBase64: the card goes out as base64 of its UTF-8 bytes, as we2.rs
   assert.match(we2Rs, /STANDARD\.encode\(info\.to_string\(\)\)/);
   // …and the browser's post-burn step sends it that way, never btoa(JSON…).
   const we2Flash = readFileSync(join(__dirname, "..", "assets", "we2-flash.js"), "utf8");
-  assert.ok(!/btoa\(JSON\.stringify\(modelInfoJson/.test(we2Flash), "the burn path base64s the card with btoa() again");
-  assert.match(we2Flash, /modelInfoBase64\(\{ version: job\.version, sha256: job\.sha256 \}\)/);
+  assert.ok(!/btoa\(JSON\.stringify\(/.test(we2Flash), "the burn path base64s the card with btoa() again");
+  assert.match(we2Flash, /burnCardBase64\(job\)/);
+});
+
+test("burnCardBase64: the person card goes on the module only for the SHA-256-matched pinned model", async () => {
+  const { modelInfoJson, burnCardBase64 } = await core();
+  const sha256 = "cd".repeat(32);
+  const decode = (b64) => JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+  assert.deepStrictEqual(decode(burnCardBase64({ pinned: true, version: "1.0.0", sha256 })),
+    modelInfoJson({ version: "1.0.0", sha256 }));
+  // A file the person picked, or a job that does not say it was matched:
+  // the card names no model and lists no class, so neither bench labels its
+  // detections "person" and the card does not claim to be ours.
+  for (const job of [{ pinned: false, version: "", sha256 }, { version: "", sha256 }, { pinned: "yes", sha256 }]) {
+    const card = decode(burnCardBase64(job));
+    assert.ok(!card.name, `${JSON.stringify(job)}: the card names a model: ${card.name}`);
+    assert.deepStrictEqual(card.classes, [], `${JSON.stringify(job)}: the card lists a class`);
+    assert.ok(!/person|SecuraCV/i.test(JSON.stringify(card)), `${JSON.stringify(job)}: ${JSON.stringify(card)}`);
+    assert.strictEqual(card.sha256, sha256, "the card still says which bytes went out");
+  }
 });
 
 // ── anti-rot: the catalog, the engine, and the release pipeline agree ───────

@@ -21,7 +21,7 @@
 // Same failure posture as the ESP32 flow: every error names the fix, and
 // nothing here can brick the module — the burn menu lives in mask ROM.
 
-import { WE2, We2Flasher, makeAtParser, atCommand, modelInfoBase64,
+import { WE2, We2Flasher, makeAtParser, atCommand, burnCardBase64,
          stylizeDetections, meterModel, WE2_CLASSES } from "./we2-core.js";
 import { helpTopic, hatchMoment, isVisionBoard, verifyPinnedModelAsset } from "./flash-core.js";
 import { chirp } from "./chirp.js";
@@ -777,18 +777,22 @@ function phaseModuleDone(ctx, s, job) {
     await sleep(1200);
     const ver = await wakeModule(at, s.t, (line) => { proof.textContent = line; });
     if (ver) {
-      // store our model card on-device (what SenseCraft does after a flash),
-      // then a one-shot invoke as the "it actually runs" proof
-      const info = modelInfoBase64({ version: job.version, sha256: job.sha256 });
+      // store a model card on-device (what SenseCraft does after a flash),
+      // then a one-shot invoke as the "it actually runs" proof. Our card only
+      // for the pinned model; a local file's card names nothing and lists no
+      // class (burnCardBase64), so no later bench labels it "person".
+      const info = burnCardBase64(job);
       await at.cmd('INFO="' + info + '"', { timeoutMs: 3000 });
       const inv = await at.cmd("INVOKE=1,0,1", { timeoutMs: 8000 });
       // The one place a model is named: this flasher just wrote it, and its
       // SHA-256 (and, once a release key is pinned, its signature) matched
       // manifest-vision-model.json before a byte went out. A local file is
       // the person's own, so it is never named for them.
-      const named = job.pinned ? "SecuraCV person detection, installed and checked. " : "Your model file, installed. ";
+      const named = job.pinned === true
+        ? "SecuraCV person detection, installed and checked. The module answered, carries our model card, "
+        : "Your model file, installed. The module answered ";
       proof.textContent = inv && inv.code === 0
-        ? "✓ " + named + "The module answered, carries our model card, and ran one inference. Done — the " +
+        ? "✓ " + named + "and ran one inference. Done — the " +
           "model persists across power cycles and every host reflash."
         : "The module answers AT but the test inference didn’t reply — power-cycle it once. " +
           "If it keeps refusing: the module may be running non-SSCMA firmware; see the device guide §4.";
@@ -800,7 +804,7 @@ function phaseModuleDone(ctx, s, job) {
   })();
 
   // ── the bench: shared with phaseModuleBench — video, boxes, meter, guide ──
-  const bench = mountBench(ctx, at, { personClass: job.pinned });
+  const bench = mountBench(ctx, at, { personClass: job.pinned === true });
   box.append(bench.node);
 
   const done = el("button", "ghost", "Disconnect — I’m done");

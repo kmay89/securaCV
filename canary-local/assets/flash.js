@@ -1980,8 +1980,9 @@ function renderRosterStrip() {
   });
   sec.append(list);
   sec.append(el("p", "fineprint",
-    "Kept for this tab only, and only public facts — which firmware, which " +
-    "dials, whether WiFi was baked (never the network itself)."));
+    "Kept for this tab only: which firmware, which dials, whether WiFi was " +
+    "baked (never the network itself), and each board's hardware address, only " +
+    "to recognize it if it comes back — never shown."));
   return sec;
 }
 

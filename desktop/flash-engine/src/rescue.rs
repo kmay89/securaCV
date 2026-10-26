@@ -119,6 +119,18 @@ pub fn read_flash_args(port: &str, size: u64, out: &str, baud: u32) -> Vec<Strin
     ]
 }
 
+/// The error a failed region read ends in: the exit code, the offset, and the
+/// whole captured espflash log, with the board info's "MAC address: …" masked
+/// ([`crate::flash::mask_hardware_address`]) — read-flash prints it right
+/// after connecting, and this error is drawn on screen and kept in the app's
+/// event log.
+pub fn read_failure(code: i32, offset: u32, log: &str) -> String {
+    format!(
+        "espflash exited with code {code} reading 0x{offset:x}: {}",
+        crate::flash::mask_hardware_address(log.trim())
+    )
+}
+
 /// `read-flash <offset> <size> <out> --port <port> --baud <baud>` — read ONE
 /// region (the health check reads the partition table, app descriptors, otadata,
 /// coredump, and NVS this way, each to a temp file it reads back).
@@ -289,6 +301,20 @@ pub fn human_bytes(n: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_region_read_never_carries_the_address_espflash_printed() {
+        // read-flash prints the board info, "MAC address: …" included, right
+        // after connecting (espflash 3.3.0); the health check's error keeps
+        // the whole captured log.
+        let log = "Chip type:         esp32s3 (revision v0.2)\nMAC address:       dc:54:75:c1:22:30\nError: espflash::timeout\n";
+        let err = read_failure(1, 0x8000, log);
+        assert!(!err.contains("c1:22:30"), "{err}");
+        assert_eq!(
+            err,
+            "espflash exited with code 1 reading 0x8000: Chip type:         esp32s3 (revision v0.2)\nMAC address:       [hardware address hidden]\nError: espflash::timeout"
+        );
+    }
 
     #[test]
     fn backup_filename_is_the_browsers_scheme_and_names_no_board() {

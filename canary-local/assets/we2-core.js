@@ -279,13 +279,38 @@ export function modelInfoJson({ version, sha256 }) {
   };
 }
 
+// A model file the person chose on their own computer. This flasher checked
+// nothing about it, so its card names no model and lists no class: both
+// benches pick their label map from the card, any other tool that reads
+// AT+INFO? sees it as the module's own description, and this one must not
+// claim to be the pinned person detector. The burn still writes it, so a card
+// left by an earlier pinned burn cannot speak for the new file.
+export function localModelInfoJson({ sha256 }) {
+  return {
+    name: "",
+    classes: [],
+    description: "A local model file, not checked by the flasher that wrote it",
+    sha256: sha256 || "",
+  };
+}
+
 // The card as AT+INFO= carries it: base64 of the JSON's UTF-8 bytes, which is
 // what we2.rs sends. btoa() takes Latin-1 only and throws on the card's em
 // dash, so the bytes are encoded first.
-export function modelInfoBase64(opts) {
+function cardBase64(card) {
   let bin = "";
-  for (const b of new TextEncoder().encode(JSON.stringify(modelInfoJson(opts)))) bin += String.fromCharCode(b);
+  for (const b of new TextEncoder().encode(JSON.stringify(card))) bin += String.fromCharCode(b);
   return btoa(bin);
+}
+export function modelInfoBase64(opts) {
+  return cardBase64(modelInfoJson(opts));
+}
+
+// The card a burn stores: ours only when the job says, exactly, that its bytes
+// matched manifest-vision-model.json (job.pinned === true); anything else gets
+// the card that claims nothing.
+export function burnCardBase64(job = {}) {
+  return cardBase64(job.pinned === true ? modelInfoJson(job) : localModelInfoJson(job));
 }
 
 // ── live-preview detection formatting (the bench "wow") ─────────────────────

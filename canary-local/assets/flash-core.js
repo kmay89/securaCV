@@ -2250,17 +2250,23 @@ const TAIL_REDACT = [
   /\bWIFI:.*\bP:/,        // "[SETUP] QR WIFI:T:WPA;S:<ssid>;P:<key>;;" — the key, in any field order
 ];
 
-// Lines that are no secret but name this one board: the boot banner's
-// "Hardware ID" (boot_kv on the display, Sense, Vision and Sentinel; the WAP's
+// Lines that are no secret but name this one board (or, for a peer's
+// fingerprint, another in the household): the boot banner's "Hardware ID"
+// (boot_kv on the display, Sense, Vision and Sentinel; the WAP's
 // "  Hardware ID    : …" in sys_monitor.h — the flagship prints none), the
 // self-manifest line, which carries the key fingerprint, the device id and the
-// boot count, and any line with a MAC-shaped token in it (the ROM tools print
-// the board's own). Shown in the flasher, never pasted.
+// boot count, every line carrying a key fingerprint, the TLS certificate
+// (per device, its CN the key fingerprint) or a .local name (built from the
+// device id; on the WAP from the name the person gave it, or else the key
+// fingerprint), and any line with a MAC-shaped token in it (the ROM tools
+// print the board's own). Shown in the flasher, never pasted.
 const TAIL_IDENTITY = [
   /hardware\s*id\b/i,               // "    Hardware ID 3f7a9e21b4c5d6e8", "  Hardware ID    : …"
   /securacv\.canary\.manifest\//,   // {"schema":"securacv.canary.manifest/v1",…}
   /\bdevice[\s_-]*id\b/i,           // every family's Device ID boot line (often a name the person typed)
-  /\bkey[\s_-]*fp\b|\bfp8\b|\bkey\s+fingerprint\b|\bpubkey\b/i, // the flagship's Key FP line; the WAP's FP8, Pubkey and fingerprint lines
+  /\bkey[\s_-]*fp\b|\bfp8\b|\bkey\s+fingerprint\b|\bpubkey(?:[\s_-]*fp)?\b|\bfp=/i, // the flagship's Key FP; the WAP's FP8, Pubkey, fingerprint and receipt lines; the witness ready line, a mesh peer's line
+  /\bCN:\s*securacv-|cert[\s_-]*(?:fp|fingerprint)\b/i, // the TLS certificate's CN (the key fingerprint), its own fingerprint lines
+  /[\w-]\.local\b/i,                 // the advertised .local name (from the device id, a name the person typed, or the key fingerprint)
   /\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b/i, // a ROM tool's "MAC: …" / "MAC address: …", any MAC-shaped token
 ];
 
@@ -2291,7 +2297,10 @@ export function buildDiagnosticReport(info = {}) {
   add("chosen product", info.product);
   add("connected baud", info.baud);
   add("stage", info.stage);
-  add("error", info.error);
+  // The error is scrubbed like the tail: the desktop's carries espflash's own
+  // last lines, which can hold the hardware address its board info prints.
+  // The address is masked first, so the rest of that line stays readable.
+  add("error", info.error == null ? undefined : sanitizeLogTail(maskHardwareAddress(info.error)));
   if (info.logTail) {
     lines.push("--- last serial output ---");
     lines.push(sanitizeLogTail(String(info.logTail).split("\n").slice(-12).join("\n")));
@@ -2304,8 +2313,8 @@ export function buildDiagnosticReport(info = {}) {
 // espflash prints its board info ("MAC address: …") before every flash,
 // write-bin and read-flash. Each flasher masks a MAC-shaped token (six
 // two-digit hex octets joined by ':' or '-') where it draws a log line, so no
-// console shows the address, and the report's tail scrubber drops any line
-// still carrying one.
+// console shows the address, and the report's tail scrubber replaces any line
+// still carrying one with a visible marker.
 const HW_ADDRESS_RE = /\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b/gi;
 export const HW_ADDRESS_MASK = "[hardware address hidden]";
 export function maskHardwareAddress(text) {
@@ -2576,7 +2585,8 @@ export function reportShareProjection(r = {}, when = Date.now()) {
 // "Save full report for your own records": everything the health check read,
 // labeled as describing this one board — and still no hardware address.
 export function reportFullProjection(r = {}) {
-  const { mac: _mac, ...rest } = r || {};
+  const rest = { ...(r || {}) };
+  delete rest.mac;
   return { report: "securacv-board-report", scope: "full", note: FULL_REPORT_NOTE, ...rest };
 }
 

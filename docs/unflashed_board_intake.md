@@ -176,10 +176,16 @@ its last two bytes match the board in radio range. Both flashers draw a
 only, never copy it, and never write it into a saved report, a diagnostic
 report or a file name (saved files are named by the local date and a counter).
 The Lab's native bench keeps the address detect_chip returns and shows none of
-it. `canary-local/tests/desktop_parity.test.js` holds all three to that: it
-runs each flasher's own drawing code for its connect card and its report on a
-stand-in page (no byte of the address before Show, the whole address after,
-none in a copy) and drives the Lab bench's whole page.
+it. espflash prints the address in its board info on every connect, so a
+failed run's error carries it too: the flash engine masks it in every error it
+builds from espflash's output, and the desktop's status lines and event log
+and the Lab bench's failure details mask it again where they draw it.
+`canary-local/tests/desktop_parity.test.js` holds all three to that: it runs
+each flasher's own drawing code for its connect card, its report and its
+nursery strip on a stand-in page (no byte of the address before Show, the
+whole address after, none in a copy), drives the Lab bench's whole page, and
+runs a failed install, health check and Lab-bench flash whose error still
+carries the address.
 
 ### 3b. What the chip is
 

@@ -756,7 +756,8 @@ function reportShareProjection(r = {}, when = Date.now()) {
   return out;
 }
 function reportFullProjection(r = {}) {
-  const { mac: _mac, ...rest } = r || {};
+  const rest = { ...(r || {}) };
+  delete rest.mac;
   return { report: "securacv-board-report", scope: "full", note: FULL_REPORT_NOTE, ...rest };
 }
 const HW_ADDRESS_RE = /\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b/gi;
@@ -776,7 +777,8 @@ function maskHardwareAddress(text) {
 // the "[SETUP] QR WIFI:…;P:" line when its setup network comes up, the
 // flagship on every re-raise too; a report someone is ASKED to paste must not
 // carry it) and of identity lines (the boot banner's Hardware ID, the
-// self-manifest's fingerprint, device id and boot count).
+// self-manifest, and every line carrying the device id, a key fingerprint,
+// the TLS certificate or a .local name).
 const TAIL_REDACT = [
   /password/i,
   /passphrase|\bpsk\b/i,
@@ -788,7 +790,9 @@ const TAIL_IDENTITY = [
   /hardware\s*id\b/i,
   /securacv\.canary\.manifest\//,
   /\bdevice[\s_-]*id\b/i,
-  /\bkey[\s_-]*fp\b|\bfp8\b|\bkey\s+fingerprint\b|\bpubkey\b/i,
+  /\bkey[\s_-]*fp\b|\bfp8\b|\bkey\s+fingerprint\b|\bpubkey(?:[\s_-]*fp)?\b|\bfp=/i,
+  /\bCN:\s*securacv-|cert[\s_-]*(?:fp|fingerprint)\b/i,
+  /[\w-]\.local\b/i,
   /\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b/i,
 ];
 function sanitizeLogTail(text) {
@@ -813,7 +817,10 @@ function buildDiagnosticReport(info = {}) {
   add("USB device", info.usb);
   add("chosen product", info.product);
   add("stage", info.stage);
-  add("error", info.error);
+  // Scrubbed like the tail: an install's error carries espflash's last lines,
+  // which can hold the hardware address its board info prints (masked, so the
+  // rest of the line stays readable).
+  add("error", info.error == null ? undefined : sanitizeLogTail(maskHardwareAddress(info.error)));
   if (info.logTail) {
     lines.push("--- last console output ---");
     lines.push(sanitizeLogTail(String(info.logTail).split("\n").slice(-12).join("\n")));
@@ -1115,7 +1122,10 @@ function profileSaveFromFlash(p) {
 // silent. Powers the health story on the About page.
 function logEvent(kind, msg) {
   prefs.log = prefs.log || [];
-  prefs.log.unshift({ t: Date.now(), kind, msg: String(msg).slice(0, 160) });
+  // Kept in the webview's storage and listed in About. An error can carry
+  // espflash's board info, so the address is masked before the entry is cut
+  // to length (a cut address is still its first bytes).
+  prefs.log.unshift({ t: Date.now(), kind, msg: maskHardwareAddress(String(msg)).slice(0, 160) });
   prefs.log = prefs.log.slice(0, 40);
   savePrefs();
   if (!$("about-view").classList.contains("hidden")) renderAbout();
@@ -6783,7 +6793,10 @@ function setConn(kind, text) {
 }
 function setStatus(id, msg, kind) {
   const el = $(id);
-  el.textContent = msg;
+  // Every status line, masked: a failure's details can carry espflash's own
+  // board info, "MAC address: …" included. The address is drawn in one
+  // place only, its reveal (macRevealRow).
+  el.textContent = maskHardwareAddress(msg);
   el.className = "status" + (kind ? " " + kind : "");
 }
 function enableCard(id) {

@@ -163,9 +163,11 @@ The flasher tries to fix the common failures before asking the user to:
   a paste-able report (browser, OS, chip, baud, error, log tail) for
   Discussions. Public-only by construction — never Wi-Fi credentials or keys,
   no hardware address (not even a tail of it), and the log tail's Hardware ID,
-  self-manifest, device id, key-fingerprint and MAC-bearing lines replaced by
-  a visible marker (`buildDiagnosticReport`). esptool's own "MAC: …" connect
-  line is masked in the technical log too (`maskHardwareAddress`).
+  self-manifest, device id, key-fingerprint, TLS-certificate, `.local`-name
+  and MAC-bearing lines replaced by a visible marker; the error line is
+  scrubbed the same way, with any hardware address in it masked
+  (`buildDiagnosticReport`). esptool's own "MAC: …" connect line is masked in
+  the technical log too (`maskHardwareAddress`).
 - **About this board** — the hello card shows the chip and its revision, the
   flash it carries and a "Hardware address · Show" row; "More about this
   board" lists the package, the flash and PSRAM in the package and factory

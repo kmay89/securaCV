@@ -657,7 +657,8 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       result.append(el("h2", null, c.title || "The flash didn’t finish"));
       result.append(el("p", "muted", withoutLocalFile(c.hint)));
       const details = el("details", "flash-log");
-      details.append(el("summary", null, "Details"), el("pre", null, String(e)));
+      // espflash's last lines, which can hold its board info's "MAC address: …".
+      details.append(el("summary", null, "Details"), el("pre", null, core.maskHardwareAddress(String(e))));
       result.append(details);
       result.append(el("p", "fineprint",
         "Nothing is bricked — the ESP32’s first-stage bootloader is in ROM. Put the board " +

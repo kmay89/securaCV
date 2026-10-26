@@ -1381,8 +1381,9 @@ test("buildDiagnosticReport: the serial tail is scrubbed of credential lines", a
 // the board prints it.
 function printf(fmt, ...args) {
   let i = 0;
-  return fmt.replace(/%(-?)(\d*)s/g, (_, left, width) => {
-    const v = String(args[i++]);
+  return fmt.replace(/%(-?)(\d*)(?:\.(\d+))?(s|lu|u)/g, (_, left, width, prec, conv) => {
+    let v = String(args[i++]);
+    if (conv === "s" && prec) v = v.slice(0, Number(prec)); // "%.16s"
     const w = Number(width || 0);
     return left ? v.padEnd(w) : v.padStart(w);
   });
@@ -1461,6 +1462,66 @@ test("sanitizeLogTail: the device id and the key fingerprint lines never reach a
   assert.ok(r.includes("Brownout detector was triggered"), "diagnosis survives");
 });
 
+test("sanitizeLogTail: every other line carrying a key fingerprint, the TLS certificate or a .local name never reaches a report", async () => {
+  // The rest of the lines the firmware prints with this board's key
+  // fingerprint (or a household peer's), its TLS certificate (a per-device
+  // self-signed one, whose CN is the key fingerprint) or the .local name it
+  // advertises (built from the device id; the WAP's from the name the person
+  // gave it, or else the key fingerprint). Rendered from the firmware's own
+  // format strings.
+  const { buildDiagnosticReport, sanitizeLogTail } = await core();
+  const fw = (p) => readFileSync(join(ROOT, "..", p), "utf8");
+  const fmt = (src, re, what) => {
+    const m = re.exec(src);
+    assert.ok(m, `${what} moved — re-point this test`);
+    return m[1].replace(/\\"/g, '"');
+  };
+  const fp = "aabbccddeeff0011";
+  const peer = "0123456789abcdef";
+  const cert = "c0ffee00c0ffee00c0ffee00c0ffee00";
+  const host = "canary-kids-room";
+  const lines = [];
+  for (const fam of ["canary-sense", "canary-vision", "canary-sentinel"]) {
+    const witness = fw(`firmware/projects/${fam}/src/witness.cpp`);
+    lines.push(printf(fmt(witness, /"(Ed25519 ready  fp=%s  chain_len=%lu)\\n",\s*fp_hex,/, `${fam}'s witness ready line`), fp, 42));
+    const mdns = fw(`firmware/projects/${fam}/src/net/mdns_mgr.cpp`);
+    assert.match(mdns, /make_hostname\(canary::cfg::get\(\)\.device_id, s_host, sizeof\(s_host\)\);/,
+      `${fam}'s .local name is no longer built from its device id`);
+    lines.push(printf(fmt(mdns, /printf\("(Fleet advert up as %s\.local \(_%s\._%s\))\\n",\s*s_host,/, `${fam}'s advert line`),
+      host, "securacv", "tcp"));
+  }
+  const display = fw("firmware/projects/canary-display/src/net/discovery.cpp");
+  lines.push(printf(fmt(display, /printf\("(Fleet advert up as %s\.local \(_%s\._%s\))\\n",\s*hostname,/, "the display's advert line"),
+    host, "securacv", "tcp"));
+  const ino = fw("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino");
+  lines.push(
+    printf(fmt(ino, /Serial\.printf\( "(║    \\"pubkey_fp\\": \\"%s\\",)\\n", g_device\.fingerprint_hex\)/, "the WAP's receipt key line"), fp),
+    printf(fmt(ino, /Serial\.printf\("(║    \\"tls_cert_fp\\": \\"%s\\",)\\n", g_tls_cert_fp_hex\)/, "the WAP's receipt cert line"), cert),
+    printf(fmt(ino, /Serial\.printf\("(\[TLS\] CN: securacv-%s)\\n", g_device\.fingerprint_hex\)/, "the WAP's TLS CN line"), fp),
+    printf(fmt(ino, /Serial\.printf\("(\[TLS\] Cert fingerprint: %\.16s\.\.\.)\\n", g_tls_cert_fp_hex\)/, "the WAP's cert line"), cert),
+  );
+  const net = fw("firmware/canary/lib/securacv_network/src/securacv_network.cpp");
+  lines.push(printf(fmt(net, /Serial\.printf\("(\[TLS\] Cert fingerprint: %\.16s\.\.\.)\\n", m_tls_cert_fp_hex\)/, "the flagship's cert line"), cert));
+  const csi = fw("firmware/canary/src/csi_modules_integration.cpp");
+  lines.push(
+    printf(fmt(csi, /Serial\.printf\("(\[ble\.scout\.peer\] fp=%s state=%s label=\\"%s\\")\\n",/, "the flagship's scout line"), peer, "arrived", "porch"),
+    printf(fmt(csi, /Serial\.printf\("(\[mesh\.channel\] lock ch=%u reason=%u from fp=%s)\\n",/, "the flagship's channel line"), 6, 1, peer),
+    printf(fmt(csi, /Serial\.printf\("(\[mesh\.election\] restored elected hub fp=%s from NVS)\\n",/, "the flagship's election line"), peer),
+  );
+  // Replaced, not dropped: each line becomes the marker.
+  const scrubbed = sanitizeLogTail(lines.join("\n")).split("\n");
+  lines.forEach((ln, i) => assert.strictEqual(scrubbed[i], "[identity line: shown in the flasher, not in reports]", `kept: ${ln}`));
+  // And through the builder, whose tail is the last 12 lines: two halves.
+  for (const part of [lines.slice(0, 8), lines.slice(8)]) {
+    const r = buildDiagnosticReport({ logTail: [...part, "Brownout detector was triggered"].join("\n") });
+    for (const leak of [fp, peer, cert.slice(0, 16), host]) {
+      assert.ok(!r.includes(leak), `"${leak}" survived into the report:\n${r}`);
+    }
+    assert.strictEqual((r.match(/\[identity line: shown in the flasher, not in reports\]/g) || []).length, part.length);
+    assert.ok(r.includes("Brownout detector was triggered"), "diagnosis survives");
+  }
+});
+
 test("the ROM tools' own MAC lines are masked where drawn, and never reach a report", async () => {
   // esptool-js's connect logs "MAC: …" unasked (the vendored bundle's main()),
   // and espflash prints "MAC address: …" in its board info before every
@@ -1487,6 +1548,10 @@ test("the ROM tools' own MAC lines are masked where drawn, and never reach a rep
   const r = buildDiagnosticReport({ logTail: tail });
   assert.ok(!/dc:54|c1:22:30/i.test(r));
   assert.ok(r.includes("Error: write failed") && r.includes("Chip type:"));
+  // …nor through the error, which can end in espflash's own last lines.
+  const e = buildDiagnosticReport({ error: "espflash exited with code 1.\n" + tail });
+  assert.ok(!/dc:54|c1:22:30/i.test(e), e);
+  assert.ok(e.includes(`MAC address:       ${HW_ADDRESS_MASK}`) && e.includes("Error: write failed"), e);
   // flash.js draws esptool's log through the mask.
   const flashJs = readFileSync(join(ROOT, "assets/flash.js"), "utf8");
   assert.match(flashJs, /writeLine\(data\) \{ if \(logSink\) \{ logSink\.textContent \+= core\.maskHardwareAddress\(data\)/);

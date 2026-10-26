@@ -213,10 +213,14 @@ on:
       # (sweep A86); the flagship's lives here (the WAP's, Vision's, Sense's
       # and the display's are under globs above)
       - "firmware/canary/src/main.cpp"
-      # flash.test.js renders each family's Hardware ID boot line from the
-      # firmware's own format to prove the report scrubber drops it; the
-      # Sentinel's is the one outside the globs above
+      # flash.test.js renders each family's identity lines (the Hardware ID,
+      # the key fingerprint, the .local name, a peer's fingerprint) from the
+      # firmware's own format strings to prove the report scrubber replaces
+      # them; these are the files outside the globs above
       - "firmware/projects/canary-sentinel/src/main.cpp"
+      - "firmware/projects/canary-sentinel/src/witness.cpp"
+      - "firmware/projects/canary-sentinel/src/net/mdns_mgr.cpp"
+      - "firmware/canary/src/csi_modules_integration.cpp"
       - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
       # vision_wasm32.test.js crosses the host suite's extreme-box values,
       # read from the suite itself so the two grids cannot drift (sweep A49)
@@ -447,10 +451,14 @@ on:
       # (sweep A86); the flagship's lives here (the WAP's, Vision's, Sense's
       # and the display's are under globs above)
       - "firmware/canary/src/main.cpp"
-      # flash.test.js renders each family's Hardware ID boot line from the
-      # firmware's own format to prove the report scrubber drops it; the
-      # Sentinel's is the one outside the globs above
+      # flash.test.js renders each family's identity lines (the Hardware ID,
+      # the key fingerprint, the .local name, a peer's fingerprint) from the
+      # firmware's own format strings to prove the report scrubber replaces
+      # them; these are the files outside the globs above
       - "firmware/projects/canary-sentinel/src/main.cpp"
+      - "firmware/projects/canary-sentinel/src/witness.cpp"
+      - "firmware/projects/canary-sentinel/src/net/mdns_mgr.cpp"
+      - "firmware/canary/src/csi_modules_integration.cpp"
       - "tvos/witness-core/tests/fixtures/fleet_contract_vectors.json"
       # vision_wasm32.test.js crosses the host suite's extreme-box values,
       # read from the suite itself so the two grids cannot drift (sweep A49)
