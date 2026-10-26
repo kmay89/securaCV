@@ -216,15 +216,18 @@ uint32_t outbound_bytes_today();
  *
  * The captive-portal landing page bakes a fresh pairing token into the QR
  * code (and into the manual /companion?token=<hex> fallback link). The
- * token gates HTTP-side provisioning so a casual visitor on the AP can't
- * drive credentials into /api/wifi/connect by guessing the URL — see the
- * pair_token_valid() call in handle_wifi_connect (canary_wap.ino).
+ * token gates HTTP-side provisioning DURING FIRST-BOOT SETUP so a casual
+ * visitor on the AP can't drive credentials into /api/wifi/connect by
+ * guessing the URL — see wifi_change_authorize() (canary_wap.ino).
  *
- * Two consumers, two redemption models:
- *   - Wizard flow (/api/wifi/connect): validate-only via pair_token_valid().
- *     The token stays alive for the full 10-minute TTL so the wizard's
- *     "Try again" path works after a mistyped password without forcing a
- *     fresh QR scan. The token ages out naturally; we don't burn it.
+ * Two consumers, two redemption models, one slot pool (no token kind):
+ *   - Wizard flow (/api/wifi/connect, /ap-only, /qr-scan): validate-only
+ *     via pair_token_valid(), a first-boot grant. After setup those routes
+ *     take the bearer alone (sweep F334): the landing page below mints into
+ *     the same pool for any caller on the home network, so a token it hands
+ *     out must never move the network. The token stays alive for the full
+ *     10-minute TTL so the wizard's "Try again" path works after a mistyped
+ *     password without forcing a fresh QR scan; we don't burn it.
  *   - Dashboard auto-login (?cv_pair=<hex> on /): single-use via
  *     pair_token_consume(). The token is exchanged for a 24 h cv_session
  *     cookie, and the slot is burned on first redemption.

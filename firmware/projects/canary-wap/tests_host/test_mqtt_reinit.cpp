@@ -92,6 +92,7 @@ struct esp_mqtt_client {
   std::string will_topic;
   std::string certificate;     // broker.verification.certificate, as configured
   std::string password;        // credentials.authentication.password, as configured (F289: what a move would send)
+  std::string username;        // credentials.username, as configured (F333: Forget drops it)
   int network_timeout_ms = 0;  // as configured; 0 or less is esp_mqtt's 10 s
   bool connected = false;      // esp_mqtt's own view: CONNECTED until aborted
 };
@@ -231,6 +232,7 @@ esp_mqtt_client_handle_t esp_mqtt_client_init(const esp_mqtt_client_config_t* co
   c->will_topic = config->session.last_will.topic ? config->session.last_will.topic : "";
   c->certificate = config->broker.verification.certificate ? config->broker.verification.certificate : "";
   c->password = config->credentials.authentication.password ? config->credentials.authentication.password : "";
+  c->username = config->credentials.username ? config->credentials.username : "";
   c->network_timeout_ms = config->network.timeout_ms;
   fake::clients.push_back(c);
   fake::calls.push_back({"init", fake::task, c->id});
@@ -2833,6 +2835,115 @@ void test_two_writers_never_interleave() {
   CHECK(!stub_mqtt::mutex_held);
 }
 
+// ── Forget Wi-Fi drops the broker login (sweep F333) ─────────────────────
+//
+// Forget re-opens the keyless joins (the Bluetooth setup door, the camera's
+// boot scan), and every code also chooses the network the unit joins, so
+// whoever wins one can answer the stored broker host there. Before F333 a
+// Forget left the stored user and password on file for that host to take.
+// Now handle_wifi_forget() calls csi_mqtt::login_clear(), and asks for the
+// re-init when it held.
+
+// login_clear() removes the stored user and password, under the writer
+// lock, and keeps the rest of the row: host, port, TLS mode, CA, prefix,
+// discovery, enabled. The re-init Forget asks for opens the next client
+// with neither, to the same broker, and GET says no password is set.
+void test_forget_drops_the_broker_login() {
+  boot_with_password();
+  csi_mqtt::Config c;
+  CHECK(csi_mqtt::config_load(&c));
+  std::snprintf(c.user, sizeof c.user, "%s", "ha-user");
+  std::snprintf(c.prefix, sizeof c.prefix, "%s", "loft");
+  c.port = 1884;
+  c.discovery = false;
+  CHECK(csi_mqtt::config_save(c));
+  CHECK(csi_mqtt::ca_save(pem_of(400, 'C').c_str()));
+  (void)csi_mqtt::request_reinit();
+  reinit_turns();
+  CHECK(fake::last_client()->username == "ha-user" && fake::last_client()->password == kStoredPass);
+  const Stored was = stored();
+  CHECK(was.user == "ha-user" && was.pass == kStoredPass && !was.ca.empty());
+  const unsigned contended0 = stub_mqtt::mutex_contended;
+  CHECK(csi_mqtt::login_clear());
+  CHECK(stub_mqtt::mutex_contended == contended0 && !stub_mqtt::mutex_held);
+  const Stored now = stored();
+  CHECK(now.user.empty() && now.pass.empty());
+  CHECK(stub_nvs().count(std::string("csi/") + csi_mqtt::NVS_KEY_USER) == 0);
+  CHECK(stub_nvs().count(std::string("csi/") + csi_mqtt::NVS_KEY_PASS) == 0);
+  CHECK(now.host == was.host && now.port == 1884 && now.tls_mode == was.tls_mode);
+  CHECK(now.ca == was.ca && now.prefix == "loft" && !now.discovery && now.enabled);
+  // The re-init Forget asks for: the next client carries no login.
+  fake::calls.clear();
+  (void)csi_mqtt::request_reinit();
+  reinit_turns();
+  CHECK(fake::count("init", "loop") == 1);
+  CHECK(fake::last_client()->uri == "mqtt://10.0.0.1:1884");
+  CHECK(fake::last_client()->username.empty() && fake::last_client()->password.empty());
+  const Http get = http(csi_mqtt::handle_config_get, "", /*turn_at=*/0);
+  CHECK(get.req.status == "200 OK");
+  CHECK(get.req.resp.find("\"password_set\":false") != std::string::npos);
+  CHECK(get.req.resp.find("ha-user") == std::string::npos);
+  CHECK(get.req.resp.find("\"host\":\"10.0.0.1\"") != std::string::npos);
+  power_cycle();
+  std::printf("PASS forget_drops_the_broker_login\n");
+}
+
+// The clear is a save like the others (the writer lock, #1835's review):
+// inside another save's writes it is refused and writes nothing, so the
+// login stays until a clear is served; Forget then reports
+// broker_login_cleared:false and asks for no re-init. Once that save is
+// done, a clear holds.
+void test_login_clear_waits_for_a_save() {
+  boot_with_password();
+  csi_mqtt::Config row;
+  CHECK(csi_mqtt::config_load(&row));
+  const unsigned contended0 = stub_mqtt::mutex_contended;
+  unsigned puts = 0;
+  int inner = -1;
+  unsigned writes_before = 0, writes_after = 0;
+  stub_nvs_on_put = [&](const char*) {
+    if (++puts != 1) return;                            // inside the save's first write
+    CHECK(stub_mqtt::mutex_held);
+    writes_before = stub_nvs_writes();
+    inner = csi_mqtt::login_clear() ? 1 : 0;
+    writes_after = stub_nvs_writes();
+  };
+  CHECK(csi_mqtt::config_save(row));
+  stub_nvs_on_put = nullptr;
+  CHECK(inner == 0);                                    // refused under the other save
+  CHECK(writes_after == writes_before);                 // and wrote nothing
+  CHECK(stub_mqtt::mutex_contended == contended0 + 1);
+  CHECK(stored().pass == kStoredPass);                  // the login stays
+  CHECK(csi_mqtt::login_clear());                       // once the save is done, it holds
+  CHECK(stored().pass.empty() && stored().user.empty());
+  CHECK(!stub_mqtt::mutex_held);
+  power_cycle();
+  std::printf("PASS login_clear_waits_for_a_save\n");
+}
+
+// A row with no login: the clear holds and touches nothing else. On a
+// fresh store (no row at all) it writes nothing; on a row a save wrote with
+// an empty user and password it removes those two keys and no other.
+void test_login_clear_on_a_row_without_one() {
+  reset_device();
+  const unsigned fresh = stub_nvs_writes();
+  CHECK(csi_mqtt::login_clear());
+  CHECK(stub_nvs_writes() == fresh && stub_nvs().empty());
+  boot_with_broker("10.0.0.1");
+  const Stored was = stored();
+  CHECK(was.user.empty() && was.pass.empty());
+  auto others = stub_nvs();
+  others.erase(std::string("csi/") + csi_mqtt::NVS_KEY_USER);
+  others.erase(std::string("csi/") + csi_mqtt::NVS_KEY_PASS);
+  const unsigned writes0 = stub_nvs_writes();
+  CHECK(csi_mqtt::login_clear());
+  CHECK(stub_nvs_writes() == writes0 + 2);              // the two removes, nothing else
+  CHECK(stub_nvs() == others);
+  CHECK(stored().reads_as(was));
+  power_cycle();
+  std::printf("PASS login_clear_on_a_row_without_one\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -2905,6 +3016,9 @@ const Test kTests[] = {
      test_a_wrong_bearer_beside_the_cookie_is_not_a_bearer},
     {"the_move_gate_compares_once", test_the_move_gate_compares_once},
     {"the_mqtt_routes_answer_a_held_bearer_429", test_the_mqtt_routes_answer_a_held_bearer_429},
+    {"forget_drops_the_broker_login", test_forget_drops_the_broker_login},
+    {"login_clear_waits_for_a_save", test_login_clear_waits_for_a_save},
+    {"login_clear_on_a_row_without_one", test_login_clear_on_a_row_without_one},
 };
 
 }  // namespace reinit

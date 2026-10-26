@@ -168,6 +168,20 @@ inline bool ap_only_for_discovery(bool ap_only_persisted, bool state_ap_only,
   return ap_only_persisted || (state_ap_only && credentials_configured);
 }
 
+// Whether a keyless join may happen: one that asks for no credential, only
+// for presence (the Bluetooth setup door's Just Works claim, the camera's
+// boot QR scan). Open only on a unit with no stored network that is not
+// standalone on purpose (a standalone unit must never take a stranger's
+// network). One predicate for both doors (sweep F333): the boot scan used
+// to test only the stored network, so a code held to a standalone unit's
+// lens took it off standalone. After setup only the owner's own acts make
+// it true again: Forget Wi-Fi with the bearer (F345), or the 10 s hold.
+// has_credentials is the caller's fact (the door counts a join still being
+// proven as none).
+inline bool keyless_join_open(bool has_credentials, bool ap_only) {
+  return !has_credentials && !ap_only;
+}
+
 // The Bluetooth setup door's first-boot window is re-armed by a POWER CYCLE,
 // not by a reboot: a never-provisioned unit restarts itself every 15 minutes
 // (the wizard's abandonment timer), and if each restart re-armed the window

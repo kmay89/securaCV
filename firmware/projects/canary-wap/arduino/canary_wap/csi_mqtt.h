@@ -188,11 +188,11 @@ struct Config {
  * prefix as the default).
  * config_save() writes it key by key on the caller's task, one save at a
  * time (a second writer waits for the first's lock); the loop task's re-init
- * opens no client from a row a save (this, ca_save, config_clear) is still
- * writing, or wrote during its read (csi_mqtt.cpp's open_client, sweep
- * F289's review), so no client ever carries the stored password to a host
- * another task's save was still writing, and no row is two saves' keys
- * interleaved. */
+ * opens no client from a row a save (this, ca_save, config_clear,
+ * login_clear) is still writing, or wrote during its read (csi_mqtt.cpp's
+ * open_client, sweep F289's review), so no client ever carries the stored
+ * password to a host another task's save was still writing, and no row is
+ * two saves' keys interleaved. */
 bool config_load(Config* out);
 bool config_save(const Config& cfg);
 
@@ -202,6 +202,16 @@ bool config_save(const Config& cfg);
  * the open client alone; the reset restarts the device next. True when no
  * MQTT key remains. */
 bool config_clear();
+
+/* Forget Wi-Fi's share (canary_wap.ino handle_wifi_forget, sweep F333):
+ * remove the stored broker user and password, under the writer lock, and
+ * keep the rest of the row (host, port, TLS mode, CA, prefix, discovery).
+ * Forget re-opens the keyless joins, and every code also chooses the
+ * network, so whoever wins one could answer the stored broker host. True
+ * when neither key remains (a row without them is true and unwritten);
+ * false when another save holds the lock or NVS will not open. The caller
+ * asks for the re-init. */
+bool login_clear();
 
 /* Store (or, with an empty/null PEM, remove) the broker CA under
  * NVS_KEY_CA. Callers validate the PEM shape first

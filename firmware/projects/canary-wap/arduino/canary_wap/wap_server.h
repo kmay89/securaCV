@@ -180,7 +180,8 @@ struct RateLimitEntry {
  * ── Wi-Fi and updates ──
  * GET    /api/wifi                        - Wi-Fi status
  * *      /api/wifi/*                      - Scan, pair token, AP-only, connect, disconnect, forget, reconnect
- * *      /api/wifi/qr-scan                - Camera QR provisioning (FEATURE_QR_PROVISION)
+ *                                           (after setup connect, AP-only, disconnect and forget: bearer alone, F334)
+ * *      /api/wifi/qr-scan                - Camera QR provisioning (FEATURE_QR_PROVISION; setup only, F334)
  * *      /api/ota/*                       - Signed pull-OTA: status, check, install, config
  *
  * ── Camera (FEATURE_CAMERA_PEEK) and sealed snapshots (FEATURE_VAULT_SNAPSHOT) ──

@@ -2215,6 +2215,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
               <label class="form-label">Device name <span style="color:var(--muted);font-weight:normal;">(optional — makes it canary-&lt;name&gt;.local)</span></label>
               <input type="text" class="form-input" id="wifiDeviceName" placeholder="e.g. kitchen" maxlength="32" autocapitalize="off" autocorrect="off">
             </div>
+            <p class="tnote">Changing Wi-Fi takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once.</p>
             <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
               <button class="btn btn-primary" onclick="connectWifi()" id="wifiConnectBtn">Connect</button>
               <button class="btn btn-secondary" onclick="disconnectWifi()" id="wifiDisconnectBtn" style="display:none;">Disconnect</button>
@@ -2857,25 +2858,20 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         headers['Authorization'] = 'Bearer ' + apiToken;
       }
       options.headers = headers;
-      try {
-        const resp = await fetch(API_BASE + endpoint, options);
-        if (resp.status === 401 || resp.status === 403) {
-          apiToken = null;
-          showAuthModal(sentToken
-            ? 'Invalid or expired token. Please re-enter.'
-            : 'Your session does not cover this, or has ended. Paste the API token, or use BOOT Tap Once.');
-          throw new Error('auth_required');
-        }
-        if (resp.status === 429) {
-          const data = await resp.json();
-          showAuthModal('Too many failed attempts. Retry in ' + data.retry_after_s + ' seconds.');
-          throw new Error('rate_limited');
-        }
-        return resp;
-      } catch (e) {
-        if (e.message === 'auth_required' || e.message === 'rate_limited') throw e;
-        throw e;
+      const resp = await fetch(API_BASE + endpoint, options);
+      if (resp.status === 401 || resp.status === 403) {
+        apiToken = null;
+        showAuthModal(sentToken
+          ? 'Invalid or expired token. Please re-enter.'
+          : 'Your session does not cover this, or has ended. Paste the API token, or use BOOT Tap Once.');
+        throw new Error('auth_required');
       }
+      if (resp.status === 429) {
+        const data = await resp.json();
+        showAuthModal('Too many failed attempts. Retry in ' + data.retry_after_s + ' seconds.');
+        throw new Error('rate_limited');
+      }
+      return resp;
     }
 
     function showAuthModal(msg) {
@@ -2973,17 +2969,12 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('recoveryKitLater').textContent = 'Continue';
     }
 
-    // Settings → Device → Recovery kit (sweep F257): the kit again, any time,
-    // for a page signed in with the token. The receipt route serves its
-    // bearer grant on the Authorization header alone (sweep F289): the
-    // cv_session cookie signs a browser into the dashboard, but the landing
-    // page mints one for any host on the home network, so it is no grant for
-    // the token and the SoftAP password the kit carries. A browser that
-    // resumed a cookie session on load never saw the BOOT-tap offer above and
-    // holds no token, so its save is refused (403) and secureFetch brings the
-    // sign-in back: Use BOOT Tap Once offers the kit as it signs in, and a
-    // typed token is sent as a bearer and serves here. The one request is
-    // that GET; the save is RecoveryKit.save's blob: download.
+    // Settings → Device → Recovery kit (sweep F257): the kit again, for a
+    // page signed in with the token. The receipt takes the bearer alone
+    // (sweep F289: the landing page mints a session for any host), so a
+    // cookie page's save is refused (403) and secureFetch brings the sign-in
+    // back; Use BOOT Tap Once offers the kit as it signs in. The one request
+    // is that GET; the save is RecoveryKit.save's blob: download.
     async function saveRecoveryKitFromSettings() {
       const done = document.getElementById('settingsKitDone');
       const err = document.getElementById('settingsKitErr');
@@ -3033,16 +3024,11 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function requestFromDevice() {
       const s = document.getElementById('authStatus');
       s.className = 'auth-status info';
-      // Polling budget: 30 ticks × 2 s = 60 s. The device's gate TTL
-      // (advertised in the 403 body's gate_ttl_seconds) is much shorter
-      // than this budget, so a press anywhere in the 60 s window lands.
-      // The poll starts at the click, before the tap: the device hands a
-      // tap only to the one address that asked from 10 s before it onward
-      // (sweep F342), so this page is on record when the press lands. The
-      // line says to press only once the device has answered an ask (sweep
-      // F342's fourth review): until then the first ask may still be on its
-      // way (a TLS handshake, a blip, a busy server), and a press it has not
-      // reached yet is one no page of the owner's is asking for.
+      // 30 ticks × 2 s = 60 s, past the device's gate TTL (the 403's
+      // gate_ttl_seconds). The poll starts at the click, before the tap: a
+      // tap goes only to the one address that asked from 10 s before it
+      // (sweep F342). The line says to press only once the device answered
+      // an ask: a press the first ask has not reached is no page's.
       const POLL_INTERVAL_MS = 2000;
       const POLL_TICKS = 30;
       let gateTtl = 30;
@@ -5177,8 +5163,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const deviceName = deviceNameEl ? deviceNameEl.value.trim() : '';
       if (!ssid) { alert('Enter network name'); return; }
 
-      // Hide any previous failure banner; the firmware will repopulate it
-      // if the new attempt also fails.
+      // A new failure is shown again.
       const failBox = document.getElementById('wifiFailReason');
       if (failBox) failBox.style.display = 'none';
 
@@ -5189,7 +5174,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const data = await api('/api/wifi/connect', 'POST', connectBody);
       if (!data.ok) {
         document.getElementById('wifiProgress').style.display = 'none';
-        alert('Failed: ' + (data.error || 'unknown error'));
+        if (!signInRaised(data)) alert('Failed: ' + (data.error || 'unknown error'));
         return;
       }
       startWifiPolling();
@@ -5208,12 +5193,12 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     async function forgetWifi() {
-      if (!confirm('Remove saved WiFi credentials from this Canary?')) return;
+      if (!confirm('Forget the saved Wi-Fi networks and the saved broker login? Until this Canary is set up again, its Bluetooth setup door is open for 30 minutes to the first phone nearby, and a camera unit takes a Wi-Fi code shown to its lens. To change networks, use Connect instead: it keeps the broker login.')) return;
       stopWifiPolling();
       const data = await api('/api/wifi/forget', 'POST');
-      if (!data.ok) { alert('Failed to remove credentials'); return; }
-      // Wipe the input fields so the next user doesn't see the prior password.
-      clearWifiInputs();
+      if (!data.ok) { if (!signInRaised(data)) alert('Failed to remove credentials'); return; }
+      if (data.broker_login_cleared === false) alert('Wi-Fi forgotten, but the saved broker login could not be cleared. Clear it on the MQTT page.');
+      clearWifiInputs();   // the prior password off the page
       await loadWifiStatus();
     }
 

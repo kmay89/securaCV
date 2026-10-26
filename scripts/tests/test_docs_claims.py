@@ -396,7 +396,7 @@ def body_after(text: str, start: str, end_pattern: str) -> str:
 
 
 class TheClaimsHoldToTheCode(unittest.TestCase):
-    def test_the_session_buys_the_pair_token_and_the_scan_route_takes_it(self):
+    def test_the_scan_route_answers_only_during_setup_and_forget_drops_the_login(self):
         csi = (WAP / "csi_integration.cpp").read_text(encoding="utf-8")
         # GET /api/pair/token is handle_pair_token, whose first statement is
         # the session-or-bearer macro ...
@@ -409,15 +409,24 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
         cookie = macro.index("cv_session_validate((req))")
         bearer = macro.index("api_auth_check_optional((req), g_api_token")
         self.assertLess(cookie, bearer)
-        # POST /api/wifi/qr-scan takes that token and no cookie of its own.
+        # So the session buys a pair token, and since sweep F334 POST
+        # /api/wifi/qr-scan answers 404 outside first-boot setup before it
+        # reads that token: its first statement after the request count is
+        # the wizard check, and it names no cookie gate of its own.
         ino = (WAP / "canary_wap.ino").read_text(encoding="utf-8")
         self.assertIn('.uri = "/api/wifi/qr-scan", .method = HTTP_POST,   .handler = handle_qr_scan_start', ino)
         start = body_after(ino, "static esp_err_t handle_qr_scan_start(httpd_req_t* req) {", r"\nstatic esp_err_t ")
-        self.assertIn("csi_integration::pair_token_valid(token)", start)
+        code = [ln.strip() for ln in start.splitlines()[1:] if ln.strip() and not ln.strip().startswith("//")]
+        self.assertEqual(code[0], "g_health.http_requests++;")
+        self.assertEqual(code[1], "if (!setup_wizard::is_active()) {")
+        self.assertEqual(code[2], 'httpd_resp_set_status(req, "404 Not Found");')
+        self.assertLess(start.index('"404 Not Found"'), start.index("csi_integration::pair_token_valid(token)"))
+        self.assertLess(start.index('"404 Not Found"'), start.index("g_qr_auto_next_ms = millis() + 15000;"))
         for cookie_gate in ("cv_session_validate", "session_validate_cookie", "CSI_AUTH_OR_RETURN"):
             self.assertNotIn(cookie_gate, start)
-        # The scan task's hub-code branch re-points the broker with the stored
-        # password and re-checks the token only for a Wi-Fi-only code.
+        # The scan task's hub-code branch re-points the broker and keeps the
+        # row's login (outside move_needs_password() on purpose, F333/F348),
+        # and re-checks the token only for a Wi-Fi-only code.
         self.assertIn("prov.wifi_only && !g_qr_auto_scan &&\n"
                       "                   !csi_integration::pair_token_valid(g_qr_scan_token)", ino)
         hub = body_after(ino, "if (!prov.wifi_only && prov.host[0]) {", r"\n          }\n")
@@ -426,6 +435,26 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
         self.assertIn("csi_mqtt::config_save(mc)", hub)
         self.assertIn("csi_mqtt::request_reinit()", hub)
         self.assertNotIn("mc.pass", hub)
+        # The boot scan asks the setup door's rule first: no scan on a
+        # standalone unit (F333).
+        tick = body_after(ino, "static void qr_auto_scan_tick(uint32_t now) {", r"\n}\n")
+        first = [ln.strip() for ln in tick.splitlines()[1:] if ln.strip()][0]
+        self.assertEqual(first, "if (!provisioning_logic::keyless_join_open(g_wifi_creds.configured, g_wifi_ap_only)) return;")
+        door = body_after(ino, "bool ble_improv_door_should_open() {", r"\n}\n")
+        self.assertIn("provisioning_logic::keyless_join_open(", door)
+        # Forget takes the bearer alone (F345), and after the networks it
+        # clears the broker login and asks for the re-init when that held
+        # (F333); Disconnect takes the bearer too (F334).
+        forget = body_after(ino, "static esp_err_t handle_wifi_forget(httpd_req_t* req) {", r"\n}\n")
+        wipe = forget.index("wifi_clear_credentials();")
+        clear = forget.index("const bool login_cleared = csi_mqtt::login_clear();")
+        self.assertLess(wipe, clear)
+        self.assertLess(clear, forget.index("(void)csi_mqtt::request_reinit();"))
+        self.assertIn('doc["broker_login_cleared"] = login_cleared;', forget)
+        for wrapper in ("handle_wifi_forget_auth", "handle_wifi_disconnect_auth"):
+            body = body_after(ino, f"static esp_err_t {wrapper}(httpd_req_t* req) {{", r"\n}\n")
+            self.assertIn("api_auth_check_bearer(req, g_device.api_token_str)", body)
+            self.assertNotIn("api_auth_check(", body)
 
     def test_the_csi_macro_answers_a_held_bearer_429(self):
         # Sweep F339: the CSI routes' bearer is compared through the accounted

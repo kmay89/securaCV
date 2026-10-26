@@ -1549,7 +1549,9 @@ esp_err_t handle_tune_post_preset(httpd_req_t* req) {
  * RAM-only ring of one-shot tokens for the captive-portal QR onboarding
  * flow. The captive-portal handler bakes the token into the QR; the
  * companion PWA validates / consumes it before showing the WiFi
- * credentials form.
+ * credentials form. The wizard's redemption is a first-boot grant: after
+ * setup the Wi-Fi routes take the bearer alone (sweep F334), since the
+ * landing page's ?cv_pair link mints into this same pool for any caller.
  *
  * Slots: small fixed pool. Each slot tracks 32 random bytes, the
  * issuance time, and a "used" flag. Eviction prefers (a) used slots,

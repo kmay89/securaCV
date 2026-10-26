@@ -49,6 +49,13 @@
 //     Entry's digits a session is not sent, leads with "Don't match" for a
 //     comparison on a page without the token, and asks nobody for a PIN once
 //     a pairing is over.
+//   * The network moves on the bearer alone (F334, F345): after setup the
+//     Wi-Fi card's Connect and Forget take the API token, so a session-only
+//     page's refusal brings the sign-in up and alerts nothing (the typed
+//     network stays in the form), the card says so first, Forget's confirm
+//     names what it re-opens (the setup door, a camera's code scan) and the
+//     broker login it drops (F333), and a Forget whose login clear the
+//     device could not make says where to clear it.
 //
 // The page's own code is cut out of web_ui.h by markers that stand in the page
 // before and after these changes (so the old page runs here and fails on what
@@ -774,5 +781,86 @@ describe('Credential grants ask for sign-in (F335, F346)', () => {
       'the vault card carries the note');
     const card = slice('<div class="form-label">Unlock key</div>', '<div id="vaultKeyEntry"');
     assert.ok(card.includes('class="tnote"'), 'above the key box');
+  });
+});
+
+// ── The network moves on the bearer alone (F334, F345) ───────────────────
+
+describe('The network moves on the bearer alone (F334, F345)', () => {
+  // The Wi-Fi card over the page's own api(), secureFetch() and sign-in,
+  // against a device that answers every request `answer` (a session-only
+  // page: no token held).
+  function wifiPage(answer) {
+    const sent = [];
+    const p = pageContext({}, {
+      API_BASE: '', apiToken: null,
+      fetch: async (url, opts = {}) => {
+        sent.push(`${opts.method || 'GET'} ${url}`);
+        const a = answer(url);
+        return { status: a.status, ok: a.status >= 200 && a.status < 300,
+                 text: async () => JSON.stringify(a.body), json: async () => a.body };
+      },
+      stopWifiPolling() {}, startWifiPolling() { p.polling = true; },
+      loadWifiStatus: async () => {}, clearWifiInputs() { p.cleared = true; },
+    });
+    p.ctx.window._refreshInterval = 7;   // a running dashboard
+    vm.runInContext(apiSrc + uiFunction('showAuthModal', false) + uiFunction('hideAuthModal', false) +
+      uiFunction('connectWifi', true) + uiFunction('forgetWifi', true) +
+      '\nglobalThis.__w = { connectWifi, forgetWifi };\n', p.ctx);
+    p.sent = sent;
+    return p;
+  }
+  const REFUSED = { status: 401, body: { error: 'unauthorized' } };
+
+  it('a session-only Connect brings the sign-in up and alerts nothing; the network stays typed', async () => {
+    const p = wifiPage(() => REFUSED);
+    p.el('wifiSsidInput').value = 'Home';
+    p.el('wifiPassword').value = 'hunter22';
+    await p.ctx.__w.connectWifi();
+    assert.deepEqual(p.sent, ['POST /api/wifi/connect']);
+    assert.deepEqual(p.record.alerts, []);
+    assert.equal(p.el('authOverlay').classList.contains('hidden'), false);
+    assert.match(p.el('authStatus').textContent, /Paste the API token, or use BOOT Tap Once/);
+    assert.equal(p.el('authNotNow').style.display, '');
+    assert.equal(p.el('wifiProgress').style.display, 'none');
+    assert.equal(p.el('wifiPassword').value, 'hunter22');
+    assert.ok(!p.polling);
+  });
+
+  it('a session-only Forget brings the sign-in up and alerts nothing', async () => {
+    const p = wifiPage(() => REFUSED);
+    await p.ctx.__w.forgetWifi();
+    assert.deepEqual(p.sent, ['POST /api/wifi/forget']);
+    assert.deepEqual(p.record.alerts, []);
+    assert.equal(p.el('authOverlay').classList.contains('hidden'), false);
+    assert.ok(!p.cleared);
+  });
+
+  it("Forget's confirm names what it re-opens and the broker login it drops", async () => {
+    const asked = [];
+    const p = wifiPage(() => ({ status: 200, body: { ok: true, broker_login_cleared: true } }));
+    p.ctx.confirm = (m) => { asked.push(m); return false; };
+    await p.ctx.__w.forgetWifi();
+    assert.deepEqual(p.sent, [], 'a declined confirm sends nothing');
+    assert.equal(asked.length, 1);
+    assert.match(asked[0], /saved broker login/);
+    assert.match(asked[0], /Bluetooth setup door is open for 30 minutes to the first phone nearby/);
+    assert.match(asked[0], /a camera unit takes a Wi-Fi code shown to its lens/);
+    assert.match(asked[0], /use Connect instead: it keeps the broker login/);
+  });
+
+  it('a Forget whose broker login stayed on file says where to clear it', async () => {
+    for (const [cleared, alerts] of [[false, 1], [true, 0], [undefined, 0]]) {
+      const p = wifiPage(() => ({ status: 200, body: { ok: true, broker_login_cleared: cleared } }));
+      await p.ctx.__w.forgetWifi();
+      assert.equal(p.record.alerts.length, alerts, String(cleared));
+      if (alerts) assert.match(p.record.alerts[0], /broker login could not be cleared\. Clear it on the MQTT page\./);
+      assert.ok(p.cleared, 'the form is cleared once the networks are forgotten');
+    }
+  });
+
+  it('the Wi-Fi card says the token is needed, above its buttons', () => {
+    const card = slice('<div id="wifiSetupSection">', 'id="wifiConnectBtn"');
+    assert.ok(card.includes('<p class="tnote">Changing Wi-Fi takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once.</p>'));
   });
 });

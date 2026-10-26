@@ -115,7 +115,8 @@ SKETCH = Path("firmware/projects/canary-wap/arduino/canary_wap")
 AUTH_MARKERS = (
     "api_auth_check(",            # Bearer + session cookie (401/403/429)
     "api_auth_check_bearer(",     # Bearer ONLY, never the cookie (F289: the
-                                  # pairing QR, whose answer carries the token)
+                                  # pairing QR, whose answer carries the token;
+                                  # F334/F345: the Wi-Fi routes after setup)
     "api_auth_check_or_query(",   # + ?token= for <img>/stream tags
     "api_auth_check_optional(",   # the cookie or the accounted grant, nothing
                                   # sent (caller enforces)
@@ -126,7 +127,8 @@ AUTH_MARKERS = (
                                   # and the claim are the handler's own)
     "CSI_AUTH_OR_RETURN",         # csi_integration session/Bearer macro
     "pair_token_valid(",          # 10-min wizard pair token
-    "wifi_change_authorize(",     # pair token OR lockout-throttled admin cred
+    "wifi_change_authorize(",     # the bearer alone after setup (F334); during
+                                  # it, pair token OR lockout-throttled admin cred
     "qr_scan_request_allowed(",   # pair token OR admin credential
     "session_validate_cookie(",   # cv_session cookie (self-gating pages)
     "authorized(req",             # csi_mqtt session/Bearer helper
