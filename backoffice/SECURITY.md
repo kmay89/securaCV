@@ -69,6 +69,32 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   so a half-finished switch locks nobody out. *Log out everywhere else*
   ends their other sessions. The Health page warns when the oldest owner
   password is a year old.
+- **A sign-in link, in place of the password.** With a mail relay, the
+  login page offers "Email me a sign-in link". The link stands in for the
+  password, never for the authenticator: it opens a page that asks for the
+  code. It is good for `SIGNIN_LINK_MINUTES` (15) and once; the browser that
+  asked for it holds a nonce cookie the link checks, so a link read out of a
+  mailbox on another device opens nothing (a 404, the same as an expired or
+  a used one). The token and the nonce are stored as SHA-256 hashes. The
+  answer to a request is the same whether the address is a person here or
+  not, so there is nothing to enumerate; a wrong code on the link counts
+  like a wrong password, against the same locks.
+- **The watch.** Every sign-in from a network (a /24, a /48) the person has
+  not used in thirty days mails the person ("log out everywhere else, change
+  your password, tell an owner" if it was not them) and pushes to the phone,
+  and is in the audit log. An address locked out after eight failed logins
+  pushes to the phone, once an hour per address. A scanner — sixty missing
+  or refused pages from one address in ten minutes — is blocked for ten
+  minutes and pushed about; a person with a session is never blocked, and
+  neither are the store, the webhook, the status page or a customer's page,
+  so a block is never a denial of service against the business.
+  `ADMIN_ALLOW_CIDRS` makes the admin and its door exist only for the
+  networks you name (a home, an office, a VPN); every other network sees a
+  404 for every admin path, while the store, the webhook and the customers'
+  pages stay open. `SESSION_BIND_IP=1` ends a session the moment it turns up
+  from another network than it was opened on, which is what a stolen cookie
+  does; a phone that changes networks signs in again. Both are off by
+  default and the Health page says which is on.
 - **Recovery.** A lost authenticator is recovered by a person, not a
   network: an owner sends a fresh invitation (the same link flow, which
   replaces the password and authenticator), or, for the last owner,
@@ -135,6 +161,31 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   column as a REAL). Every CSV the admin downloads is formula-safe: a cell
   starting with `=`, `+`, `-` or `@` is prefixed with an apostrophe, so a
   customer's name is never run by a spreadsheet.
+
+## The boundary
+
+The API is read by an AI operator as often as by a person, and every ticket,
+mail, form and payment carries text an outsider wrote. Two rules, both
+mechanical:
+
+- **Scrubbed on the way in.** A ticket's subject and body, a reply by mail,
+  a form submission, a buyer's name and notes from Stripe: each passes
+  `sanitize()` (`src/guard.mjs`) before it is stored or shown, which removes
+  zero-width characters, every bidi embedding, override and isolate, the
+  byte-order mark, soft hyphens and C0 controls (a newline and a tab stay),
+  normalizes to NFC and caps the length. Nothing can hide an instruction in
+  an invisible run, spoof a name with a direction override, or smuggle a
+  control sequence into a terminal that prints the log.
+- **Marked on the way out.** Every API answer that carries outsider text
+  names those fields in `_untrusted` and says in `_notice` that they are
+  data to read, never instructions to follow, whatever they say; the same
+  two travel as `X-Untrusted-Fields` and `X-Boundary-Notice` headers. An
+  operator built on a language model reads the record with its provenance
+  attached. Nothing here makes a model safe; it makes the provenance
+  impossible to miss.
+- **Crawlers.** Every answer carries `X-Robots-Tag: noindex, nofollow,
+  noarchive, noai, noimageai` and `/robots.txt` disallows everything; the
+  admin and the customers' pages are nobody's training data.
 
 ## The data
 

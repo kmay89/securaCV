@@ -24,6 +24,14 @@ export async function push(db, cfg, { title, body, tags = 'package' }, { fetchIm
   try { const r = await fetchImpl(url, { method: 'POST', headers: { title, tags, ...(token ? { authorization: `Bearer ${token}` } : {}) }, body }); return { ok: !!r.ok, status: r.status }; }
   catch (err) { return { ok: false, reason: String(err.message || err).slice(0, 160) }; }
 }
+// A security event on the phone: a lockout, a scanner blocked, a sign-in from a new network. Once per key per hour.
+const pushed = new Map();
+export async function securityPush(db, cfg, key, { title, body }, { fetchImpl = timedFetch, now = Date.now() } = {}) {
+  const last = pushed.get(key); if (last && now - last < 3600_000) return { ok: false, reason: 'already pushed this hour' };
+  pushed.set(key, now); if (pushed.size > 5000) pushed.clear();
+  if (!pushConfigured(db, cfg)) return { ok: false, reason: 'no topic' };
+  return push(db, cfg, { title, body, tags: 'rotating_light' }, { fetchImpl });
+}
 export const testPush = (db, cfg, { fetchImpl = timedFetch } = {}) => push(db, cfg, { title: `${cfg.company || 'The backoffice'}: test push`, body: 'If you can read this, a new order will reach this phone the minute it lands.', tags: 'white_check_mark' }, { fetchImpl });
 export function orderNudgeText(o, cfg, { promise = null } = {}) {
   const lines = (o.items || []).map(i => `${i.qty}× ${i.sku}`).join(', ') || 'no line items';

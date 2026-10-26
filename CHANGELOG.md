@@ -1,6 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+### The backoffice guards its door (backoffice 0.7.0)
+
+- Sign-in links that stand in for the password, never the authenticator,
+  bound to the browser that asked; a watch that blocks scanners, pushes on
+  lockouts and on sign-ins from a new network, an admin allowlist and
+  session-to-network binding; outsider text scrubbed at every ingress and
+  marked as data in the API; no indexing, no AI training, on every answer.
+
 ### The backoffice edits the store listing without a commit, sets the phone in Settings, and watches sales-tax nexus (backoffice 0.6.0)
 
 - Price, name, batch cap, hidden and a sale window per product, live on the

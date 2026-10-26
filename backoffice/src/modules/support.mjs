@@ -6,6 +6,7 @@ import { nowIso } from '../db.mjs';
 import { token } from '../http.mjs';
 import { upsertContact, validEmail, markBounced } from './contacts.mjs';
 import { enqueue, fill } from './mail.mjs';
+import { sanitize } from '../guard.mjs';
 
 export const STATUSES = ['open', 'waiting_on_customer', 'waiting_on_us', 'closed'];
 export const PRIORITIES = ['low', 'normal', 'high', 'urgent'];
@@ -24,6 +25,8 @@ export function classify(subject = '', body = '') {
 }
 
 export function openTicket(db, { email, name = null, subject, body, kind = null, priority = null, channel = 'email', cfg = {}, autoAck = true, messageId = null, inReplyTo = null, fromAddr = null }) {
+  // outsider text: scrubbed of invisible and direction-override characters before it is stored or shown (guard.mjs)
+  subject = sanitize(subject, { max: 400 }); body = sanitize(body); name = name == null ? null : sanitize(name, { max: 120 });
   const guess = classify(subject, body);
   const contact = email && validEmail(email) ? upsertContact(db, { email, name, source: `support:${channel}` }) : null;
   return db.tx(() => {
@@ -49,6 +52,7 @@ export const messageIdOrNull = (s) => (typeof s === 'string' && /^<[^\s<>]{1,500
 export const inReplyToHeaders = (mid) => { const m = messageIdOrNull(mid); return m ? { 'In-Reply-To': m, References: m } : {}; };
 
 export function addMessage(db, ticketId, { direction, body, from_addr = null, to_addr = null, message_id = null, in_reply_to = null, slaHours = 24 }) {
+  if (direction === 'in') body = sanitize(body);
   message_id = messageIdOrNull(message_id); in_reply_to = messageIdOrNull(in_reply_to);
   const now = nowIso();
   if (message_id && db.get('SELECT id FROM ticket_messages WHERE message_id = ?', message_id)) return null;

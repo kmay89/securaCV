@@ -53,6 +53,7 @@ already chose it. Everything *around* Stripe is here.
 | A privacy desk (GDPR tooling) | **Customers** | the right to a copy (everything held about a person as one JSON) and the right to be forgotten (name, addresses, messages, attachments and mail blanked in one transaction; order numbers, amounts and dates kept so the books still add up), both logged |
 | Attachments in a helpdesk | **Support** | the photo of the warped lid and the PDF of the purchase order travel with the mail, stored with the message (images, PDFs and text, 5 MB each), shown inline, served same-origin and sandboxed |
 | User accounts and permissions (what every SaaS charges per seat for) | **People** | each person with their own password and authenticator, invited by a link that works once (they set their own password and scan a QR off the page — no QR service, the code is drawn here), four roles checked on every request (owner, ops, support, viewer), every action written down under the person's name, lockout per address and per person, a role change or a disable that applies to live sessions at once, *Your account* for password and authenticator rotation |
+| Magic links, device alerts, a WAF's basics (Cloudflare Access, Auth0) | **The door and the watch** | a mailed sign-in link bound to the browser that asked (the authenticator still required); a mail and a push on a sign-in from a new network; scanners blocked, lockouts pushed; an admin allowlist and session-to-network binding; outsider text scrubbed and marked as data for the AI operator. All in [`SECURITY.md`](SECURITY.md) |
 | An admin login | **Auth** | password + authenticator code for everyone, lockout after eight failures, strict cookies, CSRF plus a cross-site refusal, read-only or read-write bearer tokens. The whole model is in [`SECURITY.md`](SECURITY.md) |
 
 What is deliberately **not** here: the attestation service (LICENSING.md §2b
@@ -422,6 +423,7 @@ src/modules/labels.mjs  the label bought from the ship bench (Shippo), the demo'
 src/modules/recovery.mjs every hosted checkout written down, the one follow-up an abandoned one gets, the conversion number
 src/modules/notify.mjs  the new-order nudge to the operator: a mail, and a push if NTFY_URL is set
 src/modules/promise.mjs the promise made at checkout, one honest line per state for the customer, the mails a person sends with one click, what the customer has been told
+src/guard.mjs           the watch and the boundary: a scanner blocked, an address allowlist, session-to-network binding, outsider text scrubbed on the way in and marked as data in the API
 src/attention.mjs       the one scale of urgency (now / soon / calm) from stated deadlines; the sidebar badges, the home page, the Decide queue, every table row and the digest read it
 src/auth.mjs            scrypt password, TOTP (RFC 6238), sessions, API tokens
 src/server.mjs          public endpoints, the JSON API, the request pipeline
