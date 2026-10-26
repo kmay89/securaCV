@@ -48,6 +48,12 @@ test('/healthz fails when the scheduler has not ticked in five minutes, and pass
     const stale = await fetch(base + '/healthz'); assert.equal(stale.status, 503); assert.match(await stale.text(), /scheduler stalled/);
     app.schedulerTick = Date.now();
     assert.equal((await fetch(base + '/healthz')).status, 200);
+    // the stamp itself: a scheduler whose job never resolves stops stamping (the guard returns without it), one whose jobs finish keeps stamping
+    const { startScheduler } = await import('../src/jobs.mjs'); const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    let ran = 0; const stopStuck = startScheduler(app, { tickMs: 15, jobs: { stall: [0, () => { ran++; return new Promise(() => {}); }] } });
+    try { const t0 = app.schedulerTick; await wait(150); assert.equal(ran, 1, 'the stuck job is entered once; every later tick returns on the guard'); assert.equal(app.schedulerTick, t0, 'and none of those ticks stamps'); } finally { stopStuck(); }
+    const stopQuick = startScheduler(app, { tickMs: 15, jobs: { quick: [0, async () => ({ ok: true })] } });
+    try { const t0 = app.schedulerTick; await wait(150); assert.ok(app.schedulerTick > t0, 'a loop that completes stamps'); } finally { stopQuick(); }
   } finally { await app.close(); }
 });
 

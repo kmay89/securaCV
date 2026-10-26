@@ -115,8 +115,8 @@ export const JOBS = {
   }],
 };
 
-export async function runJob(app, name) {
-  const job = JOBS[name]; if (!job) throw new Error(`unknown job ${name}`);
+export async function runJob(app, name, { jobs = JOBS } = {}) {
+  const job = jobs[name]; if (!job) throw new Error(`unknown job ${name}`);
   const t0 = Date.now();
   try {
     const result = await job[1](app);
@@ -129,22 +129,25 @@ export async function runJob(app, name) {
   }
 }
 
-export function startScheduler(app, { tickMs = 10_000 } = {}) {
+export function startScheduler(app, { tickMs = 10_000, jobs = JOBS } = {}) {
   // Seeded from the last run on record, so a process that restarts does not run every job again at
   // once: fourteen crash-restarts used to replace two weeks of nightly backups with fourteen copies of
   // the same hour, and each boot uploaded and drilled.
   const last = {}; for (const r of jobRuns(app.db)) { const t = Date.parse(r.last_run_at); if (Number.isFinite(t)) last[r.name] = t; }
-  let running = false;
+  // The heartbeat /healthz reads: stamped when the scheduler starts and again each time a loop completes.
+  // A loop stuck on a job (the guard below returns without stamping) leaves it aging, and five minutes on
+  // /healthz says "scheduler stalled" — the symptom a job that never resolves would otherwise hide.
+  let running = false; app.schedulerTick = Date.now();
   const tick = async () => {
     if (running) return; running = true;
     try {
-      for (const [name, [interval]] of Object.entries(JOBS)) {
+      for (const [name, [interval]] of Object.entries(jobs)) {
         if (Date.now() - (last[name] || 0) < interval * 1000) continue;
         last[name] = Date.now();
-        const r = await runJob(app, name);
+        const r = await runJob(app, name, { jobs });
         if (r.ok) { const ex = app.db.get('SELECT key FROM exceptions WHERE key = ? AND resolved_at IS NULL', `job:${name}`); if (ex) await resolve(app.db, app.cfg, `job:${name}`, 'Ran clean.'); }
       }
-    } finally { running = false; app.schedulerTick = Date.now(); }   // stamped when a loop completes: a loop stuck on a job never stamps, and /healthz says so
+    } finally { running = false; app.schedulerTick = Date.now(); }
   };
   const timer = setInterval(tick, tickMs); timer.unref();
   setTimeout(tick, 1500).unref();
