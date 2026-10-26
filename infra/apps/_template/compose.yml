@@ -17,6 +17,9 @@ services:
       retries: 3
       start_period: 20s
     security_opt: [no-new-privileges:true]
+    # the image is read-only at runtime: the app writes only to its data volume and /tmp
+    read_only: true
+    tmpfs: [/tmp]
     cap_drop: [ALL]
     mem_limit: 512m
     pids_limit: 256

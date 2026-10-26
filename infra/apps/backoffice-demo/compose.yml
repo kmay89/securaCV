@@ -16,6 +16,9 @@ services:
       - /srv/data/backoffice-demo:/data
     networks: [edge]
     security_opt: [no-new-privileges:true]
+    # the image is read-only at runtime: the app writes only to its data volume and /tmp
+    read_only: true
+    tmpfs: [/tmp]
     cap_drop: [ALL]
     mem_limit: 384m
     pids_limit: 256
