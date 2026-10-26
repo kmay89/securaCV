@@ -8472,6 +8472,16 @@ static void qr_scan_task_fn(void* param) {
     int result = qr_scanner::scan_frame(fb, payload, sizeof(payload));
     esp_camera_fb_return(fb);
 
+    // A boot window holds the setup door's rule for its whole run, not only
+    // at its start (sweep F333's review): the wizard's standalone choice, or
+    // a network any path stored, ends a running window here, before a code
+    // read in this frame can act on it.
+    if (g_qr_auto_scan &&
+        !provisioning_logic::keyless_join_open(g_wifi_creds.configured, g_wifi_ap_only)) {
+      memset(payload, 0, sizeof(payload));
+      break;
+    }
+
     if (result == 1) {
       char ssid[33] = {};
       char pass[65] = {};
@@ -8609,9 +8619,10 @@ static void qr_scan_task_fn(void* param) {
 // at the display's add-a-canary code, done. It follows the Bluetooth setup
 // door's rule (sweep F333: one predicate for both keyless joins), so a unit
 // set standalone does not scan: any code held to its lens used to take it
-// off standalone. A phone captive-portal session can still run the classic
-// wizard during setup (its start handler simply takes over; this tick
-// stands down while any scan or peek is live).
+// off standalone. A window already running asks the rule again after every
+// frame (qr_scan_task_fn). A phone captive-portal session can still run the
+// classic wizard during setup (its start handler simply takes over; this
+// tick stands down while any scan or peek is live).
 static void qr_auto_scan_tick(uint32_t now) {
   if (!provisioning_logic::keyless_join_open(g_wifi_creds.configured, g_wifi_ap_only)) return;
   if (g_qr_scan_active ||

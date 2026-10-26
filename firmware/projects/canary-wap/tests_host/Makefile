@@ -585,7 +585,8 @@ run: run-receipt-grant
 clean: clean-receipt-grant
 
 # Who may move the network the unit joins (sweep F334, F345, F333), and who
-# may reboot it (F361): after first-boot setup the bearer alone.
+# may reach its two reboot routes (F361): after first-boot setup the bearer
+# alone.
 # wifi_change_authorize() (POST /api/wifi/connect and /ap-only), the Forget,
 # Disconnect and Reconnect wrappers, the reboot and safe-mode-retry wrappers,
 # ble_improv_door_should_open() and auth_request_source() cut

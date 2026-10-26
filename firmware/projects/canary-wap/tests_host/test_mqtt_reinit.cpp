@@ -476,6 +476,7 @@ void run_tasks();
 void power_cycle() {
   stub_nvs_on_put = nullptr;                          // the race tests' hooks (F289)
   stub_nvs_on_get = nullptr;
+  stub_nvs_refuse_remove = nullptr;
   stub_nvs().clear();                                 // disabled
   stub_mqtt::on_delay = nullptr;
   stub_mqtt::fail_task_create = 0;
@@ -2944,6 +2945,42 @@ void test_login_clear_on_a_row_without_one() {
   std::printf("PASS login_clear_on_a_row_without_one\n");
 }
 
+// NVS can refuse a remove and keep the value (stub_nvs_refuse_remove). Each
+// clear reads every key back after its remove and answers false while one
+// is still there, so Forget reports broker_login_cleared:false and asks for
+// no re-init, and the factory reset prints that NVS refused the clear. The
+// other keys' removes still land, and a clear NVS then takes holds.
+void test_a_refused_remove_reads_back_false() {
+  boot_with_password();
+  csi_mqtt::Config c;
+  CHECK(csi_mqtt::config_load(&c));
+  std::snprintf(c.user, sizeof c.user, "%s", "ha-user");
+  CHECK(csi_mqtt::config_save(c));
+  CHECK(csi_mqtt::ca_save(pem_of(400, 'D').c_str()));
+  const std::string pass_key = std::string("csi/") + csi_mqtt::NVS_KEY_PASS;
+  const std::string ca_key = std::string("csi/") + csi_mqtt::NVS_KEY_CA;
+  // login_clear(), the password's remove refused.
+  stub_nvs_refuse_remove = [](const char* key) { return strcmp(key, csi_mqtt::NVS_KEY_PASS) == 0; };
+  CHECK(!csi_mqtt::login_clear());
+  CHECK(stub_nvs().count(pass_key) == 1 && stored().pass == kStoredPass);   // still on file, and said so
+  CHECK(stored().user.empty());                                             // the user's remove landed
+  CHECK(!stub_mqtt::mutex_held);
+  stub_nvs_refuse_remove = nullptr;
+  CHECK(csi_mqtt::login_clear());
+  CHECK(stub_nvs().count(pass_key) == 0);
+  // config_clear(), the CA's remove refused.
+  stub_nvs_refuse_remove = [](const char* key) { return strcmp(key, csi_mqtt::NVS_KEY_CA) == 0; };
+  CHECK(!csi_mqtt::config_clear());
+  CHECK(stub_nvs().count(ca_key) == 1);
+  CHECK(stub_nvs().count(std::string("csi/") + csi_mqtt::NVS_KEY_HOST) == 0);
+  CHECK(!stub_mqtt::mutex_held);
+  stub_nvs_refuse_remove = nullptr;
+  CHECK(csi_mqtt::config_clear());
+  CHECK(stub_nvs().count(ca_key) == 0);
+  power_cycle();
+  std::printf("PASS a_refused_remove_reads_back_false\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -3019,6 +3056,7 @@ const Test kTests[] = {
     {"forget_drops_the_broker_login", test_forget_drops_the_broker_login},
     {"login_clear_waits_for_a_save", test_login_clear_waits_for_a_save},
     {"login_clear_on_a_row_without_one", test_login_clear_on_a_row_without_one},
+    {"a_refused_remove_reads_back_false", test_a_refused_remove_reads_back_false},
 };
 
 }  // namespace reinit

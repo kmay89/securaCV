@@ -200,7 +200,8 @@ bool config_save(const Config& cfg);
  * the broker row and its CA — every MQTT key this namespace holds and
  * nothing else in it (the CSI module's own settings live here too). Leaves
  * the open client alone; the reset restarts the device next. True when no
- * MQTT key remains. */
+ * MQTT key remains, read back after the removes; false too when another
+ * save holds the lock or NVS will not open. */
 bool config_clear();
 
 /* Forget Wi-Fi's share (canary_wap.ino handle_wifi_forget, sweep F333):
@@ -209,7 +210,8 @@ bool config_clear();
  * Forget re-opens the keyless joins, and every code also chooses the
  * network, so whoever wins one could answer the stored broker host. True
  * when neither key remains (a row without them is true and unwritten);
- * false when another save holds the lock or NVS will not open. The caller
+ * false when another save holds the lock, NVS will not open, or a key is
+ * still there when read back after its remove (NVS refused it). The caller
  * asks for the re-init. */
 bool login_clear();
 
