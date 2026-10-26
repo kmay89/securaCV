@@ -14,9 +14,9 @@
  * - Progress is reported via user-registered callback
  * - Self-test validation runs at boot to confirm or roll back an update
  *
- * The pure-logic subset (version compare, update decision, URL policy,
- * signed-message layout, hex parsing, message strings) compiles on the
- * host under -DSECURACV_OTA_HOST_BUILD for unit testing.
+ * The pure-logic subset (version compare, update decision, slot pre-check,
+ * URL policy, signed-message layout, hex parsing, message strings) compiles
+ * on the host under -DSECURACV_OTA_HOST_BUILD for unit testing.
  */
 
 #include "securacv_ota.h"
@@ -124,6 +124,16 @@ securacv_ota_decision_t securacv_ota_update_decision(
     if (cmp > 0)  return SECURACV_OTA_DECISION_UPDATE;
     if (cmp == 0) return SECURACV_OTA_DECISION_UP_TO_DATE;
     return SECURACV_OTA_DECISION_ROLLBACK;
+}
+
+bool securacv_ota_image_fits_slot(uint32_t image_size, uint32_t slot_size)
+{
+    // No inactive slot: nothing can be written, whatever the size.
+    if (slot_size == 0) return false;
+    // An undeclared size cannot be pre-checked; the download path still
+    // holds the received length to the manifest and the write to the slot.
+    if (image_size == 0) return true;
+    return image_size <= slot_size;
 }
 
 // IPv4 literal parser for the URL policy. Returns true and fills octets
@@ -382,7 +392,7 @@ const char *securacv_ota_error_str(securacv_ota_error_t error)
         case SECURACV_OTA_ERR_SIZE_MISMATCH:     return "Image size mismatch";
         case SECURACV_OTA_ERR_FLASH_WRITE:       return "Flash write failed";
         case SECURACV_OTA_ERR_FLASH_READ:        return "Flash read failed";
-        case SECURACV_OTA_ERR_PARTITION:         return "Partition error";
+        case SECURACV_OTA_ERR_PARTITION:         return "No inactive OTA slot, or the image is larger than the slot";
         case SECURACV_OTA_ERR_VERSION_ROLLBACK:  return "Version rollback rejected";
         case SECURACV_OTA_ERR_SELF_TEST_FAILED:  return "Self-test failed";
         case SECURACV_OTA_ERR_ALREADY_RUNNING:   return "OTA already running";
@@ -436,8 +446,14 @@ const char *securacv_ota_friendly_error(securacv_ota_error_t error)
             return "The update file failed its security check, so it was not installed.";
         case SECURACV_OTA_ERR_FLASH_WRITE:
         case SECURACV_OTA_ERR_FLASH_READ:
-        case SECURACV_OTA_ERR_PARTITION:
             return "The update could not be saved. Your Canary is still on its current software.";
+        case SECURACV_OTA_ERR_PARTITION:
+            // Retrying never helps here: the space is fixed by how the board
+            // was first flashed over USB, and only a USB install changes it.
+            // "Does not fit", not "too big": this code also covers a board
+            // with no update space at all (a single-app table), where no
+            // smaller update would install either.
+            return "This update does not fit in the space your Canary keeps for updates. Install it over USB instead.";
         case SECURACV_OTA_ERR_VERSION_ROLLBACK:
             return "That update is older than the software already installed, so it was skipped.";
         case SECURACV_OTA_ERR_SELF_TEST_FAILED:
@@ -1377,7 +1393,8 @@ uint32_t securacv_ota_get_last_check_time(void)
  * 1. Fetch manifest (with retry/backoff)
  * 2. Parse and validate manifest (product, signature fields)
  * 3. Compare versions against the anti-rollback floor
- * 4. Gate on can_install (if install_mode)
+ * 4. Refuse an image the inactive slot cannot hold, then gate on
+ *    can_install (if install_mode)
  * 5. Download firmware
  * 6. Verify SHA-256, then the Ed25519 release signature
  * 7. Commit to the inactive OTA partition
@@ -1477,6 +1494,38 @@ static void ota_task(void *arg)
         ESP_LOGE(TAG, "Install refused: manifest has no valid signature field");
         ota_set_error(SECURACV_OTA_ERR_SIGNATURE_INVALID);
         goto task_exit;
+    }
+
+    // The image must fit the inactive slot BEFORE a byte is fetched. A
+    // partition table changes only over USB, so a board keeps the slots it
+    // was first flashed with through every OTA (firmware/PARTITIONS.md).
+    // Without this the engine downloaded and wrote until the slot ran out,
+    // failed, and repeated the whole download on every poll: the Vision C3
+    // boards on 0x140000 slots against fw-v2.4.16's 1.40 MB images. The size
+    // is the manifest's, which its signature covers (ota_parse_manifest);
+    // the downloaded length is held to it again after the download.
+    {
+        const esp_partition_t *next = esp_ota_get_next_update_partition(NULL);
+        // A single-app table (huge_app.csv) has no inactive slot: IDF then
+        // hands back the RUNNING partition, which esp_ota_begin refuses.
+        const bool has_slot = (next != NULL && next != esp_ota_get_running_partition());
+        const uint32_t slot_size = has_slot ? (uint32_t)next->size : 0;
+        if (!securacv_ota_image_fits_slot(s_ctx.manifest.size, slot_size)) {
+            if (!has_slot) {
+                ESP_LOGE(TAG, "Install refused: this unit's partition table has no inactive "
+                              "app slot — it needs a USB reflash to a table with A/B slots "
+                              "before it can update over the air");
+            } else {
+                ESP_LOGE(TAG, "Install refused: image is %lu bytes but the inactive app slot "
+                              "'%s' holds %lu — this unit's partition table predates the image; "
+                              "it needs a USB reflash to a newer partition table (nothing was "
+                              "downloaded or written)",
+                         (unsigned long)s_ctx.manifest.size, next->label,
+                         (unsigned long)slot_size);
+            }
+            ota_set_error(SECURACV_OTA_ERR_PARTITION);
+            goto task_exit;
+        }
     }
 
     // Give the device a veto before we spend bandwidth and flash cycles.
