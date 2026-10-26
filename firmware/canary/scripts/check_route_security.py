@@ -180,7 +180,13 @@ every other gate), and the premise the last one stands on:
     pip install platformio==6.1.19`; it never falls back to a reading of its
     own. The pin moves with the release builds' (platformio_pin_problems,
     which scripts/tests/test_route_check_platformio_pin.py runs in
-    lint.yml). So a library that raises its own access point or serves its
+    lint.yml), and every invocation there is held to it, not only the pins
+    a workflow spells: each step of the two release workflows and of
+    firmware.yml's route-check job that runs setup-platformio hands it
+    exactly one platformio-version, the pin, and each pip install there
+    that names the platformio package names `platformio==6.1.19`, so a
+    second, unpinned setup step after the pinned one fails. So a library
+    that raises its own access point or serves its
     own routes (WiFiManager's autoConnect(), handed no AP password, raises
     an open SoftAP and serves a firmware upload) fails, naming every env
     that fetches it, until a reviewer adds its row. A row is an `owner/name`
@@ -227,7 +233,14 @@ every other gate), and the premise the last one stands on:
     carry only this way). No handler's own body names the private key. A
     function defined twice (an `#if` body and its `#else` one) is every one
     of its bodies: their reads and calls are its own, and each body is held
-    to its row and its grant. Pinned whole (GLUE_DEFS, each defined exactly
+    to its row and its grant. A handler is keyed by its bare name, as the
+    tables key it, and read at every definition of that name, qualified or
+    not, as the route-gate and Host-first rules read it: a callback
+    registered as `Api::handle_status` is the body of `esp_err_t
+    Api::handle_status(...)`, its ANSWER_STATEMENTS row keyed by that
+    qualified name, and a bare name defined under two qualified names
+    (`handle_status` and `Api::handle_status`) fails, since the row keys
+    one. Pinned whole (GLUE_DEFS, each defined exactly
     once under ROOTS, in its file, so a second body or a shadow in another
     lib fails): the glue every grant runs through (host_is_foreign,
     auth_gate, bearer_present_and_valid, from_ap_subnet, page_token_inject
@@ -390,7 +403,9 @@ its library's own dependencies), as PlatformIO 6.1.19 resolves the
 configuration (PLATFORMIO_PIN moves with the builds that ship the flagship:
 platformio_pin_problems, run in lint.yml by
 scripts/tests/test_route_check_platformio_pin.py, fails when the pin, a
-release workflow's or the route-check job's moves alone; a reading a newer
+release workflow's or the route-check job's moves alone, or a step there
+installs PlatformIO unpinned, though a requirements file a pip install's
+`-r` names is not read; a reading a newer
 PlatformIO adds, which the unpinned PR builds would take, is held only once
 the pin moves), and an ESP-IDF component pioarduino's IDF component manager
 would fetch is refused where `custom_component_add` names it (a build
@@ -1536,8 +1551,10 @@ SECRET_ANSWERS = {
 # auth_gate call to exactly this statement).
 BEARER_REFUSAL = "if (!auth_gate(req)) return ESP_OK;"
 # Each SECRET_ANSWERS handler's own statements that read a credential, pinned
-# the way an emitter's are (keyed by its home file, in order, every body of
-# it): its grant says where it may answer, and this says what else it does
+# the way an emitter's are (keyed by its home file and its definition's name,
+# qualified as the definition is, `Api::handle_status` for a member defined
+# out of its class; in order, every body of it): its grant says where it may
+# answer, and this says what else it does
 # with a credential there. The receipt reads none itself (its builder,
 # send_provisioning_receipt, does), so a serial or MQTT line added under its
 # SERVE_TAP or SERVE_BEARER test, which the grant alone would pass, fails.
@@ -3360,7 +3377,16 @@ def _refusal_end(code: str, blanked: str, lo: int, hi: int) -> int:
 def _answer_problems(sources, T, defs, by_name, reads, carried, stops, routes) -> list:
     """(d) Every registered handler that carries a credential is a
     SECRET_ANSWERS row with exactly that set, and (e) its grant holds, in
-    every body of it. A handler's own body never names the private key."""
+    every body of it. A handler's own body never names the private key.
+
+    A handler is keyed by its bare name, as the tables key it, and its bodies
+    are every definition of that name, qualified or not, as the route-gate
+    and Host-first rules read it (handler_bodies): a callback registered as
+    `Api::handle_status` is the definition `esp_err_t Api::handle_status(...)
+    {`, and so is one registered bare from inside the class's own members.
+    A bare name defined under more than one qualified name (`handle_status`
+    and `Api::handle_status`) fails: the registration cannot say which one it
+    names, and its ANSWER_STATEMENTS row keys one."""
     problems = []
     handlers = {h.split("::")[-1] for _u, _m, h, _f in routes}
     public = {h.split("::")[-1] for u, m, h, _f in routes if (m, u) in T["public"]}
@@ -3375,16 +3401,22 @@ def _answer_problems(sources, T, defs, by_name, reads, carried, stops, routes) -
 
     def bodies(h):
         for key in by_name.get(h, ()):
-            if key[1] == h and key not in stops:
+            if key not in stops:
                 text = sources[key[0]]
                 for d in defs[key]:
-                    yield key[0], text, blank_string_contents(text), d
+                    yield key[0], key[1], text, blank_string_contents(text), d
 
     for h in sorted(handlers):
-        for fname, text, blanked, d in bodies(h):
+        named = sorted({k[1] for k in by_name.get(h, ())})
+        if len(named) > 1:
+            problems.append(f"route handler {h}() is defined under {len(named)} names "
+                            f"({', '.join(n + '()' for n in named)}): the answer rule reads "
+                            f"every one of them as its body and its ANSWER_STATEMENTS row "
+                            f"keys one; give each handler a name of its own")
+        for fname, qual, text, blanked, d in bodies(h):
             m = _PRIVATE_KEY.search(blanked, d[3], d[4])
             if m:
-                problems.append(f"{fname}:{_line_of(text, m.start())}: route handler {h}() "
+                problems.append(f"{fname}:{_line_of(text, m.start())}: route handler {qual}() "
                                 f"names the private key (privkey), which the token and the "
                                 f"SoftAP password are derived from: no route answers it")
         got = carries(h)
@@ -3414,16 +3446,16 @@ def _answer_problems(sources, T, defs, by_name, reads, carried, stops, routes) -
             problems.append(f"{h}() is a PUBLIC_ALLOWLIST route handler with the {grant!r} "
                             f"grant: a public route may carry a credential only through the "
                             f"page path")
-        for fname, text, blanked, d in bodies(h):
+        for fname, qual, text, blanked, d in bodies(h):
             code = blanked[d[3]:d[4]]
             sites = _answer_sites(code, T["reads"], carriers, h)
 
-            def where(off, fname=fname, text=text, d=d):
-                return f"{fname}:{_line_of(text, d[3] + off)}: {h}()"
+            def where(off, fname=fname, qual=qual, text=text, d=d):
+                return f"{fname}:{_line_of(text, d[3] + off)}: {qual}()"
             if grant == "bearer":
                 end = _refusal_end(text, blanked, d[3], d[4])
                 if end < 0:
-                    problems.append(f"{fname}: {h}() answers {_kinds(got)} with no "
+                    problems.append(f"{fname}: {qual}() answers {_kinds(got)} with no "
                                     f"`{BEARER_REFUSAL}` at its own top level")
                 for off, what in sites:
                     if end < 0 or d[3] + off < end:
@@ -3457,7 +3489,11 @@ def _answer_problems(sources, T, defs, by_name, reads, carried, stops, routes) -
 
 def _answer_statement_problems(sources, T, defs, reads) -> list:
     """Each SECRET_ANSWERS handler's own reading statements are exactly its
-    ANSWER_STATEMENTS row (keyed by its home file), in every body of it."""
+    ANSWER_STATEMENTS row (keyed by its home file and its definition's
+    qualified name), in every body of it: every definition of its bare name,
+    as _answer_problems reads it, so a row that names the handler under
+    another qualifier than its definition's fails rather than holding
+    nothing."""
     problems = []
     rows = T["answer_stmts"]
     for h in sorted(T["answers"]):
@@ -3467,7 +3503,16 @@ def _answer_statement_problems(sources, T, defs, reads) -> list:
                             f"ANSWER_STATEMENTS rows; it takes one, keyed by its home file")
             continue
         suffix, qual = homes[0]
-        for key in sorted(k for k in defs if k[1] == qual):
+        keys = sorted(k for k in defs if k[1].split("::")[-1] == h)
+        if not keys:
+            problems.append(f"ANSWER_STATEMENTS names {qual}() ({suffix}), which is defined "
+                            f"nowhere the check reads — remove or fix the row")
+        for key in keys:
+            if key[1] != qual:
+                problems.append(f"ANSWER_STATEMENTS keys {h}() as {qual}(), but it is "
+                                f"defined as {key[1]}() in {key[0]}: key the row by the "
+                                f"definition's name")
+                continue
             if not _in_file(key[0], suffix):
                 problems.append(f"ANSWER_STATEMENTS: {qual}() is defined in {key[0]}; its row "
                                 f"says {suffix} — remove or fix the row")
@@ -4559,7 +4604,10 @@ REGISTRY_LIBS = {
 # refuses any other, and a missing module, with the install command. The pin
 # moves with the release builds': platformio_pin_problems() fails when a
 # `platformio-version:` in PLATFORMIO_PIN_RELEASES, or the one the route-check
-# job installs, is not this one, and scripts/tests/test_route_check_platformio_pin.py
+# job installs, is not this one, or when a setup-platformio step or a pip
+# install of PlatformIO there does not pin it (a second, unpinned step after
+# the pinned one installs the newest over it), and
+# scripts/tests/test_route_check_platformio_pin.py
 # runs it in lint.yml, which no path filter skips (so a PR that edits only a
 # release workflow runs it; firmware.yml's filter does not name
 # flasher-release.yml).
@@ -4570,6 +4618,62 @@ PLATFORMIO_PIN_CHECK = ("firmware.yml", "python3 firmware/canary/scripts/check_r
 _PIO_VERSION_LINE = re.compile(
     r"""^[ \t]*platformio-version:[ \t]*(["']?)([^"'\s#]*)\1[ \t]*(?:#.*)?$""", re.M)
 _WORKFLOW_JOB = re.compile(r"^  [A-Za-z0-9_-]+:[ \t]*(?:#.*)?$")
+# A step key that runs the shared setup action (`uses: ./.github/actions/
+# setup-platformio`, as a list item's first key or below it); `lead` ends
+# where the key starts.
+_SETUP_PLATFORMIO = re.compile(
+    r"""^(?P<lead>[ \t]*(?:-[ \t]+)?)uses:[ \t]*(["']?)(?:[^"'\s#]*/)?setup-platformio"""
+    r"""(?:@[^"'\s#]*)?\2[ \t]*(?:#.*)?$""")
+# A pip install in a shell line (pip, pip3, `python3 -m pip`, pipx, uv pip),
+# with its arguments up to the end of its command.
+_PIP_INSTALL = re.compile(r"(?:^|[\s;&|(])(?:pip3?|pipx|uv[ \t]+pip)[ \t]+install\b([^;&|#]*)")
+
+
+def _setup_platformio_steps(lines: list, lo: int, hi: int) -> list:
+    """[(line of its `uses:`, [(line, version) of each platformio-version: in
+    the step])] for every step in lines[lo:hi] that runs setup-platformio.
+    A step runs from the list item that holds its key to the next line,
+    neither blank nor a comment, indented less than its keys."""
+    out = []
+    for i in range(lo, hi):
+        m = _SETUP_PLATFORMIO.match(lines[i])
+        if not m:
+            continue
+        key = len(m.group("lead"))
+        start = i
+        while start > lo and not (re.match(r"[ \t]*-[ \t]", lines[start]) and
+                                  len(lines[start]) - len(lines[start].lstrip()) < key):
+            start -= 1
+        end = i + 1
+        while end < hi and (not lines[end].strip() or lines[end].lstrip().startswith("#")
+                            or len(lines[end]) - len(lines[end].lstrip()) >= key):
+            end += 1
+        out.append((i, [(k, v.group(2)) for k in range(start, end)
+                        for v in [_PIO_VERSION_LINE.match(lines[k])] if v]))
+    return out
+
+
+def _pip_platformio(lines: list, lo: int, hi: int) -> list:
+    """[(line, requirement as written)] for every requirement that names the
+    platformio package in a pip install in lines[lo:hi] (a backslash-newline
+    continues a line; a comment line is skipped). A requirements file a
+    `-r` names is not read."""
+    out, i = [], lo
+    while i < hi:
+        first, text = i, lines[i]
+        while text.rstrip().endswith("\\") and i + 1 < hi:
+            i += 1
+            text = text.rstrip()[:-1] + " " + lines[i]
+        i += 1
+        if text.lstrip().startswith("#"):
+            continue
+        for m in _PIP_INSTALL.finditer(text):
+            for word in m.group(1).split():
+                req = word.strip("\"'")
+                if (req and not req.startswith("-")
+                        and re.split(r"[\s=<>!~\[;@]", req)[0].lower() == "platformio"):
+                    out.append((first, req))
+    return out
 
 
 def platformio_pin_problems(workflows=Path(".github/workflows")) -> list:
@@ -4579,8 +4683,31 @@ def platformio_pin_problems(workflows=Path(".github/workflows")) -> list:
     it runs this file (exactly one `platformio-version:` in that job, above
     the step that runs it): a release pin bumped alone would leave the library
     rule reading the configuration with a PlatformIO the release builds no
-    longer read it with."""
+    longer read it with. Every invocation is held, not only the pins the file
+    spells: each step in those workflows (in firmware.yml, in the route-check
+    job) that runs setup-platformio hands it exactly one platformio-version
+    (without one the action installs the newest PlatformIO), and each pip
+    install there that names the platformio package names it
+    `platformio==PLATFORMIO_PIN` (a second step after the pinned one replaces
+    it). firmware.yml's other jobs take the newest PlatformIO on purpose."""
     problems, pin = [], repr(PLATFORMIO_PIN)
+
+    def invocation_problems(name, lines, lo, hi):
+        out = []
+        for at, pins in _setup_platformio_steps(lines, lo, hi):
+            if len(pins) != 1:
+                out.append(f"{_shown(workflows / name)}:{at + 1}: a setup-platformio step hands "
+                           f"it {'no' if not pins else len(pins)} platformio-version"
+                           f"{' lines' if pins else ''}, so it installs "
+                           f"{'the newest PlatformIO' if not pins else 'whichever comes last'}"
+                           f", not PLATFORMIO_PIN ({pin}): every setup-platformio step here "
+                           f"pins it")
+        out.extend(f"{_shown(workflows / name)}:{at + 1}: a pip install names {req!r}, not "
+                   f"platformio=={PLATFORMIO_PIN} (PLATFORMIO_PIN), the PlatformIO whose reader "
+                   f"the library rule reads platformio.ini with"
+                   for at, req in _pip_platformio(lines, lo, hi)
+                   if req != f"platformio=={PLATFORMIO_PIN}")
+        return out
     texts = {}
     for name in PLATFORMIO_PIN_RELEASES + PLATFORMIO_PIN_CHECK[:1]:
         try:
@@ -4602,6 +4729,8 @@ def platformio_pin_problems(workflows=Path(".github/workflows")) -> list:
                         f"PLATFORMIO_PIN ({pin}), the PlatformIO whose reader the library rule "
                         f"reads platformio.ini with — move them together"
                         for m in found if m.group(2) != PLATFORMIO_PIN)
+        lines = texts[name].splitlines()
+        problems.extend(invocation_problems(name, lines, 0, len(lines)))
     name, command = PLATFORMIO_PIN_CHECK
     if name in texts:
         lines = texts[name].splitlines()
@@ -4612,6 +4741,8 @@ def platformio_pin_problems(workflows=Path(".github/workflows")) -> list:
                             f"({pin}) — expected once")
         else:
             start = max((i for i in range(runs[0]) if _WORKFLOW_JOB.match(lines[i])), default=0)
+            end = next((i for i in range(runs[0] + 1, len(lines))
+                        if _WORKFLOW_JOB.match(lines[i])), len(lines))
             pins = [(i + 1, m.group(2)) for i in range(start, runs[0])
                     for m in [_PIO_VERSION_LINE.match(lines[i])] if m]
             if [v for _n, v in pins] != [PLATFORMIO_PIN]:
@@ -4620,6 +4751,13 @@ def platformio_pin_problems(workflows=Path(".github/workflows")) -> list:
                                 f"{', '.join(f'{v!r} (line {n})' for n, v in pins) or 'none'} "
                                 f"above it, not exactly PLATFORMIO_PIN ({pin}), so the route "
                                 f"check would refuse its own job's PlatformIO")
+            problems.extend(f"{_shown(workflows / name)}:{i + 1}: platformio-version "
+                            f"{m.group(2)!r}, below `{command}` in its job, is not "
+                            f"PLATFORMIO_PIN ({pin})"
+                            for i in range(runs[0] + 1, end)
+                            for m in [_PIO_VERSION_LINE.match(lines[i])]
+                            if m and m.group(2) != PLATFORMIO_PIN)
+            problems.extend(invocation_problems(name, lines, start, end))
     return problems
 
 
@@ -7528,6 +7666,93 @@ _FIX_TABLE_PLANTS = (
      ("MINT_AFTER: setup() (fx/src/main.cpp) no longer calls derive_api_token()",)),
 )
 
+# A route callback registered qualified: the fixture's /api/status handler
+# defined and registered as Api::handle_status (a static member defined out of
+# its class), its two census rows and its ANSWER_STATEMENTS row naming it so
+# (_qualified_fixture). The answer rule once matched a handler's definition
+# only by the bare name the tables key it by, so here the grant and the answer
+# statements read no body, and a credential answered before the refusal
+# passed (Codex, #1852). (old, new) edits to _FIX_NET.
+_FIX_QUALIFIED_NET = (
+    ("static esp_err_t handle_status(httpd_req_t* req) {\n",
+     "esp_err_t Api::handle_status(httpd_req_t* req) {\n"),
+    (".handler = handle_status }", ".handler = Api::handle_status }"),
+)
+_QUALIFIED_STATUS = "Api::handle_status"
+# /api/status's refusal and the statements after it, in the clean fixture.
+_FIX_STATUS_TAIL = ("  if (!auth_gate(req)) return ESP_OK;\n"
+                    "  ScvNetworkManager& net = network_get_instance();\n  JsonDocument doc;\n"
+                    "  doc[\"provisioning_gate\"] = (s_gate_take && s_gate_is_open) ? "
+                    "\"physical_button\" : \"unwired\";\n"
+                    "  doc[\"tls_cert_fp\"] = net.getTlsCertFp();\n")
+_PIN_HEADER = "  httpd_resp_set_hdr(req, \"X-Pin\", network_get_instance().getTlsCertFp());\n"
+_QUALIFIED_EARLY = ("Api::handle_status() reaches a credential (getTlsCertFp) before its "
+                    "refusal")
+
+
+def _qualified_fixture():
+    """(sources, tables): the clean fixture with /api/status's handler
+    qualified (_FIX_QUALIFIED_NET), the census rows of the two gate hooks it
+    reads and its ANSWER_STATEMENTS row naming Api::handle_status."""
+    sources = _fixture_sources()
+    text = sources[_FIX_NET]
+    for old, new in _FIX_QUALIFIED_NET:
+        assert text.count(old) == 1, f"the qualified fixture's text {old!r} is not in {_FIX_NET}"
+        text = text.replace(old, new)
+    sources[_FIX_NET] = text
+    tables = _fixture_tables(_fixture_sources())
+
+    def requal(row):
+        return (row[0], _QUALIFIED_STATUS) if row == (_NET, "handle_status") else row
+    census = dict(tables["census"])
+    for name in ("s_gate_take", "s_gate_is_open"):
+        census[name] = dict(census[name], callers={requal(r) for r in census[name]["callers"]})
+    return sources, dict(tables, census=census,
+                         answer_stmts={requal(k): v for k, v in tables["answer_stmts"].items()})
+
+
+# (what, file, old text, new text, table plant or None, words every one of
+# which a problem names), on _qualified_fixture(); an empty old text appends.
+_FIX_QUALIFIED_PLANTS = (
+    # Codex's case: the handler's row keyed by the bare name the tables key it
+    # by, its body writing the pin before its refusal. Every rule passed it.
+    ("a qualified handler answers the pin before its refusal, its row keyed bare", _FIX_NET,
+     _FIX_STATUS_TAIL, _PIN_HEADER + _FIX_STATUS_TAIL,
+     _with("answer_stmts", lambda a: {(f, q.split("::")[-1]): v for (f, q), v in a.items()}),
+     (_QUALIFIED_EARLY, "ANSWER_STATEMENTS keys handle_status() as handle_status(), but it is "
+      "defined as Api::handle_status() in fx/lib/securacv_network.cpp")),
+    ("a qualified handler answers the pin before its refusal", _FIX_NET,
+     _FIX_STATUS_TAIL, _PIN_HEADER + _FIX_STATUS_TAIL, None,
+     (_QUALIFIED_EARLY,
+      "Api::handle_status() reads the TLS pin in a statement not in its ANSWER_STATEMENTS row")),
+    # Its pinned statement moved above its refusal: the pin holds a
+    # statement's text and the blocks around it, not its place beside the
+    # refusal, so only the grant sees it (and it read no body).
+    ("a qualified handler's pinned statement moved above its refusal", _FIX_NET,
+     _FIX_STATUS_TAIL,
+     "  ScvNetworkManager& net = network_get_instance();\n  JsonDocument doc;\n"
+     "  doc[\"tls_cert_fp\"] = net.getTlsCertFp();\n"
+     "  if (!auth_gate(req)) return ESP_OK;\n"
+     "  doc[\"provisioning_gate\"] = (s_gate_take && s_gate_is_open) ? "
+     "\"physical_button\" : \"unwired\";\n", None,
+     (_QUALIFIED_EARLY,)),
+    # A second definition of the bare name, which the qualified registration
+    # may not name: the answer rule reads both, and the row keys one.
+    ("a qualified handler's bare name defined again in another file", _FIX_OTHER, "",
+     "static esp_err_t handle_status(httpd_req_t* req) {\n"
+     "  return httpd_resp_sendstr(req, \"{}\");\n}\n", None,
+     ("route handler handle_status() is defined under 2 names (Api::handle_status(), "
+      "handle_status())",
+      "ANSWER_STATEMENTS keys handle_status() as Api::handle_status(), but it is defined as "
+      "handle_status() in fx/lib/securacv_other.cpp")),
+    # A handler's row naming no definition the check reads: it held nothing.
+    ("a SECRET_ANSWERS handler with no definition", _FIX_NET,
+     "esp_err_t Api::handle_status(httpd_req_t* req) {\n",
+     "esp_err_t Api::handle_status_v2(httpd_req_t* req) {\n", None,
+     ("ANSWER_STATEMENTS names Api::handle_status() (securacv_network.cpp), which is defined "
+      "nowhere the check reads",)),
+)
+
 
 # The flagship's configuration in small, as the library rule's self-test writes
 # it into a temp dir (relative paths under it): platformio.ini with [env]'s
@@ -7624,6 +7849,21 @@ def _assert_answer_gate_rule() -> None:
         got = check_bearer_only_answers(clean, plant(tables))
         missing = [w for w in words if not any(w in p for p in got)]
         assert not missing, (f"the bearer-only answer rule passed a table plant ({what}): "
+                             f"expected problems naming {missing!r}, got {got!r}")
+    # A callback registered qualified is read at its definition, by the grant
+    # and the answer statements alike: the qualified fixture passes, and every
+    # plant on it fails for its named reason.
+    qualified, qtables = _qualified_fixture()
+    got = check_bearer_only_answers(qualified, qtables)
+    assert got == [], "the qualified-handler fixture fails: " + "; ".join(got)
+    for what, fname, old, new, plant, words in _FIX_QUALIFIED_PLANTS:
+        planted = dict(qualified)
+        text = planted.get(fname, "")
+        assert old in text, f"qualified plant {what!r}: its text is not in {fname}"
+        planted[fname] = strip_comments(text.replace(old, new, 1) if old else text + new)
+        got = check_bearer_only_answers(planted, plant(qtables) if plant else qtables)
+        missing = [w for w in words if not any(w in p for p in got)]
+        assert not missing, (f"the bearer-only answer rule passed a qualified plant ({what}): "
                              f"expected problems naming {missing!r}, got {got!r}")
     # A lambda's `return` leaves the lambda, not the function: a callback
     # registered between begin()'s mode raise and its softAP() is no way out.

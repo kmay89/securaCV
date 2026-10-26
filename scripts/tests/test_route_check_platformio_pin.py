@@ -28,6 +28,15 @@ What is pinned:
     and the pin twice (exactly one), its install step removed or moved below
     the check, a pin in another job only, and the check run twice or not at
     all;
+  - every invocation is held, not only the pins a workflow spells: in each
+    release workflow and in the route-check job (above the check or below
+    it), a second setup-platformio step with no platformio-version (bare, or
+    with only its extras), one with two, and a pip install of PlatformIO at
+    no pin or another one (`--upgrade platformio`, `platformio==6.2.0`, a
+    range, a name split onto a continuation line) FAIL, where the pins
+    collected across the file used to cover them (Codex, #1852); a pip
+    install at the pin passes, and firmware.yml's other jobs, which take the
+    newest PlatformIO on purpose, are not held;
   - a pin quoted in a comment is not read as one;
   - main() refuses another PlatformIO, or none, before any rule runs, naming
     the install command (in CI its job installs the pin, so this refusal is
@@ -64,6 +73,28 @@ CHECK_RUN = crs.PLATFORMIO_PIN_CHECK[1]
 STEP = ("      - uses: ./.github/actions/setup-platformio\n"
         "        with:\n"
         '          platformio-version: "{}"\n')
+# Steps that run setup-platformio with no platformio-version: the action then
+# installs the newest PlatformIO (`pip install --upgrade platformio`).
+UNPINNED_STEPS = (
+    "      - uses: ./.github/actions/setup-platformio\n",
+    "      - name: Set up PlatformIO again\n"
+    "        uses: ./.github/actions/setup-platformio\n"
+    "        with:\n          extras: intelhex==2.3.0\n",
+)
+# A step that hands it the pin twice (the last one wins).
+TWICE_PINNED_STEP = STEP.format(PIN) + f'          platformio-version: "{PIN}"\n'
+# A pinned step written with its `with:` above its `uses:`.
+WITH_FIRST_STEP = ("      - name: Set up PlatformIO, keys reordered\n        with:\n"
+                   f'          platformio-version: "{PIN}"\n'
+                   "        uses: ./.github/actions/setup-platformio\n")
+# Steps that install PlatformIO with pip, other than at the pin.
+UNPINNED_INSTALLS = (
+    "      - run: python3 -m pip install --upgrade platformio\n",
+    "      - run: pip install platformio==6.2.0\n",
+    "      - run: pip3 install --quiet 'platformio>=6.1'\n",
+    "      - name: Tools\n        run: |\n          python3 -m pip install --quiet \\\n"
+    "            intelhex==2.3.0 \\\n            platformio\n",
+)
 
 
 def step_bounds(text: str, at: int) -> tuple:
@@ -110,6 +141,41 @@ class PlatformioPinTest(unittest.TestCase):
                 self.assert_named(got, name, "platformio-version '6.2.0' is not "
                                              "check_route_security.py's PLATFORMIO_PIN")
 
+    def test_every_setup_step_in_a_release_is_pinned(self) -> None:
+        # A second setup-platformio step with no platformio-version installs
+        # the newest PlatformIO over the pinned one. Each step is held, not
+        # only the pins the workflow spells somewhere in it.
+        for name in crs.PLATFORMIO_PIN_RELEASES:
+            text = (WORKFLOWS / name).read_text()
+            _start, end = step_bounds(text, text.index(f"          {PIN_LINE}\n"))
+            for step in UNPINNED_STEPS:
+                with self.subTest(name=name, step=step):
+                    got = self.doctored(name, text, text[:end] + step + text[end:])
+                    self.assert_named(got, name, "a setup-platformio step hands it no "
+                                                 "platformio-version")
+            with self.subTest(name=name, step=TWICE_PINNED_STEP):
+                got = self.doctored(name, text, text[:end] + TWICE_PINNED_STEP + text[end:])
+                self.assert_named(got, name, "a setup-platformio step hands it 2 "
+                                             "platformio-version lines")
+            # A pinned step whose `with:` comes before its `uses:` is pinned.
+            with self.subTest(name=name, step=WITH_FIRST_STEP):
+                self.assertEqual(self.doctored(name, text,
+                                               text[:end] + WITH_FIRST_STEP + text[end:]), [])
+
+    def test_every_pip_install_of_platformio_in_a_release_is_pinned(self) -> None:
+        for name in crs.PLATFORMIO_PIN_RELEASES:
+            text = (WORKFLOWS / name).read_text()
+            _start, end = step_bounds(text, text.index(f"          {PIN_LINE}\n"))
+            for step in UNPINNED_INSTALLS:
+                with self.subTest(name=name, step=step):
+                    got = self.doctored(name, text, text[:end] + step + text[end:])
+                    self.assert_named(got, name, f"not platformio=={PIN}")
+            # At the pin, it holds; a package whose name only starts with
+            # platformio is another package.
+            pinned = (f"      - run: python3 -m pip install --quiet platformio=={PIN} "
+                      f"platformio-extras==1.0\n")
+            self.assertEqual(self.doctored(name, text, text[:end] + pinned + text[end:]), [])
+
     def test_release_pin_bumped_alone_fails(self) -> None:
         for name in crs.PLATFORMIO_PIN_RELEASES:
             with self.subTest(name=name):
@@ -142,6 +208,34 @@ class PlatformioPinTest(unittest.TestCase):
                     rf"installs platformio-version '{re.escape(first)}' \(line \d+\), "
                     rf"'{re.escape(second)}' \(line \d+\) above it, not exactly "
                     rf"PLATFORMIO_PIN", p) for p in got), got)
+
+    def test_route_check_job_second_unpinned_setup_or_install_fails(self) -> None:
+        # Above the check, a setup-platformio step with no platformio-version
+        # or a pip install of PlatformIO at no pin replaces the pinned one
+        # before the check runs; below it, the job still installs it unpinned.
+        text = (WORKFLOWS / "firmware.yml").read_text()
+        check, end = step_bounds(text, text.index(f"          {CHECK_RUN}\n"))
+        for at in (check, end):
+            for step, words in ([(s, "a setup-platformio step hands it no platformio-version")
+                                 for s in UNPINNED_STEPS]
+                                + [(s, f"not platformio=={PIN}") for s in UNPINNED_INSTALLS]
+                                + [(STEP.format("6.2.0"), "platformio-version '6.2.0'")]
+                                * (at == end)):
+                with self.subTest(below=at == end, step=step):
+                    got = self.doctored("firmware.yml", text, text[:at] + step + text[at:])
+                    self.assert_named(got, "firmware.yml", words)
+
+    def test_unpinned_platformio_in_another_firmware_job_passes(self) -> None:
+        # firmware.yml's build jobs take the newest PlatformIO on purpose; only
+        # the route-check job is held.
+        text = (WORKFLOWS / "firmware.yml").read_text()
+        check = text.index(f"          {CHECK_RUN}\n")
+        job = text.rindex("\n  build-platformio:\n", 0, check)
+        _start, end = step_bounds(text, text.index("\n      - ", job) + 1)
+        for step in UNPINNED_STEPS + UNPINNED_INSTALLS:
+            with self.subTest(step=step):
+                self.assertEqual(self.doctored("firmware.yml", text,
+                                               text[:end] + step + text[end:]), [])
 
     def test_route_check_job_without_its_install_fails(self) -> None:
         got = self.doctored("firmware.yml", f"          {PIN_LINE}\n", "")

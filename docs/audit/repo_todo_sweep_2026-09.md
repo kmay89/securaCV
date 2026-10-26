@@ -2170,8 +2170,10 @@ so — see D2 below.)
     build jobs pin none and take the newest, 6.2.0 on 2026-10-22, whose
     `ProjectConfig` and `PackageSpec` are the same text;
     `platformio_pin_problems` fails when either release pin, or the one
-    `firmware.yml`'s route-check job installs, is not `PLATFORMIO_PIN`, run
-    by `scripts/tests/test_route_check_platformio_pin.py` in `lint.yml`).
+    `firmware.yml`'s route-check job installs, is not `PLATFORMIO_PIN`, or a
+    `setup-platformio` step or a pip install of PlatformIO there does not
+    pin it, run by `scripts/tests/test_route_check_platformio_pin.py` in
+    `lint.yml`).
     `platformio_lib_deps` hands `platformio.ini` to `ProjectConfig` from
     `firmware/canary`, as `pio run` does, and takes each env's `lib_deps` as
     it resolves them (its `extends` and `[env]`, the `extra_configs` files,
@@ -2227,13 +2229,16 @@ so — see D2 below.)
   rule, which replaces the old `auth_get_token` loop (rule 5 keeps its
   emitter-behind-the-Host half). A function defined twice (an `#if` body
   and its `#else` one) is every one of its bodies, whatever its head, in
-  this rule, the route-gate rule and the Host-first rule. 293 planted
-  fixtures (268 source edits, 25 table edits), with the self-test's lexer,
+  this rule, the route-gate rule and the Host-first rule, and a route
+  handler is every definition of its name, a qualified one
+  (`Api::handle_status`) included. 298 planted fixtures (268 source edits,
+  25 table edits, 5 on a fixture whose `/api/status` handler is qualified),
+  with the self-test's lexer,
   flag-file, build-input, library, reach, header, file-kind, route-form,
   symbol-binding and raw-literal cases, each fail for their named reason
   before the tree is read (the library cases run 69 projects written into a
   temp dir through PlatformIO 6.1.19's `ProjectConfig`); the tree passes
-  with its 83 registrations, in 14 to 22 s (Python 3.11 to 3.14). The `/*`
+  with its 83 registrations, in 14 to 25 s (Python 3.11 to 3.14). The `/*`
   allowlist reasons now say what the
   port-80 redirect does (a probe path gets the probe's plain answer or the
   TLS hint, else 307, or 500 on an oversize target).
@@ -3107,6 +3112,63 @@ so — see D2 below.)
   6. The planted fixtures stay 293. The tree passes in 14.6 s on Python
   3.11 and 22.0 s on 3.13 (PlatformIO 6.1.19), and under 6.2.0 with the pin
   lifted. Host-tested; not run on a device. No new number.
+  *Change (2026-10-26, the PR's Codex review):* two gaps, each reproduced
+  before its fix.
+  - A route callback registered qualified (`.handler =
+    Api::handle_status`) is keyed by its bare name, as `SECRET_ANSWERS`
+    keys it, but `_answer_problems` read a definition only where its whole
+    qualified name was that bare name, so for `esp_err_t
+    Api::handle_status(...)` the bearer-only grant and the answer statements
+    read no body. The TLS pin written before `if (!auth_gate(req)) return
+    ESP_OK;`, under an `ANSWER_STATEMENTS` row keyed `handle_status`,
+    passed every rule, and so did the handler's pinned statement moved above
+    its refusal under a row keyed `Api::handle_status` (a statement pin holds
+    its text and its blocks, not its place beside the refusal). A handler is
+    now read at every definition of its bare name, qualified or not, as the
+    route-gate and Host-first rules read it (`handler_bodies`); a bare name
+    defined under two qualified names fails (the registration cannot say
+    which it names, and the row keys one), and
+    `_answer_statement_problems` fails a row keyed by another name than its
+    definition's, or naming no definition, where it held nothing. Five
+    plants on a fixture whose `/api/status` handler, its two gate-hook
+    census rows and its row name `Api::handle_status`
+    (`_FIX_QUALIFIED_PLANTS`) hold it: the two above passed every rule
+    before, and the other three (the pin written before the refusal under a
+    qualified row, the bare name defined again in another file, a row with
+    no definition) each lacked the problem they now name.
+  - `platformio_pin_problems` collected the `platformio-version:` lines
+    across a workflow without tying them to the steps that install
+    PlatformIO, so a second `setup-platformio` step with no version after
+    the pinned one (the action then runs `pip install --upgrade
+    platformio`) passed, as did a pip install of PlatformIO in a `run:`
+    step. Every `setup-platformio` step in `firmware-release.yml`,
+    `flasher-release.yml` and `firmware.yml`'s route-check job (above the
+    check or below it; a pin below it is held too) now hands it exactly one
+    `platformio-version`, `PLATFORMIO_PIN`, and every pip install there
+    that names the platformio package names `platformio==6.1.19`
+    (`_setup_platformio_steps`, `_pip_platformio`: a step runs from its
+    list item to the next line indented less than its keys, so a `with:`
+    above its `uses:` is read; a backslash continuation is one line; a
+    requirements file a `-r` names is not read). `firmware.yml`'s build
+    jobs, which take the newest PlatformIO on purpose, are not held.
+  The pin test is 18 tests. Four new ones hold a second setup step with no
+  version or with only its extras (in a release workflow, also one with the
+  pin twice) and four unpinned pip installs (`--upgrade`, `==6.2.0`, a
+  range, a name on a continuation line), in each release workflow and
+  above and below the route check (with a 6.2.0 step below it): 27 failing
+  cases, every one of which the old rule passed; and a pin installed with
+  pip, a pinned step with its `with:` above its `uses:`, and the same
+  unpinned steps in another `firmware.yml` job: 10 passing ones. Of 14
+  checker mutants (five of the answer rule's reading: the old exact-name
+  match, the ambiguity, the row-name and the missing-definition checks
+  dropped, and the statement rows read by exact name; nine of the pin
+  rule's: either scope's per-step reading dropped, the pin below the check
+  unread, no continuation, the whole of `firmware.yml` read, a step's two
+  pins admitted, any pinned version admitted, no walk back to a step's
+  list item, and a step that ends at its `uses:`), the self-test and
+  the pin test refuse all 14. The planted fixtures are 298 (268 source, 25
+  table, 5 qualified). The tree passes in 24.4 s on Python 3.13
+  (PlatformIO 6.1.19). Host-tested; not run on a device. No new number.
 - [x] **F339 [code] canary-wap: other bearer compares stay silent beside the
   lockout.** `csi_integration.cpp`'s `CSI_AUTH_OR_RETURN`
   (`api_auth_check_optional`, every CSI dashboard route), `csi_mqtt.cpp`'s

@@ -210,7 +210,8 @@
     `REGISTRY_LIBS` row names. The configuration is read with PlatformIO's
     own reader, not an imitation of it: `ProjectConfig`, at the version the
     builds that ship the flagship pin (6.1.19, in `firmware-release.yml` and
-    `flasher-release.yml`, held equal to them by
+    `flasher-release.yml`, held equal to them, at every `setup-platformio`
+    step and pip install of PlatformIO there, by
     `scripts/tests/test_route_check_platformio_pin.py`), run from
     `firmware/canary` as `pio run` runs it, resolves each env's `lib_deps`
     (its `extends` and `[env]`, the `extra_configs` files, every
@@ -589,12 +590,55 @@
   refuses all 6. The planted fixtures stay 293. The tree passes in 14.6 s on
   Python 3.11 and 22.0 s on 3.13 (PlatformIO 6.1.19), and under 6.2.0 with
   the pin lifted.
+  The PR's Codex review found two gaps, each reproduced before its fix. A
+  route callback registered qualified (`.handler = Api::handle_status`) is
+  keyed by its bare name, as the tables key it, but the answer rule read a
+  definition only where its whole qualified name was that bare name, so for
+  `esp_err_t Api::handle_status(...)` the bearer-only grant and the answer
+  statements read no body: the TLS pin written before `if
+  (!auth_gate(req)) return ESP_OK;`, under an `ANSWER_STATEMENTS` row keyed
+  `handle_status`, passed every rule, and so did the handler's pinned
+  statement moved above its refusal under a row keyed `Api::handle_status`.
+  A handler is now read at every definition of its bare name, qualified or
+  not, as the route-gate and Host-first rules read it; a bare name defined
+  under two qualified names fails (the registration cannot say which it
+  names, and the row keys one), and an `ANSWER_STATEMENTS` row keyed by
+  another name than its definition's, or naming no definition, fails
+  instead of holding nothing. Five plants on a fixture whose `/api/status`
+  handler is `Api::handle_status` hold it: two passed every rule before,
+  and the other three each lacked the problem they now name. And
+  `platformio_pin_problems` collected the `platformio-version:` lines
+  across a workflow without tying them to the steps that install
+  PlatformIO, so a second `setup-platformio` step with no version after the
+  pinned one (the action then installs the newest) passed, as did a `pip
+  install --upgrade platformio`. Every `setup-platformio` step in the two
+  release workflows and in `firmware.yml`'s route-check job (above the
+  check or below it) now hands it exactly one `platformio-version`, the pin
+  (a pin below the check is held too), and every pip install there that
+  names the platformio package names `platformio==6.1.19` (a backslash
+  continuation read as one line; a requirements file a `-r` names is not
+  read); `firmware.yml`'s build jobs, which take the newest on purpose, are
+  not held. The pin test is 18 tests: four new ones hold a second setup
+  step with no version or with only its extras (in a release workflow, also
+  one with the pin twice) and four unpinned pip installs (`--upgrade`,
+  `==6.2.0`, a range, a name on a continuation line), in each release
+  workflow and above and below the route check (with a 6.2.0 step below
+  it), 27 failing cases, every one of
+  which the old rule passed; and a pin installed with pip, a pinned step
+  with its `with:` above its `uses:` and the same unpinned steps in another
+  `firmware.yml` job, 10 passing ones. Of 14 checker mutants (five of the
+  answer rule's reading, nine of the pin rule's per-step reading), the
+  self-test and the pin test refuse all 14. The planted fixtures are 298
+  (268 source, 25 table, 5 on the qualified fixture). The tree passes in
+  24.4 s on Python 3.13 (PlatformIO 6.1.19).
   The head parser names a constructor
   for its class (it named `ScvNetworkManager`'s body after its last
   initializer, `m_peers_last_browse_ms`), a member as `Class::name`, and a
   function whose head ends in `noexcept`, `override`, `final`, a member's
-  `const` or a trailing return type. 293 planted fixtures (268 source, 25
-  table), with the self-test's lexer, flag-file, build-input, library, reach,
+  `const` or a trailing return type, and a route handler is read at every
+  definition of its name, a qualified one included. 298 planted fixtures
+  (268 source, 25 table, 5 on a fixture whose `/api/status` handler is
+  qualified), with the self-test's lexer, flag-file, build-input, library, reach,
   header, file-kind, route-form, symbol-binding and raw-literal cases, each
   fail for their named reason before the tree is read; they refuse each of
   the 60 mutants of the check that undo one of the third review's fixes, weaken a
@@ -610,7 +654,7 @@
   ran), so it is an injector the build-input rule does not read, as are
   `--for-linker`, `--for-assembler` and `--define-macro`; they stay unread,
   deliberate spellings outside the threat model (the sixth review).
-  The tree passes with its 83 registrations in 14 to 22 s (Python 3.11 to
+  The tree passes with its 83 registrations in 14 to 25 s (Python 3.11 to
   3.14, PlatformIO 6.1.19). The threat model
   is a careless or mistaken firmware edit (a refactor, a new route, a new
   feature, a moved line, a widened helper, a new file), not a deliberate
