@@ -6,8 +6,9 @@
 // has one.
 import { postPayout } from './ledger.mjs';
 import { raise, resolve } from './exceptions.mjs';
+import { timedFetch } from '../net.mjs';
 
-async function stripeList(cfg, path, { fetchImpl = fetch } = {}) {
+async function stripeList(cfg, path, { fetchImpl = timedFetch } = {}) {
   const out = []; let starting_after = null;
   for (let page = 0; page < 10; page++) {
     const r = await fetchImpl(`https://api.stripe.com/v1/${path}${path.includes('?') ? '&' : '?'}limit=100${starting_after ? `&starting_after=${starting_after}` : ''}`, { headers: { authorization: `Bearer ${cfg.stripeApiKey}` } });
@@ -18,7 +19,7 @@ async function stripeList(cfg, path, { fetchImpl = fetch } = {}) {
   return out;
 }
 
-export async function reconcile(db, cfg, { fetchImpl = fetch, now = Date.now(), days = 7 } = {}) {
+export async function reconcile(db, cfg, { fetchImpl = timedFetch, now = Date.now(), days = 7 } = {}) {
   if (!cfg.stripeApiKey) return { skipped: 'STRIPE_API_KEY not set — reconciliation needs read access to payouts and charges' };
   const since = Math.floor((now - 30 * 86400000) / 1000);
   // payouts: Stripe's paid payouts of the last 30 days, each in the books exactly once

@@ -35,6 +35,7 @@ import { runJob, JOBS } from './jobs.mjs';
 import { isDemo, DEMO_PASSWORD, DEMO_USERS, DEMO_TOTP_SECRET, DEMO_WEBHOOK_SECRET, DEMO_CATALOG, DEMO_SHIPPING, SCENARIOS, localBase, seedDemoUsers } from './modules/demo.mjs';
 import { totp } from './auth.mjs';
 import { weekLabel as weekLabelNow } from './modules/orders.mjs';
+import { timedFetch } from './net.mjs';
 
 export function createApp({ db, cfg }) {
   cfg.tz = setTimezone(cfg.tz);
@@ -56,7 +57,13 @@ export function createApp({ db, cfg }) {
   const { router } = app;
 
   // ---------- public
-  router.get('/healthz', (c) => text(c.res, 'ok'));
+  // Docker and the kit poll this: it fails when the database cannot answer or the scheduler has not ticked in
+  // five minutes (a hung job), so a container that is up but not working is restarted rather than trusted.
+  router.get('/healthz', (c) => {
+    try { db.get('SELECT 1 AS one'); } catch (err) { throw new HttpError(503, `database: ${err.message}`); }
+    if (app.schedulerTick && Date.now() - app.schedulerTick > 5 * 60_000) throw new HttpError(503, 'scheduler stalled');
+    text(c.res, 'ok');
+  });
   router.get('/status', (c) => html(c.res, statusPage(db, cfg), 200, { 'Cache-Control': 'public, max-age=60' }));
   router.get('/status.json', (c) => json(c.res, publicStatus(db), 200, { 'Cache-Control': 'public, max-age=60', 'Access-Control-Allow-Origin': '*' }));
   router.get('/confirm/:token', (c) => { const ok = confirmConsent(db, c.params.token); html(c.res, plain(cfg, ok ? 'Confirmed' : 'Link expired', ok ? `Thanks — ${e(ok.email)} is confirmed for occasional news. One-click unsubscribe is in every mail.` : 'That confirmation link is not valid any more. Sign up again if you still want the news.'), ok ? 200 : 404); });
@@ -133,7 +140,7 @@ export function createApp({ db, cfg }) {
     if (!app.limiter.allow(`store:${clientIp(c.req)}`)) throw new HttpError(429, 'slow down');
     if (cfg.demo) throw new HttpError(503, 'the demo takes no payments — the site falls back to its own cart');
     const cat = await app.catalog().catch(() => null); if (!cat) throw new HttpError(503, 'the catalog is not loaded');
-    const r = await createCheckout(db, cfg, cat, { items: c.body?.items, zip: c.body?.zip, email: c.body?.email }, { fetchImpl: app.fetchImpl || fetch });
+    const r = await createCheckout(db, cfg, cat, { items: c.body?.items, zip: c.body?.zip, email: c.body?.email }, { fetchImpl: app.fetchImpl || timedFetch });
     json(c.res, { url: r.url, id: r.id, ships: r.ships, delivers: r.delivers }, 200, corsHeaders(cfg));
   }), { public: true });
   router.get('/store/session/:id', store(async (c) => { json(c.res, sessionStatus(db, cfg, c.params.id), 200, { ...corsHeaders(cfg), 'Cache-Control': 'private, no-store' }); }), { public: true });
@@ -261,7 +268,11 @@ export function createApp({ db, cfg }) {
   });
   app.server = server;
   app.listen = () => new Promise(r => server.listen(cfg.port, cfg.host, () => { const a = server.address(); if (cfg.demo) { cfg.port = a.port; cfg.baseUrl = `http://127.0.0.1:${a.port}`; cfg.siteOrigin = cfg.baseUrl; } r(a); }));
-  app.close = () => new Promise(r => server.close(r));
+  // A request may take at most a minute; headers at most fifteen seconds (a client that opens a socket and
+  // says nothing is dropped, not kept). Caddy in front has its own limits; these hold without it.
+  server.headersTimeout = 15_000; server.requestTimeout = 60_000; server.keepAliveTimeout = 5_000;
+  app.close = () => new Promise(r => { server.close(r); server.closeIdleConnections?.(); });
+  app.closeAll = () => server.closeAllConnections?.();
   return app;
 }
 
@@ -269,8 +280,8 @@ export async function applyStripeEvent(app, m, event = null) {
   const { db, cfg } = app;
   if (m.kind === 'order') {
     const catalog = await app.catalog().catch(() => null);
-    if (!m.line_items_present) { try { const items = await fetchLineItems(cfg, m.external_id, { fetchImpl: app.fetchImpl || fetch }); if (items) m.items = items; } catch (e) { db.audit('stripe', 'order.line_items.failed', 'order', m.external_id, { error: String(e.message || e) }); } }
-    if (m.discount_code && /^promo_|^[A-Za-z0-9]{8,}$/.test(m.discount_code) && !db.get('SELECT code FROM discounts WHERE code = ?', m.discount_code)) { try { m.discount_code = await resolveDiscountCode(cfg, m.discount_code, { fetchImpl: app.fetchImpl || fetch }); } catch { /* the id stays */ } }
+    if (!m.line_items_present) { try { const items = await fetchLineItems(cfg, m.external_id, { fetchImpl: app.fetchImpl || timedFetch }); if (items) m.items = items; } catch (e) { db.audit('stripe', 'order.line_items.failed', 'order', m.external_id, { error: String(e.message || e) }); } }
+    if (m.discount_code && /^promo_|^[A-Za-z0-9]{8,}$/.test(m.discount_code) && !db.get('SELECT code FROM discounts WHERE code = ?', m.discount_code)) { try { m.discount_code = await resolveDiscountCode(cfg, m.discount_code, { fetchImpl: app.fetchImpl || timedFetch }); } catch { /* the id stays */ } }
     const { order, created } = recordOrder(db, m, { catalog, actor: 'stripe' });
     if (created && order.email && order.items.length) {
       // "We have it": the order, the batch it ships in and the arrival window — the same estimate the store showed before paying.

@@ -4,8 +4,9 @@
 // later raise just bumps last_seen. Resolution comments and closes it.
 // Silence means healthy. The inbox of the company is the issue tracker.
 import { nowIso } from '../db.mjs';
+import { timedFetch } from '../net.mjs';
 
-export async function raise(db, cfg, key, title, body, { fetchImpl = fetch } = {}) {
+export async function raise(db, cfg, key, title, body, { fetchImpl = timedFetch } = {}) {
   const now = nowIso();
   const existing = db.get('SELECT * FROM exceptions WHERE key = ?', key);
   if (existing && !existing.resolved_at) { db.run('UPDATE exceptions SET last_seen_at = ?, body = ? WHERE key = ?', now, body, key); return { ...existing, bumped: true }; }
@@ -22,7 +23,7 @@ export async function raise(db, cfg, key, title, body, { fetchImpl = fetch } = {
   return db.get('SELECT * FROM exceptions WHERE key = ?', key);
 }
 
-export async function resolve(db, cfg, key, note = 'Condition cleared.', { fetchImpl = fetch } = {}) {
+export async function resolve(db, cfg, key, note = 'Condition cleared.', { fetchImpl = timedFetch } = {}) {
   const e = db.get('SELECT * FROM exceptions WHERE key = ? AND resolved_at IS NULL', key);
   if (!e) return null;
   db.run('UPDATE exceptions SET resolved_at = ? WHERE key = ?', nowIso(), key);

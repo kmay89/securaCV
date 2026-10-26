@@ -180,8 +180,22 @@ const main = async () => {
       // BACKOFFICE_DEMO=1 on an empty database: seed itself, so a container is the whole demo.
       if (cfg.demo) { const r = await ensureDemo(db, cfg); if (r) console.log('[backoffice] demo mode: seeded', JSON.stringify(r)); }
       if (!hasOperator(db)) console.error('[backoffice] no owner yet — run `backoffice setup` in another shell; serving anyway');
-      const addr = await app.listen(); startScheduler(app);
+      const addr = await app.listen(); const stopScheduler = startScheduler(app);
       console.log(`[backoffice] listening on http://${addr.address}:${addr.port}  (public base: ${cfg.baseUrl})`);
+      // docker stop sends SIGTERM and waits ten seconds: stop taking requests, let the ones in flight finish
+      // (eight seconds at most, then they are cut), close the database cleanly, exit 0.
+      let stopping = false;
+      const shutdown = async (sig) => {
+        if (stopping) return; stopping = true; console.log(`[backoffice] ${sig}: stopping`); stopScheduler();
+        await Promise.race([app.close(), new Promise(r => setTimeout(r, 8000).unref())]); app.closeAll?.();
+        try { db.close(); } catch { /* already closed */ } process.exit(0);
+      };
+      process.on('SIGTERM', () => shutdown('SIGTERM')); process.on('SIGINT', () => shutdown('SIGINT'));
+      // A rejected promise nobody awaited is logged, not fatal: one bad job or mail must not take the shop down.
+      // An exception nobody caught leaves the process in a state nothing can vouch for: log it, close the
+      // database, exit 1 — the container's restart policy brings a clean one back within seconds.
+      process.on('unhandledRejection', (err) => console.error('[backoffice] unhandled rejection:', err?.stack || err));
+      process.on('uncaughtException', (err) => { console.error('[backoffice] uncaught exception, exiting:', err?.stack || err); try { db.close(); } catch { /* already closed */ } process.exit(1); });
       return new Promise(() => {});
     }
     case 'token': return args[0] === 'revoke' ? out(`revoked ${revokeApiToken(db, args[1])}`) : out(`${createApiToken(db, args[1] || 'cli', { scope: flags['read-only'] ? 'ro' : 'rw' })}\n(shown once — store it in the client's environment${flags['read-only'] ? '; read-only: GET only' : ''})`);

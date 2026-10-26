@@ -18,6 +18,7 @@ import { editItems } from './modules/orders.mjs';
 import { trackingConfigured, pollTracking } from './modules/shipping.mjs';
 import { orderToken } from './modules/delivery.mjs';
 import { listItems } from './modules/inventory.mjs';
+import { timedFetch } from './net.mjs';
 
 const KIND_LABEL = { purchasing: 'Purchasing', sales: 'Sales', support: 'Support', orders: 'Orders', books: 'Books', mail: 'Mail' };
 
@@ -132,6 +133,6 @@ ${!r.sent_at && q.customers.length ? `<form method="post" action="/devices/recal
     const items = String(c.body.lines || '').split('\n').map(l => l.split('|').map(x => x.trim())).filter(l => l[0]).map(([sku, qty]) => ({ sku, qty: int(qty, { name: `${sku} qty`, min: 1, fallback: 1 }) }));
     const o = editItems(db, Number(c.params.id), items, { catalog: await app.catalog().catch(() => null), actor: 'web' }); back(c, `/orders/${o.id}`, `items on ${o.number} changed`);
   });
-  router.post('/orders/track', async (c) => { if (!trackingConfigured(cfg)) throw new HttpError(400, 'set USPS_CLIENT_ID and USPS_CLIENT_SECRET first (Settings explains)'); const r = await pollTracking(db, cfg, { fetchImpl: app.fetchImpl || fetch, minAgeH: 0 }); backTo(c, '/ship', `checked ${r.checked} parcel${r.checked === 1 ? '' : 's'}: ${r.delivered} delivered, ${r.alerts} alert${r.alerts === 1 ? '' : 's'}`); });
+  router.post('/orders/track', async (c) => { if (!trackingConfigured(cfg)) throw new HttpError(400, 'set USPS_CLIENT_ID and USPS_CLIENT_SECRET first (Settings explains)'); const r = await pollTracking(db, cfg, { fetchImpl: app.fetchImpl || timedFetch, minAgeH: 0 }); backTo(c, '/ship', `checked ${r.checked} parcel${r.checked === 1 ? '' : 's'}: ${r.delivered} delivered, ${r.alerts} alert${r.alerts === 1 ? '' : 's'}`); });
   router.get('/api/orders/:number/status-url', (c) => { const o = db.get('SELECT * FROM orders WHERE number = ?', c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, { url: `${cfg.baseUrl}/o/${o.number}/${orderToken(cfg.secret, o.number)}` }); });
 }

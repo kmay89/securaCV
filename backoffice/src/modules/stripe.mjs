@@ -3,6 +3,7 @@
 // subscription state. Two inputs: the signed webhook (live) and the CSV
 // export the weekly batch already uses (catch-up / offline).
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { timedFetch } from '../net.mjs';
 
 // Stripe-Signature: t=<ts>,v1=<hex>[,v1=<hex>…]; signed_payload = `${t}.${body}`
 export function verifyStripeSignature(rawBody, header, secret, { now = Date.now() / 1000, toleranceS = 300 } = {}) {
@@ -68,7 +69,7 @@ export function eventToOrder(event) {
 // are expandable, never inline). With an API key we fetch them; without one
 // the order is recorded empty and an exception names it (orders.mjs refuses
 // to pack an order with no items, so nothing ships blind).
-export async function fetchLineItems(cfg, sessionId, { fetchImpl = fetch } = {}) {
+export async function fetchLineItems(cfg, sessionId, { fetchImpl = timedFetch } = {}) {
   if (!cfg.stripeApiKey) return null;
   const r = await fetchImpl(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}/line_items?limit=100&expand[]=data.price.product`, { headers: { authorization: `Bearer ${cfg.stripeApiKey}` } });
   if (!r.ok) throw new Error(`stripe line_items ${r.status} for ${sessionId}`);
@@ -83,7 +84,7 @@ export async function fetchLineItems(cfg, sessionId, { fetchImpl = fetch } = {})
 // A promotion id (promo_…) or coupon id from the webhook → the code the customer typed, when an
 // API key allows the lookup. Without one the id is kept as the code: still a stable label for
 // the books, and never fed to the local discount rules (recordOrder sees discount_cents set).
-export async function resolveDiscountCode(cfg, code, { fetchImpl = fetch } = {}) {
+export async function resolveDiscountCode(cfg, code, { fetchImpl = timedFetch } = {}) {
   if (!code || !cfg.stripeApiKey) return code;
   const isPromo = /^promo_[A-Za-z0-9]+$/.test(code);
   const r = await fetchImpl(`https://api.stripe.com/v1/${isPromo ? 'promotion_codes' : 'coupons'}/${encodeURIComponent(code)}`, { headers: { authorization: `Bearer ${cfg.stripeApiKey}` } });

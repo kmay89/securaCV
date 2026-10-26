@@ -17,6 +17,7 @@ import { enqueue } from './modules/mail.mjs';
 import { unreconciledStripeCents } from './modules/ledger.mjs';
 import { resetDemo, isDemo } from './modules/demo.mjs';
 import { join } from 'node:path';
+import { timedFetch } from './net.mjs';
 
 export const JOBS = {
   // name: [interval seconds, fn(app)]
@@ -72,7 +73,7 @@ export const JOBS = {
     await resolve(db, cfg, 'backup:check', 'A checked backup exists again.');
     let offsite = { skipped: 'BACKUP_S3_URL / KEY / SECRET not set' };
     if (offsiteConfigured(cfg)) {
-      try { offsite = await uploadOffsite(cfg, b.path, { fetchImpl: app.fetchImpl || fetch }); await resolve(db, cfg, 'backup:offsite', 'The off-site copy is current again.'); }
+      try { offsite = await uploadOffsite(cfg, b.path, { fetchImpl: app.fetchImpl || timedFetch }); await resolve(db, cfg, 'backup:offsite', 'The off-site copy is current again.'); }
       catch (e) { offsite = { error: String(e.message || e) }; await raise(db, cfg, 'backup:offsite', 'backup [off-site failed]: the copy did not reach the bucket', `${e.message}\n\nThe local backup is checked; only the off-site copy is missing. Check BACKUP_S3_URL / KEY / SECRET and the bucket's permissions.`); }
     }
     db.audit('system', 'backup.taken', 'backup', b.path, { bytes: b.bytes, checked: checked.ok, offsite: offsite.read_back || false });
@@ -83,13 +84,13 @@ export const JOBS = {
   // Weekly: the latest copy (off-site when configured) is pulled back and proven to boot.
   restore_drill: [7 * 86400, async (app) => {
     const { db, cfg } = app;
-    try { const r = await restoreDrill(cfg, { fetchImpl: app.fetchImpl || fetch, localDir: join(cfg.dataDir, 'backups') }); db.setSetting('drill:last', JSON.stringify({ at: r.at, ok: r.ok, offsite: r.offsite, encrypted: !!r.encrypted, age_h: r.age_h, orders: r.counts?.orders ?? null, errors: (r.errors || []).slice(0, 5) })); if (!r.ok) throw new Error(r.errors.join('; ')); await resolve(db, cfg, 'backup:drill', 'The restore drill passed.'); db.audit('system', 'backup.drill', 'backup', r.source, { ok: true, orders: r.counts.orders }); return r; }
+    try { const r = await restoreDrill(cfg, { fetchImpl: app.fetchImpl || timedFetch, localDir: join(cfg.dataDir, 'backups') }); db.setSetting('drill:last', JSON.stringify({ at: r.at, ok: r.ok, offsite: r.offsite, encrypted: !!r.encrypted, age_h: r.age_h, orders: r.counts?.orders ?? null, errors: (r.errors || []).slice(0, 5) })); if (!r.ok) throw new Error(r.errors.join('; ')); await resolve(db, cfg, 'backup:drill', 'The restore drill passed.'); db.audit('system', 'backup.drill', 'backup', r.source, { ok: true, orders: r.counts.orders }); return r; }
     catch (e) { db.setSetting('drill:last', JSON.stringify({ at: nowIso(), ok: false, errors: [String(e.message || e).slice(0, 300)] })); await raise(db, cfg, 'backup:drill', 'backup [restore drill failed]: the latest copy could not be proven', String(e.message || e)); throw e; }
   }],
   // Daily: payouts and charges in Stripe against the books and the orders (needs STRIPE_API_KEY).
-  reconcile: [86400, async (app) => reconcile(app.db, app.cfg, { fetchImpl: app.fetchImpl || fetch })],
+  reconcile: [86400, async (app) => reconcile(app.db, app.cfg, { fetchImpl: app.fetchImpl || timedFetch })],
   // Hourly, with USPS credentials: where every open shipment is; delivered when the carrier says so.
-  tracking: [3600, async (app) => pollTracking(app.db, app.cfg, { fetchImpl: app.fetchImpl || fetch })],
+  tracking: [3600, async (app) => pollTracking(app.db, app.cfg, { fetchImpl: app.fetchImpl || timedFetch })],
   // Once a day at DIGEST_HOUR (UTC): today's list, the numbers, the health checklist, to the operator.
   digest:   [600, async ({ db, cfg }) => {
     if (!cfg.operatorEmail) return { skipped: 'OPERATOR_EMAIL not set' };
@@ -129,6 +130,7 @@ export function startScheduler(app, { tickMs = 10_000 } = {}) {
   const last = {};
   let running = false;
   const tick = async () => {
+    app.schedulerTick = Date.now();
     if (running) return; running = true;
     try {
       for (const [name, [interval]] of Object.entries(JOBS)) {

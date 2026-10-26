@@ -20,6 +20,7 @@ export function openDb(path = ':memory:') {
   const db = new DatabaseSync(path);
   if (path !== ':memory:') { try { chmodSync(path, 0o600); } catch { /* not every filesystem */ } }   // the company's data is the operator's alone
   db.exec('PRAGMA busy_timeout = 5000');
+  if (path !== ':memory:') { db.exec('PRAGMA journal_mode = WAL'); db.exec('PRAGMA synchronous = FULL'); }
   migrate(db);
   return wrap(db);
 }
