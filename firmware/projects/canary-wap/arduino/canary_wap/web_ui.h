@@ -1503,6 +1503,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <div class="form-group">
           <div class="form-label">Unlock key</div>
           <div id="vaultKeyState" style="font-size:0.85rem;margin-bottom:0.5rem;color:var(--muted);">No key registered — all triggers stay off.</div>
+          <p class="tnote">Registering a key takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once.</p>
           <div id="vaultKeyEntry" style="display:flex;gap:0.5rem;flex-wrap:wrap;">
             <input type="text" class="form-input" id="vaultPubkey" placeholder="Paste the 64-hex public key printed by: unseal_snapshot.py gen-key" style="flex:1;min-width:260px;font-family:monospace;font-size:0.78rem;">
             <button class="btn btn-primary btn-sm" onclick="registerVaultKey()">Register</button>
@@ -3300,7 +3301,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         } else {
           alert(d.error || 'Key registration failed');
         }
-      } catch (e) { alert('Key registration failed'); }
+      } catch (e) {
+        // The bearer alone (sweep F335): the sign-in is up, the key kept.
+        if (!signInRaised(e)) alert('Key registration failed');
+      }
       refreshVault();
     }
 
@@ -4402,6 +4406,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     async function startPairing(mode) {
+      // Its confirm takes the API token (sweep F346): asked before the window runs.
+      if (!apiToken) return showAuthModal('Pairing Canaries takes the API token on each one: paste it (it is in your recovery kit), or use BOOT Tap Once, then start the pairing again.');
       const endpoint = mode === 'init' ? '/api/mesh/pair/start' : '/api/mesh/pair/join';
       const data = await api(endpoint, 'POST');
       if (!data.ok) { alert('Failed: ' + (data.error || 'Unknown')); return; }
@@ -4433,7 +4439,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     function stopPairingPolling() { if (pairingPollingInterval) { clearInterval(pairingPollingInterval); pairingPollingInterval = null; } }
-    async function confirmPairing() { await api('/api/mesh/pair/confirm', 'POST'); document.getElementById('pairingStatus').textContent = 'Completing…'; }
+    async function confirmPairing() {
+      const d = await api('/api/mesh/pair/confirm', 'POST');
+      if (d.ok) document.getElementById('pairingStatus').textContent = 'Completing…';
+    }
     async function cancelPairing() { stopPairingPolling(); await api('/api/mesh/pair/cancel', 'POST'); refreshOpera(); }
     async function saveOperaName() { const name = document.getElementById('operaNameInput').value.trim(); if (name) await api('/api/mesh/name', 'POST', { name }); refreshOpera(); }
     async function leaveOpera() { if (confirm('Leave this opera? This Canary stops sharing alerts with the group. You can re-pair any time to rejoin.')) { await api('/api/mesh/leave', 'POST'); refreshOpera(); } }
@@ -5374,14 +5383,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     async function refreshBtStatus() {
       const data = await api('/api/bluetooth');
       if (!data || !data.state) {
-        // Backend not present. Three failure modes land here:
-        //   1. FEATURE_BLUETOOTH=0 (MINIMAL profile)
-        //   2. NimBLEDevice.h missing (library not installed)
-        //   3. NimBLE-Arduino is 1.x — the bluetooth_channel TU silently
-        //      compiled empty against the wrong callback API and
-        //      register_routes() was never called.
-        // Surface (3) explicitly because it bit us before and the symptom
-        // (no /api/bluetooth response) looks identical to (1) and (2).
+        // No route: FEATURE_BLUETOOTH=0 (MINIMAL), NimBLEDevice.h missing, or
+        // NimBLE-Arduino 1.x, whose channel compiled empty; say which fixes it.
         const subtitle = document.getElementById('btSubtitle');
         if (subtitle) subtitle.textContent = 'BLE radio not registered. Flash a FULL or DEV build with NimBLE-Arduino ≥ 2.3.8.';
         const badge = document.getElementById('btStateBadge');
@@ -5427,12 +5430,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       else if (data.advertising) { badge.className = 'badge info'; text.textContent = 'Advertising'; }
       else { badge.className = 'badge info'; text.textContent = data.enabled ? 'Idle' : 'Disabled'; }
 
-      // When init was refused/failed, say WHY in the subtitle instead of
-      // presenting a dead-looking panel ("internal RAM too fragmented…").
-      // Once a bring-up succeeds the reason is cleared, and the subtitle goes
-      // back to the card's own line: a tap of Start Advertising or Pair can
-      // bring a refused stack up within the page's session (sweep F235), and
-      // the refusal used to stay on screen until a reload.
+      // Why the radio is off (init refused or failed), cleared once a bring-up
+      // works: Start Advertising or Pair can bring a refused stack up (F235).
       const subtitle = document.getElementById('btSubtitle');
       if (subtitle && data.init_fail_reason) {
         subtitle.textContent = 'Radio off — ' + data.init_fail_reason;
@@ -5470,16 +5469,27 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         document.getElementById('btPairingState').textContent = 'Pairing: ' + data.pairing.state;
         const pinEl = document.getElementById('btPairingPin');
         const isConfirming = (data.pairing.state === 'confirming');
-        if (data.pairing.pin !== undefined && data.pairing.pin !== null) {
+        const hint = document.getElementById('btPairingHint');
+        const done = data.pairing.state === 'complete';
+        window.__btPairingPin = null;
+        if (done || data.pairing.state === 'failed') {
+          // Spent (sweep F346): a finished pairing comes with no digits.
+          pinEl.textContent = '------';
+          hint.textContent = done ? 'Paired. The phone is listed under Paired devices.'
+            : 'This pairing did not finish. Press Start Pairing to try again.';
+        } else if (data.pairing.pin !== undefined && data.pairing.pin !== null) {
           pinEl.textContent = String(data.pairing.pin).padStart(6, '0');
           window.__btPairingPin = data.pairing.pin;
-          document.getElementById('btPairingHint').textContent = isConfirming
-            ? 'Compare this 6-digit code to the code on your phone. If they match, tap "Numbers match".'
-            : 'Confirm this PIN on your phone.';
+          hint.textContent = !isConfirming ? 'Confirm this PIN on your phone.'
+            : apiToken ? 'Compare this 6-digit code to the code on your phone. If they match, tap "Numbers match".'
+            : 'If you did not start this pairing, tap "Don\'t match". To accept it, "Numbers match" asks for the API token first; if your phone gives up meanwhile, press Start Pairing and pair again.';
+        } else if (data.pairing.pin_hidden) {
+          // A typed PIN is the bond: it comes only with the API token (sweep F346).
+          pinEl.textContent = 'hidden';
+          hint.textContent = 'A device is asking for a PIN to type. It shows only on a page signed in with the API token. If you did not start this, press Cancel Pairing.';
         } else {
           pinEl.textContent = 'waiting…';
-          window.__btPairingPin = null;
-          document.getElementById('btPairingHint').textContent =
+          hint.textContent =
             'Open Bluetooth on your phone, connect to ' + (data.device_name || 'this device') +
             ', and a PIN will appear here.';
         }
@@ -5550,6 +5560,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     async function btStartPairing() {
+      // "Numbers match" and a typed PIN take the API token (sweep F346):
+      // asked before the phone's pairing clock runs.
+      if (!apiToken) return showAuthModal('Pairing a phone takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once, then press Start Pairing again.');
       const data = await api('/api/bluetooth/pair/start', 'POST');
       if (data && data.success === false) {
         alert('Pairing: ' + (data.error || 'unknown error'));

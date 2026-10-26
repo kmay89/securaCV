@@ -397,9 +397,10 @@ BROKER_REPOINT = {"handler": "handle_config_post",
 # `gate(req, tok)` ("read"). A module route that answered its copy names it
 # somewhere else, and fails; a module the sketch hands the token to with no
 # entry here fails too.
-def _gated_module(gate: str) -> dict:
-    return {"copy": r"\bauth_token_storage\s*\(", "keep": ("auth_token_storage", gate, "register_routes"),
-            "decl": (), "read": ()}
+def _gated_module(gate: str, *more: str, read: tuple = ()) -> dict:
+    return {"copy": r"\bauth_token_storage\s*\(",
+            "keep": ("auth_token_storage", gate, *more, "register_routes"),
+            "decl": (), "read": read}
 
 
 MODULE_TOKEN_COPIES = {
@@ -410,7 +411,11 @@ MODULE_TOKEN_COPIES = {
                      "read": ("handle_config_get", "handle_config_post", "handle_test")},
     "audible_chirp_api.h": _gated_module("auth_gated"),
     "beacon_api.h": _gated_module("bcn_auth_gated"),
-    "bluetooth_api.h": _gated_module("bt_auth_gated"),
+    # bt_bearer_gated: the bond's confirm, the bearer alone (F346); the
+    # status route reads the copy only to ask the bearer gate whether a
+    # Passkey Entry's digits may ride.
+    "bluetooth_api.h": _gated_module("bt_auth_gated", "bt_bearer_gated",
+                                     read=("handle_bluetooth_status",)),
     "chirp_api.h": _gated_module("chirp_auth_gated"),
     "household_api.h": _gated_module("auth_gated"),
     "rf_presence_api.h": _gated_module("auth_gated"),

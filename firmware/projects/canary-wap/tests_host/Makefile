@@ -558,7 +558,7 @@ RGRANT_CUT = ../../../tests_host/cut_functions.awk
 CUT_INCS  += $(RGRANT_INC) $(RGRANT_CSI_INC)
 
 $(RGRANT_INC): $(SRC_DIR)/canary_wap.ino $(RGRANT_CUT) Makefile
-	awk -v 'sigs=static inline bool provisioning_gate_take() {|static bool provisioning_gate_take_for(|static bool request_host_names_device(httpd_req_t* req) {|static bool session_cookie_header(|uint32_t auth_request_source(httpd_req_t* req) {|static bool qr_scan_request_allowed(httpd_req_t* req) {|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {' \
+	awk -v 'sigs=static inline bool provisioning_gate_take() {|static bool provisioning_gate_take_for(|static bool request_host_names_device(httpd_req_t* req) {|static bool session_cookie_header(|uint32_t auth_request_source(httpd_req_t* req) {|static bool qr_scan_request_allowed(httpd_req_t* req) {|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {|static esp_err_t handle_vault_key_set_auth(httpd_req_t* req) {|static esp_err_t handle_mesh_pair_confirm_auth(httpd_req_t* req) {' \
 	  -f $(RGRANT_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
 $(RGRANT_CSI_INC): $(SRC_DIR)/csi_integration.cpp Makefile

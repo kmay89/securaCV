@@ -9687,8 +9687,10 @@ static esp_err_t handle_mesh_pair_join_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_mesh_pair_join(req);
 }
+// The confirm hands this opera's secret to the radio, or takes the
+// initiator's in place of this device's (sweep F346): the bearer alone.
 static esp_err_t handle_mesh_pair_confirm_auth(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_mesh_pair_confirm(req);
 }
 static esp_err_t handle_mesh_pair_cancel_auth(httpd_req_t* req) {
@@ -9991,8 +9993,10 @@ static esp_err_t handle_vault_config_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_vault_config(req);
 }
+// The recipient key is who can open every frame sealed from now on (sweep
+// F335): the bearer alone, never the landing page's session.
 static esp_err_t handle_vault_key_set_auth(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_vault_key_set(req);
 }
 static esp_err_t handle_vault_key_clear_auth(httpd_req_t* req) {

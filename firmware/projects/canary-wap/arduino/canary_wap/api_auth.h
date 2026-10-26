@@ -35,17 +35,19 @@
 // who already opened the paired dashboard do not have to reveal or retype
 // the long-lived API token when they click Settings.
 //
-// It is NOT a credential for the routes that hand out a credential (sweep
-// F289). The dashboard's landing page mints that session for whoever loads
-// it on the home network (deliberate LAN posture, the 2026-07 audit's
-// "Trust-on-LAN"), so a session is proof of being on the LAN, not of holding
-// the token or of a hand on the BOOT button. GET /api/provisioning-receipt
-// (the bearer token, the SoftAP password, the TLS pin) and GET
-// /api/pairing-qr (the token and the pin) therefore take the bearer-only
-// checks below — api_auth_bearer_grant() and api_auth_check_bearer(), both
-// under every admin route's per-address lockout — and never this bridge;
-// their other grants (the BOOT tap, the setup-door claim) are the handlers'
-// own.
+// It is NOT a credential for an answer that carries a credential, or for a
+// write that grants one (sweep F289, F335, F346). The dashboard's landing
+// page mints that session for whoever loads it on the home network
+// (deliberate LAN posture, the 2026-07 audit's "Trust-on-LAN"), so a session
+// is proof of being on the LAN, not of holding the token or of a hand on the
+// BOOT button. Such routes take the bearer-only checks below —
+// api_auth_bearer_grant() and api_auth_check_bearer(), both under every
+// admin route's per-address lockout — and never this bridge. For example:
+// GET /api/provisioning-receipt and GET /api/pairing-qr (the token, the
+// SoftAP password, the TLS pin), POST /api/vault/key (who can open every
+// frame sealed from then on), and a pairing's confirm (a lasting Bluetooth
+// bond, an opera's secret). SECURITY_MODEL.md keeps the list. Their other
+// grants (the BOOT tap, the setup-door claim) are the handlers' own.
 extern bool cv_session_validate(httpd_req_t* req) __attribute__((weak));
 
 // The source a request's wrong bearers are counted against (sweep F343): the

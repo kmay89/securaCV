@@ -40,6 +40,15 @@
 //     later; signInRaised() is the one test for "secureFetch already showed
 //     the sign-in"; Not now puts away a sign-in a running dashboard raised;
 //     and every "takes the API token" card note is one sentence shape.
+//   * Credential grants ask for sign-in (F335, F346): registering the vault
+//     key and the two pairings' confirms take the bearer alone, so the page
+//     asks for the token at Start Pairing and at the opera's Create/Join
+//     (before the phone's or the opera's clock runs), says nothing more under
+//     a refused key registration (the key stays in the box) or a refused
+//     opera confirm (the code stays up), shows 'hidden' for a Passkey
+//     Entry's digits a session is not sent, leads with "Don't match" for a
+//     comparison on a page without the token, and asks nobody for a PIN once
+//     a pairing is over.
 //
 // The page's own code is cut out of web_ui.h by markers that stand in the page
 // before and after these changes (so the old page runs here and fails on what
@@ -659,5 +668,111 @@ describe('The shared sign-in (F334, F335, F346)', () => {
     assert.ok(notes.includes('Showing the QR takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once.'),
       'the pairing QR card (GET /api/pairing-qr takes the bearer alone, sweep F289) carries the note');
     assert.match(src, /\.tnote \{[^}]*color: var\(--muted\)/);
+  });
+});
+
+// ── Credential grants ask for sign-in (F335, F346) ───────────────────────
+
+describe('Credential grants ask for sign-in (F335, F346)', () => {
+  // The page with `apiToken` (null: a page signed in by the landing page's
+  // session alone). Its sign-in records each message; its secureFetch is a
+  // device that refuses every request the way the page's own does (the
+  // sign-in raised, then auth_required thrown).
+  function grantPage(answers, apiToken) {
+    const p = pageContext(answers, { apiToken, refreshVault() {}, auth: [] });
+    p.ctx.showAuthModal = (m) => p.ctx.auth.push(m);
+    p.ctx.secureFetch = async () => { p.ctx.showAuthModal('refused'); throw new Error('auth_required'); };
+    p.ctx.startPairingPolling = () => p.calls.push('poll');
+    p.ctx.window.__btPollTimer = 1;
+    vm.runInContext(uiFunction('signInRaised', false) + uiFunction('refreshBtStatus', true) +
+      uiFunction('btStartPairing', true) + uiFunction('registerVaultKey', true) +
+      uiFunction('startPairing', true) + uiFunction('confirmPairing', true) +
+      '\nglobalThis.__g = { refreshBtStatus, btStartPairing, registerVaultKey, startPairing, confirmPairing };\n', p.ctx);
+    return p;
+  }
+  const bt = (pairing) => ({ '/api/bluetooth': { state: 'idle', enabled: true, advertising: false, connected: false, pairing } });
+  // The card-note template, ending in what to press again ("on each one":
+  // an opera's two Canaries each take their own token).
+  const ASK = /^[A-Z][a-z]+ [^:]+ takes the API token(?: on each one)?: paste it \(it is in your recovery kit\), or use BOOT Tap Once, then /;
+
+  it('a Passkey Entry the session is not sent shows "hidden" and keeps no digits', async () => {
+    const p = grantPage(bt({ state: 'pin_displayed', pin_hidden: true }), null);
+    await p.ctx.__g.refreshBtStatus();
+    assert.equal(p.el('btPairingPin').textContent, 'hidden');
+    assert.equal(p.ctx.window.__btPairingPin, null);
+    assert.match(p.el('btPairingHint').textContent, /signed in with the API token\. If you did not start this, press Cancel Pairing\./);
+    assert.equal(p.el('btPairingConfirmRow').style.display, 'none');
+  });
+
+  it('a finished or failed pairing asks nobody for a PIN', async () => {
+    for (const [state, says] of [['complete', /^Paired\. The phone is listed under Paired devices\.$/],
+                                 ['failed', /^This pairing did not finish\. Press Start Pairing to try again\.$/]]) {
+      const p = grantPage(bt({ state }), null);
+      p.ctx.window.__btPairingPin = 482913;
+      await p.ctx.__g.refreshBtStatus();
+      assert.equal(p.el('btPairingPin').textContent, '------', state);
+      assert.equal(p.ctx.window.__btPairingPin, null, state);
+      assert.match(p.el('btPairingHint').textContent, says);
+      assert.equal(p.el('btPairingConfirmRow').style.display, 'none', state);
+    }
+  });
+
+  it('a comparison on a page without the token leads with "Don\'t match"', async () => {
+    const p = grantPage(bt({ state: 'confirming', pin: 2913 }), null);
+    await p.ctx.__g.refreshBtStatus();
+    assert.equal(p.el('btPairingPin').textContent, '002913');
+    assert.equal(p.ctx.window.__btPairingPin, 2913);
+    assert.match(p.el('btPairingHint').textContent, /^If you did not start this pairing, tap "Don't match"\. To accept it, "Numbers match" asks for the API token first/);
+    assert.equal(p.el('btPairingConfirmRow').style.display, 'flex');
+    const q = grantPage(bt({ state: 'confirming', pin: 482913 }), 'cv_x');
+    await q.ctx.__g.refreshBtStatus();
+    assert.equal(q.el('btPairingHint').textContent,
+      'Compare this 6-digit code to the code on your phone. If they match, tap "Numbers match".');
+  });
+
+  it('Start Pairing and Create/Join ask for the token before the radio pairs', async () => {
+    const p = grantPage({}, null);
+    await p.ctx.__g.btStartPairing();
+    assert.ok(!p.calls.includes('POST /api/bluetooth/pair/start'), 'no pairing started');
+    assert.equal(p.ctx.auth.length, 1);
+    assert.match(p.ctx.auth[0], ASK);
+    assert.match(p.ctx.auth[0], /then press Start Pairing again\.$/);
+    for (const mode of ['init', 'join']) {
+      const m = grantPage({}, null);
+      await m.ctx.__g.startPairing(mode);
+      assert.deepEqual(m.calls, [], mode);
+      assert.equal(m.ctx.auth.length, 1, mode);
+      assert.match(m.ctx.auth[0], ASK);
+    }
+    // With the token in the page, both go to the device as before.
+    const t = grantPage({ '/api/mesh/pair/start': { ok: true } }, 'cv_x');
+    await t.ctx.__g.btStartPairing();
+    await t.ctx.__g.startPairing('init');
+    assert.ok(t.calls.includes('POST /api/bluetooth/pair/start') && t.calls.includes('POST /api/mesh/pair/start'));
+    assert.ok(t.calls.includes('poll'));
+    assert.deepEqual(t.ctx.auth, []);
+  });
+
+  it('a refused opera confirm never says "Completing…"; a served one does', async () => {
+    const p = grantPage({ '/api/mesh/pair/confirm': { ok: false, error: 'auth_required' } }, null);
+    p.el('pairingStatus').textContent = 'Verify code:';
+    await p.ctx.__g.confirmPairing();
+    assert.equal(p.el('pairingStatus').textContent, 'Verify code:');
+    const q = grantPage({ '/api/mesh/pair/confirm': { ok: true } }, 'cv_x');
+    await q.ctx.__g.confirmPairing();
+    assert.equal(q.el('pairingStatus').textContent, 'Completing…');
+  });
+
+  it('a refused key registration alerts nothing and keeps the key; the card says so first', async () => {
+    const p = grantPage({}, null);
+    p.el('vaultPubkey').value = 'a'.repeat(64);
+    await p.ctx.__g.registerVaultKey();
+    assert.deepEqual(p.record.alerts, []);
+    assert.equal(p.el('vaultPubkey').value, 'a'.repeat(64));
+    assert.equal(p.ctx.auth.length, 1);
+    assert.ok(src.includes('<p class="tnote">Registering a key takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once.</p>'),
+      'the vault card carries the note');
+    const card = slice('<div class="form-label">Unlock key</div>', '<div id="vaultKeyEntry"');
+    assert.ok(card.includes('class="tnote"'), 'above the key box');
   });
 });

@@ -195,7 +195,7 @@ struct RateLimitEntry {
  * POST   /api/mesh/enable                 - Enable/disable mesh networking
  * POST   /api/mesh/pair/start             - Start pairing (initiator mode)
  * POST   /api/mesh/pair/join              - Start pairing (joiner mode)
- * POST   /api/mesh/pair/confirm           - Confirm pairing code
+ * POST   /api/mesh/pair/confirm           - Confirm pairing code (bearer alone, F346)
  * POST   /api/mesh/pair/cancel            - Cancel ongoing pairing
  * POST   /api/mesh/leave                  - Leave current opera
  * POST   /api/mesh/remove                 - Remove peer from opera
