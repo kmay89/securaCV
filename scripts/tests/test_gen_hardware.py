@@ -9,8 +9,8 @@ render half runs in enclosure.yml (`gen_hardware.py --check`).
   • parse_line reads every item of a real HARDWARE echo into (qty, kind,
     spec, text), and refuses an item it cannot count rather than dropping it;
   • the join bills each echoed fastener to the row its description names,
-    reports a short row and an unbilled fastener, honors a set's join
-    filter, and never reads a non-fastener;
+    reports a short row and an unbilled fastener, bills the WAP shield's
+    screws on top of the plate's, and never reads a non-fastener;
   • the committed ledger agrees with itself: its drift is exactly
     KNOWN_DRIFT, its eight rib sets are the "Lid rib proportions" table
     DESIGN_RULES.md prints, and a table that disagrees is caught.
@@ -88,12 +88,15 @@ def _set(sid, device, line):
 class JoinsTheBom(unittest.TestCase):
     def test_short_row_and_unbilled_fastener(self):
         sets = _set("doorbell+inserts", "canary-vision", DOORBELL_INSERTS)
-        boms = {"bom_canary_vision.csv": {"INS1": 5, "SCR5": 8, "SCR8": 1}}
+        boms = {"bom_canary_vision.csv": {"INS1": 5, "SCR5": 8, "SCR8": 1, "SCR10": 6}}
         table, drift = gh.join(sets, boms)
-        # the +inserts set joins inserts only: INS1 is the option's billed line
-        self.assertEqual(table["doorbell+inserts"], {"INS1": {"bom": 5, "echo": 7}})
+        # the +inserts set joins inserts and screws: INS1 and the machine screws
+        # (SCR10) are the option's billed lines; the camera's self-tappers stay SCR5's
+        self.assertEqual(table["doorbell+inserts"], {"INS1": {"bom": 5, "echo": 7},
+                                                   "SCR10": {"bom": 6, "echo": 6},
+                                                   "SCR5": {"bom": 8, "echo": 4}})
         self.assertEqual([(d["set"], d["what"]) for d in drift], [("doorbell+inserts", "short INS1")])
-        boms = {"bom_canary_vision.csv": {"INS1": 7}}
+        boms = {"bom_canary_vision.csv": {"INS1": 7, "SCR5": 4, "SCR10": 6}}
         _, drift = gh.join(sets, boms)
         self.assertEqual(drift, [])
 
@@ -109,16 +112,20 @@ class JoinsTheBom(unittest.TestCase):
         self.assertEqual(drift, [])
         self.assertEqual(table["sense"], {"SCR3": {"bom": 4, "echo": 4}})   # the pipe is not joined
 
-    def test_the_shield_set_joins_only_its_replacement_screws(self):
-        line = ('"HARDWARE — WAP: 4x M2 flat x 8 self-tap · '
-                '4x M2 flat x 16 self-tap — REPLACES the lid screws when the shield is fitted"')
-        table, drift = gh.join(_set("wap.battery_weather.shield", "canary-wap", line),
-                               {"bom_canary_wap.csv": {"SCR3": 4}})
-        # SCR3 names flat heads 8-16 mm (16 is the battery build's from-the-back
-        # length), so it bills the shield's replacement screws too — and only
-        # them: the set's own 8 mm lid screws are the ones the shield replaces
-        self.assertEqual(table["wap.battery_weather.shield"], {"SCR3": {"bom": 4, "echo": 4}})
+    def test_the_shield_set_bills_its_screws_on_top_of_the_plates(self):
+        # the shield's four screws drive into their own blind pilots from the
+        # face: they are added to the plate's eight, not swapped for them
+        line = ('"HARDWARE — WAP: 8x M2 pan x 8 self-tap (plate to the post ends) · '
+                '8x O-ring 2 ID x 1 CS (under the head) · '
+                '4x M2 flat x 12 self-tap (shield to the face\'s pilots)"')
+        sets = _set("wap.battery_weather.shield", "canary-wap", line)
+        table, drift = gh.join(sets, {"bom_canary_wap.csv": {"SCR3": 12, "ORG1": 8}})
+        self.assertEqual(table["wap.battery_weather.shield"],
+                         {"ORG1": {"bom": 8, "echo": 8}, "SCR3": {"bom": 12, "echo": 12}})
         self.assertEqual(drift, [])
+        # the BOM's plate count alone is short by the shield's four
+        _, drift = gh.join(sets, {"bom_canary_wap.csv": {"SCR3": 8, "ORG1": 8}})
+        self.assertEqual([d["what"] for d in drift], ["short SCR3"])
 
     def test_a_missing_row_is_short(self):
         line = '"HARDWARE — WAP: 4x M2 flat x 8 self-tap"'
@@ -133,10 +140,11 @@ class TheCommittedLedgerAgreesWithItself(unittest.TestCase):
     def test_its_drift_is_exactly_the_known_list(self):
         keys = {f"{d['set']}|{d['what']}" for d in self.led["bom_drift"]}
         self.assertEqual(keys, gh.KNOWN_DRIFT)
-        # the drift the gate was built to surface: 9 inserts (eight plate posts and the
-        # security boss) against INS1 = 5
-        self.assertIn("doorbell+inserts|short INS1", keys)
-        self.assertEqual(self.led["sets"]["doorbell+inserts"]["bom"]["INS1"], {"bom": 5, "echo": 13})   # 12 plate posts (v0.8) + the security boss
+        # the drift the gate was built to surface — the doorbell's inserts against
+        # INS1 = 5 — is fixed in the CSV: 13 billed for 12 plate posts (v0.8) + the
+        # security boss, and the join holds it there
+        self.assertNotIn("doorbell+inserts|short INS1", keys)
+        self.assertEqual(self.led["sets"]["doorbell+inserts"]["bom"]["INS1"], {"bom": 13, "echo": 13})
 
     def test_the_join_reproduces_from_the_committed_items_and_csvs(self):
         sets = {sid: {"device": r["device"], "items": r["items"]} for sid, r in self.led["sets"].items()}

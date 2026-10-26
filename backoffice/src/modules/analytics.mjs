@@ -1,3 +1,4 @@
+import { csvLine } from '../http.mjs';
 // Analytics: the sales numbers a storefront admin shows, computed from the
 // orders table on every request (a company of one has thousands of orders,
 // not millions). Definitions follow the common storefront vocabulary so the
@@ -17,7 +18,10 @@ export function window_(days, now = Date.now()) {
 // Refunds count in the period they were issued (the ledger's income:refunds legs carry that
 // date), not the period the order was paid — so a refund today shows today, and last month's
 // numbers do not move.
-const refundsBetween = (db, from, to) => db.get('SELECT COALESCE(SUM(debit_cents),0) AS c FROM ledger WHERE account = \'income:refunds\' AND date >= ? AND date <= ?', from.slice(0, 10), to.slice(0, 10)).c;
+// A refund posts as income:refunds plus the tax share reversed off liabilities:sales_tax (ledger.mjs); the
+// customer got both back, so both legs are the refund here.
+const REFUND_LEGS = "source = 'refund' AND account IN ('income:refunds', 'liabilities:sales_tax')";
+const refundsBetween = (db, from, to) => db.get(`SELECT COALESCE(SUM(debit_cents),0) AS c FROM ledger WHERE ${REFUND_LEGS} AND date >= ? AND date <= ?`, from.slice(0, 10), to.slice(0, 10)).c;
 
 function totals(db, from, to) {
   const r = db.get(`SELECT COUNT(*) AS orders, COALESCE(SUM(subtotal_cents),0) AS gross_cents, COALESCE(SUM(discount_cents),0) AS discounts_cents,
@@ -41,7 +45,7 @@ export function series(db, { from, to, days }) {
   for (const o of db.all('SELECT paid_at, subtotal_cents - discount_cents AS net, total_cents AS total, (SELECT COALESCE(SUM(qty),0) FROM order_items i WHERE i.order_id = o.id) AS units FROM orders o WHERE paid_at >= ? AND paid_at < ? AND status != \'canceled\' AND total_cents > 0', from, to)) {
     const b = buckets[idx(o.paid_at)]; if (!b) continue; b.orders++; b.units += o.units; b.net_cents += o.net; b.total_cents += o.total;
   }
-  for (const r of db.all('SELECT date, debit_cents FROM ledger WHERE account = \'income:refunds\' AND date >= ? AND date <= ?', from.slice(0, 10), to.slice(0, 10))) {
+  for (const r of db.all(`SELECT date, debit_cents FROM ledger WHERE ${REFUND_LEGS} AND date >= ? AND date <= ?`, from.slice(0, 10), to.slice(0, 10))) {
     const b = buckets[Math.max(0, idx(r.date + 'T12:00:00.000Z'))]; if (!b) continue; b.net_cents -= r.debit_cents; b.total_cents -= r.debit_cents;
   }
   for (const t of db.all('SELECT created_at FROM tickets WHERE created_at >= ? AND created_at < ?', from, to)) { const b = buckets[idx(t.created_at)]; if (b) b.tickets++; }
@@ -74,5 +78,5 @@ export function analytics(db, { days = 30, now = Date.now() } = {}) {
 
 export function analyticsCsv(db, opts) {
   const a = analytics(db, opts);
-  return [`${a.series.step},orders,units,net_sales_usd,total_sales_usd,tickets`, ...a.series.buckets.map(b => [b.label, b.orders, b.units, (b.net_cents / 100).toFixed(2), (b.total_cents / 100).toFixed(2), b.tickets].join(','))].join('\n') + '\n';
+  return [`${a.series.step},orders,units,net_sales_usd,total_sales_usd,tickets`, ...a.series.buckets.map(b => csvLine([b.label, b.orders, b.units, (b.net_cents / 100).toFixed(2), (b.total_cents / 100).toFixed(2), b.tickets]))].join('\n') + '\n';
 }

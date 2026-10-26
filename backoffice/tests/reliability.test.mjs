@@ -12,7 +12,8 @@ import { seedDemo } from '../src/modules/demo.mjs';
 import { createApp } from '../src/server.mjs';
 import { runJob } from '../src/jobs.mjs';
 import { openDb } from '../src/db.mjs';
-import { setupOperator, totp, createApiToken } from '../src/auth.mjs';
+import { totp, createApiToken } from '../src/auth.mjs';
+import { DEMO_USERS, DEMO_PASSWORD, DEMO_TOTP_SECRET } from '../src/modules/demo.mjs';
 import { openExceptions } from '../src/modules/exceptions.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'bo-rel-'));
@@ -42,7 +43,8 @@ test('a backup is opened and proven; a damaged copy fails; restore puts a checke
 
 test('Signature V4 matches the AWS published example; upload PUTs, HEADs and writes the pointer; the drill pulls the latest copy back and proves it', async () => {
   const h = signS3({ method: 'GET', url: 'https://examplebucket.s3.amazonaws.com/test.txt', headers: { range: 'bytes=0-9' }, payloadHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', key: 'AKIAIOSFODNN7EXAMPLE', secret: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', region: 'us-east-1', date: new Date('2013-05-24T00:00:00Z') });
-  assert.equal(h.signature, 'f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41');
+  assert.equal(h.authorization.split('Signature=')[1], 'f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41');
+  assert.ok(!('signature' in h), 'the bare signature is not a header, so it never leaks into a request');
   assert.match(h.authorization, /^AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE\/20130524\/us-east-1\/s3\/aws4_request, SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, Signature=/);
   // a fake bucket: PUT stores, HEAD answers with the stored length, GET returns the bytes
   const store = new Map(); const calls = [];
@@ -120,9 +122,9 @@ test('the doctor names what is missing and what to do; the health and audit page
   assert.match(by.offsite.fix, /BACKUP_S3_URL/); assert.match(by.operator_email.fix, /OPERATOR_EMAIL/); assert.ok(!h.ok && h.failing.includes('backup'));
   assert.ok(todayLines(db, cfg).some(l => /to pack or ship/.test(l.what) && l.href === '/pack'));
   assert.match(digestText(db, cfg), /HEALTH — \d+ failing/);
-  setupOperator(db, 'reliability-test-pw-1'); const app = createApp({ db, cfg }); const addr = await app.listen(); const base = `http://127.0.0.1:${addr.port}`;
+  const app = createApp({ db, cfg }); const addr = await app.listen(); const base = `http://127.0.0.1:${addr.port}`;
   try {
-    const login = await fetch(base + '/login', { method: 'POST', body: new URLSearchParams({ password: 'reliability-test-pw-1', code: totp(db.setting('auth:totp')) }), redirect: 'manual' });
+    const login = await fetch(base + '/login', { method: 'POST', body: new URLSearchParams({ email: DEMO_USERS[0].email, password: DEMO_PASSWORD, code: totp(DEMO_TOTP_SECRET) }), redirect: 'manual' });
     const cookie = login.headers.get('set-cookie').split(';')[0]; const get = (p) => fetch(base + p, { headers: { cookie } });
     for (const p of ['/', '/health', '/audit', '/audit?actor=web&action=order.&from=2020-01-01&to=2030-12-31', '/audit.csv', '/pack', '/ship', '/pack?batch=2020-W01', '/ship?batch=2020-W01']) { const r = await get(p); assert.equal(r.status, 200, p); }
     const home = await (await get('/')).text(); assert.ok(home.includes('class="hp') && home.includes('class="act') && home.includes('Pack bench') && !home.includes('<h1>Home</h1>'), 'the home page has the health pill and action cards');

@@ -1,0 +1,94 @@
+#cloud-config
+# One server, many apps — paste this as the user-data of a fresh Ubuntu 24.04
+# host (bin/render-cloud-init fills the two placeholders from your key and
+# email). It makes the box patched, locked and ready for `kit`: firewall,
+# SSH keys only, unattended upgrades, fail2ban, Docker, the edge network,
+# Caddy, and a sparse checkout of this kit at /srv/kit. Three to five minutes.
+hostname: edge
+package_update: true
+package_upgrade: true
+packages: [ufw, fail2ban, unattended-upgrades, git, curl, ca-certificates, jq]
+
+# ops and deploy share the `kit` group: it owns /srv/apps and /srv/data (setgid), so what ops
+# makes, deploy can start, and nobody else on the box reads an app's .env.
+groups:
+  - kit
+
+users:
+  - name: ops
+    groups: [sudo, kit]
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    ssh_authorized_keys:
+      - "__SSH_PUBLIC_KEY__"
+  - name: deploy
+    shell: /bin/bash
+    groups: [kit]
+    # CI's user: no sudo; in the docker group so `kit deploy` can pull and start containers.
+    # Its only key is written later by `kit deploy-key`, bound to the forced command.
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/10-keys-only.conf
+    permissions: '0644'
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      MaxAuthTries 4
+      X11Forwarding no
+  - path: /etc/apt/apt.conf.d/52-auto-reboot.conf
+    permissions: '0644'
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "04:30";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+  - path: /etc/fail2ban/jail.d/sshd.local
+    permissions: '0644'
+    content: |
+      [sshd]
+      enabled = true
+      maxretry = 5
+      findtime = 10m
+      bantime = 1h
+  - path: /etc/docker/daemon.json
+    permissions: '0644'
+    content: |
+      { "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "3" }, "live-restore": true }
+
+runcmd:
+  # the firewall before anything listens
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+  - systemctl restart ssh
+  - systemctl enable --now fail2ban
+  - dpkg-reconfigure -f noninteractive unattended-upgrades
+  # a little swap keeps a 2 GB box honest under a build-less, image-only load
+  - 'if ! swapon --show | grep -q .; then fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile && echo "/swapfile none swap sw 0 0" >> /etc/fstab; fi'
+  # Docker from Docker's own repository, then the users who may drive it
+  - curl -fsSL https://get.docker.com | sh
+  - usermod -aG docker ops
+  - usermod -aG docker deploy
+  - systemctl enable --now docker
+  # the kit: a sparse checkout of only infra/ from the repository
+  - mkdir -p /srv/kit /srv/edge/sites /srv/apps /srv/data /srv/sites
+  - git clone --depth 1 --filter=blob:none --sparse https://github.com/kmay89/securaCV.git /srv/kit
+  - git -C /srv/kit sparse-checkout set infra
+  - chown -R ops:ops /srv/kit /srv/edge
+  # apps, data and sites: ops owns them, the kit group (ops + deploy) shares them, setgid keeps it so
+  - chown -R ops:kit /srv/apps /srv/data /srv/sites
+  - chmod 2770 /srv/apps /srv/data
+  - chmod 2775 /srv/sites
+  - chmod 755 /srv/kit/infra/bin/kit /srv/kit/infra/bin/deploy
+  - ln -sf /srv/kit/infra/bin/kit /usr/local/bin/kit
+  # the edge: the private network every app joins, and Caddy on 80/443
+  - docker network create edge || true
+  - cp /srv/kit/infra/edge/compose.yml /srv/kit/infra/edge/Caddyfile /srv/edge/
+  - 'printf "ACME_EMAIL=%s\n" "__ACME_EMAIL__" > /srv/edge/.env'
+  - chown -R ops:ops /srv/edge
+  - su - ops -c 'cd /srv/edge && docker compose up -d'
+
+final_message: "edge is up after $UPTIME seconds — ssh ops@<ip> and run: kit doctor"

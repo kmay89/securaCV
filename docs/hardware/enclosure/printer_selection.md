@@ -30,31 +30,34 @@ concrete answers worth writing down:
 
 ### Scope of these measurements
 
-**This analysis covers the 34 committed, print-validated STLs in this folder**
-(`git ls-files '*.stl'`) — the released WAP, Vision, Doorbell and Sense parts
-plus the workshop coupons. That is the set we would actually put into
-production, and it is exactly reproducible.
+**This analysis covers the 29 committed, print-validated STLs in this folder**
+(`git ls-files 'docs/hardware/enclosure/*.stl'`) — the released WAP, Vision,
+Doorbell and Sense parts plus the workshop coupons. That is the set we would
+actually put into production, and it is exactly reproducible. (The repo-wide
+`git ls-files '*.stl'` also lists the Lab's nine preview meshes of
+in-development designs under `canary-local/enclosures/preview/`; they are not
+released and not costed.)
 
 It is **not** the whole catalog. Around 60 parts render from the `.scad`
 sources, including the [in-development](./README.md#in-development) designs that
 have no committed STL, and **those are not costed here**. One of them matters
 for printer choice and is called out below: [`canary_s3_lcd7.scad`](./canary_s3_lcd7.scad),
 the 7" wall dashboard, is dimensioned around a **192.96 × 110.76 mm** bonded
-glass slab, so its bezel lands near **200 mm** wide — bigger than anything in
-the released set.
+glass slab, so its one-piece frame lands near **200 mm** wide (197.3) — bigger
+than anything in the released set.
 
 ### The constraints
 
 | Constraint | Measured reality | What it rules in / out |
 |---|---|---|
-| **Largest released part** | **120.5 × 78.0 × 43.7 mm** (`canary_dash_display_stand`) | Build volume is **not a constraint for the released set** — it fits any current machine with room to spare. Do not pay for bed size. |
-| **Largest part in the catalog** | ~**200 mm** wide (7" dashboard bezel, in development, no committed STL) | Sets the real floor: a **~220 mm bed or larger** if that design ships. Comfortably inside a 256 mm machine; it rules out the 180 mm mini class. |
-| **Tallest print** | ~44 mm in the modeled orientation | Warping scales with height and footprint. At this size, **an active heated chamber is a nice-to-have, not a requirement** — this is the single biggest cost lever. |
+| **Largest released part** | **175.8 × 56.7 × 50.3 mm** (`canary_vision_doorbell_plate_wedge15`, the doorbell's 15° wall plate) | Build volume is **not a constraint for the released set** — it fits every machine below, and a 180 mm mini bed with 4 mm to spare on its long axis. Do not pay for bed size. |
+| **Largest part in the catalog** | ~**200 mm** wide (7" dashboard frame, 197.3 mm, in development, no committed STL) | Sets the real floor: a **~220 mm bed or larger** if that design ships. Comfortably inside a 256 mm machine; it rules out the 180 mm mini class. |
+| **Tallest print** | ~50 mm in the modeled orientation (the 15° wedge plate; the cases themselves stand ≤ 30 mm) | Warping scales with height and footprint. At this size, **an active heated chamber is a nice-to-have, not a requirement** — this is the single biggest cost lever. |
 | **Supports** | Never — geometry self-supports | No soluble material, no second nozzle needed for support interface. |
-| **Materials** | PETG default · ASA outdoor · **TPU 90–95 A** gaskets · **CF-PETG/CF-Nylon** bracket · PC narrowly | Needs: **enclosure** (ASA), **direct drive** (TPU), **hardened nozzle** (CF). |
+| **Materials** | PETG default · ASA outdoor · **TPU 90–95 A** gaskets + the doorbell's plungers · **CF-PETG/CF-Nylon** bracket · PC narrowly | Needs: **enclosure** (ASA), **direct drive** (TPU), **hardened nozzle** (CF). |
 | **Finish surface** | The **bed** — visible faces print face-down | A **textured PEI plate is mandatory**, not an upgrade. |
 | **Nozzle / layer** | 0.4 mm / 0.20 mm | Stock hardware on everything. |
-| **Catalog size** | 34 committed STLs (~60 parts render from source) | Throughput comes from **parallel machines**, not one fast one. |
+| **Catalog size** | 29 committed STLs (~60 parts render from source) | Throughput comes from **parallel machines**, not one fast one. |
 
 **The conclusion this forces:** the expensive tier of the market sells large
 build volume, active chambers and dual extrusion. This catalog needs **none of
@@ -111,7 +114,7 @@ Prices are US, mid-2026, base unit unless noted.
 
 | Machine | Unit | Chamber | Build vol | Verdict for *these* parts |
 |---|---|---|---|---|
-| **Bambu Lab P2S** | **$549** ($799 w/ AMS) | Passive, 40–50 °C | 256³ | **Best value.** Passive is sufficient at our ≤44 mm heights |
+| **Bambu Lab P2S** | **$549** ($799 w/ AMS) | Passive, 40–50 °C | 256³ | **Best value.** Passive is sufficient at our ≤50 mm heights |
 | Bambu Lab P1S | ~$449–549 | Passive | 256³ | Proven farm workhorse; buy only if steeply discounted |
 | Bambu Lab X2D | $649 ($899 w/ AMS) | **Active 65 °C**, dual nozzle | 256×256×260 | Capability we would almost never use |
 | QIDI Q2 | ~$499 | **Active 65 °C** | — | Cheapest true active chamber; smaller ecosystem |
@@ -157,7 +160,7 @@ PETG 1.27 g/cm³. That is deliberate, and worth explaining: our spec is 4 walls
 (1.6 mm) with 1.0 mm solid top/bottom skins against a 2.0 mm modeled wall, so a
 typical wall section is ~1.6 mm solid perimeter plus ~0.4 mm at 30 % gyroid —
 roughly **85–90 % dense**, not 30 %. Gaskets are TPU at 100 % infill, so they
-are fully solid. Only the few bulky parts (the watch-station stand) sit
+are fully solid. Only the few bulky parts (the doorbell's 15° wedge plate) sit
 meaningfully below the bound. **Quoting the upper bound means these figures never
 understate cost**; the slicer's own estimate is the authority for any real run.
 
@@ -165,17 +168,17 @@ PETG at $20/kg, ASA at $41/kg ([price tracker](https://filamentpricetracker.com/
 
 | Device set | Parts | Solid volume | Mass (upper bound) | PETG | ASA |
 |---|---|---|---|---|---|
-| WAP (compact) | 2 | 9.0 cm³ | 11.5 g | **$0.23** | $0.47 |
-| WAP (battery) | 2 | 26.5 cm³ | 33.7 g | **$0.67** | $1.38 |
-| Sense radome | 2 | 27.6 cm³ | 35.1 g | **$0.70** | $1.44 |
-| Vision (xiao, indoor) | 4 | 36.1 cm³ | 45.9 g | **$0.92** | $1.88 |
-| Vision (xiao, weather) | 5 | 57.2 cm³ | 72.6 g | **$1.45** | $2.98 |
-| WAP (weather) | 4 | 57.8 cm³ | 73.4 g | **$1.47** | $3.01 |
-| Doorbell | 4 | 57.9 cm³ | 73.5 g | **$1.47** | $3.01 |
-| **All 34 committed STLs** | 34 | 673.2 cm³ | **855 g** | **$17.10** | $35.05 |
+| WAP (compact) | 2 | 11.3 cm³ | 14.4 g | **$0.29** | $0.59 |
+| Sense radome | 2 | 34.2 cm³ | 43.5 g | **$0.87** | $1.78 |
+| WAP (battery) | 2 | 38.4 cm³ | 48.7 g | **$0.97** | $2.00 |
+| Vision (xiao, indoor) | 4 | 44.3 cm³ | 56.3 g | **$1.13** | $2.31 |
+| Vision (xiao, weather) | 6 | 75.0 cm³ | 95.3 g | **$1.91** | $3.91 |
+| WAP (weather) | 4 | 97.7 cm³ | 124.0 g | **$2.48** | $5.09 |
+| Doorbell | 6 | 167.8 cm³ | 213.2 g | **$4.26** | $8.74 |
+| **All 29 committed STLs** | 29 | 734.8 cm³ | **933 g** | **$18.66** | $38.26 |
 
 **The headline: the entire released catalog is under a kilogram of PETG —
-roughly one spool, about $17.** Filament is not the cost of this operation, and
+roughly one spool, about $19.** Filament is not the cost of this operation, and
 that conclusion is robust: it holds even at the upper bound, and the true figure
 is at or below it.
 
@@ -197,13 +200,13 @@ get inflated 5×.
 
 **These are deliberately left per-hour rather than per-device.** Converting them
 needs a print time, and we have not benchmarked one — see the note below. What
-the table does establish is the shape of the cost: **material is $0.23–$1.47 per
+the table does establish is the shape of the cost: **material is $0.29–$4.26 per
 device and everything else is cents per hour on top.**
 
 **Labor is in neither table, and it dominates both.** Plate changes, part
 removal, gasket fitting, QC against the fit coupon — at any realistic wage,
-human handling costs several times the ~$1.50 of material, power and machine
-wear. That single fact drives the decision at the bottom of this page.
+human handling costs several times the few dollars of material, power and
+machine wear. That single fact drives the decision at the bottom of this page.
 
 > **Not benchmarked: print time and daily capacity.** Per
 > [AGENTS.md](../../../AGENTS.md) rule 4 — *no performance claim without a
@@ -265,7 +268,7 @@ this is why buying more of them wins.
 |---|---|
 | Cheapest path to enclosed + direct drive + textured PEI | **Cloud-tethered by default** (LAN-only mode exists and works) |
 | Largest install base → our docs match what readers own | Relatively closed ecosystem; parts are first-party |
-| Passive 40–50 °C chamber is *sufficient* for our ≤44 mm parts | Not enough chamber for tall ASA or serious PC — irrelevant here |
+| Passive 40–50 °C chamber is *sufficient* for our ≤50 mm parts | Not enough chamber for tall ASA or serious PC — irrelevant here |
 | $21 user-serviceable hotend; guided swap on-screen | Firmware updates can shift behavior under a production run |
 | $549 means three machines beat one premium machine | Vendor concentration risk in the fleet |
 
@@ -294,12 +297,12 @@ this is why buying more of them wins.
 
 The reasoning, in order of weight:
 
-1. **The parts are small.** No released part exceeds 120 mm or prints taller than
-   ~44 mm, and the largest thing the catalog could ship (the 7" bezel, ~200 mm)
+1. **The parts are small.** No released part exceeds 176 mm or prints taller than
+   ~50 mm, and the largest thing the catalog could ship (the 7" frame, ~200 mm)
    still sits well inside a stock 256 mm bed. That deletes large build volume
    *and* active chamber heating from the requirements list — most of what the
    premium tier sells.
-2. **Throughput is parallel, not serial.** A 34-part catalog of small, repetitive
+2. **Throughput is parallel, not serial.** A 29-part catalog of small, repetitive
    parts is embarrassingly parallel. Three machines beat one machine that is
    30 % faster, for a third of the price premium — and this holds whatever the
    per-part time turns out to be, because it is a ratio, not a rate.
@@ -351,7 +354,8 @@ either way: **buy several cheap enclosed machines, not one expensive one.**
 ## Confidence and staleness
 
 - **Part measurements** (dimensions, volumes) are computed by signed-tetrahedron
-  integration over the 34 STLs returned by `git ls-files '*.stl'` and are exact
+  integration over the 29 STLs returned by
+  `git ls-files 'docs/hardware/enclosure/*.stl'` and are exact
   for this tree. Re-run them if the CAD changes materially.
 - **Masses are upper bounds** (100 % of solid volume), not slicer output. True
   printed mass is at or modestly below them — see the reasoning in the running-cost

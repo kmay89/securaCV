@@ -22,25 +22,28 @@ generator READS (its docstring, its imports), not from memory:
    1  gen_cad_params        manifest -> the case .scad literals            (writes the knob)
    2  lint_design_lang      the literal-knob canon still holds              (a lint; nothing written)
    3  render                render.sh --no-png: every released and dev STL  (needs OpenSCAD)
-   4  gen_assembled_dims    fit-checked unions -> assembled_dims.json       (needs OpenSCAD)
-   5  gen_hardware          each committed preset's HARDWARE echo + lid-rib headroom
+   4  gen_revisions         the rendered STLs + the sources + git -> revisions.json: each part's
+                            rev, fingerprint, what moved and where (the regions a viewer tints)
+   5  gen_assembled_dims    fit-checked unions -> assembled_dims.json       (needs OpenSCAD)
+   6  gen_hardware          each committed preset's HARDWARE echo + lid-rib headroom
                             -> hardware.json, joined against the BOM CSVs  (needs OpenSCAD)
-   6  gen_assembly_poses    each case's seated datums (its own derived names, echoed by
+   7  gen_assembly_poses    each case's seated datums (its own derived names, echoed by
                             OpenSCAD) -> the Lab benches' poses in assembly.json  (needs OpenSCAD)
-   7  gen_enclosures        README tables + .scad knobs + cad.enclosure_sets
+   8  gen_enclosures        README tables + .scad knobs + cad.enclosure_sets
                             -> enclosures / catalog / build / workshop .json
-   8  gen_figures           STL bboxes + assembled_dims + catalog.json -> figures.json, SVGs,
+   9  gen_figures           STL bboxes + assembled_dims + catalog.json -> figures.json, SVGs,
                             fleet_figures.h / fleet_figures_art.h, FleetFigures.swift / FleetSolids.swift
-   9  gen_device_glbs       figures.json verdicts -> the two flashers' .glb
-  10  setup_regen           IF fleet_figures.h or fleet_figures_art.h moved: the Arduino sketch
+  10  gen_device_glbs       figures.json verdicts -> the two flashers' .glb
+  11  setup_regen           IF fleet_figures.h or fleet_figures_art.h moved: the Arduino sketch
                             mirror (firmware/projects/canary-display/setup.sh regen), then STOP —
                             the emulator dist is upstream of the catalogs and only Actions can build it
-  11  gen_flash             dist meta + manifests -> flash.json
-  12  gen_builder_manifest  curated .scad -> builder_manifest.json  [+ --site DIR: the website carries]
-  13  gen_print_files       --site DIR only: the in-development cases' print-ready STLs + their
-                            provenance manifest into the website's print/ (needs OpenSCAD)
-  14  gen_stamp             report-only: --check (a STAMP_REV bump is a human decision, gen_stamp.py)
-  15  gen_mark_svg          report-only: --check (the mark does not move with a board knob)
+  12  gen_flash             dist meta + manifests -> flash.json
+  13  gen_builder_manifest  curated .scad -> builder_manifest.json  [+ --site DIR: the website carries]
+  14  gen_print_files       --site DIR only: the in-development cases' print-ready STLs + their
+                            provenance manifest (each file's rev from step 4) into the website's
+                            print/ (needs OpenSCAD)
+  15  gen_stamp             report-only: --check (a STAMP_REV bump is a human decision, gen_stamp.py)
+  16  gen_mark_svg          report-only: --check (the mark does not move with a board knob)
 
 GEN_ENCLOSURES COMES BEFORE GEN_FIGURES because gen_figures.mjs reads
 canary-local/devices/catalog.json — each figure's catalog evidence (the
@@ -54,13 +57,13 @@ before the one generator that reads it. scripts/tests/test_regen_cad.py
 holds the rule for every step: no step's own script names, as a quoted
 path, a file a LATER step writes.
 
-THE STOP AT STEP 9 IS THE POINT. The emulator compiles fleet_figure.cpp
+THE STOP AT STEP 11 IS THE POINT. The emulator compiles fleet_figure.cpp
 against fleet_figures.h, and gen_flash.py stamps each artifact's
 fw_version from canary-local/emulator/dist/*.meta.json into flash.json — so
 when the figure headers moved, the dist must be rebuilt (Actions ->
 "Rebuild emulator dist (pinned emsdk)", dispatched on YOUR branch; emsdk
 6.0.3 exactly, which most machines cannot install) and pulled BEFORE steps
-10–11 run. The script regenerates the sketch mirror, prints exactly that,
+12–13 run. The script regenerates the sketch mirror, prints exactly that,
 and exits 3 (not a failure: a resume point). `--from gen_flash` finishes
 the chain once the dist is back. CLAUDE.md's four dist-retrigger symptoms
 apply and are printed at the stop.
@@ -78,7 +81,7 @@ sketch mirror directory, as firmware/scripts/check_display_arduino_sync.sh
 proves it — but against the tree as it stands, not HEAD, so the check is
 meaningful right after a write run regenerated the mirror and before it is
 committed; CI's script would report that as drift). --site DIR under
---check runs step 11 as `gen_builder_manifest.py --site DIR --check`: every
+--check runs step 13 as `gen_builder_manifest.py --site DIR --check`: every
 carry is regenerated in memory and compared with the checkout, a stale or
 missing one is named by file, and nothing is written in either tree — so a
 checkout that was not carried after the ledger moved fails here, the same
@@ -189,6 +192,17 @@ STEPS: tuple[Step, ...] = (
          note=("no check form: OpenSCAD's STL bytes are not deterministic, so nothing byte-gates "
                "them; gen_assembled_dims --check and gen_figures --check gate their bounding boxes "
                "and seams, and enclosure.yml re-renders and greps the log in CI")),
+    # Every part's revision and what moved, read off the meshes render.sh
+    # just wrote (and the committed previews); its --check in lint.yml holds
+    # the committed STLs and every part's sources to the ledger, and in
+    # enclosure.yml, after render.sh, every dev render too. No OpenSCAD of
+    # its own except to render a dev part's PREVIOUS rev for the regions,
+    # which is why it sits right after render.
+    Step("gen_revisions",
+         ("python3", f"{ENC_REL}/gen_revisions.py"), ".",
+         ("python3", f"{ENC_REL}/gen_revisions.py", "--check"), "argv", False,
+         "render.sh's recipes (recorded, nothing rendered) + the rendered STLs + the sources + git "
+         "-> canary-local/devices/revisions.json (each part's rev, fingerprint, what moved, regions)"),
     Step("gen_assembled_dims",
          ("python3", f"{ENC_REL}/gen_assembled_dims.py"), ".",
          ("python3", f"{ENC_REL}/gen_assembled_dims.py", "--check"), "argv", True,

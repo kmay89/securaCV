@@ -62,6 +62,28 @@
 //    mount_keyhole_pocket on its native axis; back_t + kh_extra = 5.0 keeps
 //    the pocket blind at exactly head_h + 1.5.
 //
+//  2026-10-22: v0.3-dev — four fixes from the CAD audit, render/mesh-checked:
+//    · the bezel's snap CAUGHT 0.1 mm. Each nub tip stood 0.10 past the
+//      counterbore wall (0.037 mm³ of catch a nub, probed) — the catalog's
+//      press tolerance itself — and the skirt's 0.15 of radial play let one
+//      nub out of its window altogether (the bezel shifted 0.14 along a
+//      diagonal still seats, with three nubs caught). On a 2.6 lever the
+//      cycle budget allowed no more. The fingers are 0.9 longer now
+//      (skirt_dep 4.9, snap_depth 4.2, the counterbore 5.2 deep): a 3.5
+//      lever, 0.2 of catch at 1.96 % strain. The ridge's end plates moved
+//      out to the skirt face — they sat 0.25 under it, so the 4.2 ridge the
+//      window derives from never surfaced. The puck's outside does not
+//      move; the bezel prints 0.9 taller.
+//    · the base's chin slot left the seat plate's foot a 14 mm flat bridge
+//      at z 6 (twice the 7.0 ceiling, held only by the slot walls): behind
+//      the seat plane the slot undercuts the plate. Its top is the
+//      catalog's bridge profile now, a 7.0 flat on 45° gables.
+//    · the saddle's rim lead-in cut nothing (0.004 mm³ — it started at the
+//      rim and rose into air); it is a 0.6 × 45° chamfer inside the mouth.
+//    · the bezel's face chamfer stopped 0.01 short of bez_t, so the printed
+//      face stood 0.01 off the bed and the assembled puck measured 27.63
+//      against puck_len 27.64; it reaches bez_t now.
+//
 //  ⚠️ DEV STATUS: one print of v0.2 measured, v0.3 render/mesh-verified only.
 //     MEASURE your display stack (stack_t) and the USB position before
 //     printing; the MEASURE tags mark the two numbers only a bench can give.
@@ -130,11 +152,13 @@ pry_ang      = 0;     // degrees, 0 = +X  // [0:15:345]
 nub_w        = 4.2;   // the nub ridge's drawn width (arc chord) — exactly what the old end plates drew
 snap_play    = 0.15;  // window clearance per side — the catalog default (canary_snap_lib)
 snap_h       = 1.8;   // slot height
-snap_depth   = 3.3;   // slot center below the drum rim: low on the finger, where its lever is longest
-snap_proud   = 0.25;  // nub stand-proud of the skirt: 0.1 of working interference over the counterbore
-                      // (0.4 needed 0.25 of finger travel — 9 % strain on the 2.35 mm skirt; 0.3 on a
-                      // 1.0 finger at the real 1.9 lever was 6.2 %)
-skirt_dep    = 4.0;   // bezel skirt reach into the counterbore (the counterbore is cut 0.3 deeper so the tip floats)
+snap_depth   = 4.2;   // slot center below the drum rim: low on the finger, where its lever is longest
+                      // (3.3 left a 2.6 lever, which held the catch to 0.1 inside the cycle budget)
+snap_proud   = 0.35;  // nub stand-proud of the skirt: 0.2 of working interference over the counterbore
+                      // (0.25 caught 0.1, the press tolerance itself; 0.4 needed 0.25 of finger travel —
+                      // 9 % strain on the 2.35 mm skirt; 0.3 on a 1.0 finger at the real 1.9 lever was 6.2 %)
+skirt_dep    = 4.9;   // bezel skirt reach into the counterbore (the counterbore is cut 0.3 deeper so the tip floats);
+                      // 4.9 carries the nub at snap_depth 4.2 — a 3.5 lever, so 0.2 of catch costs 1.96 % strain
 finger_t     = 0.8;   // finger thickness — the skirt is relieved to this behind the nubs so the
                       // fingers flex (a 2.35 wall did not); the snap lib's cycle budget gates it
 finger_root  = 0.7;   // full-thickness band under the face plate the fingers hang from — their lever runs root → nub;
@@ -308,12 +332,15 @@ module drum() {
         difference() {
             cylinder(d = drum_d, h = drum_h);
             // bore — smooth wall to wall below the counterbore: the display's
-            // back parts sweep Ø43.2; this is what locates the disc radially
+            // back parts sweep Ø43.2 inside it. The disc's own rim rides in
+            // the funnel above it (Ø44.7 at the PCB's back face, 0.85 a side)
+            // until the bezel's glass pocket takes it to 0.5: the counterbore
+            // deepened for the longer snap fingers (the bore held it at 0.7)
             translate([0, 0, floor_z]) cylinder(d = bore_d, h = drum_h);
             // rim counterbore: the bezel skirt rides here, around the glass,
             // and the snap windows cut its wall. The step down to the bore
-            // is a 45° funnel so the disc finds the bore — facing up, no
-            // overhang in the open-face-up print
+            // is a 45° funnel so the disc's back parts find the bore — facing
+            // up, no overhang in the open-face-up print
             translate([0, 0, drum_h - cb_dep]) cylinder(d = cb_d, h = cb_dep + 1);
             translate([0, 0, drum_h - cb_dep - (cb_d - bore_d)/2]) cylinder(d1 = bore_d, d2 = cb_d, h = (cb_d - bore_d)/2 + 0.01);
             // XIAO USB-C stadium through the wall at the measured shell
@@ -393,8 +420,10 @@ module bezel() {
         union() {
             // face plate with edge chamfer
             cylinder(d = drum_d, h = bez_t - lid_edge);
+            // (h carries the 0.01 overlap too, so the face lands ON bez_t: it
+            // stopped 0.01 short, and the printed face stood off the bed)
             translate([0, 0, bez_t - lid_edge - 0.01])
-                cylinder(d1 = drum_d, d2 = drum_d - 2*lid_edge, h = lid_edge);
+                cylinder(d1 = drum_d, d2 = drum_d - 2*lid_edge, h = lid_edge + 0.01);
             // skirt: the glass pocket's wall, slit into four fingers midway
             // between the nubs (a closed ring has no compliance path, so the
             // nubs would shave instead of snapping). The relief leaves the
@@ -414,11 +443,14 @@ module bezel() {
             // drum_h − snap_depth, hence the nub sits at bezel z = −snap_depth.
             for (a = snap_angs()) rotate([0, 0, a]) {
                 nz = -snap_depth;             // slot center, bezel frame
-                translate([skirt_od/2 - 0.5, 0, nz]) hull() {
+                // the end plates' outer faces sit 0.02 under the skirt face (inside its
+                // facets), so the ridge surfaces at its full drawn nub_w — they sat 0.25
+                // under it, and the 4.2 the window derives from never reached the wall
+                translate([skirt_od/2 - 0.27, 0, nz]) hull() {
                     translate([0, -nub_w/2 + 0.05, 0]) cube([0.5, 0.1, snap_h - 0.4], center = true);
                     // tip cube is 0.5 wide: its OUTER face lands at skirt_od/2 + snap_proud,
                     // so the strain assert's snap_defl is the travel the finger really makes
-                    translate([snap_proud + 0.25, 0, 0]) cube([0.5, 0.1, 0.6], center = true);
+                    translate([snap_proud + 0.02, 0, 0]) cube([0.5, 0.1, 0.6], center = true);
                     translate([0, nub_w/2 - 0.05, 0]) cube([0.5, 0.1, snap_h - 0.4], center = true);
                 }
             }
@@ -562,8 +594,11 @@ module stand_cut() {
         in_pocket() {
             // the pocket — the drum's barrel, from the seat plane out
             cylinder(d = pkt_d, h = pocket_dep + 60);
-            // rim lead-in for the drum
-            translate([0, 0, pocket_dep - 0.01]) cylinder(d1 = pkt_d, d2 = pkt_d + 2.4, h = 1.2 + 0.02);
+            // rim lead-in for the drum: 0.6 x 45° INSIDE the saddle's mouth. It
+            // used to start at the rim and rise into air (0.004 mm³ cut); 0.6
+            // keeps a 1.1 web over each spring tab's root (1.2 left 0.7, under
+            // core_min_web())
+            translate([0, 0, pocket_dep - 0.6]) cylinder(d1 = pkt_d, d2 = pkt_d + 1.2 + 0.02, h = 0.6 + 0.01);
             // the open top: the saddle's upper cup_open degrees, ahead of the seat plane only
             linear_extrude(pocket_dep + 60)
                 polygon([[0, 0], for (t = [90 - cup_open/2 : 2 : 90 + cup_open/2]) 2*cup_od*[cos(t), sin(t)]]);
@@ -578,8 +613,14 @@ module stand_cut() {
         }
         // ...and a vertical slot through the base under the whole chin line
         // (the saddle's lowest outer line runs from the seat plane, buried at
-        // y = 0, to front_low), into the channel below
-        translate([-chin_w/2, front_low[1] - 5, -1]) cube([chin_w, -front_low[1] + 5 + 3, base_t + 2]);
+        // y = 0, to front_low), into the channel below. Behind the seat plane
+        // it undercuts the seat plate's foot, so its top is the catalog's
+        // bridge profile — 45° down to a 7.0 flat — where a flat top left that
+        // foot a chin_w bridge; it runs to y = 4, past the plate's back face at
+        // the crown (y 3.06 at z 9.5), so the gable leaves no knife edge
+        translate([0, 4, -1 + (base_t + 2 + port_bridge_cham_for(chin_w))/2]) rotate([90, 0, 0])
+            linear_extrude(-front_low[1] + 5 + 4)
+                port_bridge_profile2d(chin_w, base_t + 2 + port_bridge_cham_for(chin_w));
         // open cable channel under the base, chin to the rear edge. Its
         // ceiling is a bridge (the stand prints base-down), so it takes the
         // catalog's chamfered-top profile: 12 wide at the floor, 7.0 of flat

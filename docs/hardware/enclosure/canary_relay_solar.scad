@@ -7,7 +7,8 @@
 //  angled SOLAR ROOF bracket that doubles as the radiation shield/rain roof,
 //  and hose-clamp/zip-tie channels on the back for pole mounting.
 //  Sealing reuses the Canary gasket system (sealed by default — it lives on
-//  a pole). Wire the panel through the roof gland note in the README.
+//  a pole). The panel's lead leaves the panel's back through a hole in the
+//  roof's bed and runs straight across to the M8 gland in the face below it.
 //
 //  THE PARTING LINE IS THE BACK FACE (the piston plate, canary_core_lib pl_*).
 //  The SHELL — the show part — is ONE piece: face, side walls and the screw
@@ -110,6 +111,25 @@
 //              heads fit their seats, the sealed seats keep their gland web;
 //              the board+stack and the holder clear the shell's posts, and the
 //              roof sits on the face with nothing under its feet but the face.
+//  2026-10-22: FIT AND PRINT (v0.2-dev) — probed in position again. The
+//              LoRa board gets +Y end stops (the Sense's v0.2 fix): hooked
+//              only by one mid-span clip pair on its ±X edges, it slid
+//              40.5 mm up its rails before it touched anything, so a plug
+//              pushed into the service USB shoved it up and off the opening;
+//              its travel is board_clear now. The roof's bed passes the
+//              panel's lead: the slot is pan_t + 0.2, the bed was solid under
+//              the whole panel and the rails close its sides, so the lead had
+//              no way out (the header's "roof gland note in the README" was
+//              never written) — a hole now drops it through the bed straight
+//              above the face gland. The bed's far stop and the rib loop's
+//              far cross rib faced down-slope square to the bed, roof_ang off
+//              horizontal in the leaning print (30°, reaching 2.3 and 3.5 mm,
+//              at z 92-97 of a 100 mm part standing on 464 mm2): both lean
+//              back to 46° off horizontal (draft). The SMA bore, horizontal
+//              in the face-down print, takes tearbore_x's crown (DESIGN_RULES
+//              §7), and the panel-gland hole a threaded body's clearance: 8.2
+//              left the M8 thread 0.1 a side, under FDM hole shrink (the
+//              SMA's lesson).
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft-edge face, the piston plate (pl_*), screw registry
@@ -488,6 +508,13 @@ module back() {
                 }
                 edgeclip(lb_cx + s*lb_w/2, lb_cy, s > 0 ? 0 : 180, standoff_h);
             }
+            // +Y end stops (the Sense's): two bumps board_clear past the board's top
+            // edge. Hooked only on its ±X edges it slid 40.5 mm up the rails under a
+            // plug pushed into the service USB; the gap between them passes the SMA
+            // pigtail and the battery leads
+            for (s = [1, -1])
+                translate([lb_cx + s*(lb_w/2 - 4) - 1.5, lb_cy + lb_l/2 + board_clear, floor_t - 0.01])
+                    cube([3, 2.0, standoff_h + pcb_t + 1.0]);
             // battery-holder bay: a ring wall round the holder's pocket, with a
             // drain notch through its LOW (-Y) end — the weep it drains to sits
             // above the gasket groove now, and a bay with a closed ring is a cup
@@ -561,9 +588,18 @@ module shell_solid() {
             // under the external nut — this is the sky-facing wall.
             translate([lb_cx, out_y/2, sma_z])
                 rotate([-90, 0, 0]) translate([0, 0, -wall_eff*2])
-                    linear_extrude(wall_eff*4) intersection() {
-                        circle(d = sma_d);
-                        translate([-sma_d/2, -sma_d/2]) square([5.7 + (sma_d - 5.7)/2, sma_d]);   // D-flat: 5.7 across the flat
+                    linear_extrude(wall_eff*4) union() {
+                        intersection() {
+                            circle(d = sma_d);
+                            translate([-sma_d/2, -sma_d/2]) square([5.7 + (sma_d - 5.7)/2, sma_d]);   // D-flat: 5.7 across the flat
+                        }
+                        // the bore is horizontal in the face-down print and +y here is UP
+                        // there: tearbore_x's crown (canary_core_lib), so the top of the
+                        // hole stands at 45° instead of sagging onto the thread. The flat
+                        // stays put; the cap's 1.3 flat sits 4.15 off the axis, under the washer
+                        let (r = sma_d/2, cy = min(r + 0.75, r*1.38))
+                            polygon([[-r*0.7071, r*0.7071], [-(r*1.4142 - cy), cy],
+                                     [ r*1.4142 - cy, cy], [ r*0.7071, r*0.7071]]);
                     }
             // ...and the INSIDE spot-face that thins the sealed wall to sma_wall
             // around the jack: a standard bulkhead's thread is ~8 mm, and the
@@ -579,8 +615,10 @@ module shell_solid() {
                 rotate([90, 0, 0]) linear_extrude(wall_eff*3)
                     mirror([0, 1, 0]) port_bridge_profile2d(usb_w, usb_h);
             translate([0, 0, base_d]) {
-                // panel-lead gland hole in the face (fit an M8 cable gland or silicone-seal)
-                translate([gland_x, gland_y, -1]) cylinder(d = 8.2, h = lid_t + 2);
+                // panel-lead gland hole in the face (fit an M8 cable gland or silicone-seal):
+                // the M8 thread + a threaded body's slide clearance (the doorbell's M12
+                // button hole) — 8.2 was 0.1 a side and prints near 8.0, the SMA's lesson
+                translate([gland_x, gland_y, -1]) cylinder(d = 8.0 + 2*tol_slide, h = lid_t + 2);
                 // pressure vent: Ø3 hole + inner spot-face for an adhesive ePTFE
                 // patch (Ø10) — the most thermally-cycled design in the folder
                 // pumps ~14 % of its volume past the gasket per day/night cycle
@@ -654,6 +692,19 @@ module roof() {
     bed_l = pan_l + tol_slide + roof_stop_t;
     stop_h = pan_t - 0.4;   // BELOW the panel's top face: water sheds over the stop, not against it
     rail_x = pan_w/2 + tol_slide;   // the rails' inner face
+    // the roof prints as drawn, the panel bed leaning 90 - roof_ang off the print
+    // bed, so a face square to the panel bed that looks DOWN-slope is a roof_ang
+    // overhang (30° at the default, near the top of a 100 mm print): the stop's
+    // panel face and the rib loop's far cross rib lean back this far, to 46°
+    draft = max(0, 46 - roof_ang);
+    rib_w = min(1.6, rib_t_max(2));   // plate_ribs' own width on the 2 mm bed, passed to it
+    rib_in = 2.0 + rib_w;             // the loop's far cross rib: inner face this far from the bed's end
+    // the panel's lead: the slot is pan_t + 0.2 and the rails close its sides,
+    // so a lead leaves the panel's BACK — through the bed here, where the bed's
+    // mid-plane stands straight above the face gland, so it runs square across
+    // to it under the bed's shelter (clamped inside the panel's span at a low
+    // roof_ang, where it slants). A panel whose pads sit elsewhere moves this.
+    lead_y = min((inner_y/2 - 2 - cos(roof_ang) - gland_y)/sin(roof_ang), pan_l - 8);
     difference() {
         union() {
             // two feet over the top corner posts — outboard of the panel
@@ -667,9 +718,14 @@ module roof() {
                 for (s = [1, -1]) translate([s*(pan_w/2 - 1.2) + (s < 0 ? -1.8 : 0), 0, 2 + pan_t + 0.2])
                     cube([1.8, bed_l, 1.4]);   // retaining lips: 1.2 mm OVER the panel edge, rooted in the rails
                 // stop at the FAR (lower, outboard) end: gravity pulls the panel onto
-                // it; drain notches at bed level let what runs under the panel out
+                // it; drain notches at bed level let what runs under the panel out.
+                // Its panel face leans back by draft: the panel bears on its foot
                 difference() {
-                    translate([-pan_w/2 - 3, bed_l - roof_stop_t, 2 - 0.01]) cube([pan_w + 6, roof_stop_t, stop_h + 0.01]);
+                    hull() {
+                        translate([-pan_w/2 - 3, bed_l - roof_stop_t, 2 - 0.01]) cube([pan_w + 6, roof_stop_t, 0.01]);
+                        translate([-pan_w/2 - 3, bed_l - roof_stop_t + stop_h*tan(draft), 2 + stop_h - 0.01])
+                            cube([pan_w + 6, roof_stop_t - stop_h*tan(draft), 0.01]);
+                    }
                     if (roof_drain_w > 0) for (x = [-pan_w/3, 0, pan_w/3])
                         translate([x - roof_drain_w/2, bed_l - roof_stop_t - 1, 2 - 0.02]) cube([roof_drain_w, roof_stop_t + 2, 1.2]);
                 }
@@ -677,7 +733,15 @@ module roof() {
                 // spines along the slope, 4 mm on 1.6 — the bed is a 2 mm plate
                 // on two struts with a panel and the wind on it
                 if (roof_ribs)
-                    translate([0, bed_l/2, 0.01]) mirror([0, 0, 1]) plate_ribs(pan_w + 6, bed_l, 2, 4.0, r = 1.0, inset = 2.0, n = 2);
+                    translate([0, bed_l/2, 0.01]) mirror([0, 0, 1]) plate_ribs(pan_w + 6, bed_l, 2, 4.0, r = 1.0, inset = 2.0, n = 2, rw = rib_w);
+                // ...and the far cross rib's inner face leans back by draft: a wedge
+                // rooted 1.0 into the bed and half the rib deep (flush, it left a
+                // coincident face pair), its sloped face 0.01 proud of the rib's
+                // from the bed to the tip, its ends buried in the loop's side ribs
+                if (roof_ribs && draft > 0)
+                    translate([-(pan_w + 6)/2 + 2 + rib_w/2, 0, 0]) rotate([90, 0, 90]) linear_extrude(pan_w + 6 - 4 - rib_w)
+                        polygon([[bed_l - rib_in + rib_w/2, 1.0], [bed_l - rib_in + tan(draft) - 0.01, 1.0],
+                                 [bed_l - rib_in - 3.99*tan(draft) - 0.01, -3.99], [bed_l - rib_in + rib_w/2, -3.99]]);
             }
             // struts from the feet up to the bed's UNDERSIDE, their upper end
             // defined in the bed's frame under the side rail (x outboard of the
@@ -700,6 +764,10 @@ module roof() {
             translate([p[0], p[1], -0.1]) cylinder(d = scr_c, h = 30);
             translate([p[0], p[1], roof_seat]) cylinder(d = head_d + 0.6, h = 40);
         }
+        // the panel lead's hole through the bed (lead_y): pointed up-slope, so in
+        // the leaning print its top is two 45° flanks, not a bridge
+        roof_bed_frame() translate([gland_x, lead_y, -0.1])
+            linear_extrude(2 + 0.2) hull() { translate([-3, -6]) square([6, 10]); translate([0, 7]) square(0.01, center = true); }
         // crop everything below the foot plane: the tilted lower stop otherwise
         // protrudes ~2.7 mm below z=0 and digs into the face on assembly
         // (crop top sits 0.01 below the feet so no coincident faces)

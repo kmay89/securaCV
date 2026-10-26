@@ -227,9 +227,11 @@ is asserted in the CAD, not assumed. **Printing them**: TPU 90–95A, 0.2 mm
 layers (the web is exactly three of them — a 0.3 layer makes it one layer
 too thick or too thin), 100 % infill, slow, both buttons in the one print
 so each stem's layers get time to set, no supports; cut them off the
-sprue with scissors, never tear. The heads stand 0.2 mm proud of the back
-face on purpose: the wall plate's slab squeezes the rims onto their seats,
-which seals the bores behind them. One
+sprue with scissors, never tear. The heads stand 0.2 mm proud of the back face
+so the wall plate's slab caps them, but the slab does not seal them: its cable
+slot runs under half of each rim, and the body floats a few tenths on its
+lugs. Each rim is seated on a thin film of neutral-cure silicone at assembly,
+and the TPU web is the seal. One
 dimple in a head means R, two mean B — **the side is a `MEASURE` knob**
 (`xiao_rst_side`): the vendor model has no silkscreen, so look at the board
 before you trust the dimples, and flip the knob if they are swapped.

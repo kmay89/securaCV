@@ -1,0 +1,8 @@
+# A static site served from /srv/sites/<host>/ — `kit site add www.example.com static` writes this.
+# (The .example suffix keeps it out of the import; copy it to <host>.caddy to use it.)
+www.example.com {
+	import secure
+	root * /srv/sites/www.example.com
+	file_server
+	try_files {path} {path}.html {path}/index.html
+}

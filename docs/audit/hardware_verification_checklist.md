@@ -2686,13 +2686,16 @@ SoftAP dropped; `recovery_kit.test.js`: the dashboard's sign-in and
 Settings save run against a fake device); the compile is CI's; not run on
 a device. Owner: U1.
 
-An installed WAP serves its dashboard and API over https on 443 from the
-first boot after setup (a self-signed certificate; the browser warns once,
-and the receipt's `tls_cert_fp` is that certificate's SHA-256), and port
-80 answers everything but the captive probes and `/api/fleet` with a 301
-to https. The rows below use https; on an http-only build (or one whose
-`/api/status` `tls_mode_reason` says TLS is off) use http and expect no
-301.
+Once a certificate is stored, an installed WAP serves its dashboard and
+API over https on 443 from the first boot after setup (a self-signed
+certificate; the browser warns once, and the receipt's `tls_cert_fp` is
+that certificate's SHA-256), and port 80 answers everything but the
+captive probes and `/api/fleet` with a 301 to https. No stock build stores
+one today (F15: the on-device generator compiles out on every pinned core),
+so a stock WAP serves plain HTTP after setup, its receipt's `tls_cert_fp`
+is empty, and its serial log says "TLS unavailable — running in HTTP-ONLY
+mode" at boot. The rows below use https; on such a unit use http and expect
+no 301.
 
 - [ ] **A receipt fetched over the home network names the `.local` name; port 80's redirect does too**
   - Setup: a canary-wap on this firmware, joined to the home Wi-Fi, a laptop
@@ -2769,16 +2772,23 @@ alone, and beside a wrong bearer, refused on both routes; a bearer, the
 BOOT tap and the setup-door claim served); the compile is CI's; not run on
 a device. Owner: U1. The broker-move step: `move_needs_password()` in
 `csi_mqtt.cpp`, host-tested in `tests_host/test_mqtt_reinit.cpp` (the REAL
-handler; every refusal test fails with the gate reverted).
+handler; every refusal test fails with the gate reverted). The rows below
+are written for `https://`, which no stock WAP serves (F15): until one
+does, run them at `http://canary-<suffix>.local` with `curl -s` in place of
+`curl -sk`. The cookie is then `cv_session`; over HTTPS it is
+`__Host-cv_session` (F337), and the device reads either name, so the curl
+lines' `Cookie: cv_session=<hex>` works on both.
 
 - [ ] **A dashboard session minted by the landing page buys neither the receipt nor the pairing QR; a bearer buys both; the tap still buys the receipt**
   - Setup: a canary-wap on this firmware joined to the home Wi-Fi, a laptop
     on the home network with no session for it (a private window), `curl`,
     the API token from a recovery kit.
   - Repro: open `https://canary-<suffix>.local/` and follow **Open
-    dashboard** (the `?cv_pair=` link): the dashboard loads on the
-    `cv_session` cookie. From the browser's developer tools (Application,
-    Cookies) copy the cookie's value `<hex>`. Then: `curl -sk -o /dev/null
+    dashboard** (the `?cv_pair=` link): the dashboard loads on the session
+    cookie, `__Host-cv_session` over HTTPS and `cv_session` over plain HTTP
+    (F337). From the browser's developer tools (Application, Cookies) copy
+    the cookie's value `<hex>` (the reader takes either name, so the curl
+    lines below send it as `cv_session`). Then: `curl -sk -o /dev/null
     -w '%{http_code}\n' -H "Cookie: cv_session=<hex>"
     https://canary-<suffix>.local/api/provisioning-receipt`; the same with
     `.../api/pairing-qr`; the same two with `-H "Authorization: Bearer
@@ -2869,6 +2879,10 @@ backoff's clear outside `api_auth.h` to the receipt, after its refusal
 is CI's; nothing here ran on a device or in a browser. Owner: U1.
 
 - [ ] **The session cookie is `Secure` over HTTPS, set without `Secure` on the first-boot SoftAP, and read by its whole name**
+  - Blocked until a WAP serves HTTPS (F15): no stock unit stores a
+    certificate, so the two HTTPS answers cannot be read yet. The
+    first-boot SoftAP step and the two `xcv_session` curls run now, over
+    `http://canary-<suffix>.local` with `curl -s`.
   - Setup: a canary-wap on this firmware joined to the home Wi-Fi with HTTPS
     up, a second unit (or this one after a factory reset) at its first-boot
     SoftAP setup, a browser with developer tools, `curl`.
@@ -2883,10 +2897,11 @@ is CI's; nothing here ran on a device or in a browser. Owner: U1.
     xcv_session=<hex>" https://canary-<suffix>.local/api/status` with a live
     session's `<hex>`, and the same with `-H "Cookie: xcv_session=0;
     cv_session=<hex>"`.
-  - Expected: both HTTPS answers carry `cv_session=<64 hex>; HttpOnly;
-    SameSite=Strict; Path=/; Max-Age=86400; Secure` and the browser marks
-    the cookie Secure; the first-boot SoftAP answer carries the same
-    attributes without `Secure` and the browser keeps the cookie (the setup
+  - Expected: both HTTPS answers carry `__Host-cv_session=<64 hex>;
+    HttpOnly; SameSite=Strict; Path=/; Max-Age=86400; Secure` (the name is
+    F337's) and the browser marks the cookie Secure; the first-boot SoftAP
+    answer carries `cv_session=<64 hex>` with the same attributes without
+    `Secure` and the browser keeps the cookie (the setup
     page's optional Home Assistant step, which rides it, then saves); the `xcv_session` curl is `401` (a
     longer name is not this cookie) and the one with both cookies is `200`.
     Before this change no answer carried `Secure`, and `xcv_session=<hex>`
@@ -3051,6 +3066,81 @@ the session and pair-token slots' seconds clock (`uptime_s()`) in
   - B is a host on the network only, with its Bluetooth off: the hold reopens the setup door, which goes to the first Bluetooth client that connects, and a host also in radio range could reach it before the phone (`magic_pairing.md` §3.7). With B's loop running, have the iPhone ready, hold BOOT 10 s, release, and set the Canary up again from the iPhone through the Bluetooth setup door. During the pairing B also sends `curl -s 'http://<STA address>/api/provisioning-receipt?claim=00000000000000000000000000000000'` every second.
   - Expect: the iPhone ends paired; once the WAP is back on the home Wi-Fi, every answer B gets is `403` (while the WAP restarts into first-boot setup, B's requests get no HTTP answer); `/api/logs` shows at most one "setup-door claim did not match" line per 10 s; the serial console's boot receipt shows the same token as before the hold.
 - Artifact: `docs/audit/repro/F342/`.
+
+## canary-wap: a foreign Host gets no session, no pair token and no receipt (F344) — on-device verification
+
+Host-tested (`test_session_cookie`, `test_receipt_grant`; the rule itself
+in `firmware/tests_host/test_host_guard.cpp`). Not yet proven on a device:
+that esp_http_server hands the handlers the Host a real client sent, and
+that the captive sheets still render. Every row runs over plain HTTP, the
+stock WAP's posture after setup (no stock WAP serves HTTPS, F15); repeat the
+first row with `curl -sik https://…` once one does. `curl -H 'Host: …'`
+replaces the Host curl would send for the URL. Not run against a browser or
+a rebinding resolver; a browser's local-network prompt may block some
+cases before the device sees them. Code: `request_host_names_device()`,
+`send_foreign_host_page()`, `request_host_is_setup_name()`, `handle_ui()`,
+`handle_legacy_ui()`, `handle_companion_html()`, `handle_wifi_pair_token()`
+and `handle_provisioning_receipt()` in `canary_wap.ino`, and
+`session_validate_cookie()` in `csi_integration.cpp` (every cookie route's
+Host question), over the staged `host_guard.h`. Owner: U1.
+
+- [ ] **canary-wap: a foreign Host gets no session, no pair token and no receipt (F344)**
+  - Setup: a stock unit on this firmware, set up and joined to the home Wi-Fi; two laptops with `curl` on the same network (step 5 needs a second address).
+  - After setup:
+    1. `curl -si -H 'Host: evil.example' http://<STA address>/` answers `403 Forbidden`, `Content-Type: text/plain; charset=utf-8`, the body "This Canary answers only its own names. Open it at its .local name, its IP address, or the bare name your router gives it.", no `Set-Cookie`, and no `cv_pair` anywhere in the body.
+    2. `-H 'Host: canary-<suffix>.local'`, `-H 'Host: canary-<suffix>'` and `-H 'Host: canary-<suffix>.lan'` answer the landing page ("Welcome to your Canary"), and so does the bare `http://<STA address>/`. `-H 'Host: canary-<suffix>.fritz.box'` answers the `403` sentence.
+    3. Take a token from a real landing (`curl -s http://<STA address>/ | grep -o 'cv_pair=[0-9a-f]*' | head -1`), then `curl -si -H 'Host: evil.example' 'http://<STA address>/?cv_pair=<token>'`: the `403` sentence and no `Set-Cookie`. Then `curl -si 'http://<STA address>/?cv_pair=<token>'` (the device's own address as the Host): `302` to `/` with one `Set-Cookie: cv_session=…`, so the token was still good.
+    4. `curl -si -H 'Host: evil.example' --compressed http://<STA address>/settings` and `…/companion` answer the `403` sentence; with the device's own address they answer the pages.
+    5. Start `while :; do curl -s http://canary-<suffix>.local/api/provisioning-receipt; echo; sleep 2; done` (the owner's ask). After its first `403`, send `curl -si -H 'Host: evil.example' http://<STA address>/api/provisioning-receipt` from a second laptop: that answers `403` with the body exactly `{"error":"host"}`. Within 10 s of that request, short-tap BOOT: the owner's loop is served the receipt at its next ask, not `409 tap_contended`, and `/api/logs` has no "BOOT tap closed" line. The foreign ask goes before the tap on purpose: one sent after it can land after the owner's next ask has already spent the tap, and then a sketch without the Host row passes too (`test_receipt_grant.cpp`'s `test_receipt_foreign_host_is_refused_first` is the same order).
+    6. A session carried in under a foreign name (what a rebinding page sets for itself with `document.cookie`): take step 3's `Set-Cookie: cv_session=<hex>`, then `curl -si -H 'Host: evil.example' -H 'Cookie: cv_session=<hex>' http://<STA address>/api/pair/token` answers `401`, and so does `…/api/peek/snapshot` on a unit with its camera. The same two requests without the `-H 'Host: …'` answer `200` (a pair token; a JPEG), so the session itself was good (`test_session_cookie.cpp`'s `test_every_cookie_gate_asks_the_host`).
+  - Setup window: factory-reset (hold BOOT 10 s), run the wizard at `http://canary.local` until the Wi-Fi join succeeds, and within 120 s of the join send the two `evil.example` requests above to `http://<STA address>/` and, with BOOT tapped, to `/api/provisioning-receipt`: both answer `403` as above, and the wizard's own recovery-kit step at `canary.local` still succeeds.
+  - The SoftAP after setup (its captive DNS runs for the AP's whole life): a joined unit raises `SecuraCV-XXXX` at every boot until the home link has held 120 s (`AP_DROP_GRACE_MS`), and again when the link is lost, so first turn the home router's Wi-Fi off and wait for `SecuraCV-XXXX` to reappear, or use a unit in standalone (AP-only) mode. Then join `SecuraCV-XXXX` from an iPhone and an Android phone. A captive sheet that opens shows the probe's answer or the `403` sentence, never a blank page; the phone's browser at `http://192.168.4.1/` and `http://canary.local/` gets the landing page.
+  - First boot, on a fresh unit:
+    - the iOS and Android captive sheets still show the static "open canary.local" instruction page;
+    - `http://canary.local` and `http://192.168.4.1` (and `http://CANARY.LOCAL`) open the wizard;
+    - `curl -si -H 'Host: canary.local.evil.example' http://192.168.4.1/` returns the static instruction page (`200`, no `Location`), and `curl -si -H 'Host: canary.local.evil.example' http://192.168.4.1/api/wifi/pair-token` answers `404 {"ok":false}`;
+    - from a laptop on `SecuraCV-XXXX` while the wizard is active, `curl -si -H 'Origin: http://evil.example' http://192.168.4.1/api/wifi/pair-token` answers `200` with `{"ok":true,"token":"<64 hex>"}`, `Cache-Control: no-store` and no `Access-Control-Allow-Origin` header (so a page on another site cannot read it), and the wizard's own "setup link expired" recovery still gets a fresh token.
+  - Artifact: `docs/audit/repro/F344/`.
+
+## canary-wap: the session cookie's name follows the transport (F337) — on-device verification
+
+Host-tested (`tests_host/test_session_cookie.cpp`: the HTTPS exchange's
+`__Host-cv_session`, the plain-HTTP boot's `cv_session`, each sent back to
+the dashboard, and the reader's two names, the `__Host-` one first;
+`tests_host/test_receipt_grant.cpp`: the receipt's HTTPS tap and claim;
+`wizard_logic.test.js`: the writer's text); the compile is CI's. Not run in
+a browser or on a device. Whether Safari and Chrome store a `__Host-`
+`Secure` cookie from a clicked-through self-signed origin, and whether a
+browser holding both cookies stays under esp_http_server's 1024-byte
+request-header limit, are open until a WAP serves HTTPS. The first row
+runs now, over plain HTTP; the second is blocked until a WAP serves HTTPS
+(F15: no stock unit stores a certificate). Code: `session_cookie_header()`
+in `canary_wap.ino`, `read_session_cookie_hex()` in `csi_integration.cpp`.
+Owner: U1.
+
+- [ ] **canary-wap: over plain HTTP the cookie stays `cv_session`, and the device reads `__Host-cv_session` first (F337)**
+  - Setup: a stock unit on this firmware, set up and joined to the home Wi-Fi; a laptop with `curl` on the same network. `curl` sends whatever `Cookie` header it is given, so it can present the `__Host-` name over plain HTTP, which a browser never does.
+  - Repro and expected:
+    1. Take a token from a real landing (`curl -s http://<STA address>/ | grep -o 'cv_pair=[0-9a-f]*' | head -1`), then `curl -si 'http://<STA address>/?cv_pair=<token>'`: `302` to `/` with one `Set-Cookie: cv_session=<64 hex>; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`, with no `Secure` and no `__Host-` name. Call its value `<hex>`.
+    2. `curl -s -o /dev/null -w '%{http_code}\n' -H "Cookie: __Host-cv_session=<hex>" http://<STA address>/api/status` answers `200`, and so does `-H "Cookie: cv_session=<hex>"`.
+    3. `-H "Cookie: cv_session=<hex>; __Host-cv_session=<hex>"` answers `200`.
+    4. `-H "Cookie: __Host-cv_session=0; cv_session=<hex>"` (a malformed `__Host-` cookie in front of a good plain one) and `-H "Cookie: __Host-cv_session=<64 hex no session holds>; cv_session=<hex>"` both answer `401`: the `__Host-` cookie is the one read, and the plain one behind it is not tried.
+    5. `-H "Cookie: x__Host-cv_session=<hex>"` and `-H "Cookie: __host-cv_session=<hex>"` answer `401`.
+  - Artifact: `docs/audit/repro/F337/plain-http/`.
+
+- [ ] **canary-wap: the HTTPS session cookie is `__Host-cv_session` (F337) — blocked until a WAP serves HTTPS (F15)**
+  - Setup: unit 1 serving `https://canary.local`; unit 2, or the same unit factory-reset; desktop Chrome and Safari; `curl`.
+  - Repro:
+    1. Use unit 1 at `https://canary.local`: follow **Open dashboard**.
+    2. Within 24 h, set up unit 2 at `http://canary.local` (factory-reset variant: the same unit, also at `http://canary.local`). Not at `http://192.168.4.1`: a cookie follows the host name, so one from `https://canary.local` never blocks that address, and the step would pass on the old sketch too.
+    3. Save the recovery kit, then run the Home Assistant step.
+    4. Holding both cookies, load the dashboard over HTTPS in desktop Chrome and Safari.
+    5. Read the headers of both HTTPS mint answers with `curl -sk -D - -o /dev/null` (a GET; the routes answer no HEAD): `'https://canary.local/?cv_pair=<token>'`, and `https://canary.local/api/provisioning-receipt` inside a BOOT tap's window.
+  - Expected:
+    - the kit save's `cv_session` is stored and the Home Assistant save succeeds; before, it answered "This needs the recovery-kit step first";
+    - the dashboard over HTTPS answers `200`, not `431`;
+    - both mint answers show `__Host-cv_session=<64 hex>; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400; Secure`.
+  - Artifact: `docs/audit/repro/F337/https/`.
 
 ## Flagship (`firmware/canary`): the bearer lockout (F340) — on-device verification
 

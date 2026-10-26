@@ -174,13 +174,13 @@ bed size actually starts to matter.
 | **WAP base / lid** | open-up / **face-down** | no | Face-down puts the chamfer and debossed label on layer 1. |
 | **TPU gasket** | flat | **yes** | TPU 90–95 A, 2 walls, 100 % infill, ~25 mm/s, fan low. **External spool holder — never the AMS.** |
 | **Sense radome front** | **face-down**, window flat | no | Uniform membrane, unfilled PETG/ASA only. No CF, no metallic paint, no foil label in front of the antenna. |
-| **7" bezel** | **face-down** | no ¹ | ~208 mm across the ears — the largest part in the catalog. Clean plate; the window ledge prints on layer 1 and is the show surface. |
-| **7" back tray** | outer face **down** | no ¹ | Keep the vent slots clear of any post-processing; they are the convection path, not decoration. |
-| **7" corner gauge** | as exported | no | Print this **before** the two above. ~16.5 g vs ~158 g. |
+| **7" frame** (`part="frame"`) | **back-plate-down**, as exported | no ¹ | ~197 × 115 mm — the largest part in the catalog. The adhesive-ledge wedges self-support only this way up. |
+| **7" ring + frame gauges** | as exported | no | Print these **before** the frame: ~5.6 g + ~19 g against ~136 g. |
 
-¹ These are wide, flat, face-down parts — the shape most prone to lifting a
-corner. Start without a brim on a clean plate; if a corner lifts, a 5 mm outer
-brim is the fix, not a hotter bed.
+¹ A wide, flat part — the shape most prone to lifting a corner. Start without a
+brim on a clean plate; if a corner lifts, a 5 mm outer brim is the fix, not a
+hotter bed. (The two-part 7" bezel + back tray is legacy: the tray cannot take
+the bonded panel — its render says LEGACY. Don't print it for a build.)
 
 ---
 

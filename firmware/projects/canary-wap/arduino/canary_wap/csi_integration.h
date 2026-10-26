@@ -112,8 +112,17 @@ void on_wifi_sta_connected();
 constexpr size_t SESSION_COOKIE_HEX_LEN = 64;
 
 /**
- * True if the request carries a `cv_session=<hex>` cookie that matches
- * a live, unexpired session in the in-RAM session store. Never sends
+ * True if the request carries a session cookie, `__Host-cv_session=<hex>`
+ * (set over HTTPS) or else `cv_session=<hex>` (set over plain HTTP; sweep
+ * F337), that matches a live, unexpired session in the in-RAM session
+ * store, and only when the request's Host can name this device
+ * (host_guard.h's rule; sweep F344, its third review): a missing, oversize
+ * or foreign Host is false whatever the cookie holds, so a live value a
+ * DNS-rebinding page sets for its own public name opens nothing (a page
+ * another network served under one of the device's names is not told
+ * apart: canary_wap.ino, request_host_names_device()). The Host is asked
+ * first. A `__Host-` cookie that is present is the one asked, malformed or
+ * not: the plain one behind it is not tried. Never sends
  * a response — caller decides what to do on failure (handle_ui shows
  * a pair landing; CSI API handlers fall through to Bearer auth or 401).
  *
@@ -121,11 +130,13 @@ constexpr size_t SESSION_COOKIE_HEX_LEN = 64;
  * injected into dashboard HTML — that approach made the token
  * harvestable by anyone on the SoftAP who could view-source on /
  * (per pull-request review #392 r3213361582). Cookies are HttpOnly +
- * SameSite=Strict, so JS can't read them and cross-origin requests
- * can't forge them, and Secure on an answer from the HTTPS server
+ * SameSite=Strict, so JS can't read them and a cross-site request
+ * doesn't carry them (CSRF; a page that rebinds its own name to this
+ * device is same-site to itself, and the Host question above is what stops
+ * the cookie it sets), and Secure on an answer from the HTTPS server
  * (canary_wap.ino session_cookie_header()), so a browser never sends
- * one to the port-80 redirect in the clear. The header is read by the
- * cookie's whole name: "xcv_session=" is not this cookie.
+ * one to the port-80 redirect in the clear. The header is read by each
+ * cookie's whole name: "xcv_session=" is neither cookie.
  *
  * A session signs a browser into the dashboard and nothing more (sweep
  * F289): the landing page mints one for whoever loads / on the home

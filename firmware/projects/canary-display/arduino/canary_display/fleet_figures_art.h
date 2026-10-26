@@ -511,7 +511,7 @@ inline constexpr FigureArt kFigureArt[] = {
   { "device.canary-display-nightstand", "c361481b", 20, kArt_device_canary_display_nightstand_faces },
   { "device.canary-display-nightstand-c6", "cbada0b2", 37, kArt_device_canary_display_nightstand_c6_faces },
   { "device.canary-display-touch169", "72fa8cf1", 19, kArt_device_canary_display_touch169_faces },
-  { "device.canary-display-watch", "ba3c22d9", 32, kArt_device_canary_display_watch_faces },
+  { "device.canary-display-watch", "97400369", 32, kArt_device_canary_display_watch_faces },
   { "device.canary-nightlight", "27f621f7", 25, kArt_device_canary_nightlight_faces },
   { "device.canary-sense", "ea8ac325", 14, kArt_device_canary_sense_faces },
   { "device.canary-vision", "2d4c8e94", 9, kArt_device_canary_vision_faces },

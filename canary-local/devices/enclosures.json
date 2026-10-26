@@ -3,7 +3,7 @@
  "source": "docs/hardware/enclosure",
  "print_settings": {
   "source": "docs/hardware/enclosure/README.md §Suggested print settings",
-  "material": "PETG or ASA for heat/UV exposure; PLA only for indoor/bench",
+  "material": "PETG indoors; ASA for anything that sees sun (PETG is not UV-stable: it yellows and embrittles outdoors); PLA only for fit checks, never a deployed housing",
   "gasket_material": "TPU 90–95A · 2 perimeters · 100% infill · slow",
   "layer_height_mm": 0.2,
   "walls": 3,
@@ -23,13 +23,13 @@
      "name": "base",
      "file": "canary_wap_enclosure_compact_base.stl",
      "print_note": "prints flat, open side up — no supports",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     },
     {
      "name": "lid",
      "file": "canary_wap_enclosure_compact_lid.stl",
      "print_note": "prints face-down: chamfer + deboss land on the first layers (clean bed = clean face)",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     }
    ],
    "scad": "canary_wap_enclosure.scad"
@@ -46,13 +46,13 @@
      "name": "base",
      "file": "canary_wap_enclosure_battery_base.stl",
      "print_note": "prints flat, open side up — no supports",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     },
     {
      "name": "lid",
      "file": "canary_wap_enclosure_battery_lid.stl",
      "print_note": "prints face-down: chamfer + deboss land on the first layers (clean bed = clean face)",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     }
    ],
    "scad": "canary_wap_enclosure.scad"
@@ -60,7 +60,7 @@
   {
    "id": "wap-weather",
    "name": "WAP · weather",
-   "for": "battery build + TPU gasket seal, drip-edge lid, keyhole mounts (CER‑2 / ~IP54 target — ratings)",
+   "for": "battery build + TPU gasket seal, O-ringed plate screws, keyhole mounts (CER‑2 / ~IP54 target — ratings)",
    "status": "released",
    "device": "canary-wap",
    "preview": "preview_weather.png",
@@ -69,13 +69,13 @@
      "name": "base",
      "file": "canary_wap_enclosure_weather_base.stl",
      "print_note": "prints flat, open side up — no supports",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "ASA — it lives outdoors (PETG yellows and embrittles in sun)"
     },
     {
      "name": "lid",
      "file": "canary_wap_enclosure_weather_lid.stl",
      "print_note": "prints face-down: chamfer + deboss land on the first layers (clean bed = clean face)",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "ASA — it lives outdoors (PETG yellows and embrittles in sun)"
     },
     {
      "name": "gasket",
@@ -98,7 +98,7 @@
      "name": "coupon",
      "file": "canary_wap_enclosure_clip_coupon.stl",
      "print_note": "print FIRST — 15-minute fit tuner for your printer's tolerances",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     }
    ],
    "scad": "canary_wap_enclosure.scad"
@@ -119,13 +119,13 @@
      "name": "back",
      "file": "canary_vision_enclosure_xiao_indoor_back.stl",
      "print_note": "prints flat — no supports",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     },
     {
      "name": "front",
      "file": "canary_vision_enclosure_xiao_indoor_front.stl",
      "print_note": "prints face-down without support",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     }
    ],
    "scad": "canary_vision_enclosure.scad"
@@ -146,19 +146,19 @@
      "name": "back",
      "file": "canary_vision_enclosure_xiao_weather_back.stl",
      "print_note": "prints flat — no supports",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "ASA — it lives outdoors (PETG yellows and embrittles in sun)"
     },
     {
      "name": "front",
      "file": "canary_vision_enclosure_xiao_weather_front.stl",
      "print_note": "prints face-down without support",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "ASA — it lives outdoors (PETG yellows and embrittles in sun)"
     },
     {
      "name": "hood",
      "file": "canary_vision_enclosure_xiao_weather_hood.stl",
      "print_note": "prints drip-edge-down, spigot up — press into the front's groove and bond (neutral-cure silicone)",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "ASA — it lives outdoors (PETG yellows and embrittles in sun)"
     },
     {
      "name": "gasket",
@@ -184,13 +184,13 @@
      "name": "back",
      "file": "canary_vision_enclosure_devkit_indoor_back.stl",
      "print_note": "prints flat — no supports",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     },
     {
      "name": "front",
      "file": "canary_vision_enclosure_devkit_indoor_front.stl",
      "print_note": "prints face-down without support",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     }
    ],
    "scad": "canary_vision_enclosure.scad"
@@ -212,13 +212,13 @@
      "name": "bracket",
      "file": "canary_vision_enclosure_bracket.stl",
      "print_note": "prints flat; GoPro prongs vertical for in-plane strength",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     },
     {
      "name": "knob",
      "file": "canary_vision_enclosure_knob.stl",
      "print_note": "prints flat on its face",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     }
    ],
    "scad": "canary_vision_enclosure.scad"
@@ -235,25 +235,25 @@
      "name": "body",
      "file": "canary_vision_doorbell_body.stl",
      "print_note": "prints flat as modeled — no supports by design",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "ASA — it lives outdoors (PETG yellows and embrittles in sun)"
     },
     {
      "name": "face",
      "file": "canary_vision_doorbell_face.stl",
      "print_note": "prints face-down without support (edge rounds off the bed)",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "ASA — it lives outdoors (PETG yellows and embrittles in sun)"
     },
     {
      "name": "plate",
      "file": "canary_vision_doorbell_plate.stl",
      "print_note": "prints flat on the wall face",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "ASA — it lives outdoors (PETG yellows and embrittles in sun)"
     },
     {
      "name": "wedge 15°",
      "file": "canary_vision_doorbell_plate_wedge15.stl",
      "print_note": "prints flat on the wall face",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "ASA — it lives outdoors (PETG yellows and embrittles in sun)"
     },
     {
      "name": "gasket",
@@ -265,7 +265,7 @@
      "name": "retainer",
      "file": "canary_vision_doorbell_retainer.stl",
      "print_note": "prints flat as modeled — no supports by design",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "ASA — it lives outdoors (PETG yellows and embrittles in sun)"
     },
     {
      "name": "plungers R+B",
@@ -279,7 +279,7 @@
   {
    "id": "sense-radome",
    "name": "Sense · radome",
-   "for": "MR60BHA2 mmWave witness: thin radar window, hinge + keyholes (shares the Vision bracket/knob)",
+   "for": "MR60BHA2 mmWave witness: thin radar window, hinge (shares the Vision bracket/knob); keyholes in the `sense_ceiling` build",
    "status": "released",
    "device": "canary-sense",
    "preview": "preview_sense.png",
@@ -288,13 +288,13 @@
      "name": "back",
      "file": "canary_sense_back.stl",
      "print_note": "prints flat — no supports",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     },
     {
      "name": "front",
      "file": "canary_sense_front.stl",
      "print_note": "prints face-down without support",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     }
    ],
    "scad": "canary_sense_enclosure.scad"
@@ -311,13 +311,13 @@
      "name": "shield",
      "file": "canary_wap_enclosure_weather_shield.stl",
      "print_note": "prints as oriented; louvers are self-supporting at 45°",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "white or light ASA"
     },
     {
      "name": "tray",
      "file": "canary_wap_enclosure_tray.stl",
      "print_note": "prints flat — no supports",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     }
    ],
    "scad": "canary_wap_enclosure.scad"
@@ -336,21 +336,21 @@
      "file": "preview/canary_watch_station_drum.stl",
      "preview_mesh": true,
      "print_note": "prints open-face-up; keyhole pockets in the back (canary_watch_station.scad)",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     },
     {
      "name": "bezel",
      "file": "preview/canary_watch_station_bezel.stl",
      "preview_mesh": true,
      "print_note": "flat ring, prints face-down; seats the display disc",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     },
     {
      "name": "stand",
      "file": "preview/canary_watch_station_stand.stl",
      "preview_mesh": true,
      "print_note": "tilted cradle prints upright — no supports",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     }
    ],
    "scad": "canary_watch_station.scad"
@@ -380,7 +380,7 @@
   {
    "id": "outlet-cradle",
    "name": "Outlet cradle",
-   "for": "collar grips a USB wall wart; T-studs hang any keyhole-pocket Canary",
+   "for": "collar grips a USB wall wart; T-studs hang a Canary built with an in-line keyhole pair (the WAP and Vision weather builds, the Sense's `sense_ceiling`; `target` reads the spread) — not the WAP compact's single pocket, nor the Combo's side-by-side pair",
    "status": "in-development",
    "note": "measure your adapter",
    "device": null,
@@ -413,14 +413,14 @@
      "file": "preview/canary_combo_back.stl",
      "preview_mesh": true,
      "print_note": "prints flat — no supports",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     },
     {
      "name": "front",
      "file": "preview/canary_combo_front.stl",
      "preview_mesh": true,
      "print_note": "prints face-down without support",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     }
    ],
    "scad": "canary_combo.scad"
@@ -461,7 +461,7 @@
   {
    "id": "functional-inserts",
    "name": "Functional inserts",
-   "for": "buzzer horn (louder chirp), matte anti-glare ring, 3-part printed cable gland (TPU bush)",
+   "for": "buzzer horn (a few dB of on-axis directivity; at the default `horn_h` 8, the shortest its profile prints without support, it fits no WAP preset: alone it needs `horn_h` ≤ 5.0 on a camera preset (the Sense camera's flex) and ≤ 4.0 on compact_plain, and with the BOM's piezo glued under its throat only 2.7 / 2.15, where it is a short flare that needs support; without the room, glue the piezo straight onto the GORE seat), matte anti-glare ring, 3-part printed cable gland (TPU bush)",
    "status": "in-development",
    "note": "glue-in / press-in parts",
    "device": null,
@@ -494,9 +494,9 @@
   {
    "id": "field-case",
    "name": "Field case",
-   "for": "bag-carry rugged witness at the honest top of the FDM ceiling: Ø1.5 O-ring cord (27 % squeeze), six-lobe clamp, zero external ports (open to charge), bonded PC lens disc behind a contrast-color trim bezel, ePTFE vent, 4 mm walls, TPU impact boot + lanyard. CER‑4 intent: IP67 + MIL‑STD‑810H transit drop — [earn the rating, don't assume it](./field_ratings.md)",
+   "for": "bag-carry rugged witness at the honest top of the FDM ceiling: Ø1.5 O-ring cord (27 % squeeze), eight-lobe clamp, zero external ports (open to charge), bonded PC lens disc behind a contrast-color trim bezel, ePTFE vent, 4 mm walls, TPU impact boot + lanyard. CER‑4 intent: IP67 + MIL‑STD‑810H transit drop — [earn the rating, don't assume it](./field_ratings.md)",
    "status": "in-development",
-   "note": "72 × 39 × 21 body; boot on ≈ 94 wide",
+   "note": "84 × 39 shell, 101 × 56 over its screw lobes, 24.6 tall with the lid; boot on ≈ 106 × 61",
    "device": null,
    "preview": "preview_dev_field.png",
    "parts": [],
@@ -516,28 +516,28 @@
      "file": "preview/canary_dash_display_frame.stl",
      "preview_mesh": true,
      "print_note": "prints face-down: the A-surface is your textured build plate",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     },
     {
      "name": "back",
      "file": "preview/canary_dash_display_back.stl",
      "preview_mesh": true,
      "print_note": "prints PADS-UP (inner face on the bed) — the dock pads and their pocket bridges are the last layers, not the first",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     },
     {
      "name": "stand",
      "file": "preview/canary_dash_display_stand.stl",
      "preview_mesh": true,
      "print_note": "prints flat; fin + rails are additive — no supports",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     },
     {
      "name": "cradle",
      "file": "preview/canary_dash_display_cradle.stl",
      "preview_mesh": true,
      "print_note": "prints flat as modeled — no supports by design",
-     "material": "PETG / ASA (PLA indoors)"
+     "material": "PETG indoors · ASA in sun"
     }
    ],
    "scad": "canary_dash_display.scad"
@@ -545,7 +545,7 @@
   {
    "id": "s3-hallway-stick-case",
    "name": "S3 hallway stick case",
-   "for": "Waveshare ESP32-S3-LCD-1.47 (the USB-A STICK, not the C6 header board). The hallway nightlight body: plugs into a wall adapter, the 172x320 glass faces the corridor, and the WS2812 leaves through a lit white seam down both long walls. Screwless — four cantilever beams cut into the bezel wall, sized by strain (ε printed at render, PETG budget 1.8%), with ASYMMETRIC return angles: steep at the plug end so it never lets go, shallow at the far end so a thumb pops it for the microSD. The plug end is the whole design problem: the opening is a RECTANGLE (series-A is not a stadium — that is USB-C), the wall is thin and relieved so a recessed receptacle clears it, an assert fails the render if under 11 mm of insertion length survives, and the drop buttress reaches INWARD (outward would eat the very length it protects). The RGB does not fire backwards — Waveshare's \"clear acrylic sandwich panel\" is the tell, the LED glows out the edge gap between the LCD module and the PCB — so the light gets a seam along the side walls at exactly that band rather than a hole in the back, which frees the back for the mark. The seam is filled with unfilled white PETG, a light pipe rather than a slot, and its x span is derived from the cavity face and asserted: the first version stopped 0.65 mm short and would have shipped a light pipe with no light in it. The side elevation reads 1 mm black / 3 mm white / black. Ties are hidden ribs in the inner 1.2 mm of the wall, so the white line is unbroken and each side presses in as ONE strip. No vents — the case is 8.2 mm of measured stack in a 9.2 mm shell, and the thumb scoop to the USB opening is the airway. Black PETG, yellow mark, white band. Two board builds since the board is sold bare but advertises GPIO expansion: `headers=\"none\"` and `headers=\"male\"` (the 2.54 mm rows soldered pointing down). The plug end does not move — headers add depth behind the PCB, so the insertion length and the drop collar are untouched and the case simply gets 5.85 mm deeper (bezel 9.200 → 15.050). What the axis does turn on is the compliant PCB ribs: they land on the same long edges the pin rows run down, and at the unmeasured `hdr_inset` candidates they clear by 0.20 mm or overlap by 0.20, so that arithmetic is an assert rather than a comment",
+   "for": "Waveshare ESP32-S3-LCD-1.47 (the USB-A STICK, not the C6 header board). The hallway nightlight body: plugs into a wall adapter, the 172x320 glass faces the corridor, and the WS2812 leaves through a lit white seam down both long walls. Screwless — four cantilever beams cut into the bezel wall, sized by strain (ε printed at render, PETG budget 1.8%), with 45° hold faces at all four hooks (the plate pulls out against their undersides) and a far-end scallop that lifts the far pair first, so a thumb pops it for the microSD and the plug end is never the end that lets go. The plug end is the whole design problem: the opening is a RECTANGLE (series-A is not a stadium — that is USB-C), the wall is thin and relieved so a recessed receptacle clears it, an assert fails the render if under 11 mm of insertion length survives, and the drop buttress reaches INWARD (outward would eat the very length it protects). The RGB does not fire backwards — Waveshare's \"clear acrylic sandwich panel\" is the tell, the LED glows out the edge gap between the LCD module and the PCB — so the light gets a seam along the side walls at exactly that band rather than a hole in the back, which frees the back for the mark. The seam is filled with unfilled white PETG, a light pipe rather than a slot, and its x span is derived from the cavity face and asserted: the first version stopped 0.65 mm short and would have shipped a light pipe with no light in it. The side elevation reads 1 mm black / 3 mm white / black. Ties are hidden ribs in the inner 1.2 mm of the wall, so the white line is unbroken and each side presses in as ONE strip. No vents — the case is 8.2 mm of measured stack in a 9.2 mm shell, and the thumb scoop to the USB opening is the airway. Black PETG, yellow mark, white band. Two board builds since the board is sold bare but advertises GPIO expansion: `headers=\"none\"` and `headers=\"male\"` (the 2.54 mm rows soldered pointing down). The plug end does not move — headers add depth behind the PCB, so the insertion length and the drop collar are untouched and the case simply gets 5.85 mm deeper (bezel 9.200 → 15.050). What the axis does turn on is the compliant PCB ribs: they land on the same long edges the pin rows run down, and at the unmeasured `hdr_inset` candidates they clear by 0.20 mm or overlap by 0.20, so that arithmetic is an assert rather than a comment",
    "status": "in-development",
    "note": "screwless snap, thumb-release, 3 filaments, 2 board builds, `gen_3mf.py stick` / `stick-male`",
    "device": "canary-display-nightstand-s3",
@@ -567,7 +567,7 @@
   {
    "id": "c3-pocket-display-case",
    "name": "C3 pocket display case",
-   "for": "Waveshare ESP32-C3-LCD-1.47 (portrait; the C6 sibling's exact outline + panel, plus a TF slot and an RGB LED), three board builds: `headers=\"pillars\"` (the board as Waveshare ships it — brass corner pillars on, headers not soldered; the press bosses span the measured 2.8 mm to land on the flat pillar tops and hold the board against the bezel, and the lid skirt is notched around each pillar), `\"none\"` (stripped, pillars unscrewed — the shallowest case), or `\"male\"` (down-facing headers + pillars — deepest, thin skirt clear of the pin rows). Three PETG spools, and the slots are roles: slot 1 body = YELLOW (bezel and lid both), slot 2 mark = BLACK, slot 3 light = WHITE. The white does the job of Waveshare's clear-acrylic sandwich: measured off the hardware at 1 mm behind the glass front, 2.8 mm tall, and it is ONE continuous U — up both long walls, around both far corners, across the LED's end wall — white through the full wall depth with no ties crossing it. Both earlier cuts are lessons kept: outer-skin webs chop the strip into dashes, inboard ribs put black slats in the light path, and a strip that stops short of the corners goes dark exactly where it turns. The black is the branding: the lid's back carries the \"Canary\" wordmark, debossed and filled at zero clearance so the AMS fuses it. The wordmark alone, not the bird — [`canary_mark_lib.scad`](./canary_mark_lib.scad) states a ~30 mm minimum for the mark's interior detail and this lid is 25.12 mm across. It carries the mark and the wall hanger (`lid_back`): the plate is 41 mm tall and the wordmark takes four of them, so the hanger sits high and the word reads below it. The hanger is an egg — [`canary_vent_lib.scad`](./canary_vent_lib.scad)'s house ovoid, mounted upright (wide base down, crown up). A round keyhole admits exactly one head size and a real wall screw did not fit the old Ø7 one; an egg tapers continuously, so one opening takes a range of heads — offer the head into the base, let the case drop, and the flank carries the screw to the crown, which is sized to the shank and will not give the head back. The through cut is asserted clear of the press bosses and the skirt's snap band. The glass is located, not clamped: bosses cut to the exact component stack (no preload), and the face touches the panel only on a land over the module border — the innermost 0.5 mm of lip is relieved 0.25 so the window rim never puts a contact line on the glass edge. BOOT/RST are printed-in-place flexure paddles: a press pad cut free by a 0.55 mm slot on three sides, hinged at its USB end, a boss on its back over the actuator — press it with a fingertip, no tool, nothing internal exposed, and the pad sits recessed so a pocket squeeze lands on the ear rim instead. USB-C is a true stadium hugging the shell at ~0.05 mm per side with a chamfered rim for the plug's overmold (the recessed ring it replaced left a 0.4 mm floor over the insertion slot and broke out on the first print). The front face itself prints flat on the plate, with no modeled foot relief: the \"face edge chamfer\" this file used to carry was an untapered cut, so what it drew was a 0.80 mm square rabbet around the whole first-layer perimeter — an overhang, on the one surface a person looks at, giving up a fifth of the face plate's bed contact (403.62 mm² where flat gives 508.15) to duplicate a ~0.2 mm elephant-foot compensation the slicer already applies. [`check_foot_relief.py`](./check_foot_relief.py) measures every exported mesh and fails the build if a stepped foot comes back; a real taper still passes. Keyed lid: the board's M2 pillar pattern is asymmetric, so offered the wrong way round the skirt lands on the USB shell and refuses to close — the error is physical, not a rattle you discover later. Asymmetric snap nubs give it a real click. microSD swaps with the lid off (the slot mouth faces down-board; no wall window could pass a card). Two plates, not one with a flag: `gen_3mf.py c3` cuts the case for the board as Waveshare ships it, `gen_3mf.py c3-male` cuts it for a board with the headers soldered on — 3.00 mm deeper in the bezel (12.25 → 15.25) with press bosses 3.00 mm longer (4.80 → 7.80) and a thin skirt clear of the pin rows, same outline. They are not interchangeable on a finished print, so the board they were cut for is in the filename; `-bezel` / `-lid` suffixes split either one when you are iterating on one half. It also fits the USB-A board (`port=\"usb_a\"` — the ESP32-S3-LCD-1.47, same PCB outline, same panel, same buttons, but the board ends in a series-A male plug): `gen_3mf.py c3-usba` / `c3-usba-male`. The port axis is the only difference and it is additive — every USB-C part renders vertex-for-vertex identical to before it existed. Four things move with it: the opening becomes a rectangle (a stadium leaves a series-A shell's square corners nowhere to go), it centers on the PCB mid-plane because the plug straddles the board rather than sitting on its back, the chin bulge disappears (nothing to swallow — the plug goes through and stands outside), and the root gains an inward drop collar (outward would spend the very insertion length it protects; the assert caught that on the first cut, at 8.8 mm against an 11.0 floor). The interesting one is the light ring: a series-A plug sits low enough to land on the band, so rather than shortening the ring on every wall or stopping it at this one — the U this case abandoned when print 3 showed the pipe going dark where it turns — the ring dives under the plug, keeping 1.55 mm of white running beneath the opening. Still one closed ring, and the band's part count is what proves it. Not offered in the `pillars` build: that is a measured claim about the C3's brass standoffs and nobody has had an S3 in hand to say the same",
+   "for": "Waveshare ESP32-C3-LCD-1.47 (portrait; the C6 sibling's exact outline + panel, plus a TF slot and an RGB LED), three board builds: `headers=\"pillars\"` (the board as Waveshare ships it — brass corner pillars on, headers not soldered; the press bosses span the measured 2.8 mm to land on the flat pillar tops and hold the board against the bezel, and the lid skirt is notched around each pillar), `\"none\"` (stripped, pillars unscrewed — the shallowest case), or `\"male\"` (down-facing headers + pillars — deepest, thin skirt clear of the pin rows). Three PETG spools, and the slots are roles: slot 1 body = YELLOW (bezel and lid both), slot 2 mark = BLACK, slot 3 light = WHITE. The white does the job of Waveshare's clear-acrylic sandwich: measured off the hardware at 1 mm behind the glass front, 2.8 mm tall, and it is ONE continuous U — up both long walls, around both far corners, across the LED's end wall — white through the full wall depth with no ties crossing it. Both earlier cuts are lessons kept: outer-skin webs chop the strip into dashes, inboard ribs put black slats in the light path, and a strip that stops short of the corners goes dark exactly where it turns. The black is the branding: the lid's back carries the \"Canary\" wordmark, debossed and filled at zero clearance so the AMS fuses it. The wordmark alone, not the bird — [`canary_mark_lib.scad`](./canary_mark_lib.scad) states a ~30 mm minimum for the mark's interior detail and this lid is 25.12 mm across. It carries the mark and the wall hanger (`lid_back`): the plate is 41 mm tall and the wordmark takes four of them, so the hanger sits high and the word reads below it. The hanger is an egg — [`canary_vent_lib.scad`](./canary_vent_lib.scad)'s house ovoid, mounted upright (wide base down, crown up). A round keyhole admits exactly one head size and a real wall screw did not fit the old Ø7 one; an egg tapers continuously, so one opening takes a range of heads — offer the head into the base, let the case drop, and the flank carries the screw to the crown, which is sized to the shank and will not give the head back. The through cut is asserted clear of the press bosses and the skirt's snap band. The glass is located, not clamped: bosses cut to the exact component stack (no preload), and the face touches the panel only on a land over the module border — the innermost 0.5 mm of lip is relieved 0.25 so the window rim never puts a contact line on the glass edge. BOOT/RST are printed-in-place flexure paddles: a press pad cut free by a 0.55 mm slot on three sides, hinged at its USB end, a boss on its back over the actuator — press it with a fingertip, no tool, nothing internal exposed, and the pad sits recessed so a pocket squeeze lands on the ear rim instead. USB-C is a true stadium hugging the shell at ~0.05 mm per side with a chamfered rim for the plug's overmold (the recessed ring it replaced left a 0.4 mm floor over the insertion slot and broke out on the first print). The front face itself prints flat on the plate, with no modeled foot relief: the \"face edge chamfer\" this file used to carry was an untapered cut, so what it drew was a 0.80 mm square rabbet around the whole first-layer perimeter — an overhang, on the one surface a person looks at, giving up a fifth of the face plate's bed contact (403.62 mm² where flat gives 508.15) to duplicate a ~0.2 mm elephant-foot compensation the slicer already applies. [`check_foot_relief.py`](./check_foot_relief.py) measures every exported mesh and fails the build if a stepped foot comes back; a real taper still passes. Keyed lid: the board's M2 pillar pattern is asymmetric, so on the USB-C board a tab on the lid's inner face rides in the USB insertion slot: offered the wrong way round, it lands on the far wall's rim and the lid refuses to close, in all three builds (the skirt's one-ended USB relief, the old key, only caught the stripped build). The USB-A board has no slot and no tab: turned, its skirt lands on the drop collar. The error is physical, not a rattle you discover later. Asymmetric snap nubs give it a real click. microSD swaps with the lid off (the slot mouth faces down-board; no wall window could pass a card). Two plates, not one with a flag: `gen_3mf.py c3` cuts the case for the board as Waveshare ships it, `gen_3mf.py c3-male` cuts it for a board with the headers soldered on — 3.00 mm deeper in the bezel (12.25 → 15.25) with press bosses 3.00 mm longer (4.80 → 7.80) and a thin skirt clear of the pin rows, same outline. They are not interchangeable on a finished print, so the board they were cut for is in the filename; `-bezel` / `-lid` suffixes split either one when you are iterating on one half. It also fits the USB-A board (`port=\"usb_a\"` — the ESP32-S3-LCD-1.47, same PCB outline, same panel, same buttons, but the board ends in a series-A male plug): `gen_3mf.py c3-usba` / `c3-usba-male`. The port axis is the only difference and it is additive — every USB-C part renders vertex-for-vertex identical to before it existed. Four things move with it: the opening becomes a rectangle (a stadium leaves a series-A shell's square corners nowhere to go), it centers on the PCB mid-plane because the plug straddles the board rather than sitting on its back, the chin bulge disappears (nothing to swallow — the plug goes through and stands outside), and the root gains an inward drop collar (outward would spend the very insertion length it protects; the assert caught that on the first cut, at 8.8 mm against an 11.0 floor). The interesting one is the light ring: a series-A plug sits low enough to land on the band, so rather than shortening the ring on every wall or stopping it at this one — the U this case abandoned when print 3 showed the pipe going dark where it turns — the ring dives under the plug, keeping 1.55 mm of white running beneath the opening. Still one closed ring, and the band's part count is what proves it. Not offered in the `pillars` build: that is a measured claim about the C3's brass standoffs and nobody has had an S3 in hand to say the same",
    "status": "in-development",
    "note": "3 filaments, snap lid, keyed, 2 boards × 3 board builds, `gen_3mf.py c3` / `c3-male` / `c3-usba` / `c3-usba-male`",
    "device": "canary-nightlight",
@@ -581,7 +581,7 @@
   {
    "id": "7-touch-dashboard-case",
    "name": "7″ touch dashboard case",
-   "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (bottom-wall intake → top-wall exhaust — print in PETG/ASA, this panel runs hot; the two-part tray adds a ~41 cm² back grille, and the one-piece `frame`'s plate deliberately carries none — see the back-plate section), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered USB pass-through plus a matching side exit on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `gauge` corner pair first (~16.5 g vs ~158 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). Connector centers and `pcb_h` are NOMINAL — measure yours",
+   "for": "Waveshare ESP32-S3-Touch-LCD-7 (7″ 800×480 capacitive touch): the wall/desk slab. Face-down bezel retains the bonded glass over the active-area window; deep vented rear tray carries the PCB on molded M3 standoffs and screws to four gusseted outboard M3 corner ears (webbed into the shell — no thin necks). Real convection path (bottom-wall intake → top-wall exhaust — print in PETG/ASA, this panel runs hot; the two-part tray adds a ~40 cm² back grille, and the one-piece `frame`'s plate deliberately carries none — see the back-plate section), bottom connector channel + side USB/CAN/RS485/battery slots on the tray. The one-piece `frame` adds a bottom-centered USB pass-through plus a matching side exit on the microSD's wall (hang the case portrait with that wall down and the cable leaves out the bottom; the leashed blank fills whichever exit is idle) and three TPU fitments: a slit wire grommet (strain relief — tugs load the frame, not the board), a captive leashed press-through BOOT/RESET plug whose press towers reach the button caps at the board edge, and a peel-open SD cover that stays attached. Optional 20° desk dock for the frame (drop-in slot on tilted seat pads, self-centering keys into the frame's keying slots, landscape and portrait — portrait seats on well ribs — open well under the USB port + desk-level cable channel for the power lead, vented back fin, tip-checked both ways — `stand_gauge` proves the slot before the big print). Print the `ring_gauge` (~5.6 g) and the `frame_gauge` corner (~19 g) before the one-piece `frame` (~136 g) — see the [P2S bring-up](./bambu_p2s_bringup.md#7--print-3--the-7-dashboard). The two-part bezel + tray and its `gauge` pair are legacy: the tray's PCB bosses stand where the panel's own M3 standoffs go, so it cannot take the bonded panel (its render says LEGACY). Connector centers and `pcb_h` are NOMINAL — measure yours",
    "status": "in-development",
    "note": "glass drops in, lip 10.4, TPU-fitted ports",
    "device": "canary-display-dash7",
@@ -607,7 +607,7 @@
   {
    "id": "vehicle-mount-kit",
    "name": "Vehicle mount kit",
-   "for": "VHB-taped dash plate with a 10° stud riser + an air-vent louver clip (extruded spring prongs snap over one blade). ⚠️ cabins exceed +60 °C: USB power only, ASA, light colors",
+   "for": "VHB-taped dash plate (the tape on its flat underside) with a 10° stud riser + an air-vent louver clip (extruded spring prongs snap over one blade), the studs on 2.4 mm riser pads so they reach a booted field case's keyholes. ⚠️ cabins exceed +60 °C: USB power only, ASA, light colors",
    "status": "in-development",
    "note": "set `stud_gap` per case (36 = field)",
    "device": null,
@@ -618,7 +618,7 @@
   {
    "id": "body-worn-clips",
    "name": "Body-worn clips",
-   "for": "belt leaf-spring clip (prints on its side: flex stays in-plane) + MOLLE/PALS weave plate, both on the two-stud interface; made for the field case's floor keyholes",
+   "for": "belt leaf-spring clip (prints with its profile on the bed: the leaf's flex stays in the layer plane) + MOLLE/PALS weave plate, both on the two-stud interface; made for the field case's floor keyholes, the studs on 2.4 mm riser pads so they reach them through the boot's floor",
    "status": "in-development",
    "note": "check local recording law; pair with the sign",
    "device": null,
@@ -640,7 +640,7 @@
   {
    "id": "universal-fit-coupon",
    "name": "Universal fit coupon",
-   "for": "ONE small print that calibrates every fit in the catalog: the Canary mark embossed in uniform domed strokes (no feature narrower than one rib, so that single width decides the whole emblem), the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays) beside the doorbell's dovetail lug pocket (the mate carries both, so a snapped stud does not end the station), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labeled with the parameter it tunes",
+   "for": "ONE small print that calibrates every fit in the catalog: the Canary bird debossed full-size into the bed face (the glyph first-layer test — `glyph_rib` is the one number it tunes), the WAP's two-sided clip channel, keyhole+stud with a click detent (slide the mate on, it clicks and stays) beside the doorbell's dovetail lug pocket (the mate carries both, so a snapped stud does not end the station), slide tongue, gasket, press, screw (+ a −/0/+ pilot ladder), insert, the USB-C port opening, and the embossed/debossed brand wordmarks — each station labeled with the parameter it tunes",
    "status": "in-development",
    "note": "**print this before any case**",
    "device": null,
@@ -880,8 +880,8 @@
       },
       {
        "name": "tab_hole_d",
-       "default": "3.6",
-       "comment": "through-hole (M3 / #6)"
+       "default": "4.2",
+       "comment": "through-hole (M3 / #6): the #6's 3.505 major + 2 x tol_hole, rounded up (3.6 left a #6 0.04 a side; no released preset draws the tabs)"
       },
       {
        "name": "tab_cb_d",
@@ -1240,6 +1240,16 @@
        "name": "tol_hole",
        "default": "0.30",
        "comment": "clearance holes: plate screws — core_tol_hole()"
+      },
+      {
+       "name": "bridge_layer",
+       "default": "0.2",
+       "range": [
+        0.08,
+        0.04,
+        0.32
+       ],
+       "comment": "your slicer's layer height: the face's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)"
       }
      ]
     },
@@ -1284,8 +1294,8 @@
       },
       {
        "name": "kh_lock",
-       "default": "true",
-       "comment": "(keyhole mounts) two anti-lift knockout bosses: 0.6 mm web, pierce with"
+       "default": "false",
+       "comment": "(keyhole mounts) two anti-lift knockout bosses (0.6 mm web), OFF by default since v0.9.1:"
       }
      ]
     },
@@ -1490,12 +1500,12 @@
       {
        "name": "vent_pad_d",
        "default": "12.0",
-       "comment": "GORE-vent recess Ø (the buzzer + pressure vent: the recess seats an adhesive vent)"
+       "comment": "GORE-vent patch Ø (the recess is cut tol_slide over it), on the face's INNER side (the buzzer + pressure vent: the recess seats an adhesive vent; it prints face-down, and an outer seat cannot bridge)"
       },
       {
        "name": "vent_pad_depth",
        "default": "0.8",
-       "comment": "GORE-vent recess depth into the face's outer surface — core_vent_pad_depth()"
+       "comment": "GORE-vent recess depth into the face's inner surface — core_vent_pad_depth()"
       },
       {
        "name": "vent_hole_d",
@@ -1743,8 +1753,7 @@
       },
       {
        "name": "board_cx",
-       "default": "-inner_l/2 + board_clear + board_l/2 + 0.5",
-       "comment": "USB-biased (0.5 = positioning margin, not a fit)"
+       "default": "-inner_l/2 + max(board_clear + 0.5, floor_cove + tol_slide + brd_xiao_usb_overhang()) + board_l/2"
       },
       {
        "name": "board_cy",
@@ -1858,6 +1867,10 @@
        "default": "2*cam_throw*tan(cam_fov/2) + 2.0"
       },
       {
+       "name": "face_inset",
+       "default": "lid_edge + 0.45*lid_edge2"
+      },
+      {
        "name": "cam_r",
        "default": "e_camera ? max(cam_win_d/2, cam_disc_d > 0 ? cam_disc_d/2 + tol_slide : 0) : 0"
       },
@@ -1867,7 +1880,7 @@
       },
       {
        "name": "vent_r",
-       "default": "e_buzzer ? vent_pad_d/2 : 0"
+       "default": "e_buzzer ? vent_pad_d/2 + tol_slide : 0"
       },
       {
        "name": "mag_r",
@@ -1898,13 +1911,18 @@
       {
        "name": "_seal_span",
        "default": "max(span_l/(n_mid + 1), 2*post_cy)"
+      },
+      {
+       "name": "stop_y0",
+       "default": "port_usbc_overmold_w()/2 + 0.2",
+       "comment": "a stop's inboard edge across the board"
       }
      ]
     }
    ]
   },
   "canary_vision_enclosure.scad": {
-   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.6",
+   "title": "SecuraCV Canary Vision — 3D-printable enclosure (parametric)  v0.7",
    "groups": [
     {
      "name": "What to render",
@@ -2099,6 +2117,11 @@
        "comment": "module front-side component height (CSI connector etc.)"
       },
       {
+       "name": "vm_back_h",
+       "default": "5.0",
+       "comment": "module BACK-side component height: the XIAO's socket rows and Body1 at the USB edge — brd_grove_v2_back_h(), the vendor CAD."
+      },
+      {
        "name": "cam_w",
        "default": "25.0",
        "comment": "OV5647 carrier width (X) — brd_w(\"ov5647\")"
@@ -2258,7 +2281,7 @@
       {
        "name": "standoff_h",
        "default": "3.5",
-       "comment": "PCBs sit this high off the plate (RAISE if DevKit has soldered pin headers!)"
+       "comment": "the DevKit sits this high off the plate, the module at least this (RAISE if DevKit has soldered pin headers!)"
       },
       {
        "name": "cav_extra",
@@ -2329,8 +2352,8 @@
       },
       {
        "name": "kh_lock",
-       "default": "true",
-       "comment": "(keyhole mounts) anti-lift knockouts: 0.6 mm web, pierce with #4/M3 on install"
+       "default": "false",
+       "comment": "(keyhole mounts) anti-lift knockouts (0.6 mm web), OFF: the plate screws enter from the back face, so a case hung on"
       }
      ]
     },
@@ -2502,8 +2525,8 @@
       },
       {
        "name": "br_screw_d",
-       "default": "4.2",
-       "comment": "countersunk wall screws (#8 / M4)"
+       "default": "4.8",
+       "comment": "countersunk wall screws (#8 / M4): the #8's 4.17 major + 2 x tol_hole (4.2 let the screw thread the bracket)"
       },
       {
        "name": "bracket_tripod",
@@ -2646,7 +2669,7 @@
       {
        "name": "vent_pad_d",
        "default": "12.0",
-       "comment": "GORE-vent seat Ø, on the front's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
+       "comment": "GORE-vent patch Ø (its seat is cut tol_slide over it), on the front's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
       },
       {
        "name": "vent_pad_depth",
@@ -2890,7 +2913,7 @@
       },
       {
        "name": "vm_standoff",
-       "default": "has_dk ? standoff_h : stack_sock_h + xiao_below_eff"
+       "default": "has_dk ? max(standoff_h, vm_back_h + 0.5) : stack_sock_h + xiao_below_eff"
       },
       {
        "name": "bot_margin",
@@ -2947,6 +2970,14 @@
       {
        "name": "cam_post_eff",
        "default": "cam_lens_h - cam_barrel_in"
+      },
+      {
+       "name": "cam_pil",
+       "default": "cam_post_eff - 0.8 - 0.1"
+      },
+      {
+       "name": "cam_scr_len",
+       "default": "max([for (l = hw_std_lens()) if (l - pcb_t <= cam_pil - 0.2) l])"
       },
       {
        "name": "cam_ap_d",
@@ -3234,7 +3265,7 @@
       {
        "name": "opt_weep",
        "default": "true",
-       "comment": "Ø2 weep through the bottom wall just above the plate's face (mounted button-down):"
+       "comment": "Ø2 weep straight out through the bottom wall, over the gasket groove (straight down when hung):"
       },
       {
        "name": "weep_d",
@@ -3649,7 +3680,7 @@
       {
        "name": "svc_proud",
        "default": "0.2",
-       "comment": "the head's face stands this far PROUD of the back face: the wall plate's slab presses the rim onto its"
+       "comment": "the head's face stands this far PROUD of the back face, so mounted the wall plate's slab caps the heads."
       },
       {
        "name": "svc_pip_d",
@@ -4094,8 +4125,8 @@
       },
       {
        "name": "plate_screw_d",
-       "default": "4.2",
-       "comment": "wall screws (#8 / M4 PAN head — the seats are flat counterbores)"
+       "default": "4.8",
+       "comment": "wall screws (#8 / M4 PAN head — the seats are flat counterbores): the #8's 4.17 major + 2 x tol_hole (4.2 let the screw thread the plate, the Vision bracket's AUD-5)"
       },
       {
        "name": "plate_head_h",
@@ -4245,7 +4276,7 @@
       {
        "name": "vent_pad_d",
        "default": "12.0",
-       "comment": "GORE-vent seat Ø, on the face's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
+       "comment": "GORE-vent patch Ø (its seat is cut tol_slide over it), on the face's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
       },
       {
        "name": "vent_pad_depth",
@@ -4799,7 +4830,7 @@
       {
        "name": "svc_seat_depth",
        "default": "svc_rim_t - svc_proud",
-       "comment": "the rim's floor: the head stands svc_proud of the back face, for the slab to squeeze"
+       "comment": "the rim's floor: the head stands svc_proud of the back face (the slab caps it, the film under the rim seals it)"
       },
       {
        "name": "svc_rim_id",
@@ -4991,6 +5022,10 @@
        "comment": "the shell's weep exits its bottom wall here (beside the security screw)"
       },
       {
+       "name": "weep_z",
+       "default": "floor_t + (e_seal ? gasket_groove + core_min_web() : 0.2) + weep_d/2"
+      },
+      {
        "name": "plate_seat_z",
        "default": "wplate_t - plate_head_h - 0.2"
       }
@@ -5061,7 +5096,7 @@
       {
        "name": "opt_seal",
        "default": "false",
-       "comment": "perimeter TPU gasket + drip-edge front (indoor ceilings rarely need it)"
+       "comment": "perimeter TPU gasket in the shell's ledge + O-rings under the plate screws (indoor ceilings rarely need it)"
       },
       {
        "name": "opt_weep",
@@ -5284,7 +5319,7 @@
       {
        "name": "vent_pad_d",
        "default": "12.0",
-       "comment": "GORE-vent seat Ø on the front's outer face — core_vent_pad_d()"
+       "comment": "GORE-vent patch Ø (its seat on the front's outer face is cut tol_slide over it) — core_vent_pad_d()"
       },
       {
        "name": "vent_pad_depth",
@@ -5391,7 +5426,7 @@
       {
        "name": "tol_slide",
        "default": "0.20",
-       "comment": "sliding fits: front lip, drip skirt — core_tol_slide()"
+       "comment": "sliding fits: the plate in its bore — core_tol_slide()"
       },
       {
        "name": "tol_press",
@@ -5401,7 +5436,7 @@
       {
        "name": "tol_hole",
        "default": "0.30",
-       "comment": "clearance holes: front screws — core_tol_hole()"
+       "comment": "clearance holes: the plate screws — core_tol_hole()"
       }
      ]
     },
@@ -5446,8 +5481,8 @@
       },
       {
        "name": "kh_lock",
-       "default": "true",
-       "comment": "(keyhole mounts) anti-lift knockouts, as on the Vision: a 0.6 mm web at the back face, pierced with #4/M3 on install"
+       "default": "false",
+       "comment": "(keyhole mounts) anti-lift knockouts (a 0.6 mm web at the back face), OFF as on the Vision since its v0.7: their screws go in"
       }
      ]
     },
@@ -5557,6 +5592,16 @@
        "comment": "hinge bolt Ø (M5 at the default); its hole is cut 0.4 over"
       },
       {
+       "name": "hinge_clear",
+       "default": "0.15",
+       "range": [
+        0.0,
+        0.05,
+        0.4
+       ],
+       "comment": "extra slot width on the bracket for printed fins that run +0.1 oversize (the Vision's)"
+      },
+      {
        "name": "hinge_teeth",
        "default": "true",
        "comment": "radial detent teeth on the hinge's mating faces (the bracket carries the pockets); false = smooth faces"
@@ -5594,8 +5639,8 @@
       },
       {
        "name": "br_screw_d",
-       "default": "4.2",
-       "comment": "wall-screw clearance at the plate's four corners, 90° countersunk for a #8 flat head (Ø8.3)"
+       "default": "4.8",
+       "comment": "wall-screw clearance at the plate's four corners, 90° countersunk for a #8 flat head (Ø8.3):"
       },
       {
        "name": "bracket_tripod",
@@ -5976,7 +6021,12 @@
       {
        "name": "fin_root",
        "default": "fin_r*(1 + sqrt(2)) - hinge_off",
-       "comment": "the 45° line from the point back to the wall"
+       "comment": "the root's height on the wall: unchanged by the crown below"
+      },
+      {
+       "name": "fin_pt",
+       "default": "base_d + lid_t",
+       "comment": "the crown, ON the bed (the face's show plane)"
       }
      ]
     }
@@ -6237,18 +6287,18 @@
       },
       {
        "name": "snap_depth",
-       "default": "3.3",
+       "default": "4.2",
        "comment": "slot center below the drum rim: low on the finger, where its lever is longest"
       },
       {
        "name": "snap_proud",
-       "default": "0.25",
-       "comment": "nub stand-proud of the skirt: 0.1 of working interference over the counterbore"
+       "default": "0.35",
+       "comment": "nub stand-proud of the skirt: 0.2 of working interference over the counterbore"
       },
       {
        "name": "skirt_dep",
-       "default": "4.0",
-       "comment": "bezel skirt reach into the counterbore (the counterbore is cut 0.3 deeper so the tip floats)"
+       "default": "4.9",
+       "comment": "bezel skirt reach into the counterbore (the counterbore is cut 0.3 deeper so the tip floats);"
       },
       {
        "name": "finger_t",
@@ -6734,13 +6784,13 @@
       },
       {
        "name": "stalk_h",
-       "default": "70.0",
+       "default": "65.0",
        "comment": "stalk height to the hinge axis region — puts the standing radome ~130 mm over the nightstand"
       },
       {
        "name": "pose_low",
        "default": "15",
-       "comment": "the forward tip limit below horizontal — where the case root meets the center fin (header)"
+       "comment": "the forward tip limit below horizontal the base clearance is asserted at (header: free to 30°)"
       },
       {
        "name": "stalk_d",
@@ -6806,6 +6856,16 @@
        "default": "5.0"
       },
       {
+       "name": "hinge_clear",
+       "default": "0.15",
+       "range": [
+        0.0,
+        0.05,
+        0.4
+       ],
+       "comment": "outer fins stand this much wider than the GoPro pitch: the bracket's (a printed fin's +0.1 left 0.075 of the bare 0.175 gap)"
+      },
+      {
        "name": "hinge_teeth",
        "default": "true"
       },
@@ -6853,12 +6913,16 @@
       },
       {
        "name": "head_off",
-       "default": "10.0",
-       "comment": "bolt axis above the head's base plate"
+       "default": "15.0",
+       "comment": "bolt axis above the head's base plate: the stalk top (head_off - 0.2 out)"
       },
       {
        "name": "axis_z",
        "default": "base_t - 2 + (stalk_h - 0.2 + head_off)*cos(stalk_tilt)"
+      },
+      {
+       "name": "stalk_foot_r",
+       "default": "base_d*0.05 + 2*tan(stalk_tilt) + (stalk_d/2)/cos(stalk_tilt)"
       }
      ]
     }
@@ -6906,8 +6970,8 @@
       },
       {
        "name": "dev_screw_d",
-       "default": "3.7",
-       "comment": "6-32 clearance"
+       "default": "4.2",
+       "comment": "6-32 clearance: the 3.505 major + 2 x tol_hole, rounded up so the 33-gon's flat keeps 0.3 (3.7 left 0.09 a side)"
       },
       {
        "name": "lid_edge",
@@ -7094,7 +7158,7 @@
    ]
   },
   "canary_outlet_cradle.scad": {
-   "title": "Canary — OUTLET PLUG-IN CRADLE  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — OUTLET PLUG-IN CRADLE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -8536,7 +8600,7 @@
       {
        "name": "standoff_ff",
        "default": "11.0",
-       "comment": "F-F brass standoffs on the Pi's hole grid: 11 bare, 16 with a HAT"
+       "comment": "M-F brass standoffs on the Pi's hole grid, male end DOWN through the PCB into the tray standoff's pilot: 11 bare, 16 with a HAT"
       }
      ]
     },
@@ -8589,7 +8653,7 @@
       {
        "name": "lid_screw_d",
        "default": "2.8",
-       "comment": "M2.5 CLEARANCE: the cover's screws run down the Pi's hole grid into F-F"
+       "comment": "M2.5 CLEARANCE: the cover's screws run down the Pi's hole grid into the M-F"
       },
       {
        "name": "clip_screw_d",
@@ -8778,13 +8842,31 @@
       {
        "name": "tab_w",
        "default": "4.0"
+      },
+      {
+       "name": "pilot_skin",
+       "default": "1.0",
+       "comment": "solid floor under each tray standoff's pilot"
+      },
+      {
+       "name": "clip_pilot",
+       "default": "6.1",
+       "comment": "the clip's M3 self-tap pilot depth, from its tray face"
+      },
+      {
+       "name": "ff_male_max",
+       "default": "pcb_t + standoff_h - pilot_skin"
+      },
+      {
+       "name": "clip_m3",
+       "default": "max([for (l = hw_std_lens()) if (l <= floor_t + clip_pilot - 0.5) l])"
       }
      ]
     }
    ]
   },
   "canary_hammond_chassis.scad": {
-   "title": "Canary — HAMMOND INTERNAL CHASSIS PLATE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "Canary — HAMMOND INTERNAL CHASSIS PLATE  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -8814,13 +8896,13 @@
      "params": [
       {
        "name": "boss_dx",
-       "default": "147.0",
-       "comment": "boss spacing (X)"
+       "default": "97.0",
+       "comment": "boss spacing (X) — a placeholder inside the 1554F panel outline: MEASURE"
       },
       {
        "name": "boss_dy",
-       "default": "77.0",
-       "comment": "boss spacing (Y)"
+       "default": "66.0",
+       "comment": "boss spacing (Y) — a placeholder inside the 1554F panel outline: MEASURE"
       },
       {
        "name": "boss_screw_d",
@@ -8829,12 +8911,13 @@
       },
       {
        "name": "plate_l",
-       "default": "158.0",
-       "comment": "plate outline (fits inside the box walls) — MEASURE your box"
+       "default": "108.0",
+       "comment": "plate outline: Hammond's 1554FPL inner panel (109.2 x 77.5) less a hair — the panel"
       },
       {
        "name": "plate_w",
-       "default": "88.0"
+       "default": "76.0",
+       "comment": "the BOM's 1554F2GYCL (ENC1, 119.4 x 88.9 outside) takes (v0.3: 158 x 88 overran the box)"
       },
       {
        "name": "plate_t",
@@ -8954,16 +9037,24 @@
        "comment": "outboard of the tie slots (b_w/2 + 8, 8 tall)"
       },
       {
+       "name": "vent_x",
+       "default": "plate_l/2 - 11"
+      },
+      {
        "name": "rib_l",
-       "default": "2*(plate_l/2 - 14 - 5 - 2)",
-       "comment": "between the vent columns (plate_l/2 - 14, 10 wide)"
+       "default": "2*(vent_x - 5 - 2)",
+       "comment": "between the vent columns (vent_x, 10 wide)"
+      },
+      {
+       "name": "stop_x0",
+       "default": "max(port_usbc_overmold_w()/2 + 0.2, (stack == \"wap\") ? 0 : xiao_w/2 + 0.3, b_w/2 - 2.6)"
       }
      ]
     }
    ]
   },
   "canary_mount_adapters.scad": {
-   "title": "Canary — UNIVERSAL MOUNT ADAPTERS  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — UNIVERSAL MOUNT ADAPTERS  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -9013,8 +9104,8 @@
       },
       {
        "name": "screw_d",
-       "default": "4.2",
-       "comment": "wall screws (#8 / M4), counterbored"
+       "default": "4.8",
+       "comment": "wall screw clearance (#8 / M4): the #8's 4.17 major + 2 x tol_hole (4.2 let the screw thread the adapter), counterbored"
       }
      ]
     },
@@ -9091,8 +9182,7 @@
       },
       {
        "name": "cb_h",
-       "default": "2.2",
-       "comment": "pan-head counterbore depth (a #8 pan head sits in it)"
+       "default": "3.5"
       },
       {
        "name": "mag_ap_t",
@@ -9101,14 +9191,14 @@
       {
        "name": "pole_t",
        "default": "max(ap_t, strap_t + 1.2 + cb_h)",
-       "comment": "5.6 at the defaults"
+       "comment": "6.9 at the defaults (5.6 before the v0.2 seat)"
       }
      ]
     }
    ]
   },
   "canary_inserts.scad": {
-   "title": "Canary — FUNCTIONAL INSERTS  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — FUNCTIONAL INSERTS  ⚠️ IN DEVELOPMENT (v0.2.1-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -9138,12 +9228,13 @@
       },
       {
        "name": "horn_mouth",
-       "default": "14.0",
-       "comment": "at the lid face (covers the vent hole ring). Physics honesty: a"
+       "default": "12.0",
+       "comment": "at the lid face: the WAP's Ø12 vent-pad recess, so the wall end glues on the flat round it and the mouth still covers the Ø6 vent-hole ring."
       },
       {
        "name": "horn_h",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "the shortest support-free length of this profile (steepest bore flare (mouth - throat)/horn_h = 45° at 8) — it fits no WAP preset; the header gives the room each leaves (v0.2.1)"
       },
       {
        "name": "horn_wall",
@@ -9157,8 +9248,8 @@
      "params": [
       {
        "name": "gr_od",
-       "default": "13.4",
-       "comment": "fits inside the 14 mm disc seat (12 mm seats: set 11.4)"
+       "default": "14.0",
+       "comment": "the disc's own Ø: the seat is cut disc + 2*tol_slide (Ø14.4), so the ring centers like the disc (12 mm seats: set 12.0)"
       },
       {
        "name": "gr_id",
@@ -9167,7 +9258,8 @@
       },
       {
        "name": "gr_t",
-       "default": "0.6"
+       "default": "0.2",
+       "comment": "one layer: the seats are cut disc_t + 0.2 deep, so the disc lands flush (at 0.6 it stood 0.4 proud of the face)"
       }
      ]
     },
@@ -9177,8 +9269,8 @@
      "params": [
       {
        "name": "cg_hole",
-       "default": "8.2",
-       "comment": "panel hole it fits (relay lid default)"
+       "default": "8.4",
+       "comment": "panel hole it fits: the relay lid's (its M8 thread + 2 x tol_slide since the 2026-10-22 audit; at 8.2 the barb no longer caught there)"
       },
       {
        "name": "cg_cable",
@@ -9325,9 +9417,24 @@
        "comment": "8.6: the barb parks free inside"
       },
       {
+       "name": "cg_skirt",
+       "default": "cg_barb_z - 0.1 - cg_lip_h - (2.0 + cg_panel)",
+       "comment": "4.3: the lip's underside to the panel"
+      },
+      {
        "name": "cg_cap_h",
-       "default": "cg_cap_floor + (cg_top + cg_gap - cg_barb_z) + 0.1 + cg_lip_h",
+       "default": "cg_cap_floor + (cg_top + cg_gap - cg_barb_z) + 0.1 + cg_lip_h + cg_skirt",
        "comment": "lip 0.1 under the shoulder"
+      },
+      {
+       "name": "cg_oring_d",
+       "default": "1.0",
+       "comment": "the flange O-ring's cord"
+      },
+      {
+       "name": "cg_oring_dep",
+       "default": "0.65",
+       "comment": "its groove: + the cap's 0.1 of snap slack, the cord rests at 0.75 — 25 %"
       }
      ]
     }
@@ -9403,8 +9510,8 @@
       },
       {
        "name": "stack_h",
-       "default": "8.0",
-       "comment": "height of the stack above the PCB (the Sense camera board) — the cavity is standoff_h + board_h + this + 1.0 deep"
+       "default": "12.2",
+       "comment": "height of the stack above the PCB (the Sense camera board) — the cavity is standoff_h + board_h + this + 1.0 deep; 12.2 puts the lid's inner face 0.5 over the Sense lens top (brd_xiao_sense_cam_h() 12.7), asserted"
       },
       {
        "name": "standoff_h",
@@ -9474,13 +9581,13 @@
       },
       {
        "name": "pigtail_w",
-       "default": "10.5",
-       "comment": "pigtail pass-through slot width, low on the -X wall: the connector sits recessed, so a pigtail cable runs out through it; the weep sits beside it and the lid lip is notched over it"
+       "default": "12.8",
+       "comment": "pigtail pass-through slot width, low on the -X wall: the connector sits 7.1 inside it, so the pigtail's plug overmold stands in the slot — the Type-C spec max 12.35 + 2 x tol_slide; the weep sits beside it and the lid lip is notched over it"
       },
       {
        "name": "pigtail_h",
-       "default": "6.5",
-       "comment": "pigtail pass-through slot height, centered on the USB-C connector axis; its top corners are 45° chamfers so the wall bridges it (canary_port_lib)"
+       "default": "6.9",
+       "comment": "pigtail pass-through slot height at full width, centered on the USB-C connector axis — the spec max overmold 6.5 + 2 x tol_slide; the 45° bridge chamfers stand above it (canary_port_lib)"
       }
      ]
     },
@@ -9495,18 +9602,18 @@
       },
       {
        "name": "cam_dx",
-       "default": "0.0",
-       "comment": "aperture offset from the board center — MEASURE: the XIAO"
+       "default": "-6.95",
+       "comment": "aperture offset from the board center along X, + = away from the USB end: the Sense camera sits over the USB end — brd_xiao_sense_cam_dx(), canary_board_lib"
       },
       {
        "name": "cam_dy",
-       "default": "0.0",
-       "comment": "Sense camera sits over the USB end (brd_xiao_sense_cam_dx/dy), not dead center"
+       "default": "-0.64",
+       "comment": "aperture offset from the board center across the width — brd_xiao_sense_cam_dy(), canary_board_lib"
       },
       {
        "name": "ko_ring_d",
        "default": "22.0",
-       "comment": "mock knockout ring (aperture recessed inside it)"
+       "comment": "mock knockout ring, centered on the aperture (aperture recessed inside it)"
       },
       {
        "name": "ko_depth",
@@ -9552,8 +9659,36 @@
        "default": "floor_t + standoff_h + board_h + port_usbc_shell_h()/2"
       },
       {
+       "name": "stop_y0",
+       "default": "port_usbc_overmold_w()/2 + 0.2"
+      },
+      {
        "name": "weep_y",
        "default": "pigtail_w/2 + weep_d()/2 + 1.5"
+      },
+      {
+       "name": "lens_gap",
+       "default": "stack_h + 1.0 - brd_xiao_sense_cam_h()"
+      },
+      {
+       "name": "mount_d",
+       "default": "4.17 + 2*tol_hole",
+       "comment": "#8 clearance: the 4.17 major + 2 x tol_hole (4.77)"
+      },
+      {
+       "name": "mount_hd",
+       "default": "7.9 + 2*tol_hole",
+       "comment": "the #8 pan head's 7.9 + 2 x tol_hole (8.5)"
+      },
+      {
+       "name": "mount_cb",
+       "default": "floor_t - 1.0",
+       "comment": "counterbore depth: the house 1.0 floor stays under the head"
+      },
+      {
+       "name": "mount_y",
+       "default": "mount_hd/2 + 0.25",
+       "comment": "± across the board's centerline: the two seats 0.5 apart"
       }
      ]
     }
@@ -9597,8 +9732,8 @@
       },
       {
        "name": "screw_d",
-       "default": "4.2",
-       "comment": "countersunk corners; or use VHB and set screws=false"
+       "default": "4.8",
+       "comment": "#8 clearance: the 4.17 major + 2 x tol_hole (4.2 let the screw thread the sign) — countersunk corners; or use VHB and set screws=false"
       },
       {
        "name": "cs_head_d",
@@ -9678,7 +9813,7 @@
       {
        "name": "cs_h",
        "default": "(cs_head_d - screw_d) / (2*tan(41))",
-       "comment": "2.30 for #8 in a Ø4.2 hole"
+       "comment": "1.96 for #8 in a Ø4.8 hole"
       },
       {
        "name": "text_room",
@@ -9743,13 +9878,13 @@
       },
       {
        "name": "stack_h",
-       "default": "6.5",
-       "comment": "Sense expansion + camera height above the base PCB"
+       "default": "12.7",
+       "comment": "Sense camera lens top above the base PCB's top face — brd_xiao_sense_cam_h() (Seeed's model), canary_board_lib"
       },
       {
        "name": "cam_dx",
-       "default": "0.0",
-       "comment": "lens center offset from board center"
+       "default": "6.95",
+       "comment": "lens center offset from board center, + = toward the USB (+X) — brd_xiao_sense_cam_dx() is -6.95 with + = away from the USB: the module sits over the USB end"
       },
       {
        "name": "cam_dy",
@@ -9821,8 +9956,8 @@
       },
       {
        "name": "head_clear",
-       "default": "1.8",
-       "comment": "clearance above the camera stack"
+       "default": "-1.3",
+       "comment": "camera-top clearance under the lid's inner face. NEGATIVE: the Ø8 lens barrel stands 1.3 into the lid's window, its top 0.5 behind the disc (the WAP's arrangement; asserted)"
       }
      ]
     },
@@ -9904,8 +10039,18 @@
      "params": [
       {
        "name": "ap_d",
-       "default": "8.0",
-       "comment": "aperture through the web behind the disc"
+       "default": "10.0",
+       "comment": "window through the web behind the disc. The Ø8 lens barrel stands in it, 1.0 a side (asserted); the disc keeps a 1.2 bond ring"
+      },
+      {
+       "name": "bridge_layer",
+       "default": "0.2",
+       "range": [
+        0.08,
+        0.04,
+        0.32
+       ],
+       "comment": "your slicer's layer height: the face-down lid's bezel-recess and disc-seat counterbores get bridge steps this thick (core_bridge_steps)"
       }
      ]
     },
@@ -9920,13 +10065,13 @@
       },
       {
        "name": "vent_x",
-       "default": "30.0",
-       "comment": "vent position X — over the plug room beyond the board's USB edge: at (-15, 6) the"
+       "default": "5.0",
+       "comment": "vent position X — over the board's antenna end, clear of the lens and the battery"
       },
       {
        "name": "vent_y",
        "default": "0.0",
-       "comment": "vent position Y (see vent_x)"
+       "comment": "vent position Y, assembled (the lid cuts it at -vent_y, see lid()) — see vent_x"
       }
      ]
     },
@@ -10161,6 +10306,11 @@
       {
        "name": "batt_dy",
        "default": "batt_w/2 - (inner_w/2 - r_in)"
+      },
+      {
+       "name": "stop_y0",
+       "default": "port_usbc_overmold_w()/2 + 0.2",
+       "comment": "a stop's inboard edge across the board"
       }
      ]
     }
@@ -10323,6 +10473,11 @@
        "name": "lob_o",
        "default": "2.2",
        "comment": "lobe diagonal offset outboard of the cavity corner"
+      },
+      {
+       "name": "cb_h",
+       "default": "2.0",
+       "comment": "pan-head counterbore depth in the back: the registry's M2 pan seat (head k 1.6 + 0.4 sink)"
       },
       {
        "name": "screw_l",
@@ -11009,12 +11164,12 @@
       },
       {
        "name": "snap_beam_t",
-       "default": "0.85",
+       "default": "0.8",
        "comment": "beam thickness (the wall is locally thinned to this)"
       },
       {
        "name": "snap_eng",
-       "default": "0.4",
+       "default": "0.25",
        "comment": "engagement depth (how far the hook stands past the plate edge)"
       },
       {
@@ -11229,14 +11384,6 @@
        "default": "z_usb - usb_shell_h/2 - usb_clear - usb_relief"
       },
       {
-       "name": "snap_defl",
-       "default": "snap_eng + tol_press"
-      },
-      {
-       "name": "snap_strain",
-       "default": "snap_strain(snap_beam_t, snap_defl, snap_beam_l)"
-      },
-      {
        "name": "btn_y",
        "default": "board_l/2 - btn_from_usb",
        "comment": "+Y is the plug end"
@@ -11303,6 +11450,19 @@
       {
        "name": "beam_root_z",
        "default": "bez_h - snap_beam_l"
+      },
+      {
+       "name": "snap_defl",
+       "default": "snap_eng + tol_press"
+      },
+      {
+       "name": "snap_lever",
+       "default": "groove_mid_z - beam_root_z",
+       "comment": "root -> hook, where the plate loads it"
+      },
+      {
+       "name": "snap_strain",
+       "default": "snap_strain(snap_beam_t, snap_defl, snap_lever)"
       },
       {
        "name": "mark_word_h",
@@ -11580,6 +11740,11 @@
        "name": "btn_body_p",
        "default": "0.4",
        "comment": "metal body overhang past the PCB edge — MEASURE"
+      },
+      {
+       "name": "btn_body_d",
+       "default": "3.5",
+       "comment": "switch body depth IN from its overhanging face (X) — MEASURE; the C3 sibling's number for the same switch, which the stripped back's bosses must clear"
       }
      ]
     },
@@ -11866,8 +12031,8 @@
       },
       {
        "name": "stand_iy",
-       "default": "2.6",
-       "comment": "inset from ±Y edge (M2 pattern) — MEASURE"
+       "default": "(headers == \"male\") ? 2.6 : 2.2",
+       "comment": "inset from ±Y edge (M2 pattern; stripped: off the switch bodies) — MEASURE"
       },
       {
        "name": "stand_d",
@@ -12977,6 +13142,29 @@
       {
        "name": "sw_x0",
        "default": "board_w/2 + btn_body_p - btn_body_d"
+      },
+      {
+       "name": "collar_flat_z",
+       "default": "z_usb + usb_a_h/2 + port_bridge_cham_for(usb_a_w + 2*collar_gap)"
+      },
+      {
+       "name": "lid_key_w",
+       "default": "usb_shell_w - 2.0",
+       "comment": "across the slot (x): 1.05 clear of each slot wall"
+      },
+      {
+       "name": "lid_key_y0",
+       "default": "yc/2 + 0.1",
+       "comment": "inner face, lid frame: 0.1 outboard of the cavity line"
+      },
+      {
+       "name": "lid_key_t",
+       "default": "1.0",
+       "comment": "through the wall (y): stops 0.2 inboard of the receptacle face"
+      },
+      {
+       "name": "lid_key_len",
+       "default": "min(2.0, bez_h - (z_pcb_back + 3.26 + usb_dz) - 0.4)"
       }
      ]
     }
@@ -13601,11 +13789,6 @@
        "name": "ledge_slope_max",
        "default": "max(ledge_side, ledge_top, ledge_bot)",
        "comment": "deepest back-slope"
-      },
-      {
-       "name": "ledge_slope_n",
-       "default": "20",
-       "comment": "steps in the 45° back-slope. Each step overhangs by"
       }
      ]
     },
@@ -14743,8 +14926,13 @@
        "comment": "window center across the wall"
       },
       {
+       "name": "btn_pcb_top",
+       "default": "panel_core_dy + pcb_h/2",
+       "comment": "the board's BUTTON edge, frame y"
+      },
+      {
        "name": "btn_tower_len",
-       "default": "btn_reach > 0 ? btn_reach : fr_yo/2 - pcb_h/2 - 3.6"
+       "default": "btn_reach > 0 ? btn_reach : fr_yo/2 - btn_pcb_top - 3.6"
       },
       {
        "name": "usb_open_w",
@@ -15406,6 +15594,10 @@
        "default": "bez_h - snap_depth - snap_h/2 - 0.8"
       },
       {
+       "name": "btn_notch",
+       "default": "opt_btn && z_btn + btn_d/2 > bez_h - skirt_dep"
+      },
+      {
        "name": "cable_w",
        "default": "port_usbc_overmold_w() + 2*1.0",
        "comment": "1.0 of play a side: the plug arrives tilted"
@@ -15504,7 +15696,7 @@
    ]
   },
   "canary_vehicle_mount.scad": {
-   "title": "Canary — VEHICLE MOUNT KIT  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — VEHICLE MOUNT KIT  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -15549,6 +15741,16 @@
        "name": "stud_stem_h",
        "default": "1.4",
        "comment": "stem height — canary_mount_lib mount_stud_stem()"
+      },
+      {
+       "name": "stud_riser",
+       "default": "2.4",
+       "comment": "pad under each stud (canary_wear_clip's): the field boot's floor (boot_floor 2.5) less 0.1, so a stud reaches its keyhole through the boot's floor window; 0 = studs on the bare face"
+      },
+      {
+       "name": "stud_riser_d",
+       "default": "10.0",
+       "comment": "riser pad diameter, teardrop-pointed 45° so it prints sideways on the vent clip. It passes the boot's 24 x 16 floor window over the whole 8 mm slide"
       }
      ]
     },
@@ -15573,8 +15775,8 @@
       },
       {
        "name": "vhb_rec",
-       "default": "0.6",
-       "comment": "3M VHB strip register recess depth"
+       "default": "0",
+       "comment": "3M VHB strip register recess depth: 0 = the tape on the flat bed face (v0.3: a 0.6 recess roofed a 20 mm flat bridge over the bed)"
       }
      ]
     },
@@ -15617,8 +15819,12 @@
      "note": "",
      "params": [
       {
+       "name": "stud_fp",
+       "default": "max(stud_head, stud_riser > 0 ? stud_riser_d : 0)"
+      },
+      {
        "name": "stud_span",
-       "default": "stud_gap + stud_head + 4"
+       "default": "stud_gap + stud_fp + 4"
       },
       {
        "name": "riser_l",
@@ -15684,6 +15890,16 @@
        "name": "stud_stem_h",
        "default": "1.4",
        "comment": "stem height — mount_stud_stem()"
+      },
+      {
+       "name": "stud_riser",
+       "default": "2.4",
+       "comment": "pad under each stud: the field boot's floor (boot_floor 2.5) less 0.1, so a stud reaches its keyhole through the boot's floor window; 0 = studs on the bare plate"
+      },
+      {
+       "name": "stud_riser_d",
+       "default": "10.0",
+       "comment": "riser pad diameter, teardrop-pointed 45° so it prints sideways on the belt clip. It passes the boot's 24 x 16 floor window over the whole 8 mm slide"
       }
      ]
     },
@@ -15745,11 +15961,21 @@
        "comment": "PALS grid: 1\" webbing rows spaced 1\" apart = 38.1 mm"
       }
      ]
+    },
+    {
+     "name": "Quality",
+     "note": "",
+     "params": [
+      {
+       "name": "stud_fp",
+       "default": "max(stud_head, stud_riser > 0 ? stud_riser_d : 0)"
+      }
+     ]
     }
    ]
   },
   "canary_vision_pro_mount.scad": {
-   "title": "Canary — VISION PRO MOUNT  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — VISION PRO MOUNT  ⚠️ IN DEVELOPMENT (v0.2-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -15868,21 +16094,52 @@
        "comment": "face web the stud head grips behind — mount_kh_face()"
       },
       {
-       "name": "kh_x",
-       "default": "12.0",
-       "comment": "keyhole pair spacing (± from center)"
+       "name": "kh_gap",
+       "default": "30.0",
+       "comment": "keyhole pair spacing, IN LINE along the slots (vertical, as every case back) — set it to the stud surface's stud_gap (the asserts say when plate_h must grow)"
       },
       {
        "name": "kh_y",
-       "default": "22.0",
-       "comment": "keyhole row offset from center, toward the TOP edge"
+       "default": "7.5",
+       "comment": "keyhole pair center, from the plate center toward the TOP edge"
+      }
+     ]
+    },
+    {
+     "name": "Quality",
+     "note": "",
+     "params": [
+      {
+       "name": "mag_r",
+       "default": "mag_d/2 + core_tol_press()",
+       "comment": "the magnet pocket's radius"
+      },
+      {
+       "name": "dev_x",
+       "default": "12.0",
+       "comment": "tripod at -dev_x, magnet at +dev_x"
+      },
+      {
+       "name": "dev_y",
+       "default": "-plate_h/2 + mag_r + 1.4",
+       "comment": "both: 1.4 of wall under the magnet pocket (-20.5 at plate_h 64)"
+      },
+      {
+       "name": "kh_lo",
+       "default": "kh_y - kh_gap/2 - kh_slot_l/2",
+       "comment": "the lower pocket's head-circle center (its low end)"
+      },
+      {
+       "name": "kh_cav",
+       "default": "(kh_head_d + 0.6)/2",
+       "comment": "its head cavity's radius (mount_keyhole_pocket)"
       }
      ]
     }
    ]
   },
   "canary_fit_coupon.scad": {
-   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.3-dev)",
+   "title": "Canary — UNIVERSAL FIT-CHECK COUPON  ⚠️ IN DEVELOPMENT (v0.4-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -16208,7 +16465,7 @@
    ]
   },
   "canary_bench_fixture.scad": {
-   "title": "Canary — BENCH BRING-UP FIXTURE  ⚠️ IN DEVELOPMENT (v0.2-dev)",
+   "title": "Canary — BENCH BRING-UP FIXTURE  ⚠️ IN DEVELOPMENT (v0.4-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -16303,7 +16560,7 @@
       {
        "name": "mag_h",
        "default": "3.0",
-       "comment": "tamper magnet height — not read by the geometry: the slider's pocket is open at the knob top, its floor 1.3 above the foot's underside and 6.4 below the knob top"
+       "comment": "tamper magnet height — not read by the geometry: the slider's pocket is open at the knob top, its floor 3.2 above the foot's underside and 4.5 below the knob top"
       }
      ]
     },
@@ -16342,11 +16599,21 @@
        "comment": "the station labels' font (an OpenSCAD font name)"
       }
      ]
+    },
+    {
+     "name": "Quality",
+     "note": "",
+     "params": [
+      {
+       "name": "stop_x0",
+       "default": "port_usbc_overmold_w()/2 + 0.2"
+      }
+     ]
     }
    ]
   },
   "canary_dock.scad": {
-   "title": "Canary — FLEET PROVISIONING DOCK  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — FLEET PROVISIONING DOCK  ⚠️ IN DEVELOPMENT (v0.3-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -16384,7 +16651,7 @@
     },
     {
      "name": "Board",
-     "note": "XIAO (any variant); defaults measured from the committed vendor GLB (canary-local/boards/seeed_xiao_esp32s3_sense.glb): board 21 x 17.8 mm, bare thickness 4.4 incl the USB shell; a Sense with its camera folded flat stacks to 13.7 — pick the variant to size the pocket.",
+     "note": "XIAO (any variant); defaults measured from the committed vendor GLB (canary-local/boards/seeed_xiao_esp32s3_sense.glb): board 21 x 17.8 mm, bare thickness 4.4 incl the USB shell; a Sense with its camera folded flat stacks to 13.96 (PCB bottom to lens top) — pick the variant to size the pocket.",
      "params": [
       {
        "name": "variant",
@@ -16411,8 +16678,8 @@
       },
       {
        "name": "pocket_sense",
-       "default": "14.5",
-       "comment": "pocket depth: Sense w/ camera folded on top (13.7 measured)"
+       "default": "15.0",
+       "comment": "pocket depth: Sense w/ camera folded on top — 13.96 PCB bottom to lens top (Seeed's GLB) + the 0.75 the PCB rides the r1.5 corners + 0.29 (v0.3: 14.5 held the lens 0.21 into the front wall)"
       },
       {
        "name": "thumb_d",
@@ -16438,6 +16705,11 @@
       {
        "name": "label_depth",
        "default": "0.6"
+      },
+      {
+       "name": "label_size",
+       "default": "6.0",
+       "comment": "bay number text height — centered between the thumb cutout and the face's top edge, asserted to fit there (v0.2: a 7, set lower, lost 40-47 % of each digit to the cutout)"
       },
       {
        "name": "label_font",
@@ -16470,13 +16742,21 @@
        "name": "front_setback",
        "default": "(bh - 4)*tan(recline)",
        "comment": "the front face leans back with the bays"
+      },
+      {
+       "name": "lbl_s_hole",
+       "default": "(3 + pocket_d/2 + 2*tan(recline))*sin(recline) - 2*cos(recline) + board_l*0.35 + thumb_d/2"
+      },
+      {
+       "name": "lbl_s",
+       "default": "(lbl_s_hole + (bh - 4)/cos(recline))/2"
       }
      ]
     }
    ]
   },
   "canary_shop_tools.scad": {
-   "title": "Canary — SHOP TOOLS  ⚠️ IN DEVELOPMENT (v0.1-dev)",
+   "title": "Canary — SHOP TOOLS  ⚠️ IN DEVELOPMENT (v0.2.1-dev)",
    "groups": [
     {
      "name": "What to render",
@@ -16494,20 +16774,32 @@
     },
     {
      "name": "Insert guide",
-     "note": "matches screw_insert-mode posts",
+     "note": "sits in a bore corner on the ledge, over a screw_insert post",
      "params": [
       {
-       "name": "post_d",
-       "default": "6.7",
-       "comment": "fattened post OD (insert_d 3.5 + 2.4 wall = 5.9; WAP pd max(5, 5.9))"
+       "name": "post_dx",
+       "default": "4.55",
+       "comment": "post center from the bore wall along X (ledge_w + the post's offset from the cavity wall): WAP 4.55, Vision and Sense 4.85; sealed: WAP (battery_weather) 7.35, Vision (vision_weather) and Sense 7.65, doorbell 8.85"
+      },
+      {
+       "name": "post_dy",
+       "default": "4.55",
+       "comment": "post center from the bore wall along Y: WAP 4.55, Vision and Sense 4.85; sealed: WAP (battery_weather) 7.35, Vision (vision_weather) and Sense 7.65, doorbell 8.85"
+      },
+      {
+       "name": "bore_corner_r",
+       "default": "2.6",
+       "comment": "the plate bore's corner radius (the case's bore_r): 2.6 on the unsealed WAP, Vision and Sense, 5.4 on the sealed WAP, Vision and Sense, 10.8 on the sealed doorbell"
       },
       {
        "name": "insert_d",
-       "default": "3.5"
+       "default": "3.5",
+       "comment": "insert knurl OD (M2 short series); the guide bore passes it with 0.2 a side"
       },
       {
        "name": "guide_h",
-       "default": "12.0"
+       "default": "12.0",
+       "comment": "guide height above the ledge — the length that holds the iron square"
       }
      ]
     },
@@ -16575,12 +16867,17 @@
     },
     {
      "name": "Doorbell",
-     "note": "mirror canary_vision_doorbell plate defaults",
+     "note": "mirror canary_vision_doorbell plate defaults (gen_templates.py --check probes the doorbell and fails when one of these stops equaling its source)",
      "params": [
       {
        "name": "db_exit_slide",
        "default": "8.0",
        "comment": "the wall plate's pass runs this far up the slide (mount_dt_travel)"
+      },
+      {
+       "name": "db_r",
+       "default": "12.0",
+       "comment": "the plate outline's corner radius (the doorbell's rr)"
       },
       {
        "name": "line",

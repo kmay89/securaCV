@@ -35,6 +35,11 @@ on:
       # sets gen_enclosures.py and gen_builder_manifest.py read; both of
       # those --checks run only here, so a manifest edit must run them
       - "devices/*/device.json"
+      # the part-revision ledger: lint.yml's --check holds the committed
+      # meshes and every part's sources to it, but only this workflow renders
+      # the dev parts, so an edit to the ledger alone must run the rendered
+      # check or a dev part's fingerprint could be hand-edited past the gate
+      - "canary-local/devices/revisions.json"
   pull_request:
     branches: [ "main" ]
     paths:
@@ -47,6 +52,7 @@ on:
       - "canary-local/boards/**"
       - "canary-local/tools/**"
       - "devices/*/device.json"
+      - "canary-local/devices/revisions.json"
 
 permissions:
   contents: read
@@ -73,7 +79,15 @@ jobs:
     # Renders + mesh checks only. The seated-fit suite used to live here and
     # was the long pole by far; it now has its own job (see `fit` below), so
     # this one reports in minutes instead of waiting on it.
-    timeout-minutes: 40
+    #
+    # 75, re-measured (CI.md R2: ~2-3x the healthy runtime). The 2026-10-22
+    # audit put 16 parts that never rendered into render.sh and added the
+    # revision check, and the job went from 24.8 min (main, 40119d27) to 32.0
+    # and 34.8 on that PR's runs: 80-87% of the old 40, with the OpenSCAD
+    # install under 30 s each time. The install has its own clock (see the
+    # fit job's "THE INSTALL IS NOT THE GATE"), because on the same days it
+    # took 3 to over 10 minutes on other runners.
+    timeout-minutes: 75
     defaults:
       run:
         working-directory: docs/hardware/enclosure
@@ -114,9 +128,21 @@ jobs:
         run: python3 gen_mark_svg.py --check
 
       - name: Install OpenSCAD + admesh
+        timeout-minutes: 15
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq openscad admesh
+
+      # The 1:1 paper drill templates. render.sh rewrites template_*.svg, but
+      # nothing compared them with the committed files, so the doorbell's stayed
+      # the v0.6 drawing (82 x 135 mm) under a 172.7 mm v0.9 plate for three
+      # weeks. This renders each one (OpenSCAD's 2D SVG export is deterministic,
+      # unlike its STL bytes) and compares bytes, and probes the doorbell and the
+      # Vision bracket for every number the template copies from them. It runs
+      # BEFORE the render step on purpose: after render.sh the checkout holds the
+      # fresh drawings and a byte compare would always pass.
+      - name: Paper drill templates match the parts they drill for
+        run: python3 gen_templates.py --check
 
       # The measured assembled envelopes the fleet-figure ledger reads for
       # multi-part devices (gen_figures.mjs cannot run OpenSCAD, so the
@@ -173,6 +199,14 @@ jobs:
           # OpenSCAD exits 0 on geometry warnings — treat them as failures.
           # (Benign CGAL cache statistics lines are not matched by these patterns.)
           ! grep -E 'ERROR|WARNING|Object isn.t a valid 2-manifold' render.log
+
+      # Every part the render just wrote — the committed released STLs and
+      # the gitignored dev_*.stl — against its recorded revision. A part whose
+      # printed shape moved without gen_revisions.py recording the next rev
+      # fails here, dev parts included (--rendered: a missing dev render is an
+      # error, not a skip). lint.yml runs the no-OpenSCAD half on every PR.
+      - name: Every part's revision is recorded (dev renders included)
+        run: python3 gen_revisions.py --check --rendered
 
       # Every released case, assembled and intersected. The mesh checks below
       # cannot see this class of defect at all: the pan-head pad that shipped
@@ -297,6 +331,14 @@ jobs:
               dev_c3_147_hdr_bezel.stl) echo 2 ;;
               dev_c3_147_usba_bezel.stl) echo 2 ;;
               dev_c3_147_usba_hdr_bezel.stl) echo 2 ;;
+              # the lid's wordmark inlay is a SET of six letters and the S3
+              # stick's accent inlay eight: fewer means a letter was lost (a
+              # missing font does not show here — OpenSCAD falls back to
+              # another font silently — and a text() that drew nothing writes
+              # no file, which stops render.sh and fails gen_revisions.py
+              # --check --rendered)
+              dev_c3_147_mark.stl)      echo 6 ;;
+              dev_s3_147_fil_accent.stl) echo 8 ;;
               *)                        echo 1 ;;
             esac
           }
@@ -355,7 +397,7 @@ jobs:
     runs-on: ubuntu-24.04
     # A MATRIX, not a bigger number — and the history is why.
     #
-    # These are full-assembly CGAL intersections, 21 of them, on a 2-core
+    # These are full-assembly CGAL intersections, 28 of them, on a 2-core
     # runner. As one serial step the suite has now blown three budgets: 30 min
     # (died at 30:15 "with the geometry all green"), then 75 as part of the
     # combined job, then 90 with a job all to itself — canceled at 89m45s.
@@ -371,10 +413,11 @@ jobs:
     # portrait are separate.
     #
     # fail-fast: false on purpose. These check different things, and one
-    # broken gate must not hide the state of the other twenty — that is the
+    # broken gate must not hide the state of the others — that is the
     # same argument as splitting the mesh checks out of this job.
     #
-    # NOTHING was dropped to fit the clock. All 21 gates run, the inverted
+    # NOTHING was dropped to fit the clock. Every gate runs (21 then; the
+    # 2026-10-22 audit added the tethers and fil groups' seven), the inverted
     # ones keep their empty/solid semantics, and the self-test that proves a
     # broken render is rejected still runs as its own group.
     # PER-GROUP BUDGETS, sized from measurement rather than one number for
@@ -423,7 +466,19 @@ jobs:
     # If a group starts consuming most of its budget again, re-measure and
     # re-cut rather than doubling: a gate that got slower is telling you the
     # part got heavier, and that is worth knowing before the timeout is.
-    timeout-minutes: ${{ matrix.minutes }}
+    #
+    # THE INSTALL IS NOT THE GATE (2026-10-23). These budgets used to be the
+    # job's, so the apt install of OpenSCAD spent from them, and the install
+    # stopped being a rounding error: 14-30 s on every runner on 2026-10-21,
+    # then 2.8-8.7 min on six of thirteen runners on 5da963c8 and 3.9-6.5 on
+    # three more on 3555613d, where tpu was canceled at 10 minutes still
+    # inside apt, its 18-second gate never started (b61d40f2 went the same
+    # way). So each group's minutes now bound its gate STEP, the thing they
+    # were measured from; the install step has its own 15, and the job's
+    # number is only a backstop over both: 15 + the largest gate budget (105)
+    # is the policy ceiling of 120. A hung gate still dies on its own small
+    # clock, and as a failed step that names itself, not a cancellation.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -435,6 +490,8 @@ jobs:
           - { group: dock-p,        minutes: 35 }
           - { group: frame,         minutes: 35 }
           - { group: ports,         minutes: 45 }
+          - { group: tethers,       minutes: 15 }
+          - { group: fil,           minutes: 20 }
           - { group: battery-none,  minutes: 65 }
           - { group: battery-3000,  minutes: 105 }
           - { group: battery-10000, minutes: 105 }
@@ -445,11 +502,13 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install OpenSCAD
+        timeout-minutes: 15
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq openscad
 
       - name: 7in dashboard parts must actually assemble
+        timeout-minutes: ${{ matrix.minutes }}
         run: |
           # A valid mesh is not a valid case. v0.1 of the 7" case exported three
           # watertight, single-part STLs whose bezel lip floated 5 mm clear of
@@ -557,6 +616,28 @@ jobs:
           fit frame_sd_window empty || exit 1  # SD opening really open through the plate
           fit sd_tether_hole empty || exit 1   # tether anchor hole really open through the plate
           fit sd_tether_barb solid "the SD cover's barb misses its anchor hole — strap length, hole position or install transform drifted" || exit 1
+              ;;
+            tethers)
+              # The two TPU fitments' leashes (the USB grommet's — the port
+              # blank carries the same strap and barb — and the BOOT/RESET
+              # plug's): each anchor hole really open, each barb really in its
+              # hole, and the grommet's barb flush. These probes
+              # existed in the file and no gate ran them (2026-10-22 audit).
+              # The gate step took 5.2 and 5.6 min on 5da963c8 and 3555613d
+              # (fil's 4.2 and 8.2), so 15 and 20: about 2.5x, the gate alone,
+              # now that the install has its own clock.
+          bfit none port_teth_hole  empty || exit 1
+          bfit none port_teth_barb  solid "the grommet's leash barb misses its anchor hole" || exit 1
+          bfit none port_barb_proud empty || exit 1
+          bfit none plug_teth_hole  empty || exit 1
+          bfit none plug_teth_barb  solid "the BOOT/RESET plug's leash barb misses its anchor hole" || exit 1
+              ;;
+            fil)
+              # The multi-filament split: body, ink and accent must tile the
+              # frame with no gap and no overlap, or the AMS prints a seam or a
+              # double wall. Two probes, ~8 minutes each locally (475 / 437 s).
+          bfit none fil_gap     empty || exit 1
+          bfit none fil_overlap empty || exit 1
               ;;
             tpu)
           fit frame_usb_seal solid "the grommet no longer fills the USB port — waist or installed transform drifted" || exit 1

@@ -129,12 +129,16 @@ export function enqueue(db, { to, subject, text, kind = 'transactional', ref = n
 export async function sendOutbox(db, cfg, { transport = null, limit = 50, now = nowIso } = {}) {
   // Demo mode never opens a socket: the message is built, logged as sent, and kept in the outbox to read.
   const tx = transport || (cfg.demo ? async () => true : cfg.smtpUrl ? (m) => smtpSend(cfg.smtpUrl, m) : null);
-  const rows = db.all('SELECT * FROM mail_outbox WHERE status = \'queued\' AND attempts < 5 ORDER BY id LIMIT ?', limit);
+  // A row left in 'sending' by a process that died mid-send goes back to the queue after ten minutes.
+  db.run('UPDATE mail_outbox SET status = \'queued\' WHERE status = \'sending\' AND created_at < ?', new Date(Date.now() - 10 * 60_000).toISOString());
+  const rows = db.all('SELECT * FROM mail_outbox WHERE status = \'queued\' AND attempts < 12 AND (next_attempt_at IS NULL OR next_attempt_at <= ?) ORDER BY id LIMIT ?', now(), limit);
   const out = { sent: 0, failed: 0, suppressed: 0, skipped: 0 };
   for (const m of rows) {
+    // claimed before the socket opens: a second run (the scheduler and a "send now" press at once) sees it taken and sends nothing twice
+    if (!db.run('UPDATE mail_outbox SET status = \'sending\' WHERE id = ? AND status = \'queued\'', m.id).changes) continue;
     const marketing = m.kind === 'campaign' || m.kind === 'automation';
     if (marketing && !canMarket(contactByEmail(db, m.to_addr))) { db.run('UPDATE mail_outbox SET status = \'suppressed\' WHERE id = ?', m.id); out.suppressed++; continue; }
-    if (!tx || !cfg.mailFrom) { out.skipped++; continue; }
+    if (!tx || !cfg.mailFrom) { db.run('UPDATE mail_outbox SET status = \'queued\' WHERE id = ?', m.id); out.skipped++; continue; }
     const hdr = JSON.parse(m.headers || '{}'); const unsub = (hdr['List-Unsubscribe'] || '').replace(/^<|>$/g, '');
     const html = marketing ? renderHtml(m.body_text, brandOpts(cfg, { unsubscribe: unsub, preheader: hdr['X-Preheader'] || '' })) : null;
     delete hdr['X-Preheader'];
@@ -144,7 +148,9 @@ export async function sendOutbox(db, cfg, { transport = null, limit = 50, now = 
       db.run('UPDATE mail_outbox SET status = \'sent\', sent_at = ?, message_id = ?, attempts = attempts + 1 WHERE id = ?', now(), msg.id, m.id);
       out.sent++;
     } catch (e) {
-      db.run('UPDATE mail_outbox SET attempts = attempts + 1, last_error = ?, status = CASE WHEN attempts + 1 >= 5 THEN \'failed\' ELSE \'queued\' END WHERE id = ?', String(e.message || e).slice(0, 500), m.id);
+      // 30 s, 2 min, 8 min, 32 min, ~2 h, then 6 h apart: a relay down for an afternoon loses nothing; after ~48 h of refusals the row is failed, and a person can retry it
+      const delay = Math.min(6 * 3600_000, 30_000 * 4 ** m.attempts);
+      db.run('UPDATE mail_outbox SET attempts = attempts + 1, last_error = ?, next_attempt_at = ?, status = CASE WHEN attempts + 1 >= 12 THEN \'failed\' ELSE \'queued\' END WHERE id = ?', String(e.message || e).slice(0, 500), new Date(Date.parse(now()) + delay).toISOString(), m.id);
       out.failed++;
     }
   }
@@ -155,3 +161,6 @@ export const outboxStats = (db) => Object.fromEntries(db.all('SELECT status, COU
 
 // {{name}} substitution with a safe fallback — templates are plain text.
 export const fill = (tpl, vars) => tpl.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_, k) => k.split('.').reduce((o, p) => (o == null ? '' : o[p]), vars) ?? '');
+
+// A person's "retry": every failed row goes back to the queue with a clean count.
+export const retryFailedMail = (db) => db.run('UPDATE mail_outbox SET status = \'queued\', attempts = 0, next_attempt_at = NULL WHERE status = \'failed\'').changes;

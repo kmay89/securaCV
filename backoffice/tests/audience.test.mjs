@@ -103,12 +103,12 @@ test('a bounce names the address and suppresses it; the newsletter form double-o
   optIn(db, 'gone@example.test', 'Gone');
   const r = ingestEmail(db, { from: 'Mail Delivery Subsystem <mailer-daemon@relay.example.test>', subject: 'Undeliverable: October from the bench', text: 'Your message to gone@example.test could not be delivered.\n550 5.1.1 User unknown', messageId: '<dsn1@relay.example.test>' }, { cfg });
   assert.equal(r.ignored, 'bounce'); assert.deepEqual(r.bounced, ['gone@example.test']); assert.ok(db.get('SELECT bounced_at FROM contacts WHERE email = \'gone@example.test\'').bounced_at); assert.equal(db.get('SELECT COUNT(*) AS n FROM tickets').n, 0, 'a bounce is not a ticket');
-  setupOperator(db, 'audience-test-pw-1'); const app = createApp({ db, cfg }); const addr = await app.listen(); const base = `http://127.0.0.1:${addr.port}`;
+  const totpSecret = setupOperator(db, 'audience-test-pw-1'); const app = createApp({ db, cfg }); const addr = await app.listen(); const base = `http://127.0.0.1:${addr.port}`;
   try {
     const f = await fetch(base + '/forms/newsletter', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'new@example.test', name: 'New' }) });
     assert.equal((await f.json()).newsletter, 'confirmation mail sent'); assert.ok(db.get('SELECT consent_token FROM contacts WHERE email = \'new@example.test\'').consent_token); assert.equal(db.get('SELECT consent_marketing FROM contacts WHERE email = \'new@example.test\'').consent_marketing, 0);
     // security: the door
-    const login = await fetch(base + '/login', { method: 'POST', body: new URLSearchParams({ password: 'audience-test-pw-1', code: totp(db.setting('auth:totp')) }), redirect: 'manual' });
+    const login = await fetch(base + '/login', { method: 'POST', body: new URLSearchParams({ password: 'audience-test-pw-1', code: totp(totpSecret) }), redirect: 'manual' });
     const cookie = login.headers.get('set-cookie').split(';')[0]; const csrf = db.get('SELECT csrf FROM sessions').csrf;
     const home = await fetch(base + '/', { headers: { cookie } }); assert.equal(home.headers.get('cache-control'), 'no-store'); assert.match(home.headers.get('permissions-policy'), /camera=\(\)/); assert.equal(home.headers.get('cross-origin-opener-policy'), 'same-origin'); assert.ok(!home.headers.get('strict-transport-security'), 'no HSTS over plain http');
     const xs = await fetch(base + '/orders/bulk', { method: 'POST', headers: { cookie, 'sec-fetch-site': 'cross-site' }, body: new URLSearchParams({ _csrf: csrf, action: 'packed' }), redirect: 'manual' }); assert.equal(xs.status, 403, 'a cross-site POST is refused before the body matters');
@@ -118,7 +118,7 @@ test('a bounce names the address and suppresses it; the newsletter form double-o
     assert.equal((await fetch(base + '/api/inventory/move', { method: 'POST', headers: { authorization: `Bearer ${ro}`, 'content-type': 'application/json' }, body: '{}' })).status, 403, 'a read-only token cannot write');
     assert.notEqual((await fetch(base + '/api/inventory/move', { method: 'POST', headers: { authorization: `Bearer ${rw}`, 'content-type': 'application/json' }, body: '{}' })).status, 403);
     for (let i = 0; i < 8; i++) await fetch(base + '/login', { method: 'POST', body: new URLSearchParams({ password: 'wrong', code: '000000' }), redirect: 'manual' });
-    const locked = await fetch(base + '/login', { method: 'POST', body: new URLSearchParams({ password: 'audience-test-pw-1', code: totp(db.setting('auth:totp')) }), redirect: 'manual' });
+    const locked = await fetch(base + '/login', { method: 'POST', body: new URLSearchParams({ password: 'audience-test-pw-1', code: totp(totpSecret) }), redirect: 'manual' });
     assert.equal(locked.status, 429, 'eight failures lock the address, even for the right password');
     assert.ok(db.get('SELECT detail FROM audit_log WHERE action = \'auth.login.locked\'')); assert.ok(JSON.parse(db.get('SELECT detail FROM audit_log WHERE action = \'auth.login.failed\' ORDER BY id DESC LIMIT 1').detail).ip);
     const by = Object.fromEntries(doctor(db, cfg).checks.map(c => [c.key, c])); assert.equal(by.logins.ok, true); assert.match(by.logins.detail, /^8 /); assert.equal(by.password_age.ok, true); assert.equal(by.offsite_sealed.ok, null);

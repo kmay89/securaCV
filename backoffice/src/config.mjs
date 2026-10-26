@@ -22,15 +22,25 @@ export function loadConfig(overrides = {}) {
     stripeWebhookSecret: env('STRIPE_WEBHOOK_SECRET', ''),
     stripeApiKey: env('STRIPE_API_KEY', ''),                        // optional, read-only uses (payout list)
     githubToken: env('GITHUB_TOKEN', ''),
-    githubRepo: env('GITHUB_REPO', 'kmay89/securaCV'),
+    githubRepo: env('GITHUB_REPO', ''),                             // exceptions open issues here when GITHUB_TOKEN is set — a PRIVATE repo: the bodies describe customers' orders
+    trustedProxies: env('TRUSTED_PROXIES', 'loopback,private'),      // whose X-Forwarded-For to believe: loopback, private, exact addresses, v4 CIDRs
     storeJson: env('STORE_JSON', 'https://securacv.com/store.json'), // catalog: path or URL
+    shippingJson: env('SHIPPING_JSON', ''),                           // boxes + parcels: path or URL; blank = next to store.json
     slaHours: Number(env('SUPPORT_SLA_HOURS', '24')),
     sessionHours: Number(env('SESSION_HOURS', '12')),
     backupKeep: Number(env('BACKUP_KEEP', '14')),
     backupS3Url: env('BACKUP_S3_URL', '').replace(/\/$/, ''),          // https://<endpoint>/<bucket>/<prefix> — any S3-compatible store (B2, R2, Tigris, S3)
     backupEncryptionKey: env('BACKUP_ENCRYPTION_KEY', ''),             // a passphrase; off-site copies are sealed (AES-256-GCM) under it
     backupS3Key: env('BACKUP_S3_KEY', ''), backupS3Secret: env('BACKUP_S3_SECRET', ''), backupS3Region: env('BACKUP_S3_REGION', 'us-east-1'),
-    operatorEmail: env('OPERATOR_EMAIL', env('SUPPORT_ADDR', '')),       // the morning digest goes here
+    operatorEmail: env('OPERATOR_EMAIL', env('SUPPORT_ADDR', '')),
+    tz: env('OPERATOR_TZ', 'UTC'),                                     // every time the admin shows, the digest hour, campaign scheduling
+    shipFromState: env('SHIP_FROM_STATE', 'MA'),                        // the delivery estimate counts from here
+    batchCloseDay: Number(env('BATCH_CLOSE_DAY', '0')),                 // the batch cadence the store promises: orders in by this weekday (0 = Sunday)…
+    batchCloseHour: Number(env('BATCH_CLOSE_HOUR', '23')),              // …at this hour (operator time, 23 = 11 pm)…
+    batchShipDay: Number(env('BATCH_SHIP_DAY', '2')),                   // …ship on this weekday (2 = Tuesday)
+    taxMode: env('TAX_MODE', 'none'),                                   // none | stripe — see README "Tax"
+    checkoutSuccessPath: env('CHECKOUT_SUCCESS_PATH', '/store/thanks'), // on the website, where Stripe sends a paid shopper
+    uspsClientId: env('USPS_CLIENT_ID', ''), uspsClientSecret: env('USPS_CLIENT_SECRET', ''), uspsApiBase: env('USPS_API_BASE', 'https://apis.usps.com'),       // the morning digest goes here
     digestHour: Number(env('DIGEST_HOUR', '7')),                       // UTC hour the digest is sent
     secure: env('BACKOFFICE_BASE_URL', '').startsWith('https://'),
     demo: env('BACKOFFICE_DEMO', '') === '1',                       // also set by a database the demo seeded

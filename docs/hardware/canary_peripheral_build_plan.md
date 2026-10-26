@@ -335,10 +335,11 @@ strong pull at boot) · ADC2/GPIO5 is shared with WiFi.
   the camera); and a sealed USB-C access port or pigtail gland.
 - Mount the tamper magnet on the lid so opening the enclosure separates `MAG1`
   from `SW2`. A **parametric 3D-printable enclosure** (OpenSCAD configurator +
-  ready STLs) is maintained in [`enclosure/`](./enclosure/) — v0.7 with three
+  ready STLs) is maintained in [`enclosure/`](./enclosure/) — v0.9 with three
   presets (`battery_full`, `compact_plain`, `battery_weather`), per-printer fit
-  tolerances, an opt-in **weather mode** (printed TPU gasket + drip-edge lid +
-  sealed camera-disc seat, ≈ IP54 splash resistance) and opt-in **wall mounting**
+  tolerances, an opt-in **weather mode** (printed TPU gasket in the shell's
+  ledge + O-ringed plate screws + sealed camera-disc seat, ≈ IP54 splash
+  resistance) and opt-in **wall mounting**
   (blind keyholes / screw tabs). The weather-kit parts are itemized in
   [`bom_canary_wap.csv`](./bom_canary_wap.csv) (items 21–26). Print the clip
   coupon and verify against your hardware before printing the full case; for
@@ -447,7 +448,7 @@ are not, so do not rely on them alone.
   condensation can escape. Consider a small desiccant pack inside.
 - Conformal-coat the PCB and the WS2812 for high-humidity / coastal sites.
 - The printed enclosure's **weather mode** ([`enclosure/`](./enclosure/), TPU
-  gasket + drip-edge lid) is an intermediate option: fine for **rain/splash
+  gasket + O-ringed plate screws) is an intermediate option: fine for **rain/splash
   (~IP54)** under an eave or porch, mounted USB-down — it is *not* an IP66/67
   substitute for ENC1 in fully exposed or immersion-prone locations.
 

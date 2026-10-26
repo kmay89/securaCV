@@ -289,7 +289,7 @@ module board_rail(x, y, l, h, wall, t = 0, fil = 0, dir = 1) {
 // ---------------------------------------------------------------------------
 //  Plate ribs — a section for a flat panel.
 //
-//  A 158 x 88 x 2.4 mm chassis plate, a 113.7 x 73.6 x 2.4 mm display back, a
+//  A 108 x 76 x 2.4 mm chassis plate (158 x 88 until 2026-10-23), a 113.7 x 73.6 x 2.4 mm display back, a
 //  110 x 70 x 3.0 mm sign: three sheets in this catalog with no third
 //  dimension anywhere on them. They warp off the bed, and afterwards they do
 //  not stay flat — which matters most on the display back, because four snap

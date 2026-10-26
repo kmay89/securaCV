@@ -646,9 +646,81 @@ test("cable spine: trails away from the port and stays behind the connector", as
   for (let i = 1; i <= 10; i++) { // the spine never doubles back toward the port
     assert.ok(cablePoint(i / 10)[2] <= cablePoint((i - 1) / 10)[2] + 1e-6);
   }
-  // the port is on the base's −X wall; the light pipe is on the lid face —
-  // both measured from the committed compact STLs (33.7 × 37.6 base)
+  // the port is in the lid's −X wall (the lid is the shell since the piston
+  // plate); the light pipe is on the lid face — the next test holds both to
+  // the committed compact STLs as the card seats them
   assert.ok(WAP_PORT[0] < -16 && WAP_PORT[0] > -17.5, "port off the −X wall");
-  assert.ok(Math.abs(WAP_PORT[1]) < 0.01, "USB slot is y-centered (usb_w 10.5 notch)");
+  assert.ok(Math.abs(WAP_PORT[1]) < 0.01, "USB opening is y-centered (board_cy 0)");
   assert.ok(WAP_LED[2] > 7, "light pipe sits on the lid face, toward the viewer");
+});
+
+// The rig's two numbers, held to the real card: the WAP card is the committed
+// compact STLs seated by real-shapes.js (the CAD's seat), and a ray through
+// that seated lid says whether the light answers through its port and the
+// plug enters its opening. Both were typed from an earlier lid on the
+// bbox-stacked card: the LED sat 1.9 mm under the solid face, 11.4 mm off the
+// Ø3.2 port, and all five of the plug tip's rays hit the −X wall below the
+// 12 × 6.5 opening.
+test("cable rig: the LED shows through the lid's light-pipe port and the plug's tip enters the USB opening", async () => {
+  const { WAP_PORT, WAP_LED } = await import("../assets/wap-ui.js");
+  const { upgradeRealShape } = await import("../assets/real-shapes.js");
+  const { existsSync } = require("node:fs");
+  const { resolve } = require("node:path");
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const p = resolve(ROOT, String(url));
+    if (!existsSync(p)) return { ok: false, status: 404 };
+    const b = readFileSync(p);
+    return { ok: true, status: 200, arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) };
+  };
+  const scene = { parts: [], clearParts() { this.parts = []; }, addMesh(builder, o = {}) { const q = { builder, ...o }; this.parts.push(q); return q; } };
+  try {
+    assert.ok(await upgradeRealShape(scene, "canary-wap"), "the WAP card upgrades to the committed STLs");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.strictEqual(scene.parts.length, 2, "the card is the base and the lid");
+  const lid = scene.parts[1];   // realTwoPart adds the back (the base), then the front (the lid)
+  const m = lid.model;
+  const P = lid.builder.pos, I = lid.builder.idx;
+  const V = [];
+  for (let i = 0; i < P.length; i += 3) {
+    const [x, y, z] = [P[i], P[i + 1], P[i + 2]];
+    V.push([0, 1, 2].map((k) => m[k] * x + m[4 + k] * y + m[8 + k] * z + m[12 + k]));
+  }
+  const top = Math.max(...V.map((v) => v[2]));
+  // the parameters t of every hit of the ray o + t·d on the lid (Möller–Trumbore)
+  const hits = (o, d) => {
+    const out = [];
+    for (let i = 0; i < I.length; i += 3) {
+      const a = V[I[i]], b = V[I[i + 1]], c = V[I[i + 2]];
+      const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      const p = [d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0]];
+      const det = e1[0] * p[0] + e1[1] * p[1] + e1[2] * p[2];
+      if (Math.abs(det) < 1e-12) continue;
+      const s = [o[0] - a[0], o[1] - a[1], o[2] - a[2]];
+      const u = (s[0] * p[0] + s[1] * p[1] + s[2] * p[2]) / det;
+      if (u < 0 || u > 1) continue;
+      const q = [s[1] * e1[2] - s[2] * e1[1], s[2] * e1[0] - s[0] * e1[2], s[0] * e1[1] - s[1] * e1[0]];
+      const v = (d[0] * q[0] + d[1] * q[1] + d[2] * q[2]) / det;
+      if (v < 0 || u + v > 1) continue;
+      out.push((e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]) / det);
+    }
+    return out;
+  };
+  // the LED: on the face, and its Ø2.4 core looks out through an open hole —
+  // no lid surface within the face's 2 mm (plus margin) under five points
+  assert.ok(Math.abs(WAP_LED[2] - top) < 0.05, `WAP_LED z ${WAP_LED[2]} is not on the lid's face (z ${top.toFixed(3)})`);
+  for (const [dx, dy] of [[0, 0], [1.2, 0], [-1.2, 0], [0, 1.2], [0, -1.2]]) {
+    const near = hits([WAP_LED[0] + dx, WAP_LED[1] + dy, top + 5], [0, 0, -1]).filter((t) => t < 5 + 2.5);
+    assert.deepStrictEqual(near, [], `the LED at (${WAP_LED[0] + dx}, ${WAP_LED[1] + dy}) looks at solid lid, not the light-pipe port`);
+  }
+  // the USB-C tip (buildRig: 3.4 thick along z, 9.0 wide along y, its front
+  // face 6.35 past WAP_PORT[0] when seated): its center and four corners,
+  // cast from outside along +X to that front face, cross no lid surface
+  for (const [dy, dz] of [[0, 0], [4.5, 1.7], [-4.5, 1.7], [4.5, -1.7], [-4.5, -1.7]]) {
+    const o = [-40, WAP_PORT[1] + dy, WAP_PORT[2] + dz];
+    const blocked = hits(o, [1, 0, 0]).filter((t) => t > 0 && o[0] + t < WAP_PORT[0] + 6.35);
+    assert.deepStrictEqual(blocked, [], `the plug tip's corner (${dy}, ${dz}) hits the lid at x ${blocked.map((t) => (o[0] + t).toFixed(2))}`);
+  }
 });

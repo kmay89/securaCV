@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# kit — one server, many apps. Runs on the server as `ops` (or as `deploy`, for `deploy` only).
+# Everything it does is a few docker/compose commands in well-known directories; read it once.
+set -euo pipefail
+# Everything kit writes is shared with the kit group (ops + deploy) and nobody else: .tag files
+# the deploy user must rewrite, directories the setgid bit already hands to the group.
+umask 007
+
+KIT_DIR="${KIT_DIR:-/srv/kit/infra}"
+EDGE="${EDGE_DIR:-/srv/edge}"
+APPS="${APPS_DIR:-/srv/apps}"
+DATA="${DATA_DIR:-/srv/data}"
+SITES="${SITES_DIR:-/srv/sites}"
+
+usage() {
+  cat <<'EOF'
+kit — one server, many apps
+
+  kit doctor                              is the server well? (firewall, ssh, updates, fail2ban, docker, edge, apps, disk)
+  kit ps                                  what runs, which tag, healthy or not
+  kit logs <app> [-f]                     an app's logs
+  kit app add <name> [--image <ref>] [--port <n>]   a new app directory from the template (backoffice and backoffice-demo have their own)
+  kit env <app>                           edit the app's .env (0640, group kit)
+  kit deploy <app> [<tag>]                pull the tag (default: the one deployed, else latest), start, wait for healthy, else roll back
+  kit run <app> <cmd…>                    run a command in the app's container
+  kit offline <app> <cmd…>                stop the app, run a command in a fresh container of it (same env, same data), start it again — for a restore
+  kit site add <host> <app>:<port>|static  write /srv/edge/sites/<host>.caddy and reload the edge
+  kit reload                              reload Caddy after editing a site file
+  kit deploy-key                          make the CI deploy key (prints the private half ONCE and the known_hosts line)
+  kit update                              git pull the kit itself
+EOF
+}
+
+die() { echo "kit: $*" >&2; exit 1; }
+need_app() { [ -n "${1:-}" ] || die "which app?"; [[ "$1" =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || die "app names are lowercase letters, digits and dashes"; [ -d "$APPS/$1" ] || die "no app '$1' under $APPS (kit app add $1)"; }
+compose() { local app="$1"; shift; docker compose --project-directory "$APPS/$app" "$@"; }
+health_of() { docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$1" 2>/dev/null || echo "absent"; }
+ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+bad() { printf '  \033[31m✗\033[0m %s\n' "$*"; FAILS=$((FAILS + 1)); }
+
+cmd_doctor() {
+  FAILS=0
+  echo "server"
+  if sudo -n ufw status 2>/dev/null | grep -q '^Status: active'; then ok "firewall on (22, 80, 443)"; else bad "ufw is not active — sudo ufw --force enable"; fi
+  if sudo -n sshd -T 2>/dev/null | grep -q '^passwordauthentication no'; then ok "ssh: keys only"; else bad "ssh accepts passwords — /etc/ssh/sshd_config.d/10-keys-only.conf"; fi
+  if systemctl is-active -q fail2ban; then ok "fail2ban watching sshd"; else bad "fail2ban is not running"; fi
+  if systemctl is-enabled -q unattended-upgrades 2>/dev/null && grep -q 'Automatic-Reboot "true"' /etc/apt/apt.conf.d/52-auto-reboot.conf 2>/dev/null; then ok "unattended security upgrades, reboot at 04:30 when needed"; else bad "unattended-upgrades not set up"; fi
+  if [ -f /var/run/reboot-required ]; then bad "a reboot is pending ($(tr '\n' ' ' < /var/run/reboot-required.pkgs 2>/dev/null))"; else ok "no reboot pending"; fi
+  if systemctl is-active -q docker; then ok "docker running ($(docker version -f '{{.Server.Version}}' 2>/dev/null))"; else bad "docker is not running"; fi
+  local disk mem; disk="$(df -h / | awk 'NR==2{print $5" used of "$2}')"; mem="$(free -m | awk '/^Mem:/{printf "%d of %d MB used", $3, $2}')"
+  if [ "$(df / | awk 'NR==2{print $5}' | tr -d %)" -lt 85 ]; then ok "disk $disk"; else bad "disk $disk — nearly full"; fi
+  ok "memory $mem"
+  echo "edge"
+  if [ "$(health_of edge)" = "running" ] || [ "$(health_of edge)" = "healthy" ]; then ok "caddy up"; else bad "caddy is $(health_of edge) — cd $EDGE && docker compose up -d"; fi
+  local n=0; for f in "$EDGE"/sites/*.caddy; do [ -e "$f" ] || continue; n=$((n + 1)); local host; host="$(basename "$f" .caddy)"
+    local code; code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 "https://$host/" 2>/dev/null || echo 000)"
+    if [ "$code" != "000" ]; then ok "https://$host answers $code"; else bad "https://$host does not answer — DNS pointing here? kit logs edge"; fi; done
+  [ "$n" -gt 0 ] || ok "no sites yet (kit site add <host> <app>:<port>)"
+  if [ "$(stat -c '%a %G' "$DATA" 2>/dev/null)" = "2770 kit" ] && [ "$(stat -c '%a %G' "$APPS" 2>/dev/null)" = "2770 kit" ]; then ok "$APPS and $DATA are ops:kit, setgid 2770"; else bad "$APPS / $DATA are not 2770 ops:kit — sudo chown -R ops:kit $APPS $DATA && sudo chmod 2770 $APPS $DATA"; fi
+  echo "apps"
+  local any=0; for d in "$APPS"/*/; do [ -d "$d" ] || continue; any=1; local app; app="$(basename "$d")"; local h; h="$(health_of "$app")"; local tag; tag="$(cat "$d/.tag" 2>/dev/null || echo '—')"
+    if [ "$h" = "healthy" ] || [ "$h" = "running" ]; then ok "$app $h · tag $tag"; else bad "$app is $h · tag $tag — kit logs $app"; fi
+    if [ "$(stat -c '%a %G' "$d/.env" 2>/dev/null)" = "640 kit" ]; then ok "$app/.env is 0640, group kit"; else bad "$app/.env is not 0640 ops:kit — chgrp kit $d.env && chmod 640 $d.env"; fi
+    if [ -d "$DATA/$app" ] && [ -n "$(ls -A "$DATA/$app" 2>/dev/null)" ] && [ "$(stat -c %u "$DATA/$app")" = "0" ]; then bad "$DATA/$app is root-owned — kit deploy $app hands it to the image's user"; fi; done
+  [ "$any" = 1 ] || ok "no apps yet (kit app add <name>)"
+  echo; if [ "$FAILS" = 0 ]; then echo "all green"; else echo "$FAILS to fix"; exit 1; fi
+}
+
+cmd_ps() {
+  printf '%-18s %-10s %-14s %s\n' APP STATE TAG IMAGE
+  for d in "$APPS"/*/; do [ -d "$d" ] || continue; local app; app="$(basename "$d")"
+    printf '%-18s %-10s %-14s %s\n' "$app" "$(health_of "$app")" "$(cat "$d/.tag" 2>/dev/null || echo -)" "$(docker inspect -f '{{.Config.Image}}' "$app" 2>/dev/null || echo -)"
+    if [ -f "$d/.tag.previous" ]; then printf '%-18s %-10s %-14s %s\n' '' previous "$(cat "$d/.tag.previous")" "(kit deploy $app $(cat "$d/.tag.previous") rolls back)"; fi; done
+  printf '%-18s %-10s\n' edge "$(health_of edge)"
+}
+
+cmd_app_add() {
+  local app="${1:-}"; shift || true; [ -n "$app" ] || die "kit app add <name> [--image <ref>] [--port <n>]"
+  [[ "$app" =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || die "app names are lowercase letters, digits and dashes"
+  [ -d "$APPS/$app" ] && die "$APPS/$app exists"
+  local image="" port="8080"; while [ $# -gt 0 ]; do case "$1" in --image) image="$2"; shift 2;; --port) port="$2"; shift 2;; *) die "unknown option $1";; esac; done
+  mkdir -p "$APPS/$app" "$DATA/$app"
+  if [ -d "$KIT_DIR/apps/$app" ]; then cp "$KIT_DIR/apps/$app/compose.yml" "$APPS/$app/"; cp "$KIT_DIR/apps/$app/env.example" "$APPS/$app/.env"
+  else [ -n "$image" ] || die "a new app needs --image <ref> (what CI publishes)"; sed -e "s|__APP__|$app|g" -e "s|__IMAGE__|$image|g" -e "s|__PORT__|$port|g" "$KIT_DIR/apps/_template/compose.yml" > "$APPS/$app/compose.yml"; : > "$APPS/$app/.env"; fi
+  chgrp -R kit "$APPS/$app" "$DATA/$app" 2>/dev/null || echo "  (no kit group on this box — cloud-init makes it; the deploy user will not be able to read $APPS/$app)" >&2
+  chmod 2770 "$APPS/$app" "$DATA/$app"; chmod 640 "$APPS/$app/.env"
+  echo "made $APPS/$app (compose.yml, .env 0640 ops:kit) and $DATA/$app (handed to the image's user on first deploy)"; echo "next: kit env $app · kit site add <host> $app:<port> · kit deploy $app latest"
+}
+
+cmd_env() { need_app "${1:-}"; "${EDITOR:-nano}" "$APPS/$1/.env"; chmod 640 "$APPS/$1/.env"; echo "saved; apply with: kit deploy $1"; }
+
+# The app's data directory is a bind mount over the image's volume, and the image's process (the
+# backoffice runs as `node`, uid 1000) must own it or its first write fails — the host user who made
+# the directory is not that uid. After the pull the image itself is asked who it runs as, and the
+# directory is handed over from inside a container (neither ops nor deploy may chown on the host).
+# Idempotent: nothing happens once the owner matches.
+init_data() {
+  local app="$1" tag="$2"; local dir="$DATA/$app"; [ -d "$dir" ] || return 0
+  local image; image="$(TAG="$tag" compose "$app" config --images 2>/dev/null | head -1)"; [ -n "$image" ] || return 0
+  local uid gid; uid="$(docker run --rm --entrypoint id "$image" -u 2>/dev/null || true)"; gid="$(docker run --rm --entrypoint id "$image" -g 2>/dev/null || true)"
+  if ! [[ "$uid" =~ ^[0-9]+$ && "$gid" =~ ^[0-9]+$ ]]; then echo "  (could not ask $image who it runs as; leaving $dir as is)"; return 0; fi
+  [ "$(stat -c %u "$dir")" = "$uid" ] && return 0
+  echo "handing $dir to the image's user ($uid:$gid)"
+  docker run --rm --user 0 --entrypoint chown -v "$dir:/kit-data" "$image" -R "$uid:$gid" /kit-data || echo "  ($image has no chown — sudo chown -R $uid:$gid $dir by hand)" >&2
+}
+
+cmd_deploy() {
+  need_app "${1:-}"; local app="$1"; local tag="${2:-}"
+  [ -n "$tag" ] || tag="$(cat "$APPS/$app/.tag" 2>/dev/null || echo latest)"
+  [[ "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$ ]] || die "that is not an image tag"
+  local prev; prev="$(cat "$APPS/$app/.tag" 2>/dev/null || true)"
+  echo "deploy $app ← $tag${prev:+ (was $prev)}"
+  TAG="$tag" compose "$app" pull -q
+  init_data "$app" "$tag"
+  TAG="$tag" compose "$app" up -d --remove-orphans
+  local i=0; while [ $i -lt 24 ]; do local h; h="$(health_of "$app")"
+    case "$h" in healthy) break;; running) docker inspect -f '{{.State.Health}}' "$app" 2>/dev/null | grep -q '<nil>' && break;; esac
+    sleep 5; i=$((i + 1)); done
+  local h; h="$(health_of "$app")"
+  if [ "$h" = "healthy" ] || [ "$h" = "running" ]; then
+    if [ -n "$prev" ] && [ "$prev" != "$tag" ]; then echo "$prev" > "$APPS/$app/.tag.previous"; fi; echo "$tag" > "$APPS/$app/.tag"
+    docker image prune -f >/dev/null 2>&1 || true; echo "$app is $h on $tag"
+  else
+    echo "$app is $h on $tag after two minutes" >&2; docker logs --tail 40 "$app" >&2 || true
+    if [ -n "$prev" ] && [ "$prev" != "$tag" ]; then echo "rolling back to $prev" >&2; TAG="$prev" compose "$app" up -d --remove-orphans; fi
+    exit 1
+  fi
+}
+
+cmd_logs() { need_app "${1:-}"; local app="$1"; shift; docker logs --tail 200 "$@" "$app"; }
+cmd_run() { need_app "${1:-}"; local app="$1"; shift; [ $# -gt 0 ] || die "kit run <app> <cmd…>"; docker exec -it "$app" "$@"; }
+# A restore must not race the running process for the database file: stop it, run the command in a
+# throwaway container with the same env and volumes, then start it again whatever happened.
+cmd_offline() {
+  need_app "${1:-}"; local app="$1"; shift; [ $# -gt 0 ] || die "kit offline <app> <cmd…>"
+  local tag; tag="$(cat "$APPS/$app/.tag" 2>/dev/null || echo latest)"
+  echo "stopping $app"; TAG="$tag" compose "$app" stop
+  local rc=0; TAG="$tag" compose "$app" run --rm --no-deps "$app" "$@" || rc=$?
+  echo "starting $app"; TAG="$tag" compose "$app" up -d
+  return "$rc"
+}
+
+cmd_site_add() {
+  local host="${1:-}" target="${2:-}"; [ -n "$host" ] && [ -n "$target" ] || die "kit site add <host> <app>:<port>|static"
+  [[ "$host" =~ ^[a-z0-9.-]+$ ]] || die "that is not a hostname"
+  local f="$EDGE/sites/$host.caddy"; [ -e "$f" ] && die "$f exists — edit it, then kit reload"
+  if [ "$target" = "static" ]; then mkdir -p "$SITES/$host"; printf '%s {\n\timport secure\n\troot * %s\n\tfile_server\n\ttry_files {path} {path}.html {path}/index.html\n}\n' "$host" "$SITES/$host" > "$f"; echo "put the files in $SITES/$host"
+  else [[ "$target" =~ ^[a-z0-9-]+:[0-9]+$ ]] || die "the target is <app>:<port> or static"; printf '%s {\n\timport secure\n\treverse_proxy %s\n}\n' "$host" "$target" > "$f"; fi
+  echo "wrote $f"; cmd_reload
+}
+cmd_reload() { docker exec edge caddy validate --config /etc/caddy/Caddyfile >/dev/null && docker exec edge caddy reload --config /etc/caddy/Caddyfile && echo "edge reloaded"; }
+
+cmd_deploy_key() {
+  local key="/tmp/kit-deploy-$$"; ssh-keygen -q -t ed25519 -N '' -C "ci-deploy $(date +%F)" -f "$key"
+  sudo -n install -d -m 700 -o deploy -g deploy /home/deploy/.ssh
+  { printf 'command="%s/bin/deploy",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ' "$KIT_DIR"; cat "$key.pub"; } | sudo -n tee -a /home/deploy/.ssh/authorized_keys >/dev/null
+  sudo -n chown deploy:deploy /home/deploy/.ssh/authorized_keys; sudo -n chmod 600 /home/deploy/.ssh/authorized_keys
+  echo "Installed for user deploy, bound to the forced command. Put these in the repository's Actions secrets:"; echo
+  echo "DEPLOY_HOST:        $(curl -sS --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
+  echo "DEPLOY_KNOWN_HOSTS: $(ssh-keyscan -t ed25519 127.0.0.1 2>/dev/null | sed 's/^127\.0\.0\.1/'"$(curl -sS --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"'/')"
+  echo "DEPLOY_SSH_KEY:     (the whole block below, shown once)"; echo; cat "$key"; echo
+  shred -u "$key" "$key.pub" 2>/dev/null || rm -f "$key" "$key.pub"
+}
+
+cmd_update() { git -C "$(dirname "$KIT_DIR")" pull --ff-only && echo "kit is current"; }
+
+case "${1:-help}" in
+  doctor) cmd_doctor;;
+  ps) cmd_ps;;
+  logs) shift; cmd_logs "$@";;
+  app) shift; case "${1:-}" in add) shift; cmd_app_add "$@";; *) die "kit app add <name>";; esac;;
+  env) shift; cmd_env "$@";;
+  deploy) shift; cmd_deploy "$@";;
+  run) shift; cmd_run "$@";;
+  offline) shift; cmd_offline "$@";;
+  site) shift; case "${1:-}" in add) shift; cmd_site_add "$@";; *) die "kit site add <host> <app>:<port>|static";; esac;;
+  reload) cmd_reload;;
+  deploy-key) cmd_deploy_key;;
+  update) cmd_update;;
+  help|-h|--help) usage;;
+  *) usage; exit 1;;
+esac

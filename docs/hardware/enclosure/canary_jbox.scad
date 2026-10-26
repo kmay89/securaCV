@@ -1,7 +1,8 @@
 // ============================================================================
 //  Canary — COVERT JUNCTION-BOX SHELL  ⚠️ IN DEVELOPMENT (v0.1-dev)
 //  Sometimes a witness should look like street furniture. This shell holds
-//  the compact WAP stack (plain XIAO ESP32-S3) inside a housing styled as a
+//  the compact WAP stack (XIAO ESP32-S3; the Sense camera by default,
+//  opt_camera) inside a housing styled as a
 //  utility junction box: squared body, fake conduit bosses on the sides, and
 //  the camera aperture hidden inside a mock "unpunched knockout" ring on the
 //  lid. Utilitarian gray ASA/PETG completes the disguise.
@@ -20,6 +21,32 @@
 //  seats are the house 90° cone (cs_cone90_cut) at the M2 flat head's height;
 //  posts stand 0.2 INTO the walls, the corner behind them filled, webbed by
 //  corner_gusset; opt_weep drains the -X (cable, down) wall.
+//  2026-10-23: audit fixes, each probed in the assembled pose —
+//   - THE LID COULD NOT CLOSE ON THE DEFAULT BUILD. opt_camera is the XIAO
+//     Sense, whose lens stands brd_xiao_sense_cam_h() 12.7 over the PCB; the
+//     cavity gave it 9.0 (stack_h 8.0 + 1.0), so an Ø8 barrel stood 108 mm3
+//     into the seated lid, through all 2.4 of it, and the aperture sat over
+//     the board center, 6.98 off the lens (cam_dx/dy were 0 with a MEASURE
+//     note the registry has since answered). stack_h is 12.2 (the lid's inner
+//     face 0.5 over the lens top, asserted from the registry), the aperture
+//     and its knockout ring sit on the lens, and the conduit bosses' keels
+//     reach the bed on the taller body (centered at base_h/2 their fixed
+//     r*sqrt(2) point would float 1.56 over it).
+//   - THE PIGTAIL'S OWN PLUG DID NOT FIT. The receptacle's mouth is 7.1 inside
+//     the -X wall, shorter than any straight Type-C overmold, so the overmold
+//     of whatever is plugged in stands in the slot — and the 10.5 slot's 2.5
+//     chamfers took 40.2 mm3 out of a spec-max (12.35 x 6.5) one, and the
+//     corners of a slim 8.4 x 4.5. The slot opens to the spec overmold plus
+//     tol_slide a side and keeps its full width over the overmold's whole
+//     height, the bridge chamfers above it.
+//   - NOTHING LOCATED THE BOARD ALONG X (the WAP's AUD-2, never carried
+//     here): the clips hold Y and Z, so a plug slid it along its rails — off
+//     their 3 mm ends past 3, into the wall at 8.5. The WAP's end stops stand
+//     0.3 off the board's ends, outside the overmold's envelope.
+//   - THE BOX COULD NOT BE MOUNTED: the HARDWARE line billed 2 #8 wall
+//     screws and no hole took them. Two now run through the floor under the
+//     board (driven before it clips in), pan heads in counterbores that keep
+//     the house 1.0 floor.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d — the catalog's shared helpers
@@ -47,7 +74,7 @@ board_w = 17.5;      // board width — the 17.5 spec, brd_w("xiao"); a real boa
                      // difference, so the spec default stands
 board_h = 1.2;       // PCB thickness — the 1.2 spec, brd_t("xiao"); the cavity, the clip hooks and the pigtail slot all stack on it
 board_clear = 0.6;   // clearance each side of the board — the cavity is the board plus 2 x this plus 2 x inner_pad
-stack_h = 8.0;       // height of the stack above the PCB (the Sense camera board) — the cavity is standoff_h + board_h + this + 1.0 deep
+stack_h = 12.2;      // height of the stack above the PCB (the Sense camera board) — the cavity is standoff_h + board_h + this + 1.0 deep; 12.2 puts the lid's inner face 0.5 over the Sense lens top (brd_xiao_sense_cam_h() 12.7), asserted
 standoff_h = 3.5;    // 3.5: the clip beam (standoff + PCB) keeps the measured
                      // 17.8 board under the 4.5 % strain budget (3.0 ran 5.5 %)
 
@@ -67,14 +94,14 @@ boss_d = 12.0;       // fake conduit boss diameter (fits the body height; a true
 boss_l = 6.0;        // boss protrusion
 screw_d = 1.6;  screw_head_d = 4.0;  screw_head_h = 1.2;
 post_d = 5.0;        // corner post diameter — four lid-screw posts standing 0.2 into both walls, each piloted screw_d from 2 mm above the floor
-pigtail_w = 10.5;    // pigtail pass-through slot width, low on the -X wall: the connector sits recessed, so a pigtail cable runs out through it; the weep sits beside it and the lid lip is notched over it
-pigtail_h = 6.5;     // pigtail pass-through slot height, centered on the USB-C connector axis; its top corners are 45° chamfers so the wall bridges it (canary_port_lib)
+pigtail_w = 12.8;    // pigtail pass-through slot width, low on the -X wall: the connector sits 7.1 inside it, so the pigtail's plug overmold stands in the slot — the Type-C spec max 12.35 + 2 x tol_slide; the weep sits beside it and the lid lip is notched over it
+pigtail_h = 6.9;     // pigtail pass-through slot height at full width, centered on the USB-C connector axis — the spec max overmold 6.5 + 2 x tol_slide; the 45° bridge chamfers stand above it (canary_port_lib)
 
 /* [Camera knockout] */
 cam_ap_d   = 9.0;    // camera aperture diameter through the lid at cam_dx/cam_dy (opt_camera)
-cam_dx     = 0.0;    // aperture offset from the board center — MEASURE: the XIAO
-cam_dy     = 0.0;    // Sense camera sits over the USB end (brd_xiao_sense_cam_dx/dy), not dead center
-ko_ring_d  = 22.0;   // mock knockout ring (aperture recessed inside it)
+cam_dx     = -6.95;  // aperture offset from the board center along X, + = away from the USB end: the Sense camera sits over the USB end — brd_xiao_sense_cam_dx(), canary_board_lib
+cam_dy     = -0.64;  // aperture offset from the board center across the width — brd_xiao_sense_cam_dy(), canary_board_lib
+ko_ring_d  = 22.0;   // mock knockout ring, centered on the aperture (aperture recessed inside it)
 ko_depth   = 0.8;    // depth of the mock knockout's groove in the lid's outer face (the groove is 0.8 wide, just outside ko_ring_d)
 
 /* [Print tolerances] */
@@ -122,9 +149,30 @@ assert(abs((screw_d + 2*tol_hole) + 2*screw_head_h - (screw_head_d + 2*tol_hole)
        "screw_head_h: the 90° seat does not open to the flat head's diameter");
 assert(lid_t - screw_head_h >= 1.0, "the lid seat leaves under 1.0 mm under the head");
 usb_zc = floor_t + standoff_h + board_h + port_usbc_shell_h()/2;
+// the board's end stops stand outboard of the Type-C overmold across the board
+stop_y0 = port_usbc_overmold_w()/2 + 0.2;
+assert(board_w/2 - stop_y0 >= core_min_wall(), "the board's end stops would be thinner than a wall across the board");
 // the drain: -X wall at the floor, beside the pigtail slot
 weep_y = pigtail_w/2 + weep_d()/2 + 1.5;
 assert(!opt_weep || weep_y + weep_d()/2 + 0.5 <= inner_w/2 - pd, "the weep runs into a corner post");
+// the Sense lens under the lid: the cavity's top is the lid's inner face, and
+// the lens top must stand under it — 0.2 is the least a print's height error
+// leaves (the WAP's floor for the same lens); 8.0 left it 3.7 INTO the lid
+lens_gap = stack_h + 1.0 - brd_xiao_sense_cam_h();
+assert(!opt_camera || lens_gap >= 0.2 - 1e-9,
+       str("the Sense lens top stands ", -lens_gap, " mm over the lid's inner face — raise stack_h to at least ",
+           brd_xiao_sense_cam_h() - 1.0 + 0.2));
+// the pigtail slot passes a spec-max Type-C overmold across its whole height
+assert(pigtail_w >= port_usbc_overmold_w() && pigtail_h >= port_usbc_overmold_h(),
+       "the pigtail slot is smaller than the Type-C spec overmold that stands in it");
+// two #8 wall screws through the floor under the board (2026-10-23): pan
+// heads in counterbores that keep the house 1.0 floor (DESIGN_RULES §4)
+mount_d  = 4.17 + 2*tol_hole;                     // #8 clearance: the 4.17 major + 2 x tol_hole (4.77)
+mount_hd = 7.9 + 2*tol_hole;                      // the #8 pan head's 7.9 + 2 x tol_hole (8.5)
+mount_cb = floor_t - 1.0;                         // counterbore depth: the house 1.0 floor stays under the head
+mount_y  = mount_hd/2 + 0.25;                     // ± across the board's centerline: the two seats 0.5 apart
+assert(mount_y - mount_hd/2 >= 0.2, "the two wall-screw counterbores run into each other");
+assert(mount_y + mount_hd/2 <= board_w/2 + clip_clear - 0.2, "a wall-screw counterbore runs under a board clip's root");
 // Cantilever snap clip on a board long edge — the compact-WAP idiom, so the
 // drawing now comes from canary_snap_lib like the WAP's own: the insertion-
 // strain arithmetic runs as an assert on every render instead of trusting a
@@ -147,14 +195,16 @@ module body() {
                 // A horizontal cylinder's lower quarter is an overhang, so each
                 // carries a 45° keel down to the bed (a teardrop, point down,
                 // cropped at z = 0): it prints unsupported and reads as the
-                // cast web under a real conduit hub
+                // cast web under a real conduit hub. The point drops at least
+                // 0.55 past the bed (2026-10-23): the camera's taller body put
+                // base_h/2 over r*sqrt(2), and the keel floated 1.56 off the bed
                 for (sy = [1, -1], i = [-1, 1])
                     translate([i*out_l/4, sy*(out_w/2 - 0.01), base_h/2])
                         mirror([0, sy > 0 ? 1 : 0, 0]) rotate([90, 0, 0]) linear_extrude(boss_l)
                             intersection() {
                                 hull() {
                                     circle(d = boss_d);
-                                    translate([0, -boss_d/2*sqrt(2)]) square(0.01, center = true);
+                                    translate([0, -max(boss_d/2*sqrt(2), base_h/2 + 0.55)]) square(0.01, center = true);
                                 }
                                 translate([-boss_d, -base_h/2]) square([2*boss_d, boss_d + base_h]);
                             }
@@ -162,18 +212,27 @@ module body() {
             translate([0, 0, floor_t])   // the cavity, floor cove left standing (canary_core_lib)
                 cavity_cut(inner_l, inner_w, max(0.1, corner_r - wall_t), cav_h + 1, floor_cove);
             // the pigtail pass-through slot, low on the -X short wall: route a pigtail
-            // through it (a plug cannot reach the recessed connector) and dress
-            // the cable as conduit. Sheltered mounting only - the slot is open.
+            // through it and dress the cable as conduit. Sheltered mounting only -
+            // the slot is open.
             // centered on the connector AXIS (shell/2 above the PCB), not PCB-top + h/2:
             // the pigtail's lower half landed in the wall
             // 45°-chamfered top corners keep the upright wall's bridge to the
-            // print-validated span (canary_port_lib; the slot bridged 10.5 flat)
-            translate([-out_l/2, 0, usb_zc]) rotate([90, 0, 90])
-                linear_extrude(wall_t*3, center = true) port_bridge_profile2d(pigtail_w, pigtail_h);
+            // print-validated span (canary_port_lib; the slot bridged 10.5 flat).
+            // The receptacle's mouth is 7.1 inside the wall, so the pigtail plug's
+            // overmold stands in the slot (2026-10-23): the full width spans the
+            // overmold's whole height, usb_zc ± pigtail_h/2, and the chamfers sit
+            // above it — centered, they cut 40.2 mm3 out of a spec-max overmold
+            translate([-out_l/2, 0, usb_zc + port_bridge_cham_for(pigtail_w)/2]) rotate([90, 0, 90])
+                linear_extrude(wall_t*3, center = true)
+                    port_bridge_profile2d(pigtail_w, pigtail_h + port_bridge_cham_for(pigtail_w));
             // drain at the low point: the -X wall's floor corner, angled down
             // and out (canary_core_lib weep_cut)
             if (opt_weep)
                 weep_cut(-inner_l/2, weep_y, floor_t + weep_d()/2 + 0.2, "-x", wall_t, weep_d());
+            // the two #8 wall screws the HARDWARE line bills (2026-10-23: no hole
+            // took them): through the floor under the board, driven before it
+            // clips in, pan heads in flat counterbores (canary_core_lib)
+            for (sy = [1, -1]) cb_flat_cut(0, sy*mount_y, floor_t, mount_d, mount_hd, mount_cb);
         }
         // lid key (canary_core_lib): a rib on the +Y wall, centered, inside the lip zone
         if (lid_key) lid_key_rib(0, inner_w/2, 270, base_h, lip_h);
@@ -202,6 +261,15 @@ module body() {
             translate([s*(board_l/2 - 1.5) - 1.5, -(board_w - 1)/2, floor_t - 0.01])
                 cube([3, board_w - 1, standoff_h + 0.01]);
         for (s = [1, -1]) for (cx = [-board_l/4, board_l/4]) boardclip(cx, s);
+        // END STOPS along X (2026-10-23 — the WAP's AUD-2 board_stops, carried):
+        // the clips hold Y and Z only, so a plug slid the board 8.5 mm along its
+        // rails. A core_min_wall() column off each end of each long edge, 0.3 off
+        // the drawn ends (a real board mics 21.14: 0.23 a side), up to the PCB's
+        // top face, outside a spec-max Type-C overmold across the connector axis
+        for (sx = [1, -1], sy = [1, -1])
+            translate([sx*(board_l/2 + 0.3) - (sx > 0 ? 0 : core_min_wall()),
+                       sy > 0 ? stop_y0 : -board_w/2, floor_t - 0.01])
+                cube([core_min_wall(), board_w/2 - stop_y0, standoff_h + board_h + 0.01]);
     }
 }
 
@@ -209,8 +277,10 @@ module lid() {
     union() {
         difference() {
             rrect(out_l, out_w, corner_r, lid_t);
-            // mock knockout: shallow circular groove ring; aperture recessed inside it
-            translate([0, 0, lid_t - ko_depth]) difference() {
+            // mock knockout: shallow circular groove ring; aperture recessed inside it,
+            // so the ring rides on the aperture (2026-10-23: the aperture moved onto
+            // the lens, 6.98 off center, and would have cut the ring)
+            translate([cam_dx, cam_dy, lid_t - ko_depth]) difference() {
                 cylinder(d = ko_ring_d + 1.6, h = ko_depth + 0.1);
                 translate([0, 0, -0.1]) cylinder(d = ko_ring_d, h = ko_depth + 0.3);
             }
