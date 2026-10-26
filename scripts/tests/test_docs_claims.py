@@ -5,8 +5,11 @@ docs/security/SECURITY_MODEL.md ships in every evidence export, and for a
 while it promised things the firmware did not do: zero outbound connections
 (the networked products open a broker socket, a daily signed-manifest check
 and SNTP), TLS on every hop (the flagship's release images serve plain HTTP on
-port 80, its dev and full builds serve HTTPS only from the first boot after
-setup, and the WAP's HTTPS is an after-setup opt-in), Bluetooth compiled out
+port 80, and since F15's correction of 2026-10-19 no stock unit of either tree
+serves HTTPS at all: the certificate generator's guard names a header no
+pinned core ships, so the flagship's dev and full builds and the WAP, whose
+HTTPS turns on by itself after setup once a certificate is stored, serve
+plain HTTP), Bluetooth compiled out
 (the shipped WAP profile compiles NimBLE), an API access code released only
 by a button press (the flagship hands its token with no press to the
 first-boot wizard, and after setup to a bearer caller and a request over its
@@ -83,9 +86,12 @@ BANNED = (
     ("All communication between your phone/computer and the device is "
      "encrypted with TLS",
      "the flagship's release images serve plain HTTP on port 80 (its dev and "
-     "full builds serve HTTPS from the first boot after setup, CI-compiled); "
-     "the WAP serves HTTPS after setup and falls back to HTTP when it fails "
-     "to start"),
+     "full builds serve HTTPS from the first boot after setup once a "
+     "certificate is stored, CI-compiled); the WAP serves HTTPS after setup "
+     "once a certificate is stored and falls back to HTTP when it fails to "
+     "start; and since F15's correction (2026-10-19) no stock unit of either "
+     "tree stores one, since the generator's guard names a header no pinned "
+     "core ships"),
     ("displayed only via physical button press",
      "one BOOT tap hands the flagship's token to one page load, but it also "
      "goes with no press to the first-boot wizard, and after setup to a "
@@ -95,8 +101,10 @@ BANNED = (
     ("TLS is required for all API access (no HTTP fallback)",
      "plain HTTP is a stated posture: setup mode and start failure on the "
      "WAP, the flagship's release images (its dev and full builds redirect "
-     "port 80 to HTTPS from the first boot after setup), the displays' LAN "
-     "page"),
+     "port 80 to HTTPS from the first boot after setup once a certificate is "
+     "stored), the displays' LAN page, and since F15's correction "
+     "(2026-10-19) every stock unit of either tree, none of which can "
+     "generate its certificate"),
     ("`securacv_mqtt` still plain",
      "firmware/canary's securacv_mqtt rides the shared broker-TLS transport "
      "(plain / CA / pin / lab, fail-closed) since 2026-09-19"),
@@ -2113,7 +2121,8 @@ MUST_PASS = [
     "BLE (NimBLE) is compiled into the shipped Canary WAP build",
     "the MINIMAL profile compiles it out; the code is not compiled in there",
     "a release image serves plain HTTP on port 80",
-    "the WAP serves HTTPS on port 443 once setup has completed",
+    "the WAP serves HTTPS on port 443 once setup has completed and a "
+    "certificate is stored",
     "set from the Broker encryption select in either flasher's broker block",
     "nothing outbound that is not disclosed, named and tested",
     "the token stops drive-by web pages, not a LAN host",
@@ -2238,7 +2247,7 @@ MUST_PASS_IN = [
      'which clears every saved network and opens the door again for half an hour from that moment, to the first phone or computer nearby that connects'),
     ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
      '  //    and the address they serve has its own slot cleared (sweep F341,\n'
-     '  //    after step 3), never the shared overflow: an address held only\n'
+     '  //    after step 4), never the shared overflow: an address held only\n'
      '  //    through the overflow, which a host striking from nine or more\n'
      '  //    addresses keeps running, stays held after it is served.'),
     ('CHANGELOG.md',
@@ -2278,7 +2287,7 @@ MUST_PASS_IN = [
     ('docs/getting_started_canary.md',
      'on the all-rounder Canary, holding BOOT to 30 seconds removes the Ed25519 device key'),
     ('docs/getting_started_canary.md',
-     '10-second BOOT reset and an over-the-air update keep the certificate, so that fingerprint stays right; holding BOOT to 30 seconds, or installing again in a flasher'),
+     '10-second BOOT reset and an over-the-air update will keep the certificate, so that fingerprint will stay right; holding BOOT to 30 seconds, or installing again in a flasher'),
     ('firmware/canary/include/canary_config.h',
      '// generated once on the first TLS-capable boot. The 10 s BOOT reset and an\n'
      '// OTA update keep both (reset_scope_keys.h kIdentityKept); the 30 s wipe\n'
@@ -3239,7 +3248,7 @@ MUST_PASS_IN = [
     ('docs/manual_test_plan_captive_portal.md',
      "  device's identity key fingerprint, never the MAC, encoded in the"),
     ('docs/manual_test_plan_captive_portal.md',
-     '  new key and so a new suffix. The softAP runs beside the station (AP+STA)'),
+     '  new key and so a new suffix. The softAP is up while the device is'),
     ('docs/FAQ.md',
      "network's password, so only a BOOT tap, the token itself or the setup\n"
      "door's one-time claim fetches it, never the dashboard's own session."),

@@ -567,8 +567,9 @@ lives in our own companion service, which a standard client never looks
 for, so a WAP set up from Home Assistant's app has Wi-Fi and is then paired
 in the SecuraCV app: tap it under *Ready to pair* on the Fleet tab and add it
 with its recovery kit (`canary-recovery-kit.json`: open its dashboard at
-`https://canary-<suffix>.local/settings` and accept the certificate
-warning; signed in with the token, choose **Settings**, **Device**,
+`http://canary-<suffix>.local/settings`, since no stock WAP serves HTTPS
+yet (once one does, use `https://` and accept the certificate warning);
+signed in with the token, choose **Settings**, **Device**,
 **Recovery kit**, **Save my recovery kit**; signed out, or signed in only
 through the landing page's link, choose **Use BOOT Tap Once**, short-tap
 BOOT when the page says to, then **Save my recovery kit** — the kit holds the token and the setup

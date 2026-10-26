@@ -554,6 +554,14 @@ Genuinely solid. Gaps:
   a core without it compiles HTTP-only and says why. **Release pending** the size-guard delta;
   **bench Track D open**. Fallback if the IDF 4.4 core lacks x509write: option (c), the
   certificate provisioned by the flashers' NVS builders.
+  *Correction 2026-10-22 (F15, F337):* "landed" holds for the compile, not for a device. The
+  on-device generator is gated on `__has_include("mbedtls/x509write_crt.h")`, a header mbedTLS
+  has never shipped (its write API is declared in `mbedtls/x509_crt.h`, behind
+  `MBEDTLS_X509_CRT_WRITE_C`; neither arduino-esp32 2.0.17 nor PlatformIO's
+  framework-arduinoespressif32 3.3.8 and its libs has the header), so every pinned core compiles
+  it out, nothing else stores a certificate, and a `[env:dev]` or `[env:full]` unit serves plain
+  HTTP and says so in `tls_mode_reason` ("no stored certificate and this core cannot generate
+  one"). The fix (test `x509_crt.h` and `MBEDTLS_X509_CRT_WRITE_C`, or option (c)) is F15's.
 - **Auth coverage is good — the MJPEG stream *is* gated.** `handle_peek_stream` calls `auth_gate`
   first ([`securacv_network.cpp:1700`](canary/lib/securacv_network/src/securacv_network.cpp)), so the
   peek stream is **not** an open privacy hole. The main intentionally-ungated handler is `handle_ui`

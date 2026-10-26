@@ -64,7 +64,8 @@ On first boot the device starts a WiFi Access Point and a captive portal.
    characters are unique to this board). The AP password is device-unique and
    printed on the provisioning receipt / serial log.
 2. A "sign in to network" page appears. Open **`http://canary.local`** in a real
-   browser (the captive page links to it; `http://192.168.4.1` also works).
+   browser (the captive page says to type it, and is deliberately not a link;
+   `http://192.168.4.1` also works).
 3. In the dashboard's **WiFi** section:
    - Select your home network and enter its password.
    - **Device name** (optional but recommended): type something memorable like

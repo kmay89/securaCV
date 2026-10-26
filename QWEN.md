@@ -113,6 +113,12 @@ beacon or chirp code, read the Beacon section of `AGENTS.md` in full first.
 - Changed an enclosure `.scad`? Attach PNG previews of every affected part
   for the requester — the change must be seeable, not just readable
   (recipe: `docs/hardware/enclosure/README.md`, "Preview renders")
+- Changed an enclosure `.scad` and re-rendered? Record the part revisions:
+  `python3 docs/hardware/enclosure/gen_revisions.py` (after `render.sh`;
+  `--note "…"` for words) bumps `rN` for every part whose printed shape
+  moved and writes what moved — knobs, deltas, the regions the viewers
+  tint — into `canary-local/devices/revisions.json`; `--check` in lint.yml
+  and enclosure.yml refuses a part that moved unrecorded
 - Changed a builder-curated `.scad`, one of its `use<>` libraries, or the
   fleet figures? Refresh the website's carried copies too:
   `docs/hardware/enclosure/gen_builder_manifest.py --site <website-checkout>`

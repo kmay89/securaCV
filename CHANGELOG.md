@@ -1,6 +1,198 @@
 # Changelog
 
 ## [Unreleased]
+### Dependency advisories of 2026-10-19 to -23: the TLS roots and verifier, two constant-time crates, and body-parser (Dependency Audit #330)
+
+- **Five advisories, every one with a reachable fix, so none is ignored.**
+  The Monday audit on `main` failed on five of the seven Rust lockfiles and
+  on canary-vision's npm tree. `webpki-roots` and `webpki-root-certs` 1.0.9
+  bundled roots that trust distrusted emSign intermediates
+  (RUSTSEC-2026-0381, -0383) and `rustls-webpki` 0.103.15 could accept a
+  distrusted intermediate (RUSTSEC-2026-0382): both sit under every outbound
+  HTTPS call the kernel, the Flasher, the Lab, hub-io and flash-engine make
+  (`ureq`, `reqwest`, `rustls`). `crypto-bigint` 0.7.5 (also yanked) and
+  `ctutils` 0.4.2/0.4.3 had timing variability in operations meant to be
+  constant-time (RUSTSEC-2026-0387, -0385), under `elliptic-curve` and `srp`
+  in the kernel and the household-key checker. The lockfiles now carry
+  `webpki-roots` and `webpki-root-certs` 1.0.11, `rustls-webpki` 0.103.16,
+  `crypto-bigint` 0.7.10 and `ctutils` 0.4.6, each inside its manifest's
+  range. The root lockfile's second `crypto-bigint`, the 0.5.5 that
+  `elliptic-curve` 0.13 needed and that has no fixed 0.5 release, leaves the
+  tree with `c2pa` 0.91.6 (`c2pa_raw_crypto` 0.2 takes `elliptic-curve`
+  0.14), so no ignore was added. `body-parser` 2.3.0's denial of service via
+  trailing bytes after a compressed body (GHSA-27r3-jxmh-p828) went to 2.4.0
+  in #1857.
+- **Dependabot's four cargo bumps ride along** (c2pa, libc, mdns-sd, tauri
+  and its build crates): the Lab and the Flasher must lock the same
+  `mdns-sd` (`desktop_parity.test.js`), which is why #1864 and #1865, each
+  bumping one app, failed that test on their own. Lockfile bumps only; no
+  source changed. `cargo audit` is CI's.
+
+### canary-wap answers the receipt, the setup mints and, after setup, its pages only to a Host that names it, and its HTTPS session cookie has a name of its own (sweep F344, F337, #1848)
+
+- **A DNS-rebinding page under a public name gets no session, no pair token
+  and no receipt from a WAP (sweep F344).** After setup the WAP read no `Host`
+  header: its landing page `/` handed any caller a one-tap pair token, the
+  `?cv_pair=` exchange minted a 24-hour session for any Host, and the
+  provisioning receipt's BOOT tap and setup-door claim served any Host. Every
+  stock WAP serves plain HTTP after setup (its certificate generator is gated
+  on a header no pinned core ships, F15), so a page on another site whose name
+  is re-pointed at the WAP's address could load those as its own origin: a
+  session that reads the live camera and the vault download, a pair token that
+  authorizes `/api/wifi/connect`, and around a BOOT tap or the post-join setup
+  window, the bearer token and the SoftAP password. (The landing now hands a
+  pair token only to a Host that names the device, but a live one's value,
+  wherever it is carried, still works for its ten minutes on
+  `/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` with no
+  Host question. F334, still open, asks whether Wi-Fi changes after setup take
+  a bearer, so that the pair token serves only the first-boot wizard; its
+  ledger entry names connect and ap-only, not the scan. And a standalone unit
+  with a camera keeps scanning for a Wi-Fi QR code after setup, so a carried
+  token reads that scan's status and stops it.) The WAP now stages the shared
+  `firmware/common/network/host_guard.h` that the flagship and the display
+  already use (byte-identical, held by `check_improv_sync.sh`). After setup,
+  `/`, `/?cv_pair=`, `/admin`, `/settings` and `/companion` answer a Host that
+  cannot name the device (anything but an IP address, a `.local` name, a
+  single label, or a `.lan`, `.internal` or `.home.arpa` name), or no Host,
+  with `403` and one fixed sentence: "This Canary answers only its own names.
+  Open it at its .local name, its IP address, or the bare name your router
+  gives it." No pair token, no session, the owner's link unspent, and a live
+  cookie under that name refused too. Every other cookie route asks the same
+  question before it reads the cookie, the live camera, the vault download and
+  `/api/pair/token` included: any host on the home network can take a 24-hour
+  session at the landing, and a page can set that value for its own name, so
+  closing the landing alone left such a value working from a rebinding page.
+  The receipt asks the same question first, in every mode, and answers
+  `403 {"error":"host"}` before it reads the bearer, takes the claim or judges
+  the tap, so such a request is never a lockout strike, never an asker that
+  contends the owner's tap, and spends nothing. Unlike the flagship there is
+  no SoftAP exemption, because the WAP's captive DNS sends every name to the
+  device. Names that now get the `403` page after setup: a router name under
+  another suffix (`canary-x.fritz.box`, `.localdomain`, `.home`), a name with
+  a trailing dot, a public split-horizon name, and a reverse proxy that
+  forwards a public Host; use the `.local` name, the IP or the bare router
+  name. A Host too long for the device's 96-byte buffer is refused, never read
+  cut short. The route check now lists every place that mints a session or a
+  pair token (`MINT_SITES` in `check_route_security.py`), each after its gate,
+  so a new page that hands out the landing fails it. Not covered here:
+  `/api/wifi`, `/api/wifi/scan` and `/api/fleet` answer with
+  `Access-Control-Allow-Origin: *`, so any web page can read them at the
+  device's address, rebinding or not, and the other public routes ask no Host
+  (F357, a decision still open); outside the receipt a bearer asks no Host (a
+  rebinding page that holds the bearer token is F57's open question); a pair
+  token's value carried off the LAN works for its ten minutes, as above; and
+  the Host question tells a public name from a name only the local network
+  answers, not the device from another server that answered such a name
+  (`canary.local`, `192.168.4.1`, the device's own LAN address, any `.local`
+  name, a single label or a private suffix) on a network the browser used
+  before, such as a hostile hotspot or mDNS spoofed on a shared Wi-Fi. A page
+  loaded there runs same-origin with the device when the browser comes home
+  (every WAP claims `canary.local`) or joins the SoftAP (whose captive DNS
+  answers every name with the device), whether it was left open or kept in
+  the browser's HTTP cache, which serves it again with no request to the
+  device for as long as its server said, even after the browser has quit
+  (in headless Chromium 141, clearing that name's cookies and stored data did
+  not remove it: the site's own "Delete data" for `canary.local` left the
+  cached page to be served again, while "Delete browsing data" with "Cached
+  images and files" over "All time", which empties every site's cache, did;
+  other browsers were not tried): it can take the landing's pair token, a session through
+  `?cv_pair=`, during setup the wizard's pair token (from `/`'s redirect to
+  the wizard or from the re-issue), and, around a BOOT tap the owner presses
+  from that browser, the receipt. Only HTTPS with an identity the browser can
+  check closes that, and neither F15 nor F256 gives a browser one: F15 would
+  bring HTTPS with a self-signed certificate, whose warning the owner
+  accepts, and only a client that pins the certificate checks it (the iPhone
+  app pins the receipt's `tls_cert_fp`; F256 asks whether it may learn one
+  over mDNS). F15 would still help: once a unit serves HTTPS after setup,
+  port 80 answers only the captive probes, `/api/fleet` and a redirect, so a
+  page planted over plain HTTP is cross-origin to the device and takes none
+  of these (it reads nothing; but `SameSite=Strict` compares sites, so in a
+  browser that does not count the scheme in the site, as Chromium does, its
+  requests still carry the session cookie and it can write blind with the
+  owner's session: a reboot, or any other write a session may make); a page
+  served over https at that name whose certificate warning
+  the owner accepted still does, and so does any page during the first-boot
+  setup or on a unit whose HTTPS start failed, which serve plain HTTP.
+  Host-tested
+  (`test_session_cookie.cpp`, `test_receipt_grant.cpp`); not run against a
+  browser or on a device.
+- **The first-boot wizard answers exactly `canary.local` or `192.168.4.1`
+  (sweep F344).** `/`'s setup branch and the wizard token's re-issue
+  (`/api/wifi/pair-token`) tested the Host by substring, so a name that merely
+  contained one of them (`canary.local.evil.example`), which the captive DNS
+  also resolves to the device, was sent to the wizard with a token that
+  authorizes the Wi-Fi join, and `CANARY.LOCAL` was not. Both now match the
+  two names exactly, in any case and with any port; every other name still
+  gets the static "open canary.local" page on `/` and `404 {"ok":false}` on
+  the re-issue, and no token. And the re-issue's answer no longer carries
+  `Access-Control-Allow-Origin: *` (it went out through the sketch's JSON
+  sender, which adds it to every answer). An exact name does not stop a page
+  that asks for the real one: during setup, a page on another site open in the
+  owner's browser while that browser was on the SoftAP could read a pair token
+  at `http://192.168.4.1/api/wifi/pair-token`, and spend it on
+  `/api/wifi/connect` (join the device to a network the page names) or
+  `/api/wifi/ap-only` (end setup in standalone mode). The wizard reads the
+  token from the same origin, so it works as before, and the route check now
+  refuses a place that mints and answers through that sender. The WAP's two
+  READMEs offer the device's unique `.local` name for after setup only, since
+  during setup `/` under it gets the static page, and the Home Assistant guide
+  says so and no longer offers the WAP a `/setup` page it does not have.
+  Host-tested; not run on a device.
+- **canary-wap's session cookie is `__Host-cv_session` over HTTPS and stays
+  `cv_session` over plain HTTP (sweep F337).** A browser that holds a `Secure`
+  cookie refuses a same-name cookie that an http page at the same host name
+  sets, so with one name a browser that had used one WAP over HTTPS at
+  `canary.local` could not sign in to a unit it then met over plain HTTP at
+  `canary.local` (a second unit, since every WAP claims `canary.local`; the
+  same unit after a factory reset; or a unit whose HTTPS start failed) until
+  the old cookie's 24 hours ran out, and the wizard's Home Assistant step
+  answered "This needs the recovery-kit step first" meanwhile. The same held
+  at `192.168.4.1` only for a browser that had used a unit over
+  `https://192.168.4.1` on its SoftAP (a standalone unit, or a joined one
+  while its SoftAP is up: after a boot until the home link has held 120 s, or
+  after the link drops): cookies follow the host name, so one from
+  `https://canary.local` never blocked `http://192.168.4.1`. The two names
+  never meet. The device reads `__Host-cv_session` first and a malformed one
+  reads nothing; plain `cv_session` is still read. In current browsers only an
+  https answer at that host name can set the `__Host-` name (this device;
+  another unit answering the same name, whose session matches none here and
+  whose cookie the landing's next one replaces; or any server whose
+  certificate the browser accepted there), so a cookie planted over http
+  cannot shadow it (integrity, not availability: an on-path host can still
+  sign a browser out by overflowing its Cookie header). A server of the last
+  kind can: it can set the name to a session it took at the landing, which
+  then validates and buys no more than the landing gives any LAN host while
+  sessions are interchangeable, or set it `Partitioned`, which the landing's
+  cookie does not replace, and while the planted one is the older the browser
+  sends it first, so every sign-in falls back to the landing until it expires
+  or is cleared (seen in headless Chromium 141 against a stand-in server). No
+  `Strict-Transport-Security`: browsers ignore it from a self-signed
+  certificate and for an IP address, and it would shut a browser out of a unit
+  that falls back to HTTP. Sessions live in RAM, so the update's reboot ends
+  them: tap **Open dashboard** once, as after any reboot. On a stock unit
+  nothing else changes today, because no stock WAP serves HTTPS (below).
+  Host-tested (`test_session_cookie.cpp`, `test_receipt_grant.cpp`,
+  `wizard_logic.test.js`); not run in a browser or on a device.
+- **Neither firmware tree's stock build serves HTTPS today (F15
+  corrected).** The on-device certificate generator on the WAP and on the
+  flagship's `FEATURE_HTTPS` builds is gated on `mbedtls/x509write_crt.h`, a
+  header mbedTLS has never shipped (its certificate-writing API is in
+  `mbedtls/x509_crt.h`; checked on arduino-esp32 2.0.17 and PlatformIO's
+  framework-arduinoespressif32 3.3.8), and nothing else stores a
+  certificate. So every WAP serves plain HTTP after setup and hands out no
+  `tls_cert_fp` pin, and the flagship's HTTPS builds serve HTTP and say why in
+  `tls_mode_reason`. THREAT_MODEL, SECURITY_MODEL, FEATURES.md, the WAP's
+  READMEs, `device_trust.md`, the FAQ, `magic_pairing.md`,
+  `iphone_companion_app.md`, the captive
+  portal test plan, the bench checklist, the bench runbook's Track D,
+  `PARITY_PLAN.md`, the S3 optimization roadmap, the flagship's getting-started
+  guide, `firmware/README.md`'s `dev` row and the glossary's TLS pin no
+  longer say otherwise (the broker password's provisioning request is plain
+  on every stock unit, and the flagship guide says to use `http://`); the
+  FAQ's recovery-kit steps and the README's first-boot step use `http://`. The generator itself is not changed here: fixing its guard
+  turns HTTPS on for every such unit and changes the pin the apps trust,
+  which needs the bench (F15 stays open).
+
 ### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (sweep F342, F347, #1842, #1843)
 
 #1842 carries the claim, the tap, the sweeps and its first five reviews'

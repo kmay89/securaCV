@@ -212,11 +212,11 @@
       "qty": "1",
       "required": false,
       "category": "Mechanical",
-      "desc": "Magnet, Ni-coated neodymium disc (or SmCo for high temp) for tamper",
-      "mpn": "NEO-6X3-NI",
+      "desc": "Magnet, Ni-coated neodymium disc 6 x 2 mm (or SmCo for high temp) for tamper",
+      "mpn": "NEO-6X2-NI",
       "mfr": "Generic",
       "usd": 0.4,
-      "notes": "Lid-mounted; separates from SW2 when enclosure opens. Ni/epoxy coat for corrosion; NdFeB max ~80C, use SmCo if hot",
+      "notes": "Lid-mounted; separates from SW2 when enclosure opens. Ni/epoxy coat for corrosion; NdFeB max ~80C, use SmCo if hot. 6 x 2, not 6 x 3: the face's pocket is Ø6.2 x 2.2 (mag_h), so a 3 mm disc would stand 0.8 proud of its ring",
       "orderable": false
      },
      {
@@ -414,7 +414,7 @@
       "mpn": "M2X8-ST-MIX",
       "mfr": "Generic",
       "usd": 0.6,
-      "notes": "Driven through the back plate's recessed seats into the one-piece shell's post ends (the plate nests inside the walls; the only seam is on the back face): 4x flat 10mm on the battery and compact builds; the Outdoor build takes 4x PAN 8mm over O-rings (ORG1) plus 4x flat 12mm for the sun shield into the shell's blind face pilots. Max ~0.3 N-m or the printed posts strip",
+      "notes": "Driven through the back plate's recessed seats into the one-piece shell's post ends (the plate nests inside the walls; the only seam is on the back face): 4x flat 10mm on the battery and compact builds; the Outdoor build takes 8x PAN 8mm over O-rings (ORG1) plus 4x flat 12mm for the sun shield into the shell's blind face pilots. Max ~0.3 N-m or the printed posts strip",
       "orderable": false
      },
      {
@@ -462,7 +462,7 @@
       "mpn": "M3.5-PAN-ANCHOR",
       "mfr": "Generic",
       "usd": 0.6,
-      "notes": "For the printed enclosure's blind keyhole mounts (opt_mount); head <= 7mm dia, <= 2.5mm tall",
+      "notes": "For the printed enclosure's blind keyhole mounts (opt_mount); head <= 6.8mm dia (the pocket's Ø7.0 head hole does not pass a 7.0 head), <= 2.5mm tall",
       "orderable": false
      },
      {
@@ -479,14 +479,26 @@
      },
      {
       "ref": "INS1",
-      "qty": "4",
+      "qty": "8",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 brass heat-set insert, short series 3.5mm OD x 4.0mm",
+      "desc": "M2 brass heat-set insert, short series 3.5mm OD x 4.0mm (4 on the battery and compact builds, 8 on the Outdoor build)",
       "mpn": "M2-HSI-3.5X4",
       "mfr": "Generic",
+      "usd": 0.8,
+      "notes": "Service-grade lid threads: set screw_insert=true in the enclosure (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws (SCR5) instead of SCR3 self-tappers. One per plate screw: the Outdoor build has eight",
+      "orderable": false
+     },
+     {
+      "ref": "SCR5",
+      "qty": "8",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M2 MACHINE screws for the heat-set insert builds (screw_insert=true): FLAT head 10mm on the battery and compact builds, PAN head 8mm on the Outdoor build",
+      "mpn": "M2-MACH-MIX",
+      "mfr": "Generic",
       "usd": 0.4,
-      "notes": "Service-grade lid threads: set screw_insert=true in the enclosure (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws instead of SCR3 self-tappers",
+      "notes": "In place of SCR3's plate screws when the posts carry INS1 - a self-tapper strips brass: 4x flat 10mm, or 8x pan 8mm over the O-rings. The same lengths as the self-tappers they replace: below the insert the bore opens to Ø2.3, so the screw runs free to its tip",
       "orderable": false
      },
      {
@@ -498,14 +510,14 @@
       "mpn": "OR-2X1-NBR70",
       "mfr": "Generic",
       "usd": 0.4,
-      "notes": "Outdoor build: one under each of the 4 lid screws' pan heads, in the glands the back seats carry (canary_wap_enclosure e_gland). NBR or silicone 70A",
+      "notes": "Outdoor build: one under each of the 8 plate screws' pan heads, in the glands the back seats carry (canary_wap_enclosure e_gland). NBR or silicone 70A",
       "orderable": false
      }
     ],
     "required_usd": 25.99,
-    "full_usd": 102.78,
+    "full_usd": 103.58,
     "required_usd_live": 27.9,
-    "full_usd_live": 117.25,
+    "full_usd_live": 118.05,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {
@@ -527,7 +539,7 @@
        "VENT1",
        "LP1"
       ],
-      "usd": 11.75,
+      "usd": 12.35,
       "note": "Splash-resistant (~IP54) printed case, enclosure/ v0.7 - NOT a substitute for ENC1 outdoors"
      }
     ]
@@ -536,9 +548,9 @@
     "source": "docs/hardware/enclosure/README.md §Assembly",
     "steps": [
      "(battery variant) Drop the LiPo in the bay; route the leads through the wire channel notched in the bay ribs along the +Y wall to the XIAO BAT pads. Read the battery safety notice in build plan §6.5 first.",
-     "Press the PCB straight down until the four edge clips snap over it, USB-C aligned to the wall cutout — no screws needed for the board. (To remove, gently splay the clips outward and lift.)",
-     "Press a 6 mm magnet into the lid pocket (press fit — a drop of CA glue makes it permanent); add a GORE vent over the seat if sealing; press the light pipe into the LED port.",
-     "(weather mode) Seat the TPU gasket in the rim groove; glue the clear disc into the camera seat.",
+     "Press the PCB straight down between the four end stops at its short ends until the four edge clips snap over it, USB-C toward the wall cutout — no screws needed for the board (the stops locate it along the case, so a plug cannot push it into the camera window). (To remove, gently splay the clips outward and lift.)",
+     "Press a 6 mm magnet into the lid pocket (press fit — a drop of CA glue makes it permanent); add a GORE vent into the seat on the face's inner side if sealing; press the light pipe into the LED port.",
+     "(weather mode) Glue the clear disc into the camera seat. Turn the shell face-down and press the TPU gasket into the groove in its ledge on a thin film of silicone grease — the printed ring is 0.5 mm narrower than its groove (1.1 in 1.6), so dry it drops out when step 5 turns the shell face-up over the plate.",
      "Lower the shell over the plate (its walls swallow the plate's edge — the key slot on the plate meets the rib in the +Y wall, so it only goes one way), turn the case over and drive the M2 screws through the plate's recessed seats into the post ends — the Outdoor build seats an O-ring under each pan head first — snug diagonally, then final quarter-turns. Don't crank them: M2 self-taps strip printed posts beyond ~0.3 N·m (two fingers on the short end of the driver is plenty). The face and the sides stay unbroken; the only seam is the hairline around the plate on the back."
     ]
    }
@@ -768,7 +780,7 @@
       "qty": "18",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 self-tapping pan-head screws, mixed lengths: Vision case 4x 6mm (camera posts) + 6x 8mm (back plate to the shell's post ends); doorbell v0.8 4x 5mm (camera posts) + 2x 4mm (module board posts) + 12x 10mm (back plate, over a 2 mm head floor)",
+      "desc": "M2 self-tapping pan-head screws, mixed lengths: Vision case 4x 4mm (camera posts) + 4x 8mm (back plate to the shell's post ends; 6x on the weather preset); doorbell v0.8 4x 5mm (camera posts) + 2x 4mm (module board posts) + 12x 10mm (back plate, over a 2 mm head floor)",
       "mpn": "M2X8-ST-MIX",
       "mfr": "Generic",
       "usd": 0.9,
@@ -792,11 +804,23 @@
       "qty": "4",
       "required": false,
       "category": "Mechanical",
-      "desc": "#8 / M4 countersunk screw + wall anchor (bracket fixing)",
+      "desc": "#8 / M4 screw + wall anchor: COUNTERSUNK for the Vision bracket, PAN head for the doorbell wall plate",
       "mpn": "M4-CSK-ANCHOR",
       "mfr": "Generic",
       "usd": 1.2,
-      "notes": "Bracket wall mounting; or hang on the bracket's keyhole slots",
+      "notes": "Vision bracket: its four corner holes are Ø4.8 with 90° cones for a #8 flat head (Ø8.3). Doorbell wall plate: four Ø4.8 holes under flat counterbores (Ø8.6 x 3.0) cut for a #8 PAN head, which lands flush - a countersunk head there bears on the hole's edge. One build or the other, so 4 covers either. The bracket's two keyhole slots (Ø7.5 head pass, 4.2 slot) pass no #8: hang it on SCR9 instead",
+      "orderable": false
+     },
+     {
+      "ref": "SCR9",
+      "qty": "2",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "#6 / M3.5 pan-head screw + wall anchor (keyhole mount)",
+      "mpn": "M3.5-PAN-ANCHOR",
+      "mfr": "Generic",
+      "usd": 0.6,
+      "notes": "Vision weather preset (mount both): one in each of the back plate's two blind keyholes (canary_mount_lib: Ø7.0 head pass, 4.2 slot, 2.5 head channel); head <= 6.8mm dia (the Ø7.0 head hole does not pass a 7.0 head), <= 2.5mm tall. The same two hang the bracket on its keyhole slots in place of SCR7",
       "orderable": false
      },
      {
@@ -820,19 +844,43 @@
       "mpn": "DISC-PMMA-14X1",
       "mfr": "Generic",
       "usd": 0.6,
-      "notes": "Vision case: bond into the front-face seat with NEUTRAL-CURE silicone (acid-cure attacks PC). Doorbell v0.7: the disc goes in from the INSIDE behind the face's lip and the printed retainer ring (part=\"retainer\") presses in behind it - run a thin bead of neutral-cure silicone round the lip's ledge before the disc so the window seals; no bridges face the window. For sealing also see WAP BOM items 23-26 (silicone, USB plug, TPU, GORE vent)",
+      "notes": "Vision case: bond into the front-face seat with NEUTRAL-CURE silicone (acid-cure attacks PC). Doorbell v0.7: the disc goes in from the INSIDE behind the face's lip and the printed retainer ring (part=\"retainer\") presses in behind it - run a thin bead of neutral-cure silicone round the lip's ledge before the disc so the window seals; no bridges face the window. For sealing also see WAP BOM items 18a, 23, 24 and 26 (GORE vent, silicone, USB plug, TPU)",
+      "orderable": false
+     },
+     {
+      "ref": "LP1",
+      "qty": "1",
+      "required": false,
+      "category": "Optomechanical",
+      "desc": "Light pipe Ø3, single, press-fit (status LED to the front face)",
+      "mpn": "LIGHTPIPE-3MM",
+      "mfr": "Generic",
+      "usd": 0.45,
+      "notes": "Every Vision preset bores the front for it (Ø3.2, lp_d + 2 x tol_press); cut it to reach from the LED to flush with the face. The WAP BOM's LP1 fills the same Ø3.2 bore",
       "orderable": false
      },
      {
       "ref": "INS1",
-      "qty": "5",
+      "qty": "13",
       "required": false,
       "category": "Mechanical",
-      "desc": "M2 brass heat-set insert, short series 3.5mm OD x 4.0mm (4x front corners + 1x doorbell security boss)",
+      "desc": "M2 brass heat-set insert, short series 3.5mm OD x 4.0mm (Vision case: 4 plate posts, 6 on the weather preset; doorbell: 12 plate posts + 1 security boss)",
       "mpn": "M2-HSI-3.5X4",
       "mfr": "Generic",
-      "usd": 0.5,
-      "notes": "Service-grade threads: set screw_insert=true (posts auto-fatten; the doorbell cavity widens for the nut arc), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws for the front corners AND the security screw (SCR8 machine variant). Vision case builds need 4; the fifth seats in the doorbell body's security boss from the outer face",
+      "usd": 1.3,
+      "notes": "Service-grade threads: set screw_insert=true (posts auto-fatten; the doorbell cavity widens for the nut arc), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws (SCR10) in the plate posts AND the security screw (SCR8 machine variant). Vision case builds need 4 (6 on the weather preset); the doorbell needs 13 - one in each of its 12 plate posts (v0.8) and the 13th in the body's security boss, from the outer face",
+      "orderable": false
+     },
+     {
+      "ref": "SCR10",
+      "qty": "12",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M2 pan-head MACHINE screws for the heat-set insert builds (screw_insert=true): Vision case 4x 8mm (6x on the weather preset); doorbell 12x 10mm",
+      "mpn": "M2-PAN-MACH-MIX",
+      "mfr": "Generic",
+      "usd": 0.6,
+      "notes": "In place of SCR5's plate screws when the posts carry INS1 - a self-tapper driven into brass strips the insert. The same lengths as the self-tappers they replace: below the insert the bore opens to Ø2.3, so the screw runs free to its tip",
       "orderable": false
      },
      {
@@ -922,7 +970,7 @@
       "mpn": "M2X10-SEC-TX",
       "mfr": "Generic",
       "usd": 0.3,
-      "notes": "Doorbell anti-theft lock: drives up through the wall plate's collar into the body's blind boss - tool-only removal, Ring-style. With screw_insert=true the boss carries INS1's fifth insert, so use the M2 machine-thread variant (a self-tapper strips brass)",
+      "notes": "Doorbell anti-theft lock: drives up through the wall plate's collar into the body's blind boss - tool-only removal, Ring-style. With screw_insert=true the boss carries one of INS1's inserts (the doorbell's 13th), so use the M2 machine-thread variant (a self-tapper strips brass)",
       "orderable": false
      },
      {
@@ -1107,9 +1155,9 @@
      }
     ],
     "required_usd": 28.69,
-    "full_usd": 94.45,
+    "full_usd": 96.9,
     "required_usd_live": 29.49,
-    "full_usd_live": 106.21,
+    "full_usd_live": 108.66,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {
@@ -1129,7 +1177,7 @@
        "NUT1",
        "CW2"
       ],
-      "usd": 41.84,
+      "usd": 42.24,
       "note": "Wall/tripod-mountable unit with adjustable hinge; add WAP weather-kit items for sealing"
      }
     ]
@@ -1140,7 +1188,7 @@
      "Screw the OV5647 to the four posts inside the front face (M2 self-tappers, ribbon edge toward the module; the lens barrel enters the bore in the front); bond the clear disc into the seat. (vent/buzzer) Stick the GORE patch over the vent cluster on the front's inner face. (weather) Press the hood's spigot into the groove around the window (open side down) and bond it with neutral-cure silicone.",
      "(xiao host) Seat the XIAO in the module's socket — both USB-C ports must face the same direction; backwards seating feeds power into GPIO and can kill either board (device guide §3). Click the stack into the tall side rails, module up, both ports aligned to the two bottom-wall openings (model port above, firmware port below). (devkit host) Click the Vision AI V2 and the DevKitM-1 into their snap-clip cradles (DevKit USB-C down, aligned to the wall opening); the module's own USB-C faces the middle gap — open the case to reflash models.",
      "Route the camera FPC to the module's CSI connector (and, devkit host, the Grove cable across the middle gap to the DevKit pins).",
-     "(weather) Seat the TPU gasket in the rim groove.",
+     "(weather) Turn the front face-down and press the TPU gasket into the groove in its ledge on a thin film of silicone grease — the printed ring is 0.5 mm narrower than its groove, so dry it drops out when step 5 turns the shell face-up over the plate.",
      "Lower the shell over the plate (the walls swallow the plate's edge; the plate's key slot meets the rib in the +Y wall, so it only goes one way), turn it over and drive the short M2 screws through the plate's recessed seats into the post ends (4, or 6 with the weather preset's mid posts — an O-ring under each pan head on a sealed build) — the face and every side stay unbroken — snug diagonally, then final quarter-turns.",
      "Screw the bracket to the wall (or a tripod plate via the 1/4-20 nut), slot the case prongs into it, set the angle, tighten the M5 thumbscrew."
     ]
@@ -1209,11 +1257,11 @@
       "qty": "1",
       "required": false,
       "category": "Mechanical",
-      "desc": "Magnet, Ni-coated neodymium disc for tamper",
-      "mpn": "NEO-6X3-NI",
+      "desc": "Magnet, Ni-coated neodymium disc 6 x 2 mm for tamper",
+      "mpn": "NEO-6X2-NI",
       "mfr": "Generic",
       "usd": 0.4,
-      "notes": "Lid-mounted; separates from SW2 when the radome opens. Ni/epoxy coat for corrosion",
+      "notes": "Lid-mounted; separates from SW2 when the radome opens. Ni/epoxy coat for corrosion. 6 x 2, not 6 x 3: the front's pocket is Ø6.2 x 2.2 (mag_h), and the carrier keeps 1 mm under its ring - a 3 mm disc stands 0.8 proud and leaves 0.2",
       "orderable": false
      },
      {
@@ -1237,7 +1285,19 @@
       "mpn": "M2-HSI-3.5X4",
       "mfr": "Generic",
       "usd": 0.4,
-      "notes": "Service-grade lid threads: set screw_insert=true (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws instead of SCR3 self-tappers",
+      "notes": "Service-grade lid threads: set screw_insert=true (posts auto-fatten), install at 220-240C (PETG) / 240-260C (ASA), use M2 machine screws (SCR8) instead of SCR3 self-tappers",
+      "orderable": false
+     },
+     {
+      "ref": "SCR8",
+      "qty": "4",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M2 MACHINE screw, PAN head, 8mm (into INS1, screw_insert=true)",
+      "mpn": "M2X8-MACH-PAN",
+      "mfr": "Generic",
+      "usd": 0.2,
+      "notes": "In place of SCR3 when the posts carry INS1 - a self-tapper strips brass. The same length as the self-tapper: below the insert the bore opens to Ø2.3, so the screw runs free to its tip. 6 with seal_mid_posts",
       "orderable": false
      },
      {
@@ -1249,7 +1309,7 @@
       "mpn": "M3.5-PAN-ANCHOR",
       "mfr": "Generic",
       "usd": 0.6,
-      "notes": "For the printed enclosure's keyhole mounts (opt_mount); head <= 7mm dia, <= 2.5mm tall",
+      "notes": "For the printed enclosure's keyhole mounts (mount_style keyhole or both); head <= 6.8mm dia (the pocket's Ø7.0 head hole does not pass a 7.0 head), <= 2.5mm tall",
       "orderable": false
      },
      {
@@ -1261,7 +1321,7 @@
       "mpn": "TPU-95A",
       "mfr": "Generic",
       "usd": 0.2,
-      "notes": "Printed perimeter gasket for the sealed radome preset (opt_seal); 2 perimeters, 100% infill, slow. Radar sees through plastic — no window, no vent needed",
+      "notes": "Printed perimeter gasket for the sealed radome preset (opt_seal); 2 perimeters, 100% infill, slow. Radar sees through plastic, so no window — but a sealed build still needs a pressure path, which the CAD asserts: opt_weep (a Ø2 weep, no part) or opt_vent (a Ø12 adhesive GORE patch, the WAP BOM's VENT1)",
       "orderable": false
      },
      {
@@ -1275,12 +1335,48 @@
       "usd": 0.2,
       "notes": "Sealed build (opt_seal): one under each back screw's pan head, in the glands the back seats carry (e_gland); 6 with seal_mid_posts. NBR or silicone 70A",
       "orderable": false
+     },
+     {
+      "ref": "SCR6",
+      "qty": "1",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "M5 x 25 bolt + nut (or GoPro-style M5 knurled thumbscrew)",
+      "mpn": "M5X25+NUT",
+      "mfr": "Generic",
+      "usd": 1.2,
+      "notes": "Hinge clamp for the default mount (mount_style hinge or both): through the bracket's fins and the front's; the printed knob (part=knob, the Vision's) captures a standard M5 nut",
+      "orderable": false
+     },
+     {
+      "ref": "SCR7",
+      "qty": "4",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "#8 / M4 countersunk screw + wall anchor (bracket fixing)",
+      "mpn": "M4-CSK-ANCHOR",
+      "mfr": "Generic",
+      "usd": 1.2,
+      "notes": "The hinge bracket's four corner holes (part=bracket, the Vision's): Ø4.8 with 90° cones for a #8 flat head (Ø8.3)",
+      "orderable": false
+     },
+     {
+      "ref": "LP1",
+      "qty": "1",
+      "required": false,
+      "category": "Optomechanical",
+      "desc": "Light pipe Ø3, single, press-fit (status LED to the front face)",
+      "mpn": "LIGHTPIPE-3MM",
+      "mfr": "Generic",
+      "usd": 0.45,
+      "notes": "opt_led (on in every preset): the front's Ø3.2 press-fit bore carries the kit's WS2812 to the face; cut it to reach from the LED to flush with the face. The WAP BOM's LP1 fills the same Ø3.2 bore",
+      "orderable": false
      }
     ],
     "required_usd": 36.4,
-    "full_usd": 40.2,
+    "full_usd": 43.25,
     "required_usd_live": 36.4,
-    "full_usd_live": 42.16,
+    "full_usd_live": 45.21,
     "pricing_as_of": "2026-09-02T13:37:16Z",
     "recipes": [
      {
@@ -1296,9 +1392,10 @@
        "MAG1",
        "SCR3",
        "SCR4",
-       "FIL1"
+       "FIL1",
+       "ORG1"
       ],
-      "usd": 39.6,
+      "usd": 39.8,
       "note": "Printed radome + tamper + keyhole mount; INS1 optional service threads extra"
      }
     ]
@@ -1309,7 +1406,7 @@
      "Seat the XIAO ESP32-C6 in the MR60 radar carrier's stacking socket (its USB-C toward the bottom-wall opening — the port height is derived from the seated stack, so a mis-seated stack misses its own cutout).",
      "Click the carrier into the snap rails, antenna face toward the front, until the +Y end stops locate it — the stops are what keep the antenna under the radome window, so push it home against them.",
      "Press the light pipe into the WS2812 port; when sealing, glue a clear disc behind the lux aperture (the BH1750 needs to see room light) and stick a GORE-type membrane over any vent seat.",
-     "(weather mode) Seat the TPU gasket in the rim groove.",
+     "(weather mode) Turn the radome shell face-down and press the TPU gasket into the groove in its ledge on a thin film of silicone grease — the printed ring is 0.5 mm narrower than its groove, so dry it drops out when step 5 turns the shell face-up over the plate.",
      "Lower the radome shell over the plate (the walls swallow the plate's edge — the key slot meets the rib in the +Y wall, so the window can only land over the antenna array), turn it over and drive the 4 × M2 × 8 screws through the plate's recessed seats into the corner post ends — snug diagonally first, then final quarter-turns, never past ~0.3 N·m.",
      "Mount it: slot the hinge prongs into the shared Vision bracket and set the angle (bedside ≤ 1.5 m for the wellbeing channel), or hang the blind keyholes — ceiling-mount the MR60FDA2 fall build facing straight down."
     ]
@@ -1368,6 +1465,18 @@
       "orderable": false
      },
      {
+      "ref": "W-SCR1",
+      "qty": "1",
+      "required": false,
+      "category": "Mechanical",
+      "desc": "#6 / M3.5 pan-head screw + wall anchor (keyhole wall mount)",
+      "mpn": "M3.5-PAN-ANCHOR",
+      "mfr": "Generic",
+      "usd": 0.3,
+      "notes": "Only for hanging the drum on a wall without the stand: one screw in its blind keyhole (canary_mount_lib: Ø7.0 head pass, 4.2 slot, 2.5 head channel); head <= 6.8mm dia (the Ø7.0 head hole does not pass a 7.0 head), <= 2.5mm tall",
+      "orderable": false
+     },
+     {
       "ref": "W-BT1",
       "qty": "1",
       "required": false,
@@ -1423,9 +1532,9 @@
      }
     ],
     "required_usd": 34.99,
-    "full_usd": 41.94,
+    "full_usd": 42.24,
     "required_usd_live": 34.99,
-    "full_usd_live": 44.14,
+    "full_usd_live": 44.44,
     "pricing_as_of": "2026-09-02T13:37:16Z"
    },
    "assembly": {
@@ -1435,7 +1544,7 @@
      "Set the stand on the desk. It prints base-down with no supports: an open 220° saddle on a 25° reclined seat plate, two rails in the saddle and two spring tabs in its wall (the dock), a teardrop window through the plate to push the puck out from behind, a sculpted spine to the base, and the chin pocket that passes a 90° (up/down-angle) USB-C lead, elbow pointing back, into the open channel under the base and out the rear. A straight plug cannot mate in the cradle — its body would meet the desk. (Wall-mounting instead? Skip the stand — the drum's blind keyhole hangs the puck on a single screw.)",
      "Dock the drum: USB slot down, slide it back into the saddle. The two keyways on its barrel find the rails (it only goes in USB-down), and at 13 mm deep, back cap on the seat plate, the tabs' nubs drop into the drum's dimples with a click. Pull it forward to undock — the same click; the open top is where you grip it.",
      "Pin the XIAO ESP32-S3 into the Round Display's back socket. It rides the display's own two 7-pin headers — component side away from the display, USB-C at the disc edge. Zero wiring: the display's charger, RTC and microSD come along. Click the kit's flex antenna pigtail onto the XIAO's U.FL (on the component side, at the end away from the USB), then stick the antenna tag into its bay: the shallow curved recess in the bore wall, 135° round from the USB slot, a millimeter up from the floor. Its adhesive lands on the recess, the tag curves with the wall, and the pigtail runs across the floor and up the wall under it — nothing above the bay reaches the tag (the display's back parts sweep past it with 0.2 mm to spare, which the file asserts). Measure your tag (`ant_l`, `ant_w`) if it is not the kit's 2.4G A-02.",
-     "Lower the stack into the bore, display face up, USB-C aligned to the side slot. The Ø43.0 disc passes the Ø45.9 rim counterbore, funnels into the Ø44.4 bore and lands on the three seat pads — the PCB's back face rests on them, so nothing floats; the XIAO's USB shell hovers 0.4 mm over its end-stop boss, which is what keeps its pins in the socket in a drop. The USB-C receptacle looks out through the stadium slot. (battery build, opt_batt) Before you lower it, tape the protected LiPo between the fence rails on the drum floor and plug it into the display's JST 1.25 — check the polarity first; vendor pigtails vary.",
+     "Lower the stack into the bore, display face up, USB-C aligned to the side slot. The Ø43.0 disc passes the Ø45.9 rim counterbore, its back parts funnel into the Ø44.4 bore, and it lands on the three seat pads with its rim in the funnel (0.85 mm clear a side until the bezel's glass pocket takes it to 0.5) — the PCB's back face rests on them, so nothing floats; the XIAO's USB shell hovers 0.4 mm over its end-stop boss, which is what keeps its pins in the socket in a drop. The USB-C receptacle looks out through the stadium slot. (battery build, opt_batt) Before you lower it, tape the protected LiPo between the fence rails on the drum floor and plug it into the display's JST 1.25 — check the polarity first; vendor pigtails vary.",
      "Snap the bezel home. Its skirt drops into the counterbore AROUND the glass (the skirt's bore is the glass pocket, 0.5 mm clear a side) and the four nubs click into the wall slots — no fasteners. The Ø40.0 aperture leaves 1.5 mm of lip on the glass edge, 0.1 mm over the glass front with the disc on its pads: captured both ways, pixels untouched. To open it again, lift the bezel at the fingernail notch in the drum rim."
     ]
    }
@@ -1473,11 +1582,11 @@
       "qty": "1",
       "required": false,
       "category": "Enclosure",
-      "desc": "3D-printed Dash case (bezel frame + vented back + 25deg stand)",
+      "desc": "3D-printed Dash case (bezel frame + vented back + 25deg stand + wall cradle)",
       "mpn": "canary_dash_display.scad",
       "mfr": "SecuraCV",
       "usd": 2.5,
-      "notes": "docs/hardware/enclosure/canary_dash_display.scad (v0.1-dev, not print-validated). Back carries 2x keyholes + 75mm horizontal M4 pair. MEASURE your panel before printing",
+      "notes": "docs/hardware/enclosure/canary_dash_display.scad (v0.1-dev, not print-validated). The back carries four dock pads that click onto the printed wall cradle (part=cradle, canary_cradle_lib); v0.2 retired the 2x keyholes + 75mm horizontal M4 pair. MEASURE your panel before printing",
       "orderable": false
      },
      {
@@ -1497,11 +1606,11 @@
       "qty": "2",
       "required": false,
       "category": "Mechanical",
-      "desc": "M4 x 10 machine screw (75mm-pair wall mount) or 2x #6 pan screws for keyholes",
-      "mpn": "M4X10",
+      "desc": "#8 / M4 pan-head screw + wall anchor (wall cradle)",
+      "mpn": "M4-PAN-ANCHOR",
       "mfr": "Generic",
-      "usd": 0.3,
-      "notes": "Only for wall mounting; desk stand needs no hardware",
+      "usd": 0.6,
+      "notes": "Only for wall mounting: two through the wall cradle's slotted Ø4.4 holes (Ø8.6 counterbores; the slots let the plate level without re-drilling). The desk stand needs no hardware",
       "orderable": false
      },
      {
@@ -1530,9 +1639,9 @@
      }
     ],
     "required_usd": 42.5,
-    "full_usd": 45.5,
+    "full_usd": 45.8,
     "required_usd_live": 42.5,
-    "full_usd_live": 45.5,
+    "full_usd_live": 45.8,
     "pricing_as_of": "2026-09-02T13:37:16Z"
    },
    "assembly": {

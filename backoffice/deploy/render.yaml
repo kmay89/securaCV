@@ -1,0 +1,23 @@
+# Render blueprint: a free web service running the public demo.
+# New → Blueprint → point it at the repo; it reads this file. The free tier
+# sleeps when idle and has no disk, which is fine for a demo that reseeds
+# itself on boot (BACKOFFICE_DEMO=1 on an empty database).
+services:
+  - type: web
+    name: securacv-backoffice-demo
+    runtime: docker
+    rootDir: backoffice
+    dockerfilePath: deploy/Dockerfile
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: BACKOFFICE_DEMO
+        value: "1"
+      - key: BACKOFFICE_DEMO_RESET_MINUTES
+        value: "60"
+      - key: BACKOFFICE_HOST
+        value: 0.0.0.0
+      - key: BACKOFFICE_PORT
+        value: "8787"
+      - key: BACKOFFICE_DATA_DIR
+        value: /data

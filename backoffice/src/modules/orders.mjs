@@ -2,18 +2,59 @@
 // resolved against the catalog (an unknown SKU is a loud error), COGS frozen
 // at the time of sale so the books do not move when the BOM does. Packing an
 // order consumes inventory through the recipes; shipping mails the tracking.
-import { nowIso } from '../db.mjs';
+import { nowIso, currentActor } from '../db.mjs';
 import { upsertContact } from './contacts.mjs';
 import { resolveSku, cogsCents } from './catalog.mjs';
 import { consumeForOrder, releaseForOrder } from './inventory.mjs';
 import { enqueue, fill } from './mail.mjs';
 import { postSale, postRefund } from './ledger.mjs';
+import { evaluate as evaluateDiscount } from './discounts.mjs';
+import { normalizeTags } from './contacts.mjs';
+import { estimateDelivery, orderStatusUrl } from './delivery.mjs';
+import { csvLine } from '../http.mjs';
+import { currentTz } from '../render.mjs';
+import { packOrder, weightCheck } from './packing.mjs';
+import { postExpense } from './ledger.mjs';
+
+// A whole number of cents, zero or more: Stripe always sends one; a hand-typed order or an API caller may not.
+const cents = (v, name) => { const n = v == null || v === '' ? 0 : Number(v); if (!Number.isInteger(n) || n < 0) throw new Error(`${name} must be a whole number of cents, 0 or more`); return n; };
+// A line's quantity is a whole number of at least one; its unit price a whole number of cents.
+export const MAX_LINE_QTY = 999;   // Stripe's adjustable quantity stops at 999; anything above is a typo or an attack on the planner
+const lineQty = (v) => { const n = v == null || v === '' ? 1 : Number(v); if (!Number.isInteger(n) || n < 1) throw new Error(`qty must be a whole number of at least 1 (got ${JSON.stringify(v)})`); if (n > MAX_LINE_QTY) throw new Error(`qty ${n} is more than ${MAX_LINE_QTY} on one line — split the order, or check the number`); return n; };
+// The same SKU twice on one order (two Payment Link lines, a typed duplicate) is one line with the quantities added; a differing unit price keeps both.
+const mergeLines = (items) => { const out = []; for (const it of items) { const same = out.find(x => x.sku === it.sku && x.unit_cents === it.unit_cents && x.cogs_cents === it.cogs_cents); if (same) same.qty += it.qty; else out.push({ ...it }); } return out; };
+const currencyOf = (v) => { const c = String(v || 'usd').trim().toLowerCase(); if (!/^[a-z]{3}$/.test(c)) throw new Error(`currency must be a three-letter code (got ${JSON.stringify(v)})`); return c; };
+const lineCents = (v, fallback = 0) => { if (v == null || v === '') return fallback; const n = Number(v); if (!Number.isInteger(n) || n < 0) throw new Error(`unit price must be a whole number of cents (got ${JSON.stringify(v)})`); return n; };
+
+// What a shipping label needs. A US address wants a two-letter state and a 5 or 5+4 ZIP; anywhere
+// wants a street line and a city. Stripe's own address is never refused here (the money is taken;
+// the order must exist) — the order page and the benches flag it; a hand-typed one is refused.
+export function addressIssues({ line1, city, state, zip, country = 'US' } = {}) {
+  const out = []; const us = String(country || 'US').toUpperCase() === 'US';
+  if (!String(line1 || '').trim()) out.push('no street line');
+  if (!String(city || '').trim()) out.push('no city');
+  if (us && !/^[A-Z]{2}$/.test(String(state || '').trim().toUpperCase())) out.push('state is not a two-letter code');
+  if (us && !/^\d{5}(-\d{4})?$/.test(String(zip || '').trim())) out.push('ZIP is not 5 digits (or 5+4)');
+  if (!us && !String(zip || '').trim()) out.push('no postal code');
+  return out;
+}
+// A tracking number as the carrier prints it: no spaces, upper case, letters, digits and dashes only.
+export function normalizeTracking(t) {
+  const s = String(t || '').replace(/\s+/g, '').toUpperCase();
+  if (!s) return '';
+  if (!/^[A-Z0-9-]{1,40}$/.test(s)) throw new Error(`that tracking number has characters a carrier never prints: ${JSON.stringify(String(t).slice(0, 40))}`);
+  return s;
+}
 
 export const STATUSES = ['pending', 'paid', 'packed', 'shipped', 'delivered', 'refunded', 'canceled'];
 
-export function weekLabel(d = new Date()) {
-  // ISO week, e.g. 2026-W43 — the weekly batch the store-README describes.
-  const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+export function weekLabel(d = new Date(), tz = currentTz()) {
+  // ISO week, e.g. 2026-W43 — the weekly batch the store-README describes. "Orders in by Sunday
+  // night" is Sunday night where the operator is (OPERATOR_TZ), so the calendar date is taken in
+  // that zone before the week is counted: an order paid 23:30 Sunday in Boston is 03:30 Monday UTC
+  // and still belongs to the week that just closed.
+  const ymd = (() => { try { const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d).map(x => [x.type, x.value])); return [+p.year, +p.month - 1, +p.day]; } catch { return [d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()]; } })();
+  const date = new Date(Date.UTC(...ymd));
   const dayNum = date.getUTCDay() || 7; date.setUTCDate(date.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
   return `${date.getUTCFullYear()}-W${String(Math.ceil((((date - yearStart) / 86400000) + 1) / 7)).padStart(2, '0')}`;
@@ -22,69 +63,263 @@ export function weekLabel(d = new Date()) {
 export function recordOrder(db, o, { catalog = null, bomTotals = {}, actor = 'system' } = {}) {
   if (o.external_id) { const dup = db.get('SELECT id FROM orders WHERE external_id = ?', o.external_id); if (dup) return { order: orderById(db, dup.id), created: false }; }
   const unknown = [];
-  const items = (o.items || []).map(it => {
+  if (o.items != null && !Array.isArray(o.items)) throw new Error('items must be a list of {sku, qty, unit_cents}');
+  const items = mergeLines((o.items || []).map(it => {
+    if (!it || typeof it !== 'object') throw new Error('each item is an object with a sku');
     const p = catalog ? resolveSku(catalog, it.sku) || resolveSku(catalog, it.name) : null;
     if (catalog && !p) unknown.push(it.sku || it.name);
-    return { sku: p?.sku || it.sku || it.name, name: p?.name || it.name, qty: it.qty || 1, unit_cents: it.unit_cents ?? p?.price_cents ?? 0, cogs_cents: p ? cogsCents(p, bomTotals) : 0 };
-  });
+    return { sku: p?.sku || it.sku || it.name, name: p?.name || it.name, qty: lineQty(it.qty), unit_cents: lineCents(it.unit_cents, p?.price_cents ?? 0), cogs_cents: p ? cogsCents(p, bomTotals) : 0 };
+  }));
   if (unknown.length) throw new Error(`unknown SKU(s): ${unknown.join(', ')} — add them to store.json or fix the Payment Link metadata`);
+  const currency = currencyOf(o.currency);
+  for (const k of ['subtotal_cents', 'shipping_cents', 'tax_cents', 'total_cents']) cents(o[k], k);
   return db.tx(() => {
     const contact = o.email ? upsertContact(db, { email: o.email, name: o.name || null, source: 'store' }) : null;
+    // A hand-made order has no external id to dedupe on. The same customer, lines and total inside
+    // two minutes is a double submit (or a double click) until someone says otherwise.
+    if (!o.external_id && (o.source || 'manual') === 'manual' && !o.allow_duplicate) {
+      const sig = items.map(i => `${i.qty}× ${i.sku}`).sort().join(', ');
+      const recent = db.all("SELECT o.id, o.number, o.total_cents, (SELECT GROUP_CONCAT(qty || '× ' || sku, ', ') FROM order_items i WHERE i.order_id = o.id) AS items_text FROM orders o WHERE o.source = 'manual' AND o.created_at >= ? AND ((contact_id IS NOT NULL AND contact_id = ?) OR (contact_id IS NULL AND ? IS NULL)) ORDER BY o.id DESC LIMIT 20", new Date(Date.now() - 120_000).toISOString(), contact?.id ?? null, contact?.id ?? null);
+      const dup = recent.find(r => r.total_cents === cents(o.total_cents, 'total_cents') && String(r.items_text || '').split(', ').sort().join(', ') === sig);
+      if (dup) throw new Error(`that looks like a duplicate of ${dup.number} (same customer, lines and total, under two minutes ago) — open it, or wait two minutes and try again`);
+    }
     const number = db.nextNumber('EL');
     const paidAt = o.paid_at || nowIso();
-    const r = db.run(`INSERT INTO orders (number, external_id, payment_intent, source, contact_id, status, currency, subtotal_cents, shipping_cents, tax_cents, total_cents,
+    // A discount: Stripe already took it off the total (it says what it took, even when that is
+    // $0 for free shipping, so `discount_cents` arrives set); a manual order names a code with no
+    // amount, and the rules in discounts.mjs price it, then the total follows.
+    let subtotal = cents(o.subtotal_cents, 'subtotal_cents'), shipping = cents(o.shipping_cents, 'shipping_cents'), tax = cents(o.tax_cents, 'tax_cents'), total = cents(o.total_cents, 'total_cents');
+    let discountCode = o.discount_code ? String(o.discount_code).trim().toUpperCase() : null, discountCents = o.discount_cents == null ? 0 : cents(o.discount_cents, 'discount_cents');
+    let discountNote = '';
+    if (discountCode && o.discount_cents == null) {
+      const ev = evaluateDiscount(db, discountCode, { subtotal_cents: subtotal, shipping_cents: shipping, at: paidAt });
+      if (!ev.ok) throw new Error(`discount ${discountCode}: ${ev.reason}`);
+      discountCents = ev.discount_cents; if (ev.free_shipping) shipping = 0; discountNote = ev.reason;
+      total = Math.max(0, subtotal - (ev.free_shipping ? 0 : discountCents) + shipping + tax);
+      if (ev.free_shipping) discountCents = 0;
+    }
+    const r = db.run(`INSERT INTO orders (number, external_id, payment_intent, source, contact_id, status, currency, subtotal_cents, shipping_cents, tax_cents, total_cents, discount_code, discount_cents, tags,
         ship_name, ship_line1, ship_line2, ship_city, ship_state, ship_zip, ship_country, created_at, paid_at, batch, notes)
-      VALUES (?, ?, ?, ?, ?, 'paid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      number, o.external_id || null, o.payment_intent || null, o.source || 'manual', contact?.id ?? null, o.currency || 'usd',
-      o.subtotal_cents || 0, o.shipping_cents || 0, o.tax_cents || 0, o.total_cents || 0,
+      VALUES (?, ?, ?, ?, ?, 'paid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      number, o.external_id || null, o.payment_intent || null, o.source || 'manual', contact?.id ?? null, currency,
+      subtotal, shipping, tax, total, discountCode, discountCents, normalizeTags(o.tags),
       o.name || contact?.name || '', o.ship?.line1 || '', o.ship?.line2 || '', o.ship?.city || '', (o.ship?.state || '').toUpperCase(), o.ship?.zip || '', (o.ship?.country || 'US').toUpperCase(),
-      nowIso(), paidAt, weekLabel(new Date(paidAt)), o.notes || null);
+      o.created_at || paidAt, paidAt, weekLabel(new Date(paidAt)), o.notes || null);
     const id = r.lastInsertRowid;
     for (const it of items) db.run('INSERT INTO order_items (order_id, sku, name, qty, unit_cents, cogs_cents) VALUES (?, ?, ?, ?, ?, ?)', id, it.sku, it.name, it.qty, it.unit_cents, it.cogs_cents);
     const order = orderById(db, id);
     postSale(db, order);
-    db.audit(actor, 'order.create', 'order', number, { external_id: o.external_id, total_cents: o.total_cents });
+    const via = { stripe: 'Stripe Checkout', manual: 'the admin, by hand', invoice: 'an invoice', import: 'a Stripe CSV import' }[order.source] || order.source;
+    addEvent(db, id, { kind: 'placed', actor, at: paidAt, text: `Order placed via ${via} · ${items.reduce((s, i) => s + i.qty, 0)} item${items.reduce((s, i) => s + i.qty, 0) === 1 ? '' : 's'} · ${usd(total)}${total === 0 ? ' (no charge)' : ''}` });
+    if (discountCode) addEvent(db, id, { kind: 'discount', actor, at: paidAt, text: `Discount ${discountCode} applied${discountNote ? ` (${discountNote})` : ''}: −${usd(discountCents)}${shipping === 0 && discountNote.includes('shipping') ? ', shipping free' : ''}` });
+    if (o.notes) addEvent(db, id, { kind: 'note', actor, at: paidAt, text: o.notes });
+    db.audit(actor, 'order.create', 'order', number, { external_id: o.external_id, total_cents: total, discount_code: discountCode });
     return { order, created: true };
   });
 }
 
+export const usd = (c) => `$${((Number(c) || 0) / 100).toFixed(2)}`;
+
+// ---------- the timeline: one line per thing that happened to the order
+export function addEvent(db, orderId, { kind, text, actor = 'system', at = nowIso() }) {
+  db.run('INSERT INTO order_events (order_id, at, actor, kind, text) VALUES (?, ?, ?, ?, ?)', orderId, at, actor === 'web' ? currentActor('web') : actor, kind, String(text || '').slice(0, 4000));
+  return db.get('SELECT * FROM order_events WHERE id = last_insert_rowid()');
+}
+export const timeline = (db, orderId) => db.all('SELECT * FROM order_events WHERE order_id = ? ORDER BY at DESC, id DESC', orderId);
+export function addNote(db, orderId, text, { actor = 'web' } = {}) {
+  const o = orderById(db, orderId); if (!o) throw new Error('no such order');
+  const t = String(text || '').trim(); if (!t) throw new Error('the note is empty');
+  const ev = addEvent(db, o.id, { kind: 'note', text: t, actor });
+  db.audit(actor, 'order.note', 'order', o.number); return ev;
+}
+export function setTags(db, orderId, tags, { actor = 'web' } = {}) {
+  const o = orderById(db, orderId); if (!o) throw new Error('no such order');
+  const t = normalizeTags(tags);
+  if (t !== o.tags) { db.run('UPDATE orders SET tags = ? WHERE id = ?', t, o.id); addEvent(db, o.id, { kind: 'tags', actor, text: t ? `Tags: ${t}` : 'Tags cleared' }); db.audit(actor, 'order.tags', 'order', o.number, { tags: t }); }
+  return orderById(db, orderId);
+}
+export function updateShipping(db, orderId, ship, { actor = 'web' } = {}) {
+  const o = orderById(db, orderId); if (!o) throw new Error('no such order');
+  if (['shipped', 'delivered'].includes(o.status)) throw new Error(`${o.number} already shipped — the address on the label is the address`);
+  const next = { name: ship.name ?? o.ship_name, line1: ship.line1 ?? o.ship_line1, line2: ship.line2 ?? o.ship_line2, city: ship.city ?? o.ship_city, state: String(ship.state ?? o.ship_state ?? '').toUpperCase(), zip: ship.zip ?? o.ship_zip, country: String(ship.country ?? o.ship_country ?? 'US').toUpperCase() };
+  const issues = addressIssues(next); if (issues.length) throw new Error(`that address will not make a label: ${issues.join('; ')}`);
+  for (const k of ['name', 'line1', 'line2', 'city']) next[k] = String(next[k] || '').trim().slice(0, 120); next.zip = String(next.zip || '').trim().slice(0, 20);
+  db.run('UPDATE orders SET ship_name = ?, ship_line1 = ?, ship_line2 = ?, ship_city = ?, ship_state = ?, ship_zip = ?, ship_country = ? WHERE id = ?', next.name, next.line1, next.line2 || '', next.city, next.state, next.zip, next.country, o.id);
+  addEvent(db, o.id, { kind: 'address', actor, text: `Shipping address changed to ${next.line1}${next.line2 ? ', ' + next.line2 : ''}, ${next.city}, ${next.state} ${next.zip}` });
+  db.audit(actor, 'order.address', 'order', o.number); return orderById(db, orderId);
+}
+export function resendTracking(db, orderId, { cfg = null, actor = 'web' } = {}) {
+  const o = orderById(db, orderId); if (!o) throw new Error('no such order');
+  if (!['shipped', 'delivered'].includes(o.status)) throw new Error(`${o.number} has not shipped`); if (!o.email) throw new Error('no email on the order');
+  const est = estimateDelivery(o.shipped_at, o.ship_state, { fromState: cfg?.shipFromState, carrier: o.carrier || 'USPS' });
+  enqueue(db, { to: o.email, subject: `Your ${cfg?.product || 'SecuraCV'} order ${o.number} is on its way`, kind: 'transactional', ref: `order:${o.number}`, contactId: o.contact_id, text: fill(SHIPPED_TPL, { name: o.ship_name || 'there', number: o.number, carrier: o.carrier || 'USPS', tracking: o.tracking || '(no tracking)', company: cfg?.company || 'Errer Labs', support: cfg?.supportAddr || '', estimate: est ? `Expect it ${est.label}.` : '', status_url: cfg?.secret ? orderStatusUrl(cfg, o) : '' }) });
+  addEvent(db, o.id, { kind: 'mail', actor, text: `Tracking email re-sent to ${o.email}` }); db.audit(actor, 'order.resend_tracking', 'order', o.number);
+  return o;
+}
+
+// The line items can change until the order is packed (a customer adds a parts pack, Stripe sent none):
+// the money stays what was charged; COGS and the pick list follow the new lines.
+export function editItems(db, orderId, items, { catalog = null, bomTotals = {}, actor = 'web' } = {}) {
+  const o = orderById(db, orderId); if (!o) throw new Error('no such order');
+  if (o.status !== 'paid') throw new Error(`${o.number} is ${o.status} — items change only before packing (unpack it first)`);
+  const unknown = []; const next = (items || []).filter(it => it && (it.sku || it.name)).map(it => { const p = catalog ? resolveSku(catalog, it.sku) || resolveSku(catalog, it.name) : null; if (catalog && !p) unknown.push(it.sku || it.name); const qty = Math.max(1, Number(it.qty) || 1); return { sku: p?.sku || it.sku || it.name, name: p?.name || it.name || it.sku, qty, unit_cents: it.unit_cents != null ? Number(it.unit_cents) : (p?.price_cents ?? 0), cogs_cents: p ? cogsCents(p, bomTotals) : Number(it.cogs_cents) || 0 }; });
+  if (unknown.length) throw new Error(`unknown SKU(s): ${unknown.join(', ')}`); if (!next.length) throw new Error('an order needs at least one line');
+  const merged = mergeLines(next.map(it => ({ ...it, qty: lineQty(it.qty) })));
+  return db.tx(() => {
+    db.run('DELETE FROM order_items WHERE order_id = ?', o.id);
+    for (const it of merged) db.run('INSERT INTO order_items (order_id, sku, name, qty, unit_cents, cogs_cents) VALUES (?, ?, ?, ?, ?, ?)', o.id, it.sku, it.name, it.qty, it.unit_cents, it.cogs_cents);
+    addEvent(db, o.id, { kind: 'items', actor, text: `Items changed: ${o.items.map(i => `${i.qty}× ${i.sku}`).join(', ') || 'none'} → ${merged.map(i => `${i.qty}× ${i.sku}`).join(', ')} (the charge is unchanged)` });
+    db.audit(actor, 'order.items', 'order', o.number, { items: merged.map(i => `${i.qty}× ${i.sku}`) });
+    return orderById(db, o.id);
+  });
+}
+
+// Shopify's status tabs: how many orders sit in each state right now.
+export const statusCounts = (db) => { const out = Object.fromEntries(STATUSES.map(s => [s, 0])); for (const r of db.all('SELECT status, COUNT(*) AS n FROM orders GROUP BY status')) out[r.status] = r.n; out.all = Object.values(out).reduce((a, b) => a + b, 0); out.open = out.paid + out.packed; return out; };
+
+// The weekly batches, newest first: what each contains and where it stands.
+export const batches = (db) => db.all(`SELECT batch, COUNT(*) AS orders, SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) AS to_pack, SUM(CASE WHEN status = 'packed' THEN 1 ELSE 0 END) AS to_ship,
+  SUM(CASE WHEN status IN ('shipped','delivered') THEN 1 ELSE 0 END) AS shipped, SUM(CASE WHEN status IN ('canceled','refunded') THEN 1 ELSE 0 END) AS dropped,
+  (SELECT COALESCE(SUM(i.qty),0) FROM order_items i JOIN orders o2 ON o2.id = i.order_id WHERE o2.batch = o.batch AND o2.status NOT IN ('canceled','refunded')) AS units,
+  SUM(CASE WHEN status NOT IN ('canceled') THEN total_cents - refunded_cents ELSE 0 END) AS sales_cents, MIN(paid_at) AS first_paid_at, MAX(shipped_at) AS last_shipped_at
+  FROM orders o GROUP BY batch ORDER BY batch DESC`);
+
+// Several orders at once (the "select all → mark packed" a storefront admin has). Each result says what happened to that order.
+export function bulkTransition(db, ids, to, opts = {}) {
+  const out = [];
+  for (const id of ids) { try { const o = transition(db, Number(id), to, opts); out.push({ id: o.id, number: o.number, status: o.status }); } catch (e) { const o = orderById(db, id); out.push({ id: Number(id), number: o?.number, error: e.message }); } }
+  return out;
+}
+
 export const orderById = (db, id) => { const o = db.get('SELECT o.*, c.email FROM orders o LEFT JOIN contacts c ON c.id = o.contact_id WHERE o.id = ?', id); if (o) o.items = db.all('SELECT * FROM order_items WHERE order_id = ? ORDER BY id', id); return o; };
 export const orderByNumber = (db, n) => { const o = db.get('SELECT id FROM orders WHERE number = ? OR external_id = ? OR payment_intent = ?', n, n, n); return o ? orderById(db, o.id) : null; };
-export const listOrders = (db, { status = '', batch = '', q = '', limit = 300 } = {}) => db.all(
-  `SELECT o.*, c.email, (SELECT GROUP_CONCAT(qty || '× ' || sku, ', ') FROM order_items i WHERE i.order_id = o.id) AS items_text FROM orders o LEFT JOIN contacts c ON c.id = o.contact_id
-   WHERE (? = '' OR o.status = ?) AND (? = '' OR o.batch = ?) AND (? = '' OR o.number LIKE ? OR o.ship_name LIKE ? OR c.email LIKE ? OR o.tracking LIKE ?)
-   ORDER BY o.id DESC LIMIT ?`, status, status, batch, batch, q, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, limit);
+export const listOrders = (db, { status = '', batch = '', q = '', tag = '', from = '', to = '', discount = '', sku = '', limit = 300 } = {}) => db.all(
+  `SELECT o.*, c.email, (SELECT GROUP_CONCAT(qty || '× ' || sku, ', ') FROM order_items i WHERE i.order_id = o.id) AS items_text, (SELECT COALESCE(SUM(qty),0) FROM order_items i WHERE i.order_id = o.id) AS units FROM orders o LEFT JOIN contacts c ON c.id = o.contact_id
+   WHERE (? = '' OR o.status = ? OR (? = 'open' AND o.status IN ('paid','packed'))) AND (? = '' OR o.batch = ?) AND (? = '' OR o.number LIKE ? OR o.ship_name LIKE ? OR c.email LIKE ? OR o.tracking LIKE ? OR o.external_id LIKE ?)
+     AND (? = '' OR (',' || o.tags || ',') LIKE ?) AND (? = '' OR o.paid_at >= ?) AND (? = '' OR o.paid_at < ?) AND (? = '' OR o.discount_code = ?) AND (? = '' OR o.id IN (SELECT order_id FROM order_items WHERE sku = ?))
+   ORDER BY o.paid_at DESC, o.id DESC LIMIT ?`, status, status, status, batch, batch, q, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, tag, `%,${tag},%`, from, from, to, to ? to + 'T23:59:59.999Z' : '', discount, discount.toUpperCase(), sku, sku, limit);
 
-export function transition(db, id, to, { actor = 'web', carrier = null, tracking = null, cfg = null } = {}) {
+export const packPlanOf = (o) => { try { return o?.pack_plan ? JSON.parse(o.pack_plan) : null; } catch { return null; } };
+
+// How many pre-flashed boards the box must hold, from the data rather than a guess: a line's
+// recipe parts that are board SKUs (a SKU some registered board carries as its `board`), or,
+// when the recipe says nothing, a line whose SKU is what registered boards are flashed for
+// (`product_sku`), one per unit. Zero when the data cannot say — a gate that fires on a guess is
+// a gate people learn to click through.
+export function boardsNeeded(db, o) {
+  const boardSkus = new Set(db.all('SELECT DISTINCT board FROM devices WHERE board IS NOT NULL').map(r => r.board));
+  const productSkus = new Set(db.all('SELECT DISTINCT product_sku FROM devices WHERE product_sku IS NOT NULL').map(r => r.product_sku));
+  let needed = 0; const lines = [];
+  for (const it of o.items || []) {
+    let per = db.all('SELECT part_sku, qty FROM recipes WHERE finished_sku = ?', it.sku).filter(p => boardSkus.has(p.part_sku)).reduce((a, p) => a + p.qty, 0);
+    if (!per && productSkus.has(it.sku)) per = 1;
+    if (per) { needed += per * it.qty; lines.push({ sku: it.sku, boards: per * it.qty }); }
+  }
+  return { needed, lines };
+}
+export const boardsOn = (db, orderId) => db.all('SELECT id, serial, board, product_sku, fw_version, status FROM devices WHERE order_id = ? ORDER BY id', orderId);
+// `check` is the pack bench's proof that the box holds what the order says: { ticked: [sku…] (every
+// line, as it went in), measuredOz (the scale, optional), anyway (skip what failed), reason (why) }.
+// Without it (the API, a seed) packing is unchecked, as before; with it every failure is refused by
+// name unless `anyway` is ticked with a reason, and whatever was skipped goes on the timeline.
+export function transition(db, id, to, { actor = 'web', carrier = null, tracking = null, cfg = null, at = null, shipping = null, measuredOz = null, postageCents = 0, shipAnyway = false, check = null } = {}) {
   const o = orderById(db, id); if (!o) throw new Error('no such order');
-  const allowed = { paid: ['packed', 'canceled', 'refunded'], pending: ['paid', 'canceled'], packed: ['shipped', 'paid'], shipped: ['delivered', 'refunded'], delivered: ['refunded'] };
+  if (typeof to !== 'string' || !STATUSES.includes(to)) throw new Error(`"${String(to).slice(0, 30)}" is not an order status (${STATUSES.join(', ')})`);
+  const allowed = { paid: ['packed', 'canceled'], pending: ['paid', 'canceled'], packed: ['shipped', 'paid', 'canceled'], shipped: ['delivered'], delivered: [] };
+  // "Refunded" is what a recorded refund makes an order, never a status someone sets: setting it
+  // by hand would leave the books showing a sale the customer no longer paid for.
+  if (to === 'refunded') throw new Error(`record the refund instead (the order becomes refunded when the full amount is recorded) — ${o.number} stays ${o.status}`);
   if (!(allowed[o.status] || []).includes(to)) throw new Error(`cannot move ${o.number} from ${o.status} to ${to}`);
+  let scale = { checked: false };
+  if (to === 'shipped') {
+    tracking = normalizeTracking(tracking); carrier = String(carrier || 'USPS').trim().slice(0, 40) || 'USPS';
+    if (tracking) { const twin = db.get('SELECT number FROM orders WHERE tracking = ? AND id != ?', tracking, o.id); if (twin) throw new Error(`tracking ${tracking} is already on order ${twin.number} — one label cannot ship two boxes`); }
+    if (measuredOz != null && measuredOz !== '') { measuredOz = Number(measuredOz); if (!Number.isFinite(measuredOz) || measuredOz <= 0 || measuredOz > 2000) throw new Error('the scale reading is a number of ounces above zero'); } else measuredOz = null;
+    if (!Number.isInteger(postageCents) || postageCents < 0 || postageCents > 100_000) throw new Error('the label cost is a whole number of cents, 0 or more');
+    scale = weightCheck(packPlanOf(o), measuredOz, { tolerance: cfg?.weightToleranceOz ?? 1.5 });
+    if (scale.checked && !scale.ok && !shipAnyway) throw new Error(`the scale reads ${scale.measured} oz, the plan expects ${scale.expected} oz (${scale.delta > 0 ? '+' : ''}${scale.delta} oz, over the ${scale.tolerance} oz tolerance) — recount the box, or tick "ship anyway"`);
+  }
+  // The plan is made from the lines as they are now and frozen on the order: the bench reads it, the scale checks against it, the CSV carries it.
+  const plan = to === 'packed' ? packOrder(shipping, o.items) : null;
+  const skipped = []; let packedOz = null; const boards = to === 'packed' ? boardsOn(db, o.id) : [];
+  if (to === 'packed' && check && typeof check === 'object') {
+    const anyway = !!check.anyway; const reason = String(check.reason || '').trim().slice(0, 200);
+    if (anyway && !reason) throw new Error('"pack anyway" needs a reason — it goes on the timeline');
+    const ticked = new Set((Array.isArray(check.ticked) ? check.ticked : []).map(String));
+    const missing = o.items.filter(i => !ticked.has(i.sku));
+    if (missing.length) { if (!anyway) throw new Error(`not every line is ticked: ${missing.map(i => `${i.qty}× ${i.sku}`).join(', ')} — tick each line as it goes in the box, or tick "pack anyway" and say why`); skipped.push(`${missing.length} line${missing.length === 1 ? '' : 's'} unticked`); }
+    const need = boardsNeeded(db, o);
+    if (need.needed && boards.length !== need.needed) { if (!anyway) throw new Error(`${o.number} needs ${need.needed} board${need.needed === 1 ? '' : 's'} in the box, ${boards.length} scanned — scan the ${need.needed > boards.length ? `${need.needed - boards.length} missing` : 'right ones'}, or tick "pack anyway" and say why`); skipped.push(`${boards.length} of ${need.needed} boards`); }
+    if (check.measuredOz != null && check.measuredOz !== '') { packedOz = Number(check.measuredOz); if (!Number.isFinite(packedOz) || packedOz <= 0 || packedOz > 2000) throw new Error('the scale reading is a number of ounces above zero'); }
+    scale = weightCheck(plan, packedOz, { tolerance: cfg?.weightToleranceOz ?? 1.5 });
+    if (scale.checked && !scale.ok) { if (!anyway) throw new Error(`the scale reads ${scale.measured} oz, the plan expects ${scale.expected} oz (${scale.delta > 0 ? '+' : ''}${scale.delta} oz, over the ${scale.tolerance} oz tolerance) — recount the box, or tick "pack anyway" and say why`); skipped.push(`scale ${scale.delta > 0 ? '+' : ''}${scale.delta} oz`); }
+    if (anyway) skipped.push(`packed anyway: ${reason}`);
+  } else if (to === 'packed') skipped.push('bench check not run');   // packed from the API or a seed: the timeline says no line was ticked and no board scanned
+
   return db.tx(() => {
-    const now = nowIso();
+    const now = at || nowIso();
     db.run(`UPDATE orders SET status = ?, paid_at = CASE WHEN ? = 'paid' THEN ? ELSE paid_at END, packed_at = CASE WHEN ? = 'packed' THEN ? ELSE packed_at END,
             shipped_at = CASE WHEN ? = 'shipped' THEN ? ELSE shipped_at END, delivered_at = CASE WHEN ? = 'delivered' THEN ? ELSE delivered_at END WHERE id = ?`,
       to, to, now, to, now, to, now, to, now, id);
-    if (to === 'packed') { if (!o.items.length) throw new Error(`${o.number} has no line items — fetch them from Stripe (STRIPE_API_KEY) or add them before packing`); consumeForOrder(db, o); }
-    if (to === 'paid' && o.status === 'packed') releaseForOrder(db, o);
+    if (to === 'packed') { if (!o.items.length) throw new Error(`${o.number} has no line items — fetch them from Stripe (STRIPE_API_KEY) or add them before packing`); consumeForOrder(db, o); db.run('UPDATE orders SET pack_plan = ?, measured_oz = COALESCE(?, measured_oz) WHERE id = ?', shipping ? JSON.stringify(plan) : null, packedOz, id); }
+    // Unpacking frees the lines for editing, so the plan made for the old lines goes with it; the next pack plans afresh.
+    if (to === 'paid' && o.status === 'packed') { releaseForOrder(db, o); db.run('UPDATE orders SET pack_plan = NULL WHERE id = ?', id); }
+    // Canceled: the boards scanned into it are not going anywhere; free them for the next order (a shipped one stays on its record).
+    if (to === 'canceled') { const freed = db.run("UPDATE devices SET order_id = NULL WHERE order_id = ? AND status != 'shipped'", id).changes; if (freed) addEvent(db, id, { kind: 'note', actor, at: now, text: `${freed} board${freed === 1 ? '' : 's'} released back to stock` }); if (o.status === 'packed') { const back = releaseForOrder(db, o); if (back.length) addEvent(db, id, { kind: 'unpacked', actor, at: now, text: `Canceled after packing — parts returned to stock: ${back.map(([sku, n]) => `${n}× ${sku}`).join(', ')}` }); } }
     if (to === 'shipped') {
-      db.run('UPDATE orders SET carrier = ?, tracking = ? WHERE id = ?', carrier, tracking, id);
+      db.run('UPDATE orders SET carrier = ?, tracking = ?, measured_oz = ?, postage_cents = postage_cents + ? WHERE id = ?', carrier, tracking || null, measuredOz, postageCents, id);
       db.run('UPDATE devices SET status = \'shipped\' WHERE order_id = ?', id);
-      if (o.email) enqueue(db, { to: o.email, subject: `Your ${cfg?.product || 'SecuraCV'} order ${o.number} is on its way`, kind: 'transactional', ref: `order:${o.number}`,
-        text: fill(SHIPPED_TPL, { name: o.ship_name || 'there', number: o.number, carrier: carrier || 'USPS', tracking: tracking || '(no tracking)', company: cfg?.company || 'Errer Labs', support: cfg?.supportAddr || '' }) });
+      if (postageCents) postExpense(db, { date: now.slice(0, 10), account: 'expenses:postage', cents: postageCents, memo: `label ${o.number}`, paidFrom: 'assets:bank', ref: `order:${o.number}` });
+      if (o.email) { const est = estimateDelivery(now, o.ship_state, { fromState: cfg?.shipFromState, carrier: carrier || 'USPS' }); enqueue(db, { to: o.email, subject: `Your ${cfg?.product || 'SecuraCV'} order ${o.number} is on its way`, kind: 'transactional', ref: `order:${o.number}`, contactId: o.contact_id,
+        text: fill(SHIPPED_TPL, { name: o.ship_name || 'there', number: o.number, carrier: carrier || 'USPS', tracking: tracking || '(no tracking)', company: cfg?.company || 'Errer Labs', support: cfg?.supportAddr || '', estimate: est ? `Expect it ${est.label} (${est.min_days}–${est.max_days} business days — an estimate, not a promise).` : '', status_url: cfg?.secret ? orderStatusUrl(cfg, o) : '' }) }); }
     }
-    db.audit(actor, `order.${to}`, 'order', o.number, { carrier, tracking });
+    const boxLine = plan?.boxes?.length ? ` · ${plan.boxes.map(b => `${b.box_name.replace(/ \(.*\)$/, '')} ${b.weight_oz} oz`).join(' + ')}${plan.total_cost_est != null ? ` · postage ≈ ${usd(Math.round(plan.total_cost_est * 100))}` : ''}` : plan?.warnings?.length ? ` · box: ${plan.warnings[0]}` : '';
+    const scaleLine = scale.checked ? ` · scale ${scale.measured} oz vs ${scale.expected} oz${scale.ok ? ' ✓' : ` (${scale.delta > 0 ? '+' : ''}${scale.delta} oz, ${to === 'packed' ? 'packed' : 'shipped'} anyway)`}` : (to === 'shipped' ? measuredOz : packedOz) != null ? ` · scale ${to === 'shipped' ? measuredOz : packedOz} oz` : '';
+    const checkLine = check || skipped.length ? (skipped.length ? ` · ${skipped.join(', ')}` : ' · every line ticked') + (boards.length ? ` · boards ${boards.map(b => b.serial).join(', ')}` : '') + scaleLine : '';
+    const line = { packed: `Packed${o.items.length ? ` · ${o.items.map(i => `${i.qty}× ${i.sku}`).join(', ')} pulled from stock` : ''}${boxLine}${checkLine}`, shipped: `Shipped via ${carrier || 'USPS'}${tracking ? ` · ${tracking}` : ''}${scaleLine}${postageCents ? ` · label ${usd(postageCents)}` : ''}${o.email ? ` · tracking emailed to ${o.email}` : ''}`, delivered: 'Delivered', canceled: `Canceled${o.total_cents - o.refunded_cents > 0 ? ` — ${usd(o.total_cents - o.refunded_cents)} was paid: refund it in Stripe, and the webhook (or "Record refund") writes it here` : ''}`, paid: o.status === 'packed' ? 'Unpacked — parts returned to stock' : 'Marked paid' }[to] || `Now ${to}`;
+    addEvent(db, id, { kind: to === 'paid' && o.status === 'packed' ? 'unpacked' : to, actor, at: now, text: line });
+    db.audit(actor, `order.${to}`, 'order', o.number, { carrier, tracking, boxes: plan?.boxes?.map(b => b.box) || undefined, measured_oz: measuredOz ?? packedOz ?? undefined, postage_cents: postageCents || undefined, scale: scale.checked ? (scale.ok ? 'ok' : 'off, went anyway') : undefined, skipped: skipped.length ? skipped : undefined });
     return orderById(db, id);
   });
 }
 
-export function refund(db, id, cents, { actor = 'web', reason = '' } = {}) {
+// The website's fulfill.mjs buys the batch's labels and writes manifest.json: one entry per
+// order with its tracking number and the rate paid. Importing it ships every packed order it
+// names — tracking, carrier, postage, the customer's mail — with no typing. An order already
+// shipped with that tracking is left alone; a different tracking, an unknown order, an entry
+// without a label, are each reported by name and nothing else stops.
+export function importLabels(db, manifest, { cfg = null, actor = 'web', at = null } = {}) {
+  const rows = Array.isArray(manifest) ? manifest : Array.isArray(manifest?.manifest) ? manifest.manifest : null;
+  if (!rows) throw new Error('manifest.json is a list of orders (fulfill.mjs writes it next to the slips)');
+  const out = { shipped: [], skipped: [], problems: [] };
+  for (const r of rows) {
+    const number = String(r?.order_id || '').trim(); const tracking = normalizeTracking(r?.tracking);
+    if (!number) { out.problems.push('an entry has no order_id'); continue; }
+    if (!tracking) { out.skipped.push(`${number}: no label (${r?.status || 'no status'})`); continue; }
+    const o = orderByNumber(db, number); if (!o) { out.problems.push(`${number}: no such order here`); continue; }
+    if (o.status === 'shipped' || o.status === 'delivered') { if (o.tracking === tracking) out.skipped.push(`${number}: already shipped with that tracking`); else out.problems.push(`${number}: already shipped with ${o.tracking || 'no tracking'}, the manifest says ${tracking}`); continue; }
+    if (o.status !== 'packed') { out.problems.push(`${number}: is ${o.status}, not packed — pack it first`); continue; }
+    const rate = Number(r?.rate); const postageCents = Number.isFinite(rate) && rate > 0 ? Math.round(rate * 100) : 0;
+    try { transition(db, o.id, 'shipped', { actor, carrier: String(r?.carrier || 'USPS'), tracking, cfg, at, postageCents }); out.shipped.push(`${number}: ${tracking}`); }
+    catch (err) { out.problems.push(`${number}: ${err.message}`); }
+  }
+  db.audit(actor, 'orders.import_labels', 'manifest', `${rows.length} entries`, { shipped: out.shipped.length, skipped: out.skipped.length, problems: out.problems });
+  return out;
+}
+
+export function refund(db, id, amountCents, { actor = 'web', reason = '', at = null } = {}) {
   const o = orderById(db, id); if (!o) throw new Error('no such order');
-  const amt = Math.min(Number(cents) || 0, o.total_cents - o.refunded_cents);
-  if (amt <= 0) throw new Error('nothing to refund');
+  const asked = Number(amountCents); if (!Number.isInteger(asked)) throw new Error('the refund is a whole number of cents');
+  const amt = Math.min(asked, o.total_cents - o.refunded_cents);
+  if (amt <= 0) throw new Error(o.total_cents - o.refunded_cents > 0 ? 'nothing to refund — the amount must be above zero' : 'nothing to refund');
   return db.tx(() => {
     const total = o.refunded_cents + amt;
-    db.run('UPDATE orders SET refunded_cents = ?, status = CASE WHEN ? >= total_cents THEN \'refunded\' ELSE status END, notes = COALESCE(notes, \'\') || ? WHERE id = ?', total, total, reason ? `\nrefund ${amt}: ${reason}` : '', id);
-    postRefund(db, o, amt, reason);
+    db.run('UPDATE orders SET refunded_cents = ?, status = CASE WHEN ? >= total_cents THEN \'refunded\' ELSE status END WHERE id = ?', total, total, id);
+    // Refunded in full before it shipped: the box is not going out, so the parts pulled for it go back on the shelf.
+    if (total >= o.total_cents && o.status === 'packed') { const back = releaseForOrder(db, o); if (back.length) addEvent(db, id, { kind: 'unpacked', actor, at: at || nowIso(), text: `Refunded before shipping — parts returned to stock: ${back.map(([sku, n]) => `${n}× ${sku}`).join(', ')}` }); }
+    if (total >= o.total_cents && ['paid', 'packed'].includes(o.status)) { const freed = db.run("UPDATE devices SET order_id = NULL WHERE order_id = ? AND status != 'shipped'", id).changes; if (freed) addEvent(db, id, { kind: 'note', actor, at: at || nowIso(), text: `${freed} board${freed === 1 ? '' : 's'} released back to stock` }); }
+    postRefund(db, o, amt, reason, (at || nowIso()).slice(0, 10));
+    addEvent(db, id, { kind: 'refund', actor, at: at || nowIso(), text: `${total >= o.total_cents ? 'Full' : 'Partial'} refund of ${usd(amt)}${reason ? ` — ${reason}` : ''}${actor === 'stripe' ? ' (reported by Stripe)' : ' (record only — issue it in Stripe)'}` });
     db.audit(actor, 'order.refund', 'order', o.number, { cents: amt, reason });
     return orderById(db, id);
   });
@@ -92,13 +327,18 @@ export function refund(db, id, cents, { actor = 'web', reason = '' } = {}) {
 
 // The CSV the website's fulfill.mjs already understands (fulfill-README.md
 // "The input CSV"): one row per order, catalog SKU, validated address.
+// A label is for a box that has not left: the CSV only ever carries paid and packed orders,
+// whatever filter the link named (a label for a shipped, canceled or refunded order is always wrong).
 export function fulfillCsv(db, { batch = '', status = 'paid' } = {}) {
-  const rows = listOrders(db, { batch, status, limit: 5000 }).reverse();
-  const esc = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-  const head = ['order_id', 'email', 'name', 'sku', 'qty', 'line1', 'line2', 'city', 'state', 'zip', 'country'];
+  const want = ['paid', 'packed', 'open'].includes(status) ? status : 'open';
+  const rows = listOrders(db, { batch, status: want, limit: 5000 }).reverse().filter(o => ['paid', 'packed'].includes(o.status));
+  // After the website's columns: the frozen plan (box id, expected ounces, pieces, service) and
+  // how many lines the order has, so a multi-line order is visibly one shipment, not N rows that
+  // each want a label. Extra columns are ignored by a reader that does not know them.
+  const head = ['order_id', 'email', 'name', 'sku', 'qty', 'line1', 'line2', 'city', 'state', 'zip', 'country', 'order_lines', 'box', 'expected_oz', 'pieces', 'service'];
   const out = [head.join(',')];
-  for (const o of rows) for (const it of db.all('SELECT * FROM order_items WHERE order_id = ?', o.id))
-    out.push([o.number, o.email, o.ship_name, it.sku, it.qty, o.ship_line1, o.ship_line2, o.ship_city, o.ship_state, o.ship_zip, o.ship_country].map(esc).join(','));
+  for (const o of rows) { const items = db.all('SELECT * FROM order_items WHERE order_id = ?', o.id); const plan = packPlanOf(o);
+    for (const it of items) out.push(csvLine([o.number, o.email, o.ship_name, it.sku, it.qty, o.ship_line1, o.ship_line2, o.ship_city, o.ship_state, o.ship_zip, o.ship_country, items.length, plan?.boxes?.map(b => b.box).join('+') || '', plan?.total_oz ?? '', plan?.pieces ?? '', plan?.service || ''])); }
   return out.join('\n') + '\n';
 }
 
@@ -106,6 +346,8 @@ export const SHIPPED_TPL = `Hi {{name}},
 
 Order {{number}} shipped today via {{carrier}}.
 Tracking: {{tracking}}
+{{estimate}}
+Where it is, any time: {{status_url}}
 
 Your Canary provisions itself at home — power it on and point your phone's camera at the QR card in the box. No account, no app store, no cloud.
 

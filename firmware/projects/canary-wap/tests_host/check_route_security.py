@@ -66,6 +66,25 @@ to a fixed point, every function that calls one). What it reads:
     refusal: a request that refusal answers (no tap, no claim taken) clears
     nothing. And the table itself (g_auth_table) is named in api_auth.h
     only, so no file writes or clears it directly.
+  - The mints (sweep F344): session_issue(), pair_token_issue() and
+    send_pair_landing() hand their caller a session or a pair token, and no
+    mint may answer a DNS-rebinding page under a public name (the cookie
+    gates also refuse a session's value under such a name:
+    session_validate_cookie() asks the Host itself, test_session_cookie; a
+    page another network served under one of the device's own names passes
+    every Host test, and only HTTPS with an identity the browser checks
+    tells it apart, which neither F15's self-signed certificate nor F256
+    gives a browser). Each call stands in a MINT_SITES
+    function, after that function's gate for it (handle_ui's and the
+    receipt's Host row, the
+    setup branch's exact setup names, /api/pair/token's cookie-or-bearer
+    macro), and each entry still has its call. A page, a wrapper or a
+    global that mints anywhere else fails, by file and line. And no
+    MINT_SITES function answers through http_send_json() or
+    http_send_error() or names Access-Control-Allow-Origin (review of F344:
+    the wizard token's re-issue answered its token through
+    http_send_json(), whose `*` let a page on another site read it), so
+    what a mint site hands out is not readable by another site's page.
 
 It is a text check, and names are matched by spelling: a helper or a local
 named like a gate in the class fails it, and a secret reached through a name
@@ -74,8 +93,10 @@ struct handed out, a copy a module's keeper passes on, a gate called through
 an object or a pointer) passes it. Whether a gate decides right, whether the
 receipt's tap and claim are right, and what the move gate counts as a move
 are the host suites' (test_receipt_grant, test_receipt_authority,
-test_mqtt_reinit). Its fixtures (_assert_secret_rules) run first, every
-run: a clean sketch that passes and thirty-eight plants that each fail it.
+test_mqtt_reinit, test_session_cookie). Its fixtures (_assert_secret_rules)
+run first, every run: a clean sketch that passes and fifty-seven plants
+that each fail it, through the same text_rule_problems() main() runs over
+the tree, so a rule dropped from that list fails the plants that need it.
 
 Run from the repo root (CI: firmware.yml host tests):
     python3 firmware/projects/canary-wap/tests_host/check_route_security.py
@@ -117,9 +138,11 @@ AUTH_MARKERS = (
 # the check so the list can't rot.
 PUBLIC_ALLOWLIST = {
     # Pages/static assets: the HTML is public, every API it calls is gated.
-    ("GET", "/admin"): "static admin/settings page; all APIs it calls are gated",
+    ("GET", "/admin"): "static admin/settings page; all APIs it calls are gated; "
+        "after setup, own-name Host only (host_guard.h, sweep F344)",
     ("GET", "/settings"): "same page as /admin",
-    ("GET", "/companion"): "wizard/companion PWA shell (BLE chars enforce pairing)",
+    ("GET", "/companion"): "wizard/companion PWA shell (BLE chars enforce pairing); "
+        "after setup, own-name Host only (host_guard.h, sweep F344)",
     ("GET", "/companion-sw.js"): "service worker for /companion",
     ("GET", "/companion-manifest.webmanifest"): "PWA manifest",
     ("GET", "/manifest.webmanifest"): "PWA manifest (sense dashboard)",
@@ -162,12 +185,17 @@ PUBLIC_ALLOWLIST = {
 # Handlers that gate internally in ways the marker scan can't attribute to
 # a single route (multi-branch pages). Name → reason.
 SELF_GATING_HANDLERS = {
-    "handle_ui": "cookie → dashboard; else pair-landing; wizard branch Host-gated",
-    "handle_legacy_ui": "serves static HTML only",
+    "handle_ui": "after setup the Host must name this device (host_guard.h), "
+        "else 403; cookie → dashboard; else pair-landing; wizard branch "
+        "exact-Host-gated (canary.local or 192.168.4.1)",
+    "handle_legacy_ui": "static HTML; after setup a Host that cannot name "
+        "this device gets 403",
     "handle_captive_probe": "returns fixed probe responses",
     "handle_https_redirect": "301 to https at the request's Host when it is an IP literal or the device's own name, else receipt_authority.h's address (503 when it has none); no data",
     "handle_tune_page": "session-cookie check, 302 to / when absent",
-    "handle_wifi_pair_token": "gated on setup_wizard::is_active + direct Host",
+    "handle_wifi_pair_token": "gated on setup_wizard::is_active + exact setup "
+        "Host (canary.local or 192.168.4.1); its answer sends no CORS header "
+        "(MINT_SITES), so another site's page cannot read the token",
 }
 
 
@@ -278,6 +306,67 @@ BACKOFF_CLEAR_HOMES = (RAW_COMPARE_HOME, "auth_backoff.h")
 # the table (`g_auth_table = {}`) or by handing it to auth_backoff.h itself.
 AUTH_TABLE = re.compile(r"\bg_auth_table\b")
 AUTH_TABLE_HOME = "api_auth.h"
+
+# The mints (sweep F344): a call of one hands its caller a dashboard session
+# (session_issue) or a pair token (pair_token_issue; send_pair_landing serves
+# one in the landing page). No mint may answer a DNS-rebinding page under a
+# public name (a session's value it carries in anyway is refused by the
+# cookie gates, whose session_validate_cookie() asks the Host; a page served
+# under one of the device's own names is not told apart by any Host test),
+# so every call stands in a
+# MINT_SITES function, after that function's gate, and nowhere else:
+#   ("refusal", cond): after an `if` at the top level of the body whose
+#     whole condition is `cond` and whose branch returns;
+#   ("grant", cond): inside the branch of an `if` whose whole condition is
+#     `cond`;
+#   ("statement", text): after the statement `text` at the top level of the
+#     body (a macro that returns on a refusal);
+#   None: send_pair_landing() itself, a mint held to its own callers here.
+# Declarations and definitions of the three are not calls. An entry with no
+# call left fails, so the table cannot rot.
+MINT_CALL = re.compile(r"\b(send_pair_landing|pair_token_issue|session_issue)\s*\(")
+MINT_SITES = {
+    ("canary_wap.ino", "handle_ui"): {
+        # The first-boot setup branch: the wizard's redirect, to exactly
+        # canary.local or 192.168.4.1.
+        "pair_token_issue": ("grant", "request_host_is_setup_name(req)"),
+        # After setup: the ?cv_pair exchange and the landing, to a Host
+        # that names the device.
+        "session_issue": ("refusal", "!request_host_names_device(req)"),
+        "send_pair_landing": ("refusal", "!request_host_names_device(req)"),
+    },
+    ("canary_wap.ino", "handle_provisioning_receipt"): {
+        # Its Host row is its first statement, in every mode.
+        "session_issue": ("refusal", "!request_host_names_device(req)"),
+    },
+    ("canary_wap.ino", "handle_wifi_pair_token"): {
+        # The wizard token's re-issue: setup only, the exact setup names,
+        # and its answer read same-origin only (MINT_WILDCARD_SEND).
+        "pair_token_issue": ("refusal", "!setup_wizard::is_active()||!request_host_is_setup_name(req)"),
+    },
+    ("csi_integration.cpp", "handle_pair_token"): {
+        # GET /api/pair/token: the cookie or the bearer first. The cookie
+        # half asks the Host (session_validate_cookie()); the bearer half
+        # asks none (F57's open question).
+        "pair_token_issue": ("statement", "CSI_AUTH_OR_RETURN(req);"),
+    },
+    ("csi_integration.cpp", "send_pair_landing"): {
+        "pair_token_issue": None,
+    },
+}
+_MINT_DECL = re.compile(r"\b(?:bool|esp_err_t)\s+(?:[A-Za-z_]\w*\s*::\s*)*$")
+# What a mint site hands out is kept from a page on another site only because
+# its answer grants no cross-origin read, so no MINT_SITES function sends
+# through canary_wap.ino's JSON senders, which add
+# `Access-Control-Allow-Origin: *` (http_send_error() answers through
+# http_send_json()), or names the header itself. Review of F344: the wizard
+# token's re-issue answered through http_send_json(), so during setup any
+# page in the owner's browser on the SoftAP read a pair token at 192.168.4.1.
+# The body is read, not what it calls: a helper that sends the wildcard for
+# a mint site is not seen here (test_session_cookie's re-issue rows and
+# test_receipt_grant read the headers).
+MINT_WILDCARD_SEND = re.compile(r"\b(http_send_json|http_send_error)\s*\(")
+MINT_WILDCARD_HEADER = '"Access-Control-Allow-Origin"'
 
 # csi_mqtt.cpp's stored broker password: the functions that name the member
 # (`.pass` / `->pass`, its emptiness test `pass[0]` aside). GET
@@ -1203,6 +1292,79 @@ def auth_table_problems(sources: dict) -> list:
     return problems
 
 
+def _gate_before(code: str, rel: int, gate) -> bool:
+    """Whether the call at `rel` in a function body `code` (string-blanked)
+    stands after its MINT_SITES gate (see MINT_SITES for the three kinds)."""
+    if gate is None:
+        return True
+    kind, want = gate
+    if kind == "refusal":
+        return any(returns and _depth(code, pos) == 0 and _squash(cond) == _squash(want)
+                   and bspan[1] <= rel for pos, cond, _c, bspan, returns in _ifs(code))
+    if kind == "grant":
+        return any(bspan[0] <= rel < bspan[1] and _squash(cond) == _squash(want)
+                   for _pos, cond, _c, bspan, _returns in _ifs(code))
+    spelled = re.compile(r"\s*".join(map(re.escape, _squash(want))))
+    return any(k.end() <= rel and _depth(code, k.start()) == 0
+               and code[:k.start()].rstrip()[-1:] in ("", ";", "{", "}")
+               for k in spelled.finditer(code))
+
+
+def mint_site_problems(sources: dict, sites=None) -> list:
+    """The mints (sweep F344): every call of a MINT_CALL function (comments
+    and string contents blanked; a declaration or a definition of one is no
+    call) stands in a MINT_SITES function of its file, after that
+    function's gate for it, and every MINT_SITES entry still has its call.
+    So a new page that hands out the landing, a wrapper that mints a
+    session, or a mint moved above its Host row fails, by file and line."""
+    sites = MINT_SITES if sites is None else sites
+    problems, seen = [], set()
+    for fname, text in sorted(sources.items()):
+        blanked = _blank(text)
+        funcs = functions(text, indented=True)
+        for m in MINT_CALL.finditer(blanked):
+            if _MINT_DECL.search(blanked[max(0, m.start() - 96):m.start()]):
+                continue  # `bool session_issue(...)`: its declaration or definition
+            call, where = m.group(1), f"{fname}:{_line(blanked, m.start())}"
+            inner = sorted((e - b, n, b, e) for n, _p, _h, b, e in funcs if b <= m.start() < e)
+            name = inner[0][1] if inner else None
+            entry = sites.get((fname, name), {})
+            if call not in entry:
+                problems.append(f"{where}: {name + '()' if name else 'code outside every function'} "
+                                f"calls {call}(), which mints a session or a pair token: only "
+                                f"MINT_SITES may, each after its gate (a Host that names the "
+                                f"device, or a credential)")
+                continue
+            seen.add((fname, name, call))
+            b, e = inner[0][2], inner[0][3]
+            if not _gate_before(blanked[b:e], m.start() - b, entry[call]):
+                kind, want = entry[call]
+                problems.append(f"{where}: {name}() calls {call}() not after its gate, the "
+                                f"{kind} `{want}` (MINT_SITES): a caller that has not passed it "
+                                f"would be handed a session or a pair token")
+    for (fname, name), entry in sorted(sites.items()):
+        for call in sorted(entry):
+            if (fname, name, call) not in seen:
+                problems.append(f"MINT_SITES names {fname}'s {name}() calling {call}(), which it "
+                                f"no longer does: remove or fix the entry")
+    for fname, text in sorted(sources.items()):
+        blanked = _blank(text)
+        for name, _p, _h, b, e in functions(text, indented=True):
+            if (fname, name) not in sites:
+                continue
+            for m in MINT_WILDCARD_SEND.finditer(blanked, b, e):
+                problems.append(f"{fname}:{_line(blanked, m.start())}: {name}() mints a session or "
+                                f"a pair token and answers through {m.group(1)}(), which sends "
+                                f"Access-Control-Allow-Origin: *: a page on another site would "
+                                f"read what it hands out")
+            at = text.find(MINT_WILDCARD_HEADER, b, e)
+            if at >= 0:
+                problems.append(f"{fname}:{_line(text, at)}: {name}() mints a session or a pair "
+                                f"token and names Access-Control-Allow-Origin: its answer must "
+                                f"grant no other site a read")
+    return problems
+
+
 # The three rule functions are named for the gates they hold, not for what
 # the gates protect: CodeQL's py/clear-text-logging-sensitive-data reads a
 # call to a function whose name says "secret" or "password" as a secret
@@ -1287,6 +1449,14 @@ _FIX_INO = (
     "  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;\n"
     "  return httpd_resp_sendstr(req, \"{}\");\n"
     "}\n"
+    "static esp_err_t handle_landing(httpd_req_t* req) {\n"
+    "  if (request_host_is_setup_name(req)) {\n"
+    "    char hex[65];\n"
+    "    if (csi_integration::pair_token_issue(hex, sizeof(hex))) return ESP_OK;\n"
+    "  }\n"
+    "  if (!request_host_names_device(req)) return send_refusal(req);\n"
+    "  return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;\n"
+    "}\n"
     "static void start_server(httpd_handle_t server) {\n"
     "  csi_integration::init(server, g_device.api_token_str);\n"
     "}\n"
@@ -1303,6 +1473,16 @@ _FIX_CSI = (
     "esp_err_t handle_csi_status(httpd_req_t* req) {\n"
     "  CSI_AUTH_OR_RETURN(req);\n"
     "  return httpd_resp_sendstr(req, \"{}\");\n"
+    "}\n"
+    "bool pair_token_issue(char* hex_out, size_t out_cap);\n"
+    "bool send_pair_landing(httpd_req_t* req) {\n"
+    "  char hex[65];\n"
+    "  return pair_token_issue(hex, sizeof(hex));\n"
+    "}\n"
+    "esp_err_t handle_pair_token(httpd_req_t* req) {\n"
+    "  CSI_AUTH_OR_RETURN(req);\n"
+    "  char hex[65];\n"
+    "  return pair_token_issue(hex, sizeof(hex)) ? ESP_OK : ESP_FAIL;\n"
     "}\n"
     "}\n"
 )
@@ -1367,6 +1547,18 @@ _FIX_TABLES = {
                          "decl": ("const char* (*s_api_token_provider)() = nullptr;",),
                          "read": ("handle_config_get", "handle_config_post")},
     },
+}
+# The mint rule's fixture table (sweep F344): the fixture's three mint sites,
+# one of each gate kind, and the landing's own mint.
+_FIX_MINT_SITES = {
+    ("canary_wap.ino", "handle_landing"): {
+        "pair_token_issue": ("grant", "request_host_is_setup_name(req)"),
+        "send_pair_landing": ("refusal", "!request_host_names_device(req)"),
+    },
+    ("csi_integration.cpp", "handle_pair_token"): {
+        "pair_token_issue": ("statement", "CSI_AUTH_OR_RETURN(req);"),
+    },
+    ("csi_integration.cpp", "send_pair_landing"): {"pair_token_issue": None},
 }
 _FIX_HANDLERS = {"handle_qr", "handle_kit", "handle_status", "handle_config_get",
                  "handle_config_post"}
@@ -1517,6 +1709,107 @@ _FIX_PLANTS = (
      "  csi_integration::init(server, g_device.api_token_str);\n"
      "  vault_api::register_routes(server, g_device.api_token_str);\n",
      "hands the token to vault_api::"),
+    # The mints (sweep F344): only MINT_SITES, each after its gate.
+    ("a new page handing out the landing (the review's /tune plant)", "canary_wap.ino",
+     "static void start_server(",
+     "static esp_err_t handle_tune(httpd_req_t* req) {\n"
+     "  return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;\n}\n"
+     "static void start_server(", "handle_tune() calls send_pair_landing()"),
+    ("a wrapper minting a session", "canary_wap.ino", "static void start_server(",
+     "static bool mint(char* h) {\n  return csi_integration::session_issue(h, 65);\n}\n"
+     "static void start_server(", "mint() calls session_issue()"),
+    ("a mint outside every function", "csi_integration.cpp", "bool init(",
+     "static const bool g_minted = session_issue(g_buf, 65);\nbool init(",
+     "code outside every function calls session_issue()"),
+    ("the landing above its Host refusal", "canary_wap.ino",
+     "  if (!request_host_names_device(req)) return send_refusal(req);\n"
+     "  return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;\n",
+     "  const bool sent = csi_integration::send_pair_landing(req);\n"
+     "  if (!request_host_names_device(req)) return send_refusal(req);\n"
+     "  return sent ? ESP_OK : ESP_FAIL;\n",
+     "handle_landing() calls send_pair_landing() not after its gate"),
+    ("a Host refusal that does not return", "canary_wap.ino",
+     "if (!request_host_names_device(req)) return send_refusal(req);",
+     "if (!request_host_names_device(req)) log_refusal(req);",
+     "handle_landing() calls send_pair_landing() not after its gate"),
+    ("the setup token minted outside its grant", "canary_wap.ino",
+     "    if (csi_integration::pair_token_issue(hex, sizeof(hex))) return ESP_OK;\n  }\n",
+     "  }\n  char tok[65];\n  if (csi_integration::pair_token_issue(tok, sizeof(tok))) return ESP_OK;\n",
+     "handle_landing() calls pair_token_issue() not after its gate"),
+    # The grant's lower bound (review 4 of F344): a mint in front of the
+    # grant's `if`, which the plant above (after its `}`) does not reach.
+    ("the setup token minted before its grant", "canary_wap.ino",
+     "  if (request_host_is_setup_name(req)) {\n    char hex[65];\n"
+     "    if (csi_integration::pair_token_issue(hex, sizeof(hex))) return ESP_OK;\n  }\n",
+     "  char hex[65];\n  if (csi_integration::pair_token_issue(hex, sizeof(hex))) return ESP_OK;\n"
+     "  if (request_host_is_setup_name(req)) {\n  }\n",
+     "handle_landing() calls pair_token_issue() not after its gate"),
+    ("the credential-gated route minting before its gate", "csi_integration.cpp",
+     "  CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n  return pair_token_issue",
+     "  char hex[65];\n  pair_token_issue(hex, sizeof(hex));\n  CSI_AUTH_OR_RETURN(req);\n"
+     "  return pair_token_issue",
+     "handle_pair_token() calls pair_token_issue() not after its gate"),
+    # The refusal's upper bound (review 5 of F344): a mint inside the Host
+    # refusal's own branch hands the landing to every refused Host, and no
+    # plant above puts one there, so a _gate_before() that took the
+    # branch's start, or the `if` itself, for its end passed them all.
+    ("the landing handed out in its Host refusal's own branch", "canary_wap.ino",
+     "if (!request_host_names_device(req)) return send_refusal(req);",
+     "if (!request_host_names_device(req)) "
+     "return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;",
+     "handle_landing() calls send_pair_landing() not after its gate"),
+    ("a mint site whose call is gone", "canary_wap.ino",
+     "  return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;\n", "  return ESP_OK;\n",
+     "which it no longer does"),
+    # The three exactness rules _gate_before() keeps, one plant each (review
+    # of F344's PR: dropping any of them passed every plant above): a
+    # refusal at the top level of the body, a refusal and a grant whose
+    # WHOLE condition is the gate, and a statement at the top level, at a
+    # statement boundary.
+    ("the Host refusal nested in another branch", "canary_wap.ino",
+     "  if (!request_host_names_device(req)) return send_refusal(req);\n",
+     "  if (x) {\n    if (!request_host_names_device(req)) return send_refusal(req);\n  }\n",
+     "handle_landing() calls send_pair_landing() not after its gate"),
+    ("the Host refusal's condition widened", "canary_wap.ino",
+     "if (!request_host_names_device(req)) return send_refusal(req);",
+     "if (!request_host_names_device(req) && x) return send_refusal(req);",
+     "handle_landing() calls send_pair_landing() not after its gate"),
+    ("the setup grant's condition widened", "canary_wap.ino",
+     "  if (request_host_is_setup_name(req)) {\n",
+     "  if (request_host_is_setup_name(req) || x) {\n",
+     "handle_landing() calls pair_token_issue() not after its gate"),
+    ("the credential macro made conditional", "csi_integration.cpp",
+     "  CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n",
+     "  if (x) CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n",
+     "handle_pair_token() calls pair_token_issue() not after its gate"),
+    ("the credential macro made conditional, in braces", "csi_integration.cpp",
+     "  CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n",
+     "  if (x) { CSI_AUTH_OR_RETURN(req); }\n  char hex[65];\n",
+     "handle_pair_token() calls pair_token_issue() not after its gate"),
+    # A mint site's answer grants no other site a read (review of F344: the
+    # wizard token's re-issue answered through http_send_json()).
+    ("the setup token answered through the wildcard sender", "canary_wap.ino",
+     "    if (csi_integration::pair_token_issue(hex, sizeof(hex))) return ESP_OK;\n",
+     "    if (csi_integration::pair_token_issue(hex, sizeof(hex))) return http_send_json(req, hex);\n",
+     "handle_landing() mints a session or a pair token and answers through http_send_json()"),
+    ("a mint site refusing through the wildcard error sender", "canary_wap.ino",
+     "if (!request_host_names_device(req)) return send_refusal(req);",
+     "if (!request_host_names_device(req)) return http_send_error(req, 403, \"host\");",
+     "handle_landing() mints a session or a pair token and answers through http_send_error()"),
+    # The wildcard rule reads the whole body (review 5 of F344): every plant
+    # above sits in a short fixture function, so a scan of a body's first
+    # few hundred characters passed them all.
+    ("the wildcard sender far down a long mint site", "canary_wap.ino",
+     "  return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;\n",
+     "  note_request(req);\n" * 40
+     + "  if (!csi_integration::send_pair_landing(req)) return ESP_FAIL;\n"
+       "  return http_send_json(req, \"{}\");\n",
+     "handle_landing() mints a session or a pair token and answers through http_send_json()"),
+    ("a credential-gated mint naming the CORS header", "csi_integration.cpp",
+     "  CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n",
+     "  CSI_AUTH_OR_RETURN(req);\n  httpd_resp_set_hdr(req, \"Access-Control-Allow-Origin\", \"*\");\n"
+     "  char hex[65];\n",
+     "handle_pair_token() mints a session or a pair token and names Access-Control-Allow-Origin"),
 )
 
 
@@ -1526,19 +1819,32 @@ def _fixture_sources() -> dict:
             "bluetooth_api.h": _FIX_BT}
 
 
-def _fixture_problems(sources: dict) -> list:
-    """The rules the fixtures exercise: the secret rule, the raw compare rule
-    and the backoff's clear, as main() runs them over the tree."""
-    return (answer_gate_rule_problems(sources, _FIX_HANDLERS, **_FIX_TABLES)
+def text_rule_problems(sources: dict, handlers: set, tables=None, clear_homes=BACKOFF_CLEARS,
+                       mint_sites=None) -> list:
+    """Every text rule, in the one list main() runs over the tree and the
+    self-test runs over its fixtures: the secret rule, the raw compare rule,
+    the backoff's clear, the lockout table and the mints. The tables
+    default to the tree's (the fixtures pass their own). One list, so a rule
+    dropped from it fails every plant that needs it (review 4 of F344:
+    main() called each rule itself, and deleting one of those calls passed
+    the self-test and the tree)."""
+    tables = {} if tables is None else tables
+    return (answer_gate_rule_problems(sources, handlers, **tables)
             + raw_compare_problems(sources)
-            + backoff_clear_problems(sources, ("handle_kit",), _FIX_TABLES["grants"])
-            + auth_table_problems(sources))
+            + backoff_clear_problems(sources, clear_homes, tables.get("grants"))
+            + auth_table_problems(sources)
+            + mint_site_problems(sources, mint_sites))
+
+
+def _fixture_problems(sources: dict) -> list:
+    """The rules the fixtures exercise, as main() runs them over the tree."""
+    return text_rule_problems(sources, _FIX_HANDLERS, _FIX_TABLES, ("handle_kit",), _FIX_MINT_SITES)
 
 
 def _assert_secret_rules() -> None:
-    """Each plant fails the secret rule, the raw compare rule or the
-    backoff's clear for its reason; the clean fixture passes all three. Runs
-    every time, before the tree."""
+    """Each plant fails the secret rule, the raw compare rule, the
+    backoff's clear or the mint rule for its reason; the clean fixture
+    passes all of them. Runs every time, before the tree."""
     clean = _fixture_problems(_fixture_sources())
     assert clean == [], "the secret rule's clean fixture fails: " + "; ".join(clean)
     for what, fname, old, new, word in _FIX_PLANTS:
@@ -1557,7 +1863,7 @@ def _assert_secret_rules() -> None:
     assert raw_compare_problems(quiet) == [], (
         "the raw compare rule read a comment or a string as a call: "
         + "; ".join(raw_compare_problems(quiet)))
-    assert len(_FIX_PLANTS) == 38, "the module docstring counts the plants: update it"
+    assert len(_FIX_PLANTS) == 57, "the module docstring counts the plants: update it"
 
 
 def main() -> int:
@@ -1649,10 +1955,7 @@ def main() -> int:
                             f"({fname}) has NO credential gate and is not "
                             f"on the public allowlist")
 
-    failures += answer_gate_rule_problems(secret_sources, handler_names(routes))
-    failures += raw_compare_problems(secret_sources)
-    failures += backoff_clear_problems(secret_sources)
-    failures += auth_table_problems(secret_sources)
+    failures += text_rule_problems(secret_sources, handler_names(routes))
 
     stale = set(PUBLIC_ALLOWLIST) - matched_allowlist
     for key in sorted(stale):

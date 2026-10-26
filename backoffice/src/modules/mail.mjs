@@ -24,17 +24,44 @@ export function qpEncode(str) {
 export const encodeHeader = (s) => /^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?${Buffer.from(s, 'utf8').toString('base64')}?=`;
 export const messageId = (domain = 'backoffice.local') => `<${Date.now().toString(36)}.${randomBytes(8).toString('hex')}@${domain}>`;
 
-export function buildMessage({ from, to, subject, text, headers = {}, id = null }) {
+export function buildMessage({ from, to, subject, text, html = null, headers = {}, id = null }) {
   const domain = (String(from).match(/@([^>\s]+)/) || [])[1] || 'backoffice.local';
   const mid = id || messageId(domain);
-  const h = [
-    `Date: ${new Date().toUTCString().replace('GMT', '+0000')}`,
-    `From: ${from}`, `To: ${to}`, `Subject: ${encodeHeader(subject)}`, `Message-ID: ${mid}`,
-    'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', 'Content-Transfer-Encoding: quoted-printable',
-    ...Object.entries(headers).filter(([, v]) => v != null && v !== '').map(([k, v]) => `${k}: ${v}`),
-  ];
-  return { id: mid, raw: h.join('\r\n') + '\r\n\r\n' + qpEncode(text) + '\r\n' };
+  const common = [`Date: ${new Date().toUTCString().replace('GMT', '+0000')}`, `From: ${from}`, `To: ${to}`, `Subject: ${encodeHeader(subject)}`, `Message-ID: ${mid}`, 'MIME-Version: 1.0',
+    ...Object.entries(headers).filter(([, v]) => v != null && v !== '').map(([k, v]) => `${k}: ${v}`)];
+  if (!html) return { id: mid, raw: [...common, 'Content-Type: text/plain; charset=utf-8', 'Content-Transfer-Encoding: quoted-printable'].join('\r\n') + '\r\n\r\n' + qpEncode(text) + '\r\n' };
+  // multipart/alternative: the plain text first (it is the canonical copy), the HTML for clients that render it
+  const b = `=_bo_${randomBytes(9).toString('hex')}`;
+  const part = (type, body) => `--${b}\r\nContent-Type: ${type}; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n${qpEncode(body)}\r\n`;
+  return { id: mid, raw: [...common, `Content-Type: multipart/alternative; boundary="${b}"`].join('\r\n') + '\r\n\r\n' + part('text/plain', text) + part('text/html', html) + `--${b}--\r\n` };
 }
+
+// ---------- the designed mail: plain text in, a branded HTML part out.
+// The text is what the operator writes and what the archive keeps; the HTML
+// is derived from it at send time, so the two can never disagree. Markup is
+// the little that survives in email: `# heading`, blank-line paragraphs,
+// `- bullets`, **bold**, bare URLs (linked), and {{merge}} tags already filled.
+// No images, no tracking pixels, no remote anything — by rule.
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const inline = (s) => esc(s).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/(https?:\/\/[^\s<)]+)/g, (u) => `<a href="${u}" style="color:#8a6508;text-decoration:underline">${u}</a>`);
+export function renderHtml(text, { company = 'Errer Labs', product = 'SecuraCV', siteOrigin = '', accent = '#b4820b', preheader = '', unsubscribe = '', footer = '' } = {}) {
+  const blocks = String(text || '').replace(/\r\n/g, '\n').split(/\n{2,}/).map(b => b.trim()).filter(Boolean);
+  const body = blocks.map(b => {
+    if (/^#{1,3} /.test(b)) return `<h2 style="margin:22px 0 8px;font-size:20px;line-height:1.3;color:#1b1b1b">${inline(b.replace(/^#+ /, ''))}</h2>`;
+    if (b.split('\n').every(l => /^[-*] /.test(l))) return `<ul style="margin:0 0 14px 20px;padding:0">${b.split('\n').map(l => `<li style="margin:4px 0">${inline(l.slice(2))}</li>`).join('')}</ul>`;
+    if (/^(—|--)\s*$/m.test(b) || /^(—|--) ?\S/.test(b)) return `<p style="margin:18px 0 0;color:#6b6b6b">${inline(b).replace(/\n/g, '<br>')}</p>`;
+    return `<p style="margin:0 0 14px;line-height:1.55">${inline(b).replace(/\n/g, '<br>')}</p>`;
+  }).join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${esc(company)}</title></head>
+<body style="margin:0;padding:0;background:#f3f1ec;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:16px;color:#1b1b1b">${preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0">${esc(preheader)}</div>` : ''}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f1ec"><tr><td align="center" style="padding:28px 12px">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+<tr><td style="padding:0 6px 14px"><span style="display:inline-block;padding:6px 12px;border-radius:999px;background:${accent};color:#1a1300;font-weight:700;font-size:14px;letter-spacing:.02em">${esc(company)}</span></td></tr>
+<tr><td style="background:#ffffff;border:1px solid #e3dfd6;border-radius:14px;padding:30px 32px">${body}</td></tr>
+<tr><td style="padding:16px 8px 0;font-size:12.5px;line-height:1.6;color:#6b6b6b">${footer ? `${inline(footer)}<br>` : ''}${siteOrigin ? `<a href="${esc(siteOrigin)}" style="color:#6b6b6b">${esc(siteOrigin.replace(/^https?:\/\//, ''))}</a> · ` : ''}no tracking pixels, ever${unsubscribe ? ` · <a href="${esc(unsubscribe)}" style="color:#6b6b6b">unsubscribe in one click</a>` : ''}</td></tr>
+</table></td></tr></table></body></html>`;
+}
+export const brandOpts = (cfg, extra = {}) => ({ company: cfg.company || 'Errer Labs', product: cfg.product || 'SecuraCV', siteOrigin: cfg.siteOrigin || '', ...extra });
 
 // ---------- SMTP client
 function parseSmtpUrl(url) {
@@ -89,9 +116,9 @@ export async function smtpSend(url, { from, to, raw }, { timeoutMs = 30_000 } = 
 }
 
 // ---------- the outbox
-export function enqueue(db, { to, subject, text, kind = 'transactional', ref = null, headers = {} }) {
-  const r = db.run('INSERT INTO mail_outbox (to_addr, subject, body_text, headers, kind, ref, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    to, subject, text, JSON.stringify(headers), kind, ref, nowIso());
+export function enqueue(db, { to, subject, text, kind = 'transactional', ref = null, headers = {}, contactId = null }) {
+  const r = db.run('INSERT INTO mail_outbox (to_addr, subject, body_text, headers, kind, ref, contact_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    to, subject, text, JSON.stringify(headers), kind, ref, contactId, nowIso());
   return db.get('SELECT * FROM mail_outbox WHERE id = ?', r.lastInsertRowid);
 }
 
@@ -100,19 +127,30 @@ export function enqueue(db, { to, subject, text, kind = 'transactional', ref = n
 // suppressed at send time, not just at queue time — consent can be withdrawn
 // between the two.
 export async function sendOutbox(db, cfg, { transport = null, limit = 50, now = nowIso } = {}) {
-  const tx = transport || (cfg.smtpUrl ? (m) => smtpSend(cfg.smtpUrl, m) : null);
-  const rows = db.all('SELECT * FROM mail_outbox WHERE status = \'queued\' AND attempts < 5 ORDER BY id LIMIT ?', limit);
+  // Demo mode never opens a socket: the message is built, logged as sent, and kept in the outbox to read.
+  const tx = transport || (cfg.demo ? async () => true : cfg.smtpUrl ? (m) => smtpSend(cfg.smtpUrl, m) : null);
+  // A row left in 'sending' by a process that died mid-send goes back to the queue after ten minutes.
+  db.run('UPDATE mail_outbox SET status = \'queued\' WHERE status = \'sending\' AND created_at < ?', new Date(Date.now() - 10 * 60_000).toISOString());
+  const rows = db.all('SELECT * FROM mail_outbox WHERE status = \'queued\' AND attempts < 12 AND (next_attempt_at IS NULL OR next_attempt_at <= ?) ORDER BY id LIMIT ?', now(), limit);
   const out = { sent: 0, failed: 0, suppressed: 0, skipped: 0 };
   for (const m of rows) {
-    if (m.kind === 'campaign' && !canMarket(contactByEmail(db, m.to_addr))) { db.run('UPDATE mail_outbox SET status = \'suppressed\' WHERE id = ?', m.id); out.suppressed++; continue; }
-    if (!tx || !cfg.mailFrom) { out.skipped++; continue; }
-    const msg = buildMessage({ from: cfg.mailFrom, to: m.to_addr, subject: m.subject, text: m.body_text, headers: JSON.parse(m.headers || '{}') });
+    // claimed before the socket opens: a second run (the scheduler and a "send now" press at once) sees it taken and sends nothing twice
+    if (!db.run('UPDATE mail_outbox SET status = \'sending\' WHERE id = ? AND status = \'queued\'', m.id).changes) continue;
+    const marketing = m.kind === 'campaign' || m.kind === 'automation';
+    if (marketing && !canMarket(contactByEmail(db, m.to_addr))) { db.run('UPDATE mail_outbox SET status = \'suppressed\' WHERE id = ?', m.id); out.suppressed++; continue; }
+    if (!tx || !cfg.mailFrom) { db.run('UPDATE mail_outbox SET status = \'queued\' WHERE id = ?', m.id); out.skipped++; continue; }
+    const hdr = JSON.parse(m.headers || '{}'); const unsub = (hdr['List-Unsubscribe'] || '').replace(/^<|>$/g, '');
+    const html = marketing ? renderHtml(m.body_text, brandOpts(cfg, { unsubscribe: unsub, preheader: hdr['X-Preheader'] || '' })) : null;
+    delete hdr['X-Preheader'];
+    const msg = buildMessage({ from: cfg.mailFrom, to: m.to_addr, subject: m.subject, text: m.body_text, html, headers: hdr });
     try {
       await tx({ from: cfg.mailFrom, to: m.to_addr, raw: msg.raw, id: msg.id });
       db.run('UPDATE mail_outbox SET status = \'sent\', sent_at = ?, message_id = ?, attempts = attempts + 1 WHERE id = ?', now(), msg.id, m.id);
       out.sent++;
     } catch (e) {
-      db.run('UPDATE mail_outbox SET attempts = attempts + 1, last_error = ?, status = CASE WHEN attempts + 1 >= 5 THEN \'failed\' ELSE \'queued\' END WHERE id = ?', String(e.message || e).slice(0, 500), m.id);
+      // 30 s, 2 min, 8 min, 32 min, ~2 h, then 6 h apart: a relay down for an afternoon loses nothing; after ~48 h of refusals the row is failed, and a person can retry it
+      const delay = Math.min(6 * 3600_000, 30_000 * 4 ** m.attempts);
+      db.run('UPDATE mail_outbox SET attempts = attempts + 1, last_error = ?, next_attempt_at = ?, status = CASE WHEN attempts + 1 >= 12 THEN \'failed\' ELSE \'queued\' END WHERE id = ?', String(e.message || e).slice(0, 500), new Date(Date.parse(now()) + delay).toISOString(), m.id);
       out.failed++;
     }
   }
@@ -123,3 +161,6 @@ export const outboxStats = (db) => Object.fromEntries(db.all('SELECT status, COU
 
 // {{name}} substitution with a safe fallback — templates are plain text.
 export const fill = (tpl, vars) => tpl.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_, k) => k.split('.').reduce((o, p) => (o == null ? '' : o[p]), vars) ?? '');
+
+// A person's "retry": every failed row goes back to the queue with a clean count.
+export const retryFailedMail = (db) => db.run('UPDATE mail_outbox SET status = \'queued\', attempts = 0, next_attempt_at = NULL WHERE status = \'failed\'').changes;

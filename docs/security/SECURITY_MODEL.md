@@ -382,6 +382,123 @@ as a bearer, to a phone spending the setup door's claim, or for thirty
 seconds after a short BOOT tap — and also in the pairing QR an operator
 fetches with the token, or on the serial console.
 
+Since sweep F344 the WAP asks the flagship's Host question too, in fewer
+places and with no exemption. After setup, the landing page `/`, its one-tap
+link (`/?cv_pair=`), `/admin`, `/settings` and `/companion` answer only a
+Host that can name this device (`host_guard.h`: an IP address, a `.local`
+name, a single label, or a `.lan`, `.internal` or `.home.arpa` name). Any
+other Host, or none, gets `403` and one fixed `text/plain` sentence ("This
+Canary answers only its own names. Open it at its .local name, its IP
+address, or the bare name your router gives it."): no pair token is handed
+out, no session is minted, the owner's link stays unspent, and a live cookie
+sent under that name is refused too. The provisioning receipt asks the same
+question first, in every mode, setup included, and answers
+`403 {"error":"host"}` before it reads the bearer, takes the claim or judges
+the tap, so such a request is never a strike (F343), never an asker for the
+tap (F342), spends nothing and clears nothing (F341). A DNS-rebinding page
+under a public name is then handed no session and no receipt (what no Host
+question can tell apart is under "What it leaves" below). Nor can it use a
+session carried in: any host on the LAN can take a 24-hour session at the
+landing, and a page can set that value for its own name with
+`document.cookie`, so the cookie validator behind every cookie route
+(`session_validate_cookie()`, which `api_auth.h`'s checks and
+`CSI_AUTH_OR_RETURN` reach through `cv_session_validate()`) asks the same
+Host question before it reads the cookie (F344's third review). Before, it
+read no Host, and such a value reached the dashboard, the live camera, the
+vault download, every session admin route and `GET /api/pair/token` (whose
+pair token then authorized `/api/wifi/connect`) from the rebinding page for
+its 24 hours. Two differences from the flagship. There is no SoftAP
+exemption, because the WAP's captive DNS sends every name to the device; its
+wizard runs at `canary.local` or `192.168.4.1`, which both pass, and the
+setup branch and the wizard token's re-issue now match exactly those two
+names, in any case and with any port, rather than any name that contains one
+of them. And the question is asked by the places that mint a session or a
+pair token for a caller holding no credential (`check_route_security.py`'s
+`MINT_SITES` lists every place that mints, each with the gate it must pass
+first), the pages that start a sign-in and the cookie, not by every API
+route as the flagship asks it: outside the receipt a bearer asks no Host, so
+a rebinding page that holds the bearer token itself is F57's open question,
+and a pair token's value carried off the LAN is read with no Host on
+`/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` (start,
+status and stop; a started scan acts only on a code held to the camera) for
+its ten minutes. F334, still open, asks whether Wi-Fi changes after setup
+take a bearer, so that the pair token serves only the first-boot wizard; its
+ledger entry names connect and ap-only, not the scan. And a standalone unit
+with a camera keeps scanning for a Wi-Fi QR code after setup
+(`qr_auto_scan_tick()` runs whenever no Wi-Fi is saved), so a carried token
+reads that scan's status (the network name the code held, the error text)
+and stops it. Refused after
+setup: a router name under another suffix (`.fritz.box`, `.localdomain`,
+`.home`), a name with a trailing dot, a public split-horizon name, and a
+reverse proxy that forwards a public Host; use the `.local` name, the IP or
+the bare router name instead (widening the shared list is F356). What it leaves: the Host question tells a public name from a name
+only the local network answers; it cannot tell this device from another
+server that answered such a name (`canary.local`, `192.168.4.1`, the
+device's own LAN address, any `.local` name, a single label or a private
+suffix) on a network the browser used before, such as a hostile hotspot or
+mDNS spoofed on a shared Wi-Fi. A page loaded there runs same-origin with
+the device when the browser comes home (every WAP claims `canary.local`) or
+joins the SoftAP (whose captive DNS answers every name with the device),
+whether it was left open or kept in the browser's HTTP cache: a cached
+answer is served again, with no request to the device, for as long as the
+server that sent it said, even after the browser has quit. In headless
+Chromium 141, clearing that name's cookies and stored data did not remove
+such a copy: the site's own "Delete data" for `canary.local`, and "Delete
+browsing data" over "All time" with "Cookies and other site data" but not
+"Cached images and files", each cleared that name's storage and left the
+cached page to be served again, while "Delete browsing data" with "Cached
+images and files" over "All time", which empties every site's cache,
+removed it. Other browsers were not tried. It can take the landing's pair token, a 24-hour session
+through `?cv_pair=`, during setup the wizard's pair token (from `/`'s
+redirect to the wizard or from the re-issue, at either setup name), and,
+around a BOOT tap the owner presses from that browser, the
+receipt: one browser is one address to the tap rule (F342), and here the
+answer is readable. Only HTTPS with an
+identity the browser can check closes it, and neither F15 nor F256 gives a
+browser one: F15 would bring HTTPS with a self-signed certificate, whose
+warning the owner accepts, and only a client that pins the certificate checks
+it (the iPhone app pins the receipt's `tls_cert_fp`; F256 asks whether it may
+learn one over mDNS). F15 would still help: once a unit serves HTTPS after
+setup, port 80 answers only the captive probes, `/api/fleet` and a redirect,
+so a page planted over plain HTTP is cross-origin to the device and takes
+none of these (it reads nothing; but `SameSite=Strict` compares sites, so in
+a browser that does not count the scheme in the site, as Chromium does, its
+requests still carry the session cookie and it can write blind with the
+owner's session: a reboot, or any other write a session may make); a page
+served over https at that name whose certificate
+warning the owner accepted still does, and so does any page during the
+first-boot setup or on a unit whose HTTPS start failed, which serve plain
+HTTP. And a cross-site page
+can still send requests at the IP address (an IP literal passes). It cannot
+read what the landing, the exchange, the pages, the wizard token's re-issue
+(`/api/wifi/pair-token`) or the receipt serve, since none sends a CORS
+header with it (the receipt's `500` and `503` error codes do, through
+`http_send_error()`, and carry nothing else). The re-issue answered through
+`http_send_json()`, with `Access-Control-Allow-Origin: *`, until F344's
+second review: during setup a page on another site, in the owner's own
+browser on the SoftAP, read a pair token at `192.168.4.1` (a setup name,
+which the exact match passes) and could spend it on `/api/wifi/connect` or
+`/api/wifi/ap-only`. It now sends no CORS header, and
+`check_route_security.py` refuses a mint site that answers through
+`http_send_json()`. Its requests spend no claim, from another address close
+an open tap rather than take it (F342), from the owner's own browser can
+still use up an open tap, can churn pair tokens, and can stop the boot
+Wi-Fi QR scan of a unit with no Wi-Fi saved each time it asks: `POST
+/api/wifi/qr-scan` yields that scan before it reads the body or checks the
+pair token, and the scan starts again about five seconds after its task
+unwinds (older than F344; noted under it in the ledger). A denial of
+service, not a way to the token. Three public routes do answer it readably:
+`/api/wifi` (the home network's name, the station address, the SoftAP's name
+and client count), `/api/wifi/scan` (nearby networks) and `/api/fleet`
+(coarse presence) send `Access-Control-Allow-Origin: *` (`http_send_json()`;
+`/api/fleet`'s by its documented contract), so any page can read them at the
+IP, rebinding or not, and the Host question cannot close that. The other
+public routes (`/api/selftest`, `/api/device-info`, `/api/help-qr`,
+`/enroll`, `/api/device/enroll`) send no CORS header (`/api/device-info`'s
+`500` and `503` error codes do, through `http_send_error()`, and carry
+nothing else), so only a rebinding page reads them, and they ask no Host. Both are F357. Host-tested; not run
+against a browser or on a device.
+
 Since sweep F342 the tap goes to the one address asking for it: when a
 second address asked for the receipt in the ten seconds before the tap or
 during it, the tap is closed and an asker gets `409 tap_contended` while an
@@ -451,9 +568,12 @@ window the session can open (it mints the wizard's pair token over
 (`FEATURE_QR_PROVISION`) — accepted as proximity-bound, named in the
 ledger. Since F289's follow-up (#1832) a wrong bearer on the receipt counts
 toward the same per-address lockout as the admin routes (F343), and the
-session cookie itself is `HttpOnly`, `SameSite=Strict`, and `Secure` whenever
-it is set over HTTPS (the first-boot setup runs plain HTTP, where a `Secure`
-cookie would be dropped); host-tested, the ESP32 compile is CI's, not
+session cookie itself is `HttpOnly`, `SameSite=Strict`, and `Secure` and
+named `__Host-cv_session` whenever it is set over HTTPS (the first-boot
+setup runs plain HTTP, where a `Secure` cookie would be dropped, and sets
+`cv_session`; two names, F337, so that once a WAP serves HTTPS a browser
+holding its cookie can still sign in to a unit it meets over plain HTTP at
+canary.local); host-tested, the ESP32 compile is CI's, not
 bench-tested. The WAP's lockout is per source address. A host's wrong
 bearers hold only that host's address (F343). A browser that mistyped the
 token waits at most about 60 s, or signs in with Use BOOT Tap Once, which
@@ -550,19 +670,27 @@ credential at all, a per-boot CSRF token that keeps cross-site pages away
 from writes, and the on-glass-only settings above that no network caller
 can flip.
 
-**Encryption in transit is an opt-in, not the default.** The Canary WAP
-serves HTTPS on port 443 with a certificate minted on the device once setup
-has completed and the certificate loads; during first-boot setup, and when
-the HTTPS server fails to start, it serves plain HTTP and says so on the
-serial log. The flagship's `dev`, `dev_ha`, `usb-onboard` and `full` builds
-(`FEATURE_HTTPS=1`) take the same shape with a self-signed ECDSA P-256
-certificate generated on the device and kept in its NVS: from the first
-boot after setup completes they serve HTTPS on 443 and 307-redirect port 80
-there, except the connectivity probes phones and laptops send, and a build,
-core or certificate step that cannot do TLS serves plain HTTP and says why in
-`/api/status` `tls_mode_reason`. CI compiles `dev` and `full`; `dev_ha` and
-`usb-onboard` inherit the flag from `dev` and no workflow builds them; none
-of the four has run on hardware. The flagship's release images (`release`,
+**Encryption in transit is not the default, and no stock unit serves
+HTTPS today.** Both trees have an HTTPS server built in that runs once a
+certificate is stored, and no stock build stores one (F15): the on-device
+certificate generator compiles out on every pinned core (its guard tests
+`mbedtls/x509write_crt.h`, a header mbedTLS never ships) and nothing else
+stores a certificate. So the Canary WAP serves plain HTTP after setup as
+during it, and the flagship's `dev`, `dev_ha`, `usb-onboard` and `full`
+builds (`FEATURE_HTTPS=1`) serve plain HTTP and say why in `/api/status`
+`tls_mode_reason` ("no stored certificate and this core cannot generate
+one"). Once a certificate is stored, the WAP would serve HTTPS on port 443
+from a certificate minted on the device after setup has completed, and
+plain HTTP during first-boot setup and when the HTTPS server fails to
+start, saying so on the serial log; the flagship's HTTPS builds would take
+the same shape with a self-signed ECDSA P-256 certificate generated on the
+device and kept in its NVS, serving HTTPS on 443 from the first boot after
+setup completes and 307-redirecting port 80 there, except the connectivity
+probes phones and laptops send, and a build, core or certificate step that
+cannot do TLS serves plain HTTP and says why in `tls_mode_reason`. CI
+compiles `dev` and `full`; `dev_ha` and `usb-onboard` inherit the flag from
+`dev` and no workflow builds them; none of the four has run on hardware.
+The flagship's release images (`release`,
 `release_ha` and the board envs built on them) stay plain HTTP on port 80
 until the size budget shows HTTPS fits and the maintainer turns it on, and
 the displays' LAN page and the headless products' setup portals are plain
@@ -573,9 +701,10 @@ container with its host port disabled, and the Docker sidecar's on every
 interface with port 8799 published from the first start, so Home Assistant
 can pair over the LAN (what that opens, and what crosses the wire, is
 [below](#home-assistant-pairing-and-what-crosses-your-network)). The
-iPhone app pins the certificate fingerprint in the receipt's `tls_cert_fp` —
-the WAP's pairing receipt and QR, and the flagship's receipt on its HTTPS
-builds, which `/api/status` also reports — refuses an https Canary it
+iPhone app pins the certificate fingerprint in the receipt's `tls_cert_fp`
+when a unit hands one out (the WAP's pairing receipt and QR, and the
+flagship's receipt on its HTTPS builds, which `/api/status` also reports;
+no stock unit has one to hand out today), refuses an https Canary it
 cannot check, and offers a plain-http credential push only when nothing
 encrypted reaches the device and only behind a disclosure you switch on.
 Compile-tested by CI; whether a given unit is serving HTTPS is on its serial
@@ -589,10 +718,11 @@ SHA-256 fingerprint (which products support which is in
 [`docs/FIRMWARE_VARIANT_AUDIT.md`](../FIRMWARE_VARIANT_AUDIT.md)). An
 incomplete TLS setup refuses to connect rather than quietly downgrading, and
 the unverified "lab" mode exists only as a mode chosen by name that warns on
-every connect. On the flagship's release images, and on its HTTPS builds
-until the first boot after setup or when HTTPS fails to start, provisioning
-the broker password over `POST /api/mqtt/config` crosses the LAN in the
-clear like the rest of the device API. A `POST /api/mqtt/config` that moves
+every connect. Provisioning the broker password over
+`POST /api/mqtt/config` crosses the LAN in the clear like the rest of the
+device API on every stock unit of either tree today, since none serves HTTPS
+(F15); the flagship's release images stay plain HTTP after that too, until
+HTTPS is turned on for them. A `POST /api/mqtt/config` that moves
 the broker (a new host or port) while a password is stored and the body
 names none is refused `400 password_required_for_new_host` from any caller
 (`mqtt_tls_fields::credential_carry`; the flagship has no dashboard session,
@@ -727,7 +857,7 @@ could use against the kernel; the receipt names the credential that asked
 | **Law enforcement** (without the physical device) | There is no ERRERlabs server to subpoena. A Canary talks only to the broker and hub you run and to the update host, which sees an anonymous manifest fetch; the evidence lives on the device and on your hub. |
 | **Network observers** | They see the disclosed paths and nothing else: a broker session (readable on the wire until you provision TLS), a daily signed-manifest fetch and SNTP from every product without GPS. No path carries an identifier beyond what your own broker login already is. On the hub they also see the kernel's plain HTTP where it crosses the LAN — the Docker sidecar's paired token on every Home Assistant request until TLS lands for it — and the coarse claims and the signed announcement on your own broker. |
 | **Other WiFi users** | Each device has a unique, randomly derived password. |
-| **Remote attackers** | Nothing listens beyond your network and nothing is exposed to the internet; the outbound paths are client-initiated to hosts you chose. Encryption on the device's own API is an opt-in — the WAP's HTTPS after setup, the flagship's `FEATURE_HTTPS` builds from the first boot after setup, the kernel's `api-tls` — and the MQTT broker link is TLS only once you provision it (plain by default). |
+| **Remote attackers** | Nothing listens beyond your network and nothing is exposed to the internet; the outbound paths are client-initiated to hosts you chose. Encryption on the device's own API is not the default: the WAP turns HTTPS on by itself after setup once a certificate is stored, the flagship serves it only in its `FEATURE_HTTPS` builds, from the first boot after setup (neither Canary serves it on any stock unit today, F15), and the kernel only with its `api-tls` build feature; and the MQTT broker link is TLS only once you provision it (plain by default). |
 | **ERRERlabs under court order** | We cannot comply because we have nothing — no keys, no data, no access. |
 
 ---
@@ -741,7 +871,7 @@ The device uses well-vetted, standard cryptographic primitives:
 | Device identity & record signing | Ed25519 | Arduino Crypto (Rhys Weatherley) |
 | Chain integrity & domain separation | SHA-256 | mbedTLS (ESP-IDF) |
 | API token derivation | HMAC-SHA256 / HKDF | mbedTLS (ESP-IDF) |
-| Transport encryption (opt-in: the WAP's HTTPS after setup; the flagship's `FEATURE_HTTPS` builds from the first boot after setup; the kernel's `api-tls` feature) | TLS 1.2+ (RSA-2048 self-signed on the WAP; ECDSA P-256 self-signed on the flagship's `FEATURE_HTTPS` builds, CI-compiled in `dev` and `full` and never run on hardware) | mbedTLS (ESP-IDF); rustls (kernel) |
+| Transport encryption (the WAP's HTTPS, automatic after setup once a certificate is stored; the flagship's `FEATURE_HTTPS` builds from the first boot after setup — neither Canary serves it on any stock unit today, F15; the kernel's `api-tls` feature) | TLS 1.2+ (RSA-2048 self-signed on the WAP; ECDSA P-256 self-signed on the flagship's `FEATURE_HTTPS` builds, CI-compiled in `dev` and `full` and never run on hardware) | mbedTLS (ESP-IDF); rustls (kernel) |
 | Broker link (MQTT over TLS, when provisioned) | TLS 1.2+; CA chain verification on all five products; SHA-256 certificate pin and a named unverified lab mode on canary-display (not the plain-only nightstand-c6), canary-sense, canary-vision and the `firmware/canary` flagship; canary-wap is CA-only (esp_mqtt has no pin hook). Compile-tested, host-tested, not bench-tested | mbedTLS via WiFiClientSecure (display / sense / vision / flagship) and esp-tls (canary-wap) |
 | At-rest event database (kernel) | SQLCipher (AES-256), key derived from the device seed | SQLCipher via rusqlite |
 

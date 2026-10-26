@@ -31,7 +31,7 @@ test('paid → packed consumes the recipe; shipped queues the tracking mail; ref
   assert.equal(item(db, 'xiao-esp32s3').on_hand, 4); assert.equal(item(db, 'wap-shell').on_hand, 1);
   transition(db, order.id, 'shipped', { carrier: 'USPS', tracking: '9400 1', cfg });
   const mail = db.get('SELECT * FROM mail_outbox WHERE ref = ?', 'order:EL-000001');
-  assert.ok(mail && mail.to_addr === 'ada@example.test' && mail.body_text.includes('9400 1'));
+  assert.ok(mail && mail.to_addr === 'ada@example.test' && mail.body_text.includes('Tracking: 94001'), 'the tracking number is mailed as the carrier prints it (no spaces)');
   assert.equal(orderByNumber(db, 'EL-000001').status, 'shipped');
   refund(db, order.id, 800, { reason: 'shipping overcharge' });
   assert.equal(orderByNumber(db, 'EL-000001').refunded_cents, 800);
@@ -47,8 +47,9 @@ test('the fulfill.mjs CSV carries one row per item with the catalog SKU', () => 
   recordOrder(db, sampleOrder({ items: [{ sku: 'wap-kit', name: 'Canary WAP Kit', qty: 2, unit_cents: 6900 }, { sku: 'wap-parts', name: 'WAP Enclosure Set', qty: 1, unit_cents: 1500 }] }), { catalog: catalog() });
   const csv = fulfillCsv(db);
   const lines = csv.trim().split('\n');
-  assert.equal(lines[0], 'order_id,email,name,sku,qty,line1,line2,city,state,zip,country');
+  assert.equal(lines[0], 'order_id,email,name,sku,qty,line1,line2,city,state,zip,country,order_lines,box,expected_oz,pieces,service', 'the website\'s columns first, the frozen box plan after');
   assert.equal(lines.length, 3);
+  assert.ok(lines[1].endsWith(',2,,,,'), 'not yet packed: the plan columns are empty, the line count is there');
   assert.ok(lines[1].startsWith('EL-000001,ada@example.test,Ada Lovelace,wap-kit,2,'));
   assert.equal(listOrders(db, { q: 'Lovelace' }).length, 1);
 });

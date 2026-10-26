@@ -4,10 +4,11 @@
 // hosted helpdesk; GitHub issues stay the public front door (doc 20).
 import { nowIso } from '../db.mjs';
 import { token } from '../http.mjs';
-import { upsertContact, validEmail } from './contacts.mjs';
+import { upsertContact, validEmail, markBounced } from './contacts.mjs';
 import { enqueue, fill } from './mail.mjs';
 
 export const STATUSES = ['open', 'waiting_on_customer', 'waiting_on_us', 'closed'];
+export const PRIORITIES = ['low', 'normal', 'high', 'urgent'];
 export const KINDS = ['support', 'sales', 'press', 'security', 'warranty', 'feedback', 'build_request', 'wholesale'];
 const TOKEN_RE = /\[(T-\d{6}) ([a-z0-9]{6})\]/i;
 
@@ -33,25 +34,33 @@ export function openTicket(db, { email, name = null, subject, body, kind = null,
       VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?)`, number, contact?.id ?? null, String(subject || '(no subject)').slice(0, 200), priority || guess.priority, channel, kind || guess.kind, now, now, sla, tt);
     const id = r.lastInsertRowid;
     addMessage(db, id, { direction: 'in', from_addr: fromAddr || contact?.email || null, body: body || '', message_id: messageId, in_reply_to: inReplyTo });
-    if (autoAck && contact?.email) enqueue(db, { to: contact.email, subject: `[${number} ${tt}] Re: ${subject}`, kind: 'support', ref: `ticket:${number}`,
+    // One acknowledgement per address per hour: a form or a mailbox fed someone else's address in a
+    // loop would otherwise make this server the one flooding them.
+    const ackedLately = contact?.email && db.get("SELECT id FROM mail_outbox WHERE to_addr = ? AND kind = 'support' AND ref LIKE 'ticket:%' AND created_at >= ?", contact.email, new Date(Date.now() - 3600_000).toISOString());
+    if (autoAck && contact?.email && !ackedLately) enqueue(db, { to: contact.email, subject: `[${number} ${tt}] Re: ${subject}`, kind: 'support', ref: `ticket:${number}`,
       headers: inReplyToHeaders(messageId), text: fill(ACK_TPL, { name: contact.name || 'there', number, company: cfg.company || 'Errer Labs', hours: cfg.slaHours || 24 }) });
     db.audit('system', 'ticket.open', 'ticket', number, { kind: kind || guess.kind, channel });
     return ticketById(db, id);
   });
 }
 
-export const inReplyToHeaders = (mid) => mid ? { 'In-Reply-To': mid, References: mid } : {};
+// A Message-ID is one bracketed token with no whitespace, or nothing: anything else (a CRLF, a second header) is dropped before it can reach a mail header.
+export const messageIdOrNull = (s) => (typeof s === 'string' && /^<[^\s<>]{1,500}>$/.test(s.trim())) ? s.trim() : null;
+export const inReplyToHeaders = (mid) => { const m = messageIdOrNull(mid); return m ? { 'In-Reply-To': m, References: m } : {}; };
 
-export function addMessage(db, ticketId, { direction, body, from_addr = null, to_addr = null, message_id = null, in_reply_to = null }) {
+export function addMessage(db, ticketId, { direction, body, from_addr = null, to_addr = null, message_id = null, in_reply_to = null, slaHours = 24 }) {
+  message_id = messageIdOrNull(message_id); in_reply_to = messageIdOrNull(in_reply_to);
   const now = nowIso();
   if (message_id && db.get('SELECT id FROM ticket_messages WHERE message_id = ?', message_id)) return null;
   const r = db.run('INSERT INTO ticket_messages (ticket_id, direction, from_addr, to_addr, message_id, in_reply_to, body, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     ticketId, direction, from_addr, to_addr, message_id, in_reply_to, body, now);
   const t = db.get('SELECT * FROM tickets WHERE id = ?', ticketId);
   if (direction === 'out') db.run('UPDATE tickets SET updated_at = ?, first_response_at = COALESCE(first_response_at, ?), status = CASE WHEN status = \'closed\' THEN \'closed\' ELSE \'waiting_on_customer\' END WHERE id = ?', now, now, ticketId);
-  else if (direction === 'in') db.run('UPDATE tickets SET updated_at = ?, status = CASE WHEN status = \'closed\' THEN \'open\' ELSE \'waiting_on_us\' END, sla_due_at = CASE WHEN status IN (\'closed\',\'waiting_on_customer\') THEN ? ELSE sla_due_at END WHERE id = ?', now, new Date(Date.now() + 24 * 3600_000).toISOString(), ticketId);
+  // A customer writing to a closed ticket reopens it as a new question: the clock and the first-response mark
+  // start over, so the SLA job sees it as unanswered again. A reply while we wait on them resets the clock only.
+  else if (direction === 'in') db.run('UPDATE tickets SET updated_at = ?, first_response_at = CASE WHEN status = \'closed\' THEN NULL ELSE first_response_at END, closed_at = CASE WHEN status = \'closed\' THEN NULL ELSE closed_at END, status = CASE WHEN status = \'closed\' THEN \'open\' ELSE \'waiting_on_us\' END, sla_due_at = CASE WHEN status IN (\'closed\',\'waiting_on_customer\') THEN ? ELSE sla_due_at END WHERE id = ?', now, new Date(Date.now() + (Number(slaHours) || 24) * 3600_000).toISOString(), ticketId);
   else db.run('UPDATE tickets SET updated_at = ? WHERE id = ?', now, ticketId);
-  return db.get('SELECT * FROM ticket_messages WHERE id = ?', r.lastInsertRowid) && t;
+  return { ...db.get('SELECT * FROM ticket_messages WHERE id = ?', r.lastInsertRowid), ticket: t };
 }
 
 export const ticketById = (db, id) => { const t = db.get('SELECT t.*, c.email, c.name AS contact_name FROM tickets t LEFT JOIN contacts c ON c.id = t.contact_id WHERE t.id = ?', id); if (t) t.messages = db.all('SELECT * FROM ticket_messages WHERE ticket_id = ? ORDER BY id', id); return t; };
@@ -82,7 +91,7 @@ export function setStatus(db, ticketId, status, { actor = 'web' } = {}) {
 }
 export function update(db, ticketId, { kind, priority, labels }) {
   if (kind && KINDS.includes(kind)) db.run('UPDATE tickets SET kind = ? WHERE id = ?', kind, ticketId);
-  if (priority) db.run('UPDATE tickets SET priority = ? WHERE id = ?', priority, ticketId);
+  if (priority) { if (!PRIORITIES.includes(priority)) throw new Error(`priority is one of ${PRIORITIES.join(', ')}`); db.run('UPDATE tickets SET priority = ? WHERE id = ?', priority, ticketId); }
   if (labels != null) db.run('UPDATE tickets SET labels = ? WHERE id = ?', labels, ticketId);
   return ticketById(db, ticketId);
 }
@@ -94,6 +103,10 @@ export function ingestEmail(db, mail, { cfg = {} } = {}) {
   const from = mail.from || ''; const email = (from.match(/<([^>]+)>/) || [, from])[1].trim();
   const name = (from.match(/^\s*"?([^"<]+?)"?\s*</) || [])[1] || null;
   const isAuto = /auto-?reply|automatic reply|out of office|mailer-daemon|postmaster|delivery status|undeliverable/i.test(`${mail.subject} ${from} ${mail.headers?.['auto-submitted'] || ''}`) || /^(auto-generated|auto-replied)/i.test(mail.headers?.['auto-submitted'] || '');
+  // A bounce (a delivery status notification) names the address that failed: it is suppressed from marketing mail from here on.
+  const isBounce = /mailer-daemon|postmaster|delivery status|undeliverable|delivery has failed|could not be delivered/i.test(`${mail.subject} ${from}`);
+  const bounced = [];
+  if (isBounce) { const seen = new Set(); for (const [, addr] of String(mail.text || '').matchAll(/([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g)) { const a = addr.toLowerCase(); if (seen.has(a) || a === email.toLowerCase() || /mailer-daemon|postmaster/.test(a)) continue; seen.add(a); if (markBounced(db, a, { reason: mail.subject || 'bounce' })) bounced.push(a); } }
   const tok = (mail.subject || '').match(TOKEN_RE);
   let t = tok ? db.get('SELECT * FROM tickets WHERE number = ? AND thread_token = ?', tok[1].toUpperCase(), tok[2].toLowerCase()) : null;
   if (!t) {
@@ -101,13 +114,15 @@ export function ingestEmail(db, mail, { cfg = {} } = {}) {
     for (const r of refs) { const m = db.get('SELECT ticket_id FROM ticket_messages WHERE message_id = ?', r) || db.get('SELECT ref FROM mail_outbox WHERE message_id = ?', r); if (m?.ticket_id) { t = db.get('SELECT * FROM tickets WHERE id = ?', m.ticket_id); break; } if (m?.ref?.startsWith('ticket:')) { t = db.get('SELECT * FROM tickets WHERE number = ?', m.ref.slice(7)); break; } }
   }
   if (t) {
-    const added = addMessage(db, t.id, { direction: isAuto ? 'note' : 'in', from_addr: email, body: (isAuto ? '[auto-reply] ' : '') + (mail.text || ''), message_id: mail.messageId || null, in_reply_to: mail.inReplyTo || null });
-    return { ticket: ticketById(db, t.id), created: false, duplicate: !added };
+    const added = addMessage(db, t.id, { direction: isAuto ? 'note' : 'in', from_addr: email, body: (isAuto ? '[auto-reply] ' : '') + (mail.text || ''), message_id: mail.messageId || null, in_reply_to: mail.inReplyTo || null, slaHours: cfg.slaHours || 24 });
+    if (added && !isAuto && mail.attachments?.length) saveAttachments(db, added.id, mail.attachments);
+    return { ticket: ticketById(db, t.id), created: false, duplicate: !added, attachments: added && mail.attachments ? mail.attachments.length : 0 };
   }
-  if (isAuto) return { ticket: null, created: false, ignored: 'auto-reply' };
+  if (isAuto) return { ticket: null, created: false, ignored: isBounce ? 'bounce' : 'auto-reply', bounced };
   if (mail.messageId && db.get('SELECT id FROM ticket_messages WHERE message_id = ?', mail.messageId)) return { ticket: null, created: false, duplicate: true };
   const ticket = openTicket(db, { email, name, subject: mail.subject || '(no subject)', body: mail.text || '', channel: 'email', cfg, messageId: mail.messageId || null, inReplyTo: mail.inReplyTo || null, fromAddr: email });
-  return { ticket, created: true };
+  if (mail.attachments?.length) saveAttachments(db, ticket.messages[0].id, mail.attachments);
+  return { ticket, created: true, attachments: mail.attachments?.length || 0 };
 }
 
 // --- a minimal RFC 5322 / MIME reader: enough for the plain-text part of
@@ -121,8 +136,32 @@ export function parseEmail(raw) {
   const text = extractText(body, ct, headers['content-transfer-encoding'] || '7bit');
   const refs = (headers.references || '').match(/<[^>]+>/g) || [];
   return { headers, from: decodeWords(headers.from || ''), to: decodeWords(headers.to || ''), subject: decodeWords(headers.subject || ''), messageId: (headers['message-id'] || '').trim() || null,
-    inReplyTo: ((headers['in-reply-to'] || '').match(/<[^>]+>/) || [])[0] || null, references: refs, date: headers.date || null, text: text.trim() };
+    inReplyTo: ((headers['in-reply-to'] || '').match(/<[^>]+>/) || [])[0] || null, references: refs, date: headers.date || null, text: text.trim(), attachments: extractAttachments(body, ct) };
 }
+// Photos of a warped lid, a PDF of a purchase order: the parts a person attached, kept with the message.
+// Images, PDFs and text only; 5 MB each, five per mail; anything else is named in the text and dropped.
+export const ATTACHMENT_TYPES = /^(image\/(png|jpeg|gif|webp|heic)|application\/pdf|text\/plain|text\/csv)$/i;
+export function extractAttachments(body, ct, { max = 5, maxBytes = 5 * 1024 * 1024, out = [] } = {}) {
+  const type = ct.split(';')[0].trim().toLowerCase(); if (!type.startsWith('multipart/') || out.length >= max) return out;
+  const boundary = (ct.match(/boundary="?([^";]+)"?/i) || [])[1]; if (!boundary) return out;
+  const parts = body.split(new RegExp(`(?:\\r?\\n)?--${boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:--)?(?:\\r?\\n|$)`)).slice(1).filter(p => p.trim());
+  for (const p of parts) {
+    if (out.length >= max) break;
+    const sep = p.indexOf('\r\n\r\n') >= 0 ? '\r\n\r\n' : '\n\n'; const i = p.indexOf(sep); const h = parseHeaders(i < 0 ? p : p.slice(0, i)); const b = i < 0 ? '' : p.slice(i + sep.length);
+    const pct = h['content-type'] || 'text/plain'; const ptype = pct.split(';')[0].trim().toLowerCase();
+    if (ptype.startsWith('multipart/')) { extractAttachments(b, pct, { max, maxBytes, out }); continue; }
+    const disp = h['content-disposition'] || ''; const filename = decodeWords(((disp.match(/filename\*?="?([^";]+)"?/i) || pct.match(/name="?([^";]+)"?/i) || [])[1] || '').replace(/^UTF-8''/i, '')).trim();
+    if (!/attachment/i.test(disp) && !filename) continue; if (!ATTACHMENT_TYPES.test(ptype)) continue;
+    const cte = (h['content-transfer-encoding'] || '7bit').toLowerCase().trim();
+    const bytes = cte === 'base64' ? Buffer.from(b.replace(/\s+/g, ''), 'base64') : cte === 'quoted-printable' ? Buffer.from(b.replace(/=\r?\n/g, '').replace(/=([0-9A-Fa-f]{2})/g, (_, x) => String.fromCharCode(parseInt(x, 16))), 'latin1') : Buffer.from(b, 'latin1');
+    if (!bytes.length || bytes.length > maxBytes) continue;
+    out.push({ filename: (filename || `attachment-${out.length + 1}`).replace(/[\\/\u0000-\u001f]/g, '_').slice(0, 120), mime: ptype, bytes });
+  }
+  return out;
+}
+export function saveAttachments(db, messageId, attachments = []) { let n = 0; for (const a of attachments) { db.run('INSERT INTO attachments (ticket_message_id, filename, mime, size, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)', messageId, a.filename, a.mime, a.bytes.length, a.bytes, nowIso()); n++; } return n; }
+export const attachmentsFor = (db, ticketId) => db.all('SELECT a.id, a.ticket_message_id, a.filename, a.mime, a.size FROM attachments a JOIN ticket_messages m ON m.id = a.ticket_message_id WHERE m.ticket_id = ? ORDER BY a.id', ticketId);
+export const attachment = (db, id) => { const a = db.get('SELECT a.*, m.ticket_id FROM attachments a JOIN ticket_messages m ON m.id = a.ticket_message_id WHERE a.id = ?', id); if (a) a.bytes = Buffer.from(a.bytes); return a; };
 function parseHeaders(head) {
   const out = {}; let last = null;
   for (const line of head.split(/\r?\n/)) {

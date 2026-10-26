@@ -245,7 +245,9 @@ describe('the close-out link, on the routes the device serves (repo sweep F129)'
     assert.match(receipt, /session_cookie_header\(req, session_hex, cookie_hdr, sizeof\(cookie_hdr\)\)/);
     assert.match(receipt, /httpd_resp_set_hdr\(req, "Set-Cookie", cookie_hdr\)/);
     const writer = ino.split('static bool session_cookie_header(')[1].split('\n}\n')[0];
-    assert.match(writer, /"cv_session=%s; HttpOnly; SameSite=Strict; Path=\/; Max-Age=86400%s",\s*session_hex, tls \? "; Secure" : ""\)/);
+    // Its name follows the transport too (sweep F337): __Host-cv_session
+    // over HTTPS, cv_session on the plain-HTTP setup the wizard runs on.
+    assert.match(writer, /"%s=%s; HttpOnly; SameSite=Strict; Path=\/; Max-Age=86400%s",\s*tls \? "__Host-cv_session" : "cv_session", session_hex, tls \? "; Secure" : ""\)/);
     assert.match(writer, /const bool tls = g_https_server != nullptr && req->handle == g_https_server;/);
     assert.match(ino, /static esp_err_t handle_status_auth\(httpd_req_t\* req\) \{\n  if \(!api_auth_check\(req, g_device\.api_token_str\)\) return ESP_OK;/);
     const auth = fs.readFileSync(path.join(__dirname, 'api_auth.h'), 'utf8');
