@@ -4,7 +4,10 @@ import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { Router, HttpError, parseCookies, cookie, readBody, parseBody, RateLimiter, Lockout, html, json, text, redirect, clientIp, setTrustedProxies, escapeHtml, safeEqual, int, asArray } from './http.mjs';
 const e = escapeHtml;
-import { layout, setTimezone, dt as fmtDt, day as fmtDay } from './render.mjs';
+import { layout, setTimezone, setEnvironment, dt as fmtDt, day as fmtDay } from './render.mjs';
+import { applyEnv, ENV_TEXT } from './env.mjs';
+import { build, recordBoot } from './version.mjs';
+import { listFlags, setFlag, clearFlag } from './flags.mjs';
 import { orderToken, deliveryLine, trackingUrl } from './modules/delivery.mjs';
 import { editItems } from './modules/orders.mjs';
 import { sessionFor, login, logout, apiTokenFor, hasOperator, carryLegacyOperator, can } from './auth.mjs';
@@ -51,6 +54,10 @@ export function createApp({ db, cfg }) {
     // A demo database from before people existed (or between resets) must have the demo people the login page names, on every boot.
     if (isDemo(db)) seedDemoUsers(db);
   }
+  // The environment: its label on every page, its rules enforced (a fatal one stops here, before the app
+  // listens), its mutes applied, the database labeled; then the build is written down if it is new here.
+  const { env } = applyEnv(cfg, db); setEnvironment(env, ENV_TEXT[env]);
+  recordBoot(db, cfg);
   // In demo mode the catalog is the demo's own, never fetched from the live site.
   setTrustedProxies(cfg.trustedProxies);
   const app = { db, cfg, json, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), formLimiter: new RateLimiter({ limit: 5, windowMs: 10 * 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), once: new Map(), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o), shipping: cfg.demo ? async () => DEMO_SHIPPING : (o) => loadShipping(cfg, o) };
@@ -64,7 +71,9 @@ export function createApp({ db, cfg }) {
   router.get('/healthz', (c) => {
     try { db.get('SELECT key FROM settings LIMIT 1'); } catch (err) { throw new HttpError(503, `database: ${err.message}`); }
     if (app.schedulerTick && Date.now() - app.schedulerTick > 5 * 60_000) throw new HttpError(503, 'scheduler stalled');
-    text(c.res, 'ok');
+    // "ok <environment> <build>": a monitor reads the first word; the promote workflow reads the rest to prove the
+    // server runs the build it just sent (a public commit hash of a public repository; no secret in it)
+    text(c.res, `ok ${cfg.env} ${build(cfg).sha}`);
   });
   router.get('/status', (c) => html(c.res, statusPage(db, cfg), 200, { 'Cache-Control': 'public, max-age=60' }));
   router.get('/status.json', (c) => json(c.res, publicStatus(db), 200, { 'Cache-Control': 'public, max-age=60', 'Access-Control-Allow-Origin': '*' }));
@@ -176,6 +185,8 @@ export function createApp({ db, cfg }) {
 
   // ---------- JSON API (bearer token or a logged-in session)
   router.get('/api', (c) => json(c.res, { name: 'securacv-backoffice', endpoints: API_INDEX }));
+  router.get('/api/flags', (c) => json(c.res, listFlags(db, cfg)));
+  router.post('/api/flags/:name', (c) => json(c.res, c.body.on === null || c.body.on === undefined ? clearFlag(db, cfg, c.params.name, { actor: c.actor }) : setFlag(db, cfg, c.params.name, c.body.on === true || c.body.on === 1 || c.body.on === '1' || c.body.on === 'true', { actor: c.actor })));
   router.get('/api/snapshot', (c) => json(c.res, snapshot(db)));
   router.get('/api/orders', (c) => json(c.res, listOrders(db, Object.fromEntries(['status', 'batch', 'q', 'tag', 'from', 'to', 'discount', 'sku'].map(k => [k, c.query.get(k) || ''])))));
   router.get('/api/orders/:number', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, o); });
@@ -393,7 +404,7 @@ export function safeLocalPath(referer) {
 
 const corsHeaders = (cfg) => ({ 'Access-Control-Allow-Origin': cfg.siteOrigin, 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type', Vary: 'Origin' });
 
-const API_INDEX = ['GET /api/snapshot', 'GET /api/analytics?days=7|30|90|365', 'GET /api/search?q=', 'GET /api/orders?status=&batch=&q=&tag=&from=&to=&discount=&sku=', 'GET /api/orders/:number', 'POST /api/orders {…, discount_code, tags}', 'POST /api/orders/:number/transition {to, carrier, tracking}', 'POST /api/orders/:number/refund {cents, reason}',
+const API_INDEX = ['GET /api/flags', 'POST /api/flags/:name {on: true|false, or null for the default} (owner)', 'GET /api/snapshot', 'GET /api/analytics?days=7|30|90|365', 'GET /api/search?q=', 'GET /api/orders?status=&batch=&q=&tag=&from=&to=&discount=&sku=', 'GET /api/orders/:number', 'POST /api/orders {…, discount_code, tags}', 'POST /api/orders/:number/transition {to, carrier, tracking}', 'POST /api/orders/:number/refund {cents, reason}',
   'GET /api/orders/:number/events', 'POST /api/orders/:number/note {body}', 'POST /api/orders/:number/tags {tags}', 'GET /api/batches', 'GET /api/customers?q=&tag=&segment=&sort=', 'GET /api/customers/:id', 'POST /api/customers/:id/tags {tags}',
   'GET /api/products?days=', 'GET /api/products/:sku', 'GET /api/discounts', 'POST /api/discounts {code, kind, value, min_subtotal_cents, starts_at, ends_at, max_uses, note}', 'POST /api/discounts/:code/status {status}', 'GET /api/discounts/:code/evaluate?subtotal=&shipping=',
   'GET /api/tickets?status=&kind=&q=', 'GET /api/tickets/:number', 'POST /api/tickets {email, subject, body}', 'POST /api/tickets/:number/reply {body, close}', 'POST /api/mail/ingest {from, subject, text, messageId, inReplyTo}',
