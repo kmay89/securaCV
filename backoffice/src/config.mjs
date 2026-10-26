@@ -36,6 +36,9 @@ export function loadConfig(overrides = {}) {
     notifyNewOrder: env('NOTIFY_NEW_ORDER', '') === '' ? null : env('NOTIFY_NEW_ORDER', '') === '1',   // a new order mails the operator the minute it lands (and pushes); null = Settings decides (on by default)
     ntfyUrl: env('NTFY_URL', ''), ntfyToken: env('NTFY_TOKEN', ''),      // optional: an ntfy topic URL for a phone push on a new order — off unless set
     recoveryHours: Number(env('CHECKOUT_RECOVERY_HOURS', '1')),          // an abandoned checkout with an email gets its one follow-up this long after it expires
+    adminAllowCidrs: env('ADMIN_ALLOW_CIDRS', ''),                       // when set, the admin (and /login) exist only for these networks; everything else gets a 404. The store, the webhook and the customers' pages are untouched
+    sessionBindIp: env('SESSION_BIND_IP', '') === '1',                   // a session used from another network than it was opened on is ended (a stolen cookie travels; a phone that changes networks logs in again)
+    signInLinkMinutes: Number(env('SIGNIN_LINK_MINUTES', '15')),        // how long a mailed sign-in link is good for
     shippoToken: env('SHIPPO_API_TOKEN', ''),                             // labels from the ship bench (Shippo; the website's fulfill.mjs uses the same account)
     shipFrom: { name: env('SHIP_FROM_NAME', ''), company: env('SHIP_FROM_COMPANY', env('COMPANY', '')), line1: env('SHIP_FROM_LINE1', ''), line2: env('SHIP_FROM_LINE2', ''), city: env('SHIP_FROM_CITY', ''), state: env('SHIP_FROM_STATE', 'MA'), zip: env('SHIP_FROM_ZIP', ''), phone: env('SHIP_FROM_PHONE', ''), email: env('SHIP_FROM_EMAIL', '') },   // the return address on every label
     tz: env('OPERATOR_TZ', 'UTC'),                                     // every time the admin shows, the digest hour, campaign scheduling
