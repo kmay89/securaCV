@@ -553,6 +553,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     /* Form elements */
     .form-group { margin-bottom: 1rem; }
+    .tnote { font-size: 0.72rem; color: var(--muted); margin: 0 0 0.4rem; }
     .form-label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.3rem; }
     .form-input, .form-select {
       width: 100%;
@@ -883,6 +884,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <p style="font-size:0.72rem;color:var(--muted);text-align:center;margin-top:0.5rem;">
         Click the button, then short-tap BOOT on the Canary when the line below says to, within 60 seconds.
       </p>
+      <button class="btn btn-ghost btn-sm" id="authNotNow" style="display:none;width:100%;margin-top:0.5rem;" onclick="hideAuthModal()">Not now</button>
       <div class="auth-status" id="authStatus"></div>
       <div class="auth-footer">
         <span id="authDeviceId">--</span> |
@@ -2460,6 +2462,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             </div>
             <button class="btn btn-primary btn-sm" onclick="togglePairingQr()" id="pairingQrBtn">Show QR</button>
           </div>
+          <p class="tnote">Showing the QR takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once.</p>
           <div id="pairingQrWrap" style="display:none;text-align:center;padding:0.5rem 0;">
             <img id="pairingQrImg" alt="Pairing QR code" style="width:240px;max-width:80%;border-radius:8px;background:#fff;padding:8px;">
             <p style="font-size:0.75rem;color:var(--muted);margin:0.5rem 0 0;">This code contains the device's API token — only show it to a phone you trust.</p>
@@ -2876,6 +2879,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     function showAuthModal(msg) {
       document.getElementById('authOverlay').classList.remove('hidden');
+      // Not now: back to a running dashboard, whose session still works.
+      const nn = document.getElementById('authNotNow');
+      if (nn) nn.style.display = window._refreshInterval ? '' : 'none';
       if (msg) {
         const s = document.getElementById('authStatus');
         s.textContent = msg;
@@ -2886,6 +2892,13 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     function hideAuthModal() {
       document.getElementById('authOverlay').classList.add('hidden');
       document.getElementById('authStatus').className = 'auth-status';
+    }
+
+    // Whether secureFetch already raised the sign-in for this refusal (an
+    // api() answer or a thrown Error): its caller then shows nothing more.
+    function signInRaised(r) {
+      const w = r && (r.error || r.message);
+      return w === 'auth_required' || w === 'rate_limited';
     }
 
     async function resumeExistingSession() {
@@ -2915,7 +2928,9 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
       apiToken = input;
       try {
-        const resp = await secureFetch('/api/status');
+        // Without the cookie, so the device compares the pasted token: a
+        // session passes /api/status alone, and took a mistyped token.
+        const resp = await secureFetch('/api/status', { credentials: 'omit', cache: 'no-store' });
         if (resp.ok) {
           hideAuthModal();
           startDashboard();
@@ -2991,43 +3006,24 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (!RecoveryKit.save(window, await resp.text())) throw new Error('not a recovery kit');
         done.style.display = 'block';
       } catch (e) {
-        const signIn = e && (e.message === 'auth_required' || e.message === 'rate_limited');
-        err.textContent = signIn
+        err.textContent = signInRaised(e)
           ? 'Sign in again first (Use BOOT Tap Once offers the kit as it signs you in).'
           : 'Could not fetch the recovery kit: ' + (e && e.message ? e.message : 'unknown') + '. Try again.';
         err.style.display = 'block';
       }
     }
 
-    // What the page says when the device answers 409 tap_contended (sweep
-    // F342): another address asked for the receipt during the same BOOT
-    // tap, so the device closed the tap and handed nothing out. `retry` is
-    // the page's own way back in, and it names the click before the press
-    // (sweep F342's fourth review): the page stops asking on the 409, and a
-    // tap no page of the owner's is asking for goes to the first asker, so a
-    // bare "try again" read as "press BOOT again" hands the keys to the
-    // other device if it is still asking. "Wait 10 seconds" is the device's
-    // rule: its 409 ends once an ask finds no address other than the asker
-    // asking in the last 10 s, which is 10 s after the other device stops
-    // (the new click then asks first, hears 403, and is served on the next
-    // tap) or, under a host that keeps polling, 10 s after this page stopped
-    // (the new click hears 403 too, and the next tap is closed again, so
-    // nothing is handed out). The ways out avoid the token box on purpose:
-    // on a page the landing session signed in, that box still takes the
-    // cookie's word for a token, so a mistyped one looks accepted (the
-    // ledger's owner-authority items revisit this copy once the box checks
-    // the token itself). The hold's list is factory_reset_by_hold()'s, and
-    // the hold comes last (sweep F342's fifth review): it reopens the
-    // first-boot Bluetooth setup door, which goes to the first client in
-    // radio range that connects (magic_pairing.md §2.2), so a host on the
-    // network that is also in range can take that door, spend its claim
-    // and keep the token the hold kept. The kit and the console carry no
-    // such exposure.
+    // The 409 tap_contended copy (sweep F342): another address asked during
+    // the same BOOT tap, so the device handed nothing out. `retry` is the
+    // page's way back in and names the click before the press. The token
+    // comes first: the sign-in checks a pasted one by itself (no tap, and
+    // not the cookie's word). The hold comes last: it reopens the first-boot
+    // Bluetooth setup door, which goes to the first client in range.
     function tapContendedText(retry) {
       return "Another device on your network asked for this Canary's keys at the same time, so it said no. " +
              'Close any other Canary pages and wait 10 seconds, then ' + retry + ' ' +
-             'If this keeps happening: the iPhone app can pair from your recovery kit, or the USB console prints ' +
-             'the token each time the Canary starts. Last, with your iPhone ready: hold BOOT for 10 seconds ' +
+             'If this keeps happening, paste the token instead: it is in your recovery kit, and the USB console ' +
+             'prints it each time the Canary starts. Last, with your iPhone ready: hold BOOT for 10 seconds ' +
              '(this clears its Wi-Fi, its Home Assistant link and its name, and keeps the token) and set it up ' +
              'again from the iPhone app right away. For half an hour after that, Bluetooth setup goes to the ' +
              'first phone or computer nearby that connects.';
@@ -3470,7 +3466,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         try { return JSON.parse(text); }
         catch { return { ok: false, error: text.slice(0, 100), unrouted: res.status === 404 }; }
       } catch (e) {
-        if (e.message === 'auth_required' || e.message === 'rate_limited') return { ok: false, error: e.message };
+        if (signInRaised(e)) return { ok: false, error: e.message };
         return { ok: false, error: 'Network error' };
       }
     }
@@ -4642,9 +4638,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         wrap.style.display = '';
         btn.textContent = 'Hide QR';
       } catch (e) {
-        if (e.message !== 'auth_required' && e.message !== 'rate_limited') {
-          alert('Could not load the pairing QR.');
-        }
+        if (!signInRaised(e)) alert('Could not load the pairing QR.');
       }
     }
 

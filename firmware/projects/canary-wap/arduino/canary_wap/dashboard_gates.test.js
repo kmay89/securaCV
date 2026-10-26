@@ -33,6 +33,13 @@
 //     download_url, which named a route nothing registers), and
 //     exportWitness() saves that answer as a JSON download. The answer fed to
 //     the page carries exactly the keys canary_wap.ino's handle_export writes.
+//   * The shared sign-in (the owner-authority PR: F334, F335, F346): a pasted
+//     token is checked by itself (GET /api/status with credentials 'omit'),
+//     because a page holding the landing page's session passed that route on
+//     the cookie alone, so a mistyped token was taken and refused one step
+//     later; signInRaised() is the one test for "secureFetch already showed
+//     the sign-in"; Not now puts away a sign-in a running dashboard raised;
+//     and every "takes the API token" card note is one sentence shape.
 //
 // The page's own code is cut out of web_ui.h by markers that stand in the page
 // before and after these changes (so the old page runs here and fails on what
@@ -77,7 +84,10 @@ const logicBlock = (() => {
 // What the page's own api() (and the secureFetch() under it) returns for a
 // response, or for no answer at all: lifted from the page and run against a
 // stub fetch, so a refusal a test feeds a view is the one the page makes.
-const apiSrc = uiFunction('secureFetch', true) + uiFunction('api', true);
+// api() asks signInRaised() (the shared sign-in) where the page has it; an
+// older page (WAP_WEB_UI) has none, and its api() does not call it.
+const apiSrc = (src.includes('\n    function signInRaised(') ? uiFunction('signInRaised', false) : '') +
+  uiFunction('secureFetch', true) + uiFunction('api', true);
 async function answerTo(res) {
   const ctx = {
     API_BASE: '', apiToken: null, console: { error() {} }, showAuthModal() {},
@@ -572,5 +582,82 @@ describe('Export saves what it exported (F278)', () => {
     assert.deepEqual(p.record.alerts, ['Export failed: auth_required']);
     assert.deepEqual(p.record.blobs, []);
     assert.equal(p.record.navigated, null);
+  });
+});
+
+// ── The shared sign-in (F334, F335, F346) ────────────────────────────────
+
+// What a session page's device does with GET /api/status: api_auth_check
+// takes the cookie before it compares anything (api_auth.h), so a request
+// that carries the cookie (credentials not 'omit') is answered 200 whatever
+// its bearer says; without the cookie the bearer is compared.
+function cookieDevice(sent) {
+  return async (url, opts = {}) => {
+    const auth = (opts.headers || {}).Authorization;
+    sent.push({ url, credentials: opts.credentials, cache: opts.cache, auth });
+    const ok = opts.credentials !== 'omit' || auth === 'Bearer cv_right';
+    return { status: ok ? 200 : 403, ok, json: async () => ({}), text: async () => '{}' };
+  };
+}
+
+describe('The shared sign-in (F334, F335, F346)', () => {
+  it('signInRaised() is true exactly for the refusals secureFetch showed the sign-in for', () => {
+    const p = pageContext({});
+    vm.runInContext(uiFunction('signInRaised', false) + '\nglobalThis.__r = signInRaised;\n', p.ctx);
+    for (const r of [{ ok: false, error: 'auth_required' }, { ok: false, error: 'rate_limited' },
+                     new Error('auth_required'), new Error('rate_limited')]) {
+      assert.equal(p.ctx.__r(r), true, JSON.stringify(r) + String(r));
+    }
+    for (const r of [{ ok: false, error: 'Network error' }, { ok: false, error: 'unauthorized' },
+                     new Error('HTTP 500'), { ok: true }, null, undefined]) {
+      assert.equal(p.ctx.__r(r), false, JSON.stringify(r) + String(r));
+    }
+  });
+
+  it('a pasted token is checked by itself, not by the session cookie', async () => {
+    for (const [typed, signedIn] of [['cv_wrong', false], ['cv_right', true]]) {
+      const sent = [];
+      const p = pageContext({}, {
+        API_BASE: '', apiToken: null, fetch: cookieDevice(sent),
+        startDashboard() { p.started = (p.started || 0) + 1; },
+      });
+      vm.runInContext(uiFunction('secureFetch', true) + uiFunction('showAuthModal', false) +
+        uiFunction('hideAuthModal', false) + uiFunction('connectWithToken', true) +
+        '\nglobalThis.__c = connectWithToken; globalThis.__show = showAuthModal;\n', p.ctx);
+      p.ctx.__show();
+      p.el('tokenInput').value = typed;
+      await p.ctx.__c();
+      assert.equal(p.el('authOverlay').classList.contains('hidden'), signedIn, typed);
+      assert.equal(p.ctx.apiToken, signedIn ? 'cv_right' : null, typed);
+      assert.equal(p.started || 0, signedIn ? 1 : 0, typed);
+      if (!signedIn) assert.equal(p.el('authStatus').textContent, 'Invalid or expired token. Please re-enter.');
+      assert.deepEqual(sent, [{ url: '/api/status', credentials: 'omit', cache: 'no-store', auth: 'Bearer ' + typed }]);
+    }
+  });
+
+  it('the sign-in a running dashboard brings up can be put away (Not now)', () => {
+    assert.match(src, /<button[^>]*\bid="authNotNow"[^>]*\bonclick="hideAuthModal\(\)"[^>]*>Not now<\/button>/);
+    for (const running of [true, false]) {
+      const p = pageContext({});
+      p.ctx.window._refreshInterval = running ? 7 : undefined;
+      vm.runInContext(uiFunction('showAuthModal', false) + uiFunction('hideAuthModal', false) +
+        '\nglobalThis.__s = showAuthModal; globalThis.__h = hideAuthModal;\n', p.ctx);
+      p.el('authNotNow').style.display = running ? 'none' : '';
+      p.ctx.__s('Pasting the token');
+      assert.equal(p.el('authNotNow').style.display, running ? '' : 'none', running ? 'running' : 'first load');
+      assert.equal(p.el('authOverlay').classList.contains('hidden'), false);
+      p.ctx.__h();
+      assert.equal(p.el('authOverlay').classList.contains('hidden'), true);
+    }
+  });
+
+  it('every "takes the API token" card note is the one template', () => {
+    const notes = [...src.matchAll(/<p class="tnote">([^<]*)<\/p>/g)].map((m) => m[1]);
+    for (const n of notes) {
+      assert.match(n, /^[A-Z][a-z]+ [^:]+ takes the API token: paste it \(it is in your recovery kit\), or use BOOT Tap Once\.$/, n);
+    }
+    assert.ok(notes.includes('Showing the QR takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once.'),
+      'the pairing QR card (GET /api/pairing-qr takes the bearer alone, sweep F289) carries the note');
+    assert.match(src, /\.tnote \{[^}]*color: var\(--muted\)/);
   });
 });

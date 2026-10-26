@@ -36,9 +36,10 @@
 //     stops the dashboard's sign-in on that answer and says another device
 //     asked, keeping no token and offering no kit, and a second click then
 //     asks first and signs in on the next tap; the Settings save
-//     says the same instead of "HTTP 409"; neither sends the owner to the
-//     token box (on a cookie page it still takes the cookie's word), and
-//     the 10 s hold is said to clear what it clears; the dashboard's
+//     says the same instead of "HTTP 409"; both name pasting the token
+//     first (the sign-in checks a pasted token by itself since the
+//     owner-authority PR: dashboard_gates.test.js 'The shared sign-in'),
+//     then the USB console, then the 10 s hold, said to clear what it clears; the dashboard's
 //     timeout line sends the owner to click before the press (its old
 //     "Press BOOT and click above" was the press-first order the arbiter
 //     cannot protect); the
@@ -193,6 +194,7 @@ function dashboard(answers, routes = {}) {
     kitBlock(src, 'web_ui.h'),
     src.match(/\n {4}let apiToken = null;\n/)[0],
     uiFunction(src, 'secureFetch', true),
+    uiFunction(src, 'signInRaised'),
     uiFunction(src, 'showAuthModal'),
     uiFunction(src, 'hideAuthModal'),
     src.match(/\n {4}let recoveryKitText = null;\n/)[0],
@@ -565,7 +567,7 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.doesNotMatch(read(UI), /wait 10 seconds, and try again/);
   });
 
-  it("the contention copy names ways out that do not go through the token box", () => {
+  it("the contention copy names the pasted token first, then the console, then the hold", () => {
     const d = dashboard([GATE_403]);
     const fn = uiFunction(read(UI), 'tapContendedText');
     const text = vm.runInNewContext(fn + '\n;tapContendedText("click Use BOOT Tap Once again, and only then short-tap BOOT.")', {});
@@ -580,15 +582,18 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     // first client in radio range that connects (magic_pairing.md §2.2): a
     // host on the network that is also in range can take it and keep the
     // token. So the kit and the console come first, the hold last, with the
-    // phone ready and the door's first-come rule named.
+    // phone ready and the door's first-come rule named. The kit's way out is
+    // the token pasted into the sign-in: it needs no tap, so no other asker
+    // can close it, and the sign-in compares it without the session cookie
+    // (before the owner-authority PR it took the cookie's word for any
+    // pasted string, so this copy steered clear of the token box).
+    assert.match(text, /paste the token instead: it is in your recovery kit, and the USB console prints it/);
     const kit = text.indexOf('recovery kit');
     const usb = text.indexOf('USB console');
     const hold = text.indexOf('hold BOOT for 10 seconds');
     assert.ok(kit >= 0 && usb > kit && hold > usb, 'the kit, then the console, then the hold: ' + text);
     assert.match(text, /with your iPhone ready: hold BOOT for 10 seconds/);
     assert.match(text, /Bluetooth setup goes to the first phone or computer nearby that connects/);
-    assert.doesNotMatch(text, /paste|token box|type the token/i,
-      'on a cookie page the token box still takes the cookie\'s word for a token');
     assert.ok(d.api);
   });
 });
