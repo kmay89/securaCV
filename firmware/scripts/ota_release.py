@@ -70,6 +70,12 @@ Manifest schema v1 (per-variant flat JSON, one file per product):
       "release_url": "https://.../releases/tag/fw-v2.2.0"
     }
 
+Every string must fit the device's buffer for it whole (DEVICE_FIELD_BYTES,
+the 2.4.17+ engine's securacv_ota_manifest_t): the device refuses a field it
+would have to cut, so `manifest` refuses to write one and `verify` refuses to
+pass one. Product ids of 32 bytes or more, and manifest_version 2, verify
+only on 2.4.17 or newer; `verify` prints a NOTE for either.
+
 Commands:
     keygen          Generate an Ed25519 release keypair (PEM private key).
     pubkey-header   Emit ota_release_key.h contents for a keypair.
@@ -100,6 +106,76 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 MANIFEST_VERSION = 1
 SEMVER_PARTS = 3
+
+# What the device holds: securacv_ota_manifest_t's string buffers in the
+# 2.4.17+ engine (firmware/common/ota/src/securacv_ota.h), in bytes with the
+# NUL. test_ota_release.py reads the header and fails if the two disagree.
+# The engine refuses a manifest whose field does not fit — engines before
+# 2.4.17 cut it to fit instead, so the message they rebuilt never matched the
+# signature. Either way a field that does not fit is a channel no device can
+# follow, so the signer refuses to write one and `verify` refuses to pass one.
+DEVICE_FIELD_BYTES: dict[str, int] = {
+    "product": 48,
+    "version": 33,
+    "min_version": 33,
+    "url": 256,
+    "sha256": 65,
+    "signature": 129,
+    "manifest_signature": 129,
+    "signing_key_id": 33,
+    "release_notes": 512,
+    "release_url": 128,
+    "board": 48,
+    "chip": 16,
+}
+# The product buffer engines before 2.4.17 had (char product[32]): a 32-byte
+# or longer id never verified there. `verify` notes it; it cannot be fixed
+# over the air, only by one USB install of 2.4.17 or newer.
+LEGACY_PRODUCT_BYTES = 32
+
+
+def device_field_problems(manifest: dict) -> list[str]:
+    """Every manifest string the 2.4.17+ engine cannot hold, as problems.
+
+    Bytes, not characters: the device stores the UTF-8 the JSON carries, and
+    needs one byte more for the NUL.
+    """
+    problems: list[str] = []
+    for field, cap in DEVICE_FIELD_BYTES.items():
+        value = manifest.get(field)
+        if not isinstance(value, str):
+            continue
+        n = len(value.encode("utf-8"))
+        if n >= cap:
+            problems.append(
+                f"{field} is {n} bytes; the device holds at most {cap - 1} "
+                f"(securacv_ota_manifest_t.{field}[{cap}]) and refuses the whole manifest"
+            )
+    return problems
+
+
+def legacy_engine_notes(manifest: dict) -> list[str]:
+    """What units on an engine older than 2.4.17 cannot do with this manifest.
+
+    Not failures — the release is right, the fielded engine is what cannot
+    read it, and no manifest can fix that over the air — but worth saying
+    where an operator reads the verify output.
+    """
+    notes: list[str] = []
+    product = manifest.get("product")
+    if isinstance(product, str) and len(product.encode("utf-8")) >= LEGACY_PRODUCT_BYTES:
+        notes.append(
+            f"{product} is {len(product.encode('utf-8'))} bytes: units running 2.4.16 or "
+            f"older cut it to {LEGACY_PRODUCT_BYTES - 1} and cannot verify this manifest — "
+            f"they need one install with the browser flasher or the Flasher app to reach "
+            f"2.4.17, after which updates over the air work"
+        )
+    if manifest.get("manifest_version", 1) == 2:
+        notes.append(
+            "manifest_version 2 (board/chip) verifies only on 2.4.17 or newer; units on "
+            "older firmware refuse it"
+        )
+    return notes
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -360,6 +436,9 @@ def build_manifest(
     if manifest_version == 2:
         manifest["board"] = board or ""
         manifest["chip"] = chip or ""
+    too_long = device_field_problems(manifest)
+    if too_long:
+        raise ValueError("; ".join(too_long))
     return manifest
 
 
@@ -371,6 +450,11 @@ def verify_manifest(manifest: dict, firmware: bytes, public_key: Ed25519PublicKe
             problems.append(f"missing required field: {field}")
     if problems:
         return problems
+
+    # The device's buffers, before any signature: a manifest a 2.4.17+ unit
+    # cannot hold is refused there whatever its signatures say, so publishing
+    # it would be a channel that quietly never updates anything.
+    problems.extend(device_field_problems(manifest))
 
     try:
         parse_semver(manifest["version"])
@@ -645,6 +729,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
         for problem in problems:
             print(f"FAIL: {problem}", file=sys.stderr)
         return 1
+    for note in legacy_engine_notes(manifest):
+        print(f"NOTE: {note}", file=sys.stderr)
     print(
         f"OK: {manifest['product']} {manifest['version']} "
         f"({manifest['size']} bytes, key {manifest.get('signing_key_id', '?')})"

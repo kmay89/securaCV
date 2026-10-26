@@ -48,10 +48,31 @@ engine confirms it (`esp_ota_mark_app_valid_cancel_rollback`) only when:
    fleet rule is "Wi-Fi associated"; `firmware/canary` adds its diagnostics
    score; and
 2. the board has reported itself healthy for the **confirm dwell**
-   (`securacv_ota_health_tick(now, healthy)`, default 60 s, set by the board's
-   config) — a crash loop, a watchdog reset or a wedged radio inside the
-   dwell reboots into the previous image instead of confirming the new one.
-   A board that sets no dwell confirms at the probe, as before.
+   (`securacv_ota_health_tick(now, healthy)`, 60 s on every tree that runs
+   the engine) — a crash loop, a watchdog reset, a power cut or a wedged
+   radio inside the dwell reboots into the previous image instead of
+   confirming the new one. A build that sets no dwell confirms at `init()`.
+
+What "healthy" means is each board's call, and none of them needs the
+broker — a node with no MQTT must still be able to confirm an update it
+installed from its own page:
+
+| Product | Healthy while | Also confirms |
+|---|---|---|
+| `firmware/canary` (flagship) | the station link is up (the probes themselves run at its healthy gate, 30 s into `loop()`) | a deliberate restart (Home Assistant or HTTP reboot, serial `x`) once the probes passed — the code chose to stop, so it is not a crash inside the dwell |
+| canary-wap | the station link is up, **or** it runs standalone ("Use without home WiFi") with its own access point up — it can install over Bluetooth with no station network at all | — |
+| canary-display (every flavor) | Wi-Fi is up; the broker is not required | — |
+| canary-vision, canary-sense, canary-sentinel | Wi-Fi is up; the broker is not required | — |
+
+Until the image is confirmed, the update is not over: the one-shot install
+marker the engine wrote when the boot partition flipped stays where it is
+(`securacv_ota_take_pending_version()` returns false while the running image
+is `PENDING_VERIFY`). Each tree records the outcome from one function, called
+at boot after the probes and again on the pass the health tick confirms: the
+confirming pass records "applied"; a revert inside the dwell boots the old
+image, which finds the marker and records the rollback. Engines before 2.4.17
+consumed the marker on the new image's first boot, so a revert inside the
+dwell went unrecorded while the record said "applied".
 
 The order of the two calls cannot change the answer. Every board runs the
 probe (`securacv_ota_boot_self_test`) before `securacv_ota_init`, because the
@@ -63,7 +84,9 @@ dwell is known (a dwell → the ticks decide; none → confirm now), and the
 ticks confirm after the dwell has held. The otadata partition is read only
 while a dwell is armed. A build that can install an image but runs no
 engine (the flagship's `secure` envs) says so with
-`securacv_ota_confirm_now()` and confirms at the probe as it always did.
+`securacv_ota_confirm_now()` and confirms at the probe as it always did; the
+flagship's deliberate-restart path calls the same function once the probes
+passed.
 
 A failed required probe calls `esp_ota_mark_app_invalid_rollback_and_reboot`
 on the spot. The anti-rollback floor in NVS rises **only after** confirmation,
@@ -80,6 +103,7 @@ Before a byte is written:
 
 | Check | Where | Refusal |
 |---|---|---|
+| every field fits its buffer whole — refused, never cut to fit (`securacv_ota_manifest_from_fields`); `ota_release.py verify` holds a release to the same sizes (`DEVICE_FIELD_BYTES`) before it is published | engine + CI | `MANIFEST_INVALID` |
 | manifest signature over every field | engine | `MANIFEST_SIG` |
 | `product` equals the compiled product id | engine | `MANIFEST_INVALID` |
 | `board` / `chip` equal the compiled board (`CANARY_FIGURE_HARDWARE`) and IDF target — **manifest_version 2** only; a v1 manifest carries no hardware fields and a v1 manifest that does is refused by the signer | engine | `BOARD_MISMATCH` |
@@ -90,6 +114,22 @@ Before a byte is written:
 
 After writing: sha256 of the written partition against the manifest, then
 the image signature. Then the pending-verify boot above.
+
+Two version boundaries the release workflow respects:
+
+- **manifest_version 2 (board / chip) needs 2.4.17 or newer on the device.**
+  Older engines rebuild a v1 message for a v2 manifest and refuse it, so the
+  release workflow keeps signing v1 (no `--board` / `--chip`) until the
+  fielded units have moved past 2.4.16.
+- **Product ids of 32 bytes or more verify only on 2.4.17 or newer.** Older
+  engines kept the id in `char product[32]` and cut it to fit, so seven
+  Canary Display products (`dash-modes`, `nightstand7`, `nightstand-s3`,
+  `touch169`, `amoled241`, `nightstand-c6`, `nightlight-c3`) never verified a
+  manifest over the air. 2.4.17 holds 47 bytes (`SECURACV_OTA_PRODUCT_MAX`,
+  host-tested against every id the build files declare); a unit on 2.4.16
+  needs one install with the browser flasher or the Flasher app to reach
+  2.4.17, and updates over the air work from then on. `ota_release.py verify`
+  prints a note for such a manifest.
 
 ## 4. Three ways an update arrives
 
@@ -129,8 +169,10 @@ intended seat for one, and `PARITY.md` marks it ⚠️.
 
 | Rule | Code | Test |
 |---|---|---|
-| signatures, floors, board/chip, min_version | `common/ota/src/securacv_ota.cpp` | `firmware/tests_host/test_ota_logic.cpp`, `firmware/scripts/test_ota_release.py` |
+| signatures, floors, board/chip, min_version | `common/ota/src/securacv_ota.cpp` | `firmware/common/ota/test_ota_logic.cpp`, `firmware/scripts/test_ota_release.py` |
 | manifest v2 message | `ota_release.py` ↔ `securacv_ota_build_manifest_message()` | the shared fixture in both tests |
+| fields whole or refused; the device's buffer sizes | `securacv_ota_manifest_from_fields()` ↔ `ota_release.DEVICE_FIELD_BYTES` | `test_ota_logic.cpp` (every declared product id), `test_ota_release.py` (`TestDeviceBuffers` reads the header) |
 | confirm dwell | `securacv_ota_health_tick()` | `test_ota_logic.cpp` |
+| the install marker waits for confirmation | `securacv_ota_take_marker()` behind `securacv_ota_take_pending_version()` | `test_ota_logic.cpp` |
 | staged rollout | `custom_components/securacv/rollout.py` | `custom_components/securacv/tests/test_staged_update.py` |
 | the signer wrapper's in-repo refusal | `tools/sign-firmware` | `firmware/scripts/test_ota_release.py` (`TestSignFirmwareWrapper`) |

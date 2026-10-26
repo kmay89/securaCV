@@ -476,6 +476,166 @@ class TestManifestV2:
         assert run("verify", "--pubkey", str(header), "--manifest", str(out), str(fw)).returncode == 0
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# The device's buffers: what a 2.4.17+ engine can hold, modeled by the signer
+# ──────────────────────────────────────────────────────────────────────────
+
+REPO = Path(__file__).resolve().parents[2]
+ENGINE_HEADER = REPO / "firmware/common/ota/src/securacv_ota.h"
+
+# The seven published Canary Display ids the pre-2.4.17 char product[32]
+# could not hold (32-37 bytes): every manifest for them failed its signature
+# check on the device.
+LONG_PUBLISHED_IDS = (
+    "securacv-canary-display-dash-modes",
+    "securacv-canary-display-nightstand7",
+    "securacv-canary-display-nightstand-s3",
+    "securacv-canary-display-touch169",
+    "securacv-canary-display-amoled241",
+    "securacv-canary-display-nightstand-c6",
+    "securacv-canary-display-nightlight-c3",
+)
+
+
+def engine_manifest_buffers() -> dict[str, int]:
+    """securacv_ota_manifest_t's char buffers, read out of the engine header."""
+    import re
+
+    text = ENGINE_HEADER.read_text(encoding="utf-8")
+    defines = {name: int(value) for name, value in
+               re.findall(r"^#define\s+(SECURACV_OTA_\w+_MAX)\s+(\d+)\s*$", text, re.M)}
+    body = re.search(r"typedef struct \{(.*?)\} securacv_ota_manifest_t;", text, re.S)
+    assert body, "securacv_ota_manifest_t not found in the engine header"
+    out: dict[str, int] = {}
+    for name, size in re.findall(r"\bchar\s+(\w+)\[(\w+)\];", body.group(1)):
+        out[name] = int(size) if size.isdigit() else defines[size]
+    return out
+
+
+def declared_product_ids() -> set[str]:
+    """Every OTA product id the build files declare (the C++ host test reads
+    the same files): the shared env .ini files and each flavors.json dir."""
+    import re
+
+    # The token as a whole word (not SECURACV_OTA_PRODUCT_MAX), then a
+    # "securacv-..." string on the same line: #define, -D build flag, or the
+    # WAP sketch's `OTA_PRODUCT = "..."`.
+    pattern = re.compile(r'OTA_PRODUCT(?![A-Za-z0-9_])[^"\n]*"(securacv-[A-Za-z0-9._-]+)')
+    texts = [p.read_text(encoding="utf-8", errors="replace")
+             for p in sorted((REPO / "firmware/envs/platformio").glob("*.ini"))]
+    for flavor in json.loads((REPO / "firmware/flavors.json").read_text()):
+        root = REPO / flavor["dir"]
+        for path in root.rglob("*"):
+            if ".pio" in path.parts or not path.is_file():
+                continue
+            if path.suffix in (".ini", ".h", ".hpp", ".ino", ".cpp"):
+                texts.append(path.read_text(encoding="utf-8", errors="replace"))
+    ids: set[str] = set()
+    for text in texts:
+        ids.update(pattern.findall(text))
+    return ids
+
+
+class TestDeviceBuffers:
+    def build(self, private_key, **overrides):
+        kwargs = dict(
+            private_key=private_key,
+            firmware=FIRMWARE,
+            product="securacv-canary",
+            version="2.4.17",
+            url="https://example.com/fw.bin",
+            release_notes="Updates confirm after a healthy minute.",
+            release_url="https://example.com/notes",
+        )
+        kwargs.update(overrides)
+        return ota_release.build_manifest(**kwargs)
+
+    def test_the_table_is_the_engine_struct(self):
+        # One number per buffer, in two languages: read the C header so they
+        # cannot drift.
+        assert engine_manifest_buffers() == ota_release.DEVICE_FIELD_BYTES
+
+    def test_every_declared_product_id_fits_the_device(self):
+        ids = declared_product_ids()
+        assert "securacv-canary" in ids and "securacv-canary-wap" in ids
+        assert set(LONG_PUBLISHED_IDS) <= ids, set(LONG_PUBLISHED_IDS) - ids
+        cap = ota_release.DEVICE_FIELD_BYTES["product"]
+        too_long = sorted(i for i in ids if len(i.encode()) >= cap)
+        assert not too_long, too_long
+        # ...and the seven are exactly the published ones the old buffer cut.
+        assert all(len(i.encode()) >= ota_release.LEGACY_PRODUCT_BYTES for i in LONG_PUBLISHED_IDS)
+
+    @pytest.mark.parametrize("product", LONG_PUBLISHED_IDS)
+    def test_the_long_display_ids_sign_and_verify(self, private_key, product):
+        manifest = self.build(private_key, product=product)
+        assert ota_release.verify_manifest(manifest, FIRMWARE, private_key.public_key()) == []
+        notes = ota_release.legacy_engine_notes(manifest)
+        assert any("2.4.16" in n and "Flasher app" in n for n in notes), notes
+
+    def test_a_short_id_carries_no_legacy_note(self, private_key):
+        manifest = self.build(private_key)
+        assert ota_release.legacy_engine_notes(manifest) == []
+
+    def test_a_v2_manifest_notes_it_needs_2_4_17(self, private_key):
+        manifest = self.build(private_key, board="xiao-esp32c6-mr60", chip="esp32c6")
+        assert any("2.4.17" in n for n in ota_release.legacy_engine_notes(manifest))
+
+    @pytest.mark.parametrize("field", sorted(ota_release.DEVICE_FIELD_BYTES))
+    def test_verify_refuses_any_field_the_device_cannot_hold(self, private_key, field):
+        cap = ota_release.DEVICE_FIELD_BYTES[field]
+        manifest = self.build(private_key)
+        manifest[field] = "x" * (cap - 1)
+        assert not any(p.startswith(f"{field} is ") and "the device holds" in p for p in
+                       ota_release.verify_manifest(manifest, FIRMWARE, private_key.public_key()))
+        manifest[field] = "x" * cap
+        problems = ota_release.verify_manifest(manifest, FIRMWARE, private_key.public_key())
+        assert any(p.startswith(f"{field} is {cap} bytes") for p in problems), problems
+
+    def test_bytes_not_characters(self, private_key):
+        cap = ota_release.DEVICE_FIELD_BYTES["release_notes"]
+        notes = "é" * ((cap - 1) // 2)  # two bytes each: fits
+        assert len(notes.encode()) < cap
+        self.build(private_key, release_notes=notes)
+        notes += "é"                    # one character more, two bytes over
+        assert len(notes) < cap <= len(notes.encode())
+        with pytest.raises(ValueError, match="release_notes"):
+            self.build(private_key, release_notes=notes)
+
+    def test_the_signer_refuses_what_no_device_can_hold(self, private_key):
+        cap = ota_release.DEVICE_FIELD_BYTES["product"]
+        self.build(private_key, product="securacv-" + "p" * (cap - 1 - len("securacv-")))
+        with pytest.raises(ValueError, match="product is 48 bytes"):
+            self.build(private_key, product="securacv-" + "p" * (cap - len("securacv-")))
+
+    def test_cli_verify_passes_a_long_id_and_says_who_cannot_read_it(self, tmp_path):
+        key = tmp_path / "releaser.pem"
+        fw = tmp_path / "firmware.bin"
+        out = tmp_path / "manifest.json"
+        header = tmp_path / "ota_release_key.h"
+        fw.write_bytes(FIRMWARE)
+        signer = Path(__file__).parent / "ota_release.py"
+
+        def run(*a):
+            return subprocess.run([sys.executable, str(signer), *a], capture_output=True, text=True)
+
+        assert run("keygen", "--private-key", str(key)).returncode == 0
+        assert run("pubkey-header", "--private-key", str(key), "--out", str(header)).returncode == 0
+        result = run("manifest", "--private-key", str(key),
+                     "--product", "securacv-canary-display-nightlight-c3", "--version", "2.4.17",
+                     "--url", "https://example.com/fw.bin", "--out", str(out), str(fw))
+        assert result.returncode == 0, result.stderr
+        result = run("verify", "--pubkey", str(header), "--manifest", str(out), str(fw))
+        assert result.returncode == 0, result.stderr
+        assert "NOTE:" in result.stderr and "2.4.16" in result.stderr
+
+        manifest = json.loads(out.read_text())
+        manifest["release_notes"] = "n" * ota_release.DEVICE_FIELD_BYTES["release_notes"]
+        out.write_text(json.dumps(manifest))
+        result = run("verify", "--pubkey", str(header), "--manifest", str(out), str(fw))
+        assert result.returncode == 1
+        assert "release_notes is 512 bytes" in result.stderr
+
+
 class TestPubkeyHeader:
     def test_header_contains_key_bytes(self, private_key):
         from cryptography.hazmat.primitives import serialization
