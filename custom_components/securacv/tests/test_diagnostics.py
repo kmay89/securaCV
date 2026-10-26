@@ -231,28 +231,68 @@ def test_the_correlation_id_correlates_within_one_dump_only() -> None:
 
 def test_every_canary_keeps_its_own_row() -> None:
     """Rows are keyed by eight characters of the Canary id, and many ids share
-    them: every canary-wap unit is `canary-s3-…`, and a Sense
-    (`canary-sense-…`) starts the same way. Each Canary keeps its own row in
-    every section, with a per-dump ordinal and no ninth character of its id,
-    so two units pinned to one key are seen to share a correlation id."""
+    them: every canary-wap unit is `canary-s3-…`, and the Sense's id
+    (`canary_sense_001`, every Sense config) and the Sentinel's
+    (`canary_sentinel_001`) are both `canary_s…`. Each Canary keeps its own
+    row in every section, with a per-dump ordinal and no ninth character of
+    its id, so two units pinned to one key are seen to share a correlation
+    id. The WAP ids are ones canary_wap.ino's recipe can print (the fourth
+    character of the suffix is always 2), which
+    scripts/tests/test_wap_name_examples.py holds every source line to."""
     hass = HomeAssistant()
-    shared, other = "aabbccdd11223344", "99887766deadbeef"
-    fingerprints = {"canary-s3-5e6f": shared, "canary-s3-7a8b": shared, "canary-sense-9c0d": other}
+    shared, sense_key, sentinel_key = "aabbccdd11223344", "99887766deadbeef", "5566778899aabbcc"
+    fingerprints = {
+        "canary-s3-aB72": shared,
+        "canary-s3-xQ32": shared,
+        "canary_sense_001": sense_key,
+        "canary_sentinel_001": sentinel_key,
+    }
     entry = _entry_with_kernel(hass, devices={}, fingerprints=fingerprints)
-    for device_id in ("canary-s3-5e6f", "canary-s3-7a8b", "canary-sense-9c0d", "canary01"):
+    for device_id in ("canary-s3-aB72", "canary-s3-xQ32", "canary_sense_001", "canary_sentinel_001", "canary01"):
         _publish(hass, entry, device_id, "status", STATUS)
-    entry.runtime_data.verify["canary-s3-7a8b"] = {"trusted": True, "reason": "ok"}
+    entry.runtime_data.verify["canary-s3-xQ32"] = {"trusted": True, "reason": "ok"}
+    entry.runtime_data.verify["canary_sentinel_001"] = {"trusted": False, "reason": "unsigned"}
 
     diag = _diag(hass, entry)
-    assert diag["canary_device_count"] == 4
-    assert set(diag["canary_devices"]) == {"canary-s… #1", "canary-s… #2", "canary-s… #3", "canary01"}
+    assert diag["canary_device_count"] == 5
+    assert set(diag["canary_devices"]) == {
+        "canary-s… #1", "canary-s… #2", "canary_s… #1", "canary_s… #2", "canary01",
+    }
     assert set(diag["trust"]) == set(diag["canary_devices"])
-    assert diag["verification"] == {"canary-s… #2": {"trusted": True, "reason": "ok"}}
-    first, second, sense = (diag["trust"][f"canary-s… #{n}"]["key_correlation_id"] for n in (1, 2, 3))
-    assert first == second != sense
+    assert diag["verification"] == {
+        "canary-s… #2": {"trusted": True, "reason": "ok"},
+        "canary_s… #2": {"trusted": False, "reason": "unsigned"},
+    }
+    wap1, wap2, sense, sentinel = (
+        diag["trust"][row]["key_correlation_id"]
+        for row in ("canary-s… #1", "canary-s… #2", "canary_s… #1", "canary_s… #2")
+    )
+    assert wap1 == wap2
+    assert len({wap1, sense, sentinel}) == 3
     text = repr(diag)
-    for leaked in ("canary-s3", "canary-se", "5e6f", "7a8b", "9c0d"):
+    for leaked in ("canary-s3", "canary_se", "aB72", "xQ32", "_001"):
         assert leaked not in text, leaked
+
+
+def test_a_canary_only_verification_has_seen_has_a_row() -> None:
+    """A retained chain or counts publish can be verified before the
+    Canary's status arrives, so verification can name an id no device record
+    has. It gets a row of its own, numbered after the device records when it
+    shares their eight characters, and the dump does not fail on it."""
+    hass = HomeAssistant()
+    entry = _entry_with_kernel(hass, devices={})
+    _publish(hass, entry, "canary-s3-aB72", "status", STATUS)
+    _publish(hass, entry, "canary-s3-xQ32", "status", STATUS)
+    entry.runtime_data.verify["chainonly01"] = {"trusted": True, "reason": "ok"}
+    entry.runtime_data.verify["canary-s3-Kx22"] = {"trusted": False, "reason": "bad_signature"}
+
+    diag = _diag(hass, entry)
+    assert diag["verification"] == {
+        "chainonl…": {"trusted": True, "reason": "ok"},
+        "canary-s… #3": {"trusted": False, "reason": "bad_signature"},
+    }
+    assert set(diag["canary_devices"]) == {"canary-s… #1", "canary-s… #2"}
+    assert "Kx22" not in repr(diag)
 
 
 def test_the_dump_shows_what_the_device_page_shows() -> None:

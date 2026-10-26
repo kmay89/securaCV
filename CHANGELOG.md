@@ -24,16 +24,21 @@
   images older than the flavors' own types. A status that names no type (the
   `firmware/canary` build's names none) or a type this release does not know
   keeps "SecuraCV Canary"; the wire string is never shown. The type is
-  remembered, so the canary-wap's last will (`{"online": false}`, no
-  `device_type`) keeps the model, and every entity's device info applies
-  the same rule, so an entity no longer writes "SecuraCV Canary" back over
-  it.
+  remembered while Home Assistant runs, so the canary-wap's last will
+  (`{"online": false}`, no `device_type`) keeps the model, and every
+  entity's device info applies the same rule, so an entity no longer writes
+  "SecuraCV Canary" back over it. The memory does not outlive a restart: a
+  Canary whose retained status is its last will reads "SecuraCV Canary"
+  again until it next names its type.
 - **Every value is bounded text from the broker.** Version, board and name
-  are cut to 64 printable characters, control characters dropped
+  are cut to 64 printable characters, control characters dropped before
+  whitespace is collapsed so that a dropped one leaves no space behind
   (`mqtt_payload.broker_text`); a version that is not a string (a number, an
   object) is dropped instead of `str()`-ed onto the page. No serial number
   is set on a Canary's device. A fact a publish leaves out is no longer
   written as empty, so an update no longer clears the board or the address,
+  nor does the first status after a restart clear the version, board or
+  address the registry stored,
   and a device that the availability topic announced first is registered by
   the status that follows (before, that status wrote nothing to the
   registry unless it carried a new version).
@@ -60,21 +65,34 @@
   units pinned to one key could not be seen to share a correlation id. Ids
   that share their eight characters now each get a per-dump ordinal
   (`canary-s… #1`, `canary-s… #2`), numbered in the order the integration
-  recorded them; no ninth character is shown. The per-Canary `firmware` and
-  `hardware` are the device page's own (the version health reported, else
-  the status's, and the board the status last named), so they no longer
-  disagree with the page once a later status leaves a fact out.
+  recorded them, an id only verification has seen (a retained chain or
+  counts publish verified before the status) after the device records; no
+  ninth character is shown. The per-Canary `firmware` and `hardware` are
+  the device page's own (the version health reported, else the status's,
+  and the board the status last named), so within a run they no longer
+  disagree with the page once a later status leaves a fact out; after a
+  restart the dump shows only what each Canary has published since, while
+  the page keeps the version, board and address the registry stored. The
+  file Home Assistant downloads also carries the integration's open Repairs
+  issues, which it adds outside the sweep: an entry-scoped issue id ends in
+  the entry id, and a kernel key-mismatch issue carries the kernel's URL
+  and the key it served. None names a Canary. That predates this change
+  and is filed as F399; the security docs and the setup guide now say so.
 - **Tests.** `test_device_registry_versions.py` (new) drives the
   integration's own subscriptions with each family's status and health
   shape from `tests/fixtures/canary_mqtt_payloads.json`; in the monorepo it
   also holds every fixture key to the producer named beside it, the
   product table's keys to the device types `firmware/configs/*/*/config.h`
   and the canary-wap publish, and its names to the Apple apps' table
-  (`ios/Shared/DeviceNaming.swift`), and those checks skip in the HACS
-  mirror, which carries neither (`python.yml` watches the files they
-  read). The stub suite's device registry now clears a field passed as
-  None, as the core's does, so a writer that sends None for a fact it lacks
-  fails there too. `test_diagnostics.py` and the real-core lane
+  (`ios/Shared/DeviceNaming.swift`), and holds every status producer to
+  spelling no version key but the flagship's `firmware`; those checks skip
+  in the HACS mirror, which carries neither (`python.yml` watches the files
+  they read). It also checks that a health without a version keeps the one
+  health reported, that a health-first Canary is named by a status that
+  changes nothing else, and that a restart keeps the registry's facts. The
+  stub suite's device registry now clears a field passed as None, as the
+  core's does, so a writer that sends None for a fact it lacks fails there
+  too. `test_diagnostics.py` and the real-core lane
   (`tests/ha`) assert no run of four fingerprint characters anywhere in the
   dump, that the dump's firmware is the device page's (health's over the
   status's) and the board bounded, and that a value under each of the eight
@@ -83,14 +101,17 @@
   firmware and model on a device page, the flagship's status version, a
   health-first Canary taking its status's name, and an update keeping the
   board and the address. `test_diagnostics.py` also keeps two canary-wap
-  units and a Sense in rows of their own, the two units' correlation ids
-  equal. `python.yml` now also watches the eleven files outside its trees
-  that the stub suite already read (the dictionary, the voice sentences,
-  the seven contract vectors, and the viewer's verify and zip cores), found
-  by `scripts/check_path_filter_reads.py`. The stub suite
-  passes on Python 3.11 and 3.13 (932 tests) and the real-core lane on
-  Home Assistant 2026.5.0 and 2026.10.1 (112 each). Host-tested; not run
-  against a device or a live broker.
+  units, a Sense and a Sentinel in rows of their own, the two units'
+  correlation ids equal, and gives an id only verification has seen a row.
+  Every WAP id in the tests is one the WAP's suffix recipe can print, as
+  `scripts/tests/test_wap_name_examples.py` requires. `python.yml` now
+  also watches the eleven files outside its trees that the stub suite
+  already read (the dictionary, the voice sentences, the seven contract
+  vectors, and the viewer's verify and zip cores), found by
+  `scripts/check_path_filter_reads.py`. The stub suite passes on Python
+  3.11 and 3.13 (942 tests) and the real-core lane on Home Assistant
+  2026.5.0 and 2026.10.1 (112 each). Host-tested; not run against a device
+  or a live broker.
 ### Dependency advisories of 2026-10-19 to -23: the TLS roots and verifier, two constant-time crates, and body-parser (Dependency Audit #330)
 
 - **Five advisories, every one with a reachable fix, so none is ignored.**

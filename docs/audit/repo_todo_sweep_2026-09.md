@@ -4333,15 +4333,45 @@ so — see D2 below.)
   recorded them, the same key in the device, trust and verification
   sections, with no ninth character of any id;
   `test_every_canary_keeps_its_own_row` (stub suite) holds two canary-wap
-  units pinned to one key and a Sense to their own rows, and fails on the
-  dump as it was. The dump's per-Canary `firmware` and `hardware` are the
-  device page's own (`entity.canary_registry_facts`), so a later status that
-  leaves a fact out no longer makes them disagree with the page;
+  units pinned to one key, a Sense and a Sentinel to their own rows, with
+  WAP ids the WAP's suffix recipe can print, and fails on the dump as it
+  was; `test_a_canary_only_verification_has_seen_has_a_row` gives an id
+  that only verification has seen (a retained chain or counts publish
+  verified before the status) a row of its own, numbered after the device
+  records. The dump's per-Canary `firmware` and `hardware` are the device
+  page's own (`entity.canary_registry_facts`), so within a run a later
+  status that leaves a fact out no longer makes them disagree with the page;
+  after a restart the dump shows only what each Canary has published since,
+  while the page keeps the version, board and address the registry stored.
   `test_the_dump_shows_what_the_device_page_shows` (stub) and
   `test_the_dump_shows_the_firmware_the_device_page_shows` (real core) hold
   them there. The docs that described eight-character fingerprints say so
   now (`THREAT_MODEL.md`, `SECURITY_MODEL.md`, `homeassistant_setup.md`,
-  `ha_frigate_product.md`). Host-tested in both Home Assistant lanes.
+  `ha_frigate_product.md`), and the first two and the setup guide's
+  troubleshooting row also say that the downloaded file's Repairs issues
+  are outside the sweep (F399). Host-tested in both Home Assistant lanes.
+- [ ] **F399 [code] Home Assistant's diagnostics download carries the
+  integration's Repairs issues outside the redaction sweep.**
+  Home Assistant's diagnostics view adds every open issue of the
+  integration's domain to the downloaded file itself, beside the data
+  `async_get_config_entry_diagnostics()` returns and outside its
+  `async_redact_data` (`homeassistant/components/diagnostics/__init__.py:288-294`
+  at 2026.10.1), and a persistent issue's `to_json()` includes its `data`
+  and `translation_placeholders` (`homeassistant/helpers/issue_registry.py:74-97`).
+  `custom_components/securacv/repairs.py` ends every entry-scoped issue id
+  in the entry id (`issue_id()`, `:73-75`), and
+  `async_report_tofu_mismatch()` (`:126-155`), a persistent issue, puts the
+  kernel's URL, host included, in its placeholders and its data, and the
+  whole served key in its data, where `TofuMismatchRepairFlow` reads it back
+  (`:259`). So a posted dump of an entry with a key-mismatch issue open
+  carries a host, a key and the entry id, the classes `TO_REDACT` keeps out
+  of the integration's own data. It predates device-details PR 2 and is
+  about the kernel: no issue names a Canary. Fix: keep the host and the key
+  out of issue data and placeholders (the fix flow then needs the served
+  key from somewhere else), or redact them there, and hold the whole
+  downloaded file, issues included, to the redaction rule in the real-core
+  lane. From a real-core download (2026.10.1) in device-details PR 2's
+  second review; filed by #<PR>, 2026-10-26.
 
 ### Parity & sub-projects
 

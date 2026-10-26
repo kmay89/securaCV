@@ -748,11 +748,17 @@ then swept by Home Assistant's redaction over tokens, the pairing token id,
 hosts, URLs, device ids, keys, hashes, entry ids, nonces, IP and MAC
 addresses, SSIDs, names, coordinates, the seed, and the keys a Canary's
 answers use for its hardware token, mDNS host name, serial number, chip and
-module ids and Bluetooth addresses, so a value that reaches the dump through
-a path the projection did not foresee is still replaced. A Canary's key
-fingerprint keeps none of its digits: each pinned Canary gets a correlation
-id, a keyed hash of the fingerprint under a salt drawn for that one dump,
-which links rows of the same dump and nothing else.
+module ids and Bluetooth addresses, so a value that reaches the
+integration's dump through a path the projection did not foresee is still
+replaced. A Canary's key fingerprint keeps none of its digits: each pinned
+Canary gets a correlation id, a keyed hash of the fingerprint under a salt
+drawn for that one dump, which links rows of the same dump and nothing
+else. The sweep covers what the integration returns, not the whole file:
+Home Assistant adds the integration's open Repairs issues to the download
+itself, unswept: the id of each issue about the entry ends in the entry
+id, and a kernel key-mismatch issue carries the kernel's URL with its host
+and the whole key it served (sweep F399, open). None of them names a
+Canary.
 
 **Evidence exports sit behind Home Assistant's authentication.** An export
 is one zip under `<config>/securacv/evidence` (directory `0700`, files

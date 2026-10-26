@@ -14,9 +14,10 @@ deprecation warning today and a refusal from 2026.12. A Canary's device page
 says what the Canary itself published, through one writer
 (``async_sync_canary_device``): the model from the device_type its status
 names (``const.canary_model``), the firmware its health topic reports (its
-status's only when no health has), and its status's board and address, each
-bounded broker text (``mqtt_payload.broker_text``). No serial number is set
-on a Canary's device.
+status's only when no health has) and its status's board, each bounded
+broker text (``mqtt_payload.broker_text``), and its status's address in the
+LAN-only form ``__init__._safe_config_url`` accepts (a private or link-local
+IP, or a ``.local`` name). No serial number is set on a Canary's device.
 """
 from __future__ import annotations
 

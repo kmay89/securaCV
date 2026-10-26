@@ -15,6 +15,11 @@ an identifier the owner did not mean to publish (THREAT_MODEL.md principle
      identifiers), so a value that reaches the dump through a path this
      file did not foresee is still replaced.
 
+Both layers cover what this function returns. Home Assistant adds the
+integration's open Repairs issues to the downloaded file itself, outside
+them (ledger F399): an entry-scoped issue id ends in the entry id, and a
+kernel key-mismatch issue carries the kernel's URL and the key it served.
+
 A Canary's key fingerprint carries none of its digits into the dump. Until
 the canary-wap stops serving it, the whole fingerprint is readable by anyone
 in radio range (its Bluetooth Device Information serial), and the last four

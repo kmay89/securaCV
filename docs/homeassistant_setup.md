@@ -585,17 +585,21 @@ not data loss.
 
 #### Canary devices: "SecuraCV Canary <id>"
 
-One device per Canary, created the first time its `securacv/<id>/status` or
-`securacv/<id>/health` publish is seen (a device its health created first
-takes the name its first status gives), attached under the kernel device
-when one exists. Its model is the product name for the `device_type` its
-status names (*Canary WAP*, *Canary Sense*, *Canary Dash*, and so on;
-*SecuraCV Canary* when the status names none, as the `firmware/canary`
-build's does, or names a type this release does not know), and its firmware
-is the `firmware_version` its `health` topic reports, which is where every
-Canary publishes it. A version on its `status` (only the `firmware/canary`
-build's carries one, as `firmware`) shows only until a health has reported
-one. Each is unsigned text from the broker, bounded to 64 characters; no
+One device per Canary, created by the first publish the integration sees
+from it on its `status`, `health`, `counts`, `chain`, `events`, `tamper`,
+`transport`, `mesh` or `chirp` topic (the `availability` topic alone creates
+none, and a device another topic created first takes the name its first
+status gives), attached under the kernel device when one exists. Its model
+is the product name for the `device_type` its status names (*Canary WAP*,
+*Canary Sense*, *Canary Dash*, and so on; *SecuraCV Canary* when the status
+names none, as the `firmware/canary` build's does, or names a type this
+release does not know), and its firmware is the `firmware_version` its
+`health` topic reports, which is where every Canary publishes it. A version
+on its `status` (only the `firmware/canary` build's carries one, as
+`firmware`) shows only until a health has reported one. The firmware, the
+board and the name its status gives are unsigned text from the broker,
+bounded to 64 characters; the model is picked from the product table by a
+`device_type` that is unsigned too, and is never the wire string itself. No
 serial number is set. Every
 unique id is `securacv_canary_<device_id>_<suffix>` with the suffix shown in
 parentheses. **Signed** means the publish carries the device's Ed25519
@@ -1328,7 +1332,7 @@ silent — are sensors and events, not issues.
 | The Export button is unavailable | The kernel is unreachable; both buttons follow the kernel's availability. |
 | The export notification's link says expired | Links live 24 hours. **Media → SecuraCV evidence** resolves each pack to a fresh link; or export again. |
 | `pwk_*` entities and `securacv_*` entities both show | The claim has not reached the bridge yet: it needs the broker, and a bridge from this release or later. `witness/claim_state` reads `claimed` once it has. |
-| Diagnostics show redacted values | By design: tokens, hosts, ids, keys, hashes, MACs, SSIDs, names, coordinates and a Canary's hardware, chip, module and Bluetooth identifiers are redacted; the kernel key's fingerprint is shown as its eight characters, and each Canary's key fingerprint as a correlation id (`key_correlation_id`) that links rows of the same dump and carries none of its digits. |
+| Diagnostics show redacted values | By design: tokens, hosts, ids, keys, hashes, MACs, SSIDs, names, coordinates and a Canary's hardware, chip, module and Bluetooth identifiers are redacted; the kernel key's fingerprint is shown as its eight characters, and each Canary's key fingerprint as a correlation id (`key_correlation_id`) that links rows of the same dump and carries none of its digits. The file's `issues` section is not redacted: Home Assistant adds the integration's open Repairs issues there itself, the id of an issue about this entry ends in the entry's id, and a kernel key-mismatch issue carries the kernel's URL, host included, and the whole key it served. Remove that section before posting the file. |
 
 ## Alternative Setup Modes
 

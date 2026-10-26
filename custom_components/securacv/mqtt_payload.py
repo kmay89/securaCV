@@ -50,13 +50,16 @@ def broker_text(value: Any, limit: int = BROKER_TEXT_MAX_LENGTH) -> str | None:
     """A broker-supplied value as bounded, printable text, or None.
 
     Only a str is text: a number, bool, list or object is None, never its
-    ``str()``. Runs of whitespace become one space, characters that do not
-    print (control characters among them) are dropped, and the result is
-    cut to ``limit`` characters; empty is None.
+    ``str()``. Characters that neither print nor are whitespace (control
+    characters among them) are dropped first, then runs of whitespace
+    become one space and the ends are trimmed, so a dropped character
+    leaves no space behind; the result is cut to ``limit`` characters, and
+    empty is None.
     """
     if not isinstance(value, str):
         return None
-    text = "".join(ch for ch in " ".join(value.split()) if ch.isprintable())
+    kept = "".join(ch for ch in value if ch.isprintable() or ch.isspace())
+    text = " ".join(kept.split())
     return text[:limit].rstrip() or None
 
 

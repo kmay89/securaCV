@@ -14,19 +14,23 @@ read what reached the device registry:
     ``firmware``) only until a health has reported one, and a new version
     (an update) is written again;
   - the model is the product name for the published device_type, kept
-    through the canary-wap's last will, which names none, and the same rule
-    every entity's device_info applies, so an entity cannot put the plain
-    model back;
+    through the canary-wap's last will, which names none (while Home
+    Assistant runs: the remembered type does not outlive a restart), and
+    the same rule every entity's device_info applies, so an entity cannot
+    put the plain model back;
   - every value is a str, broker text is bounded to 64 printable
     characters, a non-string version is never ``str()``-ed, and no serial
     number is set on a Canary;
-  - a heartbeat that changes nothing writes nothing, and a publish that
-    leaves a fact out never clears it;
+  - a heartbeat that changes nothing writes nothing, a publish that leaves
+    a version, board or address out never clears it, not even the first
+    status after a restart, and a name is written whenever the status
+    handler first names a device;
   - the health topic still pins the key first (trust on first use).
 
-In the monorepo three more checks hold the fixture and the product-name
+In the monorepo four more checks hold the fixture and the product-name
 table to their sources: every key a fixture body carries is spelled by the
-producer named beside it, the table's keys are exactly the device types the
+producer named beside it, no status producer spells a version key but the
+flagship's ``firmware``, the table's keys are exactly the device types the
 firmware configs publish (plus the one legacy display type), and its names
 are the Apple apps' names for those types. The HACS mirror carries neither
 the firmware nor the apps, so those skip there; the rest run on the
@@ -62,6 +66,7 @@ from securacv.const import (  # noqa: E402
     canary_model,
 )
 from securacv.device_trust import TrustStore  # noqa: E402
+from securacv.diagnostics import async_get_config_entry_diagnostics  # noqa: E402
 
 FIXTURES = json.loads(
     (Path(__file__).parent / "fixtures" / "canary_mqtt_payloads.json").read_text(encoding="utf-8")
@@ -237,6 +242,73 @@ def test_an_update_keeps_the_board_and_the_address() -> None:
     assert device.model == "Canary Sense"
 
 
+def test_a_restart_keeps_what_the_registry_stored() -> None:
+    """The registry outlives a restart and the runtime does not: the first
+    status after one, naming no version, board or address (a Sense's does
+    not, once its address is left out), leaves the ones the registry stored.
+    Within one run the status handler's own memory covers this, so only a
+    restart shows whether the writer leaves an unknown fact out."""
+    hass = _hass()
+    device_registry(hass).async_get_or_create(
+        config_entry_id="e1",
+        identifiers={(DOMAIN, "canary_sense01")},
+        manufacturer=MANUFACTURER,
+        model="Canary Sense",
+        name="SecuraCV Canary sense01",
+        sw_version="2.4.16",
+        hw_version="esp32s3",
+        configuration_url="http://192.168.1.51",
+    )
+    _mqtt_entry(hass)
+    status = {key: value for key, value in FAMILIES["canary-sense"]["status"].items() if key != "ip"}
+    _publish(hass, "sense01", "status", status)
+
+    device = _device(hass, "sense01")
+    assert device.sw_version == "2.4.16"
+    assert device.hw_version == "esp32s3"
+    assert device.configuration_url == "http://192.168.1.51"
+    assert device.model == "Canary Sense"
+    _assert_strings(device)
+
+
+def test_a_health_without_a_version_keeps_the_one_health_reported() -> None:
+    """A health publish whose firmware_version is missing, not text or empty
+    once bounded says nothing about the version: the page and the dump keep
+    the one an earlier health reported, and the status's older one (the
+    flagship's ``firmware``) does not come back."""
+    hass = _hass()
+    entry = _mqtt_entry(hass)
+    flagship = FAMILIES["canary"]
+    _publish(hass, "flag01", "status", dict(flagship["status"], firmware="2.4.15"))
+    _publish(hass, "flag01", "health", dict(flagship["health"], firmware_version="2.4.16"))
+
+    for body in ({"uptime": 7200}, {"firmware_version": 2.4}, {"firmware_version": " \x00 "}):
+        _publish(hass, "flag01", "health", body)
+        assert _device(hass, "flag01").sw_version == "2.4.16", body
+        rows = run(async_get_config_entry_diagnostics(hass, entry))["canary_devices"]
+        assert rows["flag01"]["firmware"] == "2.4.16", body
+
+
+def test_the_first_status_names_a_device_its_health_made_though_nothing_else_changed() -> None:
+    """The flagship's health and status carry the same version and its status
+    names no type, board or address, so after a health-first start the
+    status changes no fact on the page. It still names the device: a name is
+    written whenever the status handler first names it."""
+    hass = _hass()
+    _mqtt_entry(hass)
+    flagship = FAMILIES["canary"]
+    assert flagship["status"]["firmware"] == flagship["health"]["firmware_version"]
+
+    _publish(hass, "flag01", "health", flagship["health"])
+    assert getattr(_device(hass, "flag01"), "name", None) is None
+    _publish(hass, "flag01", "status", flagship["status"])
+
+    device = _device(hass, "flag01")
+    assert getattr(device, "name", None) == "SecuraCV Canary flag01"
+    assert device.sw_version == "2.4.16"
+    assert device.model == MODEL_CANARY
+
+
 # ── the model ────────────────────────────────────────────────────────────
 
 
@@ -289,6 +361,12 @@ def test_broker_text_is_bounded_and_never_stringified() -> None:
 
     _publish(hass, "ctl01", "health", {"firmware_version": "2.4.16\x1b[31m\x00\n  beta "})
     assert _device(hass, "ctl01").sw_version == "2.4.16[31m beta"
+
+    # A dropped character leaves no space behind it: none in front, never two.
+    _publish(hass, "nul01", "health", {"firmware_version": "\x00 2.4.16"})
+    assert _device(hass, "nul01").sw_version == "2.4.16"
+    _publish(hass, "nul02", "status", {"online": True, "device_name": "Front \x00 gate"})
+    assert _device(hass, "nul02").name == "Front gate"
 
     # A cut that lands on a space leaves no trailing space.
     _publish(hass, "cut01", "health", {"firmware_version": "1" * 63 + " 2.4.16"})
@@ -415,6 +493,24 @@ def test_every_fixture_key_is_spelled_by_its_producer(family: str, topic: str) -
         )
     if topic == "health":
         assert "firmware_version" in FAMILIES[family]["health"]
+
+
+@_monorepo_only
+@pytest.mark.parametrize("family", sorted(FAMILIES))
+def test_no_status_producer_spells_a_version_key_but_the_flagships_firmware(family: str) -> None:
+    """The check above runs one way, fixture to producer. This one runs the
+    other way for the version keys the status handler reads: the fixture's
+    ``$comment``, the handler's comment, ``data.py`` and
+    homeassistant_setup.md say no family puts ``firmware_version`` on status
+    and only the flagship's carries a version, as ``firmware``, so a status
+    producer that starts spelling one of those keys fails here."""
+    rel, func = FAMILIES[family]["status_producer"].split("#")
+    body = _function_body(_REPO / rel, func)
+    for key in ("firmware_version", "fw_version", "firmware"):
+        spelled = f'\\"{key}\\":' in body or f'["{key}"]' in body
+        assert spelled == (family == "canary" and key == "firmware"), (
+            f"{family} status: {key!r} {'is' if spelled else 'is not'} spelled in {rel}#{func}"
+        )
 
 
 @_monorepo_only
