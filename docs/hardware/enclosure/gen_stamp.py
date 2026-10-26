@@ -68,7 +68,12 @@ from pathlib import Path
 #  .10g: the 2026-09 assembly review — the legacy bezel's window margin
 #  (win_margin 0.6 -> 1.0), the side-port label landing on its own wall, the
 #  zero-count loop guards, and the panel record's microSD note.
-STAMP_REV = "2026.10k"
+#  .10l: the 2026-10-22 function / fit / print audit — the BOOT/RESET towers
+#  reach the caps where the drawing's M3 chain puts the board (they stopped
+#  1.435 short), the ledge's back-slope is a swept 45° face (it was a 0.5 mm
+#  staircase), the leash channel's ceiling is chamfered, and the tray grille
+#  stops undercutting a PCB boss's root fillet (AUDIT_2026_09.md AUD-18).
+STAMP_REV = "2026.10l"
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "canary_s3_lcd7_stamp.scad"

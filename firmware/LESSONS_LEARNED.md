@@ -398,6 +398,37 @@
   up in the IDF 4.4 headers too, not only in the current docs.
 - **Date learned:** 2026-09
 
+### A feature test that names a header no core ships is a feature that never runs
+- **What happened:** Both trees' on-device TLS certificate generator (the
+  WAP's, and the flagship's `FEATURE_HTTPS` builds', backlog F15, #1704) is
+  gated on `__has_include("mbedtls/x509write_crt.h")`. mbedTLS has never
+  shipped that header: its certificate-writing API is declared in
+  `mbedtls/x509_crt.h`, behind `MBEDTLS_X509_CRT_WRITE_C`, which both
+  pinned cores define (arduino-esp32 2.0.17; PlatformIO's
+  framework-arduinoespressif32 3.3.8 and its libs). So the generator, and
+  the only code that stores a certificate, compile out on every unit; every
+  CI leg is green, and the ledger, THREAT_MODEL, SECURITY_MODEL and
+  FEATURES.md said HTTPS had landed. No stock unit of either tree has ever
+  served HTTPS or handed out a `tls_cert_fp` pin. Found while deciding
+  F337 and F344, which both depend on whether HTTPS runs.
+- **Root cause:** `__has_include` is false, not an error, for a name that
+  does not exist, so a misspelled or imagined header turns a feature off
+  silently everywhere, and the fallback branch (here: "no certificate, HTTP
+  only", logged on serial and in `tls_mode_reason`) looks like a designed
+  posture. "CI-compiled" was read as "landed", though a compile proves only
+  that both branches parse.
+- **Fix:** Docs corrected (F15's dated correction, the security docs,
+  FEATURES.md). The guard itself is not changed yet: testing
+  `mbedtls/x509_crt.h` and `MBEDTLS_X509_CRT_WRITE_C` turns HTTPS on for
+  every such unit and changes the pin the apps trust, so it waits for the
+  bench (F15).
+- **Rule:** A feature test that guards a whole feature must be shown true on
+  at least one pinned core before the feature is called landed: find the
+  header in that core's tree, or read the build's own log line for the
+  branch it took. A green compile with the feature compiled out is not
+  evidence for the feature.
+- **Date learned:** 2026-10
+
 ---
 
 ## Hardware: XIAO ESP32S3 Sense
@@ -607,6 +638,106 @@
   Against rebinding that side is the device's own identity, never a second
   header from the same request.
 - **Date:** 2026-09
+- **Amended, 2026-10-21 (sweep F344):** the third Canary that serves a LAN
+  page, the canary-wap, asked no Host question after setup: its landing page
+  handed a rebinding page a pair token, its `?cv_pair=` exchange minted that
+  page a session (which reads the live camera), and the provisioning
+  receipt's BOOT tap and setup-door claim served any Host. It now stages the
+  same header and asks it on every place that mints a session or a pair
+  token for a caller holding no credential, or starts a sign-in, and first
+  on the receipt. That alone kept a rebinding page from being handed a
+  session, not from holding one (the PR's third review): any host on the LAN
+  takes a 24-hour session at the landing, a page can set that value for its
+  own name with `document.cookie`, and the cookie validator read no Host, so
+  the value reached the live camera, every session admin route and `GET
+  /api/pair/token` from the rebinding page. The validator behind every
+  cookie route (`session_validate_cookie()`) now asks the same question
+  before it reads the cookie. It takes no SoftAP
+  exemption: its captive DNS answers every name with the device too, so an
+  exemption keyed on the interface would hand the rebinding path to anything
+  on the SoftAP, and its wizard runs at two fixed names that pass anyway. Its
+  first-boot setup branch had a second fault of the same kind:
+  `strstr(host, "canary.local")` admitted `canary.local.evil.example`, which
+  that same captive DNS resolves to the device, and the token it minted
+  authorizes the Wi-Fi join. And the wizard token's re-issue
+  (`/api/wifi/pair-token`) answered through `http_send_json()`, which sends
+  `Access-Control-Allow-Origin: *`, so during setup any page on another site
+  in the owner's browser on the SoftAP read a pair token at `192.168.4.1`,
+  a name the exact test must pass (the PR's second review).
+- **Rule:** A name test is an equality on the parsed authority (trimmed, the
+  port dropped, lowercased: `host_authority_name()`), never a substring of
+  the raw header, and a header cut to its buffer is no answer at all (a
+  108-byte rebinding name cut to 95 bytes ends in `.local`). And an
+  exemption that is safe on one product is not safe by default on another:
+  check what answers DNS there before copying it. A rule that rests on
+  "every mint asks first" needs a guard that lists the mints, or the next
+  page that hands out the landing passes every check. A Host test stops only
+  a page that reached the device under another name; against a page that
+  asks for the device's real name, a credential is kept only by an answer
+  that grants no cross-origin read, so a route that hands one out sends no
+  CORS header. And closing the places that hand a credential out does not
+  close the places that take it: a host-only cookie is whatever a page on
+  that name sets, so the code that reads a session asks which name the
+  request was sent to, as the code that hands one out does. And a Host test
+  tells a public name from a name only the local network answers, not this
+  device from another server that answered that name on a network the
+  browser used before (`canary.local` from a hostile hotspot, a page left
+  open, or kept in the HTTP cache, until the browser comes home): only an
+  identity the browser checks tells those apart, and a self-signed
+  certificate gives a browser none (only a client that pins it, as the
+  iPhone app pins the receipt's `tls_cert_fp`, checks one), so a doc
+  that says "a rebinding page gets nothing" scopes it to a public name (the
+  PR's fifth review). And a residual that names how long the planted page
+  must live is checked against the browser's cache, not only its tabs: a
+  fresh cached answer comes back with no request to the device, after the
+  browser has quit (the sixth review, seen in headless Chromium).
+- **Regression check:** `projects/canary-wap/tests_host/test_session_cookie.cpp`
+  (the pages and the setup names, an oversize Host, the re-issue's
+  headers, and the real cookie validator under the device's names and
+  foreign ones) and
+  `test_receipt_grant.cpp` (the receipt's Host row);
+  `projects/canary-wap/tests_host/check_route_security.py`'s `MINT_SITES`
+  (every mint, after its gate, and none answering through the wildcard
+  sender); `firmware/scripts/check_improv_sync.sh`
+  holds the staged copy byte-identical to the canonical header.
+
+### One cookie name for HTTPS and plain HTTP locks a browser out of the plain one
+- **What happened:** Since #1832 the WAP's session cookie carries `Secure`
+  over HTTPS and not over plain HTTP, under one name, `cv_session`. A browser
+  that holds a `Secure` cookie refuses a same-name cookie that an http page
+  at the same host name sets (RFC 6265bis, "Leave Secure Cookies Alone"),
+  and every WAP claims `canary.local`. So once HTTPS runs, a browser that
+  used one unit over HTTPS at `canary.local` and then meets a unit over
+  plain HTTP at `canary.local` (a second unit, the same one after a factory
+  reset, or one whose HTTPS start failed) drops every session cookie the
+  plain page sets, and the wizard's Home Assistant step answers 401, until
+  the old cookie's 24 h run out. A cookie follows the host name, so the
+  same happens at `192.168.4.1` only to a browser that used a unit over
+  `https://192.168.4.1` on its SoftAP (a standalone unit, or a joined one
+  while its SoftAP is up: after a boot until the home link has held 120 s,
+  or after the link drops); one from `https://canary.local` never blocks
+  `http://192.168.4.1`. No stock unit serves HTTPS yet (F15), so no
+  owner has hit it; F337 lands before HTTPS does.
+- **Root cause:** A cookie's name is shared across both schemes at one host,
+  and the `Secure` attribute does not make two cookies of one name.
+- **Fix:** Over HTTPS the cookie is `__Host-cv_session`, which in current
+  browsers only an https answer with `Path=/` and no `Domain` can set, so an
+  http page can neither set it nor shadow it (it can still push the Cookie
+  header past the reader's 512-byte ceiling and sign the browser out:
+  integrity, not availability); over plain HTTP it stays `cv_session`. The reader takes the `__Host-` one first and does not fall
+  back when it is malformed. That fallback to the plain name on an HTTPS
+  request is safe only while every session buys the same thing.
+- **Rule:** When one origin name serves both schemes, give the HTTPS cookie
+  a `__Host-` name of its own. And before one session can do more than
+  another, read only the `__Host-` name over HTTPS and mint a fresh session
+  at the elevation: the prefix binds a secure scheme and the host name, not
+  a certificate, so a server whose certificate the browser accepted at that
+  name can set the `__Host-` name to a session it holds.
+- **Regression check:** `projects/canary-wap/tests_host/test_session_cookie.cpp`
+  (the HTTPS exchange's name and its round trip, the reader's two names),
+  `test_receipt_grant.cpp` (the receipt's HTTPS cookie) and
+  `wizard_logic.test.js` (the writer's text).
+- **Date learned:** 2026-10
 
 ### User-typed identifiers must use an unambiguous alphabet
 - **What happened:** A user typed their API token from the serial monitor into

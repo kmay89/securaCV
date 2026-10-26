@@ -224,6 +224,21 @@
 //       at the desk.
 //     Nothing about the frame, the fitments, the gauges or the fit gates
 //     moved; the corner gauge stops short of the side slots.
+//  2026-10-22  Second display-case audit (v0.11) — each change carries its
+//     own note and numbers where it lives:
+//     - plug_buttons: the towers reach the board's BUTTON edge where the
+//       drawing's chain puts it (panel_core_dy + pcb_h/2 = 47.365), not a
+//       glass-centered board's (48.80) — they parked 1.435 short of the caps
+//       (btn_tower_len 5.13 -> 6.565), and btn_reach now accepts the ~7 a
+//       caliper reads instead of refusing it.
+//     - FRAME: the adhesive ledge's back-slope is a swept 45° face instead of
+//       a 0.5 mm staircase (ledge_slope_n is gone), and the plug-leash
+//       channel's ceiling side is 45° instead of square. Material only comes
+//       out, and the envelope does not move.
+//     - TRAY (part="back", legacy): the grille's boss dodge counts the egg's
+//       own size and the boss's root fillet — 90 -> 86 eggs, ~41 -> ~40 cm2.
+//     - ring_gauge: its label is a deboss; it stood 0.01 proud and printed
+//       as nothing.
 // ============================================================================
 
 use <canary_panel_lib.scad> // THE PANEL REGISTRY — every panel/board number
@@ -773,11 +788,8 @@ ledge_side = 10.0;  // ledge width along each short (±x) edge
 ledge_top  = 6.0;   // along the button (top) edge
 ledge_bot  = 2.0;   // along the FPC (bottom) edge — keep small, the FPC lives there
 ledge_slope_max = max(ledge_side, ledge_top, ledge_bot);  // deepest back-slope
-ledge_slope_n   = 20;  // steps in the 45° back-slope. Each step overhangs by
 
 /* [Frame — back-plate branding] */
-                       // its own height, so ANY count self-supports; this only
-                       // sets how smooth the sloped face reads.
 // Every ledge carries a 45° back-slope wedge down to its wall, so the frame
 // prints BACK-PLATE-DOWN with the ledges fully self-supporting — solid
 // material under the adhesive landing, no overhang, no sacrificial geometry.
@@ -2085,15 +2097,33 @@ btn_z0 = glass_guard + glass_t + 1;  btn_z1 = fz_boss + 1;   // the band the but
 btn_zc = (btn_z0 + btn_z1)/2;                  // window center across the wall
 // Tower reach, from the plug's LIP PLANE (local z 3.6 — where the pips used
 // to start) to the button caps. AUTO derives it from the panel record: the
-// caps sit flush with the PCB outline (BOOT/RESET carry d = 0), the board
-// edge sits at pcb_h/2, and the plug's local z 0 is the outer skin at
-// fr_yo/2 — so outer skin → caps is fr_yo/2 - pcb_h/2 and the towers carry
-// what the lip plane doesn't. RESTING contact by construction: the tower
-// tips park ON the caps and the dimple's flex is the press travel.
-btn_tower_len = btn_reach > 0 ? btn_reach : fr_yo/2 - pcb_h/2 - 3.6;
-assert(btn_tower_len > 0.4 && btn_tower_len <= fr_yo/2 - pcb_h/2 - 3.6 + 0.6,
+// caps sit flush with the PCB outline (BOOT/RESET carry d = 0), the board's
+// BUTTON edge sits at btn_pcb_top (below), and the plug's local z 0 is the
+// outer skin at fr_yo/2 — so outer skin → caps is fr_yo/2 - btn_pcb_top and
+// the towers carry what the lip plane doesn't. RESTING contact by
+// construction: the tower tips park ON the caps and the dimple's flex is the
+// press travel.
+// v0.11 (2026-10-22 audit): the board edge was taken at pcb_h/2, i.e. the
+// board CENTERED on the glass — but the drawing's own chain (see
+// panel_core_dy) puts the outline the board is dimensioned by 13.64 past the
+// top M3 row: m3_oy + m3_dy/2 + 13.64 = 47.365 = panel_core_dy + pcb_h/2,
+// not 48.80. The towers parked 1.435 short of the caps, behind a plug that is
+// 3.6 mm of solid TPU and cannot travel that far, so a press through the
+// dimple never reached BOOT/RESET — and the override could not fix it, since
+// the assert capped btn_reach at the same wrong edge (6.5 refused, max 5.73).
+// The first fit agrees: the 2 mm pips (tips at local z 5.6) measured ~5 mm
+// short, i.e. caps ~7 from the lip plane; this derivation gives 6.565, the
+// old one 5.13. A centered board would also stand 1.435 past the drawing's
+// outline at the button end, which the drawing does not show. One thing the
+// record cannot settle: on the btn_zc axis the Ø(btn_pip_d - 1.2) tip spans
+// z 9.65..13.45 and the board's back face is at 10.4, so the tip's lowest
+// 0.75 mm faces the board EDGE too. If a press bottoms on the edge instead of
+// the cap, btn_pip_dz lifts the towers off it — a caliper call, not a guess.
+btn_pcb_top   = panel_core_dy + pcb_h/2;   // the board's BUTTON edge, frame y
+btn_tower_len = btn_reach > 0 ? btn_reach : fr_yo/2 - btn_pcb_top - 3.6;
+assert(btn_tower_len > 0.4 && btn_tower_len <= fr_yo/2 - btn_pcb_top - 3.6 + 0.6,
        str("frame: btn_reach drives the towers past the button caps (max ",
-           fr_yo/2 - pcb_h/2 - 3.6 + 0.6, " incl 0.6 squeeze) — they would ",
+           fr_yo/2 - btn_pcb_top - 3.6 + 0.6, " incl 0.6 squeeze) — they would ",
            "hold BOOT/RESET pressed. Measure again."));
 // USB pass-through: the opening passes the HEAD; the grommet then fills it
 // around just the wire, so the port needs no relation to where the connector
@@ -2189,14 +2219,13 @@ assert(!mount_keyholes || (khm_dx + khm_head_d/2 + khm_pad_w + 1.5 < fr_xi/2
 assert(khm_slide_w < khm_head_d, "frame: keyhole slide wider than its head hole");
 // count knobs that feed `for (i = [0 : n - 1])`: at n = 0 OpenSCAD 2021.01
 // iterates {0, -1} AND prints a DEPRECATED warning, which the render gate
-// reads as a failure; ledge_slope_n = 0 divides the staircase by zero. Say
-// so here, in the knob's own words, instead of in a CI log
+// reads as a failure. Say so here, in the knob's own words, instead of in a
+// CI log
 assert(vent_rows >= 1 && vent_cols >= 1, "vent_rows / vent_cols must be at least 1 (use plate_grille=false to drop the grille)");
 assert(vent_top_n >= 1 && vent_bottom_n >= 1 && vent_side_n >= 1,
        "vent_top_n / vent_bottom_n / vent_side_n must be at least 1");
 assert(frame_vent_flank_n >= 1, "frame_vent_flank_n must be at least 1");
 assert(edge_vent_n >= 1, "edge_vent_n must be at least 1");
-assert(ledge_slope_n >= 1, "ledge_slope_n must be at least 1 (it divides the staircase)");
 // the frame chains its depth through standoff_len only, so it never asks
 // whether the tallest REAR component (comp_h, the registry's one MEASURE
 // number) clears the plate. With the record as written it does not: the
@@ -3135,10 +3164,22 @@ function grille_cells(ox = m3_ox, oy = m3_oy, keepouts = []) =
         let (x = (c - (vent_cols-1)/2) * vent_pitch_x
                  + (r % 2 == 1 ? vent_pitch_x/2 : 0) - vent_pitch_x/4,
              y = (r - (vent_rows-1)/2) * vent_pitch_y)
+        // v0.11 (2026-10-22 audit): the boss dodge was a fixed ±6 x ±9 box
+        // on the egg's CENTER, blind to the egg's own half-size (3.25 x 4.5)
+        // and to the boss's 45° root fillet — on the tray it let an egg in
+        // ~3.9 from the +x top boss: 0.39 of floor to the Ø7 shank and the
+        // fillet's Ø10 foot hanging 1.11 over the hole, its -x side cut away
+        // (and an egg sat 0.54 off the +x bottom boss's fillet). Now the box
+        // is the egg's half-size plus the root fillet's radius plus a 0.8
+        // web — the frame's (frame_boss_d + 3) root, the larger of the two
+        // boss families this predicate serves, so the tray's Ø7 + 3 clears.
+        // The tray grille gives up four eggs for it (90 -> 86).
         if (vent_hit(c, r) && abs(x) < pcb_w/2 - 6 && abs(y) < pcb_h/2 - 6
             && min([for (sx = [1,-1], sy = [1,-1])
-                   max(abs(x - (ox + sx*m3_dx/2)) - 6,
-                       abs(y - (oy + sy*m3_dy/2)) - 9)]) > 0
+                   max(abs(x - (ox + sx*m3_dx/2))
+                         - (vent_slot_w/2 + (frame_boss_d + 3)/2 + 0.8),
+                       abs(y - (oy + sy*m3_dy/2))
+                         - (vent_slot_l/2 + (frame_boss_d + 3)/2 + 0.8))]) > 0
             && (len(keepouts) == 0 ||
                 min([for (k = keepouts)
                     max(abs(x - k[0]) - k[2], abs(y - k[1]) - k[3])]) > 0))
@@ -3902,22 +3943,29 @@ module frame() {
             // need to exist. offset() grows the opening uniformly, corners
             // included, so the 45° face is now continuous all the way round.
             //
-            // Stepped rather than swept because the three edges are different
-            // widths (10 / 6 / 2), so there is no single profile to revolve.
-            // Each step is ledge_slope_step tall and overhangs by the same,
-            // which is a 45° staircase — self-supporting at any step size; the
-            // step only sets how smooth the face looks.
-            for (i = [0 : ledge_slope_n - 1]) {
-                h = ledge_slope_max * i / ledge_slope_n;
-                translate([0, 0, ledge_z + ledge_t + h])
-                    linear_extrude(ledge_slope_max/ledge_slope_n + 0.01)
-                        difference() {
-                            rrect2d(fr_xi, fr_yi, fr_ri);
-                            offset(r = h)
-                                translate([0, (ledge_bot - ledge_top)/2])
-                                    rrect2d(fr_xi - 2*ledge_side,
-                                            fr_yi - ledge_top - ledge_bot, 2);
-                        }
+            // v0.11 (2026-10-22 audit): SWEPT, no longer stepped. The
+            // staircase (ledge_slope_n = 20 steps over 10 mm) claimed "a 45°
+            // staircase is self-supporting at any step size", and it is not:
+            // a step lays its whole overhang in ONE layer, so every 0.5 mm of
+            // height left a bare 0.5 mm shelf — wider than a 0.42 line — and
+            // the exported frame carried a shelf ring at 19 step heights
+            // (~3,000 mm² of flat ceiling, print z 9.8..18.8; the
+            // frame_gauge ~600 mm² of the same). A true 45° face overhangs
+            // one layer height per layer.
+            // The three widths (10 / 6 / 2) were the reason for stepping, but
+            // they need no profile: the opening is convex, so the HULL of it
+            // shrunk 1 at -1 and grown ledge_slope_max at ledge_slope_max is
+            // exactly offset(r = h) at every height h between — the face the
+            // steps approximated, passing through the ledge's own opening at
+            // its back face. Only the teeth (≤ 0.5) come out, and the
+            // ledge_slope_n knob goes with them.
+            translate([0, 0, ledge_z + ledge_t]) difference() {
+                linear_extrude(ledge_slope_max) rrect2d(fr_xi, fr_yi, fr_ri);
+                hull() for (h = [-1, ledge_slope_max])
+                    translate([0, 0, h]) linear_extrude(0.01) offset(r = h)
+                        translate([0, (ledge_bot - ledge_top)/2])
+                            rrect2d(fr_xi - 2*ledge_side,
+                                    fr_yi - ledge_top - ledge_bot, 2);
             }
         }
         // glass entry chamfer around the front rim
@@ -3985,8 +4033,20 @@ module frame() {
             sT = plug_teth_dx < 0 ? -1 : 1;
             x0 = btn_dx + sT*(btn_w/2 + 1.0);
             x1 = btn_dx + plug_teth_dx + sT*2.5;
-            translate([min(x0, x1), fr_yo/2 - plug_chan_d, btn_zc - 2.5])
-                cube([abs(x1 - x0), plug_chan_d + 0.1, 5.0]);
+            // v0.11 (2026-10-22 audit): the channel's front-side face (low
+            // z) was square — back-plate-down it is a ceiling, a 1.2 deep
+            // cantilever into the skin bridging the channel's 10.5 length
+            // (print z 14.25, the only square groove top on an upright wall
+            // of this frame). The hull takes that face to 45° out to the
+            // skin, so it builds on itself; the floor the strap lies on and
+            // the 5.0 at the floor are unchanged, the mouth opens to 6.2 at
+            // the skin, and only material comes out.
+            hull() {
+                translate([min(x0, x1), fr_yo/2 - plug_chan_d, btn_zc - 2.5])
+                    cube([abs(x1 - x0), plug_chan_d + 0.1, 5.0]);
+                translate([min(x0, x1), fr_yo/2, btn_zc - 2.5 - plug_chan_d])
+                    cube([abs(x1 - x0), 0.1, 5.0 + plug_chan_d]);
+            }
             translate([btn_dx + plug_teth_dx, fr_yi/2 - 1, btn_zc])
                 rotate([-90, 0, 0]) cylinder(d = sd_teth_hole, h = frame_wall + 2);
             translate([btn_dx + plug_teth_dx, fr_yo/2 - plug_chan_d - 0.451, btn_zc])
@@ -4463,18 +4523,25 @@ module rg_corner2d(rr) {   // the glass corner at this radius, opened by the rev
 ring_gauge_w = 6.0;   // radial width — wide enough to stay flat and be handled
 ring_gauge_t = 1.2;   // thickness; a 2 mm-wide ring at 200 mm long curls
 module ring_gauge() {
-    linear_extrude(ring_gauge_t) difference() {
-        rrect2d(fr_xi + 2*ring_gauge_w, fr_yi + 2*ring_gauge_w,
-                fr_ri + ring_gauge_w);
-        rrect2d(fr_xi, fr_yi, fr_ri);
+    difference() {
+        linear_extrude(ring_gauge_t) difference() {
+            rrect2d(fr_xi + 2*ring_gauge_w, fr_yi + 2*ring_gauge_w,
+                    fr_ri + ring_gauge_w);
+            rrect2d(fr_xi, fr_yi, fr_ri);
+        }
+        // the part says what it is, so a loose ring on a bench is never a
+        // mystery. v0.11 (2026-10-22 audit): DEBOSSED 0.35 into the top
+        // face. It was unioned instead — sunk 0.35 into the ring and standing
+        // 0.01 proud of it (top 1.21 on a 1.20 ring), which no slicer makes
+        // a layer of, so the printed ring carried no label at all. The cut
+        // keeps the original depth and leaves 0.85 of web under the glyphs.
+        translate([0, -fr_yi/2 - ring_gauge_w/2, ring_gauge_t - 0.35])
+            linear_extrude(0.36)
+                text(str("GLASS ", glass_w, " x ", glass_h, "  r", glass_r,
+                         "  rev", frame_reveal),
+                     size = 3.0, font = label_font, halign = "center",
+                     valign = "center");
     }
-    // the part says what it is, so a loose ring on a bench is never a mystery
-    translate([0, -fr_yi/2 - ring_gauge_w/2, ring_gauge_t - 0.35])
-        linear_extrude(0.36)
-            text(str("GLASS ", glass_w, " x ", glass_h, "  r", glass_r,
-                     "  rev", frame_reveal),
-                 size = 3.0, font = label_font, halign = "center",
-                 valign = "center");
 }
 
 module radius_gauge() {

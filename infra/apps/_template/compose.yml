@@ -1,0 +1,29 @@
+# A new project on the edge. `kit app add <name> --image <image> [--port <n>]` copies this with
+# the placeholders filled. The only contract: the container answers a health URL, and it listens
+# on one port that Caddy reaches by the app's name on the edge network.
+services:
+  __APP__:
+    image: __IMAGE__:${TAG:-latest}
+    container_name: __APP__
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - /srv/data/__APP__:/data
+    networks: [edge]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:__PORT__/healthz >/dev/null 2>&1 || curl -fsS http://127.0.0.1:__PORT__/healthz >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    security_opt: [no-new-privileges:true]
+    # the image is read-only at runtime: the app writes only to its data volume and /tmp
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    mem_limit: 512m
+    pids_limit: 256
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+networks:
+  edge:
+    external: true

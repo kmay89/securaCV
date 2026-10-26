@@ -105,7 +105,7 @@ function core_corner_r()   = 3.0;   // outside corner radius of a shell
 // the Customizer keeps it), and scripts/lint_design_lang.py fails the build
 // on a default that neither matches nor declares a deviation.
 function core_lightpipe_d()    = 3.0;   // status light pipe, press-fit bore = d + 2*tol_press
-function core_vent_pad_d()     = 12.0;  // GORE membrane seat on the outer face
+function core_vent_pad_d()     = 12.0;  // the GORE membrane patch's Ø — each case cuts its seat vent_pad_d + 2*tol_slide (inner face on the face-down shells)
 function core_vent_pad_depth() = 0.8;   // recess for the adhesive membrane
 function core_vent_ring_d()    = 6.0;   // through-hole ring diameter behind the pad
 function core_vent_hole_d()    = 1.0;   // the README's outdoor rule: <= 1.0 mm keeps insects out
@@ -727,9 +727,12 @@ function scr_post_min(id) = scr_pilot(id) + 3.0;
 //  the screw thread onto the post top and into the cavity. A gasket
 //  cannot fix that; a ring under the head can. This cuts a flat-floored
 //  gland around the through-hole: a standard O-ring (ID = shank, section
-//  cs) sits in it and the head squeezes it ~25 % — the standard face-seal
-//  squeeze — against the floor. The gland is sized so the ring's OD is
-//  captured (radial constraint) and the head still clears the gland wall.
+//  cs) sits in it, 0.75 x cs deep — 25 %, the standard face-seal squeeze.
+//  The gland is sized so the ring's OD is captured (radial constraint) and
+//  the head still clears the gland wall. But a pan head narrower than the
+//  gland (M2: Ø4.0 against Ø4.3) has no land to stop on, so until a washer
+//  wider than the gland bears on its mouth, torque and not the depth sets
+//  the squeeze (open: AUDIT_2026_09.md, the 2026-10-23 cross-family review).
 //  Use PAN heads with it (a flat head's cone would push the ring out).
 //  z0 = show face; cuts DOWN into a plate of thickness t.
 //    cs    — ring section;  id_r — ring inner diameter

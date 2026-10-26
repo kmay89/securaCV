@@ -106,9 +106,10 @@ is already at parity ✅) are omitted.
 ### Shared gap (neither tree, not a parity item but on the v1 path)
 - **TLS (HTTPS self-signed): ⚠️ / ⚠️ in the dashboard** (canary (PIO) since #1704, the F15
   paragraph below; canary-wap since #1691). The `canary-wap` sketch's `httpd_ssl_start`-on-443
-  path is a runtime opt-in, not the build's posture: compile-gated on `esp_https_server.h`
+  path is a runtime state, not the build's posture: compile-gated on `esp_https_server.h`
   (`SECURACV_HAS_HTTPS_SERVER`), served after first-boot setup once `init_tls_cert()` loads or
-  generates the device certificate, and plain HTTP during setup and again when the HTTPS server
+  generates the device certificate (no stock core can generate one: the correction below), and
+  plain HTTP during setup and again when the HTTPS server
   fails to start (logged) — `FEATURES.md`'s canary-wap HTTPS note. Neither tree has run it on
   hardware: proving it is the shared TLS gap (launch review §2) and Track D in the bench
   runbook — do it once and mirror into both trees.
@@ -122,6 +123,15 @@ is already at parity ✅) are omitted.
   size-guard log gives the slot delta. Never run on hardware: the dashboard cell is ⚠️, not ✅.
   Fallback if the dev leg shows the 2.0.17 core lacks x509write: option (c), certificate + key
   provisioned by the two flashers' NVS builders (no on-device keygen).
+- *Correction 2026-10-22 (F15, F337):* neither tree has generated the certificate on a device.
+  Both generators are gated on `__has_include("mbedtls/x509write_crt.h")`, a header mbedTLS has
+  never shipped (its write API is in `mbedtls/x509_crt.h`, behind `MBEDTLS_X509_CRT_WRITE_C`;
+  checked on arduino-esp32 2.0.17 and PlatformIO's framework-arduinoespressif32 3.3.8 and its
+  libs), so every pinned core compiles it out, and nothing else stores a certificate. A stock
+  WAP serves plain HTTP after setup, and the `canary (PIO)` `[env:dev]` / `[env:full]` builds
+  serve HTTP and say so in `tls_mode_reason` ("no stored certificate and this core cannot
+  generate one"). The CI compile above is real; the HTTPS it compiles does not run. Track D's D1
+  records the HTTP-only reason until F15's guard is fixed.
 
 ---
 
@@ -198,7 +208,7 @@ cell to ✅ only after the matching bench-runbook track passes** and an artifact
 | →Arduino | Sensing dashboard panel | ☐ | n/a | ☐ |
 | →Arduino | WiFi power save | ☐ | ☐ | ☐ |
 | →Arduino | WiFi auto-reconnect | ☐ | n/a | ☐ |
-| shared | TLS (HTTPS) enabled | ☐ ACTIVE: code in dev/full (2026-09, F15) — tick when that PR's `firmware.yml` run is green · ☐ WAP default builds | ☐ | ☐ |
+| shared | TLS (HTTPS) enabled | ☐ ACTIVE: code in dev/full (2026-09, F15) — compiles, but no stock core generates the certificate (the 2026-10-22 correction above), so a green `firmware.yml` run does not tick it · ☐ WAP default builds | ☐ | ☐ |
 
 **Exit:** every row ✅ in `FEATURES.md` for both `canary (PIO)` and `canary-wap (Arduino)` columns,
 with the bench-gated rows backed by a runbook artifact.

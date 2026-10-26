@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-24.04  # the image the job was written against (CI.md R11)
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Image name (owner lower-cased, as GHCR requires)
         id: meta
@@ -71,6 +71,6 @@ jobs:
           docker build -q -t backoffice-smoke -f backoffice/deploy/Dockerfile backoffice
           docker run -d --rm --name bo -e BACKOFFICE_DEMO=1 -p 8787:8787 backoffice-smoke
           for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1 && break; sleep 1; done
-          curl -fsS http://127.0.0.1:8787/login | grep -q "DEMO MODE"
+          curl -fsS http://127.0.0.1:8787/login | grep -q 'class="demo"'   # the demo banner, on public pages too
           docker logs bo | grep -q "demo mode: seeded"
           docker stop bo

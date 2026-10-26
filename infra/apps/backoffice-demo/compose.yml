@@ -1,0 +1,28 @@
+# The public demo: the same image in demo mode, synthetic data reseeded every hour.
+# Its data directory is separate; nothing here can reach a real service.
+services:
+  backoffice-demo:
+    image: ghcr.io/kmay89/securacv-backoffice:${TAG:-latest}
+    container_name: backoffice-demo
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      BACKOFFICE_DEMO: "1"
+      BACKOFFICE_DEMO_RESET_MINUTES: "60"
+      BACKOFFICE_HOST: 0.0.0.0
+      BACKOFFICE_PORT: "8787"
+      BACKOFFICE_DATA_DIR: /data
+    volumes:
+      - /srv/data/backoffice-demo:/data
+    networks: [edge]
+    security_opt: [no-new-privileges:true]
+    # the image is read-only at runtime: the app writes only to its data volume and /tmp
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    mem_limit: 384m
+    pids_limit: 256
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+networks:
+  edge:
+    external: true

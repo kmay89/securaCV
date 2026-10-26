@@ -70,6 +70,15 @@ not named `gen_*` is not found by any name pattern — `viewer/build.mjs
 `grep -rhoE "[a-zA-Z0-9_/.-]+\.(py|mjs) [^|;&]*--check"
 .github/workflows/*.yml | sort -u` is the cross-check.)
 
+One is new and bites on every CAD edit: `gen_revisions.py` writes
+`canary-local/devices/revisions.json` (each part's `rN`, its mesh fingerprint,
+what moved and the regions the viewers tint) from the rendered STLs, and its
+`--check` — in lint.yml for the committed STLs, in enclosure.yml after
+render.sh for the dev renders too — refuses a part whose shape moved
+unrecorded. It is step 4 of `regen_cad.py`, right after `render`; a
+comment-only edit does not move it, a re-render of the same design does not
+move it, a post moved 1 mm inside the envelope does.
+
 The ones that bite most often: `gen_stamp.py` and `gen_builder_manifest.py`
 (any enclosure `.scad`), `gen_enclosures.py` (catalog JSON),
 `gen_agent_entrypoints.py` (any AGENTS.md edit — six vendor files),
