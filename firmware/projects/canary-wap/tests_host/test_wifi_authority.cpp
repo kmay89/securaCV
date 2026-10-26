@@ -1,5 +1,6 @@
 // After first-boot setup, the bearer alone moves the network a canary-wap
-// joins (sweep F334, F345, F333).
+// joins (sweep F334, F345, F333), and the bearer alone reboots it (F361,
+// decided by the same rule).
 //
 // Before, POST /api/wifi/connect and /api/wifi/ap-only went through
 // wifi_change_authorize(), which took the wizard's pair token first and then
@@ -13,17 +14,22 @@
 // Bluetooth setup door, whose claim buys the receipt. Now, whenever
 // setup_wizard::is_active() is false, the gate is api_auth_check_bearer():
 // no cookie, the per-address lockout, its own 401/403/429. During setup
-// (no session exists then) the wizard's gate is unchanged.
+// (no session exists then) the wizard's gate is unchanged. POST /api/reboot
+// and POST /api/safe-mode/retry were api_auth_check() wrappers too, so any
+// landing session rebooted the unit at will: a LAN denial, and each reboot
+// emptied the RAM lockout table, resetting a guesser's budget (F361). Both
+// wrappers are api_auth_check_bearer() now.
 //
 // This runs the REAL api_auth.h (the lockout table, sweep F343) and
 // provisioning_logic.h (keyless_join_open(), the one rule for the setup door
 // and the camera's boot scan, sweep F333), and the functions cut verbatim
 // out of canary_wap.ino (firmware/tests_host/cut_functions.awk):
 // wifi_change_authorize(), the Forget, Disconnect and Reconnect wrappers,
-// ble_improv_door_should_open() and auth_request_source() (the lockout's
-// source over stubs/receipt_grant's peer). Stand-ins: the wizard flag, the
-// pair-token store, the session bridge, and the handlers the wrappers guard
-// (Forget's clears the stored network, as wifi_clear_credentials() does).
+// the reboot and safe-mode-retry wrappers, ble_improv_door_should_open()
+// and auth_request_source() (the lockout's source over stubs/receipt_grant's
+// peer). Stand-ins: the wizard flag, the pair-token store, the session
+// bridge, and the handlers the wrappers guard (Forget's clears the stored
+// network, as wifi_clear_credentials() does).
 // What it pins:
 //   - after setup, the landing page's pair token alone, its session alone,
 //     and both together: 401 with WWW-Authenticate and no strike (before:
@@ -40,12 +46,15 @@
 //     (before: Forget ran and the door opened); the bearer runs each once;
 //     Reconnect, which only rejoins the stored network, still takes the
 //     session;
+//   - the reboot and the safe-mode retry: a session alone is 401 and the
+//     unit does not restart (before: it did), a wrong bearer is 403 and a
+//     strike, the bearer restarts it once;
 //   - the door's composition of the keyless-join rule;
 //   - the sketch's text (CANARY_WAP_INO, comments stripped): POST
 //     /api/wifi/qr-scan answers 404 outside setup before it reads anything;
 //     Connect and AP-only ask the gate before any write; the boot scan asks
 //     the keyless-join rule first; Forget clears the broker login after the
-//     networks and reports it; the four routes are registered on these
+//     networks and reports it; the six routes are registered on these
 //     handlers.
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host run-wifi-authority
@@ -143,6 +152,17 @@ static esp_err_t handle_wifi_reconnect(httpd_req_t* req) {
   ++g_reconnects;
   return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
+// The two restarts (F361), each counting the restart it would make.
+static int g_reboots = 0;
+static int g_safe_mode_retries = 0;
+static esp_err_t handle_reboot(httpd_req_t* req) {
+  ++g_reboots;
+  return httpd_resp_sendstr(req, "{\"ok\":true,\"message\":\"Rebooting...\"}");
+}
+static esp_err_t handle_safe_mode_retry(httpd_req_t* req) {
+  ++g_safe_mode_retries;
+  return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
 
 // ── the functions, cut verbatim out of canary_wap.ino ────────────────────────
 #include WIFI_AUTHORITY_INC
@@ -186,6 +206,7 @@ void reset_device() {
   g_improv_join_pending = false;
   g_wifi_ap_only = false;
   g_disconnects = g_forgets = g_reconnects = 0;
+  g_reboots = g_safe_mode_retries = 0;
   g_auth_table = {};
   stub_grant::now_ms = 100000;
 }
@@ -375,6 +396,43 @@ void test_reconnect_still_takes_the_session() {
   std::printf("PASS reconnect_still_takes_the_session\n");
 }
 
+// ── the reboot and the safe-mode retry (F361) ────────────────────────────────
+
+// Both take the bearer alone: a session alone is 401 with no strike and the
+// unit does not restart, a wrong bearer beside it is 403 and one strike, and
+// the bearer restarts it once. The same during setup (no session exists
+// then; the wrappers ask nothing about it). Before F361 the session
+// restarted the unit at will, and each restart emptied the lockout table.
+void test_the_reboot_routes_take_the_bearer() {
+  struct Route { const char* name; esp_err_t (*wrapper)(httpd_req_t*); int* ran; };
+  const Route routes[] = {
+      {"reboot", handle_reboot_auth, &g_reboots},
+      {"safe-mode retry", handle_safe_mode_retry_auth, &g_safe_mode_retries},
+  };
+  for (const Route& rt : routes) {
+    for (bool during_setup : {false, true}) {
+      const std::string name = std::string(rt.name) + (during_setup ? " (setup)" : "");
+      reset_device();
+      setup_wizard::g_active = during_setup;
+      Req s;
+      s.cookie();
+      CHECK(rt.wrapper(&s.r) == ESP_OK);
+      CHECK_MSG(s.r.status == "401 Unauthorized" && has_header(s.r, "WWW-Authenticate"), name);
+      CHECK_MSG(*rt.ran == 0 && strikes(kHostA) == 0, name);
+      Req w;
+      w.cookie().bearer(kWrong);
+      CHECK(rt.wrapper(&w.r) == ESP_OK);
+      CHECK_MSG(w.r.status == "403 Forbidden" && *rt.ran == 0, name);
+      CHECK_MSG(strikes(kHostA) == 1, name);
+      Req b;
+      b.from(192, 168, 1, 21).bearer(kToken);
+      CHECK(rt.wrapper(&b.r) == ESP_OK);
+      CHECK_MSG(b.r.status == "200 OK" && *rt.ran == 1, name);
+    }
+  }
+  std::printf("PASS the_reboot_routes_take_the_bearer\n");
+}
+
 // The setup door's composition of keyless_join_open() (the boot scan's rule
 // too): open on a unit with no proven network that is not standalone.
 void test_the_door_asks_the_keyless_join_rule() {
@@ -522,8 +580,10 @@ void test_sketch_text() {
   const int says = first_with(forget, "doc[\"broker_login_cleared\"] = login_cleared;");
   CHECK(wipe >= 0 && clear > wipe && when == clear + 1 && reinit == when + 1 && says > reinit);
 
-  // The four routes are registered on the handlers this suite holds.
+  // The six routes are registered on the handlers this suite holds.
   for (const char* reg : {
+           "httpd_uri_t reboot = { .uri = \"/api/reboot\", .method = HTTP_POST, .handler = handle_reboot_auth };",
+           "httpd_uri_t safe_retry = { .uri = \"/api/safe-mode/retry\", .method = HTTP_POST, .handler = handle_safe_mode_retry_auth };",
            "httpd_uri_t wifi_connect = { .uri = \"/api/wifi/connect\", .method = HTTP_POST, .handler = handle_wifi_connect };",
            "httpd_uri_t wifi_ap_only = { .uri = \"/api/wifi/ap-only\", .method = HTTP_POST, .handler = handle_wifi_ap_only };",
            "httpd_uri_t wifi_disconnect = { .uri = \"/api/wifi/disconnect\", .method = HTTP_POST, .handler = handle_wifi_disconnect_auth };",
@@ -543,12 +603,13 @@ int main() {
   test_during_setup_the_wizard_gate_is_unchanged();
   test_forget_and_disconnect_take_the_bearer();
   test_reconnect_still_takes_the_session();
+  test_the_reboot_routes_take_the_bearer();
   test_the_door_asks_the_keyless_join_rule();
   test_sketch_text();
   if (g_failures) {
     std::printf("%d of %d checks FAILED\n", g_failures, g_checks);
     return 1;
   }
-  std::printf("ALL %d Wi-Fi authority checks PASSED\n", g_checks);
+  std::printf("ALL %d post-setup authority checks PASSED\n", g_checks);
   return 0;
 }

@@ -155,8 +155,8 @@ struct RateLimitEntry {
  * GET    /api/config                      - Get current configuration
  * POST   /api/config                      - Update configuration
  * POST   /api/export                      - Create export bundle
- * POST   /api/reboot                      - Reboot device
- * POST   /api/safe-mode/retry             - Leave safe mode and retry
+ * POST   /api/reboot                      - Reboot device (bearer alone, F361)
+ * POST   /api/safe-mode/retry             - Leave safe mode and retry (bearer alone, F361)
  * POST   /api/identify                    - Blink to identify
  * POST   /api/device-name                 - Set the device name
  * GET    /api/selftest                    - Run the self-test

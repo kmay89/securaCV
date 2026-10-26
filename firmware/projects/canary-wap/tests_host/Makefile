@@ -584,18 +584,20 @@ clean-receipt-grant:
 run: run-receipt-grant
 clean: clean-receipt-grant
 
-# Who may move the network the unit joins (sweep F334, F345, F333): after
-# first-boot setup the bearer alone. wifi_change_authorize() (POST
-# /api/wifi/connect and /ap-only), the Forget, Disconnect and Reconnect
-# wrappers, ble_improv_door_should_open() and auth_request_source() cut
+# Who may move the network the unit joins (sweep F334, F345, F333), and who
+# may reboot it (F361): after first-boot setup the bearer alone.
+# wifi_change_authorize() (POST /api/wifi/connect and /ap-only), the Forget,
+# Disconnect and Reconnect wrappers, the reboot and safe-mode-retry wrappers,
+# ble_improv_door_should_open() and auth_request_source() cut
 # verbatim out of canary_wap.ino (firmware/tests_host/cut_functions.awk), over
 # stubs/receipt_grant, the REAL api_auth.h (the per-address lockout) and the
 # REAL provisioning_logic.h (keyless_join_open(), the setup door's and the
 # boot scan's one rule), with stand-ins for the wizard flag, the pair-token
 # store, the session bridge and the handlers the wrappers guard. After setup
 # the landing page's pair token and session get 401 and no strike, a wrong
-# bearer 403 and one strike for its own address, and a session's Forget
-# leaves the network on file and the setup door shut; during setup the
+# bearer 403 and one strike for its own address, a session's Forget leaves
+# the network on file and the setup door shut, and a session's reboot
+# restarts nothing; during setup the
 # wizard's gate is unchanged. It also reads the sketch's text (its path is
 # passed in): POST /api/wifi/qr-scan answers 404 outside setup before
 # anything else, Connect and AP-only ask the gate before any write, the boot
@@ -607,7 +609,7 @@ WAUTH_CUT = ../../../tests_host/cut_functions.awk
 CUT_INCS += $(WAUTH_INC)
 
 $(WAUTH_INC): $(SRC_DIR)/canary_wap.ino $(WAUTH_CUT) Makefile
-	awk -v 'sigs=uint32_t auth_request_source(httpd_req_t* req) {|static WifiChangeAuth wifi_change_authorize(httpd_req_t* req,|static esp_err_t handle_wifi_disconnect_auth(httpd_req_t* req) {|static esp_err_t handle_wifi_forget_auth(httpd_req_t* req) {|static esp_err_t handle_wifi_reconnect_auth(httpd_req_t* req) {|bool ble_improv_door_should_open() {' \
+	awk -v 'sigs=uint32_t auth_request_source(httpd_req_t* req) {|static WifiChangeAuth wifi_change_authorize(httpd_req_t* req,|static esp_err_t handle_wifi_disconnect_auth(httpd_req_t* req) {|static esp_err_t handle_wifi_forget_auth(httpd_req_t* req) {|static esp_err_t handle_wifi_reconnect_auth(httpd_req_t* req) {|static esp_err_t handle_reboot_auth(httpd_req_t* req) {|static esp_err_t handle_safe_mode_retry_auth(httpd_req_t* req) {|bool ble_improv_door_should_open() {' \
 	  -f $(WAUTH_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
 # api_auth.h's helpers these functions never call are unused here, and its

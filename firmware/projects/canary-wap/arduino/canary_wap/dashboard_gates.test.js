@@ -56,6 +56,9 @@
 //     names what it re-opens (the setup door, a camera's code scan) and the
 //     broker login it drops (F333), and a Forget whose login clear the
 //     device could not make says where to clear it.
+//   * The reboot takes the API token (F361): Reboot Device and Retry full
+//     boot go through the same sign-in, so a session-only page's refusal
+//     says "Rebooting…" to nobody, and the card says the token is needed.
 //
 // The page's own code is cut out of web_ui.h by markers that stand in the page
 // before and after these changes (so the old page runs here and fails on what
@@ -862,5 +865,55 @@ describe('The network moves on the bearer alone (F334, F345)', () => {
   it('the Wi-Fi card says the token is needed, above its buttons', () => {
     const card = slice('<div id="wifiSetupSection">', 'id="wifiConnectBtn"');
     assert.ok(card.includes('<p class="tnote">Changing Wi-Fi takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once.</p>'));
+  });
+});
+
+// ── The reboot takes the API token (F361) ────────────────────────────────
+
+describe('The reboot takes the API token (F361)', () => {
+  function rebootPage(status) {
+    const sent = [];
+    const p = pageContext({}, {
+      API_BASE: '', apiToken: null,
+      fetch: async (url, opts = {}) => {
+        sent.push(`${opts.method || 'GET'} ${url}`);
+        if (status === 'drop') throw new TypeError('Failed to fetch');   // the restart cut the link
+        return { status, ok: status === 200, text: async () => '{"ok":true}', json: async () => ({}) };
+      },
+    });
+    p.ctx.window._refreshInterval = 7;
+    vm.runInContext(apiSrc + uiFunction('showAuthModal', false) + uiFunction('hideAuthModal', false) +
+      uiFunction('confirmReboot', true) + uiFunction('retryFullBoot', true) +
+      '\nglobalThis.__r = { confirmReboot, retryFullBoot };\n', p.ctx);
+    p.sent = sent;
+    return p;
+  }
+
+  it('a session-only reboot brings the sign-in up and says "Rebooting…" to nobody', async () => {
+    for (const [fn, url] of [['confirmReboot', '/api/reboot'], ['retryFullBoot', '/api/safe-mode/retry']]) {
+      const p = rebootPage(401);
+      await p.ctx.__r[fn]();
+      assert.deepEqual(p.sent, [`POST ${url}`], fn);
+      assert.deepEqual(p.record.alerts, [], fn);
+      assert.equal(p.el('authOverlay').classList.contains('hidden'), false, fn);
+      assert.match(p.el('authStatus').textContent, /Paste the API token, or use BOOT Tap Once/);
+    }
+  });
+
+  it('a served reboot, or one whose restart cut the link, says it is rebooting', async () => {
+    for (const status of [200, 'drop']) {
+      const p = rebootPage(status);
+      await p.ctx.__r.confirmReboot();
+      assert.deepEqual(p.record.alerts, ['Rebooting…'], String(status));
+      const q = rebootPage(status);
+      await q.ctx.__r.retryFullBoot();
+      assert.deepEqual(q.record.alerts, ['Rebooting into full operation…'], String(status));
+    }
+  });
+
+  it('the device card says the token is needed, above Reboot Device', () => {
+    const card = slice('<p class="tnote">Rebooting this Canary takes the API token', 'onclick="confirmReboot()"');
+    assert.ok(card.includes('<p class="tnote">Rebooting this Canary takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once.</p>'));
+    assert.ok(card.length < 600, 'the note sits with the Save and Reboot buttons');
   });
 });

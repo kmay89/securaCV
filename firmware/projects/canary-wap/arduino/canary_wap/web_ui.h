@@ -2449,7 +2449,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
               <option value="3">Warning</option>
             </select>
           </div>
-          <div style="display:flex;gap:0.5rem;margin-top:1rem;flex-wrap:wrap;">
+          <p class="tnote">Rebooting this Canary takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once.</p>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
             <button class="btn btn-primary" onclick="saveConfig()" title="Save current settings to the canary's flash so they survive a reboot">Save Configuration</button>
             <button class="btn btn-danger" onclick="confirmReboot()" title="Restart the device (witness chain preserved)">Reboot Device</button>
           </div>
@@ -5762,8 +5763,10 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (lvl && data.log_level != null) lvl.value = data.log_level;
     }
 
-    async function confirmReboot() { if (confirm('Restart this Canary? It will be offline for about a minute, then come back on its own. No records are lost.')) { try { await api('/api/reboot', 'POST'); } catch (_) { /* device may drop the connection mid-reboot */ } alert('Rebooting…'); } }
-    async function retryFullBoot() { if (confirm('Retry a full boot? The device will reboot and re-enable all peripherals.')) { try { await api('/api/safe-mode/retry', 'POST'); } catch (_) { /* device may drop the connection mid-reboot */ } alert('Rebooting into full operation…'); } }
+    // Both take the API token (sweep F361): a refusal has raised the sign-in.
+    // api() never throws; a reboot that drops the link reads as sent.
+    async function confirmReboot() { if (confirm('Restart this Canary? It will be offline for about a minute, then come back on its own. No records are lost.') && !signInRaised(await api('/api/reboot', 'POST'))) alert('Rebooting…'); }
+    async function retryFullBoot() { if (confirm('Retry a full boot? The device will reboot and re-enable all peripherals.') && !signInRaised(await api('/api/safe-mode/retry', 'POST'))) alert('Rebooting into full operation…'); }
     async function rotateOldLogs() {
       if (!confirm('Delete older witness-export bundles from the SD card to free space? Sealed witness records and the hash chain are NOT affected — only regenerable export files are removed.')) return;
       const data = await api('/api/logs/rotate', 'POST', {});

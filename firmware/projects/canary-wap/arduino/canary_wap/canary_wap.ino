@@ -9645,13 +9645,18 @@ static esp_err_t handle_export_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_export(req);
 }
+// The two reboot routes take the bearer alone (sweep F361), as the Wi-Fi
+// routes do after setup (no session exists during it): the landing page
+// mints a session for any host on the network, and a reboot at will is a
+// LAN denial that also empties the RAM lockout table, resetting a token
+// guesser's budget. The flagship's reboot takes the bearer too.
 static esp_err_t handle_reboot_auth(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_reboot(req);
 }
 
 static esp_err_t handle_safe_mode_retry_auth(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_safe_mode_retry(req);
 }
 
