@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+<<<<<<< HEAD
 ### The backoffice says which environment and build it is, guards its migrations, carries feature flags, and reaches production only through a promote button (backoffice 0.2.0)
 
 - **Environment label and build** (`backoffice/src/env.mjs`, `version.mjs`):
@@ -25,6 +26,8 @@
   The owner's manual, the infra README, GO_LIVE and RELEASE_BUTTONS carry the
   story; `backoffice/CHANGELOG.md` starts, held to `package.json` by a test.
 
+=======
+>>>>>>> origin/main
 ### Dependency advisories of 2026-10-19 to -23: the TLS roots and verifier, two constant-time crates, and body-parser (Dependency Audit #330)
 
 - **Five advisories, every one with a reachable fix, so none is ignored.**
