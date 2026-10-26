@@ -40,7 +40,7 @@ Confirm that Settings is easy to reach without weakening the threat model:
 - Confirm a session alone does not fetch the recovery kit: **Settings**, **Device**, **Recovery kit** on a page signed in only by the cookie brings the sign-in back, which reads "Your session does not cover this, or has ended", and BOOT Tap Once then saves the kit.
 - Confirm a session alone does not register a vault key: Register on a cookie-only page brings the sign-in back with no alert; Not now returns; a mistyped token is refused at the sign-in; pasting the right token then registers it.
 - Confirm a cookie-only page cannot confirm a Bluetooth or opera pairing: Start Pairing and Create/Join bring the sign-in up first (Not now goes back), a mistyped token is refused there, and a curl confirm with the cookie alone answers 401.
-- Confirm a cookie-only page cannot change the Wi-Fi or reboot the unit after setup: Connect, Remove credentials, Disconnect, Reboot Device and Retry full boot bring the sign-in up with no "Failed" alert and the typed network kept, and a curl to `/api/wifi/connect`, `/api/wifi/forget` or `/api/reboot` with the cookie alone answers 401.
+- Confirm a cookie-only page cannot change the Wi-Fi, or reboot the unit with Reboot Device or Retry full boot, after setup: Connect, Remove credentials, Disconnect, Reboot Device and Retry full boot bring the sign-in up with no "Failed" alert and the typed network kept, and a curl to `/api/wifi/connect`, `/api/wifi/forget` or `/api/reboot` with the cookie alone answers 401.
 - Confirm unauthenticated calls to protected endpoints such as `/api/status` return `401` or `403`.
 - Confirm repeated bad token attempts trigger auth backoff instead of unlimited retries.
 

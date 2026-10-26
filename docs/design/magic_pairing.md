@@ -587,7 +587,8 @@ landing session could reboot the WAP (`POST /api/reboot`, `POST
 seconds of guessing got about 37 guesses a minute if the unit was back on
 the LAN 45 s later, about 100 at 10 s, about 155 at 5 s (modeled in
 `test_auth_backoff.cpp`; the boot time is not measured). Both routes take
-the bearer alone now, as the flagship's reboot does. Not closed by it: ARP spoofing; httpd's LRU purge (a host that opens
+the bearer alone now, as the flagship's reboot does; a session's firmware
+install restarts the unit only into a newer signed image. Not closed by it: ARP spoofing; httpd's LRU purge (a host that opens
 enough connections closes the owner's); nine or more striking addresses (the
 overflow, above); and a cross-site `<img src=...?token=x>`, which holds the
 visiting browser's own address. A phone that still holds a pairing for a

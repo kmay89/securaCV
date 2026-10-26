@@ -369,8 +369,10 @@ setup `POST /api/wifi/connect`, `/ap-only`, `/disconnect` and `/forget`
 (F334, F345; `POST /api/wifi/qr-scan` answers `404` after setup), and `POST
 /api/reboot` and `POST /api/safe-mode/retry` (F361). The
 `/api/mqtt/config` row names the one save the session alone cannot make
-there. The dashboard asks for the token before those actions; paste it from
-the recovery kit, or use BOOT Tap Once.
+there. The dashboard asks for the token at those actions: before Start
+Pairing and the opera's Create/Join begin, and when any of the others is
+refused (the Wi-Fi, vault key, reboot and pairing-QR cards say so
+beforehand); paste it from the recovery kit, or use BOOT Tap Once.
 
 ```json
 {

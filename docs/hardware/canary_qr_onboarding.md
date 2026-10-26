@@ -81,11 +81,17 @@ it the shared grammar and made it scan on its own:
   the Bluetooth setup door's rule (`provisioning_logic::keyless_join_open()`,
   sweep F333): no network stored and not standalone, so a unit set
   standalone in the wizard no longer scans (any code held to its lens used
-  to take it off standalone). To add a standalone unit to a display's
-  fleet, change its Wi-Fi from the dashboard (the API token or one BOOT
-  tap), or hold BOOT 10 s, then show the code. A phone captive-portal
-  session takes the camera over cleanly during first-boot setup; after
-  setup `POST /api/wifi/qr-scan` answers `404` (F334).
+  to take it off standalone), and a window that was already running when
+  the owner chose standalone ends at its next frame. To add a standalone
+  unit to a display's fleet, hold BOOT 10 s, then show the code: the hold
+  clears standalone and the stored networks, and the unit scans again.
+  Changing its Wi-Fi from the dashboard (the API token or one BOOT tap)
+  stores a network, and a unit with a network stored does not scan; join
+  the display's network that way and type the hub as the broker on
+  `/mqtt` instead. Forget Wi-Fi leaves a standalone unit standalone. A
+  phone captive-portal session takes the camera over cleanly during
+  first-boot setup; after setup `POST /api/wifi/qr-scan` answers `404`
+  (F334).
 - **Session vs. proximity auth:** the display-minted `SCV1` path carries
   its own expiring token, so the phone-session pair-token gates don't
   apply to it; a plain `WIFI:` code in boot-scan mode joins Wi-Fi and

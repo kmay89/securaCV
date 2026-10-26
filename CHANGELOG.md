@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### canary-wap: after setup the API token alone moves its network, reboots it, re-keys its vault and confirms a pairing, and the sign-in checks a pasted token by itself; a failed provisioning says what the unit does (sweep F333, F334, F335, F336, F345, F346, F348, F349, F361, #<PR>)
+### canary-wap: after setup the API token alone moves its network, re-keys its vault, confirms a pairing and reboots it (the firmware install aside), and the sign-in checks a pasted token by itself; a failed provisioning says what the unit does (sweep F333, F334, F335, F336, F345, F346, F348, F349, F361, #<PR>)
 
 - **canary-wap: one dashboard sign-in, which checks a pasted token by itself
   (the owner-authority items' shared sign-in).** On a page holding the
@@ -11,9 +11,10 @@
   token and refused one step later, at whatever needed the bearer. It now
   sends the pasted token without the cookie (`credentials: 'omit'`), so a
   mistype reads "Invalid or expired token. Please re-enter." at the sign-in
-  (and costs that browser's address one strike: a re-paste within 2 s reads
-  "Too many failed attempts. Retry in 2 seconds."). A sign-in a running
-  dashboard brings up has a **Not now** button; a refused action alerts
+  (and costs that browser's address one strike: a re-paste in the next 2 s
+  is refused for the rest of that backoff, "Too many failed attempts. Retry
+  in … seconds."). A sign-in a running dashboard brings up has a **Not
+  now** button; a refused action alerts
   nothing on top of it; every card whose action takes the token says so
   beforehand ("… takes the API token: paste it (it is in your recovery kit),
   or use BOOT Tap Once."); and the "another device asked" copy names
@@ -37,10 +38,13 @@
   discovery): retype the login on `/mqtt` afterwards, or use Connect, which
   keeps it. Its confirm says what it re-opens. A camera unit set standalone
   no longer scans Wi-Fi codes (the boot scan asks the setup door's rule,
-  `keyless_join_open()`); to add one to a display's fleet, change its Wi-Fi
-  from the dashboard, or hold BOOT 10 s, then show the code. The 10 s hold
-  is the token-free way out, and works whatever the lockout is doing. Kept
-  as posture: the plain broker link (`tls_mode` 0), which a host answering
+  `keyless_join_open()`, and a running window asks it again after every
+  frame); to add one to a display's fleet, hold BOOT 10 s, then show the
+  code, or join it to the display's network from the dashboard and type the
+  hub as the broker on `/mqtt` (a unit with a network stored does not scan,
+  and Forget leaves a standalone unit standalone). The 10 s hold is the
+  token-free way out, and works whatever the lockout is doing. Kept as
+  posture: the plain broker link (`tls_mode` 0), which a host answering
   for the broker can still read; the CA-verified mode is the defense.
   Host-tested (`test_wifi_authority`, `test_provisioning_logic`,
   `test_mqtt_reinit`, `dashboard_gates.test.js`, `test_docs_claims.py`);
@@ -58,8 +62,8 @@
   half). Numeric Comparison digits and the mesh code stay visible: both ends
   compute them. The dashboard asks for the token at Start Pairing and at the
   opera's Create/Join, before the phone's or the opera's clock runs; a
-  comparison the page did not start leads with "Don't match"; a finished
-  pairing shows no digits. The other vault routes stay on the session (a
+  comparison on a page without the API token leads with "Don't match"; a
+  finished pairing shows no digits. The other vault routes stay on the session (a
   session can destroy sealed frames but not redirect them). Host-tested
   (`test_bluetooth_commands_wap`, `test_receipt_grant`,
   `dashboard_gates.test.js`); not bench-tested. After updating: compare the
@@ -68,14 +72,17 @@
   yours). After updating: check Settings > Bluetooth > Paired devices and the
   Opera peers for anything you do not recognize, and remove it; a bond or
   peer a session made before this release persists.
-- **canary-wap: the API token alone reboots the unit (sweep F361).** `POST
-  /api/reboot` and `POST /api/safe-mode/retry` took the landing page's
-  session, so any host on the home network could reboot the unit at will,
-  and each reboot emptied the RAM lockout table, resetting a token guesser's
-  budget. Both take the bearer alone now, as the flagship's reboot does.
-  Reboot Device and Retry full boot on the dashboard ask for the token
-  through the same sign-in. Host-tested (`test_wifi_authority`,
-  `dashboard_gates.test.js`); not bench-tested.
+- **canary-wap: the API token alone reboots the unit, the firmware install
+  aside (sweep F361).** `POST /api/reboot` and `POST /api/safe-mode/retry`
+  took the landing page's session, so any host on the home network could
+  reboot the unit at will, and each reboot emptied the RAM lockout table,
+  resetting a token guesser's budget. Both take the bearer alone now, as the
+  flagship's reboot does. Reboot Device and Retry full boot on the dashboard
+  ask for the token through the same sign-in. A session can still start the
+  dashboard's firmware install (or turn automatic updates on), which
+  restarts the unit only into a newer signed image. Host-tested
+  (`test_wifi_authority`, `dashboard_gates.test.js`, `test_docs_claims.py`);
+  not bench-tested.
 - **canary-wap: a failed provisioning says what the unit does (sweep F336,
   decision).** `setup()` no longer prints "HALTING" (it never halted) or says
   it still serves HTTP. A release build prints `[!!] PROVISIONING FAILED -

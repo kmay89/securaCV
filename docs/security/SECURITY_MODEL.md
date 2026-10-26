@@ -448,8 +448,9 @@ so a page planted over plain HTTP is cross-origin to the device and takes
 none of these (it reads nothing; but `SameSite=Strict` compares sites, so in
 a browser that does not count the scheme in the site, as Chromium does, its
 requests still carry the session cookie and it can write blind with the
-owner's session: any write a session may make, which since F361 is no
-longer a reboot); a page
+owner's session: any write a session may make, of which since F361 only
+the firmware install restarts the unit, and only into a newer signed
+image); a page
 served over https at that name whose certificate
 warning the owner accepted still does, and so does any page during the
 first-boot setup or on a unit whose HTTPS start failed, which serve plain
@@ -545,11 +546,13 @@ owner types on `/mqtt` after a Forget and before the unit is set up again
 can reach whoever answers the stored broker on a plain link (the
 CA-verified mode is the defense), and the boot scan has no time window.
 
-The session also cannot make a write that grants a credential, move the
-unit off its owner's network, or reboot it. These routes take the bearer
-alone, never the session (`api_auth_check_bearer()`, or for one answer
-field the accounted `api_auth_bearer_grant()`; `api_auth.h` points here for
-the list):
+The session also cannot make a write that grants a credential or moves the
+unit off its owner's network, and of its writes only the firmware install
+restarts the unit (`POST /api/ota/install`, or automatic updates turned on
+with `POST /api/ota/config`), which installs only a newer signed image.
+These routes take the bearer alone, never the session
+(`api_auth_check_bearer()`, or for one answer field the accounted
+`api_auth_bearer_grant()`; `api_auth.h` points here for the list):
 - `GET /api/provisioning-receipt` and `GET /api/pairing-qr` (F289);
 - `POST /api/vault/key`, the vault's recipient key, which decides who can
   open every frame sealed from then on (F335);
@@ -614,8 +617,10 @@ guesses a minute between reboots from any number of addresses. Until F361 a
 landing session could reboot the unit at will (`POST /api/reboot`, `POST
 /api/safe-mode/retry`), so a guesser that rebooted it every few seconds got
 more (about 100 a minute if it was back on the LAN 10 s later;
-`THREAT_MODEL.md` scenario 10); both routes take the bearer now. The
-token's entropy stays the bound. Host-tested; not run on a device. Every bearer
+`THREAT_MODEL.md` scenario 10); both routes take the bearer now, and a
+session's firmware install restarts the unit only into a newer signed
+image. The token's entropy stays the bound. Host-tested; not run on a
+device. Every bearer
 compare on the WAP counts toward that per-address lockout, and none is
 compared while its address is held (sweep
 F339): the receipt and the pairing QR; the admin routes; the CSI routes, the

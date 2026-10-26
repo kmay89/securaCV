@@ -3385,8 +3385,10 @@
   answered the check the token was meant to pass.
 - **Fix:** after setup the bearer alone (`api_auth_check_bearer()`) gates
   every change to the network the unit joins, on every interface, and every
-  write that grants a credential (the vault key, the two confirms) or
-  reboots the unit; `POST /api/wifi/qr-scan` answers `404` outside setup.
+  write that grants a credential (the vault key, the two confirms), and the
+  two reboot routes; `POST /api/wifi/qr-scan` answers `404` outside setup.
+  The firmware install stays on the session and restarts the unit only into
+  a newer signed image.
   The setup window is a branch in code (`setup_wizard::is_active()`), not a
   comment. The setup door and the camera's boot scan, two doors to one act
   (a join that asks for no credential), share one predicate,

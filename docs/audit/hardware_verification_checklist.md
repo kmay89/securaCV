@@ -3246,7 +3246,7 @@ the compile is CI's; nothing here ran on a device or in a browser. Owner: U1.
     `docs/audit/repro/F341/flagship-receipt/`; step 7:
     `docs/audit/repro/F340/refused-token/`).
 
-## canary-wap: after setup the API token alone moves the network, reboots the unit, re-keys the vault and confirms a pairing (F334, F345, F333, F335, F346, F361) — on-device verification
+## canary-wap: after setup the API token alone moves the network, re-keys the vault, confirms a pairing and, the firmware install aside, reboots the unit (F334, F345, F333, F335, F346, F361) — on-device verification
 
 Host-tested (`test_wifi_authority`, `test_receipt_grant`,
 `test_bluetooth_commands_wap`, `test_mqtt_reinit`, `test_provisioning_logic`,
@@ -3275,7 +3275,7 @@ vault, Bluetooth, opera and device cards in `web_ui.h`. Owner: U1.
   - Artifact: `docs/audit/repro/wap-network-authority/http/`.
 - [ ] **The dashboard asks for the token once, and catches a mistyped one**
   - Setup: a browser signed in only by the landing.
-  - Repro: Settings → Wi-Fi shows the token note. Type a network and press Connect. In the sign-in, paste a wrong `cv_` token, then the kit's token, then press Connect again.
+  - Repro: Settings → Wi-Fi shows the token note. Type a network and press Connect. In the sign-in, paste a wrong `cv_` token, then the kit's token 3 s later (the wrong one is a strike: a 2 s backoff for this address), then press Connect again.
   - Expected: the sign-in overlay with no 'Failed:' alert and the SSID kept; the wrong token reads 'Invalid or expired token. Please re-enter.'; the right one signs in; Connect joins.
   - Artifact: a screen recording.
 - [ ] **On the recovery portal, Connect asks for the token or one BOOT tap**
@@ -3302,9 +3302,9 @@ vault, Bluetooth, opera and device cards in `web_ui.h`. Owner: U1.
   - Artifact: `docs/audit/repro/wap-network-authority/forget/`.
 
 - [ ] **A standalone camera unit takes no code (F333)**
-  - Setup: a camera WAP set standalone in the wizard; serial attached; a phone showing a `WIFI:` code.
-  - Repro: hold the code to the lens for 3 minutes; read serial and `GET /api/wifi`.
-  - Expected: no scan window, no chirp, still ap_only. Hold BOOT 10 s and show the code again: it joins.
+  - Setup: an unprovisioned camera WAP, its boot scan running (serial attached); a second phone showing a `WIFI:` code.
+  - Repro: choose standalone in the wizard, then at once hold the code to the lens for 3 minutes; read serial and `GET /api/wifi`.
+  - Expected: no chirp and still ap_only, though the window running at the choice had up to 60 s left (it ends at its next frame); no new window starts. Hold BOOT 10 s and show the code again: it joins.
   - Artifact: `docs/audit/repro/wap-network-authority/standalone-scan/`.
 - [ ] **After Forget a code carries no login (F333)**
   - Setup: a camera WAP with a broker login saved; a display minting an add-a-canary code for another broker; that broker's log open.
@@ -3353,10 +3353,11 @@ vault, Bluetooth, opera and device cards in `web_ui.h`. Owner: U1.
   - An HTTPS variant is blocked until a WAP serves HTTPS.
   - Artifact: `docs/audit/repro/F346/`.
 
-- [ ] **A session reboots nothing (F361)**
+- [ ] **A session's reboot restarts nothing (F361)**
   - Setup: a FULL WAP set up on the home Wi-Fi (plain HTTP); a laptop with
     the landing cookie and the API token; a browser that loaded
-    `http://canary-<suffix>.local/` (a session only).
+    `http://canary-<suffix>.local/` (a session only). For step 5, a unit
+    flashed with a release older than the published signed one.
   - Repro:
     1. `curl -s -w '%{http_code}\n' -X POST -H "Cookie: cv_session=<hex>" http://<sta-ip>/api/reboot`,
        then `GET /api/status` with the cookie (its uptime).
@@ -3364,11 +3365,19 @@ vault, Bluetooth, opera and device cards in `web_ui.h`. Owner: U1.
     3. Repeat both against `http://<sta-ip>/api/safe-mode/retry`.
     4. On the session-only dashboard: Settings → Device, Reboot Device,
        confirm. Paste the token in the sign-in, then Reboot Device again.
+    5. On the older unit, `curl -s -w '%{http_code}\n' -X POST -H "Cookie:
+       cv_session=<hex>" http://<sta-ip>/api/ota/install` (that unit's
+       landing cookie), then poll `GET /api/ota/status` and `GET
+       /api/status` with the cookie.
   - Expected: the cookie-only POSTs answer 401 and the uptime keeps
     counting; the bearer's answer 200 and the unit restarts; the device
     card shows "Rebooting this Canary takes the API token…"; the first
     dashboard press brings the sign-in with no "Rebooting…" alert, and the
-    second says "Rebooting…" and the unit restarts.
+    second says "Rebooting…" and the unit restarts. Step 5 answers 200 and
+    the unit restarts into the published release: the one restart a session
+    still makes, by design here, and only into a newer signed image. Run it
+    again on the updated unit: `GET /api/ota/status` reads
+    `"update_available":false` and the uptime keeps counting.
   - Artifact: `docs/audit/repro/F361/`.
 
 ## canary-wap after a failed provisioning (F336) — on-device verification

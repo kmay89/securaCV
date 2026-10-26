@@ -543,9 +543,11 @@ Once**, then press the button again — on your home network and on the
 Canary's own `SecuraCV-wap-XXXX` network alike.
 That is why the kit comes first.
 
-**Why the dashboard asks to be unlocked on your home network.** The page
-you load carries the key that every button on it uses. Over the Canary's
-own Wi-Fi only your phone can reach it, so the key comes with the page.
+**Why the all-rounder Canary's dashboard asks to be unlocked on your home
+network.** (A WAP's pages never carry the key, on either network: above.)
+The page you load carries the key that every button on it uses. Over the
+Canary's own Wi-Fi only your phone can reach it, so the key comes with the
+page.
 On your home network any device could load that page, so the Canary sends
 it *without* the key and shows a banner with three ways in:
 

@@ -1758,12 +1758,26 @@ so — see D2 below.)
   whoever answers the stored broker on a plain link (the CA-verified mode is
   the defense); the boot scan has no time window.
   Owner cost: retype the login on /mqtt after a Forget; Connect keeps it.
+  To add a standalone unit to a display's fleet, hold BOOT 10 s, then show
+  the code; a unit with a network stored (after a dashboard Connect) does
+  not scan, and Forget leaves a standalone unit standalone.
+  Review fixes (same PR): the rule was asked only when a boot window
+  started, so a window already running when the wizard's standalone choice
+  (or any stored network) landed kept up to 60 s in which a `WIFI:` code
+  took the unit off standalone. `qr_scan_task_fn()` now asks
+  `keyless_join_open()` after every frame, before a code read in it acts,
+  and ends the window when it is shut (`test_wifi_authority`'s text pin,
+  5 of its checks fail on the old task). And no test saw `login_clear()`'s
+  readback: `stubs/mqtt/Preferences.h` gained a remove-refusal hook, and
+  `test_mqtt_reinit`'s a_refused_remove_reads_back_false fails on a
+  `login_clear()` or a `config_clear()` that answers true regardless.
   Host-tested (`test_provisioning_logic`'s keyless_join_open table,
   `test_mqtt_reinit`'s forget_drops_the_broker_login,
-  login_clear_waits_for_a_save and login_clear_on_a_row_without_one,
-  `test_wifi_authority`'s and `test_docs_claims.py`'s text pins), not
-  bench-tested (the U1 rows "A standalone camera unit takes no code (F333)"
-  and "After Forget a code carries no login (F333)").
+  login_clear_waits_for_a_save, login_clear_on_a_row_without_one and
+  a_refused_remove_reads_back_false, `test_wifi_authority`'s and
+  `test_docs_claims.py`'s text pins), not bench-tested (the U1 rows "A
+  standalone camera unit takes no code (F333)" and "After Forget a code
+  carries no login (F333)").
 - [x] **F334 [decision] canary-wap: the broker gate covers the save, not the
   link.** #1835's move gate (F325) refuses a session's save that moves the
   kept password, and the password still reaches a listener without one. (1) A host on the network
@@ -2475,7 +2489,10 @@ so — see D2 below.)
     hold and a fresh iPhone setup): on a page the landing session signed in,
     `connectWithToken()` still takes the cookie's word for a pasted token.
     The owner-authority PR (F334, F335, F346) revisits this copy once that
-    box checks the token itself (`credentials: 'omit'`).
+    box checks the token itself (`credentials: 'omit'`). (Since #<PR>, that
+    PR: `connectWithToken()` sends the pasted token with `credentials:
+    'omit'`, and `tapContendedText()` says to paste the token from the
+    recovery kit if the refusal keeps happening, ahead of the 10 s hold.)
   - Found on the way and fixed: the companion's recovery-kit banner
     (`#wiz-recovery-err`, class `err`, `display:none` until `.show`) never
     had `.show` set, so its guidance was never on screen; the save now
@@ -3573,7 +3590,7 @@ so — see D2 below.)
     Create/Join, before the phone's clock runs.
   - A pasted token is checked by itself (without the cookie), so a mistype is
     refused at the sign-in, not at the confirm.
-  - A comparison the page did not start leads with "Don't match".
+  - A comparison on a page without the API token leads with "Don't match".
   - The sign-in gained Not now.
   - The kernel wizard already sends the bearer.
   Written into `THREAT_MODEL.md` (the BLE pairing row and a bullet in the
@@ -3952,13 +3969,14 @@ so — see D2 below.)
   BOOT hold keeps both (`factory_reset_by_hold()`), so the token a unit was
   set up with is its token for life. After F334, F345, F346 and F361 it is the
   only post-setup authority over the network the WAP joins, its bonds, its
-  vault key and its reboots, and the setup door's winner after the owner's own
-  Forget or hold keeps it (magic_pairing.md §8). Options: a rotation counter
-  in the derivation (the iPhone and Home Assistant pairings then run again),
-  or keep, documented. Whoever implements it must make `nvs_load_token()`
-  answer Loaded, Absent or Refused, as F360 did for the key (reuse
-  `stored_key_length()`'s IDF probe shape), and close F365 in the same PR,
-  with a test that a rotated token survives a failed read. Filed by the
+  vault key and its reboots (a session's firmware install still restarts the
+  unit, only into a newer signed image), and the setup door's winner after the
+  owner's own Forget or hold keeps it (magic_pairing.md §8). Options: a
+  rotation counter in the derivation (the iPhone and Home Assistant pairings
+  then run again), or keep, documented. Whoever implements it must make
+  `nvs_load_token()` answer Loaded, Absent or Refused, as F360 did for the key
+  (reuse `stored_key_length()`'s IDF probe shape), and close F365 in the same
+  PR, with a test that a rotated token survives a failed read. Filed by the
   owner-authority PR (#<PR>), allocated by the network-authority decisions
   (2026-10-20).
 - [ ] **F354 [code] The flagship's BOOT tap still goes to the first asker.**
@@ -4461,8 +4479,18 @@ so — see D2 below.)
   wrong bearer 403 and a strike, the bearer restarts once; 20 of its checks
   fail on the old wrappers) and `dashboard_gates.test.js` 'The reboot takes
   the API token (F361)'. `THREAT_MODEL.md` scenario 10, `SECURITY_MODEL.md`
-  and `magic_pairing.md` §3.7 now say the reboot loop was closed. Host-tested;
-  not bench-tested (U1 row "A session reboots nothing (F361)").
+  and `magic_pairing.md` §3.7 now say the reboot loop was closed.
+  Review fix (same PR): eight sentences of this PR said a session could no
+  longer restart the unit at all (`SECURITY_MODEL.md` twice, the
+  `THREAT_MODEL.md` rebinding row, F353 above, the CHANGELOG twice, the
+  lessons entry, the U1 section's heading), while `POST /api/ota/install` and
+  `POST /api/ota/config` still open with `api_auth_check()` and the install
+  restarts the unit into a newer signed release. Each now names that restart;
+  `test_docs_claims.py` retires the eight and holds the caveat to the handlers
+  (`test_the_firmware_install_is_the_one_restart_a_session_makes`). Gating the
+  install on the bearer would be a new decision, not this one. Host-tested;
+  not bench-tested (U1 row "A session's reboot restarts nothing (F361)", whose
+  step 5 is that install).
 - [ ] **F362 [code+decision] canary-sense, canary-vision and canary-sentinel
   store a new key over a stored one they fail to read.**
   `load_or_generate_keypair()` (`src/witness.cpp:58`, the same lines in all

@@ -177,7 +177,19 @@ BANNED = (
      "since F361 the WAP's reboot routes take the bearer alone, as the "
      "flagship's does"),
     ("owner's session: a reboot, or any other write a session may make",
-     "any write a session may make, which since F361 is no longer a reboot"),
+     "any write a session may make, of which since F361 only the firmware "
+     "install restarts the unit, and only into a newer signed image"),
+    # Retired by that PR's review: a session's firmware install
+    # (POST /api/ota/install, api_auth_check) still restarts the unit once a
+    # newer signed release is published, so "no longer a reboot" was false.
+    ("any write a session may make, which since F361 is no longer a reboot",
+     "of a session's writes only the firmware install restarts the unit, "
+     "and only into a newer signed image"),
+    ("The session also cannot make a write that grants a credential, move "
+     "the unit off its owner's network, or reboot it.",
+     "the session cannot grant a credential or move the unit off its "
+     "owner's network, and of its writes only the firmware install restarts "
+     "the unit, which installs only a newer signed image"),
 )
 
 # Sentences retired from documents the gate above does not scan whole (the
@@ -218,6 +230,30 @@ RETIRED_IN = (
      "session",
      "behind the pair token, which the session can mint, and a code in front "
      "of the camera, which it cannot"),
+    # The owner-authority PR's review: the bearer is not the only authority
+    # over the unit's restarts while the firmware install takes the session.
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "it is the only post-setup authority over the network the WAP joins, "
+     "its bonds, its vault key and its reboots, and",
+     "its reboots, but for a session's firmware install, which restarts the "
+     "unit only into a newer signed image"),
+    ("CHANGELOG.md",
+     "after setup the API token alone moves its network, reboots it, re-keys "
+     "its vault and confirms a pairing",
+     "the firmware install aside: a session may start it, and it restarts "
+     "the unit only into a newer signed image"),
+    ("CHANGELOG.md",
+     "canary-wap: the API token alone reboots the unit (sweep F361).",
+     "the same, the firmware install aside"),
+    ("firmware/LESSONS_LEARNED.md",
+     "every write that grants a credential (the vault key, the two confirms) "
+     "or reboots the unit;",
+     "the two reboot routes; the firmware install stays on the session and "
+     "restarts the unit only into a newer signed image"),
+    ("docs/audit/hardware_verification_checklist.md",
+     "after setup the API token alone moves the network, reboots the unit, "
+     "re-keys the vault and confirms a pairing",
+     "the firmware install aside, which a session may start"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -261,8 +297,12 @@ MUST_PASS = [
     "the health log)",
     "Until F361 a landing session could reboot the unit at will",
     "Until F361 any landing session could reboot the WAP",
-    "owner's session: any write a session may make, which since F361 is no "
-    "longer a reboot",
+    "owner's session: any write a session may make, of which since F361 only "
+    "the firmware install restarts the unit, and only into a newer signed "
+    "image",
+    "The session also cannot make a write that grants a credential or moves "
+    "the unit off its owner's network, and of its writes only the firmware "
+    "install restarts the unit",
 ]
 # The replacements of the RETIRED_IN sentences, which share most of their
 # words with what they replaced.
@@ -278,6 +318,18 @@ MUST_PASS_IN = [
     "that token",
     "behind the pair token, which the session can mint (`GET /api/pair/token` "
     "takes the cookie), and a code in front of the camera, which it cannot",
+    # The owner-authority PR review's replacements.
+    "it is the only post-setup authority over the network the WAP joins, its "
+    "bonds, its vault key and its reboots (a session's firmware install "
+    "still restarts the unit, only into a newer signed image), and",
+    "after setup the API token alone moves its network, re-keys its vault, "
+    "confirms a pairing and reboots it (the firmware install aside)",
+    "canary-wap: the API token alone reboots the unit, the firmware install "
+    "aside (sweep F361).",
+    "every write that grants a credential (the vault key, the two confirms), "
+    "and the two reboot routes;",
+    "after setup the API token alone moves the network, re-keys the vault, "
+    "confirms a pairing and, the firmware install aside, reboots the unit",
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -326,6 +378,12 @@ MUST_FAIL = [
     "(`POST /api/reboot`, `POST /api/safe-mode/retry`), which empties it: a",
     "requests still carry the session cookie and it can write blind with the\n"
     "owner's session: a reboot, or any other write a session may make); a page",
+    # And the owner-authority PR's own overclaims, as its review found them.
+    "requests still carry the session cookie and it can write blind with the\n"
+    "owner's session: any write a session may make, which since F361 is no\n"
+    "longer a reboot); a page",
+    "The session also cannot make a write that grants a credential, move the\n"
+    "unit off its owner's network, or reboot it. These routes take the bearer",
 ]
 # And the RETIRED_IN sentences as they stood, wrapped.
 MUST_FAIL_IN = [
@@ -345,6 +403,17 @@ MUST_FAIL_IN = [
     "  still re-points the broker with the stored password — behind the pair\n"
     "  token and a code in front of the camera, not the session; named in the\n"
     "  ledger.",
+    "  set up with is its token for life. After F334, F345, F346 and F361 it is the\n"
+    "  only post-setup authority over the network the WAP joins, its bonds, its\n"
+    "  vault key and its reboots, and the setup door's winner after the owner's own",
+    "### canary-wap: after setup the API token alone moves its network, reboots it, "
+    "re-keys its vault and confirms a pairing, and the sign-in checks",
+    "- **canary-wap: the API token alone reboots the unit (sweep F361).** `POST",
+    "  every change to the network the unit joins, on every interface, and every\n"
+    "  write that grants a credential (the vault key, the two confirms) or\n"
+    "  reboots the unit; `POST /api/wifi/qr-scan` answers `404` outside setup.",
+    "## canary-wap: after setup the API token alone moves the network, reboots "
+    "the unit, re-keys the vault and confirms a pairing (F334, F345",
 ]
 
 
@@ -519,6 +588,38 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
             body = body_after(ino, f"static esp_err_t {wrapper}(httpd_req_t* req) {{", r"\n}\n")
             self.assertIn("api_auth_check_bearer(req, g_device.api_token_str)", body)
             self.assertNotIn("api_auth_check(", body)
+
+    def test_the_firmware_install_is_the_one_restart_a_session_makes(self):
+        # Since F361 POST /api/reboot and /api/safe-mode/retry take the bearer
+        # alone, but the dashboard's firmware install and its update settings
+        # still open with api_auth_check(), which takes the session cookie;
+        # the install task restarts the unit after a verified install, and
+        # the decision installs only a version above the running one and the
+        # NVS floor. So the security docs name that restart wherever they say
+        # what a session cannot do (the PR's review: "no longer a reboot").
+        ino = (WAP / "canary_wap.ino").read_text(encoding="utf-8")
+        for handler in ("handle_ota_install", "handle_ota_config"):
+            body = body_after(ino, f"static esp_err_t {handler}(httpd_req_t* req) {{", r"\n}\n")
+            code = [ln.strip() for ln in body.splitlines()[1:] if ln.strip() and not ln.strip().startswith("//")]
+            self.assertEqual(code[0], "if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;", handler)
+        self.assertIn("securacv_ota_check_and_install();",
+                      body_after(ino, "static esp_err_t handle_ota_install(httpd_req_t* req) {", r"\n}\n"))
+        ota = (WAP / "securacv_ota.cpp").read_text(encoding="utf-8")
+        self.assertIn("if (cmp > 0)  return SECURACV_OTA_DECISION_UPDATE;", ota)
+        self.assertIn("esp_restart();", body_after(ota, "if (s_ctx.config.auto_reboot) {", r"\n    } else {"))
+        sec = normalized((REPO / "docs/security/SECURITY_MODEL.md").read_text(encoding="utf-8"))
+        threat = normalized((REPO / "docs/security/THREAT_MODEL.md").read_text(encoding="utf-8"))
+        blind = ("any write a session may make, of which since F361 only the firmware "
+                 "install restarts the unit, and only into a newer signed image")
+        self.assertIn(blind, sec)
+        self.assertIn(blind, threat)
+        self.assertIn("and of its writes only the firmware install restarts the unit "
+                      "(`POST /api/ota/install`, or automatic updates turned on with "
+                      "`POST /api/ota/config`), which installs only a newer signed image.", sec)
+        self.assertIn("a session's firmware install restarts the unit only into a newer "
+                      "signed image", sec)
+        self.assertIn("the dashboard's firmware install, which a session may start, "
+                      "restarts the unit only into a newer signed image", threat)
 
     def test_the_csi_macro_answers_a_held_bearer_429(self):
         # Sweep F339: the CSI routes' bearer is compared through the accounted

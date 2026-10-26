@@ -131,7 +131,10 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   GET keeps write-only cannot be read through a broker the session names that way; host-tested. The
   QR hub-provision path still moves it on a scanned code, in a scan window the session can open with
   the pair token it mints (`GET /api/pair/token` takes the cookie), but only for a code in front of
-  the camera. F289's follow-up (#1832) adds that the receipt's bearer grant counts a wrong token
+  the camera. (Since #<PR>, sweep F333 and F334: after setup `POST /api/wifi/qr-scan` answers `404`,
+  so the session opens no scan window, and the boot scan runs only while no network is stored and
+  the unit is not standalone; a Forget, which takes the bearer, clears the stored broker login.)
+  F289's follow-up (#1832) adds that the receipt's bearer grant counts a wrong token
   toward the lockout (`api_auth_bearer_grant`), also host-tested only. See
   `docs/audit/repo_todo_sweep_2026-09.md` F289.)*
 - **[MEDIUM] Port-80→HTTPS redirect hardcodes `192.168.4.1`** (`handle_https_redirect`), so once
@@ -157,7 +160,8 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   clear that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane, or hold BOOT
   10 s. Clients behind one address share a backoff, and a
   deliberate LAN denial stays open (a landing session's `POST /api/reboot`, ARP spoofing, httpd's
-  connection purge; `magic_pairing.md` §3.7). Host-tested, not run on a device. The wildcard
+  connection purge; `magic_pairing.md` §3.7; since #<PR>, sweep F361, `POST /api/reboot` and `POST
+  /api/safe-mode/retry` take the bearer alone). Host-tested, not run on a device. The wildcard
   `Access-Control-Allow-Origin` is unchanged.)*
 
 `wap_server.cpp` is a **linker stub** — the real 499 KB server is inline in the `.ino`, and the
