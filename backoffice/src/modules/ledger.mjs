@@ -51,7 +51,11 @@ export function postSale(db, order) {
   if (cogs) legs.push({ account: 'expenses:cogs', debit: cogs }, { account: 'assets:inventory', credit: cogs });
   return post(db, { date, legs, memo: `sale ${order.number}`, ref: `order:${order.number}`, source: order.source });
 }
-export const postRefund = (db, order, cents, reason = '', date = today()) => post(db, { date, legs: [{ account: 'income:refunds', debit: cents }, { account: 'assets:stripe', credit: cents }], memo: `refund ${order.number} ${reason}`.trim(), ref: `order:${order.number}`, source: 'refund' });
+// The tax share of a refund (the order's tax rate applied to the amount going back) is a reversal of
+// the tax collected, not a sales refund: it comes off the liability, so the sales-tax table and the
+// ledger agree on what was actually collected. The rest is income:refunds.
+export const refundTaxShare = (order, cents) => order.total_cents > 0 && order.tax_cents > 0 ? Math.min(order.tax_cents, Math.round(cents * order.tax_cents / order.total_cents)) : 0;
+export const postRefund = (db, order, cents, reason = '', date = today()) => { const tax = refundTaxShare(order, cents); return post(db, { date, legs: [{ account: 'income:refunds', debit: cents - tax }, { account: 'liabilities:sales_tax', debit: tax }, { account: 'assets:stripe', credit: cents }], memo: `refund ${order.number} ${reason}`.trim(), ref: `order:${order.number}`, source: 'refund' }); };
 
 // A payout moves money Stripe → bank; the fee is what Stripe kept.
 export function postPayout(db, { id, date = today(), amount_cents, fee_cents = 0 }) {
@@ -89,7 +93,12 @@ export function monthly(db, months = 12) {
   }
   return out;
 }
-export const salesTaxByState = (db, { from, to }) => db.all('SELECT ship_state AS state, COUNT(*) AS orders, SUM(subtotal_cents) AS taxable_cents, SUM(tax_cents) AS tax_cents FROM orders WHERE paid_at >= ? AND paid_at < ? AND status NOT IN (\'canceled\') AND total_cents > 0 GROUP BY ship_state ORDER BY tax_cents DESC', from, to + 'T23:59:59Z');
+// Net of refunds: a refunded order's tax went back with the money (postRefund reverses the same share), so the
+// table shows what was kept, which is what is owed. A canceled order was refunded in full, so it drops out.
+export const salesTaxByState = (db, { from, to }) => db.all(`SELECT ship_state AS state, COUNT(*) AS orders,
+  SUM(subtotal_cents - CAST(ROUND(subtotal_cents * 1.0 * refunded_cents / total_cents) AS INTEGER)) AS taxable_cents,
+  SUM(tax_cents - MIN(tax_cents, CAST(ROUND(tax_cents * 1.0 * refunded_cents / total_cents) AS INTEGER))) AS tax_cents
+  FROM orders WHERE paid_at >= ? AND paid_at < ? AND status NOT IN ('canceled') AND total_cents > 0 GROUP BY ship_state ORDER BY tax_cents DESC`, from, to + 'T23:59:59Z');
 
 export function ledgerCsv(db, { from = '0000-00-00', to = '9999-99-99' } = {}) {
   const rows = db.all('SELECT * FROM ledger WHERE date BETWEEN ? AND ? ORDER BY date, txn, id', from, to);

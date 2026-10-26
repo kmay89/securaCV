@@ -48,7 +48,7 @@ export function openTicket(db, { email, name = null, subject, body, kind = null,
 export const messageIdOrNull = (s) => (typeof s === 'string' && /^<[^\s<>]{1,500}>$/.test(s.trim())) ? s.trim() : null;
 export const inReplyToHeaders = (mid) => { const m = messageIdOrNull(mid); return m ? { 'In-Reply-To': m, References: m } : {}; };
 
-export function addMessage(db, ticketId, { direction, body, from_addr = null, to_addr = null, message_id = null, in_reply_to = null }) {
+export function addMessage(db, ticketId, { direction, body, from_addr = null, to_addr = null, message_id = null, in_reply_to = null, slaHours = 24 }) {
   message_id = messageIdOrNull(message_id); in_reply_to = messageIdOrNull(in_reply_to);
   const now = nowIso();
   if (message_id && db.get('SELECT id FROM ticket_messages WHERE message_id = ?', message_id)) return null;
@@ -56,7 +56,9 @@ export function addMessage(db, ticketId, { direction, body, from_addr = null, to
     ticketId, direction, from_addr, to_addr, message_id, in_reply_to, body, now);
   const t = db.get('SELECT * FROM tickets WHERE id = ?', ticketId);
   if (direction === 'out') db.run('UPDATE tickets SET updated_at = ?, first_response_at = COALESCE(first_response_at, ?), status = CASE WHEN status = \'closed\' THEN \'closed\' ELSE \'waiting_on_customer\' END WHERE id = ?', now, now, ticketId);
-  else if (direction === 'in') db.run('UPDATE tickets SET updated_at = ?, status = CASE WHEN status = \'closed\' THEN \'open\' ELSE \'waiting_on_us\' END, sla_due_at = CASE WHEN status IN (\'closed\',\'waiting_on_customer\') THEN ? ELSE sla_due_at END WHERE id = ?', now, new Date(Date.now() + 24 * 3600_000).toISOString(), ticketId);
+  // A customer writing to a closed ticket reopens it as a new question: the clock and the first-response mark
+  // start over, so the SLA job sees it as unanswered again. A reply while we wait on them resets the clock only.
+  else if (direction === 'in') db.run('UPDATE tickets SET updated_at = ?, first_response_at = CASE WHEN status = \'closed\' THEN NULL ELSE first_response_at END, closed_at = CASE WHEN status = \'closed\' THEN NULL ELSE closed_at END, status = CASE WHEN status = \'closed\' THEN \'open\' ELSE \'waiting_on_us\' END, sla_due_at = CASE WHEN status IN (\'closed\',\'waiting_on_customer\') THEN ? ELSE sla_due_at END WHERE id = ?', now, new Date(Date.now() + (Number(slaHours) || 24) * 3600_000).toISOString(), ticketId);
   else db.run('UPDATE tickets SET updated_at = ? WHERE id = ?', now, ticketId);
   return { ...db.get('SELECT * FROM ticket_messages WHERE id = ?', r.lastInsertRowid), ticket: t };
 }
@@ -112,7 +114,7 @@ export function ingestEmail(db, mail, { cfg = {} } = {}) {
     for (const r of refs) { const m = db.get('SELECT ticket_id FROM ticket_messages WHERE message_id = ?', r) || db.get('SELECT ref FROM mail_outbox WHERE message_id = ?', r); if (m?.ticket_id) { t = db.get('SELECT * FROM tickets WHERE id = ?', m.ticket_id); break; } if (m?.ref?.startsWith('ticket:')) { t = db.get('SELECT * FROM tickets WHERE number = ?', m.ref.slice(7)); break; } }
   }
   if (t) {
-    const added = addMessage(db, t.id, { direction: isAuto ? 'note' : 'in', from_addr: email, body: (isAuto ? '[auto-reply] ' : '') + (mail.text || ''), message_id: mail.messageId || null, in_reply_to: mail.inReplyTo || null });
+    const added = addMessage(db, t.id, { direction: isAuto ? 'note' : 'in', from_addr: email, body: (isAuto ? '[auto-reply] ' : '') + (mail.text || ''), message_id: mail.messageId || null, in_reply_to: mail.inReplyTo || null, slaHours: cfg.slaHours || 24 });
     if (added && !isAuto && mail.attachments?.length) saveAttachments(db, added.id, mail.attachments);
     return { ticket: ticketById(db, t.id), created: false, duplicate: !added, attachments: added && mail.attachments ? mail.attachments.length : 0 };
   }

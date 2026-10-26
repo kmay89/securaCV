@@ -12,8 +12,8 @@ import { actorStore, nowIso } from './db.mjs';
 import { registerUsers } from './admin_users.mjs';
 import { loadCatalog, loadShipping } from './modules/catalog.mjs';
 import { verifyStripeSignature, eventToOrder, fetchLineItems, resolveDiscountCode } from './modules/stripe.mjs';
-import { storefrontCatalog, estimateForZip, createCheckout, sessionStatus, StoreError } from './modules/storefront.mjs';
-import { recordOrder, refund, orderByNumber, transition, listOrders, timeline, addNote, setTags, batches, statusCounts } from './modules/orders.mjs';
+import { storefrontCatalog, estimateForZip, createCheckout, sessionStatus, StoreError, oversoldLines } from './modules/storefront.mjs';
+import { recordOrder, refund, orderByNumber, transition, listOrders, timeline, addNote, addEvent, setTags, batches, statusCounts } from './modules/orders.mjs';
 import { listCustomers, contactById, customerStats, setContactTags } from './modules/contacts.mjs';
 import { listDiscounts, createDiscount, setDiscountStatus, evaluate as evaluateDiscount } from './modules/discounts.mjs';
 import { analytics } from './modules/analytics.mjs';
@@ -21,6 +21,7 @@ import { listProducts, productDetail } from './modules/products.mjs';
 import { search } from './modules/search.mjs';
 import { upsertSubscription, postSubscriptionPayment } from './modules/subscriptions.mjs';
 import { postPayout, profitAndLoss, postExpense } from './modules/ledger.mjs';
+import { payoutFee } from './modules/reconcile.mjs';
 import { confirmConsent, unsubscribe, upsertContact, joinWaitlist, validEmail, searchContacts } from './modules/contacts.mjs';
 import { sendConsentRequest } from './modules/campaigns.mjs';
 import { openTicket, listTickets, ticketByNumber, reply as ticketReply, ingestEmail } from './modules/support.mjs';
@@ -310,18 +311,55 @@ export async function applyStripeEvent(app, m, event = null) {
         text: fill(ORDER_TPL, { name: order.ship_name || 'there', number: order.number, items: order.items.map(i => `${i.qty}× ${i.name}`).join('\n'), ships: est.ships.ships_label, closes: est.ships.closes_label, arrives: est.delivers ? est.delivers.label : 'a few business days after it ships', status_url: orderStatusUrl(cfg, order), company: cfg.company || 'Errer Labs', support: cfg.supportAddr || '' }) });
     }
     if (created && order.currency !== 'usd') await raiseException(db, cfg, `currency:${order.number}`, `orders [currency]: ${order.number} is in ${order.currency.toUpperCase()}`, `Stripe charged ${order.currency.toUpperCase()} for ${order.number}; the books and the sales-tax table count every order as USD cents. Check the Payment Link's currency, and correct the ledger by hand if this was real: ${cfg.baseUrl}/orders/${order.id}`);
+    // Sold past the cap or the shelf: the order stands (the customer paid), it is tagged so the Pack bench and the
+    // list show it, and an exception says by how much — the fix is parts, a cap, or a mail and a refund, a human's call.
+    if (created && order.items.length && catalog) {
+      const over = oversoldLines(db, order, catalog, { tz: cfg.tz });
+      if (over.length) {
+        setTags(db, order.id, `${order.tags || ''},oversold`); const why = over.map(x => `${x.sku}: ${x.short} short (${x.why})`).join('; ');
+        addEvent(db, order.id, { kind: 'note', actor: 'stripe', text: `Oversold — ${why}` });
+        await raiseException(db, cfg, `oversold:${order.number}`, `orders [oversold]: ${order.number} needs more than is there`, `${why}\n\nThe customer has paid. Make or receive the parts and pack it late (tell them the new date), raise the week's cap if it was wrong, or refund it in Stripe: ${cfg.baseUrl}/orders/${order.id}`);
+      }
+    }
     if (created && !order.items.length) await raiseException(db, cfg, `stripe:line-items:${order.number}`, `orders [no line items]: ${order.number}`, `Stripe's webhook carried no line_items for ${m.external_id} and they could not be fetched${cfg.stripeApiKey ? '' : ' (STRIPE_API_KEY is not set)'}. The order is recorded with no items and cannot be packed until they are added — see ${cfg.baseUrl}/orders/${order.id}.`);
     return { order: order.number, created, items: order.items.length };
   }
   if (m.kind === 'refund') {
     // A refund names the PaymentIntent (or the charge); a Checkout order is stored under its session id too.
     const o = db.get('SELECT * FROM orders WHERE payment_intent = ? OR external_id = ? OR external_id = ?', m.external_id, m.external_id, m.charge || '');
-    if (!o) return { ignored: 'unknown order' };
+    // No order yet: Stripe can deliver the refund before the session's own event (or the order's event failed). A
+    // refusal makes Stripe retry for three days, by which time the order is here; the retry then applies. The
+    // stripe:failed exception the pipeline raises names it meanwhile, and resolves on the delivery that works.
+    if (!o) throw new Error(`refund for ${m.external_id}: no order carries that PaymentIntent yet — retried until one does`);
     const delta = m.refunded_cents - o.refunded_cents; if (delta > 0) refund(db, o.id, delta, { actor: 'stripe', reason: 'stripe' });
     return { order: o.number, refunded_cents: m.refunded_cents };
   }
+  if (m.kind === 'dispute') {
+    // A chargeback: the money is already held back. The order is tagged, the timeline says so, an exception carries
+    // the evidence deadline; when Stripe closes it the exception resolves with the outcome (a loss is a refund the
+    // charge.refunded event does not send, so it is recorded here).
+    const o = db.get('SELECT * FROM orders WHERE payment_intent = ? OR external_id = ? OR external_id = ?', m.external_id || '', m.external_id || '', m.charge || '');
+    if (!o) return { ignored: 'dispute on an unknown charge', dispute: m.dispute };
+    if (m.type === 'charge.dispute.created') {
+      setTags(db, o.id, `${o.tags || ''},disputed`);
+      addEvent(db, o.id, { kind: 'note', actor: 'stripe', text: `Disputed — ${m.reason || 'no reason given'} · ${(m.amount_cents / 100).toFixed(2)} USD${m.due ? ` · evidence due ${m.due}` : ''} (${m.dispute})` });
+      await raiseException(db, cfg, `dispute:${o.number}`, `orders [dispute]: ${o.number} charged back (${m.reason || 'no reason'})`, `${(m.amount_cents / 100).toFixed(2)} USD is held back by the card network.${m.due ? ` Evidence is due ${m.due}.` : ''} Submit it in the Stripe dashboard (the tracking number, the signed-for delivery, the correspondence on ${cfg.baseUrl}/orders/${o.id}); this clears when Stripe closes the dispute.`);
+    } else if (m.type === 'charge.dispute.closed') {
+      const lost = m.status === 'lost';
+      addEvent(db, o.id, { kind: 'note', actor: 'stripe', text: `Dispute ${m.status || 'closed'}${lost ? ` — ${(m.amount_cents / 100).toFixed(2)} USD taken back` : ''} (${m.dispute})` });
+      if (lost && m.amount_cents > o.refunded_cents) refund(db, o.id, m.amount_cents - o.refunded_cents, { actor: 'stripe', reason: 'dispute lost' });
+      await resolveException(db, cfg, `dispute:${o.number}`, `Closed: ${m.status || 'closed'}.`);
+    }
+    return { order: o.number, dispute: m.dispute, status: m.status };
+  }
   if (m.kind === 'subscription') { const s = upsertSubscription(db, m); return { subscription: s.id, status: s.status }; }
-  if (m.kind === 'payout') { postPayout(db, { id: m.external_id, date: m.arrival || undefined, amount_cents: m.amount_cents }); return { payout: m.external_id }; }
+  if (m.kind === 'payout') {
+    // The webhook says what reached the bank; the fee Stripe kept is on the balance transactions, read with an
+    // API key. Without one the fee is 0 here and the daily reconcile job is what posts it — it skips a payout
+    // already in the books, so the two never post the same payout twice.
+    let fee = 0; try { fee = (await payoutFee(cfg, m.external_id, { fetchImpl: app.fetchImpl || timedFetch }))?.fee_cents ?? 0; } catch (e) { db.audit('stripe', 'payout.fee.failed', 'payout', m.external_id, { error: String(e.message || e) }); }
+    const posted = postPayout(db, { id: m.external_id, date: m.arrival || undefined, amount_cents: m.amount_cents, fee_cents: fee }); return { payout: m.external_id, posted: !!posted, fee_cents: fee };
+  }
   if (event?.type === 'invoice.paid' && event.data?.object?.subscription) {
     const o = event.data.object; const sub = typeof o.subscription === 'string' ? o.subscription : o.subscription?.id;
     const posted = postSubscriptionPayment(db, { external_id: sub, invoice_id: o.id, amount_cents: o.amount_paid || 0, date: new Date((o.created || Date.now() / 1000) * 1000).toISOString().slice(0, 10) });

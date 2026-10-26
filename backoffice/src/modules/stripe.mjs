@@ -30,6 +30,9 @@ export function eventToOrder(event) {
   const o = event.data?.object || {};
   // A card pays inside `completed`; ACH / bank debit pay later and arrive as `async_payment_succeeded`;
   // a 100 % code pays nothing and says `no_payment_required`. All three are an order.
+  // A Checkout in `subscription` or `setup` mode is a plan or a saved card, never a box to pack: those
+  // arrive on their own events below. Only a `payment` session (the mode a Payment Link uses) is an order.
+  if (o.mode && o.mode !== 'payment' && type.startsWith('checkout.session.')) return { kind: 'ignore', type, why: `checkout mode ${o.mode}` };
   if ((type === 'checkout.session.completed' && ['paid', 'no_payment_required'].includes(o.payment_status)) || type === 'checkout.session.async_payment_succeeded') {
     const addr = o.shipping_details?.address || o.customer_details?.address || {};
     const items = (o.line_items?.data || []).map(li => ({
@@ -51,6 +54,10 @@ export function eventToOrder(event) {
       ship: { line1: addr.line1 || '', line2: addr.line2 || '', city: addr.city || '', state: addr.state || '', zip: addr.postal_code || '', country: addr.country || 'US' },
       items, paid_at: new Date((o.created || Date.now() / 1000) * 1000).toISOString(),
     };
+  }
+  if (type === 'charge.dispute.created' || type === 'charge.dispute.closed' || type === 'charge.dispute.updated') {
+    return { kind: 'dispute', type, external_id: (typeof o.payment_intent === 'string' ? o.payment_intent : o.payment_intent?.id) || null, charge: typeof o.charge === 'string' ? o.charge : o.charge?.id || null,
+      dispute: o.id, status: o.status || '', reason: o.reason || '', amount_cents: o.amount ?? 0, due: o.evidence_details?.due_by ? new Date(o.evidence_details.due_by * 1000).toISOString().slice(0, 10) : null };
   }
   if (type === 'charge.refunded') return { kind: 'refund', external_id: (typeof o.payment_intent === 'string' ? o.payment_intent : o.payment_intent?.id) || o.id, charge: o.id, refunded_cents: o.amount_refunded ?? 0 };
   if (type.startsWith('customer.subscription.')) {

@@ -2,7 +2,7 @@
 // The command line is the same company as the web admin — same SQLite file,
 // same functions — so an operator (or an AI operator) can run the whole
 // business from a terminal. `backoffice help` lists everything.
-import { readFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { loadConfig } from '../src/config.mjs';
 import { openDb } from '../src/db.mjs';
 import { setupOperator, createApiToken, revokeApiToken, totpUri, hasOperator, listUsers, inviteUser, userByEmail, setRole, setStatus, removeUser, ROLES, ROLE_TEXT } from '../src/auth.mjs';
@@ -52,6 +52,9 @@ const cfg = loadConfig();
 // shipping, the demo webhook secret, every live integration off), so it is decided before the app exists.
 if (cmd === 'first-order') cfg.demo = true;
 const db = openDb(cfg.dbPath);
+const PID_FILE = join(cfg.dataDir, 'backoffice.pid');
+// The pid of a `serve` in this process space, or null: no file, a pid that is not alive, or a file we cannot read.
+function servePid() { try { const pid = Number(readFileSync(PID_FILE, 'utf8').trim()); if (!pid || pid === process.pid) return null; process.kill(pid, 0); return pid; } catch { return null; } }
 const app = createApp({ db, cfg });
 
 const HELP = `backoffice — the company in one SQLite file (${cfg.dbPath})
@@ -181,6 +184,8 @@ const main = async () => {
       if (cfg.demo) { const r = await ensureDemo(db, cfg); if (r) console.log('[backoffice] demo mode: seeded', JSON.stringify(r)); }
       if (!hasOperator(db)) console.error('[backoffice] no owner yet — run `backoffice setup` in another shell; serving anyway');
       const addr = await app.listen(); const stopScheduler = startScheduler(app);
+      // The pid beside the database: `restore` refuses to replace a file a running server has open.
+      try { writeFileSync(PID_FILE, String(process.pid)); } catch { /* read-only data dir: restore cannot check, serve still runs */ }
       console.log(`[backoffice] listening on http://${addr.address}:${addr.port}  (public base: ${cfg.baseUrl})`);
       // docker stop sends SIGTERM and waits ten seconds: stop taking requests, let the ones in flight finish
       // (eight seconds at most, then they are cut), close the database cleanly, exit 0.
@@ -188,7 +193,7 @@ const main = async () => {
       const shutdown = async (sig) => {
         if (stopping) return; stopping = true; console.log(`[backoffice] ${sig}: stopping`); stopScheduler();
         await Promise.race([app.close(), new Promise(r => setTimeout(r, 8000).unref())]); app.closeAll?.();
-        try { db.close(); } catch { /* already closed */ } process.exit(0);
+        try { db.close(); } catch { /* already closed */ } try { unlinkSync(PID_FILE); } catch { /* never written */ } process.exit(0);
       };
       process.on('SIGTERM', () => shutdown('SIGTERM')); process.on('SIGINT', () => shutdown('SIGINT'));
       // A rejected promise nobody awaited is logged, not fatal: one bad job or mail must not take the shop down.
@@ -213,7 +218,12 @@ const main = async () => {
       // This process opened the live database at startup (openDb above). Replacing the file under an open
       // WAL connection lets the final close checkpoint the old pages over the restored copy — so the
       // connection is closed first, and the file is replaced only after.
-      const dest = flags.to || cfg.dbPath; if (dest === cfg.dbPath) db.close();
+      const dest = flags.to || cfg.dbPath;
+      // A server with the file open would checkpoint its own pages over the restored copy. The pid file says whether
+      // one is running in this process space; `--force` is for a stale file left by a crash (the kit's `restore`
+      // stops the container first, which is the only safe order).
+      if (dest === cfg.dbPath && !flags.force) { const live = servePid(); if (live) throw new Error(`\`backoffice serve\` is running (pid ${live}) — stop it first (the restored file would be overwritten by its next checkpoint); --force overrides a stale pid file`); }
+      if (dest === cfg.dbPath) db.close();
       if (flags.offsite) {   // the server died: pull the latest off-site copy back (or a named one) and put it in place
         const name = typeof flags.offsite === 'string' ? flags.offsite : (args[0] || null);   // `--offsite <name>` parses as the flag's value
         const got = await fetchOffsite(cfg, { name });

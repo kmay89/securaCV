@@ -89,6 +89,23 @@ export function availableNow(db, product, { now = new Date(), tz = currentTz() }
   return limits.length ? Math.min(...limits) : null;
 }
 
+// After an order is recorded: each line whose SKU is now committed past what the week's cap or the
+// shelf can cover. The store refuses a checkout for more than availableNow() says, but two checkouts
+// can pay for the last unit in the same minute, and a Payment Link bypasses the store entirely.
+export function oversoldLines(db, order, catalog, { now = new Date(), tz = currentTz() } = {}) {
+  const out = [];
+  for (const it of order.items || []) {
+    const p = catalog?.products?.get?.(it.sku); if (!p) continue;
+    if (p.stock != null && Number.isFinite(Number(p.stock))) {
+      const taken = db.get("SELECT COALESCE(SUM(i.qty), 0) AS n FROM order_items i JOIN orders o ON o.id = i.order_id WHERE i.sku = ? AND o.batch = ? AND o.status IN ('paid', 'packed', 'shipped', 'delivered')", it.sku, order.batch || weekLabel(now, tz)).n;
+      if (taken > Number(p.stock)) { out.push({ sku: it.sku, short: taken - Number(p.stock), why: `${taken} sold this week against a cap of ${Number(p.stock)}` }); continue; }
+    }
+    const b = buildable(db, it.sku);
+    if (b != null) { const committed = db.get("SELECT COALESCE(SUM(i.qty), 0) AS n FROM order_items i JOIN orders o ON o.id = i.order_id WHERE i.sku = ? AND o.status = 'paid'", it.sku).n; if (committed > b) out.push({ sku: it.sku, short: committed - b, why: `${committed} paid and waiting, parts on the shelf for ${b}` }); }
+  }
+  return out;
+}
+
 export function storefrontCatalog(db, catalog, { now = new Date(), cfg = {} } = {}) {
   const ships = nextShipDate(now, { tz: cfg.tz, closeDay: cfg.batchCloseDay, closeHour: cfg.batchCloseHour, shipDay: cfg.batchShipDay });
   const products = [];

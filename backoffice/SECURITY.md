@@ -95,6 +95,24 @@ record for money (Stripe is), for mail (the mailbox is) or for the catalog
   third party's inbox), the status page, confirm/unsubscribe links (random
   144-bit tokens), invoice and order links (HMAC of the number, compared in
   constant time).
+- What Stripe sends in the wrong order is refused, not lost: a refund whose
+  order is not here yet (the session's own event failed or is still on the
+  way) is a 400, Stripe retries it for three days, and the retry applies once
+  the order exists. A chargeback tags the order, raises an exception with the
+  evidence deadline, and resolves when Stripe closes it (a loss is recorded
+  as the refund it is). A Checkout in subscription or setup mode is never a
+  shop order; a charge on an invoice is never a missing one.
+- An order sold past the week's cap or the shelf (two checkouts for the last
+  unit in the same minute, a Payment Link outside the store) is recorded as
+  paid, tagged `oversold`, and raised as an exception that says by how much;
+  the fix (parts, a date, a refund) is a person's call, never a silent refusal
+  of money already taken.
+- Packing is one order at a time at the bench: every line ticked, the boards
+  scanned, the scale read. There is no bulk "packed", and a pack from the
+  API without the check says "bench check not run" on the timeline.
+- A canceled or fully refunded order lets its boards and its parts go back
+  to stock; a shipped one keeps its record. A refund reverses its share of
+  the sales tax off the liability, so the tax table is net of refunds.
 - A Stripe event id is claimed before the work, marked applied after it,
   and released if the work fails: two deliveries at the same instant apply
   once, a delivery that failed is left for Stripe to retry, and a claim the
