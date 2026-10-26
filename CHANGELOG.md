@@ -1,6 +1,33 @@
 # Changelog
 
 ## [Unreleased]
+### Dependency advisories of 2026-10-19 to -23: the TLS roots and verifier, two constant-time crates, and body-parser (Dependency Audit #330)
+
+- **Five advisories, every one with a reachable fix, so none is ignored.**
+  The Monday audit on `main` failed on five of the seven Rust lockfiles and
+  on canary-vision's npm tree. `webpki-roots` and `webpki-root-certs` 1.0.9
+  bundled roots that trust distrusted emSign intermediates
+  (RUSTSEC-2026-0381, -0383) and `rustls-webpki` 0.103.15 could accept a
+  distrusted intermediate (RUSTSEC-2026-0382): both sit under every outbound
+  HTTPS call the kernel, the Flasher, the Lab, hub-io and flash-engine make
+  (`ureq`, `reqwest`, `rustls`). `crypto-bigint` 0.7.5 (also yanked) and
+  `ctutils` 0.4.2/0.4.3 had timing variability in operations meant to be
+  constant-time (RUSTSEC-2026-0387, -0385), under `elliptic-curve` and `srp`
+  in the kernel and the household-key checker. The lockfiles now carry
+  `webpki-roots` and `webpki-root-certs` 1.0.11, `rustls-webpki` 0.103.16,
+  `crypto-bigint` 0.7.10 and `ctutils` 0.4.6, each inside its manifest's
+  range. The root lockfile's second `crypto-bigint`, the 0.5.5 that
+  `elliptic-curve` 0.13 needed and that has no fixed 0.5 release, leaves the
+  tree with `c2pa` 0.91.6 (`c2pa_raw_crypto` 0.2 takes `elliptic-curve`
+  0.14), so no ignore was added. `body-parser` 2.3.0's denial of service via
+  trailing bytes after a compressed body (GHSA-27r3-jxmh-p828) went to 2.4.0
+  in #1857.
+- **Dependabot's four cargo bumps ride along** (c2pa, libc, mdns-sd, tauri
+  and its build crates): the Lab and the Flasher must lock the same
+  `mdns-sd` (`desktop_parity.test.js`), which is why #1864 and #1865, each
+  bumping one app, failed that test on their own. Lockfile bumps only; no
+  source changed. `cargo audit` is CI's.
+
 ### canary-wap answers the receipt, the setup mints and, after setup, its pages only to a Host that names it, and its HTTPS session cookie has a name of its own (sweep F344, F337, #1848)
 
 - **A DNS-rebinding page under a public name gets no session, no pair token
