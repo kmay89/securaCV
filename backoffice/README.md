@@ -38,6 +38,10 @@ already chose it. Everything *around* Stripe is here.
 | An uptime dashboard, a runbook, a morning report | **Health** | the doctor's checklist (configuration, backups and their proofs, books, probes, jobs, logins, disk) with what to do about each; the same list is `backoffice doctor`, `/api/health` (503 when anything fails, for an outside monitor) and the morning digest email |
 | An audit trail | **Audit log** | every action by anyone or anything, append-only, filterable, CSV |
 | A fulfillment app's pick-and-pack flow | **Pack bench / Ship bench** | one order at a time through the weekly batch: pick list, serial scan, one button; then tracking in, one button, the customer mailed |
+| Buying the label in the admin (Shopify Shipping) | **Ship bench** | with `SHIPPO_API_TOKEN`: one button buys the USPS label for the box the order was packed in, writes the tracking and postage onto the order, ships it and opens the PDF to print; refuses a bad address or a blank return address before any money moves |
+| Abandoned checkout recovery + the conversion number | **Marketing · The checkout** | every hosted checkout counted from Stripe's own events (opened, paid, abandoned, recovered — no pixel, no cookie); an abandoned one with an email gets one follow-up with Stripe's link that reopens the same cart, never a second |
+| Customer account self-service | **The customer's page** | no account to make: the signed link in every mail shows where it is and lets them fix the address while it is on the shelf |
+| The admin app's push notification | **Notify** | a new order mails `OPERATOR_EMAIL` the minute it lands, and pushes to an ntfy topic if you set one |
 | A purchasing module (an ERP's) | **Purchasing** | purchase orders drafted from the reorder points in one click (grouped by supplier, at the reorder quantity), marked ordered with an expected date, received into stock line by line and booked as inventory; "buildable" looks ahead to when the parts land |
 | A marketing dashboard (Klaviyo's) | **Marketing** | the funnel from a signup to a repeat buyer, where people come from, what every campaign and automation did in the week after (orders and replies, no pixels), the codes, and customers and sales by state on a tile map that fetches nothing from a map provider |
 | Carrier tracking + a customer order page (Shopify's) | **Delivery** | a delivery estimate in every tracking mail (business days, a band a day across the country), a signed public status page per order with the stepper, the carrier link and the items, and — with USPS API credentials — the hourly carrier poll that marks delivered on the carrier's day and raises a carrier alert as an exception |
@@ -315,7 +319,46 @@ Three numbers show up around an order, and each has one source.
   two to seven business days, replaced by the carrier's own word when USPS
   tracking is configured.
 
+## What the customer is told, and when
+
+The customer hears from us at every turn, by mail, and can see the same thing
+any time on their page (`/o/<number>/<token>`, the link in every mail and on the
+thanks page — no login). The promise the store made at checkout is written on
+the order (`promised_ship_on`, `promised_arrive_by`), and every line below reads
+it, so a mail and the page never disagree.
+
+| Moment | Mail | Their page says |
+|---|---|---|
+| Checkout timed out | one mail, an hour later, with Stripe's link that reopens the same cart — only if they typed an email, and never a second | — |
+| Paid | "We have your order": items, the batch it ships in, the arrival window, the page link | "Ships Tue, Nov 3 · arrives Nov 5–Nov 9"; a form to fix the address while it is on the shelf |
+| Packed | — | "Packed and waiting for the label — ships Tue, Nov 3" |
+| The ship day passes | the late apology, **a person's click** (a Decide card counts them; once per order), with a refund offer | "Running later than planned — it was due to ship Tue, Nov 3", and the same offer |
+| Shipped | "On its way": carrier, tracking, the estimate | "On its way · estimated Nov 5–Nov 9", the tracking link |
+| Carrier reports a problem | the carrier note, **a person's click**, once | "The carrier reports a problem", what happens next |
+| Delivered (carrier or a click) | the "settled in?" automation, three days later | "Delivered Nov 6" |
+| The address will not make a label | the address question, **a person's click**, once | unchanged (it still ships on the promise once fixed) |
+| Canceled | by itself: what is coming back and when | "Canceled Oct 28", the money line |
+| Refunded, in part or full | by itself, whoever recorded it (page, API, Stripe) | "Refunded $15.00", keep what arrived |
+| A support ticket | the acknowledgment with the ticket number and the SLA; every reply in the same thread | — |
+
+Every order page has a **The customer knows** card: what their page says right
+now, the promise, every mail with whether it was sent, queued or failed, and the
+nudges still owed. A failed customer mail is *now* on the home page and the
+sidebar: the page says they were told, and they were not.
+
 ## How each piece behaves (the rules it keeps)
+
+- **Where to look is computed, never typed.** `src/attention.mjs` turns every
+  deadline into one of three levels — *now* (red: a clock has run out, or a
+  person is already being failed), *soon* (amber: inside a stated window), *calm*
+  (no mark) — and every page reads it from there: a count on the sidebar section
+  colored by the worst thing inside it, the home page's focus strip and cards, the
+  Decide queue ranked by the clock each card is against, the mark on a table
+  row's left edge, a due date in a cell. The windows are the operator's promises,
+  stated once in `WINDOWS` (two days to ship an order, six hours before an SLA,
+  a week on a warranty claim); a new kind of work gets a level by stating its
+  deadline, not by picking a color. The brand gold means "an action" and nothing
+  else — a chart series never wears it.
 
 - **Orders** — one row per shipment; an unknown SKU is a refused order, not a
   guessed one; idempotent on Stripe's event id, so redelivery is safe;
@@ -370,6 +413,11 @@ bin/backoffice.mjs      the CLI — same functions as the web admin, `backoffice
 src/db.mjs              node:sqlite, migrations/, numbers (EL-, T-, WC-, INV-YYYY-), audit log, savepoint transactions
 src/http.mjs            router, body parsing, cookies, CSRF, rate limiter, escaping
 src/render.mjs          server-rendered HTML; no client JavaScript
+src/modules/labels.mjs  the label bought from the ship bench (Shippo), the demo's pretend one, the readable fallback
+src/modules/recovery.mjs every hosted checkout written down, the one follow-up an abandoned one gets, the conversion number
+src/modules/notify.mjs  the new-order nudge to the operator: a mail, and a push if NTFY_URL is set
+src/modules/promise.mjs the promise made at checkout, one honest line per state for the customer, the mails a person sends with one click, what the customer has been told
+src/attention.mjs       the one scale of urgency (now / soon / calm) from stated deadlines; the sidebar badges, the home page, the Decide queue, every table row and the digest read it
 src/auth.mjs            scrypt password, TOTP (RFC 6238), sessions, API tokens
 src/server.mjs          public endpoints, the JSON API, the request pipeline
 src/admin.mjs           one page per module; src/admin_shop.mjs the storefront half (products, customers, discounts, analytics, batches, search, packing slips);

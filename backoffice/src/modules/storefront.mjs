@@ -20,6 +20,7 @@ import { buildable } from './inventory.mjs';
 import { currentTz } from '../render.mjs';
 import { isOn } from '../flags.mjs';
 import { timedFetch } from '../net.mjs';
+import { recordSession } from './recovery.mjs';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -163,6 +164,8 @@ export async function createCheckout(db, cfg, catalog, { items, zip = null, emai
     success_url: `${site}${cfg.checkoutSuccessPath || '/store/thanks'}?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${site}/store`,
     expires_at: Math.floor(now.getTime() / 1000) + 30 * 60,
+    // if it times out, Stripe mints a link that reopens this cart for 30 days (the one follow-up mail carries it; recovery.mjs)
+    after_expiration: { recovery: { enabled: 'true', allow_promotion_codes: 'true' } },
     metadata: { source: 'site', skus: lines.map(l => `${l.qty}x ${l.sku}`).join(', '), ships_on: est.ships.ships_on, batch: weekLabel(now, cfg.tz) },
     payment_intent_data: { metadata: { skus: lines.map(l => `${l.qty}x ${l.sku}`).join(', ') } },
     ...(isOn(db, cfg, 'stripe_tax') ? { automatic_tax: { enabled: 'true' } } : {}),
@@ -172,6 +175,7 @@ export async function createCheckout(db, cfg, catalog, { items, zip = null, emai
   const body = await r.json().catch(() => ({}));
   if (!r.ok || !body.url) { db.audit('public', 'store.checkout.failed', 'stripe', body?.error?.type || String(r.status), { message: String(body?.error?.message || '').slice(0, 200) }); throw new StoreError(502, 'the payment page could not be opened — nothing was charged; try again in a moment'); }
   db.audit('public', 'store.checkout', 'stripe', body.id, { lines: lines.map(l => `${l.qty}x ${l.sku}`), zip: est.state, ships_on: est.ships.ships_on });
+  recordSession(db, { id: body.id, amount_cents: lines.reduce((s, l) => s + l.qty * l.unit_cents, 0) + (catalog.shipping_flat_cents || 0), lines: lines.map(l => `${l.qty}x ${l.sku}`).join(', '), state: est.state, email: email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null, created_at: now.toISOString() });
   return { id: body.id, url: body.url, ships: est.ships, delivers: est.delivers, lines };
 }
 
