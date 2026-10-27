@@ -60,6 +60,12 @@ per-product paths and the completeness gate the workflows already have. What
 fails this step is never one build's: a name or version the field cannot hold
 (the catalog's or the release's), or a stamped image esptool reads back wrong
 (this tool's defect), whichever product shows it.
+
+`release --fail-on-refused` makes a refused image fail the step instead, and
+leaves it where it is. flasher-release.yml passes it: that workflow uploads
+its manifest-flash.json over the tag's existing one with no completeness gate
+in between, so a product dropped here would vanish from both flashers on a
+green run, flagship included.
 """
 from __future__ import annotations
 
@@ -233,9 +239,10 @@ def stamp_file(path: Path, project: str, version: str, product_id: str) -> list[
     return esptool_readback(path, project, version, layout(stamped).hash_at is not None)
 
 
-def release(version: str, catalog: dict, builds: dict) -> int:
-    """Stamp every built product app; 0 unless a value cannot fit its field or
-    esptool reads a stamped image back wrong."""
+def release(version: str, catalog: dict, builds: dict, fail_on_refused: bool = False) -> int:
+    """Stamp every built product app; 0 unless a value cannot fit its field,
+    esptool reads a stamped image back wrong, or (with fail_on_refused) an
+    image is refused."""
     errors = []
     for p in catalog["products"]:
         pid, build = p["id"], builds.get(p["id"])
@@ -256,6 +263,9 @@ def release(version: str, catalog: dict, builds: dict) -> int:
             errors.append(f"{pid}: {e}")
             continue
         except Refused as e:
+            if fail_on_refused:
+                errors.append(f"{pid} ({path}): not stamped — {e}")
+                continue
             aside = path.with_name(path.name + ".refused")
             path.replace(aside)
             print(f"::warning::{pid}: not stamped — {e}. Moved aside to {aside}, so this "
@@ -275,6 +285,8 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     rel = sub.add_parser("release", help="stamp every product build_flash_manifest.py packages")
     rel.add_argument("--version", required=True, help="the release version, e.g. 2.4.18 (no fw-v)")
+    rel.add_argument("--fail-on-refused", action="store_true",
+                     help="fail on an image this tool refuses instead of moving it aside")
     one = sub.add_parser("image", help="stamp one app image in place")
     one.add_argument("--project", required=True, help="project_name: the product's asset_stem")
     one.add_argument("--version", required=True, help="the firmware's own version string")
@@ -283,7 +295,7 @@ def main() -> None:
 
     catalog = json.loads(build_flash_manifest.FLASH_JSON.read_text(encoding="utf-8"))
     if args.cmd == "release":
-        sys.exit(release(args.version, catalog, build_flash_manifest.BUILD))
+        sys.exit(release(args.version, catalog, build_flash_manifest.BUILD, args.fail_on_refused))
     product = next((p for p in catalog["products"] if p["asset_stem"] == args.project), None)
     if product is None:
         sys.exit(f"stamp_app_desc: {args.project!r} is no product's asset_stem in {build_flash_manifest.FLASH_JSON}")

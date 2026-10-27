@@ -573,14 +573,16 @@ jobs:
         # now), so both flashers can name the board this image goes onto.
         # Before the factory merge, so manifest-flash.json's sha256 covers
         # the stamped bytes; esptool reads each one back, and a bad readback
-        # fails the run. An app the stamper refuses is moved aside, so its
-        # product drops out of manifest-flash.json like any failed rebuild.
+        # fails the run, and so does an app the stamper refuses
+        # (--fail-on-refused): manifest-flash.json goes up over the tag's
+        # existing one with no completeness gate in between, so a product
+        # dropped here would vanish from both flashers on a green run.
         # On the release channel the stamper is overlay tooling, so a
         # rebuild of an older tag stamps that tag's factory images too (an
         # app that predates its product id string stays unstamped).
         env:
           VERSION: ${{ steps.ver.outputs.version }}
-        run: python3 firmware/scripts/stamp_app_desc.py release --version "$VERSION"
+        run: python3 firmware/scripts/stamp_app_desc.py release --version "$VERSION" --fail-on-refused
 
       - name: Build factory images + manifest-flash.json
         id: factory

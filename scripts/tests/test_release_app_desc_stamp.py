@@ -126,6 +126,13 @@ class TheWorkflows(unittest.TestCase):
                 self.assertNotIn("if", stamp)
                 self.assertNotIn("continue-on-error", stamp)
 
+    def test_only_the_gated_release_drops_a_refused_app(self):
+        # firmware-release.yml's assemble step and completeness gate weigh a
+        # product the stamper drops; flasher-release.yml uploads its catalog
+        # over the tag's with neither, so there a refusal fails the run.
+        self.assertIn("--fail-on-refused", self.stamp_step(steps("flasher-release.yml"))["run"])
+        self.assertNotIn("--fail-on-refused", self.stamp_step(steps("firmware-release.yml"))["run"])
+
     def test_the_tag_rebuild_overlays_the_stamper_with_the_rest_of_the_tooling(self):
         # The release channel checks out an old tag, which has no stamper (or
         # an older one): it must come from the dispatch ref, before it runs.

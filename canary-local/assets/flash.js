@@ -5493,7 +5493,7 @@ function reportRow(label, value, tone) {
 
 // The date an app descriptor carries is whatever compiled that record. An
 // Arduino build's comes from the core's precompiled libraries (fw-v2.4.17's
-// read Mar 5 2024 and Mar 31 2026), and the release stamp leaves it alone
+// read Mar 5 2024, Mar 31 2026 or Jun 2 2026), and the release stamp leaves it alone
 // (firmware/scripts/stamp_app_desc.py), so it is never "when this firmware
 // was built". desktop/src/app.js says the same (desktop_parity.test.js).
 const DESCRIPTOR_DATE_NOTE =

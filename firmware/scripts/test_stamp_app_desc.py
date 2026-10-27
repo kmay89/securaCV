@@ -422,6 +422,23 @@ def test_release_moves_aside_an_image_it_cannot_stamp(tmp_path, capsys, app):
     assert (d / "firmware.bin.refused").read_bytes() == app
 
 
+def test_release_fails_on_a_refused_image_when_told_to_and_leaves_it_in_place(tmp_path, capsys):
+    # flasher-release.yml has no completeness gate before it replaces the
+    # tag's manifest-flash.json, so there a refusal must stop the run rather
+    # than drop the product.
+    d = tmp_path / "pio"
+    d.mkdir()
+    app = hand_image()[:-1]
+    (d / "firmware.bin").write_bytes(app)
+    catalog = {"products": [{"id": "securacv-canary", "asset_stem": "canary"}]}
+    builds = {"securacv-canary": {"toolchain": "pio", "dir": str(d), "vsuffix": ""}}
+    assert sad.release("2.4.18", catalog, builds, fail_on_refused=True) == 1
+    out = capsys.readouterr().out
+    assert "::error::securacv-canary" in out and "not stamped" in out
+    assert (d / "firmware.bin").read_bytes() == app
+    assert not (d / "firmware.bin.refused").exists()
+
+
 def test_release_fails_on_a_version_the_field_cannot_hold_and_moves_nothing(tmp_path, capsys):
     # A value that does not fit is the release's or the catalog's fault, not
     # one build's: every product would show it, so it fails the step rather
