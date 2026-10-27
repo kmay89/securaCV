@@ -1108,9 +1108,13 @@ def _augment_device_registry() -> None:
             raise ValueError(f"no device {identifier} in {config_entry_id}")
         return device.id
 
+    def async_entries_for_config_entry(registry, config_entry_id):
+        return [device for device in registry.devices if device.config_entry_id == config_entry_id]
+
     dr_mod.DeviceInfo = DeviceInfo
     dr_mod.DeviceEntry = types.SimpleNamespace
     dr_mod.async_get = async_get
+    dr_mod.async_entries_for_config_entry = async_entries_for_config_entry
     dr_mod.async_get_device_id_by_identifier = async_get_device_id_by_identifier
     dr_mod._securacv_rich = True
     entity_mod = _module("homeassistant.helpers.entity")

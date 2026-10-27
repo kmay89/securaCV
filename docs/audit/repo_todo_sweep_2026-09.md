@@ -7000,7 +7000,7 @@ so — see D2 below.)
   Canary key has a hex letter in every four-character run of its
   fingerprint and its kernel key is fixed, and it asserts both, so neither
   a bucket start's digits nor the kernel's own fingerprint can spell a run
-  (with the first key, `abd93943326cbd12`, it failed in 246 of the 157,680
+  (with the first key, `abd93943326cbd12`, it failed in 246 of the 157,824
   bucket starts of the three years from 2026-10-27, and a kernel key drawn
   fresh per test shares a run with the Canary's about once in a thousand
   runs). The rule "two
@@ -7010,20 +7010,33 @@ so — see D2 below.)
   `canary-c3-…`; `canary_sense_001` and `canary_sentinel_001` are both
   `canary_s…`), so one Canary's rows replaced another's. `_shown_ids()` now
   gives ids that share their eight characters a per-dump ordinal
-  (`canary-s… #1`, `canary-s… #2`), numbered in the order the integration
-  recorded them, the same key in the device, trust and verification
-  sections, with no ninth character of any id;
+  (`canary-s… #1`, `canary-s… #2`), numbered in the order the dump lists
+  them (the Canaries the integration has a record of, then every other
+  Canary with a device page, then ids only verification has seen), the
+  same key in the device, trust and verification sections, with no ninth
+  character of any id;
   `test_every_canary_keeps_its_own_row` (stub suite) holds two canary-wap
   units pinned to one key, a Sense and a Sentinel to their own rows, with
   WAP ids the WAP's suffix recipe can print, and fails on the dump as it
   was; `test_a_canary_only_verification_has_seen_has_a_row` gives an id
   that only verification has seen (a retained chain or counts publish
   verified before the status) a row of its own, numbered after the device
-  records. A Canary heard only on health, whose version gives it a device
-  page before any status does, has a row and a trust row too, numbered
-  after the status records (`test_a_canary_heard_only_on_health_has_a_row`,
-  in both suites; both fail on the dump as it was, which had no row for
-  it). The dump's per-Canary `firmware` and `hardware` are the device
+  records. Every Canary with a device page under the entry has a row, and
+  a trust row when its key is pinned, whichever topic made the page:
+  `_canary_page_ids()` reads the pages from the device registry, because a
+  health with no version, or a first counts, chain, events, tamper,
+  transport, mesh or chirp publish, makes a page through the entities the
+  platforms add and leaves no record the dump read before.
+  `test_every_canary_with_a_device_page_has_a_row` holds it in both
+  suites, the real-core lane once for each of those eight topics, and
+  fails on the dump without the registry read, which had no row for any
+  of them; `test_a_page_kept_from_before_a_reload_has_a_row` (real core)
+  gives a page the registry kept through a reload a row before its Canary
+  publishes again. `test_a_canary_heard_only_on_health_has_a_row` (stub)
+  and `test_the_records_are_numbered_before_the_other_pages` (real core)
+  make a health-only Canary's page first and still number it after the
+  status record; both fail when the pages are listed first. The dump's
+  per-Canary `firmware` and `hardware` are the device
   page's own (`entity.canary_registry_facts`), so within a run a later
   status that leaves a fact out no longer makes them disagree with the page;
   after a restart the dump shows only what each Canary has published since,

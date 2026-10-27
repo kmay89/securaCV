@@ -32,8 +32,9 @@
   Canary whose retained status is its last will reads "SecuraCV Canary"
   again until it next names its type.
 - **Every value is bounded text from the broker.** Version, board and name
-  are cut to 64 printable characters, control characters dropped before
-  whitespace is collapsed so that a dropped one leaves no space behind
+  are cut to 64 printable characters: characters that neither print nor are
+  whitespace are dropped, so a dropped one leaves no space behind, then each
+  run of whitespace (a newline or a tab included) becomes one space
   (`mqtt_payload.broker_text`); a version that is not a string (a number, an
   object) is dropped instead of `str()`-ed onto the page. No serial number
   is set on a Canary's device. A fact a publish leaves out is no longer
@@ -65,13 +66,20 @@
   Sentinel start alike, so one Canary's rows replaced another's and two
   units pinned to one key could not be seen to share a correlation id. Ids
   that share their eight characters now each get a per-dump ordinal
-  (`canary-s… #1`, `canary-s… #2`), numbered in the order the integration
-  recorded them, an id only verification has seen (a retained chain or
-  counts publish verified before the status) after the device records; no
-  ninth character is shown. A Canary heard only on health, whose version
-  gives it a device page before any status does, now has a row too (and a
-  trust row when its key is pinned); before, the dump had none for it. The
-  per-Canary `firmware` and `hardware` are
+  (`canary-s… #1`, `canary-s… #2`), numbered in the order the dump lists
+  them: the Canaries the integration has a record of, then every other
+  Canary with a device page, then an id only verification has seen (a
+  retained chain or counts publish verified before the status); no ninth
+  character is shown. Every Canary with a device page under the entry now
+  has a row (and a trust row when its key is pinned), whichever topic made
+  the page: a status, a health with or without a version, or a first
+  counts, chain, events, tamper, transport, mesh or chirp publish, each of
+  which adds entities and so the page; before, only a Canary the
+  integration had a record of (from its status, its availability or an
+  event it published) had one. The pages are read from the device
+  registry, so a Canary whose page predates a restart has a row before it
+  publishes again, every fact in it empty until it does (and its trust row
+  when its key is pinned). The per-Canary `firmware` and `hardware` are
   the device page's own (the version health reported, else the status's,
   and the board the status last named), so within a run they no longer
   disagree with the page once a later status leaves a fact out; after a
@@ -108,12 +116,17 @@
   health-first Canary taking its status's name, and an update keeping the
   board and the address. `test_diagnostics.py` also keeps two canary-wap
   units, a Sense and a Sentinel in rows of their own, the two units'
-  correlation ids equal, and gives an id only verification has seen a row,
-  and both suites give a Canary heard only on health one. The real-core
+  correlation ids equal, and gives an id only verification has seen a row;
+  both suites give every Canary with a device page a row, the real-core
+  lane for a first publish on each of the eight topics that make a page
+  without a record (health with no version, counts, chain, events, tamper,
+  transport, mesh, chirp) and for a page kept through a reload, and both
+  number a Canary heard only on health after a status record its page
+  predates. The real-core
   dump test's Canary key has a hex letter in every four-character run of
   its fingerprint, and its kernel key is fixed: with the old key the scan
   failed whenever the clock's bucket start spelled one of the fingerprint's
-  all-digit runs (246 of the 157,680 bucket starts in the three years from
+  all-digit runs (246 of the 157,824 bucket starts in the three years from
   2026-10-27), and a kernel key drawn fresh for each test shares four
   characters with the Canary's fingerprint about once in a thousand runs.
   The test asserts both preconditions. A real-core test holds what the
@@ -125,8 +138,8 @@
   already read (the dictionary, the voice sentences, the seven contract
   vectors, and the viewer's verify and zip cores), found by
   `scripts/check_path_filter_reads.py`. The stub suite passes on Python
-  3.11 and 3.13 (943 tests) and the real-core lane on Home Assistant
-  2026.5.0 and 2026.10.1 (114 each). Host-tested; not run against a device
+  3.11 and 3.13 (944 tests) and the real-core lane on Home Assistant
+  2026.5.0 and 2026.10.1 (124 each). Host-tested; not run against a device
   or a live broker.
 
 ## [2.4.17] - 2026-10-27

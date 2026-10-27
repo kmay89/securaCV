@@ -1,13 +1,15 @@
 """Device info and the entity bases every platform shares.
 
 Two devices per entry: the kernel (one, "SecuraCV", model "Privacy Witness
-Kernel") and the Canaries (one per device id seen on the status topic).
-The kernel device carries two identifiers — the durable ``kernel_<device
-id>`` and the URL older registries already hold — so an upgrade merges
-into the existing device instead of creating a second. Canary devices link
-to the kernel as their via-device; the shim below speaks whichever
-device-registry API the running core has (``via_device_id`` from 2026.8,
-``via_device`` before).
+Kernel") and the Canaries (one per device id, made by its first status,
+health, counts, chain, events, tamper, transport, mesh or chirp publish:
+the status handler writes it, the health handler does when the health
+reports a version, and every entity's device info does too). The kernel
+device carries two identifiers — the durable ``kernel_<device id>`` and the
+URL older registries already hold — so an upgrade merges into the existing
+device instead of creating a second. Canary devices link to the kernel as
+their via-device; the shim below speaks whichever device-registry API the
+running core has (``via_device_id`` from 2026.8, ``via_device`` before).
 
 Every DeviceInfo value is a string: a non-string ``sw_version`` is a
 deprecation warning today and a refusal from 2026.12. A Canary's device page

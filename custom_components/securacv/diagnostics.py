@@ -48,6 +48,7 @@ from urllib.parse import urlsplit
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.const import CONF_TOKEN, CONF_URL
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 
 from .const import (
     CONF_AUTH_MODE,
@@ -63,6 +64,7 @@ from . import PLATFORMS
 from .data import SecuraCVConfigEntry, runtime_for
 from .entity import canary_registry_facts
 from .kernel_trust import kernel_key_fingerprint, normalize_kernel_key
+from .mqtt_payload import valid_device_id
 
 # Every key whose value is a secret, a credential, a stable identifier, a
 # network address or a location. Applied recursively by async_redact_data.
@@ -138,10 +140,10 @@ def _shown_ids(device_ids: Iterable[str]) -> dict[str, str]:
 
     Ids that share those characters (two canary-wap units, `canary-s3-…`;
     a Sense and a Sentinel, `canary_s…`) each get a per-dump ordinal after
-    them, numbered in the order the runtime recorded them (the Canary
-    records, then any Canary only its health has given a device page, then
-    any id only verification has seen), so no row replaces another and no
-    further character of an id is shown.
+    them, numbered in the order given (the Canary records, then every other
+    Canary with a device page under the entry, then any id only verification
+    has seen), so no row replaces another and no further character of an id
+    is shown.
     """
     ids = list(dict.fromkeys(device_ids))
     prefix = {device_id: _truncated(device_id) or device_id for device_id in ids}
@@ -155,6 +157,29 @@ def _shown_ids(device_ids: Iterable[str]) -> dict[str, str]:
             key = f"{key} #{seen[key]}"
         shown[device_id] = key
     return shown
+
+
+def _canary_page_ids(hass: HomeAssistant, entry: SecuraCVConfigEntry) -> list[str]:
+    """The id of every Canary the entry has a device page for.
+
+    Read from the device registry, in the order it lists the entry's
+    devices. A Canary's first publish on any topic the integration reads
+    makes its page: the status handler writes it, the health handler does
+    when the health reports a version, and the sensor, binary sensor and
+    event platforms add entities, and so the page, for its status, health,
+    counts, chain, events, tamper, transport, mesh and chirp. The runtime's
+    records miss some of those (a health with no version, or a first mesh
+    publish, records nothing), so the registry is what says which Canaries
+    have a page. The kernel's page is not a Canary's.
+    """
+    prefix = "canary_"
+    ids: list[str] = []
+    for device in dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id):
+        for domain, identifier in sorted(device.identifiers):
+            device_id = identifier[len(prefix):]
+            if domain == DOMAIN and identifier.startswith(prefix) and valid_device_id(device_id):
+                ids.append(device_id)
+    return ids
 
 
 def _correlation_ids() -> Callable[[Any], str | None]:
@@ -343,13 +368,15 @@ async def async_get_config_entry_diagnostics(
     devices_info: dict[str, Any] = {}
     trust_info: dict[str, Any] = {}
     correlation_id = _correlation_ids()
-    # A row for every Canary heard this run: the status and availability
-    # records, then any Canary whose device page only its health has written
-    # (a health that reports a version makes the page before any status).
+    # A row for every Canary the integration has a record of this run (from
+    # its status, its availability or an event it published), then for every
+    # other Canary with a device page under this entry, whichever topic made
+    # the page and whether or not it has published since Home Assistant
+    # started; what it has not published since is None.
     canary_ids: list[str] = []
     shown_ids: dict[str, str] = {}
     if runtime is not None:
-        canary_ids = list(dict.fromkeys([*runtime.devices, *runtime.canary_registry]))
+        canary_ids = list(dict.fromkeys([*runtime.devices, *_canary_page_ids(hass, entry)]))
         shown_ids = _shown_ids([*canary_ids, *runtime.verify])
         for device_id in canary_ids:
             shown = shown_ids[device_id]

@@ -39,6 +39,7 @@ from ..const import (  # noqa: E402
 )
 from .. import _async_device_status_received, _async_record_health_firmware  # noqa: E402
 from ..diagnostics import TO_REDACT, async_get_config_entry_diagnostics  # noqa: E402
+from ..entity import canary_device_info, kernel_device_info  # noqa: E402
 from ..kernel_trust import kernel_key_fingerprint  # noqa: E402
 
 FULL_FP = "aabbccdd11223344"  # 16 hex chars, like the real Canary fingerprint
@@ -298,21 +299,22 @@ def test_a_canary_only_verification_has_seen_has_a_row() -> None:
 def test_a_canary_heard_only_on_health_has_a_row() -> None:
     """A health that reports a version makes the Canary's device page before
     any status does, so the dump gives it a row too: the page's version, and
-    its trust row, numbered after the status records when it shares their
-    eight characters. A health with no version makes no page and no row."""
+    its trust row. Its page is made first here, and its row is still
+    numbered after the status record that shares its eight characters: the
+    records come first, then the other pages."""
     hass = HomeAssistant()
     fingerprints = {"canary-s3-aB72": "aabbccdd11223344", "canary-s3-xQ32": "99887766deadbeef"}
     entry = _entry_with_kernel(hass, devices={}, fingerprints=fingerprints)
-    _publish(hass, entry, "canary-s3-aB72", "status", STATUS)
     _publish(hass, entry, "canary-s3-xQ32", "health", {"firmware_version": "2.4.16"})
-    _publish(hass, entry, "health02", "health", {"free_heap": 120000})
+    _publish(hass, entry, "canary-s3-aB72", "status", STATUS)
 
     diag = _diag(hass, entry)
     registry = device_registry(hass)
     page = registry.async_get_device(identifiers={(DOMAIN, "canary_canary-s3-xQ32")})
     assert page is not None and page.sw_version == "2.4.16"
-    assert registry.async_get_device(identifiers={(DOMAIN, "canary_health02")}) is None
+    assert registry.devices.index(page) == 0
     assert diag["canary_device_count"] == 2
+    assert diag["canary_devices"]["canary-s… #1"]["device_type"] == "canary-wap"
     assert diag["canary_devices"]["canary-s… #2"] == {
         "online": None,
         "firmware": "2.4.16",
@@ -324,9 +326,62 @@ def test_a_canary_heard_only_on_health_has_a_row() -> None:
     assert CORRELATION_ID.fullmatch(diag["trust"]["canary-s… #2"]["key_correlation_id"])
     assert set(diag["trust"]) == set(diag["canary_devices"])
     text = repr(diag)
-    assert "xQ32" not in text and "health02" not in text
+    assert "xQ32" not in text
     for window in _windows(fingerprints["canary-s3-xQ32"]):
         assert window not in text.lower(), window
+
+
+def test_every_canary_with_a_device_page_has_a_row() -> None:
+    """A Canary's device page is made by its first publish on any topic the
+    integration reads: a health with no version, or counts, chain, events,
+    tamper, transport, mesh or chirp, makes it through the entities the
+    platforms add, and none of them writes a record of the status or health
+    handler. This suite runs no platform, so the pages are made here as an
+    entity's device info makes them; the real-core lane drives each topic.
+    Each such Canary has a row, and a trust row, numbered after the status
+    record that shares its eight characters. The kernel's page is not a
+    Canary row, nor is another entry's Canary, another integration's
+    identifier, or an identifier whose id no topic could carry."""
+    hass = HomeAssistant()
+    fingerprints = {"canary-s3-aB72": "aabbccdd11223344", "canary-s3-kM52": "99887766deadbeef"}
+    entry = _entry_with_kernel(hass, devices={}, fingerprints=fingerprints)
+    registry = device_registry(hass)
+    registry.async_get_or_create(config_entry_id=entry.entry_id, **kernel_device_info(entry))
+    for device_id in ("canary-s3-kM52", "mesh01"):
+        registry.async_get_or_create(
+            config_entry_id=entry.entry_id, **canary_device_info(hass, entry, device_id)
+        )
+    other = make_entry(entry_id="other", data={CONF_ENABLE_MQTT: True, CONF_MQTT_PREFIX: "securacv"})
+    registry.async_get_or_create(
+        config_entry_id=other.entry_id, **canary_device_info(hass, other, "elsewhere01")
+    )
+    registry.async_get_or_create(config_entry_id=entry.entry_id, identifiers={("mqtt", "canary_foreign01")})
+    registry.async_get_or_create(config_entry_id=entry.entry_id, identifiers={(DOMAIN, "canary_no/topic")})
+    _publish(hass, entry, "canary-s3-aB72", "status", STATUS)
+
+    diag = _diag(hass, entry)
+    assert diag["canary_device_count"] == 3
+    assert set(diag["canary_devices"]) == {"canary-s… #1", "canary-s… #2", "mesh01"}
+    assert diag["canary_devices"]["canary-s… #1"]["device_type"] == "canary-wap"
+    nothing_published = {
+        "online": None,
+        "firmware": None,
+        "hardware": None,
+        "device_type": None,
+        "last_event_type": None,
+    }
+    assert diag["canary_devices"]["canary-s… #2"] == nothing_published
+    assert diag["canary_devices"]["mesh01"] == nothing_published
+    assert set(diag["trust"]) == set(diag["canary_devices"])
+    assert diag["trust"]["canary-s… #2"]["pinned"] is True
+    assert CORRELATION_ID.fullmatch(diag["trust"]["canary-s… #2"]["key_correlation_id"])
+    assert (
+        diag["trust"]["canary-s… #2"]["key_correlation_id"]
+        != diag["trust"]["canary-s… #1"]["key_correlation_id"]
+    )
+    text = repr(diag)
+    for leaked in ("kM52", "aB72", "elsewhere", "foreign", "no/topic"):
+        assert leaked not in text, leaked
 
 
 def test_the_dump_shows_what_the_device_page_shows() -> None:

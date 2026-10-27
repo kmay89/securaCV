@@ -207,6 +207,124 @@ async def test_a_canary_heard_only_on_health_has_a_row(
     assert re.fullmatch(r"[g-hj-km-np-tv-z]{4}-[g-hj-km-np-tv-z]{4}", diagnostics["trust"][shown]["key_correlation_id"])
 
 
+async def test_the_records_are_numbered_before_the_other_pages(
+    hass: HomeAssistant,
+    kernel: KernelMock,
+    mqtt_mock: MqttMockHAClient,
+    setup_kernel_entry,
+    hass_client: ClientSessionGenerator,
+) -> None:
+    """Two canary-wap units share their eight characters, so each row gets an
+    ordinal. The unit heard only on health has its page first, and the unit
+    whose status the integration recorded is still #1: the records come
+    first, then the other pages."""
+    entry = await setup_kernel_entry(enable_mqtt=True)
+    async_fire_mqtt_message(
+        hass, "securacv/canary-s3-xQ32/health", json.dumps({"public_key": CANARY_KEY, "firmware_version": "2.4.16"}), qos=1, retain=True
+    )
+    await hass.async_block_till_done()
+    async_fire_mqtt_message(
+        hass, "securacv/canary-s3-aB72/status", json.dumps({"online": True, "device_type": "canary-wap"}), qos=1, retain=True
+    )
+    await hass.async_block_till_done()
+
+    diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+    assert canary_device(hass, entry, "canary-s3-xQ32") is not None
+    assert diagnostics["canary_device_count"] == 2
+    assert diagnostics["canary_devices"]["canary-s… #1"]["device_type"] == "canary-wap"
+    assert diagnostics["canary_devices"]["canary-s… #2"]["firmware"] == "2.4.16"
+    assert diagnostics["trust"]["canary-s… #2"]["pinned"] is True
+
+
+# A first publish on each of these topics gives a Canary its device page
+# through the entities the platforms add for it, and none of them writes a
+# record of the status or the health handler: a health with no version (its
+# key is pinned all the same), counts, chain, events, tamper, transport,
+# mesh and chirp.
+PAGE_ONLY_PUBLISHES = {
+    "health": {"public_key": CANARY_KEY, "free_heap": 120000},
+    "counts": {"total": 3},
+    "chain": {"length": 3},
+    "events": {"event_type": "BoundaryCrossingObjectLarge"},
+    "tamper": {"type": "gpio", "active": True},
+    "transport": {"wifi": {"connected": True}},
+    "mesh": {"connected": True},
+    "chirp": {"active": True},
+}
+
+
+@pytest.mark.parametrize("topic", list(PAGE_ONLY_PUBLISHES))
+async def test_every_canary_with_a_device_page_has_a_row(
+    topic: str,
+    hass: HomeAssistant,
+    kernel: KernelMock,
+    mqtt_mock: MqttMockHAClient,
+    setup_kernel_entry,
+    hass_client: ClientSessionGenerator,
+) -> None:
+    """Whichever topic gave a Canary its device page, the dump has a row for
+    it, and a trust row when its key is pinned; the kernel's own page is not
+    a Canary row. Before, a Canary whose page came from any of these topics
+    alone had neither."""
+    entry = await setup_kernel_entry(enable_mqtt=True)
+    async_fire_mqtt_message(
+        hass, f"securacv/{CANARY}/{topic}", json.dumps(PAGE_ONLY_PUBLISHES[topic]), qos=1, retain=True
+    )
+    await hass.async_block_till_done()
+
+    diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+    assert canary_device(hass, entry, CANARY) is not None
+    assert diagnostics["canary_device_count"] == 1
+    (shown,) = diagnostics["canary_devices"]
+    assert shown == CANARY[:8] + "…"
+    assert diagnostics["canary_devices"][shown]["online"] is None
+    assert diagnostics["canary_devices"][shown]["firmware"] is None
+    if topic == "health":
+        assert entry.runtime_data.trust_store.is_pinned(CANARY)
+        assert diagnostics["trust"][shown]["pinned"] is True
+        assert re.fullmatch(r"[g-hj-km-np-tv-z]{4}-[g-hj-km-np-tv-z]{4}", diagnostics["trust"][shown]["key_correlation_id"])
+    else:
+        assert diagnostics["trust"] == {}
+
+
+async def test_a_page_kept_from_before_a_reload_has_a_row(
+    hass: HomeAssistant,
+    kernel: KernelMock,
+    mqtt_mock: MqttMockHAClient,
+    setup_kernel_entry,
+    hass_client: ClientSessionGenerator,
+) -> None:
+    """A reload starts the integration's records afresh and the device
+    registry keeps the page, as a restart does: the Canary has a row before
+    it publishes again, with nothing it published before in it, and its
+    trust row from the pin the trust store kept."""
+    entry = await setup_kernel_entry(enable_mqtt=True)
+    async_fire_mqtt_message(
+        hass, f"securacv/{CANARY}/status", json.dumps({"online": True, "device_type": "canary-sense"}), qos=1, retain=True
+    )
+    async_fire_mqtt_message(
+        hass, f"securacv/{CANARY}/health", json.dumps({"public_key": CANARY_KEY, "firmware_version": "2.4.16"}), qos=1, retain=True
+    )
+    await hass.async_block_till_done()
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+    page = canary_device(hass, entry, CANARY)
+    assert page is not None and page.sw_version == "2.4.16"
+    assert entry.runtime_data.devices == {}
+    assert diagnostics["canary_device_count"] == 1
+    (shown,) = diagnostics["canary_devices"]
+    assert diagnostics["canary_devices"][shown] == {
+        "online": None,
+        "firmware": None,
+        "hardware": None,
+        "device_type": None,
+        "last_event_type": None,
+    }
+    assert diagnostics["trust"][shown]["pinned"] is True
+
+
 def test_an_identifier_key_is_replaced_wherever_it_lands() -> None:
     """The second net on the core's own async_redact_data: a value under any
     of the identifier keys a Canary's answers use, at any depth, comes out
