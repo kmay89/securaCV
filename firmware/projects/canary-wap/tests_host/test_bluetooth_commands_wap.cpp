@@ -5112,7 +5112,13 @@ void test_a_passkey_to_show_reaches_the_owner() {
   bc::BluetoothStatus st;
   bc::read_status(&st);
   CHECK(st.pairing.state == bc::PAIR_PIN_DISPLAYED && st.pairing.pin_code == shown);
+  // The digits ride GET /api/bluetooth only with the bearer (sweep F346:
+  // a_passkey_rides_only_with_the_bearer holds the session's pin_hidden).
+  bluetooth_api::auth_token_storage() = "cv_test_token";
+  g_bearer = true;
   const Tap answer = tap(bluetooth_api::handle_bluetooth_status);
+  g_bearer = false;
+  bluetooth_api::auth_token_storage() = nullptr;
   CHECK(answer.body.find("\"pin\":" + std::to_string(shown)) != std::string::npos);
   CHECK(health_says("Pairing PIN displayed") == 1 && health_detail("Pairing PIN displayed").empty());
   CHECK(!health_carries(six_digits(shown)));

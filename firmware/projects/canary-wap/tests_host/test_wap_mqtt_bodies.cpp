@@ -297,6 +297,11 @@ int esp_mqtt_client_subscribe(esp_mqtt_client_handle_t c, const char* topic, int
 
 // ── What the sketch links in on a device ────────────────────────────────
 
+// The bearer lockout's source (api_auth.h declares it; canary_wap.ino
+// defines it from the request's socket peer, sweep F343). Every binary that
+// compiles the real api_auth.h defines it; nothing here sends a bearer.
+uint32_t auth_request_source(httpd_req_t*) { return 0; }
+
 namespace csi_integration {
 bool session_validate_cookie(httpd_req_t*) { return true; }
 void add_outbound_bytes(uint32_t) {}
