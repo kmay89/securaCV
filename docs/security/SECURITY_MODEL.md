@@ -550,8 +550,11 @@ CA-verified mode is the defense), and the boot scan has no time window.
 The session also cannot make a write that grants a credential or moves the
 unit off its owner's network (a network one moved it to before F334 can
 stay saved, below), and of its writes only the firmware install
-restarts the unit (`POST /api/ota/install`, or automatic updates turned on
-with `POST /api/ota/config`), which installs only a newer signed image.
+restarts the unit (`POST /api/ota/install`, automatic updates turned on
+with `POST /api/ota/config`, or the MQTT update entity's Install or
+auto-update switch, sent from whatever broker the bridge points at, which a
+session may re-point with a password typed), which installs only a newer
+signed image.
 These routes take the bearer alone, never the session
 (`api_auth_check_bearer()`, or for one answer field the accounted
 `api_auth_bearer_grant()`; `api_auth.h` points here for the list):

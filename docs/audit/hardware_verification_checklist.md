@@ -3389,6 +3389,14 @@ vault, Bluetooth, opera and device cards in `web_ui.h`. Owner: U1.
        cv_session=<hex>" http://<sta-ip>/api/ota/install` (that unit's
        landing cookie), then poll `GET /api/ota/status` and `GET
        /api/status` with the cookie.
+    6. On a second older unit, with a test broker (Mosquitto, any login
+       accepted) on the laptop: `curl -s -w '%{http_code}\n' -X POST -H
+       "Cookie: cv_session=<hex>" -H 'Content-Type: application/json' -d
+       '{"enabled":true,"host":"<laptop-ip>","port":1883,"user":"x","password":"x"}'
+       http://<sta-ip>/api/mqtt/config`; once the bridge connects,
+       `mosquitto_pub -h <laptop-ip> -t '<prefix>/<device id>/update/cmd'
+       -m install` (the topic is the update entity's `cmd_t` in its
+       discovery message), then poll `GET /api/status` with the cookie.
   - Expected: the cookie-only POSTs answer 401 and the uptime keeps
     counting; the bearer's answer 200 and the unit restarts; the device
     card shows "Rebooting this Canary takes the API token…"; the first
@@ -3397,7 +3405,10 @@ vault, Bluetooth, opera and device cards in `web_ui.h`. Owner: U1.
     the unit restarts into the published release: the one restart a session
     still makes, by design here, and only into a newer signed image. Run it
     again on the updated unit: `GET /api/ota/status` reads
-    `"update_available":false` and the uptime keeps counting.
+    `"update_available":false` and the uptime keeps counting. Step 6: the
+    save answers 200, the health log reads "Firmware install requested from
+    Home Assistant", and the unit restarts into the published release, the
+    same install reached through a broker the session chose.
   - Artifact: `docs/audit/repro/F361/`.
 
 ## canary-wap after a failed provisioning (F336) — on-device verification

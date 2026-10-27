@@ -1827,9 +1827,11 @@ so — see D2 below.)
   The ledger named only the pair token, but the session cookie moved the
   network too, through `api_auth_check`. The Bluetooth bond was a second road,
   closed by F346's gate in the same PR.
-  During setup nothing changes: no session exists then, and the wizard's pair
-  token works as before. After setup the landing's pair token and session
-  still open the dashboard, but no longer move the device. On the recovery
+  During setup nothing changes: the wizard's pair token works as before, and
+  so does a presented credential (`handle_ui` mints no session during setup,
+  but the receipt route mints one on a BOOT tap or the setup door's claim,
+  and the SoftAP is the boundary then). After setup the landing's pair token
+  and session still open the dashboard, but no longer move the device. On the recovery
   portal the AP key opens the dashboard, and Connect then takes the recovery
   kit's token or one BOOT tap. There the STA is down and the SoftAP takes one
   client, so nobody else can contend the tap.
@@ -1869,6 +1871,13 @@ so — see D2 below.)
   Filed: F353, the bearer token cannot be rotated. Host-tested
   (`test_wifi_authority`, `dashboard_gates.test.js`), not bench-tested (U1
   rows, plain HTTP).
+  Third review fix (same PR): `csi_developer_api.md` and `csi_integration.h`
+  said the whole of `/api/wifi/qr-scan` answers `404` after setup; only the
+  POST start does, and its status and stop still take a pair token
+  (`qr_scan_request_allowed()`). The CHANGELOG's F344 entry, in the same
+  unreleased section, still called F334 open and the standalone camera's
+  scan running after setup; it now points to F334 and F333 in this release.
+  `RETIRED_IN` holds the three files to it.
 - [x] **F335 [decision] canary-wap: a session re-keys the vault.** `POST
   /api/vault/key` (`api_auth_check`, so any session) replaces the X25519
   unlock key that future snapshots are sealed to, and `GET
@@ -1966,8 +1975,9 @@ so — see D2 below.)
   sure recovery is a clean install (full erase), which also erases the
   identity key, so a hub that knew the unit sees a new one. Done (2026-10-26,
   #<PR>):
-  `setup()`'s "HALTING" line and its "should still serve HTTP" comment are
-  replaced by the posture per build, both lines keeping the `[!!]
+  `setup()`'s storage-failure "HALTING" line and its "should still serve
+  HTTP" comment are replaced by the posture per build (F360's line for an
+  identity key that cannot be used still says "HALTING", and halts), both lines keeping the `[!!]
   PROVISIONING FAILED` prefix and no credential word (the flashers' report
   scrubber redacts such lines). No behavior change; no host harness compiles
   `setup()`, CI compiles both lines (the FULL legs and the DEV profile gate),
@@ -1986,6 +1996,9 @@ so — see D2 below.)
   `js/help-catalog.js`) for a failure no bench has reproduced yet; add it to
   all three in one change once the U1 row has seen the line. Whether a unit
   with a full NVS halts or runs on an identity it cannot keep stays F58's.
+  Third review fix (same PR): the CHANGELOG said `setup()` no longer prints
+  "HALTING" at all, while F360's line still does; it now says for a storage
+  failure, and `RETIRED_IN` holds it.
 - [x] **F337 [decision] canary-wap over HTTPS: the session cookie's name, and
   no HSTS.** (1) Since F326 the cookie is `Secure` over HTTPS, and a browser
   that holds a `Secure` `cv_session` refuses a same-name cookie an `http:`
@@ -4007,10 +4020,11 @@ so — see D2 below.)
   `derive_api_token()` derives the token from the identity key, and the 10 s
   BOOT hold keeps both (`factory_reset_by_hold()`), so the token a unit was
   set up with is its token for life. After F334, F345, F346 and F361 it is the
-  only post-setup authority over the network the WAP joins, its bonds, its
-  vault key and its reboots (a session's firmware install still restarts the
-  unit, only into a newer signed image), and the setup door's winner after the
-  owner's own Forget or hold keeps it (magic_pairing.md §8). Options: a
+  only post-setup grant of a network move, a bond, a vault key or a reboot (a
+  session can still remove a bond or the vault key, rejoin the stored
+  network, and start the firmware install, which restarts the unit only into
+  a newer signed image), and the setup door's winner after the owner's own
+  Forget or hold keeps it (magic_pairing.md §3.7, §8). Options: a
   rotation counter in the derivation (the iPhone and Home Assistant pairings
   then run again), or keep, documented. Whoever implements it must make
   `nvs_load_token()` answer Loaded, Absent or Refused, as F360 did for the key
@@ -4506,13 +4520,16 @@ so — see D2 below.)
   *Decided and done (2026-10-26, #<PR>), under the maintainer's instruction to
   fix the remaining open items in best engineering practice and best value for
   the user and security, by F334's post-setup authority rule:* both wrappers
-  are `api_auth_check_bearer()`, as the Wi-Fi routes are after setup. No
-  session exists during setup, so the rule needs no setup branch. The
+  are `api_auth_check_bearer()`, as the Wi-Fi routes are after setup. The
+  wrappers ask nothing about setup: the bearer is the rule in every mode,
+  and a session the receipt route minted during setup (on a BOOT tap or the
+  setup door's claim; `handle_ui` mints none then) is refused too. The
   dashboard's Reboot Device and Retry full boot go through the same sign-in: a
   session-only page's refusal raises it and says "Rebooting…" to nobody, and
   the device card says "Rebooting this Canary takes the API token…". A
-  session's other road to a restart, the dashboard's firmware install,
-  restarts the unit only into a newer signed image. Pinned by
+  session's other roads to a restart, the dashboard's firmware install and
+  the MQTT update entity's Install from a broker the session points the
+  bridge at, restart the unit only into a newer signed image. Pinned by
   `test_wifi_authority.cpp`'s `the_reboot_routes_take_the_bearer` (after and
   during setup: a session alone 401 with no strike and nothing restarted, a
   wrong bearer 403 and a strike, the bearer restarts once; 20 of its checks
@@ -4537,6 +4554,24 @@ so — see D2 below.)
   the firmware install restarts the unit, and `test_docs_claims.py`'s
   `RETIRED_IN` holds each file to it (F344's own entry above keeps the
   sentence as it stood then).
+  Third review fix (same PR): `SECURITY_MODEL.md` named two routes to the
+  install a session can start; the MQTT update entity is a third. The bridge
+  subscribes to `<prefix>/<device id>/update/cmd` and `update/auto/cmd` on
+  every connect, latches an `install` or an `ON` for the loop, and the loop
+  runs `securacv_ota_check_and_install()`; a session can point the bridge at
+  its own broker, since `POST /api/mqtt/config` takes the cookie and a save
+  that carries a password is no move (`move_needs_password()`). The same
+  signed-image checks apply. `SECURITY_MODEL.md`, the CHANGELOG and this
+  entry name it, `test_the_firmware_install_is_the_one_restart_a_session_makes`
+  holds those code facts, and the U1 row gains step 6. Also: "no session
+  exists during setup" (this entry, F334's, three comments in
+  `canary_wap.ino`, two in `test_wifi_authority.cpp`) was untrue, since the
+  receipt route mints a session on a BOOT tap or the setup door's claim in
+  every mode (`handle_ui` mints none during setup, and the SoftAP is the
+  boundary then); and F353 called the token the only post-setup authority
+  over the bonds, the vault key and the network, which a session can still
+  remove, remove and rejoin. Each now says what the code does, and
+  `RETIRED_IN` holds the files to it. No behavior change.
 - [ ] **F362 [code+decision] canary-sense, canary-vision and canary-sentinel
   store a new key over a stored one they fail to read.**
   `load_or_generate_keypair()` (`src/witness.cpp:58`, the same lines in all

@@ -231,11 +231,15 @@ RETIRED_IN = (
      "behind the pair token, which the session can mint, and a code in front "
      "of the camera, which it cannot"),
     # The owner-authority PR's review: the bearer is not the only authority
-    # over the unit's restarts while the firmware install takes the session.
+    # over the unit's restarts while the firmware install takes the session;
+    # its third review: nor over the bonds, the vault key or the network,
+    # which a session can still remove, remove and rejoin.
     ("docs/audit/repo_todo_sweep_2026-09.md",
      "it is the only post-setup authority over the network the WAP joins, "
-     "its bonds, its vault key and its reboots, and",
-     "its reboots, but for a session's firmware install, which restarts the "
+     "its bonds, its vault key and its reboots",
+     "the only post-setup grant of a network move, a bond, a vault key or a "
+     "reboot; a session can still remove a bond or the vault key, rejoin the "
+     "stored network and start the firmware install, which restarts the "
      "unit only into a newer signed image"),
     ("CHANGELOG.md",
      "after setup the API token alone moves its network, reboots it, re-keys "
@@ -300,6 +304,52 @@ RETIRED_IN = (
      "The 10 s hold is the token-free way out, and works whatever the lockout "
      "is doing.",
      "the hold is the last way out (magic_pairing.md §3.7)"),
+    # And its nits. A session can exist during setup: handle_ui mints none
+    # then, but the receipt route mints one on a BOOT tap or the setup door's
+    # claim in every mode (session_issue() after the grant).
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "During setup nothing changes: no session exists then",
+     "handle_ui mints no session during setup; the receipt route does on a "
+     "BOOT tap or the door's claim, and the SoftAP is the boundary then"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "No session exists during setup, so the rule needs no setup branch.",
+     "the wrappers ask nothing about setup: the bearer is the rule in every "
+     "mode, and a setup-time session is refused too"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+     "(no session exists then: handle_ui mints none)",
+     "the same"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+     "(no session exists during it)",
+     "the same"),
+    ("firmware/projects/canary-wap/tests_host/test_wifi_authority.cpp",
+     "(no session exists then)",
+     "the same; the file's own setup case sends a cookie that goes ahead"),
+    # The F344 entry, in the same unreleased section, still called F334 open
+    # and the standalone camera's scan running after setup (BANNED retires
+    # both from the security docs, which do not include the CHANGELOG).
+    ("CHANGELOG.md",
+     "F334, still open, asks whether Wi-Fi changes after setup take a bearer",
+     "F334 is done in this release: after setup connect and ap-only take the "
+     "bearer alone and the scan's start answers 404"),
+    ("CHANGELOG.md",
+     "a standalone unit with a camera keeps scanning for a Wi-Fi QR code "
+     "after setup",
+     "since F333 the boot scan runs only while no network is stored and the "
+     "unit is not standalone"),
+    # Only the scan's POST start answers 404 after setup; its status and stop
+    # still take a pair token (qr_scan_request_allowed()).
+    ("docs/csi_developer_api.md",
+     "and `/api/wifi/qr-scan` answers `404` (F334)",
+     "the scan's start, `POST /api/wifi/qr-scan`, answers `404`"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/csi_integration.h",
+     "a first-boot grant. After setup those routes",
+     "after setup connect and ap-only take the bearer alone and the scan's "
+     "POST start answers 404; its status and stop still take a pair token"),
+    # F360's key_refused line in setup() still prints "HALTING", and halts.
+    ("CHANGELOG.md",
+     "`setup()` no longer prints \"HALTING\" (it never halted)",
+     "no longer prints \"HALTING\" for a storage failure (it never halted "
+     "there)"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -365,9 +415,6 @@ MUST_PASS_IN = [
     "behind the pair token, which the session can mint (`GET /api/pair/token` "
     "takes the cookie), and a code in front of the camera, which it cannot",
     # The owner-authority PR review's replacements.
-    "it is the only post-setup authority over the network the WAP joins, its "
-    "bonds, its vault key and its reboots (a session's firmware install "
-    "still restarts the unit, only into a newer signed image), and",
     "after setup the API token alone moves its network (a network joined "
     "before the update can stay saved), re-keys its vault, confirms a pairing "
     "and reboots it (the firmware install aside)",
@@ -396,6 +443,28 @@ MUST_PASS_IN = [
     "console",
     "The 10 s hold needs no token and works whatever the lockout is doing, "
     "but it is the last way out when BOOT taps keep closing",
+    # And of its nits.
+    "it is the only post-setup grant of a network move, a bond, a vault key "
+    "or a reboot (a session can still remove a bond or the vault key, rejoin "
+    "the stored network,",
+    "During setup nothing changes: the wizard's pair token works as before, "
+    "and so does a presented credential",
+    "The wrappers ask nothing about setup: the bearer is the rule in every "
+    "mode,",
+    "// During setup the wizard carries a live pair token, and a *presented* admin\n"
+    "// credential (the bearer, or a session: handle_ui mints none during setup,",
+    "// The two reboot routes take the bearer alone (sweep F361), in every mode, as\n"
+    "// the Wi-Fi routes do after setup: the landing page",
+    "// WiFi-management auth wrappers, meaningful only AFTER first-boot setup\n"
+    "// (they ask nothing about setup).",
+    "During setup the\n// wizard's gate is unchanged (handle_ui mints no session then, but the",
+    "Host question. Since F334 and F333, in this release, the pair token serves "
+    "only the first-boot wizard",
+    "take the bearer alone and the scan's start,\n`POST /api/wifi/qr-scan`, "
+    "answers `404` (F334)",
+    " *     via pair_token_valid(), a first-boot grant. After setup connect and",
+    "`setup()` no longer prints \"HALTING\" for a storage failure (it\n"
+    "  never halted there)",
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -504,6 +573,27 @@ MUST_FAIL_IN = [
     "  iPhone through the setup door. improv_core.h and wifi_clear_credentials()",
     "  and Forget leaves a standalone unit standalone). The 10 s hold is the\n"
     "  token-free way out, and works whatever the lockout is doing. Kept as",
+    "  set up with is its token for life. After F334, F345, F346 and F361 it is the\n"
+    "  only post-setup authority over the network the WAP joins, its bonds, its\n"
+    "  vault key and its reboots (a session's firmware install still restarts the",
+    "  During setup nothing changes: no session exists then, and the wizard's pair\n"
+    "  token works as before.",
+    "  are `api_auth_check_bearer()`, as the Wi-Fi routes are after setup. No\n"
+    "  session exists during setup, so the rule needs no setup branch. The",
+    "// During setup (no session exists then: handle_ui mints none) the wizard",
+    "// routes do after setup (no session exists during it): the landing page",
+    "// WiFi-management auth wrappers, meaningful only AFTER first-boot setup\n"
+    "// (no session exists during it). Disconnect drops the unit off its network",
+    "// (no session exists then) the wizard's gate is unchanged. POST /api/reboot",
+    "  Host question. F334, still open, asks whether Wi-Fi changes after setup take\n"
+    "  a bearer, so that the pair token serves only the first-boot wizard; its",
+    "  ledger entry names connect and ap-only, not the scan. And a standalone unit\n"
+    "  with a camera keeps scanning for a Wi-Fi QR code after setup, so a carried",
+    "`/api/wifi/ap-only` take the bearer alone and `/api/wifi/qr-scan` answers\n"
+    "`404` (F334); the wizard's token no longer moves the network.",
+    " *     via pair_token_valid(), a first-boot grant. After setup those routes\n"
+    " *     take the bearer alone (sweep F334): the landing page below mints into",
+    "  decision).** `setup()` no longer prints \"HALTING\" (it never halted) or says",
 ]
 
 
@@ -697,6 +787,28 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
         ota = (WAP / "securacv_ota.cpp").read_text(encoding="utf-8")
         self.assertIn("if (cmp > 0)  return SECURACV_OTA_DECISION_UPDATE;", ota)
         self.assertIn("esp_restart();", body_after(ota, "if (s_ctx.config.auto_reboot) {", r"\n    } else {"))
+        # A third road to the same install (the PR's third review): the
+        # bridge subscribes to the update entity's two command topics on
+        # every connect, latches an "install" or an "ON" for the loop, and the
+        # loop runs the same install; and a session may point the bridge at
+        # its own broker, since a save that carries a password is no move
+        # (move_needs_password()) and the route takes the cookie.
+        mqtt = (WAP / "csi_mqtt.cpp").read_text(encoding="utf-8")
+        connected = body_after(mqtt, "/* Firmware update entity: subscribe to the Install + auto-update",
+                               r"\n      }\n")
+        self.assertIn('build_topic(cmd_topic, sizeof(cmd_topic), "update/cmd");', connected)
+        self.assertIn('build_topic(cmd_topic, sizeof(cmd_topic), "update/auto/cmd");', connected)
+        self.assertIn("s_pending_install.store(true, std::memory_order_relaxed);", mqtt)
+        self.assertIn("s_pending_auto.store(1, std::memory_order_relaxed);", mqtt)
+        drain = body_after(ino, "if (csi_mqtt::take_pending_install()) {", r"\n    }\n")
+        self.assertIn("securacv_ota_check_and_install();", drain)
+        self.assertIn("securacv_ota_set_auto_update(ota_auto_cmd == 1);", ino)
+        gate = body_after(mqtt, "static bool move_needs_password(const Config& before, const Config& after,", r"\n}\n")
+        self.assertIn("if (password_in_body) return false;", gate)
+        csi = (WAP / "csi_integration.cpp").read_text(encoding="utf-8")
+        self.assertIn('.uri = "/api/mqtt/config", .method = HTTP_POST, .handler = csi_mqtt::handle_config_post', csi)
+        post = body_after(mqtt, "esp_err_t handle_config_post(httpd_req_t* req) {", r"\n}\n")
+        self.assertIn("if (!bearer && !csi_integration::session_validate_cookie(req)) return send_refusal(req, held);", post)
         sec = normalized((REPO / "docs/security/SECURITY_MODEL.md").read_text(encoding="utf-8"))
         threat = normalized((REPO / "docs/security/THREAT_MODEL.md").read_text(encoding="utf-8"))
         blind = ("any write a session may make, of which since F361 only the firmware "
@@ -704,8 +816,11 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
         self.assertIn(blind, sec)
         self.assertIn(blind, threat)
         self.assertIn("and of its writes only the firmware install restarts the unit "
-                      "(`POST /api/ota/install`, or automatic updates turned on with "
-                      "`POST /api/ota/config`), which installs only a newer signed image.", sec)
+                      "(`POST /api/ota/install`, automatic updates turned on with "
+                      "`POST /api/ota/config`, or the MQTT update entity's Install or "
+                      "auto-update switch, sent from whatever broker the bridge points at, "
+                      "which a session may re-point with a password typed), which installs "
+                      "only a newer signed image.", sec)
         self.assertIn("a session's firmware install restarts the unit only into a newer "
                       "signed image", sec)
         self.assertIn("the dashboard's firmware install, which a session may start, "

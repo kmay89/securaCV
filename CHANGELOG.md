@@ -93,15 +93,17 @@
   resetting a token guesser's budget. Both take the bearer alone now, as the
   flagship's reboot does. Reboot Device and Retry full boot on the dashboard
   ask for the token through the same sign-in. A session can still start the
-  dashboard's firmware install (or turn automatic updates on), which
-  restarts the unit only into a newer signed image. Host-tested
+  dashboard's firmware install (or turn automatic updates on), or point the
+  MQTT bridge at a broker that presses the update entity's Install, and
+  either restarts the unit only into a newer signed image. Host-tested
   (`test_wifi_authority`, `dashboard_gates.test.js`, `test_docs_claims.py`);
   not bench-tested.
 - **canary-wap: a failed provisioning says what the unit does (sweep F336,
-  decision).** `setup()` no longer prints "HALTING" (it never halted) or says
-  it still serves HTTP. A release build prints `[!!] PROVISIONING FAILED -
-  storage refused the identity; no web server this boot. Reflash with a clean
-  install (full erase)`; a debug build says its access point may still start
+  decision).** `setup()` no longer prints "HALTING" for a storage failure (it
+  never halted there) or says it still serves HTTP. A release build prints
+  `[!!] PROVISIONING FAILED - storage refused the identity; no web server
+  this boot. Reflash with a clean install (full erase)`; a debug build says
+  its access point may still start
   on a debug key it does not print. No behavior change: the loop keeps the
   serial console, Bluetooth and the BOOT hold, and a release build starts no
   web server. A stored identity key that cannot be read still halts first,
@@ -221,11 +223,12 @@
   pair token only to a Host that names the device, but a live one's value,
   wherever it is carried, still works for its ten minutes on
   `/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` with no
-  Host question. F334, still open, asks whether Wi-Fi changes after setup take
-  a bearer, so that the pair token serves only the first-boot wizard; its
-  ledger entry names connect and ap-only, not the scan. And a standalone unit
-  with a camera keeps scanning for a Wi-Fi QR code after setup, so a carried
-  token reads that scan's status and stops it.) The WAP now stages the shared
+  Host question. Since F334 and F333, in this release, the pair token serves
+  only the first-boot wizard: after setup the first two take the bearer
+  alone and the scan's start answers `404`. The scan's status and stop still
+  take a pair token, and a camera unit's boot scan runs only while no network
+  is stored and the unit is not standalone, so a carried token reads that
+  scan's status and stops it then.) The WAP now stages the shared
   `firmware/common/network/host_guard.h` that the flagship and the display
   already use (byte-identical, held by `check_improv_sync.sh`). After setup,
   `/`, `/?cv_pair=`, `/admin`, `/settings` and `/companion` answer a Host that

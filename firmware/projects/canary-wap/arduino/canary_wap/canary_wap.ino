@@ -7065,8 +7065,10 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
 // 24 h session, and the AP key is printed in too many places to be a
 // network-move credential. api_auth_check_bearer() takes no cookie, sits
 // under the per-address lockout and sends its own 401/403/429.
-// During setup (no session exists then: handle_ui mints none) the wizard
-// carries a live pair token, and a *presented* admin credential is checked
+// During setup the wizard carries a live pair token, and a *presented* admin
+// credential (the bearer, or a session: handle_ui mints none during setup,
+// but the receipt route mints one on a BOOT tap or the setup door's claim,
+// and the SoftAP is the boundary then) is checked
 // through the lockout-aware `api_auth_check` so Bearer guessing is throttled
 // like every other admin route (the silent `api_auth_check_optional` used
 // before sweep F339 turned this fallback into an unthrottled token oracle).
@@ -9661,8 +9663,8 @@ static esp_err_t handle_export_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_export(req);
 }
-// The two reboot routes take the bearer alone (sweep F361), as the Wi-Fi
-// routes do after setup (no session exists during it): the landing page
+// The two reboot routes take the bearer alone (sweep F361), in every mode, as
+// the Wi-Fi routes do after setup: the landing page
 // mints a session for any host on the network, and a reboot at will is a
 // LAN denial that also empties the RAM lockout table, resetting a token
 // guesser's budget. The flagship's reboot takes the bearer too.
@@ -9677,7 +9679,7 @@ static esp_err_t handle_safe_mode_retry_auth(httpd_req_t* req) {
 }
 
 // WiFi-management auth wrappers, meaningful only AFTER first-boot setup
-// (no session exists during it). Disconnect drops the unit off its network
+// (they ask nothing about setup). Disconnect drops the unit off its network
 // and Forget wipes every saved network and re-opens the Bluetooth setup
 // door's first-boot window, whose claim buys the receipt: both take the
 // bearer alone (sweep F334, F345), never the landing page's session, which

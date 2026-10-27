@@ -222,10 +222,12 @@ uint32_t outbound_bytes_today();
  *
  * Two consumers, two redemption models, one slot pool (no token kind):
  *   - Wizard flow (/api/wifi/connect, /ap-only, /qr-scan): validate-only
- *     via pair_token_valid(), a first-boot grant. After setup those routes
- *     take the bearer alone (sweep F334): the landing page below mints into
- *     the same pool for any caller on the home network, so a token it hands
- *     out must never move the network. The token stays alive for the full
+ *     via pair_token_valid(), a first-boot grant. After setup connect and
+ *     ap-only take the bearer alone and the scan's POST start answers 404
+ *     (sweep F334): the landing page below mints into the same pool for any
+ *     caller on the home network, so a token it hands out must never move
+ *     the network. The scan's status and stop still take a pair token.
+ *     The token stays alive for the full
  *     10-minute TTL so the wizard's "Try again" path works after a mistyped
  *     password without forcing a fresh QR scan; we don't burn it.
  *   - Dashboard auto-login (?cv_pair=<hex> on /): single-use via

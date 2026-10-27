@@ -542,8 +542,10 @@ reachable to anyone on the AP. The token is a UX gate that tells the
 companion PWA "you came through the portal, run the wizard." That holds
 only during setup: the landing page mints into the same pool for any caller
 on the home network, so after setup `/api/wifi/connect` and
-`/api/wifi/ap-only` take the bearer alone and `/api/wifi/qr-scan` answers
-`404` (F334); the wizard's token no longer moves the network.
+`/api/wifi/ap-only` take the bearer alone and the scan's start,
+`POST /api/wifi/qr-scan`, answers `404` (F334); the wizard's token no longer
+moves the network. The scan's status and stop (`GET` and `DELETE`) still
+take a pair token.
 
 ### `GET /api/pair/token`
 

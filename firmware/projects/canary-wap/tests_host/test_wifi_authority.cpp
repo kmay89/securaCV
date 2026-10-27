@@ -14,8 +14,10 @@
 // off its own, or Forget it, which wipes every saved network and re-opens the
 // Bluetooth setup door, whose claim buys the receipt. Now, whenever
 // setup_wizard::is_active() is false, the gate is api_auth_check_bearer():
-// no cookie, the per-address lockout, its own 401/403/429. During setup
-// (no session exists then) the wizard's gate is unchanged. POST /api/reboot
+// no cookie, the per-address lockout, its own 401/403/429. During setup the
+// wizard's gate is unchanged (handle_ui mints no session then, but the
+// receipt route does on a BOOT tap or the setup door's claim, and that
+// cookie takes the presented-credential branch). POST /api/reboot
 // and POST /api/safe-mode/retry were api_auth_check() wrappers too, so any
 // landing session rebooted the unit at will: a LAN denial, and each reboot
 // emptied the RAM lockout table, resetting a guesser's budget (F361). Both
@@ -404,8 +406,9 @@ void test_reconnect_still_takes_the_session() {
 
 // Both take the bearer alone: a session alone is 401 with no strike and the
 // unit does not restart, a wrong bearer beside it is 403 and one strike, and
-// the bearer restarts it once. The same during setup (no session exists
-// then; the wrappers ask nothing about it). Before F361 the session
+// the bearer restarts it once. The same during setup (the wrappers ask
+// nothing about it, and a session can exist then: the receipt route mints
+// one on a BOOT tap or the setup door's claim). Before F361 the session
 // restarted the unit at will, and each restart emptied the lockout table.
 void test_the_reboot_routes_take_the_bearer() {
   struct Route { const char* name; esp_err_t (*wrapper)(httpd_req_t*); int* ran; };
