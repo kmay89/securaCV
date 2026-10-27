@@ -203,8 +203,9 @@ function fastenerGaps(dev, scad, parts, sets) {
 // that stops happening (it was fixed: shrink the list).
 const FASTENER_GAPS = new Set([
   // the tab seats the OV5647 on the front's posts but draws none of the four
-  // screws the case echoes for it
-  "canary-vision|unchoreographed 4x M2 pan x 6 self-tap (OV5647 to the front posts)",
+  // screws the case echoes for it (x 4 since the cross-family review, #1856:
+  // cam_scr_len is the longest standard length the pillar takes)
+  "canary-vision|unchoreographed 4x M2 pan x 4 self-tap (OV5647 to the front posts)",
   // canary_dash_display.scad prints no HARDWARE line, so nothing counts the
   // four back-to-frame screws (D-SCR1) the tab drives
   "canary-display-dash|no hardware set for canary_dash_display.scad",

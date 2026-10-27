@@ -12,6 +12,8 @@
  * reads the sketch's values.
  *
  * Transport, as the sketch runs it:
+ * - The SoftAP SSID is SecuraCV-wap-<4 chars of the key fingerprint>
+ *   (generate_ap_ssid), never the MAC, so a flasher install changes it
  * - WPA2/WPA3 transition (PMF capable) with a device-unique password; WPA2-PSK
  *   where the core lacks SoftAP SAE (ap_security_policy.h, F16)
  * - HTTPS on port 443 once first-boot setup is done (where the build has the

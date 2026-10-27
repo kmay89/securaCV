@@ -4830,7 +4830,8 @@ MUST_PASS_IN = [
     ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
      "Serial.println(\"[BOOT] Released before 10 s: nothing reset (hold 10 s for a factory reset; Forget Wi-Fi on the dashboard clears only the saved Wi-Fi and broker login; on a unit that had Wi-Fi, the hold, and Forget unless the unit runs standalone, reopen the Bluetooth setup door for half an hour, to the first client that connects)\");"),
     ('firmware/projects/canary-wap/arduino/canary_wap/wap_server.h',
-     'static const char* AP_SSID_PREFIX    = "SecuraCV-";      // unused: the SSID is SecuraCV-wap-<4 chars of the key fingerprint> (generate_ap_ssid), never the MAC, so a flasher install changes it'),
+     ' * - The SoftAP SSID is SecuraCV-wap-<4 chars of the key fingerprint>\n'
+     ' *   (generate_ap_ssid), never the MAC, so a flasher install changes it'),
     ('firmware/projects/canary-wap/arduino/canary_wap/familiar.cpp',
      ' * it in; we hash it into Bloom filters with a device-specific salt, so one\n'
      " * device's filter bits mean nothing on another's. The salt is no defense\n"
