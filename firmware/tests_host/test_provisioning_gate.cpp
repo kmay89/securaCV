@@ -47,7 +47,9 @@
 //     quiet for the lookback (to the millisecond), so a retry 10 s after the
 //     other device stopped is NO_TAP and its next tap serves, while two
 //     addresses still asking hear it to the closed tap's TTL; a re-tap
-//     served to anyone ends it; the same address never contends with
+//     served to anyone ends it, and the ask it was served to stays on
+//     record, so a host asking first after the owner's next tap is
+//     contended by it; the same address never contends with
 //     itself; the record fails closed across a 49.7-day silence; and a peer
 //     key prints as a.b.c.d (only behind a zero prefix) or as eight hex
 //     groups;
@@ -1061,13 +1063,36 @@ static void a_polling_owner_stays_on_record_past_the_lookback() {
 //   - an IPv6 address whose last four bytes are the owner's IPv4 (a compare
 //     of the last four bytes merges it with the mapped owner);
 //   - two link-local addresses (every non-mapped key maps to IPv4 0, so a
-//     compare through ipv4_host_order_from_addr() merges them).
+//     compare through ipv4_host_order_from_addr() merges them);
+//   - and, for each of the key's 16 bytes, two global addresses that differ
+//     in that byte alone (2001:db8:0:1::5 and that address with the byte's
+//     low bit flipped), so a compare that leaves out any one byte merges a
+//     pair. Without them the suite pinned only bytes 3 and 15 one by one
+//     (15 is the byte the IPv4 rows' two addresses differ in): a compare of
+//     bytes 1-15, or of byte 3 and bytes 8-15, passed every row.
 // The timeline is (3b)'s: the owner polls every 2 s from 21 s before the
 // tap, and the other host asks first, 100 ms after it.
 static Peer v6(const uint8_t (&addr)[16]) {
   Peer p{};
   peer_key_from_addr(AddrFamily::IPV6, addr, p.key);
   return p;
+}
+
+static void a_second_peer_contends_a_polling_owner(const Peer& owner, const Peer& host, const char* what) {
+  CHECK(memcmp(owner.key, host.key, PEER_KEY_LEN) != 0, "the pair is two keys: %s", what);
+  Bench b;
+  const uint32_t click = 700000;
+  const uint32_t T = click + 21000;
+  uint32_t t = click;
+  for (; t < T; t += 2000) {
+    CHECK(b.ask(owner, t) == TapVerdict::NO_TAP, "the owner's poll before the tap: %s", what);
+  }
+  open(b.gate, T);
+  CHECK(b.ask(host, T + 100) == TapVerdict::CONTENDED,
+        "a second IPv6 peer asking first after the tap was taken for the owner: %s", what);
+  CHECK(b.ask(owner, t) == TapVerdict::CONTENDED, "the owner's next poll: CONTENDED: %s", what);
+  CHECK(b.served == 0, "served %d beside a polling owner: %s", b.served, what);
+  CHECK(peek(b.gate) == 0, "and the tap is closed: %s", what);
 }
 
 static void ipv6_askers_are_told_apart_by_all_sixteen_bytes() {
@@ -1085,21 +1110,22 @@ static void ipv6_askers_are_told_apart_by_all_sixteen_bytes() {
       {kOwner, v6(kDb8Tail), "::ffff:192.168.1.20 and 2001:db8::1:c0a8:114 (the same last four bytes)"},
       {v6(kLinkOwner), v6(kLinkHost), "fe80::211:22ff:fe33:4455 and fe80::aa:bbff:fecc:ddee (both map to IPv4 0)"},
   };
-  for (const Pair& p : pairs) {
-    CHECK(memcmp(p.owner.key, p.host.key, PEER_KEY_LEN) != 0, "the pair is two keys: %s", p.what);
-    Bench b;
-    const uint32_t click = 700000;
-    const uint32_t T = click + 21000;
-    uint32_t t = click;
-    for (; t < T; t += 2000) {
-      CHECK(b.ask(p.owner, t) == TapVerdict::NO_TAP, "the owner's poll before the tap: %s", p.what);
-    }
-    open(b.gate, T);
-    CHECK(b.ask(p.host, T + 100) == TapVerdict::CONTENDED,
-          "a second IPv6 peer asking first after the tap was taken for the owner: %s", p.what);
-    CHECK(b.ask(p.owner, t) == TapVerdict::CONTENDED, "the owner's next poll: CONTENDED: %s", p.what);
-    CHECK(b.served == 0, "served %d beside a polling owner: %s", b.served, p.what);
-    CHECK(peek(b.gate) == 0, "and the tap is closed: %s", p.what);
+  for (const Pair& p : pairs) a_second_peer_contends_a_polling_owner(p.owner, p.host, p.what);
+  // One byte at a time: the two keys differ in byte i and nowhere else.
+  static const uint8_t kBase[16] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 5};
+  for (size_t i = 0; i < PEER_KEY_LEN; i++) {
+    uint8_t other[16];
+    memcpy(other, kBase, sizeof(other));
+    other[i] ^= 0x01;
+    const Peer owner = v6(kBase);
+    const Peer host = v6(other);
+    char a[PEER_KEY_TEXT_CAP];
+    char h[PEER_KEY_TEXT_CAP];
+    peer_key_text(owner.key, a, sizeof(a));
+    peer_key_text(host.key, h, sizeof(h));
+    char what[128];
+    std::snprintf(what, sizeof(what), "%s and %s (byte %u differs, and only it)", a, h, (unsigned)i);
+    a_second_peer_contends_a_polling_owner(owner, host, what);
   }
   // And one IPv6 peer is one asker: the owner alone, polling from its own
   // address, is served on its first ask after the tap.
@@ -1178,8 +1204,9 @@ static void a_clean_next_tap_serves_and_a_retap_inside_the_lookback_does_not() {
 // (6b) The 409 ends when its cause ends: once the other address has been
 // quiet for the lookback, an ask inside the closed tap's 30 s is NO_TAP (the
 // page keeps asking) and the owner's next tap serves it. This is the flow the
-// pages' "wait 10 seconds, then click Use BOOT Tap Once again, and only then
-// short-tap BOOT" prescribes. Before, every ask was
+// pages' "wait 10 seconds, then click Use BOOT Tap Once again" prescribes,
+// with the press after the device has answered the new ask with 403 (the
+// line says when). Before, every ask was
 // CONTENDED until the closed tap's TTL had run, so a retry 10 to 30 s after
 // the tap stopped on its first answer, before the press.
 static void the_409_ends_when_the_other_address_goes_quiet() {
@@ -1285,6 +1312,27 @@ static void a_served_retap_ends_the_contention() {
   }
   CHECK(h.served == 0, "following the hint under a poller serves nothing, got %d", h.served);
   CHECK(h.closed_by == 2, "both taps closed (%d)", h.closed_by);
+}
+
+// (6d) A served tap clears the contention, not the addresses: the ask it
+// was served to stays on record. The owner is served, taps again 1.5 s
+// later, and a host asks first after that re-tap: the owner's served ask is
+// 2 s old, inside the lookback, so the host is CONTENDED and nothing more is
+// served. A TAKE that also forgot the askers handed that host the re-tap
+// (the token, the SoftAP password and the pin); SECURITY_MODEL.md states
+// this rule ("a served tap clears only the contention, not the addresses").
+static void a_served_ask_stays_on_record_for_the_next_tap() {
+  Bench b;
+  open(b.gate, 100000);
+  CHECK(b.ask(kOwner, 100500) == TapVerdict::TAKE, "the owner is served");
+  CHECK(b.arb.recent.has && std::memcmp(b.arb.recent.key, kOwner.key, PEER_KEY_LEN) == 0 &&
+            b.arb.recent.last_ms == 100500,
+        "and its ask stays on record");
+  open(b.gate, 102000);
+  CHECK(b.ask(kOther, 102500) == TapVerdict::CONTENDED,
+        "a host asking first after the re-tap, the served owner 2 s before it: CONTENDED");
+  CHECK(b.served == 1, "served %d", b.served);
+  CHECK(b.closed_by == 1 && peek(b.gate) == 0, "and the re-tap is closed (%d)", b.closed_by);
 }
 
 // (7) The same address asking again and again never contends with itself.
@@ -1422,6 +1470,7 @@ int main() {
   a_clean_next_tap_serves_and_a_retap_inside_the_lookback_does_not();
   the_409_ends_when_the_other_address_goes_quiet();
   a_served_retap_ends_the_contention();
+  a_served_ask_stays_on_record_for_the_next_tap();
   the_same_address_never_contends();
   a_stamp_that_moved_since_the_peek_is_not_taken();
   a_stale_record_fails_closed_across_the_wrap();

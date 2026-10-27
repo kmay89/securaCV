@@ -26,14 +26,17 @@ what changes once a second device joins the network.
 | **USB-C cable** | For flashing |
 | microSD, GPS | Optional |
 
-Each board has a globally-unique hardware identity. The firmware derives a
-stable per-device handle from it (`device_id` = `canary-s3-4dC2`, AP SSID
-`SecuraCV-wap-4dC2`), so you never have to configure anything to make two devices
-distinct at the hardware level. The four-character suffix is encoded in an
-unambiguous alphabet (no `0/O/o` or `1/I/i/l/L`), so it never contains glyphs
-you might misread. Because the handle is derived from immutable hardware, it is
-**the same every time you flash** — that stability is the point: it's how
-`canary.local`, Home Assistant, and MQTT keep tracking the same board.
+Each board makes its own Ed25519 identity key on its first boot. The firmware
+derives a per-device handle from that key's public fingerprint (`device_id` =
+`canary-s3-4dC2`, AP SSID `SecuraCV-wap-4dC2`), never from the MAC, so you
+never have to configure anything to make two devices distinct. The
+four-character suffix is encoded in an unambiguous alphabet (no `0/O/o` or
+`1/I/i/l/L`), so it never contains glyphs you might misread. The handle lasts
+as long as the key: an over-the-air update and the 10-second BOOT reset keep
+it, and that stability is the point: it's how `canary.local`, Home Assistant,
+and MQTT keep tracking the same board. An install in either flasher is not an
+update in that sense: it starts the board's settings region over, so the next
+boot makes a new key, and with it a new handle.
 
 ---
 
@@ -126,14 +129,21 @@ no tokens to copy:
 
 1. In the app: **My Canaries → + Add Canary**. Canaries already on your WiFi
    appear under *Discovered on your network*; tap one (or enter its address).
-2. The app listens for ~60 seconds. **Short-tap the BOOT button** on that
-   Canary — the tap opens the device's provisioning gate and the app captures
-   the receipt (address + token) itself.
+2. The app asks the Canary first. **Don't press BOOT yet:** the step reads
+   *Asking the Canary first* until the device answers that it is waiting for
+   a tap. When the step changes to **Short-tap the BOOT button**, short-tap
+   BOOT on that Canary: the tap opens the device's provisioning gate and the
+   app, which listens for about 60 seconds, captures the receipt (address +
+   token) itself. A press made before the app has asked is one no page of
+   yours is asking for, and goes to whichever device asks first. If another
+   device on your network asks during the same tap, a WAP hands out nothing
+   and the app stops with *Another device asked at the same time*: close any
+   other Canary pages, wait 10 seconds and try again.
 3. Confirm the pairing: tap **Blink to confirm** to make that exact box flash
    its LED, give it a name (becomes `canary-<name>.local`), and pick the room
    it watches.
 4. Tap **+ Add another Canary** and repeat — every device after the first is
-   one tap in the app plus one tap on the device.
+   one tap in the app plus, once the app says to, one tap on the device.
 
 Fallbacks (under *Other ways to pair*): scan the pairing QR from the device
 dashboard (**Settings → Device → Show QR** — requires the app to be served

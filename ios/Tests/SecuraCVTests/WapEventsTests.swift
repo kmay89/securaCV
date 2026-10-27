@@ -184,12 +184,14 @@ final class WapEventsTests: XCTestCase {
         let handler = String(end.map { afterStart[..<$0.lowerBound] } ?? afterStart)
 
         // The envelope and the auth gate. Losing CSI_AUTH_OR_RETURN would
-        // open the sensing feed to anyone on the LAN — a privacy regression
-        // the client's Bearer header would silently paper over.
+        // open the sensing feed with no sign-in at all — a regression the
+        // client's Bearer header would silently paper over. (The gate is
+        // not the owner's alone: a landing session, which any LAN host can
+        // mint, passes it too, ledger F346.)
         XCTAssertTrue(handler.contains(#"{\"events\":["#),
                       "the events/today envelope moved — update WapEventsToday")
         XCTAssertTrue(handler.contains("CSI_AUTH_OR_RETURN"),
-                      "events/today lost its auth gate — the feed must stay token-gated")
+                      "events/today lost its auth gate — the feed must stay gated")
 
         // Every key the serializer prints, in order, against the decoder's
         // key set — exact equality both ways, so a renamed OR added field
@@ -371,7 +373,7 @@ final class WapEventsTests: XCTestCase {
         let handler = String(end.map { afterStart[..<$0.lowerBound] } ?? afterStart)
 
         XCTAssertTrue(handler.contains("CSI_AUTH_OR_RETURN"),
-                      "the stream lost its auth gate — live room sense must stay token-gated")
+                      "the stream lost its auth gate — live room sense must stay gated")
         // Every key the Swift decoder reads must still be printed somewhere
         // in the handler (the three variants interleave, so presence — not
         // order — is the contract here).

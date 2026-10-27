@@ -35,9 +35,12 @@ constexpr const char* NVS_KEY_OPERA = "opera_secret";
  * docs/security/THREAT_MODEL.md "Opera mesh"): persisting the
  * household opera_secret to NVS requires flash encryption to be
  * active. canary-wap's mesh_network.cpp enforces the same check
- * on its opera_config write/load paths. Devices without FE blown
- * simply cannot store an opera_secret — the user must complete
- * pairing on every boot until the eFuse is committed. The device's
+ * on its opera_config write/load paths. A device without flash
+ * encryption on (a Phase 2 board included: its kit burns the key but
+ * no SPI_BOOT_CRYPT_CNT) simply cannot store an opera_secret — the
+ * user must complete pairing on every boot until flash encryption is
+ * on, and then the stored secret is still plaintext NVS, which flash
+ * encryption does not cover (mesh_state.h). The device's
  * own identity key is a different question with a different answer
  * (Tier 0 by decision; common/identity/key_at_rest.h). */
 inline bool flash_encryption_enabled() {
@@ -135,7 +138,7 @@ bool clear_opera_secret() {
   if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) return false;
   /* Preferences::remove returns false when the key is absent OR on a
    * real NVS error (flash corruption, hardware fault). To make this
-   * call idempotent across factory-reset semantics WITHOUT swallowing
+   * call idempotent (a leave on a board that never paired) WITHOUT swallowing
    * real failures, we check isKey() on the false path:
    *   • remove → true                 ⇒ erased successfully
    *   • remove → false, isKey → false ⇒ already absent, idempotent OK

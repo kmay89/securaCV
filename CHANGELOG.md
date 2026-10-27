@@ -9,6 +9,744 @@
   lockdown in one step; tripwire paths; blocks that survive a restart; a
   self-check at boot; `MAINTENANCE.md`.
 
+
+### The flagship's route check holds every answer that carries a credential to a bearer-only grant, on the grants as #1838 left them (sweep F338, #1852)
+
+- **`firmware/canary/scripts/check_route_security.py` gains the bearer-only
+  answer rule (`check_bearer_only_answers`), canary-wap's F328 rule ported to
+  the flagship's own gates.** No firmware, route or wire change, and no live
+  path was open: every gated route already refuses with `if
+  (!auth_gate(req)) return ESP_OK;`, the receipt takes a real bearer or the
+  BOOT tap, the pages inject the token only through `page_token_decide`, and
+  nothing reads or sets a cookie. The gap was the guard's. Of 51 edits a
+  mutation driver applied to a private copy of the tree, the check as F340
+  left it passed 47 and the new check fails all 51. The classes it now
+  fails:
+  - a route that answers the bearer token, the SoftAP password, the TLS pin
+    or the TLS private key without being a `SECRET_ANSWERS` row with exactly
+    what it carries (a public `/api/fleet` answering the SoftAP password,
+    directly, through a helper or through a function or member pointer;
+    `/api/status` answering it beside the pin), and any function that reads
+    one without being named (a helper printing the SoftAP password), in any
+    file under the tree's `lib/` and `src/`, read as the compiler reads it:
+    an `.inc` or `.hpp` of code is read, a file of any other kind fails but a
+    library manifest by its name (`library.json`, `library.properties`) and
+    a file git ignores (an editor's backup, an OS's `.DS_Store`), a raw
+    string literal is one literal (a reader after the web UI's HTML is
+    code), a backslash-newline is spliced (a name split across two lines by
+    one is that name) and a digraph is the token it spells (`%:define`,
+    `<% %>`); and a file outside the tree that the flagship compiles or
+    `#include`s (each `.cpp` its `build_src_filter` compiles from
+    `firmware/common`, and every file an `#include` reaches from the tree or
+    from those) naming a credential or anything else the check holds under
+    the tree (a helper there returning `auth_get_token()`, opening the BOOT
+    tap on `g_prov_gate`, or raising the SoftAP open with `WiFi.softAP(...,
+    nullptr)`, `WiFi.mode(WIFI_AP_STA)` or an open `esp_wifi_set_config`,
+    called from a route or `loop()`), but the NVS key names where
+    `canary_config.h` defines them and `reset_scope_keys.h` lists them,
+    `ap_password.h`'s deriver and `provisioning_gate.h`'s two decisions, and
+    the held names that are ordinary words in the shared code
+    (`INCLUDE_COMMON_WORDS`: `begin`, `check`, `grant`, `compare`, `setup`,
+    `s_active`, `s_started_ms`, `hmac_sha256`, `from_ap_subnet`), which are
+    not read there.
+    Another product's source there (`setup_portal.cpp`) and a host test are
+    not read, so a correct edit to one no longer fails the flagship's check;
+  - an answer outside its grant: `/api/status` answering before
+    `if (!auth_gate(req)) return ESP_OK;` at its own top level, the receipt
+    handing `receipt_decide` anything but its bearer and tap lambdas or
+    answering outside a `SERVE_*` test, a page answering other than through
+    `send_html_with_token(..., page_token_inject(req))` (the emitter itself
+    named only by the three page handlers, so a function pointer or a
+    reference to it handed `PageToken::INJECT` fails); and a statement of an
+    answering handler's own that reads a credential and is not its row, so
+    the receipt cannot also publish the token over MQTT or print the SoftAP
+    password under its served verdict;
+  - an edit to the glue a grant runs through, pinned whole (40 bodies:
+    `auth_gate`, `bearer_present_and_valid`, `from_ap_subnet` and its
+    helpers `netif_ip4`, `be_word_host_order` and `sockaddr_ip4_host_order`,
+    `page_token_inject` and F341's clear, the tap's take and its hooks,
+    `host_is_foreign`, the lockout's `auth_get_instance`, its source key
+    `request_peer_ipv4`, `AuthManager::check`, `grant`, `compare`,
+    `handedToken`, `constantTimeCompare` and their wrappers, the three
+    accessors, the token's deriver `derive_api_token` and its `hmac_sha256`
+    and `format_api_token_string`, the SoftAP password's way to the radio,
+    `announce_setup_network()` and `apply_ap_security()`,
+    `page_token_inject`'s setup input at its source, the setup lib's
+    `setup_init`, `setup_is_first_boot`, `setup_is_active`,
+    `setup_mark_complete` and `setup_check_timeout`, the BOOT tap at its
+    source, `handle_boot_button()` whole with its press, and the port-80
+    path, `handle_captive_probe` and `handle_https_redirect`, with the two
+    members its hint branch decides on, `isTlsEnabled()` and
+    `getHttpsServer()`), so, against a careless edit (the check's threat
+    model, below), none of `page_token_inject`'s four inputs can be widened
+    in the glue, in the helpers it reads them through, or by a macro of a
+    name they call (a `#define`, or a flag in its `-D` spelling: gcc's
+    `--define-macro` is not read); a
+    sink cannot be added inside an accessor, and the token cannot be keyed
+    on the public key; each is defined exactly once under ROOTS, in its
+    file, so a second `#else` body or a shadow in another lib fails,
+    written with a trailing return type or not;
+  - a gate primitive mentioned, or defined, where its census row does not say
+    (a call, a function pointer or an address taken alike): an `auth_gate`
+    call that is not the whole refusal at its handler's own top level in every
+    body that holds it (`!from_ap_subnet(req) && !auth_gate(req)` on `POST
+    /api/wifi/connect`, the same refusal nested under `if
+    (!from_ap_subnet(req)) {` or `#if`, a head split across `#if` / `#else`,
+    or an early `return`, `goto`, `throw`, `co_return` or ESP-IDF
+    `ESP_RETURN_ON_*` / `ESP_GOTO_ON_*` macro before it);
+    `auth_handed_token` outside a served tap; anything but
+    `auth_get_instance()` reaching the AuthManager's one instance `s_auth`,
+    or anything but the three wrappers reaching that, which a namespace-scope
+    lambda, a `noexcept` or trailing-return helper, a namespace-scope
+    `&auth_get_instance()` or a `this` the constructor saved no longer slips
+    past; the receipt sent from any route but its own; the TLS key's loader
+    or writer, or the private key's loader, called anywhere but where it is
+    today, and the private key's NVS record named outside its three
+    functions; a `WiFi.softAP()` other than `begin()`'s and `raiseAp()`'s,
+    each with its key, and the radio's mode set anywhere but `begin()`,
+    `dropAp()` and `raiseAp()`, each statement where it sits (`WiFi.mode`,
+    `enableAP`, `softAPConfig` or `esp_wifi_set_mode` bring the SoftAP up on
+    the open config `dropAp()` leaves, and so does
+    `WiFiGenericClass::mode()`, a static; `softAPdisconnect()` with its
+    default `false` leaves a running SoftAP up on that config on core 2.0.17
+    and raises one on core 3.x, and `softAPbandwidth()` raises it on 3.x), or
+    a way out between a raise and the `softAP()` that keys it (an STA-first
+    `return true;` in `begin()` leaves the SoftAP up, never keyed, on the
+    config the driver loaded); `begin()` started by anything but
+    `setup()`'s one call with `g_ap_password` (a second start handed `""`
+    through `this->`, `(*this).`, a member's bare call, the unused
+    `network_init()`, the instance `s_network`, a cast, or a reference or
+    pointer to the manager under another name, typed, `auto` or
+    `decltype`, direct-, brace- or copy-initialized, captured by a lambda,
+    returned by a function or handed to one); `WiFi` named other than with a
+    member after it; the driver's config written by anything but
+    `apply_ap_security()` and the STA's PMF request (an
+    `esp_wifi_set_config(WIFI_IF_AP, ...)` set to open), or Arduino 3.x's
+    `WiFi.AP` class named at all; the BOOT tap opened anywhere but
+    `handle_boot_button()`'s short press, where it sits, a press made by
+    anything but the button's GPIO, or `g_prov_gate` (or the peek hook's
+    copy) named, written or initialized anywhere else; `handle_boot_button()`'s
+    every-pass call from `loop()` moved under a block, or behind a way out of
+    `loop()` above it (its sweep is what expires a tap nobody took); a server
+    the core brings (`WebServer`, `HTTPUpdateServer`, `ArduinoOTA`, the raw
+    `WiFiServer` or core 3.x's `NetworkServer`, and `WiFiProv`, whose SoftAP
+    scheme raises an access point of its own, with the ESP-IDF provisioning
+    manager it wraps, `wifi_prov_mgr_*` on core 2.x and `network_prov_mgr_*`
+    on 3.x) or ESPAsyncWebServer's (`AsyncWebServer`) named at all, whose
+    routes, firmware push or access point no rule reads; the setup state, or
+    the stored first-boot flag it is read from (`NVS_KEY_SETUP_OK`), written
+    outside the setup lib's pinned functions, the credentials reset that
+    clears that flag run by anything but the BOOT hold, or the setup
+    timeout's call dropped from `loop()` or put behind a way out above it;
+    the TLS flag or the TLS server's
+    handle written anywhere but the constructor and `startHttpServer()`, each
+    statement where it sits (`m_tls_enabled = false;` once the port-80
+    server is up, or `m_https_server = m_http_server;`, would serve the setup
+    page and its token on plain HTTP beside HTTPS); the token's alphabet
+    narrowed; the
+    boot handing `auth_load_or_derive` anything but `g_device.privkey`; and
+    an `AUTH_MARKERS` name that is no census row, or a `PRE_HOST_STEPS` name
+    that is no row, emitter or `auth_get_token`, such as a stale
+    `auth_check_optional(`;
+  - a device-side or emitter statement that reads a credential and is not
+    in its function's row, in order (a serial, BLE or MQTT sink in
+    `setup()`, `raiseAp()` or the receipt's builder), every pinned statement
+    held where it sits (the blocks and preprocessor conditionals around it,
+    and a goto before it): `begin()`'s parameter reassigned, its copy of the
+    SoftAP key made dead or compiled out (`raiseAp()` would re-raise on an
+    empty key), and each mint pinned as the whole statement: `setup()`'s
+    `derive_ap_password(device.privkey, ...)` call, its refusal and its halt
+    (the F350 review), at `setup()`'s own level with no block or
+    preprocessor conditional around it and no `goto` before it, so a
+    public-key argument, a discarded result, a dropped halt, a deleted call,
+    the call compiled out under `#if 0` or `if (false) {`, or moved below
+    the network's start, fails; and each mint after the statement that
+    establishes the key it reads (`setup()`'s `witness_provision_device()`
+    refusal, `witness_provision_device()`'s `establish_identity_key()`), so
+    a mint moved above it, or a way out before that statement (a degraded
+    boot's `return true;` ahead of `establish_identity_key()`, which hands
+    `setup()` a success), which would key the SoftAP password or the bearer
+    on an all-zero private key, the same on every Canary, fails;
+  - a `#define` under ROOTS or in a file outside it the flagship compiles or
+    `#include`s, or a `-D` flag in
+    `platformio.ini` and the files its `extra_configs` names (on its own line
+    or under it, a missing one named; in the `-D` spelling, as defense in
+    depth: gcc's `--define-macro`, its long form, passes), that names a
+    pinned or census
+    function, a device-side use, an accessor, a mint, an emitter, a
+    comparer, a credential's spelling or the private key, or is named for a
+    function a pinned body or statement calls (`#define auth_gate(r) (true)`
+    after the gate's definition ungated all 62 gated handlers, 63 routes, and
+    left every pin intact; `#define take(s, n, t) is_open(s, n, t)` would turn
+    the take hook into a peek); `canary_config.h`'s NVS key names are the one
+    exception. No macro or flag may be a C++ keyword (`#define false true`
+    makes every `return false;` after it a `return true;`); under the tree, a
+    macro named for anything else a pinned text reads, a value such as
+    `PROVISIONING_GATE_TTL_MS` or `BOOT_SHORT_PRESS_MS` included, is the
+    `ROOTS_DEFINES` row it is today and is never `#undef`'d; and
+    `SETUP_TIMEOUT_MS` is held to its value. A macro or flag that pastes
+    tokens (`##`, `%:%:`) fails too, but GNU's `, ##__VA_ARGS__`: `#define
+    CV_JOIN(a, b) a##b` names nothing held, and `CV_JOIN(auth_get_,
+    token)()` answers the bearer from a public route, or `JOIN(auth_handed_,
+    token)(...)` clears its own lockout, under no spelling a rule reads; and
+    nothing there binds a name to a symbol, in the spellings the rule names,
+    but the empty compiler barrier and the known pragmas (an
+    `__asm__("_Z14auth_get_tokenv")` label or an asm `call8`, a
+    `weakref`/`alias`/`ifunc`/`symver` attribute or `__REDIRECT` macro, a
+    `redefine_extname` or `weak` pragma as `#pragma` or `_Pragma`, a name
+    spelled as the C++ symbol `_Z14auth_get_tokenv`);
+  - a build input the check does not read: an `#include` through a macro, a
+    compiled file that is not C or C++, a `build_src_filter` entry that
+    matches nothing, a file of this repository outside the read folders that
+    the flagship `#include`s or compiles, and, in the flag files, a linker
+    option through `-Wl,`, `-Xlinker`, `--wrap`, `--defsym` or `-T`
+    (`-Wl,--wrap=<auth_check's symbol>` sends every call of it to a function
+    returning `true`, which ungates every route), a forced include
+    (`-include`/`--include`/`-imacros`/`--imacros`, in the space, glued and
+    `=` forms), an include or sysroot path the reach does not read
+    (`-isystem`, `-iquote`, `-idirafter`, `-iprefix`, `--sysroot`; only `-I`
+    is read), a compiler-driver injector (`-specs`, `-fplugin`, `-wrapper`,
+    `-B` before a path, `-Xpreprocessor`/`-Wp,`, `-Xassembler`/`-Wa,`), a
+    response file (`@file`), a build script (`extra_scripts`, or a `!command`
+    dynamic value that runs a command and splices its stdout into the flags),
+    a local library, a moved source folder, an ESP-IDF component
+    (`custom_component_add`, which pioarduino's IDF component manager fetches
+    from Espressif's registry; no library, so the library rule does not hold
+    it) (each of those keys in any case), or a `${sysenv.*}` value the
+    build-time environment sets;
+  - a library the build fetches, as an entry of an env's `lib_deps` or as a
+    dependency a library manifest under the tree declares, that no
+    `REGISTRY_LIBS` row names. The configuration is read with PlatformIO's
+    own reader, not an imitation of it: `ProjectConfig`, at the version the
+    builds that ship the flagship pin (6.1.19, in `firmware-release.yml` and
+    `flasher-release.yml`, held equal to them, at every `setup-platformio`
+    step and pip install of PlatformIO there, by
+    `scripts/tests/test_route_check_platformio_pin.py`), run from
+    `firmware/canary` as `pio run` runs it, resolves each env's `lib_deps`
+    (its `extends` and `[env]`, the `extra_configs` files, every
+    interpolation, `${this.option}` included, the older key names `lib_use`,
+    `lib_force` and `lib_install`, a key at any indent and in any case, a
+    one-line list split on `, `); each entry is read by PlatformIO's
+    `PackageSpec` in that folder, and each manifest by its manifest parser.
+    A failing entry names every env that fetches it. A configuration
+    PlatformIO refuses, an env whose `lib_deps` it cannot resolve, an
+    `extends` cycle anywhere in it (which PlatformIO can walk forever, from
+    an env or through an interpolation into a section on it; no env's
+    `lib_deps` is resolved while one stands), a file
+    it reads that the `-D` rule's flag files do not hold, and a `${sysenv.*}`
+    reference anywhere in the flag files (read in their text, so an empty
+    environment at check time hides none) fail too; without the `platformio`
+    module, or at another version of it, the check fails before any rule
+    runs, naming `python3 -m pip install platformio==6.1.19`, which
+    `firmware.yml` runs first (through `setup-platformio`). Each row is an
+    `owner/name` with its reason, and the four rows are the libraries the
+    flag files name today (`rweather/Crypto`, `bblanchon/ArduinoJson`,
+    `knolleary/PubSubClient`, `h2zero/NimBLE-Arduino`); no row admits a bare
+    registry name, a registry id, a URL or a path (a version PlatformIO reads
+    as a URL, `rweather/Crypto @ git@github.com:...`, included), an owner
+    before a tree library's name (`tzapu/securacv_mesh`) is the registry's
+    library, a tree library's name with a version range is that library only
+    where its manifest's version is in the range, and a row
+    vouches for the dependencies its library declares, which are not read
+    (the four declare none).
+    `tzapu/WiFiManager` added to `lib_deps` for a recovery portal passed
+    every rule: its `autoConnect()`, handed no AP password, raises an open
+    SoftAP and serves a firmware upload and `/erase` that no rule reads;
+  - a route guarded by a helper whose name ends in a gate's
+    (`lan_auth_gate(req)` refusing only a foreign Host, or
+    `setup_auth_gate(req)` returning `from_ap_subnet(req)` on `POST
+    /api/wifi/connect`): the route-gate and Host-first rules matched the gate
+    markers as substrings, so the helper passed as the gate while the census,
+    which reads whole names, never saw it. A marker now counts only as a
+    whole name;
+  - a function defined twice (an `#if` body and its `#else` one): every body
+    is read, whatever its head (`static int`, `IRAM_ATTR`, `noexcept`, a
+    trailing return type), so a public route's `#else` body that sends the
+    receipt, or an ungated `#else` body of a gated route, fails, in this
+    rule and in the route-gate and Host-first rules;
+  - a route handler naming the private key, a read of the token's NVS
+    record, the Wi-Fi driver's copy of the SoftAP passphrase (its read-back
+    included) or the TLS key's NVS record outside the functions that hold
+    them, and a string literal under ROOTS that is the token's, the TLS
+    key's, the first-boot flag's or the private key's NVS key (`"api_token"`
+    read or written by a public route), in any file, one that names no key
+    included (`"setup_" "ok"`, `"setup\x5fok"`);
+  - a route registered in a form no rule reads (an `httpd_uri_t` assigned
+    field by field, a cast `.method`, a lambda `.handler`, the registration
+    call taken as a pointer, in a function or at namespace scope), and
+    `register_route()` registering anything but the route it is handed;
+  - the no-session premise: a cookie read, a `Set-Cookie`, a request header
+    other than `Authorization` in the auth lib and `Host`, a header named by
+    a variable, a URL query outside the witness log's paging, and a
+    request's raw path (`->uri`, or `.uri` through any reference to the
+    request, which keeps its query) outside its four readers, each pointing
+    at canary-wap's any-session class (F328), which CONSOLIDATION.md's Phase
+    6 `cv_session` port must bring with it.
+
+  The PR's first review found 31 edits of these kinds that its first version
+  passed. Its second review found more that the second version passed (an open
+  boot-time SoftAP through `begin()`'s parameter, a second start or the
+  driver's config; a function pointer or a trailing-return helper reaching the
+  lockout; a `#define` of a gate; the setup unlock widened at its source; the
+  BOOT tap opened elsewhere; an `#else` body under another head; a split head;
+  ESP-IDF's early-exit macros), 46 edits in all with those this repair added
+  beside them, and one property no plant held (a pinned row's order). Its
+  third review found 55 more that the third version passed (53 passed the
+  check as F340 left it too): a macro of a name the glue calls, or a `#define`
+  in a header outside ROOTS; the receipt sending the token to MQTT or the
+  serial line under its served tap (the two that check refused: the new reader
+  rule had exempted every answering handler); the SoftAP raised open by a mode
+  switch or by a second `begin()` through a spelling the census did not read;
+  a mint moved ahead of its key; an NVS record read or written by its literal
+  key; the first-boot flag cleared or the credentials reset run from a public
+  route; `from_ap_subnet`'s interface helper reading the other interface; code
+  after a raw literal, or in an `.inc` file; the page's emitter or the TLS
+  key's loader reached another way; the BOOT press faked; the AuthManager's
+  `this` saved; the peek hook writing the tap's stamp; `SETUP_TIMEOUT_MS`
+  widened; and five round-2 branches no plant held. Its repair found 21 more
+  of those kinds and fixed them beside the review's: a `take` macro in a
+  `firmware/common` header, `WiFi.softAPConfig()`, `"api_" "token"` (in a
+  file that already named a key: the fourth review found the rule skipped a
+  file that named none), the
+  private key's NVS record, the TLS key's writer, a member returning `*this`,
+  a `decltype` alias, `WiFi` under another name; and a name split by a
+  backslash-newline (a reader, a `#define`), a digraph `%:define` or a `<% ;
+  ... %>` block read at its function's own level (a refusal or a mint inside
+  one), `#define false true`, the tap's TTL or the BOOT press threshold
+  shadowed under the tree, a header outside it returning `auth_get_token()` or
+  opening the tap, `WiFiGenericClass::mode()`, a route registered through a
+  pointer to `register_route`, and the wrapper registering a route of its own.
+  Its fourth review found 12 more that the fourth version passed (each
+  passed the check as F340 left it too): a token-paste macro answering the
+  bearer from `/api/fleet` or clearing its lockout (`a##b`, `auth_get ##
+  _token`, `auth_get##__VA_ARGS__`), a header helper called from `loop()`
+  raising the SoftAP open (`WiFi.softAP(..., nullptr)`, `WiFi.mode`, an open
+  `esp_wifi_set_config`), the port-80 hint's two members or the TLS flag
+  answered wrong (`getHttpsServer()` returning the port-80 server,
+  `isTlsEnabled()` returning `false`, the flag cleared once the port-80 server
+  is up), and a joined or escaped first-boot key in a file naming no key; nine
+  branches no plant held (a raw literal's prefix, a `-D` flag's value, an
+  unreadable NVS key define, six table-hygiene rows); and two false failures
+  (a correct edit to another product's `setup_portal.cpp`, a host test's
+  `#define delay(ms)` shim). Its repair found seven more and fixed them
+  beside these: the paste spelled with the digraph `%:%:`, in a header the
+  flagship includes or as a `-D` flag; an asm label and an asm call; a linker
+  `--wrap` of `auth_check`; and the TLS server's handle pointed at the port-80
+  server. Each passed the fourth version and the check as F340 left it, and
+  the paste, asm and wrap forms build (host g++, and the paste and asm forms
+  with the tree's `xtensa-esp32s3-elf-g++ 14.2.0`).
+  Its fifth review found four more escapes of kinds the fourth repair had
+  closed only for one spelling, each now failed by a planted fixture (each
+  passed the fourth version and the check as F340 left it): a `weakref`,
+  `alias`, `ifunc` or `symver` attribute, a `__REDIRECT` macro, a
+  `redefine_extname` or `weak` pragma (as `#pragma` or `_Pragma`), or a name
+  spelled as the C++ symbol `_Z14auth_get_tokenv` — each reaching a function
+  by its symbol the way the asm label the fourth repair closed does, so a
+  public `/api/fleet` answered the bearer or cleared its own lockout while the
+  check stayed green; the `=`/`--`/glued long forms of the forced include and
+  the `-specs`/`-fplugin`/`-wrapper`/`-B`/`-Xpreprocessor`/`-Xassembler` and
+  `-Wp,`/`-Wa,` driver injectors and a response file (`@file`), which the
+  build-input rule read only in their space form; PlatformIO's `!command`
+  dynamic value, which runs a command at build time and splices its stdout
+  into the flags no rule read; and an include folder added with `-isystem`,
+  `-iquote`, `-idirafter`, `-iprefix` or `--sysroot`, which the reach did not
+  read (only `-I`) and the build-input rule did not refuse. The symbol-binding
+  class is now one rule (`symbol_binding_problems`, the empty compiler barrier
+  and the known pragmas aside), and `build_input_problems` holds the space,
+  glued and `=`/`--` spellings of each of those flags and the `!command` (not
+  gcc's long aliases or a letter-led glued `-B<dir>`: see the sixth review
+  below); the weakref, redefine_extname and `_Z` extern-C forms were compiled
+  on the tree's `xtensa-esp32s3-elf-g++ 14.2.0` and on host g++, which
+  reference the real `_Z14auth_get_tokenv` (a host link resolved it and
+  printed the secret) and, on the xtensa target, `_Z17auth_handed_tokenm`
+  (its `uint32_t` an `unsigned long`; host g++ spells the lockout clear
+  `_Z17auth_handed_tokenj`). It also carried one nit: the rule functions are
+  each self-tested, but main()'s own two wiring lines are not, so a two-file
+  fixture now holds the composition they rely on (build_reach's `includes`,
+  fed to `check_bearer_only_answers`, catches a header reader; `includes={}`
+  hides it) and the docstring states the residual that main()'s two lines are
+  not themselves run by a self-test. Host-tested; not run on a device.
+  Its sixth review held the check to its threat model (a careless or mistaken
+  firmware edit, not a deliberate attempt to evade it) and found nine more
+  edits that passed both the fifth version and the check as F340 left it,
+  each now failed by a planted fixture: a route guarded by a helper whose
+  name ends in a gate's (`lan_auth_gate(req)` on `POST /api/wifi/disconnect`,
+  `setup_auth_gate(req)` returning `from_ap_subnet(req)` on `POST
+  /api/wifi/connect`), which the route-gate and Host-first rules took for the
+  gate by substring while the census, reading whole names, never saw it;
+  `WiFi.softAPdisconnect()` with its default `false` (in a new network
+  member, `loop()` or the setup lib) and `WiFi.softAPbandwidth()`, which leave
+  the SoftAP up on an open config or, on core 3.x, raise it; a `return`
+  between `begin()`'s or `raiseAp()`'s mode raise and the `softAP()` that
+  keys it, which leaves the SoftAP up, never keyed; and a degraded boot's
+  `return true;` ahead of `establish_identity_key()`, after which `setup()`
+  mints the SoftAP key from the all-zero private key. It also carried two
+  nits (`handle_boot_button()` polled only on its GPIO edge, which drops
+  F347's every-pass sweep, and a second HTTP server, `WebServer`,
+  `AsyncWebServer`, `HTTPUpdateServer` or `ArduinoOTA`, whose routes no rule
+  reads), planted five branches no plant held (the SoftAP key re-derived by a
+  helper, beside the bearer's, a second `network.begin(..., "")`,
+  `register_route` named at namespace scope, the carry's fixed point, a gated
+  route answering through another), and corrected the docs: the threat model
+  is stated plainly, the paste, symbol-binding and build-input rules are
+  defense in depth over the spellings they name, and the "every spelling"
+  claims above are narrowed. Of 17 checker mutants that each undo one of
+  these fixes or weaken one of those branches, the self-test refuses all 17
+  (the six that weaken an older branch pass the fifth version's self-test).
+  Its seventh review found a registry library the build fetches unread:
+  `tzapu/WiFiManager` added to `lib_deps` for a recovery portal, whose
+  `autoConnect()`, handed no AP password, raises an open SoftAP and serves a
+  firmware upload and `/erase`, passed the sixth version, as did the core's
+  raw `WiFiServer` (`NetworkServer` on core 3.x) and `WiFiProv`, whose SoftAP
+  scheme raises an access point of its own. Every library `lib_deps` or a
+  manifest under the tree names is now a `REGISTRY_LIBS` row with its reason
+  (or a library under the tree), and the server row names the core's three.
+  It also found the docs stating
+  the macro rule's flag clause as complete, though gcc's `--define-macro`
+  (the long form of `-D`) passes it; that is a deliberate spelling, so the
+  threat paragraphs now name the clause as defense in depth and the other
+  claims are qualified. And it carried four nits: an early `return` in
+  `loop()` above the BOOT sweep or the setup timeout now fails (`lead`), the
+  server row's `AsyncWebServer` has a fixture, a census row that allows a name
+  nowhere says so, and two of the ledger's lists are complete. Of 19 checker
+  mutants that each undo one of these fixes or weaken the new table, the
+  self-test refuses all 19.
+  Its eighth review found the library rule reading the ini more narrowly than
+  PlatformIO does: the same `tzapu/WiFiManager` entry passed under an
+  indented `lib_deps` key (configparser reads an option at any indent, so an
+  env written as an indented block is read), under `Lib_Deps` (it lowercases
+  a key) and under `lib_install`, `lib_use` or `lib_force` (older names
+  PlatformIO still reads as `lib_deps`). The rule now reads the ini as
+  configparser does and takes all four keys, and a version range
+  (`>=7.0.0,<8.0.0`) is one entry rather than an unknown library `<8.0.0`
+  (its split of an interpolated value, which the ninth review found reading
+  two entries as one, below); a version holding an `@`, a `:` or a `/` is a
+  URL, as PlatformIO reads it, and a row is an `owner/name`, which no bare
+  name or URL matches. It also found no self-test driving
+  `library_manifests()`, a row's owner or the URL guard, and the docs saying
+  no server the core brings is named, though the flagship's own captive DNS
+  responder is a `WiFiUDP` and it runs mDNS: they now say which servers the
+  row names, and name the core's UDP classes, its responders and a BLE GATT
+  server as unseen. And it carried the nits: the server row names the ESP-IDF
+  provisioning manager `WiFiProv` wraps, a row vouches for its library's own
+  dependencies (the four declare none), the docs state one rule for a bare
+  name and a URL, and the server row's comment says which `#include`
+  spellings are a mention. Of the 20 checker mutants the ninth round built
+  from its list of these fixes, the eighth version's self-test refuses 18
+  (it passes an interpolated one-line value split on every comma rather
+  than on `, `, and an interpolated value's trailing empty line kept; the
+  ninth version has neither that split nor that line's pop).
+  Its ninth review found that split reading less than PlatformIO does: a
+  one-line `lib_deps` that interpolates another one-line list
+  (`${common.libs}, WiFiManager`) is one line to PlatformIO, which splits
+  all of it on `, `, while the rule split only the list and read
+  `knolleary/PubSubClient @ ^2.8, WiFiManager` as one entry, its version
+  `^2.8, WiFiManager`, so a bare `WiFiManager` passed; and
+  `${sysenv.LIB_DEPS}` passed, skipped as a `lib_deps` value read on its
+  own, though PlatformIO reads it as the environment variable. The rule now
+  splits every line of the expanded value on `, `, which splits wherever
+  PlatformIO does and more where a line of a longer value holds a `, `
+  (on 21 `lib_deps` spellings its entries are PlatformIO 6.2.0's, or the
+  same split wider in the 4 where a PlatformIO entry holds `, `), and a
+  `lib_deps`-keyed reference adds nothing only when it names a section, a
+  `${sysenv.*}` or built-in one failing as unset. It carried the nits:
+  self-test cases for the `/` of a manifest's URL guard, a `WiFiProvClass`
+  of its own, a bare name that is a row's name, `library.json`'s list of
+  names, a library named only by its manifest or only by its folder and an
+  interpolated `lib_ignore` with an empty line after it; the
+  `REGISTRY_LIBS` comment says the census row names some of the core's
+  servers and lists those it does not. Of 28 checker mutants that each undo
+  or alter one of the ninth review's fixes or nits, or one of the eighth's
+  still in the code, the self-test refuses all 28.
+  Its tenth review found `${this.option}` read in the wrong section: with
+  `[env]`'s `lib_deps` refactored to end in `${this.custom_extra_libs}`
+  beside an empty `custom_extra_libs =`, and an `[env:recovery]` setting
+  `custom_extra_libs = tzapu/WiFiManager @ ^2.0.17`, PlatformIO 6.2.0
+  returned WiFiManager among that env's `lib_deps` (it reads `[env]`'s
+  value in each env that inherits it, `this` naming that env), while the
+  rule read `[env]`'s own empty list and passed. A `${this.option}` is now
+  read wherever any section sets it, which reads more than PlatformIO does
+  where the value is an env's own, never less. Of five checker mutants that
+  each undo or narrow that fix, the self-test refuses all five.
+  Its eleventh round stopped imitating PlatformIO's reader. Rounds 7 to 10
+  had built a text reader of its ini (the indent rule, the older key names,
+  case folding, the one-line `, ` split, `${section.option}` and
+  `${this.option}`, `${sysenv.*}`), and each review found another spelling
+  PlatformIO reads that the reader did not. The library rule now reads the
+  configuration with PlatformIO's own `ProjectConfig`, `PackageSpec` and
+  manifest parser, pinned to 6.1.19, the release builds' pin
+  (`firmware.yml`'s PR build jobs pin none and take the newest, 6.2.0 today,
+  whose `ProjectConfig` and `PackageSpec` are the same text and whose
+  manifest parser adds one reading, an owner written into a list
+  dependency's `name`, which 6.1.19 fails as no row). The hand-written
+  reader is gone (`_ini_options`, `LIB_DEPS_KEYS`, `expand()`, the spec and
+  interpolation patterns, and the JSON and `library.properties` reading);
+  `flag_sources` and `build_reach` still read the text for the `-D` and `-I`
+  rules, and a file PlatformIO reads that `flag_sources` does not now fails.
+  A `${sysenv.*}` reference fails anywhere in the flag files (none is in the
+  tree), and so does a build-input key (`extra_scripts`, `lib_extra_dirs`,
+  `src_dir` and the rest) in any case. The self-test's library cases now
+  write a project into a temp dir and run it as main() runs the tree, through
+  `ProjectConfig`: 46 projects (the configuration in small as it is today,
+  passing with each env's resolved list checked; 9 spellings of a row or a
+  library in the tree, passing; 26 spellings of an unreviewed library, each
+  failing and naming its env: 24 of the 26 the seventh to tenth reviews'
+  fail list held, which the round said were all 26, and a registry id and a
+  path; and 10 more: an entry `[env]` lists, named with every env that
+  inherits it, an `extra_configs` file's env, a `library.json` dependency,
+  `${sysenv.LIB_DEPS}` with the variable unset, set to a row and set to
+  WiFiManager, a `${sysenv.*}` in `build_flags`, a configuration PlatformIO
+  refuses, an interpolation it cannot resolve and an `Extra_Configs` whose
+  files `flag_sources` does not read), a missing configuration, and the
+  manifest forms. Of 18 checker mutants that each weaken the new rule (the
+  envs' lists ignored; a URL or a path, a registry id, a bare row name or an
+  unreadable spec admitted; the owner ignored; only the first env named;
+  `${sysenv.*}` dropped from the build-input rule; a key read in one case;
+  the file cross-check dropped; the configuration read from the wrong
+  folder; PlatformIO's refusal, an unresolvable env, a missing configuration
+  or an unreadable manifest swallowed; a manifest's dependencies ignored; an
+  env's list read from its own section's text, split or not), the round said
+  the self-test refused all 18; it refused 17 (a registry id admitted
+  passed, its review found). The planted fixtures stay 293 (268 source, 25
+  table).
+  Its eleventh round's review found that self-test thinner than it said,
+  and two edges of the new reading. No case took an env's `lib_deps` only
+  through `extends` (each env extending another set its own list), so a
+  reader that skipped `extends` passed; none held a registry id or a URL
+  under the name of a library in the tree (`securacv_mesh=1234`, which
+  PlatformIO fetches from the registry by the id), so a rule admitting
+  either passed; and two of the 26 failing spellings (`${common.LIBS}` read
+  from a `Libs` key, and `${env:a.lib_ignore}` with no blank line before the
+  next section), with the ninth review's `${lib_deps}`, had been dropped.
+  Each is a case again. Each entry is now read in the project's folder, as
+  `pio run` reads it: read from the repo root, an owner/name with no version
+  naming a folder of `firmware/canary` (a vendored `rweather/Crypto/`) was
+  the registry row, where PlatformIO copies the folder into the build. An
+  `extends` cycle, which PlatformIO 6.1.19's reader walks forever (`pio run`
+  hangs on it, and so did the check, with no message), fails for every env
+  whose walk reaches it, naming the cycle. A registry id is named as one
+  (the message read `securacv_mesh=1234` as `'securacv_mesh'`). And nothing
+  tied `PLATFORMIO_PIN` to the release workflows' pin the docs call it:
+  with both release pins moved to 6.2.0 every gate passed. Now
+  `platformio_pin_problems` fails when a `platformio-version:` in
+  `firmware-release.yml` or `flasher-release.yml`, or the one
+  `firmware.yml`'s route-check job installs above the check, is not
+  `PLATFORMIO_PIN`, run by `scripts/tests/test_route_check_platformio_pin.py`
+  in `lint.yml`, which no path filter skips (`firmware.yml`'s does not name
+  `flasher-release.yml`); each release pin's comment points at it. The
+  self-test's library cases are now 61 projects: 12 passing (the
+  configuration as it is today; an env holding the list of what it extends,
+  an env or a section that is none; the 9 spellings; and a version-less
+  owner/name, without a folder of its name), 33 failing and naming their env
+  (the 26 spellings the seventh to tenth reviews held, `${lib_deps}`, the
+  eleventh round's registry id and path, and this round's id and URL under
+  a tree library's name, a path ending in one's folder name and a library
+  only an `extends` brings in), and 16 more (the eleventh round's 10,
+  `${sysenv.EXTRA_LIBS}`, the id's message, the vendored folder, and three
+  cycles: two envs, an env extending itself though it sets its own list,
+  and one `[env]` reaches, named for all five envs). Of 24 checker mutants
+  (the eleventh round's 18, and `extends` skipped, entries read outside the
+  project's folder, the cycle check dropped, a cycle reached through `[env]`
+  missed, a cycle skipped where the env sets its own list, and an id named
+  as its name), the self-test refuses all 24 (the dropped cycle check by
+  hanging, as PlatformIO does); of 8 mutants of `platformio_pin_problems`,
+  its test refuses all 8. The planted fixtures stay 293.
+  That round's second review found the self-test thinner again, and three
+  edges. No case put an owner before a tree library's name, so a rule that
+  admitted `tzapu/securacv_mesh @ ^2.0.17` by its name passed, where
+  PlatformIO installs it from the registry (`pio pkg install` skips only an
+  entry with no owner and no URL); it is a case now, in `lib_deps` and in a
+  manifest. A tree library's name with a range its manifest's version is not
+  in (`securacv_mesh @ ^0.2.0` against 0.1.0) passed, where `pio run` reads
+  the whole entry as no library's name, `get_package` refuses the tree's
+  copy and the name is installed from the registry; it is admitted now only
+  where PlatformIO's own comparison puts that version in the range (a
+  manifest that gives no version read as `0.0.0+<time>`, as PlatformIO's
+  `build_metadata` reads it).
+  An `extends` cycle no env's own walk reaches, but an interpolation does
+  (two helper sections extending each other, read through
+  `${portal_libs.libs}`), still hung the check with no message, as did an
+  env interpolating an env on a cycle: the round said the hang was fixed,
+  and it was only for a cycle an env's own walk reaches. Every section's
+  walk is checked now; a cycle is named for each env that reaches it, else
+  once by its section, and no env's `lib_deps` is resolved while one stands.
+  And pioarduino's `custom_component_add` in `[env:full]` (an ESP-IDF
+  component the IDF component manager fetches from Espressif's registry;
+  `espressif/network_provisioning`'s softAP scheme raises its own access
+  point) passed every rule, while the round's docstring said every library
+  an env fetches was held: it fails as a build input now, and the docstring
+  claims what is held (an env's `lib_deps` and the manifests under the
+  tree). The pin test now holds every release pin (a second one in a release
+  workflow), exactly one in the route-check job (a second in either order,
+  or the pin twice), the release list itself (the two workflows that run
+  `pio run -e release_ha`) and `main()`'s refusal of another version, or
+  none, which no test drove; and a two-target `extends` on two lines is a
+  cycle case (edges split on commas missed it and hung). `_extends_cycle`'s
+  docstring no longer says `config.get` never returns on a cycle: it returns
+  when the walk meets the option first. The library cases are 69 projects:
+  13 passing (a range the tree library's version is in), 35 failing and
+  naming their env (an owner before a tree library's name, and a range its
+  version is not in), and 21 more (their messages, the two-line `extends`,
+  the interpolated cycle, an env interpolating an env on one, and the
+  component), with two `custom_component_add` build-input lines and three
+  manifest cases. Of 13 checker mutants (the review's surviving owner mutant
+  among them), the self-test refuses all 13, four by hanging as PlatformIO
+  does; the review's other survivor, the `${sysenv.` pattern narrowed to
+  that one spelling, refuses what PlatformIO reads as the environment (its
+  `VARTPL_RE` takes no space and no other case as `sysenv`), so no case
+  tells it from the wider pattern, which stays. Of 6 mutants of
+  `platformio_pin_problems` and `main()`'s guard, the pin test (14 tests)
+  refuses all 6. The planted fixtures stay 293. The tree passes in 14.6 s on
+  Python 3.11 and 22.0 s on 3.13 (PlatformIO 6.1.19), and under 6.2.0 with
+  the pin lifted.
+  The PR's Codex review found two gaps, each reproduced before its fix. A
+  route callback registered qualified (`.handler = Api::handle_status`) is
+  keyed by its bare name, as the tables key it, but the answer rule read a
+  definition only where its whole qualified name was that bare name, so for
+  `esp_err_t Api::handle_status(...)` the bearer-only grant and the answer
+  statements read no body: the TLS pin written before `if
+  (!auth_gate(req)) return ESP_OK;`, under an `ANSWER_STATEMENTS` row keyed
+  `handle_status`, passed every rule, and so did the handler's pinned
+  statement moved above its refusal under a row keyed `Api::handle_status`.
+  A handler is now read at every definition of its bare name, qualified or
+  not, as the route-gate and Host-first rules read it; a bare name defined
+  under two qualified names fails (the registration cannot say which it
+  names, and the row keys one), and an `ANSWER_STATEMENTS` row keyed by
+  another name than its definition's, or naming no definition, fails
+  instead of holding nothing. Five plants on a fixture whose `/api/status`
+  handler is `Api::handle_status` hold it: two passed every rule before,
+  and the other three each lacked the problem they now name. And
+  `platformio_pin_problems` collected the `platformio-version:` lines
+  across a workflow without tying them to the steps that install
+  PlatformIO, so a second `setup-platformio` step with no version after the
+  pinned one (the action then installs the newest) passed, as did a `pip
+  install --upgrade platformio`. Every `setup-platformio` step in the two
+  release workflows and in `firmware.yml`'s route-check job (above the
+  check or below it) now hands it exactly one `platformio-version`, the pin
+  (a pin below the check is held too), and every pip install there that
+  names the platformio package names `platformio==6.1.19` (a backslash
+  continuation read as one line; a requirements file a `-r` names is not
+  read); `firmware.yml`'s build jobs, which take the newest on purpose, are
+  not held. The pin test is 18 tests: four new ones hold a second setup
+  step with no version or with only its extras (in a release workflow, also
+  one with the pin twice) and four unpinned pip installs (`--upgrade`,
+  `==6.2.0`, a range, a name on a continuation line), in each release
+  workflow and above and below the route check (with a 6.2.0 step below
+  it), 27 failing cases, every one of
+  which the old rule passed; and a pin installed with pip, a pinned step
+  with its `with:` above its `uses:` and the same unpinned steps in another
+  `firmware.yml` job, 10 passing ones. Of 14 checker mutants (five of the
+  answer rule's reading, nine of the pin rule's per-step reading), the
+  self-test and the pin test refuse all 14. The planted fixtures are 298
+  (268 source, 25 table, 5 on the qualified fixture). The tree passes in
+  24.4 s on Python 3.13 (PlatformIO 6.1.19).
+  The review of that repair found two more gaps, each reproduced before
+  its fix. `EMITTER_STATEMENTS` had the gap the answer rows had: an
+  emitter's rows were counted under the bare name `TOKEN_EMITTERS` keys it
+  by and pinned only under its definition's qualified name, so once a
+  refactor defined the receipt's builder as `esp_err_t
+  receipt::send_provisioning_receipt(...)` (its census home moved with it,
+  as that rule's failure asks), a row keyed bare counted and pinned
+  nothing: on the tree, a `Serial.printf` of the token and the SoftAP
+  password added to the builder passed, where the same line in the bare
+  definition fails. Both tables' rows are now read by one rule
+  (`_statement_row_problems`): found by the bare name, keyed by the
+  definition's own name (a row keyed by another fails, naming the
+  definition), pinned at every definition, and an emitter is still defined
+  once, in its home. Five plants on a fixture whose receipt builder is
+  `receipt::send_provisioning_receipt` hold it; the review's case passed
+  every rule, and the fixture itself failed. And `platformio_pin_problems`,
+  whose docstring said every invocation is held, read only `pip`, `pip3`,
+  `pipx` and `uv pip` directly followed by `install`: `pio upgrade` (which
+  PlatformIO's own CLI suggests when a release is out), `platformio
+  upgrade`, `pip3.11 install`, `pip --quiet install`, `-mpip`,
+  PlatformIO's source by URL or VCS (its documented way to install the
+  development version), a wheel of it by path, `uv tool install`, `pipx
+  upgrade`, the get-platformio.py installer and a name folded onto the next
+  line of a `run: >` block all passed, in a release workflow where nothing
+  else refuses them. Each fails now (`_PIP_INSTALL`, `_PLATFORMIO_SOURCE`,
+  `_PIO_UPGRADE`, `_PIO_INSTALLER`, over a step read as `_shell_lines`
+  joins it: a backslash continuation, a folded or plain `run:` value as
+  YAML folds it, comments dropped), and the docstrings say what is read and
+  what is not (a `-r` requirements file, `pipx run`, an installer script of
+  its own). The pin test is 19 tests: those 13 installs in each release
+  workflow and above and below the route check are 52 failing cases, every
+  one of which the old rule passed; a step with the pin twice is now
+  planted above and below the check too; and an install at the pin with `uv
+  tool`, an sdist of another package whose name starts with platformio, a
+  `pio` command that installs nothing and a comment naming an upgrade pass.
+  A handler defined under two names that answers no credential is no
+  longer told that its `ANSWER_STATEMENTS` row keys one (it has none; a
+  plant holds the wording). Of 23 checker mutants (nine of the statement
+  rows and that message, 14 of the pin rule's reading), the self-test and
+  the pin test refuse all 23. The planted fixtures are 304 (268 source, 25
+  table, 6 on the qualified handler's fixture, 5 on the qualified
+  emitter's). The tree passes in 24.3 s on Python 3.13 and 16 s on 3.11
+  (PlatformIO 6.1.19).
+  The head parser names a constructor
+  for its class (it named `ScvNetworkManager`'s body after its last
+  initializer, `m_peers_last_browse_ms`), a member as `Class::name`, and a
+  function whose head ends in `noexcept`, `override`, `final`, a member's
+  `const` or a trailing return type, and a route handler is read at every
+  definition of its name, a qualified one included. 304 planted fixtures
+  (268 source, 25 table, 6 on a fixture whose `/api/status` handler is
+  qualified and 5 on one whose receipt builder is), with the self-test's
+  lexer, flag-file, build-input, library, reach,
+  header, file-kind, route-form, symbol-binding and raw-literal cases, each
+  fail for their named reason before the tree is read; they refuse each of
+  the 60 mutants of the check that undo one of the third review's fixes, weaken a
+  branch it found unheld, or undo one of its repair's own, each of 41 more
+  that undo one of the fourth review's fixes or weaken a branch it found
+  unheld (the 11 of those that weaken an older branch pass the fourth
+  version's self-test). The 39 fifth-round mutants, run on a private copy of
+  the head, are the symbol-binding and build-input escapes above (26 GREEN on
+  the round-4 check, RED now), their controls of the spelling the fourth
+  repair already caught (RED both ways), and `--prefix`, GREEN both ways:
+  gcc honors it as `-B` (host g++ 13.3 and the tree's xtensa g++ 14.2.0 both
+  rewrite `--prefix=<dir>` to `-B <dir>`, and an `as` planted in that folder
+  ran), so it is an injector the build-input rule does not read, as are
+  `--for-linker`, `--for-assembler` and `--define-macro`; they stay unread,
+  deliberate spellings outside the threat model (the sixth review).
+  The tree passes with its 83 registrations in 14 to 25 s (Python 3.11 to
+  3.14, PlatformIO 6.1.19). The threat model
+  is a careless or mistaken firmware edit (a refactor, a new route, a new
+  feature, a moved line, a widened helper, a new file), not a deliberate
+  attempt to evade the check (preprocessor tricks aimed at it, token pasting,
+  symbol aliasing, inline assembly, injected build flags) or an edit to the
+  checker itself: the paste, symbol-binding and build-input rules, and the
+  macro rule's flag and C++-keyword clauses, are defense in depth over the
+  spellings they name, not a guarantee (gcc's long aliases `--prefix`,
+  `--for-linker`, `--for-assembler` and `--define-macro`, the long form of
+  `-D`, a letter-led glued `-B<dir>` and `-L`/`-l` pass them). A static text
+  check: names are matched by spelling (the network manager's are the
+  exception: a reference to it under another name fails, however declared),
+  values are not checked but `SETUP_TIMEOUT_MS`'s and a shadow under the tree
+  of a value the glue reads (a `memset` of the private key before a mint
+  passes, and so does a header's own value), the files outside the tree the
+  flagship reaches are read for their `#define` lines, their asm and symbol
+  bindings, and the names the check holds (but `INCLUDE_COMMON_WORDS`), not
+  followed as code, a library the build links is not read (a registry one is
+  held to `REGISTRY_LIBS` by its name, its row vouching for the dependencies
+  it declares, the core only by the spellings the census names, so a server
+  or an access point the core can start under another name is not seen: one
+  on the raw socket API, the core's UDP classes, `WiFiUDP`, `AsyncUDP` and
+  `DNSServer`, of which the flagship's own captive DNS responder is a
+  `WiFiUDP`, its mDNS and NetBIOS responders, of which the flagship runs
+  mDNS, a BLE GATT server, the core's `BLEServer` or NimBLE's, which the
+  flagship's status service runs, or an ESP-IDF component such as
+  `esp_local_ctrl`), the linker is not read (a flag that would
+  bind a symbol fails instead, in the spellings the build-input rule names),
+  an NVS record
+  is not followed under a key built at run time or through a walk of the
+  whole namespace, the private key is not followed through a helper, a
+  statement before a gated route's refusal that does the route's work
+  without leaving is not seen, an early `return` between a mint's
+  `MINT_AFTER` statement and the mint is not refused (the rest of its
+  function goes with it: `setup()`'s start of the network, or the token's
+  mint, which leaves the bearer empty, so every gated route refuses as
+  unprovisioned), and
+  an edit to pinned glue or a pinned statement updates its row in the same
+  review (the failure prints the row as it now is).
 ### After the 2.4.16 train: an OTA image too big for its slot is refused before it downloads, no app release can take `releases/latest`, and long release notes end with a link instead of mid-sentence
 
 - **Firmware: the pull-OTA engine checks the slot first.** Once the signed
@@ -325,7 +1063,15 @@
   turns HTTPS on for every such unit and changes the pin the apps trust,
   which needs the bench (F15 stays open).
 
-### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (F342, F347)
+### canary-wap: the setup-door claim is spent only by a match, the BOOT tap goes to one asker, and the gate, claim and WAP slots age without a wrap (sweep F342, F347, #1842, #1843)
+
+#1842 carries the claim, the tap, the sweeps and its first five reviews'
+fixes. It was merged before its Codex review's and its final review's
+fixes landed, and those are its follow-up, #1843, whose parts below are,
+besides wording: the companion's save that stops when its step is left,
+asks on through a rejected fetch and waits for a `403` to say press; the
+BLE OTA line named as press-first; the seizure scenario's list of what each
+hold keeps; and the per-address lockout's ways out.
 
 - **A wrong `?claim=` no longer spends the phone's setup-door claim (sweep
   F342).** `claim_ticket::take()` exchanged the claim's minted-at word to 0
@@ -364,28 +1110,37 @@
   `409` ends once an ask finds no address other than the asker asking in
   the last 10 s (and at the closed tap's 30 s at the latest). That is 10 s
   after the other device stops, so the pages' retry works: "wait 10
-  seconds, then click Use BOOT Tap Once again, and only then short-tap
-  BOOT" (the companion: tap Save again, and press when its note says to)
-  asks first, and the next tap serves it. If the
+  seconds, then click Use BOOT Tap Once again, and short-tap BOOT when this
+  line says to" (the companion: tap Save again, and press when its note
+  says to) asks first, and the next tap serves it. If the
   other device keeps polling, its own asks end the `409` 10 s after the
   owner's page stopped: the owner's retry hears `403` and keeps asking, and
   the next tap is closed with `409` again (the poller residual below). The
   `409`'s own hint says to start the request first and keep it
   asking, then press BOOT, never a bare re-tap (a tap no client of the
   owner's is asking for goes to whoever asks first), and so does every
-  instruction a WAP page or answer gives: the `403`'s hint and button (its
-  button said "short tap, then poll within 30 seconds", and its hint "Press
+  instruction for the receipt's tap a WAP page or answer gives: the
+  `403`'s hint and button (its button said "short tap, then poll within 30 seconds", and its hint "Press
   the BOOT button on the device to reveal the provisioning receipt."), both
   pages' new `409` text (it names the click, or the tap on Save, before the
   press), the dashboard's timeout line ("Didn't see a tap. Click Use BOOT
-  Tap Once again, then short-tap BOOT."; it said "Press BOOT and click
-  above"), and the text of the companion's Home Assistant step (that step's
-  banner is not shown yet; the ledger's F342 entry notes it). The getting
-  started guide's sentence and the Lab's BOOT card said a short press lets
+  Tap Once again, and short-tap BOOT when this line says to."; it said
+  "Press BOOT and click above"), and the text of the companion's Home
+  Assistant step (that step's
+  banner is not shown yet; the ledger's F342 entry notes it). The
+  companion's BLE OTA line for a v1 manifest ("short-tap BOOT within 30 s
+  before Start") stays press-first: that tap is the break-glass, which no
+  receipt client is asking for, so a device on the network whose ask for
+  the receipt is judged between the tap and Start takes or closes it. The
+  getting started guide's sentence and the Lab's BOOT card said a short press lets
   the dashboard hand over the recovery kit for 30 seconds; they now say the
-  press hands it to the one page already asking, so click **Use BOOT Tap
-  Once** first. Both pages say to press only once the device has answered their
-  first ask ("Asking the Canary first. Don't press BOOT yet." until then),
+  press hands it to one asking page, so click **Use BOOT Tap Once** first
+  (a tap no page was asking for goes to the first address that asks after
+  it). Both pages say to press only once the device has answered
+  one of their asks with `403` ("Asking the Canary first. Don't press BOOT
+  yet." on the dashboard and "Asking your Canary first. Don't press BOOT
+  yet." on the companion until then; an ask that never reached the device
+  is asked again),
   so a press made as the instruction appears cannot land before the
   page's ask has reached the device. The dashboard's copy
   says the 10 s BOOT hold clears the Wi-Fi, the Home Assistant link and the
@@ -395,6 +1150,20 @@
   kit", then short-press BOOT when its note says to; the old order still
   works), and its message
   banner is now on screen (the handler set its text but never showed it).
+  The save stops when its step is left (**Do this later** or **Run
+  again** while it asks): an ask in flight is aborted and no other
+  follows, so a later BOOT tap is not claimed by a page the owner has
+  moved on from, no kit downloads and the Home Assistant step does not
+  come back. An ask that never reaches the device (the phone's Wi-Fi
+  dropping for a moment, as it can once the Canary has joined the home
+  network) is asked again 2 s later, as the dashboard's sign-in does, and no longer ends the
+  save; a save the device never answers ends "Your Canary didn't
+  answer", not "Didn't see a press". Leaving the step also puts away the
+  line a save that has ended left on it (a `409`, a missed press), so Run
+  again's next result does not show it again. The iPhone app's "No
+  recovery kit?" advice to forget the WAP's Wi-Fi now says that for half
+  an hour after it, Bluetooth setup goes to the first phone or computer
+  nearby that connects.
   A sole asker is served at once, as before. The asker is the socket peer
   (`request_peer_key()`, the read the per-address lockout already keys on),
   and the serial console names
@@ -411,13 +1180,92 @@
   and reopens the first-boot setup door for 30 minutes, and that door goes
   to whichever Bluetooth client connects first, so a host on the network
   that is also in radio range could reach it before the phone, spend the
-  claim minted for its own link and keep the token. The docs that said
-  otherwise now agree: `magic_pairing.md` §2.1 and the WAP README said no
+  claim minted for its own link and keep the token. And a host only on the
+  network can turn the WAP's Bluetooth off from a landing session before
+  the hold (F346), a saved setting the hold keeps, under which every link
+  is dropped, so no phone reaches the door: a denial, not a takeover, in
+  which the kit's token and the console still work. The dashboard's advice
+  now says, before the hold's own sentence, to check that Bluetooth Enabled
+  is on under Settings, Bluetooth, and how its sign-in, which covers the
+  page with no session, gets there (the main page, Open dashboard, then
+  Settings); the iPhone app's "No recovery kit?" advice says to check it
+  before forgetting the WAP's Wi-Fi, which leaves it as the hold does, and
+  it and the app's kit footer walk the same way there from the WAP's main
+  page (Open dashboard, then Settings; they named a Use BOOT Tap Once that
+  page does not show), and `FAQ.md`'s Forget Wi-Fi answer says to check the
+  switch first. The docs that said otherwise now agree: `magic_pairing.md` §2.1 and the WAP README said no
   button gesture factory-resets a WAP, and the 10 s hold does (it re-arms
   the setup door's window as Forget Wi-Fi does, on a unit that had
   credentials); `THREAT_MODEL.md` and `openipc_architecture_learnings.md`
   said the USB serial console is disabled in production, and release
-  images enable it.
+  images enable it; `THREAT_MODEL.md`'s seizure scenario said a factory
+  reset destroys all data, and it now says what each device's hold keeps
+  (the WAP's keeps the identity key, the chain, the SD records, the token,
+  the HTTPS certificate the iPhone app pins and its private key, the
+  Bluetooth bonds, the Opera mesh's member list and, on a board with flash
+  encryption on, the mesh's secret, id and revocations and the Beacon
+  channel's X25519 key, member set and audit ring; only the flagship's
+  30 s stage sheds the key, and NVS leaves an erased
+  entry's bytes in flash until it reuses the page, so
+  the flagship's key, and the saved Wi-Fi passwords and broker login the
+  WAP's hold removes from NVS, stay there in plaintext on every tier today,
+  since flash encryption does not cover NVS and the NVS encryption that
+  would is not available under `framework = arduino`; on the default tier an
+  install or a full erase in either flasher, each of which rewrites the
+  settings region, is what removes them).
+  The scenario's secure-tier line, which said flash encryption prevents
+  data extraction, now says it leaves NVS plaintext on the WAP and the
+  flagship. **If you provisioned the secure tier for seizure, read this:**
+  the security docs, the design notes, the bench runbook and the in-browser
+  flasher's trust card said or implied that its fuses protect the identity
+  key, the saved Wi-Fi or the mesh secret at rest, and they do not. Every
+  released tree builds with `framework = arduino`, where NVS encryption is
+  not available, so on a board with flash encryption fused the key, the
+  saved Wi-Fi and broker passwords and the Bluetooth bonds are still
+  plaintext in NVS, and the WAP's mesh secret beside them; the fuses protect
+  at most the firmware image. `SECURITY_MODEL.md` (its honest statement, its
+  physical-access paragraph, its seizure advice and its software promise's
+  limit), `THREAT_MODEL.md` (its principle scope and Scenario 8), the beacon
+  spec, `hardware_root_of_trust.md`, `vault_operator_ux_v1_1.md`,
+  `V1_BENCH_TEST_RUNBOOK.md` and the flasher's card now say so, and
+  `test_docs_claims.py` holds the build files to it. Likewise
+  `magic_pairing.md` offered a factory reset as the fix for a WAP a stranger
+  joined to its own network through the open setup door: that stranger could
+  spend the claim from that network, and the token and SoftAP password its
+  receipt carries survive the hold and Forget Wi-Fi, which also reopen the
+  first-come door (ledger F345); it now says so. The per-address
+  lockout's ways out (F343, in its entry below) offered the 10 s hold as a
+  way out from under a host striking from 9 or more addresses, and it is
+  not one while that host keeps striking: the hold empties the table, as
+  any restart does, but once the unit is set up on the same network again
+  the host's next strikes from nine addresses hold every untracked address
+  again, and the claim that pairs the phone does not clear that, so the
+  phone ends paired and held. `SECURITY_MODEL.md`, `magic_pairing.md` §3.7
+  and the ledger now say so for both trees. On the WAP the way out is
+  changing its Wi-Fi from a browser to a network that host is not on (the
+  landing page's session reaches `POST /api/wifi/connect` under the
+  lockout, F346), which needs no hold and does not reopen the first-come
+  setup door, or waiting until it stops. That holds only while that host
+  leaves it alone: it can mint sessions until the owner's is evicted, and
+  a host also in radio range can bond a Bluetooth peer of its own through
+  its session and write the WAP back to a network it is on over the bonded
+  lane. And it lasts only while the new network stays up: the WAP keeps
+  the networks it joined before, the host's among them, and goes back to
+  one on its own when the new network is not found twice running (a
+  hotspot turned off, a network out of range); no route forgets one saved
+  network, so only Forget Wi-Fi or the hold drop them, and both reopen the
+  first-come setup door. The iPhone's bonded Bluetooth lane is no way out
+  today: the iPhone app never dials a WAP's lane (ledger A65, open). Once
+  that is settled the lane holds only while that host leaves it alone and
+  the new network stays up, and taking it away needs no radio: any landing
+  session can turn the WAP's Bluetooth off, a saved setting that restarts
+  and the 10 s hold keep, under which every link is dropped, or delete
+  the phone's bond, and a host's own bonded peer can keep the owner's
+  write refused for as long as it keeps writing. On the flagship the way
+  out is waiting, or the hold followed by a setup onto a network that host
+  is not on. A
+  browser that mistyped the token signs in with Use BOOT Tap Once on the
+  WAP, since a tap clears only the address it is served to (F341).
   Host-tested (`test_provisioning_gate.cpp`, `test_receipt_grant.cpp`,
   `test_receipt_authority.cpp`, `recovery_kit.test.js`); not run on a device.
 
@@ -438,6 +1286,387 @@
   (`test_provisioning_gate.cpp`, `test_claim_ticket.cpp`,
   `test_receipt_grant.cpp`, `test_session_cookie.cpp`); the wraps cannot be
   bench-tested, and nothing here ran on a device.
+
+- **The remaining copies of #1843's four corrections now say what the code
+  does (#1843's sweep for every copy).** A BOOT tap or the setup-door claim
+  that serves an address frees that address's own slot, never the shared
+  overflow: two sentences of `SECURITY_MODEL.md`, the WAP receipt's
+  comment, `CONSOLIDATION.md` and the flagship's page-token comment said
+  "ends that address's backoff" with no exception, and the F341 entry below
+  left the flagship out of its way-out amendment. The 10 s BOOT hold keeps
+  the identity key, the chain and the HTTPS certificate on every Canary, and
+  the token on a WAP (the flagship's hold removes its stored token and the
+  next boot derives one from the key, so a token a flasher seeded does not
+  come back: the fourth pass below); the flagship's 30 s wipe, and an install
+  or a full erase in either flasher (whose factory image starts NVS over),
+  change them. The getting started guide said a factory reset loses the witness
+  chain and makes a new certificate, the flagship's `ota_deploy.py` and
+  `ota_deploy.sh` offered a factory reset as the reason for a pin mismatch,
+  and the iPhone app's certificate-mismatch error said a reset explains it,
+  which could lead an owner to re-pair to whatever is answering; each now
+  names an install or a full erase in a flasher (or the flagship's 30 s
+  wipe; the install since the third pass below) and says the 10 s reset
+  keeps the certificate. The flagship's serial banner said BOOT
+  resets at 5 s (it warns at 3, resets at 10 with the key kept and wipes at
+  30); either flasher's "Erase the entire chip" help called the erase a
+  factory reset; and the Home Assistant integration's comments, the
+  lockout's notes, the event-id floor's note (both trees), `FEATURES.md` and
+  the WAP's readiness list said a reset gives a new identity, or that the
+  WAP has no reset path. The iPhone app's Wi-Fi rollout and Bluetooth
+  rescue no longer send the owner to "hold BOOT", which on a WAP is the 10 s
+  factory reset: they name the setup network a WAP raises on its own while
+  it is off its Wi-Fi. The WAP dashboard's Forget Wi-Fi confirm now says
+  every saved network goes and that for half an hour after, its Bluetooth
+  setup goes to the first phone or computer nearby that connects. NVS is
+  plaintext on every tier: the flagship's Bluetooth panel said paired
+  devices are "stored securely" and now says where they are kept; both
+  flashers' eFuse card said a flash-encrypted board's reads come back as
+  ciphertext, and now says the firmware image does; comments, `PARITY.md`,
+  `FIRMWARE_MAP.md`, the design, strategy and audit notes no longer offer
+  flash encryption or the secure kit as the at-rest protection (the path is
+  NVS encryption, after the arduino-as-IDF-component migration), and
+  `THREAT_MODEL.md`, `FEATURES.md`, the firmware README and
+  `secure_provisioning.md` no longer credit the opt-in tier with a working
+  Secure Boot or the secure env with running. And the getting started
+  guide's unlock banner and "whichever asks first" are the flagship's, now
+  said so, with the WAP's ask-first order beside them and no in-app BOOT-tap
+  fetch (the iPhone app has none). The Vision SPA said to short-tap BOOT in
+  the same moment as its first ask, so a press could land before the ask
+  reached a WAP and go to another asker, and read a WAP's `409
+  tap_contended` as a missed tap: it now says "Don't press BOOT yet" until
+  the device answers with `403`, and on `409` stops and says another device
+  asked, with the ways out; the reference server's comments say it models
+  the first-asker rule, not the WAP's. `test_docs_claims.py` bans every
+  retired sentence where it stood. Host-tested where code moved
+  (`canary-vision` SPA tests, the sketch's tests); not run on a device or in
+  a browser.
+
+- **The secure kit turns on neither Secure Boot nor flash encryption, and
+  the docs now say so (#1843's sweep, second pass).** The
+  provisioning kit's Phase 2 (`provision_canary.sh --phase 2`) writes the app
+  in plaintext, burns a flash-encryption key, `SECURE_BOOT_EN` with no Secure
+  Boot key digest, and the JTAG fuses, but no `SPI_BOOT_CRYPT_CNT`, and its own
+  `verify_device.py --expect-locked` then fails on three fuses it never burns.
+  So a Phase 2 board has neither protection, and what the chip's ROM does with
+  `SECURE_BOOT_EN` and no digest has not been run on a bench. `THREAT_MODEL.md`
+  (its trust-boundary diagram, the seizure scenario's secure tier, which is
+  FAIL today like the default, so the scenario's own grade is FAIL too, the
+  supply-chain mitigations and the hardware trust line), `SECURITY_MODEL.md`
+  (the opt-in tiers buy nothing yet), the in-browser flasher's trust card,
+  `secure_provisioning.md` (its Step 3 list, its lockdown check's output,
+  its eFuse table and its build step), `FEATURES.md`'s kit row, the bench
+  runbook's C0 row and the hardware checklist's preamble, the script's own
+  help, warning and summary, `secure_defaults.h`, the strategy
+  doc's evidence-grade SKU, the vault and root-of-trust design notes, the
+  intake guide and `PENTEST_SCOPE.md` said or implied otherwise; each now
+  says what the kit does (and `PENTEST_SCOPE.md`'s known-and-accepted list
+  now says the 10 s reset keeps the identity and the certificate by design,
+  and a WAP's token; the fourth pass below scopes the token). The `THREAT_MODEL.md`
+  "Firmware corrupt" row also said no tier refuses a corrupt image: every
+  tier's bootloader checks the image's checksum and SHA-256 and tries the
+  other slot (read from the pinned cores' `sdkconfig`), and what no tier
+  refuses is a well-formed unsigned image. Other copies the same pass
+  corrected:
+  - The Bluetooth setup door's rule called the door one "for a device nobody
+    owns yet" in `improv_core.h` (both copies), `magic_pairing.md`,
+    `ble_protocol.md`, `GLOSSARY.md`, `FAQ.md` and the Sense and Vision
+    READMEs. It is a door for a device with no network saved: one its owner
+    cleared with the 10 s hold (or, on a WAP, Forget Wi-Fi) still has an
+    owner, since the hold keeps the witness identity on a Sense, a Vision and
+    a WAP and a WAP's token too, and the door still goes to whichever client
+    connects first.
+  - `mesh_state.h`, the flagship's `main.cpp` and `ble_scout_key.h` (both
+    copies) said a factory reset clears the opera secret, the peers, the
+    elected hub or the scout key. The 10 s reset keeps all of them, the
+    flagship's 30 s wipe drops them with the namespace, and only
+    `POST /api/mesh/leave` and the rotation's failure path clear the secret.
+  - The flagship's receipt comment and a WAP test comment said a served tap
+    ends the address's backoff with no overflow exception.
+  - The getting started guide's recovery section gave the WAP's one-asker
+    tap to both trees (its `gen_wap.py` pin now holds the WAP-scoped
+    sentence), and `onboarding_multiple_canaries.md`, the Vision SPA's header
+    comment and `ios/README.md` gave the old press-first order.
+  - The iPhone app's Fleet Wi-Fi did-not-return copy offered a Bluetooth
+    rescue the app never reaches on a WAP (ledger A65); it now names the
+    WAP's own setup network only.
+  - The WAP dashboard's Forget Wi-Fi confirm now says the setup door opens
+    only on a build that has it, with Bluetooth on (gen_web_assets_gz.py,
+    gen_wap.py, gen_homeassistant.py and gen_csp.py run).
+  - A dated legal audit's recommended "never leaves the secure element"
+    carries an amendment (no Canary has one), the readiness list no longer
+    states as current a rule Forget Wi-Fi already breaks (F345). (This
+    pass also wrote that an ordinary re-flash keeps NVS; it does not, since
+    both flashers' installs write a factory image whose settings region is
+    blank, and the third and fourth passes below correct the copies.)
+  `viewer.yml`'s `viewer` job now runs the recorded-reads gate too, and its
+  path filter lists the witness dictionary and the break-glass page and test,
+  which its steps read and which no PR editing them alone used to run (this
+  was on `main` before #1843). `test_docs_claims.py` ties every scoped
+  retirement to its own file: each retired form and each replacement now
+  names the file it stood in, each form must trip a row of that file and
+  each row must have a form there, and each replacement must stand in its
+  file, so a row deleted beside a sibling with the same needle, or pointed at
+  another file, fails; three new tests hold the kit, the resets and the
+  iPhone's Bluetooth filter to the code. The Vision SPA's capture has behavior rows
+  (`tests/spa/receipt-capture.test.js`, run on a stub device in a VM): the
+  press line waits for the first `403`, a `409` stops the capture, and the
+  timeout says whether the device ever answered. Host-tested; not run on a
+  device or in a browser.
+
+- **An install in either flasher gives a Canary a new key, and the kit's own
+  files no longer give a recipe for "full Secure Boot" (#1843's sweep, third
+  pass).** Both flashers write a factory image from offset 0 to the end of
+  the app, and its settings region is blank (`make_factory.py`), so every
+  install starts NVS over and the next boot makes a new identity key, token
+  and certificate; an over-the-air update, a PlatformIO or Arduino IDE
+  upload and the 10 s BOOT reset keep the key and the certificate (the
+  token too, except a flasher-seeded one on the flagship: the fourth pass
+  below). The second pass had written the
+  opposite, that an ordinary re-flash keeps the key and only a full erase
+  changes it; these copies now say what the flashers do (the fourth pass
+  below corrects the ones this pass missed): the iPhone app's
+  device store and certificate-mismatch message, `auth_backoff.h`, Home
+  Assistant's comments and replay test, the ledger, `LESSONS_LEARNED.md`,
+  this file, `THREAT_MODEL.md`, `PENTEST_SCOPE.md`, `magic_pairing.md`, the
+  getting started guide, the flagship's `ota_deploy` scripts, the Sense,
+  Vision and Sentinel `witness.h`, the WAP's hostname comment, the desktop
+  Flasher's first-contact box (which said unticking it keeps the identity)
+  and the in-browser flasher's erase and chain help. Home Assistant's
+  key-mismatch notification, which named a re-flash as a cause, was right
+  about that; it now lists every cause and says to check the new key on the
+  device before rotating the pin. The provisioning kit's
+  `platformio_secure.ini`, `sdkconfig.defaults.secure` and README said its
+  four steps enable full Secure Boot or full security; they now say
+  uncommenting the sdkconfig changes nothing under `framework = arduino`,
+  and Phase 2 leaves flash encryption off and Secure Boot enabled with
+  nothing to verify against, possibly unbootable. The key generator and
+  `secure_provisioning.md` no longer say losing the signing key bricks
+  devices (the kit never uses it), and `SECURITY_MODEL.md` no longer calls
+  the opt-in key-backup-enforced. Also: the docs index and a lesson's quote
+  of the setup door's rule name a cleared unit; the iPhone companion design
+  doc no longer says the app's tokens come from a BOOT tap; the Fleet
+  Wi-Fi sheet no longer offers the Bluetooth lane the app never reaches on
+  a WAP (ledger A65); the "Firmware corrupt" row scopes the OTA signature
+  check to release images; "un-fused" reads "without flash encryption"
+  where the meaning depends on it; the WAP wizard's recovery-kit line and
+  two companion retry lines say to press BOOT when the note says to.
+  `recovery_kit.test.js` now walks every function the WAP's 10 s hold
+  reaches for the mesh's keys and the scout key, `receipt-capture.test.js`
+  holds the press line's subtitle, the unanswered timeout's advice and the
+  capture's cancel guards, and `test_docs_claims.py` bans each retired
+  sentence where it stood. Host-tested; not run on a device or in a
+  browser.
+
+- **Neither flasher promises that an install keeps a board's settings or
+  key, and the flagship's 10 s hold is no longer said to keep a token a
+  flasher seeded (#1843's sweep, fourth pass).** Both flashers' Update
+  verdict said the settings region is left alone, their Reinstall verdict
+  that installing again is harmless, and the in-browser flasher's
+  first-contact button read "it's mine — keep its data"; every install
+  writes a factory image whose settings region is blank, so a board that
+  keeps a witness key comes up with a new one either way. Every verdict for
+  a board already set up now ends on the same sentence in both flashers,
+  and the button
+  reads "it's mine — skip the full erase" and says what it keeps (the
+  partitions the install does not write). The browser's trust card said the
+  key never leaves the board and the page never reads it; its own safety
+  copy, saved to your downloads, is a full read of the flash, key included,
+  and the card now says so. Other copies corrected: the five
+  `runtime_config.h` and `firmware_ota.md` ("sticky across reflashes", "HA
+  entities survive reflashes"), the Lab Sense page's NVS policy, the
+  flagship's handle and certificate comments, `device_pseudonym.h`, the
+  WAP's SSID comment, and the key-change lists in Home Assistant's
+  `sensor.py`, `csi_event_log.h`, the hatchery and the CSI id-floor notes,
+  which left out an install. The flagship's 10 s hold removes its stored
+  token and the next boot derives one from the key, so a token either
+  flasher seeded at install does not come back; the first sweep bullet
+  above and `PENTEST_SCOPE.md` had said the hold keeps the token on every
+  Canary, and
+  a WAP's "token derived from the key" now names a seeded one too. The WAP
+  dashboard's timeout line and `409` lines say to press BOOT when the line
+  says to, the kit's `partitions_secure.csv`, `secure_provisioning.md`
+  Step 3 and the scripts' help give Phase 2 as a dry run only, a phone that
+  missed the setup-door claim is sent to the recovery kit rather than a
+  BOOT tap the iPhone app does not have, and Secure Boot on a Phase 2
+  board is described as enabled with nothing to verify against.
+  `desktop_parity.test.js` holds both flashers' verdicts to the shared
+  sentence, `recovery_kit.test.js` walks the WAP's hold for the identity
+  key, the token, the certificate and the Beacon keys, and
+  `test_docs_claims.py` holds the token claim to the code and bans each
+  retired sentence where it stood. Host-tested; not run on a device or in a
+  browser.
+
+- **"Keys never leave the device" is the firmware's promise, and every
+  remaining copy of the four corrections says what the code does (#1843's
+  sweep, fifth pass).** Both flashers' pre-flash safety copy is a full read
+  of the flash over USB, through the chip's ROM download mode, so that file
+  holds the identity key in the clear and a restore puts it back:
+  `SECURITY_MODEL.md`, `THREAT_MODEL.md` (Principle 1 and Scenario 6),
+  `PENTEST_SCOPE.md`, `secure_defaults.h` and a lesson now say so, and the
+  pentest scope no longer calls a documented flash read a Critical finding.
+  An install in either flasher starts NVS over, the crash-loop count and
+  the device's handle with it: the flagship's E6 boot line, `boot_guard.h`,
+  the multi-Canary guide (which said the handle is the same every time you
+  flash), the captive portal test plan, the onboarding evaluation, the
+  getting started guide's setup-network paragraph, both flashers' "clean
+  install" advice, and the F360 notes here, in the ledger and in a lesson
+  say what the flashers do. The provisioning kit's Phase 2 leaves flash
+  encryption off and Secure Boot enabled with nothing to verify against,
+  and is a dry run today: `THREAT_MODEL.md`, `PENTEST_SCOPE.md`, the intake
+  guide, `secure_provisioning.md`, the kit's sdkconfig, `firmware/README.md`,
+  `mesh_state.cpp` and the bench validation runbook follow. A WAP's token
+  may be one a flasher seeded, and the flagship's 10 s hold drops a seeded
+  token, which the WAP sketch's README and secrets note and both flashers'
+  token and stale-key copy now say. `TRUST_MODEL.md` names the WAP's bonded
+  lane among the ways a node takes Wi-Fi; the improvement roadmap, a lesson
+  and the hub walkthrough entry below carry amendments for the Bluetooth lane no WAP
+  fills (A65); `magic_pairing.md` no longer calls a unit with no network
+  saved one nobody owns; the FAQ, `wap_server.h` and the iPhone app's
+  receipt comment name every grant of the receipt; the Lab's WAP page says
+  the keys ride through a tap of RESET (`gen_wap.py` run). `test_docs_claims.py`
+  bans 64 more retired sentences where they stood (192 of 192 row mutants
+  fail it) and holds the safety-copy claim to both flashers' code.
+  Host-tested; not run on a device or in a browser.
+
+- **The iPhone app reads no WAP's Bluetooth console, Forget Wi-Fi is any
+  landing session's, and a flasher install gives a new key, in every
+  remaining copy (#1843's sweep, sixth pass).** The console is served by
+  the WAP alone, and the iPhone app dials only a peripheral advertising it,
+  which a WAP does not (A65): both flashers' Bluetooth notes, the browser's
+  iPhone panel, the iOS README, the app's Bluetooth permission text and the
+  WAP's `/companion` page, which no longer sends iPhone owners to Bluefy,
+  follow. Forget Wi-Fi takes `api_auth_check()`, which any landing session
+  passes (F345), and a landing session can bond a peer to the WAP's
+  Bluetooth lane (F346), so the WAP's door and wipe comments,
+  `improv_core.h`, the README and `magic_pairing.md` no longer call a
+  re-armed door, or the lane, the owner's alone. Both flashers' smart pick ("installing
+  keeps it, updated in place") and settings verdicts, the desktop change
+  map, the SD recovery comments and guides and the token's lifetime say an
+  install starts NVS over under a new key; `SECURITY_MODEL.md`,
+  `THREAT_MODEL.md`, `gen_flash.py` and the salt comments say what a flash
+  read gets; the WAP's ready banner, its gate-open line and the README stopped
+  reading press-first (`web_assets_gz.h`, `wap.json` and `flash.json`
+  regenerated). `test_docs_claims.py` banned 141 more retired sentences
+  where they stood. Host-tested; not run on a device, in a browser or
+  through Xcode.
+
+- **The receipt's BOOT tap is said to go to one asker, an unasked tap to
+  the first address that asks after it, and an old SD card to be taken out
+  after a new key (#1843's sweep, sixth pass, round-1 review).** The sixth
+  pass had written that the WAP's tap goes to the one page or address
+  "already asking" into the gate-open serial line, the boot banner and the
+  README, and the getting started guide and the Lab's BOOT card said the
+  same from #1842; `tap_arbitrate()` serves
+  the sole address seen asking from 10 s before the tap onward, so a tap no
+  page was asking for goes to the first address that asks inside its 30 s,
+  and each copy now says so. Its recovery copy said an old card's chain
+  stays verifiable off-device after a new key: left in, the flagship stops writing
+  evidence to it while its old chain is the longer one, then appends the
+  new key's records to the same file (the WAP appends at once), and
+  `tools/verify_witness_log.py` fails that file under either key, so the
+  copy says to take the old log off or use a fresh card, and the
+  flagship's log line names the fresh card beside the reboot. Copies that
+  still credited the owner with clearing a unit, or called the WAP's
+  `api_auth_check()` routes bearer-gated (the OTA routes among them, which
+  any host on the network can drive with a landing session), now say what
+  the code does, in the docs, the WAP sketch's comments and the iPhone
+  app's; the iPhone design note no longer says the `/companion` page sends
+  people to Bluefy. Both flashers now offer the Bluetooth check for the WAP
+  alone, the one board that serves the console. `PARTITIONS.md`,
+  `regression_check.sh` and the kit's partition table scope `framework =
+  arduino` to every released build, and the token's lifetime names a
+  flasher's restore. `test_docs_claims.py` bans 95 more retired sentences
+  where they stood, 16 of them the sixth pass's own, and `wap.test.js` and
+  `desktop_parity.test.js` pin the corrected copy. Host-tested; not run on
+  a device or in a browser.
+
+- **An old SD card's log is moved off, not copied, after a new key; the
+  iPhone app's shared session can hold a landing session's cookie; and the
+  WAP's fleet scan is `/api/fleet/scan` (#1843's sweep, sixth pass, round-2
+  review).** The round-1 copy said to copy `/WITNESS/records.jsonl` off the
+  card or use a fresh card; both trees append to that one fixed path and
+  nothing renames or deletes it, so a copy leaves the file where the new key
+  writes. `usb_onboard.md`, the flagship's serial recovery guide and its
+  fork guard's comment now say to move it off (copy it, then delete it from
+  the card in a card reader, since the USB drive is read-only). Three iPhone
+  app comments said the app never holds the cookie the WAP's gate takes;
+  over http the shared `URLSession` keeps the `cv_session` a claim's
+  receipt sets and sends it back, which the gate takes until it expires in
+  24 h, the WAP reboots, or newer sessions push it out of the WAP's eight
+  session slots (the eighth minted after it, unless one minted in the same
+  second of uptime moves that sooner or later), and the comments say so.
+  The vault surface's comment
+  ("Auth-gated like the Wi-Fi routes (Bearer)"), `device_trust.md`'s WAP row
+  and the roadmap's `handle_witness_v1` line no longer call
+  `api_auth_check()` routes the bearer's alone, and two ledger notes and
+  the feature-gaps row FW9 carry amendments. Three sentences named a
+  `/api/fleet-scan` route no tree registers; the captive portal test plan
+  named its setup network `SecuraCV-XXXX` beside `SecuraCV-wap-XXXX`;
+  `PARTITIONS.md`, `regression_check.sh` and the S3 roadmap said only
+  canary-ota sets (or has on) NVS encryption, when the kit's
+  `sdkconfig.defaults.secure` sets it too, inert under `framework =
+  arduino`, and canary-ota has no `nvs_keys` partition. The getting started
+  guide's first WAP tap paragraph says who gets an unasked tap, and the gate
+  comments name both cookie spellings. `test_docs_claims.py` bans 25 more
+  retired sentences where they stood, two of them sentences the merge of
+  #1844 to #1873 retired with no needle (the threat model's "asks no Host
+  question" and the guide's "A factory reset will make a new certificate"),
+  and holds the files that ask for NVS encryption to the three it names;
+  `desktop_parity.test.js` reads the flashers' Bluetooth console copy as the
+  user reads it (concatenations folded, case ignored), so the five retired
+  strings its old needle could not see now fail it. Host-tested; not run on
+  a device, in a browser or through Xcode.
+
+- **The iPhone app's session cookie has a third end, and the Lab's hold
+  message reopens the setup door only on a unit that had Wi-Fi (#1843's
+  sweep, sixth pass, round-3 review).** Round 2 gave the `cv_session` a
+  claim's receipt leaves in the app's shared `URLSession` two ends, its
+  24 h and a WAP reboot. The WAP keeps sessions in eight RAM slots
+  (`csi_integration.cpp`'s `SESSION_SLOTS`), and once all eight are live
+  `pick_session_slot_for_issuance()` evicts the oldest, so newer sessions
+  end it, the eighth minted after the claim's when no other shares its
+  second of uptime (every `?cv_pair` sign-in at the landing and every
+  receipt a tap or a claim serves mints one), which can be minutes after
+  the claim. The three app comments, the round-2 entry
+  above and the ledger name all three ends. The Lab's BOOT card said the
+  10 s hold reopens the first-come Bluetooth setup door on every unit;
+  `wifi_clear_credentials()` re-arms the door's carried window only on a
+  unit that had Wi-Fi stored, and the hold ends in a software restart,
+  which keeps a spent window, so the card now says "on a unit that had
+  Wi-Fi", as the sketch's serial line does. The round-2 entry above and the
+  ledger counted four retired console strings the flashers' old needle
+  could not see; it missed five of the eight, and both now say so.
+  `test_docs_claims.py` bans 8 more retired sentences where they stood (the
+  five two-end lifetimes, the Lab's unscoped door and the two miscounts).
+  Host-tested; not run on a device, in a browser or through Xcode.
+
+- **The witness page's spec no longer puts the SD log and the MQTT publish
+  behind the WAP's gate, and the session cookie's count allows for a tie
+  (#1843's sweep, sixth pass, round-4 review).** `spec/witness_api_v1.md`
+  said the uptime bucket already rides the SD witness line,
+  `GET /api/witness`, `POST /api/export` and the MQTT `chain` publish, all
+  behind `api_auth_check()`, and that the gate in front of
+  `/api/v1/witness` is the one that reads the SD log. No canary-wap route
+  reads `/WITNESS/records.jsonl` (the firmware opens it only to append and
+  to recover the chain head when the card mounts), the export answers
+  `export_time_ms` and no bucket, the `chain` publish carries `length` and
+  `latest_hash` and reaches the broker, not the gate, and the page is the
+  one canary-wap HTTP route that carries a record's `payload_hash`, so a
+  landing session any host on the network can mint (F346) reaches a hash
+  the SD line gives only to a reader of the card. Both passages now say
+  so. The three app comments, the CHANGELOG entries above and the ledger
+  said eight newer sessions end the app's cookie; sessions are stamped in
+  whole seconds of uptime and the eviction takes the lowest slot on a tie,
+  so that count holds only when no other session shares the cookie's
+  second, and each copy now says a tie can move it sooner or later. The
+  readiness TODO now says the 10 s hold reopens the setup door on a unit
+  that had Wi-Fi, unless Bluetooth was turned off, which the hold keeps.
+  `test_docs_claims.py` bans 17 more retired sentences where they stood,
+  among them four the merge of #1844 to #1873 rewrote in the hardware
+  checklist with no needle (the `cv_session` name on rows that open
+  `https://` pages, where the cookie is `__Host-cv_session`) and the Lab
+  test's "one page already asking" comment. Host-tested; not run on a
+  device, in a browser or through Xcode.
 
 ### The flagship and the canary-wap halt on a stored identity key they cannot read, instead of running on a zero key or replacing it (sweep F360, #1840)
 
@@ -510,7 +1739,9 @@
   lookup of it, makes a new identity that same boot. The
   WAP's BOOT hold keeps the identity (it has no wipe stage), so a clean
   install in either flasher is its only way to a new identity on purpose,
-  halted or not. It halts, where other provisioning failures go on (sweep
+  halted or not *(amended 2026-10-22, #1843's sweep: any install in either
+  flasher, with or without its full erase, is: its factory image starts NVS
+  over)*. It halts, where other provisioning failures go on (sweep
   F336), because from there the boot record and the mesh would use the
   zeroed key and the chain would restart at seq 0 over the stored one. A
   working unit and a first boot are unchanged.
@@ -733,7 +1964,13 @@
   the shared overflow slot runs, and a tap does not clear that; then wait,
   change Wi-Fi from the iPhone's bonded Bluetooth lane, or hold BOOT 10 s.
   The flagship has no Bluetooth lane that changes its Wi-Fi, so there the
-  fallbacks are to wait or the 10 s hold. The dashboard now drops a token
+  fallbacks are to wait or the 10 s hold. (Amended by #1843, in the F342
+  section above: a tap clears an address only when it is served to that
+  address's ask, and the flagship's tap still goes to the first asker,
+  F354; under that host the hold is no way out unless the unit is then set
+  up on a network that host is not on, the iPhone app does not reach a
+  WAP's Bluetooth lane today, ledger A65, and that section gives the WAP's
+  ways out with their caveats.) The dashboard now drops a token
   the device refuses (a `401`, or `403 {"error":"forbidden"}`) and shows its
   unlock banner again, saying the token was refused, as the WAP's page does;
   it kept a mistyped paste and sent it on every poll, a strike each time the
@@ -770,7 +2007,9 @@
   bearer whenever the backoff was not running held every other caller's right
   token at `429`: the F289 follow-up's replay refused 86 of 86 of the owner's
   polls over ten minutes. The likeliest such host was the owner's own phone,
-  still polling a reset unit with its old token (filed as F352). The backoff
+  still polling a re-installed unit (an install or a full erase in either
+  flasher starts NVS over and gives it a new key and token; the 10 s hold and
+  an OTA update keep the token) with its old token (filed as F352). The backoff
   is now one per source address, the request's socket peer and never a
   header, on the new pure `firmware/common/network/auth_backoff.h` (staged
   into the sketch, held by `check_improv_sync.sh`): 8 tracked addresses, each
@@ -781,7 +2020,12 @@
   (F341). A host that strikes from 9 or more addresses within 60 s holds
   every untracked address while the shared overflow slot runs, and a tap
   does not clear that; then wait, change Wi-Fi from the iPhone's bonded
-  Bluetooth lane, or hold BOOT 10 s. Clients behind one address share a
+  Bluetooth lane, or hold BOOT 10 s. (Amended by #1843, in the F342
+  section above: a browser that mistyped the token signs in with Use BOOT
+  Tap Once, since a tap clears only the address it is served to; under that
+  host the hold is no way out, the iPhone app does not reach a WAP's
+  Bluetooth lane today, ledger A65, and that section gives the ways out
+  with their caveats.) Clients behind one address share a
   backoff, and a deliberate LAN denial is not closed (a landing session's
   `POST /api/reboot` also empties the table, kept in RAM, and with it the
   guess budget, so a guesser that reboots the unit every few seconds gets
@@ -872,7 +2116,13 @@
   its address (F341). A host that strikes from 9 or more addresses within
   60 s holds every untracked address while the shared overflow slot runs,
   and a tap does not clear that; then wait, change Wi-Fi from the iPhone's
-  bonded Bluetooth lane, or hold BOOT 10 s. **Host-tested**
+  bonded Bluetooth lane, or hold BOOT 10 s. (Amended by #1843, in the F342
+  section above: a tap clears an address only when it is served to that
+  address's own ask, and the flagship's tap still goes to the first asker,
+  F354; under that host the hold is no way out unless the unit is then set
+  up on a network that host is not on, the iPhone app does not reach a
+  WAP's Bluetooth lane today, ledger A65, and that section gives both
+  trees' ways out with their caveats.) **Host-tested**
   (`test_receipt_grant.cpp`, 1642 checks, 25 of which fail on the sketch
   before the change: the right bearer served at once after the tap, the
   claim and a header-less tap wait; `firmware/tests_host/test_securacv_auth.cpp`,
@@ -1297,8 +2547,9 @@ All are closed here; none of the code changes is run on a device.
   at a full ceiling too. The ceiling's hour of six 10-minute buckets is
   recorded as a decision at `csi_event_set_module_ceiling()` (F132). An
   exhausted event-id space is the owner's to recover, now said at
-  `space_low()` on both trees: a factory reset on a canary, a full flash erase
-  on a canary-wap without restoring the flasher's pre-erase backup, then a
+  `space_low()` on both trees: the 30 s BOOT wipe on a canary (its 10 s reset
+  keeps the floor), a full flash erase on a canary-wap (whose 10 s hold keeps
+  it too) without restoring the flasher's pre-erase backup, then a
   re-pin in Home Assistant (F82). `wifi.channel_activity`'s three knobs are
   documented as compile-time defaults (F122). The Tuning Lab's per-row reset
   and Reset all remove the stored row instead of storing the default, so the
@@ -2708,6 +3959,12 @@ that was still running when it merged. Design: `docs/design/magic_pairing.md`.
 - **The door rule — the one that matters, and the one the first commit got
   wrong.** The door is open *for a device nobody owns yet, and for an
   owner's own tap — never for a device that has an owner and a bad day*.
+  *(Amended 2026-10-22, #1843's sweep: `improv_core.h` now reads "a device
+  with NO NETWORK SAVED (a new one nobody owns yet, or one its owner
+  cleared)". The 10 s hold, and Forget Wi-Fi on a WAP, clear the network
+  and keep the witness identity, so a cleared unit still has an owner, and
+  its door goes to whichever client connects first;
+  `docs/design/magic_pairing.md` §2.2.)*
   With **no stored credentials** it opens on its own for a first-boot
   window of **30 minutes after power-on** (`IMPROV_FIRST_BOOT_WINDOW_MS`;
   a power cycle or a factory reset re-arms it; compile-time 0 = tap-only)
@@ -2873,7 +4130,10 @@ that was still running when it merged. Design: `docs/design/magic_pairing.md`.
   or typed, the phone joining `SecuraCV-XXXX` itself (NEHotspotConfiguration,
   a new entitlement) and posting the home Wi-Fi to the portal's `/join` with
   the device's `/status` verdict shown; a WAP's bonded Bluetooth provisioning
-  service for a brand-new unit; and the Fleet tab's discovery for the
+  service for a brand-new unit *(amended 2026-10-22, #1843: that step could
+  never list a WAP, since the app dials only a peripheral advertising the
+  console service, which no WAP advertises, ledger A65; the walkthrough now
+  names the WAP's own setup page)*; and the Fleet tab's discovery for the
   appearance. Pure halves host-tested (`HubOnboardingTests`,
   `HubProvisionPlanTests`, `SetupPortalTests`, `HubDiscoveryRowsTests`,
   `SetupGuideTests`); the gated iOS CI is the compiler.
@@ -6629,7 +7889,7 @@ reverted a bad image or entered safe mode on real hardware yet; that is
   fetched `/api/v1/witness` in the canary-vision reference shape while
   canary-wap answered only `/api/witness` (one record, another shape, no
   signature). canary-wap now serves the page from a 16-record RAM ring
-  (`witness_page.h`, `handle_witness_v1`, Bearer-gated, chunked) as
+  (`witness_page.h`, `handle_witness_v1`, Bearer-gated *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)*, chunked) as
   `chain_format: wap_v1` — the firmware's own domain-separated chain hash
   and its existing per-record Ed25519 signature over the raw hash, no new
   signing scheme — with coarse ten-minute timestamps only when the device
@@ -8667,7 +9927,9 @@ someone went looking.
   New pure selection ladder `smartPick` (`flash-core.js`, 13 tests in
   `tests/flash_select.test.js`): a `?product=` ask wins outright; else the
   app descriptor already on the board ("This board already runs X —
-  installing keeps it, updated in place"); else the chip **plus the
+  installing keeps it, updated in place" *(amended 2026-10-22, #1843's sweep:
+  an install starts the settings over under a new key, and the card now says
+  so)*); else the chip **plus the
   measured flash size** — an ESP32-S3 with 16 MB flash can only be the
   Waveshare panel module, with 8 MB it's the XIAO class — with the evidence
   stated on the page; else the authored per-chip default. Where size
@@ -10828,7 +12090,7 @@ FEATURE_DATA_MGMT.
   threshold, append-only chain-hashed audit log as a ring buffer
   NVS-persisted under the flash-encryption gate. Off by default
   (`FEATURE_BEACON_CHANNEL=0`).
-- **Beacon REST API** (`beacon_api.h`): Bearer-token-gated surface —
+- **Beacon REST API** (`beacon_api.h`): Bearer-token-gated surface *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)* —
   `/api/beacon`, `/set`, `/pair/*`, `/revoke`, `/originate`, `/cosign`,
   `/cancel`, `/active`, `/audit` (paginated), `/selftest`.
 - **COSIGN_REQ/RESP encryption**: X25519 ECDH between paired device
@@ -10873,7 +12135,7 @@ FEATURE_DATA_MGMT.
   unsynced; conservative night-mode when unsynced.
 - 5-emoji session display (~1 M distinct).
 - `chirp_api.h` REST endpoints Bearer-gated via the standard
-  template-trampoline pattern; wired into `canary_wap.ino`.
+  template-trampoline pattern *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)*; wired into `canary_wap.ino`.
 - Presence requirement also gates ACK origination.
 - Per-`session_pubkey` rate limit on incoming witnesses.
 - `TPL_AUTH_FEDERAL_PRESENCE` removed; 0x04 slot reserved.

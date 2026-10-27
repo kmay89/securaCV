@@ -34,7 +34,7 @@ Witness Wall** is the Apple TV app that polls `GET /api/fleet`.
 | C6 | Live join reasons | `wifi_join_policy.h` labels (Network not found / Wrong password / No address from the router / Couldn't connect) shown while the join runs, retry without a re-scan |
 | C7 | AP hold after join | `onboarding_fsm.h` `Timing`: 120 s after the join, 1.6 s after the phone acknowledges |
 | C8 | Saved-network ring + backoff | `wifi_store.h` (4 networks, last-good first, rotate on Network-not-found) under the shared retry policy |
-| C9 | Credentials encrypted at rest | NVS encryption or flash encryption on the credential blobs |
+| C9 | Credentials encrypted at rest | NVS encryption on the NVS that holds the credential blobs (flash encryption alone does not cover NVS) |
 | C10 | Recovery re-raise without wipe | `onboarding_fsm.h` `recovery_reraise_due()`: 10 min offline after ever being online → SoftAP (and the BLE door where there is one) come back, nothing forgotten |
 | C11 | Hold-button reset | `common/io/reset_hold.h`: warn at 3 s, reset at 10 s (credentials and settings; identity kept), restart on release |
 | C12 | `GET /api/status` | `common/network/node_status.h` body: node, fw, uptime, ip, rssi, onboarding, hub, peers_seen, wall, peer, coord, ota{…}, creds_at_rest, clock — no MAC, no key, no broker address |
@@ -63,7 +63,7 @@ Witness Wall** is the Apple TV app that polls `GET /api/fleet`.
 | **canary-sense** | ✅ | ✅ open on :80 | ✅ | ✅ ⁸ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ ⁹ |
 | **canary-vision** | ✅ | ✅ open on :80 | ✅ | ✅ ⁸ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ ⁹ |
 | **canary-sentinel** | ✅ | ✅ open on :80 | ✅ | ✅ ⁸ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ ⁹ |
-| **canary-wap** | ✅ | ✅ bearer-gated ¹⁰ | ⚠️ ¹¹ | ⚠️ ¹² | ❌ ¹³ | ❌ ¹³ | ✅ | ✅ | ✅ | ✅ |
+| **canary-wap** | ✅ | ✅ gated ¹⁰ | ⚠️ ¹¹ | ⚠️ ¹² | ❌ ¹³ | ❌ ¹³ | ✅ | ✅ | ✅ | ✅ |
 | **canary (PIO)** | ✅ (30 s wipe opt-in) | ✅ bearer-gated ¹⁰ | ✅ | ⚠️ ¹² | ❌ ¹³ | ❌ ¹³ | ✅ | ✅ | ✅ | ⚠️ ⁹ |
 | **canary-display** | ⚠️ ¹⁴ | ✅ open on :80 | ⚠️ ¹¹ | ✅ | ⚠️ ¹⁵ | ❌ ¹⁵ | ✅ | ✅ (direct) ¹⁶ | ✅ | ⚠️ ⁹ |
 
@@ -83,8 +83,11 @@ Witness Wall** is the Apple TV app that polls `GET /api/fleet`.
    core as built (the precompiled `sdkconfig` leaves it off; see
    `firmware/common/identity/key_at_rest.h` and `FIRMWARE_MAP.md` §3). Rather
    than fake it, every `/api/status` reports `creds_at_rest: "plaintext-nvs"`,
-   and the opt-in secure kit (`firmware/provisioning/`, flash encryption +
-   Secure Boot v2) stays the documented path. This is the one brief item the
+   and the path is NVS encryption, which needs the arduino-as-IDF-component
+   migration (`firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` item 9): the opt-in
+   secure kit (`firmware/provisioning/`) does not encrypt NVS, since flash
+   encryption does not cover it and the kit's NVS-encryption setting is
+   inert under `framework = arduino`. This is the one brief item the
    program could not close in firmware, and it says so on every node.
 2. **No BLE in the sentinel build**, by design: it is a door/window/hallway
    sensor on a C6 whose radio budget goes to the fleet beacon; the shared
@@ -123,9 +126,11 @@ Witness Wall** is the Apple TV app that polls `GET /api/fleet`.
    file-upload route (the PIO canary's `POST /api/ota` is the dev-only,
    unsigned one). `OTA.md` §4 names the URL-install alternative a signed
    manifest on any HTTP server gives you.
-10. **Gated, with the same body.** The WAP and the PIO canary answer
-    `/api/status` behind their bearer token (they also serve a rich, gated
-    status and carry more than the coarse body); the shared `node_status`
+10. **Gated, with the same body.** The PIO canary answers `/api/status`
+    behind its bearer token, and the WAP behind `api_auth_check()`, which
+    takes the bearer or the landing session any host on its network can
+    mint (ledger F346), so the WAP's status is not the owner's alone (both
+    serve a rich, gated status and carry more than the coarse body); the shared `node_status`
     body rides inside it. The three headless boards and the display answer it
     open on port 80, coarse by construction.
 11. **Own TXT, same essentials.** The WAP (`device_id fw host name model dt
@@ -342,7 +347,7 @@ These are the calls.
   phone-home scan matches them, and `docs/security/SECURITY_MODEL.md`
   discloses the new path. Their records still stamp `ts_ms` from uptime.
 - **`/api/status` is open and coarse on nodes that had no HTTP server**, and
-  rides inside the bearer-gated status on the two that already had one. The
+  rides inside the gated status on the two that already had one. The
   body never carries a MAC, a key or the broker address, so it is safe to be
   open; the roll-call the Wall polls was already open on the same terms.
 - **The fleet key is derived, not provisioned.** HKDF of the Wi-Fi credentials

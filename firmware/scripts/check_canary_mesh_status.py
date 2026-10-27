@@ -48,8 +48,9 @@ rule 7 holds both locks' shape.
    `count` to `build_mesh_peers_json` (sweep F199: the rows are the view's
    members, which equal `peers_total`). It calls no `mesh_state::`
    function: until F199 it read the persisted pubkeys
-   (`mesh_state::load_trusted_peers`, refused without flash encryption, so
-   a dev board answered 500 `load_failed`) and joined them against the
+   (`mesh_state::load_trusted_peers`, refused without flash encryption,
+   which no Canary has on today, so every board answered 500
+   `load_failed`) and joined them against the
    view. Its answers are 200 with the rows, or the one 500 `encode_failed`
    when `build_mesh_peers_json` cannot fit them (F199's review): its
    `return` statements are exactly the rate-limit and auth gates' two

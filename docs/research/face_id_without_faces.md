@@ -515,11 +515,13 @@ plaintext `hh_slots` and `hh_count` NVS keys, as follow-up. It keeps
 `familiar` only as RAM-only, notification-only novelty, and retires the
 household / non-household tier split in
 [`apple_watch_and_notifications.md`](../design/apple_watch_and_notifications.md).
-Until then, `household.h`'s claim that IRKs are "flash-encrypted at rest on
-ESP32 with secure boot" is wrong: flash encryption does not cover NVS, NVS
-encryption cannot be built under the Arduino 2.0.17 core, and secure boot is
-opt-in, so the IRKs sit in plaintext
-([`key_at_rest.h`](../../firmware/common/identity/key_at_rest.h)).
+Until then, the IRKs sit in plaintext: `household.h`'s old claim that they
+were "flash-encrypted at rest on ESP32 with secure boot" was wrong, and its
+comment now says so (2026-10-21), since flash encryption does not cover NVS,
+NVS encryption cannot be built under `framework = arduino` (neither pinned
+core's precompiled `sdkconfig` has it), and secure boot works on no tier: the
+provisioning kit prepares it, and its Phase 2 sets `SECURE_BOOT_EN` with no
+key digest, so nothing is verified ([`key_at_rest.h`](../../firmware/common/identity/key_at_rest.h)).
 
 ### 6.9 Bill of materials (October 2026 snapshots)
 

@@ -284,7 +284,7 @@ coordinates, identities, free text.
 | P7 | **Un-forkable** — one history, the same for every reader | (roadmap G5) mesh cosigned heads; optional public log | compare heads across witnesses | single-device installs keep P2-P4 but not P7; we say so |
 | P8 | **Stranger-verifiable** — no trust in us or the runtime required | offline viewer + CLI, byte-parity locked; golden corpus (G9) | run the tool; reproduce the fixtures | verifier trust rests on published validation, like any forensic tool |
 | P9 | **Private by construction** — proof without exposure | invariants I–VII enforced in code — I/II at the type level (compile-fail tested), the rest by runtime gates and fail-closed policy; hash-only anchoring; two-tier split | read the export: nothing identifying is in it | privacy limits evidentiary richness — deliberately (the QAR/FDR trade) |
-| P10 | **A known instrument** — you can know what code witnessed | signed firmware/OTA, versioned dictionary hash in checkpoints, (doc 12) release provenance | verify firmware signatures + dictionary hash | plaintext-NVS key on current canaries until flash encryption ships (doc 12 F2) — the honest asterisk |
+| P10 | **A known instrument** — you can know what code witnessed | signed firmware/OTA, versioned dictionary hash in checkpoints, (doc 12) release provenance | verify firmware signatures + dictionary hash | plaintext-NVS key on every current canary, fused or not, until NVS encryption ships (doc 12 F2; flash encryption alone does not cover NVS) — the honest asterisk |
 
 The card's rule, borrowed from aviation: **capture maximally (within the
 privacy floor), disclose minimally, promise only what a stranger can check.**
