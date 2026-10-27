@@ -29,6 +29,10 @@ and several of its pages state facts whose source of truth lives HERE:
                                                    sim.js: the bench's PG1 driver port
                                                    and the /modes page's mode registry
                                                    port, each drift-gated here
+  download.html's app-v<x.y.z> and              this repo's newest PUBLISHED app-v*
+    flasher-v<x.y.z> tokens: the /download         and flasher-v* releases (not draft,
+    buttons' exact release pages and the           not prerelease), read off the GitHub
+    note that names them                           REST API: never tauri.conf.json
 
 (The CAD carries — /scad, js/builder-data.js, scad/cad-dims.json — have their
 own tool, docs/hardware/enclosure/gen_builder_manifest.py --site.)
@@ -43,7 +47,9 @@ command that refreshes all three, and the website's weekly "Update everything"
 carry job runs it from a fresh checkout of this repo and opens a PR when the
 bytes moved. The playground carry joined them in 2026-10: its three files were
 website hand copies headed HAND-COPIED, and every firmware version bump left
-playground-data.js's fw_version behind.
+playground-data.js's fw_version behind. The downloads carry joined them the
+same month: the /download buttons had opened GitHub's release search, which
+matches text, not tags, and a hand-typed tag goes stale with the next release.
 
 Direction, honestly: onboarding-spec.json as a whole is WEBSITE-authored (the
 probe fixes, the serial-command copy, the OS table). Only its `builds` block is
@@ -54,9 +60,15 @@ other carries are whole files: copied verbatim, or (the playground carry) the
 upstream bytes under a CARRIED header the website's tests/carry-claims.test.mjs
 reads, with playground.json wrapped as an ES module (`export const PLAYGROUND =`
 and the JSON, its trailing newline replaced by `;\n`).
+The downloads carry is a stamp too: in download.html it moves the version in
+each app-v<x.y.z> and flasher-v<x.y.z> token and nothing else.
 
 Byte-reproducible: no dates, no commit shas. The same upstream tree always
-produces the same bytes, so "did anything change?" is an exact answer.
+produces the same bytes, so "did anything change?" is an exact answer. The
+downloads carry's one input outside the tree is the release list: the same
+published releases always stamp the same bytes, and a run that cannot read
+the list (offline, rate-limited, an API error after retries) writes nothing
+and says why. It never stamps a guess.
 Transforms live here, never on the website; the website only receives files.
 
 Usage (DIR is the website checkout root):
@@ -65,6 +77,15 @@ Usage (DIR is the website checkout root):
   python3 scripts/carry_to_site.py --site DIR --only kernel-status
   python3 scripts/carry_to_site.py --site DIR --only verifier
   python3 scripts/carry_to_site.py --site DIR --only playground
+  python3 scripts/carry_to_site.py --site DIR --only downloads
+  python3 scripts/carry_to_site.py --site DIR --only downloads --check
+
+The downloads carry reads the releases with GH_TOKEN when it is set (the
+API's unauthenticated limit is 60 requests an hour). --check writes nothing:
+it exits 1 when download.html does not name the newest published releases,
+or when the release list cannot be read (a check that cannot read the truth
+does not pass). It is the downloads carry's alone; the weekly job's diff is
+the other carries' check.
 
 Pinned by scripts/tests/test_carry_to_site.py (discovered by lint.yml).
 """
@@ -74,8 +95,13 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
+import re
 import shutil
 import sys
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -523,12 +549,173 @@ def carry_playground(site: Path) -> list[Path]:
 
 
 # --------------------------------------------------------------------------- #
+# 5. download.html's app-v / flasher-v tokens <- the newest published releases
+# --------------------------------------------------------------------------- #
+
+# The /download buttons open exact release pages (.../releases/tag/app-v<x.y.z>
+# for the Lab, .../releases/tag/flasher-v<x.y.z> for the Flasher) and the note
+# under the cards names the same tags; the website's
+# tests/download-facts.test.mjs holds every token of a family to one version.
+# The truth is the newest PUBLISHED release of each family, never
+# tauri.conf.json: a version bump merges before its release exists (a Lab
+# release is a draft until someone publishes it), and a stamp from the config
+# would point the buttons at a 404 until then.
+RELEASES_API = "https://api.github.com/repos/kmay89/securaCV/releases"
+SITE_DOWNLOAD = "download.html"
+DOWNLOAD_FAMILIES = {"app-v": "the Lab", "flasher-v": "the Flasher"}
+SEMVER = r"[0-9]+\.[0-9]+\.[0-9]+"
+API_ATTEMPTS = 3
+API_PAGE_LIMIT = 20
+
+
+class ReleasesUnavailable(Exception):
+    """The API cannot say which release of a family is the newest published one."""
+
+
+def _token_re(prefix: str) -> re.Pattern:
+    # The website test's own pattern (`\b${prefix}(${SEMVER})\b`, ASCII like
+    # JavaScript's), so the stamp moves exactly the tokens that test counts.
+    return re.compile(rf"\b{re.escape(prefix)}({SEMVER})\b", re.ASCII)
+
+
+def _api_page(url: str, token: str | None) -> tuple[list, str | None]:
+    """One page of the release list and the next page's URL. Retries a network
+    error, a 5xx and a 429; any other HTTP error is the answer."""
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        **({"Authorization": f"Bearer {token}"} if token else {}),
+    })
+    why = ""
+    for attempt in range(API_ATTEMPTS):
+        if attempt:
+            time.sleep(2 ** attempt)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as res:
+                page = json.loads(res.read())
+                link = res.headers.get("Link") or ""
+        except urllib.error.HTTPError as e:
+            why = f"HTTP {e.code} from {url}"
+            if e.code < 500 and e.code != 429:
+                raise ReleasesUnavailable(why) from None
+            continue
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+            why = f"{url}: {e}"
+            continue
+        if not isinstance(page, list):
+            raise ReleasesUnavailable(f"{url} did not answer with a list of releases")
+        nxt = re.search(r'<([^>]+)>;\s*rel="next"', link)
+        return page, nxt.group(1) if nxt else None
+    raise ReleasesUnavailable(f"{why} ({API_ATTEMPTS} attempts)")
+
+
+def read_releases(token: str | None) -> list[dict]:
+    """Every release of this repo, drafts included (the filter is
+    newest_published's), following the API's pages to the end."""
+    url: str | None = RELEASES_API + "?per_page=100"
+    releases: list[dict] = []
+    for _ in range(API_PAGE_LIMIT):
+        page, url = _api_page(url, token)
+        releases += page
+        if url is None:
+            return releases
+    raise ReleasesUnavailable(f"the release list ran past {API_PAGE_LIMIT} pages")
+
+
+def newest_published(releases: list[dict], prefix: str) -> str | None:
+    """The highest x.y.z among the family's published releases, or None. A
+    release counts only when the API says so outright: draft and prerelease
+    both false and a publish date. A tag with anything after x.y.z (an -rc)
+    is not a stable release and would stamp a token the page cannot hold."""
+    tag = re.compile(re.escape(prefix) + f"({SEMVER})", re.ASCII)
+    best = None
+    for r in releases:
+        m = tag.fullmatch(str(r.get("tag_name") or ""))
+        if not m or r.get("draft") is not False or r.get("prerelease") is not False \
+                or not r.get("published_at"):
+            continue
+        version = tuple(int(n) for n in m.group(1).split("."))
+        if best is None or version > best:
+            best = version
+    return ".".join(map(str, best)) if best else None
+
+
+def stamp_downloads(html: str, newest: dict[str, str]) -> str:
+    """Every app-v / flasher-v token at its family's newest published version;
+    every other byte as it was."""
+    for prefix, version in newest.items():
+        html = _token_re(prefix).sub(prefix + version, html)
+    return html
+
+
+def stamped_download_page(site: Path) -> tuple[Path, str, str, dict[str, str]]:
+    """download.html, its text, the stamped text and the versions stamped.
+    Raises ReleasesUnavailable when the API cannot name a family's newest
+    published release; a page without a family's token stops the carry."""
+    path = site / SITE_DOWNLOAD
+    if not path.is_file():
+        fail(f"{path} is missing — this carry stamps release tags INTO the website's "
+             "page, it does not author it")
+    html = path.read_text(encoding="utf-8")
+    for prefix in DOWNLOAD_FAMILIES:
+        if not _token_re(prefix).search(html):
+            fail(f"{SITE_DOWNLOAD} names no {prefix}<x.y.z> — the page changed shape, "
+                 "and a stamp with nothing to move would say it is current")
+    token = os.environ.get("GH_TOKEN") or None
+    try:
+        releases = read_releases(token)
+    except ReleasesUnavailable as e:
+        hint = "" if token else "; GH_TOKEN is not set"
+        raise ReleasesUnavailable(f"the release list could not be read ({e}{hint})") from None
+    newest = {}
+    for prefix, app in DOWNLOAD_FAMILIES.items():
+        newest[prefix] = newest_published(releases, prefix)
+        if newest[prefix] is None:
+            raise ReleasesUnavailable(f"the API shows no published {prefix}<x.y.z> "
+                                      f"release of {app}")
+    return path, html, stamp_downloads(html, newest), newest
+
+
+def carry_downloads(site: Path) -> list[Path]:
+    try:
+        path, _html, stamped, _newest = stamped_download_page(site)
+    except ReleasesUnavailable as e:
+        print(f"carry_to_site.py: downloads: {SITE_DOWNLOAD} left as it is — {e}",
+              file=sys.stderr)
+        return []
+    path.write_text(stamped, encoding="utf-8")
+    return [path]
+
+
+def check_downloads(site: Path) -> int:
+    """0 when download.html names the newest published releases, 1 when not."""
+    try:
+        _path, html, stamped, newest = stamped_download_page(site)
+    except ReleasesUnavailable as e:
+        fail(f"downloads: cannot check {SITE_DOWNLOAD} — {e}")
+    if stamped == html:
+        print(f"{SITE_DOWNLOAD} names the newest published releases: "
+              + ", ".join(p + v for p, v in newest.items()))
+        return 0
+    for prefix, version in newest.items():
+        named = sorted(set(_token_re(prefix).findall(html)) - {version})
+        if named:
+            print(f"{SITE_DOWNLOAD} is stale: it names {', '.join(prefix + n for n in named)}; "
+                  f"the newest published release of {DOWNLOAD_FAMILIES[prefix]} is "
+                  f"{prefix}{version}")
+    print("refresh it: python3 scripts/carry_to_site.py --site <website checkout> "
+          "--only downloads")
+    return 1
+
+
+# --------------------------------------------------------------------------- #
 
 CARRIES = {
     "builds": carry_builds,
     "kernel-status": carry_kernel_status,
     "verifier": carry_verifier,
     "playground": carry_playground,
+    "downloads": carry_downloads,
 }
 
 
@@ -538,11 +725,19 @@ def main(argv: list[str] | None = None) -> None:
                     help="the website checkout root (kmay89/securacv_website)")
     ap.add_argument("--only", metavar="CARRY", action="append", choices=sorted(CARRIES),
                     help="refresh only this carry (repeatable); default: all of them")
+    ap.add_argument("--check", action="store_true",
+                    help="with --only downloads: write nothing, exit 1 unless download.html "
+                         "names the newest published releases")
     args = ap.parse_args(argv)
+    if args.check and set(args.only or ()) != {"downloads"}:
+        ap.error("--check is the downloads carry's: pass --only downloads (the weekly "
+                 "job's diff is the other carries' check)")
 
     site = args.site.resolve()
     if not (site / "js").is_dir() or not (site / "tests").is_dir():
         fail(f"{site} does not look like the website checkout (no js/ and tests/)")
+    if args.check:
+        sys.exit(check_downloads(site))
     for name in args.only or list(CARRIES):
         for path in CARRIES[name](site):
             print(f"wrote {path.relative_to(site)}")

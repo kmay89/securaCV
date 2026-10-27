@@ -216,6 +216,17 @@ workflow calls both, and calls the pointer as a reusable workflow so a broken
 updater manifest fails the publish run instead of passing quietly. (A human
 clicking Publish in the UI *does* fire the event, so that path still works.)
 
+**The website's download buttons follow the publish, not the build.**
+securacv.com/download links exact releases (`app-v<x.y.z>`,
+`flasher-v<x.y.z>`), stamped by `scripts/carry_to_site.py`'s `downloads`
+carry from the newest release of each app that the GitHub API shows as
+published (not a draft, not a prerelease). A version that is only in
+`tauri.conf.json`, or only a draft, never reaches them. The website's weekly
+carry job runs it; to move them the day you publish (the Lab here, or a
+Flasher the master button cut):
+`python3 scripts/carry_to_site.py --site <website-checkout> --only downloads`
+(`--check` asks without writing, and exits 1 on a stale page).
+
 ### Fix a release's notes (rewrite the body from the repo)
 
 Rewrites the **body** of one published `fw-v*`, `flasher-v*` or `app-v*`

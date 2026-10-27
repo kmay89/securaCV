@@ -162,7 +162,9 @@ beacon or chirp code, read the Beacon section of `AGENTS.md` in full first.
   `python3 scripts/carry_to_site.py --site <website-checkout>` stamps the
   /checkup build matrix, the landing page's kernel-status grid, the
   Witness Wall's vendored verifier and the Test bench's and Modes page's
-  playground files (the same weekly job runs it)
+  playground files (the same weekly job runs it). Published a Lab or
+  Flasher release? Its `--only downloads` carry moves the /download buttons
+  to the newest published `app-v*` / `flasher-v*` tags (`--check` asks first)
 - Touched an input of the firmware SBOM — `firmware/flavors.json`, a
   `platformio.ini` (or a file its `extra_configs` reads), a
   `library.json` / `library.properties`, a sketch's `sketch.yaml` profile

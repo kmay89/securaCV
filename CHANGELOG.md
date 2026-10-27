@@ -245,6 +245,32 @@
   placed each part at its address inside the file. Host-tested (node and
   cargo unit tests); not bench-tested.
 
+### The website's download buttons are carried from the published releases
+
+- **`scripts/carry_to_site.py` gains a `downloads` carry.** securacv.com's
+  /download page links exact releases (`app-v<x.y.z>` for the Lab,
+  `flasher-v<x.y.z>` for the Flasher) and names the same tags in its note;
+  the carry moves every such token in `download.html` to the newest release
+  of its app that the GitHub REST API shows as published (not a draft, not a
+  prerelease, a bare `x.y.z` tag, highest by number) and leaves every other
+  byte alone. It reads the list with `GH_TOKEN` when set, follows every page
+  and makes three attempts on a network error, a 5xx or a 429. It never reads
+  `tauri.conf.json`: a version bump merges before its release exists, and a
+  stamp from the config would point the buttons at a missing page. A run that
+  cannot read the list, or finds no published release of an app, leaves the
+  page as it is and says why; `--only downloads --check` exits 1 on a stale
+  page and on an unreadable list. Pinned by
+  `scripts/tests/test_carry_to_site.py` (no network: the API reader is tested
+  against a stand-in `urlopen`). Run on a scratch copy of the website: a page
+  at `app-v0.3.2` / `flasher-v0.12.2` keeps its bytes, and a page faked back
+  to `app-v0.2.4`, `app-v0.3.1` and `flasher-v0.11.9` is stamped back to the
+  committed page byte for byte (the website's `tests/download-facts.test.mjs`
+  passes both: it holds the page to one version per app, not to the newest
+  one, which is what this carry adds). The website
+  half is not in this change: its weekly carry job commits only the paths in
+  its `CARRY_PATHS`, so `download.html` joins that list, and the carry step
+  needs `GH_TOKEN` in its environment.
+
 ## [2.4.17] - 2026-10-27
 
 > **Before you update.** Vision Doorbell: move the amplifier's input wire from D3 to D10.
