@@ -492,7 +492,7 @@
       {
         "suffix": "events",
         "retained": false,
-        "cadence": "per committed CSI event",
+        "cadence": "per committed CSI event (not ambient ones, sweep F105)",
         "payload": "{\"event_id\":3221226706,\"event_type\":\"active\",\"timestamp\":312,\"zone\":\"\",\"confidence\":\"tentative\",\"signed\":true,\"module\":\"core.presence\",\"type\":\"presence_changed\",\"category\":\"event\",\"privacy\":\"p0\",\"state\":\"active\",\"motion\":78,\"breathing\":8,\"bpm\":0,\"duration_sec\":0,\"bundled\":1,\"replay\":false,\"v\":1,\"alg\":\"ed25519\",\"fp\":\"7916ca487912fa1b\",\"sig\":\"\u2026\"}"
       },
       {

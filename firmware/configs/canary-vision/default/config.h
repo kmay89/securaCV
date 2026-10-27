@@ -7,16 +7,17 @@
  *
  * What lives here is what something reads (sweep F182): the FEATURE_* flags
  * (feature_sanity.h checks them against the board; the Lab's workshop.json
- * copies them) and the watchdog timeout, which this file owns. The settings
- * it used to repeat are set in the project's own headers:
+ * copies them), the watchdog timeout, which this file owns, and a copy of
+ * the device type, which the fleet figures read here
+ * (canary-local/tools/figures/gen_figures.mjs). The settings it used to
+ * repeat are set in the project's own headers:
  * projects/canary-vision/include/canary/config.h (identity, detection and
  * dwell defaults, voxel grid, frame size, timing, MQTT buffer, discovery
- * prefix) and include/canary/topics.h (the topic patterns). The seeds
- * below are copies of config.h constants that a tool reads here: the device
- * type for the fleet figures (canary-local/tools/figures/gen_figures.mjs) and
- * four detection defaults for the flasher catalog
- * (canary-local/tools/gen_flash.py), held equal to them by
- * scripts/tests/test_vision_flavor_config_readers.py.
+ * prefix; the flasher catalog, canary-local/tools/gen_flash.py, reads its
+ * detection defaults there) and include/canary/topics.h (the topic
+ * patterns). scripts/tests/test_vision_flavor_config_readers.py fails on a
+ * CONFIG_* here that nothing reads, and holds the device type equal to
+ * config.h's.
  */
 
 #pragma once
@@ -53,12 +54,3 @@
 #define FEATURE_BLUETOOTH           0   // BLE available but not used
 #define FEATURE_RF_PRESENCE         0
 #define FEATURE_GNSS                0
-
-// ============================================================================
-// FLASHER SEEDS (copies of include/canary/config.h, which owns the values)
-// ============================================================================
-
-#define CONFIG_PERSON_TARGET        0       // SSCMA class ID for person
-#define CONFIG_SCORE_MIN            70      // Minimum detection confidence
-#define CONFIG_LOST_TIMEOUT_MS      1500    // Time before presence lost
-#define CONFIG_DWELL_START_MS       10000   // Time to confirm dwelling

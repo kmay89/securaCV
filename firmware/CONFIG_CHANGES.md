@@ -22,6 +22,25 @@ context lives in [CHANGELOG.md](../CHANGELOG.md); this file is only the
 
 ## Entries
 
+20261019: The Vision flavor config drops its copies of the detection defaults.
+No device behaves differently: the firmware loads the four from
+`projects/canary-vision/include/canary/config.h` and never read the copies.
+- `configs/canary-vision/default/config.h`: `CONFIG_PERSON_TARGET`,
+  `CONFIG_SCORE_MIN`, `CONFIG_LOST_TIMEOUT_MS` and `CONFIG_DWELL_START_MS`,
+  which only the flasher catalog's generator read.
+  `canary-local/tools/gen_flash.py` now reads the project config.h's
+  `PERSON_TARGET`, `SCORE_MIN`, `LOST_TIMEOUT_MS` and `DWELL_START_MS`,
+  the constants `src/detect_config.cpp` loads. The `FEATURE_*` flags,
+  `CV_WATCHDOG_TIMEOUT_SEC` and `CONFIG_DEVICE_TYPE` (the fleet figures
+  read it) stay.
+**Action:** if a `config_local.h`, a build flag or a script of yours sets
+any of these four, delete it; it did nothing to the firmware before and
+does nothing now. To change a detection default, edit the project's
+`include/canary/config.h` (it seeds the first boot only: the live value is
+kept in NVS and tuned from Home Assistant).
+`scripts/tests/test_vision_flavor_config_readers.py` fails on a `CONFIG_*`
+in the flavor file that nothing reads.
+
 20261019: canary-vision's flavor config no longer names seventeen `CONFIG_*`
 values nothing read (sweep F182, #1802; this entry was added by the
 post-#1802 verification, which found the removal shipped without one). No

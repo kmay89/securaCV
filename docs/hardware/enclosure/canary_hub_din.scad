@@ -82,8 +82,8 @@ pi_w = 56.0;         // Y
 hole_dx = 58.0;      // mount hole grid (X)
 hole_dy = 49.0;      // mount hole grid (Y)
 hole_off_x = 3.5;    // grid corner from board corner
-hole_off_y = 3.5;
-pcb_t = 1.4;
+hole_off_y = 3.5;    // grid corner from board corner, along Y (hole_off_x is X) — the four standoffs and the cover's screw holes and tubes sit on this grid
+pcb_t = 1.4;         // Pi 5 PCB thickness — the tray's walls stop 6 above the board's top face, and the case's height stacks hat_h on it
 standoff_h = 6.0;    // clearance under the board (PoE HAT pins / SD access)
 hat_h = 22.0;        // headroom above the PCB (HAT/M.2 + fan)
 // The cover's guide tubes SEAT on the standoff tops, making this number the
@@ -93,13 +93,13 @@ standoff_ff = 11.0;  // M-F brass standoffs on the Pi's hole grid, male end DOWN
 /* [Shell] */
 wall_t = 2.0;     // wall thickness — catalog default shell, core_wall(), canary_core_lib
 floor_t = 3.0;    // floor thickness — 3.0: the clip screws' cone seats leave a 1.35 web
-lid_t = 2.0;
+lid_t = 2.0;      // cover plate thickness — its pan-head seats leave 1.0 of floor under each head (asserted), and the case's height adds it
 corner_r = 3.0;   // catalog default — core_corner_r(), canary_core_lib
-board_clear = 1.0;
+board_clear = 1.0;  // clearance round the Pi on every side — the tray's cavity is the board plus 2 x this each way
 tol_slide = 0.20;  // catalog default — core_tol_slide(), canary_core_lib
 tol_hole  = 0.30;  // catalog default — core_tol_hole(), canary_core_lib
 screw_d = 2.2;       // M2.5 self-tap into the standoffs
-screw_head_d = 5.0;
+screw_head_d = 5.0;  // M2.5 pan-head Ø — the cover's flat seats are cut this + 0.6 wide and lid_t - 1.0 deep
 lid_screw_d = 2.8;   // M2.5 CLEARANCE: the cover's screws run down the Pi's hole grid into the M-F
                      // standoffs' female tops (no corner posts — they stood inside the Pi footprint)
 clip_screw_d = 3.4;  // M3 clearance through the floor into the clip's lands (self-tap 2.6 there)
@@ -107,13 +107,13 @@ lid_edge  = 0.8;   // first (45°) stage of the cover's edge break, mm — the h
 lid_edge2 = 0.8;   // second (~66°) stage, mm: what makes the edge read as a roundover instead of a bevel — core_face_edge2()  // [0:0.1:1.5]
 
 /* [DIN rail] — 35 mm top-hat (EN 50022) */
-din = true;
+din = true;          // the DIN-rail clip: its four M3 seats through the tray floor and part "clip" (false = no clip; the tray screws flat)
 din_w = 35.2;        // rail width across the flanges
 din_lip = 1.2;       // hook capture depth behind each flange edge (TS35 lip ~1 mm)
 din_t = 1.5;         // rail metal + spring clearance
 
 /* [Venting] */
-vent_slot_w = 2.0;
+vent_slot_w = 2.0;   // vent slot width — the floor's slots run inner_w - 16 long, and the cover's chimney slots over the SoC out_w - 24, both on vent_slot_p
 vent_slot_p = 5.0;   // pitch
 
 /* [Quality] */

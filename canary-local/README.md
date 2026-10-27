@@ -331,7 +331,11 @@ explained and linked (the firmware document generated from the build
 inputs, committed and schema-validated on every PR; the Rust and Node
 documents produced by `sbom.yml`; see `sbom/README.md`) — all emitted into
 `devices/build.json` by the same generator, drift-gated, so "how to
-build it" can never silently rot.
+build it" can never silently rot. The same file carries each printable
+set's hardware as the case's own `HARDWARE` echo counts it (from
+`docs/hardware/enclosure/hardware.json`, under each device's `hardware`).
+No page draws that list yet; `tests/assembly.test.js` holds the Assemble
+tab's screws to it.
 
 Live parameter re-rendering in the browser (openscad-wasm) is a wave-2
 hook: the lab's data model already carries everything it needs (the full
@@ -429,8 +433,13 @@ built procedurally to the BOM's sizes (`assembly.js`). Only the *choreography* �
 seated transforms, explode/insert vectors, camera, which part appears when — is
 authored, in `devices/assembly.json`. `tests/assembly.test.js` gates the honesty:
 every part resolves to a file that exists, every quoted step maps to a real
-build.json README step, and every claimed quantity matches the BOM (a `×4`
-screws badge can't drift from the BOM's four). The ribbon says so to your face:
+build.json README step, every claimed quantity matches the BOM (a `×4`
+screws badge can't drift from the BOM's four), and every screw the tab drives
+is one the case's own `HARDWARE` echo counts for the build it shows, at the
+echoed size, head, length and count, one per placement drawn (`build.json`
+carries each printable set's hardware from
+`docs/hardware/enclosure/hardware.json`; the known gaps are listed in the
+test). The ribbon says so to your face:
 *"every part is the real thing… the choreography is staged."*
 
 | Piece | File |
@@ -580,7 +589,7 @@ Anti-rot, same rule as everything here — nothing written twice:
 
 | Fact on the page | Source of truth |
 |---|---|
-| SSID `SecuraCV-XXXX`, `cv-…` password, `192.168.4.1`, NVS keys, timeouts | `arduino/canary_wap/{wap_server.h,setup_wizard.h,canary_wap.ino}` |
+| SSID `SecuraCV-wap-XXXX`, `cv-…` password, `192.168.4.1`, AP channel + client cap, ports, NVS keys, timeouts | `arduino/canary_wap/{canary_wap.ino,onboarding_fsm.h,setup_wizard.h}` |
 | The captive landing page (rendered verbatim) | `arduino/canary_wap/setup_page_html.h` |
 | Setup routes + the five wizard steps | `canary_wap.ino` + `companion_pwa.h` |
 | Boot banner + `setup()` log lines | `boot_banner.cpp` + `canary_wap.ino` |
@@ -1018,6 +1027,16 @@ fails on byte drift.
   their server answers the dist URL with a stand-in factory that forwards
   each call to the native build, and the page is served as committed. CI
   runs all six both ways. See
+  [`tests/native/README.md`](tests/native/README.md).
+- `tests/native_cores.test.js` holds the loader to the dist it stands in
+  for, and under `LAB_CORES=native` drives each native core next to its
+  committed dist, call for call; CI runs it both ways, the second in a step
+  of its own whose red means a stale or divergent dist.
+  `tests/vision_wasm32.test.js` (the Vision box pipeline, freestanding) and
+  `tests/cores_wasm32.test.js` (the whole Vision and WAP audio cores, against
+  a WASI sysroot, under `node:wasi`) build the sources for wasm32 with the
+  host's clang, where `long` is 32 bits as in the dist and on the ESP32, and
+  hold them to a g++ build. They are not emscripten or the dist. See
   [`tests/native/README.md`](tests/native/README.md).
 - `tests/boot_probe.mjs` + CI (`.github/workflows/canary-local.yml`):
   rebuilds both flavors from the tree, boots the watch in headless

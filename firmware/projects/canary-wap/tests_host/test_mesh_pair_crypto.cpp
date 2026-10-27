@@ -24,6 +24,12 @@
 //      handle_pair_offer, the code comes from confirmation_code(), and a
 //      refused derivation cancels the pairing. (Source pins — the .cpp cannot
 //      compile on the host; its path is passed in, so the pins fail closed.)
+//   7. the CONFIRM hash names its sender's role (F94): the same four pinned
+//      vectors as the PlatformIO tree's test_mesh_pairing, neither role's
+//      hash is the role-free one firmware before F94 sent, and
+//      mesh_network.cpp sends its own role's hash and checks its partner's,
+//      with no other CONFIRM hash left in it. test_mesh_liveness_wap runs the
+//      handlers: a reflected CONFIRM, and a role-free one, end the pairing.
 
 #include "mesh_pair_crypto.h"
 #include "beacon_source_scan.h"
@@ -190,6 +196,57 @@ void test_code_wire_pin_and_low_order_refusal() {
   std::printf("PASS code_wire_pin_and_low_order_refusal\n");
 }
 
+std::string hex(const uint8_t* p, size_t n) {
+  std::string out;
+  char b[3];
+  for (size_t i = 0; i < n; ++i) {
+    std::snprintf(b, sizeof b, "%02x", p[i]);
+    out += b;
+  }
+  return out;
+}
+
+void test_confirm_hash_is_bound_to_its_senders_role() {
+  // The same vectors test_mesh_pairing pins for the PlatformIO tree, each
+  // computed independently (openssl dgst over the domain, the key and the
+  // code's four little-endian bytes; Python's hashlib).
+  using mesh_pair_crypto::ConfirmSender;
+  uint8_t zero_key[32] = {0};
+  uint8_t seq_key[32];
+  for (int i = 0; i < 32; ++i) seq_key[i] = (uint8_t)i;
+  uint8_t h[32];
+  mesh_pair_crypto::confirm_hash(ConfirmSender::INITIATOR, zero_key, 884555u, h);
+  CHECK(hex(h, 32) == "d34ced10fe3400afaf0819deea176209547d68ad79a298d33c24d4b0646e0f9e");
+  mesh_pair_crypto::confirm_hash(ConfirmSender::JOINER, zero_key, 884555u, h);
+  CHECK(hex(h, 32) == "317ca8743bc47879c88b081e269db104ebbe7a84184c5cce05d9bf31c69b1679");
+  mesh_pair_crypto::confirm_hash(ConfirmSender::INITIATOR, seq_key, 123456u, h);
+  CHECK(hex(h, 32) == "dbd355d4806d3e0ee7a382a17e8e2b083f3fa187c5e96574a32c57db23e94e70");
+  mesh_pair_crypto::confirm_hash(ConfirmSender::JOINER, seq_key, 123456u, h);
+  CHECK(hex(h, 32) == "863ce906d7c46fa008ccd77195c05f410256d7efcddb99cae4155f8746d0b6ad");
+
+  // The role-free hash the sketch sent both ways before F94 (the bytes its
+  // memcpy of the uint32_t code put after the key) is neither.
+  uint8_t in[36] = {0};
+  const uint32_t code = 884555u;
+  std::memcpy(in + 32, &code, 4);
+  mesh_crypto::sha256_domain(mesh_pair_crypto::DOMAIN_PAIR_CONFIRM, in, sizeof in, h);
+  CHECK(hex(h, 32) == "68b54b5271a8b39345ec536813944be01297d0619b844619a50759c624431ebf");
+
+  CHECK(mesh_pair_crypto::partner_of(ConfirmSender::INITIATOR) == ConfirmSender::JOINER);
+  CHECK(mesh_pair_crypto::partner_of(ConfirmSender::JOINER) == ConfirmSender::INITIATOR);
+
+  // None of the three pairing domains is a prefix of another.
+  const char* domains[] = {mesh_pair_crypto::DOMAIN_PAIR_CONFIRM,
+                           mesh_pair_crypto::DOMAIN_PAIR_CONFIRM_INIT,
+                           mesh_pair_crypto::DOMAIN_PAIR_CONFIRM_JOIN};
+  for (const char* a : domains) {
+    for (const char* b : domains) {
+      if (a != b) CHECK(std::strncmp(a, b, std::strlen(a)) != 0);
+    }
+  }
+  std::printf("PASS confirm_hash_is_bound_to_its_senders_role  (d34ced10.../317ca874...)\n");
+}
+
 void test_mesh_network_calls_this_header() {
   bool ok = false;
   const std::string raw = beacon_source_scan::read_source(MESH_NETWORK_CPP, &ok);
@@ -233,6 +290,23 @@ void test_mesh_network_calls_this_header() {
   CHECK(count(dsk, "returnmesh_pair_crypto::derive_session_key(local_priv,peer_pub,key_out);") == 1);
   CHECK(count(sq, "mbedtls_hkdf(") == 0);
   CHECK(count(sq, "Curve25519::eval(") == 0);
+
+  // F94: the CONFIRM sent is this side's role's, the one checked its
+  // partner's, and no other CONFIRM hash is left in the file.
+  const std::string hpc = squeeze(function_body(code, "handle_pair_confirm"));
+  const std::string cp = squeeze(function_body(code, "confirm_pairing"));
+  CHECK(!hpc.empty() && !cp.empty());
+  CHECK(count(hpc, "mesh_pair_crypto::confirm_hash(mesh_pair_crypto::partner_of("
+                   "confirm_sender(g_pairing.role)),g_pairing.session_key,"
+                   "g_pairing.confirmation_code,expected_hash);") == 1);
+  CHECK(count(cp, "mesh_pair_crypto::confirm_hash(confirm_sender(g_pairing.role),"
+                  "g_pairing.session_key,g_pairing.confirmation_code,"
+                  "confirm.confirmation_hash);") == 1);
+  CHECK(count(sq, "mesh_pair_crypto::confirm_hash(") == 2);
+  CHECK(count(sq, "DOMAIN_PAIR_CONFIRM") == 0);
+  const std::string role = squeeze(function_body(code, "confirm_sender"));
+  CHECK(count(role, "returnrole==PAIR_ROLE_INITIATOR?mesh_pair_crypto::ConfirmSender::INITIATOR"
+                    ":mesh_pair_crypto::ConfirmSender::JOINER;") == 1);
   std::printf("PASS mesh_network_calls_this_header\n");
 }
 
@@ -244,6 +318,7 @@ int main() {
   test_two_sides_agree_on_session_key_and_code();
   test_ed25519_keys_do_not_agree();
   test_code_wire_pin_and_low_order_refusal();
+  test_confirm_hash_is_bound_to_its_senders_role();
   test_mesh_network_calls_this_header();
   std::printf("\nALL mesh pair-crypto (canary-wap) tests PASSED (%d checks)\n", g_checks);
   return 0;

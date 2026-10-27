@@ -145,7 +145,7 @@ use <canary_rib_lib.scad>    // corner_gusset (the post webs), plate_ribs under 
 part = "all";        // ["body","lid","roof","gasket","all"] — body = the PLATE (back), lid = the SHELL (front)
 
 /* [Options] */
-opt_seal = true;
+opt_seal = true;         // sealed build: a TPU gasket (part "gasket") in the ledge groove, an O-ring under every plate screw head and, with seal_mid_posts, mid posts holding each clamp span to 40 mm
 opt_weep = true;         // Ø2 drains, straight out through the BOTTOM wall (the pod hangs USB-down on
                          // its pole), a web above the gasket groove: condensate leaves at the low wall
                          // instead of pooling under the LoRa board and the 18650. The pressure path is the ePTFE vent.
@@ -158,14 +158,14 @@ seal_mid_posts = true;   // (seal mode) evenly spaced mid posts along every wall
 /* [LoRa board] — Heltec WiFi LoRa 32 V3-class. MEASURE yours */
 lb_l  = 51.0;        // board length (Y, USB end down)
 lb_w  = 26.0;        // board width (X)
-pcb_t = 1.2;
+pcb_t = 1.2;         // LoRa board PCB thickness — the 1.2 spec, brd_t("heltec_v3"); the clips hook over it, and the USB opening's axis and the cavity depth stack on it
 lb_stack = 12.0;     // tallest top-side part (OLED/pin headers)
-board_clear = 0.6;
+board_clear = 0.6;   // clearance round the LoRa board — its column is lb_w + 2 x (clip_t + clip_clear + this) + 0.5 wide, and its USB edge sits at least this off the bottom wall (floor_cove + 0.4 when that is more)
 
 /* [18650 holder] (single-cell holder with leads) */
-bh_l = 78.0;
-bh_w = 21.5;
-bh_h = 15.0;
+bh_l = 78.0;         // holder length (Y, leads down) — the bay's pocket is this + 0.6 inside a ring wall this + 3 long, and the cavity is at least this + 2 x bay_margin + 10 long (the + 10 is wire room at the top)
+bh_w = 21.5;         // holder width (X) — the bay's pocket is this + 0.6 inside a ring wall this + 3 wide, in a battery column this + 2.0 wide; the gap weep must clear the ring wall (asserted)
+bh_h = 15.0;         // holder height above the plate, cell fitted — the cavity is at least this + 1.5 deep (the LoRa stack sets it when taller). An 18650 is 18 mm across, more than this default: MEASURE yours
 
 /* [Antenna] — SMA bulkhead on the TOP wall */
 sma_d = 6.8;         // 1/4-36 SMA thread is Ø6.35: 6.8 with the D-flat at 5.7 (was 6.5/5.9 — 0.075 a side, under FDM hole shrink)
@@ -184,7 +184,10 @@ strap_w = 9.0;       // strap width
 strap_t = 2.0;       // channel depth (the plate thickens by it behind the floor)
 
 /* [Shell / tolerances / fasteners] */
-wall_t = 2.0;  floor_t = 2.0;  lid_t = 2.0;  corner_r = 3.0;
+wall_t = 2.0;        // shell wall thickness, a floor: the walls grow to the plate's ledge + core_min_wall() when that is more, 5.8 sealed and 3.0 unsealed at the defaults (the render echoes it) — core_wall()
+floor_t = 2.0;       // the plate's front face height: the rails, clips and battery bay stand on it, the ledge it seats on (and the gasket groove cut into that) sits at it, and the plate is at least this + strap_t thick
+lid_t = 2.0;         // face thickness of the shell — the vent, the panel gland and the wordmark are cut through or into it, and the roof screws' length counts it
+corner_r = 3.0;      // outer corner radius of the shell — core_corner_r(); the cavity's corners are this less the wall, floored at core_min_web() (core_cav_r), which the defaults hit, and the plate's bore follows them
 tol_slide = 0.20;  // catalog default — core_tol_slide(), canary_core_lib
 tol_press = 0.10;  // catalog default — core_tol_press(), canary_core_lib
 tol_hole  = 0.30;  // catalog default — core_tol_hole(), canary_core_lib
@@ -194,7 +197,9 @@ screw_head = "pan";   // ["pan","flat"] pan = flat-floored seat (what the O-ring
 screw_d      = 1.6;   // (m2 only) self-tap pilot Ø — the print-validated number this pod was drawn on; other sizes read scr_pilot()
 screw_head_d = 4.0;   // (m2 pan only) head Ø — the validated seat; other sizes read scr_pan_d()/scr_flat_d()
 screw_head_h = 2.0;   // (m2 pan only) head seat depth — the validated seat; other sizes read scr_pan_h()/scr_flat_h()
-gasket_w = 1.6;  gasket_groove = 1.2;  gasket_proud = 0.3;
+gasket_w = 1.6;      // gasket groove width in the ledge (opt_seal): the printed TPU ring is this - 0.5 wide, the ledge this + 2 x core_min_wall() + tol_slide + 0.4, and the ring's fill of its groove is asserted under 95 %
+gasket_groove = 1.2;  // gasket groove depth up from the ledge (opt_seal): the ring is this + gasket_proud tall; the SMA land and the USB opening keep a web over it (asserted), and the weeps are placed a web above it
+gasket_proud = 0.3;  // how far the TPU ring stands above its groove, the squeeze the plate gives it: the ring is gasket_groove + this tall (the fill is asserted)
 usb_w = 12.0;  // service USB opening width, bottom wall (plug when deployed); 12 clears a boot
 usb_h = 6.5;   // service USB opening height — boot clearance
 clip_w      = 6.0;   // board-clip tab width along the board edge — snap_boardclip default, canary_snap_lib
@@ -202,10 +207,10 @@ clip_t      = 1.0;   // clip beam thickness — snap_boardclip default; canary_s
 clip_hook   = 0.5;   // lip overhang over the board top — snap_boardclip default
 clip_hook_h = 1.2;   // lip + 45° lead-in height above the board top — snap_boardclip default
 clip_clear  = 0.25;  // beam face to board edge (a fit — tune on the coupon) — snap_boardclip default
-standoff_h = 3.0;
+standoff_h = 3.0;    // LoRa board height off the plate — its two rails stand this tall, and the clip beams root on the plate, this + pcb_t long (snap_boardclip asserts the insertion strain); the USB opening's axis rises with it, and must keep a web over the gasket groove (asserted)
 lid_edge  = 0.8;  // first (45°) stage of the show-face edge, mm — core_face_edge()  // [0:0.1:1.5]
 lid_edge2 = 0.8;  // second (~66°) stage of the show-face edge, mm — ON is the house look (core_face_edge2()); it is what reads as a roundover instead of a bevel. 0 leaves the plain 45° facet any CAD default gives you  // [0:0.1:1.5]
-foot_cham = 0.5;
+foot_cham = 0.5;  // 45° chamfer round the shell's back edge — the library's foot_chamfer_ring (0 = off)
 floor_cove = 0.8;  // 45° cove where the cavity meets the walls, at the face and at the ledge (canary_core_lib pl_cavity_cut); 0 = the old square corner  // [0:0.2:1.2]
                    // The sharp notch there was the crack-starter in every flat-printed shell — a corner drop
                    // hinges the floor about it along one layer boundary.

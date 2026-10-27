@@ -1,7 +1,7 @@
 {
   "flavor": "nightlight",
   "fw_version": "2.4.17",
-  "git": "e4c63ec8",
+  "git": "20ba64ca",
   "lvgl": "v8.4.0",
   "arduinojson": "7.4.1"
 }

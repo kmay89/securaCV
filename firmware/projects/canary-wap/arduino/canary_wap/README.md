@@ -213,7 +213,7 @@ canary_wap/
 ├── health_log.h            # Health logging declarations
 ├── nvs_store.h             # NVS manager singleton
 ├── sd_storage.h/.cpp       # SD card append-only storage
-├── wap_server.h/.cpp       # WiFi AP + HTTP server stubs
+├── wap_server.h            # HTTP route list (the AP and servers are the .ino's)
 ├── web_ui.h                # Embedded web dashboard (PROGMEM)
 ├── api_auth.h              # API authentication (bearer token)
 ├── hardware_state.h        # Safe mode & hardware resilience
