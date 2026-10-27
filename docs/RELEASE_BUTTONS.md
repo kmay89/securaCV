@@ -132,6 +132,22 @@ the tag has to be there first. It now fails with that sentence rather than a raw
 git error, and points you at `channel: dev`. Read the version-burn warning below
 before creating a tag by hand.
 
+**Know what it replaces on a published tag.** It cannot pick products: it
+compiles the tag's firmware for every product in today's `flash.json` and
+re-attaches every `*-factory.bin` plus `manifest-flash.json` under the same
+names. The builds are not byte-reproducible (the images embed their compile
+date through `__DATE__`), so every image gets a new SHA-256, the good ones
+too, and the tag's `sha256sums.txt` and build-provenance attestation (written
+by `Firmware Release`) go on describing the old bytes; this path attests
+nothing, on purpose. The firmware source is the tag's, but the build steps,
+core and library pins and the display env list are the dispatch ref's. A
+product whose rebuild fails drops out of `manifest-flash.json` with only a
+`::warning::`: this path has no completeness gate. The OTA manifests and app
+images are left alone. So for a defect in one or two products' factory images
+on a release people already install from (the fw-v2.4.17 classic-ESP32
+bootloader offset), ship the fixed images in the next version rather than
+re-cutting every image under the old tag.
+
 **`channel: dev`** — **no tag, no version, no signing key.** Builds the branch
 you dispatch from and publishes to the rolling `fw-dev-latest` prerelease, which
 is exactly what the flasher's **Advanced → dev channel** toggle reads.

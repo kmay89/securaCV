@@ -1457,6 +1457,20 @@ jobs:
           python3 -m pip install --quiet pytest cryptography
           python3 -m pytest firmware/scripts/test_ota_release.py -q
 
+      - name: Run the factory-image merge tests (bootloader offset per chip)
+        # make_factory.py builds every factory image both flashers write at
+        # flash 0x0. fw-v2.4.17 published its two classic-ESP32 images with
+        # the bootloader at 0x0, where that chip's ROM never looks (it loads
+        # from 0x1000); the offset now comes from --chip. These tests merge
+        # real images from synthetic parts with the esptool the release
+        # workflows pin and read the bytes back. MAKE_FACTORY_ESPTOOL=require
+        # turns a missing esptool into a failure, not a skip.
+        env:
+          MAKE_FACTORY_ESPTOOL: require
+        run: |
+          python3 -m pip install --quiet pytest esptool==4.12.0
+          python3 -m pytest firmware/scripts/test_make_factory.py -q
+
       - name: Run the canary OTA deploy script tests (bearer + TLS pin)
         # firmware/canary/scripts/ota_deploy.py and ota_deploy.sh push a dev
         # build to the dev-only POST /api/ota, which answers auth_gate()

@@ -290,8 +290,11 @@ firmware-release.yml (fw-v* tag)
 - **`firmware/scripts/make_factory.py`** merges a build's `bootloader.bin` +
   `partitions.bin` + `firmware.bin` into a single factory image, reading the
   app offset straight from the compiled partition table so no offsets are
-  hard-coded. `firmware-release.yml` runs it per variant and publishes the
-  factory images plus `manifest-flash.json`.
+  hard-coded. The bootloader goes where the chip's ROM loads it, taken from
+  `--chip`: 0x1000 on a classic ESP32 (the image's first 4 KB are erased
+  flash), 0x0 on the S3/C3/C6. The bootloader's own header must name the same
+  chip, or nothing is merged. `firmware-release.yml` runs it per variant and
+  publishes the factory images plus `manifest-flash.json`.
 - The flasher catalog (`flash.json`) supplies chips + human copy and is honest
   even before any release exists; the release manifest (`manifest-flash.json`)
   supplies the actual binaries. If no release is published yet, the page says

@@ -7,6 +7,44 @@
 
 ---
 
+## A factory image is a picture of flash: every part sits where its chip reads it
+
+### fw-v2.4.17's classic-ESP32 factory images put the bootloader where the ROM never looks (2026-10-27)
+- **What happened:** `canary-esp32cam-2.4.17-factory.bin` and
+  `canary-wroom-2.4.17-factory.bin`, the factory images of the two
+  classic-ESP32 reach ports (compile-tested, never booted), carry their
+  second-stage bootloader at file offset 0x0 and no image header at 0x1000.
+  Both flashers write a factory image at flash 0x0, and a classic ESP32's
+  mask ROM loads the bootloader from 0x1000, so a board installed from either
+  file would not boot. That is read from the published bytes and the ROM's
+  documented offset, not seen on a bench; USB download mode is in ROM, so a
+  board is recovered by installing a correct image. The other 19 factory
+  images are right: their S3/C3/C6 ROMs load from 0x0, and each carries its
+  own chip's bootloader there.
+- **Why nothing caught it:** `make_factory.py`'s `--bootloader-offset`
+  defaulted to 0x0 for every chip, and its help text asked the caller to pass
+  0x1000 for a classic ESP32. No caller did: `build_flash_manifest.py` (both
+  release paths) passed only `--chip`, and `dev_flash.sh` passed `esp32s3`
+  for any env without a `board_build.mcu`, which is exactly the classic
+  reach envs (they take their chip from `board =`). Every release check
+  passed: the version string is in the image, the app fits its slot, the
+  signature is valid, and both flashers' shape gate looks only for the
+  partition table at 0x8000. The default was right for every chip the tool
+  had ever merged, until the first classic ESP32 joined the catalog.
+- **The fix:** `make_factory.py` takes the offset from `--chip`
+  (`ROM_BOOTLOADER`: 0x1000 for `esp32`/`esp32s2`, 0x0 for the S3/C3/C6/C2/H2,
+  held to esptool's own table by `test_make_factory.py`) and refuses a chip
+  it has no offset for unless `--bootloader-offset` names one (the P4 and C5
+  load from 0x2000). The bootloader's image header must name the chip
+  `--chip` names (`--chip auto` reads it from there; `dev_flash.sh` now falls
+  back to `auto`), and the merged file is read back before it is kept: a
+  bootloader at the offset, the partition table at 0x8000, the app at its
+  slot. An explicit `--bootloader-offset` still overrides, with a warning.
+- **The rule:** a per-chip constant is never a default the caller has to
+  remember to override. Key it on the chip and refuse a chip you have no
+  value for; the first board of a new chip family is when every "0x0 on our
+  chips" in the packaging path stops being true at once.
+
 ## A confirm gate is only as good as the signal every board feeds it
 
 ### The 60 s confirm dwell could not be passed by boards it was written for (2026-10, before 2.4.17)

@@ -391,10 +391,11 @@ async fn flash(
 }
 
 /// What the Advanced local-file panel shows BEFORE anything is written: size,
-/// SHA-256 fingerprint, and whether the file starts with 0xE9 — the ESP32's
-/// own "program starts here" marker, which a merged factory image also opens
-/// with (it begins with the bootloader image). A missing magic only informs;
-/// the write path never blocks on it.
+/// SHA-256 fingerprint, and whether the file carries 0xE9 — the ESP32's own
+/// "program starts here" marker — where a merged factory image keeps its
+/// bootloader: at 0x0 on the S3/C3/C6, at 0x1000 on a classic ESP32 (whose
+/// ROM loads it from there; the first 4 KB of its factory image are erased
+/// flash). A missing magic only informs; the write path never blocks on it.
 #[derive(Serialize)]
 pub struct LocalFileInfo {
     size: u64,
@@ -409,7 +410,7 @@ async fn inspect_local_file(path: String) -> Result<LocalFileInfo, String> {
     Ok(LocalFileInfo {
         size: bytes.len() as u64,
         sha256: release::sha256_hex(&bytes),
-        esp_magic: bytes.first() == Some(&0xE9),
+        esp_magic: bytes.first() == Some(&0xE9) || bytes.get(0x1000) == Some(&0xE9),
     })
 }
 
@@ -456,15 +457,17 @@ async fn flash_local_file(
             &sha[..16]
         ),
     );
-    if bytes[0] != 0xE9 {
+    if bytes[0] != 0xE9 && bytes.get(0x1000) != Some(&0xE9) {
         // Warn, never block: the partition table at 0x8000 already vouched
-        // for the factory shape, and on the catalog's chips (C3/C6/S3) the
-        // bootloader sits at 0x0, so a factory image normally opens with the
-        // 0xE9 image magic — but the board can't be bricked either way.
+        // for the factory shape. A factory image keeps its bootloader, which
+        // opens with the 0xE9 image magic, where the chip's ROM loads it: 0x0
+        // on the C3/C6/S3, 0x1000 on a classic ESP32 (the ESP32-CAM and the
+        // WROOM DevKit). A file with the magic at neither place is unusual —
+        // but the board can't be bricked either way.
         emit(
             &app,
             format!(
-                "⚠ first byte is 0x{:02X}, not the ESP32 image magic 0xE9 — unusual for a C3/C6/S3 factory image. Writing anyway; the board can't be bricked.",
+                "⚠ no ESP32 image magic 0xE9 at 0x0 (C3/C6/S3) or 0x1000 (classic ESP32); the first byte is 0x{:02X} — unusual for a factory image. Writing anyway; the board can't be bricked.",
                 bytes[0]
             ),
         );

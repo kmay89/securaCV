@@ -4875,13 +4875,14 @@ async function onPickLocalFile() {
     magic.classList.toggle("hidden", state.localFile.esp_magic);
     if (!state.localFile.esp_magic) {
       // Advisory only: the backend already required the factory shape (the
-      // partition table at 0x8000), and on the catalog's chips the
-      // bootloader sits at 0x0 — so a missing 0xE9 is worth a sentence,
-      // never a refusal.
+      // partition table at 0x8000), and esp_magic looks where a factory
+      // image keeps its bootloader (0x0 on the S3/C3/C6, 0x1000 on a classic
+      // ESP32) — so a missing 0xE9 is worth a sentence, never a refusal.
       magic.textContent =
-        "⚠ This file doesn't start with 0xE9 — the ESP32's own “program " +
-        "starts here” marker, which a factory image for these chips opens " +
-        "with. It can still be written; the board can't be bricked.";
+        "⚠ This file has no 0xE9 — the ESP32's own “program starts here” " +
+        "marker — where a factory image keeps its bootloader (the first " +
+        "byte, or 4 KB in for a classic ESP32). It can still be written; " +
+        "the board can't be bricked.";
     }
     $("local-info").classList.remove("hidden");
   } catch (e) {

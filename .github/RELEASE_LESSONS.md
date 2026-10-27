@@ -44,6 +44,31 @@ any platform.
   change. The DMG windows of `flasher-v0.12.2` / `app-v0.3.2` and earlier
   keep the old panel until their next release; both guides say so.
 
+## 2026-10-27 — fw-v2.4.17 published two classic-ESP32 factory images with the bootloader where their ROM never looks
+
+- **Symptom:** `canary-esp32cam-2.4.17-factory.bin` and
+  `canary-wroom-2.4.17-factory.bin` open with an ESP32 bootloader at 0x0 and
+  hold no image header at 0x1000. Both flashers write factory images at flash
+  0x0 and a classic ESP32's ROM loads the bootloader from 0x1000, so neither
+  board would boot from them (read from the bytes; never bench-tested). The
+  other 19 factory images on the release are right.
+- **Cause:** `make_factory.py --bootloader-offset` defaulted to 0x0 for every
+  chip and asked callers to pass 0x1000 for a classic ESP32; neither release
+  path's `build_flash_manifest.py` nor `dev_flash.sh` did. Every gate passed:
+  version string, slot fit, Ed25519 signature, and the flashers' 0x8000
+  partition-table shape check.
+- **Fix:** the offset comes from `--chip` (`ROM_BOOTLOADER`, held to
+  esptool's table), the bootloader's header must name that chip, an unknown
+  chip is refused without an explicit offset, and the merged file is read
+  back before it is kept (`firmware/scripts/test_make_factory.py`, run in
+  firmware.yml). This change leaves the published 2.4.17 assets alone;
+  `docs/RELEASE_BUTTONS.md` § Flasher Factory Images says what a rebuild of a
+  published tag would replace.
+- **Applies to:** every packaging step with a per-chip constant (bootloader
+  offset, flash mode, chip guard): key it on the chip and refuse a chip with
+  no value, rather than a default that was right for every chip so far.
+  firmware/LESSONS_LEARNED.md has the firmware side.
+
 ## 2026-10-10 — The 2.4.16 train: a Flasher release held `releases/latest` for three minutes, and four more things it turned up
 
 - **Symptom:** run 38034898214's Linux leg logged "Couldn't find release

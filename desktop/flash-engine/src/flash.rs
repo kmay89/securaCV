@@ -512,8 +512,14 @@ pub async fn flash<H: FlashHost>(
         emit("✓ chip erased — nothing of the old firmware is left".into());
     }
 
-    // 3) Flash the merged factory image at 0x0. A factory image already carries
-    //    the bootloader/partition table at their real offsets, so 0x0 is right.
+    // 3) Flash the merged factory image at 0x0. A factory image is a picture of
+    //    flash from address 0, so 0x0 is right for every chip only because
+    //    make_factory.py placed each part at its address INSIDE the file: the
+    //    bootloader where that chip's ROM loads it (0x1000 on a classic ESP32
+    //    or an S2, 0x0 on the S3/C3/C6), the partition table at 0x8000, the
+    //    app at its slot. Writing at 0x0 does not make a bad layout right:
+    //    fw-v2.4.17's classic-ESP32 images carried their bootloader at 0x0 and
+    //    could not have booted (make_factory.py now takes it from --chip).
     //    espflash hard-resets the board when it's done.
     let args = rescue::write_bin_args(&port, &path.to_string_lossy(), baud);
     // Keep espflash's last words (run_streaming_with_tail): the frontends

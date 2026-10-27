@@ -159,6 +159,39 @@
   token first), and `test_docs_claims.py` retires each where it stood. No
   route or gate changed in the merge that brought #1884 in.
 
+### Factory images put the bootloader where each chip's ROM loads it: the classic-ESP32 images move it to 0x1000
+
+- **fw-v2.4.17's ESP32-CAM and ESP32 DevKit factory images cannot boot.**
+  `canary-esp32cam-2.4.17-factory.bin` and `canary-wroom-2.4.17-factory.bin`
+  carry the bootloader at 0x0; both flashers write a factory image at flash
+  0x0, and a classic ESP32 loads its bootloader from 0x1000. Read from the
+  published bytes; both boards are compile-tested reach ports that nobody has
+  booted. A board installed from either file is recovered over USB with a
+  correct image. Nothing else on that release is affected: those two boards'
+  OTA channels are not published, and the other 19 factory images (S3, C3,
+  C6) carry their own chip's bootloader at 0x0, where their ROM loads it.
+- **`make_factory.py` takes the bootloader offset from `--chip`**: 0x1000 for
+  `esp32` and `esp32s2`, 0x0 for the S3/C3/C6/C2/H2, held to esptool's own
+  table. It used to default to 0x0 for every chip and no caller passed the
+  flag. A chip it has no offset for is refused unless `--bootloader-offset`
+  names one, which still overrides, with a warning when it disagrees with the
+  ROM. The bootloader's image header must name the same chip (`--chip auto`
+  reads it from there), and the merged file is read back before it is kept.
+  `build_flash_manifest.py` is unchanged: both release paths pass `--chip`,
+  so they inherit the fix. `dev_flash.sh -f` falls back to `--chip auto`
+  instead of `esp32s3` for an env with no `board_build.mcu` (the
+  classic-ESP32 reach envs). `firmware/scripts/test_make_factory.py` merges
+  real images from synthetic parts with esptool 4.12.0 and checks 0xE9 at
+  0x1000 for `esp32`/`esp32s2` and at 0x0 for the S3/C3/C6; the Mesh + Scout
+  Host Tests job runs it.
+- **The desktop Flasher's local-file note looks at 0x1000 too.** It warned
+  that a file not starting with 0xE9 was unusual, which is every correct
+  classic-ESP32 factory image; it now looks for the magic at 0x0 or 0x1000.
+  The comment in `flash.rs` that called 0x0 right for every merged image now
+  says why it is: the merge placed each part at its address inside the file.
+  Not compiled here (formatting and the two expressions checked with rustfmt
+  and rustc only).
+
 ## [2.4.17] - 2026-10-27
 
 > **Before you update.** Vision Doorbell: move the amplifier's input wire from D3 to D10.
