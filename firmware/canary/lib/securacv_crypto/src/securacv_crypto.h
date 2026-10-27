@@ -237,7 +237,8 @@ void hex_to_str(char* out, const uint8_t* d, size_t n);
 // Build the device ID / AP SSID suffix from the Ed25519 pubkey fingerprint
 // (fp[0..1]), never the hardware MAC (event_contract §10 / privacy Invariant
 // III). Caller must populate the fingerprint first. Encoded in the unambiguous
-// alphabet (no 0/O/o, 1/I/i/l/L); stable for the device's lifetime.
+// alphabet (no 0/O/o, 1/I/i/l/L); it lasts as long as the key does (an
+// install in either flasher or the 30 s wipe gives a new one).
 void generate_device_id(char* out, size_t cap, const char* prefix,
                         const uint8_t fp[2]);
 void generate_ap_ssid(char* out, size_t cap, const uint8_t fp[2]);

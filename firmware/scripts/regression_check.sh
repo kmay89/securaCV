@@ -654,9 +654,12 @@ fi
 echo ""
 
 # ── Check: no partition table flags nvs `encrypted` ──────────────
-# NVS is not compatible with flash encryption: ESP-IDF protects it with NVS
-# encryption (CONFIG_NVS_ENCRYPTION, keys in an nvs_keys partition), and with
-# flash encryption on, IDF v4.3+ refuses to open an nvs partition flagged
+# NVS is not compatible with flash encryption: ESP-IDF's protection for NVS is
+# NVS encryption (CONFIG_NVS_ENCRYPTION, keys in an nvs_keys partition), which
+# no released Canary build has (every released build is framework = arduino, so
+# NVS is plaintext on every tier; the kit's sdkconfig.defaults.secure names
+# CONFIG_NVS_ENCRYPTION but no build reads it, and only the unreleased canary-ota
+# ESP-IDF harness builds with it set); and with flash encryption on, IDF v4.3+ refuses to open an nvs partition flagged
 # `encrypted` (nvs_partition_lookup.cpp -> ESP_ERR_NVS_WRONG_ENCRYPTION). The
 # provisioning kit's partitions_secure.csv carried that flag, so its image
 # could not have opened NVS — the identity key's home — on a fused board
@@ -668,7 +671,7 @@ NVS_ENC_HITS=$(find "$FIRMWARE_DIR" -name "*.csv" -not -path "*/.pio/*" -print0 
 if [ -n "$NVS_ENC_HITS" ]; then
   check_fail "An nvs partition is flagged 'encrypted' — IDF refuses to open it once flash encryption is on:"
   echo "$NVS_ENC_HITS" | while read -r line; do blue "  ${line#"$FIRMWARE_DIR"/}"; done
-  blue "  Fix: drop the flag; NVS is protected by NVS encryption (nvs_keys), not by flash encryption"
+  blue "  Fix: drop the flag; only NVS encryption (nvs_keys) could protect NVS, and it is unavailable under framework = arduino, which every released build uses, so NVS stays plaintext on those either way"
 else
   check_pass "No partition table flags an nvs partition 'encrypted'"
 fi
@@ -1088,8 +1091,8 @@ echo ""
 # see firmware/canary/src/main.cpp on_pairing_succeeded). On an FE-ON board the
 # entry is still plaintext at rest: flash encryption does not cover NVS, and NVS
 # encryption is unavailable under framework = arduino (mesh_state.h; roadmap
-# item 9) — the gate keeps the secret off un-fused boards, it does not encrypt
-# it on fused ones. This guard asserts that FE
+# item 9) — the gate keeps the secret off boards without flash encryption, it
+# does not encrypt it on boards with it. This guard asserts that FE
 # check is not silently removed from the mesh persistence/impl files. It does NOT,
 # and cannot statically, prove the *activation* path fails closed — see issue #610
 # C2 / the bench runbook for the on-device check, and the open design question of
@@ -1108,7 +1111,7 @@ else
     if grep -q "esp_flash_encryption_enabled" "$mf"; then
       check_pass "Mesh FE persistence gate present: $rel"
     else
-      check_fail "Mesh impl '$rel' has no esp_flash_encryption_enabled() gate — the opera_secret must never be persisted to unencrypted NVS (#610)"
+      check_fail "Mesh impl '$rel' has no esp_flash_encryption_enabled() gate — the opera_secret must never be persisted on a board without flash encryption (#610; the gate keeps it off boards without flash encryption, it does not encrypt NVS)"
     fi
   done <<< "$MESH_IMPL_FILES"
 fi

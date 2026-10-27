@@ -2,7 +2,10 @@
  * SecuraCV Canary WAP — the Bluetooth setup door (Improv Wi-Fi over BLE)
  *
  * The open Improv Wi-Fi standard, on the pairing channel's NimBLE server,
- * for a WAP nobody owns yet: while no credentials are stored, for the
+ * for a WAP nobody owns yet (or one whose owner held BOOT 10 s or forgot its
+ * Wi-Fi: both keep the identity and the token, and the door goes to
+ * whichever client connects first, docs/design/magic_pairing.md §2.2):
+ * while no credentials are stored, for the
  * first-boot window (IMPROV_FIRST_BOOT_WINDOW_MS after the last POWER
  * CYCLE — a software reset carries the spent time over, see below), a
  * phone hears it (Opera's beacon carries FLEET_BEACON_FLAG_SETUP_OPEN and
@@ -57,9 +60,10 @@
  *     factory reset), and only for the first-boot window; a saved network
  *     that stopped working raises the SoftAP recovery portal (a door with a
  *     printed key), never this one. A WAP on its own Wi-Fi offers nothing
- *     here: its owner's paths are the dashboard, the bonded rescue, and
- *     the BOOT-tap receipt. Accepted credential writes are rate-limited and
- *     capped per open door, and a client that sends nothing is dropped
+ *     here: its owner's paths are the dashboard, that recovery portal and
+ *     the BOOT-tap receipt (the bonded rescue too, but the iPhone app never
+ *     reaches it on a WAP, ledger A65). Accepted credential writes are
+ *     rate-limited and capped per open door, and a client that sends nothing is dropped
  *     from the single link (improv_core.h Timing).
  *   - THE BEARER TOKEN NEVER RIDES BLUETOOTH. The link is encrypted but not
  *     authenticated, so nothing that lasts belongs on it. Once the join the

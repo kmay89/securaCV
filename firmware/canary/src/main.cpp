@@ -705,8 +705,9 @@ static void on_pairing_succeeded(const uint8_t* secret, uint32_t code) {
   /* Joiner side: persist FIRST so a power cut between save and set
    * leaves the right NVS state on next boot. THEN set in-memory
    * UNCONDITIONALLY so the active session works even when persistence
-   * fails — typical on FE-disabled dev hardware where save refuses
-   * by design. Persistence failure should degrade reboot survivability
+   * fails — on every Canary today, since no released image or
+   * provisioning step turns flash encryption on and save refuses
+   * without it by design. Persistence failure should degrade reboot survivability
    * (user has to re-pair after reboot), not disable the current
    * session that just successfully paired. */
   const bool save_ok = mesh_state::save_opera_secret(secret);
@@ -1294,12 +1295,14 @@ void setup() {
                   g_boot_status.reset_counted ? "" : " (power-on reset: not counted)",
                   g_boot_status.image_confirmed ? "" : " (new image, pending confirmation)");
   }
-  // Bench row E6: a re-flash of another build resets the count only if the
-  // build filled app_elf_sha256 in the app descriptor. Say so on every boot.
+  // Bench row E6: a PlatformIO or Arduino IDE upload of another build, which
+  // leaves NVS alone, resets the count only if the build filled
+  // app_elf_sha256 in the app descriptor (an install in either flasher starts
+  // NVS over, the count with it, whatever the identity). Say so on every boot.
   Serial.printf("[..] Image identity (app_elf_sha256): %s\n",
                 bootguard::image_id_present()
                     ? "non-zero"
-                    : "ZERO or unreadable - a re-flash will not reset the crash-loop count");
+                    : "ZERO or unreadable - an upload that keeps NVS will not reset the crash-loop count");
   if (g_boot_status.mode == bootpolicy::BootMode::SafeMode) {
     safe_mode_run();
   }
@@ -1606,8 +1609,10 @@ void setup() {
      * wiped after the call — mesh_session derives + caches the
      * 16-byte opera_id and 8-byte sender_fp and does NOT retain
      * the 32-byte secret. mesh_state::load_opera_secret returns
-     * false on first-boot / factory-reset / FE-disabled devices —
-     * those flows leave the firmware in an unpaired state and the
+     * false on a device that never paired, left its opera (POST
+     * /api/mesh/leave), was wiped (the 30 s BOOT hold) or has flash
+     * encryption off; the 10 s BOOT reset keeps the secret. Those
+     * flows leave the firmware in an unpaired state and the
      * Scout broadcast queue drains harmlessly. */
     uint8_t opera_secret_buf[mesh_crypto::OPERA_SECRET_LEN];
     if (mesh_state::load_opera_secret(opera_secret_buf)) {
@@ -1654,8 +1659,9 @@ void setup() {
 
     /* Load persisted trusted peers (#480) and register each so this
      * boot's receive path can verify inbound BEACON_EVENT frames
-     * from peers paired in previous sessions. Empty-list (first
-     * boot / factory reset) is fine — mesh_session::on_opera_frame
+     * from peers paired in previous sessions. Empty-list (never
+     * paired, a leave, the 30 s wipe; the 10 s reset keeps the list)
+     * is fine — mesh_session::on_opera_frame
      * silently drops unknown senders, and the dashboard / UI will
      * trigger pairing to populate. */
     {
@@ -2363,7 +2369,7 @@ void setup() {
 #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
   Serial.println("║  Commands: h=help, i=identity, s=status, g=gps, r=data       ║");
-  Serial.println("║  BOOT: tap=provisioning gate, 2s=info, 5s=factory reset      ║");
+  Serial.println("║  BOOT: tap=gate, 2s=info, 10s=reset (key kept), 30s=wipe     ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
 #if FEATURE_CONSOLE_THEME
   // The warm hello: the canary greets whoever just plugged in and points them

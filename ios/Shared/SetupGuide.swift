@@ -243,7 +243,7 @@ enum SetupGuide {
                 id: "page",
                 title: "If no card appears: its own setup page",
                 short: "No card? Join its SecuraCV network in Settings — its own page walks you through.",
-                body: "A WAP keeps its own setup page on its own network, SecuraCV-wap-XXXX (SecuraCV-XXXX on firmware before 2.4.17). Join it from Settings → Wi-Fi with the key it prints on its serial console at first boot; the page opens by itself and walks you through your Wi-Fi. It does not pair the WAP with this phone — the card does that — so afterwards, save its recovery kit on that page (it asks for a short BOOT tap) and add it from the Fleet tab with that file.",
+                body: "A WAP keeps its own setup page on its own network, SecuraCV-wap-XXXX. Join it from Settings → Wi-Fi with the key it prints on its serial console at first boot; the page opens by itself and walks you through your Wi-Fi. It does not pair the WAP with this phone — the card does that — so afterwards, save its recovery kit on that page (it asks for a short BOOT tap) and add it from the Fleet tab with that file.",
                 action: nil))
         }
         steps.append(SetupStep(

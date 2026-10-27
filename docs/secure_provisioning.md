@@ -15,9 +15,10 @@ devices. The provisioning kit provides tools for:
 - Fleet management and device manifests
 - **Future:** Secure Boot v2 and Flash Encryption
 
-**Important:** Secure Boot and Flash Encryption are **Phase 2 features** (not yet enabled).
-The current provisioning workflow prepares devices for future lockdown without bricking
-them during development.
+**Important:** Secure Boot and Flash Encryption are **Phase 2 targets that no step of the
+kit reaches yet**: as tooled, Phase 2 burns fuses but turns neither on, and may leave the
+board unbootable ([Phase 2 Workflow, Step 3](#step-3-preview-the-provisioning-dry-run-only)).
+Phase 1 burns nothing, so it prepares devices without bricking them during development.
 
 ---
 
@@ -33,11 +34,18 @@ them during development.
 
 ### Phase 2: Production Lockdown (Future)
 
+The target. As tooled, `provision_canary.sh --phase 2` reaches only the JTAG line below:
+it burns `SECURE_BOOT_EN` with no key digest and no flash-encryption counter (Step 3 of
+the Phase 2 workflow).
+
 - Secure Boot v2 with RSA-3072 signing
 - XTS-AES-256 Flash Encryption
 - Anti-rollback protection
 - JTAG permanently disabled via eFuse
-- NVS encryption enabled
+- NVS encryption — named in `sdkconfig.defaults.secure` but inert under
+  `framework = arduino` (`platformio_secure.ini`, "KNOWN INERT"), so a Phase 2
+  board's NVS (the identity key, the saved Wi-Fi and broker passwords, the
+  bonds) stays plaintext until the arduino-as-IDF-component migration
 - **Irreversible:** Once burned, device cannot return to dev mode
 
 ---
@@ -50,9 +58,9 @@ All tools are located in `firmware/provisioning/`:
 |------|---------|
 | `generate_keys.sh` | One-time RSA-3072 signing key + XTS-AES flash encryption key generation with entropy checks and backup checklist |
 | `verify_device.py` | Reads security-relevant eFuses via `espefuse.py`, checks virgin state pre-provisioning and lockdown post-provisioning, outputs JSON audit trail |
-| `provision_canary.sh` | Full orchestration: virgin verify → burn keys → flash signed firmware → burn security eFuses → post-verify → generate manifest. Has `--dry-run` mode |
+| `provision_canary.sh` | Orchestration: virgin verify → flash firmware (plaintext, unsigned) → burn the flash-encryption key → burn security eFuses → post-verify → generate manifest. Has `--dry-run` mode. As tooled it turns on neither Secure Boot nor flash encryption (Step 3 below) |
 | `create_manifest.py` | Fleet management: list provisioned devices, search by MAC, generate summary reports |
-| `sdkconfig.defaults.secure` | ESP-IDF Kconfig with BT disabled, Secure Boot v2 **prepared but not enabled**, Flash Encryption release mode, NVS encryption, anti-rollback, JTAG off |
+| `sdkconfig.defaults.secure` | ESP-IDF Kconfig, staged: BT disabled, Secure Boot v2 (with anti-rollback) and Flash Encryption (release mode) commented out, NVS encryption named. The whole file is inert under `framework = arduino`, so uncommenting those lines turns nothing on; JTAG is left to `provision_canary.sh`'s eFuse burn |
 | `platformio_secure.ini` | PlatformIO environment config that wraps the security sdkconfig (`[env:secure]`, `[env:secure_ha]`; `firmware/canary/platformio.ini` includes it, and CI compiles both envs, compile-only) |
 | `partitions_secure.csv` | Partition table with OTA A/B slots, an `nvs_keys` partition, and `encrypted` flags on the partitions flash encryption may cover — never on `nvs` |
 
@@ -135,7 +143,9 @@ python create_manifest.py add \
 ## Phase 2 Workflow (Future - Production)
 
 **WARNING:** Phase 2 operations are IRREVERSIBLE. Once security eFuses are burned,
-the device cannot be returned to development mode.
+the device cannot be returned to development mode. As tooled, Phase 2 is not usable
+yet: run Step 3 as a dry run only, never on a board you want to keep
+(`firmware/provisioning/README.md`, "Phase 2 (not usable yet)").
 
 ### Step 1: Generate Signing Keys (One-Time)
 
@@ -147,71 +157,108 @@ cd firmware/provisioning
 
 # This creates:
 #   keys/secure_boot_signing_key.pem  (KEEP SECRET - offline backup required)
-#   keys/secure_boot_signing_key.pub  (embedded in firmware)
+#   keys/secure_boot_signing_key.pub  (not yet used: no step burns its digest)
 #   keys/flash_encryption_key.bin     (KEEP SECRET - one per device batch)
 #   keys/key_inventory.json           (tracking metadata)
 ```
 
-**CRITICAL:** Back up `keys/` directory to offline storage before proceeding.
-Loss of signing key = bricked devices on next OTA.
+**CRITICAL:** Back up `keys/` directory to offline storage before proceeding. The kit
+does not use the signing key yet (no step burns its digest or signs with it, Step 3); it
+is the key a Secure Boot set up from it would need for every later image.
 
-### Step 2: Build Signed Firmware
+### Step 2: Build the Secure Env's Firmware
 
 ```bash
-# Use secure PlatformIO environment (from firmware/canary)
+# Use secure PlatformIO environment (from firmware/canary). The image is not
+# Secure-Boot-signed: the signing lines in sdkconfig.defaults.secure are
+# commented out, and that file is inert under framework = arduino.
 pio run -e secure
 
-# Or with ESP-IDF directly
-idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults.secure" build
+# There is no ESP-IDF project for this tree yet (the arduino-as-IDF-component
+# migration, firmware/ESP32S3_OPTIMIZATION_ROADMAP.md item 9), so no idf.py
+# build reads sdkconfig.defaults.secure either.
 ```
 
-### Step 3: Provision Device (Dry Run First!)
+### Step 3: Preview the Provisioning (Dry Run Only)
 
 ```bash
-# ALWAYS dry-run first to preview what will happen
+# The dry run is the only Phase 2 step to run today: it previews what the
+# burn would do and burns nothing.
 ./provision_canary.sh --port /dev/ttyACM0 --phase 2 --dry-run
 
-# Review output carefully, then execute for real:
-./provision_canary.sh --port /dev/ttyACM0 --phase 2
+# Do not run it without --dry-run on a board you want to keep: as tooled it
+# turns on neither protection, its own lockdown check then fails, and what
+# the chip does with SECURE_BOOT_EN and no key digest has not been run on a
+# bench (the board may not boot).
 
-# This will:
+# What the script would do without --dry-run, in order (provision_canary.sh):
 # 1. Verify device is virgin
-# 2. Flash signed firmware
-# 3. Burn flash encryption key (if not already burned)
-# 4. Enable Secure Boot v2
-# 5. Disable JTAG
-# 6. Enable anti-rollback
-# 7. Verify all eFuses are correctly set
-# 8. Generate device manifest entry
+# 2. Flash the secure env's app image (or --firmware PATH) at 0x10000, in
+#    plaintext: no bootloader, no Secure Boot signature, no --encrypt
+# 3. Burn the flash encryption key into BLOCK_KEY0 (XTS_AES_256_KEY)
+# 4. Burn SECURE_BOOT_EN, SOFT_DIS_JTAG (7), DIS_USB_JTAG, DIS_PAD_JTAG
+#    and DIS_DOWNLOAD_MANUAL_ENCRYPT
+# 5. Run verify_device.py --expect-locked, which fails and stops the run
+#    (it expects SPI_BOOT_CRYPT_CNT odd, DIS_DOWNLOAD_MODE and
+#    SECURE_BOOT_AGGRESSIVE_REVOKE, none of which step 4 burns)
+# 6. Add the device to the fleet manifest (reached only with --skip-verify)
 ```
+
+**What that leaves on the board.** Flash encryption is off after it, and
+Secure Boot is enabled with nothing to verify against: neither protection
+works. No step burns `SPI_BOOT_CRYPT_CNT`, so the chip neither
+encrypts nor decrypts flash and the burned key goes unused; no step burns a
+Secure Boot key digest or flashes a signed bootloader, so `SECURE_BOOT_EN`
+is set with nothing to verify against (what the ROM then does has not been
+run on a bench: treat the board as possibly unbootable). No step enables
+anti-rollback (`SECURE_VERSION`) or disables ROM download mode. The RSA-3072
+signing key `generate_keys.sh` makes is checked for and never used. JTAG is
+off. The sdkconfig lines that would turn the two protections on are
+commented out, and inert under `framework = arduino` anyway (Phase 2 above).
 
 ### Step 4: Verify Lockdown
 
 ```bash
 python verify_device.py --port /dev/ttyACM0 --expect-locked
 
-# Output: JSON showing all security eFuses are correctly burned
+# Output: a JSON report of the security eFuses. After today's Phase 2 it
+# fails: SPI_BOOT_CRYPT_CNT, DIS_DOWNLOAD_MODE and
+# SECURE_BOOT_AGGRESSIVE_REVOKE are unburned (Step 3)
 ```
 
 ---
 
 ## Security eFuse Reference
 
+The Phase 2 column is the lockdown's target. The script burns only the rows
+marked "burned today" (Step 3); the rest are what a Phase 2 that enables
+Secure Boot and flash encryption would set (`verify_device.py
+--expect-locked` checks the ESP32-S3 counter and
+`SECURE_BOOT_AGGRESSIVE_REVOKE` among them, which is why it fails today).
+(`FLASH_CRYPT_CNT`, `JTAG_DISABLE` and
+`FLASH_CRYPT_CONFIG` are the classic ESP32's names; on the ESP32-S3 the
+counter is `SPI_BOOT_CRYPT_CNT` and JTAG is `DIS_PAD_JTAG` / `DIS_USB_JTAG`.)
+
 | eFuse | Phase 1 (Dev) | Phase 2 (Prod) | Purpose |
 |-------|---------------|----------------|---------|
-| `SECURE_BOOT_EN` | 0 | 1 | Enables Secure Boot v2 |
-| `FLASH_CRYPT_CNT` | 0 | odd (1,3,5,7) | Enables flash encryption |
-| `JTAG_DISABLE` | 0 | 1 | Permanently disables JTAG |
-| `FLASH_CRYPT_CONFIG` | 0 | 0xF | Full flash encryption |
-| `SECURE_BOOT_AGGRESSIVE_REVOKE` | 0 | 1 | Aggressive key revocation |
-| `SOFT_DIS_JTAG` | 0 | 7 | Software JTAG disable (3-bit field) |
+| `SECURE_BOOT_EN` | 0 | 1 (burned today, with no key digest) | Enables Secure Boot v2 |
+| `FLASH_CRYPT_CNT` | 0 | odd (1,3,5,7) (not burned today) | Enables flash encryption |
+| `JTAG_DISABLE` | 0 | 1 (burned today, as `DIS_PAD_JTAG` and `DIS_USB_JTAG`) | Permanently disables JTAG |
+| `FLASH_CRYPT_CONFIG` | 0 | 0xF (not burned today) | Full flash encryption |
+| `SECURE_BOOT_AGGRESSIVE_REVOKE` | 0 | 1 (not burned today) | Aggressive key revocation |
+| `SOFT_DIS_JTAG` | 0 | 7 (burned today) | Software JTAG disable (3-bit field) |
 
 ---
 
 ## Bluetooth Disabled by Design
 
-The secure configuration disables Bluetooth at compile time (`CONFIG_BT_ENABLED=n`).
-This is a deliberate security decision:
+The secure env compiles no Bluetooth code: its `-DFEATURE_BLE=0`,
+`-DFEATURE_BLE_SCAN=0` and `-DFEATURE_BLE_STATUS=0` flags (`platformio_secure.ini`),
+with the `lib_ignore` of the Bluetooth libraries in the `[env]` of
+`firmware/canary/platformio.ini`, which it extends.
+The `CONFIG_BT_ENABLED=n` in `sdkconfig.defaults.secure` does nothing under
+`framework = arduino`, like the rest of that file. This is a deliberate
+security decision:
 
 - **No proprietary Bluetooth binary blobs** in firmware
 - **Eliminates CVE-2025-27840** class of attacks (hidden HCI commands)
@@ -267,7 +314,7 @@ Key differences:
 
 ## OTA Updates with Secure Boot
 
-Once Secure Boot is enabled:
+No step of the kit sets Secure Boot up today (Step 3). Once one does:
 
 1. All OTA firmware must be signed with the same RSA-3072 key
 2. Anti-rollback prevents downgrading to older versions
@@ -326,7 +373,8 @@ Wait a few minutes, or use a hardware RNG if available.
 ### "Signature verification failed" (after Secure Boot)
 
 The firmware was not signed with the correct key. Ensure you're using
-the same signing key that was burned to the device's eFuse.
+the same signing key whose digest was burned to the device's eFuse (the kit
+burns no digest today, Step 3).
 
 ### "OTA rejected"
 

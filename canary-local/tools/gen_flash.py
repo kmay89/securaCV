@@ -657,15 +657,14 @@ PROVISIONING = {
     # cv-… one its boot banner prints; "nothing to type" was false.
     "ap": "When it boots it raises a WiFi network of its own (SecuraCV-canary-XXXX) with a "
           "key it prints on its serial console at boot — join it and a setup page "
-          "opens automatically. No secrets ever touch the browser.",
+          "opens automatically.",
     # The WAP: the same setup network, plus the Bluetooth setup door (Improv
     # Wi-Fi, FULL profile — every shipped WAP image) the iPhone app walks
     # through. Lead with the door; the network stays as the fallback.
     "ap-door": "Power it on near the SecuraCV iPhone app and tap the card that appears — "
                "it hands over your WiFi in one tap. No iPhone? It also raises a WiFi "
                "network of its own (named for its kind, like SecuraCV-wap-XXXX) with a key it prints on its serial "
-               "console at boot — join it and a setup page opens automatically. No "
-               "secrets ever touch the browser.",
+               "console at boot — join it and a setup page opens automatically.",
     "usb-secrets": "Fill in WiFi during the install and it’s written straight into the "
                    "chip’s settings region — the signed generic release then joins YOUR "
                    "network on first boot, no custom build needed. (Leave it empty and "
@@ -1346,8 +1345,9 @@ LESSONS = [
      "title": "The diary and the deep install",
      "body": "This Canary keeps a tamper-evident hash diary. Over-the-air updates "
              "never touch it — they swap firmware slots and nothing else. A USB "
-             "factory install like this one is deeper: on some boards the diary’s "
-             "chain state rides the settings region and starts fresh here. Visible "
+             "factory install like this one is deeper: it starts the settings "
+             "region over, where the identity key and the diary’s chain state "
+             "live, so the board starts a new chain under a new key. Visible "
              "by design — a new chain reads as a new chain, never as silently "
              "missing evidence."},
     {"id": "any-chip-board", "stage": "any",
@@ -1713,11 +1713,17 @@ def settings_help_block(vision: dict, sense_default: dict, sense_wellbeing: dict
         # ── the install itself ──
         "erase_all": {
             "label": "Erase the entire chip first",
-            "what": "Wipes every byte — firmware, settings, stored WiFi, witness history — "
-                    "then writes fresh. A factory reset and an install in one pass.",
+            "what": "Wipes every byte of flash — firmware, settings, stored WiFi, the identity "
+                    "key and the chain, and the partitions a normal install never writes (the "
+                    "second firmware slot, the file system) — then writes fresh. A normal "
+                    "install already starts the settings region over, the identity key with it, "
+                    "so the board comes up with a new identity either way. More than a factory "
+                    "reset: the 10-second BOOT reset keeps the key.",
             "when": "A board that misbehaves in ways an ordinary reinstall doesn’t fix, "
                     "or one you’re handing to someone else.",
-            "default": "Off — a normal install only touches the regions the new firmware needs.",
+            "default": "Off — a normal install writes only the regions its image covers (the "
+                       "bootloader, the partition table, a fresh settings region and the "
+                       "firmware) and leaves the rest.",
         },
         "skip_backup": {
             "label": "Skip the automatic safety copy",
@@ -1952,7 +1958,9 @@ def settings_help_block(vision: dict, sense_default: dict, sense_wellbeing: dict
         "witness_records": {
             "label": "Witness records",
             "what": "How many entries this Canary's tamper-evident hash chain holds — "
-                    "its sealed diary. The chain rides through reflashes untouched.",
+                    "its sealed diary. The chain rides through over-the-air updates "
+                    "untouched; an install here starts the settings region over, so the "
+                    "board starts a new chain under a new key (export the old one first).",
         },
         "tamper_flag": {
             "label": "Tamper flag",

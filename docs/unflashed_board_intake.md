@@ -207,9 +207,13 @@ Only evidence originating **outside the board** may waive it:
 - the MAC is in **our session roster** — we wrote this exact board ourselves; or
 - the **human says so**. The confirm card shows what the board claims to be,
   says plainly that the claim sits in flash the board controls, and offers a
-  deliberate "it's mine — keep its data" button. That preserves reflashing your
-  own Canary without losing its identity key, and puts the decision with the
-  one party a hostile image can't impersonate.
+  deliberate "it's mine — skip the full erase" button. That lets you reinstall
+  your own Canary without wiping the parts of the flash the install does not
+  write (the second firmware slot, any file system), and puts the decision with
+  the one party a hostile image can't impersonate. It does not keep the
+  identity key: the factory image every install writes carries a blank
+  settings region, so the next boot makes a new key either way (an
+  over-the-air update is what keeps it).
 
 A board's own confident announcement that it is already a Canary now buys it
 nothing.
@@ -304,10 +308,14 @@ release signature verified before a byte is written, the chip's own MD5 read
 back after. The device identity keypair is generated on first boot *after* the
 erase, so nothing pre-existing carries into the device's identity.
 
-If you want to be the last person who can ever do this to that board, the
-Phase 2 lockdown in [secure_provisioning.md](secure_provisioning.md) burns
-secure boot and flash encryption yourself. It is irreversible, so it is an
-explicit opt-in and never a default.
+The Phase 2 lockdown in [secure_provisioning.md](secure_provisioning.md) is
+where secure boot and flash encryption are staged, and as tooled it turns on
+neither: it leaves flash encryption off and Secure Boot enabled with nothing
+to verify against. So today it does not make you the last person who can
+change what runs on the board, and it does not protect the key or the saved
+Wi-Fi in NVS. Its burn is still irreversible, and it sets `SECURE_BOOT_EN`
+with no Secure Boot key digest, which has not been run on a bench (a board
+may not boot after it), so it is an explicit opt-in and never a default.
 
 ## What this does not do
 
@@ -332,7 +340,8 @@ are:
   mask-ROM property everything here leans on
 - [supply_chain_transparency.md](supply_chain_transparency.md) — the same
   posture applied to *our* binaries: signed provenance you can verify
-- [secure_provisioning.md](secure_provisioning.md) — Phase 2 lockdown, if you
-  want to close the door behind you
+- [secure_provisioning.md](secure_provisioning.md) — the Phase 2 lockdown's
+  staging, which as tooled turns on neither Secure Boot nor flash encryption
+  (read "After the flash" above before you burn anything)
 - `canary-local/assets/intake.js` — the decision logic
 - `canary-local/tests/intake.test.mjs` — the eFuse offsets, re-asserted

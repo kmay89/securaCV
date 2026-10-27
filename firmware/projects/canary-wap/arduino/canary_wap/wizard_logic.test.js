@@ -97,10 +97,11 @@ describe('capabilityNotice', () => {
     assert.match(n.text, /work fine/i);
     assert.doesNotMatch(n.text, /insecure origin/i);
   });
-  it('missing Web Bluetooth points at Bluefy', () => {
+  it('missing Web Bluetooth names a browser that has it, and sends no iPhone owner to Bluefy (ledger A65)', () => {
     const n = L.capabilityNotice(false, true, false);
     assert.equal(n.show, true);
-    assert.match(n.text, /Bluefy/);
+    assert.match(n.text, /Chrome or Edge on Android or a computer/);
+    assert.doesNotMatch(n.text, /Bluefy/);
   });
   it('capable browser gets no banner', () => {
     assert.equal(L.capabilityNotice(false, true, true).show, false);

@@ -9,7 +9,9 @@
 // Identity: an Ed25519 keypair generated from the hardware RNG on first
 // boot and persisted in NVS (namespace "securacv", key "privkey") — the
 // same storage contract as the canary-wap tree, so the keypair survives
-// reflashes and OTA installs. The fingerprint is the wap formula:
+// OTA installs and a PlatformIO upload (which leaves NVS alone); an install
+// or a full erase in either flasher writes a factory image that starts NVS
+// over, so the next boot makes a new one. The fingerprint is the wap formula:
 // SHA256("securacv:pubkey:fingerprint" || 0x00 || pubkey)[0..8] hex.
 //
 // Signing: every published event carries an Ed25519 signature over the

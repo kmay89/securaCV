@@ -215,10 +215,13 @@ at the glass", not "install esptool"). It is also cheap:
 
 - At assembler volume (Phase 3), Seeed Fusion/Elecrow flash the merged image during
   test — pre-flashing leaves our building entirely.
-- **R3 "Assembled Witness" and any future evidence-grade SKU** run the Phase-2 secure
-  provisioning path from `firmware/provisioning/` (Secure Boot v2, flash encryption,
-  eFuse burn — irreversible, dry-run first) **in-house only**. Key ceremony never goes
-  to a contract manufacturer. This is the premium the R3 margin pays for.
+- **R3 "Assembled Witness" and any future evidence-grade SKU** would run the Phase-2
+  secure provisioning path from `firmware/provisioning/` (Secure Boot v2, flash
+  encryption, eFuse burn — irreversible, dry-run first) **in-house only**, once that
+  path enables what it names: as tooled it burns fuses but turns on neither Secure
+  Boot nor flash encryption, and even turned on, flash encryption would not cover the
+  NVS that holds the key (`docs/secure_provisioning.md`, Step 3). Key ceremony never
+  goes to a contract manufacturer. This is the premium the R3 margin pays for.
 - OTA (docs/firmware_ota.md) means a stale factory image is fine: first boot on the
   customer's LAN updates through the normal signed-OTA path. Factory images therefore
   freeze per release train, not per build.

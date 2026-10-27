@@ -213,15 +213,19 @@
                  that attaches — see resetSteps), so it must be seen before every
                  flash, not discovered inside a disclosure aimed at new boards.
                  Review catch on this PR: folding it away meant reflashing a
-                 known Canary would erase its identity key unannounced. -->
+                 known Canary would wipe its whole chip unannounced. (Any
+                 install starts the settings region over, the identity key
+                 included: the factory image spans it, blank.) -->
             <label class="coldstart-ask">
               <input type="checkbox" id="first-contact" checked>
               <span>This board is new to me — wipe the whole chip before writing.
                 Leave this ticked for anything bought unflashed: a normal install
                 only overwrites the parts it needs, so whatever a previous owner
                 left in the other partitions would survive. Reflashing a Canary
-                you set up here and want to keep the identity of? Untick it —
-                it re-ticks itself for the next board.</span>
+                you set up here? Unticking it keeps those other partitions, but
+                not its identity: every install starts the settings region over,
+                so the board comes up with a new identity key either way. It
+                re-ticks itself for the next board.</span>
             </label>
 
             <!-- The board's passport: what it runs, whether your fleet has
@@ -240,12 +244,12 @@
                  entry: this window has no Bluetooth of its own, so the check
                  is a pointer to where it runs — never a dead end. -->
             <details id="ble-check" class="hint">
-              <summary>Already have a Canary? Check it over Bluetooth</summary>
-              <p class="muted">A Canary keeps a read-only Bluetooth console alive even when
+              <summary>Already have a Canary WAP? Check it over Bluetooth</summary>
+              <p class="muted">A Canary WAP keeps a read-only Bluetooth console alive even when
                 Wi-Fi is down — reading its live snapshot proves it’s on, healthy and
                 reachable, and writes nothing. This app’s window has no Bluetooth of its
-                own, so the check runs in the SecuraCV iPhone app (its App Store release is
-                still pending), or in the browser Lab in Chrome or Edge on this computer.</p>
+                own, so the check runs in the browser Lab in Chrome or Edge on this computer
+                (the iPhone app does not read a WAP’s console today).</p>
               <button id="ble-check-open" class="btn btn-small btn-ghost" type="button">Open the browser Bluetooth check ↗</button>
             </details>
 
