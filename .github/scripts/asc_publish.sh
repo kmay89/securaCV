@@ -71,7 +71,13 @@ for attempt in 1 2 3 4; do
         --file "$ipa" \
         --apiKey "$APPLE_API_KEY" \
         --apiIssuer "$APPLE_API_ISSUER" 2>&1 | tee "$log"; then
-    echo "Uploaded. Apple's phased release will carry it to users."
+    # Say where the build is, no further. An upload delivers it to App Store
+    # Connect (processing, then TestFlight); nothing in any pipeline here
+    # submits it for App Review, so no App Store user gets it until a person
+    # does that. The old line promised a phased release that never starts on
+    # its own.
+    echo "Uploaded: delivered to App Store Connect (processing, then TestFlight)."
+    echo "It reaches App Store users only after someone submits it for review in App Store Connect."
     exit 0
   fi
   if grep -qiE 'already been uploaded|redundant binary upload|bundle version.*already exists' "$log"; then

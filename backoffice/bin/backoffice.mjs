@@ -24,6 +24,7 @@ import { profitAndLoss, trialBalance, monthly, postExpense, postPayout, salesTax
 import { upsertProbe, DEFAULT_PROBES, runDueProbes, publicStatus } from '../src/modules/status.mjs';
 import { backup, listBackups, checkBackup, liveCounts, restore, restoreDrill, uploadOffsite, offsiteConfigured, fetchOffsite } from '../src/modules/backup.mjs';
 import { doctor, digestText } from '../src/modules/health.mjs';
+import { describeBuild } from '../src/version.mjs';
 import { reconcile } from '../src/modules/reconcile.mjs';
 import { snapshot } from '../src/modules/dashboard.mjs';
 import { notifyWaitlist, createCampaign, queueCampaign } from '../src/modules/campaigns.mjs';
@@ -68,6 +69,7 @@ const HELP = `backoffice — the company in one SQLite file (${cfg.dbPath})
   token create <name> | token revoke <name>  API bearer tokens for the CLI/remote/an AI operator
   snapshot                                 the dashboard numbers as JSON
   doctor                                   the health checklist (exit 1 when a check fails) — same list as /health and the digest
+  version                                  which build this is (package version, commit, date) and which environment
   backup [--no-offsite]                    a checked copy (opened, integrity, books balanced), then off-site when BACKUP_S3_* is set
   backup check <file> [--live]            prove a copy boots; --live also compares row counts with the running database
   backup drill                             pull the latest copy back (off-site when configured) and prove it
@@ -233,9 +235,10 @@ const main = async () => {
       if (!args[0]) throw new Error('restore <backup file> [--to <db path>] | restore --offsite [<name>] — stop `serve` first');
       const r = restore(args[0], dest); return out({ ...r, note: 'start `backoffice serve` again; the replaced file is kept beside the database until you delete it' });
     }
+    case 'version': return out(`${describeBuild(cfg)} · ${cfg.env}`);
     case 'doctor': {
       const h = doctor(db, cfg); const ic = (ok) => ok === true ? 'ok ' : ok === false ? '!! ' : '-- ';
-      out(`${h.ok ? 'every check passes' : `${h.failing.length} failing`}\n` + h.checks.map(c => `  ${ic(c.ok)} ${c.label.padEnd(44)} ${c.detail}${c.ok === false && c.fix ? `\n        → ${c.fix}` : ''}`).join('\n'));
+      out(`${cfg.env} · ${describeBuild(cfg)}\n${h.ok ? 'every check passes' : `${h.failing.length} failing`}\n` + h.checks.map(c => `  ${ic(c.ok)} ${c.label.padEnd(44)} ${c.detail}${c.ok === false && c.fix ? `\n        → ${c.fix}` : ''}`).join('\n'));
       if (!h.ok) process.exitCode = 1; return;
     }
     case 'reconcile': return out(await reconcile(db, cfg));

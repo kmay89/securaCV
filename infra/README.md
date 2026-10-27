@@ -11,6 +11,12 @@ droplet — any Ubuntu 24.04 host with 2 GB; the kit is provider-agnostic), $0
 for the off-site backup bucket at this size (Backblaze B2 or Cloudflare R2),
 $0 for certificates (Let's Encrypt through Caddy). Nothing else recurs.
 
+Three apps come with it: the **backoffice** (production), **backoffice-staging**
+(the same image on last night's production copy, with test keys — every merge
+lands here first) and **backoffice-demo** (synthetic data, public). Production
+changes only when a person presses **Promote backoffice to production** in
+Actions, naming the build staging runs.
+
 ```
 /srv/kit/infra/           this directory, a sparse checkout of the repo (kit update = git pull)
 /srv/edge/                Caddy: compose.yml, Caddyfile, sites/<host>.caddy — one file per hostname
@@ -68,15 +74,39 @@ $0 for certificates (Let's Encrypt through Caddy). Nothing else recurs.
    ```
    Then `https://ops.example.com` is live with a certificate. Run
    `backoffice setup` once inside it (`kit run backoffice node bin/backoffice.mjs setup`).
-5. **Let CI deploy from now on.** On the server: `kit deploy-key` prints a
-   fresh key pair's public half already installed for the `deploy` user with
-   the forced command, and the private half once, for you to put in the
-   repository's secrets as `DEPLOY_SSH_KEY`, with `DEPLOY_HOST` (the IP or
+5. **Add staging beside it.** Same three lines with the staging app, and a
+   second hostname: `kit app add backoffice-staging`, `kit env
+   backoffice-staging` (Stripe **test** keys, production's bucket values so
+   it can read the backups, nothing else live — the app refuses a live key),
+   `kit site add staging.example.com backoffice-staging:8787`, `kit deploy
+   backoffice-staging latest`. Then `kit cron` installs the nightly refresh
+   (a new server already has it): at 04:10 staging stops, restores the latest
+   off-site production copy, and starts — so every morning staging is
+   yesterday's data on whatever merged. `kit refresh backoffice-staging` does
+   it now. Log in with your production credentials; the pages say *staging*
+   in the title and a banner, mail and issues are muted, and nothing it does
+   reaches the backup bucket.
+6. **Let CI deploy from now on — to staging.** On the server: `kit deploy-key`
+   prints a fresh key pair's public half already installed for the `deploy`
+   user with the forced command, and the private half once, for you to put in
+   the repository's secrets as `DEPLOY_SSH_KEY`, with `DEPLOY_HOST` (the IP or
    hostname) and `DEPLOY_KNOWN_HOSTS` (the line it also prints, so CI pins the
    server's host key and a wrong server is refused). `DEPLOY_APPS` is the
-   space-separated list to redeploy, `backoffice` by default. The
-   "Backoffice deploy" workflow then redeploys on every merge to main that
-   published a new image, and does nothing at all while the secrets are absent.
+   space-separated list to redeploy on every merge, `backoffice-staging` by
+   default (add `backoffice-demo` for the public demo; never `backoffice` —
+   the workflow refuses it). Set the variable `DEPLOY_URL` to staging's
+   address and the workflow proves from outside that staging answers
+   `ok staging <build>` on `/healthz` after each merge. It does nothing at all
+   while the secrets are absent.
+7. **Production moves when you say so.** Actions → **Promote backoffice to
+   production** → Run. With the tag field empty it asks the server which build
+   staging runs, deploys that tag to `backoffice` (the usual pull, start, wait
+   for healthy, roll back by itself if not), and with the variable
+   `PRODUCTION_URL` set proves production answers `ok production <build>`.
+   The backoffice writes a `deploy.boot` audit row the first time a build runs
+   on its database, so Home → Activity says what went live and when. Roll
+   back is the same button with the previous tag (`kit ps` on the server
+   shows it), or `kit deploy backoffice <previous>` over SSH.
 
 ## Adding the next project
 
@@ -105,6 +135,9 @@ nothing new — the forced command already accepts any app under `/srv/apps`.
 | Is the server well? | `kit doctor` (firewall, SSH, updates, fail2ban, Docker, edge, each app's health, disk, memory, what tag runs where) |
 | What is running? | `kit ps` |
 | Logs | `kit logs backoffice` (`-f` follows) |
+| Which build runs where | `kit ps`, or `kit tag <app>`; the app's `/healthz` says `ok <env> <build>` from outside |
+| Promote staging's build to production | Actions → "Promote backoffice to production" (empty tag = what staging runs) |
+| Refresh staging from last night's production copy | `kit refresh backoffice-staging` (cron does it at 04:10; `kit cron` installs that on an older server) |
 | Deploy a specific build | `kit deploy backoffice <sha>` (the 12-char tag CI publishes) |
 | Roll back | `kit deploy backoffice <previous tag>` — `kit ps` shows the one before |
 | Change a secret | `kit env backoffice`, then `kit deploy backoffice` (same tag, restarts with the new env) |

@@ -18,7 +18,10 @@ import { estimateDelivery, orderStatusUrl } from './delivery.mjs';
 import { weekLabel, orderByNumber } from './orders.mjs';
 import { buildable } from './inventory.mjs';
 import { currentTz } from '../render.mjs';
+import { isOn } from '../flags.mjs';
 import { timedFetch } from '../net.mjs';
+import { recordSession } from './recovery.mjs';
+import { listingState } from './listing.mjs';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -111,8 +114,9 @@ export function storefrontCatalog(db, catalog, { now = new Date(), cfg = {} } = 
   const products = [];
   for (const p of catalog.products.values()) {
     const available = availableNow(db, p, { now, tz: cfg.tz });
-    const reason = p.authorization === 'pending-fcc' ? 'pending-fcc' : available === 0 ? 'batch-full' : null;
-    products.push({ sku: p.sku, name: p.name, price_cents: p.price_cents, group: p.group, available, sellable: !reason, reason, link: p.link || '' });
+    const state = listingState(p, now.getTime());
+    const reason = p.authorization === 'pending-fcc' ? 'pending-fcc' : state || (available === 0 ? 'batch-full' : null);
+    products.push({ sku: p.sku, name: p.name, price_cents: p.price_cents, group: p.group, available, sellable: !reason, reason, link: p.link || '', hidden: !!p.hidden, opens: state === 'not-yet' ? p.available_from : null, closes: p.available_until || null });
   }
   return { mode: catalog.mode, shipping_flat_cents: catalog.shipping_flat_cents, ships, products, checkout: cfg.demo ? 'demo' : cfg.stripeApiKey ? 'hosted' : 'links', generated_at: now.toISOString() };
 }
@@ -141,6 +145,7 @@ export async function createCheckout(db, cfg, catalog, { items, zip = null, emai
     if (!Number.isInteger(qty) || qty < 1 || qty > 10) throw new StoreError(400, `${sku || 'a line'}: quantity is a whole number from 1 to 10`);
     const p = catalog.products.get(sku); if (!p) throw new StoreError(400, `${sku}: not in the catalog`);
     if (p.authorization === 'pending-fcc') throw new StoreError(400, `${p.name} is not for sale until its FCC authorization is complete`);
+    const st = listingState(p, now.getTime()); if (st) throw new StoreError(400, st === 'not-yet' ? `${p.name} is not on sale yet` : st === 'ended' ? `${p.name} is no longer offered` : `${p.name} is not in the store`);
     const same = lines.find(l => l.sku === sku); if (same) same.qty += qty; else lines.push({ sku, qty, name: p.name, unit_cents: p.price_cents, product: p });
     units += qty;
   }
@@ -162,15 +167,18 @@ export async function createCheckout(db, cfg, catalog, { items, zip = null, emai
     success_url: `${site}${cfg.checkoutSuccessPath || '/store/thanks'}?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${site}/store`,
     expires_at: Math.floor(now.getTime() / 1000) + 30 * 60,
+    // if it times out, Stripe mints a link that reopens this cart for 30 days (the one follow-up mail carries it; recovery.mjs)
+    after_expiration: { recovery: { enabled: 'true', allow_promotion_codes: 'true' } },
     metadata: { source: 'site', skus: lines.map(l => `${l.qty}x ${l.sku}`).join(', '), ships_on: est.ships.ships_on, batch: weekLabel(now, cfg.tz) },
     payment_intent_data: { metadata: { skus: lines.map(l => `${l.qty}x ${l.sku}`).join(', ') } },
-    ...(cfg.taxMode === 'stripe' ? { automatic_tax: { enabled: 'true' } } : {}),
+    ...(isOn(db, cfg, 'stripe_tax') ? { automatic_tax: { enabled: 'true' } } : {}),
     ...(email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? { customer_email: email } : {}),
   };
   const r = await fetchImpl('https://api.stripe.com/v1/checkout/sessions', { method: 'POST', headers: { authorization: `Bearer ${cfg.stripeApiKey}`, 'content-type': 'application/x-www-form-urlencoded', 'idempotency-key': `cart-${now.getTime()}-${Math.random().toString(36).slice(2, 10)}` }, body: formEncode(session) });
   const body = await r.json().catch(() => ({}));
   if (!r.ok || !body.url) { db.audit('public', 'store.checkout.failed', 'stripe', body?.error?.type || String(r.status), { message: String(body?.error?.message || '').slice(0, 200) }); throw new StoreError(502, 'the payment page could not be opened — nothing was charged; try again in a moment'); }
   db.audit('public', 'store.checkout', 'stripe', body.id, { lines: lines.map(l => `${l.qty}x ${l.sku}`), zip: est.state, ships_on: est.ships.ships_on });
+  recordSession(db, { id: body.id, amount_cents: lines.reduce((s, l) => s + l.qty * l.unit_cents, 0) + (catalog.shipping_flat_cents || 0), lines: lines.map(l => `${l.qty}x ${l.sku}`).join(', '), state: est.state, email: email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null, created_at: now.toISOString() });
   return { id: body.id, url: body.url, ships: est.ships, delivers: est.delivers, lines };
 }
 

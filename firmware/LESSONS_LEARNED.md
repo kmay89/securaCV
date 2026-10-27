@@ -1613,6 +1613,48 @@
   closed early.
 - **Date learned:** 2026-09
 
+### A bigger slot reaches only the boards that get a USB flash; the engine must check the slot before it downloads
+- **What happened:** fw-v2.4.16 grew the Vision C3 envs from `default.csv`
+  (0x140000 slots) to `min_spiffs.csv` (0x1E0000) for the Bluetooth setup
+  door, and shipped 1,400,368 / 1,409,952-byte images. Every C3 board
+  factory-flashed fw-v2.2.0..fw-v2.4.15 still carries the old table, because
+  OTA ships app-only images. The pull engine downloaded the image and wrote
+  it until the slot ran out, failed, and did it all again on the next poll.
+  The release gate did not catch it. `check_slot_budget.py` measures the
+  image against the table in the repo, not the ones in the field, and for 9
+  of the 17 signed products it measured nothing: it printed a plain "not
+  checked" line that no one reads.
+- **Root cause:** The engine learned the slot was too small only from a
+  failed write, after a full download, and nothing it kept stopped the next
+  poll from trying again. The budget script passed an env with no budget,
+  so the gate's coverage gap made no noise.
+- **Fix:** `securacv_ota_image_fits_slot()` (pure, host-tested in
+  `common/ota/test_ota_logic.cpp`) runs once the manifest is parsed and
+  before any download: manifest `size` against
+  `esp_ota_get_next_update_partition(NULL)->size`, with no slot (none found,
+  or a single-app table where IDF returns the running partition) refused
+  outright. The refusal is `SECURACV_OTA_ERR_PARTITION`, a log line that says
+  the unit needs a USB reflash to a newer table, and a UI sentence that says
+  "install it over USB" rather than "try again". BLE OTA already compared
+  `image_size` with the slot before `esp_ota_begin` (`ble_ota.cpp`). The
+  slot-budget script now writes a `::warning::` annotation for a signed
+  product with no budget, and `flavors.json` budgets 7 of the 9. The other
+  two, dash and dash-modes, ship from an arduino-cli build on `huge_app`
+  (one app slot, so no OTA slot at all), while their PlatformIO env says
+  `default_16MB.csv`. They stay unbudgeted, with that reason, until the
+  two tables agree.
+- **Not fixed by this:** a board already in the field runs the engine it was
+  flashed with. The fix stops the next slot change from looping. The C3
+  boards now looping can only be fixed by a USB reflash.
+- **Regression check:** `test_image_fits_slot` in `test_ota_logic.cpp`
+  (firmware.yml's pull-OTA host test). `scripts/tests/test_check_slot_budget.py`
+  fails a signed product with neither a budget nor a declared reason.
+  Before you change a partition table, find every table the fielded boards
+  carry (the factory images of each earlier release). Budget against the
+  smallest one, as nightlight-c3 does, or say in the release notes that
+  those boards need a USB reflash.
+- **Date learned:** 2026-10
+
 ---
 
 ## Security Architecture Principles

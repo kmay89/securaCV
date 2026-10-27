@@ -12,6 +12,70 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-10-10 — The 2.4.16 train: a Flasher release held `releases/latest` for three minutes, and four more things it turned up
+
+- **Symptom:** run 38034898214's Linux leg logged "Couldn't find release
+  with tag flasher-v0.12.0. Creating one." at 07:41:32Z, and
+  `releases/latest`, the URL every Canary polls
+  (`releases/latest/download/manifest-*.json`), pointed at the Flasher from
+  07:41:33Z until the Lab publish run's keep-firmware-latest put it back at
+  07:44:25Z. The Flasher's own repair ran at about 07:48.
+- **Cause:** given a tag with no release, tauri-action creates an ordinary
+  published release (`releaseDraft: false`), and GitHub makes it `latest` on
+  the spot. The keep-latest job runs after both legs and finalize by design,
+  so it can only close a window that opened minutes earlier.
+- **Fix:** each leg of `desktop-flasher-release.yml` creates the release
+  first with `gh release create --latest=false` (the second leg reads it
+  back) and hands tauri-action its `releaseId`, so tauri-action never
+  creates or edits a release. Finalize's body edit passes `--latest=false`,
+  and its last step fails the run if `releases/latest` is not `fw-v*`.
+  keep-latest stays as the backstop. The cost: a build that fails after the
+  create leaves an empty release and its tag, which the planner reads as
+  released. Re-run the failed jobs, or delete both before a fix that needs
+  a new commit. The Lab was not exposed: its legs build a draft, and
+  `lab-publish.yml` publishes with `--latest=false`. The same
+  file's reconcile step had attached a second, unversioned
+  `SecuraCV.Flasher.app.tar.gz(.sig)` (it compared the on-disk name, not
+  tauri-action's `<Product>_<ver>_<arch>` one), and the release body called
+  the Flasher "the SecuraCV Lab". Both are fixed, but not before
+  flasher-v0.12.1 (2026-10-16) shipped with both again: the fix waited on a
+  branch while the next release ran from `main`. A release fix lands before
+  the next release, or that release repeats the fault.
+- **Also this train:**
+  - **Firmware first, then the apps that pin it.** Both desktop apps bake in
+    `flash.json`, which pins an exact `fw-v` tag. The train pressed "Update
+    everything" with `only: firmware`, waited for fw-v2.4.16 to publish, then
+    pressed again for the rest. In one press, an app can ship pinned to a
+    firmware release that does not exist yet.
+  - **GitHub cuts a release body at 125,000 characters, silently.** The
+    [2.4.16] section is 318,453, and fw-v2.4.16's page ends mid-sentence with
+    no pointer. `firmware-release.yml` now caps the body at 120,000 bytes,
+    before a bullet or heading, and links CHANGELOG.md at the tag. The
+    manifests' 400-byte `release_notes` (`head -c 400`, which stopped
+    mid-word) now end on a line boundary. Only the text changed; the
+    manifests are still signed after it is embedded.
+  - **A partition-table change cannot ship over OTA, so the release must
+    say so where owners look.** 70d52902 moved the Vision C3 envs from
+    0x140000 to 0x1E0000 app slots. An OTA rewrites the app, never the
+    table, so fielded C3 Visions fail the 2.4.16 OTA and need one USB
+    reflash. The only notice was one sentence 15 KB into the section: not at
+    the top of the release, and not in the manifest notes Home Assistant
+    shows. A partition change goes first in its version's section, naming
+    the boards and the reflash, so it heads the release and lands inside
+    the manifests' 400-byte notes.
+  - **CloudKit's `check` read only the DEVELOPMENT schema.** Development
+    creates fields on first write, so a green `check` said nothing about
+    production, the one that refuses saves. `ios/scripts/cloudkit_schema.sh`
+    now reads both and names the one that is short. Its index test also
+    looked only for the dashboard's names (`recordName`,
+    `createdTimestamp`); Apple's documented schema language spells those
+    system fields `___recordID` and `___createTime`, and it now accepts
+    either. Neither change has run against the real container yet.
+- **Applies to:** every workflow that creates a release (decide what it is
+  the moment it exists; a repair that runs last is a backstop, not the
+  invariant), and every release body or notice that someone must read
+  before installing.
+
 ## 2026-10-09 (c) — The Witness Wall compiles iPhone files, and its release watch named only `tvos`
 
 - **Symptom (found by audit, not by a user):** the Wall compiles 15 Swift

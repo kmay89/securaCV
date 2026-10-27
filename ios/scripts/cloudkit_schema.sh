@@ -39,6 +39,18 @@
 #   This script exists so "did the schema ship?" is a command with an answer
 #   instead of a thing someone remembers to click.
 #
+# WHY `check` READS BOTH ENVIRONMENTS
+#   The first `check` exported DEVELOPMENT only — the one environment that
+#   fills in a field the app writes by itself, because CloudKit mints it on the
+#   first save. So it went green while the open question was PRODUCTION, which
+#   every TestFlight and App Store build talks to: PairedDevice.tlsCertFP was
+#   first written in ios-v0.6.0, and nothing on record says it was ever
+#   promoted. A gate that reads only the environment that fills itself in
+#   answers "did the schema ship?" with yes every time. So `check` now holds
+#   BOTH exports to the same table and names the environment that is short:
+#   development says whether there is anything to promote, production whether
+#   it was promoted.
+#
 # THE TABLE IS THE POINT
 #   `requirements` below is the list of everything production needs. Adding a
 #   CKRecord type to the app and forgetting to add it here is the exact drift
@@ -49,11 +61,12 @@
 #   in CI on every push. Edit the table; the checks below read it.
 #
 # Usage:
-#   ios/scripts/cloudkit_schema.sh check      # export dev, report what's there
-#   ios/scripts/cloudkit_schema.sh promote    # verify, then deploy to production
+#   ios/scripts/cloudkit_schema.sh check      # export dev AND prod, report what each lacks
+#   ios/scripts/cloudkit_schema.sh promote    # verify dev, then deploy it to production
 #
-#   `check` exits non-zero when something required is missing, so it can gate a
-#   release step rather than only inform a human reading the scrollback.
+#   `check` exits non-zero when something required is missing from EITHER
+#   environment, so it can gate a release step rather than only inform a human
+#   reading the scrollback. A gap only production has is fixed by `promote`.
 #
 # Config (env, or edit the defaults):
 #   SECURACV_TEAM_ID       Apple team id — the same value CI passes as
@@ -69,6 +82,9 @@ set -euo pipefail
 CONTAINER="${SECURACV_CK_CONTAINER:-iCloud.com.securacv.witness}"
 TEAM_ID="${SECURACV_TEAM_ID:-${APPLE_DEVELOPMENT_TEAM:-}}"
 SCHEMA_FILE="${TMPDIR:-/tmp}/securacv-schema.ckdb"
+# Read-only: `check` compares it, nothing ever imports it. `promote` deploys
+# the DEVELOPMENT export above, never this one.
+PROD_SCHEMA_FILE="${TMPDIR:-/tmp}/securacv-schema.production.ckdb"
 
 die() { printf '\033[0;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 ok()  { printf '\033[0;32m✓\033[0m %s\n' "$*"; }
@@ -156,19 +172,31 @@ command -v xcrun >/dev/null 2>&1 || die "xcrun not found — this needs a Mac wi
 xcrun cktool --help >/dev/null 2>&1 || die "cktool unavailable — needs Xcode 14 or newer."
 [ -n "$TEAM_ID" ] || die "set SECURACV_TEAM_ID (or APPLE_DEVELOPMENT_TEAM) to your Apple team id."
 
-export_dev_schema() {
-  printf 'Exporting development schema for %s…\n' "$CONTAINER"
+# export_schema <development|production> <file>
+export_schema() {
+  local env="$1" file="$2"
+  printf 'Exporting %s schema for %s…\n' "$env" "$CONTAINER"
   if ! xcrun cktool export-schema \
         --team-id "$TEAM_ID" \
         --container-id "$CONTAINER" \
-        --environment development \
-        --output-file "$SCHEMA_FILE" 2>/dev/null; then
-    die "export failed. Usually the management token: run 'xcrun cktool save-token --type management'."
+        --environment "$env" \
+        --output-file "$file" 2>/dev/null; then
+    die "$env export failed. Usually the management token: run 'xcrun cktool save-token --type management'."
   fi
-  ok "exported to $SCHEMA_FILE"
+  ok "exported ${env} to $file"
 }
 
-# The whole `RECORD TYPE X ( … );` stanza, or nothing.
+# Production mints nothing on write: a type, field or index is there only if a
+# deploy put it there. So every production gap has the same fix.
+promote_fix() {
+  note "Fix: run '$(basename "$0") promote' — it re-checks development and"
+  note "     deploys it to production. If development lacks it too, fix that first."
+  note "     If cktool refuses the production import, deploy the same development"
+  note "     schema from CloudKit Console -> CloudKit Database -> Deploy Schema"
+  note "     Changes (Apple's documented route to production), then re-run check."
+}
+
+# The whole `RECORD TYPE X ( … );` stanza of one exported schema file, or nothing.
 #
 # The first version of this file read a fixed `grep -A20` window after the
 # header line. That silently under-reads: CloudKit's exported schema lists its
@@ -181,7 +209,7 @@ record_block() {
     $0 ~ "RECORD TYPE[[:space:]]+" t "[[:space:]]*\\(" { inblock = 1 }
     inblock { print }
     inblock && /\);[[:space:]]*$/ { exit }
-  ' "$SCHEMA_FILE"
+  ' "$2"
 }
 
 # A field name, matched on word boundaries so `name` does not match `recordName`
@@ -191,34 +219,73 @@ block_has_field() {
   printf '%s\n' "$1" | grep -qw -- "$2"
 }
 
-# The exported schema spells an index as an attribute on the field line
-# (`recordName NAME QUERYABLE`, `createdTimestamp TIMESTAMP QUERYABLE`), so the
+# The exported schema spells an index as an attribute on the field line, so the
 # test is "one line carries both the field and the word QUERYABLE."
+#
+# The table names the two SYSTEM-field indexes the way the dashboard does
+# (recordName, createdTimestamp), but the schema language an export is written
+# in spells those fields `"___recordID" REFERENCE QUERYABLE` and
+# `"___createTime" TIMESTAMP QUERYABLE` (Apple, "Integrating a Text-Based
+# Schema into Your Workflow"). Matching only the dashboard name would report
+# both indexes missing from any export written that way, in both environments,
+# so `check` could not go green and `promote` would always refuse. Accept
+# either spelling; neither can match a different field.
+schema_field_name() {
+  case "$1" in
+    recordName)       echo "___recordID" ;;
+    createdTimestamp) echo "___createTime" ;;
+    *)                echo "$1" ;;
+  esac
+}
+
 block_has_queryable() {
-  printf '%s\n' "$1" | grep -w -- "$2" | grep -qi "QUERYABLE"
+  printf '%s\n' "$1" | grep -w -e "$2" -e "$(schema_field_name "$2")" | grep -qi "QUERYABLE"
 }
 
 missing=0   # something REQUIRED is absent — promoting would ship a dead feature
 degraded=0  # only advised indexes are absent — the feature works, imperfectly
 
-verify_schema() {
-  local hard_fail="$1"
-  local type fields req_idx adv_idx block field idx
+# Where an index gap is fixed. In development, the dashboard; in production,
+# a promote, which carries development's indexes along with its types and fields.
+index_fix() {
+  local env="$1" type="$2" idx="$3"
+  if [ "$env" = "production" ]; then
+    note "A promote carries development's indexes along with its types and fields."
+    promote_fix
+  else
+    note "Add it in the dashboard: Schema -> Indexes -> $type -> $idx (Queryable),"
+    note "then re-export."
+  fi
+}
 
+# verify_schema <strict|lenient> <development|production> <file>
+# Resets the counters, so after each call they describe that environment alone.
+verify_schema() {
+  local hard_fail="$1" env="$2" file="$3"
+  local type fields req_idx adv_idx block field idx
+  missing=0
+  degraded=0
+
+  printf '\n── %s ──\n' "$env"
   while IFS='|' read -r type fields req_idx adv_idx; do
     [ -n "$type" ] || continue
     printf '\n%s\n' "$type"
 
-    block="$(record_block "$type")"
+    block="$(record_block "$type" "$file")"
     if [ -z "$block" ]; then
-      bad "$type is NOT in the development schema"
+      bad "$type is NOT in the $env schema"
       note "Without it: $(why_type "$type")."
-      note "CloudKit creates types on first write, and nothing has written one yet."
-      how_to_seed "$type"
+      if [ "$env" = "production" ]; then
+        note "Production never creates a type on write; it has only what was promoted."
+        promote_fix
+      else
+        note "CloudKit creates types on first write, and nothing has written one yet."
+        how_to_seed "$type"
+      fi
       missing=1
       continue
     fi
-    ok "$type is in the development schema"
+    ok "$type is in the $env schema"
 
     # A missing field is as fatal as a missing type, not a cosmetic gap.
     # Production rejects a save carrying a field the schema doesn't define, so
@@ -228,9 +295,10 @@ verify_schema() {
       if block_has_field "$block" "$field"; then
         ok "  field $field"
       else
-        bad "  $type exists but has no $field field"
+        bad "  $type exists in $env but has no $field field"
         note "Every write sets it, and production rejects a save with an undefined"
         note "field — so nothing is ever written. Effect: $(why_type "$type")."
+        [ "$env" = "production" ] && promote_fix
         missing=1
       fi
     done
@@ -240,10 +308,9 @@ verify_schema() {
       if block_has_queryable "$block" "$idx"; then
         ok "  $idx is QUERYABLE"
       else
-        bad "  $idx is not QUERYABLE (required)"
+        bad "  $idx is not QUERYABLE in $env (required)"
         note "$(why_index "$type" "$idx")."
-        note "Add it in the dashboard: Schema -> Indexes -> $type -> $idx (Queryable),"
-        note "then re-export."
+        index_fix "$env" "$type" "$idx"
         missing=1
       fi
     done
@@ -253,10 +320,9 @@ verify_schema() {
       if block_has_queryable "$block" "$idx"; then
         ok "  $idx is QUERYABLE"
       else
-        warn "  $idx is not QUERYABLE (advised)"
+        warn "  $idx is not QUERYABLE in $env (advised)"
         note "$(why_index "$type" "$idx")."
-        note "Add it in the dashboard: Schema -> Indexes -> $type -> $idx (Queryable),"
-        note "then re-export."
+        index_fix "$env" "$type" "$idx"
         degraded=1
       fi
     done
@@ -265,12 +331,14 @@ $(requirements)
 EOF
 
   printf '\n'
-  if [ "$missing" -eq 1 ]; then
-    bad "the schema is incomplete — at least one feature would be inoperative in production"
+  if [ "$missing" -eq 1 ] && [ "$env" = "production" ]; then
+    bad "the production schema is incomplete — at least one feature is inoperative in every TestFlight and App Store build"
+  elif [ "$missing" -eq 1 ]; then
+    bad "the $env schema is incomplete — at least one feature would be inoperative in production"
   elif [ "$degraded" -eq 1 ]; then
-    warn "everything works, but something advised is missing (see above)"
+    warn "everything works in $env, but something advised is missing (see above)"
   else
-    ok "every record type, field, and index this app depends on is present"
+    ok "every record type, field, and index this app depends on is in the $env schema"
   fi
 
   if [ "$missing" -eq 1 ] && [ "$hard_fail" = "strict" ]; then
@@ -280,14 +348,32 @@ EOF
 
 case "${1:-check}" in
   check)
-    export_dev_schema
-    verify_schema lenient
-    printf '\nNothing was deployed. Run with "promote" to push this to production.\n'
-    [ "$missing" -eq 0 ] || exit 1
+    export_schema development "$SCHEMA_FILE"
+    export_schema production "$PROD_SCHEMA_FILE"
+    verify_schema lenient development "$SCHEMA_FILE"
+    dev_missing="$missing"
+    verify_schema lenient production "$PROD_SCHEMA_FILE"
+    prod_missing="$missing"
+
+    printf '\n'
+    if [ "$prod_missing" -eq 1 ] && [ "$dev_missing" -eq 0 ]; then
+      bad "PRODUCTION lacks what the app writes or queries (named above); development has all of it."
+      note "Fix: run '$(basename "$0") promote'."
+    elif [ "$prod_missing" -eq 1 ]; then
+      bad "PRODUCTION and DEVELOPMENT both lack what the app writes or queries (named above)."
+      note "Fix development first (the steps above), then run '$(basename "$0") promote'."
+    elif [ "$dev_missing" -eq 1 ]; then
+      bad "DEVELOPMENT lacks what the app writes or queries (named above); production has it."
+      note "Shipped builds are unaffected, but 'promote' refuses until development is fixed."
+    else
+      ok "both environments carry everything this app writes and queries"
+    fi
+    printf '\nNothing was deployed. Run with "promote" to push development to production.\n'
+    [ "$dev_missing" -eq 0 ] && [ "$prod_missing" -eq 0 ] || exit 1
     ;;
   promote)
-    export_dev_schema
-    verify_schema strict
+    export_schema development "$SCHEMA_FILE"
+    verify_schema strict development "$SCHEMA_FILE"
     printf '\nDeploying to PRODUCTION (%s).\n' "$CONTAINER"
     printf 'Schema deploys are additive and cannot be undone. Continue? [y/N] '
     read -r reply
@@ -298,6 +384,8 @@ case "${1:-check}" in
       --environment production \
       --file "$SCHEMA_FILE"
     ok "production schema updated"
+    printf '\nThen run "%s check": it reads production back, so green there means the\n' "$(basename "$0")"
+    printf 'deploy landed. That proves the schema, not the feature.\n'
     printf '\nVerify for real, both halves:\n'
     printf '  * Away alerts — install the TestFlight build on a phone signed into\n'
     printf '    iCloud, arm an "Anywhere" rule, and let a Canary go dark while that\n'

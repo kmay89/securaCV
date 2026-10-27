@@ -125,7 +125,9 @@ typedef enum {
     SECURACV_OTA_ERR_SIZE_MISMATCH,         /**< Downloaded image size doesn't match manifest */
     SECURACV_OTA_ERR_FLASH_WRITE,           /**< Failed to write firmware to OTA partition */
     SECURACV_OTA_ERR_FLASH_READ,            /**< Failed to read OTA partition for verification */
-    SECURACV_OTA_ERR_PARTITION,             /**< OTA partition not found or invalid */
+    SECURACV_OTA_ERR_PARTITION,             /**< No inactive OTA slot, or the image is larger than the slot
+                                                 (a table older than the image — USB reflash; see
+                                                 securacv_ota_image_fits_slot()) */
     SECURACV_OTA_ERR_VERSION_ROLLBACK,      /**< Update rejected: version older than minimum */
     SECURACV_OTA_ERR_SELF_TEST_FAILED,      /**< Post-OTA self-test failed, rollback initiated */
     SECURACV_OTA_ERR_ALREADY_RUNNING,       /**< OTA operation already in progress */
@@ -671,6 +673,32 @@ securacv_ota_decision_t securacv_ota_update_decision(
     const char *manifest_version,
     const char *running_version,
     const char *nvs_floor);
+
+/**
+ * @brief Pre-download slot check: does the image fit the inactive app slot?
+ *
+ * Pure logic (host-tested). The pull engine asks it once the manifest is
+ * parsed and BEFORE a byte is downloaded or written, with the manifest's
+ * `size` (covered by the manifest signature) and the size of
+ * esp_ota_get_next_update_partition(NULL) — or 0 when there is no inactive
+ * slot (none found, or a single-app table, where IDF hands back the running
+ * partition itself).
+ *
+ * Why it exists: OTA ships app-only images, so a fielded board keeps the
+ * partition table it was USB-flashed with (firmware/PARTITIONS.md). Vision
+ * C3 factory images fw-v2.2.0..fw-v2.4.15 laid down 0x140000 slots; the
+ * fw-v2.4.16 images are 1,400,368 / 1,409,952 bytes. The engine used to
+ * download and write until the slot ran out, fail, and start over on every
+ * poll. Refused here, an old-table board costs one manifest fetch per poll
+ * and reports SECURACV_OTA_ERR_PARTITION (it needs a USB reflash).
+ *
+ * @param image_size Manifest-declared image size in bytes. 0 (undeclared)
+ *                   cannot be pre-checked and is not refused here; the
+ *                   post-download length check and the write bound apply.
+ * @param slot_size  Inactive app slot size in bytes (0 = no inactive slot)
+ * @return true if the install may go on to download
+ */
+bool securacv_ota_image_fits_slot(uint32_t image_size, uint32_t slot_size);
 
 /**
  * @brief URL transport policy

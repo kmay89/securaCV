@@ -4,6 +4,18 @@ The code is tested; what makes it reliable is the practice around it. This
 is the order. Each step has a check you can see on the Health page or run
 with `backoffice doctor`.
 
+## 0. Three copies, each saying which it is
+
+The server runs production (`BACKOFFICE_ENV=production`), staging and the
+demo from the same image (`infra/README.md`). Every merge deploys to
+staging, which runs on last night's production copy with test keys; a
+button promotes a build to production. Before anything below, check the
+page title and the badge beside the company name: they say *staging* or
+*dev* when it is not the real one, and `backoffice version` (or `/healthz`)
+says which build. Production refuses to start on a demo seed, on a file
+staging labeled, or without https, so the wrong data in the wrong place
+fails loudly rather than quietly.
+
 ## 1. The shadow fortnight (Stripe test mode, a throwaway mailbox)
 
 Run it for real with nothing at stake.

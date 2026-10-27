@@ -229,7 +229,27 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
   is not on its documented public allowlist.
 - **Follow-up (Phase 6, with the web UI port):** the WAP's one-shot pair token
   + 24 h HttpOnly `cv_session` cookie (option A), so a home-LAN reload stops
-  needing a fresh BOOT tap each time.
+  needing a fresh BOOT tap each time. That port must bring canary-wap's
+  any-session class with it (`ANY_SESSION_GATES` in the WAP's route check,
+  sweep F328): a session is a gate the landing page's caller passes, so the
+  receipt, the page token and every other answer that carries a credential
+  must keep refusing it. Until then the flagship's route check
+  (`check_bearer_only_answers`, sweep F338) fails a cookie read or a
+  `Set-Cookie`, any request header but `Authorization` (the auth lib) and
+  `Host`, a URL query outside the witness log's paging and a read of a
+  request's raw path (`->uri`, or `.uri` through any reference to the
+  request, which keeps its query) outside its four readers, and it pins
+  `page_token_inject` and its four inputs whole (the setup input at its
+  source: the setup lib's state, the stored flag first boot is read from and
+  the functions that set and clear them; the SoftAP input with the interface
+  helpers it reads through; the tap with the handler whose press opens it),
+  so a careless edit cannot add a session by widening one of them in that
+  glue or by a macro of a name it calls. The check's threat model is a
+  careless or mistaken firmware edit, not a deliberate evasion of it: its
+  rules against the deliberate spellings (token pasting, a symbol binding, an
+  unread build input, a held name defined by a `-D` flag, a macro named for a
+  C++ keyword) are defense in depth, and gcc's `--define-macro`, the long
+  form of `-D`, passes the flag rule.
 - Gap #10 turns ✅ when the per-peripheral state and the degraded safe mode land; gap #11 is flipped.
 
 ### Phase 4 — Mesh + CSI mesh sensing v1 ✅

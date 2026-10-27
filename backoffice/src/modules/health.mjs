@@ -2,6 +2,10 @@
 // a person can read — configuration, backups and their proofs, the books,
 // probes, jobs, disk — with what to do about each. The same list is the
 // Health page, `backoffice doctor`, and the top of the morning digest.
+import { attention } from '../attention.mjs';
+import { shipFromIssues } from './labels.mjs';
+import { pushConfigured, newOrderOn, ntfyUrlFor } from './notify.mjs';
+import { taxVerdict } from './nexus.mjs';
 import { statfsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { hasOperator } from '../auth.mjs';
@@ -16,6 +20,9 @@ import { shippingStatus } from './catalog.mjs';
 import { supportStats } from './support.mjs';
 import { lowStock } from './inventory.mjs';
 import { analytics } from './analytics.mjs';
+import { envRules } from '../env.mjs';
+import { describeBuild } from '../version.mjs';
+import { listFlags } from '../flags.mjs';
 
 const hoursSince = (iso) => iso ? (Date.now() - Date.parse(iso)) / 3600000 : null;
 const fmtH = (h) => h == null ? 'never' : h < 1 ? `${Math.round(h * 60)} min ago` : h < 48 ? `${Math.round(h)} h ago` : `${Math.round(h / 24)} d ago`;
@@ -25,6 +32,12 @@ export function doctor(db, cfg) {
   const runs = Object.fromEntries(jobRuns(db).map(r => [r.name, r]));
   const parse = (s) => { try { return JSON.parse(s || 'null'); } catch { return null; } };
   const demo = !!cfg.demo;
+  // which this is, and what build
+  const warns = envRules(cfg, db).filter(r => r.level === 'warn');
+  add('environment', 'Environment', cfg.env === 'production' ? warns.length === 0 : warns.length ? false : null, `${cfg.env || 'development'} · ${describeBuild(cfg)}${warns.length ? ` · ${warns.map(w => w.text).join('; ')}` : ''}`, 'BACKOFFICE_ENV names it: production, staging, demo or development (env.mjs says what each refuses)');
+  const sc = db.schema || {}; add('schema', 'Database schema', sc.ahead?.length ? false : true, `${sc.applied ?? '?'} migrations · latest ${sc.latest || '—'}${sc.pre_migrate_copies ? ` · ${sc.pre_migrate_copies} pre-migration cop${sc.pre_migrate_copies === 1 ? 'y' : 'ies'} on disk` : ''}${sc.ahead?.length ? ` · AHEAD of this build: ${sc.ahead.join(', ')}` : ''}`, 'start the build that applied them, or restore the pre-migration copy');
+  const flags = listFlags(db, cfg); const overdue = flags.filter(f => f.overdue); const on = flags.filter(f => f.on);
+  add('flags', 'Feature flags', overdue.length ? false : true, `${flags.length} declared · ${on.length ? `on: ${on.map(f => `${f.name} (${f.source})`).join(', ')}` : 'none on'}${overdue.length ? ` · past their date: ${overdue.map(f => f.name).join(', ')}` : ''}`, 'a rollout flag past remove_by is on for good or dead: delete it and the branch it guarded (src/flags.mjs)');
   // identity & reach
   const people = db.all("SELECT role, COUNT(*) AS n FROM users WHERE status = 'active' GROUP BY role"); const locked = db.get('SELECT COUNT(*) AS n FROM users WHERE locked_until > ?', new Date().toISOString()).n;
   add('operator', 'An owner can log in', hasOperator(db), hasOperator(db) ? `password + authenticator · ${people.map(p => `${p.n} ${p.role}`).join(', ')}${locked ? ` · ${locked} locked out` : ''}` : 'no owner', 'run `backoffice setup`, or accept the invitation');
@@ -33,6 +46,15 @@ export function doctor(db, cfg) {
   const defaultUrl = /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(cfg.baseUrl);
   add('base_url', 'The codes on slips and labels point here', demo ? null : !defaultUrl, demo ? 'demo mode' : defaultUrl ? `BACKOFFICE_BASE_URL is ${cfg.baseUrl} — a phone scanning a slip lands nowhere` : cfg.baseUrl, 'set BACKOFFICE_BASE_URL to the address the phone reaches');
   const sh = shippingStatus();
+  const edited = db.all('SELECT sku FROM product_overrides').map(r => r.sku); add('catalog', 'Store listing vs store.json', null, edited.length ? `${edited.length} edited here, not yet in the file: ${edited.join(', ')} — the store serves the edits; paste the patch from Products when convenient` : 'the store says what the file says');
+  add('push', 'Phone push on a new order', demo ? null : pushConfigured(db, cfg) ? (newOrderOn(db, cfg) ? true : null) : null, demo ? 'demo mode' : pushConfigured(db, cfg) ? (newOrderOn(db, cfg) ? `to ${ntfyUrlFor(db, cfg)}` : 'a topic is set, but new orders are set to stay quiet') : `no topic — a new order ${cfg.operatorEmail ? `mails ${cfg.operatorEmail}` : 'reaches nobody (OPERATOR_EMAIL is empty)'}`, 'paste an ntfy topic under Settings → Your phone');
+  const tax = taxVerdict(db, cfg); add('sales_tax', 'Sales tax', tax.ok, tax.text, 'turn on the stripe_tax flag in Settings, and register in each state you owe');
+  add('sign_in_links', 'Sign-in links (mailed, once, this browser only; the authenticator still needed)', demo ? null : cfg.smtpUrl ? true : null, demo ? 'demo mode (the link opens straight to the code step)' : cfg.smtpUrl ? `on · good for ${cfg.signInLinkMinutes} min` : 'off — needs SMTP_URL; password + authenticator only', 'set SMTP_URL');
+  add('allowlist', 'Admin reachable only from allowed networks', demo ? null : cfg.adminAllowCidrs ? true : null, cfg.adminAllowCidrs ? `ADMIN_ALLOW_CIDRS = ${cfg.adminAllowCidrs} (everything else sees a 404; the store, the webhook and customers\' pages are open)` : 'any network — set ADMIN_ALLOW_CIDRS to your home, office or VPN ranges to hide the admin from the internet', 'set ADMIN_ALLOW_CIDRS');
+  add('session_bind', 'Sessions bound to the network they opened on', demo ? null : cfg.sessionBindIp ? true : null, cfg.sessionBindIp ? 'on — a session that moves networks is ended' : 'off — a stolen cookie works from anywhere until it expires; SESSION_BIND_IP=1 ends it the moment it moves (a phone changing networks signs in again)', 'set SESSION_BIND_IP=1');
+  const recentNew = db.all("SELECT entity_id, detail, at FROM audit_log WHERE action = 'auth.login.new_network' AND at >= ? ORDER BY id DESC LIMIT 5", new Date(Date.now() - 7 * 86400000).toISOString()); const blocks = db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action IN ('guard.block','guard.lockout') AND at >= ?", new Date(Date.now() - 86400000).toISOString()).n;
+  add('watch', 'The watch (scanners, lockouts, new networks)', null, `${blocks} block${blocks === 1 ? '' : 's'} or lockout${blocks === 1 ? '' : 's'} in 24 h · ${recentNew.length ? `sign-ins from a new network this week: ${recentNew.map(r => { try { return `${r.entity_id} from ${JSON.parse(r.detail).net}`; } catch { return r.entity_id; } }).join('; ')}` : 'no sign-in from a new network this week'}`, 'each one is a mail to the person and a push to the phone the moment it happens');
+  add('labels', 'Labels from the ship bench', demo ? null : cfg.shippoToken ? shipFromIssues(cfg).length === 0 : null, demo ? 'demo labels (pretend, printable)' : cfg.shippoToken ? (shipFromIssues(cfg).length ? `SHIPPO_API_TOKEN set, return address incomplete: ${shipFromIssues(cfg).join(', ')}` : `SHIPPO_API_TOKEN set · from ${cfg.shipFrom.city}, ${cfg.shipFrom.state}`) : 'no SHIPPO_API_TOKEN — labels come from the website\'s fulfill.mjs and the manifest', 'set SHIPPO_API_TOKEN and SHIP_FROM_NAME/LINE1/CITY/STATE/ZIP');
   add('shipping_data', 'Box data (shipping.json) for the pack bench', demo ? null : sh.loaded_at ? !sh.error || hoursSince(sh.loaded_at) < 24 : sh.error ? false : null, demo ? 'demo boxes' : sh.loaded_at ? `${sh.boxes} boxes, ${sh.parcels} parcels · loaded ${fmtH(hoursSince(sh.loaded_at))}${sh.error ? ` · last refresh failed: ${sh.error}` : ''}` : sh.error ? sh.error : 'not asked for yet — opens with the first order page', 'set SHIPPING_JSON (or put shipping.json beside store.json) so boxes are planned, not guessed');
   add('smtp', 'Outbound mail relay', demo ? null : !!cfg.smtpUrl, demo ? 'demo transport' : cfg.smtpUrl ? 'SMTP_URL set' : 'mail is queued, never sent', 'set SMTP_URL to a relay with SPF/DKIM for your domain');
   add('imap', 'Support mailbox read', demo ? null : !!cfg.imapUrl, demo ? 'demo mode' : cfg.imapUrl ? 'IMAP_URL set' : 'inbound mail is not read', 'set IMAP_URL and SUPPORT_ADDR');
@@ -73,17 +95,9 @@ export function doctor(db, cfg) {
 
 // What needs doing today, as lines — the Home page's list and the digest's.
 export function todayLines(db, cfg, { base = '' } = {}) {
-  const o = orderStats(db), s = supportStats(db), low = lowStock(db), ex = openExceptions(db);
-  const w = db.get('SELECT COUNT(*) AS n FROM warranty_claims WHERE status IN (\'open\',\'shipping\')').n;
-  const inv = db.get('SELECT COALESCE(SUM(total_cents),0) AS c, COUNT(*) AS n FROM invoices WHERE status IN (\'sent\',\'overdue\')');
-  const lines = [];
-  if (o.open) lines.push({ n: o.open, what: `order${o.open === 1 ? '' : 's'} to pack or ship`, href: `${base}/pack`, action: 'Open the pack bench' });
-  if (s.open) lines.push({ n: s.open, what: `support ticket${s.open === 1 ? '' : 's'} waiting on us${s.breached ? ` (${s.breached} past SLA)` : ''}`, href: `${base}/tickets?status=open`, action: 'Answer', urgent: s.breached > 0 });
-  if (low.length) lines.push({ n: low.length, what: `part${low.length === 1 ? '' : 's'} at or under the reorder point: ${low.map(i => i.sku).join(', ')}`, href: `${base}/inventory`, action: 'Reorder' });
-  if (w) lines.push({ n: w, what: `warranty claim${w === 1 ? '' : 's'} open`, href: `${base}/warranty`, action: 'Resolve' });
-  if (inv.n) lines.push({ n: inv.n, what: `invoice${inv.n === 1 ? '' : 's'} outstanding, $${(inv.c / 100).toFixed(2)}`, href: `${base}/invoices`, action: 'Chase' });
-  if (ex.length) lines.push({ n: ex.length, what: `exception${ex.length === 1 ? '' : 's'} need a decision: ${ex.map(e => e.key).join(', ')}`, href: `${base}/exceptions`, action: 'Decide', urgent: true });
-  return lines;
+  // One list for the home page, the sidebar and this mail: attention.mjs ranks it by deadline (the
+  // health row is left out here; the digest has its own HEALTH section and the home its pill).
+  return attention(db, cfg).items.filter(i => i.key !== 'health').map(i => ({ n: i.n, what: i.what, href: `${base}${i.href}`, action: i.action, urgent: i.level === 'now', level: i.level, due: i.due }));
 }
 
 // The morning mail: today's list, the thirty-day numbers, the health checklist. Plain text, one screen.

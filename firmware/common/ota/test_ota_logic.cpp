@@ -18,11 +18,14 @@
  *      leaks into the primary UI when new codes are added)
  *   7. Canonical manifest-signature message — byte-identical to
  *      ota_release.py (shared fixture in test_ota_release.py)
+ *   8. Inactive-slot pre-check — an image an old partition table's slot
+ *      cannot hold is refused before any download (fw-v2.4.16 Vision C3)
  */
 
 #include "securacv_ota.h"
 
 #include <cassert>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 
@@ -81,6 +84,46 @@ static int test_update_decision()
     CHECK(securacv_ota_update_decision("2.3.0", "2.1.0", "2.3.0") == SECURACV_OTA_DECISION_UP_TO_DATE);
     // NULL floor behaves like empty.
     CHECK(securacv_ota_update_decision("2.2.0", "2.1.0", NULL) == SECURACV_OTA_DECISION_UPDATE);
+    return 0;
+}
+
+static int test_image_fits_slot()
+{
+    // The incident, in its own numbers: fw-v2.4.16's Vision C3 images
+    // (canary-vision, canary-vision-xiao-c3) against the 0x140000
+    // default.csv slots every factory image fw-v2.2.0..fw-v2.4.15 laid down.
+    // The engine used to download and write until the slot ran out, then
+    // try again on every poll; now it refuses before the download.
+    CHECK(!securacv_ota_image_fits_slot(1400368, 0x140000));
+    CHECK(!securacv_ota_image_fits_slot(1409952, 0x140000));
+    // ...and the min_spiffs.csv 0x1E0000 slots fw-v2.4.16's factory image
+    // lays down take them.
+    CHECK(securacv_ota_image_fits_slot(1400368, 0x1E0000));
+    CHECK(securacv_ota_image_fits_slot(1409952, 0x1E0000));
+
+    // Boundary: exactly full fits, one byte over does not.
+    CHECK(securacv_ota_image_fits_slot(0x140000, 0x140000));
+    CHECK(!securacv_ota_image_fits_slot(0x140000 + 1, 0x140000));
+
+    // No inactive slot (none found, or a single-app table where IDF hands
+    // back the running partition): refused whatever the size.
+    CHECK(!securacv_ota_image_fits_slot(1, 0));
+    CHECK(!securacv_ota_image_fits_slot(0, 0));
+
+    // An undeclared size cannot be pre-checked: not refused here (the
+    // post-download length check and the write bound still apply).
+    CHECK(securacv_ota_image_fits_slot(0, 0x140000));
+
+    // Top of the range: compared as-is, no arithmetic to overflow.
+    CHECK(securacv_ota_image_fits_slot(UINT32_MAX, UINT32_MAX));
+    CHECK(!securacv_ota_image_fits_slot(UINT32_MAX, UINT32_MAX - 1));
+
+    // The refusal must tell the owner the one thing that works. Retrying
+    // never does (the slot size is fixed by the USB flash), so the UI
+    // sentence names USB rather than "try again".
+    const char *msg = securacv_ota_friendly_error(SECURACV_OTA_ERR_PARTITION);
+    CHECK(msg != NULL && strstr(msg, "USB") != NULL);
+    CHECK(strstr(msg, "again") == NULL);
     return 0;
 }
 
@@ -422,6 +465,7 @@ int main()
 {
     if (test_version_compare()) return 1;
     if (test_update_decision()) return 1;
+    if (test_image_fits_slot()) return 1;
     if (test_url_policy()) return 1;
     if (test_signed_message_layout()) return 1;
     if (test_hex_to_bytes()) return 1;

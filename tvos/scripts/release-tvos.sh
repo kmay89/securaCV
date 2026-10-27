@@ -2,8 +2,10 @@
 # Archive, export, and (only when asked) upload the Witness Wall.
 #
 # The one-button release from the tag: xcodebuild archives the signed tvOS app
-# and `xcrun altool` uploads it. Apple's phased release then carries the build
-# to every Apple TV — no artifact is hand-carried. See docs/tvos/AUTOPIPELINE.md.
+# and `xcrun altool` uploads it — no artifact is hand-carried. The upload ends
+# at App Store Connect (processing, then TestFlight); the build reaches Apple TV
+# users only after someone submits it for review there. See
+# docs/tvos/AUTOPIPELINE.md.
 #
 # Reads (set by .github/workflows/tvos-release.yml):
 #   APPLE_DEVELOPMENT_TEAM, APPLE_API_ISSUER, APPLE_API_KEY, APPLE_API_KEY_PATH
@@ -85,6 +87,14 @@ echo "── regenerating the Xcode project ──"
 # The 2026-07-24 firmware lesson generalized: a release that ships under a
 # version it doesn't carry is wrong in exactly the way nobody notices until a
 # user reports it.
+#
+# This comparison has teeth only on a `tvos-v*` tag push, where
+# EXPECTED_VERSION comes from the tag. A workflow_dispatch publish (the
+# Update-everything button's path) has no tag yet: tvos-release.yml reads
+# EXPECTED_VERSION out of this same MARKETING_VERSION line with this same sed,
+# so the two sides cannot differ and this check cannot fail. On that path the
+# protection is the workflow's refusal to publish a version that is already
+# tagged; the tag is cut from this value only after the upload.
 marketing_version="$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([0-9][0-9.]*\)"\{0,1\} *$/\1/p' "$PROJECT_DIR/project.yml" | head -1)"
 if [ -z "$marketing_version" ]; then
   echo "::error::could not read MARKETING_VERSION from $PROJECT_DIR/project.yml."
@@ -247,4 +257,4 @@ fi
 # app target, not just the one that broke).
 bash "$(dirname "$0")/../../.github/scripts/asc_publish.sh" "$ipa" appletvos
 
-echo "Uploaded $marketing_version. Apple's phased release will carry it to every Apple TV."
+echo "Uploaded $marketing_version: delivered to App Store Connect. It reaches Apple TV users only after someone submits it for review in App Store Connect."
