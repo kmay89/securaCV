@@ -109,13 +109,23 @@ export function cablePoint(t, bz = CABLE_BEZIER) {
 }
 
 // Where the cable seats and where the light answers — measured from the
-// committed compact STLs, mapped through realTwoPart's placement (base at
-// z −fz/2+nest/2, lid flipped at +bz/2−nest/2):
-//   USB slot: base −X wall (x −16.85), the y ±5.25 notch (usb_w 10.5),
-//             connector center z ≈ 6.6 raw → scene (−16.85, 0, −1.45)
-//   light pipe: lid Ø3.2 at raw (5.44, −1.68) → scene (5.44, 1.68, 8.05)
-export const WAP_PORT = [-16.85, 0, -1.45];
-export const WAP_LED = [5.44, 1.68, 8.05];
+// committed compact STLs, mapped through realTwoPart's placement (the CAD's
+// seat: the base — the plate — as modeled, the lid — the shell — turned over
+// at base_h + lid_t = 15.05, the pair centered on the closed 15.25 depth, so
+// scene z = CAD z − 7.425; x/y are the CAD's):
+//   USB slot: the 12 × 6.5 opening (usb_w × usb_h) through the LID's −X
+//             wall (outer face x −17.85), centered at CAD (y 0, z 8.3 =
+//             usb_bot + usb_h/2) → scene (−16.85, 0, 0.875): the rig's
+//             seated origin, 1.0 inside the wall's outer face
+//   light pipe: the lid's Ø3.2 port at CAD (board_cx + lp_dx, board_cy +
+//             lp_dy) = (−2.85, 9.5), on the face at CAD z 15.05 → scene
+//             (−2.85, 9.5, 7.625)
+// Both were typed from an older lid and the bbox-stacked card (the base the
+// deep part): the LED sat 1.9 mm under the solid face, 11.4 mm off the port,
+// and the plug's tip ran into the wall below the opening. tests/wap.test.js
+// casts rays through the seated lid to hold both.
+export const WAP_PORT = [-16.85, 0, 0.875];
+export const WAP_LED = [-2.85, 9.5, 7.625];
 
 // ── the serial console ────────────────────────────────────────────────────
 export function buildSerial(data, bus) {
@@ -878,7 +888,7 @@ function buildStrapTrainer() {
     boot.querySelector(".bench-chip-state").textContent = held ? "held" : "released";
     status.textContent = !plugged ? "⏚ no power — plug the cable in"
       : mode === "download" ? "ROM: waiting for download (flash now, then tap RESET)"
-        : "app running — BOOT does nothing until the next reset";
+        : "app running — the ROM ignores BOOT until the next reset, but the firmware reads it (a tap hands the receipt to one asking page, so the page asks first; 10 s held is a factory reset)";
   };
   usb.addEventListener("click", () => {
     plugged = !plugged;
@@ -888,7 +898,7 @@ function buildStrapTrainer() {
   });
   boot.addEventListener("click", () => {
     held = !held;
-    if (held && plugged && mode === "run") say("(BOOT held — nothing happens: it's only sampled at reset)");
+    if (held && plugged && mode === "run") say("(BOOT held — the ROM only samples it at reset, but the running WAP counts it: kept 10 s, it clears Wi-Fi, broker and name, keeps its key and token, and, on a unit that had Wi-Fi, reopens its first-come Bluetooth setup door for half an hour, unless a landing session turned its Bluetooth off, which the hold keeps)");
     paint();
   });
   reset.addEventListener("click", () => {

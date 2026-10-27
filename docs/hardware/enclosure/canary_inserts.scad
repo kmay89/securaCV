@@ -1,19 +1,70 @@
 // ============================================================================
-//  Canary — FUNCTIONAL INSERTS  ⚠️ IN DEVELOPMENT (v0.1-dev)
+//  Canary — FUNCTIONAL INSERTS  ⚠️ IN DEVELOPMENT (v0.2.1-dev)
 //  Three small parts referenced by the enclosure docs but never modeled:
 //    part = "horn"       — exponential buzzer horn: glues INSIDE the WAP lid
 //                          over the vent cluster; channels the piezo into the
 //                          hole ring for a slightly more directional chirp.
+//                          It needs horn_h of room under the vent, and the
+//                          piezo it channels hangs under its throat. Against
+//                          Seeed's board models (the board's ±0.25 float):
+//                          the camera presets leave 12.4 over the PCB top and
+//                          the Sense camera's flex fold rises to 7.3-7.5 under
+//                          the throat's rim, so the horn ALONE fits at
+//                          horn_h <= 5.0 (at ~6 it meets the flex by 0.9;
+//                          the model mirrored, the FPC connector at 6.18
+//                          binds first, at 6.2); compact_plain leaves 6.35
+//                          over a 2.0 shield can: horn_h <= 4.0. With the
+//                          BOM's piezo (BZ1, CPT-9019S, 9 x 9 x 1.9) glued
+//                          under the throat, 0.3 clear: 2.7 on a camera
+//                          build, 2.15 compact. And 8 is the SHORTEST this
+//                          profile prints without support (the bore's
+//                          steepest flare is (mouth - throat)/horn_h, 45° at
+//                          8; at 7 down to 2.7 the bore overhangs 59-97 mm²),
+//                          so the default stays 8 and fits no WAP preset; at
+//                          a height that fits it is a short flare that needs
+//                          support. Without the room, glue the piezo straight
+//                          onto the GORE seat and leave the horn out.
 //    part = "glare_ring" — matte washer behind a camera disc: kills internal
 //                          reflections off glossy prints (print MATTE BLACK).
 //    part = "gland_body" / "gland_bush" / "gland_cap" — three-part printed
 //                          cable gland (rigid body + TPU bush + press cap)
-//                          for the relay/gang cable pass-throughs. The TPU
+//                          for the relay's panel-lead hole (Ø8.4 in its 2.0
+//                          face; the gang plate has no cable pass-through —
+//                          its power arrives by in-box USB). The TPU
 //                          bush is squeezed between the nose bore and the
 //                          cable; the cap snaps over the barb and holds it
-//                          down on its seat.
+//                          down on its seat, and its skirt clamps the panel
+//                          onto the flange's O-ring.
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
+//
+//  v0.2-dev (2026-10-23): three fits measured in their cases, one print pose.
+//    HORN — set in the WAP lid at the vent, its Ø20.8 flange (mouth 14 + the
+//    walls + 4) met the magnet pocket ring (8.8 mm³) and the camera module
+//    (8.1 mm³): the vent is 8.2 from both. The mouth is now the Ø12 vent-pad
+//    recess and the glue land is the wall's own 1.4 (Ø14.8: 0.76 clear of the
+//    module, 0.84 of the ring). It printed throat-down — 24 mm² on the bed
+//    and the flange a 3.4 mm flat overhang — so part = "horn" now lays the
+//    glue face on the bed; horn() keeps its assembled pose.
+//    GLARE RING — 0.6 under a 1.0 disc in a seat cut disc_t + 0.2 deep stood
+//    the disc 0.4 proud of the face, and Ø13.4 in the Ø14.4 seat floated 0.5
+//    a side. It is one 0.2 layer now (the disc lands flush) at the disc's own Ø.
+//    GLAND — nothing held the panel: the cap parked 4.3 above the panel's
+//    inside face, so the flange's O-ring saw no squeeze and the body could
+//    slide 5.4 out of its hole. A skirt carries the cap down to the panel,
+//    and the O-ring groove is 0.65 deep so the cap's 0.1 of snap slack rests
+//    the cord at 25 %.
+//
+//  v0.2.1-dev (2026-10-23, the cross-family review): two claims, no geometry.
+//    HORN — the header's "shorten horn_h to under ~6 for a camera build" still
+//    met the Sense camera's flex (0.9 at 6, Seeed's model), it gave no number
+//    for compact_plain, and it left out the piezo, which hangs under the
+//    throat: 2.7 / 2.15 is all that fits with it. Those heights print the bore
+//    over 59-97 mm² of overhang (8 is this profile's support-free minimum), so
+//    horn_h stays 8 and the header says what fits where.
+//    GLAND — it said "the relay/gang cable pass-throughs": the gang plate has
+//    none (device screws, light pipe, lux window only); the relay's face hole
+//    is the one it fits (8.0 + 2 x tol_slide = cg_hole, its lid_t = cg_panel).
 // ============================================================================
 
 use <canary_snap_lib.scad>   // snap_budget_once — the cap's one-time snap strain
@@ -23,19 +74,21 @@ part = "horn";       // ["horn","glare_ring","gland_body","gland_bush","gland_ca
 
 /* [Horn] — matches the WAP lid vent cluster defaults */
 horn_throat = 4.0;   // over the buzzer port
-horn_mouth  = 14.0;  // at the lid face (covers the vent hole ring). Physics honesty: a
+horn_mouth  = 12.0;  // at the lid face: the WAP's Ø12 vent-pad recess, so the wall end glues on the flat round it and the mouth still covers the Ø6 vent-hole ring.
+                     // (v0.2: 14, plus a 4 mm flange, put a Ø20.8 rim into the camera module and the
+                     // magnet ring; Ø14.8 now clears both.) Physics honesty: a
                      // lid-scale horn cannot LOAD a ~4 kHz chirp (flare cutoff ~8.5 kHz,
                      // mouth << lambda) - expect a few dB of on-axis directivity, not "louder"
-horn_h      = 8.0;   // horn height, throat to mouth — five stacked cones flaring with the square of the height, the glue flange in its last 1.2
+horn_h      = 8.0;   // the shortest support-free length of this profile (steepest bore flare (mouth - throat)/horn_h = 45° at 8) — it fits no WAP preset; the header gives the room each leaves (v0.2.1)
 horn_wall   = 1.4;   // horn wall thickness round the flare; the glue flange reaches 2 past it (Ø horn_mouth + 2 x this + 4)
 
 /* [Glare ring] — matches the camera disc seats */
-gr_od = 13.4;        // fits inside the 14 mm disc seat (12 mm seats: set 11.4)
+gr_od = 14.0;        // the disc's own Ø: the seat is cut disc + 2*tol_slide (Ø14.4), so the ring centers like the disc (12 mm seats: set 12.0)
 gr_id = 10.5;        // just over the aperture
-gr_t  = 0.6;         // glare ring thickness — a flat washer gr_od across with a gr_id hole
+gr_t  = 0.2;         // one layer: the seats are cut disc_t + 0.2 deep, so the disc lands flush (at 0.6 it stood 0.4 proud of the face)
 
 /* [Cable gland] */
-cg_hole   = 8.2;     // panel hole it fits (relay lid default)
+cg_hole   = 8.4;     // panel hole it fits: the relay lid's (its M8 thread + 2 x tol_slide since the 2026-10-22 audit; at 8.2 the barb no longer caught there)
 cg_cable  = 4.5;     // cable diameter the bush grips
 cg_panel  = 2.0;     // panel thickness
 cg_flange = 14.0;    // gland body's outer flange Ø, 2.0 thick: it bears on the panel, with a Ø1-cord O-ring groove round the hole in its panel face
@@ -48,7 +101,7 @@ tol_press = 0.10;    // catalog default — core_tol_press(), canary_core_lib
 /* [Quality] */
 $fa = 3; $fs = 0.4;
 
-echo(str("Canary inserts v0.1-dev — ", part, "  (IN DEVELOPMENT)"));
+echo(str("Canary inserts v0.2.1-dev — ", part, "  (IN DEVELOPMENT)"));
 
 // ---- cable gland arithmetic (body z: flange face at 0, nose up) ---------------
 // The bush used to be a Ø6.3→5.4 cone driven into the Ø5.5 nose bore: its
@@ -85,7 +138,13 @@ cg_cap_hole  = cg_cable + 0.3;              // 4.8 < the bush's 5.4: the floor d
 cg_lip_d     = cg_nose + 0.2;               // 8.0: slides on the nose, catches the Ø8.3 barb
 cg_lip_h     = 1.0;                         // cap snap lip height — the lip slides on the nose, cams over the barb and parks 0.1 under its shoulder
 cg_groove_d  = cg_barb_d + 0.3;             // 8.6: the barb parks free inside
-cg_cap_h     = cg_cap_floor + (cg_top + cg_gap - cg_barb_z) + 0.1 + cg_lip_h;  // lip 0.1 under the shoulder
+// the panel clamp: a skirt below the lip carries the cap down to the panel's
+// inside face, so the snap pulls the flange's O-ring onto the panel (v0.2: with
+// no skirt the cap parked 4.3 above the panel and nothing clamped the body)
+cg_skirt     = cg_barb_z - 0.1 - cg_lip_h - (2.0 + cg_panel);   // 4.3: the lip's underside to the panel
+cg_cap_h     = cg_cap_floor + (cg_top + cg_gap - cg_barb_z) + 0.1 + cg_lip_h + cg_skirt;  // lip 0.1 under the shoulder
+cg_oring_d   = 1.0;                         // the flange O-ring's cord
+cg_oring_dep = 0.65;                        // its groove: + the cap's 0.1 of snap slack, the cord rests at 0.75 — 25 %
 assert(cg_squeeze >= 0.2 && cg_squeeze <= 0.3, "cg_squeeze: keep the bush in the 20-30 % squeeze band");
 assert(cg_bush_id < cg_cable && cg_bush_id > cg_seat_d - 1.5, "gland bush: the bore must grip the cable");
 assert(cg_bush_l * cg_a_free <= cg_fill * cg_cav_l * cg_a_room + 1e-6,
@@ -98,6 +157,9 @@ assert(cg_lip_d > cg_nose && cg_lip_d < cg_barb_d, "gland cap lip must slide on 
 assert((cg_barb_d - cg_lip_d)/cg_lip_d <= snap_budget_once(),
        "gland cap: the lip's hoop strain over the barb exceeds the one-time snap budget");
 assert((cg_nose - cg_bore)/2 >= 0.7 && (cg_nose - cg_seat_d)/2 >= 0.7, "gland body: a nose wall is under 0.7 mm");
+assert(cg_skirt > 0, "gland cap: the barb sits too close to the panel for the cap's skirt to reach it");
+assert(1 - (cg_oring_dep + 0.1)/cg_oring_d >= 0.2 && 1 - (cg_oring_dep + 0.1)/cg_oring_d <= 0.3,
+       "gland O-ring: the groove + the cap's 0.1 of snap slack must rest the cord in the 20-30 % squeeze band");
 
 // exponential-ish horn: stacked conic sections from throat to mouth
 module horn() {
@@ -115,9 +177,11 @@ module horn() {
         }
         // glue flange face at the mouth stays flat (lid side)
     }
-    // mouth flange that glues to the lid underside around the vent ring
+    // mouth collar: the glue land on the lid underside round the vent-pad recess
+    // (v0.2: a flange 2 mm proud of the wall, Ø20.8, ran into the camera module
+    // and the magnet ring)
     translate([0, 0, horn_h - 1.2]) difference() {
-        cylinder(d = horn_mouth + 2*horn_wall + 4, h = 1.2);
+        cylinder(d = horn_mouth + 2*horn_wall, h = 1.2);
         translate([0, 0, -0.1]) cylinder(d = horn_mouth, h = 1.5);
     }
 }
@@ -143,9 +207,9 @@ module gland_body() {
         }
         // O-ring groove in the flange's panel face (Ø1 cord, 25 % squeeze):
         // a flat flange sealed nothing — this is what makes it a gland
-        translate([0, 0, 2.0 - 0.75]) difference() {
-            cylinder(d = cg_hole + 2*1.0 + 1.3, h = 0.8);
-            translate([0, 0, -0.1]) cylinder(d = cg_hole + 0.7, h = 1.0);
+        translate([0, 0, 2.0 - cg_oring_dep]) difference() {
+            cylinder(d = cg_hole + 2*cg_oring_d + 1.3, h = cg_oring_dep + 0.05);
+            translate([0, 0, -0.1]) cylinder(d = cg_hole + 0.7, h = cg_oring_dep + 0.25);
         }
         // two-step bore sized so every wall stays >= 0.7 mm (mesh-check catch:
         // a wide full-depth bore hollowed the stem and nose into a floating ring)
@@ -165,15 +229,18 @@ module gland_bush() {
         translate([0, 0, -0.1]) cylinder(d = cg_bush_id, h = cg_bush_l + 0.2);
     }
 }
-// snap cap (prints floor-down): the lip cams over the barb's taper, 3.75 %
-// hoop once, and parks under its flat shoulder; the floor bears on the bush
+// snap cap (prints floor-down): the barb passes the skirt free, the lip cams
+// over its taper, 3.75 % hoop once, and parks under its flat shoulder; the
+// floor bears on the bush and the skirt's end on the panel
 module gland_cap() {
+    lip_top = cg_cap_h - cg_skirt;   // the lip's skirt-side face
     difference() {
         cylinder(d = cg_hole + 3.2, h = cg_cap_h);
         translate([0, 0, -0.1]) cylinder(d = cg_cap_hole, h = cg_cap_h + 0.2);
-        translate([0, 0, cg_cap_floor]) cylinder(d = cg_groove_d, h = cg_cap_h - cg_cap_floor - cg_lip_h);  // barb groove
-        translate([0, 0, cg_cap_h - cg_lip_h - 0.01]) cylinder(d = cg_lip_d, h = cg_lip_h + 0.1);         // snap lip
-        translate([0, 0, cg_cap_h - 0.3]) cylinder(d1 = cg_lip_d, d2 = cg_lip_d + 0.6, h = 0.31);          // mouth lead-in
+        translate([0, 0, cg_cap_floor]) cylinder(d = cg_groove_d, h = lip_top - cg_cap_floor - cg_lip_h);  // barb groove
+        translate([0, 0, lip_top - cg_lip_h - 0.01]) cylinder(d = cg_lip_d, h = cg_lip_h + 0.1);           // snap lip
+        translate([0, 0, lip_top - 0.3]) cylinder(d1 = cg_lip_d, d2 = cg_lip_d + 0.6, h = 0.31);            // lead-in onto the lip
+        translate([0, 0, lip_top]) cylinder(d = cg_groove_d, h = cg_skirt + 0.1);                            // skirt bore: the barb passes free
     }
 }
 // the three in place (body frame), for the fit check: bush on its seat, cap snapped
@@ -183,7 +250,7 @@ module gland_assembly() {
     translate([0, 0, cg_top + cg_gap + cg_cap_floor]) mirror([0, 0, 1]) gland_cap();
 }
 
-if      (part == "horn")       horn();
+if      (part == "horn")       translate([0, 0, horn_h + 0.01]) mirror([0, 0, 1]) horn();   // print pose (v0.2): the glue face on the bed (the cone runs 0.01 past it)
 else if (part == "glare_ring") glare_ring();
 else if (part == "gland_body") gland_body();
 else if (part == "gland_bush") gland_bush();

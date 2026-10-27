@@ -456,12 +456,15 @@ function usbBridgeInfo(vid, pid) {
 // Public-only is enforced HERE, in the builder, same as the browser side:
 // fixed field allowlist, MAC truncated to a non-stable tail, and the console
 // tail scrubbed of credential lines (the WAP prints its AP password to serial
-// at boot; a report someone is ASKED to paste must not carry it).
+// at boot, and every setup surface prints it again inside the "[SETUP] QR
+// WIFI:…;P:" line when its setup network comes up, the flagship on every
+// re-raise too; a report someone is ASKED to paste must not carry it).
 const TAIL_REDACT = [
   /password/i,
   /passphrase|\bpsk\b/i,
   /wifi\s+pass\b/i,
   /token["']?\s*[:=]/i,
+  /\bWIFI:.*\bP:/,
 ];
 function sanitizeLogTail(text) {
   return String(text || "").split("\n").map((ln) =>
@@ -1655,7 +1658,7 @@ const fleetBook = {
     return "No stored key for this board — reflash it once with this app (any version) and the key is minted and kept automatically.";
   },
   staleTokenNote() {
-    return "The board refused the stored key — it was probably reflashed elsewhere. One reflash here mints a fresh one.";
+    return "The board refused the stored key — it was probably reflashed elsewhere, or, on an all-rounder Canary, reset with its 10-second BOOT hold (which drops a key a flasher seeded). One reflash here mints a fresh one.";
   },
   note(key, text) {
     this.opNote[key] = text;
@@ -1853,6 +1856,17 @@ function compareVersions(a, b) {
   return 0;
 }
 
+// What every USB install does to a board already set up, whichever way the
+// version moved: this app writes a factory image at 0x0 (flash-engine's
+// write-bin), and its settings region (NVS) is blank, so the saved settings
+// go and the next boot makes a new witness key. Only an over-the-air update
+// keeps them. The browser flasher's USB_INSTALL_STARTS_OVER (flash-core.js)
+// is the same sentence, and desktop_parity.test.js holds the two equal.
+const USB_INSTALL_STARTS_OVER =
+  "A USB install starts the settings region over, so the board comes up with no saved " +
+  "settings beyond what you type in before installing and, where it keeps a witness key, " +
+  "a new one; an over-the-air update keeps both.";
+
 // The one-line verdict for a candidate install, given what the board runs now.
 // A downgrade is allowed — that's what the safety copy is for — but never
 // silent, which is the whole reason this exists.
@@ -1864,26 +1878,27 @@ function installVerdict({ current, currentProduct, product, version }) {
   if (currentProduct && product && currentProduct.id !== product.id) {
     return { kind: "switch", icon: "⇄", label: `Switch from ${currentProduct.name}`,
       detail: `The board runs ${currentProduct.name} ${current.version || ""}`.replace(/\s+$/, "") +
-        ` today. Installing ${product.name} changes what this Canary is — settings from the old role don't carry over.` };
+        ` today. Installing ${product.name} changes what this Canary is — settings from the old role don't carry over. ` +
+        USB_INSTALL_STARTS_OVER };
   }
   const cmp = compareVersions(current.version, version);
   if (cmp === null) {
     return { kind: "unknown", icon: "•", label: "Version unknown",
-      detail: "The board's current version couldn't be compared — the install itself is unaffected." };
+      detail: "The board's current version couldn't be compared — the install itself is unaffected. " +
+        USB_INSTALL_STARTS_OVER };
   }
   if (cmp < 0) {
     return { kind: "update", icon: "↑", label: `Update · ${current.version} → ${version}`,
-      detail: "A newer build of the same firmware. Your settings region is left alone." };
+      detail: "A newer build of the same firmware. " + USB_INSTALL_STARTS_OVER };
   }
   if (cmp > 0) {
     return { kind: "downgrade", icon: "↓", label: `Downgrade · ${current.version} → ${version}`,
       detail: "This is OLDER than what the board runs now. That's allowed — useful when a release " +
-        "misbehaves — but newer settings may not be understood by older firmware. The automatic " +
-        "safety copy is your way back." };
+        "misbehaves — and the automatic safety copy is your way back. " + USB_INSTALL_STARTS_OVER };
   }
   return { kind: "same", icon: "=", label: `Reinstall · already on ${version}`,
-    detail: "The board already runs this exact version. Installing again rewrites it byte-for-byte — " +
-      "harmless, and occasionally exactly what a misbehaving board needs." };
+    detail: "The board already runs this exact version. Installing again is a clean start, " +
+      "occasionally exactly what a misbehaving board needs. " + USB_INSTALL_STARTS_OVER };
 }
 
 // The passport's lived-history rows, from the read-only probes.
@@ -1931,8 +1946,10 @@ const BOOT_SIGNATURES = [
     signature: "panic",
     test: /guru meditation|backtrace:|panic'?ed|abort\(\) was called|assert failed/i,
     means: "The new firmware crashed as it started up.",
-    fix: "A clean install usually clears this — it wipes stale settings a previous " +
-      "firmware may have left behind. Reconnect and tick first contact.",
+    fix: "A clean install usually clears this. Every install starts the settings " +
+      "region over; the full erase also wipes the partitions an install never writes " +
+      "(the second firmware slot, the file system), where a previous firmware may have " +
+      "left stale data. Reconnect and tick first contact.",
     action: "clean-install",
   },
   {
@@ -3159,7 +3176,7 @@ function smartPick(catalog, opts = {}) {
     const cur = matchProjectToProduct(catalog, currentProject);
     if (cur && byChip.some((x) => x.id === cur.id)) {
       return { product: cur, kind: "current", shortlist: [cur],
-        why: `This board already runs ${cur.name} — installing keeps it, updated in place.` };
+        why: `This board already runs ${cur.name}, so it is preselected. An install starts its settings over (a new witness key, where it keeps one); an over-the-air update keeps them.` };
     }
   }
   const mb = flashBytes ? Math.round(flashBytes / (1024 * 1024)) : null;
@@ -3869,7 +3886,7 @@ function renderTokenOnce(apiToken) {
   box.innerHTML =
     `<b>This board's local API key — shown once.</b> ` +
     `<span class="muted">Written into the board with the Wi-Fi, and kept in ${esc(secretStore.where())} ` +
-    `for the fleet book. Copy it if you want it somewhere else too — a reflash mints a new one.</span>` +
+    `for the fleet book. Copy it if you want it somewhere else too — a reflash mints a new one, and an all-rounder Canary's 10-second BOOT reset drops it for one the board derives from its own key.</span>` +
     `<span class="token-row"><code>${esc(apiToken)}</code>` +
     `<button type="button" class="btn btn-ghost btn-small" id="token-copy">Copy</button></span>`;
   box.classList.remove("hidden");
@@ -5291,19 +5308,21 @@ function proveSpecFor(product) {
   return (p && p.prove) || null;
 }
 
-// The read-only Bluetooth console runs on the AP-provisioned Canaries and the
-// WAP (the browser offers its check for exactly these). This window has no
-// Bluetooth of its own, so the check is a pointer — to the iPhone app, or to
-// the browser Lab in a Chromium browser — never a dead end.
+// The read-only Bluetooth console runs on the WAP alone (ble_console.h is the
+// only firmware that serves it; the flagship boards serve none, and the
+// browser offers its check for the WAP alone too). This window has no
+// Bluetooth of its own, so the check is a pointer to the browser Lab in a
+// Chromium browser (the iPhone app does not reach a WAP's console, ledger
+// A65), never a dead end.
 function bleCheckable(product) {
-  return !!product && (product.role === "wap" || product.provisioning === "ap");
+  return !!product && product.role === "wap";
 }
 const BLE_CHECK_NOTE =
-  "A Canary keeps a read-only Bluetooth console alive even when Wi-Fi is down — " +
+  "A Canary WAP keeps a read-only Bluetooth console alive even when Wi-Fi is down — " +
   "reading its live snapshot proves it’s on, healthy and reachable, and writes " +
   "nothing. This app’s window has no Bluetooth of its own, so the check runs in " +
-  "the SecuraCV iPhone app (on TestFlight by invite; App Store release pending), or in the " +
-  "browser Lab in Chrome or Edge on this computer.";
+  "the browser Lab in Chrome or Edge on this computer (the iPhone app does not " +
+  "read a WAP’s console today).";
 function openBleCheck() {
   const url = labUrl("flash.html");
   if (url) openExternal(url);
@@ -6292,7 +6311,8 @@ function showHatchCard(product) {
 
 // ── the Hatchery: name + birth certificate (shared spec with the web Lab) ────
 // The whimsical name is a display layer only — the device's functional id
-// stays the stable slug written during provisioning; here it just becomes the
+// stays the slug written during provisioning (kept across OTA updates and the
+// 10 s hold; an install in either flasher can change it); here it just becomes the
 // certificate's Ring ID. The same name parts, mottoes and copy come from the
 // embedded hatch.json the website also ships, so both surfaces hatch alike.
 let lastCert = null;

@@ -107,7 +107,7 @@ firmware/
 ├── envs/           # PlatformIO .ini per product (envs/platformio/)
 ├── canary/         # the ACTIVE flagship tree (its own platformio.ini + lib/)
 ├── projects/       # product entry points; each one's lifecycle is VARIANT_POLICY.md
-├── provisioning/   # production key + eFuse tooling (and the compile-only secure envs)
+├── provisioning/   # the opt-in key + eFuse kit, Phase 2 dry-run only (and the compile-only secure envs)
 ├── scripts/        # CI checks, release and OTA tooling
 ├── tests_host/     # host-side unit tests for the pure cores
 ├── examples/       # standalone samples (CSI, a module stub)
@@ -267,7 +267,7 @@ Lifecycle labels are [VARIANT_POLICY.md](VARIANT_POLICY.md)'s; where the two tab
 
 | Environment | Features | Use Case | PR CI |
 |-------------|----------|----------|-------|
-| `dev` | SD, WiFi, HTTP + self-signed HTTPS on 443 (port 80 redirects), Camera, OTA | Development iteration | built |
+| `dev` | SD, WiFi, HTTP; self-signed HTTPS on 443 (port 80 redirects) compiled in, not running until a certificate is stored, which no stock build does (F15), Camera, OTA | Development iteration | built |
 | `release` | as dev, size-optimized; HTTPS stays off until the size guard shows it fits the OTA slot | Production | built + OTA-slot guard |
 | `full` | + Mesh, BLE (the Scout and the GATT status service) (pioarduino core 3, `default_8MB` table). No BLE discovery, RF presence or Chirp: this tree has no code for them yet, and the inert flags that said otherwise were removed 2026-10-09 | Closest to WAP parity | built |
 | `dev_ha` | dev + MQTT (broker TLS: plain / CA / pin / lab, fail-closed) + HA Discovery | Home Assistant development | compile-only |
@@ -277,7 +277,7 @@ Lifecycle labels are [VARIANT_POLICY.md](VARIANT_POLICY.md)'s; where the two tab
 | `esp32cam` | classic-ESP32 reach port: camera peek, CSI, SPI SD, pull-OTA | AI-Thinker ESP32-CAM | built (compile-tested; USB install only, no OTA manifest) |
 | `esp32-wroom` | classic ESP32: CSI presence witness, chain, pull-OTA | Generic WROOM-32 DevKit | built (same) |
 | `freenove-s3` | S3 camera kit, SD off (1-bit SDMMC only) | Freenove FNK0085 | built (same) |
-| `secure` / `secure_ha` | the provisioning kit's Tier 3/4 image, flash encryption required (`provisioning/platformio_secure.ini`) | The production eFuse path; nothing publishes it | compile-only |
+| `secure` / `secure_ha` | the provisioning kit's Tier 3/4 image: it refuses to store or load the identity key unless NVS is encrypted, which no board is under `framework = arduino`, so it refuses on every board, fused or not (`provisioning/platformio_secure.ini`) | The production eFuse path, not yet usable; nothing publishes it | compile-only |
 
 "PR CI" is `firmware/flavors.json` `build_envs` (with the size guards its
 `size_guards` name) plus `firmware.yml`'s compile-only steps on the canary
@@ -328,7 +328,10 @@ the Canary displays show the fleet on their own glass.
 
 ## Provisioning
 
-Production device provisioning tools are in `provisioning/`:
+The opt-in provisioning kit is in `provisioning/`. Its Phase 2, the
+lockdown, runs only as a dry run today: as tooled it turns on neither Secure
+Boot nor flash encryption, and the board may not boot after its burn
+([`docs/secure_provisioning.md`](../docs/secure_provisioning.md), Step 3).
 
 ```bash
 # Generate signing keys
@@ -337,7 +340,7 @@ Production device provisioning tools are in `provisioning/`:
 # Verify virgin device
 python3 provisioning/verify_device.py --port /dev/ttyACM0
 
-# Full provisioning workflow
+# Phase 1 workflow (the default; burns no eFuse)
 ./provisioning/provision_canary.sh --port /dev/ttyACM0
 
 # Dry run (preview without burning eFuses)
@@ -392,7 +395,8 @@ Edit `secrets/secrets.h` with your credentials. The `.gitignore` prevents commit
 - Time coarsening (ten-minute buckets)
 - No MAC address logging
 - Local-first data storage
-- Session token rotation
+- RF-presence session tokens rotate (the API token does not: an OTA update
+  and a WAP's 10 s hold keep it)
 
 ---
 

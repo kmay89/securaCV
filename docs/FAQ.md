@@ -477,7 +477,8 @@ the Flasher. The all-rounder **Canary** build has no door and always uses
 the setup network below.
 
 Without the app — or for the all-rounder Canary — the **setup network**:
-the Canary raises `SecuraCV-XXXX`; join it from any phone with the key it
+the Canary raises `SecuraCV-<kind>-XXXX` (`SecuraCV-sense-K7MZ`, say; plain
+`SecuraCV-XXXX` before 2.4.17); join it from any phone with the key it
 printed on its serial console at boot (the Flasher's done card shows the
 same key for a Sense, Vision or WAP it just flashed) and the setup page
 opens on its own. For makers: the door is the open
@@ -487,17 +488,30 @@ the pairing receipt over your Wi-Fi — see
 [magic pairing (design)](design/magic_pairing.md).
 
 **When the door is open** — the rule, in the firmware's own words: *for a
-device nobody owns yet, and for an owner's own tap — never for a device that
-has an owner and a bad day.* A Canary with no Wi-Fi saved opens it for 30
-minutes after power-on (unplug and replug to get another 30). A Sense or
+device with no network saved (a new one nobody owns yet, or one whose
+network was cleared), and for an owner's own tap — never for a device that
+has an owner and a bad day.* A Canary with no Wi-Fi saved opens it for 30 minutes after
+power-on (unplug and replug to get another 30). That includes one you
+cleared yourself with the 10-second BOOT hold or, on a WAP that does not run
+standalone, Forget Wi-Fi: it keeps its identity and is still yours, but for
+that half hour the door goes to whichever phone or computer nearby connects
+first, so do it where no
+stranger is in Bluetooth range. A Sense or
 Vision that already has Wi-Fi opens it for 60 seconds when you tap its BOOT
 button. A Canary whose saved Wi-Fi has merely *stopped working* (the router
 rebooted, you changed the password) does **not** open it — it raises its
-`SecuraCV-XXXX` recovery network instead, which needs the key printed for
-it. So a Canary on your network offers nothing to a stranger's phone, on a
-good day or a bad one.
+`SecuraCV-<kind>-XXXX` recovery network instead, which needs the key printed for
+it. So the setup door offers nothing to a stranger's phone while a Canary
+stays on your network, on a good day or a bad one. On a WAP running a
+release after 2.4.17, once it is set up, Forget Wi-Fi, which reopens the
+door for half an hour unless the WAP runs standalone, asks for the API
+token, and so does the confirm that bonds a phone to the WAP's other
+Bluetooth lane, which takes a new Wi-Fi network; a page any device on your
+network opens no longer sends either. A bond confirmed on 2.4.17 or
+earlier stays until you remove it under Settings → Bluetooth (the
+[security model](security/SECURITY_MODEL.md) has the details).
 
-The older paths stay as the fallback: the `SecuraCV-XXXX` setup network with
+The older paths stay as the fallback: the `SecuraCV-<kind>-XXXX` setup network with
 its printed key, a display's glass QR (a display shows a QR instead of
 opening a door — a screen beats a radio), and the WAP's own setup page once
 it is paired.
@@ -516,7 +530,7 @@ rest of its life. Unplug it and plug it back in: the window starts again.
 The card also goes away for fifteen seconds of silence — the phone has to
 keep hearing the Canary, so walk closer — and once the Canary has joined
 your Wi-Fi it shuts the door for good, which is the card doing its job. If
-you need it before the app does, the `SecuraCV-XXXX` setup network with its
+you need it before the app does, the `SecuraCV-<kind>-XXXX` setup network with its
 printed key is always there.
 
 ### It says "this Canary already has Wi-Fi and isn't accepting a new network"
@@ -526,21 +540,50 @@ re-pointable at a new network from across the room. To change its Wi-Fi
 yourself: on a **Sense or Vision**, tap its BOOT button once (a short press
 — under a second) and the door opens for 60 seconds; or power-cycle a unit
 that has no Wi-Fi saved. On a **WAP**, which has no tap door in this
-version, use its own setup page (Settings → Wi-Fi on the dashboard, or the
-`SecuraCV-wap-XXXX` network when it is off your home network) — or tell it to
-forget its Wi-Fi from the dashboard (Settings → Wi-Fi → Forget, the
-`/api/wifi/forget` route), which clears the stored network and opens the
-door again for half an hour from that moment. Holding a WAP's BOOT button
+version, use its own setup page (Settings → WiFi on the dashboard, or the
+`SecuraCV-wap-XXXX` network when it is off your home network). Once a WAP
+running a release after 2.4.17 is set up, changing its Wi-Fi there asks for
+the API token (paste it from your recovery kit) or one BOOT tap, on the
+recovery network too: a page your home network opened, or that network's
+printed key, no longer moves it on its own (a network such a page moved it
+to on 2.4.17 or earlier can stay among its saved networks, which the WAP
+tries by itself when its own network is not found; the forget below clears
+every one). Or tell it to forget its Wi-Fi from the dashboard (Settings →
+WiFi → Remove credentials, the `/api/wifi/forget` route), which clears
+every saved network and, unless the WAP runs standalone, opens the door
+again for half an hour from that moment, to the first phone or computer
+nearby that connects, so have yours ready: until it is set up again the
+door, and the receipt its claim buys, goes to that first one, and a camera
+unit takes a Wi-Fi code shown to its lens. A forget leaves a standalone
+WAP's door shut. On a release after 2.4.17 the forget also asks for the
+token or a tap and clears the saved broker login (to change networks and
+keep that login, use Connect instead), and a standalone camera unit takes
+no code after it; on 2.4.17 a forget takes any dashboard session with no
+token or tap, keeps the broker login, and leaves a standalone camera unit
+taking a code shown to its lens. Before you forget it, check
+that Bluetooth Enabled is on under Settings → Bluetooth: forgetting does
+not turn it back on, the 10-second hold below does not either, and with it
+off no phone reaches the door. Holding a WAP's BOOT button
 for 10 seconds (the serial console says "keep holding" at 3 s) is its
 factory reset: the saved Wi-Fi networks, the broker settings, the device
 name and the first-boot flag are cleared and the setup wizard runs again;
 the Ed25519 identity key, the witness chain and the sealed records are
 kept, so every hub and display that pinned the key still recognizes it
 (every Canary with a BOOT button has the same 10-second hold —
-`docs/OTA.md` and `docs/TRUST_MODEL.md` say why the key survives). A
-Canary whose saved network is just
+`docs/OTA.md` and `docs/TRUST_MODEL.md` say why the key survives). The
+hold needs no token and no tap and works whatever the lockout is doing, but
+it keeps the API token and opens the setup door to whichever Bluetooth
+device connects first, so it is the last way out when BOOT taps keep
+closing because another device is asking. First paste the API token from
+your recovery kit (the iPhone app pairs from the kit), or read it from the
+USB serial console, which prints it at every boot. Hold BOOT 10 s only when
+the asking device is on your network and not in Bluetooth range of the
+WAP, with the iPhone ready to set it up again through the setup door
+(`docs/design/magic_pairing.md` §3.7 says why). A Canary whose saved network is just
 down right now keeps the door shut and raises its recovery network
-instead; fix the router, or use that network's printed key.
+instead; fix the router, or use that network's printed key (on a WAP
+running a release after 2.4.17, then the API token or one BOOT tap to
+change its Wi-Fi there).
 
 ### Can Home Assistant's app set a new Canary up?
 
@@ -553,14 +596,20 @@ lives in our own companion service, which a standard client never looks
 for, so a WAP set up from Home Assistant's app has Wi-Fi and is then paired
 in the SecuraCV app: tap it under *Ready to pair* on the Fleet tab and add it
 with its recovery kit (`canary-recovery-kit.json`: open its dashboard at
-`https://canary-<suffix>.local/settings` and accept the certificate
-warning; signed in with the token, choose **Settings**, **Device**,
+`http://canary-<suffix>.local/settings`, since no stock WAP serves HTTPS
+yet (once one does, use `https://` and accept the certificate warning);
+signed in with the token, choose **Settings**, **Device**,
 **Recovery kit**, **Save my recovery kit**; signed out, or signed in only
 through the landing page's link, choose **Use BOOT Tap Once**, short-tap
-BOOT, then **Save my recovery kit** — the kit holds the token and the setup
-network's password, so only a BOOT tap or the token itself fetches it, never
-the dashboard's own session. The setup page's close-out
-saves the same file. Both dashboard paths are new, checked by automated
+BOOT when the page says to, then **Save my recovery kit** — the kit holds the token and the setup
+network's password, so only a BOOT tap, the token itself or the setup
+door's one-time claim fetches it, never the dashboard's own session. The tap goes to the one device asking for it:
+if another device on your network asks during the same tap, the Canary
+hands out nothing and the page says so; close other Canary pages, wait 10
+seconds, then click **Use BOOT Tap Once** again and short-tap BOOT when
+the page says to (a press with no page of yours asking goes to whichever
+device asks first). The setup page's close-out
+saves the same file (tap **Save my recovery kit**, then short-press BOOT when it says to). Both dashboard paths are new, checked by automated
 tests and not yet on a bench device). Home Assistant's own "Improv via BLE" integration needs a Bluetooth
 radio on the Home Assistant machine itself; through an ESPHome Bluetooth
 proxy the one-tap pairing cannot complete — expected, and untested.
@@ -580,11 +629,13 @@ unproven password is not one worth remembering. "Forget" on the Set up
 screen clears it. The WAP's pairing key is a different thing, and it never
 rides Bluetooth at all (the claim ticket above).
 
-### My phone says "Unable to join the network SecuraCV-XXXX"
+### My phone says "Unable to join the network SecuraCV-display-XXXX"
 
 Forget the network on your phone, then scan the QR again.
 
-iPhone: **Settings → Wi-Fi → the (i) beside `SecuraCV-XXXX` → Forget This
+(Before 2.4.17 the name was `SecuraCV-XXXX`.)
+
+iPhone: **Settings → Wi-Fi → the (i) beside the network → Forget This
 Network.** Android: long-press the network in the Wi-Fi list → **Forget**.
 Then rescan the QR on the glass, or join by hand with the name and password
 printed under it.
@@ -601,6 +652,18 @@ single Forget.
 
 If the display has been sitting on the join screen for a while it will say
 this on its own glass too.
+
+The all-rounder Canary (`firmware/canary`) causes the same thing once, on the
+firmware update that moved its setup network's key to the device's private
+key (sweep F350): the network `SecuraCV-canary-XXXX` keeps its name, the key
+changes from `cv-` and five characters to `cv-` and twelve, and a phone that
+joined it before the update can rejoin silently with the old key. The same
+single Forget fixes it. Then join with the new key from the serial banner
+(`Password`), either flasher's done card or a recovery kit saved again from
+the dashboard, not by rescanning a card, QR or recovery kit from before the
+update: those still carry the old key. See *Recovering the password* in
+[getting started](getting_started_canary.md#recovering-the-password).
+*(Host-tested; not yet tried on a bench device.)*
 
 ---
 

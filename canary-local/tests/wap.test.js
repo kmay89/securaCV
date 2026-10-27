@@ -582,8 +582,67 @@ test("flash: BOOT/RESET facts match the .ino constants and the ROM's own strings
   const boot = f.buttons.find((b) => b.id === "boot");
   const gpio = ino.match(/BOOT_BUTTON_GPIO\s*=\s*(\d+)/);
   assert.strictEqual(boot.gpio, Number(gpio[1]));
+  // What each gesture does is the loop's BOOT handler's, not a guess. A short
+  // press opens the provisioning gate and prints no key; BOOT_LONG_PRESS_MS is
+  // only reset_hold.h's "keep holding" warning; the factory reset is the
+  // fleet's hold (onboarding_fsm.h Timing) and keeps the identity, so the
+  // setup network's name and key survive it; the sketch arms no wipe stage.
+  // (The page once said a ~1 s press printed the SSID and password and a >3 s
+  // hold reset to a fresh keypair: neither is what the sketch does.)
   const longMs = Number(ino.match(/BOOT_LONG_PRESS_MS\s*=\s*(\d+)/)[1]);
-  assert.ok(boot.gestures.some((g) => g.includes(`>${longMs / 1000} s`)), "factory-reset hold drifted");
+  const holdMs = Number(ino.match(/BOOT_BUTTON_HOLD_MS\s*=\s*(\d+)/)[1]);
+  const gateMs = Number(ino.match(/PROVISIONING_GATE_TTL_MS\s*=\s*(\d+)/)[1]);
+  const fsmH = read(join(FW, "onboarding_fsm.h"));
+  const resetMs = Number(fsmH.match(/factory_reset_hold_ms\s*=\s*(\d+);/)[1]);
+  assert.ok(ino.includes("canary::io::ResetHold{}.reset_ms == canary::net::onboard::Timing{}.factory_reset_hold_ms"),
+    "the sketch's reset hold is no longer the fleet's Timing");
+  assert.ok(ino.includes("static_assert(BOOT_LONG_PRESS_MS == canary::io::ResetHold{}.warn_ms,"),
+    "BOOT_LONG_PRESS_MS is no longer the reset hold's warning");
+  const reset = boot.gestures.find((g) => g.includes("factory reset"));
+  assert.ok(reset && reset.startsWith(`hold ${resetMs / 1000} s: factory reset`),
+    `the factory reset is the ${resetMs / 1000} s hold: ${reset}`);
+  assert.ok(/identity is kept/.test(reset) && /name and key do not change/.test(reset),
+    "the reset keeps the identity, and with it the setup network's key");
+  assert.ok(!boot.gestures.some((g) => g.includes(`>${longMs / 1000} s`)),
+    `the ${longMs / 1000} s mark is the warning, not a reset`);
+  const short = boot.gestures.find((g) => g.startsWith("short press"));
+  assert.ok(short && short.includes(`under ${holdMs / 1000} s`) && short.includes("provisioning gate") &&
+    short.includes(`${gateMs / 1000} s`) && /prints no key/.test(short),
+    "a short press opens the provisioning gate and prints no key: " + short);
+  // The tap goes to one asker (sweep F342): the card says to start the
+  // dashboard's ask first, never that the press opens a window the dashboard
+  // then uses, and names who gets a tap no page was asking for (the first
+  // address that asks after it, tap_arbitrate()).
+  assert.ok(/hands the recovery kit to one asking page/.test(short) &&
+    /click Use BOOT Tap Once on the dashboard first, then press/.test(short) &&
+    /a tap no page was asking for goes to the first address that asks after it/.test(short) &&
+    !/already asking/.test(short) && !/can hand over/.test(short),
+    "the short press's card puts the dashboard's ask first: " + short);
+  assert.ok(boot.gestures.some((g) => g.startsWith(`hold ${holdMs / 1000}–${longMs / 1000} s: prints the identity block`)),
+    "the medium hold prints the identity block");
+  assert.ok(!/wipe_ms/.test(ino), "the sketch arms a wipe stage now: the recovery text says it has none");
+  const rec = f.recovery;
+  assert.ok(rec.password.some((st) => st.includes("WiFi AP") && st.includes("Password")) &&
+    ino.includes('boot_kv("WiFi AP",') && ino.includes('boot_kv("Password",'),
+    "recovery reads the setup network's name and key off the ready banner");
+  assert.ok(rec.password.some((st) => /\btype w\b/.test(st)) &&
+    /case 'w':\s*Serial\.printf\("WiFi AP: %s\\n", g_device\.ap_ssid\);\s*Serial\.printf\("Password: %s\\n"/.test(ino),
+    "recovery names the serial w command, which prints both");
+  assert.ok(!rec.password.some((st) => /press boot/i.test(st)), "no BOOT press prints the key");
+  assert.ok(rec.factory.includes(`Hold BOOT ${resetMs / 1000} s`) && /identity is kept/.test(rec.factory) &&
+    /No BOOT hold wipes/.test(rec.factory), "factory text: " + rec.factory);
+  // The serial replay on the same page says the same: the ready banner's BOOT
+  // lines are the sketch's own boot_line() text, and none calls the 3 s
+  // warning a reset (the replay once said "Hold  BOOT (>3s) = factory reset").
+  const readyBoot = data.serial.ready.filter((l) => /\bBOOT\b/.test(l));
+  assert.ok(readyBoot.length >= 2, "the ready banner names the BOOT gestures: " + readyBoot);
+  for (const l of readyBoot) {
+    assert.ok(ino.includes(`boot_line("${l}");`), `ready banner line is not the sketch's: ${l}`);
+  }
+  assert.ok(!data.serial.ready.some((l) => l.includes(`>${longMs / 1000}s`)),
+    `the serial replay calls the ${longMs / 1000} s warning a reset`);
+  assert.ok(readyBoot.some((l) => l.includes(`Hold BOOT ${resetMs / 1000}s`) && /factory reset/.test(l) &&
+    /identity kept/.test(l)), "the replay's factory reset is the " + resetMs / 1000 + " s hold that keeps the identity");
   // the download ritual ends in the mask ROM's real strap line (bench.js prints it)
   assert.ok(benchJs.includes("DOWNLOAD(USB/UART0)"));
   assert.ok(f.download_mode.rom_line.includes("DOWNLOAD(USB/UART0)"));
@@ -611,9 +670,81 @@ test("cable spine: trails away from the port and stays behind the connector", as
   for (let i = 1; i <= 10; i++) { // the spine never doubles back toward the port
     assert.ok(cablePoint(i / 10)[2] <= cablePoint((i - 1) / 10)[2] + 1e-6);
   }
-  // the port is on the base's −X wall; the light pipe is on the lid face —
-  // both measured from the committed compact STLs (33.7 × 37.6 base)
+  // the port is in the lid's −X wall (the lid is the shell since the piston
+  // plate); the light pipe is on the lid face — the next test holds both to
+  // the committed compact STLs as the card seats them
   assert.ok(WAP_PORT[0] < -16 && WAP_PORT[0] > -17.5, "port off the −X wall");
-  assert.ok(Math.abs(WAP_PORT[1]) < 0.01, "USB slot is y-centered (usb_w 10.5 notch)");
+  assert.ok(Math.abs(WAP_PORT[1]) < 0.01, "USB opening is y-centered (board_cy 0)");
   assert.ok(WAP_LED[2] > 7, "light pipe sits on the lid face, toward the viewer");
+});
+
+// The rig's two numbers, held to the real card: the WAP card is the committed
+// compact STLs seated by real-shapes.js (the CAD's seat), and a ray through
+// that seated lid says whether the light answers through its port and the
+// plug enters its opening. Both were typed from an earlier lid on the
+// bbox-stacked card: the LED sat 1.9 mm under the solid face, 11.4 mm off the
+// Ø3.2 port, and all five of the plug tip's rays hit the −X wall below the
+// 12 × 6.5 opening.
+test("cable rig: the LED shows through the lid's light-pipe port and the plug's tip enters the USB opening", async () => {
+  const { WAP_PORT, WAP_LED } = await import("../assets/wap-ui.js");
+  const { upgradeRealShape } = await import("../assets/real-shapes.js");
+  const { existsSync } = require("node:fs");
+  const { resolve } = require("node:path");
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const p = resolve(ROOT, String(url));
+    if (!existsSync(p)) return { ok: false, status: 404 };
+    const b = readFileSync(p);
+    return { ok: true, status: 200, arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) };
+  };
+  const scene = { parts: [], clearParts() { this.parts = []; }, addMesh(builder, o = {}) { const q = { builder, ...o }; this.parts.push(q); return q; } };
+  try {
+    assert.ok(await upgradeRealShape(scene, "canary-wap"), "the WAP card upgrades to the committed STLs");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.strictEqual(scene.parts.length, 2, "the card is the base and the lid");
+  const lid = scene.parts[1];   // realTwoPart adds the back (the base), then the front (the lid)
+  const m = lid.model;
+  const P = lid.builder.pos, I = lid.builder.idx;
+  const V = [];
+  for (let i = 0; i < P.length; i += 3) {
+    const [x, y, z] = [P[i], P[i + 1], P[i + 2]];
+    V.push([0, 1, 2].map((k) => m[k] * x + m[4 + k] * y + m[8 + k] * z + m[12 + k]));
+  }
+  const top = Math.max(...V.map((v) => v[2]));
+  // the parameters t of every hit of the ray o + t·d on the lid (Möller–Trumbore)
+  const hits = (o, d) => {
+    const out = [];
+    for (let i = 0; i < I.length; i += 3) {
+      const a = V[I[i]], b = V[I[i + 1]], c = V[I[i + 2]];
+      const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      const p = [d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0]];
+      const det = e1[0] * p[0] + e1[1] * p[1] + e1[2] * p[2];
+      if (Math.abs(det) < 1e-12) continue;
+      const s = [o[0] - a[0], o[1] - a[1], o[2] - a[2]];
+      const u = (s[0] * p[0] + s[1] * p[1] + s[2] * p[2]) / det;
+      if (u < 0 || u > 1) continue;
+      const q = [s[1] * e1[2] - s[2] * e1[1], s[2] * e1[0] - s[0] * e1[2], s[0] * e1[1] - s[1] * e1[0]];
+      const v = (d[0] * q[0] + d[1] * q[1] + d[2] * q[2]) / det;
+      if (v < 0 || u + v > 1) continue;
+      out.push((e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]) / det);
+    }
+    return out;
+  };
+  // the LED: on the face, and its Ø2.4 core looks out through an open hole —
+  // no lid surface within the face's 2 mm (plus margin) under five points
+  assert.ok(Math.abs(WAP_LED[2] - top) < 0.05, `WAP_LED z ${WAP_LED[2]} is not on the lid's face (z ${top.toFixed(3)})`);
+  for (const [dx, dy] of [[0, 0], [1.2, 0], [-1.2, 0], [0, 1.2], [0, -1.2]]) {
+    const near = hits([WAP_LED[0] + dx, WAP_LED[1] + dy, top + 5], [0, 0, -1]).filter((t) => t < 5 + 2.5);
+    assert.deepStrictEqual(near, [], `the LED at (${WAP_LED[0] + dx}, ${WAP_LED[1] + dy}) looks at solid lid, not the light-pipe port`);
+  }
+  // the USB-C tip (buildRig: 3.4 thick along z, 9.0 wide along y, its front
+  // face 6.35 past WAP_PORT[0] when seated): its center and four corners,
+  // cast from outside along +X to that front face, cross no lid surface
+  for (const [dy, dz] of [[0, 0], [4.5, 1.7], [-4.5, 1.7], [4.5, -1.7], [-4.5, -1.7]]) {
+    const o = [-40, WAP_PORT[1] + dy, WAP_PORT[2] + dz];
+    const blocked = hits(o, [1, 0, 0]).filter((t) => t > 0 && o[0] + t < WAP_PORT[0] + 6.35);
+    assert.deepStrictEqual(blocked, [], `the plug tip's corner (${dy}, ${dz}) hits the lid at x ${blocked.map((t) => (o[0] + t).toFixed(2))}`);
+  }
 });

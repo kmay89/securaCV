@@ -477,7 +477,9 @@ test("canary-display-dash: panel seats against the frame lip, screws from the ba
   // the frame turns face-out about Y (the CAD's placement), so its USB wall
   // stays at the bottom with the back's: Rx(65)·Ry(180) ≡ [245, 0, 180]
   assert.deepStrictEqual(by.frame.seated.rot, [245, 0, 180], "frame turned face-out about Y");
-  assert.strictEqual(by.back.seated.rot[0], 65, "back keeps its outer-face-out print orientation");
+  // the back prints pads-up, turned about Y like the frame (its selector), so
+  // seating it undoes the same turn
+  assert.deepStrictEqual(by.back.seated.rot, [245, 0, 180], "back turned about Y from its pads-up print, like the frame");
   assert.strictEqual(by.screws.instances.length, 4, "four corner-lobe screws");
   const maxOther = Math.max(...a.parts.filter((p) => p.id !== "screws").map((p) => p.step));
   assert.ok(by.screws.step > maxOther, "screws drive last");

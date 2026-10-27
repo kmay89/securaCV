@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# The forced command on the deploy user's key: CI may say "<app> <tag>" (deploy) or "tag <app>" (which tag
+# runs) and nothing else. sshd puts what the client asked for in SSH_ORIGINAL_COMMAND; this reads two words
+# from it, refuses anything that is not an app name and an image tag, and hands them to `kit`.
+# No shell, no other command, no arguments CI invents reach the server.
+set -euo pipefail
+read -r app tag extra <<< "${SSH_ORIGINAL_COMMAND:-}"
+[ -z "${extra:-}" ] || { echo "deploy: exactly two words: <app> <tag>, or: tag <app>" >&2; exit 2; }
+if [ "${app:-}" = "tag" ]; then
+  [[ "${tag:-}" =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || { echo "deploy: bad app name" >&2; exit 2; }
+  exec "$(dirname "$0")/kit" tag "$tag"
+  exit 2   # exec never returns; belt and braces so a query can never fall through to a deploy
+fi
+[[ "${app:-}" =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || { echo "deploy: bad app name" >&2; exit 2; }
+[[ "${tag:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$ ]] || { echo "deploy: bad tag" >&2; exit 2; }
+exec "$(dirname "$0")/kit" deploy "$app" "$tag"

@@ -140,7 +140,7 @@
       "units": {
         "lid_edge": "mm"
       },
-      "sha256": "b559f1ba73eb0438f232625059d5b2fd616b364eea50c837effbf29a685aef79",
+      "sha256": "b304fe3e10bb1d00cb222908401a5f5e1a5a2f31dba1a01a2b50f7c04bdd89ea",
       "groups": [
         {
           "name": "What to render",
@@ -347,8 +347,8 @@
             {
               "name": "tab_hole_d",
               "type": "number",
-              "default": 3.6,
-              "desc": "through-hole (M3 / #6)"
+              "default": 4.2,
+              "desc": "through-hole (M3 / #6): the #6's 3.505 major + 2 x tol_hole, rounded up (3.6 left a #6 0.04 a side; no released preset draws the tabs)"
             },
             {
               "name": "tab_cb_d",
@@ -690,6 +690,15 @@
               "type": "number",
               "default": 0.3,
               "desc": "clearance holes: plate screws — core_tol_hole()"
+            },
+            {
+              "name": "bridge_layer",
+              "type": "number",
+              "default": 0.2,
+              "min": 0.08,
+              "step": 0.04,
+              "max": 0.32,
+              "desc": "your slicer's layer height: the face's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)"
             }
           ]
         },
@@ -741,8 +750,8 @@
             {
               "name": "kh_lock",
               "type": "bool",
-              "default": true,
-              "desc": "(keyhole mounts) two anti-lift knockout bosses: 0.6 mm web, pierce with"
+              "default": false,
+              "desc": "(keyhole mounts) two anti-lift knockout bosses (0.6 mm web), OFF by default since v0.9.1:"
             }
           ]
         },
@@ -954,13 +963,13 @@
               "name": "vent_pad_d",
               "type": "number",
               "default": 12.0,
-              "desc": "GORE-vent recess Ø (the buzzer + pressure vent: the recess seats an adhesive vent)"
+              "desc": "GORE-vent patch Ø (the recess is cut tol_slide over it), on the face's INNER side (the buzzer + pressure vent: the recess seats an adhesive vent; it prints face-down, and an outer seat cannot bridge)"
             },
             {
               "name": "vent_pad_depth",
               "type": "number",
               "default": 0.8,
-              "desc": "GORE-vent recess depth into the face's outer surface — core_vent_pad_depth()"
+              "desc": "GORE-vent recess depth into the face's inner surface — core_vent_pad_depth()"
             },
             {
               "name": "vent_hole_d",
@@ -1113,7 +1122,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
+          "sha256": "bdfc31b56f5b08c462d44f62e91c6c2e944555bae361f2cfbcfee762734b00d9"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -1129,7 +1138,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "63fd5fc0c72e785bafe23e45877934a0bf4273321827c4738cd156ffb108b76c"
+          "sha256": "c4f9692e091059d27331d801bf0b621a4000ee1ce6cb2663bb6790c1f1e2183d"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -1137,7 +1146,7 @@
         },
         {
           "file": "canary_rib_lib.scad",
-          "sha256": "c28d6c3ab4b6688057958dfd38d756ac4eaa7166326b186fb930097ad8c186c5"
+          "sha256": "8288799d4f67dde3bb1584d87ef06b0ada557abde0789416429516abe0c644d0"
         },
         {
           "file": "canary_color_lib.scad",
@@ -1225,7 +1234,7 @@
         }
       },
       "units": {},
-      "sha256": "a6df717f1bde099a9a4070cd63ff4cddd547294a778e643dc2c38ac02140f2c9",
+      "sha256": "625dca17605104e2f27531a9950b1f83d5b570973efda5be8209b2fdeb014f07",
       "groups": [
         {
           "name": "What to render",
@@ -1399,6 +1408,12 @@
               "type": "number",
               "default": 5.0,
               "desc": "module front-side component height (CSI connector etc.)"
+            },
+            {
+              "name": "vm_back_h",
+              "type": "number",
+              "default": 5.0,
+              "desc": "module BACK-side component height: the XIAO's socket rows and Body1 at the USB edge — brd_grove_v2_back_h(), the vendor CAD."
             },
             {
               "name": "cam_w",
@@ -1582,7 +1597,7 @@
               "name": "standoff_h",
               "type": "number",
               "default": 3.5,
-              "desc": "PCBs sit this high off the plate (RAISE if DevKit has soldered pin headers!)"
+              "desc": "the DevKit sits this high off the plate, the module at least this (RAISE if DevKit has soldered pin headers!)"
             },
             {
               "name": "cav_extra",
@@ -1663,8 +1678,8 @@
             {
               "name": "kh_lock",
               "type": "bool",
-              "default": true,
-              "desc": "(keyhole mounts) anti-lift knockouts: 0.6 mm web, pierce with #4/M3 on install"
+              "default": false,
+              "desc": "(keyhole mounts) anti-lift knockouts (0.6 mm web), OFF: the plate screws enter from the back face, so a case hung on"
             }
           ]
         },
@@ -1851,8 +1866,8 @@
             {
               "name": "br_screw_d",
               "type": "number",
-              "default": 4.2,
-              "desc": "countersunk wall screws (#8 / M4)"
+              "default": 4.8,
+              "desc": "countersunk wall screws (#8 / M4): the #8's 4.17 major + 2 x tol_hole (4.2 let the screw thread the bracket)"
             },
             {
               "name": "bracket_tripod",
@@ -2008,7 +2023,7 @@
               "name": "vent_pad_d",
               "type": "number",
               "default": 12.0,
-              "desc": "GORE-vent seat Ø, on the front's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
+              "desc": "GORE-vent patch Ø (its seat is cut tol_slide over it), on the front's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
             },
             {
               "name": "vent_pad_depth",
@@ -2226,7 +2241,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
+          "sha256": "bdfc31b56f5b08c462d44f62e91c6c2e944555bae361f2cfbcfee762734b00d9"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -2242,7 +2257,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "63fd5fc0c72e785bafe23e45877934a0bf4273321827c4738cd156ffb108b76c"
+          "sha256": "c4f9692e091059d27331d801bf0b621a4000ee1ce6cb2663bb6790c1f1e2183d"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -2250,7 +2265,7 @@
         },
         {
           "file": "canary_rib_lib.scad",
-          "sha256": "c28d6c3ab4b6688057958dfd38d756ac4eaa7166326b186fb930097ad8c186c5"
+          "sha256": "8288799d4f67dde3bb1584d87ef06b0ada557abde0789416429516abe0c644d0"
         },
         {
           "file": "canary_color_lib.scad",
@@ -2327,7 +2342,7 @@
         "plate_wedge": "°",
         "plate_wedge_x": "°"
       },
-      "sha256": "1f74ecd69450791248ab85808a60d00883ac3caf317be2897aa8b8d33a808572",
+      "sha256": "3c060f7351615a74cec5993f602e12963076107a6b5cb1d44d2e83c3531adf2d",
       "groups": [
         {
           "name": "What to render",
@@ -2395,7 +2410,7 @@
               "name": "opt_weep",
               "type": "bool",
               "default": true,
-              "desc": "Ø2 weep through the bottom wall just above the plate's face (mounted button-down):"
+              "desc": "Ø2 weep straight out through the bottom wall, over the gasket groove (straight down when hung):"
             },
             {
               "name": "weep_d",
@@ -2847,7 +2862,7 @@
               "name": "svc_proud",
               "type": "number",
               "default": 0.2,
-              "desc": "the head's face stands this far PROUD of the back face: the wall plate's slab presses the rim onto its"
+              "desc": "the head's face stands this far PROUD of the back face, so mounted the wall plate's slab caps the heads."
             },
             {
               "name": "svc_pip_d",
@@ -3351,8 +3366,8 @@
             {
               "name": "plate_screw_d",
               "type": "number",
-              "default": 4.2,
-              "desc": "wall screws (#8 / M4 PAN head — the seats are flat counterbores)"
+              "default": 4.8,
+              "desc": "wall screws (#8 / M4 PAN head — the seats are flat counterbores): the #8's 4.17 major + 2 x tol_hole (4.2 let the screw thread the plate, the Vision bracket's AUD-5)"
             },
             {
               "name": "plate_head_h",
@@ -3521,7 +3536,7 @@
               "name": "vent_pad_d",
               "type": "number",
               "default": 12.0,
-              "desc": "GORE-vent seat Ø, on the face's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
+              "desc": "GORE-vent patch Ø (its seat is cut tol_slide over it), on the face's INNER side (it prints face-down: an outer seat cannot bridge) — core_vent_pad_d()"
             },
             {
               "name": "vent_pad_depth",
@@ -3685,7 +3700,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
+          "sha256": "bdfc31b56f5b08c462d44f62e91c6c2e944555bae361f2cfbcfee762734b00d9"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -3697,7 +3712,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "63fd5fc0c72e785bafe23e45877934a0bf4273321827c4738cd156ffb108b76c"
+          "sha256": "c4f9692e091059d27331d801bf0b621a4000ee1ce6cb2663bb6790c1f1e2183d"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -3705,7 +3720,7 @@
         },
         {
           "file": "canary_rib_lib.scad",
-          "sha256": "c28d6c3ab4b6688057958dfd38d756ac4eaa7166326b186fb930097ad8c186c5"
+          "sha256": "8288799d4f67dde3bb1584d87ef06b0ada557abde0789416429516abe0c644d0"
         },
         {
           "file": "canary_color_lib.scad",
@@ -3793,7 +3808,7 @@
       "units": {
         "radome_t": "mm"
       },
-      "sha256": "866cfe25a4dc6ca759978c8a7f743d08fa47d500825520bcca08b00cc1bb7935",
+      "sha256": "f2bd12199b63a1aa9bcfc3138f86cd9d888c86947099c06ca2fbbfa7d2ef2e84",
       "groups": [
         {
           "name": "What to render",
@@ -3861,7 +3876,7 @@
               "name": "opt_seal",
               "type": "bool",
               "default": false,
-              "desc": "perimeter TPU gasket + drip-edge front (indoor ceilings rarely need it)"
+              "desc": "perimeter TPU gasket in the shell's ledge + O-rings under the plate screws (indoor ceilings rarely need it)"
             },
             {
               "name": "opt_weep",
@@ -4076,7 +4091,7 @@
               "name": "vent_pad_d",
               "type": "number",
               "default": 12.0,
-              "desc": "GORE-vent seat Ø on the front's outer face — core_vent_pad_d()"
+              "desc": "GORE-vent patch Ø (its seat on the front's outer face is cut tol_slide over it) — core_vent_pad_d()"
             },
             {
               "name": "vent_pad_depth",
@@ -4197,7 +4212,7 @@
               "name": "tol_slide",
               "type": "number",
               "default": 0.2,
-              "desc": "sliding fits: front lip, drip skirt — core_tol_slide()"
+              "desc": "sliding fits: the plate in its bore — core_tol_slide()"
             },
             {
               "name": "tol_press",
@@ -4209,7 +4224,7 @@
               "name": "tol_hole",
               "type": "number",
               "default": 0.3,
-              "desc": "clearance holes: front screws — core_tol_hole()"
+              "desc": "clearance holes: the plate screws — core_tol_hole()"
             }
           ]
         },
@@ -4261,8 +4276,8 @@
             {
               "name": "kh_lock",
               "type": "bool",
-              "default": true,
-              "desc": "(keyhole mounts) anti-lift knockouts, as on the Vision: a 0.6 mm web at the back face, pierced with #4/M3 on install"
+              "default": false,
+              "desc": "(keyhole mounts) anti-lift knockouts (a 0.6 mm web at the back face), OFF as on the Vision since its v0.7: their screws go in"
             }
           ]
         },
@@ -4379,6 +4394,15 @@
               "desc": "hinge bolt Ø (M5 at the default); its hole is cut 0.4 over"
             },
             {
+              "name": "hinge_clear",
+              "type": "number",
+              "default": 0.15,
+              "min": 0,
+              "step": 0.05,
+              "max": 0.4,
+              "desc": "extra slot width on the bracket for printed fins that run +0.1 oversize (the Vision's)"
+            },
+            {
               "name": "hinge_teeth",
               "type": "bool",
               "default": true,
@@ -4422,8 +4446,8 @@
             {
               "name": "br_screw_d",
               "type": "number",
-              "default": 4.2,
-              "desc": "wall-screw clearance at the plate's four corners, 90° countersunk for a #8 flat head (Ø8.3)"
+              "default": 4.8,
+              "desc": "wall-screw clearance at the plate's four corners, 90° countersunk for a #8 flat head (Ø8.3):"
             },
             {
               "name": "bracket_tripod",
@@ -4641,7 +4665,7 @@
       "deps": [
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
+          "sha256": "bdfc31b56f5b08c462d44f62e91c6c2e944555bae361f2cfbcfee762734b00d9"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -4657,7 +4681,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "63fd5fc0c72e785bafe23e45877934a0bf4273321827c4738cd156ffb108b76c"
+          "sha256": "c4f9692e091059d27331d801bf0b621a4000ee1ce6cb2663bb6790c1f1e2183d"
         },
         {
           "file": "canary_mark_lib.scad",
@@ -4665,7 +4689,7 @@
         },
         {
           "file": "canary_rib_lib.scad",
-          "sha256": "c28d6c3ab4b6688057958dfd38d756ac4eaa7166326b186fb930097ad8c186c5"
+          "sha256": "8288799d4f67dde3bb1584d87ef06b0ada557abde0789416429516abe0c644d0"
         },
         {
           "file": "canary_color_lib.scad",
@@ -4731,7 +4755,7 @@
         "glyph_rib": "mm",
         "glyph_depth": "mm"
       },
-      "sha256": "b4a9a6da9291089ff753155744bf2d17adeaa2a5f88ba3aec7336a5181028411",
+      "sha256": "6ea34cf7791ac5306d75784504b3abfeaf183978754ac4ef511ed19c4e835d0c",
       "groups": [
         {
           "name": "What to render",
@@ -5100,7 +5124,7 @@
         },
         {
           "file": "canary_core_lib.scad",
-          "sha256": "ab7e89d84a723f1f7429560f8c155d83010109f8fb944aa95e936ca5bded2703"
+          "sha256": "bdfc31b56f5b08c462d44f62e91c6c2e944555bae361f2cfbcfee762734b00d9"
         },
         {
           "file": "canary_mount_lib.scad",
@@ -5116,7 +5140,7 @@
         },
         {
           "file": "canary_board_lib.scad",
-          "sha256": "63fd5fc0c72e785bafe23e45877934a0bf4273321827c4738cd156ffb108b76c"
+          "sha256": "c4f9692e091059d27331d801bf0b621a4000ee1ce6cb2663bb6790c1f1e2183d"
         },
         {
           "file": "canary_color_lib.scad",

@@ -187,7 +187,9 @@ What landed instead of a default-build gate:
   canary tree**: `framework = arduino` ships a precompiled core + bootloader, so
   `CONFIG_NVS_ENCRYPTION` / `CONFIG_SECURE_FLASH_ENC_ENABLED` in any `sdkconfig.defaults` are inert
   here (the 2.0.17 core's own sdkconfig leaves `CONFIG_SECURE_FLASH_ENC_ENABLED` unset, and NVS
-  encryption depends on it; only the ESP-IDF project `canary-ota` has NVS encryption on). It needs
+  encryption depends on it; the 3.3.8 core's, which `env:full` and the canary-wap build on, leaves
+  `CONFIG_NVS_ENCRYPTION` unset; only the ESP-IDF project `canary-ota` builds with it set, and its
+  partition table has no `nvs_keys` partition). It needs
   the arduino-as-IDF-component migration (item 9) and is then a Tier-3 concern — and the point
   where `key_at_rest.h`'s NVS-encryption fact learns to read true.
 
@@ -423,7 +425,8 @@ Untapped / issues:
   closes for those builds with §1.1. CI-compiled (#1704), no bench pass. Not in this change: widening the 8-char
   AP password (below) — it is re-derived from the fingerprint every boot, so a new derivation
   changes every provisioned device's Wi-Fi password after an OTA and needs a derivation-version
-  marker first. The `"witness2026"` tripwire in `regression_check.sh` (CI's "Regression Guards"
+  marker first. *(Update 2026-10-19, sweep F350: widened with no marker; see the AP password
+  item in §3.8.)* The `"witness2026"` tripwire in `regression_check.sh` (CI's "Regression Guards"
   job) matches no source today; it stays as the ratchet.
 - **De-block the loop** — async `WiFi.scanNetworks(true,…)`, throttle/offload `MDNS.queryService`,
   move MQTT to its own task (subsumed by §1.2). **[P1]**
@@ -552,6 +555,14 @@ Genuinely solid. Gaps:
   a core without it compiles HTTP-only and says why. **Release pending** the size-guard delta;
   **bench Track D open**. Fallback if the IDF 4.4 core lacks x509write: option (c), the
   certificate provisioned by the flashers' NVS builders.
+  *Correction 2026-10-22 (F15, F337):* "landed" holds for the compile, not for a device. The
+  on-device generator is gated on `__has_include("mbedtls/x509write_crt.h")`, a header mbedTLS
+  has never shipped (its write API is declared in `mbedtls/x509_crt.h`, behind
+  `MBEDTLS_X509_CRT_WRITE_C`; neither arduino-esp32 2.0.17 nor PlatformIO's
+  framework-arduinoespressif32 3.3.8 and its libs has the header), so every pinned core compiles
+  it out, nothing else stores a certificate, and a `[env:dev]` or `[env:full]` unit serves plain
+  HTTP and says so in `tls_mode_reason` ("no stored certificate and this core cannot generate
+  one"). The fix (test `x509_crt.h` and `MBEDTLS_X509_CRT_WRITE_C`, or option (c)) is F15's.
 - **Auth coverage is good — the MJPEG stream *is* gated.** `handle_peek_stream` calls `auth_gate`
   first ([`securacv_network.cpp:1700`](canary/lib/securacv_network/src/securacv_network.cpp)), so the
   peek stream is **not** an open privacy hole. The main intentionally-ungated handler is `handle_ui`
@@ -565,8 +576,15 @@ Genuinely solid. Gaps:
   tap (one tap = one page load or one receipt fetch, 30 s;
   [`common/network/provisioning_gate.h`](common/network/provisioning_gate.h), host-tested); a
   home-LAN load gets the page without it. CI-compiled (#1704), no bench pass.
-- **AP password is exactly 8 chars** (`"cv-"` + 5), the WPA2 floor — ~28.7 bits of entropy. Widen
-  to 10–12 chars from the same fingerprint for headroom. **[P2]**
+- **(fixed 2026-10-19, sweep F350)** ~~**AP password is exactly 8 chars** (`"cv-"` + 5), the WPA2
+  floor — ~28.7 bits of entropy. Widen to 10–12 chars from the same fingerprint for headroom.~~
+  Widening it from the fingerprint would not have helped: the device publishes the fingerprint,
+  so the key was computable by anyone who had seen it, at any length. It is now an HMAC
+  of the device private key, `cv-` + 12 (~69 bits), from
+  [`common/network/ap_password.h`](common/network/ap_password.h): canary-wap's derivation,
+  except in the padding of a shortfall branch the header names (p ≈ 3e-10). Every unit's key
+  changes once, on update, and no marker keeps the old one.
+  Host-tested (`tests_host/test_ap_password.cpp`), not run on a device. **[P2]**
 - **Untapped UX:** Improv-WiFi / WebUSB provisioning, SSE/WebSocket event streams instead of poll,
   an OpenAPI description of the REST surface, USB-MSC evidence-drive (the `usb-onboard` env already
   proves the TinyUSB composite path). **[P2]**

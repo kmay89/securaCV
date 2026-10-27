@@ -9,6 +9,11 @@
 //  home. The corner seats stay local: they are the 82° US flat-head cone,
 //  not the lib's 90° cs_cone90_cut.
 //
+//  2026-10-23: the corner holes are #8 CLEARANCE, 4.8 (the 4.17 major + 2 x
+//  tol_hole — the Vision bracket's AUD-5 number). At 4.2 they gave a #8 0.017
+//  a side, under a printed hole's shrink, so the screw threaded the sign: a
+//  part threaded onto its own screw cannot be pulled down onto the wall.
+//
 //  ⚠️ DEV STATUS: render/mesh-verified only. Check your local signage rules.
 // ============================================================================
 
@@ -23,7 +28,7 @@ sign_w = 110.0;      // plate width (X) — the border groove runs 4 to 5.5 in f
 sign_h = 70.0;       // plate height (Y) — the border groove runs 4 to 5.5 in from each edge and the corner screws sit 7 in; the three lines stay at +14, 0 and -12 from the center whatever this is
 sign_t = 3.0;        // plate thickness — the text, the 0.5-deep border groove and the countersinks are cut down from its face, and a countersink deeper than this is refused (asserted)
 edge_ch = 1.0;       // 45° chamfer round the face's edge: the face is this smaller on every side than the plate
-screw_d = 4.2;       // countersunk corners; or use VHB and set screws=false
+screw_d = 4.8;       // #8 clearance: the 4.17 major + 2 x tol_hole (4.2 let the screw thread the sign) — countersunk corners; or use VHB and set screws=false
 cs_head_d = 8.2;     // #8 82° flat-head Ø — the seat's rim at the face, so the head lands flush
 screws  = true;      // four corner holes with 82° countersinks for #8 flat heads (false for a VHB mount)
 back_ribs = false;   // rib_lib loop + two cross ribs on the BACK (rib_h tall): a 110 x 70 x 3 sheet stays
@@ -49,7 +54,7 @@ $fa = 3; $fs = 0.4;
 // the countersink: an 82° cone whose rim is cs_head_d AT the face, so it starts
 // cs_h below it. It started at a fixed 1.6 down (Ø6.98 at the face), which left
 // an Ø8.2 head standing 0.70 proud of a seat the comment called flush
-cs_h = (cs_head_d - screw_d) / (2*tan(41));        // 2.30 for #8 in a Ø4.2 hole
+cs_h = (cs_head_d - screw_d) / (2*tan(41));        // 1.96 for #8 in a Ø4.8 hole
 assert(cs_h < sign_t, "the countersink is deeper than the plate — thicken sign_t or use a smaller head");
 
 // text vs the border groove: the lines must stay >= 1 mm inside its inner edge.
@@ -102,7 +107,7 @@ module sign() {
 }
 
 // the back section: a loop inboard of the screw holes (inset 12 clears the
-// Ø4.2 at 7 from the edge by 2.8) and two cross ribs. Screws pull the plate
+// Ø4.8 at 7 from the edge by 2.6) and two cross ribs. Screws pull the plate
 // onto the loop, so the loop is the bearing face — no rocking on a bad wall
 module sign_back_ribs() {
     mirror([0, 0, 1]) plate_ribs(sign_w, sign_h, sign_t, rib_h, r = 6, inset = 12, n = 2);

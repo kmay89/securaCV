@@ -67,6 +67,43 @@ static void test_sta_join() {
   CHECK(!sta_join_allowed(false, true, false));
 }
 
+// The A/B confirm dwell's health signal: the link the unit is set up to hold.
+// Args: (ap_only, configured, enabled, sta_connected, ap_up).
+static void test_ota_confirm_link_healthy() {
+  // A unit that joins home Wi-Fi: the station link, and only it.
+  CHECK(ota_confirm_link_healthy(false, true, true, true, false));
+  CHECK(ota_confirm_link_healthy(false, true, true, true, true));
+  CHECK(!ota_confirm_link_healthy(false, true, true, false, true));   // AP up is not enough
+  CHECK(!ota_confirm_link_healthy(false, true, true, false, false));
+  // The standalone choice: the AP being up. A unit with home credentials
+  // saved before the choice is still standalone (sta_join_allowed says so).
+  CHECK(ota_confirm_link_healthy(true, false, false, false, true));
+  CHECK(ota_confirm_link_healthy(true, true, true, false, true));
+  CHECK(!ota_confirm_link_healthy(true, false, false, false, false));  // AP down: not healthy
+  CHECK(!ota_confirm_link_healthy(true, true, true, false, false));
+  // Home Wi-Fi turned off (/api/wifi/disconnect persists wifi_en=false):
+  // no station network to hold, so the AP.
+  CHECK(ota_confirm_link_healthy(false, true, false, false, true));
+  CHECK(!ota_confirm_link_healthy(false, true, false, false, false));
+  // Nothing saved yet: the setup AP.
+  CHECK(ota_confirm_link_healthy(false, false, true, false, true));
+  CHECK(!ota_confirm_link_healthy(false, false, true, false, false));
+  // Where no station network is expected, a station link is not required
+  // and not counted against the unit.
+  CHECK(ota_confirm_link_healthy(true, false, false, true, true));
+  // The signal before the fix (WiFi.status() == WL_CONNECTED alone) was
+  // false for every standalone pass; the new one is true for each with the
+  // AP up.
+  for (int c = 0; c < 2; c++) {
+    for (int e = 0; e < 2; e++) {
+      const bool sta_connected = false;  // a standalone unit never joins
+      const bool old_signal = sta_connected;
+      CHECK(!old_signal);
+      CHECK(ota_confirm_link_healthy(true, c != 0, e != 0, sta_connected, true));
+    }
+  }
+}
+
 static void test_ap_teardown() {
   const uint32_t GRACE = 120000u;
   // AP-only: never torn down, even long after a (stale) connect stamp.
@@ -347,6 +384,56 @@ static void test_door_window_record() {
   CHECK(!door_window_record_valid(0xFFFFFFFFu, MAGIC, false));
 }
 
+// The one rule for a keyless join (sweep F333): the Bluetooth setup door
+// and the camera's boot QR scan open only on a unit with no stored network
+// that is not standalone on purpose. Before, the boot scan asked only about
+// the stored network, so a standalone unit scanned forever and any code
+// held to its lens took it off standalone.
+static void test_keyless_join_open() {
+  CHECK(keyless_join_open(false, false));   // fresh, or forgotten: open
+  CHECK(!keyless_join_open(true, false));   // a network on file: shut
+  CHECK(!keyless_join_open(false, true));   // standalone: shut, no network or not
+  CHECK(!keyless_join_open(true, true));
+  // The door's composition (canary_wap.ino ble_improv_door_should_open):
+  // (configured, a door join still being proven, ap_only). A pending join
+  // counts as no credentials, so the door stays open for the phone's retry.
+  const auto door = [](bool configured, bool join_pending, bool ap_only) {
+    return keyless_join_open(configured && !join_pending, ap_only);
+  };
+  CHECK(!door(true, false, false));
+  CHECK(door(false, false, false));
+  CHECK(door(true, true, false));
+  CHECK(!door(false, false, true));
+  CHECK(!door(true, true, true));
+}
+
+// Whether a running QR scan window may still act on a code it reads, asked
+// after every frame (qr_scan_task_fn): (auto_scan, has_credentials, ap_only,
+// setup_active). A boot window holds the keyless-join rule (F333's review);
+// a phone session's window, which POST /api/wifi/qr-scan starts only during
+// first-boot setup (F334), holds only while setup does. Before, nothing
+// ended a phone window when setup ended by another path (the Bluetooth
+// door's join, a second tab's standalone choice), and for up to 60 s a code
+// held to the lens joined the unit to the network it named, no bearer asked.
+static void test_scan_window_open() {
+  // A boot window: the keyless-join rule, whatever setup is doing.
+  for (bool setup : {false, true}) {
+    CHECK(scan_window_open(true, false, false, setup));
+    CHECK(!scan_window_open(true, true, false, setup));
+    CHECK(!scan_window_open(true, false, true, setup));
+    CHECK(!scan_window_open(true, true, true, setup));
+  }
+  // A phone window: setup alone, whatever is stored (during setup a network
+  // the wizard's Connect stored may have failed to join, and the phone may
+  // scan a code instead, as before).
+  for (bool creds : {false, true}) {
+    for (bool ap_only : {false, true}) {
+      CHECK(scan_window_open(false, creds, ap_only, true));
+      CHECK(!scan_window_open(false, creds, ap_only, false));
+    }
+  }
+}
+
 // The pairing channel's security profile for the setup door: the full
 // (door_open, pairing_pending, authenticated_link_up) matrix, then the
 // transitions the channel's set_setup_door() walks.
@@ -380,9 +467,9 @@ static void test_security_profile_transitions() {
   // Boot, credentials stored, door shut: Numeric Comparison applied.
   CHECK(step(false, false, false) == NUMERIC_COMPARISON);
   CHECK(applied == NUMERIC_COMPARISON);
-  // Factory reset at runtime: the door opens, but the owner's bonded phone
-  // is still connected (the dashboard that issued the reset). Held: the
-  // bonded session keeps the strict profile.
+  // Credentials wiped at runtime (Forget Wi-Fi, or the 10 s hold before its
+  // restart): the door opens, but a bonded phone is still connected. Held:
+  // the bonded session keeps the strict profile.
   CHECK(step(true, false, true) == HOLD);
   CHECK(applied == NUMERIC_COMPARISON);
   // Still held while that link is up, pass after pass.
@@ -416,6 +503,7 @@ int main() {
   test_setup_timeout();
   test_scan_cache();
   test_sta_join();
+  test_ota_confirm_link_healthy();
   test_ap_teardown();
   test_deferred_reboot();
   test_reboot_deadline_extend();
@@ -426,6 +514,8 @@ int main() {
   test_ble_scanners_held_then_released();
   test_ap_only_for_discovery();
   test_door_window_record();
+  test_keyless_join_open();
+  test_scan_window_open();
   test_security_profile_matrix();
   test_security_profile_transitions();
   if (g_failures) {

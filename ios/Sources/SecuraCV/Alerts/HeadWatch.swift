@@ -15,7 +15,9 @@
 //     the baseline — pairing a Canary with 4,000 chain records must not
 //     read as 4,000 fresh events.
 //   * ANY MOVEMENT IS NEWS, including backwards. A head that went DOWN
-//     means the chain restarted (a wipe, a reset) — exactly the kind of
+//     means the chain restarted (an install or a full erase in a
+//     flasher, an all-rounder Canary's 30 s BOOT wipe, a replaced board;
+//     an OTA update and the 10 s BOOT reset keep the chain) — exactly the kind of
 //     thing worth a full refresh and a verify, never something to ignore
 //     because it wasn't an increment.
 

@@ -111,8 +111,8 @@ final class MagicPairPlanTests: XCTestCase {
     }
 
     func testARefusalIsFinal() {
-        // 403: spent, expired, or a wrong claim — the firmware burned it, so
-        // an address on hand earns no second dial.
+        // 403: spent, expired or replaced (the firmware spends a claim only
+        // on a match), so an address on hand earns no second dial.
         XCTAssertEqual(MagicPairPlan.afterFetch(.refused, claim: claim(), triedIP: false, isPrivateHost: DeviceAPI.isPrivate),
                        .notPaired(MagicPairPlan.Copy.refused))
     }

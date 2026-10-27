@@ -1,0 +1,78 @@
+name: Backoffice deploy
+
+# Deploys the backoffice to STAGING (and the public demo) after "Backoffice
+# image" has published the commit's image to GHCR. It does one thing over SSH
+# as the locked-down `deploy` user — "<app> <tag>" — which the server's forced
+# command turns into `kit deploy`: pull, start, wait for healthy, or roll back.
+# Production is never deployed from here: "Promote backoffice to production"
+# (backoffice-promote.yml) sends the tag staging runs, when a person presses it.
+#
+# It needs three repository secrets, all printed by `kit deploy-key` on the
+# server: DEPLOY_HOST, DEPLOY_SSH_KEY and DEPLOY_KNOWN_HOSTS (the server's host
+# key, so a wrong server is refused). Optional: the variable DEPLOY_APPS, the
+# space-separated apps to redeploy on every merge (default `backoffice-staging`;
+# add `backoffice-demo` for the public demo; never `backoffice`, that is the
+# promote button's), and DEPLOY_URL (staging's public address) to prove from
+# outside that it answers and runs this very build: /healthz says "ok <env> <sha>".
+# Without the secrets it does nothing, so forks are unaffected.
+on:
+  workflow_run:
+    workflows: ["Backoffice image"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Deploys land in order, one per published image; nothing is canceled.
+concurrency:
+  group: backoffice-deploy-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: kit deploy over ssh
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04  # the image the job was written against (CI.md R11)
+    timeout-minutes: 10
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      DEPLOY_APPS: ${{ vars.DEPLOY_APPS || 'backoffice-staging' }}
+      DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Is a server configured?
+        id: gate
+        run: |
+          if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_SSH_KEY" ] || [ -z "$DEPLOY_KNOWN_HOSTS" ]; then
+            echo "No DEPLOY_HOST / DEPLOY_SSH_KEY / DEPLOY_KNOWN_HOSTS secrets — nothing to deploy to. \`kit deploy-key\` on the server prints all three."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Deploy ${{ env.DEPLOY_APPS }} ← ${{ github.event.workflow_run.head_sha }}
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          umask 077; mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          tag="${HEAD_SHA:0:12}"
+          case " $DEPLOY_APPS " in *" backoffice "*) echo "DEPLOY_APPS names 'backoffice' (production): merges deploy to staging; production is the promote button's" >&2; exit 1;; esac
+          for app in $DEPLOY_APPS; do
+            echo "== $app ← $tag"
+            ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts -o BatchMode=yes -o ConnectTimeout=20 "deploy@$DEPLOY_HOST" "$app $tag"
+          done
+          rm -f ~/.ssh/deploy_key
+      - name: The server answers from the outside, on this build
+        if: steps.gate.outputs.run == 'true' && env.DEPLOY_URL != ''
+        run: |
+          tag="${HEAD_SHA:0:12}"
+          for _ in 1 2 3 4 5 6; do
+            body="$(curl -fsS --max-time 10 "$DEPLOY_URL/healthz" 2>/dev/null || true)"
+            case "$body" in "ok "*" $tag") echo "$DEPLOY_URL/healthz: $body"; exit 0;; esac
+            sleep 10
+          done
+          echo "$DEPLOY_URL/healthz did not answer 'ok <env> $tag' after a minute (last: '${body:-nothing}')" >&2; exit 1

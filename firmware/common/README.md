@@ -44,7 +44,8 @@ common/
 ├── mqtt/           # mqtt_offline_queue.h — the MQTT offline publish queue (pure logic)
 ├── network/        # Network modules
 │   ├── ap_security_policy.h     # what security the SoftAP and STA link ask the Wi-Fi driver for (F16; host-tested)
-│   ├── host_guard.h             # does the Host a request targeted name THIS device (the LAN pages' write guard)
+│   ├── ap_password.h            # the SoftAP key: an HMAC of the device private key, `cv-` + 12, never from anything the device publishes, refused (false, "") when the HMAC fails; the canary (PIO) calls it, held equal to the WAP's own (F350; host-tested)
+│   ├── host_guard.h             # does the Host a request targeted name THIS device (the LAN pages' write guard; the WAP's pages, receipt and session cookie ask it too, F344) (host-tested; a staged copy sits by the WAP sketch, held by check_improv_sync.sh)
 │   ├── tls_policy.h             # the canary's self-signed HTTPS decisions (F15; host-tested)
 │   ├── provision_core.h
 │   ├── wifi_join_policy.h
@@ -64,8 +65,9 @@ common/
 │   ├── improv_core.h            # the Bluetooth setup door, pure half: Improv Wi-Fi's packet codec, the 0x4677 service data, and the session — the door rule (no stored credentials → a 30-min first-boot window; a tap → 60 s; a failing saved network → never), the cooldown / cap / idle bounds (host-tested; the header comment is the canonical statement)
 │   ├── improv_ble.{h,cpp}       # its NimBLE glue for both majors (2.x Sense, 1.4.x Vision): the service, the beacon-primary advert set with the Improv scan response, the encrypted-link check in the write handler, the hand-off to setup_portal_submit_join (CI-compiled, no bench pass)
 │   ├── hub_handoff.h            # the hub hand-off over the same door, pure half: the HUB characteristic's JSON (host, port, user, pass, tls — the broker the phone found and the login it minted) read strictly, every refusal wiped, and the one status byte read back; Sense and Vision take it right after the join through improv_ble (host-tested)
+│   ├── auth_backoff.h           # the bearer lockout, one backoff per source address: 8 tracked plus a shared overflow, 2 s doubling capped at the 60 s window that clears a count (host-tested; a staged copy sits by the WAP sketch, and the canary (PIO) tree's `securacv_auth` runs it by path)
 │   ├── claim_ticket.h           # the WAP's claim ticket: 16 random bytes readable once over the link that provisioned, spent once on the home LAN for the receipt — so the bearer token never rides Bluetooth (host-tested; a staged copy sits by the WAP sketch)
-│   └── provisioning_gate.h      # the BOOT-tap gate, the page-token policy and the receipt's grant order: foreign Host → bearer → claim → tap (host-tested)
+│   └── provisioning_gate.h      # the BOOT-tap gate, the page-token policy and the receipt's grant order: foreign Host → bearer → claim → tap; and a request's peer as one 16-byte key, peer_key_from_addr() (host-tested; a staged copy sits by the WAP sketch, which reads its peers through it)
 ├── ota/            # src/securacv_ota.{h,cpp} — the signed pull-OTA engine every released tree links
 ├── power/          # power_events.h, power_logic.h — battery decision logic (pure, host-tested)
 ├── provision_qr/   # provision_qr.h — the provisioning QR grammar (the display mints, the Canaries scan)

@@ -46,7 +46,7 @@ user on this list.**
 ### 1. Keys Never Leave the Device
 
 The Ed25519 private key is generated on the ESP32-family chip's hardware RNG
-and stored in NVS. It is **never**:
+and stored in NVS. By anything the firmware runs, it is **never**:
 - Transmitted over WiFi, USB, or any interface
 - Included in exports, logs, diagnostics, or crash dumps
 - Derivable from any data that leaves the device
@@ -62,13 +62,23 @@ the device, an adversary with sufficient power WILL extract it.
 #### Scope of this principle
 
 Every item above is a statement about
-*software* paths. It is not a claim that the key survives an adversary who
-takes the device to a bench: flash encryption is an opt-in tier, so on a
-default Canary the key is recoverable by reading the flash directly. What
+*firmware* paths. It is not a claim that the key survives an adversary who
+holds the device, over its USB port or on a bench: the key lives in NVS, which flash encryption
+(an opt-in tier the provisioning kit does not yet turn on) does not cover,
+and the NVS encryption that would is not
+available under `framework = arduino`, which every released firmware tree
+builds with, so on every tier today the key is recoverable by reading the
+flash directly, on a fused board too (Scenario 4 below). Our own flashers
+do exactly that read: before an install, unless told to skip it, each reads
+the whole flash over USB, through the chip's ROM download mode, which the
+Canary firmware does not control, and saves it as a safety copy on the
+computer (the browser's in its downloads, the desktop app's in its backups
+folder). That file holds the key in the clear, and restoring it puts the
+same key back on a board. What
 that does and does not buy an attacker — forward forgery yes, rewriting
 anchored history no — is stated in
 [`SECURITY_MODEL.md`](SECURITY_MODEL.md#physical-extraction-and-the-flash-encryption-default).
-Reviewers should hold this principle to the software boundary and treat
+Reviewers should hold this principle to the firmware boundary and treat
 physical extraction as the separately-documented trade it is.
 
 ### 2. Zero Phone-Home
@@ -170,7 +180,10 @@ Fork detection: divergent chains from same device are detectable
   connect; there is no fallback to plain to be talked into
 - Raw MACs are not "deleted after use" — they are hashed before storage
 - GPS is not "anonymized in post-processing" — it is coarsened at capture
-- Private keys are not "access-controlled" — there is no read interface
+- Private keys are not "access-controlled" — the firmware has no read
+  interface for them (a whole-flash read, over USB through the ROM download
+  mode or on a bench, still recovers the key: NVS is plaintext on every
+  tier, Principle 1's scope)
 - Telemetry is not "opt-out" — the code to send it does not exist
 
 Preference order: (1) Don't build it, (2) Build it so it can't leak,
@@ -181,14 +194,17 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | Surface | Decision |
 |---------|----------|
 | Bluetooth | BLE (NimBLE) in the WAP's FULL profile (and, reduced to the pairing channel — with the BLE OTA and the presence listener that ride it — and the status service, in DEV; MINIMAL compiles it out), gated on `HW_HAS_BLE`: owner pairing / provisioning, the GATT status service, signed BLE OTA v2, the Scout scanner that attributes rooms to the owner's own paired beacons by hashed MAC, and two passive scanners — BLE presence (listen-only, feeding the same presence pipeline as the WiFi one; no MAC, OUI or name kept from the scanner) and Nearby discovery of other Canaries by service UUID (everything else counted only). Nothing classes or tracks other people's devices. The S3 / C3 the BLE-bearing builds run on have no Classic (BR/EDR) radio; the classic-ESP32 boards have one and no build compiles a stack for it. The `firmware/canary` flagship's `release` / `release_ha` images have `FEATURE_BLE_STATUS=0` / `FEATURE_BLE_SCAN=0`; its `full` env compiles the Scout scanner and the GATT status service (`securacv_ble_scan`, `securacv_ble_status`), the only BLE code in that tree |
-| USB Serial | Disabled in production |
+| USB Serial | Enabled in release images, not disabled: the published ESP32-S3 builds set `CDCOnBoot=cdc`, so `Serial` is the USB console (the C3 and C6 boards' USB-Serial/JTAG provides it on its own), and `scripts/lint_usb_console.py` holds every publishing workflow to the bench builds. The console takes the serial commands, and the WAP prints its provisioning receipt there at every boot, the bearer token and the SoftAP password included. Reading it takes the cable in the unit's USB port, which is physical access: it is the owner's way back to the token when no client of theirs can win the BOOT tap (F342) |
 | JTAG | Disabled via eFuse |
-| OTA | Owner-initiated by default: the device checks a signed manifest daily and installs nothing; Install is a button, and the per-device Auto Update switch is an explicit owner opt-in (off by default). Every install verifies the Ed25519 release signature and the version floor first. The WAP's BLE OTA (protocol v2) puts product and version under the release signature and enforces the same anti-rollback floor as the pull path; a downgrade or a legacy v1 header needs the owner's BOOT-button break-glass and is logged as a bypass (`docs/firmware_ota.md`) |
+| OTA | Owner-initiated by default: the device checks a signed manifest daily and installs nothing; Install is a button, and the per-device Auto Update switch is an explicit owner opt-in (off by default). Every install over that pull path verifies the Ed25519 release signature and the version floor first (a flagship image built without `SECURACV_BUILD_RELEASE` also takes an unsigned image pushed to its bearer-gated `POST /api/ota`: the "Firmware corrupt" row below). The WAP's BLE OTA (protocol v2) puts product and version under the release signature and enforces the same anti-rollback floor as the pull path; a downgrade or a legacy v1 header needs the owner's BOOT-button break-glass and is logged as a bypass (`docs/firmware_ota.md`) |
 | Cloud | None. The outbound paths are the four in Principle 2 — broker, signed-manifest check, SNTP, opt-in forecast — to hosts the owner chose |
 | mDNS | Local network only: the device's own AP, or the home LAN once joined (`_securacv._tcp`) |
-| Setup Wi-Fi (SoftAP) | Device-unique passphrase, max 1 client. Since 2026-09 (F16) both firmware trees ask the driver for WPA2/WPA3 transition with PMF capable (never required, so a WPA2-only phone still joins) and fall back to WPA2-PSK where the core lacks SoftAP SAE — expected on the IDF 4.4 core the `canary (PIO)` dev/release builds use — reporting what is on the air as `ap_auth` in `/api/wifi/status` and `/api/status` (WAP: `/api/wifi`, `/api/device-info`). CI-compiled (#1704), never run on hardware. The `canary (PIO)` passphrase is 8 characters, the WPA2 floor; widening it is a separate decision because it is re-derived every boot and would change every provisioned device's password |
-| HTTP | Plaintext on the LAN by default (token-authenticated); TLS is an owner opt-in on the WAP (`tls_enabled`) and the kernel (`api-tls` feature) — not "TLS only". The `canary (PIO)` dev/full builds (`FEATURE_HTTPS=1`, 2026-09) serve a self-signed ECDSA P-256 certificate on 443 from the first boot after setup and redirect port 80 there; release builds stay plaintext until the size budget is read, and a build or core that cannot do TLS falls back to plaintext and says why in `/api/status` `tls_mode_reason` — CI-compiled (#1704), never run on hardware. The WAP's dashboard session cookie (`cv_session`: `HttpOnly`, `SameSite=Strict`, 24 h) carries `Secure` whenever it is set over the HTTPS server, so the browser never sends it to the port-80 redirect in the clear; the first-boot setup and a failed HTTPS start serve plain HTTP and set it without `Secure`, since a browser drops a `Secure` cookie that an http page sets (host-tested, not run in a browser against a device). The iPhone app pins the receipt's `tls_cert_fp` (`PinnedTrustDelegate`), refuses an https device it cannot check, and offers a plain-http credential push only behind a disclosure the owner switches on |
-| MQTT broker link | Plain by default — the broker password crosses the LAN in the clear until the owner provisions TLS, and on the flagship's release images the provisioning request itself (`POST /api/mqtt/config`) rides the plain device API. CA-verified or SHA-256-pinned TLS per product, refusing to connect on an incomplete setup; the lab mode is chosen by name and warns on every connect. Per-variant table: `docs/FIRMWARE_VARIANT_AUDIT.md`. Compile-tested, host-tested, not bench-tested against a TLS broker. The WAP's stored broker password is write-only (its `GET` answers `password_set`), and since sweep F289's third road (#1835) a `POST /api/mqtt/config` from the dashboard's session alone, which the landing page mints for any host on the LAN, that moves the broker (its host, port or TLS mode, or a CA sent) while a password is stored and the body names none is refused `403 password_needed` before anything is saved; the bearer, or the password typed again, moves it (`move_needs_password()`). So the session cannot point the bridge at a listener of its own and have the reconnect hand over the user and password that way (host-tested, not bench-tested; the flagship's own `POST /api/mqtt/config` refuses a carry to a new host or port from any caller, `credential_carry`). Not covered by that gate: a LAN host that spoofs the configured broker's name (mDNS, DNS or ARP) still receives the password from a plain-mode bridge with no change to the config, and the CA-verified mode is the defense. Also not covered: the WAP's camera QR provisioning re-point (`qr_scan_task_fn`). An SCV1 code that names a hub host moves the broker host and port and keeps the stored user and password, so the next connect sends them to the host the code names. It is scanned while a scan runs that a pair token started (the landing page hands one to any caller, and `GET /api/pair/token` mints one for the dashboard's session), or during the unprovisioned boot scan, and the code has to be held in the camera's view: accepted as proximity-bound in the ledger's F289, with F333 keeping the smallest fix |
+| Setup Wi-Fi (SoftAP) | Device-unique passphrase, max 1 client. Since 2026-09 (F16) both firmware trees ask the driver for WPA2/WPA3 transition with PMF capable (never required, so a WPA2-only phone still joins) and fall back to WPA2-PSK where the core lacks SoftAP SAE — expected on the IDF 4.4 core the `canary (PIO)` dev/release builds use — reporting what is on the air as `ap_auth` in `/api/wifi/status` and `/api/status` (WAP: `/api/wifi`, `/api/device-info`). CI-compiled (#1704), never run on hardware. Both trees' passphrase is `cv-` + 12 characters (15), an HMAC of the device private key; the `canary (PIO)` one was `cv-` plus 5 characters derived from the published key fingerprint (8 in all) until sweep F350, which moved every unit's key once, on update, with no marker keeping the old one (host-tested; not run on a device) |
+| HTTP | Plaintext on the LAN by default (token-authenticated) — not "TLS only". The kernel's TLS is its `api-tls` build feature. Both Canary trees serve HTTPS only with a stored certificate: the WAP after setup (`tls_enabled`), and the `canary (PIO)` dev/full builds (`FEATURE_HTTPS=1`, 2026-09) from the first boot after setup with port 80 redirected there (release builds stay plaintext until the size budget is read). The on-device certificate generator compiles out on every pinned core (its guard tests `mbedtls/x509write_crt.h`, a header mbedTLS never ships) and nothing else writes the stored certificate, so no stock unit of either tree serves HTTPS today (F15): the WAP serves plain HTTP after setup and its receipt's `tls_cert_fp` is empty, and the flagship's `FEATURE_HTTPS` builds serve plain HTTP and say why in `/api/status` `tls_mode_reason` — CI-compiled (#1704), never run on hardware. Once HTTPS runs, the WAP's dashboard session cookie (`HttpOnly`, `SameSite=Strict`, 24 h) is `__Host-cv_session` with `Secure` when it is set over the HTTPS server, so the browser never sends it to the port-80 redirect in the clear, and `cv_session` without `Secure` over plain HTTP (the first-boot setup, a failed HTTPS start), since a browser drops a `Secure` cookie that an http page sets (F337). The two names never meet, so a browser that used one unit over HTTPS at canary.local still signs in to a unit it meets over plain HTTP at canary.local: a second unit (every WAP claims canary.local), the same unit after a factory reset, or a unit whose HTTPS start failed (one name would have been refused there until its 24 h ran out). A cookie follows the host name, so the same held at 192.168.4.1 only for a browser that had used a unit over https://192.168.4.1 on its SoftAP (a standalone unit, or a joined one while its SoftAP is up: after a boot until the home link has held 120 s, or after the link drops); a cookie from https://canary.local never blocked http://192.168.4.1. In current browsers only an https answer at that host name can set the `__Host-` name: this device, another unit answering the same name (its random session matches none here, and the landing's next cookie replaces it), or any server whose certificate the browser accepted there. So a `cv_session` planted over http cannot shadow the HTTPS cookie: integrity, not availability, since an on-path host can still sign a browser out by pushing its Cookie header past the device's 512-byte ceiling. A server of the last kind can shadow it. It can set the name to a session it took at the landing (any LAN host can take one, as the DNS-rebinding row says): that validates here and fixes the browser on a session its setter holds, which buys no more than the landing gives any LAN host while sessions are interchangeable. Or it can set the name `Partitioned`, and the landing's cookie is then kept beside it rather than replacing it: the device reads the first `__Host-` cookie and the browser sends the older of the two first, so while the planted one is the older every sign-in falls back to the landing, until it expires or is cleared. It is the older from the device's next sign-in or receipt on even when planted after the device's cookie, since each mints a fresh session and a cookie set again with a new value counts as newer (seen in headless Chromium 141 against a stand-in server, not against a device). No HSTS, on purpose: a browser ignores it from a self-signed certificate (RFC 6797 s8.1) and never records it for an IP literal (s8.1.1), and a browser that did trust the certificate would be shut out of a unit that falls back to plain HTTP. Host-tested, not run in a browser against a device. The iPhone app pins the receipt's `tls_cert_fp` (`PinnedTrustDelegate`), refuses an https device it cannot check, and offers a plain-http credential push only behind a disclosure the owner switches on |
+| DNS rebinding (canary-wap) | A page on another site whose name is re-pointed at the WAP's address loads the WAP's pages as its own origin, so `SameSite=Strict` does not stop it. It matters on plain HTTP, which is every stock WAP after setup: the certificate generator is gated on `mbedtls/x509write_crt.h`, a header no pinned core ships (neither the arduino-esp32 2.0.17 core nor PlatformIO's framework-arduinoespressif32 3.3.8 and its libs has it), so no stock unit serves HTTPS (F15). Every unit also serves plain HTTP in setup's post-join window (120 s, longer while a setup-door claim is pending), when the wizard asks for the BOOT tap, and any device on the SoftAP is in scope through the captive DNS, which answers every name with the device. Covered since F344: after setup `/`, its one-tap link (`/?cv_pair=`), `/admin`, `/settings` and `/companion` answer only a Host that can name the device (`host_guard.h`, the flagship's and the display's rule: an IP literal, a `.local` name, a single label, `.lan`, `.internal`, `.home.arpa`), and any other Host gets a fixed `403` sentence, a live cookie under that name included; the provisioning receipt asks the same question first in every mode and answers `403 {"error":"host"}` before it reads the bearer, takes the claim or judges the tap. So a rebinding page under a public name is handed no session and never the receipt. And the cookie validator behind every cookie route (`session_validate_cookie()`) asks the same question before it reads the cookie (F344's third review), so a live session's value that a page sets for its own name with `document.cookie` (any host on the LAN can take one at the landing, good for 24 hours) is refused too: no dashboard, no live camera, no vault download, no `GET /api/pair/token`. Before that review it was not: the validator read no Host. Outside the receipt a bearer asks no Host (a rebinding page that holds the bearer token is F57's open question), and a pair token's value carried off the LAN is read with no Host on `/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` (start, status and stop; a started scan acts only on a code held to the camera) for its ten minutes during first-boot setup. Since F334, after setup a carried pair token no longer works on the first two or on the scan's start: the first two take the bearer alone and the start answers `404`. The scan's status and stop still take a pair token, and since F333 a camera unit's boot scan runs only while no network is stored and the unit is not standalone (after setup, only after the owner's bearer Forget or the 10 s hold), so a carried token reads that scan's status (the network name the code held, the error text) and stops it. No SoftAP exemption, unlike the flagship, because of the captive DNS; the setup branch and the wizard token's re-issue match exactly `canary.local` or `192.168.4.1`. Refused names a household may use: a router name under another suffix (`.fritz.box`, `.localdomain`, `.home`), a trailing-dot name, a public split-horizon name, a reverse proxy that forwards a public Host (widening the shared list is F356). Residuals: the Host question tells a public name from a name only the local network answers; it cannot tell the WAP from another server that answered such a name (`canary.local`, `192.168.4.1`, the WAP's own LAN address, any `.local` name, a single label or a private suffix) on a network the browser used before, such as a hostile hotspot or mDNS spoofed on a shared Wi-Fi. A page loaded there runs same-origin with the WAP when the browser comes home (every WAP claims `canary.local`) or joins the SoftAP (whose captive DNS answers every name with the device), whether it was left open or kept in the browser's HTTP cache (a cached answer is served again, with no request to the WAP, for as long as the server that sent it said, even after the browser has quit; in headless Chromium 141, clearing that name's cookies and stored data did not remove it: the site's own "Delete data" for `canary.local` left the cached page to be served again, while "Delete browsing data" with "Cached images and files" over "All time", which empties every site's cache, did; other browsers were not tried): it can take the landing's pair token, a session through `?cv_pair=`, during setup the wizard's pair token (from `/`'s redirect to the wizard or from the re-issue), and, around a BOOT tap the owner presses from that browser (one address to the tap rule, F342), a receipt it can read. Only HTTPS with an identity the browser can check closes that, and neither F15 nor F256 gives a browser one: F15 would bring HTTPS with a self-signed certificate, whose warning the owner accepts, and only a client that pins the certificate checks it (the iPhone app pins the receipt's `tls_cert_fp`; F256 asks whether it may learn one over mDNS). F15 would still help: once a unit serves HTTPS after setup, port 80 answers only the captive probes, `/api/fleet` and a redirect, so a page planted over plain HTTP is cross-origin to the device and takes none of these (it reads nothing; but `SameSite=Strict` compares sites, so in a browser that does not count the scheme in the site, as Chromium does, its requests still carry the session cookie and it can write blind with the owner's session: any write a session may make, of which since F361 only the firmware install restarts the unit, and only into a newer signed image); a page served over https at that name whose certificate warning the owner accepted still does, and so does any page during the first-boot setup or on a unit whose HTTPS start failed, which serve plain HTTP. And a cross-site page can still send requests at the LAN IP. It cannot read what the landing, the exchange, the pages, the wizard token's re-issue (`/api/wifi/pair-token`) or the receipt serve (none sends a CORS header with it; the receipt's `500` and `503` error codes do, through `http_send_error()`, and carry nothing else). The re-issue answered through `http_send_json()`, with `Access-Control-Allow-Origin: *`, until F344's second review: during setup a page on another site, in the owner's own browser on the SoftAP, read a pair token at `192.168.4.1` (a setup name, so the exact match passes it) and could spend it on `/api/wifi/connect` or `/api/wifi/ap-only`; it now sends no CORS header, and `check_route_security.py` refuses a mint site that answers through `http_send_json()`. Its requests spend no claim, from another address close an open tap (F342), from the owner's own browser can still use up an open tap, can churn pair tokens, and during first-boot setup can stop the boot Wi-Fi QR scan each time it asks (`POST /api/wifi/qr-scan` yields that scan before it reads the body or checks the pair token, and the scan starts again about five seconds after its task unwinds; older than F344, noted under it in the ledger; after setup the route answers `404` first, F334): a denial of service, not a way to the token. `/api/wifi` (the home network's name, the station address, the SoftAP's name and client count), `/api/wifi/scan` (nearby networks) and `/api/fleet` (coarse presence, by its documented contract) answer with `Access-Control-Allow-Origin: *`, so any page reads them at the IP, rebinding or not, and the Host question cannot close that; the other public routes (`/api/selftest`, `/api/device-info`, `/api/help-qr`, `/enroll`, `/api/device/enroll`) send no CORS header (`/api/device-info`'s `500` and `503` error codes do, through `http_send_error()`, and carry nothing else) and ask no Host, so a rebinding page reads them (both F357). Host-tested; not run against a browser, a rebinding resolver or a device |
+| WAP provisioning receipt (`GET /api/provisioning-receipt`) | The one answer that carries the WAP's bearer token, its SoftAP password and its TLS pin. Decided in this order: a valid bearer (the `Authorization` header alone, under the per-address lockout, F343); then the Bluetooth setup door's claim, spent only on a match (a wrong, short or truncated `?claim=` changes nothing, an expired one is burned; F342); then the BOOT tap, served only to the sole address that asked for the receipt from 10 s before the tap onward, so a second address closes the tap and an asker gets `409 tap_contended` while an address other than it asked within the last 10 s, up to the closed tap's 30 s (it ends 10 s after the other device stops; under a host that keeps polling, the poller's own asks end it 10 s after the owner's page stopped, the owner's retry hears `403`, and the next tap is closed again); the `409`'s hint says to start the request first and keep it asking, then press BOOT, never a bare re-tap, and the `403`'s hint and button, the dashboard's and the companion's `409` text (the click, or the tap on Save, before the press), the dashboard's timeout line and the companion's steps give the same order, and both pages say to press only once the device has answered one of their asks with `403` (F342). Before all of these it asks the Host (F344): a Host that cannot name the device (`host_guard.h`), or none, gets `403 {"error":"host"}` in every mode, setup included, before the bearer is read, the claim taken or the tap judged, so it is never a strike, never an asker for the tap, and spends and clears nothing. The asker is the socket peer (`request_peer_key()`, `getpeername`), never a header. Residuals: a tap no client of the owner's was asking for (an accidental tap, a page or `curl` started after it, a tap pressed per a recipe or an older page that says to press first, BLE OTA break-glass) goes to the first asker; hosts behind one address (NAT, an ARP spoofer, a page in the owner's own browser) are one asker; a host that keeps the one web server busy for more than 10 s before the tap can hide the owner's client; a dual-stack browser would count as two askers if the station interface ever enabled IPv6 (it does not today). A host that asks for the receipt at least once every 10 s (polling included) makes every tap the owner's client is already asking for refuse, loudly (a bare re-tap with no client of the owner's asking goes to that host, the first residual); the owner's ways out are the recovery kit's token and the USB serial console (the receipt with the token prints at every boot), which open nothing to anyone else, and last, holding BOOT 10 s, then setting up again from the iPhone through the setup door (the token survives the hold; the hold clears the saved Wi-Fi, the broker login and the name; a stray `?claim=` no longer spends the phone's claim). The hold reopens the first-boot setup door for 30 minutes, and the door goes to whichever Bluetooth client connects first: a client that connects before the phone (a host on the network that is also in radio range, say) can join the Canary to a network it is on, spend the claim minted for its own link (a claim is served before the tap's rule is asked) and keep the token, which nothing rotates today. So the hold is for a host known to be on the network only, with the phone ready, and the phone ends paired unless something in radio range reached the door first, or a landing session turned the WAP's Bluetooth off before the hold, which any host on the network can (F346): the setting is saved and the hold keeps it, and every link is dropped while it is off, so no phone reaches the door (a denial, not a takeover; the kit's token and the console still work). Host-tested; not run on a device |
+| MQTT broker link | Plain by default — the broker password crosses the LAN in the clear until the owner provisions TLS, and on every stock unit of either tree today the provisioning request itself (`POST /api/mqtt/config`) rides the plain device API, since none serves HTTPS (F15; the flagship's release images stay plain HTTP after that too). CA-verified or SHA-256-pinned TLS per product, refusing to connect on an incomplete setup; the lab mode is chosen by name and warns on every connect. Per-variant table: `docs/FIRMWARE_VARIANT_AUDIT.md`. Compile-tested, host-tested, not bench-tested against a TLS broker. The WAP's stored broker password is write-only (its `GET` answers `password_set`), and since sweep F289's third road (#1835) a `POST /api/mqtt/config` from the dashboard's session alone, which the landing page mints for any host on the LAN, that moves the broker (its host, port or TLS mode, or a CA sent) while a password is stored and the body names none is refused `403 password_needed` before anything is saved; the bearer, or the password typed again, moves it (`move_needs_password()`). So the session cannot point the bridge at a listener of its own and have the reconnect hand over the user and password that way (host-tested, not bench-tested; the flagship's own `POST /api/mqtt/config` refuses a carry to a new host or port from any caller, `credential_carry`). Not covered by that gate: a LAN host that spoofs the configured broker's name (mDNS, DNS or ARP) still receives the password from a plain-mode bridge with no change to the config, and it can force the reconnect that sends it; the CA-verified mode is the defense. Since F334 the session can no longer move the WAP to a network the caller runs (the four routes that move the network over HTTP take the bearer alone, disconnect and forget in every mode and connect and ap-only after setup, the recovery portal included). A network a session moved it to before F334 can stay among its saved networks: `wifi_store_note_joined()` writes every network the unit joins into a ring of up to four, and when the current network is not found twice running the unit tries the next saved one by itself (`wifi_store_rotate_if_due()`), with no request and no bearer, and on a plain link the stored login then goes to whoever answers the broker's address there. No route lists the saved networks or removes one; the remedy is a bearer Forget, which wipes the ring and the login, then setting the unit up again. The WAP's camera QR hub re-point (`qr_scan_task_fn`) keeps the row's user and password and stays outside the move gate on purpose (F333): every code also chooses the network, so a host compare there would protect nothing. Instead the boot scan runs only on a unit with no network stored that is not standalone (`keyless_join_open()`, the Bluetooth setup door's rule), the phone-session scan only during setup (`POST /api/wifi/qr-scan` answers `404` after it, and a window still running when setup ends stops at its next frame), and Forget Wi-Fi, which takes the bearer in every mode (F345), clears the stored user and password (`csi_mqtt::login_clear()`); the 10 s hold clears the whole row. What stays: a login the owner types on `/mqtt` after a Forget and before the unit is set up again can reach whoever answers the stored broker on a plain link (the CA-verified mode is its defense), and the boot scan has no time window. Host-tested, not bench-tested |
+| WAP sealed-snapshot vault (`/api/vault/*`) | `POST /api/vault/key`, the X25519 recipient key every frame sealed from then on is encrypted to, takes the bearer alone since F335 (`api_auth_check_bearer()`); a session is refused `401`, so a landing session can no longer name its own key (before, any host on the LAN could, and `SECURITY_MODEL.md`'s "operator-held key" was false under Trust-on-LAN). `GET /api/vault/status`, `DELETE /api/vault/key`, `POST /api/vault/config`, `DELETE /api/vault/item`, `POST /api/vault/test`, `GET /api/vault/list` and `GET /api/vault/download` stay on the session by design: a key clear and an item delete are health-logged, a frame's `frame_sealed` record survives its delete, and clearing the key turns every trigger off. A LAN session can destroy sealed frames but not redirect them. A key a session registered on 2.4.17 or earlier stays the recipient until the owner removes it. Since F345, Forget Wi-Fi takes the bearer, so a session cannot re-open the Bluetooth setup door and buy the receipt with its claim. Only the owner's own bearer Forget, or the 10 s BOOT hold, re-arms the door; until the unit is set up again it is in first-boot trust (after a Forget, unless it runs standalone: Forget leaves that choice set and the door shut), and the door's claim goes to the first phone in range (magic_pairing.md §8). A host's wrong bearers hold only that host's address (F343). A browser that mistyped the token waits at most about 60 s, or signs in with Use BOOT Tap Once, which clears its address when the tap is served to that browser's ask (F341). A host that strikes from 9 or more addresses within 60 s holds every untracked address, the owner's among them, while the shared overflow slot runs, and neither a tap nor the token clears that; then wait until it stops and change the WAP's Wi-Fi with the token to a network that host is not on, or, last, for a host on the network only, with the iPhone ready, hold BOOT 10 s and set it up again on such a network (the iPhone's bonded Bluetooth lane is no way out today, A65; `SECURITY_MODEL.md`'s lockout paragraph). For the vault key and the two confirms this is availability only: a session can already remove the key, reject a pairing or turn Bluetooth off; the owner waits it out (a power cycle also clears the RAM table). Host-tested, not bench-tested |
 | Fleet roll-call (`GET /api/fleet`) | The one open read on the hub: rate-limited, no token. It serves the kernel's own row and — when `api.fleet_peers_path` is set — each Canary the MQTT bridge heard, in the contract's coarse words only (name, online, chain verdict, product, and presence/occupants/breathing while proven online); never an event, a zone or key material. The origin allow-list stops other websites' scripts, not a client that can reach the port, so the port is open only where the product needs it: the SecuraCV app ships its 8799 host port disabled (the integration reaches the kernel over the Supervisor's internal network); the Docker sidecar binds every interface and publishes 8799 from the first start so Home Assistant can pair (`SECURACV_API_BIND=all`, the default, which also exports the kernel's cleartext acknowledgment — never relaxing the token on any other route; `loopback` is the opt-out), and there the roll-call serves only the kernel's own row unless `SECURACV_FLEET_ROLLCALL=1` — who is home is the owner's to opt into, never a side effect of pairing. What the roll-call says is bounded by the MQTT broker, not proven past it: a peer with publish rights can replay a captured signed publish (held to one window per missed chain advance), invent ids, or put a real id into `degraded` — see `tvos/discovery/DISCOVERY.md`. The summary file behind it is `0600` and size-bounded |
 | Viewer credential (`GET /api/sealed-log`, the Witness Wall) | A second, narrower bearer credential beside the rotating capability token, because a TV cannot re-read a token file: minted by the operator (`witness_api mint-viewer-token`, printed once as a pairing receipt that also carries the kernel's verifying key for the Wall to pin), long-lived until revoked by id, and honored on exactly one route — the non-queryable, size-capped, signed sealed-log tail (Invariant VII bounds what it reads). Presented on any other path or method it is an invalid token that counts toward the per-address lockout, and a good viewer read never clears that count (only a capability-token success does), so the narrower credential cannot reset the lockout that guards the wider one; `?token=` is refused for it as for every token. At rest only its sha256 (`viewer_tokens.json`, `0600`, beside the capability token), compared in constant time and re-read per request, so a revocation lands on the next poll. Whoever holds it reads the coarse sealed record (event types, zones, 10-minute buckets) — the reason it is a credential and not an open read like the roll-call — and over plaintext HTTP it can be sniffed on the LAN like the capability token; TLS stays the owner's opt-in (`api-tls`). What the Wall's "Verified" proves is *authorship* — every served entry signed by the pinned key and linked from the served anchor — not that the tail is *current* or *complete*: the served `checkpoint_head` is unsigned and the document carries no signed time or high-water mark, so a captured genuine document replayed later, or a genuine one cut short at either end, still walks clean against the pin, and the Wall keeps no last-walked head across polls. A signed head (or high-water mark) in the document is the roadmap item that closes it; not built |
 | Pairing (`POST /api/pair`, the Docker sidecar) | The one unauthenticated write: it redeems the 6-digit code `docker exec securacv pair` printed (once, on that terminal; never in the daemon log) for a paired bearer. Bounded three ways: the code lives 600 s and works once; a per-code budget of five attempts, each wrong guess spent durably before the refusal is sent and the fifth burning the code; and every refusal — wrong, absent, burned, expired, pairing off — the identical `401 invalid_pairing_code`, each a strike toward the per-address lockout (a success does not clear the strikes; only the first authenticated request with the new token does). Compared in constant time; the kernel stores only the code's sha256. Malformed input is a `400` and not a strike. Known limit: behind Docker Desktop's userland proxy or any reverse proxy every client shares one source address, so a guesser's lockout also holds Home Assistant's polling at `429` |
@@ -206,8 +222,8 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | Ed25519 | Signatures (identity, record signing) | Arduino Crypto (rweather) |
 | SHA-256 | Hashing (chain integrity, domain separation) | mbedTLS (ESP-IDF) |
 | HMAC-SHA256 / HKDF | Key derivation (token generation) | mbedTLS (ESP-IDF) |
-| RSA-2048 | TLS certificate (self-signed, local only) — canary-wap | mbedTLS (ESP-IDF) |
-| ECDSA P-256 | TLS certificate (self-signed, local only) — `canary (PIO)` `FEATURE_HTTPS` builds | mbedTLS (ESP-IDF) |
+| RSA-2048 | TLS certificate (self-signed, local only) — canary-wap; its on-device generator compiles out on every pinned core today (F15) | mbedTLS (ESP-IDF) |
+| ECDSA P-256 | TLS certificate (self-signed, local only) — `canary (PIO)` `FEATURE_HTTPS` builds; the same, compiled out today (F15) | mbedTLS (ESP-IDF) |
 
 **Not used (and why):**
 | Primitive | Reason |
@@ -233,14 +249,14 @@ Preference order: (1) Don't build it, (2) Build it so it can't leak,
 | Camera init fail | Continue all other witnessing |
 | GPS no fix | Record events without location |
 | Chain verify fail | Create tamper event, alert user, keep recording |
-| Auth failure | Lock out with exponential backoff |
+| Auth failure | Lock out the failing source address with exponential backoff, per address on the kernel and on both Canary firmwares (the WAP and the flagship run one table, `firmware/common/network/auth_backoff.h`: at most 60 s per address, and a shared overflow slot bounds the addresses beyond its 8-address table; a host's wrong bearers hold only that host's address, F343, F340). On the Canaries a request with no credential is no strike (the kernel counts a missing token as one, `src/api/mod.rs`), and a BOOT tap (or the WAP's setup-door claim) that hands an address the token clears that address's own slot, never the shared overflow (F341) |
 | TLS client cannot verify the WAP's self-signed certificate | The iPhone app pins the receipt's `tls_cert_fp` and refuses an https Canary whose certificate does not match or that has no pin on record (`DeviceAPI.swift`, `PinnedTrustDelegate`); browsers show their self-signed warning. No API asks the client for a certificate — the kernel's rustls config is `with_no_client_auth()` and the WAP's `httpd_ssl_config_t` carries only the server certificate and key |
 | HTTPS server fails to start on the WAP | Serves plain HTTP and logs `[HTTPS] Server start FAILED — falling back to HTTP`; setup mode is HTTP-only by design (both stated, never silent) |
-| Firmware corrupt | Refuse to boot **on the opt-in secure-provisioning tier only** (secure boot is NOT enabled on default builds — see [Scope of this principle](#scope-of-this-principle)); the default tier relies on the OTA signature check before the image is written |
-| A phone asks to pair with the WAP over BLE | A Numeric Comparison (what a phone that shows six digits and a yes/no gets, as current phones do) is answered yes only by the owner's confirm of the six digits in the web UI (`require_pin`; the phone's link and digits must still be the ones shown), on every profile that compiles the pairing channel, and since F191's review (2026-10) it asks the owner only inside pairing mode (Pair in the web UI) with new pairings allowed: outside it, it is answered no at once, where it waited for the owner's confirm on a stale pairing timeout; with no pairing channel to ask, it is answered no. Until F171 (2026-10) the default FULL profile's Opera module replaced the channel's NimBLE server callbacks, NimBLE-Arduino's default answered every Numeric Comparison yes, with no owner and no MITM check, and a Passkey Entry took the library's fixed 123456: one dispatcher (`ble_server_dispatch.h`) now gives the security callbacks to the channel alone. Not every pairing asks the owner (NimBLE 2.3.8's pairing tables, read from source): a DisplayOnly or NoInputNoOutput initiator, and on legacy pairing a DisplayYesNo one, pairs by Just Works, with no owner and no MITM protection (the channel lists no such bond it is told of, and its key opens none of the authenticated characteristics; NimBLE stores the bond, and since F191 (2026-10) the channel deletes it as it is reported, with the radio quiet as Remove does, and drops its link, and since F191's review also when that report never reached it (a full event queue dropped it, or it came before the channel owned the server's callbacks), from the stack's own record of the live link; a bond the stack refuses to delete, when another task restarted the advertiser in that window, is logged with Clear all named and asked again each minute). NimBLE-Arduino keeps 3 bonds by default and, when a new one found the store full, unpaired the oldest (when its busy guard allowed); since F189 (2026-10) the channel refuses a new phone's pairing that finds the store full (the phone's pairing fails; a phone the store holds still re-pairs) and never deletes a bond to make room (nor for a bonded phone's subscription record, whose 8-record store NimBLE's default made room in by unpairing another phone, the F189 review), so such a stranger's bonds can no longer push the owner's out; before F191 three of them filled the store and refused the owner's next pairing until Clear all (`DELETE /api/bluetooth/paired/all`, which deletes every bond the stack keeps). Since F191 such a bond survives only on the roads the channel never sees: a reboot after NimBLE stored it and before the loop task applied its report, a stack that keeps refusing its delete, or a link event dropped after the stack kept it (the retry stops there, since that event may have been the owner's own pairing); it then goes when its phone next connects with that key, or at Clear all, and on a unit whose list was never saved by identity (no owner has paired over BLE) the next boot's rebuild lists it as a paired device (filed in the 2026-09 sweep). One an older firmware stored is not deleted on its own either, but `GET /api/bluetooth` counts the store beside the list (`bond_store`: `held`, `capacity`, `unlisted`, read again when a pairing is refused at a full store or a link event was dropped) and the health log names a store full of unlisted bonds and Clear all (F209). A keyboard-only initiator pairs by Passkey Entry, which needs the six digits the WAP shows: until F191 they showed in the PIN box and went to the health log in or out of pairing mode; now they show only inside the owner's pairing mode, with new pairings allowed, never in the log, and outside it NimBLE is handed a passkey above 999999, which its `ble_sm_inject_io()` refuses (NimBLE-Arduino 2.3.8 and 2.5.0, read from source), so that pairing cannot complete and times out. A build without the pairing channel pairs by Just Works under NimBLE's defaults. Host-tested over a NimBLE stand-in (both modules' inits); not bench-tested |
+| Firmware corrupt | Every tier's bootloader checks an app image's checksum and appended SHA-256 before it boots it (neither pinned core's precompiled bootloader sets `CONFIG_BOOTLOADER_SKIP_VALIDATE_ON_POWER_ON`; it does skip the check on a wake from deep sleep), and on a failed check it tries the other app slot instead (ESP-IDF's `bootloader_utility_load_boot_image`; read from the cores' `sdkconfig` and IDF source, not run on a device). What no tier refuses today is a well-formed image that is unsigned or forged: that is Secure Boot's job, which works on no Canary today: the provisioning kit's Phase 2 sets `SECURE_BOOT_EN` with no Secure Boot key digest, so Secure Boot is enabled with nothing to verify against, and it is NOT on default builds (see [Scope of this principle](#scope-of-this-principle)), so every release image relies on the OTA path's SHA-256 and Ed25519 release-signature check, which runs on the image written to the spare slot before the device switches its boot slot to it (`firmware/common/ota`; the WAP's Bluetooth and USB drop-file paths check the same signatures). A flagship image built without `SECURACV_BUILD_RELEASE` (`env:dev`, `dev_ha`, `full`, `usb-onboard`; no release workflow publishes one) also takes an unsigned image over its bearer-gated `POST /api/ota`, with no signature check (`docs/OTA.md` §1) |
+| A phone asks to pair with the WAP over BLE | A Numeric Comparison (what a phone that shows six digits and a yes/no gets, as current phones do) is answered yes only by the owner's confirm of the six digits from a web UI holding the API token (`require_pin`; the phone's link and digits must still be the ones shown), on every profile that compiles the pairing channel, and since F191's review (2026-10) it asks the owner only inside pairing mode (Pair in the web UI) with new pairings allowed: outside it, it is answered no at once, where it waited for the owner's confirm on a stale pairing timeout; with no pairing channel to ask, it is answered no. Since F346 `POST /api/bluetooth/pair/confirm` takes the bearer alone (`bt_bearer_gated`), and a session is refused `401`: before, any landing session could confirm its own phone's bond, which unlocks the authenticated characteristics, the Wi-Fi credentials write among them. A Passkey Entry's digits reach only a bearer (`GET /api/bluetooth` answers them through the accounted grant while the passkey is displayed, `pin_hidden` to a session) and never the health log (F346, F191); a Numeric Comparison's stay visible, since the phone computes the same six. Bonds a session confirmed on 2.4.17 or earlier persist until the owner removes them. Since F345, Forget Wi-Fi takes the bearer, so a session cannot re-open the Bluetooth setup door and buy the receipt with its claim. Only the owner's own bearer Forget, or the 10 s BOOT hold, re-arms the door; until the unit is set up again it is in first-boot trust (after a Forget, unless it runs standalone: Forget leaves that choice set and the door shut), and the door's claim goes to the first phone in range (magic_pairing.md §8). A host's wrong bearers hold only that host's address (F343). A browser that mistyped the token waits at most about 60 s, or signs in with Use BOOT Tap Once, which clears its address when the tap is served to that browser's ask (F341). A host that strikes from 9 or more addresses within 60 s holds every untracked address, the owner's among them, while the shared overflow slot runs, and neither a tap nor the token clears that; then wait until it stops and change the WAP's Wi-Fi with the token to a network that host is not on, or, last, for a host on the network only, with the iPhone ready, hold BOOT 10 s and set it up again on such a network (the iPhone's bonded Bluetooth lane is no way out today, A65; `SECURITY_MODEL.md`'s lockout paragraph). Until F171 (2026-10) the default FULL profile's Opera module replaced the channel's NimBLE server callbacks, NimBLE-Arduino's default answered every Numeric Comparison yes, with no owner and no MITM check, and a Passkey Entry took the library's fixed 123456: one dispatcher (`ble_server_dispatch.h`) now gives the security callbacks to the channel alone. Not every pairing asks the owner (NimBLE 2.3.8's pairing tables, read from source): a DisplayOnly or NoInputNoOutput initiator, and on legacy pairing a DisplayYesNo one, pairs by Just Works, with no owner and no MITM protection (the channel lists no such bond it is told of, and its key opens none of the authenticated characteristics; NimBLE stores the bond, and since F191 (2026-10) the channel deletes it as it is reported, with the radio quiet as Remove does, and drops its link, and since F191's review also when that report never reached it (a full event queue dropped it, or it came before the channel owned the server's callbacks), from the stack's own record of the live link; a bond the stack refuses to delete, when another task restarted the advertiser in that window, is logged with Clear all named and asked again each minute). NimBLE-Arduino keeps 3 bonds by default and, when a new one found the store full, unpaired the oldest (when its busy guard allowed); since F189 (2026-10) the channel refuses a new phone's pairing that finds the store full (the phone's pairing fails; a phone the store holds still re-pairs) and never deletes a bond to make room (nor for a bonded phone's subscription record, whose 8-record store NimBLE's default made room in by unpairing another phone, the F189 review), so such a stranger's bonds can no longer push the owner's out; before F191 three of them filled the store and refused the owner's next pairing until Clear all (`DELETE /api/bluetooth/paired/all`, which deletes every bond the stack keeps; the health log says `BLE pairing refused: the bond store is full`). Since F191 such a bond survives only on the roads the channel never sees: a reboot after NimBLE stored it and before the loop task applied its report, a stack that keeps refusing its delete, or a link event dropped after the stack kept it (the retry stops there, since that event may have been the owner's own pairing); it then goes when its phone next connects with that key, or at Clear all, and on a unit whose list was never saved by identity (no owner has paired over BLE) the next boot's rebuild lists it as a paired device (filed in the 2026-09 sweep). One an older firmware stored is not deleted on its own either, but `GET /api/bluetooth` counts the store beside the list (`bond_store`: `held`, `capacity`, `unlisted`, read again when a pairing is refused at a full store or a link event was dropped) and the health log names a store full of unlisted bonds and Clear all (F209). A keyboard-only initiator pairs by Passkey Entry, which needs the six digits the WAP shows: until F191 they showed in the PIN box and went to the health log in or out of pairing mode; now they show only inside the owner's pairing mode, with new pairings allowed, in the PIN box of a page signed in with the API token (F346), never in the log, and outside it NimBLE is handed a passkey above 999999, which its `ble_sm_inject_io()` refuses (NimBLE-Arduino 2.3.8 and 2.5.0, read from source), so that pairing cannot complete and times out. A build without the pairing channel pairs by Just Works under NimBLE's defaults. Host-tested over a NimBLE stand-in (both modules' inits); not bench-tested |
 | The owner removes a paired phone | Its bond is deleted from NimBLE's store under the phone's identity address (the key NimBLE keeps it by), with the radio quiet for the call: NimBLE refuses to forget a bond that carries the phone's IRK (a phone using private addresses hands its IRK over) while it advertises or scans (`ble_gap_unpair()`, `BLE_HS_EBUSY`), so the loop task ends the owner's scan, pauses the presence scan and stops the shared advertiser (Opera's beacon with it, on FULL) for the delete and starts them again after. When the stack keeps the bond anyway (another task restarted the advertiser in that window), the phone stays listed and the owner is told to try again; only a phone whose bond is gone must pair again. Until F172 the delete named a byte-reversed over-the-air address, and until the F172 review the stack's refusal went unnoticed and Remove answered ok: either way the phone kept its bond and came back encrypted with no owner asked. A link that comes up while Bluetooth is off is dropped (F173). Host-tested over a stand-in that answers as `ble_gap_unpair()` does; not bench-tested |
 | Watchdog trigger | Reboot, resume from last good state |
-| NVS corruption | Generate new identity (fresh start) |
+| NVS corruption | A key NVS does not hold (never stored, or wiped) is a fresh start: a new identity. On the flagship (`firmware/canary`) and the canary-wap, a key IDF reports as stored that cannot be read, is not 32 bytes or is 32 zero bytes, or an NVS that cannot say whether one is stored, halts the boot instead: no key is generated, and nothing is written to the identity key or the chain state (sweep F360). A fault in the read that leaves the entry in place (a session that will not open, a flash read error while IDF copies the data) leaves the key for a later boot that can read it. Corruption is IDF's to meet first, and the firmware sees only its answer (read from IDF v4.4.7, v5.5.1 and v5.5.4's source). An entry whose data checksum fails IDF erases in the read it refuses, so that boot halts: on IDF 4.4 (every flagship env but `env:full`) the blob's index survives and each later boot halts until the 30 s BOOT hold at power-on wipes the identity; on IDF 5.5 (`env:full` and the canary-wap) the next boot's NVS init erases the orphaned index, so that boot finds no key and makes a new identity. Some faults make a new identity with no halt, because IDF answers "not found": a data chunk whose header fails IDF's check, on IDF 5.5 (on 4.4 it halts every boot, as above); an index entry whose header fails it, which IDF erases before the key is read (when it loads the page, or in the probe's own lookup); and a flash read error in IDF's own lookup of the key, which sets that page aside for the boot and leaves the old entry on it. All of it is today's behavior, not a decision; what holds throughout is that the firmware never writes over a key IDF still reports as stored. The canary-wap's BOOT hold keeps the identity (it has no wipe stage), so an install in either flasher, with or without the full erase (its factory image starts NVS over), is its way to a new identity on purpose, halted or not. Before F360 a read that failed after the length check, before IDF copied anything into the buffer, ran the boot on the zero key, whose setup-network key is the published `cv-3jByJ6rHdhM2` (on a release canary-wap, the SoftAP came up under it and records were signed with it), and a failed open or length lookup replaced the stored identity. Host-tested; not run on a device. canary-sense, canary-vision and canary-sentinel never sign with the zero key, but still replace a stored key they fail to read with a new one (Home Assistant shows a changed fingerprint; sweep F362) |
 
 ### 10. User Sovereignty
 
@@ -269,13 +285,20 @@ physically destroy the device.
 │  └──────────────┘  └──────────────┘  └──────────────┘  │
 │                                                          │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  Secure Boot │  │  Flash       │  │  GPS Time    │  │
-│  │  (firmware   │  │  Encryption  │  │  (SNTP on    │  │
-│  │   verify)    │  │  (data at    │  │  glass only) │  │
-│  │              │  │   rest)      │  │              │  │
+│  │  OTA image   │  │  Bootloader  │  │  GPS Time    │  │
+│  │  signature   │  │  image check │  │  (SNTP on    │  │
+│  │  (Ed25519,   │  │  (checksum,  │  │  glass only) │  │
+│  │  release img)│  │   SHA-256)   │  │              │  │
 │  └──────────────┘  └──────────────┘  └──────────────┘  │
 │                                                          │
 └─────────────────────────────────────────────────────────┘
+
+Secure Boot and flash encryption are in no tier's boundary today: the
+provisioning kit prepares both but turns on neither (Scenario 4), and flash
+encryption would cover the app image, not the NVS that holds the private
+key, which is plaintext on every tier. The OTA signature box holds for a
+release image; a flagship dev or full image also takes an unsigned image
+over its bearer-gated `POST /api/ota` (the "Firmware corrupt" row).
 
 ┌─────────────────────────────────────────────────────────┐
 │              ACKNOWLEDGED TRUST ASSUMPTIONS               │
@@ -384,13 +407,19 @@ compelled.
 **Attack:** Adversary in WiFi range attempts to access device.
 
 **Result:** Device runs its own AP — it is not on a shared network.
-Adversary must know the AP password (device-unique, derived from
-fingerprint). Even if connected: API auth required (on the flagship a peer
+Adversary must know the AP password: device-unique and computable from
+nothing the device publishes. On the WAP and the flagship it is an HMAC of
+the device's private key under its own domain label; on the headless setup
+portals and the display it is a random key minted once and kept. (Until
+sweep F350 the flagship's was derived from its public-key fingerprint,
+which the device publishes: the setup network's SSID spells two of its
+bytes and every signed MQTT event body carries all eight. Anyone who had
+seen the fingerprint could compute it. canary-wap had moved to the private
+key earlier.) Even if connected: API auth required (on the flagship a peer
 on its own AP is handed the page token, so there the AP password is the
-whole boundary), exponential backoff on failures, and HTTPS once setup has
-completed (plain HTTP during setup, on the flagship's release images — its
-dev and full builds redirect port 80 to HTTPS from the first boot after
-setup — and on the display line's LAN page).
+whole boundary), and exponential backoff on failures. HTTPS is not served
+by any stock build today (F15): the WAP and the flagship serve plain HTTP,
+and so does the display line's LAN page.
 
 **PASS if:** Network proximity alone grants no access.
 
@@ -433,22 +462,80 @@ stated, bounded to coarse claims, and revocable.
 **Attack:** Device is confiscated by adversary with forensic capability.
 
 **Result:**
-- **Default tier: FAIL.** Secure boot and flash encryption are an opt-in
-  secure-provisioning build (`firmware/provisioning/sdkconfig.defaults.secure`
-  ships them commented out; so does `canary-ota/sdkconfig.production`). On a
+- **Default tier: FAIL.** Secure boot and flash encryption are staged for an
+  opt-in secure-provisioning build that turns on neither today
+  (`firmware/provisioning/sdkconfig.defaults.secure` ships them commented
+  out; so does `canary-ota/sdkconfig.production`). On a
   default Canary the flash — identity key included — is readable on a bench.
   What that buys an attacker (forward forgery yes, rewriting anchored history
   no) is stated in [SECURITY_MODEL.md](SECURITY_MODEL.md#physical-extraction-and-the-flash-encryption-default).
-- **Secure tier: PARTIAL PASS.** Secure boot prevents firmware replacement;
-  flash encryption prevents data extraction without device cooperation.
-- Factory reset destroys all data (user can trigger before seizure) — both tiers.
+- **Secure tier: FAIL today, as the default.** The provisioning kit's
+  Phase 2 (`provision_canary.sh --phase 2`) burns a flash-encryption key,
+  `SECURE_BOOT_EN`, the JTAG fuses and `DIS_DOWNLOAD_MANUAL_ENCRYPT`, but it
+  turns on neither protection: it writes the app in plaintext, burns no
+  `SPI_BOOT_CRYPT_CNT` (so the chip does not decrypt or encrypt flash) and
+  no Secure Boot key digest, and flashes no signed bootloader (what the ROM
+  does on a board with `SECURE_BOOT_EN` and no key digest has not been run
+  on a bench). Its own post-check, `verify_device.py --expect-locked`,
+  expects fuses it never burns, so it fails. Once the kit enables them,
+  Secure Boot would refuse unsigned firmware and flash encryption would keep
+  the app image from being read off the chip, but flash encryption does
+  not cover NVS (ESP-IDF encrypts the app, OTA-data and NVS-key
+  partitions), and the NVS encryption that would is not available under
+  `framework = arduino`, which the canary-wap sketch and the
+  `firmware/canary` flagship build with (the O2 bullet in the Opera mesh
+  section below). So on those trees everything NVS holds, the identity key
+  among it, is still plaintext on the flash chip of a fused board (the
+  flagship reports it as `key_at_rest`, always `plaintext-nvs` today:
+  [SECURITY_MODEL.md](SECURITY_MODEL.md#physical-extraction-and-the-flash-encryption-default)).
+- A factory reset before the seizure does not destroy the data, on either
+  tier. The canary-wap's 10 s BOOT hold removes the saved Wi-Fi networks and
+  their passwords, the broker settings (its user, password and CA among
+  them) and the device name from NVS, but NVS only marks each entry erased,
+  and the bytes stay in flash until NVS erases that page to reuse it: the
+  home network's password and the broker's are still plaintext in flash
+  after the hold, on every tier today (NVS is plaintext on a fused board
+  too, the secure-tier bullet above), and on the default tier an install or
+  a full erase in either flasher, each of which rewrites the settings
+  region, is what removes them. The hold keeps the identity key, the chain state, the witness
+  records and the health log on SD, the API token, the HTTPS certificate and
+  its private key (NVS `tls_cert` and `tls_key`, which the next boot loads
+  again; the iPhone app pins that certificate, so a seizer who reads the key
+  can present the WAP's own certificate to it), and the Bluetooth bonds:
+  each bonded phone's keys stay in NVS, plaintext in flash as the rest of it
+  is, and a bonded peer keeps the lane that changes the WAP's Wi-Fi. It
+  keeps the Opera mesh's member list too, and on a board with flash
+  encryption on, the only board `mesh_network.cpp` and `beacon_channel.cpp`
+  write them on (the O2 bullet in the Opera mesh section and the Beacon
+  channel section below), the mesh's secret, id and revocations and the Beacon
+  channel's X25519 private key, member set and audit ring: plaintext in
+  NVS the same way, so a seizer of a board with flash encryption on who
+  reads its flash after the hold has the mesh secret.
+  Removing the paired phones (`DELETE /api/bluetooth/paired` one at a time
+  or `/api/bluetooth/paired/all`) forgets their bonds, which ends a bonded
+  peer's lane, but those are NVS entries erased the same way, so the keys'
+  bytes stay in flash the same way. No hold sheds its key (an install or a
+  full erase in either flasher, whose factory image starts NVS over, is its
+  way to a new identity). The
+  `firmware/canary` flagship's 10 s hold keeps the identity key and the
+  chain state too; only its further stage, BOOT held on to 30 s, sheds them,
+  by clearing its NVS namespace. That clear does not remove the key's bytes
+  either: they stay in flash, plaintext on every tier today, until NVS
+  erases that page to reuse it, and on the default tier an install or a
+  full erase in either flasher, each of which rewrites the settings region,
+  is what removes the key. Neither hold erases the SD card.
 
-**LIMITATION:** A sufficiently resourced adversary with physical access
-can potentially bypass ESP32 secure boot (active area of research).
+**LIMITATION:** Once Secure Boot works (on no tier today: Phase 2 sets
+`SECURE_BOOT_EN` with no key digest, so nothing is verified), a
+sufficiently resourced adversary with physical access can potentially bypass
+it (active area of research).
 SD card contents are readable if not encrypted at application layer.
 
-**PARTIAL PASS:** Documented limitation. Future mitigations: application-layer
-SD card encryption, RISC-V open silicon.
+**FAIL on both tiers today, documented:** the limitation is disclosed
+(SECURITY_MODEL.md), not mitigated. Future mitigations: NVS encryption (the
+arduino-as-IDF-component migration), a provisioning kit that turns on flash
+encryption and Secure Boot, application-layer SD card encryption, RISC-V
+open silicon.
 
 ### Scenario 5: ERRERlabs pushes malicious firmware
 
@@ -469,10 +556,13 @@ firmware update.
 
 **Attack:** Adversary attempts to create false evidence records.
 
-**Result:** Requires Ed25519 private key (never leaves device) AND
+**Result:** Requires Ed25519 private key (no firmware path exports it, but
+it is plaintext in NVS, so a full read of the flash carries it: a bench
+read, or a flasher's pre-flash safety copy, Principle 1's scope) AND
 re-hashing/re-signing every subsequent record in the chain.
 
-**PASS if:** Forgery requires physical device possession AND key extraction.
+**PASS if:** Forgery requires the device, or a full read of its flash such as
+a flasher's safety copy, AND key extraction from it.
 
 ### Scenario 7: Evidence deletion
 
@@ -489,9 +579,11 @@ the original chain state.
 **Attack:** Backdoored ESP32-S3 chips in manufacturing.
 
 **Result:** Acknowledged risk. Mitigated by:
-- No outbound connections (compromised chip has no exfiltration channel)
-- Secure boot (firmware integrity verified) — opt-in secure-provisioning tier only
-- Flash encryption (data at rest protected) — opt-in secure-provisioning tier only
+- No undisclosed outbound connections (a compromised chip would have to originate traffic of its own on a network whose expected traffic is short and known; SECURITY_MODEL.md, Hardware Trust Boundary)
+- Secure boot (would verify firmware integrity; prepared in the provisioning kit, and on no tier does it verify anything yet: Phase 2 sets `SECURE_BOOT_EN` with no key digest)
+- Flash encryption (would cover the app image at rest, not NVS, where the
+  keys and the saved passwords stay plaintext on every tier today; prepared
+  in the provisioning kit, not yet enabled on any tier, Scenario 4)
 - Future: open-source RISC-V silicon
 
 **DOCUMENTED LIMITATION:** Disclosed to users in SECURITY_MODEL.md.
@@ -515,7 +607,27 @@ Future: randomized SSID rotation with owner-only discovery.
 
 **Result:** Token comparison uses constant-time function (volatile XOR
 accumulator). Response time is independent of how many characters match.
-Additionally, exponential backoff limits brute-force attempts.
+Additionally, exponential backoff limits brute-force attempts. On the
+kernel and on both Canary firmwares it is per source address; on the
+Canaries (the WAP and the flagship share `auth_backoff.h`) at most nine
+backoffs run at once (8 tracked addresses and a shared overflow), so a host
+with many addresses gets about 30 guesses a minute between reboots. The
+table lives in RAM, and a reboot empties it. Until F361 any landing session
+could reboot the WAP (`POST /api/reboot`, `POST /api/safe-mode/retry`, both
+then behind `api_auth_check()`), so a guesser that rebooted it after every
+few seconds of guessing got about 37 a minute if the unit was back on the
+LAN 45 s later, about 100 at 10 s, about 155 at 5 s (modeled over
+`auth_backoff.h` in `firmware/tests_host/test_auth_backoff.cpp`; the WAP's
+boot time is not measured; [`magic_pairing.md`](../design/magic_pairing.md)
+§3.7). Both routes take the bearer alone now, as the flagship's reboot
+does; the dashboard's firmware install, which a session may start,
+restarts the unit only into a newer signed image. On both, the token's entropy is the
+bound across addresses (F343, F340): about 184 bits for a
+WAP token derived since its 64-byte encoder (32 random characters of a
+54-character alphabet); about 155 on average for the flagship's, whose
+encoder takes 32 HMAC bytes, so about 27 of its characters are random and
+the rest a fixed top-up; and about 116 on average for a WAP token kept in
+NVS from the first, 24-byte encoder.
 
 **PASS if:** Auth timing is constant regardless of input.
 
@@ -539,9 +651,12 @@ Additionally, exponential backoff limits brute-force attempts.
 
 ### Hardware Trust
 - ESP32-S3 manufactured by Espressif (China-based) — acknowledged boundary
-- Mitigations: no outbound connections, no Espressif cloud services used;
-  secure boot, flash encryption and eFuse locks on the opt-in
-  secure-provisioning tier (NOT on default builds)
+- Mitigations: no undisclosed outbound connections, no Espressif cloud
+  services used. Secure boot and flash encryption are prepared in the opt-in
+  provisioning kit but work on no tier today (Scenario 4): its Phase 2
+  leaves flash encryption off and Secure Boot enabled with nothing to
+  verify against, burns the JTAG-disable fuses, and is NOT run on default
+  builds
 - Future: RISC-V based designs with open-source silicon
 
 ---
@@ -597,7 +712,9 @@ To change any security-hardened default, a developer must:
 2. Every outbound path is one of the disclosed set in Principle 2, each
    named with its host test or its lack of one; `regression_check.sh`
    greps for a new client socket
-3. Ed25519 private key has no read/export interface of any kind
+3. The firmware offers no read or export path for the Ed25519 private key (a
+   full flash read over USB or on a bench still recovers it on every tier:
+   SECURITY_MODEL.md, "Physical extraction and the flash-encryption default")
 4. All cryptographic operations use vetted libraries (no custom crypto)
 5. All security-sensitive defaults are hardened where they are set:
    `firmware/canary/include/secure_defaults.h` maps each default to the
@@ -611,12 +728,15 @@ To change any security-hardened default, a developer must:
    name and fleet-beacon state, never a serial or anything about other
    people, and its two passive scanners (presence, Nearby) keep no MAC,
    OUI or name from other people's devices
-7. The WAP serves HTTPS after setup, and the flagship's dev and full builds
-   from the first boot after setup; plain HTTP is a stated posture (setup
-   mode and start failure on the WAP, both logged; the flagship's release
-   images, and its dev and full builds during setup and on a TLS start
-   failure, named in `tls_mode_reason`; the displays' LAN page), never a
-   silent downgrade of a TLS session
+7. The WAP is built to serve HTTPS after setup, and the flagship's dev and
+   full builds from the first boot after setup, each once a certificate is
+   stored; no stock unit stores one today, because the on-device generator
+   compiles out on every pinned core (F15), so both serve plain HTTP. Plain
+   HTTP is a stated posture (setup mode, a missing certificate and start
+   failure on the WAP, all logged; the flagship's release images, and its
+   dev and full builds during setup, without a certificate and on a TLS
+   start failure, named in `tls_mode_reason`; the displays' LAN page), never
+   a silent downgrade of a TLS session
 8. Evidence is verifiable offline without any ERRERlabs service
 9. Regression checks enforce all ten principles automatically
 10. The transparency document passes the "would Moxie sign this?" test
@@ -799,6 +919,25 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   a reboot; and on a board without flash encryption a boot loads no opera
   and no member, so the members it held then leave no tombstone and a
   re-pair into the same opera starts them at 0. Host-tested only.
+- **canary-wap's opera confirm takes the API token (F346).** `POST
+  /api/mesh/pair/confirm`, the step that seals this opera's `opera_secret`
+  to the partner's radio or takes the partner's opera in place of this
+  device's, takes the bearer alone (`api_auth_check_bearer()`); a session
+  is refused `401`. Before, a landing session on the LAN with a radio in
+  range could confirm a pairing it drove and be handed the opera secret.
+  The code itself stays visible to the session (`GET /api/mesh`'s
+  `pairing_code`): both ends compute it from the session key, so hiding it
+  protected nothing. `POST /api/beacon/pair/confirm` is a stub behind
+  `FEATURE_BEACON_CHANNEL` (off) and takes the bearer when it becomes real.
+  The flagship's mesh confirm already goes through its bearer-only
+  `auth_gate()`. Peers a session paired on 2.4.17 or earlier persist until
+  the owner removes them. Since F345, Forget Wi-Fi takes the bearer, so a
+  session cannot re-open the Bluetooth setup door and buy the receipt with
+  its claim. Only the owner's own bearer Forget, or the 10 s BOOT hold,
+  re-arms the door; until the unit is set up again it is in first-boot
+  trust (after a Forget, unless it runs standalone: Forget leaves that
+  choice set and the door shut), and the door's claim goes to the first
+  phone in range (magic_pairing.md §8). Host-tested, not bench-tested.
 - **The 6-digit pairing code does not cover the long-term keys**
   (pre-existing; found in the review of the F49 part 3 withdrawal). The
   code and the CONFIRM hash are derived from the ephemeral X25519 session
@@ -977,8 +1116,10 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     HEARTBEAT right after it pairs, so the joiner's ends the initiator's
     copies within one pass; they run on only while the first COMPLETE is
     lost (until the joiner opens a copy and its heartbeat follows) or when
-    that heartbeat cannot reach the initiator (F320), and their whole window
-    only then.
+    that heartbeat cannot reach the initiator (F320). Since F324 the joiner heartbeats every 30 s ± 3 s, so
+    a lost paired heartbeat costs about one more interval of copies (about
+    15 copies of two frames), not the whole window; the window runs out
+    only against a joiner that sends nothing in it.
   - *A cancel after the end (F135).* A `pair/cancel` that landed after the
     initiator's COMPLETE went out used to fail the completed pairing: the
     joiner held the `opera_secret` while the initiator never trusted or
@@ -994,8 +1135,9 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   code before its fix and by mutation; an interop probe in scratch ran the pairing library
   against the pre-F117, wave-10 and pre-F97 libraries; the canary build is
   CI's; not bench-verified.
-- **PlatformIO membership: a join needs a leave, a member says it paired,
-  the peers list is the session's (F136, F162, F199; host-tested only).**
+- **PlatformIO membership: a join needs a leave, a member says it paired
+  and keeps saying so, the peers list is the session's (F136, F162, F199,
+  F324; host-tested only).**
   - *A join on a Canary already in an opera is refused (F136).*
     `pair/join` with an opera held answers `409 opera_exists` before a
     pairing number is taken or any member, key or secret is touched; until
@@ -1005,21 +1147,208 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
     pair with a second member of the opera it holds, so a changed radio
     address is Leave then Join (F319). canary-wap's join is unchanged
     (F318).
-  - *A member announces itself once (F162).* One signed `HEARTBEAT`
-    (registry 16, empty payload) to bound members only, right after
-    NOTIFY_PAIRED and once on the first pass after a boot that bound a
-    member; never to a pairing partner that is not a member, and never on
-    a timer (a recurring heartbeat would be a new periodic RF pattern;
-    whether to add one is the maintainer's open call, F324). A receiver handles it as any verified opera frame; it
-    discloses nothing an opera frame does not.
+  - *A member announces itself, and keeps doing so (F162, F324).* One
+    signed `HEARTBEAT` (registry 16, empty payload) to bound members only,
+    right after NOTIFY_PAIRED and once on the first pass after a boot that
+    bound a member (F162), and since F324 every 30 s ± 3 s while the
+    session runs with an opera, every heartbeat re-arming the deadline;
+    never to a pairing partner that is not a member, and nothing signed or
+    counter spent with no member bound. A receiver handles it as any
+    verified opera frame; it discloses nothing an opera frame does not
+    (the opera id, the sender's fingerprint, a counter, an uptime stamp),
+    and all of that is already on the air in every opera frame.
+    - *Accepted: a periodic radio emission.* A member's MAC is now on the
+      air every interval, which marks a device as a Canary in an opera to
+      anyone listening on its channel. That adds little to the RF pattern
+      of the only build with the mesh: `[env:full]` already broadcasts the
+      BLE status beacon continuously, and no released image builds the
+      mesh. The owner who wants no periodic frame turns the mesh off
+      (`POST /api/mesh/enable` with `false`): a stopped session sends
+      nothing and drops its deadline.
+    - *Liveness counts verified frames only (F324).* A member's peer row
+      (`state`, `last_seen_sec`, `rssi`) and `peers_online` come from its
+      last frame that passed the signature, opera and counter checks
+      (`verified_seen_ms`), as on canary-wap. Until F324 they were the
+      transport entry's, which any frame from the address refreshed before
+      verification, and ESP-NOW does not authenticate a source: a 3-byte
+      junk frame and a replay from a quiet member's MAC once a minute held
+      it `CONNECTED` and `peers_online` 1 for ten minutes (host-probed). A
+      heartbeat alone would have made that easy to aim (the member's MAC on
+      the air every 30 s), so an intruder who pulled a Canary could have
+      held it `CONNECTED` with a spare ESP32. Now junk, a forgery (a
+      flipped signature byte, or a frame signed under another opera) and a
+      replay of a frame the receiver has heard refresh nothing
+      (host-tested), and a member that is gone reads `STALE` within about
+      90-100 s and `OFFLINE` within about 5 minutes while that is all a
+      radio copying its address sends.
+      An age past 2^31 ms is held there, so a member gone longer than the
+      32-bit clock can count does not read `CONNECTED` again when it wraps.
+    - *Not covered: a frame the receiver did not hear.* The counter check
+      is a high-water mark, so any genuine frame of the member's that the
+      receiver did not hear verifies whenever it arrives from the member's
+      own address, and refreshes its liveness: a recorder that sends such
+      frames one under every 90 s holds a member that is gone `CONNECTED`
+      about 90 s per frame, and then it reads `STALE` and `OFFLINE`. There
+      is no fixed bound, after a reboot or otherwise: the hold is the size
+      of the recorder's stock, and a radio near the member comes to hold
+      one three ways, and a fourth, after a pairing, is narrowed but not
+      closed (the last below):
+      - *Frames the member sent while the receiver was not listening.* A
+        member heartbeats each bound member's address every interval
+        whether or not that member is there (spec §7.1), so every heartbeat
+        it sends while the receiver is off, booting, out of range or on
+        another channel (the softAP's channel 1 before its station rejoins
+        its router, F320) is one the receiver never heard, and a passive
+        recorder near the member keeps it with no jamming. They build up at
+        one per about 30 s the receiver is away, and relayed they hold a
+        gone member `CONNECTED` about three times as long as the receiver
+        was away (2.6 to 3.3 times by the jitter's range; one hour down
+        held it about 2.9 hours in the host test). Before F324 a member sent
+        nothing on a timer, so a downtime left no frames to keep. A breaker
+        trip on the receiver's circuit or a slow router rejoin leaves a
+        small stock with no intent at all; an intruder who unplugs the
+        receiver, pulls the member and plugs the receiver back in builds a
+        large one.
+      - *After a receiver reboot, every frame it heard since its last
+        5-minute replay-counter save* is fresh again (spec §8.3; the F116
+        bullet above says the same of canary-wap's own save): at most 12
+        heartbeats one save interval holds at the shortest spacing (more if
+        the member sent other frames in it), about 18 minutes, on top of
+        what the member sent while the receiver was down. A receiver that
+        reboots more often than every 5 minutes never advances its saved
+        counter, so the same stock serves on every boot. A save before the
+        deliberate restarts would narrow this to unclean ones (a power cut,
+        a crash); it is not made.
+      - *A jammer's stock.* A jammer that keeps the member's frames from the
+        receiver and sends them late holds it `CONNECTED` for as long as its
+        stock lasts, after the member is gone too, with no `STALE` between;
+        a jammer that only blocks leaves it `STALE` within about 90 s.
+      - *Narrowed, not closed: after a pairing, every frame the member
+        signed under the opera before it.* The new receiver never heard any
+        of them, and held no saved counter for the member until its first
+        frame there. A receiver paired on the bench and unplugged within 5
+        minutes to be mounted restored no counter for the member, and every
+        frame the member had signed (since F324, one heartbeat to each other
+        member every 30 s) held a gone member `CONNECTED` again: 240
+        recorded frames, 356 minutes (host-probed). Now the counter of the
+        member's first frame that verifies there is persisted at once
+        (mesh_session's first-counter handler, main.cpp
+        `on_mesh_first_counter`; also after a re-pair from the member's
+        replay tombstone, and after a boot that restored no counter for it,
+        a saved 0 included, since a save before the member is heard writes
+        it at 0 and no frame carries 0), and once more
+        `FIRST_COUNTER_RESAVE_MS` (66 s) later if it has moved. A save that
+        fails (NVS refused the write) is tried again rather than taken as
+        done: the first on the member's next frame that verifies, the
+        second 66 s after the pass that failed. The Codex review of #1839
+        found both taken as done, so a failed first save waited for the
+        second (or, with the counter unmoved by then, for the 5-minute
+        save) and a failed second save for the 5-minute save. The first
+        frame that verifies need not be the member's newest: the counter
+        check is a high-water mark, so any older genuine frame of the
+        member's passes too, and a radio copying the member's address can
+        land one while the receiver holds the member registered and unheard.
+        That window runs until the member's own first frame lands: after a
+        pairing, milliseconds normally, up to about one heartbeat interval
+        (33 s) when the first COMPLETE or the paired heartbeat is lost,
+        which a jammer can force; after a boot that restored no counter for
+        the member, until the receiver hears the member's next heartbeat,
+        which also waits for the receiver's station to join its router (the
+        softAP's channel 1 until then, F320). The first save then holds the
+        older counter, and the member's own frames raise it in RAM only. The
+        second save holds the member's own counter unless every frame of the
+        member's own was kept from the receiver through those 66 s: lost,
+        jammed, or, after a boot, unheard by a station that had not yet
+        joined its router. So what stays open is three reboots. One before the
+        member's first frame lands (or, when NVS refused that save, before
+        its retry on the member's next frame, or a 5-minute save, lands)
+        finds nothing newer saved for it (after a first pairing, no counter
+        at all), so everything it signed before is fresh again, and nothing
+        need be landed at the pairing (host-tested: 132 of 132 relayed frames read
+        `CONNECTED`; with that save refused and the reboot before its
+        retry, 133 of 133); after a pairing that window is the one above,
+        milliseconds unless the first COMPLETE or the paired heartbeat was
+        lost or NVS refused the first save, which holds it open until a
+        retry lands: on the member's next verified frame, normally its next
+        heartbeat 27 to 33 s later, about 33 s more for each refused write.
+        No pass retries it, so when the member's own frames are kept from
+        the receiver after the refusal (lost, or jammed), it stays open
+        until the member's next verified frame or the next 5-minute save
+        that lands (main.cpp saves the counters every 300 s), as every
+        pairing's did before F324 (host-tested: 290 s of passes with the
+        member quiet ran no retry, and a reboot then read 133 of 133
+        `CONNECTED`; with a 5-minute save landed before it, none).
+        One before a save of the member's newer counter lands (the second
+        save, 66 s after the first, and, when NVS refused it, 66 s after each
+        refused try; or a 5-minute save, when one lands first), and, when the
+        member's own frames were kept out through the 66 s, one before the
+        next 5-minute save,
+        restore the older counter, and everything the member signed after
+        it is fresh again (host-tested: a reboot before the second save let
+        132 relayed frames hold a gone member `CONNECTED` at every read;
+        after it, at none, also when one heartbeat of the member's own was
+        lost and when the millis() clock wrapped between the two saves; a
+        refused second save leaves the older counter saved until its retry
+        lands 66 s later). Those two take a recording of the
+        member's earlier frames, a radio copying its address at the pairing
+        or the boot, and that reboot.
+      One frame the receiver hears from the member itself makes every older
+      one a replay. Nothing on the receive side tells a late frame from a
+      fresh one: the signed header carries the sender's own clock, which no
+      receiver checks, and closing this needs a freshness check against
+      that clock or a wire change. Host-tested
+      (`test_a_frame_the_receiver_has_not_heard_still_counts_as_live`, its
+      reboot, jammer and downtime legs,
+      `test_a_members_first_counter_is_saved_at_once`,
+      `test_an_older_first_frame_is_saved_over_once_more`,
+      `test_a_failed_first_counter_save_is_tried_again` and
+      `test_a_failed_second_save_is_tried_again_a_deadline_later`); not run
+      on a device.
+    - *The replay window of a missed frame, bounded conditionally.* A frame
+      of a member's that the receiver missed stays dispatchable from a radio
+      copying the member's own address (spec §8.3) only until the receiver
+      hears the member's next frame: on a working link its next heartbeat,
+      about 33 s or less. A jammer that keeps the member's frames from the
+      receiver keeps it open; if it also sends them late, the member reads
+      `CONNECTED` throughout (the bullet above). Not a flat 33 s bound.
+    - *Cost, from code.* One Ed25519 signature per interval per sender, and
+      at most 8 heartbeat verifies per interval per receiver (one per bound
+      member; `MAX_TRUSTED_PEERS` is 8), on the main loop; one outbound
+      counter per heartbeat (a reservation write per 1024, about 2.8 a
+      day); the 5-minute replay-counter save now writes counters that move,
+      and a member's first counter adds at most two saves that land per
+      registration (a pairing, or a boot that restored no counter for the
+      member): its first frame's, and one 66 s later if the counter moved;
+      past those two no frame adds another; these writes happen only on
+      flash-encrypted boards. A save that fails is tried again on the
+      member's next verified frame, or for the second save 66 s later,
+      never on the next pass. On a board without flash encryption every
+      replay-counter save is refused before any write, so the first-counter
+      save is tried on each of the member's verified frames and writes
+      nothing: a counter snapshot per frame (the session's half host-tested,
+      with a handler that fails on every call:
+      `test_a_failed_first_counter_save_is_tried_again` and
+      `test_a_failed_second_save_is_tried_again_a_deadline_later`). On a
+      flash-encrypted board whose NVS keeps refusing, each verified frame
+      of a member whose first save has not landed is one refused write
+      attempt (`Preferences::begin` and `putBytes` of the replay blob) on
+      top of the verify the frame already cost: normally one a heartbeat,
+      but a radio copying the member's address with a recording of the
+      member's frames this receiver has not heard sets the pace, as fast
+      as the main loop verifies what the transport queues (8 frames at a
+      time), bounded by the frames in the recording, since each verifies
+      once. It needs a board whose NVS already refuses the write; whether
+      a refused write wears flash was not checked on hardware. The
+      transport's 100-frame-a-second storm gate is untouched. The same cadence canary-wap pays (F76).
   - *The peers list is the session's (F199).* `GET /api/mesh/peers` builds
     its rows from the view the main loop published, one per member the
     session holds, and reads no NVS on the HTTP task; a stored key the
     session does not hold is not a member anything hears, so the rows
     always agree with `peers_total`.
   Pinned by host tests in `test_mesh_session` and `test_mesh_pairing`, by
-  `check_canary_mesh_status.py` and the handlers' wiring test; the canary
-  build is CI's; not bench-verified (the F136, F162, F199 and F215 section
+  `check_canary_mesh_status.py` and the handlers' wiring tests (the
+  first-counter save's in `scripts/tests/test_canary_mesh_first_counter_wiring.py`);
+  the canary build is CI's; not bench-verified (the F136, F162, F199, F215 and F324 section
   of `docs/audit/hardware_verification_checklist.md`).
 - **A canary-wap that left its opera stored an all-zero one (F113).** Its
   leave saved the zeroed opera config as it stood, the next boot loaded the
@@ -1054,8 +1383,10 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   tombstone (F116) when it was heard. Host-tested only.
 - `opera_secret` storage requires flash encryption enabled
   (eFuse `FLASH_CRYPT_CNT > 0`); load/save paths refuse on FE-off devices
-  and log loudly (v0.2 audit O2). That keeps the secret off un-fused
-  boards; it does **not** make it confidential at rest on fused ones.
+  and log loudly (v0.2 audit O2). That keeps the secret off every board
+  without flash encryption (a Phase 2 board too, whose kit burns no
+  flash-encryption counter); it does **not** make it confidential at rest
+  on a board with flash encryption on.
   Flash encryption does not cover NVS (ESP-IDF encrypts only the app,
   OTA-data and NVS-key partitions), so on an FE-on board the persisted
   `opera_secret`, trusted peers, replay counters and hub election are
@@ -1153,8 +1484,9 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   - Wall-clock-anchored timestamps; origination refused when SNTP
     unsynced (audit C10, C15).
   - Per-pubkey rate-limit on incoming witnesses (audit C14).
-  - REST API (`/api/chirp/*`) Bearer-token-gated when wired into
-    `canary_wap.ino` (audit C12).
+  - REST API (`/api/chirp/*`) behind `api_auth_check()` when wired into
+    `canary_wap.ino` (audit C12): the bearer, or a landing session any host
+    on the network can mint (F346).
 - Templates only, no free text. No "suspicious person", no "unfamiliar
   vehicle", no individual descriptions. `TPL_AUTH_FEDERAL_PRESENCE` removed
   in v0.2 (audit C17).
@@ -1173,7 +1505,8 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   cosigner" rule are enforced by the originating firmware, not on receive.
   So they stop a caller of the device's REST API who is not physically at
   the device. They do not stop anyone holding that device's Ed25519 private
-  key (readable from flash on the default tier — Scenario 4 above): with it,
+  key (plaintext in NVS on every tier today, so on the flash chip of a
+  fused board too — Scenario 4 above): with it,
   a solo ALERT, or a solo CANCEL naming a live alarm's clear-text header
   nonce, can be signed on any ESP32 in radio range, and every set member in
   range accepts it. Nor do they stop software running on the device itself.
@@ -1201,8 +1534,8 @@ treatment. Full audit: `docs/audit/mesh_and_chirp_audit_v1.md`.
   tamper-evident via the embedded signatures and chain hashes — with a
   64-entry NVS ring as the bounded recent-view cache. The ring is written
   only on a board with flash encryption on (canary-wap's
-  `beacon_channel.cpp` uses the same gate as O2; an un-fused board keeps
-  the ring in RAM only), and it is plaintext NVS there too: flash
+  `beacon_channel.cpp` uses the same gate as O2; a board without flash
+  encryption keeps the ring in RAM only), and it is plaintext NVS there too: flash
   encryption does not cover NVS, only NVS encryption would, and that is
   not available under `framework = arduino` (the O2 bullet in the Opera
   mesh section above). The
@@ -1230,7 +1563,7 @@ firmware or UI source.
 | Spoofed origination | yes (Ed25519) | yes (Ed25519, v0.2) | yes (dual Ed25519) |
 | Replay | yes (counter) | yes (1024-entry dedup + freshness) | yes (dedup + freshness) |
 | Sybil flood | yes (opera_id isolation) | yes (per-pubkey rate + unique-pubkey set) | yes (two-pubkey rule + audit) |
-| Physical extraction of opera_secret | partial (the FE gate keeps it off un-fused boards; NVS is not encrypted, so a fused board still holds it in plaintext) | n/a | n/a |
+| Physical extraction of opera_secret | partial (the FE gate keeps it off boards without flash encryption; NVS is not encrypted, so a board with flash encryption on still holds it in plaintext) | n/a | n/a |
 | Compromised device originates fake alarm | n/a | partial (suppress vote) | yes (two-pubkey rule) |
 | Reserved-tone or reserved-phrase impersonation | n/a | yes (lint) | yes (lint, color, frequencies) |
 | Hawaii-style operator error | n/a | n/a | yes (two-person rule, msgType=Exercise distinct from Alert) |
@@ -1238,7 +1571,8 @@ firmware or UI source.
 ### Outstanding work (tracked)
 
 - Beacon channel runtime not wired into the `canary_wap` loop: the REST
-  routes are registered (behind `FEATURE_BEACON_CHANNEL`, Bearer-gated), but
+  routes are registered (behind `FEATURE_BEACON_CHANNEL` and
+  `api_auth_check()`, which a landing session passes), but
   nothing calls `beacon_channel::init()`, `set_enabled()`, `update()` or
   `dispatch_espnow_message()`, and the shared ESP-NOW receive path forwards
   to Chirp only. Wiring it needs an explicit user opt-in and a `COSIGN_REQ`

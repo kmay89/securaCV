@@ -131,7 +131,14 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   GET keeps write-only cannot be read through a broker the session names that way; host-tested. The
   QR hub-provision path still moves it on a scanned code, in a scan window the session can open with
   the pair token it mints (`GET /api/pair/token` takes the cookie), but only for a code in front of
-  the camera. F289's follow-up (#1832) adds that the receipt's bearer grant counts a wrong token
+  the camera. (Since #1887 the session buys less again: after setup the four routes that move the
+  network (F334, F345), the two reboot routes (F361), the vault key (F335) and the Bluetooth and
+  mesh pairing confirms (F346) take the bearer alone, so the reboot and the Wi-Fi change in the
+  list above are no longer the session's (its firmware install still restarts the unit, only into
+  a newer signed image); and `POST /api/wifi/qr-scan` answers `404` (F333, F334),
+  so the session opens no scan window, the boot scan runs only while no network is stored and the
+  unit is not standalone, and a Forget, which takes the bearer, clears the stored broker login.)
+  F289's follow-up (#1832) adds that the receipt's bearer grant counts a wrong token
   toward the lockout (`api_auth_bearer_grant`), also host-tested only. See
   `docs/audit/repo_todo_sweep_2026-09.md` F289.)*
 - **[MEDIUM] Port-80→HTTPS redirect hardcodes `192.168.4.1`** (`handle_https_redirect`), so once
@@ -148,6 +155,43 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   (`session_cookie_header()` in `canary_wap.ino`); it is also read by its whole name, so
   `xcv_session=` is no longer taken for it. Host-tested, not run in a browser against a device.
   The other two items in this bullet are unchanged.)*
+  *(2026-10-19 note, sweep F343: the auth lockout is now per source address, the request's
+  socket peer and never a header (`firmware/common/network/auth_backoff.h`, 8 tracked addresses
+  plus a shared overflow, 2 s doubling capped at 60 s). A host's wrong bearers hold only that
+  host's address (F343). A browser that mistyped the token waits at most about 60 s, or taps
+  BOOT, which clears its address (F341). A host that strikes from 9 or more addresses within
+  60 s holds every untracked address while the shared overflow slot runs, and a tap does not
+  clear that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane, or hold BOOT
+  10 s. (Amended 2026-10-21 by #1843, #1842's follow-up, from F342's final review: a tap
+  clears an address only when it is served to that address's own ask, so a browser that
+  mistyped the token signs in with Use BOOT Tap Once. Under a host striking from 9 or more
+  addresses the hold is no way out: it empties the table, as any restart does, but once the
+  unit is set up on the same network again that host's next strikes hold every untracked
+  address again. The way out is to change the WAP's Wi-Fi from a browser to a network that
+  host is not on (the landing page's session reaches `POST /api/wifi/connect` under the
+  lockout, F346), or waiting until it stops. That holds only while that host leaves it alone:
+  it can mint sessions until the owner's is evicted, and a host also in radio range can bond a
+  Bluetooth peer of its own and write the WAP back to a network it is on over the bonded lane.
+  And it lasts only while the new network stays up: the WAP keeps the networks it joined
+  before, the host's among them, and goes back to one on its own when the new network is not
+  found twice running; no route forgets one saved network, so only Forget Wi-Fi or the hold
+  drop them, and both reopen the first-come setup door. The iPhone's bonded Bluetooth lane is
+  no way out today: the iPhone app never dials a WAP's lane (ledger A65, open). Once that is
+  settled the lane holds only while that host leaves it alone and the new network stays up, and
+  taking it away needs no radio: any landing session can turn the WAP's Bluetooth
+  off, a saved setting that restarts and the 10 s hold keep, or delete the phone's bond.
+  `magic_pairing.md` §3.7 has the whole posture.) (Amended 2026-10-27 by the owner-authority PR,
+  #1887: the four routes that move the network over HTTP take the bearer alone (Disconnect
+  and Forget in every mode, Connect and AP-only after setup; F334, F345), and the overflow holds
+  that bearer with every untracked address, the owner's among them, so the browser's move waits
+  until that host stops and then takes the API token pasted into the sign-in; last, for a host
+  on the network only, with the iPhone ready, the hold and a setup onto a network that host is
+  not on. A host's peer no longer bonds through its session: the bond's confirm and a Passkey
+  Entry's digits take the bearer, F346.) Clients behind one address share a backoff, and a
+  deliberate LAN denial stays open (a landing session's `POST /api/reboot`, ARP spoofing, httpd's
+  connection purge; `magic_pairing.md` §3.7; since #1887, sweep F361, `POST /api/reboot` and `POST
+  /api/safe-mode/retry` take the bearer alone). Host-tested, not run on a device. The wildcard
+  `Access-Control-Allow-Origin` is unchanged.)*
 
 `wap_server.cpp` is a **linker stub** — the real 499 KB server is inline in the `.ino`, and the
 stub's header comment advertises properties ("TLS on all connections", rate limiting) that aren't
@@ -408,7 +452,10 @@ pure-logic pieces are host-tested.
   and **reuse sequence numbers**, weakening the tamper-evidence chain.
 
 Full-potential gaps: Secure Boot v2 + Flash Encryption exist as a reference (`partitions_secure.csv`)
-but aren't wired into the FULL build — identity keys and the chain sit in plaintext flash today; a
+but aren't wired into the FULL build — identity keys and the chain sit in plaintext flash today
+*(amended 2026-10-21: and would on a FULL build with Secure Boot and flash encryption too, since
+flash encryption does not cover NVS and NVS encryption is not available under
+`framework = arduino`; `key_at_rest.h`)*; a
 PSRAM-backed deferred-write ring would stop record loss while the SD card is absent (the mechanism
 already exists for other rings); the ULP-RISC-V / RTC domain is used only for a crash breadcrumb.
 

@@ -71,7 +71,7 @@ Critically: the three channels share the radio (via `mesh_channel_policy`) and t
 
 A device's Beacon identity is its persistent Ed25519 device pubkey — **the same pubkey used by Opera and witness records**. This is a deliberate choice:
 
-- Reuses the existing key-management infrastructure (NVS, eFuse-derived flash encryption, key generation at first boot).
+- Reuses the existing key-management infrastructure (the key in NVS, plaintext at rest on every tier today since flash encryption does not cover NVS, see the threat table below; key generation at first boot).
 - Allows Beacon receivers to also be Opera members (a typical deployment: 1–3 Canaries in your home are Opera peers AND members of the building Beacon set).
 - Provides a single auditable identity per device for safety-critical claims.
 
@@ -536,7 +536,7 @@ BEACON_PAIR_CONFIRM    — awaiting user code confirmation
 
 ## 10. REST API
 
-All endpoints Bearer-token-gated identically to `/api/mesh/*` and `/api/bluetooth/*`. Hold-to-send actions also require the UI's hold timestamp.
+All endpoints take `api_auth_check()`: a bearer, or the dashboard session cookie, which the landing page mints for any host on the network (F346). So do `/api/mesh/*` and `/api/bluetooth/*`, but for their two pair confirms (`POST /api/mesh/pair/confirm` and `POST /api/bluetooth/pair/confirm`), which take the bearer alone since F346 (`api_auth_check_bearer()`); `/api/beacon/pair/confirm` still takes `api_auth_check()`, behind `FEATURE_BEACON_CHANNEL` (off). Hold-to-send actions also require the UI's hold timestamp.
 
 | Endpoint | Method | Purpose |
 |---|---|---|
@@ -561,7 +561,7 @@ All endpoints Bearer-token-gated identically to `/api/mesh/*` and `/api/bluetoot
 
 | Storage | Where | Encrypted? |
 |---|---|---|
-| Beacon set (pubkeys, names, last_seen) | NVS | No — persisted only with flash encryption on (same gate as the Opera secret; an un-fused board keeps the set in RAM only), and plaintext NVS there too: flash encryption does not cover NVS, and NVS encryption is not available under `framework = arduino` (`docs/security/THREAT_MODEL.md`, the Opera mesh section) |
+| Beacon set (pubkeys, names, last_seen) | NVS | No — persisted only with flash encryption on (same gate as the Opera secret; a board without flash encryption keeps the set in RAM only), and plaintext NVS there too: flash encryption does not cover NVS, and NVS encryption is not available under `framework = arduino` (`docs/security/THREAT_MODEL.md`, the Opera mesh section) |
 | Audit log of record (received + originated) | `/beacon/audit.jsonl` on SD — pure append-only JSONL, chain-hashed like witness records; **never pruned, truncated, or rotated** | SD (plaintext JSONL; the embedded Ed25519 signatures + chain hashes make it tamper-evident) |
 | Audit recent-view cache | 64-entry NVS ring (newest entries only; the chain head spans every entry ever appended, so continuity stays provable past the ring boundary) | No — the beacon set's gate and caveat: written only with flash encryption on, plaintext NVS there |
 | Per-pubkey rate-limit state | RAM only, rebuilt from audit log on boot | n/a |
@@ -642,7 +642,7 @@ What Beacon never shares:
 | Radio jamming | Physical-layer attack, outside protocol scope. Beacon falls into `Trouble` if airtime saturated. |
 | Long-range RF triangulation of beacon-set members | Acknowledged. Fingerprints are persistent identifiers; this is the same trade-off the existing Opera mesh accepts. |
 | Insider abuse of `BCN_CLR_FALSE_ALARM` to suppress real alarms | Insiders are by definition cosigners; revocation is the recourse. Audit log is signed and retains the history. |
-| One member's stolen device key forging solo frames | The solo path's BOOT-button and no-fresh-cosigner gates run on the originating device and nothing about them is on the wire (§6.2 security note). A holder of one member's Ed25519 private key — readable from flash on a device without flash encryption — can sign a solo ALERT, or a solo CANCEL naming a live alarm's clear-text nonce, on any radio in range, and receivers accept it (shown downweighted: `certainty = Observed`, solo badge). Revocation is the recourse (§3.4); the audit log records the SOLO flag. |
+| One member's stolen device key forging solo frames | The solo path's BOOT-button and no-fresh-cosigner gates run on the originating device and nothing about them is on the wire (§6.2 security note). A holder of one member's Ed25519 private key — readable from flash on every tier today: it is plaintext in NVS, which flash encryption does not cover, and NVS encryption is not available under `framework = arduino` (`docs/security/THREAT_MODEL.md` Scenario 4) — can sign a solo ALERT, or a solo CANCEL naming a live alarm's clear-text nonce, on any radio in range, and receivers accept it (shown downweighted: `certainty = Observed`, solo badge). Revocation is the recourse (§3.4); the audit log records the SOLO flag. |
 
 ## 15. Future work
 

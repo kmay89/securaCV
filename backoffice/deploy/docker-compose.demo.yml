@@ -1,0 +1,26 @@
+# The public demo on any box with Docker: TLS from Caddy, data in a volume,
+# reseeded every hour. Set DEMO_HOST to the DNS name pointed at the box.
+#   DEMO_HOST=demo.example.com docker compose -f backoffice/deploy/docker-compose.demo.yml up -d
+services:
+  backoffice:
+    image: ghcr.io/kmay89/securacv-backoffice:latest
+    restart: unless-stopped
+    environment:
+      BACKOFFICE_DEMO: "1"
+      BACKOFFICE_DEMO_RESET_MINUTES: "60"
+      BACKOFFICE_HOST: 0.0.0.0
+      BACKOFFICE_DATA_DIR: /data
+    volumes:
+      - backoffice-demo-data:/data
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    command: caddy reverse-proxy --from ${DEMO_HOST:?set DEMO_HOST} --to backoffice:8787
+    volumes:
+      - caddy-demo-data:/data
+      - caddy-demo-config:/config
+volumes:
+  backoffice-demo-data:
+  caddy-demo-data:
+  caddy-demo-config:

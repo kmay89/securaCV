@@ -68,6 +68,7 @@ roadmap.
 
 `enclosure/canary_watch_station.scad` (**IN DEVELOPMENT**): a Watcher-style
 desk puck — straight drum holding the display disc + XIAO stack behind a
-screwed bezel, sitting in a separate 25° tilted stand with a cable channel;
-all parts print flat, and the drum's keyhole pockets let it wall-mount
-without the stand.
+snap bezel (four nubs, no fasteners), docking into a separate 25° open cradle
+with a cable channel; all parts print flat with no supports — the drum
+open-face-up, the bezel face-down, the cradle base-down — and the drum's
+blind keyhole pocket lets it wall-mount without the cradle.

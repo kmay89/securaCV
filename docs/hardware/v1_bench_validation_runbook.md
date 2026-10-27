@@ -148,14 +148,20 @@ Prerequisite: each board individually passes Track A steps A1–A3.
 On a board **without** flash encryption enabled, attempt mesh provisioning.
 
 **Pass:** the device **refuses** to provision the opera secret (audit O2 behavior).
-Then enable flash encryption on all fleet boards and proceed.
+Then enable flash encryption on all fleet boards and proceed. The provisioning
+kit does not do that today (its Phase 2 burns no flash-encryption counter:
+`docs/secure_provisioning.md`, Step 3), and flash encryption does not make the
+stored secret confidential: NVS is plaintext on a board with flash encryption
+on too.
 
 ### C2. Opera pairing
 
 1. Board 1: `POST /api/mesh/enable` with `{"enabled": true}`, then `/api/mesh/pair/start`.
    A board with no opera founds one here (both trees; PlatformIO since F33,
    answering `created: true` — the web UI's "Create Opera" button).
-2. Board 2: `/api/mesh/pair/join`; confirm on both (`/api/mesh/pair/confirm`).
+2. Board 2: `/api/mesh/pair/join`; confirm on both (`/api/mesh/pair/confirm`
+   with `Authorization: Bearer <token>`, over `http://`; on canary-wap a
+   session is refused, F346).
 3. `GET /api/mesh/peers` on each — both list the other with fresh heartbeats.
 
 **Pass:** pairing completes (Ed25519 challenge-response + X25519 session per

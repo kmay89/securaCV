@@ -29,8 +29,8 @@
  *   SHA-256 matches the signed digest, swaps the boot partition, and
  *   reboots. The floor is raised the same way the pull path raises it:
  *   the install records securacv_ota_mark_pending_install() and the new
- *   image raises the floor to its own version once its boot self-test
- *   confirms it — never before.
+ *   image raises the floor to its own version once it is confirmed (its
+ *   boot self-test, then the one-minute confirm dwell) — never before.
  *
  * Break-glass (the rescue case): a v1 header, or a v2 header whose version
  * is below the floor, is accepted only if the owner has armed break-glass

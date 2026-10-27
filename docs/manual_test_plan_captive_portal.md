@@ -1,7 +1,7 @@
 # Manual Test Plan: Canary WAP Captive Portal / `canary.local` Onboarding
 
 ## Purpose
-Validate that a phone joining the Canary's `SecuraCV-XXXX` AP **stays
+Validate that a phone joining the Canary's `SecuraCV-wap-XXXX` AP **stays
 connected** (never flagged "no internet") and can reach the dashboard via
 `canary.local` or the `192.168.4.1` fallback — across iOS/macOS, Android, and
 Windows, during first-boot setup, in steady state after provisioning, and over
@@ -16,19 +16,29 @@ job; this plan covers the parts only real hardware and real OS supplicants can
 exercise.
 
 ## How the firmware behaves (reference)
-- **AP SSID** is `SecuraCV-XXXX` (a 4-char suffix derived from the device's
-  hardware identity, encoded in the unambiguous alphabet — no `0/O/o`,
-  `1/I/i/l/L`) in both setup and steady state. The softAP is always on
-  (AP+STA) and does **not** NAT.
-- **Transport**: the dashboard / setup wizard / provisioning flow is served
-  over **HTTPS on port 443** (TLS, self-signed cert generated on-device).
-  Plain **HTTP port 80 returns a 301 redirect to HTTPS** for everything
-  *except* the OS connectivity-probe paths below, which are answered in the
-  clear so the supplicant's probe succeeds. So a browser pointed at
-  `canary.local` / `192.168.4.1` lands on `http://` → 301 → `https://`, and
-  the first visit shows a self-signed-cert warning that the tester accepts.
-  (`canary_wap.ino`'s `start_http_server()`: the TLS server on 443, and the
-  port-80 server beside it that 301-redirects the rest to HTTPS.)
+- **AP SSID** is `SecuraCV-wap-XXXX` (a 4-char suffix derived from the
+  device's identity key fingerprint, never the MAC, encoded in the
+  unambiguous alphabet — no `0/O/o`, `1/I/i/l/L`) in both setup and steady
+  state. It lasts as long as the key: an OTA update and the 10 s BOOT hold
+  keep it, and an install in either flasher (which starts NVS over) gives a
+  new key and so a new suffix. The softAP is up while the device is
+  unprovisioned or its home-Wi-Fi (STA) link is down, and in standalone
+  (AP-only) mode; once the STA has held the home network for 120 s
+  (`AP_DROP_GRACE_MS`) the AP is dropped, and it is raised again when the
+  STA link is lost. It does **not** NAT.
+- **Transport**: plain **HTTP on port 80**. First-boot setup is HTTP-only by
+  design (a captive sheet shows a blank page for a certificate it does not
+  recognize). After setup the WAP serves **HTTPS on port 443** (self-signed)
+  and port 80 answers a **301 redirect to HTTPS** for every GET and POST
+  *except* the OS connectivity-probe paths below and `GET /api/fleet` (fleet
+  discovery stays on plain HTTP), but only once a certificate is stored,
+  and no stock build stores one today (F15: the on-device generator compiles
+  out on every pinned core). So on a stock unit every step below is plain
+  `http://`, with no redirect and no certificate warning; the serial log
+  says "TLS unavailable — running in HTTP-ONLY mode" at boot. On a unit
+  that does serve HTTPS, expect `http://` → 301 → `https://` after setup and
+  accept the self-signed-certificate warning once. The probe paths are
+  answered in the clear either way so the supplicant's probe succeeds.
 - **Per-platform connectivity probes** (always on plain HTTP, port 80, **not**
   redirected):
   - Apple `/hotspot-detect.html`, `/library/test/success.html` → instruction
@@ -62,38 +72,36 @@ exercise.
 
 #### A1) Apple (iOS/macOS)
 **Action**
-- Factory-fresh device (or after NVS `setup_ok` cleared). Join `SecuraCV-XXXX`.
+- Factory-fresh device (or after NVS `setup_ok` cleared). Join `SecuraCV-wap-XXXX`.
 
 **Expected**
 - A "Sign in to network" sheet appears showing the instruction page.
 - Wi-Fi does **not** drop and is **not** marked "No Internet Connection"
   while the sheet is open.
-- Opening Safari → `canary.local` redirects to HTTPS (`https://canary.local`,
-  301 from port 80) and, after accepting the self-signed-cert warning, loads
-  the setup/dashboard. `https://192.168.4.1` also loads.
+- Opening Safari → `http://canary.local` loads the setup wizard (plain
+  HTTP: first-boot setup never redirects). `http://192.168.4.1` also loads.
 
 #### A2) Android (Chrome)
 **Action**
-- Join `SecuraCV-XXXX`.
+- Join `SecuraCV-wap-XXXX`.
 
 **Expected**
 - **No** captive sign-in sheet (this is correct — the `204` is what keeps
   Android connected).
 - Status bar shows connected; **no** "Wi-Fi has no internet" warning, and the
   phone does **not** silently switch back to cellular.
-- In Chrome, `canary.local` resolves and loads **promptly** (no multi-second
-  stall from AAAA/HTTPS probes), redirecting to HTTPS (accept the self-signed
-  cert). If `.local` fails on the device's Android version,
-  `https://192.168.4.1` loads immediately.
+- In Chrome, `http://canary.local` resolves and loads **promptly** (no
+  multi-second stall from AAAA/HTTPS probes). If `.local` fails on the
+  device's Android version, `http://192.168.4.1` loads immediately.
 
 #### A3) Windows
 **Action**
-- Join `SecuraCV-XXXX`.
+- Join `SecuraCV-wap-XXXX`.
 
 **Expected**
 - Network shows connected (may show limited connectivity, but not flapping).
-- `https://192.168.4.1` loads (port 80 → 301 → HTTPS; accept the self-signed
-  cert); `canary.local` loads if the host supports mDNS.
+- `http://192.168.4.1` loads; `http://canary.local` loads if the host
+  supports mDNS.
 
 ### B) Complete provisioning
 **Action**
@@ -105,9 +113,11 @@ exercise.
 
 ### C) Steady-state AP rejoin — still no disconnect
 **Action**
-- After provisioning (NVS `setup_ok` set), forget/rejoin `SecuraCV-XXXX` from
-  each platform. (Optionally simulate the real trigger by disabling the home
-  Wi-Fi network so the device's STA link drops.)
+- After provisioning (NVS `setup_ok` set), disable the home Wi-Fi network so
+  the device's STA link drops (the real trigger: a joined unit drops
+  `SecuraCV-wap-XXXX` 120 s after the join and raises it again on STA loss), or
+  use a unit in standalone (AP-only) mode. Then forget/rejoin
+  `SecuraCV-wap-XXXX` from each platform.
 
 **Expected**
 - Same connected behavior as Section A on every platform — the AP is **not**
@@ -117,12 +127,13 @@ exercise.
 ### D) `canary.local` over home Wi-Fi (STA / mDNS)
 **Action**
 - With the Canary joined to home Wi-Fi and your phone/laptop on that **same**
-  home network (not the AP), open `https://canary.local`.
+  home network (not the AP), open `http://canary.local`.
 
 **Expected**
 - Resolves to the Canary (via the delegated `canary.local` mDNS catch-all) and
-  loads over HTTPS (port 80 → 301 → HTTPS; accept the self-signed cert).
-- `https://canary-<name>.local` (the unique hostname, e.g. `canary-kitchen.local`)
+  loads over plain HTTP on a stock unit (on a unit that serves HTTPS: port
+  80 → 301 → HTTPS; accept the self-signed cert).
+- `http://canary-<name>.local` (the unique hostname, e.g. `canary-kitchen.local`)
   also resolves.
 - With two Canaries on the LAN, `canary.local` resolves to whichever claimed
   it first; each still has its unique `canary-<name>.local`.
@@ -211,7 +222,9 @@ The shared core is `firmware/common/network/onboarding_fsm.h` (host-tested);
 every case below holds on a Sense, a Vision, a Sentinel, a WAP, a display and a
 PIO canary unless the row says otherwise. `GET /api/status` is the oracle: its
 `onboarding` word is the state (the WAP and the PIO canary answer it inside
-their bearer-gated `/api/status` under `node_status`).
+their gated `/api/status` under `node_status`: the canary's takes the bearer,
+the WAP's `api_auth_check()`, which a landing session passes too, ledger
+F346).
 
 | # | Step | Expect |
 |---|------|--------|
@@ -241,7 +254,7 @@ Record per platform (✅ / ❌ / N/A):
 
 ## Notes
 - Android `.local` resolution depends on the browser/OS version; the
-  `https://192.168.4.1` fallback is the guaranteed path and is documented for
+  `http://192.168.4.1` fallback is the guaranteed path and is documented for
   users in `docs/getting_started_canary.md` §2.
 - If a phone *does* disconnect on current firmware, capture the OS/version and
   the probe URL it hit — the per-platform handlers live on the port-80 server

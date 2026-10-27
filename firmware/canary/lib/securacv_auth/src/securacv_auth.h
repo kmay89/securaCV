@@ -3,20 +3,25 @@
  *
  * Bearer-token authentication primitives for the REST API:
  *   - Constant-time token comparison (timing-attack safe)
- *   - Exponential-backoff lockout on repeated failures
+ *   - Exponential-backoff lockout on repeated failures, one per source
+ *     address (firmware/common/network/auth_backoff.h, the WAP's table)
  *   - Token redaction for safe logging
- *   - Lifetime auth counters for the health endpoint
  *
  * This library is the canary/ PlatformIO port of
  * firmware/projects/canary-wap/arduino/canary_wap/api_auth.h (Phase 1 of
  * the consolidation plan in firmware/canary/CONSOLIDATION.md). It is
  * stateful behind a class instead of file-scope static globals so the
- * module is unit-testable and safe under RTOS task interleaving.
+ * module is unit-testable (firmware/tests_host/test_securacv_auth.cpp
+ * compiles this library whole).
  *
  * This library is now wired into the HTTP handlers: securacv_network.cpp's
  * auth_gate() calls auth_check() against the device-provisioned bearer token
- * on the REST endpoints (the SPA at "/" carries the token but is itself
- * ungated by design). The standalone class remains unit-testable in isolation.
+ * on the REST endpoints, and its bearer_present_and_valid() (the provisioning
+ * receipt, the page-token decision) calls auth_bearer_grant(). Both pass the
+ * request's source address, request_peer_ipv4(): its socket peer, read with
+ * getpeername, never a header. The two paths that hand an address the token
+ * on a BOOT tap (the receipt's SERVE_TAP, the page-token decision's tap)
+ * call auth_handed_token() with that address (sweep F341).
  *
  * Copyright (c) 2026 ERRERlabs / Karl May
  * License: Apache-2.0
@@ -29,22 +34,22 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_http_server.h"
+#include "network/auth_backoff.h"
 
 // ════════════════════════════════════════════════════════════════════════════
-// CONFIGURATION (override via build_flags if needed)
+// CONFIGURATION
 // ════════════════════════════════════════════════════════════════════════════
 
-#ifndef SECURACV_AUTH_MAX_FAILURES
-#define SECURACV_AUTH_MAX_FAILURES       5        // failures before max lockout
-#endif
-#ifndef SECURACV_AUTH_LOCKOUT_BASE_MS
-#define SECURACV_AUTH_LOCKOUT_BASE_MS    2000     // base lockout: 2 seconds
-#endif
-#ifndef SECURACV_AUTH_LOCKOUT_MAX_MS
-#define SECURACV_AUTH_LOCKOUT_MAX_MS     300000   // max lockout: 5 minutes
-#endif
-#ifndef SECURACV_AUTH_FAILURE_WINDOW_MS
-#define SECURACV_AUTH_FAILURE_WINDOW_MS  60000    // reset counter after 1 min clean
+// The backoff's numbers are firmware/common/network/auth_backoff.h's, the one
+// table both firmware trees run (sweep F340): per source address, 2 s after
+// the first strike and doubling, never more than 60 s, and cleared a minute
+// after that address's last counted strike (a bearer sent while it is held
+// is neither compared nor counted). The old per-device knobs are
+// gone. A build that still sets one meant to change a number this library no
+// longer reads, so it stops here instead of building with the knob ignored.
+#if defined(SECURACV_AUTH_MAX_FAILURES) || defined(SECURACV_AUTH_LOCKOUT_BASE_MS) || \
+    defined(SECURACV_AUTH_LOCKOUT_MAX_MS) || defined(SECURACV_AUTH_FAILURE_WINDOW_MS)
+#error "SECURACV_AUTH_MAX_FAILURES, _LOCKOUT_BASE_MS, _LOCKOUT_MAX_MS and _FAILURE_WINDOW_MS are gone (sweep F340): the bearer backoff is firmware/common/network/auth_backoff.h, per source address. Remove the -D from build_flags."
 #endif
 #ifndef SECURACV_AUTH_HEADER_BUF
 #define SECURACV_AUTH_HEADER_BUF         128      // Authorization header max bytes
@@ -54,42 +59,53 @@
 // AUTH MANAGER
 // ════════════════════════════════════════════════════════════════════════════
 
-struct AuthStats {
-  uint32_t total_successes;
-  uint32_t total_failures;
-  uint8_t  consecutive_failures;
-  bool     locked_out;
-  uint32_t lockout_remaining_ms;
-};
-
+// One instance per device (auth_get_instance()), holding the device's one
+// backoff table. One httpd task touches it: the primary server's. The port-80
+// redirect server that runs beside an HTTPS one answers its captive probes
+// with the TLS hint and never reaches a bearer (handle_captive_probe), so the
+// table takes no lock (auth_backoff.h's contract).
 class AuthManager {
  public:
+  using BearerResult = canary::net::auth_backoff::BearerResult;
+
   AuthManager();
 
-  // Check Bearer token on an esp_http_server request.
-  //   - Returns true on success.
-  //   - On failure, sends the appropriate error response (401/403/429),
-  //     records the failure, and returns false. The caller should return
-  //     ESP_OK immediately after a false return.
-  bool check(httpd_req_t* req, const char* expected_token);
+  // Check the Bearer token of a request from `source` (its socket peer's
+  // IPv4, request_peer_ipv4() in securacv_network.cpp; 0 for every source
+  // the socket cannot name) and answer every refusal.
+  //   - Returns true on success, and frees `source`'s backoff.
+  //   - On failure, sends the appropriate error response (401/403/429)
+  //     and returns false. The caller should return ESP_OK immediately
+  //     after a false return.
+  //   - While `source`'s backoff runs, every request from it is the 429
+  //     with Retry-After (at least 1, never more than 61), and nothing is
+  //     compared or recorded. Another address is not held by it.
+  //   - A malformed or wrong credential is one strike against `source`.
+  //     A request with no Authorization header is a 401 and no strike: it
+  //     carries no guess (sweep F340; the WAP's auth_logic.h rule).
+  bool check(httpd_req_t* req, const char* expected_token, uint32_t source);
 
-  // Same as check() but does NOT send an error response on failure.
-  // Used by endpoints that allow both authenticated and unauthenticated
-  // access (e.g., provisioning-receipt gated by BOOT button).
-  bool checkOptional(httpd_req_t* req, const char* expected_token);
+  // The accounted grant, for a route that has its own answer for a missing
+  // or refused bearer (the provisioning receipt and the page-token decision,
+  // through bearer_present_and_valid()). Sends nothing.
+  //   NONE  — no Authorization header; nothing recorded.
+  //   OK    — the right bearer; `source`'s backoff is freed.
+  //   WRONG — a malformed or wrong one; one strike against `source`.
+  //   HELD  — `source`'s backoff runs; nothing compared or recorded.
+  BearerResult grant(httpd_req_t* req, const char* expected_token, uint32_t source);
+
+  // For a path that hands `source` the token without a bearer (the BOOT
+  // tap: the receipt's SERVE_TAP and the page-token decision's tap in
+  // securacv_network.cpp, sweep F341): its backoff ends as a right bearer's
+  // would. Frees only its own tracked slot, never the shared overflow
+  // (auth_backoff.h): an address held only through the overflow stays held.
+  void handedToken(uint32_t source);
 
   // Redact a token for logging: "cv_7kX9mN2p..." → "cv_7kX9****".
   // Always null-terminates output when out_len >= 1.
   static void redact(const char* token, char* out, size_t out_len);
 
-  // Snapshot of current auth counters (for /api/status or health log).
-  AuthStats stats() const;
-
-  // Serialize stats() as compact JSON into buf.
-  // Always null-terminates when buf_len >= 1.
-  void statsJson(char* buf, size_t buf_len) const;
-
-  // Testing / factory reset hook.
+  // Testing / factory reset hook: every backoff freed.
   void reset();
 
   // Constant-time memory comparison. Always visits every byte regardless
@@ -97,15 +113,16 @@ class AuthManager {
   static bool constantTimeCompare(const void* a, const void* b, size_t len);
 
  private:
-  bool isLockedOut() const;
-  void recordFailure();
-  void recordSuccess();
+  // What a present Authorization header holds. Only RIGHT is a match; each
+  // other value is one strike, answered by check() with its own body.
+  enum class Presented : uint8_t { RIGHT, TOO_LONG, UNREADABLE, NOT_BEARER, WRONG };
 
-  uint8_t  m_consecutive_failures;
-  uint32_t m_last_failure_ms;
-  uint32_t m_lockout_until_ms;
-  uint32_t m_total_failures;
-  uint32_t m_total_successes;
+  // The one compare: the header against expected_token, constant time on
+  // the matching-length path. An empty expected token matches nothing.
+  Presented compare(httpd_req_t* req, const char* expected_token);
+  void sendLockout(httpd_req_t* req, uint32_t source);
+
+  canary::net::auth_backoff::Table m_table;
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -114,12 +131,14 @@ class AuthManager {
 
 AuthManager& auth_get_instance();
 
-// Convenience wrappers over the global instance. These match the function
-// surface of the Arduino-IDE api_auth.h so Phase-2 wiring is a 1:1 call.
-bool auth_check(httpd_req_t* req, const char* expected_token);
-bool auth_check_optional(httpd_req_t* req, const char* expected_token);
+// Convenience wrappers over the global instance. `source` is the request's
+// socket peer (request_peer_ipv4() in securacv_network.cpp), passed in so
+// the library reads no socket itself.
+bool auth_check(httpd_req_t* req, const char* expected_token, uint32_t source);
+AuthManager::BearerResult auth_bearer_grant(httpd_req_t* req, const char* expected_token,
+                                            uint32_t source);
+void auth_handed_token(uint32_t source);
 void auth_redact_token(const char* token, char* out, size_t out_len);
-void auth_stats_json(char* buf, size_t buf_len);
 
 // ════════════════════════════════════════════════════════════════════════════
 // BEARER CREDENTIAL OWNERSHIP

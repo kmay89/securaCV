@@ -7,7 +7,8 @@
  * origination (ALERT and CANCEL) and the BOOT-button solo path, the
  * encrypted COSIGN exchange, the receive-path validation, the NFPA-72 state
  * surface and the chain-hashed audit log. The REST routes are registered
- * (beacon_api.h, Bearer-gated, from canary_wap.ino); the runtime loop is
+ * (beacon_api.h, behind api_auth_check, which a landing session passes,
+ * from canary_wap.ino); the runtime loop is
  * not wired yet — see "Known limitations" below.
  *
  * Critical security properties (per spec/beacon_channel_v0.md):

@@ -11,6 +11,17 @@
 //  2026-08-23: rrect2d and the board clip now come from the shared libraries
 //  (canary_core_lib / canary_snap_lib) — same mesh, one home; the clip's
 //  insertion strain is now gated on every render instead of trusted.
+//  2026-10-22: end stops past both carrier ends. The carrier hangs on one clip
+//  pair at mid-span and nothing else stood in its band along the rails: on a
+//  plate in a wall it slid down them (a slab of the plate in the PCB's band,
+//  inside the board's width, came out EMPTY for ±40 mm) and took the antenna
+//  out from under the radome window. It now floats board_clear each end.
+//  2026-10-23: the 6-32 device-screw slots were 3.7 wide: 3.68 at the
+//  30-gon's flats, 0.09 a side over a 6-32's 3.505 major (a centered shank
+//  + 0.1 met both slots) — the no-clearance hole round 1 opened on every #8
+//  site, before the slot prints narrow. dev_screw_d 4.2: the major + 2 x
+//  tol_hole, rounded up so the 33-gon's flat keeps 0.3 (shank + 0.3: EMPTY).
+//  The face's head seats follow it (their cone starts at dev_screw_d).
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated. Measure
 //     your box, carrier, and stack; radome rules as in canary_sense_enclosure.
@@ -29,7 +40,7 @@ plate_w  = 70.0;     // wallplate width
 plate_h  = 115.0;    // wallplate height
 plate_t  = 3.2;      // plate thickness outside the radome
 screw_gap = 83.3;    // 6-32 device-screw spacing (single-gang standard)
-dev_screw_d = 3.7;   // 6-32 clearance
+dev_screw_d = 4.2;   // 6-32 clearance: the 3.505 major + 2 x tol_hole, rounded up so the 33-gon's flat keeps 0.3 (3.7 left 0.09 a side)
 lid_edge = 0.8;      // face edge chamfer — core_face_edge()
 corner_r = 3.0;      // plate corner radius — core_corner_r(); was a bare 4 in a part whose whole job is making Sense units read as a set
 back_rim = 1.5;      // rim on the back, inboard of the edge (rib_lib loop): the plate bears on its rim like a
@@ -116,6 +127,15 @@ module plate() {
         // back rim (canary_rib_lib): the loop only — the box opening owns the middle
         if (back_rim > 0)
             mirror([0, 0, 1]) plate_ribs(plate_w, plate_h, plate_t, back_rim, r = corner_r, inset = 1.0, n = 0);
+        // end stops just past both carrier ends: the carrier is hooked only on its ±X edges
+        // (one clip pair at y = 0), and with nothing in its band along the rails a plate
+        // standing in a wall let it slide 15+ mm down them and take the antenna out of the
+        // window (the radome case's +Y stops, both ends here — the plate mounts either way up).
+        // board_clear of float each end; outboard of a centered XIAO and its plug
+        for (sy = [1, -1], s = [1, -1])
+            translate([s*(radar_w/2 - 4) - 1.5, sy > 0 ? radar_l/2 + board_clear : -radar_l/2 - board_clear - 2.0,
+                       -(rail_h + pcb_t + 1.0)])
+                cube([3, 2.0, rail_h + pcb_t + 1.0 + 0.01]);
         // carrier rails + clips on the BACK (single-gang box device opening is ~45 x 65:
         // the carrier + XIAO recess into the box; rails only need to clear the clips)
         for (s = [1, -1]) {

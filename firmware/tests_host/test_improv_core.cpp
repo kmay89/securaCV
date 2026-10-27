@@ -410,7 +410,9 @@ static void a_factory_reset_at_runtime_rearms_the_window() {
   Session s;
   Timing t;
   session_begin(s, false, 1000, t);
-  // The owner wiped the credentials (a factory reset that did not reboot).
+  // The credentials were wiped at runtime (a WAP's Forget Wi-Fi, which takes
+  // the API token in every mode, ledger F345, or the 10 s hold before its
+  // restart): the door reopens, first-come, for the window.
   session_set_no_credentials(s, true, 60000, t);
   CHECK(s.door == Door::NoCredentials && s.state == State::Authorized, "no credentials now: open");
   CHECK(s.window_at_ms == 60000, "the window began at the wipe");
@@ -560,7 +562,9 @@ static void a_provisioned_device_shuts_when_credentials_land_and_stays_shut_in_r
   session_set_no_credentials(s, false, 10 * 60 * 1000, t);
   CHECK(s.door == Door::Shut && s.state == State::Provisioned, "recovery keeps the door shut");
   CHECK(session_on_wifi_settings(s, 10 * 60 * 1000 + 1, t) == Error::NotAuthorized, "still refused");
-  // Only the owner's tap reopens it.
+  // A tap reopens it here (on a board whose firmware reads one; the WAP has
+  // none). The credentials vanishing would reopen it too (the 10 s hold, or a
+  // WAP's Forget Wi-Fi), as the first-come NoCredentials door.
   session_tap(s, 10 * 60 * 1000 + 2);
   CHECK(s.door == Door::Tap && s.state == State::Authorized && !s.provisioned, "a tap reopens it");
   CHECK(session_on_wifi_settings(s, 10 * 60 * 1000 + 3, t) == Error::None, "credentials accepted under the tap");

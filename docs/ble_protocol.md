@@ -223,10 +223,10 @@ The open [Improv Wi-Fi](https://www.improv-wifi.com/) standard — the one Home 
 
 ### 13.2 When the door is open — the rule
 
-From `improv_core.h`: the door is open for a device NOBODY OWNS YET, and for an owner's own tap — never for a device that has an owner and a bad day.
+From `improv_core.h`: the door is open for a device with NO NETWORK SAVED (a new one nobody owns yet, or one whose network was cleared), and for an owner's own tap — never for a device that has an owner and a bad day.
 
-- **No credentials stored** (first boot, factory reset): open for a first-boot window of **30 minutes** after power-on (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle or a factory reset re-arms it; compile-time 0 = tap-only).
-- **Credentials stored:** shut, whatever the network is doing. A saved network that stopped working raises the SoftAP recovery portal (a door with a key printed on the unit) — it does **not** open this one.
+- **No credentials stored** (first boot, or after they were cleared with the 10 s factory-reset hold or, on a WAP that does not run standalone, Forget Wi-Fi, which takes the API token in every mode, ledger F345; a Forget leaves a standalone WAP standalone, and its door stays shut): open for a first-boot window of **30 minutes** after power-on (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle re-arms it, and so does clearing the credentials; compile-time 0 = tap-only). A cleared unit still has an owner: the hold keeps the witness identity on a Sense, a Vision and a WAP, and a WAP's hold and Forget Wi-Fi keep its token too. The door still goes to whichever client connects first, so for that half hour a stranger in radio range can give it their network ([`design/magic_pairing.md`](design/magic_pairing.md) §2.2; on a WAP, ledger F345).
+- **Credentials stored:** shut, whatever the network is doing. A saved network that stopped working raises the SoftAP recovery portal (a door with a key printed on the unit) — it does **not** open this one. On a WAP after setup that key opens the dashboard only: changing the Wi-Fi there takes the API token or one BOOT tap (F334).
 - **A short BOOT tap** (Sense and Vision; the WAP has no tap door in this version) opens it for **60 s**.
 - Bounds while open: accepted `WIFI_SETTINGS` writes at least **3 s** apart; **10 attempts** per open door, then it shuts until a tap or a power cycle; a connected client silent for **3 minutes** is dropped; ~**20 s** linger after a successful join, then back to the beacon.
 
@@ -258,7 +258,7 @@ The bearer token lasts; a Just Works link is encrypted but not authenticated; no
 {"device_id":"…","claim":"<32 hex>","claim_url":"…","tls_cert_fp":"…","sta_ip":"…","mdns_host":"…","expires_in_s":180}
 ```
 
-The phone spends it **on the home LAN** — `GET /api/provisioning-receipt?claim=<hex>` at the device's `.local` name — and gets the same receipt the BOOT-tap route serves (`device_id`, `base_url` at the `.local` name, `token`, `tls_cert_fp` where TLS is on). The route decides in this order and no other: a valid bearer → the claim → the BOOT tap (`provisioning_gate::receipt_decide`'s four grants; its first question, a foreign `Host`, is the flagship's `auth_gate`'s — the WAP does not ask it on this route today). A wrong guess **burns** the claim; an expired claim is burned too; a claim that serves leaves the BOOT tap unspent. Two factors: the encrypted link that provisioned, **and** presence on the Wi-Fi the device just joined — a phone that was only near the device holds a string that opens nothing from the street.
+The phone spends it **on the home LAN** — `GET /api/provisioning-receipt?claim=<hex>` at the device's `.local` name — and gets the same receipt the BOOT-tap route serves (`device_id`, `base_url` at the `.local` name, `token`, `tls_cert_fp` where TLS is on). The route decides in this order and no other: a foreign `Host` is refused first (`403 {"error":"host"}`, in every mode on the WAP since sweep F344; on the flagship outside its own access point, its `auth_gate`'s) → a valid bearer → the claim → the BOOT tap (`provisioning_gate::receipt_decide`'s four grants; [magic_pairing.md](design/magic_pairing.md) §3.7). A claim is spent only by a match: a wrong guess spends nothing (sweep F342); an expired claim is burned; a claim that serves leaves the BOOT tap unspent. Two factors: the encrypted link that provisioned, **and** presence on the Wi-Fi the device just joined — a phone that was only near the device holds a string that opens nothing from the street.
 
 ### 13.6 Discovering it with third-party tools
 

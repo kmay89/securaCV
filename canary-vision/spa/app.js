@@ -1692,7 +1692,8 @@ function renderDiscoveredPeerSection(peers) {
 // --------------- Add Canary Wizard ---------------
 //
 // Pairing leads with the zero-typing path: pick (or discover) a device,
-// short-tap its BOOT button, and the app captures the provisioning
+// let the app ask it first, short-tap its BOOT button once the step says
+// to (after the device's first 403), and the app captures the provisioning
 // receipt itself — the same physical gate the device's own dashboard
 // uses. Typing a token is the last resort, not the front door.
 
@@ -1716,11 +1717,19 @@ function normalizeBaseUrl(host) {
 
 // Poll GET /api/provisioning-receipt until the user short-taps BOOT on
 // the device. The tap opens a short-lived gate (advertised in the 403
-// body's gate_ttl_seconds), so a press anywhere in our 60 s window lands.
+// body's gate_ttl_seconds), so a press anywhere in our 60 s window lands
+// while this page is the only one asking (a WAP answers 409 tap_contended
+// when another address asked during the tap, sweep F342). The poll starts
+// before the press, and handlers.onTick's third argument says whether the
+// device has answered an ask yet (its first 403): a WAP hands a tap only to
+// the one address asking from 10 s before it onward, so until that answer
+// the step says not to press — a press the first ask has not reached yet is
+// one no page of the owner's is asking for, and goes to the first asker.
 // Returns a handle with cancel(); callers must cancel on navigation.
 function startReceiptCapture(baseUrl, handlers) {
   var canceled = false;
   var gateTtl = 30;
+  var asked = false;
 
   function tick(remaining) {
     if (canceled) return;
@@ -1736,19 +1745,30 @@ function startReceiptCapture(baseUrl, handlers) {
           handlers.onUnsupported();
           return;
         }
-        if (err && err.status === 403 && err.data && Number.isFinite(err.data.gate_ttl_seconds)) {
-          gateTtl = err.data.gate_ttl_seconds;
-        }
-        if (remaining <= 1) {
-          handlers.onTimeout();
+        if (err && err.status === 409) {
+          // Another device asked during the same tap (a WAP, sweep F342):
+          // the tap was closed and nothing was handed out, so stop here.
+          // Returning without scheduling a tick is the stop: no ask is in
+          // flight past this one (receipt-capture.test.js).
+          handlers.onContended();
           return;
         }
-        handlers.onTick(Math.round((remaining - 1) * RECEIPT_POLL_INTERVAL_MS / 1000), gateTtl);
+        if (err && err.status === 403) {
+          asked = true;
+          if (err.data && Number.isFinite(err.data.gate_ttl_seconds)) {
+            gateTtl = err.data.gate_ttl_seconds;
+          }
+        }
+        if (remaining <= 1) {
+          handlers.onTimeout(asked);
+          return;
+        }
+        handlers.onTick(Math.round((remaining - 1) * RECEIPT_POLL_INTERVAL_MS / 1000), gateTtl, asked);
         setTimeout(function () { tick(remaining - 1); }, RECEIPT_POLL_INTERVAL_MS);
       });
   }
 
-  handlers.onTick(Math.round(RECEIPT_POLL_TICKS * RECEIPT_POLL_INTERVAL_MS / 1000), gateTtl);
+  handlers.onTick(Math.round(RECEIPT_POLL_TICKS * RECEIPT_POLL_INTERVAL_MS / 1000), gateTtl, asked);
   tick(RECEIPT_POLL_TICKS);
 
   return {
@@ -2115,17 +2135,18 @@ function renderAddCanaryView() {
   }
 
   // ---- Step 2: BOOT-tap capture ----
+  // The step asks first and says to press only once the device has answered
+  // that ask (startReceiptCapture's `asked`), as the WAP's own pages do.
   function stepCapture(alertSlot, baseUrl) {
     var statusLine = el('div', { className: 'pair-status', textContent: 'Listening…' });
+    var stepTitle = el('div', { className: 'pair-step-title', textContent: 'Asking the Canary first' });
+    var stepSubtitle = el('div', { className: 'pair-step-subtitle', textContent: "Don't press BOOT yet." });
     var hero = el('div', { className: 'card pair-hero' }, [
       el('div', { className: 'pair-pulse' }, [
         el('div', { className: 'pair-pulse-core' }),
       ]),
-      el('div', { className: 'pair-step-title', textContent: 'Short-tap the BOOT button' }),
-      el('div', {
-        className: 'pair-step-subtitle',
-        textContent: 'One tap on the small button on your Canary pairs it — no codes to type.',
-      }),
+      stepTitle,
+      stepSubtitle,
       el('div', { className: 'card-subtitle', textContent: baseUrl }),
       statusLine,
     ]);
@@ -2137,26 +2158,62 @@ function renderAddCanaryView() {
     }));
 
     capture = startReceiptCapture(baseUrl, {
-      onTick: function (secondsLeft, gateTtl) {
+      onTick: function (secondsLeft, gateTtl, asked) {
         if (!document.body.contains(hero)) {
           if (capture) capture.cancel();
           return;
         }
+        if (!asked) {
+          statusLine.textContent = "Asking the Canary first. Don't press BOOT yet — " + secondsLeft + 's left.';
+          return;
+        }
+        stepTitle.textContent = 'Short-tap the BOOT button';
+        stepSubtitle.textContent = 'One tap on the small button on your Canary pairs it — no codes to type.';
         statusLine.textContent = 'Listening for ' + secondsLeft + 's — the device holds a tap for ' + gateTtl + 's.';
       },
       onReceipt: function (receipt) {
         statusLine.textContent = 'Pairing…';
         handleReceipt(alertSlot, receipt, baseUrl);
       },
-      onTimeout: function () {
+      onTimeout: function (asked) {
+        if (!document.body.contains(hero)) return;
+        while (content.firstChild) content.removeChild(content.firstChild);
+        content.appendChild(alertSlot);
+        // A step the device never answered never said to press, so it does
+        // not say it missed a tap.
+        content.appendChild(el('div', { className: 'card pair-hero' }, [
+          el('div', { className: 'pair-step-title', textContent: asked ? "Didn't catch a tap" : "The Canary didn't answer" }),
+          el('div', {
+            className: 'pair-step-subtitle',
+            textContent: asked
+              ? 'Make sure the Canary is powered and try again, and short-tap BOOT when this screen says to.'
+              : 'Make sure the Canary is powered and on your network, then try again, and press BOOT only when this screen says to.',
+          }),
+        ]));
+        content.appendChild(el('button', {
+          className: 'btn btn-primary btn-block mt-12',
+          textContent: 'Try again',
+          onClick: function () { setStep(function (slot) { stepCapture(slot, baseUrl); }); },
+        }));
+        content.appendChild(el('button', {
+          className: 'btn btn-secondary btn-block mt-12',
+          textContent: 'Back',
+          onClick: function () { setStep(stepChoose); },
+        }));
+        content.appendChild(renderFallbackExpander(alertSlot, baseUrl));
+      },
+      onContended: function () {
         if (!document.body.contains(hero)) return;
         while (content.firstChild) content.removeChild(content.firstChild);
         content.appendChild(alertSlot);
         content.appendChild(el('div', { className: 'card pair-hero' }, [
-          el('div', { className: 'pair-step-title', textContent: "Didn't catch a tap" }),
+          el('div', { className: 'pair-step-title', textContent: 'Another device asked at the same time' }),
           el('div', {
             className: 'pair-step-subtitle',
-            textContent: 'Make sure the Canary is powered and try again.',
+            textContent: "Another device on your network asked for this Canary's keys at the same time, so it said no. " +
+              'Close any other Canary pages and wait 10 seconds, then tap Try again, and short-tap BOOT only when ' +
+              'this screen says to. If this keeps happening: the iPhone app can pair from the Canary\'s recovery kit, ' +
+              'or the USB console prints the token each time the Canary starts.',
           }),
         ]));
         content.appendChild(el('button', {

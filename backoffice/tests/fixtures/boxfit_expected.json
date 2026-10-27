@@ -1,0 +1,1115 @@
+[
+ {
+  "lines": {
+   "wap-kit": 1
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-box-s",
+    "box_name": "Small carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "wap-kit"
+    ],
+    "weight_oz": 7,
+    "billable_oz": 9.25,
+    "fill": 0.8,
+    "cost_est": 4.8
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 4.8,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-s",
+       "box_name": "Small carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "wap-kit"
+       ],
+       "weight_oz": 7,
+       "billable_oz": 9.25,
+       "fill": 0.8,
+       "cost_est": 4.8
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 4.8
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 4.8
+  }
+ },
+ {
+  "lines": {
+   "wap-parts": 1
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-mailer",
+    "box_name": "Padded poly mailer (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "wap-parts"
+    ],
+    "weight_oz": 4,
+    "billable_oz": 10.41,
+    "fill": 0.57,
+    "cost_est": 4.8
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 4.8,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-mailer",
+       "box_name": "Padded poly mailer (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "wap-parts"
+       ],
+       "weight_oz": 4,
+       "billable_oz": 10.41,
+       "fill": 0.57,
+       "cost_est": 4.8
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 4.8
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 4.8
+  }
+ },
+ {
+  "lines": {
+   "vision-parts": 1
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-box-m",
+    "box_name": "Medium carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "vision-parts"
+    ],
+    "weight_oz": 6,
+    "billable_oz": 20.82,
+    "fill": 0.52,
+    "cost_est": 6.75
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 6.75,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-m",
+       "box_name": "Medium carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "vision-parts"
+       ],
+       "weight_oz": 6,
+       "billable_oz": 20.82,
+       "fill": 0.52,
+       "cost_est": 6.75
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 6.75
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 6.75
+  }
+ },
+ {
+  "lines": {
+   "vision-kit": 1
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-box-m",
+    "box_name": "Medium carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "vision-kit"
+    ],
+    "weight_oz": 10,
+    "billable_oz": 20.82,
+    "fill": 0.62,
+    "cost_est": 6.75
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 6.75,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-m",
+       "box_name": "Medium carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "vision-kit"
+       ],
+       "weight_oz": 10,
+       "billable_oz": 20.82,
+       "fill": 0.62,
+       "cost_est": 6.75
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 6.75
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 6.75
+  }
+ },
+ {
+  "lines": {
+   "witness-pair": 1
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-box-l",
+    "box_name": "Large carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "witness-pair"
+    ],
+    "weight_oz": 15,
+    "billable_oz": 62.46,
+    "fill": 0.37,
+    "cost_est": 10.5
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 10.5,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-l",
+       "box_name": "Large carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "witness-pair"
+       ],
+       "weight_oz": 15,
+       "billable_oz": 62.46,
+       "fill": 0.37,
+       "cost_est": 10.5
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 10.5
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 10.5
+  }
+ },
+ {
+  "lines": {
+   "watchful-house": 1
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-box-l",
+    "box_name": "Large carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "watchful-house"
+    ],
+    "weight_oz": 26,
+    "billable_oz": 62.46,
+    "fill": 0.78,
+    "cost_est": 10.5
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 10.5,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-l",
+       "box_name": "Large carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "watchful-house"
+       ],
+       "weight_oz": 26,
+       "billable_oz": 62.46,
+       "fill": 0.78,
+       "cost_est": 10.5
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 10.5
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 10.5
+  }
+ },
+ {
+  "lines": {
+   "wap-kit": 2
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-box-m",
+    "box_name": "Medium carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "wap-kit",
+     "wap-kit"
+    ],
+    "weight_oz": 14,
+    "billable_oz": 20.82,
+    "fill": 0.71,
+    "cost_est": 6.75
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 6.75,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-m",
+       "box_name": "Medium carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "wap-kit",
+        "wap-kit"
+       ],
+       "weight_oz": 14,
+       "billable_oz": 20.82,
+       "fill": 0.71,
+       "cost_est": 6.75
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 6.75
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 6.75
+  }
+ },
+ {
+  "lines": {
+   "wap-kit": 3
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-box-l",
+    "box_name": "Large carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "wap-kit",
+     "wap-kit",
+     "wap-kit"
+    ],
+    "weight_oz": 21,
+    "billable_oz": 62.46,
+    "fill": 0.36,
+    "cost_est": 10.5
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 10.5,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-l",
+       "box_name": "Large carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "wap-kit",
+        "wap-kit",
+        "wap-kit"
+       ],
+       "weight_oz": 21,
+       "billable_oz": 62.46,
+       "fill": 0.36,
+       "cost_est": 10.5
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 10.5
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 10.5
+  }
+ },
+ {
+  "lines": {
+   "wap-kit": 3,
+   "vision-parts": 1
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-box-l",
+    "box_name": "Large carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "vision-parts",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit"
+    ],
+    "weight_oz": 27,
+    "billable_oz": 62.46,
+    "fill": 0.53,
+    "cost_est": 10.5
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 10.5,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-l",
+       "box_name": "Large carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "vision-parts",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit"
+       ],
+       "weight_oz": 27,
+       "billable_oz": 62.46,
+       "fill": 0.53,
+       "cost_est": 10.5
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 10.5
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 10.5
+  }
+ },
+ {
+  "lines": {
+   "vision-kit": 1,
+   "wap-parts": 2
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-box-l",
+    "box_name": "Large carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "vision-kit",
+     "wap-parts",
+     "wap-parts"
+    ],
+    "weight_oz": 18,
+    "billable_oz": 62.46,
+    "fill": 0.4,
+    "cost_est": 10.5
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 10.5,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-l",
+       "box_name": "Large carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "vision-kit",
+        "wap-parts",
+        "wap-parts"
+       ],
+       "weight_oz": 18,
+       "billable_oz": 62.46,
+       "fill": 0.4,
+       "cost_est": 10.5
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 10.5
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 10.5
+  }
+ },
+ {
+  "lines": {
+   "wap-kit": 6
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-box-l",
+    "box_name": "Large carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit"
+    ],
+    "weight_oz": 42,
+    "billable_oz": 62.46,
+    "fill": 0.71,
+    "cost_est": 10.5
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 10.5,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-l",
+       "box_name": "Large carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit"
+       ],
+       "weight_oz": 42,
+       "billable_oz": 62.46,
+       "fill": 0.71,
+       "cost_est": 10.5
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 10.5
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 10.5
+  }
+ },
+ {
+  "lines": {
+   "wap-kit": 10
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-box-l",
+    "box_name": "Large carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit"
+    ],
+    "weight_oz": 56,
+    "billable_oz": 62.46,
+    "fill": 0.95,
+    "cost_est": 10.5
+   },
+   {
+    "box": "ga-box-m",
+    "box_name": "Medium carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "wap-kit",
+     "wap-kit"
+    ],
+    "weight_oz": 14,
+    "billable_oz": 20.82,
+    "fill": 0.71,
+    "cost_est": 6.75
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 17.25,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-l",
+       "box_name": "Large carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit"
+       ],
+       "weight_oz": 56,
+       "billable_oz": 62.46,
+       "fill": 0.95,
+       "cost_est": 10.5
+      },
+      {
+       "box": "ga-box-m",
+       "box_name": "Medium carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "wap-kit",
+        "wap-kit"
+       ],
+       "weight_oz": 14,
+       "billable_oz": 20.82,
+       "fill": 0.71,
+       "cost_est": 6.75
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 17.25
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 17.25
+  }
+ },
+ {
+  "lines": {
+   "witness-pair": 2
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-box-l",
+    "box_name": "Large carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "witness-pair",
+     "witness-pair"
+    ],
+    "weight_oz": 30,
+    "billable_oz": 62.46,
+    "fill": 0.75,
+    "cost_est": 10.5
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 10.5,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-l",
+       "box_name": "Large carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "witness-pair",
+        "witness-pair"
+       ],
+       "weight_oz": 30,
+       "billable_oz": 62.46,
+       "fill": 0.75,
+       "cost_est": 10.5
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 10.5
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 10.5
+  }
+ },
+ {
+  "lines": {
+   "watchful-house": 2,
+   "wap-kit": 1
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-box-l",
+    "box_name": "Large carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "watchful-house",
+     "wap-kit"
+    ],
+    "weight_oz": 33,
+    "billable_oz": 62.46,
+    "fill": 0.9,
+    "cost_est": 10.5
+   },
+   {
+    "box": "ga-box-l",
+    "box_name": "Large carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "watchful-house"
+    ],
+    "weight_oz": 26,
+    "billable_oz": 62.46,
+    "fill": 0.78,
+    "cost_est": 10.5
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 21,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-l",
+       "box_name": "Large carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "watchful-house",
+        "wap-kit"
+       ],
+       "weight_oz": 33,
+       "billable_oz": 62.46,
+       "fill": 0.9,
+       "cost_est": 10.5
+      },
+      {
+       "box": "ga-box-l",
+       "box_name": "Large carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "watchful-house"
+       ],
+       "weight_oz": 26,
+       "billable_oz": 62.46,
+       "fill": 0.78,
+       "cost_est": 10.5
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 21
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 21
+  }
+ },
+ {
+  "lines": {
+   "wap-parts": 5
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-box-l",
+    "box_name": "Large carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "wap-parts",
+     "wap-parts",
+     "wap-parts",
+     "wap-parts",
+     "wap-parts"
+    ],
+    "weight_oz": 20,
+    "billable_oz": 62.46,
+    "fill": 0.47,
+    "cost_est": 10.5
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 10.5,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-l",
+       "box_name": "Large carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "wap-parts",
+        "wap-parts",
+        "wap-parts",
+        "wap-parts",
+        "wap-parts"
+       ],
+       "weight_oz": 20,
+       "billable_oz": 62.46,
+       "fill": 0.47,
+       "cost_est": 10.5
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 10.5
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 10.5
+  }
+ },
+ {
+  "lines": {
+   "vision-kit-outdoor": 2,
+   "wap-kit-outdoor": 2
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-box-l",
+    "box_name": "Large carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "vision-kit-outdoor",
+     "vision-kit-outdoor",
+     "wap-kit-outdoor",
+     "wap-kit-outdoor"
+    ],
+    "weight_oz": 42,
+    "billable_oz": 62.46,
+    "fill": 0.92,
+    "cost_est": 10.5
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 10.5,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-l",
+       "box_name": "Large carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "vision-kit-outdoor",
+        "vision-kit-outdoor",
+        "wap-kit-outdoor",
+        "wap-kit-outdoor"
+       ],
+       "weight_oz": 42,
+       "billable_oz": 62.46,
+       "fill": 0.92,
+       "cost_est": 10.5
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 10.5
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 10.5
+  }
+ },
+ {
+  "lines": {
+   "wap-kit": 1,
+   "nope": 1
+  },
+  "unknown": [
+   "nope"
+  ],
+  "parcels": [
+   {
+    "box": "ga-box-s",
+    "box_name": "Small carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "wap-kit"
+    ],
+    "weight_oz": 7,
+    "billable_oz": 9.25,
+    "fill": 0.8,
+    "cost_est": 4.8
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 4.8,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-s",
+       "box_name": "Small carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "wap-kit"
+       ],
+       "weight_oz": 7,
+       "billable_oz": 9.25,
+       "fill": 0.8,
+       "cost_est": 4.8
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 4.8
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [
+    "nope"
+   ],
+   "total_cost_est": 4.8
+  }
+ },
+ {
+  "lines": {
+   "wap-kit": 25
+  },
+  "unknown": [],
+  "parcels": [
+   {
+    "box": "ga-box-l",
+    "box_name": "Large carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit"
+    ],
+    "weight_oz": 56,
+    "billable_oz": 62.46,
+    "fill": 0.95,
+    "cost_est": 10.5
+   },
+   {
+    "box": "ga-box-l",
+    "box_name": "Large carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit"
+    ],
+    "weight_oz": 56,
+    "billable_oz": 62.46,
+    "fill": 0.95,
+    "cost_est": 10.5
+   },
+   {
+    "box": "ga-box-l",
+    "box_name": "Large carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit",
+     "wap-kit"
+    ],
+    "weight_oz": 56,
+    "billable_oz": 62.46,
+    "fill": 0.95,
+    "cost_est": 10.5
+   },
+   {
+    "box": "ga-box-s",
+    "box_name": "Small carton (Ground Advantage)",
+    "service": "USPS Ground Advantage",
+    "items": [
+     "wap-kit"
+    ],
+    "weight_oz": 7,
+    "billable_oz": 9.25,
+    "fill": 0.8,
+    "cost_est": 4.8
+   }
+  ],
+  "oversize": [],
+  "total_cost_est": 36.3,
+  "plan": {
+   "shipments": [
+    {
+     "when": "this batch",
+     "parcels": [
+      {
+       "box": "ga-box-l",
+       "box_name": "Large carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit"
+       ],
+       "weight_oz": 56,
+       "billable_oz": 62.46,
+       "fill": 0.95,
+       "cost_est": 10.5
+      },
+      {
+       "box": "ga-box-l",
+       "box_name": "Large carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit"
+       ],
+       "weight_oz": 56,
+       "billable_oz": 62.46,
+       "fill": 0.95,
+       "cost_est": 10.5
+      },
+      {
+       "box": "ga-box-l",
+       "box_name": "Large carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit",
+        "wap-kit"
+       ],
+       "weight_oz": 56,
+       "billable_oz": 62.46,
+       "fill": 0.95,
+       "cost_est": 10.5
+      },
+      {
+       "box": "ga-box-s",
+       "box_name": "Small carton (Ground Advantage)",
+       "service": "USPS Ground Advantage",
+       "items": [
+        "wap-kit"
+       ],
+       "weight_oz": 7,
+       "billable_oz": 9.25,
+       "fill": 0.8,
+       "cost_est": 4.8
+      }
+     ],
+     "oversize": [],
+     "total_cost_est": 36.3
+    }
+   ],
+   "backorders": [],
+   "split": false,
+   "unknown_skus": [],
+   "total_cost_est": 36.3
+  }
+ }
+]

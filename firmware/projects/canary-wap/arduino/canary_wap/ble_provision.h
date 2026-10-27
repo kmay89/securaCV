@@ -1,9 +1,10 @@
 /*
  * SecuraCV Canary — BLE WiFi Provisioning
  *
- * Replaces (well — augments) the captive-AP setup flow with a phone-pairs-
- * Canary, write-credentials-over-BLE ceremony. AP mode is preserved as a
- * fallback for users who can't / won't use BLE.
+ * A peer bonded through the pairing confirm or a passkey can write the
+ * WAP's Wi-Fi over BLE (CREDS). The iPhone app never reaches this service
+ * on a WAP (ledger A65): a phone sets a WAP up through the Improv setup
+ * door (ble_improv.h), and the SoftAP page stays the fallback.
  *
  * SHAPE
  * ─────
@@ -18,11 +19,16 @@
  * SECURITY
  * ────────
  * - Every characteristic carries READ_ENC + READ_AUTHEN and / or
- *   WRITE_ENC + WRITE_AUTHEN. NimBLE rejects unbonded peers.
+ *   WRITE_ENC + WRITE_AUTHEN. NimBLE rejects unbonded peers and, under
+ *   the _AUTHEN flags, a Just Works bond too: only a bond the pairing
+ *   confirm or a passkey authenticated reaches these (THREAT_MODEL.md's
+ *   BLE pairing row).
  * - CREDS has no READ property at all. A bonded peer can SET credentials
  *   but can never read them back, even with a valid bond.
- * - Write rate-limited to 1 / 5 s and capped at 5 attempts per hour to
- *   mitigate brute-force from a stolen-bonded-phone scenario.
+ * - Write rate-limited to 1 / 5 s and capped at 10 per hour, one budget
+ *   shared by every bonded peer. A refused write costs the writer nothing,
+ *   so a hostile bonded peer can keep the owner's write refused
+ *   (SECURITY_MODEL.md, the WAP lockout paragraph; ledger F346).
  * - SSID ≤ 32 bytes, password ≤ 64 bytes (WPA2 spec) — anything longer is
  *   rejected with INVALID without ever touching the credential store.
  * - Every successful credential write is audit-logged via health_logging
@@ -53,10 +59,12 @@ static constexpr size_t MAX_STATE_PAYLOAD   = 200;
 static constexpr size_t MAX_SSID_LEN        = 32;    // WPA2 spec
 static constexpr size_t MAX_PASSWORD_LEN    = 64;    // WPA2 spec
 static constexpr uint32_t WRITE_COOLDOWN_MS = 5000;  // 1 creds-write per 5 s
-// 10 attempts/hour gives a fumbling user room to retype a password a
-// few times without locking the BLE channel out for an hour. The 5 s
-// per-write cooldown still rate-limits brute-force, and BLE requires
-// physical proximity, so 10/hour is a comfortable security ceiling.
+// 10 an hour leaves a fumbling user room to retype a password. The
+// cooldown and the cap are one budget for every bonded peer together, so a
+// bonded peer that keeps writing keeps the owner's write refused for the
+// hour (SECURITY_MODEL.md, ledger F346): they slow a guesser and do not
+// keep out a bonded peer, such as one a landing session bonded before F346
+// moved the bond's confirm and a Passkey Entry's digits to the bearer.
 static constexpr uint32_t HOURLY_WRITE_CAP  = 10;
 
 bool init(NimBLEServer* server);

@@ -44,12 +44,47 @@ to a fixed point, every function that calls one). What it reads:
     for the rest of the save stays: the dashboard's.
   - Each bearer gate is defined once, in its BEARER_GATES home, and names no
     any-session gate.
+  - Every bearer compare is accounted (sweep F339): the raw compares
+    (RAW_COMPARES: api_auth_bearer_valid(), constant_time_compare()) are
+    called only in RAW_COMPARE_HOME, api_auth.h, under its accounted grants.
+    Any other sketch file that names one, outside a comment or a string,
+    fails, by file and line. There is no allowlist: a route that compares a
+    bearer goes through api_auth_bearer_grant(), api_auth_check_bearer() or a
+    gate built on them, so a wrong one is a strike against its address.
   - The modules' own copies of the token (csi_integration's g_api_token,
     csi_mqtt's provider, each register_routes module's auth_token_storage()):
     named only by the functions and macros MODULE_TOKEN_COPIES lets keep it,
     and in csi_mqtt's handlers only read into a local that is handed to a
-    gate, or tested against nullptr, and nothing else. Every module
-    canary_wap.ino hands the token to has an entry.
+    gate, as `gate(req, tok)` or `gate(req, tok, &held)` (the grant's held
+    out-parameter, sweep F339), or tested against nullptr, and nothing else.
+    Every module canary_wap.ino hands the token to has an entry.
+  - The backoff's clear (sweep F341): auth_record_success() frees an
+    address's lockout slot, and so does auth_backoff.h's record_success()
+    it wraps. Outside api_auth.h (where the right bearer frees it) and the
+    staged auth_backoff.h (which defines it) only BACKOFF_CLEARS may call
+    either, each once, at the top level of its body after its OTHER_GRANTS
+    refusal: a request that refusal answers (no tap, no claim taken) clears
+    nothing. And the table itself (g_auth_table) is named in api_auth.h
+    only, so no file writes or clears it directly.
+  - The mints (sweep F344): session_issue(), pair_token_issue() and
+    send_pair_landing() hand their caller a session or a pair token, and no
+    mint may answer a DNS-rebinding page under a public name (the cookie
+    gates also refuse a session's value under such a name:
+    session_validate_cookie() asks the Host itself, test_session_cookie; a
+    page another network served under one of the device's own names passes
+    every Host test, and only HTTPS with an identity the browser checks
+    tells it apart, which neither F15's self-signed certificate nor F256
+    gives a browser). Each call stands in a MINT_SITES
+    function, after that function's gate for it (handle_ui's and the
+    receipt's Host row, the
+    setup branch's exact setup names, /api/pair/token's cookie-or-bearer
+    macro), and each entry still has its call. A page, a wrapper or a
+    global that mints anywhere else fails, by file and line. And no
+    MINT_SITES function answers through http_send_json() or
+    http_send_error() or names Access-Control-Allow-Origin (review of F344:
+    the wizard token's re-issue answered its token through
+    http_send_json(), whose `*` let a page on another site read it), so
+    what a mint site hands out is not readable by another site's page.
 
 It is a text check, and names are matched by spelling: a helper or a local
 named like a gate in the class fails it, and a secret reached through a name
@@ -58,8 +93,10 @@ struct handed out, a copy a module's keeper passes on, a gate called through
 an object or a pointer) passes it. Whether a gate decides right, whether the
 receipt's tap and claim are right, and what the move gate counts as a move
 are the host suites' (test_receipt_grant, test_receipt_authority,
-test_mqtt_reinit). Its fixtures (_assert_secret_rules) run first, every
-run: a clean sketch that passes and twenty-five plants that each fail it.
+test_mqtt_reinit, test_session_cookie). Its fixtures (_assert_secret_rules)
+run first, every run: a clean sketch that passes and fifty-seven plants
+that each fail it, through the same text_rule_problems() main() runs over
+the tree, so a rule dropped from that list fails the plants that need it.
 
 Run from the repo root (CI: firmware.yml host tests):
     python3 firmware/projects/canary-wap/tests_host/check_route_security.py
@@ -78,18 +115,24 @@ SKETCH = Path("firmware/projects/canary-wap/arduino/canary_wap")
 AUTH_MARKERS = (
     "api_auth_check(",            # Bearer + session cookie (401/403/429)
     "api_auth_check_bearer(",     # Bearer ONLY, never the cookie (F289: the
-                                  # pairing QR, whose answer carries the token)
+                                  # pairing QR, whose answer carries the token;
+                                  # F334/F345: connect and ap-only after
+                                  # setup, disconnect and forget always;
+                                  # F361: the reboots; F335: the vault key;
+                                  # F346: the two pair confirms)
     "api_auth_check_or_query(",   # + ?token= for <img>/stream tags
-    "api_auth_check_optional(",   # silent variant (caller enforces)
-    "api_auth_bearer_valid(",     # silent Bearer-only variant (F289)
+    "api_auth_check_optional(",   # the cookie or the accounted grant, nothing
+                                  # sent (caller enforces)
+    "api_auth_bearer_valid(",     # the raw compare: only api_auth.h calls it
+                                  # (RAW_COMPARES, sweep F339)
     "api_auth_bearer_grant(",     # the same under the lockout, nothing sent
                                   # (F289: the receipt's first grant; the tap
                                   # and the claim are the handler's own)
     "CSI_AUTH_OR_RETURN",         # csi_integration session/Bearer macro
     "pair_token_valid(",          # 10-min wizard pair token
-    "wifi_change_authorize(",     # pair token OR lockout-throttled admin cred
+    "wifi_change_authorize(",     # the bearer alone after setup (F334); during
+                                  # it, pair token OR lockout-throttled admin cred
     "qr_scan_request_allowed(",   # pair token OR admin credential
-    "provisioning_gate_is_open(", # physical BOOT-press gate
     "session_validate_cookie(",   # cv_session cookie (self-gating pages)
     "authorized(req",             # csi_mqtt session/Bearer helper
     "auth_gated<",                # module trampolines (bt_/bcn_/plain)
@@ -100,9 +143,11 @@ AUTH_MARKERS = (
 # the check so the list can't rot.
 PUBLIC_ALLOWLIST = {
     # Pages/static assets: the HTML is public, every API it calls is gated.
-    ("GET", "/admin"): "static admin/settings page; all APIs it calls are gated",
+    ("GET", "/admin"): "static admin/settings page; all APIs it calls are gated; "
+        "after setup, own-name Host only (host_guard.h, sweep F344)",
     ("GET", "/settings"): "same page as /admin",
-    ("GET", "/companion"): "wizard/companion PWA shell (BLE chars enforce pairing)",
+    ("GET", "/companion"): "wizard/companion PWA shell (BLE chars enforce pairing); "
+        "after setup, own-name Host only (host_guard.h, sweep F344)",
     ("GET", "/companion-sw.js"): "service worker for /companion",
     ("GET", "/companion-manifest.webmanifest"): "PWA manifest",
     ("GET", "/manifest.webmanifest"): "PWA manifest (sense dashboard)",
@@ -115,8 +160,9 @@ PUBLIC_ALLOWLIST = {
     # the fleet already tells anyone in radio range over the BLE v2 beacon,
     # words only, absent unless honestly known. Nothing finer rides here: no
     # range, no lux, no vital-sign numbers, no secrets, no media, no evidence
-    # (that stays behind the Bearer-gated /api/fleet-scan and the break-glass
-    # evidence paths). The WAP itself never fills the wellbeing keys.
+    # (that stays behind the api_auth_check()-gated /api/fleet/scan, which a
+    # landing session passes too, F346, and the break-glass evidence paths).
+    # The WAP itself never fills the wellbeing keys.
     ("GET", "/api/fleet"): "public coarse fleet presence/health/wellbeing words (DISCOVERY.md); no secrets/media",
     ("OPTIONS", "/api/fleet"): "CORS preflight for the public /api/fleet contract",
     # Device identity is deliberately public (pubkey + fingerprint).
@@ -145,12 +191,17 @@ PUBLIC_ALLOWLIST = {
 # Handlers that gate internally in ways the marker scan can't attribute to
 # a single route (multi-branch pages). Name → reason.
 SELF_GATING_HANDLERS = {
-    "handle_ui": "cookie → dashboard; else pair-landing; wizard branch Host-gated",
-    "handle_legacy_ui": "serves static HTML only",
+    "handle_ui": "after setup the Host must name this device (host_guard.h), "
+        "else 403; cookie → dashboard; else pair-landing; wizard branch "
+        "exact-Host-gated (canary.local or 192.168.4.1)",
+    "handle_legacy_ui": "static HTML; after setup a Host that cannot name "
+        "this device gets 403",
     "handle_captive_probe": "returns fixed probe responses",
     "handle_https_redirect": "301 to https at the request's Host when it is an IP literal or the device's own name, else receipt_authority.h's address (503 when it has none); no data",
     "handle_tune_page": "session-cookie check, 302 to / when absent",
-    "handle_wifi_pair_token": "gated on setup_wizard::is_active + direct Host",
+    "handle_wifi_pair_token": "gated on setup_wizard::is_active + exact setup "
+        "Host (canary.local or 192.168.4.1); its answer sends no CORS header "
+        "(MINT_SITES), so another site's page cannot read the token",
 }
 
 
@@ -160,10 +211,20 @@ SELF_GATING_HANDLERS = {
 # the one file that defines it: a second definition by the same name (a
 # module's own api_auth_bearer_valid over the cookie) would stand in unseen.
 BEARER_GATES = {
-    "api_auth_bearer_valid": "api_auth.h",  # silent, records nothing
+    "api_auth_bearer_valid": "api_auth.h",  # the raw compare; only api_auth.h calls it (RAW_COMPARES)
     "api_auth_bearer_grant": "api_auth.h",  # the lockout, nothing sent: the receipt's first grant
-    "api_auth_check_bearer": "api_auth.h",  # lockout + 401/403/429: the pairing QR
+    # lockout + 401/403/429, for the routes api_auth.h names: the pairing
+    # QR, the vault key, the two pair confirms, the four network moves
+    # (Connect and AP-only after setup) and the two reboots (the receipt on
+    # SECURITY_MODEL.md's list takes api_auth_bearer_grant instead)
+    "api_auth_check_bearer": "api_auth.h",
 }
+# The raw compares (sweep F339): each compares a presented token against the
+# device's with no lockout, so outside api_auth.h a call of one is a token
+# oracle that costs nothing. api_auth.h's accounted grants are their only
+# callers; raw_compare_problems() holds that, with no allowlist.
+RAW_COMPARES = ("api_auth_bearer_valid", "constant_time_compare")
+RAW_COMPARE_HOME = "api_auth.h"
 # The gates a landing-page caller passes: the cv_session cookie, every gate
 # that takes it or a Bearer header, and the pair token the landing hands to
 # any caller that loads it (send_pair_landing, at any time, not only during
@@ -175,7 +236,7 @@ ANY_SESSION_GATES = (
     "cv_session_validate",      # the cookie (api_auth.h's weak hook)
     "session_validate_cookie",  # csi_integration's cookie check
     "api_auth_check",           # cookie OR Bearer
-    "api_auth_check_optional",  # its silent variant
+    "api_auth_check_optional",  # its variant that sends nothing
     "api_auth_check_or_query",  # + ?token= for <img> tags
     "CSI_AUTH_OR_RETURN",       # csi_integration's macro
     "authorized",               # csi_mqtt's cookie OR Bearer
@@ -221,17 +282,101 @@ SECRET_ANSWERS = {
         "token ap pin", "the receipt (the recovery kit), through send_provisioning_receipt()"),
 }
 # A refusal an answer may also stand after, on grants that are not
-# credential gates: the receipt's BOOT tap (provisioning_gate_take()) and its
-# setup-door claim, whose flag only the claim's take may set ("writes"; one
-# ending in `(` is that call, then `;`). test_receipt_grant drives both.
+# credential gates: the receipt's BOOT tap (provisioning_gate_take_for(), its
+# one asker's take, sweep F342) and its setup-door claim, whose flag only the
+# claim's take may set ("writes"; one ending in `(` is that call, then `;`).
+# test_receipt_grant drives both. The tap's peek is no grant: the sketch's
+# provisioning_gate_is_open() is gone, and so is its AUTH_MARKERS entry.
 OTHER_GRANTS = {
     "handle_provisioning_receipt": {
-        "refusal": "!claim_served && !provisioning_gate_take()",
+        "refusal": "!claim_served && !provisioning_gate_take_for(req, &tap)",
         "flag": "claim_served",
         "writes": ("bool claim_served = false;",
                    "claim_served = canary::net::claim_ticket::take("),
     },
 }
+
+# The handlers that may free an address's lockout slot outside api_auth.h
+# (sweep F341): the receipt, once its BOOT tap or setup-door claim has handed
+# the asker the token. backoff_clear_problems() holds each to one
+# auth_record_success() call, at the top level of its body, after its
+# OTHER_GRANTS refusal.
+BACKOFF_CLEARS = ("handle_provisioning_receipt",)
+# The clears it counts: api_auth.h's wrapper and auth_backoff.h's own
+# record_success(), however qualified (review of F341: a direct
+# canary::net::auth_backoff::record_success() passed the rule).
+BACKOFF_CLEAR_CALL = re.compile(r"\b(auth_record_success|record_success)\s*\(")
+# Where a clear is the mechanism itself, not a route: api_auth.h (the right
+# bearer frees its address) and the staged auth_backoff.h, which defines
+# record_success() and calls it from grant() (check_improv_sync.sh holds it
+# byte-identical to firmware/common/network/auth_backoff.h).
+BACKOFF_CLEAR_HOMES = (RAW_COMPARE_HOME, "auth_backoff.h")
+# The lockout table every file shares (api_auth.h's inline g_auth_table):
+# named in AUTH_TABLE_HOME only, so a route cannot free a backoff by writing
+# the table (`g_auth_table = {}`) or by handing it to auth_backoff.h itself.
+AUTH_TABLE = re.compile(r"\bg_auth_table\b")
+AUTH_TABLE_HOME = "api_auth.h"
+
+# The mints (sweep F344): a call of one hands its caller a dashboard session
+# (session_issue) or a pair token (pair_token_issue; send_pair_landing serves
+# one in the landing page). No mint may answer a DNS-rebinding page under a
+# public name (a session's value it carries in anyway is refused by the
+# cookie gates, whose session_validate_cookie() asks the Host; a page served
+# under one of the device's own names is not told apart by any Host test),
+# so every call stands in a
+# MINT_SITES function, after that function's gate, and nowhere else:
+#   ("refusal", cond): after an `if` at the top level of the body whose
+#     whole condition is `cond` and whose branch returns;
+#   ("grant", cond): inside the branch of an `if` whose whole condition is
+#     `cond`;
+#   ("statement", text): after the statement `text` at the top level of the
+#     body (a macro that returns on a refusal);
+#   None: send_pair_landing() itself, a mint held to its own callers here.
+# Declarations and definitions of the three are not calls. An entry with no
+# call left fails, so the table cannot rot.
+MINT_CALL = re.compile(r"\b(send_pair_landing|pair_token_issue|session_issue)\s*\(")
+MINT_SITES = {
+    ("canary_wap.ino", "handle_ui"): {
+        # The first-boot setup branch: the wizard's redirect, to exactly
+        # canary.local or 192.168.4.1.
+        "pair_token_issue": ("grant", "request_host_is_setup_name(req)"),
+        # After setup: the ?cv_pair exchange and the landing, to a Host
+        # that names the device.
+        "session_issue": ("refusal", "!request_host_names_device(req)"),
+        "send_pair_landing": ("refusal", "!request_host_names_device(req)"),
+    },
+    ("canary_wap.ino", "handle_provisioning_receipt"): {
+        # Its Host row is its first statement, in every mode.
+        "session_issue": ("refusal", "!request_host_names_device(req)"),
+    },
+    ("canary_wap.ino", "handle_wifi_pair_token"): {
+        # The wizard token's re-issue: setup only, the exact setup names,
+        # and its answer read same-origin only (MINT_WILDCARD_SEND).
+        "pair_token_issue": ("refusal", "!setup_wizard::is_active()||!request_host_is_setup_name(req)"),
+    },
+    ("csi_integration.cpp", "handle_pair_token"): {
+        # GET /api/pair/token: the cookie or the bearer first. The cookie
+        # half asks the Host (session_validate_cookie()); the bearer half
+        # asks none (F57's open question).
+        "pair_token_issue": ("statement", "CSI_AUTH_OR_RETURN(req);"),
+    },
+    ("csi_integration.cpp", "send_pair_landing"): {
+        "pair_token_issue": None,
+    },
+}
+_MINT_DECL = re.compile(r"\b(?:bool|esp_err_t)\s+(?:[A-Za-z_]\w*\s*::\s*)*$")
+# What a mint site hands out is kept from a page on another site only because
+# its answer grants no cross-origin read, so no MINT_SITES function sends
+# through canary_wap.ino's JSON senders, which add
+# `Access-Control-Allow-Origin: *` (http_send_error() answers through
+# http_send_json()), or names the header itself. Review of F344: the wizard
+# token's re-issue answered through http_send_json(), so during setup any
+# page in the owner's browser on the SoftAP read a pair token at 192.168.4.1.
+# The body is read, not what it calls: a helper that sends the wildcard for
+# a mint site is not seen here (test_session_cookie's re-issue rows and
+# test_receipt_grant read the headers).
+MINT_WILDCARD_SEND = re.compile(r"\b(http_send_json|http_send_error)\s*\(")
+MINT_WILDCARD_HEADER = '"Access-Control-Allow-Origin"'
 
 # csi_mqtt.cpp's stored broker password: the functions that name the member
 # (`.pass` / `->pass`, its emptiness test `pass[0]` aside). GET
@@ -262,9 +407,10 @@ BROKER_REPOINT = {"handler": "handle_config_post",
 # `gate(req, tok)` ("read"). A module route that answered its copy names it
 # somewhere else, and fails; a module the sketch hands the token to with no
 # entry here fails too.
-def _gated_module(gate: str) -> dict:
-    return {"copy": r"\bauth_token_storage\s*\(", "keep": ("auth_token_storage", gate, "register_routes"),
-            "decl": (), "read": ()}
+def _gated_module(gate: str, *more: str, read: tuple = ()) -> dict:
+    return {"copy": r"\bauth_token_storage\s*\(",
+            "keep": ("auth_token_storage", gate, *more, "register_routes"),
+            "decl": (), "read": read}
 
 
 MODULE_TOKEN_COPIES = {
@@ -275,7 +421,11 @@ MODULE_TOKEN_COPIES = {
                      "read": ("handle_config_get", "handle_config_post", "handle_test")},
     "audible_chirp_api.h": _gated_module("auth_gated"),
     "beacon_api.h": _gated_module("bcn_auth_gated"),
-    "bluetooth_api.h": _gated_module("bt_auth_gated"),
+    # bt_bearer_gated: the bond's confirm, the bearer alone (F346); the
+    # status route reads the copy only to ask the bearer gate whether a
+    # Passkey Entry's digits may ride.
+    "bluetooth_api.h": _gated_module("bt_auth_gated", "bt_bearer_gated",
+                                     read=("handle_bluetooth_status",)),
     "chirp_api.h": _gated_module("chirp_auth_gated"),
     "household_api.h": _gated_module("auth_gated"),
     "rf_presence_api.h": _gated_module("auth_gated"),
@@ -1000,8 +1150,9 @@ def broker_gate_problems(sources: dict, handlers: set, any_session: set,
 def module_token_problems(sources: dict, any_session: set, copies: dict) -> list:
     """Each module's copy of the token is named only where `copies` says:
     kept by its getter, setter and gate, declared once, or read into a local
-    that only a gate is handed. Every module the sketch hands the token to
-    has an entry."""
+    that only a gate is handed (`gate(req, tok)`, or `gate(req, tok, &held)`
+    with the grant's held out-parameter). Every module the sketch hands the
+    token to has an entry."""
     problems = []
     for ns in sorted(set(_TOKEN_HANDED.findall(_blank(sources.get("canary_wap.ino", ""))))):
         homes = [f for f, t in sources.items() if re.search(r"\bnamespace\s+" + ns + r"\s*\{", t)]
@@ -1052,7 +1203,9 @@ def module_token_problems(sources: dict, any_session: set, copies: dict) -> list
                     continue  # a null test (#1835's bearer: tok != nullptr && ...) hands nothing on
                 head = body[:u.start()]
                 call = re.search(r"\b(?:" + gates + r")\s*\(\s*\w+\s*,\s*$", head)
-                if call is None or not re.match(r"\s*\)", body[u.end():]):
+                # The token argument, then `)` or the grant's held
+                # out-parameter, `, &<identifier>)` (sweep F339).
+                if call is None or not re.match(r"\s*(?:,\s*&\s*[A-Za-z_]\w*\s*)?\)", body[u.end():]):
                     problems.append(f"{fname}:{_line(blanked, b + u.start())}: {name}() uses `{tok}`, "
                                     f"its copy of the token, other than as a gate's token argument "
                                     f"or in a null test")
@@ -1062,6 +1215,168 @@ def module_token_problems(sources: dict, any_session: set, copies: dict) -> list
         for name in sorted((set(entry["keep"]) | set(entry["read"])) - named):
             problems.append(f"MODULE_TOKEN_COPIES lets {fname}'s {name}() name the token's copy, "
                             f"and it names none")
+    return problems
+
+
+def raw_compare_problems(sources: dict) -> list:
+    """Every bearer compare is accounted (sweep F339): outside
+    RAW_COMPARE_HOME, no sketch file names a RAW_COMPARES function followed by
+    `(`, in its code (comments and string contents blanked). No allowlist:
+    each hit is a problem, named by file and line."""
+    problems = []
+    call = re.compile(r"\b(" + "|".join(map(re.escape, RAW_COMPARES)) + r")\s*\(")
+    for fname, text in sorted(sources.items()):
+        if fname == RAW_COMPARE_HOME:
+            continue
+        blanked = _blank(text)
+        for m in call.finditer(blanked):
+            problems.append(f"{fname}:{_line(blanked, m.start())}: calls {m.group(1)}(), the raw "
+                            f"compare, which records no strike: outside {RAW_COMPARE_HOME} a bearer "
+                            f"is compared through api_auth_bearer_grant(), api_auth_check_bearer() "
+                            f"or a gate built on them, under its address's lockout")
+    return problems
+
+
+def backoff_clear_problems(sources: dict, homes=BACKOFF_CLEARS, grants=None) -> list:
+    """The backoff's clear (sweep F341): outside BACKOFF_CLEAR_HOMES, a call of
+    auth_record_success() or of auth_backoff.h's record_success()
+    (BACKOFF_CLEAR_CALL; comments and string contents blanked) stands only
+    in canary_wap.ino's `homes`, once each, at the top level of the body and
+    after the handler's OTHER_GRANTS refusal (the `if` whose whole condition
+    is that refusal and whose branch returns). So a request the refusal
+    answers, handed no credential, clears nothing, and no other route can
+    free an address's backoff without a right bearer (auth_table_problems()
+    holds the table itself to api_auth.h)."""
+    grants = OTHER_GRANTS if grants is None else grants
+    problems, seen = [], {}
+    for fname, text in sorted(sources.items()):
+        if fname in BACKOFF_CLEAR_HOMES:
+            continue
+        blanked = _blank(text)
+        funcs = functions(text, indented=True)
+        for m in BACKOFF_CLEAR_CALL.finditer(blanked):
+            inner = sorted((e - b, n, b, e) for n, _p, _h, b, e in funcs if b <= m.start() < e)
+            name = inner[0][1] if inner else None
+            where = f"{fname}:{_line(blanked, m.start())}"
+            if fname != "canary_wap.ino" or name not in homes:
+                problems.append(f"{where}: {name + '()' if name else 'code outside every function'} "
+                                f"calls {m.group(1)}(), which frees an address's backoff: "
+                                f"outside {RAW_COMPARE_HOME} only {', '.join(homes)} may, after "
+                                f"its tap-and-claim refusal (BACKOFF_CLEARS)")
+                continue
+            seen.setdefault(name, []).append((m.start(), inner[0][2], inner[0][3], where))
+    ino = _blank(sources.get("canary_wap.ino", ""))
+    for h in homes:
+        sites = seen.get(h, [])
+        if len(sites) != 1:
+            problems.append(f"{h}() clears the backoff {len(sites)} times; BACKOFF_CLEARS "
+                            f"holds it to once, after its tap-and-claim refusal")
+            continue
+        at, b, e, where = sites[0]
+        code, rel = ino[b:e], at - b
+        refusal = grants.get(h, {}).get("refusal")
+        ends = [bspan[1] for pos, cond, _c, bspan, returns in _ifs(code)
+                if refusal and returns and _depth(code, pos) == 0
+                and _squash(cond) == _squash(refusal)]
+        why = ("it has no such refusal" if not ends
+               else "the clear comes before the refusal" if rel < min(ends)
+               else "the clear is inside a branch" if _depth(code, rel) != 0
+               else None)
+        if why:
+            problems.append(f"{where}: {h}() clears the backoff other than at the top level "
+                            f"after its refusal `if ({refusal}) {{ ... return ...; }}` ({why}): "
+                            f"a request handed no credential must clear nothing")
+    return problems
+
+
+def auth_table_problems(sources: dict) -> list:
+    """The lockout table (review of F341): outside AUTH_TABLE_HOME no sketch
+    file names g_auth_table in its code (comments and string contents
+    blanked). Every read and write of it goes through api_auth.h's
+    functions, so a route cannot free a backoff by assigning the table or by
+    handing it to auth_backoff.h's record_success() itself. No allowlist."""
+    problems = []
+    for fname, text in sorted(sources.items()):
+        if fname == AUTH_TABLE_HOME:
+            continue
+        blanked = _blank(text)
+        for m in AUTH_TABLE.finditer(blanked):
+            problems.append(f"{fname}:{_line(blanked, m.start())}: names g_auth_table, the lockout "
+                            f"table: outside {AUTH_TABLE_HOME} it is read and written only through "
+                            f"api_auth.h's functions")
+    return problems
+
+
+def _gate_before(code: str, rel: int, gate) -> bool:
+    """Whether the call at `rel` in a function body `code` (string-blanked)
+    stands after its MINT_SITES gate (see MINT_SITES for the three kinds)."""
+    if gate is None:
+        return True
+    kind, want = gate
+    if kind == "refusal":
+        return any(returns and _depth(code, pos) == 0 and _squash(cond) == _squash(want)
+                   and bspan[1] <= rel for pos, cond, _c, bspan, returns in _ifs(code))
+    if kind == "grant":
+        return any(bspan[0] <= rel < bspan[1] and _squash(cond) == _squash(want)
+                   for _pos, cond, _c, bspan, _returns in _ifs(code))
+    spelled = re.compile(r"\s*".join(map(re.escape, _squash(want))))
+    return any(k.end() <= rel and _depth(code, k.start()) == 0
+               and code[:k.start()].rstrip()[-1:] in ("", ";", "{", "}")
+               for k in spelled.finditer(code))
+
+
+def mint_site_problems(sources: dict, sites=None) -> list:
+    """The mints (sweep F344): every call of a MINT_CALL function (comments
+    and string contents blanked; a declaration or a definition of one is no
+    call) stands in a MINT_SITES function of its file, after that
+    function's gate for it, and every MINT_SITES entry still has its call.
+    So a new page that hands out the landing, a wrapper that mints a
+    session, or a mint moved above its Host row fails, by file and line."""
+    sites = MINT_SITES if sites is None else sites
+    problems, seen = [], set()
+    for fname, text in sorted(sources.items()):
+        blanked = _blank(text)
+        funcs = functions(text, indented=True)
+        for m in MINT_CALL.finditer(blanked):
+            if _MINT_DECL.search(blanked[max(0, m.start() - 96):m.start()]):
+                continue  # `bool session_issue(...)`: its declaration or definition
+            call, where = m.group(1), f"{fname}:{_line(blanked, m.start())}"
+            inner = sorted((e - b, n, b, e) for n, _p, _h, b, e in funcs if b <= m.start() < e)
+            name = inner[0][1] if inner else None
+            entry = sites.get((fname, name), {})
+            if call not in entry:
+                problems.append(f"{where}: {name + '()' if name else 'code outside every function'} "
+                                f"calls {call}(), which mints a session or a pair token: only "
+                                f"MINT_SITES may, each after its gate (a Host that names the "
+                                f"device, or a credential)")
+                continue
+            seen.add((fname, name, call))
+            b, e = inner[0][2], inner[0][3]
+            if not _gate_before(blanked[b:e], m.start() - b, entry[call]):
+                kind, want = entry[call]
+                problems.append(f"{where}: {name}() calls {call}() not after its gate, the "
+                                f"{kind} `{want}` (MINT_SITES): a caller that has not passed it "
+                                f"would be handed a session or a pair token")
+    for (fname, name), entry in sorted(sites.items()):
+        for call in sorted(entry):
+            if (fname, name, call) not in seen:
+                problems.append(f"MINT_SITES names {fname}'s {name}() calling {call}(), which it "
+                                f"no longer does: remove or fix the entry")
+    for fname, text in sorted(sources.items()):
+        blanked = _blank(text)
+        for name, _p, _h, b, e in functions(text, indented=True):
+            if (fname, name) not in sites:
+                continue
+            for m in MINT_WILDCARD_SEND.finditer(blanked, b, e):
+                problems.append(f"{fname}:{_line(blanked, m.start())}: {name}() mints a session or "
+                                f"a pair token and answers through {m.group(1)}(), which sends "
+                                f"Access-Control-Allow-Origin: *: a page on another site would "
+                                f"read what it hands out")
+            at = text.find(MINT_WILDCARD_HEADER, b, e)
+            if at >= 0:
+                problems.append(f"{fname}:{_line(text, at)}: {name}() mints a session or a pair "
+                                f"token and names Access-Control-Allow-Origin: its answer must "
+                                f"grant no other site a read")
     return problems
 
 
@@ -1113,7 +1428,7 @@ _FIX_API_AUTH = (
     "static bool api_auth_bearer_valid(httpd_req_t* req, const char* t) {\n"
     "  return t && header_matches(req, t);\n"
     "}\n"
-    "static bool api_auth_bearer_grant(httpd_req_t* req, const char* t) {\n"
+    "static bool api_auth_bearer_grant(httpd_req_t* req, const char* t, bool* held = nullptr) {\n"
     "  if (auth_is_locked_out()) return false;\n"
     "  return api_auth_bearer_valid(req, t);\n"
     "}\n"
@@ -1141,12 +1456,21 @@ _FIX_INO = (
     "  if (!claimed && !gate_take()) {\n"
     "    return httpd_resp_sendstr(req, \"{\\\"error\\\":\\\"tap\\\"}\");\n"
     "  }\n"
+    "  auth_record_success(req);\n"
     "  send_kit(req);\n"
     "  return ESP_OK;\n"
     "}\n"
     "static esp_err_t handle_status(httpd_req_t* req) {\n"
     "  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;\n"
     "  return httpd_resp_sendstr(req, \"{}\");\n"
+    "}\n"
+    "static esp_err_t handle_landing(httpd_req_t* req) {\n"
+    "  if (request_host_is_setup_name(req)) {\n"
+    "    char hex[65];\n"
+    "    if (csi_integration::pair_token_issue(hex, sizeof(hex))) return ESP_OK;\n"
+    "  }\n"
+    "  if (!request_host_names_device(req)) return send_refusal(req);\n"
+    "  return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;\n"
     "}\n"
     "static void start_server(httpd_handle_t server) {\n"
     "  csi_integration::init(server, g_device.api_token_str);\n"
@@ -1165,13 +1489,23 @@ _FIX_CSI = (
     "  CSI_AUTH_OR_RETURN(req);\n"
     "  return httpd_resp_sendstr(req, \"{}\");\n"
     "}\n"
+    "bool pair_token_issue(char* hex_out, size_t out_cap);\n"
+    "bool send_pair_landing(httpd_req_t* req) {\n"
+    "  char hex[65];\n"
+    "  return pair_token_issue(hex, sizeof(hex));\n"
+    "}\n"
+    "esp_err_t handle_pair_token(httpd_req_t* req) {\n"
+    "  CSI_AUTH_OR_RETURN(req);\n"
+    "  char hex[65];\n"
+    "  return pair_token_issue(hex, sizeof(hex)) ? ESP_OK : ESP_FAIL;\n"
+    "}\n"
     "}\n"
 )
 _FIX_MQTT = (
     "const char* (*s_api_token_provider)() = nullptr;\n"
     "void set_api_token_provider(const char* (*fn)()) { s_api_token_provider = fn; }\n"
-    "static bool authorized(httpd_req_t* req, const char* t) {\n"
-    "  return csi_integration::session_validate_cookie(req) || api_auth_check_optional(req, t);\n"
+    "static bool authorized(httpd_req_t* req, const char* t, bool* held = nullptr) {\n"
+    "  return csi_integration::session_validate_cookie(req) || api_auth_check_optional(req, t, held);\n"
     "}\n"
     "bool write_row(const Config& cfg) { return prefs.putString(\"p\", cfg.pass) > 0; }\n"
     "static bool move_needs_password(const Config& before, const Config& after, bool typed,\n"
@@ -1182,14 +1516,16 @@ _FIX_MQTT = (
     "}\n"
     "esp_err_t handle_config_get(httpd_req_t* req) {\n"
     "  const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;\n"
-    "  if (!authorized(req, tok)) return ESP_OK;\n"
+    "  bool held = false;\n"
+    "  if (!authorized(req, tok, &held)) return ESP_OK;\n"
     "  Config c;\n"
     "  return httpd_resp_sendstr(req, c.pass[0] ? \"set\" : \"none\");\n"
     "}\n"
     "esp_err_t handle_config_post(httpd_req_t* req) {\n"
     "  const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;\n"
-    "  if (!authorized(req, tok)) return ESP_OK;\n"
-    "  const bool bearer = tok != nullptr && api_auth_bearer_valid(req, tok);\n"
+    "  bool held = false;\n"
+    "  const bool bearer = tok != nullptr && api_auth_bearer_grant(req, tok, &held);\n"
+    "  if (!bearer && !csi_integration::session_validate_cookie(req)) return ESP_OK;\n"
     "  Config c;\n"
     "  const Config before = c;\n"
     "  if (typed) strncpy(c.pass, buf, 128);\n"
@@ -1199,6 +1535,17 @@ _FIX_MQTT = (
     "  }\n"
     "  if (!write_row(c)) return ESP_OK;\n"
     "  return ESP_OK;\n"
+    "}\n"
+)
+# A module route that compares the bearer for a field of its answer, as F346's
+# GET /api/bluetooth passkey does: through the accounted grant.
+_FIX_BT = (
+    "namespace bluetooth_api {\n"
+    "esp_err_t handle_bluetooth_status(httpd_req_t* req) {\n"
+    "  const char* tok = auth_token_storage();\n"
+    "  const bool digits = tok != nullptr && api_auth_bearer_grant(req, tok);\n"
+    "  return httpd_resp_sendstr(req, digits ? \"{\\\"pin\\\":1}\" : \"{}\");\n"
+    "}\n"
     "}\n"
 )
 _FIX_TABLES = {
@@ -1215,6 +1562,18 @@ _FIX_TABLES = {
                          "decl": ("const char* (*s_api_token_provider)() = nullptr;",),
                          "read": ("handle_config_get", "handle_config_post")},
     },
+}
+# The mint rule's fixture table (sweep F344): the fixture's three mint sites,
+# one of each gate kind, and the landing's own mint.
+_FIX_MINT_SITES = {
+    ("canary_wap.ino", "handle_landing"): {
+        "pair_token_issue": ("grant", "request_host_is_setup_name(req)"),
+        "send_pair_landing": ("refusal", "!request_host_names_device(req)"),
+    },
+    ("csi_integration.cpp", "handle_pair_token"): {
+        "pair_token_issue": ("statement", "CSI_AUTH_OR_RETURN(req);"),
+    },
+    ("csi_integration.cpp", "send_pair_landing"): {"pair_token_issue": None},
 }
 _FIX_HANDLERS = {"handle_qr", "handle_kit", "handle_status", "handle_config_get",
                  "handle_config_post"}
@@ -1267,11 +1626,11 @@ _FIX_PLANTS = (
      "  if (cv_session_validate(req)) return true;\n  if (auth_is_locked_out()) return false;\n",
      "api_auth_bearer_grant() names cv_session_validate"),
     ("the move gate's bearer taking a session", "csi_mqtt.cpp",
-     "&& api_auth_bearer_valid(req, tok);", "&& authorized(req, tok);",
+     "&& api_auth_bearer_grant(req, tok, &held);", "&& authorized(req, tok);",
      "a bearer that names authorized"),
     ("the move gate's bearer also taking the cookie", "csi_mqtt.cpp",
-     "&& api_auth_bearer_valid(req, tok);",
-     "&& (api_auth_bearer_valid(req, tok) || authorized(req, tok));",
+     "&& api_auth_bearer_grant(req, tok, &held);",
+     "&& (api_auth_bearer_grant(req, tok, &held) || authorized(req, tok));",
      "a bearer that names authorized"),
     ("the move gate also letting a session through", "csi_mqtt.cpp",
      "if (move_needs_password(before, c, typed, bearer)) {",
@@ -1297,40 +1656,229 @@ _FIX_PLANTS = (
      "  return httpd_resp_sendstr(req, \"{}\");", "  return httpd_resp_sendstr(req, g_api_token);",
      "handle_csi_status() names its module's copy"),
     ("a module handler answering the token it read for its gate", "csi_mqtt.cpp",
-     "  if (!authorized(req, tok)) return ESP_OK;\n  Config c;\n  return",
-     "  if (!authorized(req, tok)) return ESP_OK;\n  httpd_resp_sendstr(req, tok);\n"
+     "  if (!authorized(req, tok, &held)) return ESP_OK;\n  Config c;\n  return",
+     "  if (!authorized(req, tok, &held)) return ESP_OK;\n  httpd_resp_sendstr(req, tok);\n"
      "  Config c;\n  return", "other than as a gate's token argument"),
     ("a module handler reading the token it tests for null", "csi_mqtt.cpp",
-     "tok != nullptr && api_auth_bearer_valid(req, tok);",
-     "tok[0] != '\\0' && api_auth_bearer_valid(req, tok);", "or in a null test"),
+     "tok != nullptr && api_auth_bearer_grant(req, tok, &held);",
+     "tok[0] != '\\0' && api_auth_bearer_grant(req, tok, &held);", "or in a null test"),
+    ("a module handler handing its token on past a gate's held out-parameter", "csi_mqtt.cpp",
+     "authorized(req, tok, &held)", "authorized(req, tok, held_of(tok))",
+     "other than as a gate's token argument"),
+    # The token used once, as the token argument: only the tail after it,
+    # not `, &<identifier>)`, is wrong, so only the reader's tail rule fails it.
+    ("a gate's held argument that is not `&<identifier>`", "csi_mqtt.cpp",
+     "authorized(req, tok, &held)", "authorized(req, tok, held_ptr())",
+     "other than as a gate's token argument"),
+    # Every bearer compare accounted (sweep F339): the raw compares outside
+    # api_auth.h, with no allowlist.
+    ("the move gate's bearer through the raw compare", "csi_mqtt.cpp",
+     "&& api_auth_bearer_grant(req, tok, &held);", "&& api_auth_bearer_valid(req, tok);",
+     "calls api_auth_bearer_valid(), the raw compare"),
+    ("a module's answer field through the raw compare (F346's passkey)", "bluetooth_api.h",
+     "api_auth_bearer_grant(req, tok);", "api_auth_bearer_valid(req, tok);",
+     "bluetooth_api.h:4: calls api_auth_bearer_valid(), the raw compare"),
+    ("a module's own constant_time_compare() of a token", "csi_integration.cpp", "",
+     "static bool same(const char* a, const char* b) { return constant_time_compare(a, b, 32); }\n",
+     "calls constant_time_compare(), the raw compare"),
     ("the module's copy named outside every function", "csi_integration.cpp",
      "bool init(", "const char* g_leak = g_api_token;\nbool init(", "outside every function"),
+    # The backoff's clear (sweep F341): once, after the tap-and-claim refusal.
+    ("the backoff cleared inside the tap's refusal", "canary_wap.ino",
+     "  }\n  auth_record_success(req);\n  send_kit(req);",
+     "    auth_record_success(req);\n  }\n  send_kit(req);", "other than at the top level"),
+    # One plant for each of the three conditions alone (review of F341): the
+    # plant above trips the first two at once.
+    ("the backoff cleared at the top level above the refusal", "canary_wap.ino",
+     "  if (!claimed && !gate_take()) {\n    return httpd_resp_sendstr(req, \"{\\\"error\\\":\\\"tap\\\"}\");\n"
+     "  }\n  auth_record_success(req);\n",
+     "  auth_record_success(req);\n  if (!claimed && !gate_take()) {\n"
+     "    return httpd_resp_sendstr(req, \"{\\\"error\\\":\\\"tap\\\"}\");\n  }\n",
+     "the clear comes before the refusal"),
+    ("the backoff cleared inside a branch after the refusal", "canary_wap.ino",
+     "  }\n  auth_record_success(req);\n  send_kit(req);",
+     "  }\n  if (claimed) {\n    auth_record_success(req);\n  }\n  send_kit(req);",
+     "the clear is inside a branch"),
+    ("the backoff cleared twice after the refusal", "canary_wap.ino",
+     "  }\n  auth_record_success(req);\n  send_kit(req);",
+     "  }\n  auth_record_success(req);\n  auth_record_success(req);\n  send_kit(req);",
+     "handle_kit() clears the backoff 2 times"),
+    # The clear spelled without the wrapper, and the table written directly.
+    ("a route calling auth_backoff.h's record_success() itself", "canary_wap.ino",
+     "  return httpd_resp_sendstr(req, \"{}\");",
+     "  canary::net::auth_backoff::record_success(backoff_table(), auth_request_source(req));\n"
+     "  return httpd_resp_sendstr(req, \"{}\");",
+     "handle_status() calls record_success()"),
+    ("a route clearing the lockout table", "canary_wap.ino",
+     "  return httpd_resp_sendstr(req, \"{}\");", "  g_auth_table = {};\n  return httpd_resp_sendstr(req, \"{}\");",
+     "names g_auth_table, the lockout table"),
+    ("a second route clearing the backoff", "canary_wap.ino",
+     "  return httpd_resp_sendstr(req, \"{}\");",
+     "  auth_record_success(req);\n  return httpd_resp_sendstr(req, \"{}\");",
+     "handle_status() calls auth_record_success()"),
+    ("a module clearing the backoff", "csi_integration.cpp",
+     "  CSI_AUTH_OR_RETURN(req);\n", "  CSI_AUTH_OR_RETURN(req);\n  auth_record_success(req);\n",
+     "csi_integration.cpp:11: handle_csi_status() calls auth_record_success()"),
     ("the token handed to a module whose copy is not listed", "canary_wap.ino",
      "  csi_integration::init(server, g_device.api_token_str);\n",
      "  csi_integration::init(server, g_device.api_token_str);\n"
      "  vault_api::register_routes(server, g_device.api_token_str);\n",
      "hands the token to vault_api::"),
+    # The mints (sweep F344): only MINT_SITES, each after its gate.
+    ("a new page handing out the landing (the review's /tune plant)", "canary_wap.ino",
+     "static void start_server(",
+     "static esp_err_t handle_tune(httpd_req_t* req) {\n"
+     "  return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;\n}\n"
+     "static void start_server(", "handle_tune() calls send_pair_landing()"),
+    ("a wrapper minting a session", "canary_wap.ino", "static void start_server(",
+     "static bool mint(char* h) {\n  return csi_integration::session_issue(h, 65);\n}\n"
+     "static void start_server(", "mint() calls session_issue()"),
+    ("a mint outside every function", "csi_integration.cpp", "bool init(",
+     "static const bool g_minted = session_issue(g_buf, 65);\nbool init(",
+     "code outside every function calls session_issue()"),
+    ("the landing above its Host refusal", "canary_wap.ino",
+     "  if (!request_host_names_device(req)) return send_refusal(req);\n"
+     "  return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;\n",
+     "  const bool sent = csi_integration::send_pair_landing(req);\n"
+     "  if (!request_host_names_device(req)) return send_refusal(req);\n"
+     "  return sent ? ESP_OK : ESP_FAIL;\n",
+     "handle_landing() calls send_pair_landing() not after its gate"),
+    ("a Host refusal that does not return", "canary_wap.ino",
+     "if (!request_host_names_device(req)) return send_refusal(req);",
+     "if (!request_host_names_device(req)) log_refusal(req);",
+     "handle_landing() calls send_pair_landing() not after its gate"),
+    ("the setup token minted outside its grant", "canary_wap.ino",
+     "    if (csi_integration::pair_token_issue(hex, sizeof(hex))) return ESP_OK;\n  }\n",
+     "  }\n  char tok[65];\n  if (csi_integration::pair_token_issue(tok, sizeof(tok))) return ESP_OK;\n",
+     "handle_landing() calls pair_token_issue() not after its gate"),
+    # The grant's lower bound (review 4 of F344): a mint in front of the
+    # grant's `if`, which the plant above (after its `}`) does not reach.
+    ("the setup token minted before its grant", "canary_wap.ino",
+     "  if (request_host_is_setup_name(req)) {\n    char hex[65];\n"
+     "    if (csi_integration::pair_token_issue(hex, sizeof(hex))) return ESP_OK;\n  }\n",
+     "  char hex[65];\n  if (csi_integration::pair_token_issue(hex, sizeof(hex))) return ESP_OK;\n"
+     "  if (request_host_is_setup_name(req)) {\n  }\n",
+     "handle_landing() calls pair_token_issue() not after its gate"),
+    ("the credential-gated route minting before its gate", "csi_integration.cpp",
+     "  CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n  return pair_token_issue",
+     "  char hex[65];\n  pair_token_issue(hex, sizeof(hex));\n  CSI_AUTH_OR_RETURN(req);\n"
+     "  return pair_token_issue",
+     "handle_pair_token() calls pair_token_issue() not after its gate"),
+    # The refusal's upper bound (review 5 of F344): a mint inside the Host
+    # refusal's own branch hands the landing to every refused Host, and no
+    # plant above puts one there, so a _gate_before() that took the
+    # branch's start, or the `if` itself, for its end passed them all.
+    ("the landing handed out in its Host refusal's own branch", "canary_wap.ino",
+     "if (!request_host_names_device(req)) return send_refusal(req);",
+     "if (!request_host_names_device(req)) "
+     "return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;",
+     "handle_landing() calls send_pair_landing() not after its gate"),
+    ("a mint site whose call is gone", "canary_wap.ino",
+     "  return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;\n", "  return ESP_OK;\n",
+     "which it no longer does"),
+    # The three exactness rules _gate_before() keeps, one plant each (review
+    # of F344's PR: dropping any of them passed every plant above): a
+    # refusal at the top level of the body, a refusal and a grant whose
+    # WHOLE condition is the gate, and a statement at the top level, at a
+    # statement boundary.
+    ("the Host refusal nested in another branch", "canary_wap.ino",
+     "  if (!request_host_names_device(req)) return send_refusal(req);\n",
+     "  if (x) {\n    if (!request_host_names_device(req)) return send_refusal(req);\n  }\n",
+     "handle_landing() calls send_pair_landing() not after its gate"),
+    ("the Host refusal's condition widened", "canary_wap.ino",
+     "if (!request_host_names_device(req)) return send_refusal(req);",
+     "if (!request_host_names_device(req) && x) return send_refusal(req);",
+     "handle_landing() calls send_pair_landing() not after its gate"),
+    ("the setup grant's condition widened", "canary_wap.ino",
+     "  if (request_host_is_setup_name(req)) {\n",
+     "  if (request_host_is_setup_name(req) || x) {\n",
+     "handle_landing() calls pair_token_issue() not after its gate"),
+    ("the credential macro made conditional", "csi_integration.cpp",
+     "  CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n",
+     "  if (x) CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n",
+     "handle_pair_token() calls pair_token_issue() not after its gate"),
+    ("the credential macro made conditional, in braces", "csi_integration.cpp",
+     "  CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n",
+     "  if (x) { CSI_AUTH_OR_RETURN(req); }\n  char hex[65];\n",
+     "handle_pair_token() calls pair_token_issue() not after its gate"),
+    # A mint site's answer grants no other site a read (review of F344: the
+    # wizard token's re-issue answered through http_send_json()).
+    ("the setup token answered through the wildcard sender", "canary_wap.ino",
+     "    if (csi_integration::pair_token_issue(hex, sizeof(hex))) return ESP_OK;\n",
+     "    if (csi_integration::pair_token_issue(hex, sizeof(hex))) return http_send_json(req, hex);\n",
+     "handle_landing() mints a session or a pair token and answers through http_send_json()"),
+    ("a mint site refusing through the wildcard error sender", "canary_wap.ino",
+     "if (!request_host_names_device(req)) return send_refusal(req);",
+     "if (!request_host_names_device(req)) return http_send_error(req, 403, \"host\");",
+     "handle_landing() mints a session or a pair token and answers through http_send_error()"),
+    # The wildcard rule reads the whole body (review 5 of F344): every plant
+    # above sits in a short fixture function, so a scan of a body's first
+    # few hundred characters passed them all.
+    ("the wildcard sender far down a long mint site", "canary_wap.ino",
+     "  return csi_integration::send_pair_landing(req) ? ESP_OK : ESP_FAIL;\n",
+     "  note_request(req);\n" * 40
+     + "  if (!csi_integration::send_pair_landing(req)) return ESP_FAIL;\n"
+       "  return http_send_json(req, \"{}\");\n",
+     "handle_landing() mints a session or a pair token and answers through http_send_json()"),
+    ("a credential-gated mint naming the CORS header", "csi_integration.cpp",
+     "  CSI_AUTH_OR_RETURN(req);\n  char hex[65];\n",
+     "  CSI_AUTH_OR_RETURN(req);\n  httpd_resp_set_hdr(req, \"Access-Control-Allow-Origin\", \"*\");\n"
+     "  char hex[65];\n",
+     "handle_pair_token() mints a session or a pair token and names Access-Control-Allow-Origin"),
 )
 
 
 def _fixture_sources() -> dict:
     return {"api_auth.h": _FIX_API_AUTH, "canary_wap.ino": _FIX_INO,
-            "csi_integration.cpp": _FIX_CSI, "csi_mqtt.cpp": _FIX_MQTT}
+            "csi_integration.cpp": _FIX_CSI, "csi_mqtt.cpp": _FIX_MQTT,
+            "bluetooth_api.h": _FIX_BT}
+
+
+def text_rule_problems(sources: dict, handlers: set, tables=None, clear_homes=BACKOFF_CLEARS,
+                       mint_sites=None) -> list:
+    """Every text rule, in the one list main() runs over the tree and the
+    self-test runs over its fixtures: the secret rule, the raw compare rule,
+    the backoff's clear, the lockout table and the mints. The tables
+    default to the tree's (the fixtures pass their own). One list, so a rule
+    dropped from it fails every plant that needs it (review 4 of F344:
+    main() called each rule itself, and deleting one of those calls passed
+    the self-test and the tree)."""
+    tables = {} if tables is None else tables
+    return (answer_gate_rule_problems(sources, handlers, **tables)
+            + raw_compare_problems(sources)
+            + backoff_clear_problems(sources, clear_homes, tables.get("grants"))
+            + auth_table_problems(sources)
+            + mint_site_problems(sources, mint_sites))
+
+
+def _fixture_problems(sources: dict) -> list:
+    """The rules the fixtures exercise, as main() runs them over the tree."""
+    return text_rule_problems(sources, _FIX_HANDLERS, _FIX_TABLES, ("handle_kit",), _FIX_MINT_SITES)
 
 
 def _assert_secret_rules() -> None:
-    """Each plant fails the secret rule for its reason; the clean fixture
-    passes it. Runs every time, before the tree."""
-    clean = answer_gate_rule_problems(_fixture_sources(), _FIX_HANDLERS, **_FIX_TABLES)
+    """Each plant fails the secret rule, the raw compare rule, the
+    backoff's clear or the mint rule for its reason; the clean fixture
+    passes all of them. Runs every time, before the tree."""
+    clean = _fixture_problems(_fixture_sources())
     assert clean == [], "the secret rule's clean fixture fails: " + "; ".join(clean)
     for what, fname, old, new, word in _FIX_PLANTS:
         sources = _fixture_sources()
         assert old in sources[fname], f"fixture plant {what!r}: its text is not in {fname}"
         sources[fname] = sources[fname].replace(old, new, 1) if old else sources[fname] + new
-        got = answer_gate_rule_problems(sources, _FIX_HANDLERS, **_FIX_TABLES)
+        got = _fixture_problems(sources)
         assert any(word in p for p in got), (
             f"the secret rule passed a plant ({what}): expected a problem naming {word!r}, "
             f"got {got!r}")
+    # The raw compare rule reads code: a comment (stripped, as main() strips
+    # every source) or a string that names a raw compare is no call of it.
+    quiet = {"x.cpp": strip_comments('// api_auth_bearer_valid(req, t)\n'
+                                     'const char* s = "constant_time_compare(a, b, 3)";\n'
+                                     '/* constant_time_compare( */\n')}
+    assert raw_compare_problems(quiet) == [], (
+        "the raw compare rule read a comment or a string as a call: "
+        + "; ".join(raw_compare_problems(quiet)))
+    assert len(_FIX_PLANTS) == 57, "the module docstring counts the plants: update it"
 
 
 def main() -> int:
@@ -1422,7 +1970,7 @@ def main() -> int:
                             f"({fname}) has NO credential gate and is not "
                             f"on the public allowlist")
 
-    failures += answer_gate_rule_problems(secret_sources, handler_names(routes))
+    failures += text_rule_problems(secret_sources, handler_names(routes))
 
     stale = set(PUBLIC_ALLOWLIST) - matched_allowlist
     for key in sorted(stale):

@@ -15,6 +15,7 @@
 #include "esp_mac.h"
 #include "mbedtls/sha256.h"
 #include "mbedtls/md.h"
+#include "nvs.h"  // stored_key_length(): IDF's own answer for "nothing stored" (sweep F360)
 
 // Where the identity key sleeps: the tier / wire label / allow-refuse decision
 // is the host-tested policy in common/identity/key_at_rest.h; this file only
@@ -267,8 +268,10 @@ bool hmac_sha256(const uint8_t* key, size_t key_len,
 // Unambiguous alphabet: drops EVERY case variant of the glyph-confusion
 // classes — 0/O/o and 1/I/i/l/L — so a value a user reads or types by hand
 // (serial monitor, sticker, phone screen) can't be mis-keyed. Shared by the
-// API token, the WiFi AP password, and the device_id / AP-SSID suffix, so the
-// "no confusing characters" rule holds everywhere a human sees an identifier.
+// API token and the device_id / AP-SSID suffix; the WiFi AP password
+// (common/network/ap_password.h) renders through provision_core.h's
+// render_password over the same 54 characters, so the "no confusing
+// characters" rule holds everywhere a human sees an identifier.
 // 54 chars; 32 chars × log2(54) ≈ 184 bits — the few bits dropped vs a raw
 // hex/base62 encoding are a clear UX win.
 static const char UNAMBIGUOUS_ALPHABET[] =
@@ -391,9 +394,10 @@ static key_at_rest::Facts key_at_rest_facts() {
   // Flash encryption does NOT encrypt NVS (ESP-IDF encrypts only the app,
   // otadata and nvs_keys partitions; this tree's tables leave nvs unflagged,
   // so it is written in plaintext). NVS is ciphertext only under NVS
-  // encryption, which the Arduino core this tree builds on does not compile
-  // in (2.0.17's precompiled sdkconfig leaves CONFIG_SECURE_FLASH_ENC_ENABLED,
-  // and with it CONFIG_NVS_ENCRYPTION, unset). So on every canary image the
+  // encryption, which neither Arduino core this tree builds on compiles in
+  // (2.0.17's precompiled sdkconfig leaves CONFIG_SECURE_FLASH_ENC_ENABLED,
+  // and with it CONFIG_NVS_ENCRYPTION, unset; 3.3.8's, env:full's, leaves
+  // CONFIG_NVS_ENCRYPTION unset). So on every canary image the
   // key's NVS is plaintext, fused board or not, and this fact is false — set
   // here, not read, so no core's sdkconfig can make it claim more. It learns
   // to read true with the arduino-as-IDF-component migration (roadmap item 9)
@@ -421,22 +425,95 @@ void crypto_print_key_at_rest() {
                 key_at_rest::boot_text(f));
 }
 
-bool nvs_load_key(uint8_t priv[32]) {
+// The stored private key's length, asked of IDF's NVS before Preferences
+// reads it (sweep F360). Preferences cannot tell "nothing stored" from "NVS
+// failed": its begin() fails alike on a namespace never created and on a
+// fault, and getBytesLength() answers 0 alike for a missing key and a failed
+// lookup. Only IDF's ESP_ERR_NVS_NOT_FOUND reads as no key, as
+// health/boot_guard.h reads it. IDF answers it at the open (no namespace) or
+// at the lookup, which takes nothing from a page but a match: no key in the
+// namespace, and also a stored entry the lookup skipped (a privkey of another
+// type, an index entry whose header fails IDF's check, which it erases, a
+// page a flash read error set aside). So NOT_FOUND says IDF holds no key it
+// can find, and any other error is NVS failing to say. ESP_OK sets *len. IDF
+// logs neither answer, so a first boot no longer logs Preferences'
+// "nvs_get_blob len fail: privkey NOT_FOUND" for the key read (an error-level
+// line, kept at Core Debug Level 1 and above). By then canary_pe::on_boot()
+// has opened the namespace read-write, so a first boot meets a namespace
+// with no key in it.
+static esp_err_t stored_key_length(size_t* len) {
+  *len = 0;
+  nvs_handle_t h;
+  esp_err_t err = nvs_open(NVS_MAIN_NS, NVS_READONLY, &h);
+  if (err != ESP_OK) return err;
+  err = nvs_get_blob(h, NVS_KEY_PRIV, nullptr, len);
+  nvs_close(h);
+  return err;
+}
+
+// Fails closed (sweep F360): only a key NVS says is not there answers Absent,
+// and every other way the stored key goes unread or unused answers Refused
+// with priv zeroed, which witness_provision_device() turns into a halted boot
+// that generates no key and writes nothing over the stored one. Before,
+// every failure answered false, and the caller
+// generated and stored a new identity over whatever false meant. Worse, the
+// read's own answer was discarded: Preferences::getBytes() answers 0 when its
+// read fails, and a read that fails before IDF copies anything leaves the
+// buffer as it was (one whose data CRC fails leaves the entry's corrupted
+// bytes), so an NVS error after the length check could leave the zeroed
+// DeviceIdentity key in use: a signing key every reader of this source
+// holds, whose setup-network key is the published known answer
+// cv-3jByJ6rHdhM2, and from which, on a unit with no stored token, the API
+// token is derived too.
+KeyLoad nvs_load_key(uint8_t priv[32]) {
+  memset(priv, 0, 32);
   // Rule 2 of key_at_rest.h: an image that requires the key encrypted at rest
   // refuses to USE a stored key unless NVS is actually encrypted (flash
-  // encryption alone is not enough), symmetrically with the store.
+  // encryption alone is not enough), symmetrically with the store. Refused,
+  // not Absent: the policy refuses whatever is stored, and no new key may be
+  // made in its place (the store would refuse it too).
   const key_at_rest::Decision d = key_at_rest::decide(key_at_rest_facts());
   if (!d.allow_load) {
     Serial.printf("[!!] identity key not loaded: %s\n", d.reason);
-    return false;
+    return KeyLoad::Refused;
   }
+  size_t stored = 0;
+  const esp_err_t probe = stored_key_length(&stored);
+  if (probe == ESP_ERR_NVS_NOT_FOUND) return KeyLoad::Absent;
+  if (probe != ESP_OK) {
+    Serial.printf("[!!] identity key not loaded: NVS could not say whether one is stored (%s)\n",
+                  esp_err_to_name(probe));
+    return KeyLoad::Refused;
+  }
+  if (stored != 32) {
+    Serial.printf("[!!] identity key not loaded: the stored key is %u bytes, not 32\n",
+                  (unsigned)stored);
+    return KeyLoad::Refused;
+  }
+  // The read itself must return all 32 bytes. A refused one may have left
+  // the buffer as it was or partly written (IDF fills it before it checks the
+  // data's CRC), so it is zeroed again.
   NvsManager& nvs = NvsManager::instance();
-  if (!nvs.beginReadOnly()) return false;
-  size_t n = nvs.getBytesLength(NVS_KEY_PRIV);
-  if (n != 32) { nvs.end(); return false; }
-  nvs.getBytes(NVS_KEY_PRIV, priv, 32);
-  nvs.end();
-  return true;
+  size_t got = 0;
+  if (nvs.beginReadOnly()) {
+    got = nvs.getBytes(NVS_KEY_PRIV, priv, 32);
+    nvs.end();
+  }
+  if (got != 32) {
+    memset(priv, 0, 32);
+    Serial.printf("[!!] identity key not loaded: the stored key could not be read (%u of 32 bytes)\n",
+                  (unsigned)got);
+    return KeyLoad::Refused;
+  }
+  // A drawn key is 32 zero bytes with odds of 2^-256, and those bytes are
+  // the zeroed buffer's, the one key whose every derivation is public.
+  uint8_t any = 0;
+  for (size_t i = 0; i < 32; i++) any |= priv[i];
+  if (any == 0) {
+    Serial.printf("[!!] identity key not loaded: the stored key is 32 zero bytes\n");
+    return KeyLoad::Refused;
+  }
+  return KeyLoad::Loaded;
 }
 
 bool nvs_store_key(const uint8_t priv[32]) {
@@ -650,8 +727,10 @@ static void unambiguous_suffix16(uint16_t v, char out[5]) {
 // The suffix is derived from the Ed25519 public-key fingerprint, never the
 // hardware MAC (event_contract §10 / privacy Invariant III: no raw MAC in any
 // API payload, log, or advertised identifier). The keypair persists in NVS, so
-// the handle is stable for the device's lifetime — a *device* handle, not a
-// per-boot token — and matches the canary-wap tree's derivation.
+// the handle lasts as long as the key — a *device* handle, not a per-boot
+// token: an OTA update and the 10 s BOOT reset keep it, and an install in
+// either flasher (its factory image starts NVS over) or the 30 s wipe gives a
+// new keypair and so a new suffix. It matches the canary-wap tree's derivation.
 static uint16_t fingerprint16(const uint8_t fp[2]) {
   return (uint16_t)((fp[0] << 8) | fp[1]);
 }

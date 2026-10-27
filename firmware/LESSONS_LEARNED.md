@@ -7,6 +7,51 @@
 
 ---
 
+## A confirm gate is only as good as the signal every board feeds it
+
+### The 60 s confirm dwell could not be passed by boards it was written for (2026-10, before 2.4.17)
+- **What happened:** #1816 made a new image prove itself (60 s healthy)
+  before the bootloader stops offering a rollback. The engine and its pure
+  core were host-tested and right. The boards were not: the display, Sense,
+  Vision and Sentinel called the tick inside `if (broker)`, so a hub-less
+  unit never confirmed; the WAP fed it `WiFi.status() == WL_CONNECTED`, so a
+  standalone WAP updated over Bluetooth never confirmed; the flagship's
+  deliberate restart inside the window threw a good update away. Every tree
+  also took and erased the install marker on the first boot of the new
+  image, so it recorded "applied" (in the witness chain, on the WAP and the
+  flagship) for updates that the bootloader then undid, with nothing left
+  for the old image to record the rollback from. Each piece passed its own
+  test; the gaps were in what each board passed in and when it asked.
+- **The fix:** each loop ticks before any feature gate, with the link the
+  board is set up to hold (Wi-Fi for the display line, Sense and Vision; the
+  station link or, when the WAP is not joining home Wi-Fi, its own access
+  point); the flagship confirms at a deliberate stop once its probes have
+  passed; `securacv_ota_take_pending_version()` keeps the marker while the
+  running image is pending, and every tree records the outcome in one
+  function called at boot and again on the pass the tick confirms.
+  `regression_check.sh` refuses a confirm tick placed behind the broker gate.
+- **The rule:** when you add a gate whose input comes from the caller,
+  write down for every caller what that input will be in each of its modes
+  (no hub, no home Wi-Fi, on battery, mid-restart) and test the caller, not
+  only the gate. And record an outcome when it is known, not when the
+  question is first asked.
+
+### An id the parser copied short failed a signature it never mentioned (every release through 2.4.16)
+- **What happened:** the OTA manifest parser `strncpy`'d the product id into
+  `char product[32]` after comparing the full string, then rebuilt the
+  signed message from the copy. Seven published display ids are 32 to 37
+  bytes, so every one of those units failed every update's signature check
+  as "signature invalid", for as long as the channels existed. CI's own
+  verify step was Python, which never cuts, so it passed.
+- **The fix:** product ids get 48 bytes, versions 33, and the parser refuses
+  any field longer than its buffer, naming it, instead of cutting it.
+  `ota_release.py` models the device's field sizes and refuses a manifest
+  the device could not hold before anything is published; a host test runs
+  every product id in the tree through parse and signed message.
+- **The rule:** a fixed buffer on the signed path must refuse, never
+  truncate, and the tool that checks a signature for CI must read the bytes
+  the way the device will.
+
 ## A stacked board owns every pin it touches — read its silkscreen, not a guess
 
 ### The doorbell speaker sat on the camera module's reset pin (2026-10)
@@ -72,7 +117,10 @@
   at a one-second cadence still places it finely. A wider bucket is not a
   coarse chain. §3 now says so, and keeps coarsening a reader's duty.
   The app pins `tls_cert_fp` and refuses an https device without it; the
-  rollout prefers the bonded BLE lane and discloses plain http.
+  rollout prefers the bonded BLE lane and discloses plain http. *(Amended
+  2026-10-22, #1843: no WAP fills that lane, since the app dials only a
+  peripheral advertising the console service, which no WAP advertises, so
+  a WAP rides http or is unreachable; ledger A65.)*
 - **Guidance:** a contract that exists only as "what the other side sends
   today" is not a contract. Put the shape in `spec/`, put ONE fixture beside
   it, and have every implementer decode the same bytes in its own test —
@@ -398,6 +446,37 @@
   up in the IDF 4.4 headers too, not only in the current docs.
 - **Date learned:** 2026-09
 
+### A feature test that names a header no core ships is a feature that never runs
+- **What happened:** Both trees' on-device TLS certificate generator (the
+  WAP's, and the flagship's `FEATURE_HTTPS` builds', backlog F15, #1704) is
+  gated on `__has_include("mbedtls/x509write_crt.h")`. mbedTLS has never
+  shipped that header: its certificate-writing API is declared in
+  `mbedtls/x509_crt.h`, behind `MBEDTLS_X509_CRT_WRITE_C`, which both
+  pinned cores define (arduino-esp32 2.0.17; PlatformIO's
+  framework-arduinoespressif32 3.3.8 and its libs). So the generator, and
+  the only code that stores a certificate, compile out on every unit; every
+  CI leg is green, and the ledger, THREAT_MODEL, SECURITY_MODEL and
+  FEATURES.md said HTTPS had landed. No stock unit of either tree has ever
+  served HTTPS or handed out a `tls_cert_fp` pin. Found while deciding
+  F337 and F344, which both depend on whether HTTPS runs.
+- **Root cause:** `__has_include` is false, not an error, for a name that
+  does not exist, so a misspelled or imagined header turns a feature off
+  silently everywhere, and the fallback branch (here: "no certificate, HTTP
+  only", logged on serial and in `tls_mode_reason`) looks like a designed
+  posture. "CI-compiled" was read as "landed", though a compile proves only
+  that both branches parse.
+- **Fix:** Docs corrected (F15's dated correction, the security docs,
+  FEATURES.md). The guard itself is not changed yet: testing
+  `mbedtls/x509_crt.h` and `MBEDTLS_X509_CRT_WRITE_C` turns HTTPS on for
+  every such unit and changes the pin the apps trust, so it waits for the
+  bench (F15).
+- **Rule:** A feature test that guards a whole feature must be shown true on
+  at least one pinned core before the feature is called landed: find the
+  header in that core's tree, or read the build's own log line for the
+  branch it took. A green compile with the feature compiled out is not
+  evidence for the feature.
+- **Date learned:** 2026-10
+
 ---
 
 ## Hardware: XIAO ESP32S3 Sense
@@ -441,6 +520,136 @@
 - **Fix:** Derive AP password from pubkey fingerprint at provisioning
 - **Regression check:** Script greps for hardcoded `witness2026`
 
+### A password derived from a published value is not a secret
+- **What happened:** The per-device AP password above was derived from the
+  public-key fingerprint, and the device publishes the fingerprint: the
+  setup network's SSID suffix spells two of its bytes, and signed MQTT
+  events, the provisioning receipt, `/api/status` and the serial log carry
+  all eight. So anyone who had seen the fingerprint could compute its key,
+  and on the flagship a peer on its own SoftAP is handed the page token.
+  The WAP moved to the private key first; the flagship followed in sweep
+  F350.
+- **Fix:** Both trees derive the key as an HMAC of the device private key
+  under its own domain label (`securacv:ap-password:v1`), `cv-` + 12
+  characters; the flagship's comes from `common/network/ap_password.h`.
+- **Rule:** A function that takes a fixed-size private key takes `const uint8_t (&)[32]`,
+  not a pointer, so a shorter published value (the 8-byte fingerprint)
+  cannot be handed to it. A pointer parameter takes it without a word and
+  reads 24 bytes past it.
+- **Rule:** A secret derived from a primitive that can fail must see the
+  failure. `fleet_key::hmac_sha256` zeroes its output and says nothing, and
+  32 zero bytes render as `cv-222222222222` on every unit: the review of
+  F350's first cut found the derivation returning that as a success. It now
+  takes `hmac_sha256_checked` and refuses on false, and `setup()` halts
+  rather than raise the network on an empty key (the Arduino core raises an
+  open network on one) or a constant one. The second review found the same
+  header's HKDF reporting an all-zero fleet key as derived and its peer frame
+  tag letting a zero-tag frame through; both take the checked form now, and
+  nothing in `fleet_key.h` calls the unchecked one. `[[nodiscard]]` on the
+  derivation is a compiler warning on the device (the flagship builds
+  without `-Werror`), not a guard. The WAP had the same fault in its own
+  helper (sweep F359): `canary_wap.ino`'s `hmac_sha256()` checked none of
+  mbedTLS's answers, so a failed step left its output as the caller's
+  stack bytes, under the SoftAP key, the API token (stored in NVS for
+  every later boot) and the chain backup's HMAC. It now answers `bool` and
+  zeroes its output on a failure, and every caller refuses: provisioning
+  fails, the backup is not written. A zeroed output is only safe if every
+  reader refuses it, so a compare against it (the backup restore) must
+  refuse too, or a field of zeros passes. And a refusal is only as safe as
+  what runs after it: the WAP's `setup()` goes on after a failed
+  provisioning (sweep F336), and its two mints came ahead of the chain
+  state's load, so a refused mint, which before could not happen, left the
+  boot record and `loop()` signing under the stored key from seq 1 on a
+  head of zeros, a branch the next persist wrote over the stored chain.
+  The mints now come after the load.
+- **Rule:** Fail the branch that ships. `fleet_key.h` calls mbedTLS on the
+  device and OpenSSL on the host, and the first failure suite failed only
+  OpenSSL's `HMAC()`, so the device branch's own refusal could be inverted
+  with every host suite green and every CI compile clean. Build the failure
+  suite over the device branch too, against a stub of the library's header.
+- **Regression check:** `firmware/tests_host/test_ap_password.cpp`
+  static_asserts that `DeviceIdentity::pubkey_fp` does not bind and the
+  private key does, and holds the flagship's derivation equal to the WAP's;
+  `test_ap_password_hmac_fail.cpp` and `test_fleet_key_hmac_fail.cpp` run
+  over a failing primitive (`tests_host/hmac_fail_seam.h`), each built over
+  the OpenSSL branch and, with `-DARDUINO` over `tests_host/stubs/mbedtls_md`,
+  over the mbedTLS one. For the WAP,
+  `projects/canary-wap/tests_host/test_wap_hmac_fail.cpp` fails each
+  mbedTLS step under the sketch's own helper and its callers, cut out of
+  the sketch, fails a call anywhere in the sketch that drops the helper's
+  result, and runs `provision_device()` over a refused mint, holding the
+  chain state it leaves to the stored one.
+
+### A key that could not be read is not a key that is absent
+- **What happened:** The flagship's `nvs_load_key()` checked the stored
+  private key's length, then read it with `Preferences::getBytes()` and
+  discarded the count it answered. A read that fails before IDF copies
+  anything into the buffer leaves it as it was, so such an error between the
+  two reads ran the boot on the zeroed `DeviceIdentity` key: an Ed25519
+  signing key anyone holds, whose setup-network key is the published known
+  answer `cv-3jByJ6rHdhM2`, and from which, on a unit with no stored token,
+  the API token is derived too. And the load answered one `false` for
+  everything else: `witness_provision_device()` read it as "no key",
+  generated a keypair and stored it over the old one, so a failed open or
+  length lookup, or a stored key of the wrong length, replaced the unit's
+  identity whenever the write after it landed (sweep F360, found by F350's
+  review). The canary-wap's `nvs_load_key()` had both faults too: a read
+  that failed after the length check, before IDF copied anything, took a
+  release unit through provisioning on the zeroed key, so its SoftAP came
+  up under `cv-3jByJ6rHdhM2` and records were signed with it.
+- **Root cause:** Preferences cannot tell "nothing stored" from "NVS
+  failed": its `begin()` fails alike on a namespace never created and on a
+  fault, and `getBytesLength()` answers 0 alike for a missing key and a
+  failed lookup. The load inherited that one answer and handed it on.
+- **Fix:** `nvs_load_key()` answers `KeyLoad::Loaded`, `Absent` or
+  `Refused`, and zeroes the buffer on any but `Loaded`. Only IDF's own
+  `ESP_ERR_NVS_NOT_FOUND`, asked through `nvs_open()` / `nvs_get_blob()`
+  as `common/health/boot_guard.h` asks it, is `Absent`; the read must answer
+  all 32 bytes, and a key of 32 zero bytes is refused.
+  `establish_identity_key()` generates only on `Absent`, and on `Refused`
+  provisioning stops, so `setup()` halts with no key generated and nothing
+  written to the key or the chain state.
+  The canary-wap takes the same load and the same `establish_identity_key()`
+  shape; its `setup()` goes on after other provisioning failures, so it
+  halts on this one by name (`g_device.key_refused`), before the boot
+  record, the mesh or the chain can use the zeroed key.
+- **Rule:** A load that can fail answers three ways, and only "not there"
+  may lead to a fresh secret. Never fall back to a new secret over a stored
+  one: a refused read halts, and the firmware writes nothing over the
+  stored value. That keeps it for the next boot only when the fault left
+  the entry in place. IDF itself erases an entry whose data CRC fails, in
+  the read it refuses, and on IDF 5.5 the next boot's NVS init erases the
+  orphaned index, so that boot, finding no key, makes a new one; and IDF
+  answers "not found", so the boot makes a new key at once, for an index
+  entry whose header fails its check (erased before the key is read), for a
+  data chunk whose header fails it on IDF 5.5, and for a page a flash read
+  error in its own lookup sets aside. What the firmware can promise is
+  narrower: it never writes over a key IDF still reports as stored. Know
+  what the layer under you does on a refusal before you promise what
+  survives it, and which answers it can give at all: IDF's blob-size
+  lookup, once the open succeeded, answers only found, not found or a bad
+  handle, so a test's other answers are ones the load refuses for not
+  knowing them, not ones a device sends today. The
+  ways to start fresh on purpose are an install in either flasher, with or
+  without its full erase (its factory image starts NVS over), on either
+  tree, and the flagship's 30 s BOOT wipe; the canary-wap's BOOT hold keeps
+  the identity. A read's
+  count is part of its answer; a buffer the read refused, filled or not, is
+  zeroed before anything sees it. And a refusal that does not halt is only
+  as safe as whatever runs after it: before choosing "return false and go
+  on", read what the boot does next with the buffer the refusal left.
+- **Regression check:** `firmware/tests_host/test_nvs_load_key.cpp` runs
+  the load, its IDF probe, the store and `establish_identity_key()`, cut
+  verbatim out of the firmware, over a fake NVS that Preferences and IDF
+  read alike and that fails the open, the length lookup, the session or the
+  read; built again as the opt-in image. It also holds
+  `witness_provision_device()` to stopping on the refusal before it derives
+  anything, `setup()` to its halt, and `NVS_KEY_PRIV` to one owner. For the
+  canary-wap, `projects/canary-wap/tests_host/test_wap_first_boot_nvs.cpp`
+  runs the sketch's load, probe, store and `establish_identity_key()` over
+  its first-boot fake NVS, which fails the length lookup, the session or the
+  read, and pins `setup()`'s halt.
+
 ### Token must never enter witness chain
 - **What happened:** (Preventive) API tokens are transport auth only
 - **Rule:** Bearer tokens authenticate HTTP requests. They are NOT
@@ -479,6 +688,106 @@
   Against rebinding that side is the device's own identity, never a second
   header from the same request.
 - **Date:** 2026-09
+- **Amended, 2026-10-21 (sweep F344):** the third Canary that serves a LAN
+  page, the canary-wap, asked no Host question after setup: its landing page
+  handed a rebinding page a pair token, its `?cv_pair=` exchange minted that
+  page a session (which reads the live camera), and the provisioning
+  receipt's BOOT tap and setup-door claim served any Host. It now stages the
+  same header and asks it on every place that mints a session or a pair
+  token for a caller holding no credential, or starts a sign-in, and first
+  on the receipt. That alone kept a rebinding page from being handed a
+  session, not from holding one (the PR's third review): any host on the LAN
+  takes a 24-hour session at the landing, a page can set that value for its
+  own name with `document.cookie`, and the cookie validator read no Host, so
+  the value reached the live camera, every session admin route and `GET
+  /api/pair/token` from the rebinding page. The validator behind every
+  cookie route (`session_validate_cookie()`) now asks the same question
+  before it reads the cookie. It takes no SoftAP
+  exemption: its captive DNS answers every name with the device too, so an
+  exemption keyed on the interface would hand the rebinding path to anything
+  on the SoftAP, and its wizard runs at two fixed names that pass anyway. Its
+  first-boot setup branch had a second fault of the same kind:
+  `strstr(host, "canary.local")` admitted `canary.local.evil.example`, which
+  that same captive DNS resolves to the device, and the token it minted
+  authorizes the Wi-Fi join. And the wizard token's re-issue
+  (`/api/wifi/pair-token`) answered through `http_send_json()`, which sends
+  `Access-Control-Allow-Origin: *`, so during setup any page on another site
+  in the owner's browser on the SoftAP read a pair token at `192.168.4.1`,
+  a name the exact test must pass (the PR's second review).
+- **Rule:** A name test is an equality on the parsed authority (trimmed, the
+  port dropped, lowercased: `host_authority_name()`), never a substring of
+  the raw header, and a header cut to its buffer is no answer at all (a
+  108-byte rebinding name cut to 95 bytes ends in `.local`). And an
+  exemption that is safe on one product is not safe by default on another:
+  check what answers DNS there before copying it. A rule that rests on
+  "every mint asks first" needs a guard that lists the mints, or the next
+  page that hands out the landing passes every check. A Host test stops only
+  a page that reached the device under another name; against a page that
+  asks for the device's real name, a credential is kept only by an answer
+  that grants no cross-origin read, so a route that hands one out sends no
+  CORS header. And closing the places that hand a credential out does not
+  close the places that take it: a host-only cookie is whatever a page on
+  that name sets, so the code that reads a session asks which name the
+  request was sent to, as the code that hands one out does. And a Host test
+  tells a public name from a name only the local network answers, not this
+  device from another server that answered that name on a network the
+  browser used before (`canary.local` from a hostile hotspot, a page left
+  open, or kept in the HTTP cache, until the browser comes home): only an
+  identity the browser checks tells those apart, and a self-signed
+  certificate gives a browser none (only a client that pins it, as the
+  iPhone app pins the receipt's `tls_cert_fp`, checks one), so a doc
+  that says "a rebinding page gets nothing" scopes it to a public name (the
+  PR's fifth review). And a residual that names how long the planted page
+  must live is checked against the browser's cache, not only its tabs: a
+  fresh cached answer comes back with no request to the device, after the
+  browser has quit (the sixth review, seen in headless Chromium).
+- **Regression check:** `projects/canary-wap/tests_host/test_session_cookie.cpp`
+  (the pages and the setup names, an oversize Host, the re-issue's
+  headers, and the real cookie validator under the device's names and
+  foreign ones) and
+  `test_receipt_grant.cpp` (the receipt's Host row);
+  `projects/canary-wap/tests_host/check_route_security.py`'s `MINT_SITES`
+  (every mint, after its gate, and none answering through the wildcard
+  sender); `firmware/scripts/check_improv_sync.sh`
+  holds the staged copy byte-identical to the canonical header.
+
+### One cookie name for HTTPS and plain HTTP locks a browser out of the plain one
+- **What happened:** Since #1832 the WAP's session cookie carries `Secure`
+  over HTTPS and not over plain HTTP, under one name, `cv_session`. A browser
+  that holds a `Secure` cookie refuses a same-name cookie that an http page
+  at the same host name sets (RFC 6265bis, "Leave Secure Cookies Alone"),
+  and every WAP claims `canary.local`. So once HTTPS runs, a browser that
+  used one unit over HTTPS at `canary.local` and then meets a unit over
+  plain HTTP at `canary.local` (a second unit, the same one after a factory
+  reset, or one whose HTTPS start failed) drops every session cookie the
+  plain page sets, and the wizard's Home Assistant step answers 401, until
+  the old cookie's 24 h run out. A cookie follows the host name, so the
+  same happens at `192.168.4.1` only to a browser that used a unit over
+  `https://192.168.4.1` on its SoftAP (a standalone unit, or a joined one
+  while its SoftAP is up: after a boot until the home link has held 120 s,
+  or after the link drops); one from `https://canary.local` never blocks
+  `http://192.168.4.1`. No stock unit serves HTTPS yet (F15), so no
+  owner has hit it; F337 lands before HTTPS does.
+- **Root cause:** A cookie's name is shared across both schemes at one host,
+  and the `Secure` attribute does not make two cookies of one name.
+- **Fix:** Over HTTPS the cookie is `__Host-cv_session`, which in current
+  browsers only an https answer with `Path=/` and no `Domain` can set, so an
+  http page can neither set it nor shadow it (it can still push the Cookie
+  header past the reader's 512-byte ceiling and sign the browser out:
+  integrity, not availability); over plain HTTP it stays `cv_session`. The reader takes the `__Host-` one first and does not fall
+  back when it is malformed. That fallback to the plain name on an HTTPS
+  request is safe only while every session buys the same thing.
+- **Rule:** When one origin name serves both schemes, give the HTTPS cookie
+  a `__Host-` name of its own. And before one session can do more than
+  another, read only the `__Host-` name over HTTPS and mint a fresh session
+  at the elevation: the prefix binds a secure scheme and the host name, not
+  a certificate, so a server whose certificate the browser accepted at that
+  name can set the `__Host-` name to a session it holds.
+- **Regression check:** `projects/canary-wap/tests_host/test_session_cookie.cpp`
+  (the HTTPS exchange's name and its round trip, the reader's two names),
+  `test_receipt_grant.cpp` (the receipt's HTTPS cookie) and
+  `wizard_logic.test.js` (the writer's text).
+- **Date learned:** 2026-10
 
 ### User-typed identifiers must use an unambiguous alphabet
 - **What happened:** A user typed their API token from the serial monitor into
@@ -499,7 +808,9 @@
   shared `UNAMBIGUOUS_ALPHABET` to **54 chars** — dropping every case variant
   of the confusion classes: `0/O/o` and `1/I/i/l/L` — and routed the device_id
   / AP-SSID suffix through it via a base-54 re-encoding of the same 16 identity
-  bits (injective, so per-board uniqueness and reflash-stability are preserved).
+  bits (injective, so per-board uniqueness is preserved, and the suffix still
+  changes only with the key: an OTA update keeps it, and an install in either
+  flasher, whose factory image starts NVS over, gives a new one).
   Rejection-sampling threshold moves `228` (`57*4`) → `216` (`54*4`) so the
   result stays unbiased. Entropy across 32 chars is ~184 bits — still a UX win.
   Applied identically in both firmware trees (`firmware/canary` PlatformIO and
@@ -762,6 +1073,178 @@
   MALFORMED and WRONG_TOKEN still do.
 - **Regression check:** `tests_host/test_auth_logic.cpp` (host).
 - **Date learned:** 2026-07
+
+### A fix to one tree's auth is owed to the other tree's port of it
+- **What happened:** The flagship (`firmware/canary`) kept the bug above
+  after the WAP fixed it. Its `AuthManager::check()`, a port of the WAP's
+  `api_auth.h` (`firmware/canary/CONSOLIDATION.md`, Phase 1), never took that
+  fix: it counted a request with no `Authorization` header as a strike, and
+  its lockout is one per device. Its
+  dashboard withholds the token on a home-network load until a BOOT tap or
+  the recovery-kit token, so an open tab's token-less `/api/status` poll
+  every 2 s kept a backoff running and held the owner's iPhone app, right
+  token and all, at `429`: 119 of 120 calls over ten simulated minutes.
+  The port missed the WAP's later fixes too: its provisioning receipt
+  compared the bearer through the silent `auth_check_optional()`, no strike
+  and no backoff read, the shape the WAP's F329 had closed; and it kept the
+  five-minute cap that never ran and the `now < until` that the 49.7-day
+  `millis()` wrap breaks, both of which F343 had just fixed on the WAP.
+- **Fix:** the same rule as the WAP's: a request with no credential is a
+  `401` and no strike; a malformed or wrong one still is (sweep F340, part
+  1). Then the copy stopped being a copy (part 2): the flagship's
+  `AuthManager` runs `firmware/common/network/auth_backoff.h`, the WAP's own
+  table, read by path, keyed by the request's socket peer, and the receipt's
+  bearer is the accounted grant `auth_bearer_grant()`.
+- **Regression check:** `firmware/tests_host/test_securacv_auth.cpp` (host,
+  over the real `securacv_auth.cpp` and `auth_backoff.h`): the tab-and-app
+  case, a header-less call between a strike and the next try, two hosts, the
+  receipt's grant, the wrap and the 61 s ceiling, and text pins over
+  `securacv_network.cpp`'s wiring.
+- **Rule:** when a security fix lands in one tree, find the other tree's copy
+  of the same logic (`firmware/canary/CONSOLIDATION.md` names the ports) and
+  fix or file it in the same change. Better: when both trees run the same
+  pure logic, put it in `firmware/common` once and have both read it, so
+  there is no second copy to forget.
+- **Date learned:** 2026-10
+
+### A `static` in a header is one copy per .cpp, and one lockout for the device holds every caller
+- **What happened:** The WAP's bearer lockout was `static AuthState g_auth`
+  in `api_auth.h`: one backoff for every caller, so a host that sent a wrong
+  bearer whenever the backoff was not running held every other host's right
+  token at `429` (86 of 86 of the owner's polls over ten simulated minutes),
+  and the likeliest such host was the owner's own phone, polling a
+  re-installed unit (an install or a full erase in either flasher starts NVS
+  over and gives it a new key and token; the 10 s hold and an OTA update keep
+  the token) with its old token. Because a `static` in a header is a separate object in
+  every translation unit that includes it, `canary_wap.ino`,
+  `csi_integration.cpp` and `csi_mqtt.cpp` each had their own table, and a
+  strike one file's gate recorded never held another file's. Three more
+  defects sat in the same twenty lines: the `uint8_t` count wrapped to a
+  clean 0 after 256 strikes recorded inside a backoff; `millis() < until`
+  freed a backoff armed just before the 49.7-day wrap; and the documented
+  5-minute cap never ran, because the 60 s window cleared the count first,
+  while the sixth strike announced `Retry-After: 65` for a hold that ended at
+  60 s.
+- **Fix:** `firmware/common/network/auth_backoff.h` (sweep F343): one backoff
+  per source address (the socket peer, never a header; 8 slots plus a shared
+  overflow), the cap equal to the window, a saturating count, ages read
+  modulo 2^32. `api_auth.h` holds it as one C++17 `inline` variable.
+- **Regression check:** `firmware/tests_host/test_auth_backoff.cpp` (host);
+  `firmware/projects/canary-wap/tests_host/test_receipt_grant.cpp` (two
+  hosts, the replay, and `api_auth_second_tu.cpp`, a second translation unit
+  over `api_auth.h` linked into the same binary, which fails if the table is
+  ever per file again).
+- **Rule:** shared mutable state in a header is `inline` (C++17), never
+  `static`, and only a test with a second translation unit proves it is
+  shared. A cap the clearing window never lets run is not a cap: state the
+  maximum the code reaches, and assert it (`static_assert(MAX_MS <=
+  WINDOW_MS)`).
+- **Date learned:** 2026-10
+
+### Every compare of a credential goes through the one function that counts it
+- **What happened:** The WAP's `api_auth_check_or_query()` (the camera
+  peek's and the vault download's `?token=` links) never read the bearer
+  lockout: a right `?token=` was served inside a backoff and cleared it, and
+  a wrong one was recorded during it, so a backoff never held these routes
+  and the count ran on without bound (until F343's saturating count, 250 of
+  them wrapped it back to a clean slot). Beside it, four gates compared a
+  bearer and recorded nothing at all: `CSI_AUTH_OR_RETURN` (every
+  `/api/csi/*` route), `csi_mqtt.cpp`'s `authorized()`, the broker move
+  gate's own second compare, and `qr_scan_request_allowed()`, each through
+  the silent `api_auth_check_optional()` or `api_auth_bearer_valid()`.
+- **Root cause:** each gate assembled the compare and its accounting itself,
+  and the silent compares were callable from any file of the sketch.
+- **Fix:** one grant (sweep F339): every bearer compare goes through
+  `auth_backoff::grant()` (`api_auth_grant_presented()` in `api_auth.h`),
+  which reads the lockout once, compares at most once and records the
+  answer; a hold comes back through an optional `held` out-parameter, so a
+  route that answers it `429` makes no second lockout read.
+  `api_auth_check_or_query()` runs that grant over one candidate: the
+  header when the request sends one, the `?token=` only when it sends none.
+  The PR's review found the first version compared both in its one grant
+  and served the request if either was right, so one strike bought two
+  guesses on those links (about 63 a minute from many addresses, where the
+  docs say about 30).
+- **Regression check:** `tests_host/test_receipt_grant.cpp` (host; the CSI
+  macro and `qr_scan_request_allowed()` cut from the sources),
+  `tests_host/test_mqtt_reinit.cpp`, and `tests_host/check_route_security.py`,
+  which fails any sketch file but `api_auth.h` that calls
+  `api_auth_bearer_valid()` or `constant_time_compare()`, with no allowlist.
+- **Rule:** a credential's compare lives beside its accounting, in one
+  function every gate calls; the raw compare is private to that file, and a
+  text check keeps it there. A long token bounds the guessing, but a compare
+  that costs nothing is still an oracle and a bypass of the backoff. One
+  strike buys one candidate: a gate that takes the credential from either
+  of two places compares one of them per request, never both.
+- **Date learned:** 2026-10
+
+### A page that keeps a refused token strikes on every poll
+- **What happened:** The flagship's dashboard kept a token pasted into its
+  unlock banner whatever the device answered, and sent it on every 2 s poll.
+  A mistyped one was a strike each time its address's backoff ended, so the
+  count never had a clean minute to clear: it saturated, and the address
+  (that computer's other tabs and its curl too) stayed held at `429`, but
+  for the one poll a minute that struck again as each backoff ended, until
+  the page was reloaded. The docs said such
+  a browser waits at most about 60 s; the WAP's
+  page made that true by dropping a refused token (`secureFetch`), and the
+  flagship's did not.
+- **Fix:** `dropRefusedToken()` (sweep F340, the PR's review): a `401`, or a
+  `403 {"error":"forbidden"}`, to a request that carried the token drops it
+  and shows the banner again with "The Canary refused that token."; a `429`
+  (nothing compared) or the Host guard's `403` (never read) keeps it, and so
+  does an answer to a token the banner has since replaced. `api()` and the
+  two pollers that fetch with the token themselves all call it.
+- **Regression check:** `firmware/tests_host/test_canary_dashboard_gates.test.js`
+  (host, over the page's own functions): the drop, the keeps, the replaced
+  token, and a census that every fetch setting the bearer header is one of
+  the four it knows.
+- **Rule:** a client that polls with a credential drops it on the answer that
+  refuses it. The lockout's bound is what the server allows; whether a
+  person waits that bound or forever is the client's.
+- **Date learned:** 2026-10
+
+### A guess rate stated for a table in RAM holds only between reboots
+- **What happened:** `THREAT_MODEL.md` scenario 10 said a host with many
+  addresses gets about 30 bearer guesses a minute on both Canaries. That is
+  the bound `auth_backoff.h`'s nine backoffs allow while the table stands.
+  On the WAP the table is a RAM global, and any landing session can reboot
+  the unit (`POST /api/reboot`, `POST /api/safe-mode/retry` take the cookie
+  the landing page mints for any caller), which empties it: a guesser that
+  reboots after every few seconds of guessing gets about 37 a minute if the
+  unit is back 45 s later and about 155 if it is back in 5 s. The docs
+  listed the reboot as a denial left open, never as a reset of the guess
+  budget. *(Amended 2026-10-27, the owner-authority PR, #1887: since F361
+  both routes take the bearer alone, so no landing session reboots the
+  unit; a session's firmware install still restarts it, only into a newer
+  signed image.)*
+- **Fix:** the docs state the bound between reboots and the rates with them
+  (lockout third review, F343); `test_auth_backoff.cpp` models both over the
+  real table, so a change to its numbers fails until the docs follow. The
+  token's entropy stays the real bound.
+- **Regression check:** `firmware/tests_host/test_auth_backoff.cpp`
+  (`the_documented_guess_rates_hold`, host).
+- **Rule:** a rate a security doc quotes comes from a test, and names every
+  way the state behind it resets: a reboot, a power cut, a route that clears
+  it. State held in RAM is reset by whoever can reboot the device.
+- **Date learned:** 2026-10
+
+### A must-not-compile check built with `-Werror` cannot tell `#error` from `#warning`
+- **What happened:** `run-secauth-knobs` proves `securacv_auth.h` refuses
+  the flagship's old backoff knobs: each `-D` must fail to compile with the
+  message that names `auth_backoff.h`. It compiled with the suite's
+  `CXXFLAGS`, which carry `-Werror`, so the `#error` turned into a
+  `#warning` still failed with the same message, and the check passed. The
+  flagship's PlatformIO envs build without `-Werror`, where that edit lets
+  a stale knob through with a warning.
+- **Fix:** the check compiles with `-Wno-error` and requires `#error` in
+  the output (lockout third review, F340).
+- **Regression check:** `make -C firmware/tests_host run-secauth-knobs`
+  (host; the `#warning` edit fails it).
+- **Rule:** a check that a build must fail runs with the flags the real
+  build uses, or with none that turn a warning into the failure it expects,
+  and it matches the diagnostic's kind, not only its text.
+- **Date learned:** 2026-10
 
 ### Self-test probes must not FAIL a subsystem that merely hasn't started
 - **What happened:** The pre-flight health check showed "almost everything
@@ -1187,6 +1670,48 @@
   closed early.
 - **Date learned:** 2026-09
 
+### A bigger slot reaches only the boards that get a USB flash; the engine must check the slot before it downloads
+- **What happened:** fw-v2.4.16 grew the Vision C3 envs from `default.csv`
+  (0x140000 slots) to `min_spiffs.csv` (0x1E0000) for the Bluetooth setup
+  door, and shipped 1,400,368 / 1,409,952-byte images. Every C3 board
+  factory-flashed fw-v2.2.0..fw-v2.4.15 still carries the old table, because
+  OTA ships app-only images. The pull engine downloaded the image and wrote
+  it until the slot ran out, failed, and did it all again on the next poll.
+  The release gate did not catch it. `check_slot_budget.py` measures the
+  image against the table in the repo, not the ones in the field, and for 9
+  of the 17 signed products it measured nothing: it printed a plain "not
+  checked" line that no one reads.
+- **Root cause:** The engine learned the slot was too small only from a
+  failed write, after a full download, and nothing it kept stopped the next
+  poll from trying again. The budget script passed an env with no budget,
+  so the gate's coverage gap made no noise.
+- **Fix:** `securacv_ota_image_fits_slot()` (pure, host-tested in
+  `common/ota/test_ota_logic.cpp`) runs once the manifest is parsed and
+  before any download: manifest `size` against
+  `esp_ota_get_next_update_partition(NULL)->size`, with no slot (none found,
+  or a single-app table where IDF returns the running partition) refused
+  outright. The refusal is `SECURACV_OTA_ERR_PARTITION`, a log line that says
+  the unit needs a USB reflash to a newer table, and a UI sentence that says
+  "install it over USB" rather than "try again". BLE OTA already compared
+  `image_size` with the slot before `esp_ota_begin` (`ble_ota.cpp`). The
+  slot-budget script now writes a `::warning::` annotation for a signed
+  product with no budget, and `flavors.json` budgets 7 of the 9. The other
+  two, dash and dash-modes, ship from an arduino-cli build on `huge_app`
+  (one app slot, so no OTA slot at all), while their PlatformIO env says
+  `default_16MB.csv`. They stay unbudgeted, with that reason, until the
+  two tables agree.
+- **Not fixed by this:** a board already in the field runs the engine it was
+  flashed with. The fix stops the next slot change from looping. The C3
+  boards now looping can only be fixed by a USB reflash.
+- **Regression check:** `test_image_fits_slot` in `test_ota_logic.cpp`
+  (firmware.yml's pull-OTA host test). `scripts/tests/test_check_slot_budget.py`
+  fails a signed product with neither a budget nor a declared reason.
+  Before you change a partition table, find every table the fielded boards
+  carry (the factory images of each earlier release). Budget against the
+  smallest one, as nightlight-c3 does, or say in the release notes that
+  those boards need a USB reflash.
+- **Date learned:** 2026-10
+
 ---
 
 ## Security Architecture Principles
@@ -1197,6 +1722,10 @@
 
 ### Private keys must never leave the device
 - **Principle:** The Ed25519 private key has no export, backup, or read interface
+  in the firmware. *(Amended 2026-10-22, #1843: a read of the whole flash goes
+  around it, over USB through the chip's ROM download mode or on a bench, and
+  both flashers make that read for their pre-flash safety copy, a file that
+  holds the key in the clear: the key is plaintext in NVS on every tier.)*
 - **Why:** A key that can be exported can be compelled (court orders, coercion)
 - **Rule:** No API endpoint, log statement, debug output, or export path may
   include private key material. There is no recovery mechanism by design.
@@ -1502,12 +2031,28 @@
   (`common/io/short_tap.h`) opens it for a minute as the owner's own act. The
   rule is stated once, in the header, in one sentence: *the door is open for
   a device nobody owns yet, and for an owner's own tap — never for a device
-  that has an owner and a bad day.*
+  that has an owner and a bad day.* *(Amended 2026-10-22, #1843: the header's
+  sentence now reads "the door is open for a device with NO NETWORK SAVED (a
+  new one nobody owns yet, or one whose network was cleared), and for an
+  owner's own tap". The 10 s hold, and Forget Wi-Fi on a WAP (which any
+  landing session can send, ledger F345), clear the network but keep
+  the witness identity on a Sense, a Vision and a WAP, and a WAP's token, so
+  a cleared unit still has an owner, and its door goes to whichever client
+  connects first (`docs/design/magic_pairing.md` §2.2). The "no owner yet"
+  above covers that cleared unit too, as does the factory reset it names as
+  re-arming the window.)* *(Amended 2026-10-27, the owner-authority PR,
+  #1887: a WAP's Forget Wi-Fi takes the API token in every mode, F345, so
+  no landing session sends it; the door it reopens on a unit not running
+  standalone is still first-come.)*
 - **Regression check:** `tests_host/test_improv_core.cpp` — a session begun
   with credentials stays shut while the caller reports the portal up; a
   window that ran out does not reopen without a tap or a power cycle;
-  credentials vanishing at runtime (factory reset) re-arm the window,
-  credentials appearing (the join persisted) shut the no-credentials door.
+  credentials vanishing at runtime (factory reset) *(amended 2026-10-22,
+  #1843's sweep: on a WAP also Forget Wi-Fi, which any landing session can
+  send, F345, so the re-arm is not the owner's act alone)* re-arm the window,
+  credentials appearing (the join persisted) shut the no-credentials door
+  *(amended 2026-10-27, #1887: a WAP's Forget Wi-Fi takes the API token in
+  every mode, F345)*.
   `test_short_tap.cpp` pins what counts as a tap (≥40 ms, <700 ms; a hold
   is somebody else's gesture). Design: `docs/design/magic_pairing.md`.
   Bench: not yet — a saved network failing with the router off must raise
@@ -1527,7 +2072,10 @@
   **Just Works** — the only pairing a phone with no prior bond can open in
   one tap — which is encrypted but *unauthenticated*: it resists a passive
   listener, not an active one who paired first. The bearer token lasts for
-  the life of the device. Nothing that lasts belongs on a link like that.
+  the life of the device *(amended 2026-10-22, #1843's sweep: until an install
+  or a full erase in a flasher; OTA updates, the 10 s hold and Forget Wi-Fi
+  keep it, and nothing rotates it)*. Nothing that lasts belongs on a link like
+  that.
 - **Root cause:** "the link is encrypted" was read as "the link is
   trusted". Encryption answers who can *read*; authentication answers who
   is *there*; a Just Works link has the first and not the second, and the
@@ -1557,6 +2105,25 @@
   a 403 is final and points at Ready to pair on the Fleet tab and the
   recovery kit).
   Bench: not yet.
+- **Amended, 2026-10-19 (sweep F342):** "a wrong guess burns the claim"
+  was the wrong rule. A claim is 128 random bits that live 180 s: nobody
+  guesses that, so burning on a guess bounded nothing, and it handed any
+  host on the network a one-request denial. One stray or hostile `?claim=`
+  spent the phone's claim, the phone's own spend a moment later was `403`,
+  which the app rightly treats as final ("on the Wi-Fi, not paired"), and
+  the spend released the first-boot reboot hold under a phone that still
+  held a good claim. The fix: spend on a match, burn on expiry. `take()`
+  loads the minted-at word, compares in constant time, and spends with one
+  compare-and-swap of the word it loaded (`spend_if_match()`), so exactly
+  one matching taker wins and a mismatch changes nothing; the refusal's
+  health line is written once per 10 s at most. Rule: a single-use secret
+  should be spent by the act it authorizes, not by any attempt at it,
+  unless the secret is small enough that attempts are the threat; count the
+  bits before you add a burn. Regression check: `test_claim_ticket.cpp`'s
+  `a_mismatch_spends_nothing` (a thousand wrong values, then the right one
+  serves) and `a_spend_whose_stamp_changed_is_refused` (the seam), and
+  `test_receipt_grant.cpp`'s `test_receipt_wrong_claim_leaves_it_pending`
+  over the cut handler. Host-tested; not run on a device.
 - **Date learned:** 2026-10-07
 
 ### "Re-armed by a power cycle" was re-armed by every boot: the first-boot window and a firmware that restarts itself
@@ -1614,8 +2181,8 @@
   window open.
 - **Root cause:** the session modeled *authorization* (is the door open?)
   and not *occupancy* (who is standing in it, for how long, doing what).
-  A door that is open to whoever has no owner yet must still be a door
-  nobody can wedge.
+  A door that is open to whichever client connects while no network is
+  saved must still be a door nobody can wedge.
 - **Fix:** three bounds in `improv_core.h`'s `Timing`, all host-tested:
   accepted `WIFI_SETTINGS` writes at least `wifi_settings_cooldown_ms`
   (3 s) apart — a faster write is `InvalidRpc`, not counted, nothing
@@ -2368,6 +2935,148 @@
   tested the counter, not the trust decision.
 - **Date learned:** 2026-10
 
+### A transport's last-seen stamp is not liveness, and a presence signal needs a sender
+- **What happened:** The PlatformIO mesh reported each member's state,
+  `last_seen_sec`, RSSI and `peers_online` from the ESP-NOW transport's
+  peer entry (F324). Two things were wrong with that. First, nothing sent
+  on a timer: two healthy paired Canaries quiet for ten minutes both read
+  `CONNECTING` with the other `OFFLINE`, about 610 s old, and the web UI
+  said "Searching for opera members". Second, the transport stamps its
+  entry for any frame from a known address before the session verifies
+  anything, and ESP-NOW does not authenticate a source: a host probe sent a
+  3-byte junk frame and a replay of one verified frame from a quiet
+  member's address once a minute, and the member read `CONNECTED`,
+  `last_seen_sec` 1, the junk's RSSI, for ten minutes. Adding the heartbeat
+  alone would have made that worse, because it puts the member's address on
+  the air every 30 s for anyone to copy.
+- **Root cause:** Liveness was read from the layer that sees frames, not
+  from the layer that checks them. canary-wap had already put its stamp
+  after the signature and counter checks. And "a member is gone" can only
+  be told from "a member is quiet" if a healthy member is never quiet.
+- **Fix:** A jittered 30 s ± 3 s heartbeat that every heartbeat re-arms,
+  with a `static_assert` that one lost heartbeat cannot read `STALE`, and a
+  per-member `verified_seen_ms` and RSSI stamped in `on_opera_frame` after
+  the counter check, which the view and `online_peer_count` read instead of
+  the transport entry. Three edges the arithmetic hides: the deadline is
+  compared as a signed difference, because a device up about 49.7 days
+  arms one past 2^32 ms that wraps to a small number, and a plain
+  `now >= deadline` then signs a heartbeat on every pass until the clock
+  wraps too (28 in 400 s where 13 belong, host-probed); a deadline kept
+  across a disable longer than 2^31 ms reads as weeks in the future, so a
+  stopped pass drops it; and a 32-bit age wraps after about 49.7 days and
+  would read a long-gone member `CONNECTED` again, so every pass, stopped
+  or running, holds a heard member's age at 2^31 ms or under. What it does
+  not fix: the counter check is a high-water mark, so any genuine frame the
+  receiver did not hear still verifies and stamps the member live when a
+  copying radio sends it late, and nothing bounds that but the recorder's
+  stock. The largest stock is one the heartbeat itself creates: a member
+  heartbeats a bound member's address whether or not it is listening, so
+  every heartbeat sent while the receiver was off, booting or on another
+  channel is one it never heard, and relayed after a downtime they hold a
+  gone member `CONNECTED` about three times as long as the downtime (one
+  hour: about 2.9 hours, host-tested). A reboot adds the frames heard since
+  the last replay-counter save, and a jammer has its own. Review round 1
+  wrote the residual as "two ways, up to about 18 minutes" and listed only
+  the frames the receiver heard before a reboot; round 2 found the
+  downtime's frames, which need no jammer. A receiver rebooted within 5
+  minutes of a pairing also restored no counter for the new member, so
+  everything the member had signed before the pairing was fresh again (240
+  recorded frames, 356 minutes, host-probed); the counter of a member's
+  first frame that verifies is now persisted as soon as it lands (the
+  session's first-counter handler, main.cpp `on_mesh_first_counter`). Round
+  3 found two holes in that save. The first frame that verifies need not be
+  the member's newest (the counter check is a high-water mark, so an older
+  genuine frame a radio copying the member's address lands first passes,
+  and the save held its old counter), so the save is now taken once more
+  66 s later if the counter has moved. The residuals the docs state are a
+  reboot before the member's first frame lands, or, when NVS refused that
+  frame's save, before its retry on the member's next verified frame lands
+  (nothing saved for it yet; no pass retries it, so with the member's frames
+  kept out after the refusal, until the next 5-minute save that lands), a
+  reboot before that second save lands, and,
+  when the member's own frames were kept out through the 66 s (a jammer, or
+  after a boot a station not yet on its router's channel, F320), a reboot
+  before the next 5-minute save; review
+  round 4 found the summaries naming only the middle one. And a save
+  taken while the member was
+  registered and unheard wrote it at 0, which the boot restore counted as a
+  saved counter, so the member's first frame after that boot saved nothing;
+  a saved 0 no longer counts (no frame carries 0). The PR's Codex review
+  then found the save marked done before it ran: the session cleared the
+  member's `counter_unsaved` and armed the second save ahead of a `void`
+  handler, and main.cpp's `persist_replay_counters()` dropped
+  `mesh_state::save_replay_counters()`'s result, so one NVS write that
+  failed (`Preferences::begin` or `putBytes`) was never retried by the
+  session: a failed first save waited for the second (or, with the
+  counter unmoved by then, for the 5-minute save), and a failed second
+  save for the 5-minute save. The handler now returns the save's result; the flag clears and the second
+  save arms only on true, a false first save is tried on the member's next
+  verified frame, and a false second save 66 s after the pass that failed,
+  never on the next pass (on a board without flash encryption every save
+  is refused before any write, so a retry costs a snapshot and writes
+  nothing). Its review found the docs still bounding that second reboot
+  at "inside the 66 s": a refused second save leaves the older counter
+  saved 66 s more for each refused try, so the reboot that restores it is
+  one before the second save lands; its second review found the first
+  reboot with the same gap, bounded at the first frame's landing when a
+  refused first save leaves nothing saved until its retry lands. When a
+  fix adds a periodic send, count what the send leaves on the air for a
+  recorder, not only what it tells the receiver; when a save is meant to
+  hold "the newest", ask what makes the value it saves the newest; and
+  when a step exists to make something durable, set "done" from its
+  result, not before the call, and draw every bound the docs give at that
+  result, for each window they list, not at the step's start.
+- **Regression check:** `test_mesh_session`:
+  `test_liveness_counts_only_verified_frames` (junk and a replay refresh
+  nothing), `test_two_paired_canaries_hear_each_other_at_once` (ten quiet
+  minutes read `ACTIVE`/`CONNECTED`, the heartbeat spacing held to the
+  constants), `test_every_heartbeat_re_arms_the_timer`,
+  `test_the_heartbeat_timer_survives_a_long_disable`,
+  `test_a_long_gone_member_stays_offline_past_the_clock_wrap`; each fails
+  on the code before F324, and the last three on a mutant without the
+  re-arm, the stopped-pass drop and the age cap (running and stopped).
+  Review round 1 found seven mutants every suite let through, and these
+  fail on them: `test_the_heartbeat_spacing_holds_across_the_millis_wrap`
+  (the plain compare), `test_each_heartbeat_deadline_is_drawn_afresh` (a
+  fixed or once-drawn jitter keeps every gap inside the per-gap bounds, so
+  only a spread assertion sees it),
+  `test_a_member_bound_after_weeks_alone_is_heard_within_one_interval` (the
+  re-arm before the guards), and the wrap case's stopped leg; and
+  `test_a_frame_the_receiver_has_not_heard_still_counts_as_live` pins the
+  threat model's figures, its downtime leg from a real sending session run
+  for an hour. Review round 2: `test_a_members_first_counter_is_saved_at_once`
+  (fails without the save), the liveness case's flipped signature byte and
+  frame under another opera (a stamp in either check's failure branch
+  passed every suite), and the documented 30 s ± 3 s pinned at compile time
+  (a jitter of 0 or a 40 s interval passed every check, because every check
+  derives its bounds from the constants it tests). Review round 3:
+  the first-counter case's saved-0 leg (fails on a restore that marks a
+  saved 0 saved) and `test_an_older_first_frame_is_saved_over_once_more`
+  (an older frame landed first: fails without the second save, and pins a
+  reboot before it as still open). Review round 4: the 66 s pinned at
+  compile time beside the cadence, and that case's legs for one lost
+  heartbeat of the member's own, timed from the heartbeat constants rather
+  than from the deadline (a 33 s or 45 s deadline passed every suite), the
+  same across the millis() wrap (a `now < from + R` compare passed), a
+  frame after a deadline that found nothing moved (a save left armed until
+  the counter moved passed), and a reboot before the first frame (pinned
+  open). The Codex review: `test_a_failed_first_counter_save_is_tried_again`
+  and `test_a_failed_second_save_is_tried_again_a_deadline_later` (each
+  fails on the code it found; the second also on a retry taken on the next
+  pass and on one counted from the deadline a late pass missed, and the
+  first on a second save armed from the call that failed), with a pass
+  1 ms before each 66 s deadline (each fails on a deadline armed up to
+  999 ms early) and a reboot before a refused first save's retry lands,
+  also with the member quiet for 290 s (pinned open),
+  and the wiring test fails on a handler or a persist that drops the
+  result. Bounding each gap is not
+  testing a jitter, a check derived from a constant cannot catch a change to
+  it, and a wrap-safe compare needs a window across the wrap. Silence assertions that a
+  timer makes false were rewritten to admit only member heartbeats checked
+  by destination, signature, opera and counter
+  (`assert_only_member_heartbeats`), not deleted.
+- **Date learned:** 2026-10
+
 ### A pin on the order of a step is not a test of the step
 - **What happened:** canary-wap's `mesh_network.cpp` re-pointed a mesh
   member's radio address, and its ESP-NOW registration, at the source of
@@ -2621,10 +3330,343 @@
   The camera is what the session does not hold: a code must be in front of
   it (`FEATURE_QR_PROVISION`, off in several profiles). Accepted as
   proximity-bound; the ledger's F289 amendment says what it is owed if that
-  ever widens. A second review found this bullet calling the grant "not
+  ever widens. *(Superseded 2026-10-27, the owner-authority PR, #1887: F333
+  closes this road where it opens. After setup `POST /api/wifi/qr-scan`
+  answers `404` (F334), so the pair token the cookie mints starts no scan;
+  the boot scan asks the Bluetooth setup door's rule
+  (`provisioning_logic::keyless_join_open()`), so on a set-up unit it runs
+  only after a Forget Wi-Fi, which takes the API token, or the 10 s hold;
+  and Forget clears the stored broker login, as the hold clears the whole
+  broker row.)* A second review found this bullet calling the grant "not
   the session's": a chain's gate is its weakest link's, and the token's
   minter is a link — name the minter before calling a token-gated route
   something the session cannot reach.
+- **Date learned:** 2026-10
+
+### A physical-presence tap with no identity for its asker goes to the first poller (canary-wap, F342)
+- **What happened:** the WAP's BOOT tap opened a 30 s gate that its receipt
+  route handed to the first request that asked: `provisioning_gate_take()`
+  was a bare exchange that knew nothing about who was asking. So any host on
+  the home network that polled `GET /api/provisioning-receipt` won the
+  owner's next tap and was handed the token, the SoftAP password and the TLS
+  pin, and `/api/logs` (readable by any session) even said when the tap
+  landed. The press proved a hand was on the device, not whose request it
+  was for: the line between "on the LAN" and "owns the device" was posture
+  only.
+- **Root cause:** a presence check that grants to "the next request" grants
+  to whoever is fastest, and on a network that is a machine, not a person.
+  The WAP has no screen to show a code on, so the only signal it has is who
+  else asks.
+- **Fix:** the tap goes to one asker. `provisioning_gate.h`'s
+  `tap_arbitrate()` keeps the last two distinct addresses that asked without
+  a credential, asks before the tap included, and serves the tap only when
+  the asker is the sole address seen from 10 s before the tap onward; a
+  second address closes the tap with `409 tap_contended`. The owner's
+  clients (the dashboard's sign-in, now the companion's kit save) ask from
+  before the press, so they are on record when it lands. The stamp is peeked,
+  judged and then taken with a compare-and-swap of the stamp that was judged
+  (`take_exact()`), so nothing between the judgment and the take is consumed
+  unjudged. Rules: a grant that answers "the next request" needs an identity
+  for that request, or the fastest poller wins it; and one peer read must
+  serve every per-address rule. The tap's asker and the bearer lockout's
+  bucket are both `request_peer_key()` (one `getpeername`), so the two can
+  never disagree about who a request came from, which two readers could.
+- **Regression check:** `tests_host/test_provisioning_gate.cpp` (the arbiter
+  on a 32-bit clock: a poller and the owner across one tap, a sole owner, an
+  attacker asking first after the tap, the lookback's edge to the
+  millisecond, a re-tap, the 49.7-day silence) and the WAP's
+  `test_receipt_grant.cpp` over the cut handler (`409` with no cookie and no
+  secret, one health line naming no address, a wrong bearer or claim counted
+  as an ask, a held bearer still `429`); `test_receipt_authority.cpp` pins
+  `getpeername` once in the sketch and `request_peer_key()` as its
+  definition and two callers (the lockout's source and the tap's asker).
+  Host-tested; the peer read on the dual-stack listener is not yet proven on
+  a device (U1).
+- **Found in review, same PR:** a refusal answer must end when its cause
+  ends, and its advice must be followable. The first `409` lasted the
+  closed tap's whole 30 s whoever was still asking, while both pages stop on
+  their first `409` and say "wait 10 seconds, and try again", so following
+  the copy stopped the retry again before the press; and the device's own
+  hint said to tap BOOT again, which under a host still polling hands the
+  bare re-tap to that host. Now the `409` ends once an ask finds no address
+  other than the asker asking in the last 10 s (10 s after the other device
+  stops; under a host that keeps polling, 10 s after the owner's page
+  stopped, and the next tap is closed again) and on a served re-tap, and
+  the hint sends the client in first. Two test gaps closed with it: a seam result the code must honor
+  (`take_exact()`'s false after a TAKE verdict) needs a row that makes it
+  false at that exact point (the receipt harness's `millis()` hook acts on
+  the tap step's clock read, and a calibration call finds which read that
+  is), and a privacy check on a log line must read every field the log
+  serves (the harness's `log_health()` used to drop `detail`). A clock read
+  before an atomic load is the same trap the sweep's comment warns about:
+  `claim_ticket::take()` is handed `millis()` before it loads the word, so a
+  mint in between read 2^32 ms old and a wrong value burned it; a word
+  ahead of the clock is now compared like a fresh one.
+- **Found in the second review, same PR:** when a protection rests on an
+  order (the owner's client asks first, the press comes second), every line
+  that tells someone what to do is part of the protection. The dashboard's
+  timeout said "Press BOOT and click above to try again" and the WAP's
+  `403` said "short tap, then poll": followed as written, the press landed
+  with no client of the owner's asking, and a host reading the tap off
+  `/api/logs` was its only asker. Both now give the click first, pinned by
+  the receipt suite and `recovery_kit.test.js`. And an exception to a rule
+  should be as wide as the race it covers: "ahead of the clock" was first
+  every word up to 2^31 ms ahead, which served a claim left unswept for
+  24.8 days; it is now under a one-second skew, and every other age past
+  the TTL is burned.
+- **Found in the fourth review, same PR:** a retry line has to name its
+  first step, not just say "try again". Both pages' `409` text said "wait
+  10 seconds, and try again", the one line the owner reads while another
+  device is asking; an owner who reads it as "press BOOT again" makes, ten
+  seconds after the page stopped, exactly the bare re-tap a host still
+  polling wins (the page is no longer on record). It now says to click
+  **Use BOOT Tap Once** again (or tap Save again) and only then press. The
+  order holds in time as well as in words: the pages showed "Now short-tap
+  BOOT" before their first ask had left, so a press made as the line
+  appeared could land before any ask of the owner's had reached the device
+  (a TLS handshake, a blip); they now say it once the device has answered
+  one of their asks with `403`. And a rule a proof leans on needs a
+  behavior row of its own: the two-entry record is exact only because an ask by the address on
+  record refreshes its time, and no row polled the way the pages do (every
+  2 s, for longer than the 10 s lookback), so deleting the refresh, which
+  serves a host the token under a polling owner, failed only four harness
+  probes. Rows in both suites now poll at the pages' cadence.
+- **Found in the fifth review, same PR:** a way out of an attack is advice
+  given while that attacker is known to be present, so it has to be judged
+  against that attacker. The docs and the dashboard's `409` offered the 10 s
+  hold and a fresh iPhone setup as an equal way out under a polling host,
+  ending "so the phone ends paired"; the hold keeps the token and reopens
+  the first-boot Bluetooth setup door, which goes to the first client that
+  connects, so a host on the network that is also in radio range can take
+  it, spend its own claim and keep the token. The kit's token and the USB
+  console now come first, and the hold last, with the phone ready and the
+  door's first-come rule named. And a row that keys on a whole value needs a
+  case where only part of it differs: every asker in the arbiter's rows was
+  an IPv4-mapped key, so comparing four bytes of the 16, or the IPv4 a key
+  maps to, passed every suite; rows with IPv6 askers that differ only in the
+  prefix, or share the owner's last four bytes, now fail both.
+- **Found in Codex's review of #1842, fixed in its follow-up, #1843:** a
+  poll that can claim a one-time grant belongs to the screen that started it. The companion's kit save
+  kept asking from a step the owner had skipped, so the next BOOT tap went
+  to a page nobody was looking at, the kit downloaded unasked and the
+  hidden Home Assistant step came back. Every function that hides the step
+  now stops the save first (an `AbortController` for the ask in flight,
+  and a check after every await that it is still the running save), and a
+  row holds every such function to that first line, so an exit added
+  later cannot forget it. And a poll's error path has to tell no answer
+  from an answer: a fetch that rejected (a Wi-Fi blip) ended the whole
+  window, though the dashboard's poll of the same route already asked on
+  through one. Two copies of one loop drift; the companion now follows the
+  dashboard's rules, each with a row.
+- **Found in #1842's final review, second round (fixed in #1843):** a rule
+  found for one list of ways out governs every list. The fifth review's fix judged
+  the poller's ways out against the poller and left the lockout's, a
+  paragraph or two away in the same files, offering the same 10 s hold as
+  an equal way out from under a host striking from nine or more addresses.
+  A search for the advice ("hold BOOT 10 s") finds both lists; a search
+  for the scenario finds one. And a branch whose only remaining effect is
+  a log line needs a row that counts the line: the receipt reads a
+  truncated `?claim=` as presented, and since a value that never reaches
+  the compare spends nothing either, deleting the branch passed every
+  suite until a row counted the refusal's health line.
+- **Found in #1842's final review, third round (fixed in #1843):** a reset
+  is a way out only if the attacker cannot simply do again what it did. The second
+  round kept the 10 s hold in the lockout's list because it empties the
+  table, and judged it only against the setup door it reopens; but the host
+  that filled the table is still on the network, and once the unit is set
+  up there again its next strikes from nine addresses fill the slots and
+  arm the overflow, while the claim that pairs the phone frees only the
+  phone's own slot. The way out is the one that takes away the attacker's
+  reach (a network that host is not on), which on the WAP the owner's own
+  browser gives with no hold (its landing session reaches
+  `POST /api/wifi/connect` under the lockout), while that host leaves it
+  alone and the new network stays up (the next four bullets). Run the
+  attack again from the state the remedy leaves before listing it. And a
+  sentence in the security model needs a row of its own even when it reads
+  as obvious: "a served tap clears only the contention, not the
+  addresses" had none, and clearing both at a TAKE, which hands a host
+  that asks first after the owner's next tap the token, passed every
+  suite.
+- **Found in #1843's first review:** a search for the advice has to run
+  over the whole tree, not over the hunks the diff already touches. The
+  second round's own bullet says a search for "hold BOOT 10 s" finds both
+  lists; run over the tree it also found three audit notes in two files the
+  diff did not touch, and three CHANGELOG passages its hunks never reached,
+  all still offering the hold. And a way out has to be judged against everything else the attacker can
+  reach: the bonded lane takes away the striking host's network reach, but
+  a host also in radio range can bond through the landing session the
+  network gives it, and then use the lane itself *(amended 2026-10-27, the
+  owner-authority PR, #1887: since F346 the bond's confirm and a Passkey
+  Entry's digits take the API token, so a host bonds through its session no
+  longer; a bond a session confirmed on 2.4.17 or earlier stays until the
+  owner removes it)*. A guard that every row
+  passes without needs a row from the state it guards: every companion row
+  tapped Save first, so the stop's `if (!ctl) return;` was never reached
+  with no save running, the state most pane changes are made in.
+- **Found in #1843's second review:** judge a remedy against every route
+  the attacker's session reaches that touches the remedy, not only the
+  routes of the attack you have in mind. The first review judged the lane
+  against pairing and bounded the host by radio range; the same landing
+  session turns the WAP's Bluetooth off, a saved setting the 10 s hold
+  keeps, or deletes the phone's bond, from anywhere on the network; the
+  owner's own landing session reaches the same routes, and
+  `POST /api/wifi/connect`, so the owner's browser can turn Bluetooth back
+  on, or move the WAP with no Bluetooth at all. *(Amended 2026-10-27, the
+  owner-authority PR, #1887: the Bluetooth routes still take the session,
+  but after setup `POST /api/wifi/connect` takes the API token alone, F334,
+  so the browser's move takes the token, and under a host striking from
+  nine or more addresses it waits until that host stops; the merge's
+  bullet below says so.)* List
+  the routes by what they touch (Bluetooth's switch, its bonds, the Wi-Fi
+  it would change), and a denial's length by what the attacker pays: a
+  refused write the lane does not charge keeps the owner's refused for as
+  long as the writer keeps at it, not for the hour the cap names. And a
+  security doc's "clears" has to say where the bytes go: the seizure
+  scenario said the WAP's hold clears the saved Wi-Fi and the broker login,
+  which it removes from NVS, leaving their bytes in flash, as the same
+  paragraph already said of the flagship's key.
+- **Found in #1843's third review:** a way out is judged by the client
+  that has to take it, not only by the firmware that would answer. Every
+  list named the iPhone's bonded Bluetooth lane first, and the WAP's CREDS
+  write is real, but the iPhone app dials only a Canary that advertises the
+  console service, which a WAP does not, so it never reaches that write;
+  the same ledger already held it open as A65. Search the ledger's open
+  items for the remedy before offering it. And a tier qualifier has to come
+  from what the tier encrypts: "readable on the default tier" told a reader
+  the secure tier hides those bytes, and flash encryption does not cover
+  NVS, whose encryption is not available under `framework = arduino`, so
+  the erased Wi-Fi and broker passwords, the bonds and both trees' keys are
+  plaintext on the flash chip of a fused board too.
+- **Found in #1843's fourth review:** the state a remedy leaves includes
+  what the device will do from it on its own. The third review ran the
+  attack again from the moment after the move (the WAP on a network the
+  striking host is not on) and stopped there; but the move keeps the
+  host's network saved (`wifi_store.h` keeps up to four), and the WAP's own
+  recovery, a network not found twice running moving on to the next saved
+  one, takes it back there with no act of the owner's once a hotspot is
+  turned off or a guest network drops. Read the device's fallbacks
+  (retries, rotation, what a boot loads) before calling a move permanent:
+  here only Forget Wi-Fi or the hold drop the old network, and both reopen
+  the first-come setup door. A precondition belongs before the step it
+  guards and where the reader can act on it: the dashboard's Bluetooth
+  check followed the hold's sentence, on a sign-in that covers Settings and
+  holds no session, and its row pinned that order; it now comes first and
+  says how the sign-in reaches the switch, and the row walks that way.
+  A row that reads one function for a property has to read the functions
+  it calls to change state: the hold's row read `factory_reset_by_hold()`
+  alone, so a `remove("bt_enabled")` in `wifi_clear_credentials()` or
+  `setup_wizard::reset_to_first_boot()` passed it. And a harness whose
+  timers run at once needs a bound of its own: a page loop that stopped
+  counting its asks never yielded to node:test's timeout, so the run hung
+  rather than failing a row; both harnesses now answer `409` past 64 asks.
+- **Found in the owner-authority PR's merge of #1884 (2026-10-27):** a
+  decision that moves a route behind the bearer moves every way out that
+  route was. #1843's lockout posture rested on the owner's landing session
+  reaching `POST /api/wifi/connect` and `POST /api/wifi/forget` under the
+  lockout (the third and second rounds' bullets above); F334 and F345 put
+  both on the bearer alone (Connect after setup, Forget in every mode), and
+  the overflow holds that bearer with every untracked address, so the
+  browser's move now waits until the striking host stops. The two branches
+  merged without a conflict in most of the
+  sentences that disagreed: the dependency surfaced only because #1843's
+  fifth-review note on F345 named it. Before deciding a route's gate,
+  search the ledger and the docs for the route as a remedy, not only as an
+  attack.
+- **Date learned:** 2026-10
+
+### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)
+- **What happened:** the BOOT tap's gate, the setup-door claim and the WAP's
+  session and pair-token slots each stored a 32-bit `millis()` stamp and
+  aged it by unsigned subtraction, `(uint32_t)(now - stamp) < ttl`. That is
+  "wrap-safe" only while the stamp is younger than 2^32 ms. A tap nobody
+  took (the next credential-less receipt request would have spent it, but
+  none came) read as fresh again 49.7 days later and served the receipt for
+  30 s with no press, on the WAP and through the shared header on the
+  flagship; a claim read and never spent read as pending again; a session
+  slot not reused since it expired took its old cookie for another 24 h.
+  `/api/logs` says when a tap lands, so a host on the network could time it.
+- **Root cause:** "unsigned subtraction handles the wrap" was written into
+  the gate's own contract, and it is half true. It handles a clock that
+  wraps between the stamp and the read; it cannot handle a stamp left in
+  place for a whole cycle, because after 2^32 ms the difference is small
+  again. Clearing a stamp when it is read past its TTL does not help either:
+  a stamp nobody reads for 49.7 days is first read when it already looks
+  fresh.
+- **Fix:** each word gets the fix its threading allows. The gate and the
+  claim are shared across tasks as 32-bit atomics, so they keep them and are
+  swept every loop pass: `expire()` clears a stamp past its TTL with a
+  compare-and-swap of the value it read, so a fresh re-tap or re-mint is
+  never cleared, and no stamp outlives its TTL by more than one pass. The
+  sweep runs on the task that opens or mints, or a clock read before another
+  task's open would see the newer stamp as 2^32 ms old. The slots have one
+  writer, so they move to a wider clock: whole seconds of
+  `esp_timer_get_time()` in a `uint32_t`, a 136-year wrap at the same slot
+  size, one aligned word for the QR scanner task to read. Rules: a TTL check
+  on a 32-bit clock needs an owner that clears the stamp at its TTL, or a
+  clock wide enough that the stamp cannot outlive it; and a contract line
+  that says "wrap-safe" should say for how long.
+- **Regression check:** `tests_host/test_provisioning_gate.cpp` and
+  `test_claim_ticket.cpp` (a swept stamp stays closed 2^32 ms later, the
+  unswept twin reads open and is taken, a re-tap or re-mint is kept; the
+  flagship's `handle_boot_button()` sweeps first), the WAP's
+  `test_receipt_grant.cpp` (`loop()`'s two sweeps, run as the sketch spells
+  them, then 2^32 ms + 1 s later a bare request and the old `?claim=` are
+  both `403`; before, both were served) and `test_session_cookie.cpp` (the
+  slot functions cut from `csi_integration.cpp`: a session and a pair token
+  end at their TTLs and are not valid again 2^32 ms + 5 s after issue).
+  Host-tested; the wraps cannot be bench-tested.
+- **Date learned:** 2026-10
+
+### A setup-window grant outlived setup, and a pasted token passed on the cookie beside it (canary-wap, F334, F335, F345, F346, F361)
+- **What happened:** after first-boot setup any host on a WAP's home network
+  could move it to another network, Forget it (which re-opened the
+  Bluetooth setup door, whose claim buys the receipt), confirm its own
+  phone's Bluetooth bond or its own radio's opera pairing, re-key the
+  sealed-snapshot vault and reboot the unit at will. Separately, the
+  dashboard's sign-in accepted any mistyped `cv_` token on a page that held
+  a session, and the owner met the refusal one step later, with a strike, at
+  whatever needed the bearer (inside a phone's 30 s pairing window, at a
+  Bluetooth confirm).
+- **Root cause:** three things, each reasonable alone. Two consumers shared
+  one pair-token pool: the wizard's validate-only token (a first-boot grant
+  for a phone on the SoftAP) and the landing page's `?cv_pair` link (minted
+  for any caller on the home network), with no token kind between them, so
+  the wizard's grant on `/api/wifi/connect` became every caller's. A comment
+  said "the AP itself is the gate", true during setup and stated as if it
+  were true forever; `wifi_change_authorize()` took the pair token and then
+  `api_auth_check()`, which takes the session cookie before it compares
+  anything, and the Forget, Disconnect, reboot, vault-key and two pairing
+  confirm wrappers were `api_auth_check()` too. And the sign-in checked a
+  pasted token on `GET /api/status` with the cookie attached, so the cookie
+  answered the check the token was meant to pass.
+- **Fix:** after setup the bearer alone (`api_auth_check_bearer()`) gates
+  every HTTP route that changes the network the unit joins, on every
+  interface (a peer already bonded through the pairing confirm or a
+  passkey, one a session made before F346 among them, still moves it with
+  no token, over the Bluetooth credentials write,
+  `ble_request_wifi_provisioning()`), and every
+  write that grants a credential (the vault key, the two confirms), and the
+  two reboot routes; `POST /api/wifi/qr-scan` answers `404` outside setup.
+  The firmware install stays on the session and restarts the unit only into
+  a newer signed image.
+  The setup window is a branch in code (`setup_wizard::is_active()`), not a
+  comment. The setup door and the camera's boot scan, two doors to one act
+  (a join that asks for no credential), share one predicate,
+  `provisioning_logic::keyless_join_open()`, where the scan had asked only
+  half of the door's question. The sign-in sends a pasted token with
+  `credentials: 'omit'`. Rules: state a setup-window grant in code, at the
+  gate; give two doors to one act one predicate; and a check of a credential
+  must not pass on another credential the request carries beside it.
+- **Regression check:** `tests_host/test_wifi_authority.cpp` (the gate and
+  the wrappers cut from the sketch over the real `api_auth.h` and
+  `provisioning_logic.h`: after setup the landing's pair token and session
+  are `401`, Forget by a session leaves the door shut, a session's reboot
+  restarts nothing; text pins for the scan's `404` and the boot scan's
+  predicate), `test_receipt_grant.cpp`'s
+  `test_credential_grants_take_the_bearer`, `test_bluetooth_commands_wap.cpp`
+  (the bond confirm through the route `register_routes()` registers, the
+  Passkey Entry field) and `dashboard_gates.test.js` ('The shared sign-in':
+  `cv_wrong` stays refused on a page whose cookie answers 200).
 - **Date learned:** 2026-10
 
 ## Build profiles: a configuration nobody compiles is a configuration that rots

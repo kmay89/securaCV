@@ -58,8 +58,8 @@
 //
 //   Anyone else, and any later read, gets "{}". The phone then spends the
 //   claim ON THE HOME LAN — an unauthenticated GET of claim_url — and gets
-//   the same pairing receipt the BOOT-tap route serves. Single use: a wrong
-//   guess burns it; a 403 is spent, expired or refused. Sense and Vision
+//   the same pairing receipt the BOOT-tap route serves. Single use: the
+//   firmware spends it only on a match; a 403 is spent, expired or replaced. Sense and Vision
 //   serve no CLAIM (nothing to pair over HTTP).
 //
 // THE HUB HAND-OFF (a Sense or Vision): a camera or radar Canary reports to

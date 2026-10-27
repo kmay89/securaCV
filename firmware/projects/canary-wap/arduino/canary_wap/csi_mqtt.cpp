@@ -180,9 +180,10 @@ std::atomic<bool>        s_retire_done{false};
  * default stack (CONFIG_MQTT_TASK_STACK_SIZE, 6144) is the measure. */
 constexpr uint32_t       kRetireStackBytes   = 6144;
 /* A settings save in progress, and how many have finished (sweep F289, the
- * third road's review). config_save(), ca_save() and config_clear() write
- * the row key by key on the caller's task (the httpd task's config POST, the
- * QR scanner's provisioning, the loop task's own factory reset), and nothing
+ * third road's review). config_save(), ca_save(), config_clear() and
+ * login_clear() write the row key by key on the caller's task (the httpd
+ * task's config POST and Forget Wi-Fi, the QR scanner's provisioning, the
+ * loop task's own factory reset), and nothing
  * stops the loop task from serving a re-init between two of those writes: a
  * row holding the new host beside the old password, which the new client
  * would carry to the new host — the password move_needs_password() exists
@@ -680,6 +681,22 @@ bool config_clear() {
   for (const char* key : kKeys) {
     /* remove() also reports false for a key that never existed — the
      * readback is the truth (ca_save's rule). */
+    if (prefs.isKey(key)) prefs.remove(key);
+    ok = ok && !prefs.isKey(key);
+  }
+  prefs.end();
+  return ok;
+}
+
+bool login_clear() {
+  static const char* const kKeys[] = {NVS_KEY_USER, NVS_KEY_PASS};
+  SaveScope saving;
+  if (!saving.ok()) return false;
+  Preferences prefs;
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return false;
+  bool ok = true;
+  for (const char* key : kKeys) {
+    /* config_clear()'s rule: the readback is the truth. */
     if (prefs.isKey(key)) prefs.remove(key);
     ok = ok && !prefs.isKey(key);
   }
@@ -2068,12 +2085,32 @@ void remove_discovery() {
  * csi_integration.cpp's anonymous namespace) into this TU. Instead
  * we go through the Bearer + cookie surfaces directly the same way
  * the macro does; csi_integration::session_validate_cookie is
- * declared in csi_integration.h. ────────────────────────────────── */
+ * declared in csi_integration.h. The Bearer is compared under its
+ * address's lockout (api_auth_check_optional(), the cookie or
+ * api_auth_bearer_grant(); sweep F339): a wrong one is one strike against
+ * the address that sent it, none is compared while that address is held,
+ * and `held` (when given) reports that, so the route answers it 429. Before,
+ * this compare recorded nothing. ────────────────────────────────────── */
 
-static bool authorized(httpd_req_t* req, const char* api_token) {
+static bool authorized(httpd_req_t* req, const char* api_token, bool* held = nullptr) {
+  if (held) *held = false;
   if (csi_integration::session_validate_cookie(req)) return true;
-  if (api_token && api_auth_check_optional(req, api_token)) return true;
-  return false;
+  return api_token && api_auth_check_optional(req, api_token, held);
+}
+
+/* A request the routes below did not admit: 429 with Retry-After when the
+ * grant held its bearer (api_auth.h's lockout answer, the seconds left of
+ * that address's backoff), else the 401 challenge. */
+static esp_err_t send_refusal(httpd_req_t* req, bool held) {
+  if (held) {
+    api_auth_send_lockout(req);
+    return ESP_OK;
+  }
+  httpd_resp_set_status(req, "401 Unauthorized");
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "WWW-Authenticate", "Bearer realm=\"securacv\"");
+  httpd_resp_sendstr(req, "{\"error\":\"unauthorized\"}");
+  return ESP_OK;
 }
 
 /* The api_token for csi_mqtt's Bearer surface is the same one
@@ -2132,13 +2169,8 @@ static void write_config_answer(wap_json::Writer& w, const ConfigAnswer& a) {
 
 esp_err_t handle_config_get(httpd_req_t* req) {
   const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;
-  if (!authorized(req, tok)) {
-    httpd_resp_set_status(req, "401 Unauthorized");
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "WWW-Authenticate", "Bearer realm=\"securacv\"");
-    httpd_resp_sendstr(req, "{\"error\":\"unauthorized\"}");
-    return ESP_OK;
-  }
+  bool held = false;
+  if (!authorized(req, tok, &held)) return send_refusal(req, held);
   Config c;
   config_load(&c);
   /* Echo everything but the password — the password is write-only on
@@ -2283,8 +2315,9 @@ static bool refuse_too_long(httpd_req_t* req, const char* field, const char* val
   return true;
 }
 
-/* Sweep F289, the third road. authorized() takes the landing page's
- * cv_session cookie as well as the bearer, and that session is minted for
+/* Sweep F289, the third road. The MQTT routes take the landing page's
+ * cv_session cookie as well as the bearer (authorized(); this handler tests
+ * the two itself, its bearer once), and that session is minted for
  * whoever loads / on the home network — deliberate LAN posture for the
  * dashboard, which stays; what it buys is narrowed. GET /api/mqtt/config
  * never answers the password (write-only on the wire, so a session cannot
@@ -2322,8 +2355,9 @@ static bool refuse_too_long(httpd_req_t* req, const char* field, const char* val
  * the password still goes to the same peer, which already holds it, so a
  * session may toggle the bridge, rename the topic prefix or change the
  * username as it always could. A caller with a valid bearer
- * (api_auth_bearer_valid(): a real Authorization header, constant-time
- * compared, nothing recorded against the lockout) is never refused by this
+ * (api_auth_bearer_grant(): a real Authorization header, constant-time
+ * compared under its address's lockout, so a wrong one is a strike and a
+ * held one is not compared; sweep F339) is never refused by this
  * rule — it holds the token the GET's write-only password protects. The
  * refusal saves nothing, requests no re-init and answers 403 with a code the
  * /mqtt page reads (it shows the reason and puts the cursor in the password
@@ -2346,17 +2380,16 @@ static const char kPasswordNeeded[] =
 
 esp_err_t handle_config_post(httpd_req_t* req) {
   const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;
-  if (!authorized(req, tok)) {
-    httpd_resp_set_status(req, "401 Unauthorized");
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "WWW-Authenticate", "Bearer realm=\"securacv\"");
-    httpd_resp_sendstr(req, "{\"error\":\"unauthorized\"}");
-    return ESP_OK;
-  }
-  /* The bearer half of authorized(), once (sweep F289, the third road): a
-   * save that moves the broker and keeps the stored password needs it;
-   * move_needs_password() says when. */
-  const bool bearer = tok != nullptr && api_auth_bearer_valid(req, tok);
+  /* The bearer, compared once per request (sweep F339) under its address's
+   * lockout: a save that moves the broker and keeps the stored password
+   * needs it (sweep F289, the third road; move_needs_password() says when),
+   * and with no bearer the route takes the session cookie, as authorized()
+   * would. A wrong bearer is one strike for its address, beside the cookie
+   * too (the save then goes on as the session's); a held one is not
+   * compared, and without the cookie it is the 429. */
+  bool held = false;
+  const bool bearer = tok != nullptr && api_auth_bearer_grant(req, tok, &held);
+  if (!bearer && !csi_integration::session_validate_cookie(req)) return send_refusal(req, held);
 
   /* The body is read whole or refused (sweep F266). The cap covers every
    * field at its limit, a 128-byte password and host among them, and a
@@ -2424,7 +2457,14 @@ esp_err_t handle_config_post(httpd_req_t* req) {
   Config c;
   config_load(&c);
   /* What NVS holds before any field is applied: move_needs_password()
-   * compares the destination the body leaves against it. */
+   * compares the destination the body leaves against it. Neither copy, nor
+   * buf below, nor the heap body buffer, is wiped on return, by decision
+   * (sweep F349): while the row holds a broker password it also sits in RAM
+   * in s_active_cfg from the bridge's first settings load at boot, enabled
+   * or not, and in the esp-mqtt client while one is open, other readers of
+   * the row (GET /api/fleet among them) load it onto this task's stack too,
+   * and NVS holds it in plain bytes, so a wipe here would remove no copy a
+   * reader of this device's memory or flash would take. */
   const Config before = c;
 
   json_extract_bool  (body, "\"enabled\"",   &c.enabled);
@@ -2590,13 +2630,8 @@ esp_err_t handle_config_post(httpd_req_t* req) {
 
 esp_err_t handle_test(httpd_req_t* req) {
   const char* tok = s_api_token_provider ? s_api_token_provider() : nullptr;
-  if (!authorized(req, tok)) {
-    httpd_resp_set_status(req, "401 Unauthorized");
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "WWW-Authenticate", "Bearer realm=\"securacv\"");
-    httpd_resp_sendstr(req, "{\"error\":\"unauthorized\"}");
-    return ESP_OK;
-  }
+  bool held = false;
+  if (!authorized(req, tok, &held)) return send_refusal(req, held);
   /* A fresh connect, run by the loop task (sweep F106: init() here
    * destroyed the client under a loop-task publish), then esp_mqtt's
    * async connect: s_connected flips, or an error event lands. Both

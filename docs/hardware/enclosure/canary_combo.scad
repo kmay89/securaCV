@@ -77,6 +77,16 @@
 //              bridge_layer = your layer height, the seat depth asserted to
 //              land on whole layers). Every camera number cites
 //              canary_board_lib's OV5647 facts.
+//  2026-10-22: the Sense carrier gets +Y end stops (v0.3-dev; the Sense's
+//              v0.2 fix, ported). It is hooked only by one clip pair on its
+//              ±X edges, at clip_clear (no grip along the rails), and its top
+//              edge stood 25 mm off the +Y wall: probed in position, the
+//              carrier slid 24.5 mm up the rails before it touched anything, so a
+//              plug pushed into the C6 (its USB at the -Y end) shoved the
+//              stack up and the antenna out from under its 24 mm radome
+//              window. Two stops now stand board_clear past its top edge —
+//              the released Sense's stops, to the millimeter — and the travel
+//              is board_clear.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft-edge front, the piston plate (pl_*) — the shared idiom
@@ -493,6 +503,13 @@ module back() {
             // full-length rails at the carrier's edges clear it; in seal mode their
             // -Y ends stop 0.5 short of the wall post
             rails(s_cx, sm_cy, sm_w, sm_l, s_standoff, mid_posts ? wp_y + pd/2 + 0.5 : -1e9);
+            // +Y end stops (the Sense's, canary_sense_enclosure back()): two bumps
+            // board_clear past the carrier's top edge. Hooked only on its ±X edges
+            // it slid 24.5 mm up the rails under a plug pushed into the C6 and took
+            // the antenna out from under the radome window
+            for (s = [1, -1])
+                translate([s_cx + s*(sm_w/2 - 4) - 1.5, sm_cy + sm_l/2 + board_clear, floor_t - 0.01])
+                    cube([3, 2.0, s_standoff + pcb_t + 1.0]);
         }
         // the screws: seats through the plate, pan heads over their glands in seal mode
         for (p = post_xy())
@@ -516,6 +533,14 @@ module front() { translate([0, 0, -base_d]) shell_asm(); }
 module shell_asm() {
     difference() {
         shell_solid();
+        // the gasket groove, cut into the ledge — HERE, after shell_solid()'s
+        // union adds the posts, not inside its cavity difference: the -Y wall
+        // post stands 0.5 inside the wall, so its body reached 0.5 into the
+        // groove's inner cheek and refilled it from z 2.2 to 3.2 — the sealed
+        // build's printed ring met 0.36 mm³ of post there and rode up on it
+        // (2026-10-22 audit; the pilot alone was checked clear of the cheek)
+        if (e_seal)
+            translate([0, 0, floor_t - 0.01]) linear_extrude(gasket_groove + 0.01) rim_ring2d(gasket_w);
         // the posts' blind pilots, up from their end faces — cut LAST, through
         // the posts the union below adds
         for (p = concat(corner_xy(), midx_xy(), midy_xy()))
@@ -551,9 +576,7 @@ module shell_solid() {
             translate([0, 0, base_d]) pl_cavity_cut(inner_x, inner_y, core_cav_r(corner_r, wall_eff), cav_d, floor_cove);
             // the plate's bore below the ledge
             pl_bore_cut(bore_x, bore_y, bore_r, floor_t, plate_t);
-            // the gasket groove, cut into the ledge
-            if (e_seal)
-                translate([0, 0, floor_t - 0.01]) linear_extrude(gasket_groove + 0.01) rim_ring2d(gasket_w);
+            // (the gasket groove is cut in shell_asm(), after the posts — see there)
             translate([0, 0, base_d]) {
                 // the hood's seat: a hood_seat-deep groove in the show face on the
                 // collar's footprint (the hood is its own part)

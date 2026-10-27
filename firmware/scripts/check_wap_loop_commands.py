@@ -2901,7 +2901,7 @@ BT_GET_KEYS = {
         "store": ("held", "capacity", "unlisted"),   # F209: NimBLE's bond store beside the list
         "conn": ("address", "name", "rssi", "distance_m", "distance_label", "security",
                  "connected_sec", "bytes_sent", "bytes_received"),
-        "pair": ("state", "pin", "peer_address", "peer_name"),
+        "pair": ("state", "pin", "pin_hidden", "peer_address", "peer_name"),
         "stats": ("total_connections", "total_bytes_sent", "total_bytes_received",
                   "advertising_time_sec", "connected_time_sec"),
     },

@@ -112,20 +112,32 @@ void on_wifi_sta_connected();
 constexpr size_t SESSION_COOKIE_HEX_LEN = 64;
 
 /**
- * True if the request carries a `cv_session=<hex>` cookie that matches
- * a live, unexpired session in the in-RAM session store. Never sends
+ * True if the request carries a session cookie, `__Host-cv_session=<hex>`
+ * (set over HTTPS) or else `cv_session=<hex>` (set over plain HTTP; sweep
+ * F337), that matches a live, unexpired session in the in-RAM session
+ * store, and only when the request's Host can name this device
+ * (host_guard.h's rule; sweep F344, its third review): a missing, oversize
+ * or foreign Host is false whatever the cookie holds, so a live value a
+ * DNS-rebinding page sets for its own public name opens nothing (a page
+ * another network served under one of the device's names is not told
+ * apart: canary_wap.ino, request_host_names_device()). The Host is asked
+ * first. A `__Host-` cookie that is present is the one asked, malformed or
+ * not: the plain one behind it is not tried. Never sends
  * a response — caller decides what to do on failure (handle_ui shows
- * a pair landing; CSI API handlers fall through to Bearer auth or 401).
+ * a pair landing; CSI API handlers fall through to Bearer auth or 401;
+ * the landing page mints a session for any host on the network, F346).
  *
  * Replaces the previous design where the device's Bearer api_token was
  * injected into dashboard HTML — that approach made the token
  * harvestable by anyone on the SoftAP who could view-source on /
  * (per pull-request review #392 r3213361582). Cookies are HttpOnly +
- * SameSite=Strict, so JS can't read them and cross-origin requests
- * can't forge them, and Secure on an answer from the HTTPS server
+ * SameSite=Strict, so JS can't read them and a cross-site request
+ * doesn't carry them (CSRF; a page that rebinds its own name to this
+ * device is same-site to itself, and the Host question above is what stops
+ * the cookie it sets), and Secure on an answer from the HTTPS server
  * (canary_wap.ino session_cookie_header()), so a browser never sends
- * one to the port-80 redirect in the clear. The header is read by the
- * cookie's whole name: "xcv_session=" is not this cookie.
+ * one to the port-80 redirect in the clear. The header is read by each
+ * cookie's whole name: "xcv_session=" is neither cookie.
  *
  * A session signs a browser into the dashboard and nothing more (sweep
  * F289): the landing page mints one for whoever loads / on the home
@@ -133,8 +145,9 @@ constexpr size_t SESSION_COOKIE_HEX_LEN = 64;
  * The two routes whose answer carries a credential — GET
  * /api/provisioning-receipt (the token, the SoftAP password, the TLS pin)
  * and GET /api/pairing-qr (the token and the pin) — never take it; their
- * bearer grant is the Authorization header alone, under the one lockout
- * (api_auth.h's api_auth_bearer_grant / api_auth_check_bearer).
+ * bearer grant is the Authorization header alone, under every admin route's
+ * per-address lockout (api_auth.h's api_auth_bearer_grant /
+ * api_auth_check_bearer).
  */
 bool session_validate_cookie(httpd_req_t* req);
 
@@ -204,15 +217,20 @@ uint32_t outbound_bytes_today();
  *
  * The captive-portal landing page bakes a fresh pairing token into the QR
  * code (and into the manual /companion?token=<hex> fallback link). The
- * token gates HTTP-side provisioning so a casual visitor on the AP can't
- * drive credentials into /api/wifi/connect by guessing the URL — see the
- * pair_token_valid() call in handle_wifi_connect (canary_wap.ino).
+ * token gates HTTP-side provisioning DURING FIRST-BOOT SETUP so a casual
+ * visitor on the AP can't drive credentials into /api/wifi/connect by
+ * guessing the URL — see wifi_change_authorize() (canary_wap.ino).
  *
- * Two consumers, two redemption models:
- *   - Wizard flow (/api/wifi/connect): validate-only via pair_token_valid().
- *     The token stays alive for the full 10-minute TTL so the wizard's
- *     "Try again" path works after a mistyped password without forcing a
- *     fresh QR scan. The token ages out naturally; we don't burn it.
+ * Two consumers, two redemption models, one slot pool (no token kind):
+ *   - Wizard flow (/api/wifi/connect, /ap-only, /qr-scan): validate-only
+ *     via pair_token_valid(), a first-boot grant. After setup connect and
+ *     ap-only take the bearer alone and the scan's POST start answers 404
+ *     (sweep F334): the landing page below mints into the same pool for any
+ *     caller on the home network, so a token it hands out must never move
+ *     the network. The scan's status and stop still take a pair token.
+ *     The token stays alive for the full
+ *     10-minute TTL so the wizard's "Try again" path works after a mistyped
+ *     password without forcing a fresh QR scan; we don't burn it.
  *   - Dashboard auto-login (?cv_pair=<hex> on /): single-use via
  *     pair_token_consume(). The token is exchanged for a 24 h cv_session
  *     cookie, and the slot is burned on first redemption.

@@ -69,6 +69,26 @@ inline bool ap_teardown_due(bool ap_only, bool sta_connected, uint32_t now_ms,
          (uint32_t)(now_ms - connected_since_ms) > grace_ms;
 }
 
+// The health signal the A/B confirm dwell reads (securacv_ota_health_tick,
+// docs/OTA.md §2). A new image is confirmed only after this has held for the
+// dwell; a restart before then boots the previous image again. The signal is
+// the link this unit is set up to hold. A unit that joins home Wi-Fi
+// (sta_join_allowed, above) is healthy while its station link is up, so an
+// image that cannot hold the home network rolls back. A unit with no home
+// network to join runs on its own access point: the standalone choice ("Use
+// without home WiFi"), home Wi-Fi turned off, or nothing saved yet. For that
+// unit the AP being up is the link. The old signal read only the station link,
+// so a standalone unit updated over Bluetooth (ble_ota.cpp needs no Wi-Fi)
+// never confirmed, and its next restart put the old firmware back. How many
+// phones are on the AP is not the test: an AP nobody has joined is still the
+// unit doing its job. Arguments in sta_join_allowed's order, then the two
+// link facts.
+inline bool ota_confirm_link_healthy(bool ap_only, bool configured, bool enabled,
+                                     bool sta_connected, bool ap_up) {
+  if (sta_join_allowed(ap_only, configured, enabled)) return sta_connected;
+  return ap_up;
+}
+
 // Deferred post-provisioning reboot: armed (deadline != 0) once the STA
 // joins during first-boot setup, due when the grace elapses. Rebooting the
 // moment WL_CONNECTED fired killed the AP ~1 s after the join — before the
@@ -166,6 +186,33 @@ inline bool ble_scanners_release_due(bool ap_only, bool ap_active,
 inline bool ap_only_for_discovery(bool ap_only_persisted, bool state_ap_only,
                                   bool credentials_configured) {
   return ap_only_persisted || (state_ap_only && credentials_configured);
+}
+
+// Whether a keyless join may happen: one that asks for no credential, only
+// for presence (the Bluetooth setup door's Just Works claim, the camera's
+// boot QR scan). Open only on a unit with no stored network that is not
+// standalone on purpose (a standalone unit must never take a stranger's
+// network). One predicate for both doors (sweep F333): the boot scan used
+// to test only the stored network, so a code held to a standalone unit's
+// lens took it off standalone. After setup only the owner's own acts make
+// it true again: Forget Wi-Fi with the bearer (F345), or the 10 s hold.
+// has_credentials is the caller's fact (the door counts a join still being
+// proven as none).
+inline bool keyless_join_open(bool has_credentials, bool ap_only) {
+  return !has_credentials && !ap_only;
+}
+
+// Whether a running QR scan window may still act on a code it reads, asked
+// after every frame (canary_wap.ino qr_scan_task_fn). A boot window
+// (auto_scan) holds the keyless-join rule above for its whole run, not only
+// at its start (F333's review). A phone session's window, which POST
+// /api/wifi/qr-scan starts only during first-boot setup (F334), holds only
+// while setup does: setup can end by another path while it runs (the
+// Bluetooth door's join, a second tab's standalone choice), and after setup
+// a network move takes the bearer.
+inline bool scan_window_open(bool auto_scan, bool has_credentials, bool ap_only,
+                             bool setup_active) {
+  return auto_scan ? keyless_join_open(has_credentials, ap_only) : setup_active;
 }
 
 // The Bluetooth setup door's first-boot window is re-armed by a POWER CYCLE,

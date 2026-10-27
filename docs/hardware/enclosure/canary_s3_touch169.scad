@@ -45,6 +45,16 @@
 //      rattle: the C3's lid-slide defect exactly);
 //    * the C3's glass-relief band stands the window rim 0.25 off the
 //      innermost 0.5 of the lip, so the rim never contacts the glass edge.
+//
+//  2026-10-22: v0.2-dev — the back's skirt ring blocked two of the three
+//  button holes and the whole side slot. It stands 0.1 inside the bezel wall
+//  from the PCB back plane (bezel z 6.2) to the rim (10.7), and its only
+//  notches were the USB pair, so a pin pushed through the x = ±9 holes met
+//  1.6 of skirt (a Ø2 pin ∩ the seated back: 9.9 mm³, both ways round) and a
+//  lead leaving the +X slot met it across 4.5 of the slot's 5.0. The skirt
+//  is now notched behind the buttons and the slot, mirrored like the USB
+//  notch so the lid still seats either way round; the nubs stay on solid
+//  skirt (0.9 from the side notch), the bezel and the envelope do not move.
 // ============================================================================
 
 use <canary_core_lib.scad>    // rrect2d/pill2d + the catalog tolerance trio the knobs cite
@@ -292,7 +302,9 @@ function nub_ys() = [-(yc/2 - r_in - snap_w/2 - 0.4), yc/2 - r_in - snap_w/2 - 0
 assert(max([for (yy = nub_ys()) abs(yy)]) + snap_w/2 <= yc/2 - r_in,
        "a snap window runs onto the cavity's corner arc — the nub must face straight wall");
 // the snap is worked at every service, so the lib's CYCLE budget binds. The
-// skirt is a closed ring rooted snap_depth off its plate — effectively rigid —
+// skirt is rooted along its whole run snap_depth off its plate (1.6 thick
+// over 2.6: about four times the wall's stiffness per millimeter of run; the
+// notches behind the openings leave each nub on a corner piece) — effectively rigid —
 // so the bezel side wall is the beam that takes the nub's travel: rooted at
 // the face plate, loaded at the window center, deflected by what the nub tip
 // stands past the cavity wall (the tip cube's outer face is snap_proud + 0.05
@@ -311,6 +323,14 @@ vent_z1 = bez_h - snap_depth - snap_h/2 - 0.8;
 assert(vent_z1 - vent_z0 >= 2.0, "no wall left for vent slots below the snap windows — raise back_stack or drop opt_vent");
 assert(!opt_side || len([for (yy = nub_ys()) if (abs(yy - side_open_dy) < side_open_h/2 + snap_w/2 + 0.8) 1]) == 0,
        "a +X snap window shares its wall with the side cluster slot");
+// the skirt is notched behind the buttons (see back()) wherever their holes
+// reach its band — always at btn_side "back" — as one straight notch per ±Y
+// wall, which has to end on the skirt's straight run: past it the square cut
+// would leave a sliver of the corner arc standing
+btn_notch = opt_btn && z_btn + btn_d/2 > bez_h - skirt_dep;
+assert(!btn_notch || max(concat([for (bx = btn_xs) abs(bx) + btn_d/2 + tol_hole],
+                              opt_usb ? [abs(usb_dx) + (usb_ch_w + 0.2)/2] : [])) <= skirt_x/2 - r_in,
+       "the skirt notch behind the buttons runs onto the skirt's corner arc — btn_xs sit too near the corners");
 
 // stagger the PCB-pressing standoffs just inside the PCB corners
 function standoff_pts() = [for (sx = [1,-1], sy = [1,-1])
@@ -432,6 +452,23 @@ module back() {
                 translate([-s*usb_dx, -s*(yo/2 - (usb_reach + 0.3)/2 + 0.1), back_t - plate_relief/2 + 0.1])
                     cube([usb_ch_w + 0.2, usb_reach + 0.3, plate_relief + 0.2], center = true);
         }
+        // the button holes and the side-cluster slot look through the skirt
+        // ring too: it stands 0.1 inside the bezel wall from the PCB back
+        // plane to the rim, which is the whole height of both. Notched behind
+        // each, as the MIRRORED pair the USB notch is, so the lid turned 180°
+        // clears them as well. On the ±Y walls one notch spans every opening
+        // that can face that wall (the buttons, and the turned USB channel):
+        // cut apart, they left 0.4-wide slivers of skirt between them.
+        if (btn_notch) for (s = [1, -1]) {
+            bw  = btn_d + 2*tol_hole;
+            los = concat([for (bx = btn_xs) -s*bx - bw/2], opt_usb ? [s*usb_dx - (usb_ch_w + 0.2)/2] : []);
+            his = concat([for (bx = btn_xs) -s*bx + bw/2], opt_usb ? [s*usb_dx + (usb_ch_w + 0.2)/2] : []);
+            translate([(min(los) + max(his))/2, s*(skirt_y/2 - skirt_wall/2), back_t + skirt_dep/2 + 0.05])
+                cube([max(his) - min(los), skirt_wall + 0.6, skirt_dep + 0.3], center = true);
+        }
+        if (opt_side) for (s = [1, -1])
+            translate([-s*(skirt_x/2 - skirt_wall/2), s*side_open_dy, back_t + skirt_dep/2 + 0.05])
+                cube([skirt_wall + 0.6, side_open_h + 2*tol_slide, skirt_dep + 0.3], center = true);
         // BLIND keyhole pocket, cut into plate + pad from the outer face
         // (slot toward +Y = UP on the wall, so the case slides DOWN to seat —
         // gravity is the latch). canary_mount_lib draws it natively along the

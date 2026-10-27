@@ -215,7 +215,28 @@ bool init(NimBLEServer* server, const uint8_t release_pubkey[32]);
 // route are not these tests'.
 #include "esp_http_server.h"
 #define SECURACV_API_AUTH_H
+// The gates (sweep F346): every tap passes api_auth_check, as the dashboard's
+// session does; only a tap with g_bearer set passes the bearer-only two, as
+// only a real Authorization header does (api_auth.h). The bearer-only refusal
+// answers 401 as api_auth_check_bearer() does for a session alone. The
+// status route's grant is counted: it is an accounted compare (a strike for
+// a wrong bearer), so it must run only while a passkey is displayed, never
+// on every poll.
+bool g_bearer = false;
+int g_bearer_grants = 0;   // the accounted grant's calls (the status route's)
 inline bool api_auth_check(httpd_req_t*, const char*) { return true; }
+inline bool api_auth_bearer_grant(httpd_req_t*, const char* tok) {
+  ++g_bearer_grants;
+  return g_bearer && tok != nullptr && tok[0] != '\0';
+}
+inline bool api_auth_check_bearer(httpd_req_t* r, const char* tok) {
+  if (g_bearer && tok != nullptr && tok[0] != '\0') return true;
+  r->status = "401 Unauthorized";
+  r->type = "application/json";
+  r->resp = "{\"error\":\"unauthorized\"}";
+  ++r->sends;
+  return false;
+}
 namespace ble_ota {
 enum OtaState : uint8_t { OTA_IDLE = 0 };
 inline OtaState get_state() { return OTA_IDLE; }
@@ -3514,9 +3535,10 @@ void the_dispatcher_is_installed() {
 // does not override it, so NimBLE-Arduino's default answered yes on the
 // NimBLE host task, the owner never saw the six digits, and the channel
 // never saw the link or the bond. Now both go through the dispatcher: the
-// passkey reaches the channel and waits for the owner, only the owner's
-// confirm answers it (once, yes, on the loop task), the bond reaches the
-// paired list, and Opera still counts the link up and down.
+// passkey reaches the channel and waits for a confirm over REST (the bearer
+// alone since F346: the_bond_confirm_takes_the_bearer drives that route),
+// which answers it once, yes, on the loop task; the bond
+// reaches the paired list, and Opera still counts the link up and down.
 void test_full_profile_the_owner_answers_every_pairing() {
   boot();
   opera_init();
@@ -5965,6 +5987,118 @@ struct Test {
   const char* name;
   void (*fn)();
 };
+// A Passkey Entry's digits ride GET /api/bluetooth only with the bearer
+// (sweep F346): a session's status says a PIN is shown (pin_hidden), the
+// bearer's carries it. Before F346 every session read them, and with them a
+// keyboard-only radio in range bonded with no owner anywhere.
+void test_a_passkey_rides_only_with_the_bearer() {
+  boot();
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  uint32_t shown = 0;
+  on_nimble([&] { shown = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  loop_pass();
+  CHECK(bc::g_pairing.state == bc::PAIR_PIN_DISPLAYED && bc::g_pairing.pin_code == shown);
+  char six[16];
+  snprintf(six, sizeof six, "%06lu", (unsigned long)shown);
+  bluetooth_api::auth_token_storage() = "cv_test_token";
+  g_bearer = false;
+  g_bearer_grants = 0;
+  const std::string session = tap(bluetooth_api::handle_bluetooth_status).body;
+  CHECK(session.find(six) == std::string::npos && session.find("\"pin\":") == std::string::npos);
+  CHECK(session.find("\"pin_hidden\":true") != std::string::npos);
+  CHECK(g_bearer_grants == 1);   // the passkey is live: one accounted compare
+  CHECK(session.find("\"state\":\"pin_displayed\"") != std::string::npos);
+  g_bearer = true;
+  const std::string owner = tap(bluetooth_api::handle_bluetooth_status).body;
+  CHECK(owner.find(std::string("\"pin\":") + std::to_string(shown)) != std::string::npos);
+  CHECK(owner.find("pin_hidden") == std::string::npos);
+  g_bearer = false;
+  bluetooth_api::auth_token_storage() = nullptr;
+  std::printf("PASS a_passkey_rides_only_with_the_bearer\n");
+}
+
+// A finished pairing's digits are spent (sweep F346): pin_displayed stays
+// set after PAIR_COMPLETE and PAIR_FAILED, and neither a session nor the
+// bearer is answered digits or pin_hidden for one, so the dashboard never
+// asks a session-only page to sign in for a pairing that is over.
+void test_a_finished_pairing_shows_no_digits() {
+  boot();
+  bluetooth_api::auth_token_storage() = "cv_test_token";
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo phone = link(7, 0xA1);
+  host_sim::server->peers = {7};
+  host_sim::server->link_up(phone);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  uint32_t shown = 0;
+  on_nimble([&] { shown = host_sim::server->callbacks()->onPassKeyDisplay(); });
+  loop_pass();
+  CHECK(bc::g_pairing.state == bc::PAIR_PIN_DISPLAYED);
+  phone.encrypted = phone.authenticated = phone.bonded = true;
+  host_sim::store_bond(phone.getIdAddress(), /*irk=*/false);
+  on_nimble([&] { host_sim::server->callbacks()->onAuthenticationComplete(phone); });
+  loop_pass();
+  CHECK(bc::g_pairing.state == bc::PAIR_COMPLETE && bc::g_pairing.pin_displayed);
+  g_bearer_grants = 0;
+  for (bool b : {false, true}) {
+    g_bearer = b;
+    const std::string body = tap(bluetooth_api::handle_bluetooth_status).body;
+    CHECK(g_bearer_grants == 0);   // spent digits: nothing to compare for
+    CHECK(body.find("\"state\":\"complete\"") != std::string::npos);
+    CHECK(body.find("\"pin\":") == std::string::npos && body.find("pin_hidden") == std::string::npos);
+  }
+  g_bearer = false;
+  bluetooth_api::auth_token_storage() = nullptr;
+  std::printf("PASS a_finished_pairing_shows_no_digits\n");
+}
+
+// The bond's confirm takes the bearer (sweep F346). A Numeric Comparison's
+// digits stay in a session's status (the phone shows the same six, so they
+// are no secret, and the owner compares them), but the route register_routes()
+// gives POST /api/bluetooth/pair/confirm refuses a session alone 401 and
+// answers nothing to the stack; a bearer's confirm answers it yes, once.
+// Before F346 the route was bt_auth_gated, which a session passes, so a host
+// on the network with a radio in range confirmed its own phone's bond.
+void test_the_bond_confirm_takes_the_bearer() {
+  boot();
+  registered_routes().clear();
+  bluetooth_api::register_routes(nullptr, "cv_test_token");
+  Handler confirm = nullptr;
+  for (const httpd_uri_t& u : registered_routes()) {
+    if (u.method == HTTP_POST && std::string(u.uri) == "/api/bluetooth/pair/confirm") confirm = u.handler;
+  }
+  CHECK(confirm != nullptr);
+  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
+  NimBLEConnInfo phone = link(7, 0xA1);
+  host_sim::server->peers = {7};
+  host_sim::server->link_up(phone);
+  on_nimble([&] { host_sim::server->callbacks()->onConnect(host_sim::server.get(), phone); });
+  on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(phone, 482913); });
+  loop_pass();
+  CHECK(bc::g_pairing.state == bc::PAIR_CONFIRMING && bc::g_pending_pair_active);
+  // The comparison's line says one is pending, never the six (sweep F346):
+  // the health log is every session's read and durable on the SD card.
+  CHECK(health_says("BLE pairing PIN — awaiting user confirmation") == 1);
+  CHECK(health_detail("BLE pairing PIN — awaiting user confirmation").empty());
+  CHECK(!health_names("482913"));
+  host_sim::passkey_answers.clear();
+  g_bearer = false;
+  g_bearer_grants = 0;
+  const std::string status = tap(bluetooth_api::handle_bluetooth_status).body;
+  CHECK(status.find("\"pin\":482913") != std::string::npos);   // the box the owner compares
+  CHECK(g_bearer_grants == 0);   // a comparison's digits take no compare
+  const Tap refused = tap(confirm, "{\"pin\":482913}");
+  CHECK(refused.status == "401 Unauthorized" && refused.sleeps == 0);   // nothing submitted
+  CHECK(host_sim::passkey_answers.empty());
+  CHECK(bc::g_pairing.state == bc::PAIR_CONFIRMING && bc::g_pending_pair_active);
+  g_bearer = true;
+  const Tap ok = tap(confirm, "{\"pin\":482913}");
+  CHECK(ok.body == succeeded_with("Pairing confirmed"));
+  CHECK(host_sim::passkey_answers.size() == 1 && host_sim::passkey_answers[0].accept);
+  g_bearer = false;
+  bluetooth_api::auth_token_storage() = nullptr;
+  std::printf("PASS the_bond_confirm_takes_the_bearer\n");
+}
+
 const Test kTests[] = {
     {"a_pin_confirm_runs_on_the_loop_task", test_a_pin_confirm_runs_on_the_loop_task},
     {"a_confirm_and_the_timeout_answer_once", test_a_confirm_and_the_timeout_answer_once},
@@ -5993,6 +6127,9 @@ const Test kTests[] = {
     {"a_links_security_is_what_the_stack_said", test_a_links_security_is_what_the_stack_said},
     {"gatt_activity_counts_and_keeps_a_link", test_gatt_activity_counts_and_keeps_a_link},
     {"a_passkey_to_show_reaches_the_owner", test_a_passkey_to_show_reaches_the_owner},
+    {"a_passkey_rides_only_with_the_bearer", test_a_passkey_rides_only_with_the_bearer},
+    {"a_finished_pairing_shows_no_digits", test_a_finished_pairing_shows_no_digits},
+    {"the_bond_confirm_takes_the_bearer", test_the_bond_confirm_takes_the_bearer},
     {"a_scan_result_keeps_what_the_advertisement_said",
      test_a_scan_result_keeps_what_the_advertisement_said},
     {"times_are_the_callbacks", test_times_are_the_callbacks},

@@ -397,7 +397,9 @@ way.
 OpenIPC provides telnet/SSH for camera management. SecuraCV provides ONLY:
 - Local WiFi AP dashboard (HTTPS preferred, HTTP acceptable on local AP)
 - MQTT for event export (semantic records only, never frames)
-- Serial console (debug builds only, disabled in production)
+- Serial console over USB (enabled in release images; the WAP prints its provisioning
+  receipt there at every boot, so reading it takes physical access to the unit's USB
+  port; [THREAT_MODEL.md](security/THREAT_MODEL.md) §7)
 
 ### 3.5 Firmware from Cloud
 

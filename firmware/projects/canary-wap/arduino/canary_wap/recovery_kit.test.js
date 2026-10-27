@@ -31,7 +31,42 @@
 //     follow-up): a refused token is "Invalid or expired token", but a
 //     refusal of a page that holds no token (the kit's 403 or the pairing
 //     QR's 401 on a cookie session, or a session that has ended) says the
-//     session does not cover it, never a token the page never had.
+//     session does not cover it, never a token the page never had;
+//   * the BOOT tap goes to one asker (sweep F342): a 409 tap_contended
+//     stops the dashboard's sign-in on that answer and says another device
+//     asked, keeping no token and offering no kit, and a second click then
+//     asks first and signs in on the next tap; the Settings save
+//     says the same instead of "HTTP 409"; both name pasting the token
+//     first (the sign-in checks a pasted token by itself since the
+//     owner-authority PR: dashboard_gates.test.js 'The shared sign-in'),
+//     then the USB console, then the Bluetooth check, saying how the
+//     sign-in reaches that switch (a saved Bluetooth-off outlives the hold
+//     and everything the hold calls, #1843), then the 10 s hold, said to
+//     clear what it clears; the dashboard's
+//     timeout line sends the owner to click before the press (its old
+//     "Press BOOT and click above" was the press-first order the arbiter
+//     cannot protect); the
+//     companion's Save asks first and keeps asking every 2 s for 30 s while
+//     the owner presses BOOT (403, 403, 200 saves; a 409 says another device
+//     asked and gives Save back; any other refusal ends the save with its
+//     status; sixteen 403s, the last at 30 s, say no press was seen), its
+//     Home Assistant step's no-session line says Save before BOOT, and
+//     its banner is on screen whenever it holds a line;
+//   * the companion's save belongs to the step on screen (#1842's Codex
+//     review): Do this later or Run again while it runs aborts the ask out
+//     (the sixteenth too) and asks nothing more, and nothing is saved or shown after, a save
+//     tapped once the step is back is its own, and every function that
+//     hides the step stops the save first; with no save running, or after
+//     one has ended, a pane change still changes the pane, asks nothing and
+//     throws nothing, and an ended save's line is put away with the step
+//     (#1843); a fetch that rejects (a Wi-Fi
+//     blip) is followed by more asks until the sixteen are spent, a later
+//     200 is still served, the press line waits for the first 403, and a
+//     save the device never answered says so.
+//
+// Both harnesses answer 409 past ASK_CAP asks, so a page loop that stops
+// counting its asks fails rows by name; their timers run at once, so
+// without the cap such a loop hung the run, past node:test's own timeout.
 //
 //   node --test firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js
 
@@ -106,6 +141,178 @@ function startingDisplay(src, id) {
   return /display\s*:\s*none/.test(style) ? 'none' : '';
 }
 
+// An element's classList: add, remove, toggle (with its force argument) and
+// contains, as a browser's; `hidden` reads whether the class is set.
+function fakeClassList() {
+  const set = new Set();
+  return {
+    set,
+    get hidden() { return set.has('hidden'); },
+    add(...cs) { for (const c of cs) set.add(c); },
+    remove(...cs) { for (const c of cs) set.delete(c); },
+    toggle(c, force) {
+      const on = force === undefined ? !set.has(c) : !!force;
+      if (on) set.add(c); else set.delete(c);
+      return on;
+    },
+    contains(c) { return set.has(c); },
+  };
+}
+
+// The sketch's C++ as the compiler reads it: comments cut, and raw string
+// literals (the pages' HTML and script) emptied, so neither a word in a
+// comment nor a function in a page's script reads as code. Ordinary string
+// and character literals stay: an NVS key is one.
+function cppCode(src) {
+  let out = '';
+  for (let i = 0; i < src.length;) {
+    const c = src[i];
+    const d = src[i + 1];
+    if (c === '/' && d === '/') {
+      while (i < src.length && src[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && d === '*') {
+      const end = src.indexOf('*/', i + 2);
+      const stop = end < 0 ? src.length : end + 2;
+      out += src.slice(i, stop).replace(/[^\n]/g, ' ');
+      i = stop;
+      continue;
+    }
+    if (c === 'R' && d === '"' && ['', 'u8', 'u', 'U', 'L'].includes(src.slice(0, i).match(/\w*$/)[0])) {
+      const open = src.indexOf('(', i + 2);
+      const delim = src.slice(i + 2, open);
+      const close = src.indexOf(')' + delim + '"', open);
+      const stop = close < 0 ? src.length : close + delim.length + 2;
+      out += 'R""' + src.slice(i, stop).replace(/[^\n]/g, '');
+      i = stop;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c && src[j] !== '\n') j += src[j] === '\\' ? 2 : 1;
+      out += src.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+// The index of the brace that closes the one at `open`, past literals.
+function closingBrace(s, open) {
+  let depth = 0;
+  for (let i = open; i < s.length; i++) {
+    const c = s[i];
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < s.length && s[j] !== c && s[j] !== '\n') j += s[j] === '\\' ? 2 : 1;
+      i = j;
+    } else if (c === '{') {
+      depth++;
+    } else if (c === '}' && --depth === 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// Every free function the sketch defines that `root` reaches, root included:
+// each call in a body is tied to the sketch's definitions of that name the
+// call can see (its namespace qualifier, through the file's namespace
+// aliases, or for a bare name the caller's namespace and those around it),
+// and each of those is read in turn. A call to a function-like macro the
+// sketch defines reads the macro. A call the sketch defines no free
+// function or macro for is a library's (Serial, WiFi, Preferences, mbedtls,
+// libc) and is not read; a member call is not read either, so a check over
+// the bodies must name what a member call can touch (an NVS key, a clear).
+// A call whose name the sketch defines only where the call cannot see it,
+// or defines in a shape the index does not read (a body after `name(...)`
+// anywhere in the code), is a failure, not a guess. Returns
+// { bodies: Map<'ns::name (file)', code>, external }.
+function sketchCallWalk(root) {
+  const defs = new Map();
+  const macros = new Map();
+  const aliasesOf = new Map();
+  const bodied = new Set();
+  const files = fs.readdirSync(__dirname).filter((f) => /\.(ino|cpp|h)$/.test(f));
+  for (const file of files) {
+    const s = cppCode(read(path.join(__dirname, file)));
+    const scopes = [];
+    for (const m of s.matchAll(/\b(namespace|class|struct)\s+([\w:]+)[^;{}()=]*\{/g)) {
+      const open = m.index + m[0].length - 1;
+      scopes.push({ kind: m[1], name: m[2].split('::'), from: open, to: closingBrace(s, open) });
+    }
+    const aliases = new Map();
+    for (const m of s.matchAll(/\bnamespace\s+(\w+)\s*=\s*([\w:]+)\s*;/g)) {
+      aliases.set(m[1], m[2].split('::').filter(Boolean));
+    }
+    aliasesOf.set(file, aliases);
+    const defRe = /(?:^|[\n;{}])[ \t]*(?:template\s*<[^>]*>\s*)?(?:[\w:<>,]+[ \t*&]+)+((?:\w+::)*)(\w+)\s*\((?:[^;{}()]|\([^()]*\))*\)\s*(?:const\s*)?(?:noexcept\s*)?(?:override\s*)?\{/g;
+    for (const m of s.matchAll(defRe)) {
+      const open = m.index + m[0].length - 1;
+      const around = scopes.filter((x) => x.from < open && open < x.to).sort((a, b) => a.from - b.from);
+      const qual = m[1].split('::').filter(Boolean);
+      const def = {
+        file,
+        name: m[2],
+        method: around.some((x) => x.kind !== 'namespace'),
+        ns: around.flatMap((x) => x.name).concat(qual),
+        body: s.slice(m.index + m[0].match(/^[\n;{}]?[ \t]*/)[0].length, closingBrace(s, open) + 1),
+      };
+      if (!defs.has(def.name)) defs.set(def.name, []);
+      defs.get(def.name).push(def);
+    }
+    for (const m of s.matchAll(/\b(\w+)\s*\((?:[^;{}()]|\([^()]*\))*\)\s*(?:const\s*)?(?:noexcept\s*)?(?:override\s*)?\{/g)) {
+      bodied.add(m[1]);
+    }
+    for (const m of s.matchAll(/#define[ \t]+(\w+)\((?:[^\n]*\\\n)*[^\n]*/g)) {
+      if (!macros.has(m[1])) macros.set(m[1], []);
+      macros.get(m[1]).push({ file, name: m[1], method: false, ns: [], body: m[0] });
+    }
+  }
+  const endsWith = (a, b) => b.length <= a.length && b.every((x, i) => a[a.length - b.length + i] === x);
+  const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'return', 'sizeof', 'alignof', 'decltype',
+                            'static_assert', 'defined', 'catch']);
+  const bodies = new Map();
+  const external = new Set();
+  const queue = (defs.get(root) || []).filter((d) => !d.method && d.ns.length === 0);
+  assert.equal(queue.length, 1, root + ' is one free function of the sketch');
+  while (queue.length) {
+    const d = queue.shift();
+    const key = d.ns.concat(d.name).join('::') + ' (' + d.file + ')';
+    if (bodies.has(key)) continue;
+    bodies.set(key, d.body);
+    const calls = d.body.slice(d.body.indexOf(d.name) + d.name.length)
+      .replace(/"(?:[^"\\\n]|\\.)*"/g, '""').replace(/'(?:[^'\\\n]|\\.)*'/g, "''");
+    for (const m of calls.matchAll(/(?:^|[^\w.>:])((?:::)?(?:\w+::)*\w+)\s*\(/g)) {
+      let parts = m[1].split('::').filter(Boolean);
+      const name = parts.pop();
+      if (KEYWORDS.has(name)) continue;
+      const aliases = aliasesOf.get(d.file);
+      if (parts.length && aliases.has(parts[0])) parts = aliases.get(parts[0]).concat(parts.slice(1));
+      const free = (defs.get(name) || []).filter((x) => !x.method);
+      const seen = parts.length
+        ? free.filter((x) => endsWith(x.ns, parts))
+        : free.filter((x) => x.ns.length <= d.ns.length && x.ns.every((n, i) => d.ns[i] === n));
+      if (seen.length) {
+        queue.push(...seen);
+      } else if (!parts.length && macros.has(name)) {
+        queue.push(...macros.get(name));
+      } else {
+        assert.equal(free.length, 0, 'the walk from ' + root + ' cannot tell which ' + m[1] + '() ' + key +
+                     ' calls: the sketch defines it only in ' + free.map((x) => x.ns.join('::') || '(global)').join(', '));
+        assert.ok(!bodied.has(name), 'the walk from ' + root + ' cannot read ' + m[1] + '(), which ' + key +
+                  ' calls: the sketch gives a body to that name in a shape the walk does not index');
+        external.add(m[1]);
+      }
+    }
+  }
+  return { bodies, external };
+}
+
 // A browser window just big enough for the pages' kit code: elements by id
 // (starting as `markup` draws them), a body, Blob, URL and timers, with every
 // save recorded.
@@ -113,9 +320,7 @@ function fakeWindow(ids, markup) {
   const els = {};
   for (const id of ids) {
     const display = markup ? startingDisplay(markup, id) : 'none';
-    els[id] = { id, style: { display }, textContent: '', className: '',
-                classList: { hidden: false, add(c) { if (c === 'hidden') this.hidden = true; },
-                             remove(c) { if (c === 'hidden') this.hidden = false; } } };
+    els[id] = { id, style: { display }, textContent: '', className: '', classList: fakeClassList() };
   }
   const saved = [];
   const appended = [];
@@ -161,12 +366,14 @@ function dashboard(answers, routes = {}) {
     kitBlock(src, 'web_ui.h'),
     src.match(/\n {4}let apiToken = null;\n/)[0],
     uiFunction(src, 'secureFetch', true),
+    uiFunction(src, 'signInRaised'),
     uiFunction(src, 'showAuthModal'),
     uiFunction(src, 'hideAuthModal'),
     src.match(/\n {4}let recoveryKitText = null;\n/)[0],
     uiFunction(src, 'offerRecoveryKit'),
     uiFunction(src, 'closeRecoveryKit'),
     uiFunction(src, 'saveRecoveryKit'),
+    uiFunction(src, 'tapContendedText'),
     uiFunction(src, 'saveRecoveryKitFromSettings', true),
     uiFunction(src, 'requestFromDevice', true),
     ';({ requestFromDevice, saveRecoveryKit, closeRecoveryKit, saveRecoveryKitFromSettings, secureFetch,',
@@ -174,6 +381,9 @@ function dashboard(answers, routes = {}) {
   ].join('\n');
   const win = fakeWindow(DASH_IDS, src);
   const asked = [];
+  // The sign-in's status line as each receipt ask leaves (what the owner
+  // reads while the page is asking), kept apart from `asked`.
+  const statusAtAsk = [];
   let queue = answers.slice();
   let polls = 0;
   const calls = { start: 0 };
@@ -196,7 +406,11 @@ function dashboard(answers, routes = {}) {
       if (url !== '/api/provisioning-receipt') {
         return { status: 200, ok: true, json: async () => ({}), text: async () => '{}' };
       }
-      const a = queue[Math.min(polls++, queue.length - 1)];
+      statusAtAsk.push(win.els.authStatus.textContent);
+      // Past ASK_CAP polls the device says 409, which ends the sign-in: a
+      // poll that stopped counting fails by name instead of hanging.
+      const a = polls >= ASK_CAP ? (polls++, TAP_409) : queue[Math.min(polls++, queue.length - 1)];
+      if (a.blip) throw new TypeError('Failed to fetch');   // the ask never reached the device
       return { status: a.status, ok: a.status >= 200 && a.status < 300,
                json: async () => JSON.parse(a.body), text: async () => a.body };
     },
@@ -207,7 +421,7 @@ function dashboard(answers, routes = {}) {
   ctx.window = ctx;   // the page's global object is its window
   const api = vm.runInNewContext(code, ctx, { filename: 'web_ui.recovery_kit.js' });
   const more = (next) => { queue = next.slice(); polls = 0; };
-  return { api, win, asked, calls, ctx, more };
+  return { api, win, asked, statusAtAsk, calls, ctx, more };
 }
 
 async function dashboardTap(answers) {
@@ -222,6 +436,33 @@ function carried(asked, text) {
 }
 
 const GATE_403 = { status: 403, body: '{"error":"physical_confirmation_required","gate_ttl_seconds":30}' };
+// The device's answer when another address asked during the same BOOT tap
+// (canary_wap.ino handle_provisioning_receipt, sweep F342).
+const TAP_409 = { status: 409, body: '{"error":"tap_contended","hint":"Another device on this network asked for the receipt during the same BOOT tap, so the tap was closed and nothing was handed out. When only one device is asking, start your request first and keep it asking, then press BOOT. Or send the recovery kit\'s token as a bearer, or read the token from the USB serial console."}' };
+const CONTENDED = /^Another device on your network asked for this Canary's keys at the same time, so it said no\./;
+// A request that never reached the device (a network blip, a TLS handshake
+// that failed): fetch rejects.
+const BLIP = { blip: true };
+// More asks than either page makes (the companion's sixteen, the
+// dashboard's thirty per sign-in): from here the harnesses answer 409.
+const ASK_CAP = 64;
+// The retry each page's 409 names (sweep F342's fourth review): the click
+// that asks first, then the press, once the sign-in's line says to (it says
+// so after the device's first 403: #1843's sweep, fourth pass). The
+// sign-in's own button, and the Settings save, whose next 403 opens the
+// sign-in.
+const SIGN_IN_RETRY = 'wait 10 seconds, then click Use BOOT Tap Once again, and short-tap BOOT when this line says to.';
+const SETTINGS_RETRY = 'wait 10 seconds, then click Save my recovery kit again; when the sign-in opens, ' +
+                       'click Use BOOT Tap Once there, and short-tap BOOT when the sign-in says to.';
+// The click comes before the press in `text`, and no line in it re-tries
+// without naming the click.
+function clickBeforePress(text, click) {
+  const c = text.indexOf(click);
+  const p = text.indexOf('short-tap BOOT');
+  assert.ok(c >= 0, 'the retry names no "' + click + '": ' + text);
+  assert.ok(p > c, 'the press comes before the click: ' + text);
+  assert.doesNotMatch(text, /try again/i, 'a bare "try again" reads as "press BOOT again"');
+}
 
 describe('one builder, two pages', () => {
   it('web_ui.h and companion_pwa.h carry the same RECOVERY_KIT lines', () => {
@@ -381,6 +622,92 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.match(win.els.authStatus.textContent, /Didn't see a tap/);
   });
 
+  it("the timeout copy names the click before BOOT (sweep F342's second review)", async () => {
+    // The tap goes only to an address that asked from 10 s before it onward,
+    // so the retry must ask first. The old copy ("Press BOOT and click above
+    // to try again") led the owner to press while no page of theirs was
+    // asking, and a host watching /api/logs for the tap was then the first
+    // and only asker.
+    const { win, asked } = await dashboardTap([GATE_403]);
+    assert.equal(asked.filter((q) => q.url === '/api/provisioning-receipt').length, 30, 'the 60 s budget');
+    const text = win.els.authStatus.textContent;
+    assert.equal(text, "Didn't see a tap. Click Use BOOT Tap Once again, and short-tap BOOT when this line says to.");
+    assert.equal(win.els.authStatus.className, 'auth-status error');
+    assert.ok(text.indexOf('Click') >= 0 && text.indexOf('Click') < text.indexOf('short-tap BOOT'),
+              'the click comes before the press');
+    assert.doesNotMatch(read(UI), /Press BOOT and click/);
+    // And the press waits for the line, as the companion's retry waits for
+    // its note: the line says to press only once the device has answered
+    // with 403 (#1843's sweep, fourth pass; "then short-tap BOOT" and "and
+    // only then short-tap BOOT" read as press-at-once).
+    assert.doesNotMatch(read(UI), /Tap Once again, then short-tap BOOT|and only then short-tap BOOT/,
+                        'no retry line names the press without waiting for the line');
+  });
+
+  it('the sign-in card and the listening line put the click before BOOT too', async () => {
+    // The card's standing instruction is the first thing the owner reads,
+    // and press-first is the one order the device cannot protect: a tap no
+    // page of the owner's was asking for goes to the first asker.
+    const card = read(UI).match(
+      /onclick="requestFromDevice\(\)">Use BOOT Tap Once<\/button>\s*<p[^>]*>\s*([^<]*?)\s*<\/p>/);
+    assert.ok(card, 'the instruction under Use BOOT Tap Once was not found');
+    assert.equal(card[1], 'Click the button, then short-tap BOOT on the Canary when the line below says to, within 60 seconds.');
+    assert.ok(card[1].indexOf('Click') < card[1].indexOf('short-tap BOOT'), 'the click comes before the press');
+    // The first ask leaves with "don't press yet"; once the device has
+    // answered it (403), the line says to press now, with the countdown.
+    const { statusAtAsk } = await dashboardTap([GATE_403, GATE_403, { status: 200, body: RECEIPT }]);
+    assert.equal(statusAtAsk[0], "Asking the Canary first. Don't press BOOT yet.");
+    assert.equal(statusAtAsk[1], 'Now short-tap BOOT on the device. Listening for BOOT tap — 58s left ' +
+                                 '(device holds the press for 30s).');
+    assert.ok(statusAtAsk.length === 3 && statusAtAsk.slice(1).every((t) => /^Now short-tap BOOT on the device\. Listening for BOOT tap — \d+s left/.test(t)),
+              'the press line and its countdown follow the first answer');
+    assert.ok(statusAtAsk.every((t) => !/click/i.test(t)), 'no line asks for a click after the press');
+  });
+
+  it("the line says to press only once the device has answered an ask (sweep F342's fourth review)", async () => {
+    // The tap goes to the one address asking from 10 s before it on (a tap
+    // no page was asking for goes to the first asker after it), and the
+    // page's first ask can still be on its way when the line appears (a TLS
+    // handshake, a blip the page swallows, a busy server). A press made as
+    // the old line appeared ("Now short-tap BOOT", set before the first
+    // fetch) could land before any ask of the page's had reached the
+    // device, and a host watching /api/logs for the tap was then its only
+    // asker. Two asks that never reached the device, then the device's 403.
+    const first = await dashboardTap([BLIP, BLIP, GATE_403, GATE_403, { status: 200, body: RECEIPT }]);
+    const { statusAtAsk } = first;
+    assert.equal(statusAtAsk.length, 5);
+    // A blip waits its 2 s like any other ask (#1843's fifth review: a
+    // catch that went straight to the next ask passed every row, and with
+    // the Wi-Fi down the 30 asks then ran out in moments, not 60 s).
+    assert.deepEqual(first.win.timers, [2000, 2000, 2000, 2000], 'a sleep after each of the four asks before the receipt');
+    for (const t of statusAtAsk.slice(0, 3)) {
+      assert.match(t, /^Asking the Canary first\. Don't press BOOT yet/, 'before the device answered: ' + t);
+      assert.doesNotMatch(t, /Now short-tap/);
+    }
+    assert.match(statusAtAsk[3], /^Now short-tap BOOT on the device\./, 'after its first answer');
+    // A device that never answers never told the owner to press, so the
+    // page does not say it missed a tap.
+    const { win } = await dashboardTap([BLIP]);
+    assert.equal(win.els.authStatus.textContent,
+                 "The Canary didn't answer. Click Use BOOT Tap Once again, and press BOOT only when this line says to.");
+    assert.equal(win.timers.filter((ms) => ms === 2000).length, 30, 'thirty blips, each followed by its 2 s: the 60 s the sign-in promises');
+    assert.doesNotMatch(read(UI), /'Now short-tap BOOT on the device\. Listening for 60 seconds\.'/);
+  });
+
+  it("the press line waits for a 403, not for any answer (sweep F342's final review)", async () => {
+    // The docs say both pages say to press only once the device has
+    // answered one of their asks with 403. Any other answer (a 503 or a
+    // 500, in http_send_error()'s shape) keeps the line at "Don't press
+    // BOOT yet"; the press line follows the first 403.
+    for (const early of [{ status: 503, body: '{"ok":false,"error":"no_address"}' },
+                         { status: 500, body: '{"ok":false,"error":"out_of_memory"}' }]) {
+      const { statusAtAsk } = await dashboardTap([early, GATE_403, { status: 200, body: RECEIPT }]);
+      assert.equal(statusAtAsk.length, 3, String(early.status));
+      assert.match(statusAtAsk[1], /^Asking the Canary first\. Don't press BOOT yet/, 'after a ' + early.status + ': ' + statusAtAsk[1]);
+      assert.match(statusAtAsk[2], /^Now short-tap BOOT on the device\./, 'after the 403');
+    }
+  });
+
   it('an answer that is not a receipt offers nothing', async () => {
     for (const body of ['{"ok":true}', '{"token":"cv_x"}']) {
       const { api, win } = await dashboardTap([{ status: 200, body }]);
@@ -391,6 +718,376 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     const { api, win } = await dashboardTap([{ status: 200, body: 'not json' }, GATE_403]);
     assert.equal(win.els.recoveryKitCard.style.display, 'none');
     assert.equal(api.kitText(), null);
+  });
+
+  it('another device asking during the tap (409) stops the sign-in on that answer and says so (sweep F342)', async () => {
+    // Before: a 409 was just another non-200, so the page polled all 30
+    // ticks and ended "Didn't see a tap", which is not what happened.
+    const { api, win, asked, calls } = await dashboardTap([GATE_403, GATE_403, TAP_409, { status: 200, body: RECEIPT }]);
+    assert.equal(asked.filter((q) => q.url === '/api/provisioning-receipt').length, 3, 'the poll stops at the 409');
+    assert.match(win.els.authStatus.textContent, CONTENDED);
+    assert.equal(win.els.authStatus.className, 'auth-status error');
+    assert.doesNotMatch(win.els.authStatus.textContent, /Didn't see a tap/);
+    assert.equal(api.token(), null, 'no token kept');
+    assert.equal(calls.start, 0, 'the dashboard is not started');
+    assert.equal(win.els.recoveryKitCard.style.display, 'none', 'no kit offered');
+    assert.equal(api.kitText(), null);
+  });
+
+  it('after a 409, a second click asks first and is served on the next tap (the bench retry)', async () => {
+    // The device's 409 ends ten seconds after the other device's last ask
+    // (sweep F342's review), so the click the copy prescribes ("wait 10
+    // seconds, then click Use BOOT Tap Once again, and short-tap BOOT when
+    // this line says to") hears 403 first and keeps listening.
+    const d = dashboard([GATE_403, TAP_409]);
+    await d.api.requestFromDevice();
+    assert.match(d.win.els.authStatus.textContent, CONTENDED);
+    assert.equal(d.api.token(), null);
+    d.more([GATE_403, GATE_403, { status: 200, body: RECEIPT }]);
+    await d.api.requestFromDevice();
+    assert.equal(d.api.token(), FIELDS.token, 'the retry signs in');
+    assert.equal(d.calls.start, 1, 'the dashboard starts once');
+    assert.equal(d.win.els.recoveryKitCard.style.display, 'block', 'and offers the kit');
+    assert.doesNotMatch(d.win.els.authStatus.textContent, CONTENDED);
+  });
+
+  it("the contention copy names the click before the press (sweep F342's fourth review)", async () => {
+    // The page stops asking on the 409, and the device's 409 comes only
+    // while another address is asking. Ten seconds after the page stopped,
+    // a bare re-tap goes to the first asker, which is that address if it is
+    // still asking: the token, the network password and the TLS pin. The
+    // copy used to say "wait 10 seconds, and try again", which an owner can
+    // read as "press BOOT again".
+    const { win } = await dashboardTap([GATE_403, TAP_409]);
+    const text = win.els.authStatus.textContent;
+    assert.match(text, CONTENDED);
+    assert.ok(text.includes('Close any other Canary pages and ' + SIGN_IN_RETRY), text);
+    clickBeforePress(text, 'click Use BOOT Tap Once');
+    // The Settings save: its next Save opens the sign-in, whose button asks first.
+    const d = dashboard([TAP_409]);
+    await d.api.saveRecoveryKitFromSettings();
+    const st = d.win.els.settingsKitErr.textContent;
+    assert.ok(st.includes('Close any other Canary pages and ' + SETTINGS_RETRY), st);
+    clickBeforePress(st, 'click Use BOOT Tap Once');
+    assert.ok(st.indexOf('click Save my recovery kit again') < st.indexOf('click Use BOOT Tap Once'));
+    assert.doesNotMatch(read(UI), /wait 10 seconds, and try again/);
+  });
+
+  it("the contention copy names the pasted token first, then the console, then the hold", () => {
+    const d = dashboard([GATE_403]);
+    const fn = uiFunction(read(UI), 'tapContendedText');
+    const text = vm.runInNewContext(fn + '\n;tapContendedText("click Use BOOT Tap Once again, and short-tap BOOT when this line says to.")', {});
+    assert.match(text, CONTENDED);
+    assert.match(text, /recovery kit/);
+    assert.match(text, /USB console/);
+    assert.match(text, /hold BOOT for 10 seconds/);
+    // What the hold clears is factory_reset_by_hold()'s list (the saved
+    // Wi-Fi, the MQTT bridge's broker, the device name), not "its Wi-Fi".
+    assert.match(text, /this clears its Wi-Fi, its Home Assistant link and its name, and keeps the token/);
+    // The hold reopens the first-boot Bluetooth setup door, which goes to the
+    // first client in radio range that connects (magic_pairing.md §2.2): a
+    // host on the network that is also in range can take it and keep the
+    // token. So the kit and the console come first, the hold last, with the
+    // phone ready and the door's first-come rule named. The kit's way out is
+    // the token pasted into the sign-in: it needs no tap, so no other asker
+    // can close it, and the sign-in compares it without the session cookie
+    // (before the owner-authority PR it took the cookie's word for any
+    // pasted string, so this copy steered clear of the token box).
+    assert.match(text, /paste the token instead: it is in your recovery kit, and the USB console prints it/);
+    const kit = text.indexOf('recovery kit');
+    const usb = text.indexOf('USB console');
+    const hold = text.indexOf('hold BOOT for 10 seconds');
+    assert.ok(kit >= 0 && usb > kit && hold > usb, 'the kit, then the console, then the hold: ' + text);
+    assert.match(text, /with your iPhone ready: hold BOOT for 10 seconds/);
+    assert.match(text, /Bluetooth setup goes to the first phone or computer nearby that connects/);
+    assert.ok(d.api);
+  });
+
+  it("the contention copy says to check Bluetooth before the hold, by a switch the dashboard has and the sign-in can reach (#1843)", async () => {
+    // Any landing session can turn the WAP's Bluetooth off (F346), a saved
+    // setting the hold leaves alone, and while it is off every link is
+    // dropped: followed then, the advice clears the Wi-Fi and leaves the
+    // iPhone app nothing to set up. So the copy says to look first, and
+    // first in time as in words (#1843's fourth review: the check used to
+    // follow the hold's sentence, so it was read after the step it guards).
+    const fn = uiFunction(read(UI), 'tapContendedText');
+    const text = vm.runInNewContext(fn + '\n;tapContendedText("click Use BOOT Tap Once again, and short-tap BOOT when this line says to.")', {});
+    const check = text.indexOf('Last, check that Bluetooth Enabled is on under Settings → Bluetooth (');
+    const reach = text.indexOf("(if this page is asking you to sign in, first open the Canary's main page, " +
+                               'choose Open dashboard, then Settings there): ');
+    const why = text.indexOf('the hold below does not turn it back on, and with it off the iPhone app cannot set the Canary up. ');
+    const hold = text.indexOf('Then, with your iPhone ready: hold BOOT for 10 seconds');
+    assert.ok(check > text.indexOf('USB console') && reach > check && why > reach && hold > why, text);
+    assert.equal(text.indexOf('hold BOOT'), hold + 'Then, with your iPhone ready: '.length, 'no hold is named before the check');
+    // The switch it names, where it says: Settings, then Bluetooth, then
+    // the Bluetooth Enabled toggle in that sub-panel.
+    const ui = read(UI);
+    assert.match(ui, /<button class="nav-btn" data-panel="settings">Settings<\/button>/);
+    assert.match(ui, /onclick="switchSettingsTab\('bluetooth'\)">[^<]*Bluetooth<\/button>/);
+    const panel = ui.indexOf('<div class="sub-panel" id="settings-bluetooth">');
+    const next = ui.indexOf('<div class="sub-panel"', panel + 1);
+    const sw = ui.indexOf('<div class="toggle-title">Bluetooth Enabled</div>');
+    assert.ok(panel > 0 && sw > panel && (next < 0 || sw < next), 'the Bluetooth Enabled switch sits in Settings → Bluetooth');
+    assert.match(ui.slice(sw, next < 0 ? undefined : next), /id="btEnabled" onchange="toggleBtEnabled\(\)"/);
+    // "Does not turn it back on": nothing the hold runs touches Bluetooth's
+    // saved switch, "bt_enabled" in the main NVS namespace
+    // (bluetooth_channel.cpp's load_settings()), whose absence a boot reads
+    // as bt_defaults::ENABLED, on. The row reads every free function the
+    // hold reaches in the sketch, to the bottom (sketchCallWalk above), and
+    // holds each to no Bluetooth key, by its literal or by a name the sketch
+    // gives one, no clear or erase of a whole NVS namespace, and no call
+    // into Bluetooth code (#1843's fifth review: the fourth review's row read
+    // the hold for Bluetooth names and four named callees for the rest, and
+    // `nvs->clear()` in the hold's own session, a remove in
+    // start_captive_portal() two calls further down, or one in a new helper
+    // the hold called each passed it). Comments are cut, so
+    // wifi_clear_credentials()'s talk of the setup door is not read as code.
+    const ino = read(path.join(__dirname, 'canary_wap.ino'));
+    const body = (src, sig, file) => {
+      const at = src.indexOf(sig);
+      assert.ok(at >= 0, sig + ' not found in ' + file);
+      return src.slice(at, src.indexOf('\n}\n', at));
+    };
+    const bt = cppCode(read(path.join(__dirname, 'bluetooth_channel.cpp')));
+    assert.match(bt, /static const char\* NVS_KEY_BT_ENABLED = "bt_enabled";/);
+    assert.match(body(bt, 'static bool load_settings(BluetoothSettings* out) {', 'bluetooth_channel.cpp'),
+                 /NvsMainSession nvs\(true\);[\s\S]*out->enabled = nvs->getBool\(NVS_KEY_BT_ENABLED, bt_defaults::ENABLED\);/);
+    assert.match(read(path.join(__dirname, 'bt_defaults.h')), /constexpr bool ENABLED = true;/);
+    // Every name the sketch gives a Bluetooth key ("bt_..."), wherever it is.
+    const btNames = new Set();
+    for (const f of fs.readdirSync(__dirname).filter((n) => /\.(ino|cpp|h)$/.test(n))) {
+      for (const m of cppCode(read(path.join(__dirname, f))).matchAll(/\b(\w+)\s*(?:\[\s*\])?\s*=\s*"bt_|#define\s+(\w+)\s+"bt_/g)) {
+        btNames.add(m[1] || m[2]);
+      }
+    }
+    assert.ok(btNames.has('NVS_KEY_BT_ENABLED'), [...btNames].join(' '));
+    const { bodies } = sketchCallWalk('factory_reset_by_hold');
+    for (const reached of ['wifi_clear_credentials (canary_wap.ino)', 'csi_mqtt::config_clear (csi_mqtt.cpp)',
+                           'setup_wizard::reset_to_first_boot (setup_wizard.h)', 'wifi_raise_ap (canary_wap.ino)',
+                           'setup_wizard::start_captive_portal (setup_wizard.h)']) {
+      assert.ok(bodies.has(reached), 'the walk reaches ' + reached + ': ' + [...bodies.keys()].join(', '));
+    }
+    const btName = new RegExp('\\b(?:' + [...btNames].join('|') + ')\\b');
+    for (const [fn, code] of bodies) {
+      const calls = code.replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+      assert.doesNotMatch(code, /"bt_\w*"/, fn + ' names a Bluetooth key');
+      assert.doesNotMatch(code, btName, fn + ' names a Bluetooth key');
+      assert.doesNotMatch(code, /(?:\.|->)\s*clear\s*\(|\bnvs_erase_all\b|\bnvs_flash_erase\w*|\beraseAll\b/,
+                          fn + ' clears or erases a whole NVS namespace');
+      assert.doesNotMatch(calls, /(?:^|[^\w.>:])(?:ble_|bt_|esp_bt|esp_ble|nimble|bluetooth)\w*\s*(?:\(|::)|\b(?:NimBLE\w*|BLEDevice|bluetooth_\w+|ble_\w+|bt_\w+)\s*(?:\.|->)\s*\w+\s*\(/i,
+                          fn + ' calls into Bluetooth code');
+    }
+    // The way there from the sign-in, which covers the page and holds no
+    // session (no control closes it, and a signed-out /api/bluetooth is
+    // refused): the main page's Open dashboard link takes a landing session
+    // (handle_ui's branch 2 consumes its cv_pair and sets the cookie), the
+    // headline dashboard's Settings button opens /settings, which serves
+    // this page, and there the session resumes, the overlay is put away and
+    // the Settings panel is the one on screen.
+    const landing = read(path.join(__dirname, 'csi_integration.cpp'));
+    assert.ok(landing.includes('"<a class=\\"enter\\" href=\\"/?cv_pair=%s\\">Open dashboard</a>"'), 'the landing page\'s link');
+    assert.match(ino, /httpd_query_key_value\(qs, "cv_pair", pair_hex, sizeof\(pair_hex\)\) == ESP_OK\n\s+&& csi_integration::pair_token_consume\(pair_hex\)\) \{[\s\S]*?httpd_resp_set_hdr\(req, "Set-Cookie", cookie_hdr\);/);
+    const head = read(path.join(__dirname, 'csi_dashboard_html.h'));
+    assert.match(head, /<button class="iconbtn" id="settingsBtn" data-tip="settingsBtn">Settings<\/button>/);
+    assert.match(head, /getElementById\('settingsBtn'\)\.addEventListener\('click', \(\) => \{[^}]*window\.location\.href = '\/settings';\n\}\);/);
+    assert.match(ino, /\.uri = "\/settings", \.method = HTTP_GET, \.handler = handle_legacy_ui \}/);
+    assert.match(body(ino, 'static esp_err_t handle_legacy_ui(httpd_req_t* req) {', 'canary_wap.ino'),
+                 /return send_gzip_html\(req, CANARY_UI_HTML_GZ, CANARY_UI_HTML_GZ_LEN\);/);
+    const panelAt = (pathname) => vm.runInNewContext(uiFunction(ui, 'initialPanelFromPath') + '\n;initialPanelFromPath()',
+                                                     { window: { location: { pathname } } });
+    assert.equal(panelAt('/settings'), 'settings');
+    assert.equal(panelAt('/admin'), 'status');
+    const resume = async (ok) => {
+      const els = { authOverlay: { classList: fakeClassList() }, authStatus: { textContent: '', className: '' } };
+      let started = 0;
+      const ctx = { API_BASE: '', document: { getElementById: (id) => els[id] },
+                    fetch: async () => ({ ok }), startDashboard: () => { started++; } };
+      vm.runInNewContext(uiFunction(ui, 'hideAuthModal') + uiFunction(ui, 'resumeExistingSession', true), ctx);
+      const resumed = await vm.runInNewContext('resumeExistingSession()', ctx);
+      return { resumed, hidden: els.authOverlay.classList.contains('hidden'), started };
+    };
+    assert.deepEqual(await resume(true), { resumed: true, hidden: true, started: 1 }, 'a session puts the sign-in away');
+    assert.deepEqual(await resume(false), { resumed: false, hidden: false, started: 0 }, 'and nothing else does on load');
+  });
+
+  it("the 10 s hold keeps the WAP's opera membership and its scout key: nothing it reaches names them (#1843 sweep, third pass)", () => {
+    // mesh_state.h, the CHANGELOG and test_docs_claims.py's
+    // test_no_boot_hold_clears_the_mesh_or_scout_keys say the WAP's hold
+    // touches none of the mesh's keys or the scout key. That test reads the
+    // hold's own body; this row walks every free function the hold reaches
+    // (sketchCallWalk above, the walk the Bluetooth row runs), so a remove
+    // of "opera_sec" from a "mesh" session opened in reset_to_first_boot(),
+    // or a call into mesh_network's own clears, fails here (the review's
+    // mutant passed every suite before).
+    const code = (f) => cppCode(read(path.join(__dirname, f)));
+    // The WAP keeps its membership in NVS namespace "mesh" (mesh_network.cpp)
+    // and its scout key in "securacv" under "scout_key" (ble_scout_key.cpp),
+    // the namespace the hold's own sessions open.
+    const meshSrc = code('mesh_network.cpp');
+    const meshKeys = new Map([...meshSrc.matchAll(/static const char\* (NVS_\w+) = "([^"]*)";/g)]
+      .map((m) => [m[1], m[2]]));
+    assert.equal(meshKeys.get('NVS_NS'), 'mesh');
+    for (const [name, key] of [['NVS_FLEET_ID', 'opera_id'], ['NVS_FLEET_SECRET', 'opera_sec'],
+                               ['NVS_FLEET_NAME', 'opera_name'], ['NVS_PEER_COUNT', 'peer_cnt'],
+                               ['NVS_PEER_PREFIX', 'peer_'], ['NVS_REVOKED', 'revoked']]) {
+      assert.equal(meshKeys.get(name), key, name);
+    }
+    const scoutSrc = code('ble_scout_key.cpp');
+    assert.match(scoutSrc, /constexpr const char\* NVS_NAMESPACE = "securacv";/);
+    assert.match(scoutSrc, /constexpr const char\* NVS_KEY {7}= "scout_key";/);
+    // Every name the sketch gives the mesh namespace, wherever it is.
+    const meshNsNames = new Set();
+    for (const f of fs.readdirSync(__dirname).filter((n) => /\.(ino|cpp|h)$/.test(n))) {
+      for (const m of code(f).matchAll(/\b(\w+)\s*=\s*"mesh"\s*;/g)) meshNsNames.add(f + ':' + m[1]);
+    }
+    assert.ok(meshNsNames.has('mesh_network.cpp:NVS_NS') && meshNsNames.has('nvs_store.h:NVS_MESH_NS'),
+              [...meshNsNames].join(' '));
+    // A name a .cpp gives a key is that file's; a name a header gives one is
+    // seen wherever the header is included, so it is checked in every body.
+    const namesFor = (file) => {
+      const names = [];
+      if (file === 'mesh_network.cpp') names.push(...meshKeys.keys());
+      if (file === 'ble_scout_key.cpp') names.push('NVS_KEY');
+      for (const fn of meshNsNames) {
+        const [f, n] = fn.split(':');
+        if (f === file || f.endsWith('.h')) names.push(n);
+      }
+      return names;
+    };
+    const literals = ['"mesh"', '"scout_key"', ...[...meshKeys.entries()]
+      .filter(([name]) => name !== 'NVS_NS' && name !== 'NVS_ENABLED').map(([, key]) => '"' + key)];
+    const { bodies } = sketchCallWalk('factory_reset_by_hold');
+    assert.ok(bodies.has('setup_wizard::reset_to_first_boot (setup_wizard.h)'), [...bodies.keys()].join(', '));
+    for (const [fn, body] of bodies) {
+      const file = fn.match(/\(([^)]+)\)$/)[1];
+      for (const lit of literals) {
+        assert.ok(!body.includes(lit), fn + ' names the mesh or scout key ' + lit + '"');
+      }
+      const names = namesFor(file);
+      if (names.length) {
+        assert.doesNotMatch(body, new RegExp('\\b(?:' + names.join('|') + ')\\b'),
+                            fn + ' names a mesh or scout key by its constant');
+      }
+      const calls = body.replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+      assert.doesNotMatch(calls, /\bmesh_network\s*::|\bble_scout_key_\w+\s*\(|\bmesh_\w*(?:leave|clear|reset|forget)\w*\s*\(/,
+                          fn + ' calls into the mesh or the scout key');
+    }
+  });
+
+  it("the 10 s hold keeps the WAP's identity key, chain, token, HTTPS certificate and Beacon keys: nothing it reaches names them (#1843 sweep, fourth pass)", () => {
+    // The CHANGELOG, THREAT_MODEL.md's Scenario 4 and PENTEST_SCOPE.md say
+    // the WAP's hold keeps the identity key, the chain, the API token, the
+    // HTTPS certificate and its key, and the Beacon channel's X25519 key,
+    // member set and audit ring. The rows above walk the hold for the
+    // Bluetooth bonds and the mesh and scout keys; a key-by-key remove of
+    // "privkey" and "api_tkn", or of "tls_cert" and "tls_key", or of the
+    // "beacon" namespace's "x25519_priv", in reset_to_first_boot() passed
+    // every suite (#1843's sweep, third review). This row walks the same
+    // bodies (sketchCallWalk) for each of those keys, by literal and by the
+    // constant the sketch spells it with, and for a call into the Beacon
+    // channel.
+    const code = (f) => cppCode(read(path.join(__dirname, f)));
+    const constants = (src) => new Map([...src.matchAll(/static const char\* (NVS_\w+)\s*=\s*"([^"]*)";/g)]
+      .map((m) => [m[1], m[2]]));
+    // canary_wap.ino's own names: one translation unit with every header it
+    // includes, so a header's body can name them too.
+    const inoKeys = constants(code('canary_wap.ino'));
+    const kept = [['NVS_KEY_PRIV', 'privkey'], ['NVS_KEY_SEQ', 'seq'], ['NVS_KEY_BOOTS', 'boots'],
+                  ['NVS_KEY_CHAIN', 'chain'], ['NVS_KEY_CHAINST', 'chain_st'], ['NVS_KEY_TAMPER', 'tamper'],
+                  ['NVS_KEY_LOGSEQ', 'logseq'], ['NVS_KEY_BORN', 'born_day'], ['NVS_KEY_BORN_EX', 'born_exact'],
+                  ['NVS_KEY_API_TKN', 'api_tkn'], ['NVS_KEY_TLS_CERT', 'tls_cert'], ['NVS_KEY_TLS_KEY', 'tls_key']];
+    for (const [name, key] of kept) assert.equal(inoKeys.get(name), key, name);
+    // beacon_channel.cpp's, its own translation unit.
+    const beaconKeys = constants(code('beacon_channel.cpp'));
+    const beacon = [['NVS_NS', 'beacon'], ['NVS_SET_COUNT', 'set_count'], ['NVS_SET_PREFIX', 'set_'],
+                    ['NVS_AUDIT_COUNT', 'audit_cnt'], ['NVS_AUDIT_PREFIX', 'aud_'], ['NVS_AUDIT_HEAD', 'aud_head'],
+                    ['NVS_X25519_PRIV', 'x25519_priv'], ['NVS_X25519_PUB', 'x25519_pub']];
+    for (const [name, key] of beacon) assert.equal(beaconKeys.get(name), key, name);
+    // A whole key is matched with both quotes, a prefix with the opening one.
+    const literals = kept.map(([, key]) => '"' + key + '"')
+      .concat(beacon.map(([, key]) => (key.endsWith('_') ? '"' + key : '"' + key + '"')));
+    const { bodies } = sketchCallWalk('factory_reset_by_hold');
+    assert.ok(bodies.has('setup_wizard::reset_to_first_boot (setup_wizard.h)'), [...bodies.keys()].join(', '));
+    assert.ok(bodies.has('wifi_clear_credentials (canary_wap.ino)'), [...bodies.keys()].join(', '));
+    for (const [fn, body] of bodies) {
+      const file = fn.match(/\(([^)]+)\)$/)[1];
+      for (const lit of literals) {
+        assert.ok(!body.includes(lit), fn + ' names the kept key ' + lit);
+      }
+      const names = [];
+      if (file === 'canary_wap.ino' || file.endsWith('.h')) names.push(...kept.map(([name]) => name));
+      if (file === 'beacon_channel.cpp') names.push(...beacon.map(([name]) => name));
+      if (names.length) {
+        assert.doesNotMatch(body, new RegExp('\\b(?:' + names.join('|') + ')\\b'),
+                            fn + ' names a kept key by its constant');
+      }
+      const calls = body.replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+      assert.doesNotMatch(calls, /\bbeacon_channel\s*::|\bbeacon_\w*(?:leave|clear|reset|forget|wipe|erase|unpair|revoke)\w*\s*\(/,
+                          fn + ' calls into the Beacon channel');
+    }
+  });
+
+  it("the iPhone's set-it-up-again advice checks Bluetooth before it forgets the Wi-Fi (#1843)", () => {
+    // PairView's "No recovery kit?" advice reopens the same setup door
+    // through Forget Wi-Fi, which leaves the saved Bluetooth switch as the
+    // hold does (its handler is wifi_clear_credentials(), which the row
+    // above walks), so it says to check the switch first, as the
+    // dashboard's copy does (#1843's fourth review).
+    const swift = read(path.join(__dirname, '../../../../../ios/Sources/SecuraCV/Views/PairView.swift'));
+    const m = swift.match(/Text\("(Or set it up again from this phone: [^"]*)"\)/);
+    assert.ok(m, 'PairView\'s set-it-up-again advice not found');
+    const advice = m[1];
+    const way = advice.indexOf('open its page below and choose Open dashboard there, then Settings. ');
+    const check = advice.indexOf('First check that Bluetooth Enabled is on under Settings → Bluetooth ' +
+                                 '(forgetting its Wi-Fi does not turn it back on, and with it off this phone cannot reach it)');
+    const forget = advice.indexOf('then forget its Wi-Fi there (Settings → WiFi → Remove credentials, ');
+    assert.ok(way > 0 && check > way && forget > check, advice);
+    assert.equal(advice.indexOf('forget its Wi-Fi'), forget + 'then '.length, 'no forget is named before the check');
+    const ino = read(path.join(__dirname, 'canary_wap.ino'));
+    const at = ino.indexOf('static esp_err_t handle_wifi_forget(httpd_req_t* req) {');
+    assert.ok(at > 0);
+    assert.match(ino.slice(at, ino.indexOf('\n}\n', at)), /\n {2}wifi_clear_credentials\(\);/);
+    assert.match(ino, /\.uri = "\/api\/wifi\/forget", \.method = HTTP_POST, \.handler = handle_wifi_forget_auth \}/);
+    // That route takes the bearer alone in every mode (sweep F345), so a
+    // landing session's Remove credentials opens the sign-in first, and the
+    // advice says so before the phone is brought near.
+    const fw = ino.indexOf('static esp_err_t handle_wifi_forget_auth(httpd_req_t* req) {');
+    assert.ok(fw > 0);
+    assert.match(ino.slice(fw, ino.indexOf('\n}\n', fw)), /if \(!api_auth_check_bearer\(req, g_device\.api_token_str\)\) return ESP_OK;/);
+    // It names the sign-in's button before the press, as the kit footer does
+    // (F342: the page asks first, and the tap goes to the one asker).
+    const signIn = advice.indexOf('Remove credentials, which asks for its API token first: choose Use BOOT Tap Once in the sign-in and short-tap BOOT when the page says to, then press Remove credentials again');
+    assert.ok(signIn > forget && signIn < advice.indexOf('bring it near this phone'), advice);
+    // The button it names: Remove credentials, in Settings → WiFi, posting
+    // that route.
+    const ui = read(UI);
+    assert.match(ui, /onclick="requestFromDevice\(\)">Use BOOT Tap Once<\/button>/);
+    assert.match(ui, /onclick="switchSettingsTab\('wifi'\)">[^<]*WiFi<\/button>/);
+    assert.match(ui, /<button class="btn btn-danger" onclick="forgetWifi\(\)" id="wifiForgetBtn"[^>]*>Remove credentials<\/button>/);
+    assert.match(uiFunction(ui, 'forgetWifi', true), /await api\('\/api\/wifi\/forget', 'POST'\);/);
+    // "Its page" is the link under the advice: the WAP's name at "/", which a
+    // browser with no session gets as the landing page, whose Open dashboard
+    // the row above walks to Settings (#1843's fifth review: the advice said
+    // "Use BOOT Tap Once there lets you in", a button that page does not
+    // show). The kit's footer names the same way to the Save button, and
+    // the sign-in a landing session's Save opens.
+    assert.match(swift, /if let page = canary\.host\.flatMap\(DeviceAPI\.url\(forDiscoveredHost:\)\) \{\n\s+Link\("Open its page", destination: page\)/);
+    const api = read(path.join(__dirname, '../../../../../ios/Sources/SecuraCV/Transport/DeviceAPI.swift'));
+    assert.match(api, /static func url\(forDiscoveredHost host: String\) -> URL\? \{[\s\S]*?return URL\(string: "http:\/\/\\\(name\)"\)\n {4}\}/);
+    // The advice names Use BOOT Tap Once once, and only as a button of the
+    // sign-in that Remove credentials opens on the dashboard (the row above
+    // walks it there), never as one on the landing page.
+    assert.doesNotMatch(advice, /Use BOOT Tap Once there/);
+    assert.equal(advice.split('Use BOOT Tap Once').length, 2, advice);
+    assert.ok(advice.indexOf('choose Use BOOT Tap Once in the sign-in') > forget, advice);
+    const footer = swift.match(/Text\("(Its own page saves a recovery kit [^"]*)"\)/);
+    assert.ok(footer, 'PairView\'s kit footer not found');
+    const steps = ['open the page, choose Open dashboard there, then Settings → Device → Save my recovery kit; ',
+                   'when the sign-in opens, choose Use BOOT Tap Once and short-tap BOOT when the page says to.'];
+    assert.ok(footer[1].indexOf(steps[0]) > 0 && footer[1].indexOf(steps[1]) > footer[1].indexOf(steps[0]), footer[1]);
+    assert.match(ui, /onclick="switchSettingsTab\('device'\)">[^<]*Device<\/button>/);
+    assert.match(ui, /onclick="saveRecoveryKitFromSettings\(\)" id="settingsKitSave">Save my recovery kit<\/button>/);
+    assert.match(uiFunction(ui, 'secureFetch', true), /if \(resp\.status === 401 \|\| resp\.status === 403\) \{[\s\S]*?showAuthModal\(/);
   });
 });
 
@@ -445,6 +1142,35 @@ describe('Settings → Device → Recovery kit saves it again for a signed-in pa
     assert.equal(d.win.els.settingsKitDone.style.display, 'none');
   });
 
+  it('another device asking during the tap (409) says so, instead of "HTTP 409" (sweep F342)', async () => {
+    const d = dashboard([TAP_409]);
+    await d.api.saveRecoveryKitFromSettings();
+    assert.equal(d.asked.length, 1);
+    assert.equal(d.win.saved.length, 0);
+    assert.equal(d.win.els.settingsKitErr.style.display, 'block');
+    assert.match(d.win.els.settingsKitErr.textContent, CONTENDED);
+    assert.doesNotMatch(d.win.els.settingsKitErr.textContent, /HTTP 409/);
+    assert.equal(d.win.els.authOverlay.classList.hidden, false, 'the sign-in was never shown over it');
+    assert.equal(d.win.els.authStatus.textContent, '');
+    assert.equal(d.win.els.settingsKitDone.style.display, 'none');
+  });
+
+  it("after a 409, the retry the copy names: a second Save opens the sign-in, and it is served on the next tap", async () => {
+    // Ten seconds on, the device's 409 has ended and the second Save hears
+    // 403: secureFetch opens the sign-in, and Use BOOT Tap Once asks first.
+    const d = dashboard([TAP_409]);
+    await d.api.saveRecoveryKitFromSettings();
+    assert.match(d.win.els.settingsKitErr.textContent, CONTENDED);
+    d.more([GATE_403]);
+    await d.api.saveRecoveryKitFromSettings();
+    assert.equal(d.win.els.authOverlay.classList.hidden, false, 'the sign-in is open');
+    assert.equal(d.win.els.authStatus.textContent, NO_TOKEN_REFUSAL);
+    d.more([GATE_403, { status: 200, body: RECEIPT }]);
+    await d.api.requestFromDevice();
+    assert.equal(d.api.token(), FIELDS.token, 'signed in on the next tap');
+    assert.equal(d.win.els.recoveryKitCard.style.display, 'block', 'and the kit is offered');
+  });
+
   it('a second save after a failure clears the failure', async () => {
     const d = dashboard([{ status: 500, body: '{}' }]);
     await d.api.saveRecoveryKitFromSettings();
@@ -466,7 +1192,11 @@ describe('Settings → Device → Recovery kit saves it again for a signed-in pa
 
 // secureFetch's sign-in line for a refusal, by what the page sent.
 const TOKEN_REFUSAL = 'Invalid or expired token. Please re-enter.';
-const NO_TOKEN_REFUSAL = 'Your session does not cover this, or has ended. Paste the API token, or use BOOT Tap Once.';
+// It names the token box first: since the owner-authority PR the sign-in
+// checks a pasted token by itself, without the cookie (dashboard_gates.test.js
+// 'The shared sign-in'), so on a page a session signed in a mistyped token
+// is refused there too.
+const NO_TOKEN_REFUSAL = 'Your session does not cover this, or has ended. Paste the API token (it is in your recovery kit), or use BOOT Tap Once.';
 const QR_401 = { status: 401, body: '{"error":"unauthorized","hint":"Include \'Authorization: Bearer cv_...\' header"}' };
 
 describe("secureFetch's sign-in names what the page sent (sweep F289's follow-up)", () => {
@@ -578,24 +1308,122 @@ describe("the offer speaks the wizard's words", () => {
 });
 
 describe("the wizard's close-out saves through the same builder", () => {
-  function wizardSave(answer) {
+  // The close-out chain's recovery code as companion_pwa.h ships it: from
+  // its section comment through the Save handler (the running save's state,
+  // the step's exits and the two buttons' wiring), and showRunning(), the
+  // pane change Run again starts with.
+  function closeOutCode(src) {
+    const chain = src.match(/\n( {2}\/\/ ── Recovery kit \+ optional Home Assistant \(close-out chain\)[\s\S]*?\n {2}\$w\('wiz-recovery-save'\)\.addEventListener\('click', async \(\) => \{[\s\S]*?\n {2}\}\);\n)/);
+    if (!chain) throw new Error("the close-out chain's recovery code was not found in companion_pwa.h");
+    const running = src.match(/\n( {2}function showRunning\(\) \{[\s\S]*?\n {2}\}\n)/);
+    if (!running) throw new Error('showRunning was not found in companion_pwa.h');
+    return kitBlock(src, 'companion_pwa.h') + '\n' + running[1] + chain[1];
+  }
+  // showFinishLinks(), the pane I'm done for now and Open this one's
+  // dashboard end at, as companion_pwa.h ships it.
+  function finishLinksCode(src) {
+    const m = src.match(/\n( {2}function showFinishLinks\(\) \{[\s\S]*?\n {2}\}\n)/);
+    if (!m) throw new Error('showFinishLinks was not found in companion_pwa.h');
+    return m[1];
+  }
+  // A browser's answer to an ask, or to a body read, whose signal was
+  // aborted while it was out.
+  const aborted = () => new DOMException('The operation was aborted.', 'AbortError');
+  // Tap Save on a recovery step that is on screen, against a device
+  // answering `answers` in turn (the last repeats; one answer is every
+  // answer; BLIP is an ask that never reached the device), each 2 s sleep
+  // run at once. `on.ask(n, page)` acts while ask n (from 0) is out,
+  // `on.wait(n, page)` during the sleep before it and `on.body(n, page)`
+  // while its body is read: page.skip() taps Do this later, page.rerun()
+  // starts Run again (showRunning()), page.finish() taps I'm done for now
+  // (showFinishLinks()), page.back() puts the step on screen again (as Run
+  // again's next result does) and taps Save, and page.ui() reads every
+  // element and every save. As a browser's, fetch rejects an ask whose
+  // signal was aborted while it was out, and a body read too, unless the
+  // answer is `drained`: its body was already read off the stream, which a
+  // browser errors on abort only while the stream is still readable, so
+  // that read resolves after the abort. It settles
+  // once every save tapped has. wizardPage() is the same step with Save not
+  // yet tapped: page.save() taps it, and settled() waits for every save.
+  function wizardSave(answers, on = {}) {
+    const p = wizardPage(answers, on);
+    p.page.save();
+    return p.settled().then(() => ({ win: p.win, asked: p.asked, banners: p.banners, ui: p.ui, page: p.page }));
+  }
+  function wizardPage(answers, on = {}) {
+    const queue = Array.isArray(answers) ? answers : [answers];
     const src = read(PWA);
-    const m = src.match(/\$w\('wiz-recovery-save'\)\.addEventListener\('click', (async \(\) => \{[\s\S]*?\n {2}\})\);\n/);
-    if (!m) throw new Error('the wiz-recovery-save handler was not found in companion_pwa.h');
-    const ids = ['wiz-recovery-err', 'wiz-recovery-save', 'wiz-recovery-done', 'wiz-recovery-skip', 'wiz-ha-block'];
+    const ids = ['wiz-recovery-block', 'wiz-recovery-err', 'wiz-recovery-save', 'wiz-recovery-done',
+                 'wiz-recovery-skip', 'wiz-ha-block', 'wiz-multi-block', 'wiz-step-5-running', 'wiz-step-5-result',
+                 'wiz-another-block', 'wiz-st-failnote', 'wiz-st-continue', 'wiz-st-links', 'wiz-st-finish'];
     const win = fakeWindow(ids);
+    for (const el of Object.values(win.els)) {
+      el.listeners = [];
+      el.addEventListener = (type, fn) => { if (type === 'click') el.listeners.push(fn); };
+    }
+    win.els['wiz-recovery-block'].style.display = 'block';
+    win.els['wiz-recovery-save'].disabled = false;   // a button starts enabled
+    win.els['wiz-recovery-save'].style.display = ''; // and shown: the markup gives it no inline display
+    const click = (id) => win.els[id].listeners.map((fn) => fn());
+    const ui = () => ({
+      els: Object.fromEntries(ids.map((id) => {
+        const el = win.els[id];
+        return [id, { display: el.style.display, text: el.textContent, classes: [...el.classList.set].sort(),
+                      disabled: !!el.disabled }];
+      })),
+      saved: win.saved.length,
+      blobs: win.URL.made.length,
+    });
+    const saves = [];
+    const tapSave = () => {
+      const handlers = click('wiz-recovery-save');
+      assert.equal(handlers.length, 1, 'Save has one click handler');
+      saves.push(handlers[0]);
+    };
+    const back = () => { win.els['wiz-recovery-block'].style.display = 'block'; tapSave(); };
+    const page = { skip: () => click('wiz-recovery-skip'), rerun: () => ctx.showRunning(),
+                   finish: () => ctx.showFinishLinks(), back, save: tapSave, ui };
     const asked = [];
+    // The banner as each ask leaves: what the owner sees while Save asks.
+    const banners = [];
     const ctx = {
       $w: (id) => win.els[id],
-      fetch: async (url, opts) => { asked.push({ url, opts }); return { status: answer.status, ok: answer.status === 200, text: async () => answer.body }; },
+      fetch: async (url, opts) => {
+        const n = asked.length;
+        // Past ASK_CAP the device says 409, which ends any save: a loop
+        // that stopped counting its asks (every timer here runs at once, so
+        // node:test's timeout never fires) fails its rows by name instead
+        // of hanging the run (#1843's fourth review).
+        const answer = n >= ASK_CAP ? TAP_409 : queue[Math.min(n, queue.length - 1)];
+        const err = win.els['wiz-recovery-err'];
+        banners.push({ text: err.textContent, show: err.classList.contains('show'), note: err.classList.contains('note') });
+        asked.push({ url, opts, disabled: win.els['wiz-recovery-save'].disabled,
+                     abortedAtSend: !!(opts && opts.signal && opts.signal.aborted) });
+        if (on.ask) on.ask(n, page);
+        if (opts && opts.signal && opts.signal.aborted) throw aborted();
+        if (answer.blip) throw new TypeError('Failed to fetch');   // the ask never reached the device
+        return {
+          status: answer.status, ok: answer.status === 200,
+          text: async () => {
+            if (on.body) on.body(n, page);
+            if (!answer.drained && opts && opts.signal && opts.signal.aborted) throw aborted();
+            return answer.body;
+          },
+        };
+      },
+      Promise, AbortController,
       requestAnimationFrame: () => {}, focusActiveStepHeading: () => {},
       document: win.document, Blob: win.Blob, URL: win.URL, JSON, Error,
     };
     ctx.window = ctx;
-    ctx.setTimeout = (fn, ms) => { win.timers.push(ms); fn(); };
-    const code = kitBlock(src, 'companion_pwa.h') + '\n;(' + m[1] + ')';
-    const handler = vm.runInNewContext(code, ctx, { filename: 'wizard.recovery_save.js' });
-    return handler().then(() => ({ win, asked }));
+    ctx.setTimeout = (fn, ms) => {
+      win.timers.push(ms);
+      if (ms === 2000 && on.wait) on.wait(asked.length, page);
+      fn();
+    };
+    vm.runInNewContext(closeOutCode(src) + finishLinksCode(src), ctx, { filename: 'wizard.recovery_close_out.js' });
+    const settled = async () => { for (let i = 0; i < saves.length; i++) await saves[i]; };
+    return { win, asked, banners, ui, page, settled };
   }
   it('a served receipt is saved by RecoveryKit.save, exactly as served', async () => {
     const { win, asked } = await wizardSave({ status: 200, body: RECEIPT });
@@ -605,11 +1433,102 @@ describe("the wizard's close-out saves through the same builder", () => {
     assert.deepEqual([...win.URL.made[0].blob.parts], [RECEIPT]);
     assert.equal(win.els['wiz-recovery-done'].style.display, 'block');
     assert.equal(win.els['wiz-ha-block'].style.display, 'block');
+    // The saved kit puts Save away, so Continue is the one way on (a Save
+    // left on screen beside it would start a second ask and a second press).
+    assert.equal(win.els['wiz-recovery-save'].style.display, 'none', 'Save is put away once the kit is saved');
+    assert.equal(win.els['wiz-recovery-skip'].textContent, 'Continue');
   });
-  it('a closed gate saves nothing and says to press BOOT', async () => {
-    const { win } = await wizardSave(GATE_403);
+  it('Save asks first and keeps asking while the owner presses BOOT: 403, 403, 200 saves (sweep F342)', async () => {
+    // Before: the first 403 ended the save with "Press the BOOT button on
+    // your Canary first", so the page was never asking when the press
+    // landed, and the device hands a tap only to an address that was.
+    const { win, asked } = await wizardSave([GATE_403, GATE_403, { status: 200, body: RECEIPT }]);
+    assert.equal(asked.length, 3);
+    assert.ok(asked.every((q) => q.url === '/api/provisioning-receipt' && q.opts.cache === 'no-store'));
+    assert.deepEqual(win.timers.slice(0, 2), [2000, 2000], 'two sleeps of 2 s between the three asks');
+    assert.equal(win.timers.filter((ms) => ms === 2000).length, 2, 'and no more (the rest is the blob URL\'s revoke)');
+    assert.ok(asked.every((q) => q.disabled === true), 'Save stays disabled while it asks');
+    assert.equal(win.saved.length, 1);
+    assert.deepEqual([...win.URL.made[0].blob.parts], [RECEIPT]);
+    assert.equal(win.els['wiz-recovery-done'].style.display, 'block');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'block');
+    assert.equal(win.els['wiz-recovery-err'].textContent, '');
+    assert.equal(win.els['wiz-recovery-err'].classList.contains('show'), false, 'the banner is put away');
+    assert.equal(win.els['wiz-recovery-save'].disabled, false);
+  });
+  it('a press made before Save is served to the first ask only when no other address asks first (the residual, not a supported order)', async () => {
+    const { win, asked } = await wizardSave({ status: 200, body: RECEIPT });
+    assert.equal(asked.length, 1);
+    assert.equal(win.saved.length, 1);
+  });
+  it('the instruction is on screen while it asks, in the calm style', async () => {
+    const src = read(PWA);
+    assert.match(src, /say\('Now short-press BOOT on your Canary\.', true\);/);
+    const { win, banners } = await wizardSave([GATE_403, GATE_403, TAP_409]);
+    // While Save asks, the banner is shown, in the calm (note) style: "don't
+    // press yet" as the first ask leaves, the press once the device has
+    // answered it (sweep F342's fourth review: a press the first ask has
+    // not reached is one no page of the owner's is asking for).
+    assert.equal(banners.length, 3);
+    assert.deepEqual(banners[0], { text: "Asking your Canary first. Don't press BOOT yet.", show: true, note: true });
+    for (const b of banners.slice(1)) {
+      assert.deepEqual(b, { text: 'Now short-press BOOT on your Canary.', show: true, note: true });
+    }
+    // After the 409 the banner holds the contention copy, shown, not calm.
+    assert.ok(win.els['wiz-recovery-err'].classList.contains('show'), 'the banner is on screen');
+    assert.equal(win.els['wiz-recovery-err'].classList.contains('note'), false);
+  });
+  it('another device asking during the press (409) says so and gives Save back', async () => {
+    const { win, asked } = await wizardSave([GATE_403, TAP_409, { status: 200, body: RECEIPT }]);
+    assert.equal(asked.length, 2, 'the asking stops at the 409');
     assert.equal(win.saved.length, 0);
-    assert.match(win.els['wiz-recovery-err'].textContent, /Press the BOOT button/);
+    assert.match(win.els['wiz-recovery-err'].textContent, CONTENDED);
+    const text = win.els['wiz-recovery-err'].textContent;
+    assert.ok(text.includes('Close any other Canary pages and wait 10 seconds, then tap Save again, ' +
+                            'and short-press BOOT only when this note says to.'), text);
+    assert.ok(text.indexOf('tap Save again') < text.indexOf('short-press BOOT'), 'the tap on Save comes before the press');
+    assert.equal(win.els['wiz-recovery-save'].disabled, false, 'Save is enabled again');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'none');
+  });
+  it('no press in 30 s (sixteen 403s, the last at 30 s) saves nothing and says so', async () => {
+    // The asks go out at 0, 2, ..., 30 s, so a press up to 30 s after Save
+    // is asked for (fifteen asks ended at 28 s, and a press between 28 and
+    // 30 s heard "Didn't see a press" with the gate open).
+    const { win, asked } = await wizardSave(GATE_403);
+    assert.equal(asked.length, 16);
+    assert.equal(win.timers.filter((ms) => ms === 2000).length, 15, 'the last ask goes out 30 s after the first');
+    assert.equal(win.saved.length, 0);
+    assert.equal(win.els['wiz-recovery-err'].textContent,
+                 "Didn't see a press. Tap Save again, and short-press BOOT when this note says to (within 30 seconds).");
+    assert.ok(win.els['wiz-recovery-err'].classList.contains('show'), 'on screen');
+    assert.equal(win.els['wiz-recovery-save'].disabled, false);
+  });
+  it('the steps say Save first, then BOOT', () => {
+    const src = read(PWA);
+    const block = src.match(/<div id="wiz-recovery-block"[^>]*>([\s\S]*?)\n {6}<\/div>\n/)[1];
+    const steps = [...block.matchAll(/<li>([\s\S]*?)<\/li>/g)].map((m) => m[1]);
+    assert.deepEqual(steps, ['Tap <strong>Save my recovery kit</strong> below.',
+                             'When the note below says to, short-press the <strong>BOOT</strong> button on your Canary (within 30 seconds).']);
+  });
+  it('an answer that is not 200, 403 or 409 (a 503 after the tap was spent) ends the save with its status', async () => {
+    // The receipt can refuse after it has spent the tap (503 no_address, 500
+    // out_of_memory); the page must say so, not keep asking for a press the
+    // device already took and end on "Didn't see a press".
+    const { win, asked } = await wizardSave([GATE_403, { status: 503, body: '{"error":"no_address"}' }, { status: 200, body: RECEIPT }]);
+    assert.equal(asked.length, 2, 'the asking stops at the 503');
+    assert.equal(win.saved.length, 0);
+    assert.equal(win.els['wiz-recovery-err'].textContent,
+                 'Could not fetch the recovery kit: HTTP 503. Try again, or save it later from the dashboard.');
+    assert.ok(win.els['wiz-recovery-err'].classList.contains('show'), 'on screen');
+    assert.equal(win.els['wiz-recovery-save'].disabled, false, 'Save is enabled again');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'none');
+  });
+  it("the Home Assistant step's no-session line sends the owner to Save before BOOT", () => {
+    const src = read(PWA);
+    assert.match(src, /This needs the recovery-kit step first: go back, tap Save my recovery kit, and short-press BOOT when its note says to\./);
+    assert.doesNotMatch(src, /Tap Save, then short-press BOOT|tap Save my recovery kit, then short-press BOOT/,
+                        'no retry line names the press without waiting for the note');
+    assert.doesNotMatch(src, /press BOOT, and save the kit/);
   });
   it('a 200 that is not a receipt saves nothing and says so', async () => {
     const { win } = await wizardSave({ status: 200, body: '{"ok":true}' });
@@ -620,7 +1539,235 @@ describe("the wizard's close-out saves through the same builder", () => {
   it('the handler builds no download of its own', () => {
     const src = read(PWA);
     const m = src.match(/\$w\('wiz-recovery-save'\)\.addEventListener\('click', (async \(\) => \{[\s\S]*?\n {2}\})\);\n/);
-    assert.match(m[1], /RecoveryKit\.save\(window, await r\.text\(\)\)/);
+    // What it saves is the body it read off the answer, after it checked
+    // that the step is still on screen.
+    assert.match(m[1], /const text = await r\.text\(\);\n\s*if \(!live\(\)\) return;\n(\s*\/\/[^\n]*\n)*\s*if \(!RecoveryKit\.save\(window, text\)\)/);
     assert.doesNotMatch(m[1], /new Blob|createObjectURL|\.download\s*=/);
+  });
+
+  // Leaving the step stops its save (#1842's Codex review). Before, Do this
+  // later and Run again left the loop asking from a hidden step for up to
+  // 30 s: a later BOOT tap went to it, the kit downloaded, and the Home
+  // Assistant block came back after the owner had moved on.
+  const SERVED = { status: 200, body: RECEIPT };
+  // The owner's screen after the step was left, and the asks, the saves
+  // and the screen once the save has settled.
+  async function leaveDuring(when, n, how, answers = [GATE_403, GATE_403, SERVED]) {
+    let left = null;
+    const { win, asked, ui } = await wizardSave(answers, {
+      [when]: (at, page) => { if (at === n && !left) { page[how](); left = page.ui(); } },
+    });
+    assert.ok(left, 'the step was left');
+    return { win, asked, left, now: ui() };
+  }
+  function leftIdle(win) {
+    assert.equal(win.els['wiz-recovery-err'].textContent, '', 'the banner is put away with the step');
+    assert.equal(win.els['wiz-recovery-err'].classList.contains('show'), false);
+    assert.equal(win.els['wiz-recovery-save'].disabled, false, 'Save is given back for a return to the step');
+  }
+  it('Do this later while an ask is out aborts it, and nothing is asked, saved or shown after (Codex review)', async () => {
+    const { win, asked, left, now } = await leaveDuring('ask', 1, 'skip');
+    assert.equal(asked.length, 2, 'no ask after Do this later');
+    assert.ok(asked[1].opts.signal && asked[1].opts.signal.aborted, 'the ask that was out is aborted');
+    assert.ok(asked.every((q) => !q.abortedAtSend), 'no ask left with its signal already aborted');
+    assert.equal(win.saved.length, 0, 'nothing downloaded');
+    assert.deepEqual(now, left, 'the save touched nothing on the page after the step was left');
+    assert.equal(win.els['wiz-multi-block'].style.display, 'block');
+    assert.equal(win.els['wiz-recovery-block'].style.display, 'none');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'none');
+    leftIdle(win);
+  });
+  it('Do this later during the wait between asks stops the save before its next ask', async () => {
+    const { win, asked, left, now } = await leaveDuring('wait', 2, 'skip');
+    assert.equal(asked.length, 2, 'the ask after the wait never leaves');
+    assert.equal(win.saved.length, 0);
+    assert.deepEqual(now, left);
+    assert.equal(win.els['wiz-ha-block'].style.display, 'none');
+    leftIdle(win);
+  });
+  it('Do this later while the receipt is read saves nothing and says nothing', async () => {
+    const { win, asked, left, now } = await leaveDuring('body', 1, 'skip', [GATE_403, SERVED]);
+    assert.equal(asked.length, 2);
+    assert.equal(win.saved.length, 0, 'the receipt read as the step was left is not downloaded');
+    assert.deepEqual(now, left, 'no "Could not fetch" either');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'none');
+    leftIdle(win);
+  });
+  it('a receipt whose read resolves after the step was left is not saved (#1843)', async () => {
+    // The row above ends in the outer catch, since its read rejects on the
+    // abort. A body already drained off the stream resolves anyway, and
+    // only the check right after the read stands between it and a download
+    // nobody asked for and the Home Assistant step coming back.
+    const { win, asked, left, now } = await leaveDuring('body', 1, 'skip', [GATE_403, { ...SERVED, drained: true }]);
+    assert.equal(asked.length, 2);
+    assert.equal(win.saved.length, 0, 'the receipt read after the step was left is not downloaded');
+    assert.deepEqual(now, left, 'the save wrote on the page after the step was left');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'none');
+    leftIdle(win);
+  });
+  it('Run again during the save stops it as Do this later does', async () => {
+    const { win, asked, left, now } = await leaveDuring('ask', 1, 'rerun');
+    assert.equal(asked.length, 2);
+    assert.ok(asked[1].opts.signal.aborted);
+    assert.equal(win.saved.length, 0);
+    assert.deepEqual(now, left);
+    assert.ok(win.els['wiz-step-5-result'].classList.contains('hidden'), 'Run again hid the result pane');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'none');
+    leftIdle(win);
+  });
+  it('Do this later while the last ask is out ends the save with no line on the hidden step', async () => {
+    // The sixteenth ask is the one no wait follows: once its abort rejects
+    // the fetch, only the check in the fetch's catch stops the loop's end
+    // ("Didn't see a press") from writing on the banner stopKitSave() put
+    // away. At an earlier ask the check after the next wait catches it.
+    const { win, asked, left, now } = await leaveDuring('ask', 15, 'skip', Array(16).fill(GATE_403));
+    assert.equal(asked.length, 16);
+    assert.ok(asked[15].opts.signal.aborted, 'the last ask is aborted');
+    assert.equal(win.saved.length, 0);
+    assert.deepEqual(now, left, 'the save wrote on the page after the step was left');
+    leftIdle(win);
+  });
+  it('a save left and started again is a new save: the first one\'s end touches nothing of it', async () => {
+    // Do this later during the first save's wait, then the step is back and
+    // Save is tapped before that wait has run out: the first save wakes
+    // after the second has asked, and must leave the second's Save disabled
+    // and its banner alone.
+    const { win, asked, banners } = await wizardSave([GATE_403, GATE_403, GATE_403, SERVED], {
+      wait: (n, page) => { if (n === 1) { page.skip(); page.back(); } },
+    });
+    assert.equal(asked.length, 4, "the first save's one ask, then the second save's three");
+    assert.ok(asked.slice(1).every((q) => q.disabled === true), 'Save stays disabled while the second save asks');
+    assert.ok(asked[0].opts.signal.aborted && !asked[1].opts.signal.aborted, 'each save asks on its own signal');
+    assert.deepEqual(banners.slice(1).map((b) => b.text),
+                     ["Asking your Canary first. Don't press BOOT yet.", 'Now short-press BOOT on your Canary.',
+                      'Now short-press BOOT on your Canary.']);
+    assert.equal(win.saved.length, 1, 'the second save downloads the kit once');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'block');
+    assert.equal(win.els['wiz-recovery-save'].disabled, false);
+  });
+  it('every pane change that hides the recovery step stops its save first', () => {
+    // The rows above drive Do this later and Run again; this holds every
+    // other function that hides the step, or the pane it sits in, to the
+    // same first line, so an exit added later cannot leave a save asking.
+    const src = read(PWA);
+    const hides = [...src.matchAll(/\$w\('wiz-recovery-block'\)\.style\.display\s*=\s*'none'|\$w\('wiz-step-5-result'\)\.classList\.add\('hidden'\)/g)];
+    const fns = new Set();
+    for (const h of hides) {
+      const head = src.lastIndexOf('\n  function ', h.index);
+      assert.ok(head > 0, 'a hide outside a function at ' + h.index);
+      const name = src.slice(head + 12, src.indexOf('(', head));
+      fns.add(name);
+      const firstLine = src.slice(src.indexOf('{\n', head) + 2).split('\n')[0];
+      assert.match(firstLine, /^ {4}stopKitSave\(\);/, name + ' stops the save before it hides the step');
+    }
+    assert.deepEqual([...fns].sort(), ['showFinishLinks', 'showMultiBlock', 'showResult', 'showRunning']);
+    assert.match(src, /\$w\('wiz-recovery-skip'\)\.addEventListener\('click', showMultiBlock\);/);
+    assert.match(src, /\$w\('wiz-st-rerun'\)\.addEventListener\('click', runSelfTest\);/);
+    assert.match(src, /async function runSelfTest\(\) \{\n {4}showRunning\(\);/);
+  });
+  it('a pane change with no save running changes the pane, asks nothing and throws nothing (#1843)', () => {
+    // stopKitSave() is the first line of every pane change, and most come
+    // with no save to stop: the self-test's first showRunning() (step 5's
+    // runSelfTest(), outside its try), Continue after a saved kit, I'm done
+    // for now. A stop that reached for the absent save's controller threw
+    // there, and every row above taps Save first, so none of them saw it:
+    // the first self-test would never ask for /api/selftest.
+    const { win, asked, page } = wizardPage(SERVED);
+    win.els['wiz-step-5-running'].classList.add('hidden');
+    assert.doesNotThrow(() => page.rerun(), 'Run again, or the first self-test, with no save running');
+    assert.equal(win.els['wiz-step-5-running'].classList.contains('hidden'), false, 'the running pane is shown');
+    assert.ok(win.els['wiz-step-5-result'].classList.contains('hidden'), 'the result pane is hidden');
+    assert.doesNotThrow(() => page.skip(), 'Do this later with no save running');
+    assert.equal(win.els['wiz-multi-block'].style.display, 'block');
+    assert.equal(win.els['wiz-recovery-block'].style.display, 'none');
+    assert.doesNotThrow(() => page.finish(), "I'm done for now with no save running");
+    assert.equal(win.els['wiz-st-links'].style.display, 'flex');
+    assert.equal(win.els['wiz-st-finish'].style.display, 'inline-flex');
+    assert.equal(win.els['wiz-multi-block'].style.display, 'none');
+    assert.equal(asked.length, 0, 'leaving the step asks the device nothing');
+    leftIdle(win);
+  });
+  it('a save that has ended leaves its line on the step only until the step is left (#1843)', async () => {
+    // A save that ended on a line (another device asking, no press in 30 s,
+    // a refusal) is no running save, so leaving the step has nothing to
+    // abort. It still puts the line away: Run again's next all-passed
+    // result puts the step back on screen, and it would say the old line.
+    const ended = [[TAP_409, CONTENDED], [GATE_403, /^Didn't see a press\./],
+                   [BLIP, /^Your Canary didn't answer\./],
+                   [{ status: 503, body: '{"error":"no_address"}' }, /^Could not fetch the recovery kit: HTTP 503\./]];
+    for (const [answers, line] of ended) {
+      const { win, asked, page } = await wizardSave(answers);
+      const n = asked.length;
+      assert.match(win.els['wiz-recovery-err'].textContent, line);
+      assert.ok(win.els['wiz-recovery-err'].classList.contains('show'), 'the line is on screen while the step is');
+      assert.doesNotThrow(() => page.skip(), 'Do this later after the save ended');
+      leftIdle(win);
+      assert.doesNotThrow(() => page.rerun(), 'Run again after the save ended');
+      win.els['wiz-recovery-block'].style.display = 'block';   // the next result shows the step again
+      leftIdle(win);
+      assert.equal(asked.length, n, 'leaving the step asks nothing more');
+    }
+    const saved = await wizardSave(SERVED);
+    assert.equal(saved.win.els['wiz-recovery-skip'].textContent, 'Continue');
+    assert.doesNotThrow(() => saved.page.skip(), 'Continue after a saved kit');
+    assert.equal(saved.win.els['wiz-multi-block'].style.display, 'block');
+    assert.equal(saved.win.saved.length, 1);
+  });
+
+  // A rejected fetch is a blip, not an answer (#1842's Codex review), as the
+  // dashboard's BOOT-tap sign-in treats it. Before, the first one (a Wi-Fi
+  // channel switch or reassociation once the Canary has joined the home
+  // network) ended the whole window with "Could not fetch the recovery kit",
+  // even after the first 403 had told the owner to press BOOT, so the tap
+  // was left for whoever asked next.
+  const WAIT_LINE = "Asking your Canary first. Don't press BOOT yet.";
+  const PRESS_LINE = 'Now short-press BOOT on your Canary.';
+  it('a fetch that rejects mid-window is followed by more asks, and a later 200 is served (Codex review)', async () => {
+    const { win, asked, banners } = await wizardSave([GATE_403, BLIP, BLIP, GATE_403, SERVED]);
+    assert.equal(asked.length, 5, 'it asked on through both blips');
+    assert.equal(win.timers.filter((ms) => ms === 2000).length, 4, 'a blip waits its 2 s like any other ask');
+    assert.deepEqual(banners.map((b) => b.text), [WAIT_LINE, PRESS_LINE, PRESS_LINE, PRESS_LINE, PRESS_LINE],
+                     'the press line stays up through the blips');
+    assert.equal(win.saved.length, 1);
+    assert.deepEqual([...win.URL.made[0].blob.parts], [RECEIPT]);
+    assert.equal(win.els['wiz-recovery-done'].style.display, 'block');
+    assert.equal(win.els['wiz-ha-block'].style.display, 'block');
+    assert.equal(win.els['wiz-recovery-err'].classList.contains('show'), false);
+    assert.equal(win.els['wiz-recovery-save'].disabled, false);
+  });
+  it('blips before the device has answered keep "don\'t press yet" up until its first 403', async () => {
+    const { win, asked, banners } = await wizardSave([BLIP, BLIP, GATE_403, GATE_403, SERVED]);
+    assert.equal(asked.length, 5);
+    assert.deepEqual(banners.map((b) => b.text), [WAIT_LINE, WAIT_LINE, WAIT_LINE, PRESS_LINE, PRESS_LINE]);
+    assert.equal(win.saved.length, 1);
+  });
+  it('a save the device never answered spends its sixteen asks and says the Canary did not answer', async () => {
+    const { win, asked } = await wizardSave(BLIP);
+    assert.equal(asked.length, 16);
+    assert.equal(win.timers.filter((ms) => ms === 2000).length, 15);
+    assert.equal(win.saved.length, 0);
+    assert.equal(win.els['wiz-recovery-err'].textContent,
+                 "Your Canary didn't answer. Tap Save again, and short-press BOOT only when this note says to. " +
+                 'You can also save it later from the dashboard.');
+    assert.ok(win.els['wiz-recovery-err'].classList.contains('show'));
+    assert.equal(win.els['wiz-recovery-save'].disabled, false);
+  });
+  it('blips after the press line end, at thirty seconds, as a missed press does', async () => {
+    const { win, asked } = await wizardSave([GATE_403, BLIP]);
+    assert.equal(asked.length, 16);
+    assert.equal(win.saved.length, 0);
+    assert.equal(win.els['wiz-recovery-err'].textContent,
+                 "Didn't see a press. Tap Save again, and short-press BOOT when this note says to (within 30 seconds).");
+  });
+  it('after a blip, a 409 or a refusal still ends the save on that answer', async () => {
+    const contended = await wizardSave([BLIP, GATE_403, BLIP, TAP_409, SERVED]);
+    assert.equal(contended.asked.length, 4, 'the asking stops at the 409');
+    assert.equal(contended.win.saved.length, 0);
+    assert.match(contended.win.els['wiz-recovery-err'].textContent, CONTENDED);
+    const refused = await wizardSave([GATE_403, BLIP, { status: 503, body: '{"error":"no_address"}' }, SERVED]);
+    assert.equal(refused.asked.length, 3, 'the asking stops at the 503');
+    assert.equal(refused.win.saved.length, 0);
+    assert.equal(refused.win.els['wiz-recovery-err'].textContent,
+                 'Could not fetch the recovery kit: HTTP 503. Try again, or save it later from the dashboard.');
   });
 });

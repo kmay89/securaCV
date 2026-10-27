@@ -172,13 +172,29 @@ RENDER_PRESETS = {
 # what makes the lab's plate view honest).
 PRINT_SETTINGS = {
     "source": "docs/hardware/enclosure/README.md §Suggested print settings",
-    "material": "PETG or ASA for heat/UV exposure; PLA only for indoor/bench",
+    "material": "PETG indoors; ASA for anything that sees sun (PETG is not UV-stable: it yellows and embrittles outdoors); PLA only for fit checks, never a deployed housing",
     "gasket_material": "TPU 90–95A · 2 perimeters · 100% infill · slow",
     "layer_height_mm": 0.2,
     "walls": 3,
     "infill_pct": "20–30",
     "orientation": "parts print flat as modeled — no supports by design; lids/faces print face-down so chamfers, seats and debossed labels land on the first layers",
 }
+
+def part_material(file: str) -> str:
+    """The filament a part is printed in, as README.md's material table and
+    §Suggested print settings say it: TPU for the seals, white or light ASA
+    for the sun shield, ASA for what lives outdoors (the doorbell, the weather
+    builds and their hood), PETG indoors otherwise — and PLA for none of them
+    (the table: "clip coupon / fit checks only ... not for deployed housings")."""
+    f = file.lower()
+    if "gasket" in f or "plunger" in f:
+        return "TPU 90–95A"
+    if "_shield" in f:
+        return "white or light ASA"
+    if "doorbell" in f or "_weather_" in f or "_hood" in f:
+        return "ASA — it lives outdoors (PETG yellows and embrittles in sun)"
+    return "PETG indoors · ASA in sun"
+
 
 # filename-substring → note (first match wins). Sources: scad comments.
 PART_NOTES = [
@@ -512,8 +528,7 @@ def main():
     for s in sets:
         for p in s["parts"]:
             p["print_note"] = part_note(p["file"])
-            p["material"] = ("TPU 90–95A" if ("gasket" in p["file"].lower() or "plunger" in p["file"].lower())
-                             else "PETG / ASA (PLA indoors)")
+            p["material"] = part_material(p["file"])
     data = {
         "generated_by": "canary-local/tools/gen_enclosures.py",
         "source": "docs/hardware/enclosure",
@@ -992,9 +1007,10 @@ OPTION_LINKS = {
     ("canary_watch_station.scad", "opt_batt"): {
         "bom": ["W-BT1"], "fw": []},
     # Sense options: LED + lux are ON the MR60BHA2 kit board (no separate
-    # BOM row); the enclosure options link to bom_canary_sense.csv refs.
+    # BOM row for either; the LED's light pipe is LP1); the enclosure
+    # options link to bom_canary_sense.csv refs.
     ("canary_sense_enclosure.scad", "opt_led"): {
-        "bom": [], "fw": ["FEATURE_STATUS_LED"]},
+        "bom": ["LP1"], "fw": ["FEATURE_STATUS_LED"]},
     ("canary_sense_enclosure.scad", "opt_lux"): {
         "bom": [], "fw": ["FEATURE_AMBIENT_LIGHT"]},
     ("canary_sense_enclosure.scad", "opt_vent"): {"bom": [], "fw": []},
@@ -1003,7 +1019,7 @@ OPTION_LINKS = {
     ("canary_sense_enclosure.scad", "opt_seal"): {
         "bom": ["FIL1"], "fw": []},
     ("canary_sense_enclosure.scad", "opt_mount"): {
-        "bom": ["SCR4"], "fw": []},
+        "bom": ["SCR4", "SCR6", "SCR7"], "fw": []},
 }
 
 # README preset-table name → variant-set id (both must exist; verified).

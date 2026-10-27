@@ -1094,6 +1094,8 @@ static void apply_passkey_display(const Event& e) {
   g_pairing.state = PAIR_PIN_DISPLAYED;
   g_pairing.pin_displayed = true;
 
+  // No digits in the line (sweep F346, F191): the health log is every
+  // session's read (GET /api/logs) and durable on the SD card.
   log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH, "Pairing PIN displayed", nullptr);
 
   if (g_pair_callback) {

@@ -13,11 +13,21 @@
  *
  * AUTH MODEL
  * ──────────
- * All endpoints require bearer-token auth via api_auth_check (same as the
- * rest of the API). Mutations (POST role, override) are scoped to slots
- * that are ALREADY in the household store — the API can't create new
- * paired devices, only adjust roles on devices that completed the BLE
- * pairing ceremony. Default role for any new pairing is ROLE_GUEST.
+ * Every endpoint passes api_auth_check, which takes the bearer or a
+ * dashboard session cookie, and the landing page mints that cookie for
+ * any host on the network (ledger F346). Most of the API takes the same
+ * gate; the routes SECURITY_MODEL.md lists take the bearer, never the
+ * session.
+ * Mutations (POST role, override) are scoped to slots that are ALREADY in
+ * the household store — the API can't create new paired devices, only
+ * adjust roles on devices that completed the BLE pairing ceremony. Since
+ * F346 the bond's confirm and a Passkey Entry's digits take the bearer
+ * alone, so a host on the network no longer completes that ceremony
+ * through its session for a peer of its own (SECURITY_MODEL.md's lockout
+ * paragraph), and today no pairing fills the store at all:
+ * household::add_irk() has no caller but the on-device self-test
+ * (tests.cpp), which removes its test slot. Default role for any new
+ * pairing is ROLE_GUEST.
  */
 
 #ifndef SECURACV_HOUSEHOLD_API_H
@@ -42,9 +52,11 @@ namespace household_api {
 // happened), so there's no captive-portal flow that needs to reach these
 // routes without an API token. The doc block above promised
 // `api_auth_check` gating; this section is what makes the promise true.
-// The dashboard's secureFetch already attaches `Authorization: Bearer
-// <api_token>` on every call, so wrapping handlers is a plumbing-only fix
-// that matches the pattern used in bluetooth_api.h (#437).
+// The dashboard reaches these with its session cookie (secureFetch sends
+// `Authorization: Bearer` only when the page holds a token), so wrapping
+// handlers is a plumbing-only fix that matches the pattern used in
+// bluetooth_api.h (#437). api_auth_check() takes the landing session any
+// LAN host can mint, so the gate is not the owner's alone (F346).
 //
 // Mechanism: register_routes() stashes the API token pointer in a
 // module-local static, then wraps every real handler in the auth_gated

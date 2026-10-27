@@ -97,10 +97,11 @@ describe('capabilityNotice', () => {
     assert.match(n.text, /work fine/i);
     assert.doesNotMatch(n.text, /insecure origin/i);
   });
-  it('missing Web Bluetooth points at Bluefy', () => {
+  it('missing Web Bluetooth names a browser that has it, and sends no iPhone owner to Bluefy (ledger A65)', () => {
     const n = L.capabilityNotice(false, true, false);
     assert.equal(n.show, true);
-    assert.match(n.text, /Bluefy/);
+    assert.match(n.text, /Chrome or Edge on Android or a computer/);
+    assert.doesNotMatch(n.text, /Bluefy/);
   });
   it('capable browser gets no banner', () => {
     assert.equal(L.capabilityNotice(false, true, true).show, false);
@@ -244,13 +245,20 @@ describe('the close-out link, on the routes the device serves (repo sweep F129)'
     assert.match(receipt, /session_cookie_header\(req, session_hex, cookie_hdr, sizeof\(cookie_hdr\)\)/);
     assert.match(receipt, /httpd_resp_set_hdr\(req, "Set-Cookie", cookie_hdr\)/);
     const writer = ino.split('static bool session_cookie_header(')[1].split('\n}\n')[0];
-    assert.match(writer, /"cv_session=%s; HttpOnly; SameSite=Strict; Path=\/; Max-Age=86400%s",\s*session_hex, tls \? "; Secure" : ""\)/);
+    // Its name follows the transport too (sweep F337): __Host-cv_session
+    // over HTTPS, cv_session on the plain-HTTP setup the wizard runs on.
+    assert.match(writer, /"%s=%s; HttpOnly; SameSite=Strict; Path=\/; Max-Age=86400%s",\s*tls \? "__Host-cv_session" : "cv_session", session_hex, tls \? "; Secure" : ""\)/);
     assert.match(writer, /const bool tls = g_https_server != nullptr && req->handle == g_https_server;/);
     assert.match(ino, /static esp_err_t handle_status_auth\(httpd_req_t\* req\) \{\n  if \(!api_auth_check\(req, g_device\.api_token_str\)\) return ESP_OK;/);
     const auth = fs.readFileSync(path.join(__dirname, 'api_auth.h'), 'utf8');
-    const check = auth.split('static bool api_auth_check(httpd_req_t* req, const char* expected_token) {')[1];
-    assert.ok(check.indexOf('if (cv_session_validate && cv_session_validate(req)) {') < check.indexOf('auth_is_locked_out()'),
-      'the session cookie authenticates before any token check');
+    // api_auth_check()'s own body: the cookie test, then the bearer check
+    // (whose lockout is per source address since sweep F343). The body is
+    // cut to its closing brace, so a name later in the file cannot stand in.
+    const check = auth.split('static bool api_auth_check(httpd_req_t* req, const char* expected_token) {')[1].split('\n}\n')[0];
+    const cookieAt = check.indexOf('if (cv_session_validate && cv_session_validate(req)) {');
+    const bearerAt = check.indexOf('return api_auth_check_bearer(req, expected_token);');
+    assert.ok(cookieAt >= 0 && bearerAt >= 0, 'api_auth_check() holds the cookie test and the bearer check');
+    assert.ok(cookieAt < bearerAt, 'the session cookie authenticates before any token check');
     // "Run again" re-runs the self-test, which prepares the close-out links again
     const pwa = fs.readFileSync(PWA, 'utf8');
     assert.match(pwa, /\$w\('wiz-st-rerun'\)\.addEventListener\('click', runSelfTest\);/);

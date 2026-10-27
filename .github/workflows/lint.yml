@@ -259,7 +259,7 @@ jobs:
         # (exit 2) a source it cannot parse rather than pass with nothing to
         # look for; scripts/tests/test_lint_bench_rows.py pins the shapes.
         run: python3 scripts/lint_bench_rows.py
-      - name: CloudKit container — named, never defaulted, fully deployed
+      - name: CloudKit container — named, never defaulted, schema table matches the sources
         # CKContainer.default() reads an entitlement and raises an ObjC
         # CKException when there isn't one. Swift can't catch that, so an
         # unsigned build (CI builds exactly that) aborts on launch — which is
@@ -344,6 +344,14 @@ jobs:
         # and because this workflow is unfiltered — a manifest-only edit is
         # gated here even though enclosure.yml never sees it.
         run: python3 docs/hardware/enclosure/gen_cad_params.py --check
+      - name: Every printable part's revision is the tree's
+        # canary-local/devices/revisions.json (gen_revisions.py) records, per
+        # part, its rev, the digest of the sources that draw it and the mesh's
+        # own fingerprint (moments, not just the box — a post that moved inside
+        # the envelope reads as moved). This holds every committed STL and every
+        # part's sources to the recorded rev without OpenSCAD; enclosure.yml
+        # runs the same check after render.sh with every dev render on disk.
+        run: python3 docs/hardware/enclosure/gen_revisions.py --check
       - name: One home for the espressif32 / pioarduino platform pin
         # The same pioarduino release URL was typed in six .ini files and the
         # official espressif32 pin in three more, each trusting a "bump in

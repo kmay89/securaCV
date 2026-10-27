@@ -1,5 +1,5 @@
 // ============================================================================
-//  Canary — HAMMOND INTERNAL CHASSIS PLATE  ⚠️ IN DEVELOPMENT (v0.2-dev)
+//  Canary — HAMMOND INTERNAL CHASSIS PLATE  ⚠️ IN DEVELOPMENT (v0.3-dev)
 // @env ip="IP66/67/68 (from the bought Hammond box)" note="the rating is the purchased box's, earned only if the gland + vent are installed correctly — not our printed plate's"
 //  The build plan's harsh-outdoor path (ENC1) is a Hammond 1554/1555
 //  polycarbonate box — which arrives EMPTY. This plate screws to the box's
@@ -12,29 +12,53 @@
 //                       radar must face the box's CLEAR LID — no metal above)
 //
 //  ⚠️ DEV STATUS: render/mesh-verified only — NOT print-validated.
-//     MEASURE your box's boss spacing (Hammond publishes drawings per size;
-//     defaults below are placeholders for a 1554F-class box) and your boards.
+//     The plate outline defaults to Hammond's own 1554FPL inner panel (the
+//     panel the BOM's 1554F2GYCL takes) less a hair; the boss grid is still a
+//     placeholder inside it — MEASURE your box's bosses (Hammond publishes a
+//     drawing per size) and your boards.
 //
 //  v0.2-dev (2026-08-23): canary_*_lib adoption; the Grove Vision AI V2 plate
 //  arithmetic now reads the registry's measured 40 x 20 — this file still
 //  carried the wrong 25 x 25 that three siblings had already corrected.
+//  2026-10-23: END STOPS along the board's length. Every stack hung on one
+//  clip pair at mid-span and its rails, and nothing located it along Y: the
+//  board slid ±5 (and on) along its rails with nothing in the way, so a USB
+//  plug pushed it along — the wap XIAO leaves its clips after 13.5 mm. The
+//  WAP's AUD-2 and the Sense's v0.2 stops never reached this plate. Each end
+//  now gets a 3.0 x 2.0 column past each corner (the Sense's bump), 0.3 off
+//  the board's end, up to its top face, outboard of a spec-max Type-C
+//  overmold and of the hanging XIAO.
+//  v0.3-dev (2026-10-23, the cross-family review): THE PLATE DID NOT FIT THE
+//  BOX THE BOM NAMES. Both ENC1 rows (the WAP's and the Vision's) bill the
+//  Hammond 1554F2GYCL: 4.70 x 3.50 in (119.4 x 88.9) OUTSIDE, so its inside is
+//  smaller still — and this plate defaulted to 158 x 88 on a 147 x 77 boss
+//  grid, called "placeholders for a 1554F-class box": 38.6 mm longer than
+//  the box's outside. The outline is now 108 x 76, a hair under Hammond's 1554FPL
+//  inner panel for that size (109.2 x 77.5), and the boss grid a 97 x 66
+//  placeholder inside it (the slots keep their 2 mm web to the edge, asserted).
+//  The vent columns move to 11 in from the ends, so the sense stack's outer
+//  tie slots keep 2.0 to them (14 in left 0.45), and the rib bars follow them.
+//  The rib bars' boss-slot check read only Y; at 76 wide the sense stack's
+//  bars sit level with the slots in Y but end 9.1 mm short of them along X, so
+//  the check now asks whether they meet on BOTH axes.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect2d — the catalog's shared helpers
 use <canary_snap_lib.scad>   // the cantilever board clip + its strain budget
 use <canary_board_lib.scad>  // board registry — vm_l/vm_w read it; the knobs cite it
 use <canary_rib_lib.scad>    // the long-axis rib bars (board_rail) and their ceilings
+use <canary_port_lib.scad>   // port_usbc_overmold_w — the board's end stops stand outside a plug's envelope
 
 /* [What to render] */
 part  = "plate";     // ["plate"]
 stack = "wap";       // ["wap","vision","sense"]
 
 /* [Hammond boss grid] — MEASURE your box / check the Hammond drawing */
-boss_dx = 147.0;     // boss spacing (X)
-boss_dy = 77.0;      // boss spacing (Y)
+boss_dx = 97.0;      // boss spacing (X) — a placeholder inside the 1554F panel outline: MEASURE
+boss_dy = 66.0;      // boss spacing (Y) — a placeholder inside the 1554F panel outline: MEASURE
 boss_screw_d = 4.2;  // Hammond lid/boss screws are typically M4/#6 into inserts
-plate_l = 158.0;     // plate outline (fits inside the box walls) — MEASURE your box
-plate_w = 88.0;      // plate outline width (Y), inside the box walls — the boss slots keep a 2 mm web to its edge and the board more than 3 a side (both asserted). MEASURE your box
+plate_l = 108.0;     // plate outline: Hammond's 1554FPL inner panel (109.2 x 77.5) less a hair — the panel
+plate_w = 76.0;      // the BOM's 1554F2GYCL (ENC1, 119.4 x 88.9 outside) takes (v0.3: 158 x 88 overran the box)
 plate_t = 2.4;       // plate thickness — the rails, clips and rib bars stand on its top face (the clip beams root there), the slots go through it, and rib_h is held to the rib_lib ceiling for it (asserted)
 
 /* [Boards] — nominal; MEASURE (same meanings as the device enclosures) */
@@ -72,7 +96,7 @@ clip_clear = 0.25;   // beam face to board edge gap, a fit: tune it on the coupo
 
 /* [Extras] */
 rib_h     = 3.0;     // two rib bars along the plate's long axis, board side, between the vent columns and
-                     // outboard of the tie slots: a 158 x 88 x 2.4 plate had no third dimension anywhere
+                     // outboard of the tie slots: a 2.4 mm plate this size had no third dimension anywhere
                      // (canary_rib_lib). 0 = flat. They stand on the board side because the plate prints
                      // that way up — the underside is the bed  // [0:0.5:6]
 tie_slots = true;    // zip-tie slots for cable dressing / battery strap
@@ -91,11 +115,24 @@ assert(stack != "vision" || xiao_w/2 + 1.3 - 1.0 <= b_w/2 - 0.5, "the vision sta
 assert(boss_dx/2 + 1 + (boss_screw_d + 2*tol_hole)/2 + 2 <= plate_l/2 && boss_dy/2 + (boss_screw_d + 2*tol_hole)/2 + 2 <= plate_w/2,
        "boss slots too close to the plate edge (need >= 2 mm web) — grow plate_l/plate_w");
 rib_y = b_w/2 + 8 + 4 + 1.5 + 0.8;          // outboard of the tie slots (b_w/2 + 8, 8 tall)
-rib_l = 2*(plate_l/2 - 14 - 5 - 2);         // between the vent columns (plate_l/2 - 14, 10 wide)
-assert(rib_h == 0 || rib_y + 0.8 + 1.0 <= boss_dy/2 - (boss_screw_d + 2*tol_hole)/2 - 1,
+// the vent columns' centers: 11 in from the plate's ends (v0.3: 14 in, which on the 108
+// outline left the sense stack's outer tie slots 0.45 from a vent's corner)
+vent_x = plate_l/2 - 11;
+rib_l = 2*(vent_x - 5 - 2);                 // between the vent columns (vent_x, 10 wide)
+// the bars meet a boss slot only if they overlap it on BOTH axes (v0.3: this read Y
+// alone, and at the 1554F outline it refused the sense stack's bars, which end 9.1 mm
+// short of the slots along X)
+assert(rib_h == 0 || rib_y + 0.8 + 1.0 <= boss_dy/2 - (boss_screw_d + 2*tol_hole)/2 - 1
+                  || rib_l/2 + 1.0 <= boss_dx/2 - 1 - (boss_screw_d + 2*tol_hole)/2 - 1,
        "the rib bars run into the boss slots — shorten the board zone or set rib_h = 0");
 assert(rib_h == 0 || rib_h <= rib_h_max(rib_t_max(plate_t)), "rib_h is past the rib_lib slenderness ceiling for this plate");
-echo(str("Canary Hammond chassis v0.2-dev — plate ", plate_l, "x", plate_w,
+// the board's END STOPS (see plate()): a column's inboard edge across the
+// board — outside a spec-max Type-C overmold on the axis, beside a hanging
+// XIAO, and within 2.6 of the board's edge so it catches the corner
+stop_x0 = max(port_usbc_overmold_w()/2 + 0.2, (stack == "wap") ? 0 : xiao_w/2 + 0.3, b_w/2 - 2.6);
+assert(stop_x0 < b_w/2 - 0.5, "the board's end stops no longer catch its corners — the board is too narrow beside the overmold/XIAO");
+assert(rib_h == 0 || b_l/2 + 0.3 + 2.0 <= rib_y - 0.8 - 0.6, "the board's end stops run into the rib bars' coves");
+echo(str("Canary Hammond chassis v0.3-dev — plate ", plate_l, "x", plate_w,
          ", stack=", stack, " on ", soff, " mm rails  (IN DEVELOPMENT)"));
 
 // (rrect2d comes from canary_core_lib — the local copy is gone)
@@ -125,7 +162,7 @@ module plate() {
                     linear_extrude(plate_t + 0.2) rrect2d(4, 8, 1.5);
             // lightening/vent grid outside the board zone
             for (sx = [1, -1], i = [0, 1, 2])
-                translate([sx*(plate_l/2 - 14), (i - 1)*18, -0.1])
+                translate([sx*vent_x, (i - 1)*18, -0.1])
                     linear_extrude(plate_t + 0.2) rrect2d(10, 10, 3);
         }
         // rails (notched at the clips) + clips — same cradle idiom as the cases.
@@ -148,6 +185,14 @@ module plate() {
             // Ø2 pin prints oversize) and still reach 0.8 under the module's edge
             if (half) translate([s*(xiao_w/2 + 1.3), -b_l/2 + 1.2, plate_t - 0.01]) cylinder(d = 2.0, h = soff + 0.01);
         }
+        // END STOPS along the board's length (2026-10-23): the clips hold X and Z
+        // only, so a USB plug slid the board along its rails. A 3.0 x 2.0 column
+        // past each corner of each end (the Sense's +Y bump), 0.3 off the end,
+        // up to the board's top face (on the vision stack the -Y pair stands 0.5
+        // past the corner pins, which sit under the module's edge)
+        for (sx = [1, -1], sy = [1, -1])
+            translate([sx > 0 ? stop_x0 : -(stop_x0 + 3.0), sy > 0 ? b_l/2 + 0.3 : -(b_l/2 + 0.3 + 2.0), plate_t - 0.01])
+                cube([3.0, 2.0, soff + b_t + 0.01]);
         // long-axis rib bars (canary_rib_lib board_rail, turned to run along X):
         // the width derives from the plate (rib_t_max), the root is coved
         if (rib_h > 0) for (sy = [1, -1])

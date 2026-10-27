@@ -21,6 +21,7 @@
 #include "gnss/gps_privacy.h"  // gps_coarsen_deg() — operator-facing GPS coarsening (Invariant III)
 #include "network/provisioning_gate.h"  // BOOT-tap gate behind /api/provisioning-receipt (F20 gap #11)
 #include "network/onboarding_fsm.h"     // the setup AP's name, the fleet's hold/reset numbers
+#include "network/ap_password.h"        // the setup AP's key, from the private key (F350)
 #include "io/reset_hold.h"              // the BOOT hold's stages: warn 3 s / reset 10 s / wipe (opt-in)
 #include "reset_scope_keys.h"           // what the 10 s stage clears, what it keeps
 // The identity's SSID field holds every shape onboarding_fsm.h's builder emits
@@ -392,11 +393,15 @@ static volatile uint8_t g_tamper_pending_confidence = 0; /* 0..100 */
 static contact_tamper::State g_tamper_contact = contact_tamper::kInitial;
 #endif
 
-// Device-unique AP password (derived from pubkey fingerprint)
+// Device-unique AP password, derived from the device private key
+// (common/network/ap_password.h, sweep F350).
 static char g_ap_password[16];
+static_assert(sizeof(g_ap_password) >= canary::net::AP_PASSWORD_LEN + 1,
+              "g_ap_password must hold the cv- key and its NUL");
 
 // Physical-presence gate (F20 gap #11). Opened by a short BOOT tap in
-// handle_boot_button(); the network lib takes it — from the receipt handler
+// handle_boot_button(), which also sweeps a stamp past its TTL every pass
+// (expire(), sweep F347); the network lib takes it — from the receipt handler
 // or from a home-LAN page load, whichever asks first — through the hooks
 // registered in setup(). The State is this file's because the BOOT button is.
 static canary::net::provisioning_gate::State g_prov_gate = {0};
@@ -412,7 +417,6 @@ static void handle_serial_commands();
 static void print_banner();
 static void print_status();
 static void handle_boot_button();
-static void derive_ap_password(const uint8_t fingerprint[8], char* password, size_t len);
 
 #if FEATURE_MESH_NETWORK
 /* Mesh PairedCallback. Fires from mesh_session::process() on the main
@@ -422,17 +426,21 @@ static void derive_ap_password(const uint8_t fingerprint[8], char* password, siz
  * already had the secret when start_pairing_initiator() was called
  * (its persistence is the integration layer's responsibility before
  * pairing kicks off). */
-static void persist_replay_counters() {
-#if FEATURE_MESH_NETWORK
+static bool persist_replay_counters() {
   /* Live counters AND the replay tombstones of dropped peers, so a reboot
-   * does not re-open a left/removed device's window either. */
+   * does not re-open a left/removed device's window either. Returns whether
+   * they are durable: true with nothing to save, else
+   * mesh_state::save_replay_counters()'s result, which is false when NVS
+   * refused the write and on every call on a board without flash
+   * encryption (no replay_ctrs write there at all). Only the first-counter
+   * handler acts on it (F324; #1839's review). */
   static_assert(mesh_state::MAX_REPLAY_ENTRIES >= mesh_session::MAX_REPLAY_COUNTERS,
                 "replay_ctrs must hold every live counter and tombstone");
   uint8_t fps[mesh_session::MAX_REPLAY_COUNTERS][mesh_crypto::FINGERPRINT_LEN];
   uint64_t ctrs[mesh_session::MAX_REPLAY_COUNTERS];
   const size_t n = mesh_session::get_replay_counters(fps, ctrs,
                                                      mesh_session::MAX_REPLAY_COUNTERS);
-  if (n == 0) return;
+  if (n == 0) return true;
   const size_t save_count = (n > mesh_state::MAX_REPLAY_ENTRIES)
                           ? mesh_state::MAX_REPLAY_ENTRIES : n;
   mesh_state::ReplayEntry entries[mesh_state::MAX_REPLAY_ENTRIES];
@@ -440,8 +448,7 @@ static void persist_replay_counters() {
     memcpy(entries[i].fingerprint, fps[i], mesh_crypto::FINGERPRINT_LEN);
     entries[i].last_counter = ctrs[i];
   }
-  mesh_state::save_replay_counters(entries, save_count);
-#endif
+  return mesh_state::save_replay_counters(entries, save_count);
 }
 
 #if FEATURE_SENSING_WITNESS
@@ -486,7 +493,7 @@ static void on_mesh_peer_revoked(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
   char hex[mesh_crypto::FINGERPRINT_LEN * 2 + 1];
   mesh_fp_hex(fp, hex);
   const bool dropped = pubkey == nullptr || mesh_state::remove_trusted_peer(pubkey);
-  persist_replay_counters();
+  (void)persist_replay_counters();
   persist_revocations();
   log_health(dropped ? LOG_LEVEL_WARNING : LOG_LEVEL_ALERT, LOG_CAT_NETWORK,
              "Opera peer revoked (7-day deny-list)", hex);
@@ -522,10 +529,35 @@ static void on_mesh_peer_left(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN],
   const bool persisted = mesh_state::remove_trusted_peer(pubkey);
   /* Its last counter is now a tombstone; persist it now rather than at the
    * next 5-minute save, so a reboot in between cannot re-open its window. */
-  persist_replay_counters();
+  (void)persist_replay_counters();
   Serial.printf("[MESH] Peer %s left the opera (%s)\n", hex,
                 persisted ? "removed from NVS" : "NVS removal refused/failed");
   log_health(LOG_LEVEL_INFO, LOG_CAT_NETWORK, "Opera peer left", hex);
+}
+
+/* A member's first verified frame since it was registered with no saved
+ * counter (F324): a member just paired, one re-paired from its replay
+ * tombstone, or one no save had caught before a reboot (or caught at 0,
+ * before it was heard). Persist the counters now rather than at the next
+ * 5-minute save, so a reboot in between cannot make every frame it signed
+ * before this one (one heartbeat to each other member every 30 s) fresh
+ * again. That frame need not be the member's newest (a radio copying its
+ * address can land an older one first), so the session calls this once
+ * more FIRST_COUNTER_RESAVE_MS (66 s) later if the counter has moved; a
+ * reboot before that second save lands (66 s after the first, and 66 s
+ * more for each refused write) still restores the older counter. Returns
+ * whether the save landed: on false the session tries the first save again
+ * on the member's next verified frame, and the second one 66 s later, so
+ * one failed NVS write does not wait for the 5-minute save (#1839's
+ * review) while the member is heard; no pass retries the first, so with
+ * the member's frames kept out after the refusal the 5-minute save is the
+ * next to catch up. Two saves that land per registration at most, and none
+ * after a boot that restored a non-zero counter for the member; FE-gated
+ * like every replay_ctrs write, so on a board without flash encryption
+ * every call returns false and writes nothing. Runs on the main loop. */
+static bool on_mesh_first_counter(const uint8_t fp[mesh_crypto::FINGERPRINT_LEN]) {
+  (void)fp;
+  return persist_replay_counters();
 }
 
 /* A verified TAMPER_ALERT from a trusted peer (F10). The session has
@@ -557,7 +589,7 @@ static void on_mesh_rekey_commit(const uint8_t new_secret[mesh_crypto::OPERA_SEC
                                  size_t n_forgotten) {
   const bool persisted = mesh_state::persist_rotation(new_secret, forgotten, n_forgotten);
   /* Every peer the rotation dropped keeps its counter as a tombstone. */
-  persist_replay_counters();
+  (void)persist_replay_counters();
   char detail[48];
   snprintf(detail, sizeof(detail), "forgot %u peer(s)%s", (unsigned)n_forgotten,
            persisted ? "" : "; NOT persisted");
@@ -673,8 +705,9 @@ static void on_pairing_succeeded(const uint8_t* secret, uint32_t code) {
   /* Joiner side: persist FIRST so a power cut between save and set
    * leaves the right NVS state on next boot. THEN set in-memory
    * UNCONDITIONALLY so the active session works even when persistence
-   * fails — typical on FE-disabled dev hardware where save refuses
-   * by design. Persistence failure should degrade reboot survivability
+   * fails — on every Canary today, since no released image or
+   * provisioning step turns flash encryption on and save refuses
+   * without it by design. Persistence failure should degrade reboot survivability
    * (user has to re-pair after reboot), not disable the current
    * session that just successfully paired. */
   const bool save_ok = mesh_state::save_opera_secret(secret);
@@ -734,7 +767,7 @@ static void mqtt_publish_ota_update_state();
 /* Sign an update lifecycle event into the witness chain. The chain is the
  * audit trail: a verifier can later prove when the firmware changed and
  * whether a rollback happened. Compiled whenever ANY install channel
- * exists — the boot-outcome witness in setup() uses it too. */
+ * exists — the boot-outcome witness below uses it too. */
 static void ota_witness_event(const char* type, const char* version) {
   uint8_t payload[96];
   CborWriter cbor(payload, sizeof(payload));
@@ -744,6 +777,38 @@ static void ota_witness_event(const char* type, const char* version) {
   WitnessRecord rec;
   if (!witness_create_record(payload, cbor.size(), RECORD_STATE_CHANGE, &rec)) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_WITNESS, "OTA witness record failed", type);
+  }
+}
+
+/* Witness how an install ended, once the bootloader can no longer change the
+ * answer. The ONE place this tree records it, called wherever the answer can
+ * arrive: the healthy gate (a rollback — the previous image is running again —
+ * or a confirm at the probe), the health tick's confirming pass, and a
+ * deliberate stop that confirmed. The engine wrote the install's target the
+ * moment the boot partition flipped and hands it back once: running the
+ * target means the update applied, running anything else means the bootloader
+ * reverted it.
+ *
+ * Never while this boot's image is still PENDING_VERIFY: an image inside its
+ * confirm dwell has not stuck, and if the dwell fails the bootloader boots the
+ * previous image, which must find the target still there and witness the
+ * rollback — a chain that said "applied" first would hold a signed claim the
+ * device then contradicted. The engine holds the target back while pending
+ * (its contract for securacv_ota_take_pending_version); this tree asks too,
+ * so a signed "applied" cannot come from an image that may still revert,
+ * whatever engine it links. Loop task only: it appends a witness record. */
+static void ota_record_update_outcome() {
+  if (securacv_ota_pending_verify()) return;
+  char target[SECURACV_OTA_VERSION_MAX];
+  if (!securacv_ota_take_pending_version(target, sizeof(target))) return;
+  if (strcmp(target, FIRMWARE_VERSION) == 0) {
+    ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
+    log_health(LOG_LEVEL_NOTICE, LOG_CAT_SYSTEM,
+               "Firmware update applied", FIRMWARE_VERSION);
+  } else {
+    ota_witness_event("fw_update_rolled_back", target);
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
+               "Firmware update rolled back", target);
   }
 }
 
@@ -816,6 +881,16 @@ static void ota_scheduler_process(uint32_t now) {
   }
 }
 
+/* The A/B confirm dwell (docs/OTA.md §2), every loop pass: once the boot
+ * probes have passed at the healthy gate, a freshly installed image is
+ * confirmed only after a minute of the home link holding. The pass that
+ * confirms it is the one that witnesses the update applied. */
+static void ota_confirm_dwell_tick(uint32_t now) {
+  if (securacv_ota_health_tick(now, WiFi.status() == WL_CONNECTED)) {
+    ota_record_update_outcome();
+  }
+}
+
 #endif // FEATURE_OTA_PULL
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -831,32 +906,6 @@ static void serial_wait_for_cdc(uint32_t timeout_ms) {
 #else
   (void)timeout_ms;
 #endif
-}
-
-// Derive device-unique AP password from public key fingerprint
-// Format: "cv-XXXXX" (8 chars, unique per device)
-// Drops every case variant of the ambiguous glyphs (0/O/o, 1/I/i/l/L) so a
-// user can read the password off the serial monitor or sticker without
-// guessing. Must stay byte-identical to UNAMBIGUOUS_ALPHABET in
-// securacv_crypto.cpp — both are the project's single no-confusion alphabet.
-static const char UNAMBIGUOUS_ALPHABET[] =
-  "23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
-static const size_t UNAMBIGUOUS_LEN = sizeof(UNAMBIGUOUS_ALPHABET) - 1;  // 54
-
-static void derive_ap_password(const uint8_t fingerprint[8], char* password, size_t len) {
-  char encoded[6];
-  size_t chars_produced = 0;
-  for (size_t i = 0; chars_produced < 5 && i < 8; i++) {
-    uint8_t b = fingerprint[i];
-    if (b < 216) { // 216 = 54 * 4, rejection sampling to avoid bias
-      encoded[chars_produced++] = UNAMBIGUOUS_ALPHABET[b % UNAMBIGUOUS_LEN];
-    }
-  }
-  while (chars_produced < 5) {
-    encoded[chars_produced++] = '2';
-  }
-  encoded[5] = '\0';
-  snprintf(password, len, "cv-%s", encoded);
 }
 
 // Factory reset by BOOT hold (common/io/reset_hold.h, the fleet's grammar):
@@ -959,7 +1008,7 @@ static inline uint8_t time_bucket_now() {
 // ════════════════════════════════════════════════════════════════════════════
 //
 // Two nets, one gate (health/boot_policy.h has the full argument):
-//   · a NEW image that falls over before "healthy" is reverted by the
+//   · a NEW image that falls over before it is confirmed is reverted by the
 //     bootloader's A/B rollback — it stays PENDING_VERIFY until this code
 //     confirms it, and any reset before that boots the previous image;
 //   · a CONFIRMED image that keeps falling over lands in safe mode after
@@ -967,6 +1016,10 @@ static inline uint8_t time_bucket_now() {
 //     reached healthy.
 // "Healthy" is setup() returned + loop() ran for kDefaultHealthyDwellMs, or a
 // deliberate restart / deep sleep taken from the running loop before that.
+// The healthy gate runs the image's boot probes. With the pull engine a
+// probe-passing image then waits out the engine's confirm dwell (a minute of
+// the home link holding, ota_confirm_dwell_tick) before it is confirmed; a
+// deliberate restart or sleep confirms it at once, dwell or not.
 
 // Plain bools on purpose: every read and write of these is on the Arduino
 // loop task (setup() and loop()). POST /api/reboot, the one caller from
@@ -980,48 +1033,40 @@ static bootguard::Status g_boot_status = {};
 // /api/reboot); read by loop(). The only cross-task state in this section.
 static bool     g_restart_requested = false;
 
-// Confirm — or roll back — a freshly applied OTA image, then witness the
-// outcome. Runs at the healthy gate, not in setup(): an image that survives
-// setup() but crashes in its first seconds of loop() must still revert. If a
-// required probe fails, the engine marks the image invalid and reboots into
-// the previous firmware (does not return).
+// Run a freshly applied OTA image's boot probes, then witness whatever
+// outcome is already known. Runs at the healthy gate, not in setup(): an
+// image that survives setup() but crashes in its first seconds of loop() must
+// still revert. If a required probe fails, the engine marks the image invalid
+// and reboots into the previous firmware (does not return).
 //
 // Guard covers BOTH install channels: the engine owns rollback confirmation
 // (verifyRollbackLater), so any build that can install an image — pull OTA or
-// the dev push endpoint — must also confirm it here, or the bootloader
-// reverts it on the next boot. The probe alone no longer confirms: with the
-// pull engine (FEATURE_OTA_PULL) the image stays pending until
-// securacv_ota_init() in setup() and then a minute of health
-// (securacv_ota_health_tick in loop(), docs/OTA.md §2) confirm it. A build
-// without the engine (secure, secure_ha: FEATURE_OTA_UPDATE alone) has no
-// init() and no tick, so it confirms at the probe as it always did.
+// the dev push endpoint — must also confirm it, or the bootloader reverts it
+// on the next boot. The probe alone no longer confirms: with the pull engine
+// (FEATURE_OTA_PULL, initialized in setup() before this runs) a passing image
+// stays pending until a minute of health confirms it (ota_confirm_dwell_tick
+// in loop(), docs/OTA.md §2) or a deliberate stop does
+// (boot_health_before_deliberate_stop). A build without the engine (secure,
+// secure_ha: FEATURE_OTA_UPDATE alone) has no init() and no tick, so it
+// confirms at the probe as it always did.
+//
+// The outcome recorded here is a rollback (this boot runs the previous image
+// again) or, in a build without the engine, the confirm just made; a pending
+// image's "applied" waits for the pass that confirms it.
 static void ota_confirm_and_witness() {
 #if FEATURE_OTA_PULL || FEATURE_OTA_UPDATE
   securacv_ota_boot_self_test();
 #if !FEATURE_OTA_PULL
   securacv_ota_confirm_now();   // no engine, no dwell: the probe's verdict is final
 #endif
-
-  // Witness the update outcome. The engine recorded the install target the
-  // moment the boot partition flipped; running the old version again means
-  // the rollback fired.
-  char target[SECURACV_OTA_VERSION_MAX];
-  if (securacv_ota_take_pending_version(target, sizeof(target))) {
-    if (strcmp(target, FIRMWARE_VERSION) == 0) {
-      ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
-      log_health(LOG_LEVEL_NOTICE, LOG_CAT_SYSTEM,
-                 "Firmware update applied", FIRMWARE_VERSION);
-    } else {
-      ota_witness_event("fw_update_rolled_back", target);
-      log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
-                 "Firmware update rolled back", target);
-    }
-  }
+  ota_record_update_outcome();
 #endif
 }
 
-// The healthy gate: confirm the image, then clear the crash-loop counter.
-// Idempotent — only the first call per boot does anything. Loop task only:
+// The healthy gate: run the image's boot probes (ota_confirm_and_witness),
+// then clear the crash-loop counter. Reaching the line after the probes means
+// they passed, or that no image was pending. Idempotent — only the first call
+// per boot does anything. Loop task only:
 // ota_confirm_and_witness() appends a witness record (chain + SD), which the
 // witness lib allows from the loop task alone. POST /api/reboot therefore
 // never calls this; it raises g_restart_requested and loop() does.
@@ -1048,8 +1093,25 @@ static void boot_health_tick(uint32_t now) {
 // Called just before a restart or deep sleep the running loop chose to take:
 // the code decided to stop, it did not fall over, so an image that got this
 // far is confirmed rather than reverted by the reset it is about to cause.
+// "This far" is its boot probes: boot_mark_healthy() runs them now if the
+// healthy gate has not opened yet (a failed required probe reverts the image
+// there and never returns). With the pull engine a passing image is still
+// pending — its confirm dwell would outlast the reset, and a pending image
+// rolls back on the next boot — so the stop confirms it here.
+// securacv_ota_confirm_now() confirms only an image whose probes passed this
+// boot and that is still pending, and does nothing otherwise: before setup()
+// returned (boot_mark_healthy ran no probes), on an image the dwell already
+// confirmed, or on a boot that installed nothing. Then the outcome is
+// witnessed. Every caller persists the chain head after this, so that record
+// survives the stop.
 static void boot_health_before_deliberate_stop() {
   boot_mark_healthy("deliberate restart or sleep");
+#if FEATURE_OTA_PULL
+  if (g_boot_healthy) {
+    securacv_ota_confirm_now();
+    ota_record_update_outcome();
+  }
+#endif
 }
 
 // Every planned restart the loop task takes, first (sweep F92): a CSI
@@ -1260,12 +1322,14 @@ void setup() {
                   g_boot_status.reset_counted ? "" : " (power-on reset: not counted)",
                   g_boot_status.image_confirmed ? "" : " (new image, pending confirmation)");
   }
-  // Bench row E6: a re-flash of another build resets the count only if the
-  // build filled app_elf_sha256 in the app descriptor. Say so on every boot.
+  // Bench row E6: a PlatformIO or Arduino IDE upload of another build, which
+  // leaves NVS alone, resets the count only if the build filled
+  // app_elf_sha256 in the app descriptor (an install in either flasher starts
+  // NVS over, the count with it, whatever the identity). Say so on every boot.
   Serial.printf("[..] Image identity (app_elf_sha256): %s\n",
                 bootguard::image_id_present()
                     ? "non-zero"
-                    : "ZERO or unreadable - a re-flash will not reset the crash-loop count");
+                    : "ZERO or unreadable - an upload that keeps NVS will not reset the crash-loop count");
   if (g_boot_status.mode == bootpolicy::BootMode::SafeMode) {
     safe_mode_run();
   }
@@ -1349,8 +1413,15 @@ void setup() {
   DeviceIdentity& device = witness_get_device();
   Serial.printf("[OK] Device ID: %s\n", device.device_id);
 
-  // Derive device-unique AP password from pubkey fingerprint
-  derive_ap_password(device.pubkey_fp, g_ap_password, sizeof(g_ap_password));
+  // The setup network's key: an HMAC of the private key, never anything the
+  // device publishes (sweep F350). The array-reference parameter refuses the
+  // 8-byte fingerprint at compile time. A refusal (the HMAC failed) leaves
+  // g_ap_password "", and WiFi.softAP() raises an OPEN network on an empty
+  // key, so the boot stops here the way a provisioning failure does.
+  if (!canary::net::derive_ap_password(device.privkey, g_ap_password, sizeof(g_ap_password))) {
+    Serial.println("[!!] Setup network key derivation failed - HALTING");
+    while (true) { delay(1000); }
+  }
   Serial.printf("[OK] AP password derived (device-unique)\n");
 
   // Setup watchdog
@@ -1565,8 +1636,10 @@ void setup() {
      * wiped after the call — mesh_session derives + caches the
      * 16-byte opera_id and 8-byte sender_fp and does NOT retain
      * the 32-byte secret. mesh_state::load_opera_secret returns
-     * false on first-boot / factory-reset / FE-disabled devices —
-     * those flows leave the firmware in an unpaired state and the
+     * false on a device that never paired, left its opera (POST
+     * /api/mesh/leave), was wiped (the 30 s BOOT hold) or has flash
+     * encryption off; the 10 s BOOT reset keeps the secret. Those
+     * flows leave the firmware in an unpaired state and the
      * Scout broadcast queue drains harmlessly. */
     uint8_t opera_secret_buf[mesh_crypto::OPERA_SECRET_LEN];
     if (mesh_state::load_opera_secret(opera_secret_buf)) {
@@ -1613,8 +1686,9 @@ void setup() {
 
     /* Load persisted trusted peers (#480) and register each so this
      * boot's receive path can verify inbound BEACON_EVENT frames
-     * from peers paired in previous sessions. Empty-list (first
-     * boot / factory reset) is fine — mesh_session::on_opera_frame
+     * from peers paired in previous sessions. Empty-list (never
+     * paired, a leave, the 30 s wipe; the 10 s reset keeps the list)
+     * is fine — mesh_session::on_opera_frame
      * silently drops unknown senders, and the dashboard / UI will
      * trigger pairing to populate. */
     {
@@ -1741,6 +1815,9 @@ void setup() {
     mesh_session::set_rekey_commit_handler(&on_mesh_rekey_commit);
     /* F33 part 6: the revocation deny-list. */
     mesh_session::set_peer_revoked_handler(&on_mesh_peer_revoked);
+    /* F324: a member's first counter is persisted at once, and once more
+     * 66 s later if it has moved. */
+    mesh_session::set_first_counter_handler(&on_mesh_first_counter);
     /* F33 part 4: pair/start with no opera founds one; persisted first. */
     mesh_session::set_opera_create_handler(&on_mesh_opera_create);
     /* F161: GET /api/mesh and /api/mesh/peers read the view the main loop
@@ -1840,9 +1917,11 @@ void setup() {
     ota_cfg.chip             = CONFIG_IDF_TARGET;
 #endif
     // Health-gated confirmation (docs/OTA.md §2): the boot probes (identity,
-    // diagnostics >= 50) leave a new image pending; loop()'s
-    // securacv_ota_health_tick() confirms it after a minute of the STA link
-    // holding, so a crash loop inside that minute rolls back.
+    // diagnostics >= 50) at the healthy gate leave a new image pending;
+    // loop()'s ota_confirm_dwell_tick() confirms it after a minute of the STA
+    // link holding, so a crash loop inside that minute rolls back. A
+    // deliberate restart or sleep confirms it sooner
+    // (boot_health_before_deliberate_stop).
     ota_cfg.confirm_dwell_ms = 60000;
     ota_cfg.can_install      = ota_can_install;
     ota_cfg.on_before_reboot = ota_before_reboot;
@@ -2194,9 +2273,10 @@ void setup() {
   // Register the post-update probes. They RUN at the healthy gate
   // (boot_mark_healthy -> ota_confirm_and_witness), not here: a freshly
   // applied image is confirmed only after setup() returned AND loop() ran
-  // for bootpolicy::kDefaultHealthyDwellMs, so a crash in its first seconds
-  // of loop() still reverts it. The probes assert the parts that matter for
-  // the device's job; a failed required probe reverts it too.
+  // for bootpolicy::kDefaultHealthyDwellMs (or chose to stop sooner), so a
+  // crash in its first seconds of loop() still reverts it. With the pull
+  // engine the confirm dwell follows the probes. The probes assert the parts
+  // that matter for the device's job; a failed required probe reverts it too.
 #if FEATURE_OTA_PULL || FEATURE_OTA_UPDATE
   {
     static const securacv_selftest_t k_ota_selftests[] = {
@@ -2316,7 +2396,7 @@ void setup() {
 #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
   Serial.println("║  Commands: h=help, i=identity, s=status, g=gps, r=data       ║");
-  Serial.println("║  BOOT: tap=provisioning gate, 2s=info, 5s=factory reset      ║");
+  Serial.println("║  BOOT: tap=gate, 2s=info, 10s=reset (key kept), 30s=wipe     ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
 #if FEATURE_CONSOLE_THEME
   // The warm hello: the canary greets whoever just plugged in and points them
@@ -2342,12 +2422,14 @@ void loop() {
 #endif
 #if FEATURE_OTA_PULL
   // The A/B confirm dwell (docs/OTA.md §2): a freshly installed image is
-  // confirmed only after a minute of the home link holding.
-  securacv_ota_health_tick(millis(), WiFi.status() == WL_CONNECTED);
+  // confirmed only after a minute of the home link holding, and the pass
+  // that confirms it witnesses the update applied.
+  ota_confirm_dwell_tick(millis());
 #endif
 
-  // The healthy gate: confirm a pending OTA image and clear the crash-loop
-  // counter once this boot has run long enough to count as healthy.
+  // The healthy gate: run a pending OTA image's boot probes and clear the
+  // crash-loop counter once this boot has run long enough to count as
+  // healthy.
   boot_health_tick(millis());
 
   // POST /api/reboot, deferred here from the HTTP task (see
@@ -2404,7 +2486,7 @@ void loop() {
     const uint32_t now = millis();
     if ((int32_t)(now - s_last_replay_save_ms) >= 300000) {
       s_last_replay_save_ms = now;
-      persist_replay_counters();
+      (void)persist_replay_counters();
       persist_revocations();   /* grace left, while the list holds anything */
     }
   }
@@ -2459,7 +2541,7 @@ void loop() {
       Serial.println("[OK] Setup complete — WiFi connected, rebooting...");
       boot_health_before_deliberate_stop();
       flush_events_before_restart();
-      witness_persist_chain_state();   // the head the flushed bundles advanced
+      witness_persist_chain_state();   // the head the flushed bundles advanced, and the gate may have witnessed an update outcome
       delay(1000);
       ESP.restart();
     }
@@ -2744,6 +2826,14 @@ void loop() {
 #if FEATURE_DEEP_SLEEP
   if (policy_should_deep_sleep() && !power_is_charging()) {
     uint32_t sleep_sec = policy_get_sleep_duration_sec();
+    // A duty-cycled wake can sleep again before the healthy dwell elapses;
+    // choosing to sleep is not a crash, so it must not count toward safe mode
+    // (nor revert a pending image on the wake). First, ahead of the sleep's
+    // own record and the chain persist: the gate may run the boot probes (a
+    // failure reboots from here, with nothing of the sleep half-done) and may
+    // witness an update outcome, which must be in the head the wake resumes
+    // from.
+    boot_health_before_deliberate_stop();
     {
       power_state_t pwr;
       power_get_state(&pwr);
@@ -2764,10 +2854,6 @@ void loop() {
     lowpower_arm_wake_timer((uint64_t)sleep_sec * 1000000ULL);
     lowpower_arm_wake_touch();
     policy_ack_deep_sleep();
-    // A duty-cycled wake can sleep again before the healthy dwell elapses;
-    // choosing to sleep is not a crash, so it must not count toward safe mode
-    // (nor revert a pending image on the wake).
-    boot_health_before_deliberate_stop();
     lowpower_enter_deep_sleep();
   } else if (policy_should_deep_sleep()) {
     policy_ack_deep_sleep();
@@ -2979,6 +3065,14 @@ void loop() {
 static void handle_boot_button() {
   static uint32_t boot_btn_start = 0;
   static bool boot_btn_was_pressed = false;
+  // Sweep the BOOT tap every pass (sweep F347): unsigned subtraction ages its
+  // stamp correctly only while it is younger than 2^32 ms, so a tap nobody
+  // took would read as fresh again 49.7 days later and hand one LAN page
+  // load or receipt fetch the credential with no press. expire() clears a
+  // stamp past its TTL with a compare-and-swap of the value it read, so a
+  // fresh tap is never cleared; this task is the one that opens the gate
+  // (below), so the sweep never sees a stamp newer than its clock read.
+  canary::net::provisioning_gate::expire(g_prov_gate, millis(), PROVISIONING_GATE_TTL_MS);
 
   bool pressed = (digitalRead(BOOT_BUTTON_GPIO) == LOW);
 

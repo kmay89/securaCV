@@ -31,7 +31,10 @@
         "brd": "dk_c3",
         "dim": "w"
       },
-      "stack_h": 9.0
+      "stack_h": 9.0,
+      "vm_back_h": {
+        "brd_fn": "brd_grove_v2_back_h"
+      }
     }
   },
   "flasher": {

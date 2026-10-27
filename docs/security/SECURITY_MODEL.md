@@ -241,9 +241,9 @@ the other two:
 
 The device's cryptographic identity (an Ed25519 private key) is:
 - Generated on the device's own hardware random number generator
-- Stored only on the device's internal flash memory
-- Never transmitted over any interface (WiFi, USB, or otherwise)
-- Not backed up, escrowed, or recoverable by anyone — including ERRERlabs
+- Stored on the device's internal flash memory, in plaintext NVS
+- Never sent by the firmware over any interface (WiFi, USB, or otherwise)
+- Not backed up or escrowed by the firmware, and never held by ERRERlabs
 
 There is no "export private key" function. There is no backdoor, master
 key, or recovery mechanism. If the device is lost or destroyed, the
@@ -253,16 +253,24 @@ requires a new device with a new identity.
 **Why no backup?** Because a key that can be exported can be compelled.
 A court order, a warrant, or physical coercion — if the key CAN leave
 the device, an adversary with sufficient power WILL extract it. So there
-is no software path that will hand it over: no API, no export, no
+is no firmware path that will hand it over: no API, no export, no
 diagnostic, no debug interface, and nothing to compel us to hand over
 because we never had it.
 
-**The limit of that promise.** It is a statement about software. Someone
-who physically takes the device and reads the flash chip directly is a
-different adversary, and on a default-configured Canary they can recover
-the key. That is a deliberate trade — the alternative permanently bricks
-devices whose owners lose a key — and it is spelled out, with what it does
-and doesn't let an attacker do, under
+**The limit of that promise.** It is a statement about the firmware.
+Someone who holds the device can read its flash, over its USB port
+through the chip's ROM download mode (which the firmware does not
+control) or off the chip on a bench, and today they can recover the key
+from any Canary, a board with flash encryption fused included: the key is
+in NVS, which flash encryption does not cover, and the NVS encryption that
+would is not in any released build. Our own flashers make that USB read:
+before an install, unless told to skip it, each saves a full copy of the
+flash to your computer as its undo button (the browser's to your
+downloads, the desktop app's to its backups folder), and that file holds
+the key in the clear; restoring it puts the same key back on a board. Leaving the irreversible fuses off by default is a
+deliberate trade — the alternative permanently bricks devices whose owners
+lose a key — and both are spelled out, with what key recovery does and
+doesn't let an attacker do, under
 [Physical extraction and the flash-encryption default](#physical-extraction-and-the-flash-encryption-default).
 
 ---
@@ -278,12 +286,18 @@ flagship's own access point is told apart from one over your home network.
 
 **On the device's own access point** — the Canary WAP, the `firmware/canary`
 flagship, the headless products' setup portals — the boundary is the AP
-password, unique per device. Anyone holding it is inside. On the flagship
-that includes the API token: a request that provably arrived over its own
-access point gets the page with the token in it. The flagship keeps that
-access point up while it has no home network and again whenever the home
-link drops, and takes it down once the home link has held for a grace
-period.
+password, unique per device. Anyone holding the password is inside. On the
+flagship that includes the API token: a request that provably arrived over
+its own access point gets the page with the token in it. On the WAP and the
+flagship the password is an HMAC of the device's private key, never derived
+from anything the device publishes; the headless setup portals draw theirs
+at random. Until sweep F350 the flagship's was computed from its public-key
+fingerprint, which the device publishes (its setup network's name spells
+two of the fingerprint's bytes, and every signed event it sends over MQTT
+carries all of it), so anyone who had seen the fingerprint could compute
+the password. The flagship keeps that access point up while it has no
+home network and again whenever the home link drops, and takes it down
+once the home link has held for a grace period.
 
 **On your home network, the boundary is your network.** The flagship's
 release images serve its dashboard and API as plain HTTP on port 80. Once
@@ -318,6 +332,46 @@ that means the device, can spend your tap before you do. The decisions
 `receipt_decide`, and `host_guard.h` beside them) are host-tested, the handler glue is compiled by
 CI, and none of it is bench-tested yet.
 
+The flagship's bearer lockout is the WAP's table,
+`firmware/common/network/auth_backoff.h`, keyed by the request's socket peer
+(`request_peer_ipv4()`, never a header) (sweep F340). Every bearer it
+compares is accounted: the API routes through `auth_check()`, and the
+provisioning receipt and the page-token decision through the grant
+`auth_bearer_grant()`. A malformed or wrong bearer is a strike against its
+address. While that address's backoff runs, its API calls are refused `429`
+with `Retry-After`, and its bearer on the receipt is not compared and reads
+as none, so the receipt goes on to the BOOT tap: served if one is open,
+else its `403`, which the page reads as "tap BOOT". A request with no
+`Authorization` header is no strike, so a dashboard tab loaded without the
+token, which polls with no header, arms nothing. A BOOT tap that hands an
+address the token, on the receipt or on the page load it unlocks, ends that
+address's own backoff as a right bearer would (sweep F341), never the shared
+overflow's (`auth_handed_token()` frees only the address's own slot). The
+dashboard drops a token the device refuses and shows its unlock banner again, so a
+mistyped paste is dropped at its first refusal instead of being sent on
+every poll. A host's wrong
+bearers hold only that host's address (F343). A browser that mistyped the
+token waits at most about 60 s, or taps BOOT, which clears its address when
+the tap is served to it (F341): the flagship's tap still goes to the first
+asker (F354), so it is that browser's own receipt request or page load that
+has to be the one served. A host that strikes from 9 or more addresses
+within 60 s holds every untracked address while the shared overflow slot
+runs, and a tap does not clear that. The flagship has no Bluetooth lane
+that changes its Wi-Fi and no Bluetooth setup door, so there the way out is
+to wait until that host
+stops. Its 10 s hold empties the table (it is in RAM, and the release
+restarts the unit) and clears the saved networks, but it gets the owner out
+only if the unit is then set up on a network that host is not on: set up on
+the same network again, the host's next strikes from nine addresses hold
+every untracked address again, the owner's among them. The WAP's ways out
+are in its lockout paragraph below. Clients behind one address share a
+backoff. It does not close a deliberate
+denial from the LAN: the device-wide request limit (120 requests a minute
+across the rate-limited routes) is still one per device, so two open Status
+tabs reach it by themselves (F351), and ARP spoofing and httpd's connection
+purge stay open. Host-tested on the real `securacv_auth.cpp`; not
+bench-tested.
+
 The WAP's sensing dashboard draws the line elsewhere: its landing page
 mints a one-tap pairing link for whoever loads it, and the tap becomes a
 24-hour session cookie that signs that browser into the dashboard. That
@@ -325,8 +379,184 @@ session is proof of being on the LAN and nothing more: the WAP's bearer
 token itself (with the SoftAP password and the TLS pin) is handed out only
 in the provisioning receipt — to a caller that already presents the token
 as a bearer, to a phone spending the setup door's claim, or for thirty
-seconds after a short BOOT tap — in the pairing QR an operator fetches with
-the token, or on the serial console. Until sweep F289 the session cookie
+seconds after a short BOOT tap — and also in the pairing QR an operator
+fetches with the token, or on the serial console.
+
+Since sweep F344 the WAP asks the flagship's Host question too, in fewer
+places and with no exemption. After setup, the landing page `/`, its one-tap
+link (`/?cv_pair=`), `/admin`, `/settings` and `/companion` answer only a
+Host that can name this device (`host_guard.h`: an IP address, a `.local`
+name, a single label, or a `.lan`, `.internal` or `.home.arpa` name). Any
+other Host, or none, gets `403` and one fixed `text/plain` sentence ("This
+Canary answers only its own names. Open it at its .local name, its IP
+address, or the bare name your router gives it."): no pair token is handed
+out, no session is minted, the owner's link stays unspent, and a live cookie
+sent under that name is refused too. The provisioning receipt asks the same
+question first, in every mode, setup included, and answers
+`403 {"error":"host"}` before it reads the bearer, takes the claim or judges
+the tap, so such a request is never a strike (F343), never an asker for the
+tap (F342), spends nothing and clears nothing (F341). A DNS-rebinding page
+under a public name is then handed no session and no receipt (what no Host
+question can tell apart is under "What it leaves" below). Nor can it use a
+session carried in: any host on the LAN can take a 24-hour session at the
+landing, and a page can set that value for its own name with
+`document.cookie`, so the cookie validator behind every cookie route
+(`session_validate_cookie()`, which `api_auth.h`'s checks and
+`CSI_AUTH_OR_RETURN` reach through `cv_session_validate()`) asks the same
+Host question before it reads the cookie (F344's third review). Before, it
+read no Host, and such a value reached the dashboard, the live camera, the
+vault download, every session admin route and `GET /api/pair/token` (whose
+pair token then authorized `/api/wifi/connect`) from the rebinding page for
+its 24 hours. Two differences from the flagship. There is no SoftAP
+exemption, because the WAP's captive DNS sends every name to the device; its
+wizard runs at `canary.local` or `192.168.4.1`, which both pass, and the
+setup branch and the wizard token's re-issue now match exactly those two
+names, in any case and with any port, rather than any name that contains one
+of them. And the question is asked by the places that mint a session or a
+pair token for a caller holding no credential (`check_route_security.py`'s
+`MINT_SITES` lists every place that mints, each with the gate it must pass
+first), the pages that start a sign-in and the cookie, not by every API
+route as the flagship asks it: outside the receipt a bearer asks no Host, so
+a rebinding page that holds the bearer token itself is F57's open question,
+and a pair token's value carried off the LAN is read with no Host on
+`/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` (start,
+status and stop; a started scan acts only on a code held to the camera) for
+its ten minutes during first-boot setup. Since F334, after setup a carried
+pair token no longer works on the first two or on the scan's start: the
+first two take the bearer alone and the start answers `404`. The scan's
+status and stop still take a pair token, and since F333 a camera unit's boot scan runs only while no
+network is stored and the unit is not standalone (after setup, only after
+the owner's bearer Forget or the 10 s hold), so a carried token reads that
+scan's status (the network name the code held, the error text) and stops
+it. Refused after
+setup: a router name under another suffix (`.fritz.box`, `.localdomain`,
+`.home`), a name with a trailing dot, a public split-horizon name, and a
+reverse proxy that forwards a public Host; use the `.local` name, the IP or
+the bare router name instead (widening the shared list is F356). What it leaves: the Host question tells a public name from a name
+only the local network answers; it cannot tell this device from another
+server that answered such a name (`canary.local`, `192.168.4.1`, the
+device's own LAN address, any `.local` name, a single label or a private
+suffix) on a network the browser used before, such as a hostile hotspot or
+mDNS spoofed on a shared Wi-Fi. A page loaded there runs same-origin with
+the device when the browser comes home (every WAP claims `canary.local`) or
+joins the SoftAP (whose captive DNS answers every name with the device),
+whether it was left open or kept in the browser's HTTP cache: a cached
+answer is served again, with no request to the device, for as long as the
+server that sent it said, even after the browser has quit. In headless
+Chromium 141, clearing that name's cookies and stored data did not remove
+such a copy: the site's own "Delete data" for `canary.local`, and "Delete
+browsing data" over "All time" with "Cookies and other site data" but not
+"Cached images and files", each cleared that name's storage and left the
+cached page to be served again, while "Delete browsing data" with "Cached
+images and files" over "All time", which empties every site's cache,
+removed it. Other browsers were not tried. It can take the landing's pair token, a 24-hour session
+through `?cv_pair=`, during setup the wizard's pair token (from `/`'s
+redirect to the wizard or from the re-issue, at either setup name), and,
+around a BOOT tap the owner presses from that browser, the
+receipt: one browser is one address to the tap rule (F342), and here the
+answer is readable. Only HTTPS with an
+identity the browser can check closes it, and neither F15 nor F256 gives a
+browser one: F15 would bring HTTPS with a self-signed certificate, whose
+warning the owner accepts, and only a client that pins the certificate checks
+it (the iPhone app pins the receipt's `tls_cert_fp`; F256 asks whether it may
+learn one over mDNS). F15 would still help: once a unit serves HTTPS after
+setup, port 80 answers only the captive probes, `/api/fleet` and a redirect,
+so a page planted over plain HTTP is cross-origin to the device and takes
+none of these (it reads nothing; but `SameSite=Strict` compares sites, so in
+a browser that does not count the scheme in the site, as Chromium does, its
+requests still carry the session cookie and it can write blind with the
+owner's session: any write a session may make, of which since F361 only
+the firmware install restarts the unit, and only into a newer signed
+image); a page
+served over https at that name whose certificate
+warning the owner accepted still does, and so does any page during the
+first-boot setup or on a unit whose HTTPS start failed, which serve plain
+HTTP. And a cross-site page
+can still send requests at the IP address (an IP literal passes). It cannot
+read what the landing, the exchange, the pages, the wizard token's re-issue
+(`/api/wifi/pair-token`) or the receipt serve, since none sends a CORS
+header with it (the receipt's `500` and `503` error codes do, through
+`http_send_error()`, and carry nothing else). The re-issue answered through
+`http_send_json()`, with `Access-Control-Allow-Origin: *`, until F344's
+second review: during setup a page on another site, in the owner's own
+browser on the SoftAP, read a pair token at `192.168.4.1` (a setup name,
+which the exact match passes) and could spend it on `/api/wifi/connect` or
+`/api/wifi/ap-only`. It now sends no CORS header, and
+`check_route_security.py` refuses a mint site that answers through
+`http_send_json()`. Its requests spend no claim, from another address close
+an open tap rather than take it (F342), from the owner's own browser can
+still use up an open tap, can churn pair tokens, and during first-boot
+setup can stop the boot Wi-Fi QR scan each time it asks: `POST
+/api/wifi/qr-scan` yields that scan before it reads the body or checks the
+pair token, and the scan starts again about five seconds after its task
+unwinds (older than F344; noted under it in the ledger). After setup that
+route answers `404` before anything else (F334). A denial of service, not a
+way to the token. Three public routes do answer it readably:
+`/api/wifi` (the home network's name, the station address, the SoftAP's name
+and client count), `/api/wifi/scan` (nearby networks) and `/api/fleet`
+(coarse presence) send `Access-Control-Allow-Origin: *` (`http_send_json()`;
+`/api/fleet`'s by its documented contract), so any page can read them at the
+IP, rebinding or not, and the Host question cannot close that. The other
+public routes (`/api/selftest`, `/api/device-info`, `/api/help-qr`,
+`/enroll`, `/api/device/enroll`) send no CORS header (`/api/device-info`'s
+`500` and `503` error codes do, through `http_send_error()`, and carry
+nothing else), so only a rebinding page reads them, and they ask no Host. Both are F357. Host-tested; not run
+against a browser or on a device.
+
+Since sweep F342 the tap goes to the one address asking for it: when a
+second address asked for the receipt in the ten seconds before the tap or
+during it, the tap is closed and an asker gets `409 tap_contended` while an
+address other than it asked in the last ten seconds, up to the closed tap's
+thirty seconds. So the `409` ends ten seconds after the other device stops;
+if that device keeps polling, its own asks end it ten seconds after the
+owner's page stopped, the owner's retry hears `403`, and the next tap is
+closed with `409` again (the poller case below). The `409` tells the client
+to start its request first and keep it asking, then press BOOT; the `403`,
+the dashboard and the companion give that order too, their `409` text
+included (the click, or the tap on Save, before the press), and both pages
+say to press only once the device has answered one of their asks with `403`
+(host-tested, not bench-tested). The setup door's claim is spent only by
+a match, so a wrong `?claim=` from a host on the network no longer ends the
+phone's pairing (F342). The tap's asker is the request's socket peer
+(`request_peer_key()`, the same read the per-address lockout keys on, F343),
+never a header. To judge the tap, the WAP keeps the last two distinct
+addresses that asked for the receipt and were not served by a bearer or the
+claim, as 16-byte socket-peer keys (an IPv4 client as `::ffff:a.b.c.d`), each
+with the time of its latest ask. That record is in RAM only: nothing writes
+it to NVS or a file, a restart empties it, and otherwise an address stays
+until two other addresses have asked after its latest ask (no timer ages it
+out, and a served tap clears only the contention, not the addresses). No
+route serves it, and the health log (what `/api/logs` serves) names neither
+address; the one place an address goes is the serial console line printed
+when contention closes a tap, which names both. What the tap rule cannot
+see: a tap no client of the
+owner's was already asking for (an accidental tap, a page or `curl` started
+after it, a tap pressed per a recipe or an older page that says to press
+first, BLE OTA break-glass) still goes to the first asker; hosts behind
+one address (a NAT, an ARP spoofer, a page in the owner's own browser) are
+one asker; a host that keeps the WAP's one web server busy for more than
+ten seconds before the tap can hide the owner's client; and a host that
+asks for the receipt at least once every ten seconds (polling included)
+makes every tap the owner's client is already asking for refuse, loudly (a
+bare re-tap with no client of the owner's asking is the first case, and
+goes to that host). Then the recovery kit's token and the USB serial
+console (the receipt prints at every boot) are the ways in, and neither
+opens anything to anyone else. Holding BOOT 10 s, then setting up again
+from the iPhone through the setup door, is the last one: the hold keeps the
+token and reopens the first-boot setup door for 30 minutes, and that door
+goes to whichever Bluetooth client connects first. A client that connects
+before the phone (a host on the network that is also in radio range, say)
+can join the Canary to a network it is on, spend the claim minted for its
+own link and keep the token, which nothing rotates today. So the hold is
+for a host known to be on the network only, with the phone ready, and the
+phone ends paired unless something in radio range reached the door first,
+or a landing session turned the WAP's Bluetooth off before the hold, which
+any host on the network can (F346): the setting is saved and the hold keeps
+it, and every link is dropped while it is off, so no phone reaches the
+door. That is a denial, not a takeover; the kit's token and the console
+still work.
+
+Until sweep F289 the session cookie
 bought the receipt and the QR too, so any host on the home network could
 read the token with no tap; both routes now take the `Authorization:
 Bearer` header alone (host-tested, not bench-tested). Since sweep F289's
@@ -335,34 +565,214 @@ port, TLS mode or CA over `POST /api/mqtt/config` while keeping the stored
 broker password — that save takes the bearer or the password typed again
 (`403 password_needed`), so the password `GET /api/mqtt/config` keeps
 write-only cannot be read through a broker the session names that way
-(host-tested). The QR hub-provision path is the road that rule leaves open:
-a scanned hub code re-points the broker with the stored password, in a scan
-window the session can open (it mints the wizard's pair token over
-`GET /api/pair/token`), but only for a code in front of the camera
-(`FEATURE_QR_PROVISION`) — accepted as proximity-bound, named in the
-ledger. Since F289's follow-up (#1832) a wrong bearer on the receipt counts
-toward the same lockout as the admin routes, and the session cookie itself
-is `HttpOnly`, `SameSite=Strict`, and `Secure` whenever it is set over HTTPS
-(the first-boot setup runs plain HTTP, where a `Secure` cookie would be
-dropped); host-tested, the ESP32 compile is CI's, not bench-tested. The
+(host-tested). The camera's QR hub re-point stays outside that rule on
+purpose (sweep F333): every code also chooses the network the unit joins,
+so a host compare there would protect nothing, and the road is closed
+where it opens instead. The boot scan follows the Bluetooth setup door's
+rule (`keyless_join_open()`: no network stored, not standalone), the
+phone-session scan starts only during setup and stops at its next frame
+once setup ends (F334), and Forget Wi-Fi clears
+the stored broker user and password (`csi_mqtt::login_clear()`), so a
+keyless join reaches a set-up unit only after the owner's bearer Forget or
+the 10 s hold, and neither leaves a login on file. What stays: a login the
+owner types on `/mqtt` after a Forget and before the unit is set up again
+can reach whoever answers the stored broker on a plain link (the
+CA-verified mode is the defense), and the boot scan has no time window.
+
+The session also cannot make a write that grants a credential or moves the
+unit off its owner's network (a network one moved it to before F334 can
+stay saved, below), and of its writes only the firmware install
+restarts the unit (`POST /api/ota/install`, automatic updates turned on
+with `POST /api/ota/config`, or the MQTT update entity's Install or
+auto-update switch, sent from whatever broker the bridge points at, which a
+session may re-point with a password typed), which installs only a newer
+signed image.
+These routes take the bearer, never the session (`api_auth_check_bearer()`,
+except the receipt, which takes the accounted `api_auth_bearer_grant()`
+beside its own BOOT tap and setup-door claim; `api_auth.h` points here for
+the list):
+- `GET /api/provisioning-receipt` and `GET /api/pairing-qr` (F289);
+- `POST /api/vault/key`, the vault's recipient key, which decides who can
+  open every frame sealed from then on (F335);
+- `POST /api/bluetooth/pair/confirm`, a lasting bond to the authenticated
+  characteristics, the Wi-Fi credentials write among them, and
+  `POST /api/mesh/pair/confirm`, an opera's secret (F346);
+- `POST /api/wifi/disconnect` and `/api/wifi/forget` in every mode, first-boot
+  setup included, and after first-boot setup `POST /api/wifi/connect` and
+  `/api/wifi/ap-only`, each on every interface, the recovery portal's SoftAP
+  included (F334, F345); `POST /api/wifi/qr-scan` answers `404` outside
+  setup;
+- `POST /api/reboot` and `POST /api/safe-mode/retry` (F361).
+A network a session moved it to before F334 can stay among its saved
+networks: `wifi_store_note_joined()` writes every network the unit joins
+into a ring of up to four, and when the current network is not found twice
+running the unit tries the next saved one by itself
+(`wifi_store_rotate_if_due()`), with no request and no bearer. No route
+lists the saved networks or removes one (`GET /api/status` carries only
+`saved_networks`, a count); the remedy is a bearer Forget, which wipes the
+ring, then setting the unit up again.
+A Passkey Entry's digits (the one code that is the bond: the peer types
+what the WAP shows, and nothing on the WAP confirms) ride `GET
+/api/bluetooth` only with a bearer that passes the accounted grant while
+the passkey is displayed, and are no longer written to the health log; a
+session reads `pin_hidden`. A Numeric Comparison's digits and the mesh
+code stay visible to the session, because both ends compute them. The other
+seven vault routes (`GET /api/vault/status`, `DELETE /api/vault/key`, `POST
+/api/vault/config`, `DELETE /api/vault/item`, `POST /api/vault/test`, `GET
+/api/vault/list`, `GET /api/vault/download`) stay on the session by design:
+a key clear and an item delete are health-logged, a frame's `frame_sealed`
+record survives its delete, and clearing the key turns every trigger off.
+A LAN session can destroy sealed frames but not redirect them. The
+landing's pair token opens the dashboard and, during setup, the wizard. The
+dashboard asks for the token at those actions; pasting it from the recovery
+kit is preferred, since the sign-in checks a pasted token by itself
+(without the cookie), and the BOOT tap goes to the one address asking for
+it and closes on a second (F342). Since F345, Forget Wi-Fi takes the
+bearer, so a session cannot re-open the Bluetooth setup door and buy the
+receipt with its claim. Only the owner's own bearer Forget, or the 10 s
+BOOT hold, re-arms the door; until the unit is set up again it is in
+first-boot trust (after a Forget, unless it runs standalone: Forget leaves
+that choice set and the door shut), and the door's claim goes to the first
+phone in range (magic_pairing.md §8). For the vault key and the two
+confirms the lockout below is availability only: a session can already
+remove the key, reject a pairing or turn Bluetooth off; the owner waits it
+out (a power cycle also clears the RAM table). Host-tested, not
+bench-tested.
+
+Since F289's follow-up (#1832) a wrong bearer on the receipt counts
+toward the same per-address lockout as the admin routes (F343), and the
+session cookie itself is `HttpOnly`, `SameSite=Strict`, and `Secure` and
+named `__Host-cv_session` whenever it is set over HTTPS (the first-boot
+setup runs plain HTTP, where a `Secure` cookie would be dropped, and sets
+`cv_session`; two names, F337, so that once a WAP serves HTTPS a browser
+holding its cookie can still sign in to a unit it meets over plain HTTP at
+canary.local); host-tested, the ESP32 compile is CI's, not
+bench-tested. The WAP's lockout is per source address. A host's wrong
+bearers hold only that host's address (F343). A browser that mistyped the
+token waits at most about 60 s, or signs in with Use BOOT Tap Once, which
+clears its address when the tap is served to that browser's ask (F341). A
+host that strikes from 9 or more addresses within 60 s holds every
+untracked address, the owner's among them, while the shared overflow slot
+runs, and neither a tap nor the token clears that; then wait until it
+stops, and change the WAP's Wi-Fi from a browser on the network, with the
+API token pasted into the sign-in, to a network that host is not on. After
+first-boot setup that move takes the bearer alone
+(`wifi_change_authorize()`, F334): the landing page's session, which the
+page mints for any host on the network (F346), no longer reaches
+`POST /api/wifi/connect`, and `api_auth_check_bearer()` answers an address
+the overflow holds `429` before it compares anything, so the browser waits
+with every other untracked address. The overflow's backoff ends at most
+60 s after that host's last strike, and the move gets the owner out only
+while that host leaves it alone. (Before F334 the owner's landing session
+made that move under the lockout, since `api_auth_check()` takes the
+cookie before the bearer and its lockout, and a host that kept minting
+sessions could end it before its save. Before F346 a host also in radio
+range could bond a Bluetooth peer of its own through its session and write
+the WAP's Wi-Fi over the bonded lane, `ble_provision.cpp`'s CREDS; the
+bond's confirm and a Passkey Entry's digits take the bearer now, and a
+bond a session confirmed on 2.4.17 or earlier persists until the owner
+removes it.) And the move lasts only while the new network stays up. The WAP keeps
+every network it has joined (up to four, `wifi_store.h`), the striking
+host's among them, and when the one it is on is not found twice running (a
+phone's hotspot turned off, a network out of range, one that is down when
+the WAP starts) it tries the next saved one, in turn, with no act of the
+owner's, and stays on the host's network once it joins it. No route
+forgets one saved network (`wifi_store::remove()` has no caller): Forget
+Wi-Fi (`POST /api/wifi/forget`, which takes the bearer alone, F345, so it
+waits for the overflow too) and the 10 s hold drop them all, and each reopens the
+first-come setup door, so the move sticks only after Forget Wi-Fi and a
+setup onto the new network. The iPhone's bonded Bluetooth lane is no way
+out today: the iPhone app dials only a Canary that advertises the console
+service, which a WAP does not, so it never writes a WAP's CREDS (ledger
+A65, open). Once A65 is settled the lane would move the WAP with no
+browser, but only while that host leaves it alone and the new network
+stays up (it saves through the same paths), and taking it away needs no
+radio. Any landing
+session can turn the WAP's Bluetooth off (`POST /api/bluetooth/disable`),
+a saved setting that restarts and the 10 s hold keep, under which every
+Bluetooth link is dropped; or delete every bond, the owner's phone's
+included (`DELETE /api/bluetooth/paired/all`), so the phone must pair again
+before the lane takes its write; and a bonded peer of that host's (one a
+session confirmed before F346) can keep the owner's write refused for as
+long as it keeps writing (the lane takes one
+write in 5 s and ten an hour from every peer together, and a refused write
+costs the writer nothing). A host that keeps striking can do any of these
+again at will. The owner's session reaches the same Bluetooth routes, so
+it can turn Bluetooth back on, which that host can turn off again.
+The 10 s BOOT hold is no way out from under that host: it empties the table
+(it is in RAM,
+and the release restarts the unit), as any restart does, but once the unit
+is set up on the same network again, the host's next strikes from nine
+addresses hold every untracked address again, the owner's among them, and
+the claim that pairs the phone does not clear the overflow (it frees only
+the served address's own slot, F341), so the phone ends paired and held.
+The hold helps only with a setup onto a network that host is not on, so it
+comes last, for a host known to be on the network only, with the iPhone
+ready. The owner's browser makes that move without it once that host
+stops, with the token, and without reopening the
+first-boot setup door, which goes to whichever Bluetooth client connects
+first (the tap paragraph above), but that move keeps the host's network
+saved; the hold, or Forget Wi-Fi, followed by that setup drops it, and
+reopens that door. A wrong bearer
+on the receipt is a strike even when the setup-door claim or the BOOT tap
+then serves it, and the claim or the tap
+that serves ends that address's own backoff, as a right bearer would, never
+the shared overflow's: an address held only through the overflow stays held
+(sweep F341). The key is the request's socket peer address, never a
+header, and clients behind one address share a backoff. It does not close a
+deliberate denial from the LAN: ARP spoofing, httpd's connection purge and
+a cross-site `?token=` image that holds the visiting browser's own address
+stay open ([`magic_pairing.md`](../design/magic_pairing.md) §3.7). A reboot
+empties the table, kept in RAM, and so resets the guess budget: about 30
+guesses a minute between reboots from any number of addresses. Until F361 a
+landing session could reboot the unit at will (`POST /api/reboot`, `POST
+/api/safe-mode/retry`), so a guesser that rebooted it every few seconds got
+more (about 100 a minute if it was back on the LAN 10 s later;
+`THREAT_MODEL.md` scenario 10); both routes take the bearer now, and a
+session's firmware install restarts the unit only into a newer signed
+image. The token's entropy stays the bound. Host-tested; not run on a
+device. Every bearer
+compare on the WAP counts toward that per-address lockout, and none is
+compared while its address is held (sweep
+F339): the receipt and the pairing QR; the admin routes; the CSI routes, the
+MQTT bridge's routes and its broker move; the QR scan's admin fallback; and
+the camera's and the vault's `?token=` links, which until F339 never read
+the lockout at all (a right `?token=` was served inside a backoff and
+cleared it); and `GET /api/bluetooth`'s Passkey Entry field (F346). A held address gets `429` with `Retry-After` on the CSI and MQTT
+routes and those links; the QR scan's status and stop keep their `403`. The
+route check (`check_route_security.py`) fails any file of the sketch but
+`api_auth.h` that calls a raw compare, so `GET /api/bluetooth`'s Passkey
+Entry field (F346) compares through the same grant, and only while a
+passkey is displayed. The pair token's
+compares stay outside it on purpose: the landing page hands that token to
+any caller, and the CSI dashboard and `/companion` ride it or the cookie and
+send no bearer. Host-tested; not run on a device. The
 displays treat the LAN as their trust boundary by design — no bearer
 credential at all, a per-boot CSRF token that keeps cross-site pages away
 from writes, and the on-glass-only settings above that no network caller
 can flip.
 
-**Encryption in transit is an opt-in, not the default.** The Canary WAP
-serves HTTPS on port 443 with a certificate minted on the device once setup
-has completed and the certificate loads; during first-boot setup, and when
-the HTTPS server fails to start, it serves plain HTTP and says so on the
-serial log. The flagship's `dev`, `dev_ha`, `usb-onboard` and `full` builds
-(`FEATURE_HTTPS=1`) take the same shape with a self-signed ECDSA P-256
-certificate generated on the device and kept in its NVS: from the first
-boot after setup completes they serve HTTPS on 443 and 307-redirect port 80
-there, except the connectivity probes phones and laptops send, and a build,
-core or certificate step that cannot do TLS serves plain HTTP and says why in
-`/api/status` `tls_mode_reason`. CI compiles `dev` and `full`; `dev_ha` and
-`usb-onboard` inherit the flag from `dev` and no workflow builds them; none
-of the four has run on hardware. The flagship's release images (`release`,
+**Encryption in transit is not the default, and no stock unit serves
+HTTPS today.** Both trees have an HTTPS server built in that runs once a
+certificate is stored, and no stock build stores one (F15): the on-device
+certificate generator compiles out on every pinned core (its guard tests
+`mbedtls/x509write_crt.h`, a header mbedTLS never ships) and nothing else
+stores a certificate. So the Canary WAP serves plain HTTP after setup as
+during it, and the flagship's `dev`, `dev_ha`, `usb-onboard` and `full`
+builds (`FEATURE_HTTPS=1`) serve plain HTTP and say why in `/api/status`
+`tls_mode_reason` ("no stored certificate and this core cannot generate
+one"). Once a certificate is stored, the WAP would serve HTTPS on port 443
+from a certificate minted on the device after setup has completed, and
+plain HTTP during first-boot setup and when the HTTPS server fails to
+start, saying so on the serial log; the flagship's HTTPS builds would take
+the same shape with a self-signed ECDSA P-256 certificate generated on the
+device and kept in its NVS, serving HTTPS on 443 from the first boot after
+setup completes and 307-redirecting port 80 there, except the connectivity
+probes phones and laptops send, and a build, core or certificate step that
+cannot do TLS serves plain HTTP and says why in `tls_mode_reason`. CI
+compiles `dev` and `full`; `dev_ha` and `usb-onboard` inherit the flag from
+`dev` and no workflow builds them; none of the four has run on hardware.
+The flagship's release images (`release`,
 `release_ha` and the board envs built on them) stay plain HTTP on port 80
 until the size budget shows HTTPS fits and the maintainer turns it on, and
 the displays' LAN page and the headless products' setup portals are plain
@@ -373,9 +783,10 @@ container with its host port disabled, and the Docker sidecar's on every
 interface with port 8799 published from the first start, so Home Assistant
 can pair over the LAN (what that opens, and what crosses the wire, is
 [below](#home-assistant-pairing-and-what-crosses-your-network)). The
-iPhone app pins the certificate fingerprint in the receipt's `tls_cert_fp` —
-the WAP's pairing receipt and QR, and the flagship's receipt on its HTTPS
-builds, which `/api/status` also reports — refuses an https Canary it
+iPhone app pins the certificate fingerprint in the receipt's `tls_cert_fp`
+when a unit hands one out (the WAP's pairing receipt and QR, and the
+flagship's receipt on its HTTPS builds, which `/api/status` also reports;
+no stock unit has one to hand out today), refuses an https Canary it
 cannot check, and offers a plain-http credential push only when nothing
 encrypted reaches the device and only behind a disclosure you switch on.
 Compile-tested by CI; whether a given unit is serving HTTPS is on its serial
@@ -389,10 +800,11 @@ SHA-256 fingerprint (which products support which is in
 [`docs/FIRMWARE_VARIANT_AUDIT.md`](../FIRMWARE_VARIANT_AUDIT.md)). An
 incomplete TLS setup refuses to connect rather than quietly downgrading, and
 the unverified "lab" mode exists only as a mode chosen by name that warns on
-every connect. On the flagship's release images, and on its HTTPS builds
-until the first boot after setup or when HTTPS fails to start, provisioning
-the broker password over `POST /api/mqtt/config` crosses the LAN in the
-clear like the rest of the device API. A `POST /api/mqtt/config` that moves
+every connect. Provisioning the broker password over
+`POST /api/mqtt/config` crosses the LAN in the clear like the rest of the
+device API on every stock unit of either tree today, since none serves HTTPS
+(F15); the flagship's release images stay plain HTTP after that too, until
+HTTPS is turned on for them. A `POST /api/mqtt/config` that moves
 the broker (a new host or port) while a password is stored and the body
 names none is refused `400 password_required_for_new_host` from any caller
 (`mqtt_tls_fields::credential_carry`; the flagship has no dashboard session,
@@ -527,7 +939,7 @@ could use against the kernel; the receipt names the credential that asked
 | **Law enforcement** (without the physical device) | There is no ERRERlabs server to subpoena. A Canary talks only to the broker and hub you run and to the update host, which sees an anonymous manifest fetch; the evidence lives on the device and on your hub. |
 | **Network observers** | They see the disclosed paths and nothing else: a broker session (readable on the wire until you provision TLS), a daily signed-manifest fetch and SNTP from every product without GPS. No path carries an identifier beyond what your own broker login already is. On the hub they also see the kernel's plain HTTP where it crosses the LAN — the Docker sidecar's paired token on every Home Assistant request until TLS lands for it — and the coarse claims and the signed announcement on your own broker. |
 | **Other WiFi users** | Each device has a unique, randomly derived password. |
-| **Remote attackers** | Nothing listens beyond your network and nothing is exposed to the internet; the outbound paths are client-initiated to hosts you chose. Encryption on the device's own API is an opt-in — the WAP's HTTPS after setup, the flagship's `FEATURE_HTTPS` builds from the first boot after setup, the kernel's `api-tls` — and the MQTT broker link is TLS only once you provision it (plain by default). |
+| **Remote attackers** | Nothing listens beyond your network and nothing is exposed to the internet; the outbound paths are client-initiated to hosts you chose. Encryption on the device's own API is not the default: the WAP turns HTTPS on by itself after setup once a certificate is stored, the flagship serves it only in its `FEATURE_HTTPS` builds, from the first boot after setup (neither Canary serves it on any stock unit today, F15), and the kernel only with its `api-tls` build feature; and the MQTT broker link is TLS only once you provision it (plain by default). |
 | **ERRERlabs under court order** | We cannot comply because we have nothing — no keys, no data, no access. |
 
 ---
@@ -541,7 +953,7 @@ The device uses well-vetted, standard cryptographic primitives:
 | Device identity & record signing | Ed25519 | Arduino Crypto (Rhys Weatherley) |
 | Chain integrity & domain separation | SHA-256 | mbedTLS (ESP-IDF) |
 | API token derivation | HMAC-SHA256 / HKDF | mbedTLS (ESP-IDF) |
-| Transport encryption (opt-in: the WAP's HTTPS after setup; the flagship's `FEATURE_HTTPS` builds from the first boot after setup; the kernel's `api-tls` feature) | TLS 1.2+ (RSA-2048 self-signed on the WAP; ECDSA P-256 self-signed on the flagship's `FEATURE_HTTPS` builds, CI-compiled in `dev` and `full` and never run on hardware) | mbedTLS (ESP-IDF); rustls (kernel) |
+| Transport encryption (the WAP's HTTPS, automatic after setup once a certificate is stored; the flagship's `FEATURE_HTTPS` builds from the first boot after setup — neither Canary serves it on any stock unit today, F15; the kernel's `api-tls` feature) | TLS 1.2+ (RSA-2048 self-signed on the WAP; ECDSA P-256 self-signed on the flagship's `FEATURE_HTTPS` builds, CI-compiled in `dev` and `full` and never run on hardware) | mbedTLS (ESP-IDF); rustls (kernel) |
 | Broker link (MQTT over TLS, when provisioned) | TLS 1.2+; CA chain verification on all five products; SHA-256 certificate pin and a named unverified lab mode on canary-display (not the plain-only nightstand-c6), canary-sense, canary-vision and the `firmware/canary` flagship; canary-wap is CA-only (esp_mqtt has no pin hook). Compile-tested, host-tested, not bench-tested | mbedTLS via WiFiClientSecure (display / sense / vision / flagship) and esp-tls (canary-wap) |
 | At-rest event database (kernel) | SQLCipher (AES-256), key derived from the device seed | SQLCipher via rusqlite |
 
@@ -561,7 +973,8 @@ The witness chain is append-only:
   who checks
 
 To forge a record, an adversary would need:
-1. The device's Ed25519 private key (which never leaves the device)
+1. The device's Ed25519 private key (which no firmware path exports; a
+   full read of the flash, a flasher's safety copy included, carries it)
 2. To re-hash and re-sign every subsequent record in the chain
 
 To hide a deletion, an adversary would need to re-sign the entire chain
@@ -610,15 +1023,22 @@ no undisclosed outbound path — the few it has are named above, two of
 them pinned by host tests — so a compromised blob would have to
 originate traffic of its own, on a network whose expected traffic is
 short and known, and a WAP on its own access point gives it no route
-out at all. Secure boot and flash encryption are additional
-mitigations, but they are **off unless you turn them on** — see
+out at all. Secure boot and flash encryption would be additional
+mitigations, but **neither works on any Canary today**: the provisioning
+kit prepares both and turns on neither (its Phase 2 writes a plaintext
+image and burns no flash-encryption counter, so flash encryption stays
+off, and burns `SECURE_BOOT_EN` with no Secure Boot key digest, so Secure
+Boot is enabled with nothing to verify against) — see
 [Physical extraction and the flash-encryption default](#physical-extraction-and-the-flash-encryption-default).
 
 ### Physical Access
 Physical possession of the device enables forensic analysis of the
-SD card and flash storage. On a device in its default configuration this
-includes recovering the device's private key; the section below states
-exactly what that does and does not let an attacker do.
+SD card and flash storage. On every released firmware tree today this
+includes recovering the device's private key, on every tier: they build
+with `framework = arduino`, where NVS encryption is not available, so the
+key is plaintext in NVS on a board with flash encryption fused too. The
+section below states exactly what that does and does not let an attacker
+do.
 
 ### GPS Spoofing
 The device cannot independently verify GPS signals. A sophisticated
@@ -638,13 +1058,16 @@ not necessarily *what happened* in full detail.
 
 ### Physical extraction and the flash-encryption default
 
-**The honest statement: on a Canary in its default configuration, someone
-who takes the device away and opens it up can read the private key out of
-the flash chip.**
+**The honest statement: someone who takes a Canary away can read the
+private key out of its flash, over its USB port or off the chip, in its
+default configuration and, today, on a board with flash encryption fused
+too (the key is in NVS, which flash encryption does not cover:
+`key_at_rest` below), and so can anyone who holds a flasher's safety copy
+of that board.**
 
-This is a deliberate default, not an oversight, and the trade is worth
-understanding because it is the one place where "keys never leave the
-device" needs an asterisk.
+Leaving flash encryption off by default is deliberate, not an oversight,
+and the trade is worth understanding because it is the one place where
+"keys never leave the device" needs an asterisk.
 
 ESP32-family chips support Secure Boot and flash encryption, which together
 make the firmware image unreadable and stop unsigned firmware running.
@@ -657,8 +1080,11 @@ that can permanently destroy an owner's device is the wrong default for a
 device people are supposed to be able to keep, repair, and re-flash. So
 [the tiered design](../design/hardware_root_of_trust.md) puts the
 reversible protections in the default path and leaves the irreversible
-lockdown as an explicit, key-backup-enforced opt-in. The settings are
-staged and commented in `firmware/provisioning/sdkconfig.defaults.secure`.
+lockdown as an explicit opt-in. The design calls for that opt-in to
+enforce a key backup (its §5.2); the kit does not yet: `provision_canary.sh`
+checks only that the key files exist. The settings are staged and
+commented in `firmware/provisioning/sdkconfig.defaults.secure`, which is
+inert under `framework = arduino` (`platformio_secure.ini`).
 The PIO canary image (`firmware/canary`) does not leave you to assume
 which case yours is: it reports where its identity key sleeps as
 `key_at_rest` (`plaintext-nvs`, `nvs-encrypted` or
@@ -670,6 +1096,19 @@ encryption that would cover it is not available in that image's
 Arduino-framework build. No other firmware tree (canary-wap,
 canary-sense, canary-vision, canary-display, ...) reports `key_at_rest`
 yet.
+
+The canary-wap's stored MQTT broker password sits in NVS the same way, as
+plain bytes (no canary-wap build enables NVS encryption, and its partition
+table has no key partition for it), so the same physical access reads it.
+While it is stored it is also in RAM: in the bridge's active settings from
+their first load at boot, whether the bridge is on or not, in the MQTT
+client while one is open, and on the HTTP task's stack whenever a handler
+reads the settings row, the public `GET /api/fleet` among them. No handler
+wipes its copy, by decision (sweep F349): a wipe in one handler would remove
+none of the copies a reader of the device's memory or flash would take. The
+firmware makes no RAM-residue promise for a secret that lives as long as the
+device runs; the stack wipes it does keep (the SoftAP passphrase's) are
+hygiene where a wipe costs one line, not a guarantee.
 
 **What key recovery gets an attacker.** They can sign new records as that
 device. From that point on, a chain they produce is cryptographically
@@ -686,7 +1125,9 @@ It also does not decrypt sealed material, and that holds on both sides
 for the same structural reason — the decryption key is somewhere the
 device isn't. Sealed snapshots on the device are encrypted to an
 **operator-held X25519 public key whose private half never touches the
-device at all** (see [`../sealed_snapshot_vault.md`](../sealed_snapshot_vault.md)),
+device at all** (see [`../sealed_snapshot_vault.md`](../sealed_snapshot_vault.md);
+on the canary-wap registered only by a bearer holder since F335, where
+before any landing session could name its own),
 so there is nothing on the flash to recover that would open them. Vault
 material on the hub is protected by a separate hub-held key under the
 break-glass policy. Neither is the device identity key, so stealing the
@@ -697,15 +1138,36 @@ divergent chains from the same device key. Two chains that share a prefix
 and then disagree is not something the real device can do, so if both ever
 reach a verifier, the clone is provable.
 
-**If your threat model includes device seizure**, this is the case the
-opt-in tiers exist for. Turn them on deliberately, back up the key first,
-and understand that you are trading recoverability for extraction
-resistance. Read [`../design/hardware_root_of_trust.md`](../design/hardware_root_of_trust.md)
-before you burn a fuse — that decision cannot be walked back.
+**If your threat model includes device seizure**, know what the opt-in
+tiers buy today before you burn anything: nothing yet. The provisioning
+kit's Phase 2 (`provision_canary.sh --phase 2`) burns a flash-encryption
+key, `SECURE_BOOT_EN` and the JTAG fuses, but it writes the app in
+plaintext and burns no `SPI_BOOT_CRYPT_CNT` and no Secure Boot key digest,
+so after it flash encryption is off and Secure Boot is enabled with nothing
+to verify against: neither protects anything (what the chip does with
+`SECURE_BOOT_EN` and no key digest has not been run on a bench).
+Once the kit turns them on they would buy at most the firmware image's
+protection (flash encryption would keep the app image from being read off
+the chip; Secure Boot would refuse unsigned firmware), not the key's.
+The identity key, the saved Wi-Fi and broker passwords and the Bluetooth
+bonds stay plaintext in NVS on a board with flash encryption on too, and
+the WAP's mesh secret, which it saves only on such a board, sits beside
+them in plaintext. They stay so
+until NVS encryption is in the build, which needs the
+arduino-as-IDF-component migration
+(`firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` item 9; the Tier 3 row of
+[`../design/hardware_root_of_trust.md`](../design/hardware_root_of_trust.md)
+§5.1). Until then the defenses against a seizer are the two above, the
+anchored chain it cannot rewrite and the divergent chain a clone leaves
+for a verifier to find, and keeping the device out of reach. Read that
+design note before you burn a fuse — that decision cannot be walked back,
+and today it does not buy key secrecy.
 
-**If your threat model is an intruder, a landlord, or a domestic abuser
-who does not take the device to a lab**, the default is the right one for
-you, and the tamper-evidence properties are unaffected.
+**If your threat model is an intruder, a landlord, or a domestic abuser**,
+the default is still the right one for you (no tier protects the key today),
+and the tamper-evidence properties are unaffected. But anyone who can take
+the device, even for a few minutes with a laptop and a USB cable, can read
+its key, so keep it out of their reach.
 
 ---
 

@@ -188,11 +188,11 @@ struct Config {
  * prefix as the default).
  * config_save() writes it key by key on the caller's task, one save at a
  * time (a second writer waits for the first's lock); the loop task's re-init
- * opens no client from a row a save (this, ca_save, config_clear) is still
- * writing, or wrote during its read (csi_mqtt.cpp's open_client, sweep
- * F289's review), so no client ever carries the stored password to a host
- * another task's save was still writing, and no row is two saves' keys
- * interleaved. */
+ * opens no client from a row a save (this, ca_save, config_clear,
+ * login_clear) is still writing, or wrote during its read (csi_mqtt.cpp's
+ * open_client, sweep F289's review), so no client ever carries the stored
+ * password to a host another task's save was still writing, and no row is
+ * two saves' keys interleaved. */
 bool config_load(Config* out);
 bool config_save(const Config& cfg);
 
@@ -200,8 +200,21 @@ bool config_save(const Config& cfg);
  * the broker row and its CA — every MQTT key this namespace holds and
  * nothing else in it (the CSI module's own settings live here too). Leaves
  * the open client alone; the reset restarts the device next. True when no
- * MQTT key remains. */
+ * MQTT key remains, read back after the removes; false too when another
+ * save holds the lock or NVS will not open. */
 bool config_clear();
+
+/* Forget Wi-Fi's share (canary_wap.ino handle_wifi_forget, sweep F333):
+ * remove the stored broker user and password, under the writer lock, and
+ * keep the rest of the row (host, port, TLS mode, CA, prefix, discovery).
+ * On a unit not running standalone Forget re-opens the keyless joins
+ * (keyless_join_open()), and every code also chooses the
+ * network, so whoever wins one could answer the stored broker host. True
+ * when neither key remains (a row without them is true and unwritten);
+ * false when another save holds the lock, NVS will not open, or a key is
+ * still there when read back after its remove (NVS refused it). The caller
+ * asks for the re-init. */
+bool login_clear();
 
 /* Store (or, with an empty/null PEM, remove) the broker CA under
  * NVS_KEY_CA. Callers validate the PEM shape first
@@ -613,7 +626,9 @@ void set_api_token_provider(const char* (*fn)());
 /* HTTP handlers — registered by csi_integration::init alongside the
  * other CSI routes. Auth-gated by either the cv_session cookie or a
  * Bearer header carrying the api_token (the same dual-mode
- * CSI_AUTH_OR_RETURN uses). The /test handler asks the loop task for a
+ * CSI_AUTH_OR_RETURN uses), the bearer compared under its address's
+ * lockout: a wrong one is a strike, and a held one is answered 429 with
+ * Retry-After (sweep F339). The /test handler asks the loop task for a
  * reconnect with current NVS settings (request_reinit), waits for it, and
  * reports the broker's reachability within about 4 s, so the dashboard's
  * "Test connection" button gives a real signal rather than a spinner. The

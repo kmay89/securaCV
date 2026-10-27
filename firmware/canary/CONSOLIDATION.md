@@ -40,7 +40,7 @@ Derived from the post-archive Feature-Parity Dashboard in [FEATURES.md](../FEATU
 
 | # | Gap | Current canary (PIO) state | Source to port from | Port complexity | Security impact |
 |---|---|---|---|---|---|
-| 1 | API authentication (bearer token + HKDF derivation + exponential backoff + constant-time compare) | ✅ (Phase 2.5: SPA injects bearer; all read + mutating endpoints gated) | `canary_wap/api_auth.h` (~275 LOC) | **Low** (self-contained, ESP-IDF native) | **High** (every REST endpoint is currently unauthenticated) |
+| 1 | API authentication (bearer token + HKDF derivation + exponential backoff + constant-time compare) | ✅ (Phase 2.5: SPA injects bearer; all read + mutating endpoints gated; since sweep F340 the backoff is the WAP's own table, `firmware/common/network/auth_backoff.h`, read by path rather than ported: per source address (`request_peer_ipv4()`, the socket peer), 2 s doubling capped at 60 s, and a request with no credential is no strike, the WAP's `auth_logic.h` rule, so a dashboard tab loaded without the token arms none. The receipt's and the page's bearer is the accounted grant, `auth_bearer_grant()`, and `auth_check_optional()` is gone; since sweep F341 a BOOT tap that hands an address the token, on the receipt or on the page load, ends that address's own backoff through `auth_handed_token()`, as the WAP's tap and claim do, never the shared overflow's (an address held only through the overflow stays held); host-tested in `firmware/tests_host/test_securacv_auth.cpp`) | `canary_wap/api_auth.h` (~275 LOC) | **Low** (self-contained, ESP-IDF native) | **High** (every REST endpoint is currently unauthenticated) |
 | 2 | Rate limiting on HTTP API | ✅ (already present) | — | N/A | — |
 | 3 | Camera peek MJPEG streaming | ❌ | `canary_wap/canary_wap.ino` peek handlers (`handle_peek_start()`, `peek_stream_task()`) | High (streaming loop + resolution control) | Medium (no frame storage, still subject to DoS) |
 | 4 | GPS motion FSM (EMA + hysteresis + debounce) | ⚠️ NMEA parse only | `canary_wap/*` motion detection | Medium | Low |
@@ -50,7 +50,7 @@ Derived from the post-archive Feature-Parity Dashboard in [FEATURES.md](../FEATU
 | 8 | RF presence detection | ❌ | `canary_wap/rf_presence.{h,cpp}` | Medium | Low |
 | 9 | Chirp channel body | ⚠️ header only | `canary_wap/chirp_channel.cpp` (+ now-fixed real RSSI) | Medium | Low |
 | 10 | Hardware state & safe mode | ⚠️ crash-loop counter + serial safe mode (`common/health/boot_guard.h` over the pure `boot_policy.h`, wired in `src/main.cpp`): an NVS count of boots that never reached healthy (a power-on reset does not count), started over by a different image (an OTA install, a rollback, a re-flash; images are told apart by `app_elf_sha256`, so two builds that both leave it zero look like one image), and at 4 such boots a serial safe-mode console (never for an image still pending OTA confirmation: the bootloader's rollback owns that case) that brings up no radio, storage, sensors or witness chain and waits for the owner to clear the count (serial `c` then `y`, or BOOT held 2 s); host-tested (`firmware/tests_host/test_boot_policy.cpp`, `test_boot_guard.cpp`), CI-compiled, no bench pass. Still missing against the canary-wap: per-peripheral state — `hardware_state.h`'s GPS state machine (absent / detected / fix / lost fix) and camera present/standby record in one `HardwareState` — and its degraded safe mode (optional peripherals off while the core witness runs, bounded automatic recovery reboots, `POST /api/safe-mode/retry`). The SD three-state is already here (`securacv_storage`'s mount worker, `storage_sd_state()`) | `canary_wap/hardware_state.h` (+ now-fixed SD flush) | Low | Medium (boot safety) |
-| 11 | Provisioning gate (BOOT button) | ✅ (2026-09, option D — maintainer to confirm: BOOT tap → one consumer, one `GET /api/provisioning-receipt` or one home-LAN page load, whichever asks first; the dashboard's bearer token is injected only for first-boot setup, a bearer-authenticated request, a SoftAP-subnet peer or a spent tap, never for a bare home-LAN load; CI-compiled on #1704, no bench pass; the WAP's session-cookie model is the Phase 6 follow-up) | `canary_wap/*` gate logic → `firmware/common/network/provisioning_gate.h` | Low | High — corrected: the canary never had an unauthenticated receipt route (it had none at all); the real exposure was `GET /` and `GET /setup` putting the bearer token in the HTML for any home-LAN caller |
+| 11 | Provisioning gate (BOOT button) | ✅ (2026-09, option D — maintainer to confirm: BOOT tap → one consumer, one `GET /api/provisioning-receipt` or one home-LAN page load, whichever asks first (the WAP's receipt hands its tap to the sole address asking since F342, `tap_arbitrate()`; the flagship's adoption is F354); the dashboard's bearer token is injected only for first-boot setup, a bearer-authenticated request, a SoftAP-subnet peer or a spent tap, never for a bare home-LAN load; CI-compiled on #1704, no bench pass; the WAP's session-cookie model is the Phase 6 follow-up) | `canary_wap/*` gate logic → `firmware/common/network/provisioning_gate.h` | Low | High — corrected: the canary never had an unauthenticated receipt route (it had none at all); the real exposure was `GET /` and `GET /setup` putting the bearer token in the HTML for any home-LAN caller |
 | 12 | Audible chirp / buzzer alerts | ❌ | `canary_wap/audible_chirp.h` | Low | Low |
 | 13 | WiFi presence detection | ❌ | `canary_wap/wifi_presence.h` | Medium | Medium (MAC hygiene) |
 | 14 | System monitor (temp / heap / PSRAM) | ❌ | `canary_wap/sys_monitor.h` | Low | Low |
@@ -70,6 +70,12 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
   - Exponential-backoff lockout state machine
   - Token redaction helper
   - `api_auth_check` / `api_auth_check_optional` for `esp_http_server`
+  - *(2026-10-19, sweep F340: the lockout state machine is no longer a
+    port. Both trees run `firmware/common/network/auth_backoff.h`, one
+    backoff per source address, so the next fix to it lands in both;
+    `auth_check()` takes the request's source, the silent
+    `auth_check_optional()` is replaced by the accounted
+    `auth_bearer_grant()`, and the unused stats API is gone.)*
 - Library is **not yet wired** into `securacv_network` — primitives first, integration review second.
 - `library.json` ships independently so existing PlatformIO builds ignore it until opted in.
 - Update [FEATURES.md](../FEATURES.md) dashboard to mark gap #1 as ⚠️ (library present, handlers not yet wired).
@@ -212,14 +218,38 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
   IPv4-mapped `::ffff:a.b.c.d` the dual-stack httpd socket reports;
   conservative), or an unspent BOOT tap, which the page load then takes —
   one tap is one consumer across both paths, a page load or a receipt
-  fetch, whichever asks first (`page_token_decide`). A home-LAN load with
+  fetch, whichever asks first (`page_token_decide`). Since sweep F342 the
+  WAP's receipt hands its tap only to the sole address asking for it (the
+  same header's `tap_arbitrate()`, staged into the WAP); the flagship's
+  receipt and page load still take the tap for the first asker, and
+  adopting the arbiter there is F354. A home-LAN load with
   none of those gets the page with an empty token, `X-CV-Token: withheld`,
   and a banner naming the three unlocks. `firmware/canary/scripts/check_route_security.py`
   (in `firmware.yml`) now fails any route that reaches no credential gate and
   is not on its documented public allowlist.
 - **Follow-up (Phase 6, with the web UI port):** the WAP's one-shot pair token
   + 24 h HttpOnly `cv_session` cookie (option A), so a home-LAN reload stops
-  needing a fresh BOOT tap each time.
+  needing a fresh BOOT tap each time. That port must bring canary-wap's
+  any-session class with it (`ANY_SESSION_GATES` in the WAP's route check,
+  sweep F328): a session is a gate the landing page's caller passes, so the
+  receipt, the page token and every other answer that carries a credential
+  must keep refusing it. Until then the flagship's route check
+  (`check_bearer_only_answers`, sweep F338) fails a cookie read or a
+  `Set-Cookie`, any request header but `Authorization` (the auth lib) and
+  `Host`, a URL query outside the witness log's paging and a read of a
+  request's raw path (`->uri`, or `.uri` through any reference to the
+  request, which keeps its query) outside its four readers, and it pins
+  `page_token_inject` and its four inputs whole (the setup input at its
+  source: the setup lib's state, the stored flag first boot is read from and
+  the functions that set and clear them; the SoftAP input with the interface
+  helpers it reads through; the tap with the handler whose press opens it),
+  so a careless edit cannot add a session by widening one of them in that
+  glue or by a macro of a name it calls. The check's threat model is a
+  careless or mistaken firmware edit, not a deliberate evasion of it: its
+  rules against the deliberate spellings (token pasting, a symbol binding, an
+  unread build input, a held name defined by a `-D` flag, a macro named for a
+  C++ keyword) are defense in depth, and gcc's `--define-macro`, the long
+  form of `-D`, passes the flag rule.
 - Gap #10 turns ✅ when the per-peripheral state and the degraded safe mode land; gap #11 is flipped.
 
 ### Phase 4 — Mesh + CSI mesh sensing v1 ✅

@@ -167,7 +167,7 @@
 // ════════════════════════════════════════════════════════════════
 
 #define DEVICE_TYPE           "canary"
-#define FIRMWARE_VERSION      "2.4.16"
+#define FIRMWARE_VERSION      "2.4.17"
 
 // Optional build-time provenance for the 'f' fingerprint command. CI/PlatformIO
 // can inject the short commit with -DFIRMWARE_GIT_HASH=\"abc1234\"; when it
@@ -363,11 +363,12 @@
 
 // There is deliberately NO default AP password macro. Every call into
 // ScvNetworkManager::begin() / network_init() must pass a password
-// explicitly — main.cpp derives a device-unique one from the pubkey
-// fingerprint (derive_ap_password). A shared compile-time fallback was
-// removed so it cannot silently ship on a future code path: a new caller
-// that forgets the password is now a compile error, not a known-password
-// AP. (regression_check.sh fails the build if the old literal returns.)
+// explicitly — main.cpp derives a device-unique one from the device
+// private key (common/network/ap_password.h, sweep F350). A shared
+// compile-time fallback was removed so it cannot silently ship on a future
+// code path: a new caller that forgets the password is now a compile error,
+// not a known-password AP. (regression_check.sh fails the build if the old
+// literal returns.)
 #define AP_CHANNEL           1
 #define AP_MAX_CONNECTIONS   1    // Hardened: max 1 client for security isolation
 
@@ -534,8 +535,11 @@
 #define NVS_KEY_WIFI_EN   "wifi_en"
 #define NVS_KEY_TOKEN     "api_token"
 // FEATURE_HTTPS: the self-signed ECDSA P-256 certificate and its key, DER,
-// generated once on the first TLS-capable boot (factory reset erases both,
-// so the device re-keys and a pinned iPhone pairing must be redone).
+// generated once on the first TLS-capable boot. The 10 s BOOT reset and an
+// OTA update keep both (reset_scope_keys.h kIdentityKept); the 30 s wipe
+// (ResetScope::Everything), or an install or a full erase in either flasher
+// (whose factory image starts NVS over), removes them, after which the
+// device re-keys and a pinned iPhone pairing must be redone.
 #define NVS_KEY_TLS_CERT  "tls_cert"
 #define NVS_KEY_TLS_KEY   "tls_key"
 #define NVS_KEY_BATT_CAP  "batt_cap"

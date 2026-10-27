@@ -9,7 +9,7 @@
  * spent setup-door claim, so a receipt fetched over the home LAN while the
  * STA was connected sent its reader to 192.168.4.1: unreachable from the
  * LAN, and gone altogether once the SoftAP drops after its grace window
- * (wifi_drop_ap()). A recovery kit the dashboard saves after a BOOT tap
+ * (wifi_drop_ap()). A recovery kit the dashboard saves with a BOOT tap
  * (F257) is that receipt, so it pointed at nothing. Port 80's redirect to
  * https (handle_https_redirect(), on every TLS unit) made the same choice
  * for every caller, so `http://canary-<suffix>.local/` typed on the home
@@ -308,8 +308,11 @@ inline size_t redirect_location(char* out, size_t cap, const char* host, const c
  * order: 4 bytes for IPV4 (sin_addr), 16 for IPV6 (sin6_addr). Any IPv6
  * address that is not IPv4-mapped, any other family, and a null pointer read
  * as 0 (unknown). The same mapping as provisioning_gate.h's
- * ipv4_host_order_from_addr(), which the sketch cannot include (the Arduino
- * sketch compiles only its own directory); the host test holds the two equal. */
+ * ipv4_host_order_from_addr(). The sketch stages that header since F343 for
+ * the request's peer key (request_peer_key(), the bearer lockout's source
+ * and, since F342, the BOOT tap's asker) and for the tap gate itself; this
+ * copy stays here beside the receipt's other socket reads, and the host
+ * test holds the two equal. */
 enum class AddrFamily : uint8_t { IPV4, IPV6, OTHER };
 
 inline uint32_t ipv4_from_addr(AddrFamily family, const uint8_t* bytes) {

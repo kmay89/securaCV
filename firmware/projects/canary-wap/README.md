@@ -100,19 +100,27 @@ make monitor
    > from the device's private key) and is printed on the serial console at
    > first boot. There is no shared default password; release builds fail
    > closed if provisioning is incomplete.
-2. Open a browser at any of:
+2. Open a browser at either of:
    - **http://canary.local** — single-device catch-all (first Canary on the
      network claims it)
-   - **http://canary-\<name\>.local** — each device's unique mDNS hostname
-     once you name it (e.g. `canary-kitchen.local`). Until then it is
-     `canary-` plus four lowercase hex digits, the first two bytes of its key
-     fingerprint (e.g. `canary-7916.local`), not its device id's suffix; at
-     the default log level the serial log names it on the
-     `[INFO/NETWORK] mDNS started | canary-7916` line
    - **http://192.168.4.1** — numeric fallback that always works
+
+   The first-boot setup wizard opens only at those two names; under any
+   other name, the device's unique one included, `/` shows the static page
+   that says to type `canary.local` (sweep F344). After setup, on your home
+   network, the dashboard is at `canary.local` (when this unit holds that
+   name) and at the device's unique mDNS hostname,
+   **http://canary-\<name\>.local** once you name it (e.g.
+   `canary-kitchen.local`). Until then it is `canary-` plus four lowercase
+   hex digits, the first two bytes of its key fingerprint (e.g.
+   `canary-7916.local`), not its device id's suffix; at the default log
+   level the serial log names it on the
+   `[INFO/NETWORK] mDNS started | canary-7916` line.
    > When a TLS certificate is available the dashboard is served over
    > **HTTPS (port 443)** and plain-HTTP requests are redirected; without a
-   > cert the device runs HTTP-only. See the
+   > cert the device runs HTTP-only, which is every stock build today (the
+   > on-device certificate generator compiles out on every pinned core,
+   > F15). See the
    > [Arduino build README](arduino/canary_wap/README.md) for details.
    > The **MQTT bridge** (`/mqtt` page) has its own encryption setting:
    > *Off* (plain) or *On, check the broker's certificate* (paste the
@@ -181,18 +189,34 @@ never-provisioned unit every 15 idle minutes, which would otherwise have
 re-opened the door forever: the spent time rides in RTC-noinit memory
 (`provisioning_logic::door_window_record_valid`, host-tested; cleared after
 a power-on, brownout, power-glitch, USB / JTAG-asserted or unknown reset,
-and by **Forget Wi-Fi** on a unit that had credentials, which is the
-owner's way to re-arm the window), a phone at the door is a sign of life
+and by **Forget Wi-Fi** or the 10 s BOOT hold on a unit that had
+credentials, each of which re-arms the window, both the owner's acts:
+Forget takes the API token in every mode, so a home-network session cannot
+re-arm it, F345), a phone at the door is a sign of life
 for that wizard timer, and the restart waits while the door is open at all
 (`provisioning_logic::wizard_restart_due`, host-tested: a person watching the
 door's card on their phone has touched nothing yet) — so it cannot land
 mid-provisioning or under the card. A WAP on its own
 Wi-Fi offers nothing here — not even when that Wi-Fi is failing (the
-dashboard, the bonded rescue service and the BOOT-tap receipt are the
-owner's paths). **There is no tap door on the WAP in this version:** the
-BOOT button keeps the sketch's own gestures (a short press opens the 30 s
-receipt gate; a 2 s hold prints the identity on serial), and no button
-gesture factory-resets a WAP today. A join over the door
+dashboard, the SoftAP recovery portal with its printed key, and the BOOT-tap
+receipt are the owner's paths; after setup a Wi-Fi change on the dashboard,
+on the home network or on the `SecuraCV-wap-XXXX` recovery network, takes
+the API token or one BOOT tap, so the recovery network's key alone opens the
+dashboard and does not re-point the unit, F334; the bonded rescue service is
+there too, but the iPhone app never reaches it on a WAP, and whether the
+companion page's Bluetooth chooser lists a WAP waits on a bench, ledger A65). **There is no tap door on the WAP in this version:** the
+BOOT button keeps the sketch's own gestures: a short press hands the
+receipt to one asker for 30 s (click Use BOOT Tap Once first and press when
+the page says to; a second address asking from 10 s before the tap closes
+it, and a tap no page was asking for goes to the first address that asks
+after it, sweep F342), a 2 s hold prints the identity on serial, and a 10 s hold is
+the factory reset (`factory_reset_by_hold()`). The hold clears the saved
+Wi-Fi networks, the broker row, the device name and the first-boot flag,
+keeps the identity key and the API token (derived from the key, or the
+one a flasher seeded), and restarts into first-boot setup when BOOT is
+released. It clears the Wi-Fi through
+the same `wifi_clear_credentials()` as Forget Wi-Fi, so on a unit that had
+credentials it re-arms the door's first-boot window the same way. A join over the door
 is held in RAM until WiFi proves it (`ble_improv_submit_join` /
 `ble_improv_join_verdict`): a proven join is persisted then, exactly as the
 wizard persists, and a failed or timed-out one is forgotten so the door
@@ -225,27 +249,34 @@ The phone spends it on the home LAN — `GET /api/provisioning-receipt?claim=<he
 — and gets the same receipt the BOOT-tap route serves, `base_url` at the
 `.local` name. (Every grant names the `.local` name once the WAP is on the
 home Wi-Fi and the request did not arrive over its setup network, and so
-does port 80's redirect to https; `receipt_authority.h`, sweep F255. The
-dashboard at `https://canary-<suffix>.local/settings` then saves that
-receipt as `canary-recovery-kit.json`, for the iPhone app's **Ready to
-pair** row: offered after a BOOT-tap sign-in, and from **Settings**,
-**Device**, **Recovery kit** when already signed in; sweep F257.) The route decides bearer → claim → BOOT tap — the four-grant
-`provisioning_gate::receipt_decide` order minus its first question (a
-foreign `Host`), which the WAP does not ask on this route today (the
-flagship's `auth_gate` does); a wrong guess burns the claim, an expired one
-is burned too, and a claim that serves leaves the tap unspent.
+does port 80's redirect to https on a unit that serves HTTPS;
+`receipt_authority.h`, sweep F255. The dashboard at
+`http://canary-<suffix>.local/settings` (`https://` once the WAP serves
+HTTPS, which no stock build does yet, F15) then saves that receipt as
+`canary-recovery-kit.json`, for the iPhone app's **Ready to pair** row:
+offered after a BOOT-tap sign-in, and from **Settings**, **Device**,
+**Recovery kit** when already signed in; sweep F257.) The route decides in
+`provisioning_gate::receipt_decide`'s four-grant order: a `Host` that cannot
+name the device is refused first, `403 {"error":"host"}`, in every mode
+(sweep F344; `docs/design/magic_pairing.md` §3.7), then a valid bearer,
+then the claim, then the BOOT tap; a wrong guess spends nothing, an expired
+claim is burned, and a claim that serves leaves the tap unspent.
 Two factors: the encrypted link that provisioned, and presence on the Wi-Fi
 the WAP just joined. **The receipt the claim buys names the steady-state
-address** — `https://<name>.local` with the certificate's `tls_cert_fp` pin:
-the certificate is loaded or generated on every boot and only the HTTPS
-*server* waits for setup to end (the captive portal needs plain HTTP), so
-the claim's `claim_url` is the http address that answers now and the receipt
-is the one the phone keeps (`tls_after_setup()` in the sketch). The WAP then
-restarts once, ~10 s after the claim is spent (on HTTPS ~15 s after
-"Paired"); the reboot is held while a claim is outstanding (the claim
-promised 180 s; the grace alone ended at 120 s) and follows the same runway
-after one expires. Plain HTTP on an installed WAP redirects to https at the
-address the request used (its `Host`), never the setup network's.
+address.** Once a certificate is stored, that is `https://<name>.local`
+with the certificate's `tls_cert_fp` pin: the certificate is loaded on
+every boot and only the HTTPS *server* waits for setup to end (the captive
+portal needs plain HTTP), so the claim's `claim_url` is the http address
+that answers now and the receipt is the one the phone keeps
+(`tls_after_setup()` in the sketch). No stock build stores one today (the
+on-device generator compiles out on every pinned core, F15), so the receipt
+names `http://<name>.local` and an empty `tls_cert_fp`, and the WAP serves
+plain HTTP after setup. The WAP then restarts once, ~10 s after the claim
+is spent (on HTTPS ~15 s after "Paired"); the reboot is held while a claim
+is outstanding (the claim promised 180 s; the grace alone ended at 120 s)
+and follows the same runway after one expires. On a unit that serves
+HTTPS, plain HTTP redirects to https at the address the request used (its
+`Host`), never the setup network's.
 
 Design, threat model and bench checklist: `docs/design/magic_pairing.md`.
 **CI-compiled (also locally) and host-tested (`test_improv_core.cpp`,
@@ -335,10 +366,20 @@ curl -H "Authorization: Bearer <api-token>" http://192.168.4.1/api/status
 ```
 
 Every `/api/` route above except `/api/fleet` needs the device's API token,
-as a bearer header or the dashboard's session cookie, with one exception that
-takes the bearer header alone, because the landing page mints that session for
-any host on the home network: `/api/pairing-qr` (it carries the token). The
-`/api/mqtt/config` row names the one save the session alone cannot make.
+as a bearer header or the dashboard's session cookie, except where the
+bearer header alone is taken, because the landing page mints that session
+for any host on the home network: `/api/pairing-qr` (it carries the token)
+here, and among the routes not listed `POST /api/vault/key` (F335), `POST
+/api/bluetooth/pair/confirm` and `POST /api/mesh/pair/confirm` (F346), `POST
+/api/wifi/disconnect` and `/forget` in every mode and, after setup,
+`/connect` and `/ap-only` (F334, F345; `POST /api/wifi/qr-scan` answers
+`404` after setup), and `POST /api/reboot` and `POST /api/safe-mode/retry`
+(F361). The
+`/api/mqtt/config` row names the one save the session alone cannot make
+there. The dashboard asks for the token at those actions: before Start
+Pairing and the opera's Create/Join begin, and when any of the others is
+refused (the Wi-Fi, vault key, reboot and pairing-QR cards say so
+beforehand); paste it from the recovery kit, or use BOOT Tap Once.
 
 ```json
 {
@@ -367,7 +408,7 @@ any host on the home network: `/api/pairing-qr` (it carries the token). The
 - **No MAC Addresses Stored:** RF detection counts devices, not identities
 - **Time Buckets:** Coarsened timestamps (ten-minute buckets in every build profile)
 - **Local-First:** All data stays on device unless explicitly exported
-- **Session Rotation:** Tokens rotate every 4 hours
+- **Session Rotation:** the RF presence detector's ephemeral session tokens rotate every 4 hours. The API token does not rotate: the 10 s hold and Forget Wi-Fi keep it, an install or a full erase in a flasher replaces it, and a flasher's restore of a safety copy puts back the token that copy holds
 
 ## Project Structure
 

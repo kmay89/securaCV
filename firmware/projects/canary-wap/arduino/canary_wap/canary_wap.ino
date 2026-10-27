@@ -170,6 +170,7 @@
 #include "identity_json.h"       // pure, host-tested: /api/device-info and the receipt, measured and escaped (F212)
 #include "wap_json_writer.h"      // pure, host-tested: an SSID's control bytes as U+FFFD (F262)
 #include "receipt_authority.h"   // pure, host-tested: which address the receipt's base_url names (F255)
+#include "host_guard.h"          // pure, host-tested: does the Host name THIS device (staged copy of firmware/common/network/, check_improv_sync.sh; F344)
 #include "device_name_rule.h"    // pure, host-tested: no control byte in the device name (F226)
 #include "device_signature.h"    // Ed25519 sigs over MQTT publishes (per-device PKI)
 #include "mqtt_identity.h"       // pure, host-tested: the MQTT fp + health key, lowercase (HA20)
@@ -202,6 +203,7 @@ extern "C" {
 #include "bluetooth_channel.h"
 #include "ble_improv.h"          // the Bluetooth setup door (Improv Wi-Fi), FULL profile
 #include "claim_ticket.h"        // the claim a phone reads over that door and spends on the LAN
+#include "provisioning_gate.h"   // pure, host-tested: the BOOT-tap gate, its one asker, a request's peer key (staged)
 #include "bluetooth_api.h"
 #include "ble_console.h"
 #include "ble_log_export.h"
@@ -334,8 +336,15 @@ static volatile bool g_vault_test_pending = false;
 // VERSION & PROTOCOL (must match PWK expectations)
 // ════════════════════════════════════════════════════════════════════════════
 
-static const char* DEVICE_TYPE        = "canary";
-static const char* FIRMWARE_VERSION   = "2.4.16-wap";  // Vision runtime config release train
+// DEVICE_TYPE is this product's wire type, the same word the mDNS `dt` records
+// and csi_mqtt.cpp's status topic say. REST /api/status, node_status.node,
+// /api/fleet's product, the boot banner and the BOOT attestation read it; the
+// attestation's CBOR payload is hashed and never leaves the device. Keep it
+// one string literal declared once and never assigned elsewhere: wire_types.mjs
+// (canary-local/tools/figures) holds it to the mDNS and MQTT sites and refuses
+// any other =, compound assignment, ++ or -- of the name (sweep F294).
+static const char* DEVICE_TYPE        = "canary-wap";
+static const char* FIRMWARE_VERSION   = "2.4.17-wap";  // Vision runtime config release train
 static const char* RULESET_ID         = "securacv:canary:v1.0";
 static const char* PROTOCOL_VERSION   = "pwk:v0.3.0";
 static const char* CHAIN_ALGORITHM    = "sha256-domain-sep";
@@ -358,6 +367,12 @@ static const char* OTA_PRODUCT = "securacv-canary-wap";
 static volatile bool g_ota_publish_pending = false;
 static securacv_ota_state_t g_ota_last_seen_state = SECURACV_OTA_IDLE;
 static uint32_t g_ota_next_check_ms = 0;
+#if FEATURE_POWER_MONITOR
+/* The install veto's battery fact (power_gate::ota_install_power_ok), set by
+ * the loop on each power-monitor sample. ota_can_install() runs on the OTA
+ * task, so one word crosses instead of the monitor's struct. */
+static bool g_ota_battery_low = false;
+#endif
 
 // ════════════════════════════════════════════════════════════════════════════
 // DEVICE CONFIG
@@ -528,10 +543,14 @@ static const uint32_t BOOT_SHORT_PRESS_MS  = 50;
 static const uint32_t BOOT_LONG_PRESS_MS   = 3000;
 static_assert(BOOT_LONG_PRESS_MS == canary::io::ResetHold{}.warn_ms,
               "the 3 s diagnostic hold and ResetHold's Warn stage share one threshold");
-// Provisioning gate stays open for this long after a BOOT press, so a
-// browser tab that polls every 2 s reliably catches it and a captive
-// portal interstitial can't time the user out. The gate is still
-// single-use: the first successful receipt fetch closes it immediately.
+// The BOOT tap stays open this long for one asker:
+// provisioning_gate.h tap_arbitrate() serves it only to the sole address
+// seen asking from TAP_LOOKBACK_MS before the tap onward (sweep F342), so
+// the owner's page asks first and says when to press. A second address
+// asking in that window closes the tap (409 tap_contended), and a tap no
+// page was asking for goes to the first asker after it. A served receipt
+// closes it at once. (BLE OTA break-glass is press-first and takes the
+// gate directly.)
 static const uint32_t PROVISIONING_GATE_TTL_MS = 30000;
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -701,6 +720,14 @@ struct WitnessRecord {
   bool        verified;
 };
 
+// What nvs_load_key() found (sweep F360, the canary's rule). Absent is the
+// one answer that may lead to a new key: IDF's NVS says nothing is stored.
+// Refused means a key is, or may be, stored and was not read or not used;
+// no new identity may be made over it. Declared here, among the types and
+// above the sketch's first function, so the prototype the Arduino builder
+// hoists for nvs_load_key() sees it. One line: the host suite cuts it.
+enum class KeyLoad : uint8_t { Loaded, Absent, Refused };
+
 struct DeviceIdentity {
   uint8_t  privkey[32];
   uint8_t  pubkey[32];
@@ -724,6 +751,7 @@ struct DeviceIdentity {
   bool     born_exact;    // False ⇒ first DATED, not born. Not a birthday.
   uint32_t key_born_ms;   // millis() when this boot generated the key…
   bool     key_is_new;    // …meaningful only if this boot is the one that made it.
+  bool     key_refused;   // NVS holds, or may hold, a key this boot could not read: setup() halts (F360)
   bool     initialized;
   bool     tamper_active;
   char     device_id[32];
@@ -907,30 +935,26 @@ static inline bool tls_after_setup() {
 #endif
 }
 
-// Provisioning gate (physical BOOT button). Stores the millis() at which
-// the press landed; 0 means closed. provisioning_gate_is_open() applies
-// the TTL so the gate auto-closes after PROVISIONING_GATE_TTL_MS even if
-// the receipt is never fetched. The variable is touched from the main
-// loop task (button handler) and the HTTP server task (receipt handler),
-// so access goes through __atomic_*_n to match the pattern used for
-// other cross-task counters (see csi_integration.cpp g_outbound_bytes).
-static uint32_t g_provisioning_gate_opened_at = 0;
+// Provisioning gate (physical BOOT button): provisioning_gate.h's State, the
+// staged copy of firmware/common/network/provisioning_gate.h (sweep F342;
+// this used to be an inline copy of the header's open and take). It stores
+// the millis() at which the short press landed; 0 means closed, and the
+// header's take() and tap_arbitrate() apply the TTL, so the gate closes
+// itself after PROVISIONING_GATE_TTL_MS even if the receipt is never
+// fetched, and loop() sweeps a stamp past it every pass (expire(), sweep
+// F347), so none ages into the wrap of millis(). Opened and swept from the
+// loop task (the button handler, loop()) and taken from the httpd task (the
+// receipt) and the NimBLE host task (BLE OTA break-glass), so every access
+// is the header's __atomic builtins.
+static canary::net::provisioning_gate::State g_provisioning_gate = {0};
 
-static inline bool provisioning_gate_is_open() {
-  uint32_t opened = __atomic_load_n(&g_provisioning_gate_opened_at, __ATOMIC_RELAXED);
-  if (opened == 0) return false;
-  return (millis() - opened) < PROVISIONING_GATE_TTL_MS;
-}
-
-// Consume the gate in ONE atomic step. Two consumers race for it — the
-// HTTPS receipt handler (httpd task) and the BLE OTA break-glass hook
-// (NimBLE host task) — and a load followed by a separate store would let one
-// BOOT tap be spent twice. exchange() hands the open timestamp to exactly
-// one caller; the other reads 0 and is refused.
+// Consume the gate in ONE atomic step, for the BLE OTA break-glass hook
+// (NimBLE host task): the header's take(), one exchange, so it and the
+// receipt (httpd task, provisioning_gate_take_for(), a compare-and-swap of
+// the stamp it judged) cannot both spend one BOOT tap. The receipt does not
+// call this: its tap goes to one asker.
 static inline bool provisioning_gate_take() {
-  uint32_t opened = __atomic_exchange_n(&g_provisioning_gate_opened_at, 0, __ATOMIC_ACQ_REL);
-  if (opened == 0) return false;
-  return (millis() - opened) < PROVISIONING_GATE_TTL_MS;
+  return canary::net::provisioning_gate::take(g_provisioning_gate, millis(), PROVISIONING_GATE_TTL_MS);
 }
 
 // The claim ticket the Bluetooth setup door mints (claim_ticket.h, a staged
@@ -939,9 +963,17 @@ static inline bool provisioning_gate_take() {
 // succeeded, read once by the link that asked, and spent by one
 // GET /api/provisioning-receipt?claim=<hex> on the home LAN — the third
 // grant of that route, between the bearer and the BOOT tap. The bearer
-// token never rides Bluetooth. Minted (loop task) and taken (httpd task)
-// through the header's own atomics; never read in place.
+// token never rides Bluetooth. Minted and swept (loop task: loop() burns a
+// claim past its TTL every pass, sweep F347) and taken (httpd task) through
+// the header's own atomics; never read in place. Spent only by a match
+// (sweep F342): a wrong ?claim= changes nothing.
 static canary::net::claim_ticket::Ticket g_improv_claim = {};
+
+// millis() (claim_ticket::stamp()ed, so never 0 once set) of the last
+// "setup-door claim did not match" health line: one line per 10 s at most,
+// so a host that keeps sending wrong claims cannot fill the health log.
+// 0 = none yet. httpd task only (the receipt handler).
+static uint32_t g_claim_refusal_logged_ms = 0;
 
 // The setup door's spent first-boot window, carried across SOFTWARE resets.
 // "Re-armed by a power cycle" means a power cycle: a never-provisioned unit
@@ -954,9 +986,10 @@ static canary::net::claim_ticket::Ticket g_improv_claim = {};
 // never shortens or extends the window. Written every ~2 s by the door
 // while its no-credentials window runs (ble_improv_note_window_used), read
 // once at the door's init (ble_improv_window_used_ms), zeroed by a
-// credential wipe (wifi_clear_credentials: the owner's own act re-arms the
-// window, as improv_core.h's session does in RAM). Loop task only after
-// setup().
+// credential wipe (wifi_clear_credentials: the 10 s hold, or Forget Wi-Fi,
+// which takes the bearer in every mode, sweep F345: the owner's own act
+// re-arms the window, as improv_core.h's session does in RAM). Loop task
+// only after setup().
 RTC_NOINIT_ATTR uint32_t g_improv_window_magic;
 RTC_NOINIT_ATTR uint32_t g_improv_window_used_ms;
 static constexpr uint32_t IMPROV_WINDOW_MAGIC = 0x444F4F52;  // "DOOR"
@@ -967,8 +1000,8 @@ static constexpr uint32_t IMPROV_WINDOW_MAGIC = 0x444F4F52;  // "DOOR"
 // previous image's spent window: RTC memory survives a flash); or a reset
 // the chip cannot name (the record is RTC garbage as far as anyone can
 // tell, and clearing re-arms the window, which is the safe side — a half
-// hour of door on a unit nobody owns, not a door that never opens or never
-// shuts). A software reset, a watchdog, a panic and a deep-sleep wake keep
+// hour of door on a unit with no network saved, not a door that never opens
+// or never shuts). A software reset, a watchdog, a panic and a deep-sleep wake keep
 // the record. The USB / JTAG / glitch reasons exist from IDF 5.1 (core 3.x).
 // Mirrors firmware/common/network/improv_ble.cpp's reset_is_power_cycle.
 static bool improv_window_reset_is_power_cycle(esp_reset_reason_t why) {
@@ -992,11 +1025,16 @@ static bool improv_window_reset_is_power_cycle(esp_reset_reason_t why) {
 // OTA header, or a v2 image below the anti-rollback floor, is admitted only
 // if the owner short-tapped BOOT within the last PROVISIONING_GATE_TTL_MS —
 // the identical act that reveals the provisioning receipt. Single-use: the
-// one BEGIN it admits closes the gate, through the same atomic exchange the
-// HTTP-side receipt handler uses (provisioning_gate_take), so the two
-// consumers on their two tasks cannot both spend one tap. ble_ota.cpp
-// writes the health-log line that names what was bypassed; this only
-// records that the gate was spent on it.
+// one BEGIN it admits closes the gate through provisioning_gate_take(), the
+// header's take(), one atomic exchange. The HTTP-side receipt spends a tap
+// through provisioning_gate_take_for() instead, a compare-and-swap of the
+// stamp it judged (take_exact()), and an exchange and a compare-and-swap of
+// one word cannot both win, so the two consumers on their two tasks cannot
+// both spend one tap. This take is press-first by design (no receipt client
+// is asking), so a device on the network whose ask for the receipt is
+// judged between the tap and the BEGIN takes the tap or closes it, and the
+// BEGIN is refused. ble_ota.cpp writes the health-log line that names what
+// was bypassed; this only records that the gate was spent on it.
 static bool ble_ota_break_glass_take() {
   if (!provisioning_gate_take()) return false;
   log_health(SCV_LOG_WARNING, SCV_CAT_AUTH,
@@ -1493,7 +1531,9 @@ static void generate_device_id(char* out, size_t cap) {
   // Encoded in the unambiguous alphabet (no 0/O/o, 1/I/i/l/L) so the handle a
   // user reads off canary.local / a sticker has no confusable glyphs. base-54
   // of 16 bits is injective, so per-device uniqueness matches the old hex form;
-  // it stays stable across reflashes because the keypair persists in NVS.
+  // it stays stable across OTA updates and the 10 s hold because the keypair
+  // persists in NVS (an install in either flasher starts NVS over, so the
+  // next boot has a new keypair and a new suffix).
   char suffix[5];
   unambiguous_suffix16((uint16_t)((g_device.pubkey_fp[0] << 8) | g_device.pubkey_fp[1]),
                        suffix);
@@ -1626,21 +1666,81 @@ static_assert(csi_mqtt::kNetworkTimeoutMs > 0 &&
                       WATCHDOG_TIMEOUT_SEC * 1000u,
               "the MQTT client's network timeout must keep a publish under the loop's task watchdog");
 
-// The key read is the first session on "securacv" (setup_wizard::init() only
-// probes it), and on a first boot after an NVS erase it comes before
-// nvs_store_key() creates the namespace. An absent namespace answers "no key"
-// without a Preferences open and its NOT_FOUND line, as the refused open did
-// (sweep F201).
-static bool nvs_load_key(uint8_t priv[32]) {
-  if (csi_module_settings_nvs::probe_namespace(NVS_MAIN_NS) ==
-      csi_module_settings_nvs::NamespaceState::kAbsent) {
-    return false;
+// The stored private key's length, asked of IDF's NVS before Preferences
+// reads it (sweep F360). Preferences cannot tell "nothing stored" from "NVS
+// failed": its begin() fails alike on a namespace never created and on a
+// fault, and getBytesLength() answers 0 alike for a missing key and a failed
+// lookup. Only IDF's ESP_ERR_NVS_NOT_FOUND reads as no key. IDF answers it
+// at the open (no namespace) or at the lookup, which takes nothing from a
+// page but a match: no key in the namespace, and also a stored entry the
+// lookup skipped (a privkey of another type, an index entry whose header
+// fails IDF's check, which it erases, a page a flash read error set aside).
+// So NOT_FOUND says IDF holds no key it can find, and any other error is NVS
+// failing to say. ESP_OK sets *len. The key read is the first session on
+// "securacv" (setup_wizard::init() only probes it), and on a first boot after
+// an NVS erase it comes before nvs_store_key() creates the namespace; IDF's
+// read-only open logs nothing there, so that boot still logs no NOT_FOUND
+// line for it (sweep F201).
+static esp_err_t stored_key_length(size_t* len) {
+  *len = 0;
+  nvs_handle_t h;
+  esp_err_t err = nvs_open(NVS_MAIN_NS, NVS_READONLY, &h);
+  if (err != ESP_OK) return err;
+  err = nvs_get_blob(h, NVS_KEY_PRIV, nullptr, len);
+  nvs_close(h);
+  return err;
+}
+
+// Fails closed (sweep F360, the canary's rule): only a key NVS says is not
+// there answers Absent, and every other way the stored key goes unread or
+// unused answers Refused with priv zeroed, which establish_identity_key()
+// turns into a boot that setup() halts, with no key generated and nothing
+// written over the stored one. Before, a failed
+// session open or a length lookup other than 32 answered false, and
+// provision_device() generated a keypair and stored it over the old one; and
+// the read's own count was discarded, so a read that failed after the length
+// check, before IDF copied anything into the buffer, left g_device's zeroed
+// key in use: provisioning went on, the SoftAP came up under that key's
+// published known answer cv-3jByJ6rHdhM2, and records were signed with a key
+// anyone holds.
+static KeyLoad nvs_load_key(uint8_t priv[32]) {
+  memset(priv, 0, 32);
+  size_t stored = 0;
+  const esp_err_t probe = stored_key_length(&stored);
+  if (probe == ESP_ERR_NVS_NOT_FOUND) return KeyLoad::Absent;
+  if (probe != ESP_OK) {
+    Serial.printf("[!!] identity key not loaded: NVS could not say whether one is stored (%s)\n",
+                  esp_err_to_name(probe));
+    return KeyLoad::Refused;
   }
-  NvsMainSession nvs(true);
-  if (!nvs.isOpen()) return false;
-  if (nvs->getBytesLength(NVS_KEY_PRIV) != 32) return false;
-  nvs->getBytes(NVS_KEY_PRIV, priv, 32);
-  return true;
+  if (stored != 32) {
+    Serial.printf("[!!] identity key not loaded: the stored key is %u bytes, not 32\n",
+                  (unsigned)stored);
+    return KeyLoad::Refused;
+  }
+  // The read itself must return all 32 bytes. A refused one may have left
+  // the buffer as it was or partly written (IDF fills it before it checks the
+  // data's CRC), so it is zeroed again.
+  size_t got = 0;
+  {
+    NvsMainSession nvs(true);
+    if (nvs.isOpen()) got = nvs->getBytes(NVS_KEY_PRIV, priv, 32);
+  }
+  if (got != 32) {
+    memset(priv, 0, 32);
+    Serial.printf("[!!] identity key not loaded: the stored key could not be read (%u of 32 bytes)\n",
+                  (unsigned)got);
+    return KeyLoad::Refused;
+  }
+  // A drawn key is 32 zero bytes with odds of 2^-256, and those bytes are
+  // the zeroed buffer's, the one key whose every derivation is public.
+  uint8_t any = 0;
+  for (size_t i = 0; i < 32; i++) any |= priv[i];
+  if (any == 0) {
+    Serial.printf("[!!] identity key not loaded: the stored key is 32 zero bytes\n");
+    return KeyLoad::Refused;
+  }
+  return KeyLoad::Loaded;
 }
 
 static bool nvs_store_key(const uint8_t priv[32]) {
@@ -1771,16 +1871,37 @@ static void compute_fingerprint(const uint8_t pub[32], uint8_t fp[8]) {
 // HMAC-SHA256 (using mbedtls)
 // ════════════════════════════════════════════════════════════════════════════
 
-static void hmac_sha256(const uint8_t* key, size_t key_len,
+// True when every mbedTLS step ran (sweep F359). Each step can fail:
+// mbedtls_md_setup() answers MBEDTLS_ERR_MD_ALLOC_FAILED when it cannot
+// allocate the HMAC context, and after a failed step `out` is not (or not
+// wholly) written, so it would keep whatever the caller's stack held, bytes
+// nobody chose and this unit cannot make again after a reboot. On any failure `out` is zeroed and
+// the answer is false, and every caller refuses on false instead of using the
+// bytes: 32 zero bytes are the same on every unit (the flagship's
+// fleet_key::hmac_sha256_checked keeps the same rule, sweep F350). The context
+// is freed on every path. Declared [[nodiscard]] in data_mgmt_api.h, the first
+// declaration the compiler reads; tests_host/test_wap_hmac_fail.cpp fails
+// each step.
+static bool hmac_sha256(const uint8_t* key, size_t key_len,
                         const uint8_t* data, size_t data_len,
                         uint8_t out[32]) {
+  const mbedtls_md_info_t* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (info == nullptr) {
+    memset(out, 0, 32);
+    return false;
+  }
   mbedtls_md_context_t ctx;
   mbedtls_md_init(&ctx);
-  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
-  mbedtls_md_hmac_starts(&ctx, key, key_len);
-  mbedtls_md_hmac_update(&ctx, data, data_len);
-  mbedtls_md_hmac_finish(&ctx, out);
+  int ret = mbedtls_md_setup(&ctx, info, 1);
+  if (ret == 0) ret = mbedtls_md_hmac_starts(&ctx, key, key_len);
+  if (ret == 0) ret = mbedtls_md_hmac_update(&ctx, data, data_len);
+  if (ret == 0) ret = mbedtls_md_hmac_finish(&ctx, out);
   mbedtls_md_free(&ctx);
+  if (ret != 0) {
+    memset(out, 0, 32);
+    return false;
+  }
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1810,8 +1931,21 @@ static void unambiguous_suffix16(uint16_t v, char out[5]) {
 
 // Rejection sampling: discard bytes >= 216 (216 = 54*4, evenly divisible)
 // This eliminates modular bias entirely.
+//
+// Writes nothing past out_len (the F359 review): a null or zero-length
+// output gets no byte, and one shorter than "cv_" and its NUL gets "" (its
+// first byte only). Before, the prefix's three bytes and a NUL went in
+// unchecked, so a 1-, 2- or 3-byte buffer was written past its end, and a
+// zero length wrapped `out_len - 1` and let the loop write a whole token.
+// derive_api_token() refuses a buffer short of the whole token first, so no
+// caller reaches either; the check here is this function's own.
 static void format_api_token_string(const uint8_t* input, size_t in_len,
                                     char* output, size_t out_len) {
+  if (output == nullptr || out_len == 0) return;
+  if (out_len < 4) {
+    output[0] = '\0';
+    return;
+  }
   size_t out_idx = 0;
   output[out_idx++] = 'c';
   output[out_idx++] = 'v';
@@ -1848,15 +1982,35 @@ static void format_api_token_string(const uint8_t* input, size_t in_len,
 // HKDF-STYLE API TOKEN DERIVATION (two-step key separation)
 // ════════════════════════════════════════════════════════════════════════════
 
+// False, with `token_str` wiped, when any of its three HMACs fails (sweep
+// F359): a token rendered from bytes an HMAC did not write is one nobody
+// chose, and provision_device() would store it in NVS, where every later boot
+// loads it. provision_device() refuses on false and stores nothing.
+//
+// A buffer shorter than the token and its NUL (36 bytes: "cv_", 32
+// characters, NUL) is refused before any HMAC runs, with the bytes it was
+// given wiped (none, for a zero length); a null one is refused with nothing
+// written. Before (the F359 review), a 1- to 3-byte buffer ran all three
+// HMACs and the formatter wrote past its end. Every caller passes
+// g_device.api_token_str, 36 bytes; the length check after the format below
+// never fires for a buffer that size, and stays as a backstop.
 static bool derive_api_token(const uint8_t privkey[32], char* token_str, size_t token_str_len) {
+  if (token_str == nullptr) return false;
+  if (token_str_len < 36) {
+    secure_zero(token_str, token_str_len);
+    return false;
+  }
+
   // ── Step 1: Derive intermediate token-key (key separation) ────────────
   // The Ed25519 signing key NEVER directly touches the token derivation context.
   uint8_t token_key[32];
-  hmac_sha256(
-    privkey, 32,
-    (const uint8_t*)"securacv:token-key-derive:v1", 28,
-    token_key
-  );
+  if (!hmac_sha256(
+        privkey, 32,
+        (const uint8_t*)"securacv:token-key-derive:v1", 28,
+        token_key)) {
+    secure_zero(token_str, token_str_len);
+    return false;
+  }
 
   // ── Step 2: Derive actual API token from intermediate key + MAC ──────
   uint8_t mac[6];
@@ -1867,11 +2021,14 @@ static bool derive_api_token(const uint8_t privkey[32], char* token_str, size_t 
   memcpy(token_input + 21, mac, 6);
 
   uint8_t token_hash[32];
-  hmac_sha256(
-    token_key, 32,
-    token_input, 27,
-    token_hash
-  );
+  if (!hmac_sha256(
+        token_key, 32,
+        token_input, 27,
+        token_hash)) {
+    secure_zero(token_key, sizeof(token_key));
+    secure_zero(token_str, token_str_len);
+    return false;
+  }
 
   // ── Step 3: Encode with rejection sampling ───────────────────────────
   // The encoder keeps ~84% of its input bytes, so 32 characters need ~38 on
@@ -1886,22 +2043,29 @@ static bool derive_api_token(const uint8_t privkey[32], char* token_str, size_t 
   uint8_t token_input2[28];  // domain + MAC + block counter
   memcpy(token_input2, token_input, 27);
   token_input2[27] = 0x02;
-  hmac_sha256(token_key, 32, token_input2, 28, token_bytes + 32);
-  format_api_token_string(token_bytes, sizeof(token_bytes), token_str, token_str_len);
+  const bool second_block = hmac_sha256(token_key, 32, token_input2, 28, token_bytes + 32);
+  if (second_block) {
+    format_api_token_string(token_bytes, sizeof(token_bytes), token_str, token_str_len);
+  }
 
   // ── Wipe intermediate key material ───────────────────────────────────
   secure_zero(token_key, sizeof(token_key));
   secure_zero(token_hash, sizeof(token_hash));
   secure_zero(token_bytes, sizeof(token_bytes));
 
-  return strlen(token_str) >= 35;  // "cv_" + 32 chars
+  if (!second_block || strlen(token_str) < 35) {  // "cv_" + 32 chars
+    secure_zero(token_str, token_str_len);
+    return false;
+  }
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// DEVICE-UNIQUE AP PASSWORD (derived from pubkey fingerprint)
+// DEVICE-UNIQUE AP PASSWORD (derived from the device private key)
 // ════════════════════════════════════════════════════════════════════════════
 
-static void derive_ap_password(const uint8_t privkey[32], char* password, size_t len) {
+static bool derive_ap_password(const uint8_t privkey[32], char* password, size_t len) {
+  if (!password || len == 0) return false;
   // Derive from the PRIVATE key, not the public fingerprint. The pubkey
   // fingerprint is published (serial banner, device_id suffix, /enroll page),
   // so the old fingerprint-derived password was recomputable by anyone who had
@@ -1909,9 +2073,17 @@ static void derive_ap_password(const uint8_t privkey[32], char* password, size_t
   // the private key under its own domain label (same key-separation discipline
   // as derive_api_token) so the password is a real per-device secret.
   uint8_t pw_key[32];
-  hmac_sha256(privkey, 32,
-              (const uint8_t*)"securacv:ap-password:v1", 23,
-              pw_key);
+  if (!hmac_sha256(privkey, 32,
+                   (const uint8_t*)"securacv:ap-password:v1", 23,
+                   pw_key)) {
+    // A failed HMAC is refused, never rendered (sweep F359): its output is
+    // zeroed, and 32 zero bytes would render as "cv-222222222222" on every
+    // unit. "" is no password to every caller: provision_device() fails on
+    // the false, and resolve_ap_password() raises no SoftAP on "" in a
+    // release build.
+    password[0] = '\0';
+    return false;
+  }
 
   // 12 unambiguous chars ≈ 69 bits — far beyond offline WPA2 (PBKDF2) reach.
   // WPA2-PSK requires 8-63 ASCII chars; "cv-" + 12 = 15 fits ap_password[16].
@@ -1936,6 +2108,7 @@ static void derive_ap_password(const uint8_t privkey[32], char* password, size_t
   // lives on only in the caller's buffer (g_device.ap_password) by design.
   secure_zero(encoded, sizeof(encoded));
   secure_zero(pw_key, sizeof(pw_key));
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2328,9 +2501,10 @@ static bool sd_append_witness_record(const WitnessRecord* rec) {
 
 // Recover the chain head from the SD log of record at boot / hot-mount.
 // The NVS cache persists only every SD_PERSIST_INTERVAL records, so after
-// a power cut (or an NVS wipe/reflash while the card kept its history) the
-// cached head can be BEHIND the last record actually signed — resuming
-// from it would fork the supposedly append-only chain. SD wins when its
+// a power cut the cached head can be BEHIND the last record actually signed
+// — resuming from it would fork the supposedly append-only chain. (An NVS
+// erase or a flasher install gives a new key, so the old card's tail does
+// not verify below and the chain starts over.) SD wins when its
 // tail is strictly ahead AND the tail record's signature verifies under
 // THIS device's public key: a foreign card (another device's history) or
 // a tampered tail must never move our chain head.
@@ -3558,13 +3732,120 @@ static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_l
   return httpd_resp_send(req, (const char*)gz, gz_len);
 }
 
-// The cv_session cookie's Set-Cookie value, written into `out` (`cap`
+// ── The Host question (sweep F344) ──────────────────────────────────────────
+// Does the Host this request targeted name THIS device? host_guard.h's rule
+// (firmware/common/network, staged here byte-identical and held by
+// check_improv_sync.sh; host-tested by firmware/tests_host/
+// test_host_guard.cpp), the one the flagship (securacv_network's
+// host_is_foreign) and the display (glass_web) already apply: an IP literal
+// (no DNS was involved, so nothing was rebound), or a name public DNS cannot
+// mint (a .local, .lan, .internal or .home.arpa name, or a single label the
+// LAN resolver answers). A DNS-rebinding page (http://evil.example whose name
+// is re-pointed at this device's LAN address) arrives under its own name and
+// fails. A missing Host, or one too long for the buffer, is foreign: a
+// truncated header is never read as a name (a 108-byte rebinding name cut to
+// 95 bytes can end in ".local"). What it cannot tell (review 5 of F344): this
+// device from another server that answered one of those names (canary.local,
+// 192.168.4.1, this device's own LAN address, any .local name, a single
+// label, a .lan, .internal or .home.arpa name) on a network the browser used
+// before. A page loaded there, left open or kept in the browser's HTTP cache
+// (served again with no request here, after the browser has quit: review 6),
+// is same-origin with this device once the browser comes home (every WAP
+// claims canary.local) or joins the SoftAP (the captive DNS answers every
+// name), and its Host passes. Only HTTPS with an identity the browser checks
+// closes that, and neither F15 nor F256 gives a browser one: F15 would bring
+// HTTPS with a self-signed certificate, whose warning the owner accepts, and
+// only a client that pins the certificate checks it (the iPhone app pins the
+// receipt's tls_cert_fp; F256 asks whether it may learn one over mDNS). F15
+// would narrow it once HTTPS runs after setup: port 80 then keeps only the
+// captive probes, /api/fleet and the redirect, so a page planted over plain
+// HTTP is cross-origin here and reads nothing. It is not cross-site in every
+// browser: SameSite=Strict compares sites, and only a browser that counts
+// the scheme in the site (Chromium does) keeps the session cookie off its
+// requests; in one that does not, it can still write blind with the owner's
+// session (any write a session may make, of which since F361 only the
+// firmware install restarts the unit, and only into a newer signed image).
+// F15 narrows nothing for a page served over https at that name whose
+// certificate warning the owner accepted, nor for any page during the
+// first-boot setup or on a unit whose HTTPS start failed.
+//
+// No SoftAP or interface exemption, unlike the flagship's: the WAP's captive
+// DNS answers every name with the device (setup_wizard.h), so an exemption
+// would hand the rebinding path back to anything on the SoftAP, and the
+// WAP's wizard runs only at canary.local or 192.168.4.1, which both pass.
+//
+// Asked first by every place that mints a session or a pair token for a
+// caller holding no credential, or starts a sign-in: handle_ui after setup
+// (the landing, its pair token and the ?cv_pair exchange), /admin, /settings
+// and /companion after setup, and the provisioning receipt in every mode.
+// (The setup branch and the wizard token's re-issue ask the narrower
+// request_host_is_setup_name().) check_route_security.py's MINT_SITES holds
+// every mint to those places, each after its gate. That keeps a rebinding
+// page from being HANDED a session, not from holding one: any host on the
+// LAN can take a session at the landing, and a page can set that value for
+// its own name with document.cookie. So the validator behind every cookie
+// gate, csi_integration.cpp's session_validate_cookie(), asks the same
+// question first (review 3 of F344): GET /api/pair/token, which mints behind
+// the cookie or the bearer, refuses such a cookie too. Outside the receipt a
+// bearer asks no Host (F57's open question). Asked before the response
+// starts: esp_http_server purges the request headers on the first send.
+static bool request_host_names_device(httpd_req_t* req) {
+  char host[96];
+  if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) return false;
+  return canary::net::host_names_this_device(host);
+}
+
+// The pages' one answer to a Host that cannot name this device: 403 and a
+// fixed sentence that says what to type instead, never cached. The body is
+// fixed text, never the Host and never a device value (no name, no address).
+// After setup no sign-in starts here, so no BOOT-tap wait begins under a name
+// the receipt refuses. While the first-boot wizard runs, /admin, /settings and
+// /companion still serve under any Host (as before F344), and a receipt poll
+// from one loaded under a name the receipt refuses gets its 403
+// {"error":"host"}, which both pollers (web_ui.h's BOOT-tap sign-in,
+// companion_pwa.h's kit save) read as the gate's "ask registered": they ask
+// for a press the receipt will never count. Reaching one there takes typing
+// such a name: the captive page has no links, and the wizard's two names
+// pass.
+static esp_err_t send_foreign_host_page(httpd_req_t* req) {
+  httpd_resp_set_status(req, "403 Forbidden");
+  httpd_resp_set_type(req, "text/plain; charset=utf-8");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_sendstr(req, "This Canary answers only its own names. Open it at its .local name, its IP address, or the bare name your router gives it.");
+}
+
+// The first-boot setup's own two names, exactly: canary.local (every WAP
+// claims it over mDNS) or the SoftAP's 192.168.4.1, with any port and in any
+// case (host_authority_name() trims, drops the port and lowercases). Asked by
+// handle_ui's setup branch and by the wizard token's re-issue
+// (handle_wifi_pair_token), because the token they mint authorizes the Wi-Fi
+// join. Before, a substring test admitted any name that merely CONTAINED one
+// of the two (canary.local.evil.example, 192.168.4.1.evil.example), which the
+// captive DNS also resolves to the device, and missed CANARY.LOCAL.
+// Deliberately narrower than request_host_names_device(): every other name
+// the captive DNS sends here (a captive-portal probe's, another IP,
+// canary-<suffix>.local, a single label) gets the static instruction page,
+// because redirecting a captive mini-browser to the wizard is the white
+// screen that branch exists to prevent.
+static bool request_host_is_setup_name(httpd_req_t* req) {
+  char host[96];
+  if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) return false;
+  char name[96];
+  if (canary::net::host_authority_name(host, name, sizeof(name)) == 0) return false;
+  return strcmp(name, "canary.local") == 0 || strcmp(name, "192.168.4.1") == 0;
+}
+
+// The session cookie's Set-Cookie value, written into `out` (`cap`
 // bytes): the one spelling of its attributes for both places that mint a
 // session (handle_ui's ?cv_pair exchange and the receipt's BOOT-tap or
-// setup-door grant). False, and nothing to send, if it does not fit.
+// setup-door grant). False, and nothing to send, if it does not fit (the
+// longest, the HTTPS one, is 140 bytes and the NUL; both callers pass 160).
 //   - 86400 = 24 h, matching SESSION_TTL_MS in csi_integration.cpp.
 //   - HttpOnly: no JS can read the cookie (mitigates XSS exfil).
-//   - SameSite=Strict: cross-origin requests can't carry it (CSRF).
+//   - SameSite=Strict: cross-site requests can't carry it (CSRF). It
+//     compares sites, not origins: another origin on the same site (another
+//     port, or http beside https where the browser does not count the
+//     scheme) still sends it.
 //   - Path=/: covers /, /tune, /api/*.
 //   - Secure exactly when THIS answer goes out over the HTTPS server
 //     (sweep F289's residual): the request arrived on g_https_server, as the
@@ -3576,17 +3857,46 @@ static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_l
 //     a build without esp_https_server.h never starts one. On a plain-HTTP
 //     answer (the first-boot SoftAP setup, which runs HTTP-only so captive
 //     sheets render, or a unit whose HTTPS start failed) Secure is left off:
-//     a browser drops a Secure cookie an http page sets. (The other way
-//     round has an edge: a browser still holding a Secure cv_session from
-//     an HTTPS visit refuses a same-name cookie from an http page, so a unit
-//     that comes back HTTP-only signs that browser in again only once the
-//     old cookie's 24 h are up, or its site data is cleared.)
+//     a browser drops a Secure cookie an http page sets.
+//   - The name follows the transport too (sweep F337): __Host-cv_session
+//     over HTTPS, cv_session over plain HTTP. A browser holding a Secure
+//     cookie refuses a same-name cookie that an http page at the same host
+//     name sets, so one name for both would leave a browser that used a unit
+//     over HTTPS at canary.local unable to sign in to a unit it then met over
+//     plain HTTP at canary.local: a second unit (every WAP claims
+//     canary.local), the same unit after a factory reset, or one whose HTTPS
+//     start failed, until the old cookie's 24 h ran out (the wizard's Home
+//     Assistant step answering 401 meanwhile). The same holds at 192.168.4.1
+//     only for a browser that used a unit over https://192.168.4.1 on its
+//     SoftAP (a standalone unit, or a joined one while its SoftAP is up:
+//     after a boot until the home link has held 120 s, or after the link
+//     drops): a cookie follows the host name, so one from
+//     https://canary.local never blocks http://192.168.4.1. With two names
+//     the two never meet. And in current browsers only an https answer at
+//     this host name, Secure, Path=/ and with no Domain, can set the __Host-
+//     name, so a cv_session planted over http cannot shadow the HTTPS
+//     cookie. That is integrity, not availability: an on-path host can still
+//     push the Cookie header past the reader's 512-byte ceiling and sign the
+//     browser out. A server whose certificate the browser accepted at this
+//     name can set the __Host- name itself (csi_integration.cpp's
+//     read_session_cookie_hex() says what that buys), and that reader reads
+//     both names, the __Host- one first.
+//   - Header budget: a browser that met both transports at one host sends
+//     both cookies over HTTPS (about 77 more bytes), against
+//     esp_http_server's CONFIG_HTTPD_MAX_REQ_HDR_LEN of 1024, so keep the
+//     cookie set this device mints small.
+//   - No Strict-Transport-Security header: a browser ignores it from a
+//     self-signed certificate (RFC 6797 s8.1) and never records it for an
+//     IP literal (s8.1.1), and one that did honor it would be shut out of a
+//     unit that falls back to plain HTTP (docs/security/THREAT_MODEL.md).
+//   - No stock build serves HTTPS yet (sweep F15: the certificate generator
+//     compiles out on every pinned core), so the HTTPS branch is preparatory.
 static bool session_cookie_header(httpd_req_t* req, const char* session_hex,
                                   char* out, size_t cap) {
   const bool tls = g_https_server != nullptr && req->handle == g_https_server;
   const int n = snprintf(out, cap,
-      "cv_session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400%s",
-      session_hex, tls ? "; Secure" : "");
+      "%s=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400%s",
+      tls ? "__Host-cv_session" : "cv_session", session_hex, tls ? "; Secure" : "");
   return n > 0 && (size_t)n < cap;
 }
 
@@ -3595,8 +3905,16 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   // csi_dashboard_html.h (Phase 3 of the WiFi CSI Tool plan). The legacy
   // tabbed admin dashboard is reachable at /admin via handle_legacy_ui().
   //
-  // Three branches:
-  //   1. cv_session cookie present and valid → serve the dashboard HTML
+  // After the first-boot setup branch (Branch 0 below), the Host question
+  // comes first (sweep F344): a Host that cannot name this device
+  // (request_host_names_device(), host_guard.h's rule) gets the fixed 403
+  // page, before any branch below runs. So a DNS-rebinding page under a
+  // public name is handed no pair token, its ?cv_pair mints no session and
+  // leaves the owner's token unspent, and a live cookie sent under that name
+  // is refused too (what the Host cannot tell is above
+  // request_host_names_device()). Then three branches:
+  //   1. session cookie present and valid (__Host-cv_session, else
+  //      cv_session: read_session_cookie_hex()) → serve the dashboard HTML
   //      as-is. The page's in-page fetches authenticate via the cookie
   //      (HttpOnly + SameSite=Strict, sent automatically by browsers),
   //      so no token ever appears in HTML source for an on-AP attacker
@@ -3613,19 +3931,14 @@ static esp_err_t handle_ui(httpd_req_t* req) {
   // Branch 0: first-boot setup. canary.local (or the 192.168.4.1 fallback link)
   // should land on the setup wizard — but the captive DNS hijack points *every*
   // domain at this IP, so captive-portal assistants probing the root of foreign
-  // domains also hit "/". Gate on the Host header: only a request that actually
-  // asked for canary.local / 192.168.4.1 is the user's real browser, so mint a
-  // token and redirect it to the wizard. Anything else gets the plain static
-  // page — redirecting a captive mini-browser to the SPA is the white screen
-  // this PR exists to fix.
+  // domains also hit "/". Gate on the Host header: only a request that asked
+  // for exactly canary.local or 192.168.4.1 (request_host_is_setup_name(),
+  // sweep F344; before, any Host that merely contained one of them) is the
+  // user's real browser, so mint a token and redirect it to the wizard.
+  // Anything else gets the plain static page — redirecting a captive
+  // mini-browser to the SPA is the white screen this branch exists to prevent.
   if (setup_wizard::is_active()) {
-    char host[64] = {0};
-    bool direct = false;
-    if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) == ESP_OK) {
-      direct = (strstr(host, "canary.local") != nullptr) ||
-               (strstr(host, "192.168.4.1") != nullptr);
-    }
-    if (direct) {
+    if (request_host_is_setup_name(req)) {
       char tok_hex[csi_integration::PAIR_TOKEN_HEX_LEN + 1];
       if (csi_integration::pair_token_issue(tok_hex, sizeof(tok_hex))) {
         char location[128];
@@ -3652,6 +3965,10 @@ static esp_err_t handle_ui(httpd_req_t* req) {
     }
   }
 
+  // The Host question (sweep F344), ahead of the cookie: a refused name gets
+  // the fixed page whether or not it carries a live session.
+  if (!request_host_names_device(req)) return send_foreign_host_page(req);
+
   // Branch 1: existing valid session.
   if (csi_integration::session_validate_cookie(req)) {
     httpd_resp_set_type(req, "text/html");
@@ -3667,7 +3984,8 @@ static esp_err_t handle_ui(httpd_req_t* req) {
         && csi_integration::pair_token_consume(pair_hex)) {
       char session_hex[csi_integration::SESSION_COOKIE_HEX_LEN + 1];
       char cookie_hdr[160];
-      // The cookie's attributes, Secure over HTTPS: session_cookie_header().
+      // The cookie's name and attributes, __Host-cv_session and Secure over
+      // HTTPS: session_cookie_header().
       if (csi_integration::session_issue(session_hex, sizeof(session_hex)) &&
           session_cookie_header(req, session_hex, cookie_hdr, sizeof(cookie_hdr))) {
         httpd_resp_set_status(req, "302 Found");
@@ -3687,7 +4005,13 @@ static esp_err_t handle_legacy_ui(httpd_req_t* req) {
   // the canary-wap fleet keeps a familiar surface for power-user tasks
   // (camera peek, witness export, fine-grained tabs), and at /settings
   // for a direct route to device settings from the headline dashboard.
+  // After setup a Host that cannot name this device gets the fixed 403 page
+  // (sweep F344): its sign-in, and the BOOT-tap wait it starts, would run
+  // under a name the receipt refuses. While the first-boot wizard runs the
+  // page serves under any Host, as before, so there such a wait can still
+  // begin (send_foreign_host_page() says when).
   g_health.http_requests++;
+  if (!setup_wizard::is_active() && !request_host_names_device(req)) return send_foreign_host_page(req);
   httpd_resp_set_type(req, "text/html");
   return send_gzip_html(req, CANARY_UI_HTML_GZ, CANARY_UI_HTML_GZ_LEN);
 }
@@ -3697,10 +4021,14 @@ static esp_err_t handle_legacy_ui(httpd_req_t* req) {
 // shipping — no auth needed (the page itself just renders; the BLE
 // characteristics it talks to enforce READ_ENC + READ_AUTHEN, so a
 // drive-by visitor can load the HTML but can't see device state without
-// pairing first).
+// pairing first). After setup a Host that cannot name this device gets the
+// fixed 403 page instead (sweep F344), as '/' and /settings do; while the
+// first-boot wizard runs, the page serves under any Host, as before. The
+// service worker and the manifest are left as they were.
 
 static esp_err_t handle_companion_html(httpd_req_t* req) {
   g_health.http_requests++;
+  if (!setup_wizard::is_active() && !request_host_names_device(req)) return send_foreign_host_page(req);
   httpd_resp_set_type(req, "text/html; charset=utf-8");
   // Cache aggressively in the browser; the service worker will revalidate
   // network-first when it can reach us, so updates land within one visit.
@@ -3830,7 +4158,7 @@ static esp_err_t handle_status(httpd_req_t* req) {
     facts.credentials_submitted = __atomic_load_n(&g_onboard_creds_submitted, __ATOMIC_RELAXED);
 
     NodeStatus ns{};
-    ns.node           = "canary-wap";   // the dt word mDNS and /api/fleet already speak
+    ns.node           = DEVICE_TYPE;    // the type constant, the same word as the mDNS dt
     ns.product        = OTA_PRODUCT;
     ns.fw             = FIRMWARE_VERSION;
     ns.hardware       = nullptr;        // no CANARY_FIGURE_HARDWARE token on this tree (handle_fleet omits it too)
@@ -6661,28 +6989,28 @@ static bool scan_cache_listed_ssid(const char* posted, char* out, size_t cap) {
   return found;
 }
 
-// A request that asked for the device by its real name (vs a captive-portal
-// assistant probing a hijacked foreign domain). Same gate the "/" redirect
-// uses before minting a pairing token into the wizard URL.
-static bool request_host_is_direct(httpd_req_t* req) {
-  char host[64] = {0};
-  if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) {
-    return false;
-  }
-  return (strstr(host, "canary.local") != nullptr) ||
-         (strstr(host, "192.168.4.1") != nullptr);
-}
-
 // Re-issue a pairing token to the live wizard. The URL token is RAM-backed
 // (10-min TTL, wiped on reboot, 4-slot eviction); without this, a stale
 // token dead-ends the user at "setup link expired" even with a correct
 // password. Answers ONLY while the first-boot wizard is active and only to
-// a direct-Host browser — the same posture as the "/" redirect that minted
-// the original token. The AP itself remains the security boundary
-// (companion_pwa.h wizard doc block); the token stays a UX gate.
+// a browser that asked for exactly canary.local or 192.168.4.1
+// (request_host_is_setup_name(), sweep F344) — the same gate the "/"
+// redirect that minted the original token asks. The token authorizes the
+// Wi-Fi join and the standalone exit (wifi_change_authorize()), so its answer
+// carries no Access-Control-Allow-Origin, unlike http_send_json()'s: the
+// wizard reads it same-origin, and a page on another site, in the owner's
+// own browser while it is on the SoftAP, can send this request at
+// 192.168.4.1 (a setup name) but is not handed the body (review of F344;
+// before, it was, and could spend the token cross-site). The SoftAP's key
+// keeps every other device off it, not a page in the owner's own browser: one
+// another network served as http://192.168.4.1 or http://canary.local, left
+// open or kept in the browser's HTTP cache, reads this same-origin once the
+// browser joins the SoftAP, as it reads the token in the URL "/" redirects
+// it to, and no Host test can tell it from the wizard
+// (request_host_names_device()).
 static esp_err_t handle_wifi_pair_token(httpd_req_t* req) {
   g_health.http_requests++;
-  if (!setup_wizard::is_active() || !request_host_is_direct(req)) {
+  if (!setup_wizard::is_active() || !request_host_is_setup_name(req)) {
     httpd_resp_set_status(req, "404 Not Found");
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, "{\"ok\":false}", HTTPD_RESP_USE_STRLEN);
@@ -6699,7 +7027,9 @@ static esp_err_t handle_wifi_pair_token(httpd_req_t* req) {
   doc["token"] = tok_hex;
   String response;
   serializeJson(doc, response);
-  return http_send_json(req, response.c_str());
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  return httpd_resp_send(req, response.c_str(), HTTPD_RESP_USE_STRLEN);
 }
 
 static esp_err_t handle_wifi_scan(httpd_req_t* req) {
@@ -6785,21 +7115,34 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
-// Credential gate shared by /api/wifi/connect and /api/wifi/ap-only. The
-// wizard carries a live pair token; the settings panel carries an admin
-// credential (session cookie / Bearer) instead. A *presented* admin
-// credential is validated through the lockout-aware `api_auth_check` so
-// Bearer guessing is throttled exactly like every other admin route —
-// `api_auth_check_optional` (used before) skipped the 429 backoff and never
-// recorded a failure, turning this fallback into an unthrottled token
-// oracle: an on-AP/LAN client could spray Authorization guesses and tell a
-// valid token from the handler proceeding. A bare pair-token miss (no
-// admin credential presented at all) stays a friendly `invalid_token` so
-// the wizard can silently re-issue its RAM-backed token and retry.
+// Credential gate shared by /api/wifi/connect and /api/wifi/ap-only.
+// After first-boot setup the bearer alone moves the network the unit joins
+// over HTTP (sweep F334), on every interface, the recovery portal's SoftAP
+// included (a peer already bonded through the pairing confirm or a passkey,
+// one a session made before F346 among them, still moves it with no token,
+// over the Bluetooth credentials write, ble_request_wifi_provisioning()):
+// the landing page hands any caller on the home network a pair token and a
+// 24 h session, and the AP key is printed in too many places to be a
+// network-move credential.
+// api_auth_check_bearer() takes no cookie, sits under the per-address
+// lockout and sends its own 401/403/429.
+// During setup the wizard carries a live pair token, and a *presented* admin
+// credential (the bearer, or a session: handle_ui mints none during setup,
+// but the receipt route mints one on a BOOT tap or the setup door's claim,
+// and the SoftAP is the boundary then) is checked
+// through the lockout-aware `api_auth_check` so Bearer guessing is throttled
+// like every other admin route (the silent `api_auth_check_optional` used
+// before sweep F339 turned this fallback into an unthrottled token oracle).
+// A bare pair-token miss (no admin credential presented at all) stays a
+// friendly `invalid_token` so the wizard can silently re-issue its
+// RAM-backed token and retry.
 // (WifiChangeAuth is declared in wifi_provisioning_auth.h — included at the
 // top — so arduino-cli's hoisted prototype for this function sees the type.)
 static WifiChangeAuth wifi_change_authorize(httpd_req_t* req,
                                             const char* pair_token) {
+  if (!setup_wizard::is_active())
+    return api_auth_check_bearer(req, g_device.api_token_str) ? WifiChangeAuth::PROCEED
+                                                              : WifiChangeAuth::RESPONDED;
   if (csi_integration::pair_token_valid(pair_token)) return WifiChangeAuth::PROCEED;
   const bool has_bearer = httpd_req_get_hdr_value_len(req, "Authorization") > 0;
   const bool has_cookie = (cv_session_validate && cv_session_validate(req));
@@ -6839,9 +7182,9 @@ static esp_err_t handle_wifi_ap_only(httpd_req_t* req) {
   if (ret <= 0 || deserializeJson(body, content) != DeserializationError::Ok) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
   }
-  // Pair token (wizard) OR a lockout-throttled admin credential (settings
-  // panel). See wifi_change_authorize — the admin fallback must go through
-  // the throttled path so it can't be used as a token-guessing oracle.
+  // During setup: the wizard's pair token, or a lockout-throttled admin
+  // credential. After setup: the bearer alone (sweep F334). See
+  // wifi_change_authorize.
   const char* token = body["token"] | "";
   switch (wifi_change_authorize(req, token)) {
     case WifiChangeAuth::PROCEED: break;
@@ -6907,18 +7250,15 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
     return http_send_json(req, response.c_str());
   }
 
-  // Pairing-token gate. The captive-portal QR + manual fallback link both
-  // bake a fresh pairing token into /companion?token=<hex>, and the wizard
-  // JS forwards that token in the body of every POST here. pair_token_valid
-  // rejects empty/short/wrong-hex too, and validates WITHOUT consuming so
-  // the wizard can retry within the TTL (e.g. mistyped password).
-  //
-  // Settings-panel path: no pair token, but an admin credential (session
-  // cookie / Bearer). wifi_change_authorize routes that through the
-  // lockout-aware api_auth_check so it can't become a token-guessing oracle;
-  // a bare pair-token miss still returns invalid_token so the wizard
-  // self-heals. (Without any admin fallback the panel's Connect could never
-  // succeed post-setup — it holds no pair token.)
+  // During setup, the pairing-token gate: the captive-portal QR and the
+  // manual fallback link bake a fresh pairing token into
+  // /companion?token=<hex>, and the wizard JS forwards it in the body of
+  // every POST here. pair_token_valid rejects empty/short/wrong-hex too, and
+  // validates WITHOUT consuming so the wizard can retry within the TTL (e.g.
+  // mistyped password); a bare miss returns invalid_token so the wizard
+  // self-heals. After setup the settings panel's Connect, here or on the
+  // recovery portal's SoftAP, takes the bearer alone (sweep F334: the
+  // landing page hands any caller a pair token and a session).
   const char* token = body["token"] | "";
   switch (wifi_change_authorize(req, token)) {
     case WifiChangeAuth::PROCEED: break;
@@ -7107,7 +7447,8 @@ bool ble_log_get_by_index(size_t newest_first_index, BleLogSnapshot* out) {
 
 // Cheap getter so the BLE module can detect chain advancement without
 // rebuilding HEAD just to throw it away. Mirrors `g_health.records_created`
-// 1:1; the value monotonically increases for the device's lifetime.
+// 1:1; the value only increases within a boot (it lives in RAM and starts
+// at 0 on every boot).
 uint32_t ble_witness_get_total_records() {
   return (uint32_t)g_health.records_created;
 }
@@ -7217,9 +7558,11 @@ static bool g_improv_join_pending = false;
 // the stored-credentials fact alone, never the portal's state), and never
 // for a standalone unit the owner keeps AP-only on purpose (that one must
 // never take a stranger's network). A saved network that stopped working
-// raises the SoftAP recovery portal, not this door.
+// raises the SoftAP recovery portal, not this door. The rule is
+// keyless_join_open(), the camera's boot scan's too (sweep F333).
 bool ble_improv_door_should_open() {
-  return (!g_wifi_creds.configured || g_improv_join_pending) && !g_wifi_ap_only;
+  return provisioning_logic::keyless_join_open(g_wifi_creds.configured && !g_improv_join_pending,
+                                               g_wifi_ap_only);
 }
 
 // Credentials from the setup door: applied in RAM for one join attempt
@@ -7557,10 +7900,22 @@ static esp_err_t handle_wifi_forget(httpd_req_t* req) {
 
   WiFi.disconnect(true);
   wifi_clear_credentials();
+  // The broker login goes with the networks (sweep F333): on a unit not
+  // running standalone Forget re-opens the keyless joins (the setup door,
+  // the camera's boot scan, keyless_join_open()), and every
+  // code also chooses the network, so whoever wins one could answer the
+  // stored broker host. Host, port, TLS mode, CA, prefix and discovery stay.
+  const bool login_cleared = csi_mqtt::login_clear();
+  if (login_cleared) {
+    (void)csi_mqtt::request_reinit();
+  } else {
+    log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "Forget: broker login NOT cleared (NVS)", nullptr);
+  }
 
   JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "WiFi credentials forgotten";
+  doc["broker_login_cleared"] = login_cleared;
 
   String response;
   serializeJson(doc, response);
@@ -7918,8 +8273,9 @@ static esp_err_t handle_fleet_scan_auth(httpd_req_t* req) {
  * The wire shape is built by the ONE shared builder (fleet_selfreport.h, in
  * firmware/common, host-tested), so EVERY networked board answers byte-for-byte
  * identically — a change to the shape is a change to that one header, never a
- * per-board edit. Distinct from /api/fleet-scan above, which is the rich,
- * Bearer-gated mDNS browser for the operator UI; this one is presence-only and
+ * per-board edit. Distinct from /api/fleet/scan above, which is the rich
+ * mDNS browser for the operator UI behind api_auth_check() (the bearer, or a
+ * landing session any LAN host can mint, F346); this one is presence-only and
  * carries no secrets and no media, safe to read anonymously.
  */
 static esp_err_t handle_fleet(httpd_req_t* req) {
@@ -7934,7 +8290,7 @@ static esp_err_t handle_fleet(httpd_req_t* req) {
   FleetSelfDevice self{};
   const char* nm = setup_wizard::get_device_name();
   self.name    = (nm && nm[0]) ? nm : (const char*)g_device.device_id;
-  self.product = "canary-wap";
+  self.product = DEVICE_TYPE;
   self.online  = 1;   // we are answering this request, so we are up
   // Honest coarse chain state, backed by an actual tail check (see
   // chain_tail_intact): the latched flags PLUS the newest record
@@ -8183,6 +8539,19 @@ static void qr_scan_task_fn(void* param) {
     int result = qr_scanner::scan_frame(fb, payload, sizeof(payload));
     esp_camera_fb_return(fb);
 
+    // A window holds its rule for its whole run, not only at its start, and
+    // ends here, before a code read in this frame can act on it: a boot
+    // window the setup door's rule (sweep F333's review: the wizard's
+    // standalone choice, or a network any path stored), a phone session's
+    // window setup itself (F334: setup ended by another path, the Bluetooth
+    // door's join or a second tab's standalone choice, and after setup a
+    // network move takes the bearer).
+    if (!provisioning_logic::scan_window_open(g_qr_auto_scan, g_wifi_creds.configured,
+                                              g_wifi_ap_only, setup_wizard::is_active())) {
+      memset(payload, 0, sizeof(payload));
+      break;
+    }
+
     if (result == 1) {
       char ssid[33] = {};
       char pass[65] = {};
@@ -8226,7 +8595,14 @@ static void qr_scan_task_fn(void* param) {
             // celebration keys on that. The re-init runs on the loop task
             // (sweep F106): this is the scanner's task, and init() tears
             // down the client a loop-task publish may hold. setup() gave
-            // the bridge its identity (csi_mqtt::set_identity).
+            // the bridge its identity (csi_mqtt::set_identity). A code
+            // carries no login and keeps the row's, outside
+            // move_needs_password() on purpose (sweep F333, F348): every
+            // code also chooses the network, so a host compare here would
+            // protect nothing, and the road is closed where it opens. A
+            // keyless join reaches a set-up unit only after the owner's
+            // bearer Forget, which clears the login (csi_mqtt::
+            // login_clear()), or the 10 s hold, which clears the row.
             csi_mqtt::Config mc;
             if (csi_mqtt::config_load(&mc)) {
               strlcpy(mc.host, prov.host, sizeof(mc.host));
@@ -8310,11 +8686,16 @@ static void qr_scan_task_fn(void* param) {
 // Boot scan-to-join tick (called every loop pass while FEATURE_QR_PROVISION):
 // an unprovisioned canary with a usable camera runs 60 s scan windows with a
 // short breather, forever, until WiFi is configured — power it on, point it
-// at the display's add-a-canary code, done. A phone captive-portal session
-// can still run the classic wizard at any time (its start handler simply
-// takes over; this tick stands down while any scan or peek is live).
+// at the display's add-a-canary code, done. It follows the Bluetooth setup
+// door's rule (sweep F333: one predicate for both keyless joins), so a unit
+// set standalone does not scan: any code held to its lens used to take it
+// off standalone. A window already running asks the rule again after every
+// frame (qr_scan_task_fn). A phone captive-portal session can still run the
+// classic wizard during setup (its start handler simply takes over; this
+// tick stands down while any scan or peek is live), and its window ends at
+// the first frame after setup does.
 static void qr_auto_scan_tick(uint32_t now) {
-  if (g_wifi_creds.configured) return;
+  if (!provisioning_logic::keyless_join_open(g_wifi_creds.configured, g_wifi_ap_only)) return;
   if (g_qr_scan_active ||
       __atomic_load_n(&g_qr_scan_task, __ATOMIC_ACQUIRE) != nullptr)
     return;
@@ -8351,6 +8732,13 @@ static void qr_auto_scan_tick(uint32_t now) {
 
 static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
   g_health.http_requests++;
+  // Setup only (sweep F334), handle_wifi_pair_token's posture: a scan joins
+  // whatever network the code names, its token is the wizard's pair token,
+  // and after setup the landing page hands that token to any caller.
+  if (!setup_wizard::is_active()) {
+    httpd_resp_set_status(req, "404 Not Found");
+    return http_send_json(req, "{\"ok\":false}");
+  }
 
   if (g_qr_scan_active) {
     if (!g_qr_auto_scan) {
@@ -8438,6 +8826,11 @@ static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
 // credential. Without a gate, any on-AP peer could read the scanned SSID
 // or cancel a user's in-flight QR scan — POST already required the token,
 // so the read/cancel sides matching it is just closing the same door.
+// The admin fallback is api_auth_check_optional(): the cookie, or the bearer
+// under its address's lockout (sweep F339; before, it compared silently). A
+// wrong bearer is one strike against that address, and a held address gets
+// these routes' own 403, not a 429. The pair token is read first and is no
+// bearer, so the wizard's polls are never held.
 static bool qr_scan_request_allowed(httpd_req_t* req) {
   char qs[192];
   if (httpd_req_get_url_query_str(req, qs, sizeof(qs)) == ESP_OK) {
@@ -8647,6 +9040,107 @@ static uint32_t request_local_ipv4(httpd_req_t* req) {
   return 0;
 }
 
+// The sketch's one reader of who sent a request: the socket's PEER address
+// (getpeername; never getsockname, and never a request header), as the
+// 16-byte key provisioning_gate.h's peer_key_from_addr() writes. On the
+// dual-stack listener both cores open, an IPv4 client reads as
+// ::ffff:a.b.c.d; without the AF_INET6 branch every request would read as
+// unknown. False when the socket cannot say. The bearer lockout's source,
+// auth_request_source() below, and the BOOT tap's asker
+// (provisioning_gate_take_for(), sweep F342) are both read through it, so
+// the tap's asker and the lockout's bucket are one read. The same fd works
+// under esp_https_server, whose sessions sit on the httpd socket.
+static bool request_peer_key(httpd_req_t* req, uint8_t out[canary::net::provisioning_gate::PEER_KEY_LEN]) {
+  const int fd = httpd_req_to_sockfd(req);
+  if (fd < 0) return false;
+  struct sockaddr_storage ss;
+  socklen_t len = sizeof(ss);
+  memset(&ss, 0, sizeof(ss));
+  if (getpeername(fd, (struct sockaddr*)&ss, &len) != 0) return false;
+  if (ss.ss_family == AF_INET) {
+    const struct sockaddr_in* sin = (const struct sockaddr_in*)&ss;
+    return canary::net::provisioning_gate::peer_key_from_addr(
+        canary::net::provisioning_gate::AddrFamily::IPV4, (const uint8_t*)&sin->sin_addr.s_addr, out);
+  }
+#if defined(LWIP_IPV6) && LWIP_IPV6
+  if (ss.ss_family == AF_INET6) {
+    const struct sockaddr_in6* sin6 = (const struct sockaddr_in6*)&ss;
+    return canary::net::provisioning_gate::peer_key_from_addr(
+        canary::net::provisioning_gate::AddrFamily::IPV6, (const uint8_t*)&sin6->sin6_addr, out);
+  }
+#endif
+  return false;
+}
+
+// The source the bearer lockout counts a request's wrong bearers against
+// (api_auth.h, auth_backoff.h; sweep F343): the host-order IPv4 of the
+// request's peer key. It comes from the socket, never from a request header
+// (X-Forwarded-For included). A ::ffff: key gives its IPv4; a real IPv6
+// peer, or a socket that cannot say, gives 0, the one bucket every such
+// source shares. The mapping is provisioning_gate.h's
+// ipv4_host_order_from_addr(), the function the canary tree's
+// sockaddr_ip4_host_order() maps its peers through. Not static: api_auth.h
+// declares it, for every file of the sketch that includes it.
+uint32_t auth_request_source(httpd_req_t* req) {
+  uint8_t key[canary::net::provisioning_gate::PEER_KEY_LEN];
+  if (!request_peer_key(req, key)) return 0;
+  return canary::net::provisioning_gate::ipv4_host_order_from_addr(
+      canary::net::provisioning_gate::AddrFamily::IPV6, key);
+}
+
+// The BOOT tap's one asker (sweep F342): provisioning_gate.h's two-entry
+// record of the last two distinct addresses that asked for the receipt
+// without a credential. httpd task only: the receipt is registered on one
+// server at a time, and the one httpd task runs its handlers one by one.
+static canary::net::provisioning_gate::TapArbiter g_tap_arbiter = {};
+
+// The receipt's BOOT-tap step: true when this request takes the tap. A tap
+// goes to ONE asker (provisioning_gate::tap_arbitrate()): served only when
+// the request's peer (request_peer_key(), the socket, never a header) is
+// the sole address that asked from TAP_LOOKBACK_MS before the tap onward.
+// A second address in that window closes the tap, and an asker gets
+// `*verdict` CONTENDED (the handler's 409 tap_contended) while an address
+// other than it asked within TAP_LOOKBACK_MS, up to the end of the closed
+// tap's TTL: any ask that finds no other address asking ends it, so under a
+// host that keeps polling, the poller's own asks end it TAP_LOOKBACK_MS
+// after the owner's page stopped. The stamp is peeked once, judged, and
+// every swap after that (TAKE, the CONTENDED close, the NO_TAP burn) is a
+// take_exact() of that one stamp, so a re-tap or the BLE OTA break-glass
+// take between the two is never consumed unjudged. A socket that cannot
+// say is refused with the tap left for the next asker: the arbiter is
+// never skipped. An expired stamp a request finds is burned, as the old
+// take() burned it.
+static bool provisioning_gate_take_for(httpd_req_t* req, canary::net::provisioning_gate::TapVerdict* verdict) {
+  namespace pg = canary::net::provisioning_gate;
+  *verdict = pg::TapVerdict::NO_TAP;
+  uint8_t key[pg::PEER_KEY_LEN];
+  if (!request_peer_key(req, key)) return false;
+  const uint32_t seen = pg::peek(g_provisioning_gate);
+  *verdict = pg::tap_arbitrate(g_tap_arbiter, seen, key, millis(), PROVISIONING_GATE_TTL_MS);
+  if (*verdict == pg::TapVerdict::TAKE) {
+    if (pg::take_exact(g_provisioning_gate, seen)) return true;
+    *verdict = pg::TapVerdict::NO_TAP;   // another consumer took it since the peek
+    return false;
+  }
+  if (*verdict == pg::TapVerdict::CONTENDED) {
+    // The ask that found the contention closes the tap; only the request
+    // whose swap wins logs, so one closed tap is one line. The health log
+    // (readable by any session) names no address; the serial console names
+    // both.
+    if (seen != 0 && seen == g_tap_arbiter.contended_tap && pg::take_exact(g_provisioning_gate, seen)) {
+      char a[pg::PEER_KEY_TEXT_CAP];
+      char b[pg::PEER_KEY_TEXT_CAP];
+      pg::peer_key_text(g_tap_arbiter.recent.key, a, sizeof(a));
+      pg::peer_key_text(g_tap_arbiter.prior.key, b, sizeof(b));
+      Serial.printf("[AUTH] BOOT tap closed: two addresses asked for the receipt (%s and %s)\n", a, b);
+      log_health(SCV_LOG_WARNING, SCV_CAT_AUTH, "BOOT tap closed: two devices asked for the receipt", nullptr);
+    }
+    return false;
+  }
+  if (seen != 0) pg::take_exact(g_provisioning_gate, seen);   // NO_TAP: the stamp is expired
+  return false;
+}
+
 // What receipt_authority.h decides from, read where the device keeps it:
 // the request's own local address, the SoftAP's (0.0.0.0 on core 3.x once
 // wifi_drop_ap() released the AP netif), the STA's while it is connected,
@@ -8728,19 +9222,44 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
 
   // The grants, in order — the contract is provisioning_gate.h's four-grant
   // receipt_decide(foreign_host, bearer_ok, take_claim, take_gate)
-  // (firmware/common/network; the sketch keeps the inline copy by
-  // convention). The WAP's actual order here: a valid bearer (the header,
-  // never the session cookie, under the api_auth lockout) serves (the claim
-  // and the tap left alone);
-  // else a claim the request presented is
-  // SPENT, match or not (a guesser gets one guess per join), and serves on
-  // a match, the tap left unspent for the owner's own page load; else the
-  // BOOT tap, exactly as before. The contract's first question, a foreign
-  // Host, is the flagship's (securacv_network's host guard answers it in
-  // front of this route there); the WAP sketch has no Host guard on this
-  // route and does not ask it.
+  // (firmware/common/network, staged in the sketch; the handler spells the
+  // order out because its tap step is the WAP's own):
+  //   1. the Host (sweep F344): a Host that cannot name this device is
+  //      refused, 403 {"error":"host"}, in every mode, setup included;
+  //   2. the bearer: a valid `Authorization: Bearer` header serves, never
+  //      the session cookie; every compare is accounted per source address
+  //      (sweeps F343, F339); the claim and the tap are left alone;
+  //   3. the claim: a ?claim= from the Bluetooth setup door is spent on a
+  //      match only, and serves, the tap left unspent for the owner's own
+  //      page load (a wrong, short or truncated claim changes nothing, sweep
+  //      F342);
+  //   4. the BOOT tap, served to the sole address asking for it
+  //      (provisioning_gate_take_for(): a second address that asked in the
+  //      ten seconds before the tap or during it closes the tap, 409
+  //      tap_contended, sweep F342);
+  //   then the claim or the tap that served clears its asker's backoff
+  //   (sweep F341), and the session is minted with the receipt.
 
-  // 1. A valid Bearer token serves (for SAP re-sync). The bearer and ONLY
+  // 1. The Host first (sweep F344): host_guard.h's rule, as '/' and the
+  //    sign-in pages ask it after setup and the flagship asks it in front of
+  //    this route (its auth gate's host_is_foreign). It comes before the
+  //    bearer is read, the claim is taken and the tap is judged, so a
+  //    request under a name that cannot mean this device (a DNS-rebinding
+  //    page's, around a BOOT tap or the post-join setup window) is never
+  //    compared, never a strike against its address (F343), never an asker
+  //    to the tap's arbiter (it neither wins the tap nor contends the
+  //    owner's, F342), spends no claim, and clears nothing (F341). The body
+  //    is the flagship's, the shape of this route's other 403 (no "ok").
+  //    No SoftAP exemption: the WAP's captive DNS sends every name here,
+  //    and its wizard asks at canary.local or 192.168.4.1, which both pass.
+  if (!request_host_names_device(req)) {
+    httpd_resp_set_status(req, "403 Forbidden");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(req, "{\"error\":\"host\"}");
+  }
+
+  // 2. A valid Bearer token serves (for SAP re-sync). The bearer and ONLY
   //    the bearer: a real `Authorization: Bearer <token>` header,
   //    constant-time compared (api_auth_bearer_grant), never the cv_session
   //    cookie (sweep F289). The landing page at / mints that cookie's
@@ -8752,21 +9271,30 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //    credential (403 physical_confirmation_required; the dashboard's
   //    secureFetch brings its sign-in back, whose BOOT tap offers the kit);
   //    one that typed the token sends it as a bearer and is served here.
-  //    The bearer is under every admin route's lockout (F289's follow-up):
-  //    a wrong one is a strike, and while the backoff runs none is compared
-  //    (the 429 below, when the claim and the tap do not serve). The lockout
+  //    The bearer is under every admin route's lockout (F289's follow-up),
+  //    which is per source address (F343): a wrong one is a strike against
+  //    the address that sent it, and while that address's backoff runs none
+  //    of its bearers is compared (the 429 below, when the claim and the tap
+  //    do not serve); another address's right token is served. The lockout
   //    never gates the claim or the tap: a page with a stale token, or a
-  //    backoff a guesser armed, is still served by the claim or a BOOT tap.
-  //    (The lockout is all this decides. Any host on the network can still
-  //    spend a pending claim with one wrong ?claim=, or take an open tap by
-  //    asking first; both predate F289 and are the ledger's.)
+  //    backoff a guesser armed, is still served by the claim or a BOOT tap,
+  //    and the address they serve has its own slot cleared (sweep F341,
+  //    after step 4), never the shared overflow: an address held only
+  //    through the overflow, which a host striking from nine or more
+  //    addresses keeps running, stays held after it is served.
+  //    (The lockout is all this decides. Who gets the tap is step 4's.)
   const bool bearer_held = api_auth_bearer_held(req);
   if (api_auth_bearer_grant(req, g_device.api_token_str)) {
     return send_provisioning_receipt(req, receipt_authority::Grant::BEARER);
   }
 
-  // 2. A claim from the Bluetooth setup door (?claim=<32 hex>): one atomic
-  //    take against the ticket the loop task minted, on this task.
+  // 3. A claim from the Bluetooth setup door (?claim=<32 hex>): one take
+  //    against the ticket the loop task minted, on this task. A claim is
+  //    spent only by a match (claim_ticket::take(): load, constant-time
+  //    compare, one compare-and-swap of the word it loaded; sweep F342); a
+  //    wrong, short or truncated one changes nothing, so a stray or hostile
+  //    ?claim= neither ends the phone's pairing (its app treats a 403 as
+  //    final) nor releases the first-boot reboot hold under it.
   bool claim_served = false;
   {
     char qs[128];
@@ -8777,38 +9305,75 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
       got = httpd_query_key_value(qs, "claim", presented, sizeof(presented));
     }
     // Presented at all — even one too long for the buffer (truncated: it can
-    // never match) — is presented: the take spends the claim either way.
+    // never match) — is presented, and compared: a value that does not
+    // match spends nothing.
     if (got == ESP_OK || got == ESP_ERR_HTTPD_RESULT_TRUNC) {
       presented[sizeof(presented) - 1] = '\0';
       claim_served = canary::net::claim_ticket::take(g_improv_claim, presented, millis());
       secure_zero(presented, sizeof(presented));
       secure_zero(qs, sizeof(qs));
-      if (!claim_served) {
+      if (!claim_served &&
+          (g_claim_refusal_logged_ms == 0 ||
+           (uint32_t)(millis() - g_claim_refusal_logged_ms) >= 10000)) {
+        g_claim_refusal_logged_ms = canary::net::claim_ticket::stamp(millis());
         log_health(SCV_LOG_WARNING, SCV_CAT_AUTH,
-                   "Provisioning receipt refused: setup-door claim did not match (claim spent)", nullptr);
+                   "Provisioning receipt refused: setup-door claim did not match", nullptr);
       }
     }
   }
 
-  // 3. No valid token, no good claim — consume the physical gate (one
-  //    atomic step; the BLE OTA break-glass hook competes for the same tap
-  //    from another task)
-  if (!claim_served && !provisioning_gate_take()) {
+  // 4. No valid token, no good claim — the physical gate, for ONE asker
+  //    (sweep F342): provisioning_gate_take_for() records this request's
+  //    peer, judges the tap (tap_arbitrate()) and takes exactly the stamp
+  //    it judged (one compare-and-swap; the BLE OTA break-glass hook
+  //    competes for the same tap from another task). Before, the first
+  //    request from any host on the network inside the tap's 30 s took it:
+  //    a host polling this route won the owner's next tap.
+  canary::net::provisioning_gate::TapVerdict tap = canary::net::provisioning_gate::TapVerdict::NO_TAP;
+  if (!claim_served && !provisioning_gate_take_for(req, &tap)) {
     // A bearer the backoff kept from being compared gets the lockout's own
     // answer (429, Retry-After), not "press BOOT": a page holding the right
-    // token keeps it (secureFetch drops a token on 403) and retries.
+    // token keeps it (secureFetch drops a token on 403) and retries. It
+    // comes before the 409: a held page retries its token, not the tap.
     if (bearer_held) {
       api_auth_send_lockout(req);
       return ESP_OK;
     }
+    // A second address asked for the receipt in the ten seconds before the
+    // tap or during it: the tap is closed and nothing is handed out. An
+    // asker hears so while an address other than it asked in the last ten
+    // seconds (up to the closed tap's 30 s), the owner's page included, so
+    // it can say another device asked. The first ask that finds no other
+    // address asking ends it and is judged afresh (with no new tap, the
+    // 403): ten seconds after the other address stops, or, under a host
+    // that keeps polling, ten seconds after the owner's page stopped (the
+    // poller's own ask), when the owner's retry hears 403 and its next tap
+    // is closed again. No cookie, no secret. The hint never advises a bare
+    // re-tap: a tap no client of the owner's is asking for goes to the
+    // first asker, and the device sends this answer only when another
+    // address is asking. The body is a literal here (the receipt suite cuts
+    // this handler, not the file's constants).
+    if (tap == canary::net::provisioning_gate::TapVerdict::CONTENDED) {
+      httpd_resp_set_status(req, "409 Conflict");
+      httpd_resp_set_type(req, "application/json");
+      httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+      return httpd_resp_sendstr(req, "{\"error\":\"tap_contended\",\"hint\":\"Another device on this network asked for the receipt during the same BOOT tap, so the tap was closed and nothing was handed out. When only one device is asking, start your request first and keep it asking, then press BOOT. Or send the recovery kit's token as a bearer, or read the token from the USB serial console.\"}");
+    }
     // Derive the advertised TTL from the constant so the 403 contract
-    // and the gate behavior can never drift apart.
+    // and the gate behavior can never drift apart. The words give the order
+    // the arbiter protects (sweep F342's second review): the client asks
+    // first and the press comes second. A tap no client of the owner's is
+    // already asking for goes to the first asker, and a host that watches
+    // /api/logs for "Provisioning gate opened" is that asker, so the old
+    // "short tap, then poll within 30 seconds" led a curl user or a client
+    // into the one case the arbiter cannot protect. The fields are the old
+    // ones (the dashboard and the Vision SPA read gate_ttl_seconds).
     const unsigned long ttl_s = (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000);
-    char body[256];
+    char body[320];
     int n = snprintf(body, sizeof(body),
       "{\"error\":\"physical_confirmation_required\","
-      "\"hint\":\"Press the BOOT button on the device to reveal the provisioning receipt.\","
-      "\"button\":\"BOOT (short tap, then poll within %lu seconds)\","
+      "\"hint\":\"Start asking for the receipt first, then short-tap BOOT on the device: the tap goes to the one address asking.\","
+      "\"button\":\"BOOT (ask first, then a short tap; the tap is held %lu seconds)\","
       "\"gate_ttl_seconds\":%lu}",
       ttl_s, ttl_s);
     if (n < 0 || (size_t)n >= sizeof(body)) {
@@ -8822,11 +9387,28 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
     return httpd_resp_sendstr(req, body);
   }
 
-  // The claim matched, or the gate was open (and is now closed) — serve the
-  // receipt with the same session cookie either way: the phone that
-  // provisioned over the door is as present as the hand on the BOOT button.
-  // The cookie's attributes are handle_ui's (session_cookie_header()):
-  // Secure when this answer goes out over HTTPS, and not on the first-boot
+  // The claim or the tap has just handed this address the token, so its
+  // backoff ends as a right bearer's would (sweep F341): the client served
+  // here gets its next right-token call answered at once, not after up to
+  // 60 s of 429. The strike its header may have cost above stays the rule
+  // (one accounting for every route). Only this address's own slot is freed,
+  // never the shared overflow (auth_backoff.h). The tap-and-claim refusal
+  // returned above (its 403, 429, 409 and 500 alike), so a request refused
+  // before a tap or a claim is taken clears nothing
+  // (check_route_security.py's BACKOFF_CLEARS holds this call here, once).
+  // send_provisioning_receipt() below can still refuse (503
+  // no_address, 500 out_of_memory, 503 answer_changed) after the clear; the
+  // tap or the claim is spent by then, and a send that worked would have
+  // handed this address the token.
+  auth_record_success(req);
+
+  // The claim matched, or this request was the tap's one asker (the gate is
+  // now closed) — serve the receipt with the same session cookie either
+  // way: the phone that provisioned over the door is as present as the hand
+  // on the BOOT button.
+  // The cookie's name and attributes are handle_ui's
+  // (session_cookie_header()): __Host-cv_session and Secure when this answer
+  // goes out over HTTPS, and cv_session without Secure on the first-boot
   // SoftAP's plain-HTTP setup, where the recovery-kit save mints it.
   char session_hex[csi_integration::SESSION_COOKIE_HEX_LEN + 1];
   char cookie_hdr[160];
@@ -9068,7 +9650,13 @@ static esp_err_t handle_device_name(httpd_req_t* req) {
 }
 
 // ── Auth-wrapped handler helpers ──
-// These wrappers add Bearer token authentication to existing handlers.
+// These wrappers put api_auth_check() in front of existing handlers: the
+// session cookie first (__Host-cv_session over HTTPS, cv_session over plain
+// HTTP, F337), which the landing page mints for any host on the network
+// (ledger F346), then the bearer token under the lockout. Six wrappers
+// below take the bearer alone and say so: the two reboot routes (F361),
+// Disconnect and Forget (F334, F345), the vault key (F335) and the mesh
+// pair confirm (F346); Reconnect stays on api_auth_check().
 
 static esp_err_t handle_status_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
@@ -9147,32 +9735,41 @@ static esp_err_t handle_export_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_export(req);
 }
+// The two reboot routes take the bearer alone (sweep F361), in every mode, as
+// Disconnect and Forget do (Connect and AP-only take it after setup): the
+// landing page mints a session for any host on the network, and a reboot at
+// will is a LAN denial that also empties the RAM lockout table, resetting a
+// token guesser's budget. The flagship's reboot takes the bearer too.
 static esp_err_t handle_reboot_auth(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_reboot(req);
 }
 
 static esp_err_t handle_safe_mode_retry_auth(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_safe_mode_retry(req);
 }
 
-// WiFi-management auth wrappers. These three endpoints mutate provisioning
-// state (disable WiFi, wipe NVS-stored credentials, re-enable) and are only
-// meaningful AFTER first-setup. The dashboard's secureFetch already sends
-// `Authorization: Bearer <api_token>` on all three, but the handlers
-// themselves were originally registered without an _auth wrapper, so a
-// LAN-local curl could hit /api/wifi/forget and force a re-provisioning
-// without authenticating. (/api/wifi and /api/wifi/scan stay
-// unauthenticated by design — both are read-only and need to work during
-// captive-portal setup before any API token exists. /api/wifi/connect
-// gets its own pre-credential gate from pair_token_valid as of #434.)
+// WiFi-management auth wrappers. They ask nothing about setup, so they gate
+// during it as after it: a session the receipt route mints then (on a BOOT
+// tap or the setup door's claim) gets 401 from Disconnect and Forget. The
+// handlers were originally registered without an _auth wrapper, so a
+// LAN-local curl could hit /api/wifi/forget with no credential at all.
+// Disconnect drops the unit off its network and Forget wipes every saved
+// network and re-opens the Bluetooth setup door's first-boot window (on a
+// unit not running standalone: keyless_join_open()), whose claim buys the
+// receipt: both take the bearer alone (sweep F334, F345), never the landing
+// page's session, which any host on the network can mint. Reconnect only
+// rejoins the network already stored, so it stays on api_auth_check.
+// (/api/wifi and /api/wifi/scan stay unauthenticated by design: both are
+// read-only and work during captive-portal setup. /api/wifi/connect and
+// /ap-only take wifi_change_authorize's gate.)
 static esp_err_t handle_wifi_disconnect_auth(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_wifi_disconnect(req);
 }
 static esp_err_t handle_wifi_forget_auth(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_wifi_forget(req);
 }
 static esp_err_t handle_wifi_reconnect_auth(httpd_req_t* req) {
@@ -9187,9 +9784,12 @@ static esp_err_t handle_wifi_reconnect_auth(httpd_req_t* req) {
 // the mesh service doesn't start until WiFi is up — so none of them
 // have a "must work pre-token" exception like /api/wifi/scan does, and
 // none of them have a pre-credential gate like /api/wifi/connect's
-// pair_token_valid. The dashboard's secureFetch already supplies the
-// Bearer token on every call (web_ui.h:3063-3170), so wrapping mirrors
-// the same plumbing-only fix as #435 for the WiFi-mgmt handlers.
+// pair_token_valid. The dashboard reaches them with its session cookie
+// (secureFetch sends a bearer only when the page holds a token), so
+// wrapping mirrors the same plumbing-only fix as #435 for the WiFi-mgmt
+// handlers; api_auth_check() takes the landing session any LAN host can
+// mint, so these are not owner-only (F346), the pair confirm aside, which
+// takes the bearer alone (below).
 // Fenced like the handlers and registrations they bridge: with the mesh
 // off (DEV/MINIMAL profiles) the wrapped handle_mesh_* symbols don't
 // exist, and an unfenced wrapper is a build break the FULL-only CI of
@@ -9223,8 +9823,10 @@ static esp_err_t handle_mesh_pair_join_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_mesh_pair_join(req);
 }
+// The confirm hands this opera's secret to the radio, or takes the
+// initiator's in place of this device's (sweep F346): the bearer alone.
 static esp_err_t handle_mesh_pair_confirm_auth(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_mesh_pair_confirm(req);
 }
 static esp_err_t handle_mesh_pair_cancel_auth(httpd_req_t* req) {
@@ -9527,8 +10129,10 @@ static esp_err_t handle_vault_config_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_vault_config(req);
 }
+// The recipient key is who can open every frame sealed from now on (sweep
+// F335): the bearer alone, never the landing page's session.
 static esp_err_t handle_vault_key_set_auth(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_vault_key_set(req);
 }
 static esp_err_t handle_vault_key_clear_auth(httpd_req_t* req) {
@@ -9649,7 +10253,9 @@ static void register_api_routes(httpd_handle_t server) {
   httpd_uri_t prov = { .uri = "/api/provisioning-receipt", .method = HTTP_GET, .handler = handle_provisioning_receipt };
   httpd_register_uri_handler(server, &prov);
 
-  // Authenticated API endpoints (Bearer token required)
+  // Authenticated API endpoints (api_auth_check(): a landing session or the
+  // bearer token, F346; each _auth wrapper says when it takes the bearer
+  // alone, as the reboot routes below do, F361)
   httpd_uri_t status = { .uri = "/api/status", .method = HTTP_GET, .handler = handle_status_auth };
   httpd_register_uri_handler(server, &status);
 
@@ -10030,7 +10636,8 @@ register_extra_routes:
   httpd_uri_t wifi_pair_token = { .uri = "/api/wifi/pair-token", .method = HTTP_GET, .handler = handle_wifi_pair_token };
   httpd_register_uri_handler(active_server, &wifi_pair_token);
 
-  // Standalone mode: pairing-token-gated like /api/wifi/connect.
+  // Standalone mode: wifi_change_authorize's gate, like /api/wifi/connect
+  // (the wizard's pair token during setup, the bearer alone after it).
   httpd_uri_t wifi_ap_only = { .uri = "/api/wifi/ap-only", .method = HTTP_POST, .handler = handle_wifi_ap_only };
   httpd_register_uri_handler(active_server, &wifi_ap_only);
 
@@ -10051,7 +10658,8 @@ register_extra_routes:
   httpd_uri_t identify = { .uri = "/api/identify", .method = HTTP_POST, .handler = handle_identify };
   httpd_register_uri_handler(active_server, &identify);
 
-  // Rename this device → canary-<name>.local (Bearer-gated).
+  // Rename this device → canary-<name>.local (api_auth_check(): the bearer,
+  // or a landing session any LAN host can mint, F346).
   httpd_uri_t device_name = { .uri = "/api/device-name", .method = HTTP_POST, .handler = handle_device_name };
   httpd_register_uri_handler(active_server, &device_name);
 
@@ -10242,13 +10850,15 @@ register_extra_routes:
 
 #if FEATURE_MESH_NETWORK
   // Chirp Channel v0.2 — anonymous community witness mesh (audit C12).
-  // Every endpoint Bearer-token-gated via the chirp_api template trampoline.
+  // Every endpoint behind the chirp_api template trampoline, api_auth_check:
+  // the bearer or a landing session any host on the network can mint (F346).
   chirp_api::register_routes(active_server, g_device.api_token_str);
 #endif
 
 #if FEATURE_BEACON_CHANNEL
   // Beacon Channel — harm-reduction broadcast with two-pubkey co-signing.
-  // Bearer-gated from day one (see spec/beacon_channel_v0.md §10).
+  // Auth-gated from day one (see spec/beacon_channel_v0.md §10): api_auth_check,
+  // the bearer or a landing session any host on the network can mint (F346).
   beacon_api::register_routes(active_server, g_device.api_token_str);
 #endif
 
@@ -10481,8 +11091,10 @@ static bool wifi_clear_credentials() {
   g_improv_join_pending = false;   // a door join in flight has nothing left to prove
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
   g_wifi_status.last_fail_reason[0] = '\0';
-  // The owner's own act re-arms the Bluetooth setup door's first-boot
-  // window: improv_core.h's session does so in RAM the moment the door reads
+  // A credential wipe (the 10 s hold, or Forget Wi-Fi, which takes the
+  // bearer in every mode, sweep F345: the owner's own act either way) re-arms
+  // the Bluetooth setup door's first-boot window: improv_core.h's session
+  // does so in RAM the moment the door reads
   // "no credentials" where it read credentials before (its wiped
   // transition), and the carried record must agree, or a software restart
   // right after a Forget would start the door on the spent time instead of
@@ -10818,9 +11430,11 @@ static bool resolve_ap_password(char* out_password, size_t out_len) {
 #endif
   }
 
-  // Derive only when no valid password is currently present.
-  if (strlen(g_device.ap_password) < 8) {
-    derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password));
+  // Derive only when no valid password is currently present. A failed derive
+  // leaves "" (sweep F359), which the length test below refuses.
+  if (strlen(g_device.ap_password) < 8 &&
+      !derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password))) {
+    log_health(SCV_LOG_ERROR, SCV_CAT_CRYPTO, "AP password not derived", "HMAC-SHA256 failed");
   }
 
   // Use either pre-existing or freshly derived device-unique password.
@@ -11091,8 +11705,9 @@ static void wifi_init_provisioning() {
   if (!resolve_ap_password(ap_pass, sizeof(ap_pass))) {
     return;
   }
-  // One stable SSID for the lifetime of the device — the same name during
-  // first-boot setup and in steady state. The SoftAP is broadcast while the
+  // One SSID for as long as the key lasts — the same name during first-boot
+  // setup and in steady state (an install in either flasher starts NVS over,
+  // so the next boot has a new key and a new name). The SoftAP is broadcast while the
   // device is unprovisioned or its STA link is down; once the STA holds the
   // home network past AP_DROP_GRACE_MS the AP is torn down for radio stability
   // and automatically re-raised on STA loss (wifi_raise_ap / wifi_drop_ap).
@@ -11220,6 +11835,68 @@ static bool start_wifi_ap() {
 // DEVICE PROVISIONING
 // ════════════════════════════════════════════════════════════════════════════
 
+// The identity key: the stored one, or, only when NVS says none is stored, a
+// new one generated and stored (sweep F360, the canary's rule). Any other
+// answer is a key that is, or may be, in NVS and was not read or not used:
+// no key is generated, nothing is written here, g_device.key_refused is set
+// and the key stays zeroed, and setup() halts on it before anything signs.
+// Nothing on that path writes the key or the chain state (safe_mode_check()
+// has written its own "hw_state" rows on a crash reset by then), so a fault
+// in the read that leaves the entry in place (a session that will not open,
+// a flash read error while IDF copies the data) leaves the key, and the
+// chain state beside it, for a later boot that can read them. Corruption is
+// IDF's to meet first, and the sketch sees only its answer. An entry whose
+// data CRC fails IDF erases inside the read it refuses, leaving the blob's
+// index, so that boot halts; on IDF 5.5 (this sketch's core 3.3.8) the next
+// boot's nvs_flash_init() erases an index whose data is gone, so that boot
+// finds no key and makes a new identity. A data chunk whose header fails
+// IDF's check is erased when IDF loads the page, and the index with it in
+// the same init; a key whose index entry fails the check is erased before
+// the key is read (when IDF loads the page, or in the probe's own lookup);
+// and a flash read error in that lookup sets the page aside for the boot.
+// In each the probe answers ESP_ERR_NVS_NOT_FOUND, and that same boot takes
+// the first-boot path, a new identity, with no halt. All of it is today's
+// behavior, not a decision; what holds throughout is that this sketch never
+// writes over a key IDF still reports as stored. It halts rather than going
+// on as setup() does after the other provisioning failures (sweep F336):
+// from there the boot attestation record and the mesh take g_device.privkey
+// as it is, which here is the zeroed key every derivation of is public, and
+// the chain starts again at seq 0, which the reboot and deep-sleep paths
+// persist over the stored one. Before, a failed read fell through to a new
+// keypair stored over the old one, and a read that failed after the length
+// check, before IDF copied anything into the buffer, ran the boot on the
+// zeroed key.
+static bool establish_identity_key() {
+  g_device.key_refused = false;
+  const KeyLoad stored = nvs_load_key(g_device.privkey);
+  if (stored == KeyLoad::Loaded) {
+    Serial.println("[PROV] Loaded existing keypair from NVS");
+    return true;
+  }
+  if (stored != KeyLoad::Absent) {
+    g_device.key_refused = true;
+    Serial.println("[!!] Identity key not used: no new key is made in its place, provisioning "
+                   "cannot continue (see the identity key line above)");
+    return false;
+  }
+  Serial.println("[PROV] Generating Ed25519 keypair from hardware RNG...");
+  if (!generate_keypair(g_device.privkey, g_device.pubkey)) {
+    Serial.println("[!!] Keypair generation failed");
+    return false;
+  }
+  if (!nvs_store_key(g_device.privkey)) {
+    Serial.println("[!!] Failed to store keypair");
+    return false;
+  }
+  Serial.println("[PROV] Keypair stored in NVS");
+  g_device.first_boot = true;
+  // This boot made the key, so this boot is the only one that can honestly
+  // say how old it is when a clock finally arrives.
+  g_device.key_is_new = true;
+  g_device.key_born_ms = millis();
+  return true;
+}
+
 static bool provision_device() {
   Serial.println("[PROV] Provisioning device identity...");
 
@@ -11229,25 +11906,7 @@ static bool provision_device() {
   // Device identity (device_id / AP SSID / mDNS hostname) is derived from the
   // pubkey fingerprint, not the MAC (event_contract §10), so the keypair and its
   // fingerprint must exist before we name anything.
-  if (nvs_load_key(g_device.privkey)) {
-    Serial.println("[PROV] Loaded existing keypair from NVS");
-  } else {
-    Serial.println("[PROV] Generating Ed25519 keypair from hardware RNG...");
-    if (!generate_keypair(g_device.privkey, g_device.pubkey)) {
-      Serial.println("[!!] Keypair generation failed");
-      return false;
-    }
-    if (!nvs_store_key(g_device.privkey)) {
-      Serial.println("[!!] Failed to store keypair");
-      return false;
-    }
-    Serial.println("[PROV] Keypair stored in NVS");
-    g_device.first_boot = true;
-    // This boot made the key, so this boot is the only one that can honestly
-    // say how old it is when a clock finally arrives.
-    g_device.key_is_new = true;
-    g_device.key_born_ms = millis();
-  }
+  if (!establish_identity_key()) return false;
 
   // What we already know about when this key was born. Loaded before anything
   // can offer a clock, so the "already recorded" rule is in force from the
@@ -11265,26 +11924,6 @@ static bool provision_device() {
   generate_device_id(g_device.device_id, sizeof(g_device.device_id));
   generate_ap_ssid(g_device.ap_ssid, sizeof(g_device.ap_ssid));
   generate_mdns_hostname(g_device.mdns_hostname, sizeof(g_device.mdns_hostname));
-
-  // ── Derive API token (HKDF-style, 2-step) ──
-  Serial.println("[PROV] Deriving API token (HKDF-style, 2-step)...");
-  if (nvs_load_token(g_device.api_token_str, sizeof(g_device.api_token_str))) {
-    Serial.println("[PROV] Loaded existing API token from NVS");
-  } else {
-    if (!derive_api_token(g_device.privkey, g_device.api_token_str, sizeof(g_device.api_token_str))) {
-      Serial.println("[!!] API token derivation failed");
-      return false;
-    }
-    if (!nvs_store_token(g_device.api_token_str)) {
-      Serial.println("[!!] Failed to store API token");
-      return false;
-    }
-    Serial.println("[PROV] API token stored in NVS");
-  }
-
-  // ── Derive device-unique AP password ──
-  Serial.println("[PROV] Deriving device-unique AP password...");
-  derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password));
 
   // Load operator-configurable runtime settings (Device tab). Clamped on
   // load, so the record loop, time-coarsening bucket, and log threshold are
@@ -11351,6 +11990,43 @@ static bool provision_device() {
   // first record. It runs after log_seq is loaded, so a report takes the
   // next health-log seq, not one the load would hand out again.
   if (genesis) persist_chain_state();
+
+  // The two mints come after the chain state. Each refuses a failed HMAC
+  // (sweep F359), and the token's store can fail too; any of the three
+  // returns false with g_device.initialized still false, and setup() goes on
+  // from there (sweep F336's posture), so the boot attestation record and
+  // loop() sign with g_device.privkey, the stored key. Loaded first, the
+  // chain continues from the stored {seq, head}. When the mints came first,
+  // a refusal left seq 0 and a head of 32 zero bytes: the next records were
+  // signed under this key at seq numbers it had already used, and the
+  // persist ten records on (or the reboot, safe-mode and deep-sleep paths)
+  // wrote that branch over the stored chain state.
+
+  // ── Derive API token (HKDF-style, 2-step) ──
+  Serial.println("[PROV] Deriving API token (HKDF-style, 2-step)...");
+  if (nvs_load_token(g_device.api_token_str, sizeof(g_device.api_token_str))) {
+    Serial.println("[PROV] Loaded existing API token from NVS");
+  } else {
+    if (!derive_api_token(g_device.privkey, g_device.api_token_str, sizeof(g_device.api_token_str))) {
+      Serial.println("[!!] API token derivation failed");
+      return false;
+    }
+    if (!nvs_store_token(g_device.api_token_str)) {
+      Serial.println("[!!] Failed to store API token");
+      return false;
+    }
+    Serial.println("[PROV] API token stored in NVS");
+  }
+
+  // ── Derive device-unique AP password ──
+  // A failed HMAC fails provisioning (sweep F359), as a failed token mint
+  // does: the key is "", g_device.initialized stays false, and so a release
+  // build raises no SoftAP (resolve_ap_password()).
+  Serial.println("[PROV] Deriving device-unique AP password...");
+  if (!derive_ap_password(g_device.privkey, g_device.ap_password, sizeof(g_device.ap_password))) {
+    Serial.println("[!!] AP password derivation failed (HMAC-SHA256)");
+    return false;
+  }
 
   g_device.boot_ms = millis();
   g_device.initialized = true;
@@ -11644,6 +12320,41 @@ static void ota_witness_event(const char* type, const char* version) {
   }
 }
 
+/* How the last install ended, witnessed once: the one place it is recorded.
+ * Called after securacv_ota_init() at boot, and again on the loop pass where
+ * securacv_ota_health_tick() confirms the new image. The engine hands out the
+ * install marker only once the running image is confirmed, or on a boot that
+ * is not the image the marker names (a rollback). So an image still inside
+ * its confirm dwell records nothing yet. Recording "applied" on its first
+ * boot, as before, put an update into the chain that a failed dwell then took
+ * back, and the old image found no marker left to say so. */
+static void ota_record_update_outcome() {
+  char ota_target[SECURACV_OTA_VERSION_MAX];
+  if (!securacv_ota_take_pending_version(ota_target, sizeof(ota_target))) return;
+  if (strcmp(ota_target, FIRMWARE_VERSION) == 0) {
+    ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
+    log_health(SCV_LOG_NOTICE, SCV_CAT_SYSTEM,
+               "Firmware update applied", FIRMWARE_VERSION);
+  } else {
+    ota_witness_event("fw_update_rolled_back", ota_target);
+    log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM,
+               "Firmware update rolled back", ota_target);
+  }
+}
+
+/* The confirm dwell's health signal for this pass (docs/OTA.md §2): the
+ * link this unit is set up to hold, home Wi-Fi when it joins one, else its
+ * own access point (provisioning_logic::ota_confirm_link_healthy). A
+ * standalone unit never joins a station network, yet takes updates over
+ * Bluetooth; reading the station link alone left its update unconfirmed,
+ * and the next restart reverted it. The AP is up when the radio is in an
+ * AP mode, the same test the status snapshot's setup_ap uses. */
+static bool ota_confirm_healthy_now() {
+  return provisioning_logic::ota_confirm_link_healthy(
+      g_wifi_ap_only, g_wifi_creds.configured, g_wifi_creds.enabled,
+      WiFi.status() == WL_CONNECTED, (WiFi.getMode() & WIFI_MODE_AP) != 0);
+}
+
 /* Runs on the OTA task — only flips a flag; the main loop publishes. */
 static void ota_on_progress(securacv_ota_state_t state, uint8_t percent,
                             securacv_ota_error_t error, void* user_data) {
@@ -11651,10 +12362,17 @@ static void ota_on_progress(securacv_ota_state_t state, uint8_t percent,
   g_ota_publish_pending = true;
 }
 
-/* Install-permission gate. The BLE OTA channel and the pull engine write
+/* Install-permission gate (runs on the OTA task, before the download and
+ * again before the reboot). The BLE OTA channel and the pull engine write
  * to the same inactive partition, so they strictly exclude each other
- * (ble_ota.cpp holds the mirror-image check). */
+ * (ble_ota.cpp holds the mirror-image check). And a battery at or below
+ * the monitor's low line, not charging, defers the install: lower down
+ * the power policy deep-sleeps, and a deep sleep is a restart that wastes
+ * a download or, inside the confirm dwell, reverts the update
+ * (power_gate::ota_install_power_ok). The Bluetooth channel has no such
+ * gate: the person sending that update is beside the unit. */
 static bool ota_can_install(char* reason, size_t reason_len) {
+  (void)reason; (void)reason_len;
 #if FEATURE_BLUETOOTH && __has_include(<NimBLEDevice.h>)
   const ble_ota::OtaState b = ble_ota::get_state();
   if (b == ble_ota::OTA_RECEIVING || b == ble_ota::OTA_VERIFYING ||
@@ -11662,8 +12380,12 @@ static bool ota_can_install(char* reason, size_t reason_len) {
     snprintf(reason, reason_len, "a Bluetooth update is in progress");
     return false;
   }
-#else
-  (void)reason; (void)reason_len;
+#endif
+#if FEATURE_POWER_MONITOR
+  if (__atomic_load_n(&g_ota_battery_low, __ATOMIC_RELAXED)) {
+    snprintf(reason, reason_len, "the battery is low and not charging; plug it in to update");
+    return false;
+  }
 #endif
   return true;
 }
@@ -11996,10 +12718,35 @@ void setup() {
 
   // Provision device identity and crypto
   if (!provision_device()) {
+    // An identity key this boot could not read or use (sweep F360) halts
+    // here, as the canary halts: nothing below runs, so nothing signs with the
+    // zeroed key and nothing writes over the stored key or its chain. It is
+    // reached before the watchdog is set up and before any radio, server or
+    // task starts. The line goes to Serial only: the health log's ring is
+    // drained to the SD card by loop(), which never runs after this. Every
+    // other failure goes on (sweep F336). A refusal after the key is
+    // established comes after provision_device() has loaded the chain state,
+    // so the records below continue the stored chain; the only ones ahead of
+    // it are a new key that could not be made or stored, on a boot with no
+    // key stored (F58's pending halt-or-ephemeral call).
+    if (g_device.key_refused) {
+      Serial.println("[!!] PROVISIONING FAILED - the identity key could not be used (see the identity key line above) - HALTING");
+      while (true) { delay(1000); }
+    }
     Serial.println();
-    Serial.println("[!!] PROVISIONING FAILED - HALTING");
-    // Don't infinite loop - just log and continue with limited function
-    // The device should still serve HTTP so user can diagnose
+    // No halt (sweep F336): the loop keeps the serial console, Bluetooth and
+    // the BOOT hold. start_http_server() below runs only behind
+    // start_wifi_ap(), and a release build's resolve_ap_password() refuses an
+    // identity provisioning did not finish, so a release build serves no web
+    // page this boot. Whether to halt instead is F58's call; what else still
+    // runs is in the ledger's F336. Both lines keep the "[!!] PROVISIONING
+    // FAILED" prefix and name no credential word, so a flasher's boot
+    // diagnosis can key on the prefix and its report scrubber keeps the line.
+#if SECURACV_RELEASE_BUILD
+    Serial.println("[!!] PROVISIONING FAILED - storage refused the identity; no web server this boot. Reflash with a clean install (full erase)");
+#else
+    Serial.println("[!!] PROVISIONING FAILED - debug build: the AP may still start, on a random debug key this log does not show");
+#endif
     log_health(SCV_LOG_CRITICAL, SCV_CAT_CRYPTO, "Provisioning failed", nullptr);
   }
 
@@ -12315,8 +13062,13 @@ void setup() {
 
   // ── TLS Certificate Initialization ──
   // Two facts, kept apart. THE CERTIFICATE IS KNOWN on every initialized
-  // boot: init_tls_cert() loads it from NVS, or generates it once and stores
-  // it, so g_tls_cert_fp_hex is populated on the first boot too. THE HTTPS
+  // boot once one is stored: init_tls_cert() loads it from NVS, or generates
+  // it once and stores it, so g_tls_cert_fp_hex is populated on the first
+  // boot too. No stock build stores one (sweep F15: the generator compiles
+  // out on every pinned core, SECURACV_HAS_TLS_CERTGEN, and nothing else
+  // writes the stored certificate), so on a stock unit init_tls_cert()
+  // returns false, the fingerprint stays empty and everything below runs
+  // plain HTTP; the rest of this note is what happens once one is. THE HTTPS
   // SERVER IS UP (g_tls_enabled: the port-443 server and the port-80
   // redirect, init_http_server) only outside first-boot setup: the
   // captive-portal flow runs over plain HTTP on the AP, and a self-signed
@@ -12715,8 +13467,9 @@ void setup() {
 #endif
     // Health-gated confirmation (docs/OTA.md §2): the boot probe leaves a new
     // image pending; loop()'s securacv_ota_health_tick() confirms it after a
-    // minute of the STA link holding, so a crash loop inside that minute
-    // rolls back by the bootloader's own rule.
+    // minute of the unit's link holding (the home Wi-Fi it joins, or in
+    // standalone its own AP: ota_confirm_healthy_now), so a crash loop inside
+    // that minute rolls back by the bootloader's own rule.
     ota_cfg.confirm_dwell_ms = 60000;
     if (securacv_ota_init(&ota_cfg) == ESP_OK) {
       Serial.printf("[OK] Pull-OTA engine ready (product=%s, version=%s)\n",
@@ -12730,19 +13483,10 @@ void setup() {
 
     // Witness the outcome of an install reboot. The engine (and the BLE
     // OTA path) recorded the install target the moment the boot partition
-    // flipped; running the old version again means rollback.
-    char ota_target[SECURACV_OTA_VERSION_MAX];
-    if (securacv_ota_take_pending_version(ota_target, sizeof(ota_target))) {
-      if (strcmp(ota_target, FIRMWARE_VERSION) == 0) {
-        ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
-        log_health(SCV_LOG_NOTICE, SCV_CAT_SYSTEM,
-                   "Firmware update applied", FIRMWARE_VERSION);
-      } else {
-        ota_witness_event("fw_update_rolled_back", ota_target);
-        log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM,
-                   "Firmware update rolled back", ota_target);
-      }
-    }
+    // flipped; running the old version again means rollback. A new image
+    // still in its confirm dwell records nothing here: loop() records it on
+    // the pass that confirms it (ota_record_update_outcome).
+    ota_record_update_outcome();
   }
 
   // Print full provisioning receipt on every boot.
@@ -12795,7 +13539,7 @@ void setup() {
   boot_blank();
   boot_line("    Commands: h=help i=id s=stat t=time g=gps c=cam m=sys r=data b=bat");
   boot_line("    Token + WiFi credentials are printed above on every boot");
-  boot_line("    Press BOOT (<2s)   = receipt gate open 30s; hold 2-3s = print identity");
+  boot_line("    Press BOOT (<2s)   = receipt to one asker: ask first, or the first to ask gets it (30s); hold 2-3s = print identity");
   boot_line("    Hold BOOT 10s      = factory reset (Wi-Fi, broker, name; identity kept)");
   boot_separator();
   Serial.println();
@@ -13118,8 +13862,9 @@ static void ble_scanners_release_if_due() {
 // standalone choice, the MQTT bridge's broker row and CA (csi_mqtt's own
 // keys only), the device name and the first-boot flag (the wizard runs again).
 // Kept: the Ed25519 identity key, the chain state and its NVS records, the
-// witness records and health log on SD, the API token (derived from the
-// key), the OTA settings, the CSI module's tuning. Runs on the loop task
+// witness records and health log on SD, the API token (the one derived from
+// the key, or the one a flasher seeded: api_tkn is not cleared either way),
+// the OTA settings, the CSI module's tuning. Runs on the loop task
 // (the BOOT poll) and RETURNS: the restart is the release edge's
 // (HoldEvent::Released, released_stage >= 2) because GPIO0 is the strapping pin.
 static void factory_reset_by_hold() {
@@ -13152,8 +13897,12 @@ void loop() {
   #endif
 
   // The A/B confirm dwell (docs/OTA.md §2): a freshly installed image is
-  // confirmed only after a minute of the home link holding.
-  securacv_ota_health_tick(millis(), WiFi.status() == WL_CONNECTED);
+  // confirmed only after a minute of the unit's link holding (home Wi-Fi,
+  // or its own AP when it has no home network to join). The pass that
+  // confirms it is the pass that witnesses the update as applied.
+  if (securacv_ota_health_tick(millis(), ota_confirm_healthy_now())) {
+    ota_record_update_outcome();
+  }
 
   // Service the captive DNS redirector whenever it's up (it self-guards on
   // s_dns_running), so it answers AP clients in steady state too — not only
@@ -13255,7 +14004,8 @@ void loop() {
 
   #if FEATURE_QR_PROVISION
   // Onboarding wave: unprovisioned + camera up = scanning for a code is
-  // the safe idle. Stands down the moment WiFi is configured or a phone
+  // the safe idle. Stands down the moment WiFi is configured, on a
+  // standalone unit (keyless_join_open, sweep F333), or while a phone
   // session / peek owns the camera.
   qr_auto_scan_tick(millis());
   #endif
@@ -13350,6 +14100,19 @@ void loop() {
   // USB evidence drive: apply deferred host events (eject -> verify/install)
   usb_evidence_drive::poll();
 
+  // Sweep the BOOT tap and the setup-door claim (sweep F347). Each ages by
+  // unsigned subtraction on 32-bit millis(), which is right only while a
+  // stamp is younger than 2^32 ms: a tap nobody took would serve the receipt
+  // again 49.7 days later with no press, and a claim read but never spent
+  // would read as pending again. expire() clears a stamp past its TTL with a
+  // compare-and-swap of the value it read, so a fresh re-tap or re-mint is
+  // never cleared; no stamp outlives its TTL by more than one pass, so
+  // millis() never wraps back over one. Both are opened and minted on this
+  // task (the BOOT handler below, ble_improv::tick), so neither sweep can
+  // see a stamp newer than its own clock read.
+  canary::net::provisioning_gate::expire(g_provisioning_gate, millis(), PROVISIONING_GATE_TTL_MS);
+  canary::net::claim_ticket::expire(g_improv_claim, millis());
+
   // Check boot button:
   //   Short press (<2s)  = open provisioning gate
   //   Medium hold (2-3s) = print device info
@@ -13401,10 +14164,12 @@ void loop() {
     if (duration >= BOOT_LONG_PRESS_MS) {
       // Released between the 3 s warning and the 10 s reset: nothing
       // happened. The reset fires at 10 s while the button is still held
-      // (ResetHold above); Forget Wi-Fi on the dashboard
-      // (wifi_clear_credentials) stays the network-only reset, and still
-      // re-arms the Bluetooth setup door's first-boot window.
-      Serial.println("[BOOT] Released before 10 s: nothing reset (hold 10 s for a factory reset; Forget Wi-Fi on the dashboard resets the network only)");
+      // (ResetHold above); Forget Wi-Fi on the dashboard (handle_wifi_forget:
+      // wifi_clear_credentials() and, since F333, the stored broker login,
+      // csi_mqtt::login_clear()) is the narrower reset, takes the bearer
+      // alone (F334, F345), and still re-arms the Bluetooth setup door's
+      // first-boot window.
+      Serial.println("[BOOT] Released before 10 s: nothing reset (hold 10 s for a factory reset; Forget Wi-Fi on the dashboard clears only the saved Wi-Fi and broker login; on a unit that had Wi-Fi, the hold, and Forget unless the unit runs standalone, reopen the Bluetooth setup door for half an hour, to the first client that connects)");
     } else if (duration >= BOOT_BUTTON_HOLD_MS) {
       // Medium hold: print device info (existing behavior)
       if (g_device.initialized) {
@@ -13417,13 +14182,11 @@ void loop() {
       }
     } else if (duration >= BOOT_SHORT_PRESS_MS) {
       // Short press: open provisioning gate. Stamp the press time so the
-      // gate can self-close after PROVISIONING_GATE_TTL_MS. Sentinel-1
-      // guard handles the exceedingly rare case where millis() is 0.
-      uint32_t now_ms = millis();
-      __atomic_store_n(&g_provisioning_gate_opened_at,
-                       (now_ms == 0) ? 1 : now_ms,
-                       __ATOMIC_RELAXED);
-      Serial.printf("[AUTH] Provisioning gate OPENED (receipt available for %lu seconds)\n",
+      // gate can self-close after PROVISIONING_GATE_TTL_MS. The header's
+      // open() stores a millis() of 0 as 1 (0 is "closed"), with a release
+      // store.
+      canary::net::provisioning_gate::open(g_provisioning_gate, millis());
+      Serial.printf("[AUTH] Provisioning gate OPENED for %lu seconds: the receipt goes to one asker; with no page asking, the first address to ask gets it (ask first, then tap)\n",
                     (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000));
       log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning gate opened", "BOOT button");
       // Blink LED 3x to confirm. Skipped while an SD mount attempt is in
@@ -13724,7 +14487,17 @@ void loop() {
 
   // Update power monitor (ADC sample, SoC, charge state)
   #if FEATURE_POWER_MONITOR
-  power_monitor::process();
+  if (power_monitor::process()) {
+    // A new sample: refresh the pull-OTA install veto's battery fact
+    // (read by ota_can_install on the OTA task). Unclassified, charging,
+    // full or no battery reads as not low.
+    PowerState pwr_ota;
+    const bool low = power_monitor::get_state(&pwr_ota) &&
+        !power_gate::ota_install_power_ok(pwr_ota.battery_present,
+                                          pwr_ota.power_source == POWER_SOURCE_BATTERY,
+                                          pwr_ota.soc_pct, power_monitor::SOC_LOW_PCT);
+    __atomic_store_n(&g_ota_battery_low, low, __ATOMIC_RELAXED);
+  }
 
   // Persist battery health history (runtime minutes, SoC minimum,
   // brownout count, last-full-charge) every 10 minutes so the stats

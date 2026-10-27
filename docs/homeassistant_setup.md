@@ -425,8 +425,13 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
    the broker credentials (if you ran the one-command installer: username
    `canary`, password from **Settings → Apps → Mosquitto broker →
    Configuration → Logins**), save, and let it restart.
-2. If the wizard doesn't appear (or the Canary was set up before), open its
-   unique hostname or `http://192.168.4.1` in your browser. On a Canary WAP
+2. If the wizard doesn't appear (or the Canary was set up before): a Canary
+   WAP's first-boot wizard opens only at `http://canary.local` or
+   `http://192.168.4.1` (under its unique hostname, `/` during first boot
+   shows the static page that says to type `canary.local`), and a WAP has no
+   `/setup` page. Otherwise open the Canary's unique hostname or
+   `http://192.168.4.1` in your browser; once a WAP is set up, its unique
+   hostname reaches the dashboard. On a Canary WAP
    the hostname is `http://canary-<name>.local` once you have named it, and
    until then `http://canary-` plus four lowercase hex digits, the first two
    bytes of its key fingerprint (e.g. `http://canary-7916.local`); at the
@@ -434,7 +439,7 @@ Connect to your Canary's WiFi AP (SSID shown on device, password is device-uniqu
    `[INFO/NETWORK] mDNS started | canary-7916` line. If you only have one
    Canary, plain `http://canary.local` may also resolve, but each Canary
    always advertises its unique hostname so multiple devices on the same
-   network don't collide. `/setup` on any of
+   network don't collide. On a `firmware/canary` unit, `/setup` on any of
    those addresses reopens the wizard. On a `firmware/canary` unit that is
    already set up, a page loaded over your home WiFi arrives without its API
    token, so its saves are refused. The page carries the token only for the
@@ -1009,8 +1014,9 @@ left behind by newer firmware after a rollback to firmware that publishes
 no `egress` topic, is not shown as current, after a Home Assistant restart
 too. Clearing the retained topic (`mosquitto_pub -r -n -t
 securacv/<device_id>/egress`) removes the attribute. Both devices also
-return `csi_event_egress` from their token-gated `GET /api/diagnostics`
-(the canary since sweep F179), so a bench run without a broker can read
+return `csi_event_egress` from their gated `GET /api/diagnostics` (the
+canary's, since sweep F179, takes the bearer; the WAP's also passes a
+landing session, ledger F346), so a bench run without a broker can read
 the counters too.
 
 These count paths, not rows: `planner.queued` counts a row handed to the

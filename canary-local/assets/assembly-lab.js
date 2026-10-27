@@ -13,6 +13,7 @@ import { parseGLB } from "./glb.js";
 import { Assembly, PARTS, M } from "./assembly.js";
 import { validateDevice, itemize, fmtDims, UNIT_MODES } from "./assembly-rules.js";
 import { activeFinish } from "./finishes.js";
+import { loadLedger as loadRevisions, partRevision, changedRegions, splitByRegions, CHANGED_COLOR } from "./revisions.js";
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -81,7 +82,16 @@ export function buildAssemblyLab(asmData, buildData, deviceId) {
   });
   obs.observe(cv);
 
+  // the part-revision ledger (devices/revisions.json): a printed part whose
+  // newest revision moved carries its changed regions as a second mesh in
+  // CHANGED_COLOR, toggled from the controls; the engine moves both meshes
+  // as one part, so the tint rides the explode and the step player for free
+  const changed = [];   // [{ sp, color }] — the tinted meshes and the part's own color
+  let tintOn = false;
+  const applyTint = () => { for (const c of changed) c.sp.color = tintOn ? CHANGED_COLOR : c.color; };
+
   (async () => {
+    const revisions = await loadRevisions();
     // the shell/shell2/gasket tokens resolve to the ACTIVE finish (the
     // printed parts follow whatever filament the gallery is showing); any
     // other named token falls back to assembly.json's own palette
@@ -119,7 +129,12 @@ export function buildAssemblyLab(asmData, buildData, deviceId) {
         // (the displays' v0.1-dev parts); default: the print-validated catalog
         const base = p.base === "preview" ? "enclosures/preview/" : ENC_BASE;
         const { mesh, bbox } = parseSTL(await fetchBuf(base + p.file));
-        meshes = [{ builder: mesh, color: colorOf(p.color), gloss: p.gloss ?? 0.23 }];
+        const regions = changedRegions(partRevision(revisions, p.file, p.base));
+        const { inside, outside } = splitByRegions(mesh, regions);
+        meshes = [{ builder: outside, color: colorOf(p.color), gloss: p.gloss ?? 0.23 }];
+        if (inside.idx.length) {
+          meshes.push({ builder: inside, color: colorOf(p.color), gloss: 0.3, changed: true });
+        }
         center = bbox.center;
       } else if (p.source === "board") {
         const { parts, bbox } = parseGLB(await fetchBuf(BOARD_BASE + p.board + ".glb"));
@@ -141,8 +156,9 @@ export function buildAssemblyLab(asmData, buildData, deviceId) {
           rawBbox,
         }));
       } else {
-        asm.add({ id: p.id, meshes, seated: p.seated, explode: p.explode, insert: p.insert,
+        const ep = asm.add({ id: p.id, meshes, seated: p.seated, explode: p.explode, insert: p.insert,
           step: p.step, name: p.name, qty: p.qty, ref: p.ref, center, rawBbox });
+        meshes.forEach((mm, i) => { if (mm.changed) changed.push({ sp: ep.meshes[i].sp, color: mm.color }); });
       }
     }
 
@@ -288,6 +304,19 @@ export function buildAssemblyLab(asmData, buildData, deviceId) {
     const bStep = el("button", "tab", "Step by step");
     modeRow.append(bExpl, bStep);
     controls.append(modeRow);
+    if (changed.length) {
+      // only when some part here has regions to show — a toggle that would
+      // show nothing is not offered
+      const lbl = el("label", "asm-rev-toggle");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = tintOn;
+      cb.addEventListener("change", () => { tintOn = cb.checked; applyTint(); });
+      lbl.append(cb, document.createTextNode(" tint what each part's newest revision moved "),
+        el("i", "enclab-rev-swatch"));
+      lbl.title = "devices/revisions.json — the regions where a part's surface is not where its previous revision's was";
+      controls.append(lbl);
+    }
 
     // exploded controls
     const explWrap = el("div", "asm-explode");

@@ -1227,7 +1227,9 @@ Opera devices MUST NOT:
   (C2, C3, C5); signed suppress voting wired (C7); priority storage by
   urgency (C8); Bloom-filter dedup (C9); wall-clock-anchored timestamps with
   conservative behavior when unsynced (C10, C15); 5-emoji session display
-  (C11); REST API Bearer-gated (C12); presence requirement on ACK origination
+  (C11); REST API Bearer-gated *(amended 2026-10-22, #1843's sweep: behind
+  `api_auth_check()`, which also takes the landing session any host on the
+  network can mint, F346)* (C12); presence requirement on ACK origination
   (C13); per-pubkey rate limit on incoming witnesses (C14); `TPL_AUTH_FEDERAL_PRESENCE`
   removed (C17); host tests added (C16). `PROTOCOL_VERSION` bumped from 0 to 1.
 - v0.1 (2026-02-02): Initial draft

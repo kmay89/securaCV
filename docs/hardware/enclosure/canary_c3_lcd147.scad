@@ -170,11 +170,11 @@
 //  The C6 case's lid is 180°-rotation symmetric. This one cannot be: the
 //  board's four M2 pillars are NOT on a symmetric pattern (USB-end pair at
 //  ±8.89 / 2.40 in from the end, far pair at ±6.64 / 1.97 in — read off the
-//  Waveshare drawing), and the press bosses must land on them. So the skirt's
-//  USB relief exists at one end only: offered the wrong way round, the solid
-//  skirt segment lands on the USB shell and the lid simply will not close —
-//  the error is physical, immediate, and harmless. The keyhole hangs the
-//  case USB-down (the water-shedding way), slot pointing up.
+//  Waveshare drawing), and the press bosses must land on them. So a key tab
+//  on the lid stands in the USB insertion slot (lid_key_*): offered the wrong
+//  way round it lands on the far rim and the lid simply will not close — the
+//  error is physical, immediate, and harmless. The keyhole hangs the case
+//  USB-down (the water-shedding way), slot pointing up.
 //
 //  ── microSD ──────────────────────────────────────────────────────────────
 //  The TF slot sits on the back under the USB connector, and the card
@@ -889,10 +889,10 @@ snap_proud = 0.7;    // each nub's tip stands this far out from the skirt face, 
 // drew a 1.30 mm ridge and cut a 3.20 mm window — 1.9 mm of slack, ±0.95 mm
 // of free travel in Y.
 // Normally the skirt would hide that, since it seats in the cavity at 0.05.
-// It cannot here: the skirt's USB-end wall is the KEY, cut away by the USB
-// relief, so in that one direction the skirt locates nothing and the ridge in
-// its oversized window is the only stop the lid has. The two defects compose,
-// and that is why it shows.
+// It cannot here: the skirt's USB-end wall is cut away by the USB relief
+// (it was the lid's key then), so in that one direction the skirt locates
+// nothing and the ridge in its oversized window is the only stop the lid
+// has. The two defects compose, and that is why it shows.
 // So the ridge's drawn width is the parameter now, and the window follows it.
 // One number cannot size two features that are not the same size.
 nub_w = 1.3;         // the ridge's DRAWN width in Y — tuned by feel, and the
@@ -1741,6 +1741,31 @@ module usb_om_cut(grow = 0, box_only = false) {
 // also strips the 0.01 mm of overlap that welds it to the wall, which is how
 // a collar becomes a floating ring the mesh gate then counts as a second
 // part. The width instead gets an assert.
+//
+// 2026-10-22 audit: THE CROWN IS DROPPED WHERE IT CANNOT BE A WEB. The bore's
+// 7.0 flat sits at z_usb + usb_a_h/2 + its chamfer = 10.65, and the clip 0.3
+// under the lid of the stripped build is 10.95 — so on dev_c3_147_usba_bezel
+// the "crown" was a 0.30 mm skin bridged flat across the 7.0 bore (a column
+// probe at x 0 and x 3 through the mesh found solid at z 10.65..10.95 and
+// nothing else above the face; the sweep showed it as a 7.0 x 3.0 ceiling).
+// That is under core_min_web() — about a layer and a half laid as the part's
+// last bridge — and it carries nothing: the drop load goes into the shell's
+// top corners through the 45° chamfers, and the crown flat stands 2.75 clear
+// of the shell. Where the build leaves under a web of crown, the clip comes
+// down to just under the flat and the "U" is two flanks — the hallway stick's
+// stock collar, which is built that way for the same reason. The male build
+// keeps its 2.2 crown (14.95 - 10.65 >= 0.8); the flanks keep their chamfer
+// bearing faces in both. (The header's 2026-09-24 entry calls this crown a
+// bridge-safe 7.0 flat: the flat was; the 0.30 skin laid on it was not.)
+collar_flat_z = z_usb + usb_a_h/2 + port_bridge_cham_for(usb_a_w + 2*collar_gap);
+collar_top = (bez_h - 0.3) - collar_flat_z >= core_min_web() ? bez_h - 0.3
+                                                              : collar_flat_z - 0.05;
+// …and with the crown gone the flanks are the collar, so they must still
+// stand a web above the shell's top line, where their chamfers start bearing.
+assert(!is_a || !collar_on || collar_top - (z_usb + usb_a_h/2) >= core_min_web(),
+       str("the drop collar's flanks top out at z=", collar_top, ", only ",
+           collar_top - (z_usb + usb_a_h/2), " mm above the plug shell's top ",
+           "line — the chamfers have nothing to bear on. Deepen the build."));
 module usb_collar() {
     if (is_a && collar_on)
         intersection() {
@@ -1752,9 +1777,10 @@ module usb_collar() {
                     }
             // above the PCB's back face — below that plane is the board —
             // and 0.3 under the lid (the chamfered crown stands taller than
-            // the old flat one did)
+            // the old flat one did), or just under the bore's flat where that
+            // would leave a crown thinner than a web (collar_top, above)
             translate([-2*xo, -2*yo, z_pcb_back])
-                cube([4*xo, 4*yo, bez_h - 0.3 - z_pcb_back]);
+                cube([4*xo, 4*yo, collar_top - z_pcb_back]);
             // the 45° underside, rising inward from the end wall
             translate([-2*xo, 0, 0]) rotate([90, 0, 90]) linear_extrude(4*xo)
                 polygon([[-(yc/2 + 0.02), z_pcb_back - 0.01],
@@ -2041,9 +2067,49 @@ module bezel() {
 //  LID — yellow, prints outer-face-down (z0 = outer back face).
 //  Authored in its own frame; the assembled mapping is
 //      case = translate([0,0,bez_h+back_t]) · rotate([180,0,0]) · lid
-//  i.e. case (x, y) = lid (x, −y). KEYED — see the header: the skirt's USB
-//  relief exists at one end only, so the wrong orientation cannot close.
+//  i.e. case (x, y) = lid (x, −y). KEYED — see the header: the key tab rides
+//  in the USB insertion slot, so the wrong orientation cannot close.
 // ----------------------------------------------------------------------------
+// 2026-10-22 audit: THE KEY IS A TAB NOW, because the skirt relief was a key
+// in one build out of three. The relief only refuses a turned lid if the
+// solid skirt it swings round actually reaches the USB shell, and the skirt
+// bottom stands at bez_h - skirt_dep: 8.65 in the stripped build (1.05 into a
+// shell topping out at z_pcb_back + 3.26 = 9.71 — a real key, 15.0 mm³ of
+// turned lid in the board proxy), but 9.65 in the pillars build (0.06, and
+// the turned far bosses only graze the proxy's square shell corner — 0.63
+// mm³, nothing a real stadium shell's rounded end would touch) and 12.65 in
+// the male build (0.065 mm³). Turned bezel ∩ lid was EMPTY in both: the
+// shipping build and the headered one closed either way round, and the
+// turned bosses still found the pillars, so nothing said it was wrong. What
+// it gets wrong is the egg, which turns with the lid and points its crown
+// at the USB end: hung the water-shedding way, USB down, the screw sits in
+// the 10.1 base, which passes a 9.5 head.
+// So a tab on the plate's inner face stands in the USB insertion slot (usb_
+// slot(), x ±usb_slide/2, open from the stadium's floor to the rim), above
+// the shell and outboard of the cavity line. Seated it touches nothing;
+// turned, it lands on the far wall's rim — the 0.8 left inside the pry
+// scallop — and holds the lid up its own length: a lid that will not snap,
+// in every build. The usb_a board needs none: its slot does not exist (the
+// collar is there) and the skirt lands on the collar turned.
+lid_key_w  = usb_shell_w - 2.0;    // across the slot (x): 1.05 clear of each slot wall
+lid_key_y0 = yc/2 + 0.1;           // inner face, lid frame: 0.1 outboard of the cavity line
+lid_key_t  = 1.0;                  // through the wall (y): stops 0.2 inboard of the receptacle face
+// how far it stands off the plate: 2.0, or what the shell leaves under the
+// rim less 0.4 — the stripped build's 1.14 is still a lid standing proud
+lid_key_len = min(2.0, bez_h - (z_pcb_back + 3.26 + usb_dz) - 0.4);
+assert(is_a || lid_key_len >= 1.0,
+       str("the lid key stands only ", lid_key_len, " mm off the plate — a ",
+           "turned lid would sit that little proud, which reads as a bad seat, ",
+           "not as the wrong way round. Deepen the build or lower usb_dz."));
+// it must stay inside the slot it rides in, and clear of the cable's plug:
+// the overmold envelope starts at the receptacle face (om_y_rf, the board
+// floated inward), and the slot's far wall is usb_reach out from the cavity
+assert(is_a || (lid_key_w <= usb_slide - 1.0
+                && lid_key_y0 + lid_key_t <= -om_y_rf - 0.1
+                && lid_key_y0 + lid_key_t <= yc/2 + usb_reach - 0.2),
+       str("the lid key (", lid_key_w, " x ", lid_key_t, " from y=", lid_key_y0,
+           ") does not fit the USB slot (", usb_slide, " wide, to y=",
+           yc/2 + usb_reach, ") clear of the overmold at y=", -om_y_rf));
 module lid() {
     difference() {
         union() {
@@ -2052,7 +2118,8 @@ module lid() {
                 difference() {
                     rrect2d(skirt_x, skirt_y, r_in);
                     rrect2d(skirt_x - 2*skirt_wall, skirt_y - 2*skirt_wall, max(0.4, r_in - skirt_wall));
-                    // USB relief — ONE end only (lid +Y = case −Y): the key.
+                    // USB relief — ONE end only (lid +Y = case −Y). It was the
+                    // key until 2026-10-22; the key is the tab below now.
                     // usb_shell_w + 4, not + 2: the extra millimeter per side makes
                     // this cut MEET the pillar notches beside it. At + 2 a
                     // 0.05 mm whisker of skirt survived between the relief's
@@ -2103,6 +2170,13 @@ module lid() {
                 linear_extrude(back_t + stand_len + 0.1)
                     rrect2d(xc - 2*tol_press, yc - 2*tol_press, r_in);
             }
+            // the key tab, in the USB insertion slot (lid +Y = case −Y) — see
+            // lid_key_* above: seated it stands in air over the shell, turned
+            // it stands on the far rim
+            if (!is_a)
+                translate([usb_dx, lid_key_y0 + lid_key_t/2, back_t - 0.01])
+                    linear_extrude(lid_key_len + 0.01)
+                        square([lid_key_w, lid_key_t], center = true);
             // snap nubs on the ±X skirt faces — ASYMMETRIC: the ridge sits
             // toward the skirt TIP, so the face the bezel rim meets on the
             // way in is a long gentle ramp, and the face toward the plate is

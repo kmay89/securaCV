@@ -173,10 +173,25 @@ WIFIJOIN_BIN = $(BUILD_DIR)/test_wifi_join_policy
 # foreign Host gets no credential, the receipt route refuses it before the
 # bearer or the tap is consulted, and neither path spends the tap for it),
 # and the dual-stack socket's ::ffff:a.b.c.d peer address unwraps to IPv4
-# while a true IPv6 address reads as unknown.
+# while a true IPv6 address reads as unknown; peer_key_from_addr() names one
+# peer by one 16-byte key in either family, and refuses the unspecified one;
+# and the WAP's BOOT tap goes to one asker (sweep F342): peek() and
+# take_exact() take only the stamp that was judged, and tap_arbitrate(), on a
+# 32-bit test clock, refuses a poller and the owner across one tap, serves a
+# sole owner who asked before it, ends its 409 once the other address has
+# been quiet for the lookback (and on a served re-tap), and fails closed
+# across a 49.7-day silence; and the sweep (sweep F347): expire() clears a
+# stamp at its TTL and never a fresher one or one re-tapped since its read
+# (expire_seen(), the seam), so a tap nobody took cannot read as fresh again
+# when millis() comes back round to it (an unswept one does, which is why
+# both trees sweep every loop pass). It also reads the canary tree's main.cpp (its path is
+# passed in): handle_boot_button(), called from loop() every pass, sweeps
+# g_prov_gate as its first statement.
 # Consumed by the canary tree's securacv_network + main.cpp; the canary-wap
-# sketch keeps an inline copy of the two gate operations to this contract.
+# sketch stages the header byte-identical (check_improv_sync.sh) and its
+# gate is this header's State.
 PROVGATE_HDR = ../common/network/provisioning_gate.h
+PROVGATE_MAIN = ../canary/src/main.cpp
 PROVGATE_BIN = $(BUILD_DIR)/test_provisioning_gate
 
 # Improv Wi-Fi over BLE, the pure half (common/network/improv_core.h): the
@@ -196,10 +211,27 @@ IMPROV_BIN = $(BUILD_DIR)/test_improv_core
 # a WAP its Wi-Fi over the Bluetooth setup door is paired without the bearer
 # token ever riding Bluetooth — 16 random bytes minted on join success, read
 # once over the link that asked, spent by one GET on the home LAN. Mint
-# spelling, single use on match AND mismatch (one guess per join), the TTL,
-# millis()==0 and the wrap, constant-time compare over the whole string.
+# spelling, single use on a match (a mismatch spends nothing, sweep F342;
+# the spend is one compare-and-swap of the word the taker loaded, so a
+# spend whose word moved is refused), the TTL (an expired claim is burned;
+# a claim minted after the taker read its clock is compared, never burned),
+# millis()==0, a fresh claim across the wrap, the sweep that keeps a stamp
+# from aging into the wrap (expire(), sweep F347: a swept claim stays spent
+# when millis() comes back round, an unswept one reads pending again), and
+# the constant-time compare over the whole string.
 CLAIM_HDR = ../common/network/claim_ticket.h
 CLAIM_BIN = $(BUILD_DIR)/test_claim_ticket
+
+# The bearer lockout (common/network/auth_backoff.h, sweep F343): one backoff
+# per source address, 8 tracked plus one shared overflow that holds every
+# untracked address while it runs. The schedule (2 s doubling, capped at the
+# 60 s window that clears a count, so no hold and no Retry-After goes past
+# it), the 49.7-day wrap of millis(), a count that saturates instead of
+# wrapping, a window read with nobody asking first, the overflow's bound, and
+# grant()'s order (no credential records nothing, a held source is never
+# compared). The canary-wap sketch stages the header (check_improv_sync.sh).
+AUTHBACKOFF_HDR = ../common/network/auth_backoff.h
+AUTHBACKOFF_BIN = $(BUILD_DIR)/test_auth_backoff
 
 # The hub hand-off (common/network/hub_handoff.h): the JSON a phone writes to
 # the companion service's HUB characteristic right after the Improv join — the
@@ -297,6 +329,39 @@ MDNSTXT_BIN = $(BUILD_DIR)/test_mdns_txt
 # refuses), the truncated tag. Links OpenSSL on the host, mbedTLS on device.
 FLEETKEY_HDR = ../common/network/fleet_key.h
 FLEETKEY_BIN = $(BUILD_DIR)/test_fleet_key
+
+# The setup network's key (common/network/ap_password.h, sweep F350): an HMAC
+# of the device private key, "cv-" + 12 characters of the unambiguous
+# alphabet. test_ap_password.cpp checks known answers, the format over 256
+# keys, the refusals and the signature (the real DeviceIdentity's 8-byte
+# fingerprint does not bind, its private key does, over stubs/witness_glue),
+# and holds it equal to canary-wap's own derive_ap_password(), cut verbatim
+# out of canary_wap.ino with the sketch's alphabet lines and secure_zero()
+# (cut_functions.awk; the awk below takes the alphabet) over a stand-in for
+# its mbedTLS HMAC. Links OpenSSL on the host, mbedTLS on device.
+APPW_HDR      = ../common/network/ap_password.h ../common/network/fleet_key.h \
+                ../common/network/provision_core.h
+APPW_WAP_SRC  = ../projects/canary-wap/arduino/canary_wap/canary_wap.ino
+APPW_WAP_SIGS = static void secure_zero(|static bool derive_ap_password(
+APPW_WAP_INC  = $(BUILD_DIR)/ap_password_wap.inc
+APPW_BIN      = $(BUILD_DIR)/test_ap_password
+# The same header over a failing HMAC primitive (hmac_fail_seam.h), which
+# holds that the key is refused ("" and false), never rendered from the zeroed
+# output (the same "cv-222222222222" on every unit). Built twice, since
+# fleet_key.h has two branches: over its OpenSSL branch (the seam defines
+# OpenSSL's one-shot HMAC() itself) and, with -DARDUINO over stubs/mbedtls_md,
+# over its mbedTLS branch, the one the device ships (the seam defines
+# mbedtls_md_info_from_type() and mbedtls_md_hmac()). Their own binaries,
+# since each definition replaces the primitive for the whole program.
+HMAC_SEAM          = hmac_fail_seam.h $(wildcard stubs/mbedtls_md/mbedtls/*.h)
+APPW_FAIL_BIN      = $(BUILD_DIR)/test_ap_password_hmac_fail
+APPW_FAIL_MBED_BIN = $(BUILD_DIR)/test_ap_password_hmac_fail_mbedtls
+# The fleet key's other secrets over the same seam, both branches: the HKDF
+# (derive_from_wifi) and the peer frame tag refuse a failed HMAC (no zero
+# fleet key, no zero tag accepted or sent), and key_id_hex says so.
+FKFAIL_HDR      = ../common/network/fleet_key.h ../common/network/peer_protocol.h
+FKFAIL_BIN      = $(BUILD_DIR)/test_fleet_key_hmac_fail
+FKFAIL_MBED_BIN = $(BUILD_DIR)/test_fleet_key_hmac_fail_mbedtls
 
 # The authenticated peer protocol (common/network/peer_protocol.h): the frame
 # bytes and tag, the replay window, the 16-slot table, oldest-uptime-wins with
@@ -491,6 +556,41 @@ CANDIAG_READS = ../canary/src/main.cpp \
                 ../canary/lib/securacv_diagnostics/src/securacv_diagnostics.cpp \
                 ../canary/lib/securacv_network/src/securacv_network.cpp
 CANDIAG_BIN  = $(BUILD_DIR)/test_canary_diagnostics
+
+# The canary's bearer check and its lockout (sweep F340): the REAL
+# canary/lib/securacv_auth/src/securacv_auth.cpp, compiled whole over
+# stubs/securacv_auth (a 32-bit millis() the test moves, a header-map httpd
+# request whose answers it reads, a token derive with no mbedtls), the real
+# canary_config.h and the real common/network/auth_backoff.h it runs on. A
+# request with no Authorization header is a 401 and no strike, so a
+# dashboard tab loaded without the token arms no lockout; a malformed or
+# wrong credential is still one, against its own source address only, and
+# the right one clears it. The receipt's grant (auth_bearer_grant) is
+# accounted and never compares a held bearer. securacv_network.cpp's path is
+# passed in for the text pins over its wiring (request_peer_ipv4 into both
+# gates), so the read fails closed, and firmware/canary's for the hand-over
+# census (outside lib/securacv_auth no file names auth_get_instance or
+# handedToken, and only securacv_network.cpp calls auth_handed_token, both
+# read at run time, so a new file is read too). The two BOOT-tap paths that hand an
+# address the token (sweep F341) run for real: page_token_inject() and
+# handle_provisioning_receipt(), with bearer_present_and_valid() and
+# send_host_refusal() they call, are cut verbatim out of securacv_network.cpp
+# by cut_functions.awk (SECAUTH_NET_INC) and driven over stand-ins for the
+# Host, the setup state, the SoftAP test, the tap and the receipt writer, on
+# the real AuthManager and the real provisioning_gate.h decisions.
+SECAUTH_SRC   = ../canary/lib/securacv_auth/src/securacv_auth.cpp
+SECAUTH_HDRS  = ../canary/lib/securacv_auth/src/securacv_auth.h \
+                ../canary/include/canary_config.h \
+                ../canary/include/log_level.h \
+                ../common/network/auth_backoff.h \
+                ../common/network/provisioning_gate.h \
+                $(wildcard stubs/securacv_auth/*.h)
+SECAUTH_READS = ../canary/lib/securacv_network/src/securacv_network.cpp
+SECAUTH_BIN   = $(BUILD_DIR)/test_securacv_auth
+SECAUTH_INCS  = -I stubs/securacv_auth -I ../canary/lib/securacv_auth/src \
+                -I ../canary/include -I ../common
+SECAUTH_NET_SIGS = static void send_host_refusal(httpd_req_t* req) {|static bool bearer_present_and_valid(httpd_req_t* req) {|static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
+SECAUTH_NET_INC  = $(BUILD_DIR)/secauth_network.inc
 
 # The canary setup wizard's hub step (canary/lib/securacv_webui/src/
 # securacv_setup_page.cpp), the one UI that writes those fields: its script
@@ -702,6 +802,32 @@ CHAINPERSIST_SIGS = static bool persist_chain_blob(|void witness_persist_chain_s
 CHAINPERSIST_CALLER = bool witness_create_record_gps(
 CHAINPERSIST_INC  = $(BUILD_DIR)/chain_persist_glue.inc
 CHAINPERSIST_BIN  = $(BUILD_DIR)/test_chain_persist
+
+# The flagship's identity-key load fails closed (repo sweep F360,
+# test_nvs_load_key.cpp): nvs_load_key() answers Loaded, Absent (IDF's NVS
+# says nothing is stored) or Refused (the buffer zeroed), and
+# establish_identity_key() generates a key only on Absent, so a stored key
+# that could not be read is never replaced and the boot never runs on the
+# zeroed one. The load, its IDF probe, the store, the policy facts and
+# NvsManager's session and blob calls are cut verbatim out of
+# securacv_crypto.cpp, and establish_identity_key() out of
+# securacv_witness.cpp, into one .inc, compiled over stubs/nvs_key (a fake
+# NVS that Preferences and IDF's nvs_open() / nvs_get_blob() read alike) and
+# stubs/nvs_manager's FreeRTOS lock. Built twice: the default image, and with
+# -DSECURACV_REQUIRE_FLASH_ENCRYPTION=1 the opt-in one, whose policy refuses
+# every load before NVS is read. Both read the canary tree's sources (the
+# halt in setup(), the one call of the load, the one owner of the key's NVS
+# entry).
+NVSKEY_CRYPTO_SIGS  = $(NVSLOCK_SIGS)|size_t NvsManager::getBytes(|size_t NvsManager::putBytes(|static key_at_rest::Facts key_at_rest_facts(|static esp_err_t stored_key_length(|KeyLoad nvs_load_key(|bool nvs_store_key(
+NVSKEY_WITNESS_SIGS = static bool establish_identity_key(
+NVSKEY_HDRS   = $(NVSLOCK_HDRS) ../common/identity/key_at_rest.h \
+                ../canary/lib/securacv_witness/src/securacv_witness.h \
+                ../common/witness/chain_persist.h ../canary/include/log_level.h \
+                $(wildcard stubs/nvs_key/*.h)
+NVSKEY_READS  = $(sort $(shell find ../canary/src ../canary/lib ../canary/include -type f \( -name '*.cpp' -o -name '*.h' \)))
+NVSKEY_INC    = $(BUILD_DIR)/nvs_load_key.inc
+NVSKEY_BIN    = $(BUILD_DIR)/test_nvs_load_key
+NVSKEY_FE_BIN = $(BUILD_DIR)/test_nvs_load_key_require_fe
 
 # Coarse optical feature classifiers (canary-vision optical_features.h): pins
 # the invariant-safe coarsening of the person-detection model's box geometry —
@@ -935,20 +1061,65 @@ $(BOOTGUARD_BIN): test_boot_guard.cpp $(BOOTGUARD_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -std=gnu++11 -I stubs/boot_guard -I ../common test_boot_guard.cpp -o $@_cxx11
 	./$@_cxx11
 
+# The flagship's OTA outcome glue (firmware/canary/src/main.cpp): the healthy
+# gate's boot probes, loop()'s confirm-dwell tick, the confirm a deliberate
+# restart or sleep makes, and ota_record_update_outcome(), the one place the
+# chain says how an install ended — cut verbatim out of main.cpp by
+# cut_functions.awk and driven over a stand-in engine that keeps the 2.4.17
+# contract (the install's target is held back while this boot's image is
+# PENDING_VERIFY), and over one that does not, as every fielded unit's did. An
+# update is witnessed "applied" only once it is confirmed, a failed dwell reads
+# as a rollback, and a deliberate stop inside the gate or the dwell confirms
+# instead of reverting. Built as the envs build main.cpp: the pull engine
+# (FEATURE_OTA_PULL), FEATURE_OTA_UPDATE alone (secure, secure_ha) and neither
+# (minimal), each at gnu++11, the canary tree's default. It also reads main.cpp
+# (path passed in) for the pins the cut cannot show: one caller each of the
+# target's take and the health tick, and the chain head persisted after every
+# deliberate stop's gate.
+CANOTA_MAIN = ../canary/src/main.cpp
+CANOTA_SIGS = static void ota_record_update_outcome() {|static void ota_confirm_dwell_tick(uint32_t now) {|static void ota_confirm_and_witness() {|static void boot_mark_healthy(const char* why) {|static void boot_health_tick(uint32_t now) {|static void boot_health_before_deliberate_stop() {
+CANOTA_INC  = $(BUILD_DIR)/canary_ota_outcome.inc
+CANOTA_HDRS = ../common/ota/src/securacv_ota.h $(BOOTPOL_HDR) ../canary/include/log_level.h
+CANOTA_BIN  = $(BUILD_DIR)/test_canary_ota_outcome
+CANOTA_BINS = $(CANOTA_BIN)_pull $(CANOTA_BIN)_update $(CANOTA_BIN)_none
+$(CANOTA_BIN)_pull:   CANOTA_FLAGS = -DFEATURE_OTA_PULL=1 -DFEATURE_OTA_UPDATE=1
+$(CANOTA_BIN)_update: CANOTA_FLAGS = -DFEATURE_OTA_PULL=0 -DFEATURE_OTA_UPDATE=1
+$(CANOTA_BIN)_none:   CANOTA_FLAGS = -DFEATURE_OTA_PULL=0 -DFEATURE_OTA_UPDATE=0
+
+$(CANOTA_INC): $(CANOTA_MAIN) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(CANOTA_SIGS)' -f cut_functions.awk $(CANOTA_MAIN) > $@.tmp && mv $@.tmp $@
+
+$(CANOTA_BINS): test_canary_ota_outcome.cpp $(CANOTA_INC) $(CANOTA_HDRS) $(CANOTA_MAIN) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -std=gnu++11 $(CANOTA_FLAGS) -DSECURACV_OTA_HOST_BUILD \
+	    -I ../common/ota/src -I ../common -I ../canary/include \
+	    -DCANARY_MAIN_CPP='"$(abspath $(CANOTA_MAIN))"' \
+	    -DCANOTA_INC='"$(abspath $(CANOTA_INC))"' \
+	    test_canary_ota_outcome.cpp -o $@
+
+.PHONY: run-canary-ota-outcome
+run-canary-ota-outcome: $(CANOTA_BINS)
+	./$(CANOTA_BIN)_pull
+	./$(CANOTA_BIN)_update
+	./$(CANOTA_BIN)_none
+run: run-canary-ota-outcome
+
 $(SDMOUNT_BIN): test_sd_mount_policy.cpp $(SDMOUNT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_sd_mount_policy.cpp -o $@
 
 $(WIFIJOIN_BIN): test_wifi_join_policy.cpp $(WIFIJOIN_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_wifi_join_policy.cpp
 
-$(PROVGATE_BIN): test_provisioning_gate.cpp $(PROVGATE_HDR) Makefile | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -o $@ test_provisioning_gate.cpp
+$(PROVGATE_BIN): test_provisioning_gate.cpp $(PROVGATE_HDR) $(PROVGATE_MAIN) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DCANARY_MAIN_CPP='"$(abspath $(PROVGATE_MAIN))"' -o $@ test_provisioning_gate.cpp
 
 $(IMPROV_BIN): test_improv_core.cpp $(IMPROV_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_improv_core.cpp
 
 $(CLAIM_BIN): test_claim_ticket.cpp $(CLAIM_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_claim_ticket.cpp
+
+$(AUTHBACKOFF_BIN): test_auth_backoff.cpp $(AUTHBACKOFF_HDR) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ test_auth_backoff.cpp
 
 $(HUBHO_BIN): test_hub_handoff.cpp $(HUBHO_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_hub_handoff.cpp
@@ -989,6 +1160,38 @@ $(MDNSTXT_BIN): test_mdns_txt.cpp $(MDNSTXT_HDR) Makefile | $(BUILD_DIR)
 
 $(FLEETKEY_BIN): test_fleet_key.cpp $(FLEETKEY_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -o $@ test_fleet_key.cpp -lcrypto
+
+# The sketch's alphabet is a three-line declaration, not a function, so this
+# awk takes it (each line once, or the build fails) before cut_functions.awk
+# appends the two functions that read it.
+$(APPW_WAP_INC): $(APPW_WAP_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk '/^static const char UNAMBIGUOUS_ALPHABET\[\] =$$/ { a++; on = 1; printf "#line %d \"%s\"\n", FNR, FILENAME } \
+	  /^static const size_t UNAMBIGUOUS_LEN = / { n++; printf "#line %d \"%s\"\n", FNR, FILENAME; print; next } \
+	  on { print; if ($$0 ~ /;/) on = 0 } \
+	  END { if (a != 1 || n != 1) { print "canary_wap.ino: UNAMBIGUOUS_ALPHABET found " a + 0 " time(s), UNAMBIGUOUS_LEN " n + 0 ", expected once each" > "/dev/stderr"; exit 1 } }' \
+	  $(APPW_WAP_SRC) > $@.tmp
+	awk -v 'sigs=$(APPW_WAP_SIGS)' -f cut_functions.awk $(APPW_WAP_SRC) >> $@.tmp && mv $@.tmp $@
+
+$(APPW_BIN): test_ap_password.cpp $(APPW_HDR) $(APPW_WAP_INC) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -I stubs/witness_glue \
+	    -I ../canary/lib/securacv_witness/src -I ../canary/include -I ../common -I $(BUILD_DIR) \
+	    -o $@ test_ap_password.cpp -lcrypto
+
+$(APPW_FAIL_BIN): test_ap_password_hmac_fail.cpp $(APPW_HDR) $(HMAC_SEAM) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -I ../common \
+	    -o $@ test_ap_password_hmac_fail.cpp -lcrypto
+
+$(APPW_FAIL_MBED_BIN): test_ap_password_hmac_fail.cpp $(APPW_HDR) $(HMAC_SEAM) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -DARDUINO -I stubs/mbedtls_md -I ../common \
+	    -o $@ test_ap_password_hmac_fail.cpp -lcrypto
+
+$(FKFAIL_BIN): test_fleet_key_hmac_fail.cpp $(FKFAIL_HDR) $(HMAC_SEAM) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -I ../common \
+	    -o $@ test_fleet_key_hmac_fail.cpp -lcrypto
+
+$(FKFAIL_MBED_BIN): test_fleet_key_hmac_fail.cpp $(FKFAIL_HDR) $(HMAC_SEAM) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -DARDUINO -I stubs/mbedtls_md -I ../common \
+	    -o $@ test_fleet_key_hmac_fail.cpp -lcrypto
 
 $(PEERPROTO_BIN): test_peer_protocol.cpp $(PEERPROTO_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -o $@ test_peer_protocol.cpp -lcrypto
@@ -1040,6 +1243,42 @@ $(CANDIAG_BIN): $(CANDIAG_SRC) $(CANDIAG_HDRS) $(CANDIAG_READS) Makefile | $(BUI
 	    -DCANARY_DIAG_CPP='"$(abspath ../canary/lib/securacv_diagnostics/src/securacv_diagnostics.cpp)"' \
 	    -DCANARY_NETWORK_CPP='"$(abspath ../canary/lib/securacv_network/src/securacv_network.cpp)"' \
 	    $(CANDIAG_SRC) -o $@
+
+$(SECAUTH_NET_INC): $(SECAUTH_READS) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(SECAUTH_NET_SIGS)' -f cut_functions.awk $(SECAUTH_READS) > $@.tmp && mv $@.tmp $@
+
+$(SECAUTH_BIN): test_securacv_auth.cpp $(SECAUTH_SRC) $(SECAUTH_HDRS) $(SECAUTH_READS) $(SECAUTH_NET_INC) Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(SECAUTH_INCS) \
+	    -DCANARY_NETWORK_CPP='"$(abspath $(SECAUTH_READS))"' \
+	    -DCANARY_FLAGSHIP_DIR='"$(abspath ../canary)"' \
+	    -DSECAUTH_NET_INC='"$(abspath $(SECAUTH_NET_INC))"' \
+	    test_securacv_auth.cpp $(SECAUTH_SRC) -o $@)
+
+# The lockout's numbers are auth_backoff.h's (sweep F340). A build that
+# still sets one of the old per-device knobs meant to change a number the
+# library no longer reads, so securacv_auth.h stops it with an #error that
+# names the header. Each knob is compiled once and must be refused that way.
+# Nothing to run, and no dependency file (no -o). -Wno-error: the flagship's
+# PlatformIO envs build without -Werror, so a #warning in place of the #error
+# lets a stale knob through there, and here it must compile and fail the
+# check, not ride CXXFLAGS' -Werror into an error that reads the same.
+SECAUTH_OLD_KNOBS = SECURACV_AUTH_MAX_FAILURES SECURACV_AUTH_LOCKOUT_BASE_MS \
+                    SECURACV_AUTH_LOCKOUT_MAX_MS SECURACV_AUTH_FAILURE_WINDOW_MS
+.PHONY: run-secauth-knobs
+run-secauth-knobs: DEPFLAGS =
+run-secauth-knobs:
+	@for k in $(SECAUTH_OLD_KNOBS); do \
+	  if out=$$($(CXX) $(CXXFLAGS) -Wno-error -fsyntax-only $(SECAUTH_INCS) -D$$k=1 $(SECAUTH_SRC) 2>&1); then \
+	    echo "FAIL: -D$$k=1 compiled; securacv_auth.h must refuse it (#error)"; exit 1; \
+	  fi; \
+	  case "$$out" in \
+	    *"#error"*"are gone (sweep F340)"*"firmware/common/network/auth_backoff.h"*) ;; \
+	    *) echo "FAIL: -D$$k=1 failed, but not with the #error naming auth_backoff.h:"; \
+	       echo "$$out"; exit 1 ;; \
+	  esac; \
+	done; \
+	echo "secauth: every old SECURACV_AUTH_* backoff knob is refused by its #error"
+run: run-secauth-knobs
 
 $(IDSPACE_BIN): test_csi_event_id_space.cpp $(IDSPACE_SRC) $(IDSPACE_HDRS) Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) -Wno-stringop-truncation -DCSI_TEST_HOST_BUILD -I $(IDSPACE_DIR) \
@@ -1164,6 +1403,21 @@ $(CHAINPERSIST_BIN): test_chain_persist.cpp $(CHAINPERSIST_INC) $(CHAINPERSIST_H
 	$(CXX) $(CXXFLAGS) -I stubs/witness_glue -I ../canary/lib/securacv_witness/src \
 	    -I ../canary/include -I ../common -I $(BUILD_DIR) test_chain_persist.cpp -o $@
 
+$(NVSKEY_INC): $(NVSLOCK_SRC) $(CHAINPERSIST_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(NVSKEY_CRYPTO_SIGS)' -f cut_functions.awk $(NVSLOCK_SRC) > $@.tmp && \
+	awk -v 'sigs=$(NVSKEY_WITNESS_SIGS)' -f cut_functions.awk $(CHAINPERSIST_SRC) >> $@.tmp && \
+	mv $@.tmp $@
+
+$(NVSKEY_BIN): test_nvs_load_key.cpp $(NVSKEY_INC) $(NVSKEY_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I stubs/nvs_key -I stubs/nvs_manager -I ../canary/lib/securacv_crypto/src \
+	    -I ../canary/lib/securacv_witness/src -I ../common -I ../canary/include -I $(BUILD_DIR) \
+	    test_nvs_load_key.cpp -o $@
+
+$(NVSKEY_FE_BIN): test_nvs_load_key.cpp $(NVSKEY_INC) $(NVSKEY_HDRS) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -DSECURACV_REQUIRE_FLASH_ENCRYPTION=1 -I stubs/nvs_key -I stubs/nvs_manager \
+	    -I ../canary/lib/securacv_crypto/src -I ../canary/lib/securacv_witness/src -I ../common \
+	    -I ../canary/include -I $(BUILD_DIR) test_nvs_load_key.cpp -o $@
+
 $(LOGACK_PIO_INC): $(LOGACK_PIO_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
 	awk -v 'sigs=$(LOGACK_SIGS)' -f cut_functions.awk $(LOGACK_PIO_SRC) > $@.tmp && mv $@.tmp $@
 
@@ -1235,7 +1489,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@)
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(AUTHBACKOFF_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(APPW_BIN) $(APPW_FAIL_BIN) $(APPW_FAIL_MBED_BIN) $(FKFAIL_BIN) $(FKFAIL_MBED_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(SECAUTH_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(NVSKEY_BIN) $(NVSKEY_FE_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -1255,6 +1509,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(IMPROV_BIN)
 	./$(HUBHO_BIN)
 	./$(CLAIM_BIN)
+	./$(AUTHBACKOFF_BIN)
 	./$(SHORTTAP_BIN)
 	./$(TLSPOL_BIN)
 	./$(APSEC_BIN)
@@ -1267,6 +1522,11 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(CLOCKSYNC_BIN)
 	./$(MDNSTXT_BIN)
 	./$(FLEETKEY_BIN)
+	./$(APPW_BIN)
+	./$(APPW_FAIL_BIN)
+	./$(APPW_FAIL_MBED_BIN)
+	./$(FKFAIL_BIN)
+	./$(FKFAIL_MBED_BIN)
 	./$(PEERPROTO_BIN)
 	./$(MQTTTLS_BIN)
 	./$(MQTTFIELDS_BIN)
@@ -1285,6 +1545,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(BACKFILL_BIN)
 	./$(CANEGR_BIN)
 	./$(CANDIAG_BIN)
+	./$(SECAUTH_BIN)
 	./$(PORTAL_BIN)
 	./$(POWEREVT_BIN)
 	./$(SCENE_BIN)
@@ -1297,6 +1558,8 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(NVSLOCK_BIN)
 	./$(NVSSTORE_BIN)
 	./$(CHAINPERSIST_BIN)
+	./$(NVSKEY_BIN) $(NVSKEY_READS)
+	./$(NVSKEY_FE_BIN) $(NVSKEY_READS)
 	./$(OPTFEAT_BIN)
 	./$(VISION_PIPE_BIN)
 	./$(VISION_PIPE_UBSAN_BIN)

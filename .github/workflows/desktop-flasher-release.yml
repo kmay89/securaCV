@@ -69,7 +69,8 @@ jobs:
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 90
 
-    # tauri-action creates the GitHub release and uploads the installers.
+    # The "Create the release" step makes the GitHub release (never as
+    # releases/latest); tauri-action uploads the installers into it.
     permissions:
       contents: write
 
@@ -149,7 +150,7 @@ jobs:
           targets: ${{ matrix.rust-targets }}
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: desktop/src-tauri -> target
 
@@ -538,6 +539,53 @@ jobs:
           print(f"hub catalog pinned for HAOS {base['version']}: {len(boards)} boards, all with sha256")
           PY
 
+      # ── the release: created here, never as releases/latest ────────────────
+      # releases/latest is the URL every Canary polls for its OTA manifest
+      # (releases/latest/download/manifest-*.json), so it must always be a
+      # fw-v* release. Given a tag with no release, tauri-action creates an
+      # ordinary published one, and GitHub makes that `latest` on the spot:
+      # flasher-v0.12.0's Linux leg did exactly that at 07:41:32Z on
+      # 2026-10-10, and the fleet's update URL pointed at the Flasher until
+      # another workflow's guard put it back three minutes later. The
+      # keep-latest job below only repairs it after both legs and finalize
+      # (RELEASE_LESSONS 2026-10-10). So the release is created HERE with
+      # --latest=false, and tauri-action is handed its id (`releaseId`), not
+      # a tag: given an id it uploads into that release and never creates or
+      # edits one.
+      #
+      # Both legs run this. The second finds the release, or loses the create
+      # race and reads it back. Published, not a draft, so finalize's
+      # every-URL-resolves guard still works on public URLs. The cost: a run
+      # that fails after this step leaves the release up without installers,
+      # and its tag, which the release planner reads as "released". Re-run the
+      # failed jobs and this step finds it again; when the fix needs a new
+      # commit, delete the release and its tag first.
+      - name: Create the release (never as releases/latest)
+        id: release
+        if: steps.plan.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          PRERELEASE: ${{ steps.plan.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          release_id() { gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .id 2>/dev/null; }
+          if ! id="$(release_id)"; then
+            # A placeholder body: finalize rewrites it with this version's
+            # notes and the install text once both builds are up.
+            args=(--target "$GITHUB_SHA" --latest=false
+                  --title "SecuraCV Flasher ${TAG#flasher-v}"
+                  --notes "The SecuraCV Flasher, a native desktop app: flash a Canary over USB with no browser and no terminal. The installers and this version's notes are added when both builds finish.")
+            if [ "$PRERELEASE" = "true" ]; then args+=(--prerelease); fi
+            gh release create "$TAG" "${args[@]}" \
+              || echo "create refused (the other leg likely made it first) — reading it back"
+            id="$(release_id)" || id=""
+          fi
+          [[ "$id" =~ ^[0-9]+$ ]] || { echo "::error::could not create or find release ${TAG} (got '${id}')"; exit 1; }
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
+          echo "release ${TAG} (id ${id}) is ready for the installers"
+
       # Apple code-signing + notarization is OPT-IN via the ENABLE_MACOS_SIGNING
       # repository variable (Settings → Secrets and variables → Actions →
       # Variables), the same switch the Lab uses (desktop-release.yml). Two steps
@@ -556,18 +604,11 @@ jobs:
           # (repo secrets, or the ephemeral key written to $GITHUB_ENV above).
         with:
           projectPath: desktop
-          tagName: ${{ steps.plan.outputs.tag }}
-          releaseName: "SecuraCV Flasher __VERSION__"
-          releaseBody: |
-            The SecuraCV Lab as a native app — flash a Canary with no browser and no terminal.
-
-            **macOS:** unless this build is signed & notarized, first launch needs one
-            command — see `desktop/INSTALL.md`. Universal build: one download for Apple
-            Silicon and Intel.
-
-            **Linux:** grab the `.AppImage` or the `.deb` (both update themselves; the `.deb` asks for your password to install).
-          releaseDraft: false
-          prerelease: ${{ steps.plan.outputs.prerelease }}
+          # The release "Create the release" made (blank on a build-only run,
+          # so nothing uploads). An id, never a tag: given a tag it cannot
+          # find, tauri-action creates the release itself, as releases/latest.
+          # Name, body and prerelease are that step's; finalize writes the body.
+          releaseId: ${{ steps.release.outputs.id }}
           uploadUpdaterJson: true
           args: ${{ matrix.args }}
 
@@ -724,17 +765,9 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID || secrets.APPLE_DEVELOPMENT_TEAM }}
         with:
           projectPath: desktop
-          tagName: ${{ steps.plan.outputs.tag }}
-          releaseName: "SecuraCV Flasher __VERSION__"
-          releaseBody: |
-            The SecuraCV Lab as a native app — flash a Canary with no browser and no terminal.
-
-            **macOS:** signed & notarized — just open it. Universal build: one download
-            for Apple Silicon and Intel.
-
-            **Linux:** grab the `.AppImage` or the `.deb` (both update themselves; the `.deb` asks for your password to install).
-          releaseDraft: false
-          prerelease: ${{ steps.plan.outputs.prerelease }}
+          # Same as the unsigned step: upload into the release created above,
+          # never let tauri-action create one.
+          releaseId: ${{ steps.release.outputs.id }}
           uploadUpdaterJson: true
           args: ${{ matrix.args }}
 
@@ -756,19 +789,46 @@ jobs:
             echo "release $TAG not present yet — nothing to reconcile"; exit 0
           fi
           root=desktop/src-tauri/target
+          ver="${TAG#flasher-v}"
+          stage="$RUNNER_TEMP/reconcile"
+          mkdir -p "$stage"
           have=$(gh release view "$TAG" --json assets -q '.assets[].name' 2>/dev/null || true)
           fail=0
           found=0
           # while-read (not mapfile) so this also runs on macOS's bash 3.2.
           while IFS= read -r f; do
             found=1
+            name=$(basename "$f")
+            # The macOS updater bundle is the one file tauri-action renames:
+            # bundle/macos/<Product>.app.tar.gz(.sig) goes up as
+            # <Product>_<version>_<arch>.app.tar.gz(.sig), the arch its .dmg
+            # carries (tauri-action src/utils.ts getAssetName). Compared under
+            # the on-disk name it always looked missing, so every publish
+            # attached a second, unversioned copy (flasher-v0.12.0 has one).
+            case "$f" in
+              */bundle/macos/*.app.tar.gz|*/bundle/macos/*.app.tar.gz.sig)
+                case "$f" in
+                  */universal-apple-darwin/*) arch=universal ;;
+                  */aarch64-apple-darwin/*)   arch=aarch64 ;;
+                  */x86_64-apple-darwin/*)    arch=x64 ;;
+                  *) echo "::warning::no target triple in $f — can't name it as tauri-action does, skipped"; continue ;;
+                esac
+                name="${name%%.app.tar.gz*}_${ver}_${arch}.app.tar.gz${name##*.app.tar.gz}"
+                ;;
+            esac
             # GitHub renames spaces to dots in asset names; match on that form.
-            ghname=$(basename "$f" | tr ' ' '.')
+            ghname=$(printf '%s' "$name" | tr ' ' '.')
             if grep -qxF "$ghname" <<<"$have"; then continue; fi
             echo "missing on release: $ghname — uploading"
+            # gh names an asset after its file, so upload a copy carrying the
+            # published name whenever the on-disk name differs.
+            up="$f"
+            if [ "$(basename "$f" | tr ' ' '.')" != "$ghname" ]; then
+              up="$stage/$ghname"; cp "$f" "$up"
+            fi
             ok=0
             for i in 1 2 3 4 5; do
-              if gh release upload "$TAG" "$f" --clobber; then ok=1; break; fi
+              if gh release upload "$TAG" "$up" --clobber; then ok=1; break; fi
               echo "  upload failed (attempt $i) — retrying in $((i*6))s"; sleep $((i*6))
             done
             [ "$ok" -eq 1 ] || { echo "::error::could not upload $ghname after retries"; fail=1; }
@@ -867,8 +927,8 @@ jobs:
           echo "MANIFEST=$work/latest.json" >> "$GITHUB_ENV"
 
       - name: Release body says what this version changes
-        # tauri-action's releaseBody is static YAML, so it can only carry the
-        # install boilerplate. Rewrite the published body as: this version's
+        # The build job created the release before anything was built, so its
+        # body is a placeholder. Rewrite the published body as: this version's
         # RELEASE_NOTES.md section first (the same text the updater manifest
         # carries), then the install notes. Deterministic, so a re-run
         # converges instead of appending.
@@ -892,11 +952,14 @@ jobs:
             echo
             echo "---"
             echo
-            echo "The SecuraCV Lab as a native app — flash a Canary with no browser and no terminal."
+            echo "The SecuraCV Flasher, a native desktop app: flash a Canary over USB with no browser and no terminal."
             echo
             if [ "${SIGNED:-}" = "true" ]; then
-              echo "**macOS:** signed and notarized by Apple — just open it. Universal build:"
-              echo "one download for Apple Silicon and Intel."
+              # Notarized is not prompt-free: macOS still asks once before it
+              # opens any app downloaded from the internet. Say so.
+              echo "**macOS:** signed and notarized by Apple. Universal build: one download"
+              echo "for Apple Silicon and Intel. macOS asks once to confirm an app downloaded"
+              echo "from the internet; no Terminal step is needed."
             else
               echo "**macOS:** universal build — one download for Apple Silicon and Intel. This"
               echo "build is unsigned, so first launch needs one command: see \`desktop/INSTALL.md\`."
@@ -907,7 +970,9 @@ jobs:
             echo "Installed Flashers pick this version up on their own — the app checks at"
             echo "launch and every few hours, shows these notes, and installs only when asked."
           } > "$body"
-          gh release edit "$TAG" --notes-file "$body"
+          # --latest=false: this edit must never be the write that hands the
+          # Flasher releases/latest (see "Create the release").
+          gh release edit "$TAG" --latest=false --notes-file "$body"
 
       - name: Consistency guard — every updater URL must resolve
         shell: bash
@@ -993,20 +1058,54 @@ jobs:
           done
           [ "$ok" -eq 1 ] || { echo "::error::could not update the flasher-latest pointer"; exit 1; }
 
+      - name: Guard — releases/latest is still a firmware release
+        # The invariant "Create the release" exists for, checked after every
+        # write this run makes. Last, so it can never hold back the updater
+        # pointer above, and run even when a step above failed. It FAILS
+        # rather than repairs: the keep-latest job still runs (always()) and
+        # puts `latest` back, but this release was born with --latest=false,
+        # so a non-firmware `latest` here means something moved it that
+        # should not have, and the run stays red until someone finds what.
+        if: success() || failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! latest="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>"$RUNNER_TEMP/latest.err")"; then
+            if grep -q 'HTTP 404' "$RUNNER_TEMP/latest.err"; then
+              echo "::warning::releases/latest resolves to nothing — no published fw-v* release exists yet, so there is no fleet URL to protect"
+              exit 0
+            fi
+            cat "$RUNNER_TEMP/latest.err"
+            echo "::error::could not read releases/latest"; exit 1
+          fi
+          case "$latest" in
+            fw-v*) echo "releases/latest = ${latest}: firmware, as every Canary's OTA manifest URL needs" ;;
+            *) echo "::error::releases/latest = ${latest}, not a fw-v* release, so every Canary's OTA manifest URL (releases/latest/download/manifest-*.json) misses. This workflow never asks for latest, so find what moved it. The keep-latest job re-points it."
+               exit 1 ;;
+          esac
+
   # ── give the fleet its update URL back ──────────────────────────────────────
-  # Publishing this app release makes it GitHub's `releases/latest`, which is the
-  # URL every Canary in the field polls for its OTA manifest (config.h
+  # An app release that becomes GitHub's `releases/latest` takes the URL every
+  # Canary in the field polls for its OTA manifest (config.h
   # SECURACV_OTA_MANIFEST_URL). Left alone, the whole fleet 404s on its next
-  # check and quietly stops seeing updates.
+  # check and quietly stops seeing updates. This workflow no longer lets that
+  # happen (the build job creates the release with --latest=false, and
+  # tauri-action only uploads into it), and finalize's last step fails the run
+  # if `latest` is not firmware anyway. This job is the BACKSTOP that repairs
+  # it: until 2026-10-10 tauri-action created the release as `latest` and this
+  # job, running after both legs and finalize, was the only defense.
   #
   # Its own job, under `always()`, and NOT gated on its needs succeeding: with
   # `fail-fast: false`, one matrix leg can publish the release and upload its
   # installers while the other fails — and a job with `needs:` but no `always()`
   # is skipped outright when a dependency fails, so a step-level `if: always()`
-  # inside `finalize` would never run. That partial publish is the case that
-  # needs the repair MOST: the release exists, it has taken `latest`, and being
-  # CI-created it fires no `release:` event for release-latest-guard.yml to
-  # catch. `always()` also covers cancellation, for the same reason.
+  # inside `finalize` would never run. That partial publish is the case a
+  # repair matters MOST for: the release exists, finalize's guard never ran,
+  # and being CI-created it fires no `release:` event for
+  # release-latest-guard.yml to catch. `always()` also covers cancellation,
+  # for the same reason.
   #
   # `finalize` is in `needs` for ORDERING, not gating: the action also mirrors
   # flasher-latest's latest.json onto the firmware release holding

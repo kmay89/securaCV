@@ -15,7 +15,8 @@
 # the bundle before you publish):
 #   1. workflow_dispatch, publish unchecked  → build + sign + export, upload
 #      NOTHING, keep the .ipa as an artifact. This is the smoke test.
-#   2. workflow_dispatch, publish checked    → a real TestFlight upload.
+#   2. workflow_dispatch, publish checked    → a real TestFlight upload of the
+#      app's MARKETING_VERSION, refused if that version is already tagged.
 #   3. push a `tvos-v*` tag                  → a real TestFlight upload, with
 #      the tag's version checked against the app's MARKETING_VERSION first.
 #
@@ -110,6 +111,9 @@ jobs:
             # it from the app itself and tag afterwards. Without this the
             # upload would be invisible to release_plan.py (which derives
             # "shipped" from tags) and get re-dispatched on every press.
+            # It also means release-tvos.sh's tag-vs-MARKETING_VERSION check
+            # compares this value with itself and cannot fail here: on a
+            # dispatch, the already-tagged refusal below is the guard.
             version=""
             if [ "$publish" = "true" ]; then
               version="$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([0-9][0-9.]*\)"\{0,1\} *$/\1/p' tvos/WitnessWall/project.yml | head -1)"
@@ -146,7 +150,7 @@ jobs:
 
       - name: Cache Rust build
         if: vars.ENABLE_TVOS_BUILD == 'true'
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: tvos/witness-core -> target
           key: tvos-release
@@ -256,9 +260,10 @@ jobs:
           git push origin "tvos-v$VERSION"
           echo "::notice::Tagged tvos-v$VERSION — the Update-everything button now sees this version as shipped."
 
-      # A publish means a new TestFlight build is already on its way to every
-      # Apple TV via phased release — no artifact to hand-carry. A build-only
-      # run keeps the .ipa so a human can sideload it to a dev device.
+      # A publish means the build is already in App Store Connect (processing,
+      # then TestFlight) — no artifact to hand-carry; it reaches Apple TV users
+      # once someone submits it for review there. A build-only run keeps the
+      # .ipa so a human can sideload it to a dev device.
       - name: Upload .ipa (build-only runs)
         if: vars.ENABLE_TVOS_BUILD == 'true' && steps.plan.outputs.publish != 'true'
         uses: actions/upload-artifact@v7
@@ -280,7 +285,7 @@ jobs:
             echo "## Witness Wall (tvOS)"
             echo
             if [ "$PUBLISHED" = "true" ]; then
-              echo "🚀 **Uploaded to App Store Connect**${VERSION:+ (\`$VERSION\`)} — Apple's phased release carries it to every Apple TV."
+              echo "🚀 **Uploaded to App Store Connect**${VERSION:+ (\`$VERSION\`)} — delivered for processing, then TestFlight. It reaches Apple TV users only after someone submits it for review in App Store Connect."
             else
               echo "🧪 **Build-only smoke run** (\`$METHOD\`) — signed and exported, nothing uploaded. The \`.ipa\` is attached to this run."
             fi

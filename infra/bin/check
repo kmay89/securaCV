@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# What CI runs on every change to infra/ (and what you can run before pushing): the scripts
+# parse and pass shellcheck, every compose file renders, the Caddyfile validates with the
+# real Caddy, and cloud-init accepts the user-data. Needs docker for the last two; without a
+# daemon those are skipped and said so, never passed silently.
+set -euo pipefail
+here="$(cd "$(dirname "$0")/.." && pwd)"; cd "$here"
+fail=0; ok() { echo "  ✓ $*"; }; bad() { echo "  ✗ $*"; fail=1; }
+
+echo "scripts"
+for f in bin/kit bin/deploy bin/render-cloud-init bin/check; do if bash -n "$f"; then ok "$f parses"; else bad "$f does not parse"; fi; done
+if command -v shellcheck >/dev/null; then if shellcheck -S warning bin/kit bin/deploy bin/render-cloud-init bin/check; then ok "shellcheck clean"; else bad "shellcheck"; fi; else echo "  – shellcheck not installed here (CI runs it)"; fi
+if [ -x bin/kit ] && [ -x bin/deploy ]; then ok "bin/kit and bin/deploy are executable"; else bad "bin/kit or bin/deploy is not executable"; fi
+# the forced command's grammar: a deploy, a tag query, and nothing else
+fc() { SSH_ORIGINAL_COMMAND="$1" bash -c 'exec() { echo "exec $*"; }; source bin/deploy' 2>&1 || true; }
+d="$(fc "backoffice abc123def456")"; q="$(fc "tag backoffice-staging")"
+if [[ "$d" == *"kit deploy backoffice abc123def456"* ]] && [[ "$q" == *"kit tag backoffice-staging"* ]] && [[ "$q" != *"kit deploy"* ]]; then ok "the forced command deploys, answers a tag query, and a query never falls through to a deploy"; else bad "the forced command does not parse its two forms: '$d' / '$q'"; fi
+e1="$(fc "backoffice abc extra")"; e2="$(fc "tag Bad_Name")"; e3="$(fc "rm -rf")"
+if [[ "$e1$e2$e3" != *"exec"* ]]; then ok "the forced command refuses a third word, a bad name, a shell"; else bad "the forced command let something else through: '$e1' / '$e2' / '$e3'"; fi
+for s in 'BACKOFFICE_ENV: production' 'BACKOFFICE_ENV: staging' 'BACKOFFICE_ENV: demo'; do grep -q "$s" apps/backoffice/compose.yml apps/backoffice-staging/compose.yml apps/backoffice-demo/compose.yml || bad "no compose says $s"; done; ok "each backoffice compose labels its environment"
+if grep -q "kit refresh backoffice-staging" cloud-init.yaml && grep -q 'kit-staging-refresh' bin/kit; then ok "the nightly staging refresh is in cloud-init and kit cron"; else bad "the staging refresh cron is missing from cloud-init or kit"; fi
+
+echo "render-cloud-init"
+tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA check@example" > "$tmp/key.pub"
+if bin/render-cloud-init --ssh-key "$tmp/key.pub" --email ops@example.test > "$tmp/user-data.yaml"; then ok "renders"; else bad "render failed"; fi
+if grep -q '^#cloud-config' "$tmp/user-data.yaml"; then ok "starts with #cloud-config"; else bad "missing the #cloud-config header"; fi
+if grep -q '__' "$tmp/user-data.yaml"; then bad "a placeholder survived rendering"; else ok "no placeholder left"; fi
+if grep -q 'ssh-ed25519 AAAAC3' "$tmp/user-data.yaml" && grep -q 'ops@example.test' "$tmp/user-data.yaml"; then ok "key and email are in"; else bad "key or email missing"; fi
+
+echo "compose"
+for app in apps/backoffice apps/backoffice-demo apps/backoffice-staging; do cp "$app/env.example" "$app/.env"; if docker compose --project-directory "$app" config >/dev/null 2>"$tmp/err"; then ok "$app renders"; else bad "$app: $(head -1 "$tmp/err")"; fi; rm -f "$app/.env"; done
+sed -e 's|__APP__|sample|g' -e 's|__IMAGE__|ghcr.io/example/sample|g' -e 's|__PORT__|3000|g' apps/_template/compose.yml > "$tmp/compose.yml"; : > "$tmp/.env"
+if docker compose --project-directory "$tmp" config >/dev/null 2>"$tmp/err"; then ok "the app template renders"; else bad "template: $(head -1 "$tmp/err")"; fi
+if ACME_EMAIL=ops@example.test docker compose --project-directory edge config >/dev/null 2>"$tmp/err"; then ok "edge renders"; else bad "edge: $(head -1 "$tmp/err")"; fi
+
+if docker info >/dev/null 2>&1; then
+  echo "caddy (real binary)"
+  if docker run --rm -v "$here/edge/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$here/edge/sites:/etc/caddy/sites:ro" -e ACME_EMAIL=ops@example.test caddy:2 caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>"$tmp/err"; then ok "Caddyfile and every site validate"; else bad "caddy validate: $(tail -2 "$tmp/err" | tr '\n' ' ')"; fi
+  echo "cloud-init (real schema)"
+  if docker run --rm -v "$tmp/user-data.yaml:/user-data.yaml:ro" ubuntu:24.04 bash -c 'apt-get -qq update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y cloud-init >/dev/null 2>&1 && cloud-init schema --config-file /user-data.yaml' >"$tmp/out" 2>&1; then ok "$(tail -1 "$tmp/out")"; else bad "cloud-init schema: $(tail -3 "$tmp/out" | tr '\n' ' ')"; fi
+else
+  echo "  – no docker daemon here: caddy validate and the cloud-init schema run in CI"
+fi
+
+echo; if [ "$fail" = 0 ]; then echo "infra: all green"; else echo "infra: fix the ✗ lines"; exit 1; fi

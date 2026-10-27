@@ -29,7 +29,7 @@ four are a teaching harness, two Phase-0 cores and a concept.
 | Target | Lifecycle (`firmware/VARIANT_POLICY.md`) | MCU / boards | Build system (platform pin, `firmware/envs/platformio/platforms.ini`) | CI envs (`firmware/flavors.json` `build_envs`) | A/B app slots | OTA product |
 |---|---|---|---|---|---|---|
 | **canary (PIO)** `firmware/canary/` | ACTIVE flagship | ESP32-S3 XIAO Sense; reach ports ESP32-CAM, ESP32-WROOM DevKit, Freenove S3 | PlatformIO, `espressif32@6.9.0` (Arduino core 2.0.17 / IDF 4.4.7) for every env but `full`, which is the pioarduino core-3 zip (Arduino 3.3.8 / IDF 5.5.4) | `dev release release_ha full esp32cam esp32-wroom freenove-s3` (+ compile-only `secure`, `secure_ha`, `dev_ha`, `minimal`, `usb-onboard`) | `partitions_ota.csv` 2 × 0x1E0000; `full` uses `default_8MB.csv` | `securacv-canary` (release_ha is the published image); the three reach ports carry product ids with no published manifest |
-| **canary-wap** `firmware/projects/canary-wap/` | COMPATIBILITY | ESP32-S3 XIAO Sense (C3 is a compile-only CI target) | ONE Arduino sketch (`arduino/canary_wap/`, `canary_wap.ino` 13.5k lines) built by arduino-cli (latest core 3.x) AND PlatformIO via `src_dir` on the pioarduino core-3 zip | `canary-wap-default canary-wap-usbdrive` | `default_8MB.csv` 2 × 0x330000 | `securacv-canary-wap` (version `2.4.16-wap`) |
+| **canary-wap** `firmware/projects/canary-wap/` | COMPATIBILITY | ESP32-S3 XIAO Sense (C3 is a compile-only CI target) | ONE Arduino sketch (`arduino/canary_wap/`, `canary_wap.ino` 13.5k lines) built by arduino-cli (latest core 3.x) AND PlatformIO via `src_dir` on the pioarduino core-3 zip | `canary-wap-default canary-wap-usbdrive` | `default_8MB.csv` 2 × 0x330000 | `securacv-canary-wap` (version `2.4.17-wap`) |
 | **canary-vision** `firmware/projects/canary-vision/` | SPECIALIZED | ESP32-C3 DevKit / XIAO C3 / C3 Super Mini / XIAO S3 + Grove Vision AI V2 | PlatformIO, `espressif32@6.9.0` | `canary-vision-default canary-vision-xiao-c3 canary-vision-xiao-s3 canary-vision-c3-super-mini` | `min_spiffs.csv` 2 × 0x1E0000 (S3: `default_8MB.csv`) | `securacv-canary-vision`, `-xiao-c3`, `-xiao-s3` published; `-c3-super-mini` polled, unpublished |
 | **canary-sense** `firmware/projects/canary-sense/` | SPECIALIZED | ESP32-C6 XIAO + MR60BHA2 radar | PlatformIO, pioarduino core-3 zip (the official platform has no C6 Arduino) | `canary-sense-default canary-sense-wellbeing` | `min_spiffs.csv` 2 × 0x1E0000 | `securacv-canary-sense`, `-wellbeing` |
 | **canary-sentinel** `firmware/projects/canary-sentinel/` | SPECIALIZED Phase 1a, **unreleased** | ESP32-C6 XIAO (door/window/hallway/demo-head), XIAO C3 (lite) | PlatformIO, pioarduino core-3 (C6) and `espressif32@6.9.0` (lite) | `canary-sentinel-door canary-sentinel-lite` | `min_spiffs.csv` / `partitions.csv` | one product per preset, all unpublished (pull-OTA 404s by design) |
@@ -103,7 +103,7 @@ What is shared today, by area (consumer lists are from `grep -rl`):
 | `network/hub_handoff.h` (the phone hands a Sense/Vision its broker + login over the door) | sense, vision, sentinel runtime_config | WAP (claim ticket instead), canary (PIO), display |
 | `network/wifi_join_policy.h` (JoinFailure vocabulary, backoff, `wifi_should_open_setup`) | sense, vision, sentinel, display `wifi_mgr.cpp`, the emulator's `emu_net.cpp` (`scripts/lint_wifi_join_policy.py` requires it) | WAP (inline strings, flat 30 s retry), canary (PIO) (own backoff) |
 | `network/provision_core.h` (DNS builder, probe classifier, JSON/QR escaping, password alphabet) | shared portal, display portal | WAP (`captive_dns.h`, `captive_probe.h` are older copies of the same logic) |
-| `network/claim_ticket.h`, `provisioning_gate.h`, `host_guard.h`, `ap_security_policy.h`, `tls_policy.h`, `mqtt_transport*.h` | canary (PIO) and/or WAP as named in each header | the headless trio and the display, except `mqtt_transport` |
+| `network/claim_ticket.h`, `provisioning_gate.h`, `auth_backoff.h`, `host_guard.h`, `ap_security_policy.h`, `ap_password.h`, `tls_policy.h`, `mqtt_transport*.h` | canary (PIO) and/or WAP as named in each header; `host_guard.h` also the display (`src/net/glass_web.cpp`; its `setup.sh` stages a copy for the Arduino sketch) | the headless trio and the display, except `mqtt_transport` (both) and `host_guard.h` (the display) |
 | `fleet_selfreport/fleet_selfreport.h` (the `GET /api/fleet` body) | canary-wap (synced copy), canary-display (regen copy) | canary (PIO) serves **no** `/api/fleet`; sense/vision/sentinel run no HTTP server after provisioning |
 | `fleet_link/` (BLE presence beacon wire format, ESP-NOW and UDP-multicast transports, roster) | senders: sense, vision, WAP; receivers: display (all three transports) | canary (PIO) in `[env:full]` only |
 | `link/` (Canary Link: AEAD frame, node table, relay, replay, session) | pure, host-tested; no runtime transmit side yet (Tin Can design) | — |
@@ -129,6 +129,13 @@ captive portal, the AP-password mint, the `wl_status_t → JoinFailure` switch
 > `common/network/wifi_supervisor.cpp`; the SSID is `SecuraCV-<type>-XXXX`
 > everywhere; the AP hold is 120 s / 1.6 s; the saved-network ring holds four;
 > a 10 s hold resets credentials and keeps identity. Cells: `PARITY.md` C1–C12.
+> Since then, on the WAP: the 10 s hold is `factory_reset_by_hold()` (the
+> table's "none" below is the snapshot); `POST /api/wifi/forget` and
+> `/api/wifi/disconnect` take the API token in every mode (F345, F334), and
+> Forget also clears the stored broker login (F333); after setup `POST
+> /api/wifi/connect` and `/api/wifi/ap-only` take it too (F334), while
+> Reconnect, which only rejoins the stored network, still takes the
+> dashboard session.
 
 Four portal implementations exist. All four raise a device-unique
 `SecuraCV-XXXX` WPA2 network, hijack DNS for A queries only, answer the
@@ -140,7 +147,7 @@ each was ported from the WAP's lessons (`firmware/LESSONS_LEARNED.md`
 | | canary (PIO) | canary-wap | canary-vision / -sense / -sentinel | canary-display |
 |---|---|---|---|---|
 | Portal code | `lib/securacv_setup` + `lib/securacv_network` (`/setup`, `/api/wifi/{scan,connect,status,disconnect}`) | `setup_wizard.h` + `companion_pwa.h` wizard over `esp_http_server` `/api/wifi/*`, one-shot pair token | `common/network/setup_portal.cpp` (`/`, `/scan`, `/join`, `/status`) | `src/net/provision.cpp` (`/`, `/scan`, `/join`+tz, `/status`), blocking, the glass shows a join QR |
-| AP SSID / key | `SecuraCV-<4 chars of pubkey fp>`, key `cv-`+5 chars derived from the fingerprint | `SecuraCV-<4>`, key `cv-`+12 from HMAC(privkey), printed on serial, never persisted | `SecuraCV-<4 of salted pseudonym>`, 8-char key minted once, persisted in NVS `ap_pass` | same algorithm as the shared portal, separately implemented (`provision.cpp:651-703`), shown on the glass |
+| AP SSID / key | `SecuraCV-<4 chars of pubkey fp>`, key `cv-`+12 from HMAC(privkey) (`common/network/ap_password.h`, since F350), printed on serial, never persisted | `SecuraCV-<4>`, key `cv-`+12 from HMAC(privkey), printed on serial, never persisted | `SecuraCV-<4 of salted pseudonym>`, 8-char key minted once, persisted in NVS `ap_pass` | same algorithm as the shared portal, separately implemented (`provision.cpp:651-703`), shown on the glass |
 | AP lifetime | always-on AP+STA; dropped 8 s after STA holds, re-raised on STA loss (`raiseAp`) | always-on management AP; dropped 120 s after STA holds (`AP_DROP_GRACE_MS`), re-raised on loss | raised only while unprovisioned or recovering; lingers ≤ 25 s after success (1.6 s after the phone's ack) | same 25 s / 1.6 s linger, then the glass takes over |
 | BLE door (Improv) | none | FULL profile: 30-min first-boot window, 60 s BOOT tap, claim ticket → `GET /api/provisioning-receipt?claim=` | sense, vision: same door, same join path as the portal, plus the hub hand-off; sentinel: none | none by design ("a screen beats a radio") |
 | Password field | `/setup`: label "Wi-Fi password", placeholder "Your existing Wi-Fi password", hint "Nothing new to invent" (`securacv_setup_page.cpp:106-111`); dashboard SPA: "WiFi password" | companion wizard "Network password"; legacy dashboard "WiFi password"; fleet QR form "Password" | placeholder **"Password"** under the picked SSID (`setup_portal.cpp:150`) | placeholder **"Password"** (`provision.cpp:231`) |
@@ -176,6 +183,9 @@ MQTT, bearer token and (where present) the Ed25519 private key as plaintext
 NVS entries under namespace `securacv`. No shipped partition table has an
 `encrypted` flag or `nvs_keys` partition; `firmware/provisioning/` holds the
 opt-in secure kit (flash encryption + Secure Boot v2) that no CI leg builds.
+*(Amended 2026-10-21: `firmware.yml` compiles the kit's two envs,
+compile-only, since #1744; the kit stages flash encryption and Secure Boot,
+commented out, rather than enabling them, and neither would encrypt NVS.)*
 NVS encryption is not configurable on either pinned Arduino core as built
 (`platformio_secure.ini:63-76`, `key_at_rest.h:16-33`): the precompiled
 `sdkconfig` leaves it off and `-DSDKCONFIG_DEFAULTS` is inert. Only the PIO
@@ -205,8 +215,8 @@ rest) is derived by `gen_flash.py` from the firmware source.
 | mDNS advertise | `_http._tcp` + `_securacv._tcp` on port 80; hostname **constant `canary`** for every unit; TXT `device_id fw model tls secure_port`, `model` hard-coded "XIAO ESP32S3" for the three board ports; **no `host`, no `name`** (`securacv_network.cpp:312-368`) | `_http._tcp` + `_securacv._tcp`; hostname `canary-<name>.local` / `canary-XXXX.local` + a staggered `canary.local` catch-all; TXT `device_id fw host name model dt=canary-wap role=witness broker bport` | `_securacv._tcp` on **dummy port 1** with the canonical TXT `device_id name host fw model dt role=witness broker bport` (`mdns_mgr.cpp:73-107`, byte-identical in all three); advertised although **no HTTP server answers**, so a Wall that follows the advert gets a refused connection | `_securacv._tcp` port 80, TXT `device_id name host fw model role=display dt hw` + `broker/bport` gossip while connected (`discovery.cpp:91-147`) |
 | mDNS browse | `browsePeers()` queries `_securacv._tcp` into an 8-entry cache, **only when `GET /api/v1/peers` is requested** (`:767-833`, `:2512`) | `GET /api/fleet/scan` browses on a worker task (10 s cache) | none | browses `_securacv` then `_mqtt` for a broker referral (refused once `mqtt_user` is set) and browses witnesses every 20/60 s into the fleet model (`discovery.cpp:149-260`) |
 | Hub (broker) discovery | compiled/configured host; portal hub step `/api/mqtt/config` | user-typed broker; publishes broker gossip for displays | NVS seed, or the phone's hub hand-off over the BLE door (sense, vision); never browses; **sense and sentinel dial the compiled placeholder `127.0.0.1:1883` forever** when nothing is provisioned, vision skips with a log line | referral from mDNS gossip or `_mqtt._tcp`; rebind after 120 s dark |
-| Peer protocol | Opera mesh over ESP-NOW (Ed25519 + ChaCha20-Poly1305, X25519 pairing, 6-digit code) in `[env:full]` **only**; dev/release ship none | Opera mesh (FULL profile, which **no CI job compiles**): 30 s heartbeats, 90 s stale / 5 min offline, HKDF pairing; **does not interoperate with the PIO mesh** (`mesh_pair_crypto.h:32-39`) | fleet-link presence **beacon only**, unsigned: vision transmits v2 (ALERT flag + class + score) on BLE, ESP-NOW ch 6 and UDP multicast 239.83.67.86:5867; sense transmits v1 on BLE only; sentinel transmits nothing; both run a passive BLE roster scan whose result is never surfaced | receive-only: BLE chirp scan, ESP-NOW, UDP multicast, GATT pull → `FleetModel::on_beacon`; never transmits, never signs |
-| Coordinator / election | `HubMonitor` + lowest-fingerprint rule exist; the canary persists a received `HUB_ELECTED` and **never acts on it or sends heartbeats** (`csi_modules_integration.cpp:245-248`) | lowest-fingerprint coordinator broadcasts `HUB_ELECTED`; it governs **channel-hop proposals only**; `HubMonitor` type staged but never instantiated | none | none (presence works without a broker; ack-sync and escalation need MQTT) |
+| Peer protocol | Opera mesh over ESP-NOW (Ed25519 + ChaCha20-Poly1305, X25519 pairing, 6-digit code) in `[env:full]` **only**; dev/release ship none; 30 s ± 3 s member heartbeats, liveness from verified frames (F324) | Opera mesh (FULL profile, which **no CI job compiles**): 30 s heartbeats, 90 s stale / 5 min offline, HKDF pairing; **does not interoperate with the PIO mesh** (`mesh_pair_crypto.h:32-39`) | fleet-link presence **beacon only**, unsigned: vision transmits v2 (ALERT flag + class + score) on BLE, ESP-NOW ch 6 and UDP multicast 239.83.67.86:5867; sense transmits v1 on BLE only; sentinel transmits nothing; both run a passive BLE roster scan whose result is never surfaced | receive-only: BLE chirp scan, ESP-NOW, UDP multicast, GATT pull → `FleetModel::on_beacon`; never transmits, never signs |
+| Coordinator / election | `HubMonitor` + lowest-fingerprint rule exist; the canary persists a received `HUB_ELECTED`, **never acts on it and sends no hub heartbeat** (`csi_modules_integration.cpp:245-248`) | lowest-fingerprint coordinator broadcasts `HUB_ELECTED`; it governs **channel-hop proposals only**; `HubMonitor` type staged but never instantiated | none | none (presence works without a broker; ack-sync and escalation need MQTT) |
 | Hub loss | MQTT reconnect 1–30 s backoff, bounded offline queue + SD backfill on reconnect | `esp_mqtt` reconnects on its own; `hub` word in `/api/fleet` is `none/down/ok` | mqtt reconnect with backoff (per `mqtt_mgr`) | broker dark 120 s → rediscover and rebind |
 | `GET /api/fleet` (what the Wall reads) | **absent** (`securacv_network.cpp:1774`) | present, unauthenticated, CORS `*`, self row | **absent** (no HTTP server after provisioning) | present; self row (`chain: unknown`) + one row per heard peer |
 | `GET /api/status` | bearer-gated, rich (`:1820`) | bearer/cookie-gated, rich | none | none; status spread over `/api/device`, `/api/glass`, `/api/ota/status` |
@@ -305,8 +315,9 @@ canary-vision, canary-sense and canary-sentinel. Facts:
   bench-verified** (`V1_BENCH_TEST_RUNBOOK.md` Track E unchecked).
 - **Delivery**: daily jittered manifest pull (first check ~2 min after boot)
   on every linked target; HA update entity + Auto Update switch via
-  device-published discovery; bearer-gated `/api/ota/{status,check,install,config}`
-  on canary and WAP; LAN-open `/api/ota/{status,check,install}` on the
+  device-published discovery; `/api/ota/{status,check,install,config}` gated
+  on canary (the bearer) and WAP (`api_auth_check()`: the bearer, or a landing
+  session any host on the network can mint, ledger F346); LAN-open `/api/ota/{status,check,install}` on the
   display; BLE OTA and USB drop-file (both signed) on the WAP only; the dev-only
   unsigned `POST /api/ota` on canary dev builds. **No signed manual web
   upload on any release build; no hub push; no staged rollout; no OTA state
@@ -346,7 +357,10 @@ canary-vision, canary-sense and canary-sentinel. Facts:
   `/api/fleet`, appear in displays' fleet models via mDNS, rebind an
   uncredentialed display's broker by referral, POST `/api/ota` on a display;
   in radio range spoof the presence beacon for any fingerprint suffix, and
-  claim an unowned device during its 30-minute first-boot window.
+  claim an unowned device during its 30-minute first-boot window *(amended
+  2026-10-22: or an owned one its owner reset or made forget its Wi-Fi,
+  which keeps its identity: the door goes to whichever client connects
+  first, `design/magic_pairing.md` §2.2)*.
 - **The only pairing-grade trust** is the WAP's Opera mesh (owner-confirmed
   code, per-frame Ed25519), which has a documented grindable MITM
   (`spec/canary_mesh_network_v0.md` §11.1), has never paired on a radio, and
@@ -441,7 +455,7 @@ in this program (the matrix with per-target cells is [`PARITY.md`](PARITY.md)).
 | One onboarding state machine for every firmware | four portals; the shared one on three products | a pure `onboarding_fsm.h` core every portal consumes (timers, AP hold, recovery, factory-reset hold), adopted by the shared portal and the display, with the WAP and canary (PIO) consuming the pure rules through staged copies |
 | SoftAP kept alive 2 min after join | 25 s on the shared portal and display; 120 s AP grace on the WAP | 120 s in the shared core |
 | Multiple saved networks + auto-reconnect backoff | one slot everywhere; backoff shared on four trees | a `wifi_store.h` ring of saved networks (pure, host-tested) behind the shared portal |
-| Encrypted credentials at rest | plaintext NVS everywhere; NVS encryption not configurable on the pinned cores | honest `⚠️`: posture reported on every node, the secure kit documented as the path; no fake encryption |
+| Encrypted credentials at rest | plaintext NVS everywhere; NVS encryption not configurable on the pinned cores | honest `⚠️`: posture reported on every node, the secure kit documented as the path *(amended 2026-10-21: the path is NVS encryption, after the arduino-as-IDF-component migration, roadmap item 9; the secure kit's flash encryption does not cover NVS)*; no fake encryption |
 | Recovery re-raise without wipe after N minutes | present on five trees with differing rules; a once-online unit never re-raises on three | the shared core adds the "saved network gone for N minutes" raise |
 | Hold-button factory reset | canary (PIO) only (5 s, wipes identity too) | 10 s hold on every board with a BOOT pin, credentials-only by default, shared pure classifier |
 | Captive portal one shared page | three page templates | the shared portal's page becomes the template; the display's is reconciled to it |
@@ -466,8 +480,10 @@ marks a cell ⚠️ or ❌ with a footnote. The open items, so nobody has to
 re-derive them from the matrix:
 
 - **Credentials at rest** stay plaintext NVS on every shipped build; the
-  posture is reported as `creds_at_rest` on every node and the secure kit is
-  the documented path (PARITY footnote 1).
+  posture is reported as `creds_at_rest` on every node, and NVS encryption,
+  after the arduino-as-IDF-component migration, is the documented path; the
+  secure kit is not, since flash encryption does not cover NVS (PARITY
+  footnote 1).
 - **The WAP and the display keep their own mDNS TXT** (`host`, `role`, `fw`
   are the shared keys; `caps` and `coord` are not emitted yet) and **are not
   on the SCVP peer protocol** — neither is the flagship, whose `release` slot

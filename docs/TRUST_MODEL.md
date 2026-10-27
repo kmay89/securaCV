@@ -25,8 +25,10 @@ unsigned ("I am here"). **Paired** is defined in §3 below and nowhere else.
 The identity key is the device's birth certificate. That is why the 10-second
 factory reset (`common/io/reset_hold.h`, `onboarding_fsm.h`) clears credentials
 and settings and **keeps the key**: a reset node rejoins as the same device
-every pin knows; shedding the key is the opt-in 30-second stage the PIO canary
-alone enables, with a serial warning first.
+every pin knows; the hold sheds the key only at the opt-in 30-second stage the
+PIO canary alone enables, with a serial warning first. An install in either
+flasher sheds it too, on every Canary that keeps one: its factory image starts
+the settings region over, so the next boot makes a new key.
 
 ## 2. What is signed, what is not
 
@@ -67,7 +69,10 @@ fleet_key = HKDF-SHA256(salt = "securacv:fleet-key:v1",
 - **An open network has no secret**, so no key is derived and the peer link
   stays **off** with one logged warning and `peer: "off"` in `/api/status`.
   The protocol never runs unauthenticated — that is the brief's "explicit
-  degradation" and `PARITY.md` marks such a node ⚠️.
+  degradation" and `PARITY.md` marks such a node ⚠️. The same holds when the
+  key's HMAC fails (on the device, an allocation failure inside mbedTLS): no
+  key is derived rather than an all-zero one, and a frame whose tag the HMAC
+  could not compute is neither sent nor accepted (sweep F350's review).
 - **Rotation.** A node honors a replacement key (32 random bytes) stored
   under NVS `fleet_key`: a stored key wins over the derived one, and a key
   change empties the peer table (a new key is a new fleet). What this program
@@ -114,8 +119,16 @@ its uptime can only make itself the coordinator, which gives it nothing.
 Things that were true before and remain true: a node never refuses to boot
 over its key's storage tier (`key_at_rest.h` rule 1); no MAC, stable id or
 timestamp finer than the ten-minute bucket crosses the wire in any of the
-above (Invariants II/III); the first-boot 30-minute Improv window and the
-BOOT-tap minute are the only times a node takes Wi-Fi from a phone.
+above (Invariants II/III); the Improv door takes Wi-Fi over Bluetooth only
+in its 30-minute window while no network is saved (a first boot, or after
+it was cleared: the 10 s hold, or on a WAP Forget Wi-Fi, which takes the
+API token in every mode, ledger F345) and in the BOOT-tap minute. A WAP also takes it over
+its bonded Bluetooth lane (`ble_provision.cpp`'s CREDS, an authenticated
+link, one write per 5 s and ten an hour) from any peer whose bond the
+pairing confirm or a passkey authenticated (a Just Works bond gets no such
+link), with or without credentials saved: the iPhone app never reaches
+that lane (ledger A65), but such a peer does, and since F346 the bond's
+confirm and a Passkey Entry's digits take the API token.
 
 ## 6. Where each rule is enforced and tested
 
@@ -123,6 +136,7 @@ BOOT-tap minute are the only times a node takes Wi-Fi from a phone.
 |---|---|---|
 | fleet key derivation, open-network refusal, tag | `common/network/fleet_key.h` | `firmware/tests_host/test_fleet_key.cpp` (RFC 4231 / 5869 vectors) |
 | frame tag, replay window, table, election, hub hand-off | `common/network/peer_protocol.h` | `test_peer_protocol.cpp` |
+| a failed HMAC derives no key, sends no frame and accepts none | `common/network/fleet_key.h`, `peer_protocol.h` | `test_fleet_key_hmac_fail.cpp`, built over the mbedTLS and OpenSSL branches |
 | socket, arming, disarming on an open network | `common/network/peer_link.cpp` | compiled on sense / vision / sentinel; bench-verified: no (PARITY.md E2E plan) |
 | reset keeps the identity | `common/io/reset_hold.h` + each board's reset glue | `test_reset_hold.cpp`; the key list each board clears is in its `main.cpp` |
 | signatures, canonical bytes | `common/identity/device_signature.{h,cpp}` | `test_device_signature.cpp`, HA `tests/test_signature.py` |

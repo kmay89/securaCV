@@ -281,9 +281,11 @@ those bodies `"replay":true`. On the canary base
   space survives it; only the 30 s hold (`ResetScope::Everything`) clears the
   `securacv` namespace, the floor and the ceiling with it, and the witness
   identity and chain too, so every hub and display that pinned the device
-  sees a stranger; a canary-wap has no reset path, so its owner flashes it with the
-  flasher's full erase, which clears the floor (`ev.next`) and `csi.evsent`
-  with the rest of NVS, and does not restore the flasher's pre-erase backup
+  sees a stranger; a canary-wap's 10 s BOOT hold (`factory_reset_by_hold()`)
+  keeps both, so its owner installs it again in a flasher (with or without
+  the full erase: the factory image starts NVS over either way), which clears
+  the floor (`ev.next`) and `csi.evsent` with the rest of NVS, the identity
+  key included, and does not restore the flasher's pre-install backup
   afterwards (it would bring the counter back). Either way the owner then
   re-pins the device in Home Assistant, whose mark is above the restarted
   ids. Home Assistant shows the flag as the device's
@@ -579,10 +581,16 @@ and expire after 10 minutes. Validation is constant-time. Single-use:
 once consumed the slot is marked and the next `pair_token_consume()`
 returns false.
 
-The token is NOT a security boundary — the AP itself is the gate, and
-the existing `/api/wifi/connect` handler is reachable to anyone on the
-AP. The token is a UX gate that tells the companion PWA "you came
-through the portal, run the wizard."
+During first-boot setup the token is NOT a security boundary — the AP
+itself is the gate, and the existing `/api/wifi/connect` handler is
+reachable to anyone on the AP. The token is a UX gate that tells the
+companion PWA "you came through the portal, run the wizard." That holds
+only during setup: the landing page mints into the same pool for any caller
+on the home network, so after setup `/api/wifi/connect` and
+`/api/wifi/ap-only` take the bearer alone and the scan's start,
+`POST /api/wifi/qr-scan`, answers `404` (F334); the wizard's token no longer
+moves the network. The scan's status and stop (`GET` and `DELETE`) still
+take a pair token.
 
 ### `GET /api/pair/token`
 

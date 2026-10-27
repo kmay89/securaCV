@@ -276,7 +276,9 @@ EVVERIFY_SOURCES = test_evidence_update_verify.cpp \
 # and the accept / refuse / break-glass decision matrix — product binding,
 # the anti-rollback floor shared with the pull engine, the legacy v1 header
 # admitted only when armed — with real Ed25519 (OpenSSL). Links the OTA
-# engine's pure subset for securacv_ota_update_decision().
+# engine's pure subset for securacv_ota_update_decision(), and drives its
+# confirm dwell with provisioning_logic.h's health signal: a standalone unit
+# updated over Bluetooth keeps the update.
 BLEOTA_BIN     = test_ble_ota_policy
 BLEOTA_SOURCES = test_ble_ota_policy.cpp \
                  $(SRC_DIR)/securacv_ota.cpp
@@ -524,8 +526,11 @@ clean: clean-receipt-authority
 
 # The receipt's and the pairing QR's grants (sweep F289): the REAL api_auth.h
 # and handle_provisioning_receipt(), handle_pairing_qr(),
-# provisioning_gate_take() and session_cookie_header() (the receipt's
-# cookie, Secure over HTTPS only) cut verbatim out of canary_wap.ino
+# provisioning_gate_take(), provisioning_gate_take_for() (the BOOT tap's one
+# asker, sweep F342), request_host_names_device() (the receipt's first
+# question, the Host, over the sketch's staged host_guard.h; sweep F344) and
+# session_cookie_header() (the receipt's cookie, Secure over HTTPS only) cut
+# verbatim out of canary_wap.ino
 # (firmware/tests_host/cut_functions.awk), over stubs/receipt_grant (a request
 # with headers and a query string) and stand-ins for the two writers, the
 # session mint, the health log and the Wi-Fi facts, beside the sketch's own
@@ -536,73 +541,172 @@ clean: clean-receipt-authority
 # reads the sketch's text (its path is passed in): the two handlers name only
 # the bearer-only checks, and nothing but send_provisioning_receipt() and
 # handle_pairing_qr() writes the token or the AP password into an answer.
+# The lockout is per source address (sweep F343): the cut carries the REAL
+# auth_request_source() over the suites' one stand-in for the socket read
+# (stubs/receipt_grant/peer_source.h), and api_auth_second_tu.cpp, a second
+# translation unit over api_auth.h compiled into the same binary, proves the
+# table is one for every file that includes the header. Every bearer compare
+# is accounted (sweep F339): the cut also carries qr_scan_request_allowed()
+# (the QR scan's status and stop gate), and a second cut carries
+# csi_integration.cpp's CSI_AUTH_OR_RETURN, the /api/csi/* routes' gate, from
+# its #define to the first line that does not end in a backslash (the awk
+# fails unless it finds the #define once and its end).
 RGRANT_BIN = test_receipt_grant
 RGRANT_SRC = test_receipt_grant.cpp
+RGRANT_TU2 = api_auth_second_tu.cpp
 RGRANT_INC = test_receipt_grant.inc
+RGRANT_CSI_INC = test_receipt_grant_csi.inc
 RGRANT_CUT = ../../../tests_host/cut_functions.awk
-CUT_INCS  += $(RGRANT_INC)
+CUT_INCS  += $(RGRANT_INC) $(RGRANT_CSI_INC)
 
 $(RGRANT_INC): $(SRC_DIR)/canary_wap.ino $(RGRANT_CUT) Makefile
-	awk -v 'sigs=static inline bool provisioning_gate_take() {|static bool session_cookie_header(|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {' \
+	awk -v 'sigs=static inline bool provisioning_gate_take() {|static bool provisioning_gate_take_for(|static bool request_host_names_device(httpd_req_t* req) {|static bool session_cookie_header(|uint32_t auth_request_source(httpd_req_t* req) {|static bool qr_scan_request_allowed(httpd_req_t* req) {|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {|static esp_err_t handle_vault_key_set_auth(httpd_req_t* req) {|static esp_err_t handle_mesh_pair_confirm_auth(httpd_req_t* req) {' \
 	  -f $(RGRANT_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
-# api_auth.h's helpers the two handlers never call (the ?token= gate, the
-# stats, the console's redaction) are unused here, and its constant-time
-# compare casts through volatile: both are the header's, not the suite's.
-$(RGRANT_BIN): $(RGRANT_SRC) $(RGRANT_INC) arduino_globals.h $(wildcard stubs/receipt_grant/*.h)
-	$(CXX) $(CXXFLAGS) -Werror -Wno-unused-function -Wno-ignored-qualifiers \
+$(RGRANT_CSI_INC): $(SRC_DIR)/csi_integration.cpp Makefile
+	awk 'index($$0, "#define CSI_AUTH_OR_RETURN(req)") == 1 { n++; on = 1; printf "#line %d \"%s\"\n", FNR, FILENAME } on { print; if ($$0 !~ /\\$$/) { on = 0; done++ } } END { if (n != 1 || done != 1) { print "CSI_AUTH_OR_RETURN: its #define found " n + 0 " time(s), its end " done + 0 " in " FILENAME > "/dev/stderr"; exit 1 } }' \
+	  $(SRC_DIR)/csi_integration.cpp > $@.tmp && mv $@.tmp $@
+
+# api_auth.h's helpers the two handlers never call (the console's
+# redaction) are unused here, and its constant-time compare casts through
+# volatile: both are the header's, not the suite's. Two sources in one
+# command, so the dependency file is written by with_deps.
+$(RGRANT_BIN): $(RGRANT_SRC) $(RGRANT_TU2) $(RGRANT_INC) $(RGRANT_CSI_INC) arduino_globals.h $(wildcard stubs/receipt_grant/*.h)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-unused-function -Wno-ignored-qualifiers \
 	  -I stubs/receipt_grant -I $(SRC_DIR) -I . \
-	  -DRECEIPT_GRANT_INC='"$(RGRANT_INC)"' \
-	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(RGRANT_SRC)
+	  -DRECEIPT_GRANT_INC='"$(RGRANT_INC)"' -DRECEIPT_GRANT_CSI_INC='"$(RGRANT_CSI_INC)"' \
+	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(RGRANT_SRC) $(RGRANT_TU2))
 
 .PHONY: run-receipt-grant clean-receipt-grant
 run-receipt-grant: $(RGRANT_BIN)
 	$(call run_marked,$(RGRANT_BIN))
 clean-receipt-grant:
-	rm -f $(RGRANT_BIN) $(RGRANT_INC)
+	rm -f $(RGRANT_BIN) $(RGRANT_INC) $(RGRANT_CSI_INC)
 
 run: run-receipt-grant
 clean: clean-receipt-grant
 
+# Who may move the network the unit joins (sweep F334, F345, F333), and who
+# may reach its two reboot routes (F361): after first-boot setup the bearer
+# alone.
+# wifi_change_authorize() (POST /api/wifi/connect and /ap-only), the Forget,
+# Disconnect and Reconnect wrappers, the reboot and safe-mode-retry wrappers,
+# ble_improv_door_should_open() and auth_request_source() cut
+# verbatim out of canary_wap.ino (firmware/tests_host/cut_functions.awk), over
+# stubs/receipt_grant, the REAL api_auth.h (the per-address lockout) and the
+# REAL provisioning_logic.h (keyless_join_open(), the setup door's and the
+# boot scan's one rule), with stand-ins for the wizard flag, the pair-token
+# store, the session bridge and the handlers the wrappers guard. After setup
+# the landing page's pair token and session get 401 and no strike, a wrong
+# bearer 403 and one strike for its own address, a session's Forget leaves
+# the network on file and the setup door shut, and a session's reboot
+# restarts nothing; during setup the
+# wizard's gate is unchanged. It also reads the sketch's text (its path is
+# passed in): POST /api/wifi/qr-scan answers 404 outside setup before
+# anything else, Connect and AP-only ask the gate before any write, the boot
+# scan asks the keyless-join rule first, and Forget clears the broker login.
+WAUTH_BIN = test_wifi_authority
+WAUTH_SRC = test_wifi_authority.cpp
+WAUTH_INC = test_wifi_authority.inc
+WAUTH_CUT = ../../../tests_host/cut_functions.awk
+CUT_INCS += $(WAUTH_INC)
+
+$(WAUTH_INC): $(SRC_DIR)/canary_wap.ino $(WAUTH_CUT) Makefile
+	awk -v 'sigs=uint32_t auth_request_source(httpd_req_t* req) {|static WifiChangeAuth wifi_change_authorize(httpd_req_t* req,|static esp_err_t handle_wifi_disconnect_auth(httpd_req_t* req) {|static esp_err_t handle_wifi_forget_auth(httpd_req_t* req) {|static esp_err_t handle_wifi_reconnect_auth(httpd_req_t* req) {|static esp_err_t handle_reboot_auth(httpd_req_t* req) {|static esp_err_t handle_safe_mode_retry_auth(httpd_req_t* req) {|bool ble_improv_door_should_open() {' \
+	  -f $(WAUTH_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+# api_auth.h's helpers these functions never call are unused here, and its
+# constant-time compare casts through volatile: both are the header's.
+$(WAUTH_BIN): $(WAUTH_SRC) $(WAUTH_INC) arduino_globals.h $(wildcard stubs/receipt_grant/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-unused-function -Wno-ignored-qualifiers \
+	  -I stubs/receipt_grant -I $(SRC_DIR) -I . \
+	  -DWIFI_AUTHORITY_INC='"$(WAUTH_INC)"' \
+	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(WAUTH_SRC)
+
+.PHONY: run-wifi-authority clean-wifi-authority
+run-wifi-authority: $(WAUTH_BIN)
+	$(call run_marked,$(WAUTH_BIN))
+clean-wifi-authority:
+	rm -f $(WAUTH_BIN) $(WAUTH_INC)
+
+run: run-wifi-authority
+clean: clean-wifi-authority
+
 # The dashboard's session cookie (sweep F289's residual): handle_ui() and
-# session_cookie_header() cut verbatim out of canary_wap.ino, and
+# session_cookie_header() cut verbatim out of canary_wap.ino, with the Host
+# question's three helpers (request_host_names_device(),
+# send_foreign_host_page(), request_host_is_setup_name(), over the sketch's
+# staged host_guard.h) and the two other pages that ask it after setup,
+# handle_legacy_ui() (/admin, /settings) and handle_companion_html()
+# (/companion) (sweep F344), and
 # read_session_cookie_hex() out of csi_integration.cpp
 # (firmware/tests_host/cut_functions.awk), over stubs/receipt_grant (a request
 # with the server it arrived on) and stand-ins for the wizard flag, the
 # pair-token and session stores, the landing page and the gzip writer. The
 # cookie is Secure exactly when its answer leaves over the HTTPS server, never
-# on a plain-HTTP boot (the first-boot SoftAP setup); the reader takes the
-# cookie NAMED cv_session, never "xcv_session=" or a value holding it. It also
+# on a plain-HTTP boot (the first-boot SoftAP setup), and named
+# __Host-cv_session there, cv_session otherwise (sweep F337); the reader takes
+# the cookie NAMED __Host-cv_session first, else the one NAMED cv_session,
+# never "xcv_session=" or a value holding it. It also
 # reads the sketch's text (its path is passed in): the attributes are spelled
-# once, and both Set-Cookie sites send that spelling. The receipt's own mint
-# site is driven in test_receipt_grant.cpp.
+# once, and both Set-Cookie sites send that spelling. After setup a Host that
+# cannot name the device gets the fixed 403 on '/', the ?cv_pair exchange,
+# /admin, /settings and /companion, a live cookie included; the setup branch
+# and the wizard token's re-issue match canary.local or 192.168.4.1 exactly.
+# The re-issue, handle_wifi_pair_token(), is cut too, with http_send_json()
+# (which it no longer calls, so that a re-issue that does again fails the
+# rows, not the build): its token goes out with no
+# Access-Control-Allow-Origin, so no page on another site reads it.
+# The receipt's own mint site is driven in test_receipt_grant.cpp. And the
+# two token stores' clock
+# (sweep F347): the slot functions (pick_slot_for_issuance(), find_slot(),
+# pick_session_slot_for_issuance(), find_valid_session() and their ct_eq())
+# cut verbatim out of csi_integration.cpp into a namespace the harness opens
+# for them, over one 64-bit test clock (millis() is its low 32 bits, the
+# harness's uptime_s() its whole seconds), so a session ends at 24 h and a
+# pair token at 10 minutes and neither is valid again 2^32 ms after issue
+# (before: both were, on millis()), and eviction picks an expired slot, else
+# the oldest; and csi_integration.cpp's text (its path is passed in): both
+# slots carry issued_s, stamped from uptime_s() over esp_timer_get_time().
+# The same cut carries the REAL cookie validator (session_validate_cookie(),
+# with hex_decode_to(), session_issue() and hex_encode()), every cookie
+# gate's one question: a session the real store minted validates under a
+# Host that names the device and is refused under any other, however the
+# cookie got into the browser (review 3 of F344).
 SCOOKIE_BIN     = test_session_cookie
 SCOOKIE_SRC     = test_session_cookie.cpp
 SCOOKIE_UI_INC  = test_session_cookie_ui.inc
 SCOOKIE_CSI_INC = test_session_cookie_csi.inc
+SCOOKIE_SLOTS_INC = test_session_cookie_slots.inc
 SCOOKIE_CUT     = ../../../tests_host/cut_functions.awk
-CUT_INCS       += $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC)
+CUT_INCS       += $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC) $(SCOOKIE_SLOTS_INC)
 
 $(SCOOKIE_UI_INC): $(SRC_DIR)/canary_wap.ino $(SCOOKIE_CUT) Makefile
-	awk -v 'sigs=static bool session_cookie_header(|static esp_err_t handle_ui(httpd_req_t* req) {' \
+	awk -v 'sigs=static esp_err_t http_send_json(httpd_req_t* req, const char* json) {|static bool request_host_names_device(httpd_req_t* req) {|static esp_err_t send_foreign_host_page(httpd_req_t* req) {|static bool request_host_is_setup_name(httpd_req_t* req) {|static bool session_cookie_header(|static esp_err_t handle_ui(httpd_req_t* req) {|static esp_err_t handle_legacy_ui(httpd_req_t* req) {|static esp_err_t handle_companion_html(httpd_req_t* req) {|static esp_err_t handle_wifi_pair_token(httpd_req_t* req) {' \
 	  -f $(SCOOKIE_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
 $(SCOOKIE_CSI_INC): $(SRC_DIR)/csi_integration.cpp $(SCOOKIE_CUT) Makefile
 	awk -v 'sigs=bool read_session_cookie_hex(httpd_req_t* req, char* hex_out) {' \
 	  -f $(SCOOKIE_CUT) $(SRC_DIR)/csi_integration.cpp > $@.tmp && mv $@.tmp $@
 
-$(SCOOKIE_BIN): $(SCOOKIE_SRC) $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC) arduino_globals.h $(wildcard stubs/receipt_grant/*.h)
+$(SCOOKIE_SLOTS_INC): $(SRC_DIR)/csi_integration.cpp $(SCOOKIE_CUT) Makefile
+	awk -v 'sigs=bool hex_decode_to(const char* hex, uint8_t* out, size_t out_len) {|PairSlot* pick_slot_for_issuance() {|PairSlot* find_slot(const uint8_t* token) {|SessionSlot* pick_session_slot_for_issuance() {|bool find_valid_session(const uint8_t* token) {|bool ct_eq(const uint8_t* a, const uint8_t* b, size_t n) {|bool session_validate_cookie(httpd_req_t* req) {|bool session_issue(char* hex_out, size_t out_cap) {|void hex_encode(const uint8_t* in, size_t len, char* out) {' \
+	  -f $(SCOOKIE_CUT) $(SRC_DIR)/csi_integration.cpp > $@.tmp && mv $@.tmp $@
+
+$(SCOOKIE_BIN): $(SCOOKIE_SRC) $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC) $(SCOOKIE_SLOTS_INC) $(SRC_DIR)/csi_integration.cpp arduino_globals.h $(wildcard stubs/receipt_grant/*.h)
 	$(CXX) $(CXXFLAGS) -Werror \
 	  -I stubs/receipt_grant -I $(SRC_DIR) -I . \
 	  -DSESSION_COOKIE_UI_INC='"$(SCOOKIE_UI_INC)"' \
 	  -DSESSION_COOKIE_CSI_INC='"$(SCOOKIE_CSI_INC)"' \
+	  -DSESSION_COOKIE_SLOTS_INC='"$(SCOOKIE_SLOTS_INC)"' \
+	  -DCSI_INTEGRATION_CPP='"$(abspath $(SRC_DIR))/csi_integration.cpp"' \
 	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(SCOOKIE_SRC)
 
 .PHONY: run-session-cookie clean-session-cookie
 run-session-cookie: $(SCOOKIE_BIN)
 	$(call run_marked,$(SCOOKIE_BIN))
 clean-session-cookie:
-	rm -f $(SCOOKIE_BIN) $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC)
+	rm -f $(SCOOKIE_BIN) $(SCOOKIE_UI_INC) $(SCOOKIE_CSI_INC) $(SCOOKIE_SLOTS_INC)
 
 run: run-session-cookie
 clean: clean-session-cookie
@@ -846,7 +950,12 @@ clean: clean-wap-daily-summary
 # namespace (sweep F220): chirp_channel.cpp's load_settings() and
 # save_settings(), and the loop()'s self-test stamp read in canary_wap.ino
 # (its `if (!s_selftest_nvs_loaded) {` block, cut by line), through the real
-# nvs_store.h's NvsSession, whose read-only open now asks IDF first.
+# nvs_store.h's NvsSession, whose read-only open now asks IDF first. And the
+# key read fails closed (sweep F360, the canary's rule): stored_key_length(),
+# nvs_load_key(), nvs_store_key() and establish_identity_key(), with the
+# one-line KeyLoad enum, over the same fake NVS, which can also fail IDF's
+# blob lookup and Preferences' read: only IDF's ESP_ERR_NVS_NOT_FOUND may
+# lead to a new key, and a refused read writes nothing.
 FIRSTBOOT_BIN    = test_wap_first_boot_nvs
 FIRSTBOOT_SRC    = test_wap_first_boot_nvs.cpp
 FIRSTBOOT_WIZ    = test_wap_first_boot_nvs_wizard.inc
@@ -867,10 +976,12 @@ $(FIRSTBOOT_PWR): $(SRC_DIR)/power_monitor.h $(FIRSTBOOT_CUT) Makefile
 $(FIRSTBOOT_KEY): $(SRC_DIR)/canary_wap.ino $(FIRSTBOOT_CUT) Makefile
 	@test "$$(grep -cE '^static const char\* NVS_KEY_PRIV +=' $(SRC_DIR)/canary_wap.ino)" = 1 || { \
 	  echo "canary_wap.ino: no single NVS_KEY_PRIV line for nvs_load_key()" >&2; exit 1; }
-	@grep -nE '^static const char\* NVS_KEY_PRIV +=' $(SRC_DIR)/canary_wap.ino | \
+	@test "$$(grep -cE '^enum class KeyLoad : uint8_t \{ Loaded, Absent, Refused \};$$' $(SRC_DIR)/canary_wap.ino)" = 1 || { \
+	  echo "canary_wap.ino: no single one-line KeyLoad enum for nvs_load_key()" >&2; exit 1; }
+	@grep -nE '^static const char\* NVS_KEY_PRIV +=|^enum class KeyLoad : uint8_t \{' $(SRC_DIR)/canary_wap.ino | \
 	  sed -E 's|^([0-9]+):(.*)$$|#line \1 "$(SRC_DIR)/canary_wap.ino"\n\2|' > $@.tmp
-	awk -v 'sigs=static bool nvs_load_key(|static bool nvs_store_key(' -f $(FIRSTBOOT_CUT) \
-	  $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
+	awk -v 'sigs=static esp_err_t stored_key_length(|static KeyLoad nvs_load_key(|static bool nvs_store_key(|static bool establish_identity_key() {' \
+	  -f $(FIRSTBOOT_CUT) $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
 
 $(FIRSTBOOT_CHIRP): $(SRC_DIR)/chirp_channel.cpp $(FIRSTBOOT_CUT) Makefile
 	awk -v 'sigs=static void load_settings() {|static void save_settings() {' -f $(FIRSTBOOT_CUT) \
@@ -1657,8 +1768,9 @@ clean: clean-wander-jitter
 # `run` and `clean` by prerequisite so it adds no hunk to their lists.
 
 # The first-run wizard's pure decisions (setup-window keep-alive, scan-cache
-# freshness, AP-only join suppression, AP teardown grace), so the
-# phone-visible provisioning behavior is pinned on the host.
+# freshness, AP-only join suppression, AP teardown grace, the link the OTA
+# confirm dwell reads), so the phone-visible provisioning behavior is pinned
+# on the host.
 PROV_BIN = test_provisioning_logic
 PROV_SRC = test_provisioning_logic.cpp
 
@@ -1750,7 +1862,8 @@ HEALTH_SRC = test_health_store_logic.cpp
 # Round-two power-policy gates (power_gate_logic.h): advisory feature run/skip
 # (CSI drain) and routine MQTT heartbeat cadence stretch by power mode
 # (life-safety and event publishes bypass; overflow saturates rather than
-# wraps).
+# wraps), and the pull-OTA install veto on a discharging battery at or below
+# the monitor's low line.
 PWRGATE_BIN = test_power_gate_logic
 PWRGATE_SRC = test_power_gate_logic.cpp
 
@@ -1914,6 +2027,77 @@ clean-mqtt-identity:
 
 run: run-mqtt-identity
 clean: clean-mqtt-identity
+
+# The sketch's HMAC-SHA256 fails closed (sweep F359): hmac_sha256() answers
+# whether every mbedTLS step ran and zeroes its output when one did not, and
+# its callers refuse. secure_zero(), hmac_sha256(), the unambiguous alphabet
+# (the awk below takes its two lines, each once), format_api_token_string(),
+# derive_api_token(), derive_ap_password() and fingerprint_is_nonzero() are
+# cut verbatim out of canary_wap.ino, resolve_ap_password() on its own (the
+# suite includes it twice, as a release and as a development build), and the
+# backup format's constants (each once) with backup_chain() and
+# restore_chain() out of data_mgmt_api.h (firmware/tests_host/
+# cut_functions.awk). Under them: a stand-in for mbedTLS's streaming HMAC,
+# declared by firmware/tests_host/stubs/mbedtls_md and defined in the suite
+# over OpenSSL, that fails the step the test names; and the fake SD card
+# (stubs/sd_fake). provision_device() is cut on its own too, over stand-ins
+# for everything it calls but the two mints, so a refused mint is run against
+# the chain state it leaves. It also reads every source in the sketch
+# directory (the path is passed in), so it re-runs on every `make`: each call
+# of the three uses its result.
+HMACFAIL_BIN     = test_wap_hmac_fail
+HMACFAIL_SRC     = test_wap_hmac_fail.cpp
+HMACFAIL_KEY     = test_wap_hmac_fail_key.inc
+HMACFAIL_RESOLVE = test_wap_hmac_fail_resolve.inc
+HMACFAIL_DM      = test_wap_hmac_fail_datamgmt.inc
+HMACFAIL_PROV    = test_wap_hmac_fail_prov.inc
+HMACFAIL_INCS    = $(HMACFAIL_KEY) $(HMACFAIL_RESOLVE) $(HMACFAIL_DM) $(HMACFAIL_PROV)
+HMACFAIL_CUT     = ../../../tests_host/cut_functions.awk
+HMACFAIL_MD      = ../../../tests_host/stubs/mbedtls_md
+CUT_INCS        += $(HMACFAIL_INCS)
+
+$(HMACFAIL_KEY): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk '/^static const char UNAMBIGUOUS_ALPHABET\[\] =$$/ { a++; on = 1; printf "#line %d \"%s\"\n", FNR, FILENAME } \
+	  /^static const size_t UNAMBIGUOUS_LEN = / { n++; printf "#line %d \"%s\"\n", FNR, FILENAME; print; next } \
+	  on { print; if ($$0 ~ /;/) on = 0 } \
+	  END { if (a != 1 || n != 1) { print "canary_wap.ino: UNAMBIGUOUS_ALPHABET found " a + 0 " time(s), UNAMBIGUOUS_LEN " n + 0 ", expected once each" > "/dev/stderr"; exit 1 } }' \
+	  $(SRC_DIR)/canary_wap.ino > $@.tmp
+	awk -v 'sigs=static void secure_zero(|static bool hmac_sha256(|static void format_api_token_string(|static bool derive_api_token(|static bool derive_ap_password(|static bool fingerprint_is_nonzero(' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
+
+$(HMACFAIL_RESOLVE): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static bool resolve_ap_password(char* out_password, size_t out_len) {' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(HMACFAIL_PROV): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
+	awk -v 'sigs=static bool provision_device() {' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+$(HMACFAIL_DM): $(SRC_DIR)/data_mgmt_api.h $(HMACFAIL_CUT) Makefile
+	awk '/^static const (uint32_t|size_t) +BACKUP_(MAGIC|VERSION|PAYLOAD|SIZE) +=/ { n++; printf "#line %d \"%s\"\n", FNR, FILENAME; print } \
+	  END { if (n != 4) { print "data_mgmt_api.h: " n + 0 " BACKUP_ constant line(s), expected 4" > "/dev/stderr"; exit 1 } }' \
+	  $(SRC_DIR)/data_mgmt_api.h > $@.tmp
+	awk -v 'sigs=inline bool backup_chain(|inline bool restore_chain(' \
+	  -f $(HMACFAIL_CUT) $(SRC_DIR)/data_mgmt_api.h >> $@.tmp && mv $@.tmp $@
+
+$(HMACFAIL_BIN): $(HMACFAIL_SRC) $(HMACFAIL_INCS) arduino_globals.h $(SRC_DIR)/log_level.h \
+                 $(SRC_DIR)/chain_state.h $(wildcard $(HMACFAIL_MD)/mbedtls/*.h stubs/sd_fake/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-deprecated-declarations \
+	  -I stubs/sd_fake -I $(HMACFAIL_MD) -I $(SRC_DIR) -I . \
+	  -DWAP_HMAC_KEY_INC='"$(HMACFAIL_KEY)"' \
+	  -DWAP_HMAC_RESOLVE_INC='"$(HMACFAIL_RESOLVE)"' \
+	  -DWAP_HMAC_DATAMGMT_INC='"$(HMACFAIL_DM)"' \
+	  -DWAP_HMAC_PROV_INC='"$(HMACFAIL_PROV)"' \
+	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' -o $@ $(HMACFAIL_SRC) -lcrypto
+
+.PHONY: run-wap-hmac-fail clean-wap-hmac-fail
+run-wap-hmac-fail: $(HMACFAIL_BIN)
+	$(call run_marked,$(HMACFAIL_BIN))
+clean-wap-hmac-fail:
+	rm -f $(HMACFAIL_BIN) $(HMACFAIL_INCS)
+
+run: run-wap-hmac-fail
+clean: clean-wap-hmac-fail
 
 # Every suite compiles the sketch's code after Arduino.h's names (sweep
 # F229): check_arduino_globals.py asks make for every compile of `run` and
