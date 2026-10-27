@@ -395,7 +395,7 @@ commands are in the parity program's test plan (`PARITY.md`).
   `check_*_sync.sh` staged-copy guards; `make -C firmware/tests_host` and the
   four project `tests_host` Makefiles; the inline mesh/BLE/CSI g++ suites;
   Regression Guards (`regression_check.sh`, `check_common_build_reachability.py`,
-  `check_ota_channels.py`, `pin_budget.py`, `check_board_registry.py`);
+  `check_ota_channels.py`, `pin_budget.py`);
   route security and route budget for canary and WAP; `pytest` for
   `test_ota_release.py`; the microcopy lint over the WAP's embedded HTML.
 - **canary-local.yml**: 60+ `node --test` page suites; the generator drift
@@ -409,7 +409,9 @@ commands are in the parity program's test plan (`PARITY.md`).
   `lint_platform_pins.py`, `flavor_envs.py --check-workflows`,
   `gen_firmware_sbom.py --check --validate`, `lint_wifi_join_policy.py`,
   `lint_common_lib_manifests.py`, `gen_agent_entrypoints.py --check`,
-  `unittest discover -s scripts/tests`, and ~30 more.
+  `check_board_registry.py` (it reads the device manifests, which
+  firmware.yml's path filter does not list), `unittest discover -s
+  scripts/tests`, and ~30 more.
 - **features-dashboard-guard.yml**: a `FEATURES.md` dashboard cell may not
   move ✅ → ⚠️/❌ without an issue reference in the PR body.
 - **python.yml** (HA integration pytest + mypy), **rust.yml** (kernel),

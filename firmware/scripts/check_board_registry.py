@@ -57,7 +57,8 @@ Checks:
          board's registered mcu, and Improv's hardware string, every mDNS
          `model`, the system monitor's title and chip line, the chip
          fallback, and the /api/status and /api/fleet board tokens read the
-         target's macros.
+         target's macros (the monitor's PSRAM note, the S3 board's, prints
+         only behind HW_HAS_PSRAM).
  11. The board token reaches every place that tests it. CANARY_FIGURE_HARDWARE
      is defined in a header (the board's pins.h on canary-sense, -vision,
      -sentinel and -display; build_config.h in the canary-wap sketch), so a
@@ -485,7 +486,8 @@ def _surface(path: Path, where: str, body, want: list, refuse: list):
         n = flat.count(_squash(snippet))
         if n != 1:
             err(f"{rel} {where}: wants `{snippet}` once, has it {n} time(s): the name must "
-                "come from the build's macro, never a literal of its own")
+                "come from the build's macro (a board's note behind its target's flag), never "
+                "a literal of its own")
     for rx, why in refuse:
         if re.search(rx, flat):
             err(f"{rel} {where}: {why}")
@@ -567,7 +569,11 @@ def check_names_reach_their_surfaces():
     _surface(mon, "print_status()", _fn(msrc, "void print_status() {") if msrc else None,
              ['Serial.println(" SYSTEM MONITOR - " HARDWARE_CHIP_NAME);',
               'g_sys_metrics.chip_model[0] ? g_sys_metrics.chip_model : "not reported",',
-              'Serial.println(" * The " HARDWARE_CHIP_NAME " has NO built-in humidity sensor");'],
+              'Serial.println(" * The " HARDWARE_CHIP_NAME " has NO built-in humidity sensor");',
+              # The PSRAM note is the S3 board's: only a target with PSRAM prints it.
+              '#if HW_HAS_PSRAM\n Serial.println(" * PSRAM extends available RAM via external SPI chip'
+              ' (8MB on XIAO Sense)");\n#endif',
+              'Serial.println(" * PSRAM extends available RAM via external SPI chip (8MB on XIAO Sense)");'],
              [(r"\"[^\"]*ESP32-[SC]3[^\"]*\"", "it prints a chip's name as a literal")])
 
 

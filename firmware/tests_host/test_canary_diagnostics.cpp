@@ -25,6 +25,13 @@
  *     kCsiEventEgressDiagnosticsMax one, and spells nothing itself. Each
  *     clause is checked against an in-memory mutation of the handler that
  *     must fail it.
+ *   - the self-test's watchdog row, which checks nothing (device-details
+ *     §1.4): selftest_run() over stub probes, GET /api/selftest's body and
+ *     its handler (it runs the suite, then builds with
+ *     diagnostics_json::selftest()), the console's `d` and `t` counts and
+ *     the wake's row states (main.cpp), and the "Self-test complete" health
+ *     log (securacv_diagnostics.cpp), each source rule checked against
+ *     in-memory mutations that must fail it.
  * What the route's copy holds (what the loop task published, null before
  * the first pump) is test_canary_event_egress.cpp's, on the real egress.
  *
@@ -545,6 +552,12 @@ static std::string selftest_handler_rule(const std::string& raw) {
   if (h.empty()) return "no handle_selftest";
   if (h.find("if(!auth_gate(req))returnESP_OK;") == std::string::npos)
     return "it is not behind the bearer";
+  /* GET /api/selftest runs the suite: without the run it answers whatever
+   * report the last run (the boot's, or the console's `t`) left behind. */
+  const size_t run = h.find("(void)diag_run_selftest();");
+  const size_t read = h.find("if(!diag_get_selftest(&report)){returnhttp_send_error(");
+  if (run == std::string::npos || read == std::string::npos || run > read)
+    return "it does not run the suite before it reads the report (it would answer a cached run)";
   if (h.find("charbuf[diagnostics_json::kSelftestJsonMax];") == std::string::npos)
     return "the body buffer is not diagnostics_json::kSelftestJsonMax";
   if (h.find("if(diagnostics_json::selftest(report,buf,sizeof(buf))==0){returnhttp_send_error(") ==
@@ -579,6 +592,12 @@ static void test_the_selftest_handler_builds_with_the_builder() {
     {"the old totals back", "return http_send_json(req, buf);",
      "snprintf(buf, sizeof(buf), \"%u\", report.total_count); return http_send_json(req, buf);"},
     {"another body sent", "return http_send_json(req, buf);", "return http_send_json(req, \"{}\");"},
+    {"the run dropped (a cached report answered)", "(void)diag_run_selftest();", ""},
+    {"the report read before the run",
+     "(void)diag_run_selftest();\n\n  selftest_report_t report;\n  if (!diag_get_selftest(&report)) {\n"
+     "    return http_send_error(req, 500, \"selftest_failed\");\n  }",
+     "selftest_report_t report;\n  if (!diag_get_selftest(&report)) {\n"
+     "    return http_send_error(req, 500, \"selftest_failed\");\n  }\n  (void)diag_run_selftest();"},
   };
   int caught = 0;
   int applied = 0;
@@ -595,10 +614,45 @@ static void test_the_selftest_handler_builds_with_the_builder() {
     else std::printf("  mutation \"%s\" passes the rule\n", m.name);
   }
   const int n_muts = (int)(sizeof(muts) / sizeof(muts[0]));
-  CHECK(applied == n_muts && caught == n_muts, "and each of five mutations of it fails the rule");
+  CHECK(applied == n_muts && caught == n_muts, "and each of seven mutations of it fails the rule");
 }
 
 /* ── The console's counts and the wake (main.cpp) ────────────────────────── */
+
+/* "" when run_wake draws every row's state through scene::probe_state() the
+ * way this suite holds it, else what is wrong. Its rows are set four times:
+ * pending for the first frame, then revealed on the plain ASCII floor (one
+ * printed block), at each ANSI step, and on a skip. A reveal left pending
+ * prints every probe as [..] beside a finished score. */
+static std::string wake_rule(const std::string& wake) {
+  if (wake.empty()) return "no run_wake";
+  if (wake.find("return scene::probe_state(st.tests[i].not_a_probe, revealed, st.tests[i].passed);") ==
+      std::string::npos)
+    return "its rows do not take their state from scene::probe_state() and the report";
+  const std::regex assign("\\.state\\s*=\\s*([^;]+);");
+  const std::regex through("state_of\\(\\s*\\w+\\s*,\\s*(true|false)\\s*\\)");
+  std::vector<bool> revealed;
+  for (std::sregex_iterator it(wake.begin(), wake.end(), assign), e; it != e; ++it) {
+    const std::string rhs = (*it)[1];
+    std::smatch m;
+    if (!std::regex_match(rhs, m, through))
+      return "a row's state is set as " + rhs + ", not through state_of()";
+    revealed.push_back(m[1] == "true");
+  }
+  if (revealed.size() != 4)
+    return "its rows are set " + std::to_string(revealed.size()) +
+           " times, not four (pending, the plain floor, each ANSI step, a skip)";
+  if (revealed[0]) return "the first frame reveals its rows";
+  for (size_t k = 1; k < revealed.size(); ++k)
+    if (!revealed[k]) return "a reveal (the plain floor's, an ANSI step's or a skip's) leaves its rows pending";
+  const size_t floor_at = wake.find("if (!caps.ansi) {");
+  const size_t ansi_at = floor_at == std::string::npos ? floor_at : wake.find("} else {", floor_at);
+  const std::string floor = ansi_at == std::string::npos ? "" : wake.substr(floor_at, ansi_at - floor_at);
+  const size_t reveal = floor.find("state_of(i, true)");
+  if (reveal == std::string::npos || reveal > floor.find("scene::wake_frame("))
+    return "the plain floor prints its block before it reveals the rows";
+  return "";
+}
 
 static void test_the_console_counts_over_the_probes() {
   std::printf("-- §1.4: every console line counts passes over the probes; the wake draws each row by probe_state()\n");
@@ -619,23 +673,106 @@ static void test_the_console_counts_over_the_probes() {
   const size_t at = main_cpp.find("static void run_wake() {");
   const size_t end = at == std::string::npos ? at : main_cpp.find("\n}\n", at);
   const std::string wake = end == std::string::npos ? "" : main_cpp.substr(at, end - at);
-  CHECK(wake.find("return scene::probe_state(st.tests[i].not_a_probe, revealed, st.tests[i].passed);") !=
-            std::string::npos,
-        "run_wake's rows take their state from scene::probe_state() and the report");
-  size_t states = 0;
-  size_t through = 0;
-  const std::regex assign("\\.state\\s*=\\s*([^;]+);");
-  for (std::sregex_iterator it(wake.begin(), wake.end(), assign), e; it != e; ++it) {
-    ++states;
-    const std::string rhs = (*it)[1];
-    if (rhs.rfind("state_of(", 0) == 0) ++through;
+  const std::string verdict = wake_rule(wake);
+  if (!verdict.empty()) std::printf("  %s\n", verdict.c_str());
+  CHECK(verdict.empty(),
+        "run_wake sets every row through probe_state(): pending first, revealed on the plain "
+        "floor, at each ANSI step and on a skip");
+
+  struct Mutation { const char* name; const char* from; const char* to; };
+  const Mutation muts[] = {
+    {"the plain floor never reveals", "for (int i = 0; i < n; ++i) probes[i].state = state_of(i, true);",
+     "for (int i = 0; i < n; ++i) probes[i].state = state_of(i, false);"},
+    {"an ANSI step never reveals", "!skipped; ++i) {\n      probes[i].state = state_of(i, true);",
+     "!skipped; ++i) {\n      probes[i].state = state_of(i, false);"},
+    {"a skip never reveals", "probes[j].state = state_of(j, true);", "probes[j].state = state_of(j, false);"},
+    {"the first frame revealed", "probes[i].state = state_of(i, false);", "probes[i].state = state_of(i, true);"},
+    {"a literal state", "probes[j].state = state_of(j, true);",
+     "probes[j].state = scene::ProbeState::Pass;"},
+    {"the report's flag dropped", "st.tests[i].not_a_probe, revealed", "false, revealed"},
+    {"the plain floor's reveal gone",
+     "    for (int i = 0; i < n; ++i) probes[i].state = state_of(i, true);\n", ""},
+  };
+  int caught = 0;
+  int applied = 0;
+  for (const Mutation& m : muts) {
+    std::string mutated = wake;
+    const size_t p = mutated.find(m.from);
+    if (p == std::string::npos) {
+      std::printf("  mutation \"%s\" does not apply\n", m.name);
+      continue;
+    }
+    ++applied;
+    mutated.replace(p, std::strlen(m.from), m.to);
+    if (!wake_rule(mutated).empty()) ++caught;
+    else std::printf("  mutation \"%s\" passes the rule\n", m.name);
   }
-  CHECK(states >= 4 && through == states,
-        "and every row's state is set through it, never as a literal Pass, Fail or Pending");
-  CHECK(wake.find("state_of(i, false)") != std::string::npos &&
-            wake.find("state_of(i, true)") != std::string::npos &&
-            wake.find("state_of(j, true)") != std::string::npos,
-        "pending before the reveal, revealed after it and on a skip");
+  const int n_muts = (int)(sizeof(muts) / sizeof(muts[0]));
+  CHECK(applied == n_muts && caught == n_muts, "and each of seven mutations of it fails the rule");
+}
+
+/* ── The health log (securacv_diagnostics.cpp) ───────────────────────────── */
+
+/* "" when diag_run_selftest() logs its passes over the probes selftest_run()
+ * counted, else what is wrong (whitespace squashed first). Its "Self-test
+ * complete" line read x/10 while the score was over nine. */
+static std::string health_log_rule(const std::string& raw) {
+  std::string b;
+  for (char c : raw) {
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') continue;
+    b += c;
+  }
+  if (b.empty()) return "no diag_run_selftest";
+  if (b.find("constuint8_tprobes=selftest_run(TESTS,SELFTEST_COUNT,selftest_clock_ms,&s_selftest);") ==
+      std::string::npos)
+    return "it does not run the suite through selftest_run(), keeping its probe count";
+  if (b.find("(unsigned)s_selftest.passed_count,(unsigned)probes,(unsigned)s_selftest.health_score);") ==
+      std::string::npos)
+    return "its log line does not print the passes over the probes";
+  size_t rows = 0;
+  for (size_t p = b.find("SELFTEST_COUNT"); p != std::string::npos; p = b.find("SELFTEST_COUNT", p + 1)) ++rows;
+  if (rows != 1 || b.find("total_count") != std::string::npos)
+    return "it counts the rows somewhere besides the runner's argument";
+  if (b.find("log_health(LOG_LEVEL_INFO,LOG_CAT_SYSTEM,\"Self-testcomplete\",detail);") == std::string::npos)
+    return "it does not log the line it built";
+  return "";
+}
+
+static void test_the_health_log_counts_over_the_probes() {
+  std::printf("-- §1.4: the \"Self-test complete\" health log counts passes over the probes\n");
+  const std::string diag_cpp = read_file(CANARY_DIAG_CPP);
+  const size_t at = diag_cpp.find("uint8_t diag_run_selftest(void) {");
+  const size_t end = at == std::string::npos ? at : diag_cpp.find("\n}\n", at);
+  const std::string body = end == std::string::npos ? "" : diag_cpp.substr(at, end - at);
+  CHECK(!body.empty(), "securacv_diagnostics.cpp read; diag_run_selftest found");
+  const std::string verdict = health_log_rule(body);
+  if (!verdict.empty()) std::printf("  %s\n", verdict.c_str());
+  CHECK(verdict.empty(), "its log line reads x/<probes>, the count selftest_run() returned");
+
+  struct Mutation { const char* name; const char* from; const char* to; };
+  const Mutation muts[] = {
+    {"over the rows again (x/10)", "(unsigned)s_selftest.passed_count, (unsigned)probes,",
+     "(unsigned)s_selftest.passed_count, (unsigned)SELFTEST_COUNT,"},
+    {"over the report's rows", "(unsigned)s_selftest.passed_count, (unsigned)probes,",
+     "(unsigned)s_selftest.passed_count, (unsigned)s_selftest.total_count,"},
+    {"the runner's count dropped", "const uint8_t probes = selftest_run(", "(void)selftest_run("},
+  };
+  int caught = 0;
+  int applied = 0;
+  for (const Mutation& m : muts) {
+    std::string mutated = body;
+    const size_t p = mutated.find(m.from);
+    if (p == std::string::npos) {
+      std::printf("  mutation \"%s\" does not apply\n", m.name);
+      continue;
+    }
+    ++applied;
+    mutated.replace(p, std::strlen(m.from), m.to);
+    if (!health_log_rule(mutated).empty()) ++caught;
+    else std::printf("  mutation \"%s\" passes the rule\n", m.name);
+  }
+  const int n_muts = (int)(sizeof(muts) / sizeof(muts[0]));
+  CHECK(applied == n_muts && caught == n_muts, "and each of three mutations of it fails the rule");
 }
 
 /* ── The handler ───────────────────────────────────────────────────────── */
@@ -723,6 +860,7 @@ int main() {
   test_the_selftest_route_says_not_a_probe_too();
   test_the_selftest_handler_builds_with_the_builder();
   test_the_console_counts_over_the_probes();
+  test_the_health_log_counts_over_the_probes();
   test_the_handler_builds_with_the_builder();
   if (g_fail) {
     std::printf("test_canary_diagnostics: %d of %d checks FAILED\n", g_fail, g_checks);

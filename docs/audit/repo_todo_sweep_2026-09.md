@@ -15201,8 +15201,9 @@ so — see D2 below.)
   "Canary v1" (`securacv_mqtt.cpp` `add_device_info`); its watchdog self-test
   returned `true` on both branches of its `#if` (`securacv_diagnostics.cpp`),
   a tenth of the health score the fleet beacon, the BLE health
-  characteristic and the OTA confirm gate read; its dashboard's Firmware row
-  read "2.0.1" until answered and fell back to it (`securacv_webui.cpp`).
+  characteristic, the boot's low-score warning, the OTA confirm gate and
+  both flashers' self-manifest verdict (`healthVerdict()`) read; its
+  dashboard's Firmware row read "2.0.1" until answered and fell back to it (`securacv_webui.cpp`).
   The canary-wap's boot banner, serial system monitor and Improv hardware
   string named the S3 on the C3 build (`canary_wap.ino`, `sys_monitor.h`,
   `ble_improv.cpp`), its chip fallback was "ESP32-S3", `/admin` showed
@@ -15225,7 +15226,12 @@ so — see D2 below.)
   and the Lab's Vision generator still typed `"battery":100` into its health
   example, which its own key check refused (`gen_vision.py` exited 1 and
   `vision.test.js` failed), while the Sense generator, which checked no
-  keys, showed it on the Lab's Sense page.
+  keys, showed it on the Lab's Sense page. A second review found the
+  display lane note in `firmware/build_matrix.json` (carried to the
+  website's /checkup) still calling the flagship suite "10-probe", and the
+  board registry check, which reads the device manifests (checks 9 and 10),
+  running only in `firmware.yml`, whose path filter lists no `devices/`
+  path, so a manifest-only PR ran no check.
   *Done (#<PR>):* every one of those names now comes from the build and the
   board. The flagship's `canary_config.h` defines `CANARY_PRODUCT_NAME`
   ("Canary") and `CANARY_BOARD_NAME` ("XIAO ESP32-S3 Sense" on the
@@ -15240,8 +15246,11 @@ so — see D2 below.)
   (which now builds its body with the same row writer,
   `diagnostics_json::selftest()`), reads `[--] ... not a probe` in the wake
   scene, and counts toward neither the passes nor the score, which is over
-  the nine probes everywhere it is printed (`t`, `d`, both routes; a unit
-  with four of nine passing scores 44 where it scored 50). The two
+  the nine probes everywhere it is printed (`t`, `d`, both routes, the
+  "Self-test complete" health log; a unit with four of nine passing scores
+  44 where it scored 50, seven of nine scores 77, which both flashers read
+  as "Up, with minor warnings" where 80 read "Self-check passed", and six
+  of nine, 66, now logs the boot's low-score warning). The two
   dashboards read "--" for a firmware or chip they were not told, and
   `/admin`'s footer version is gone (its gzip 64,938 B to 64,910 B). The
   WAP's `build_config.h` names each target's board and chip, which its
@@ -15253,7 +15262,9 @@ so — see D2 below.)
   takes its Kind from the device type `/api/status` names and shows the
   signal as the glass's own word: `microcopy_lint.sh`'s plain-words audit
   keeps "dBm" out of that page, so the unit the design asked for is not the
-  fix. The three boards define their tokens, and the trio's `mdns_mgr.cpp`
+  fix. The WAP monitor's PSRAM note prints only behind `HW_HAS_PSRAM`, so
+  not on the C3. The three boards define their tokens, and the trio's
+  `mdns_mgr.cpp`
   and `ota_mgr.cpp` and the display's `ota_mgr.cpp` include `pins.h`, so
   `/api/status` and `/api/fleet` carry `hw`, every Sense, Vision and
   Sentinel advert carries it, and each of those, and every display env
@@ -15267,18 +15278,30 @@ so — see D2 below.)
   leaving a low-memory warning it would have said "Battery back to 0%").
   The docs that counted ten probes count nine and the watchdog row
   (`docs/design/test_console.md`, `serial_console_theming.md`,
-  `automated_help_desk.md`, `firmware/build_matrix.json`'s selftest note,
-  and the self-test row of `firmware/FEATURES.md`'s dashboard, whose label
-  now names no count, no cell changed), and `build_matrix.json`'s Sense
-  provenance no longer says the health sends `"battery":100`.
+  `automated_help_desk.md`, which also says the website's copy lags until
+  its follow-up, `firmware/build_matrix.json`'s selftest note and display
+  lane note, and the self-test row of `firmware/FEATURES.md`'s dashboard,
+  whose label now names no count, no cell changed), and
+  `build_matrix.json`'s Sense provenance no longer says the health sends
+  `"battery":100`. `scripts/lint_build_matrix.py` refuses a probe count in
+  the matrix other than the suite's, read from `TESTS[]` (a row with no
+  probe function is not counted; it failed on the display lane note).
   `firmware/scripts/check_board_registry.py` check 10 holds every name and
   token to the board's `pins.h` and every surface named above to its macro,
   and check 11 holds every file that tests the token to including the
-  header that defines it (37 errors on `origin/main`). Held also by
-  `test_canary_diagnostics.cpp` (the runner, `/api/selftest`'s body and
-  handler, the console's counts and the wake's row states; run over the
-  flagship sources as they stood before this review, with the new headers
-  it compiles against, 9 of its 70 checks fail), `test_mdns_txt.cpp`,
+  header that defines it (38 errors on `main` at 377bbc6f, and at
+  dc9f1dba). The check moves from `firmware.yml` to `lint.yml`, which has
+  no path filter, and
+  `scripts/tests/test_board_registry_runs_on_its_inputs.py` runs it with
+  the path-filter read recorder and fails when a workflow that runs it on a
+  pull request filters out a file it read (it failed on `firmware.yml`'s
+  filter, which missed the `devices/` listing and its 21 manifests). Held
+  also by `test_canary_diagnostics.cpp` (the runner, `/api/selftest`'s body
+  and handler, which runs the suite before it reads the report, the
+  console's counts, the wake's row states at all four places `run_wake`
+  sets them, and the health log's count; run over the flagship sources as
+  they stood before the first review, with the new headers it compiles
+  against, 10 of its 72 checks fail), `test_mdns_txt.cpp`,
   `test_console_scene.cpp`, `test_honest_names.test.js`, `gen_sense.py`'s
   and `gen_vision.py`'s key checks and
   `custom_components/securacv/tests/test_absent_battery.py`, each of which
@@ -15287,7 +15310,12 @@ so — see D2 below.)
   readers, the `pins.h` includes, the two Lab examples, a health body and
   the blueprint), each run against check 10/11 and the two host suites and,
   where they apply, the two Lab generators and `test_absent_battery.py`,
-  were all caught. `python.yml` now runs the HA suite on an edit to the
+  were all caught. The second review's 81 mutants left four alive, and
+  each is now caught: the plain floor's wake reveal left pending
+  (`test_canary_diagnostics.cpp`'s wake rule), `GET /api/selftest` without
+  its run (its handler rule), the health log back over ten rows (its
+  health-log rule) and the WAP monitor's PSRAM note unguarded (check 10).
+  `python.yml` now runs the HA suite on an edit to the
   three `mqtt_mgr.cpp` files it reads. Not changed here: the display's own
   health still sends `"battery":100` (its `mqtt_mgr.cpp` is
   emulator-compiled; the display dist PR, device-details PR 17); the Touch
@@ -15297,17 +15325,26 @@ so — see D2 below.)
   `canary-display-dash-mic`), whose `pins.h` defines no token, so their
   status, fleet row, advert and OTA engine still name no board.
   Follow-up for the website repo (`securacv_website`, read at its `main`
-  39c364c), not changed here: its `onboarding-spec.json` `selftest` block
-  (website-authored, not carried) still lists `watchdog` as a probe that
-  "checks configured", with a "Reboot to re-arm it." fix, says
-  `healthPerProbe` 10, and gives the provenance "TESTS[] (10 probes) ...
-  health_score = passed*100/10"; `tests/plugin-facts.test.mjs` pins
-  `healthPerProbe` 10 beside the ten row ids; `checkup.html` heads the boot
-  self-test "10 probes". Each moves to nine probes and the watchdog row's
-  "not a probe". `help.html`'s maker line, "GET /api/selftest — the 10
-  probes ... reachable even on the setup network", wants checking with them:
-  it sits under the flagship's probe chips, and the route it describes as
-  open on the setup network is the WAP's, whose suite is its own.
+  39c364c), not changed here: its `onboarding-spec.json` (website-authored
+  where these sit, not carried; `js/onboarding-spec.js` is generated from
+  it) still lists `watchdog` as a probe that "checks configured", with a
+  "Reboot to re-arm it." fix, says `healthPerProbe` 10, gives the
+  provenance "TESTS[] (10 probes) ... health_score = passed*100/10", and
+  describes the console's `a` as the "Animated reveal of the 10-probe
+  self-test"; `js/checkup.js` falls back to 10 per probe;
+  `tests/plugin-facts.test.mjs` pins `healthPerProbe` 10 and "exactly 10
+  probes" beside the ten row ids; `checkup.html` says "10-probe" in its
+  meta and `og:description` (lines 6 and 9), "a 10-probe self-test at
+  boot" (249), heads the boot self-test "10 probes" (271) and says "Each
+  probe is worth 10%" (272); and `help.html` calls it "The 10-probe
+  self-test" (260). Each moves to nine probes and the watchdog row's "not
+  a probe" (nine probes do not score a whole number per probe). Its
+  display lane note on /checkup moves with the next carry
+  (`carry_to_site.py`). `help.html`'s maker line (292), "GET /api/selftest
+  — the 10 probes ... reachable even on the setup network", wants checking
+  with them: it sits under the flagship's probe chips, and the route it
+  describes as open on the setup network is the WAP's, whose suite is its
+  own.
   Built here (PlatformIO at `-j 1` on this machine's offline library
   store, so CI's builds of the same envs can differ by some bytes), each
   beside the same env built here from `origin/main` 377bbc6f, on the core

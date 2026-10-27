@@ -322,6 +322,22 @@ jobs:
         # the manifests yet (roadmap §4 wave 1), so this is the only gate that
         # can catch a stale join.
         run: python3 scripts/lint_device_manifests.py
+      - name: Check board registry
+        # firmware/boards/boards.json is the single source of truth for
+        # supported hardware (the board-level flavors.json). This guard
+        # keeps the registry, the board directories, the pin headers, the
+        # build environments, and the boards README consistent — and
+        # enforces the "pins are data" rule (pins.h = #define only) plus
+        # tier_evidence for any board claiming hardware validation, and
+        # (checks 10 and 11) that every name and board token a build shows
+        # comes from its board. Contract: firmware/PORTING.md.
+        # It ran in firmware.yml, whose path filter lists no devices/ path;
+        # it reads devices/<slug>/device.json (checks 9 and 10: the env ->
+        # board join, devices/canary/device.json's name), so it runs here,
+        # unfiltered. scripts/tests/test_board_registry_runs_on_its_inputs.py
+        # records what it reads and fails when a workflow that runs it on a
+        # pull request has a path filter that misses one of those files.
+        run: python3 firmware/scripts/check_board_registry.py
       - name: Manifest-owned CAD knobs equal the case literals
         # Since roadmap §4 wave 3 (Parametrize) a manifest's `cad.params` OWNS
         # the board/module knobs of its case: gen_cad_params.py writes them

@@ -256,7 +256,7 @@
           "selftest"
         ]
       },
-      "note": "The canary-display lane: a fleet VIEWER, not a witness. It renders and verifies what the Canaries publish (TOFU-pinned Ed25519 chain heads, MQTT + HA discovery, signed pull-OTA with an HA update entity), records no witness chain of its own, and has no camera, mic, CSI, GPS or SD witness log — so none of the sensing tiles apply. 'selftest' here is the OTA engine's post-update boot self-test (rollback safety), not the canary tree's 10-probe suite. The watch (XIAO ESP32-S3 + Seeed Round Display, flavors.json check_env) stands for the line; the other display products are the same firmware on other glass, listed in canary-local/devices/flash.json and flavors.json release_envs. USB-flashable and OTA-published; the hardware tier stays compile-tested until a Hardware Test Report promotes a board."
+      "note": "The canary-display lane: a fleet VIEWER, not a witness. It renders and verifies what the Canaries publish (TOFU-pinned Ed25519 chain heads, MQTT + HA discovery, signed pull-OTA with an HA update entity), records no witness chain of its own, and has no camera, mic, CSI, GPS or SD witness log — so none of the sensing tiles apply. 'selftest' here is the OTA engine's post-update boot self-test (rollback safety), not the canary tree's nine-probe suite. The watch (XIAO ESP32-S3 + Seeed Round Display, flavors.json check_env) stands for the line; the other display products are the same firmware on other glass, listed in canary-local/devices/flash.json and flavors.json release_envs. USB-flashable and OTA-published; the hardware tier stays compile-tested until a Hardware Test Report promotes a board."
     }
   ],
   "recommended": {

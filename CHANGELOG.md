@@ -38,7 +38,14 @@
   console's `t` and `d` print "x/9", and the wake scene draws `[--] watchdog
   ... not a probe` (`scene::probe_state()`). A unit with every probe passing
   still scores 100; one with exactly four of nine passing now scores 44,
-  under the OTA gate's 50, where the free pass made it 50.
+  under the OTA gate's 50, where the free pass made it 50. Both flashers
+  grade the self-manifest's `health` (the console's `j`, the same score)
+  with one rule (`healthVerdict()` in `canary-local/assets/flash-core.js`
+  and `desktop/src/app.js`: 80 or more "Self-check passed", 50 or more "Up,
+  with minor warnings"), so seven of nine passing scores 77 and reads "Up,
+  with minor warnings", where the free pass made it 80 and "Self-check
+  passed"; and the boot's low-score warning (`score < 70`) now logs at six
+  of nine (66), where the free pass made it 70 and it did not.
 - **The dashboards show no version they were not told.** The flagship's
   Firmware row read "2.0.1" until `GET /api/status` answered and fell back
   to it; the WAP's `/admin` read "3.1.0" and fell back to "3.0.0", printed
@@ -57,6 +64,8 @@
   was the literal "XIAO ESP32S3" or "XIAO ESP32C3"), so one device names its
   board one way everywhere. The chip model fallback is empty, not
   "ESP32-S3": the serial monitor prints "not reported" and `/admin` "--".
+  The monitor's PSRAM note ("8MB on XIAO Sense") prints only where the
+  target has PSRAM (`HW_HAS_PSRAM`), so the C3 build no longer prints it.
   The S3 target defines `CANARY_FIGURE_HARDWARE "board:seeed_xiao_esp32s3"`,
   the key `canary-local/devices/figures.json` maps to the WAP's figure, so
   `GET /api/status` (as `node_status.hw`) and the `GET /api/fleet` self row
@@ -109,22 +118,40 @@
   that push would have read "Battery back to 0%". The display's health still
   sends 100: its `mqtt_mgr.cpp` is emulator-compiled, so that fix rides the
   display dist PR.
+- **The count that reaches the website says nine.** `firmware/build_matrix.json`'s
+  display lane note, which `scripts/carry_to_site.py` copies to the
+  website's /checkup page, said "the canary tree's 10-probe suite"; it says
+  nine-probe, as the selftest feature note does, and
+  `scripts/lint_build_matrix.py` now refuses any probe count in the matrix
+  that is not the suite's, read from `TESTS[]` in `securacv_diagnostics.cpp`
+  (a row with no probe function is not counted).
+- **The board registry check runs on every PR.**
+  `firmware/scripts/check_board_registry.py` reads the device manifests
+  (`devices/<slug>/device.json`: the env-to-board join of check 9, and check
+  10's product name and board ports), but it ran only in `firmware.yml`, whose
+  path filter lists no `devices/` path, so a PR that edited a manifest alone
+  ran no check. It moves to `lint.yml`, which has no path filter, and
+  `scripts/tests/test_board_registry_runs_on_its_inputs.py` runs it with the
+  path-filter read recorder and fails when a workflow that runs it on a pull
+  request has a filter that misses a file it read.
 - **Held by tests that fail on the old code:**
   `firmware/scripts/check_board_registry.py` check 10 (each name and token
   from the board's `pins.h`, the flagship's ports and the WAP's targets
   included, and each surface that shows one reading its macro: the mDNS
   `model`, Home Assistant's Model and Hardware, Improv's hardware string, the
-  WAP's mDNS `model`, monitor and chip fallback, and its `/api/status` and
-  `/api/fleet` tokens) and check 11 (every file that tests the token
-  includes the header that defines it); 37 errors on the tree before this
-  change. `test_canary_diagnostics.cpp` (the runner over stub probes, the
-  `/api/selftest` body and its handler, and the console's counts and the
-  wake's row states read from `main.cpp`), `test_mdns_txt.cpp`,
+  WAP's mDNS `model`, monitor (its PSRAM note behind `HW_HAS_PSRAM`) and chip
+  fallback, and its `/api/status` and `/api/fleet` tokens) and check 11
+  (every file that tests the token includes the header that defines it); 38
+  errors on the tree before this change. `test_canary_diagnostics.cpp` (the
+  runner over stub probes, the `/api/selftest` body and its handler, which
+  runs the suite before it reads the report, the console's counts and the
+  wake's row states at all four places it sets them, read from `main.cpp`,
+  and the "Self-test complete" health log's count), `test_mdns_txt.cpp`,
   `test_console_scene.cpp`, `firmware/tests_host/test_honest_names.test.js`
   (the mirror's receipt run against stubbed answers, and both dashboards'
-  Firmware rows), `gen_sense.py`'s key check, and
-  `custom_components/securacv/tests/test_absent_battery.py` (the HA
-  attribute, the three health bodies and the blueprint), which
+  Firmware rows), `gen_sense.py`'s key check, `lint_build_matrix.py`'s probe
+  count, and `custom_components/securacv/tests/test_absent_battery.py` (the
+  HA attribute, the three health bodies and the blueprint), which
   `.github/workflows/python.yml` now also runs on an edit to any of the
   three `mqtt_mgr.cpp` files it reads. No `FIRMWARE_VERSION` bump.
   Host-tested; not run on a device.
