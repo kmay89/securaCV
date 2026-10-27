@@ -3570,10 +3570,12 @@ so — see D2 below.)
   through a bond either.
   The re-arm stays the owner's act: a Forget with the API token, or the 10 s
   BOOT hold. The hold needs no token and no tap, and works whatever the
-  lockout is doing. It is the way out when BOOT taps keep closing because
-  another device asks (F342): hold BOOT 10 s, then set up again from the
-  iPhone through the setup door. improv_core.h and wifi_clear_credentials()
-  are unchanged.
+  lockout is doing, but it is the last way out when BOOT taps keep closing
+  because another device asks (F342), after the recovery kit's token and the
+  USB serial console, and only for a host known to be on the network only,
+  with the iPhone ready (`magic_pairing.md` §3.7): it keeps the token and
+  reopens the setup door to whichever Bluetooth client connects first.
+  improv_core.h and wifi_clear_credentials() are unchanged.
   Forget also clears the stored broker login (F333). Its confirm says the unit
   goes back to first-boot trust (the setup door open for 30 minutes to the
   first phone nearby, a camera unit taking a code shown to its lens), and a
@@ -3584,6 +3586,12 @@ so — see D2 below.)
   Host-tested (`test_wifi_authority`: a session's Forget is 401, never runs
   and leaves the door shut; the bearer's opens it), not bench-tested (U1 row,
   and a §9 row in `magic_pairing.md`).
+  Third review fix (same PR): the FAQ, `magic_pairing.md` §8, the CHANGELOG
+  and this entry called the hold the way out when BOOT taps keep closing,
+  from this decision's wording of 2026-10-19, while the base already held
+  #1842's fifth-review order (§3.7, `SECURITY_MODEL.md`, the dashboard's
+  `tapContendedText()`): the hold is last. Each now says so, and
+  `test_docs_claims.py`'s `RETIRED_IN` holds the four files to it.
 - [x] **F346 [decision] canary-wap: a session reads the Bluetooth passkey and
   the mesh confirmation code.** `GET /api/bluetooth` (`bt_auth_gated`,
   `api_auth_check`) answers `pairing.pin` while a passkey is displayed, and

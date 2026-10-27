@@ -44,8 +44,13 @@
   frame); to add one to a display's fleet, hold BOOT 10 s, then show the
   code, or join it to the display's network from the dashboard and type the
   hub as the broker on `/mqtt` (a unit with a network stored does not scan,
-  and Forget leaves a standalone unit standalone). The 10 s hold is the
-  token-free way out, and works whatever the lockout is doing. Kept as
+  and Forget leaves a standalone unit standalone). The 10 s hold needs no
+  token and works whatever the lockout is doing, but it is the last way out
+  when BOOT taps keep closing (`magic_pairing.md` §3.7): it keeps the token
+  and reopens the setup door to whichever Bluetooth client connects first,
+  so paste the kit's token or read it from the USB serial console first, and
+  hold only for a host known to be on the network only, with the iPhone
+  ready. Kept as
   posture: the plain broker link (`tls_mode` 0), which a host answering
   for the broker can still read; the CA-verified mode is the defense.
   After updating: a network a session moved the unit to before this release

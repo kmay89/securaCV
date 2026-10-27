@@ -274,6 +274,32 @@ RETIRED_IN = (
      "their action takes the token; Retry full boot, Save my recovery kit, "
      "Start Pairing and the opera's Create/Join raise the sign-in when "
      "pressed, with no note on the card"),
+    # The PR's third review: four sentences called the 10 s hold the way out
+    # when BOOT taps keep closing, from F345's decision of 2026-10-19, while
+    # main already held #1842's fifth-review order (magic_pairing.md §3.7):
+    # the kit's token and the USB console first, the hold last, since it keeps
+    # the token and reopens the setup door to the first Bluetooth client.
+    ("docs/FAQ.md",
+     "it is the way out when BOOT taps keep closing because another device is "
+     "asking: hold BOOT 10 s",
+     "the hold is the last way out, after the kit's token and the USB "
+     "console, for an asker on the network only, with the iPhone ready"),
+    ("docs/design/magic_pairing.md",
+     "the token-free way out is the 10 s hold, then setting the unit up again "
+     "from the iPhone through the setup door, whose claim is spent only by a "
+     "match",
+     "§3.7's order: the kit's token or the USB console first, the hold last; "
+     "the door goes to the first client that connects, which spends the "
+     "claim minted for its own link"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "It is the way out when BOOT taps keep closing because another device "
+     "asks (F342): hold BOOT 10 s, then set up again from the iPhone through "
+     "the setup door.",
+     "the last way out, after the kit's token and the USB console"),
+    ("CHANGELOG.md",
+     "The 10 s hold is the token-free way out, and works whatever the lockout "
+     "is doing.",
+     "the hold is the last way out (magic_pairing.md §3.7)"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -360,6 +386,16 @@ MUST_PASS_IN = [
     "image); a page",
     "the Wi-Fi, vault key, reboot and pairing-QR cards say beforehand that "
     "their action takes the token",
+    # The third review's replacements of the way-out sentences.
+    "so it is the last way out when BOOT taps keep closing because another "
+    "device is asking.",
+    "the ways out are §3.7's, in its order: the recovery kit's token or the "
+    "USB serial console first; the 10 s hold last",
+    "it is the last way out when BOOT taps keep closing because another "
+    "device asks (F342), after the recovery kit's token and the USB serial "
+    "console",
+    "The 10 s hold needs no token and works whatever the lockout is doing, "
+    "but it is the last way out when BOOT taps keep closing",
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -453,6 +489,21 @@ MUST_FAIL_IN = [
     "  owner's session: a reboot, or any other write a session may make); a page",
     "  nothing on top of it; every card whose action takes the token says so\n"
     "  beforehand (\"… takes the API token: paste it (it is in your recovery kit),",
+    # The third review's, as they stood.
+    "`docs/OTA.md` and `docs/TRUST_MODEL.md` say why the key survives). The\n"
+    "hold needs no token and no tap and works whatever the lockout is doing, so\n"
+    "it is the way out when BOOT taps keep closing because another device is\n"
+    "asking: hold BOOT 10 s, then set it up again from the iPhone through the\n"
+    "setup door.",
+    "- **When BOOT taps keep closing because another device asks (F342),** the\n"
+    "  token-free way out is the 10 s hold, then setting the unit up again from\n"
+    "  the iPhone through the setup door, whose claim is spent only by a match.",
+    "  BOOT hold. The hold needs no token and no tap, and works whatever the\n"
+    "  lockout is doing. It is the way out when BOOT taps keep closing because\n"
+    "  another device asks (F342): hold BOOT 10 s, then set up again from the\n"
+    "  iPhone through the setup door. improv_core.h and wifi_clear_credentials()",
+    "  and Forget leaves a standalone unit standalone). The 10 s hold is the\n"
+    "  token-free way out, and works whatever the lockout is doing. Kept as",
 ]
 
 

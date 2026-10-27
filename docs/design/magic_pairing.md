@@ -1015,8 +1015,11 @@ a user.
   (F333), and the hold clears the whole broker row. The door's winner keeps
   the permanent bearer token, which cannot be rotated today (F353).
 - **When BOOT taps keep closing because another device asks (F342),** the
-  token-free way out is the 10 s hold, then setting the unit up again from
-  the iPhone through the setup door, whose claim is spent only by a match.
+  ways out are §3.7's, in its order: the recovery kit's token or the USB
+  serial console first; the 10 s hold last, and only for a host known to be
+  on the network only, with the iPhone ready, since the hold keeps the token
+  and reopens the setup door to whichever Bluetooth client connects first
+  (one that beats the phone spends the claim minted for its own link).
 - **Radio coexistence** on the C3 / C6 of one BLE link beside a SoftAP and
   a candidate join is unproven on a bench (§9).
 - **The display never opens a door**, which also means a display can only

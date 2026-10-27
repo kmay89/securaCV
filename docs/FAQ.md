@@ -548,10 +548,15 @@ the Ed25519 identity key, the witness chain and the sealed records are
 kept, so every hub and display that pinned the key still recognizes it
 (every Canary with a BOOT button has the same 10-second hold —
 `docs/OTA.md` and `docs/TRUST_MODEL.md` say why the key survives). The
-hold needs no token and no tap and works whatever the lockout is doing, so
-it is the way out when BOOT taps keep closing because another device is
-asking: hold BOOT 10 s, then set it up again from the iPhone through the
-setup door. A Canary whose saved network is just
+hold needs no token and no tap and works whatever the lockout is doing, but
+it keeps the API token and opens the setup door to whichever Bluetooth
+device connects first, so it is the last way out when BOOT taps keep
+closing because another device is asking. First paste the API token from
+your recovery kit (the iPhone app pairs from the kit), or read it from the
+USB serial console, which prints it at every boot. Hold BOOT 10 s only when
+the asking device is on your network and not in Bluetooth range of the
+WAP, with the iPhone ready to set it up again through the setup door
+(`docs/design/magic_pairing.md` §3.7 says why). A Canary whose saved network is just
 down right now keeps the door shut and raises its recovery network
 instead; fix the router, or use that network's printed key (on a WAP, then
 the API token or one BOOT tap to change its Wi-Fi there).
