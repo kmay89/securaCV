@@ -276,10 +276,14 @@ def test_every_canary_keeps_its_own_row() -> None:
 
 
 def test_a_canary_only_verification_has_seen_has_a_row() -> None:
-    """A retained chain or counts publish can be verified before the
-    Canary's status arrives, so verification can name an id no device record
-    has. It gets a row of its own, numbered after the device records when it
-    shares their eight characters, and the dump does not fail on it."""
+    """Verification can hold a verdict for an id the dump has neither a
+    record nor a page for. On a real core every verdict comes from a handler
+    of the Canary's sensors, which make its page, so it is a verdict for a
+    Canary whose page the owner deleted after (tests/ha holds that, and that
+    a chain verified before the status is numbered with the pages); this
+    test adds no entities and sets the verdicts itself. Such an id gets a
+    row of its own, numbered after the device records when it shares their
+    eight characters, and the dump does not fail on it."""
     hass = HomeAssistant()
     entry = _entry_with_kernel(hass, devices={})
     _publish(hass, entry, "canary-s3-aB72", "status", STATUS)

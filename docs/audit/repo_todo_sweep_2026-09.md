@@ -7019,9 +7019,21 @@ so — see D2 below.)
   units pinned to one key, a Sense and a Sentinel to their own rows, with
   WAP ids the WAP's suffix recipe can print, and fails on the dump as it
   was; `test_a_canary_only_verification_has_seen_has_a_row` gives an id
-  that only verification has seen (a retained chain or counts publish
-  verified before the status) a row of its own, numbered after the device
-  records. Every Canary with a device page under the entry has a row, and
+  that only verification has seen a row of its own, numbered after the
+  device records. On a real core that id is a verdict held this run for a
+  Canary whose page the owner has since deleted: every verdict is written
+  by `async_record_verify()`, which only `_verify_and_record()` calls, from
+  the handlers of a Canary's counts, chain and last-event sensors, and
+  those sensors make its page, so a chain or counts publish verified
+  before the status leaves a page that is numbered with the others.
+  `test_only_a_verdict_whose_page_is_gone_is_numbered_after_the_pages`
+  (real core) holds both: a chain-first Canary's row is `canary-s… #2`
+  beside its verdict, and once the page is deleted through the device
+  registry's websocket command the verdict keeps `canary-s… #2` and no
+  device row has it. `test_a_canary_row_is_keyed_by_eight_characters_of_its_id`
+  (real core) holds a row key to eight characters of the id and an
+  ellipsis, or the whole id when it has eight or fewer. Every Canary with
+  a device page under the entry has a row, and
   a trust row when its key is pinned, whichever topic made the page:
   `_canary_page_ids()` reads the pages from the device registry, because a
   health with no version, or a first counts, chain, events, tamper,
@@ -7080,10 +7092,17 @@ so — see D2 below.)
   fix tested only on the open issues of the entry being downloaded would
   pass with both still in the file.
   `test_the_download_carries_every_issue_the_domain_holds` (real core)
-  holds that scope today. From a real-core download (2026.10.1) in
+  holds that scope today. Beyond this fix and the integration's reach, the
+  file's name carries the entry id whatever the issues hold: Home
+  Assistant names it `config_entry-securacv-<entry id>.json` (`:286` and
+  `:301`, sent as the `Content-Disposition` at `:242`, at 2026.10.1; `:281`,
+  `:296` and `:237` at 2026.5.0). The setup guide says to rename it before
+  posting, and `test_the_download_is_named_after_the_entry` (real core)
+  holds the name. From a real-core download (2026.10.1) in
   device-details PR 2's second review; filed by #<PR>, 2026-10-26, its
   scope (ignored issues, other entries' issues) corrected by the third
-  review, 2026-10-27.
+  review, 2026-10-27, and the file's name added by a later review the
+  same day.
 
 ### Parity & sub-projects
 

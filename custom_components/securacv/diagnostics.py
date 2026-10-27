@@ -142,8 +142,8 @@ def _shown_ids(device_ids: Iterable[str]) -> dict[str, str]:
     a Sense and a Sentinel, `canary_s…`) each get a per-dump ordinal after
     them, numbered in the order given (the Canary records, then every other
     Canary with a device page under the entry, then any id only verification
-    has seen), so no row replaces another and no further character of an id
-    is shown.
+    has seen: a verdict held for a Canary whose page was deleted), so no row
+    replaces another and no further character of an id is shown.
     """
     ids = list(dict.fromkeys(device_ids))
     prefix = {device_id: _truncated(device_id) or device_id for device_id in ids}
@@ -306,12 +306,15 @@ def _storage_shape(status: Any) -> dict[str, Any] | None:
 def _canary_shape(device: dict[str, Any], page: dict[str, str]) -> dict[str, Any]:
     """Firmware, hardware and liveness — never the raw status payload.
 
-    The firmware and the board are the device page's own
+    Within a run the firmware and the board are the device page's own
     (``entity.canary_registry_facts``: the health topic's version, else the
     one the status last carried, and the board the status last named), and
-    the type is the canonical one the status last named. The status and
-    health handlers recorded each as bounded broker text; nothing here
-    re-reads a payload.
+    the type is the canonical one the status last named. Those facts are
+    what the Canary has published since the entry was set up: a page kept
+    from before a restart or a reload keeps the version and board the
+    registry stored, and its row shows None for them until the Canary
+    publishes them again. The status and health handlers recorded each as bounded broker
+    text; nothing here re-reads a payload.
     """
     device_type = device.get("device_type")
     return {

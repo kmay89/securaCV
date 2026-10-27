@@ -831,7 +831,9 @@ one). A custom AppArmor profile confines each process to the paths it needs.
 dump of the integration carries shapes — the kernel URL's scheme and port,
 a four-hex prefix of the kernel id, the kernel key's eight-character
 fingerprint, availability flags, the latest event's type, window and
-attestation, digest counts, per-Canary firmware and online state — and is
+attestation, digest counts, per-Canary firmware and online state under
+each Canary's id cut to eight characters (the whole id when it has eight
+or fewer, and a per-dump ordinal where two ids share their eight) — and is
 then swept by Home Assistant's redaction over tokens, the pairing token id,
 hosts, URLs, device ids, keys, hashes, entry ids, nonces, IP and MAC
 addresses, SSIDs, names, coordinates, the seed, and the keys a Canary's
@@ -848,7 +850,9 @@ integration's other entries included, each with the time it was raised to
 the microsecond. The id of each issue about an entry ends in that entry's
 id, and a kernel key-mismatch issue carries the kernel's URL with its host
 and the whole key it served (sweep F399, open). None of them names a
-Canary.
+Canary. Home Assistant also names the file after the entry
+(`config_entry-securacv-<entry id>.json`), so its name ends in the entry
+id.
 
 **Evidence exports sit behind Home Assistant's authentication.** An export
 is one zip under `<config>/securacv/evidence` (directory `0700`, files

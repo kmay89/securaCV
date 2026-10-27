@@ -69,8 +69,10 @@
   (`canary-s… #1`, `canary-s… #2`), numbered in the order the dump lists
   them: the Canaries the integration has a record of, then every other
   Canary with a device page, then an id only verification has seen (a
-  retained chain or counts publish verified before the status); no ninth
-  character is shown. Every Canary with a device page under the entry now
+  verdict held this run for a Canary whose page the owner has since
+  deleted; a chain or counts publish verified before the status makes the
+  page first, through the sensor that verifies it); no ninth character is
+  shown. Every Canary with a device page under the entry now
   has a row (and a trust row when its key is pinned), whichever topic made
   the page: a status, a health with or without a version, or a first
   counts, chain, events, tamper, transport, mesh or chirp publish, each of
@@ -117,6 +119,10 @@
   board and the address. `test_diagnostics.py` also keeps two canary-wap
   units, a Sense and a Sentinel in rows of their own, the two units'
   correlation ids equal, and gives an id only verification has seen a row;
+  the real-core lane numbers a Canary whose chain was verified before its
+  status with the other pages, and its verdict after them once the owner
+  has deleted its page, and keys a row by eight characters of the
+  Canary's id (all of a shorter one);
   both suites give every Canary with a device page a row, the real-core
   lane for a first publish on each of the eight topics that make a page
   without a record (health with no version, counts, chain, events, tamper,
@@ -131,7 +137,8 @@
   characters with the Canary's fingerprint about once in a thousand runs.
   The test asserts both preconditions. A real-core test holds what the
   docs now say of the downloaded file's issues: an ignored issue and
-  another entry's are both in it.
+  another entry's are both in it; another holds what the setup guide says
+  of its name, which ends in the entry id.
   Every WAP id in the tests is one the WAP's suffix recipe can print, as
   `scripts/tests/test_wap_name_examples.py` requires. `python.yml` now
   also watches the eleven files outside its trees that the stub suite
@@ -139,7 +146,7 @@
   vectors, and the viewer's verify and zip cores), found by
   `scripts/check_path_filter_reads.py`. The stub suite passes on Python
   3.11 and 3.13 (944 tests) and the real-core lane on Home Assistant
-  2026.5.0 and 2026.10.1 (124 each). Host-tested; not run against a device
+  2026.5.0 and 2026.10.1 (127 each). Host-tested; not run against a device
   or a live broker.
 
 ## [2.4.17] - 2026-10-27

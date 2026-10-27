@@ -303,8 +303,9 @@ by that field.
   `__init__(config_entry)` pattern was replaced in 2024.11).
 - **Diagnostics project rather than copy:** the kernel URL as scheme and
   port, the kernel id as a four-hex prefix, the kernel key's fingerprint
-  as its eight characters, each Canary's key fingerprint as a per-dump
-  correlation id with none of its digits, `/status` storage as its
+  as its eight characters, each Canary's id as its first eight characters
+  (all of a shorter one) keying its rows, each Canary's key fingerprint as
+  a per-dump correlation id with none of its digits, `/status` storage as its
   endurance numbers (never the block-device path), and then
   `async_redact_data` over tokens, hosts, ids, keys, hashes, MACs, SSIDs,
   names, coordinates and a Canary's hardware, chip, module and Bluetooth

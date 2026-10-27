@@ -14,7 +14,7 @@ from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 from pytest_homeassistant_custom_component.components.diagnostics import get_diagnostics_for_config_entry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
-from pytest_homeassistant_custom_component.typing import ClientSessionGenerator, MqttMockHAClient
+from pytest_homeassistant_custom_component.typing import ClientSessionGenerator, MqttMockHAClient, WebSocketGenerator
 
 from conftest import (
     CLAIM_NONCE,
@@ -236,6 +236,88 @@ async def test_the_records_are_numbered_before_the_other_pages(
     assert diagnostics["trust"]["canary-s… #2"]["pinned"] is True
 
 
+async def test_only_a_verdict_whose_page_is_gone_is_numbered_after_the_pages(
+    hass: HomeAssistant,
+    kernel: KernelMock,
+    mqtt_mock: MqttMockHAClient,
+    setup_kernel_entry,
+    hass_client: ClientSessionGenerator,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    """Verification runs in the handlers of a Canary's sensor entities, and
+    those entities make its device page, so a chain publish verified before
+    the Canary's status leaves a page and a device row, numbered with the
+    other pages. An id only verification has seen is a verdict still held
+    for a Canary whose page the owner has since deleted (the integration
+    allows that for a Canary it has no record of and has not pinned): it is
+    numbered after the pages and has no device row."""
+    entry = await setup_kernel_entry(enable_mqtt=True)
+    # The device registry's commands, the diagnostics view and the websocket
+    # client, all before the first client freezes the router.
+    assert await async_setup_component(hass, "config", {})
+    assert await async_setup_component(hass, "diagnostics", {})
+    client = await hass_ws_client(hass)
+    async_fire_mqtt_message(
+        hass, "securacv/canary-s3-aB72/status", json.dumps({"online": True, "device_type": "canary-wap"}), qos=1, retain=True
+    )
+    await hass.async_block_till_done()
+    # The first chain publish adds the Canary's chain sensor; the second
+    # stands in for the broker handing the retained message to that
+    # sensor's own subscription, which verifies it.
+    for _ in range(2):
+        async_fire_mqtt_message(hass, "securacv/canary-s3-xQ32/chain", json.dumps({"length": 3}), qos=1, retain=True)
+        await hass.async_block_till_done()
+    assert list(entry.runtime_data.verify) == ["canary-s3-xQ32"]
+    assert list(entry.runtime_data.devices) == ["canary-s3-aB72"]
+    page = canary_device(hass, entry, "canary-s3-xQ32")
+    assert page is not None
+
+    diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+    assert list(diagnostics["canary_devices"]) == ["canary-s… #1", "canary-s… #2"]
+    assert diagnostics["canary_devices"]["canary-s… #1"]["device_type"] == "canary-wap"
+    assert diagnostics["verification"] == {"canary-s… #2": {"trusted": False, "reason": "unsigned"}}
+
+    # The owner deletes the page through the device registry's websocket
+    # command: `remove` where the core has it (2026.10.1, which keeps
+    # `remove_config_entry` as a deprecated alias), else `remove_config_entry`
+    # (2026.5.0). Both ask the integration first, then remove the device.
+    await client.send_json_auto_id({"type": "config/device_registry/remove", "device_id": page.id})
+    response = await client.receive_json()
+    if not response["success"] and response["error"]["code"] == "unknown_command":
+        await client.send_json_auto_id(
+            {"type": "config/device_registry/remove_config_entry", "config_entry_id": entry.entry_id, "device_id": page.id}
+        )
+        response = await client.receive_json()
+    assert response["success"], response
+    await hass.async_block_till_done()
+    assert canary_device(hass, entry, "canary-s3-xQ32") is None
+    assert list(entry.runtime_data.verify) == ["canary-s3-xQ32"]
+
+    diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+    assert list(diagnostics["canary_devices"]) == ["canary-s… #1"]
+    assert diagnostics["verification"] == {"canary-s… #2": {"trusted": False, "reason": "unsigned"}}
+    assert "xQ32" not in json.dumps(diagnostics)
+
+
+async def test_a_canary_row_is_keyed_by_eight_characters_of_its_id(
+    hass: HomeAssistant,
+    kernel: KernelMock,
+    mqtt_mock: MqttMockHAClient,
+    setup_kernel_entry,
+    hass_client: ClientSessionGenerator,
+) -> None:
+    """What the setup guide and the threat model say of a Canary's row key:
+    the first eight characters of its id and an ellipsis, or the whole id
+    when it has eight or fewer."""
+    entry = await setup_kernel_entry(enable_mqtt=True)
+    for canary_id in (CANARY, "garage"):
+        async_fire_mqtt_message(hass, f"securacv/{canary_id}/mesh", json.dumps({"connected": True}), qos=1, retain=True)
+    await hass.async_block_till_done()
+
+    diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+    assert set(diagnostics["canary_devices"]) == {"canary-k…", "garage"}
+
+
 # A first publish on each of these topics gives a Canary its device page
 # through the entities the platforms add for it, and none of them writes a
 # record of the status or the health handler: a health with no version (its
@@ -390,3 +472,23 @@ async def test_the_download_carries_every_issue_the_domain_holds(
     assert issues[ignored]["dismissed_version"] is not None
     assert repairs.issue_id(ISSUE_TOFU_MISMATCH, other) in issues
     assert all(issue["created"] for issue in issues.values())
+
+
+async def test_the_download_is_named_after_the_entry(
+    hass: HomeAssistant,
+    kernel: KernelMock,
+    setup_kernel_entry,
+    hass_client: ClientSessionGenerator,
+) -> None:
+    """What the setup guide says of the downloaded file's name, held to the
+    core: Home Assistant names the file after the entry, so with no issue
+    raised the entry id is in the name and nowhere in the body."""
+    entry = await setup_kernel_entry()
+    assert await async_setup_component(hass, "diagnostics", {})
+    client = await hass_client()
+    response = await client.get(f"/api/diagnostics/config_entry/{entry.entry_id}")
+    assert response.status == 200
+    assert response.headers["Content-Disposition"] == f'attachment; filename="config_entry-{DOMAIN}-{entry.entry_id}.json"'
+    body = await response.text()
+    assert (await response.json())["issues"] == []
+    assert entry.entry_id not in body
