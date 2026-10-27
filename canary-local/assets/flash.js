@@ -1694,7 +1694,12 @@ function phaseConnected() {
   // The live voice: a board that carries real firmware BOOTS and talks,
   // right here, before anything is written. (A brand-new board has nothing
   // to say — the bootloader keeps the port and this card doesn't appear.)
-  if (state.current && !state.current.unknown) {
+  // Not a board the user held BOOT on, either: booting it here would run the
+  // very firmware the gesture kept from running, before anything is written.
+  // That session stays in the bootloader until the install, as the desktop's
+  // fuse read leaves it (efuse.rs `park`); the serial monitor still boots it
+  // on a click.
+  if (state.current && !state.current.unknown && !state.heldBoot) {
     const voice = el("section", "flash-card flash-voice");
     voice.append(el("h3", null, "🎙 Its live voice — before anything is written"));
     voice.append(el("p", "fineprint",

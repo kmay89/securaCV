@@ -271,11 +271,24 @@ So the app speaks the read-only sliver of the ROM serial protocol itself
 over the same `serialport` link the WE2 flasher and the monitor use: reset
 into the bootloader with the sequences the vendored esptool-js uses (the
 classic bridge sequence first, the USB-Serial/JTAG sequence if that finds
-nothing), `SYNC`, six `READ_REG`s at eFuse block 0, then a hard reset back
-into the firmware. Those are the only two commands the module can send —
-nothing in it writes, burns or uploads a stub — and a probe that cannot
-reach the ROM reports "not checked", never "clean". The flash engine stays
-espflash-the-CLI; this is six register reads, not a second flasher.
+nothing), `SYNC`, six `READ_REG`s at eFuse block 0. Those are the only two
+commands the module can send — nothing in it writes, burns or uploads a
+stub — and a probe that cannot reach the ROM reports "not checked", never
+"clean". The flash engine stays espflash-the-CLI; this is six register
+reads, not a second flasher.
+
+The read does **not** reset the board back into its firmware afterward, on
+success or on failure. The button sits under the hold-BOOT instructions,
+and a board brought up that way must not be handed to the firmware the
+gesture kept from running. So the read parks DTR and RTS released (the one
+state that resets nothing, and what closing the port does to them anyway)
+and stops there, esptool's `--after no_reset`. After a good read the chip
+stays in the ROM's download mode until the install, which resets into the
+ROM itself, or until it is unplugged. It used to end in a hard reset, which
+handed a BOOT-held board to that firmware before anything was written. The
+browser's matching path was its live voice, which boots a board with
+readable firmware on the hello card; it no longer does that for a board
+you said you held BOOT on (the serial monitor still boots it, on a click).
 
 The decode is a port of the browser's `intake.js`: the same fields, bit
 offsets and widths, the same parity rule for `SPI_BOOT_CRYPT_CNT`, the same
@@ -298,8 +311,9 @@ sidecar with its own interpreter and pins.
 
 **Not bench-verified on hardware yet** (U1): the frames, the decode and the
 reset sequences are host-tested against the vendored esptool-js
-implementation, not proven on a physical board. A protocol mistake fails as
-"not checked", not as a wrong verdict.
+implementation, and the line moves after the read (the park, and nothing
+else) against a scripted board; none of it is proven on a physical board.
+A protocol mistake fails as "not checked", not as a wrong verdict.
 
 The desktop app **can** now read what firmware is resident: `board_passport`
 reads the partition table, otadata and the booted slot's `esp_app_desc_t` over

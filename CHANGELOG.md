@@ -375,6 +375,31 @@
   order. No stamped image has been flashed to a board or installed over the
   air yet.
 
+### A board brought up with BOOT held stays in its bootloader: the desktop fuse read and the browser's hello card stop booting it
+
+- **The desktop Flasher's *Read its security fuses* no longer restarts the
+  board into its own firmware.** The read reset the chip into the ROM, read
+  eFuse block 0, then hard-reset it, on success and on both failure paths.
+  That ran the very firmware the person had held BOOT to keep from running,
+  which on a native-USB board can present itself as a keyboard. The read now
+  parks DTR and RTS released (the state that resets nothing, and the state
+  closing the port would leave them in) and stops there, esptool's `--after
+  no_reset`: after a good read the chip stays in the ROM's download mode
+  until the install or an unplug. An install still connects: espflash
+  resets into the ROM itself before it writes. `efuse.rs`'s tests replay
+  the read against a scripted board and hold every line move after the last
+  SYNC or READ_REG to that park alone, on a good read, on a ROM that never
+  answers and on one that stops answering mid-read.
+- **The browser flasher no longer boots a board you held BOOT on.** After
+  its connect reads, the hello card's live voice reset any board with
+  readable firmware into that firmware, before anything was written. When
+  the cold-start answer is "I held BOOT", the session now stays in the
+  bootloader until the install; the serial monitor still boots it on a
+  click. `desktop_parity.test.js` holds both places.
+- Not bench-tested on a board. The website's advice to unplug and hold BOOT
+  again after a desktop fuse read stays until a Flasher release carries
+  this.
+
 ## [2.4.17] - 2026-10-27
 
 > **Before you update.** Vision Doorbell: move the amplifier's input wire from D3 to D10.

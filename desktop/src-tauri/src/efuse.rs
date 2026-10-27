@@ -17,6 +17,12 @@
 //!   - It does not guess on a chip without a verified bit table. The tables
 //!     below cover ESP32-S3/C3/C6, the same set the browser supports; any
 //!     other chip answers `supported: false`.
+//!   - It never resets the board back into the firmware it arrived with.
+//!     A board brought up with BOOT held was held so that firmware would not
+//!     run (on native USB it could type at the desktop). After a good read
+//!     the chip stays in the ROM's download mode until the install resets it
+//!     or the cable comes out, and a failed read does nothing more to it
+//!     either (esptool's `--after no_reset`; see `park`).
 //!
 //! The field tables, bit offsets, and the three-state clean/touched/active
 //! semantics are a line-for-line port of intake.js, and the desktop-parity
@@ -373,12 +379,21 @@ trait ResetLines {
     fn rts(&mut self, level: bool) -> Result<(), String>;
 }
 
-struct PortLines<'a> {
-    port: &'a mut Box<dyn serialport::SerialPort>,
+/// What the read needs from the board besides its two control lines: drop
+/// stale input, SYNC (`true` once the ROM answers), one READ_REG. The real
+/// port speaks it below; the tests script it.
+trait RomLink: ResetLines {
+    fn drain(&mut self);
+    fn sync(&mut self) -> bool;
+    fn read_reg(&mut self, addr: u32) -> Option<u32>;
+}
+
+struct PortLines {
+    port: Box<dyn serialport::SerialPort>,
     dtr_state: bool,
 }
 
-impl ResetLines for PortLines<'_> {
+impl ResetLines for PortLines {
     fn dtr(&mut self, level: bool) -> Result<(), String> {
         self.dtr_state = level;
         self.port
@@ -393,6 +408,23 @@ impl ResetLines for PortLines<'_> {
             .map_err(|e| format!("couldn't drive RTS: {e}"))?;
         let dtr = self.dtr_state;
         self.dtr(dtr)
+    }
+}
+
+impl RomLink for PortLines {
+    fn drain(&mut self) {
+        drain_input(&mut self.port);
+    }
+    fn sync(&mut self) -> bool {
+        sync(&mut self.port)
+    }
+    fn read_reg(&mut self, addr: u32) -> Option<u32> {
+        transact(
+            &mut self.port,
+            &read_reg_frame(addr),
+            CMD_READ_REG,
+            Duration::from_millis(500),
+        )
     }
 }
 
@@ -427,11 +459,21 @@ fn usb_jtag_serial_reset(lines: &mut dyn ResetLines) -> Result<(), String> {
     lines.dtr(false)
 }
 
-// Leave the board running its firmware again, not parked in the ROM.
-fn hard_reset(lines: &mut dyn ResetLines) -> Result<(), String> {
-    lines.rts(true)?;
-    pause(100);
-    lines.rts(false)
+// Leave the chip where the read put it: both lines released (DTR and RTS
+// deasserted), and nothing after that. The classic two-transistor circuit,
+// and the USB-Serial/JTAG peripheral that emulates it, pulls EN low only
+// while RTS is asserted and DTR is not, and IO0 low only for the opposite
+// pair, so with both released nothing is reset and the chip stays in the
+// ROM's download mode, which has no timeout. Both enter sequences above
+// already end here; parking again is for a sequence that a failed line
+// write cut short. RTS goes first because releasing DTR first, from both
+// asserted, would pass through RTS alone, which is a reset. Closing the port
+// next can only lower the lines (HUPCL, on by default on Linux and macOS and
+// left alone by serialport, and a Windows driver's close both do) or leave
+// them alone, so the drop moves neither line from here.
+fn park(lines: &mut dyn ResetLines) {
+    let _ = lines.rts(false);
+    let _ = lines.dtr(false);
 }
 
 fn drain_input(port: &mut Box<dyn serialport::SerialPort>) {
@@ -483,43 +525,32 @@ fn sync(port: &mut Box<dyn serialport::SerialPort>) -> bool {
     false
 }
 
-/// Read the six block-0 words off a real board: reset into the ROM (classic
-/// bridge sequence first, the USB-Serial/JTAG sequence if that finds nothing),
-/// SYNC, six READ_REGs, then hard-reset back into the firmware. Read-only at
-/// every step — the two commands used cannot write anything.
-fn read_block0_words(port_name: &str, efuse_base: u32) -> Result<Vec<u32>, String> {
-    let mut port = serialport::new(port_name, 115_200)
-        .timeout(Duration::from_millis(100))
-        .open()
-        .map_err(|e| format!("couldn't open {port_name}: {e}"))?;
+/// Read the six block-0 words: reset into the ROM (classic bridge sequence
+/// first, the USB-Serial/JTAG sequence if that finds nothing), SYNC, six
+/// READ_REGs. Read-only at every step — the two commands used cannot write
+/// anything. However it ends, the lines are parked and nothing resets the
+/// chip back into its firmware.
+fn read_block0<L: RomLink>(link: &mut L, efuse_base: u32) -> Result<Vec<u32>, String> {
+    let words = read_block0_in_rom(link, efuse_base);
+    park(link);
+    words
+}
 
+fn read_block0_in_rom<L: RomLink>(link: &mut L, efuse_base: u32) -> Result<Vec<u32>, String> {
     let mut synced = false;
     for attempt in 0..2 {
-        {
-            let mut lines = PortLines {
-                port: &mut port,
-                dtr_state: false,
-            };
-            let reset = if attempt == 0 {
-                classic_reset(&mut lines)
-            } else {
-                usb_jtag_serial_reset(&mut lines)
-            };
-            reset?;
+        if attempt == 0 {
+            classic_reset(link)?;
+        } else {
+            usb_jtag_serial_reset(link)?;
         }
-        drain_input(&mut port);
-        if sync(&mut port) {
+        link.drain();
+        if link.sync() {
             synced = true;
             break;
         }
     }
     if !synced {
-        // Leave the board as we found it as best we can before reporting.
-        let mut lines = PortLines {
-            port: &mut port,
-            dtr_state: false,
-        };
-        let _ = hard_reset(&mut lines);
         return Err(
             "couldn't reach the chip's ROM to read its fuses — the check did NOT run. \
                     Unplug, hold BOOT while plugging back in, and try again."
@@ -529,28 +560,26 @@ fn read_block0_words(port_name: &str, efuse_base: u32) -> Result<Vec<u32>, Strin
 
     let mut words = Vec::with_capacity(EFUSE_BLOCK0_WORDS);
     for addr in block0_addrs(efuse_base) {
-        let frame = read_reg_frame(addr);
-        match transact(&mut port, &frame, CMD_READ_REG, Duration::from_millis(500)) {
-            Some(value) => words.push(value),
-            None => {
-                let mut lines = PortLines {
-                    port: &mut port,
-                    dtr_state: false,
-                };
-                let _ = hard_reset(&mut lines);
-                return Err(format!(
-                    "the ROM stopped answering at register {addr:#x} — fuses not checked"
-                ));
-            }
-        }
+        let value = link.read_reg(addr).ok_or_else(|| {
+            format!("the ROM stopped answering at register {addr:#x} — fuses not checked")
+        })?;
+        words.push(value);
     }
+    Ok(words)
+}
 
-    let mut lines = PortLines {
-        port: &mut port,
+/// Read the six block-0 words off a real board. The port is dropped (and
+/// closed) only after `read_block0` has parked its lines.
+fn read_block0_words(port_name: &str, efuse_base: u32) -> Result<Vec<u32>, String> {
+    let port = serialport::new(port_name, 115_200)
+        .timeout(Duration::from_millis(100))
+        .open()
+        .map_err(|e| format!("couldn't open {port_name}: {e}"))?;
+    let mut link = PortLines {
+        port,
         dtr_state: false,
     };
-    let _ = hard_reset(&mut lines);
-    Ok(words)
+    read_block0(&mut link, efuse_base)
 }
 
 /// The Tauri command: read and decode the chip's security fuses. `chip` is
@@ -705,7 +734,7 @@ mod tests {
     #[test]
     fn reset_sequences_mirror_the_vendored_esptool_js() {
         // Record the line transitions and compare against the bundle's
-        // ClassicReset / UsbJtagSerialReset / HardReset sequences verbatim
+        // ClassicReset / UsbJtagSerialReset sequences verbatim
         // (sleeps elided — order is what the ROM strapping cares about here,
         // and the real delays live in the functions under test).
         #[derive(Default)]
@@ -749,9 +778,104 @@ mod tests {
                 ('D', false),
             ]
         );
+    }
 
-        let mut log = Log::default();
-        hard_reset(&mut log).unwrap();
-        assert_eq!(log.0, vec![('R', true), ('R', false)]);
+    // A scripted board: every line move, SYNC and READ_REG in order, as
+    // ('D'|'R', level), ('S', answered) and ('G', answered).
+    #[derive(Default)]
+    struct Bench {
+        log: Vec<(char, bool)>,
+        syncs: Vec<bool>, // what each SYNC answers, in order; past the end, nothing
+        reads: usize,     // READ_REGs that answer before the ROM goes quiet
+    }
+    impl ResetLines for Bench {
+        fn dtr(&mut self, level: bool) -> Result<(), String> {
+            self.log.push(('D', level));
+            Ok(())
+        }
+        fn rts(&mut self, level: bool) -> Result<(), String> {
+            self.log.push(('R', level));
+            Ok(())
+        }
+    }
+    impl RomLink for Bench {
+        fn drain(&mut self) {}
+        fn sync(&mut self) -> bool {
+            let n = self.log.iter().filter(|e| e.0 == 'S').count();
+            let answered = self.syncs.get(n).copied().unwrap_or(false);
+            self.log.push(('S', answered));
+            answered
+        }
+        fn read_reg(&mut self, addr: u32) -> Option<u32> {
+            let n = self.log.iter().filter(|e| e.0 == 'G').count();
+            let answered = n < self.reads;
+            self.log.push(('G', answered));
+            answered.then_some(addr)
+        }
+    }
+
+    fn lines_of(enter: fn(&mut dyn ResetLines) -> Result<(), String>) -> Vec<(char, bool)> {
+        let mut b = Bench::default();
+        enter(&mut b).unwrap();
+        b.log
+    }
+
+    // Everything after the last SYNC or READ_REG is the park and nothing
+    // else — no RTS pulse, so no reset into the firmware — and it leaves
+    // both lines released, the state a closing port cannot turn into a reset.
+    fn assert_left_in_rom(log: &[(char, bool)]) {
+        let last_talk = log.iter().rposition(|e| e.0 == 'S' || e.0 == 'G').unwrap();
+        assert_eq!(&log[last_talk + 1..], &[('R', false), ('D', false)]);
+        let last = |line: char| log.iter().rev().find(|e| e.0 == line).unwrap().1;
+        assert_eq!((last('D'), last('R')), (false, false));
+    }
+
+    #[test]
+    fn a_successful_read_leaves_the_chip_in_the_rom() {
+        let mut b = Bench {
+            syncs: vec![true],
+            reads: EFUSE_BLOCK0_WORDS,
+            ..Bench::default()
+        };
+        let words = read_block0(&mut b, 0x6000_7000).unwrap();
+        assert_eq!(words, block0_addrs(0x6000_7000));
+        let mut want = lines_of(classic_reset);
+        want.push(('S', true));
+        want.extend([('G', true); EFUSE_BLOCK0_WORDS]);
+        want.extend([('R', false), ('D', false)]);
+        assert_eq!(b.log, want);
+        assert_left_in_rom(&b.log);
+    }
+
+    #[test]
+    fn a_rom_that_never_syncs_is_not_reset_into_its_firmware() {
+        let mut b = Bench::default();
+        let err = read_block0(&mut b, 0x6000_7000).unwrap_err();
+        assert!(err.contains("did NOT run"), "{err}");
+        let mut want = lines_of(classic_reset);
+        want.push(('S', false));
+        want.extend(lines_of(usb_jtag_serial_reset));
+        want.push(('S', false));
+        want.extend([('R', false), ('D', false)]);
+        assert_eq!(b.log, want);
+        assert_left_in_rom(&b.log);
+    }
+
+    #[test]
+    fn a_rom_that_goes_quiet_mid_read_is_not_reset_into_its_firmware() {
+        let mut b = Bench {
+            syncs: vec![false, true], // found on the USB-Serial/JTAG sequence
+            reads: 2,
+            ..Bench::default()
+        };
+        let err = read_block0(&mut b, 0x6000_7000).unwrap_err();
+        assert!(err.contains("0x60007034"), "{err}");
+        let mut want = lines_of(classic_reset);
+        want.push(('S', false));
+        want.extend(lines_of(usb_jtag_serial_reset));
+        want.extend([('S', true), ('G', true), ('G', true), ('G', false)]);
+        want.extend([('R', false), ('D', false)]);
+        assert_eq!(b.log, want);
+        assert_left_in_rom(&b.log);
     }
 }

@@ -1668,6 +1668,24 @@ test("security fuses: both flashers read them, off ONE field table", () => {
   }
 });
 
+test("a board brought up with BOOT held stays in the bootloader until the install, on both flashers", () => {
+  // Holding BOOT is what keeps a marketplace board's firmware from running
+  // (on native USB it can type at the desktop). The desktop's fuse read used
+  // to end in a hard reset, and the browser's live voice booted any readable
+  // firmware right after intake: both handed the board back to that firmware
+  // before a byte was written. efuse.rs's own tests replay the read's line
+  // moves; these hold the two places that used to boot it.
+  const efuseRs = read(join(ROOT, "desktop/src-tauri/src/efuse.rs"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  assert.doesNotMatch(efuseRs, /fn hard_reset/,
+    "the desktop fuse read can reset the board into its firmware again");
+  assert.match(efuseRs, /let words = read_block0_in_rom\(link, efuse_base\);\s*park\(link\);/,
+    "the desktop fuse read no longer parks its lines on every way out");
+  assert.match(flashJs,
+    /if \(state\.current && !state\.current\.unknown && !state\.heldBoot\) \{\s*const voice = el\("section", "flash-card flash-voice"\)/,
+    "the browser's live voice boots a board the user held BOOT on");
+});
+
 test("health check: native parsers pin the browser's byte-magics, and the UI reaches the command", () => {
   // The native health parsers (health.rs) reimplement the browser's flash-core
   // parsers. Their magics/offsets/namespaces MUST match byte-for-byte, or the
