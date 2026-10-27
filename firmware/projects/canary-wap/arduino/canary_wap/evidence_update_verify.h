@@ -41,7 +41,8 @@ struct VerifyDeps {
 struct Verdict {
   bool ok = false;
   const char* code = "";   // stable machine-ish tag for logs/tests
-  char msg[112] = {0};     // one human sentence → RESULT.TXT
+  char msg[128] = {0};     // one human sentence → RESULT.TXT (room for the
+                           // longest product id and version the engine holds)
 };
 
 // Run the full acceptance pipeline against a staged manifest + image:

@@ -655,7 +655,7 @@ PROVISIONING = {
     # The all-rounder Canary (firmware/canary): a setup network and nothing
     # else — it compiles no Bluetooth setup door. Its network has a KEY, the
     # cv-… one its boot banner prints; "nothing to type" was false.
-    "ap": "When it boots it raises a WiFi network of its own (SecuraCV-XXXX) with a "
+    "ap": "When it boots it raises a WiFi network of its own (SecuraCV-canary-XXXX) with a "
           "key it prints on its serial console at boot — join it and a setup page "
           "opens automatically.",
     # The WAP: the same setup network, plus the Bluetooth setup door (Improv
@@ -663,7 +663,7 @@ PROVISIONING = {
     # through. Lead with the door; the network stays as the fallback.
     "ap-door": "Power it on near the SecuraCV iPhone app and tap the card that appears — "
                "it hands over your WiFi in one tap. No iPhone? It also raises a WiFi "
-               "network of its own (SecuraCV-XXXX) with a key it prints on its serial "
+               "network of its own (named for its kind, like SecuraCV-wap-XXXX) with a key it prints on its serial "
                "console at boot — join it and a setup page opens automatically.",
     "usb-secrets": "Fill in WiFi during the install and it’s written straight into the "
                    "chip’s settings region — the signed generic release then joins YOUR "
@@ -1005,7 +1005,7 @@ HATCH_MOMENTS = {
         "title": "Your Canary is on its perch.",
         "body": "The magical first proof is local and physical: join its setup network with the key it printed, open the dashboard, then make one harmless signal it can witness.",
         "steps": [
-            "Join the SecuraCV-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-…, the Password line of its boot banner) — the setup page opens on its own; if not, open canary.local.",
+            "Join the SecuraCV-canary-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-…, the Password line of its boot banner) — the setup page opens on its own; if not, open canary.local.",
             "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
             "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test.",
         ],
@@ -1019,7 +1019,7 @@ HATCH_MOMENTS = {
         "body": "The magical first proof is local and physical: hand it your Wi-Fi from your phone, open the dashboard, then make one harmless signal it can witness.",
         "steps": [
             "Open the SecuraCV iPhone app near it and tap the card that appears — it hands over your Wi-Fi.",
-            "No card? Join the SecuraCV-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-… on a WAP; eight characters on a Sense or Vision) — the setup page opens on its own; if not, open canary.local.",
+            "No card? Join the Wi-Fi network it creates (SecuraCV-wap-XXXX, SecuraCV-sense-XXXX or SecuraCV-vision-XXXX), using the key it prints on its serial console at boot (cv-… on a WAP; eight characters on a Sense or Vision) — the setup page opens on its own; if not, open canary.local.",
             "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
             "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test.",
         ],

@@ -17,6 +17,42 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.12.2 — 2026-10-27
+
+**The 2.4.17 firmware catalog is baked in, and the serial monitor offers
+each board's own commands.**
+
+- **Firmware 2.4.17 in the picker.** Setup networks are named for the kind
+  of device (`SecuraCV-sense-XXXX`), and a Sense or Vision can take its
+  Home Assistant link from iPhone app 0.8.0. From 2.4.17 on, an update for
+  another board, or too big for its space, is refused before it downloads,
+  and one that has not run healthy for a minute is rolled back at the next
+  restart. Host-tested and built by CI; not bench-tested.
+- **A plain Canary's setup network changes once when it updates:** a new
+  name (`SecuraCV-canary-` and the same four characters) and a new key.
+  Save its recovery kit again afterward.
+- **Seven displays take 2.4.17 from here, not over the air:** the Dash
+  modes build, the 7" and S3 nightstands, the C6 nightstand, the 1.69"
+  touch, the 2.41" AMOLED and the C3 nightlight. Their names were too long
+  for the update check in every earlier release; 2.4.17 fixes that for the
+  updates after it.
+- **A Canary Vision on a C3 DevKit or XIAO C3 last flashed before 2.4.16**
+  needs one USB flash from here; it updates over the air after that.
+- **Built a Vision Doorbell from the old wiring page?** 2.4.17 drives the
+  speaker from D10, not D3 (the camera module's reset): move the amp input.
+- **The monitor's command chips are the firmware's own,** for the image just
+  written or the one read off the board: single keys for the Canary, WAP
+  and Vision, the Sense's console words, none for a display (host-tested,
+  not yet tried on a board).
+- **Short Wi-Fi passwords are accepted:** no 8-character minimum, up to 64.
+- **The diagnostic report leaves out the setup network's key,** which a
+  board also prints inside a Wi-Fi QR line. Update the Flasher before you
+  paste a report from a board on 2.4.17.
+- **The Witness Wall shows the day a Canary's key was born** (or first
+  dated) when the Canary answers for itself.
+- Under the hood: rustls 0.23.46, rustls-webpki 0.103.16 and newer root
+  certificates (RUSTSEC-2026-0346 to -0349, -0381 to -0383); Tauri 2.12.5.
+
 ## 0.12.1 — 2026-10-16
 
 **A 1.47" C6 display is offered as a display, and every Canary on your

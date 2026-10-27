@@ -230,7 +230,7 @@ While open it is bounded (3 s between credential writes, 10 attempts per
 open door, a 3-minute idle disconnect). The fleet beacon carries a *setup
 open* bit and a "Sense-AB12" name while it is; the iPhone app's "new Canary
 nearby" card (`Shared/NearbyCanary.swift`) is the other half; on a WAP the
-**claim ticket** (next entry) finishes the pairing. The `SecuraCV-XXXX`
+**claim ticket** (next entry) finishes the pairing. The `SecuraCV-<kind>-XXXX`
 setup network stays underneath as the break-glass path with a key. Built
 and host-tested, not bench-tested.
 → [magic pairing (design)](design/magic_pairing.md)

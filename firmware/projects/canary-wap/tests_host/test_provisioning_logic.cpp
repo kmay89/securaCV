@@ -67,6 +67,43 @@ static void test_sta_join() {
   CHECK(!sta_join_allowed(false, true, false));
 }
 
+// The A/B confirm dwell's health signal: the link the unit is set up to hold.
+// Args: (ap_only, configured, enabled, sta_connected, ap_up).
+static void test_ota_confirm_link_healthy() {
+  // A unit that joins home Wi-Fi: the station link, and only it.
+  CHECK(ota_confirm_link_healthy(false, true, true, true, false));
+  CHECK(ota_confirm_link_healthy(false, true, true, true, true));
+  CHECK(!ota_confirm_link_healthy(false, true, true, false, true));   // AP up is not enough
+  CHECK(!ota_confirm_link_healthy(false, true, true, false, false));
+  // The standalone choice: the AP being up. A unit with home credentials
+  // saved before the choice is still standalone (sta_join_allowed says so).
+  CHECK(ota_confirm_link_healthy(true, false, false, false, true));
+  CHECK(ota_confirm_link_healthy(true, true, true, false, true));
+  CHECK(!ota_confirm_link_healthy(true, false, false, false, false));  // AP down: not healthy
+  CHECK(!ota_confirm_link_healthy(true, true, true, false, false));
+  // Home Wi-Fi turned off (/api/wifi/disconnect persists wifi_en=false):
+  // no station network to hold, so the AP.
+  CHECK(ota_confirm_link_healthy(false, true, false, false, true));
+  CHECK(!ota_confirm_link_healthy(false, true, false, false, false));
+  // Nothing saved yet: the setup AP.
+  CHECK(ota_confirm_link_healthy(false, false, true, false, true));
+  CHECK(!ota_confirm_link_healthy(false, false, true, false, false));
+  // Where no station network is expected, a station link is not required
+  // and not counted against the unit.
+  CHECK(ota_confirm_link_healthy(true, false, false, true, true));
+  // The signal before the fix (WiFi.status() == WL_CONNECTED alone) was
+  // false for every standalone pass; the new one is true for each with the
+  // AP up.
+  for (int c = 0; c < 2; c++) {
+    for (int e = 0; e < 2; e++) {
+      const bool sta_connected = false;  // a standalone unit never joins
+      const bool old_signal = sta_connected;
+      CHECK(!old_signal);
+      CHECK(ota_confirm_link_healthy(true, c != 0, e != 0, sta_connected, true));
+    }
+  }
+}
+
 static void test_ap_teardown() {
   const uint32_t GRACE = 120000u;
   // AP-only: never torn down, even long after a (stale) connect stamp.
@@ -416,6 +453,7 @@ int main() {
   test_setup_timeout();
   test_scan_cache();
   test_sta_join();
+  test_ota_confirm_link_healthy();
   test_ap_teardown();
   test_deferred_reboot();
   test_reboot_deadline_extend();
