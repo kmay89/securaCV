@@ -111,10 +111,19 @@ python3 -m http.server -d /path/to/securaCV 8000
 ```
 
 Nothing phones anywhere: no CDN, no fonts, no analytics. Every fetch stays
-on the page's own origin except the flasher's: the signed release hosts
-(GitHub's release host and its asset CDN) and a same-machine manifest server
-on loopback, each a row with a reason in the policy table (§9). Invariant IV
-extends to the docs.
+on the page's own origin, the flasher's firmware included: a browser cannot
+read a GitHub release asset (no CORS header on the download or the asset
+host), so the deployed site carries its own copy of the releases the flasher
+pins, at `firmware/<tag>/<file>` (`pages.yml` runs `tools/mirror_release.py`,
+which holds every image to its manifest's SHA-256 first), and
+`flash-core.js` `fetchReleaseAsset` reads it there. The flasher's policy
+still names the release host and its asset CDN, for a page on a local or LAN
+host that carries no copy and falls back to them, and a same-machine manifest
+server on loopback, each a row with a reason in the policy table (§9). Served
+straight from a checkout, as above, there is no copy: the flasher's official
+images stay unavailable there (`docs/browser_flasher.md` § Where the page
+reads the release from says how to try it locally). Invariant IV extends to
+the docs.
 
 ---
 
@@ -788,7 +797,7 @@ live bench preview with the on-module TSCORE/TIOU sliders.
 | Engine (DOM-free: CRC, XMODEM, preamble, state machine, AT parser) | `assets/we2-core.js` |
 | WebSerial transport + the flow UI | `assets/we2-flash.js` (mounted from `flash.js`) |
 | Catalog block + doc drift-gate | `tools/gen_flash.py` → `devices/flash.json` `we2_module` |
-| Release asset pipeline | `.github/workflows/vision-model-release.yml` |
+| Release asset pipeline | `.github/workflows/vision-model-release.yml` (then `pages.yml` copies the model into the site: the page reads it same-origin) |
 | Honesty gate (scripted fake bootloader, byte-level) | `tests/we2.test.js` |
 ## 4l. The Sense Lab: the radar pipeline, on the bench (`senselab.html`)
 
@@ -843,7 +852,10 @@ Three tiers, no lock-in, one source of truth:
    server, fully offline. Versioned with the firmware it teaches.
 2. **GitHub Pages** — `.github/workflows/pages.yml` publishes
    `canary-local/` (+ the enclosure files it references) on every main
-   push. Enable once: Settings → Pages → Source → "GitHub Actions".
+   push, with a same-origin copy of the firmware releases the flasher pins
+   under `canary-local/firmware/` (a browser cannot download a release from
+   GitHub itself); the release workflows dispatch it again once they
+   publish. Enable once: Settings → Pages → Source → "GitHub Actions".
 3. **securacv.com** — the marketing site adopts it whenever ready,
    either by pointing a custom domain/subdomain at Pages
    (e.g. `local.securacv.com`, one CNAME) or by copying the built site
@@ -1176,7 +1188,8 @@ The rules, which the generator enforces rather than documents:
   `PAGES` inside `gen_csp.py` naming the directive, the sources and *why*:
   `'wasm-unsafe-eval'` for the pages that boot the firmware wasm,
   `frame-src 'self'` for the two pages that frame another, the flasher's
-  signed release hosts and loopback. The tool cross-checks the grants against
+  signed release hosts (the fallback for a local or LAN page with no copy of
+  the release; the hosted page reads its copy under `'self'`) and loopback. The tool cross-checks the grants against
   the page, both ways — a page that loads `emulator/dist/` without the wasm
   row fails, and so does a row whose page no longer loads it; the same holds
   for `frame-src` and the page's iframes, and for the release hosts and the

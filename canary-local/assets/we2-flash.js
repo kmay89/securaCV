@@ -15,15 +15,18 @@
 // a physical, attended bench operation, the same one the getting-started
 // guide blesses for the one-time sanity check. Frames render on a local
 // canvas and are never stored or sent anywhere (this page fetches nothing
-// but its own JSON and, when you ask, the pinned model from the project's
-// GitHub release). Day-to-day aiming stays boxes-only over MQTT.
+// but its own JSON and, when you ask, the pinned model: the project's GitHub
+// release, read from this site's same-origin copy of it, since a browser
+// cannot fetch the release URL itself — flash-core.js releaseFetchPlan).
+// Day-to-day aiming stays boxes-only over MQTT.
 //
 // Same failure posture as the ESP32 flow: every error names the fix, and
 // nothing here can brick the module — the burn menu lives in mask ROM.
 
 import { WE2, We2Flasher, makeAtParser, atCommand, modelInfoJson,
          stylizeDetections, meterModel, WE2_CLASSES } from "./we2-core.js";
-import { helpTopic, hatchMoment, isVisionBoard, verifyPinnedModelAsset } from "./flash-core.js";
+import { helpTopic, hatchMoment, isVisionBoard, verifyPinnedModelAsset,
+         fetchReleaseAsset } from "./flash-core.js";
 import { chirp } from "./chirp.js";
 import { visionSession } from "./vision-session.js";
 import { visionChecklistCard } from "./vision-checklist.js";
@@ -310,14 +313,19 @@ function phaseModuleConnected(ctx, s) {
     stopProbe();
     note.textContent = "Fetching the release manifest…";
     try {
-      const man = await fetch(m.manifest_url, { cache: "no-store" }).then((r) => {
+      // Both reads go through the site's mirror of the release (a bare fetch
+      // of the github.com URL is refused by every browser: no CORS header).
+      // The SHA-256 and signature checks below bind the bytes either way.
+      const fromRelease = (url, init) =>
+        fetchReleaseAsset(url, { repo: ctx.catalog && ctx.catalog.repo, init });
+      const man = await fromRelease(m.manifest_url, { cache: "no-store" }).then((r) => {
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.json();
       });
       const asset = man && man.model;
       if (!asset || !asset.url || !asset.sha256) throw new Error("manifest has no model entry");
       note.textContent = "Downloading " + (asset.name || "model") + " (" + Math.round((asset.size || 0) / 1024) + " KB)…";
-      const bytes = new Uint8Array(await fetch(asset.url).then((r) => {
+      const bytes = new Uint8Array(await fromRelease(asset.url).then((r) => {
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.arrayBuffer();
       }));

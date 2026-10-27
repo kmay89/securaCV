@@ -61,7 +61,7 @@ permissions:
   contents: write
   id-token: write      # OIDC identity used to sign the build-provenance attestation
   attestations: write  # upload the signed provenance to this repo's attestation store
-  actions: write       # chain-dispatch vision-model-release.yml after publishing
+  actions: write       # chain-dispatch vision-model-release.yml, then pages.yml, after publishing
 
 # One release build per tag; NEVER cancel a run mid-publish (half-uploaded
 # release assets) — concurrent runs queue instead.
@@ -1057,6 +1057,7 @@ jobs:
         run: cp "${{ steps.attest.outputs.bundle-path }}" "/tmp/release/provenance-firmware-${{ steps.ver.outputs.version }}.sigstore.jsonl"
 
       - name: Publish GitHub Release
+        id: publish
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           # On a tag push this is the pushed tag; on the dispatch path it
@@ -1179,6 +1180,35 @@ jobs:
             /tmp/release/manifest-canary-display-*.json
             /tmp/release/manifest-index.json
             /tmp/release/sha256sums.txt
+
+      # The browser flasher on GitHub Pages reads this release from the site's
+      # own origin: pages.yml copies it in, because a browser cannot fetch a
+      # github.com release asset (no CORS header; RELEASE_LESSONS 2026-10-27).
+      # Nothing would redeploy the site for it otherwise: this release, made
+      # with the GITHUB_TOKEN, fires no event, and the push deploy that merged
+      # the version bump ran before the tag existed, so until the next
+      # unrelated push the hosted flasher would call every product
+      # unavailable. Last, so the dev channel's rolling manifest (the step
+      # above) is in place too; it runs even when the Vision chain went red,
+      # since the firmware is published either way. The ref is the default
+      # branch, the only one the github-pages environment deploys.
+      - name: Redeploy the site so the browser flasher mirrors this release
+        if: ${{ (success() || failure()) && steps.publish.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.event.repository.default_branch || 'main' }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          # Never a failed release over this: the release is published either
+          # way, and the next deploy (any main push touching canary-local, or
+          # Actions → pages → Run workflow) mirrors it too.
+          if gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref "$REF"; then
+            echo "Dispatched pages.yml on ${REF}: the browser flasher's same-origin mirror picks up ${TAG}."
+            echo "- Site redeploy dispatched (\`pages.yml\` on \`${REF}\`), so the browser flasher mirrors \`${TAG}\`." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::could not dispatch pages.yml — the browser flasher on GitHub Pages serves ${TAG} only after the next site deploy. Run Actions → pages → Run workflow (on ${REF}) to publish it now."
+            echo "- ⚠️ Site redeploy NOT dispatched: the browser flasher on GitHub Pages serves \`${TAG}\` only after the next deploy (Actions → pages → Run workflow)." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   # The bills of materials (Rust, Node, firmware), built from the tagged tree
   # and attached to the release just published. sbom.yml's `release:

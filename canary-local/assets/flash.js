@@ -3100,6 +3100,15 @@ function productRow(p) {
 }
 
 // ── release manifest (lazy) ─────────────────────────────────────────────────
+// Every release asset this page reads (the manifest, the factory image) goes
+// through here: the site's same-origin mirror first (pages.yml writes it), the
+// release URL itself only where that can still answer (a local host, a page
+// off http(s)). A bare fetch() of a github.com release URL can never succeed
+// in a browser (tests/flash.test.js holds this file to that).
+function fetchRelease(url, init) {
+  return core.fetchReleaseAsset(url, { repo: state.catalog && state.catalog.repo, init });
+}
+
 function activeManifestUrl() {
   // `?manifest=<url>` lets a self-hosted / air-gapped user point at their own
   // manifest — but only if it's same-origin or a private/LAN host (see
@@ -3125,7 +3134,9 @@ function ensureManifest() {
   if (state.manifest) { refreshManifestState(); return; }
   const gen = ++manifestGeneration;
   const stale = () => gen !== manifestGeneration;
-  fetch(activeManifestUrl(), { cache: "no-store" })
+  // Through the site's same-origin mirror (core.releaseFetchPlan): a browser
+  // cannot fetch the GitHub release URL itself (no CORS header on it).
+  fetchRelease(activeManifestUrl(), { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : Promise.reject(new Error("no release manifest (HTTP " + r.status + ")"))))
     .then((m) => {
       if (stale()) return;
@@ -4221,7 +4232,9 @@ async function startFlash(opts) {
       // network is minutes, and a bar parked at 0 with no counter was the
       // step that most read as "hung". The release's own size is the honest
       // total (Content-Length can be the compressed transfer size).
-      const resp = await fetch(opts.entry.factory, { cache: "no-store" });
+      // From the site's mirror of the release (fetchRelease). Whichever URL
+      // answers, the SHA-256 and signature checks below bind these bytes.
+      const resp = await fetchRelease(opts.entry.factory, { cache: "no-store" });
       if (!resp.ok) throw new Error("download failed (HTTP " + resp.status + ")");
       const dlTotal = Number(opts.entry.size) ||
         Number(resp.headers.get("content-length")) || 0;

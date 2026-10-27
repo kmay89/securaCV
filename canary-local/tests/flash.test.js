@@ -749,6 +749,206 @@ test("releaseTagFromManifestUrl: names the pinned firmware tag, and only that", 
     null);
 });
 
+// ── the same-origin release mirror (pages.yml → firmware/<tag>/<file>) ──────
+// A browser can never fetch a github.com release asset (no CORS header on the
+// redirect or on the asset host), so the hosted page reads the copy pages.yml
+// writes beside it. These pin where the page looks; scripts/tests/
+// test_pages_release_mirror.py holds the writer (tools/mirror_release.py) to
+// the same layout through node, and tests/flash_mirror_probe.mjs proves it in
+// Chromium from one origin.
+const PAGES = "https://kmay89.github.io/securaCV/canary-local/flash.html";
+const PAGES_MIRROR = "https://kmay89.github.io/securaCV/canary-local/firmware/";
+const REL = (tag, file) => `https://github.com/kmay89/securaCV/releases/download/${tag}/${file}`;
+
+test("releaseAssetParts: the project's release-download URLs, and nothing else", async () => {
+  const { releaseAssetParts, DEV_FLASH_MANIFEST_URL } = await core();
+  const tag = `fw-v${registry.fw_train}`;
+  // Every pin the page reads maps — the catalog's own, the Vision model's and
+  // the dev channel's.
+  assert.deepStrictEqual(releaseAssetParts(catalog.manifest_url, catalog.repo),
+    { repo: catalog.repo, tag, file: "manifest-flash.json" });
+  assert.deepStrictEqual(releaseAssetParts(catalog.we2_module.manifest_url, catalog.repo),
+    { repo: catalog.repo, tag, file: "manifest-vision-model.json" });
+  assert.deepStrictEqual(releaseAssetParts(DEV_FLASH_MANIFEST_URL, catalog.repo),
+    { repo: catalog.repo, tag: "fw-dev-latest", file: "manifest-flash.json" });
+  // A dev manifest names its images under the real fw-v*-dev.* tag.
+  assert.deepStrictEqual(
+    releaseAssetParts(REL("fw-v2.5.0-dev.1", "canary-2.5.0-dev.1-factory.bin"), "KMAY89/securacv"),
+    { repo: "kmay89/securaCV", tag: "fw-v2.5.0-dev.1", file: "canary-2.5.0-dev.1-factory.bin" });
+  // Without a repo any owner answers; with one, only that repository.
+  assert.ok(releaseAssetParts("https://github.com/other/fork/releases/download/fw-v1/x.bin"));
+  assert.strictEqual(
+    releaseAssetParts("https://github.com/other/fork/releases/download/fw-v1/x.bin", catalog.repo), null);
+  for (const bad of [
+    "http://github.com/kmay89/securaCV/releases/download/fw-v1/x.bin",        // not https
+    "https://github.com:8443/kmay89/securaCV/releases/download/fw-v1/x.bin",  // a port
+    "https://evil.example/kmay89/securaCV/releases/download/fw-v1/x.bin",     // another host
+    "https://github.com.evil.example/kmay89/securaCV/releases/download/fw-v1/x.bin",
+    "https://u:p@github.com/kmay89/securaCV/releases/download/fw-v1/x.bin",   // credentials
+    REL("fw-v1", "x.bin") + "?raw=1",                                           // a query
+    REL("fw-v1", "x.bin") + "#frag",                                            // a fragment
+    REL("fw-v1", "a/b.bin"),                                                    // a nested path
+    REL("fw-v1", "%2E%2E"),                                                     // ".." spelled out
+    REL("fw-v1", "a%2Fb.bin"),                                                  // an encoded slash
+    REL("fw-v1", ".hidden"),                                                    // not a plain name
+    REL("%E0", "x.bin"),                                                        // a malformed escape
+    "https://github.com/kmay89/securaCV/releases/latest/download/x.bin",        // not a pinned tag
+    "https://api.github.com/repos/kmay89/securaCV/releases/assets/1",
+    "", null, undefined, "not a url",
+  ]) {
+    assert.strictEqual(releaseAssetParts(bad, catalog.repo), null, String(bad));
+  }
+});
+
+test("isLocalHost: loopback, *.localhost, mDNS and private ranges; never a public host", async () => {
+  const { isLocalHost } = await core();
+  for (const h of ["localhost", "LOCALHOST", "tauri.localhost", "canary.local", "127.0.0.1",
+    "127.8.9.1", "10.0.0.7", "192.168.1.20", "172.16.0.1", "172.31.255.255", "169.254.3.4",
+    "0.0.0.0", "[::1]", "::1", "[fd12:3456::1]", "[fe80::1]"]) {
+    assert.strictEqual(isLocalHost(h), true, h);
+  }
+  for (const h of ["kmay89.github.io", "securacv.com", "local.securacv.com", "172.32.0.1",
+    "172.15.0.1", "192.169.0.1", "8.8.8.8", "[2001:db8::1]", "localhost.example.com",
+    "notlocal", "", null, undefined]) {
+    assert.strictEqual(isLocalHost(h), false, String(h));
+  }
+});
+
+test("releaseFetchPlan: a public host reads ONLY its mirror; a local host falls back; nothing else is mapped", async () => {
+  const { releaseFetchPlan, DEV_FLASH_MANIFEST_URL } = await core();
+  const tag = `fw-v${registry.fw_train}`;
+  const opts = { pageHref: PAGES, mirrorBase: PAGES_MIRROR, repo: catalog.repo };
+  // The hosted Lab: the mirror and nothing else. A github.com fallback there
+  // is refused by the browser and would turn an honest 404 into a "connection
+  // problem".
+  assert.deepStrictEqual(releaseFetchPlan(catalog.manifest_url, opts),
+    [`${PAGES_MIRROR}${tag}/manifest-flash.json`]);
+  assert.deepStrictEqual(releaseFetchPlan(catalog.we2_module.manifest_url, opts),
+    [`${PAGES_MIRROR}${tag}/manifest-vision-model.json`]);
+  assert.deepStrictEqual(releaseFetchPlan(DEV_FLASH_MANIFEST_URL, opts),
+    [`${PAGES_MIRROR}fw-dev-latest/manifest-flash.json`]);
+  // A relative mirror base resolves against the page.
+  assert.deepStrictEqual(releaseFetchPlan(REL(tag, "canary-x-factory.bin"), { ...opts, mirrorBase: "firmware/" }),
+    [`${PAGES_MIRROR}${tag}/canary-x-factory.bin`]);
+  // A dev server or a hub on the LAN may not carry the mirror: mirror first,
+  // then the release URL (what the page did before the mirror existed).
+  for (const page of ["http://localhost:8000/canary-local/flash.html",
+    "http://192.168.1.20/canary-local/flash.html", "http://hub.local/canary-local/flash.html"]) {
+    const base = new URL("firmware/", page).href;
+    assert.deepStrictEqual(
+      releaseFetchPlan(catalog.manifest_url, { pageHref: page, mirrorBase: base, repo: catalog.repo }),
+      [`${base}${tag}/manifest-flash.json`, catalog.manifest_url], page);
+  }
+  // Unchanged: a page off http(s) (file:, a native webview scheme), a URL
+  // that is not the project's release (a ?manifest= override, a self-hosted
+  // image, a fork), a mirror base on another origin, or no base at all.
+  for (const [url, o] of [
+    [catalog.manifest_url, { ...opts, pageHref: "file:///home/u/securaCV/canary-local/flash.html" }],
+    [catalog.manifest_url, { ...opts, pageHref: "tauri://localhost/flash.html" }],
+    [catalog.manifest_url, { ...opts, pageHref: undefined }],
+    ["https://kmay89.github.io/securaCV/canary-local/my/manifest-flash.json", opts],
+    ["http://127.0.0.1:9000/manifest-flash.json", opts],
+    ["https://github.com/someone/fork/releases/download/fw-v1/manifest-flash.json", opts],
+    [catalog.manifest_url, { ...opts, mirrorBase: "https://cdn.example/firmware/" }],
+    [catalog.manifest_url, { ...opts, mirrorBase: "" }],
+  ]) {
+    assert.deepStrictEqual(releaseFetchPlan(url, o), [url], `${url} from ${o.pageHref} / ${o.mirrorBase}`);
+  }
+});
+
+test("fetchReleaseAsset: the first OK answer wins; otherwise the LAST candidate's answer, as a bare fetch gave it", async () => {
+  const { fetchReleaseAsset } = await core();
+  const tag = `fw-v${registry.fw_train}`;
+  const mirrorUrl = `${PAGES_MIRROR}${tag}/manifest-flash.json`;
+  const LOCAL = "http://localhost:8000/canary-local/flash.html";
+  const LOCAL_MIRROR = "http://localhost:8000/canary-local/firmware/";
+  const res = (status) => ({ ok: status >= 200 && status < 300, status });
+  const recorder = (answers) => {
+    const calls = [];
+    const fetchImpl = async (url, init) => {
+      calls.push({ url, init });
+      const a = answers[url];
+      if (a instanceof Error) throw a;
+      return a || res(404);
+    };
+    return { calls, fetchImpl };
+  };
+  const base = { repo: catalog.repo, init: { cache: "no-store" } };
+
+  // Hosted page, mirror present: one same-origin request, init passed through.
+  let r = recorder({ [mirrorUrl]: res(200) });
+  let got = await fetchReleaseAsset(catalog.manifest_url,
+    { ...base, pageHref: PAGES, mirrorBase: PAGES_MIRROR, fetchImpl: r.fetchImpl });
+  assert.strictEqual(got.status, 200);
+  assert.deepStrictEqual(r.calls, [{ url: mirrorUrl, init: { cache: "no-store" } }]);
+
+  // Hosted page, release not mirrored (not cut yet): the 404 comes back as a
+  // Response, so the page's "HTTP 404" story is the true one, and github.com
+  // is never asked.
+  r = recorder({});
+  got = await fetchReleaseAsset(catalog.manifest_url,
+    { ...base, pageHref: PAGES, mirrorBase: PAGES_MIRROR, fetchImpl: r.fetchImpl });
+  assert.strictEqual(got.status, 404);
+  assert.deepStrictEqual(r.calls.map((c) => c.url), [mirrorUrl]);
+
+  // Local page, no mirror: mirror 404, then the release URL.
+  const localMirror = `${LOCAL_MIRROR}${tag}/manifest-flash.json`;
+  r = recorder({ [catalog.manifest_url]: res(200) });
+  got = await fetchReleaseAsset(catalog.manifest_url,
+    { ...base, pageHref: LOCAL, mirrorBase: LOCAL_MIRROR, fetchImpl: r.fetchImpl });
+  assert.strictEqual(got.status, 200);
+  assert.deepStrictEqual(r.calls.map((c) => c.url), [localMirror, catalog.manifest_url]);
+
+  // Local page, mirror present: the release URL is never touched.
+  r = recorder({ [localMirror]: res(200) });
+  await fetchReleaseAsset(catalog.manifest_url,
+    { ...base, pageHref: LOCAL, mirrorBase: LOCAL_MIRROR, fetchImpl: r.fetchImpl });
+  assert.deepStrictEqual(r.calls.map((c) => c.url), [localMirror]);
+
+  // Local page, both fail: the release URL's failure is what surfaces — its
+  // network error thrown (the page's "connection problem", as before the
+  // mirror), or its HTTP status returned.
+  const cors = new TypeError("Failed to fetch");
+  r = recorder({ [localMirror]: new TypeError("refused"), [catalog.manifest_url]: cors });
+  await assert.rejects(fetchReleaseAsset(catalog.manifest_url,
+    { ...base, pageHref: LOCAL, mirrorBase: LOCAL_MIRROR, fetchImpl: r.fetchImpl }), (e) => e === cors);
+  r = recorder({ [catalog.manifest_url]: res(503) });
+  got = await fetchReleaseAsset(catalog.manifest_url,
+    { ...base, pageHref: LOCAL, mirrorBase: LOCAL_MIRROR, fetchImpl: r.fetchImpl });
+  assert.strictEqual(got.status, 503);
+
+  // Not a release URL (a ?manifest= override): fetched exactly as given.
+  const override = "http://127.0.0.1:9000/manifest-flash.json";
+  r = recorder({ [override]: res(200) });
+  await fetchReleaseAsset(override, { ...base, pageHref: PAGES, mirrorBase: PAGES_MIRROR, fetchImpl: r.fetchImpl });
+  assert.deepStrictEqual(r.calls.map((c) => c.url), [override]);
+});
+
+test("flash.js / we2-flash.js read every release asset through the mirror, never by a bare fetch", () => {
+  // The four reads that used to be fetch(<github.com URL>) — refused by every
+  // browser — now go through core.fetchReleaseAsset. Every bare fetch() left in
+  // these two modules takes a same-origin string literal (devices/*.json).
+  const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+  const flashJs = strip(readFileSync(join(ROOT, "assets/flash.js"), "utf8"));
+  const we2Js = strip(readFileSync(join(ROOT, "assets/we2-flash.js"), "utf8"));
+  const bare = (src) => [...src.matchAll(/(?<![.\w])fetch\(\s*([^,)]*)/g)].map((m) => m[1]);
+  // The scan sees flash.js's own catalog reads, so a scan that matched
+  // nothing would say so rather than pass.
+  assert.ok(bare(flashJs).includes('"devices/flash.json"'), "the bare-fetch scan found nothing in flash.js");
+  for (const [name, src] of [["flash.js", flashJs], ["we2-flash.js", we2Js]]) {
+    for (const arg of bare(src)) {
+      assert.match(arg, /^"devices\/[^"]+"$/,
+        `${name}: fetch(${arg}) — a release asset must go through fetchReleaseAsset (the mirror)`);
+    }
+  }
+  assert.match(flashJs, /function fetchRelease\(url, init\) \{\s*return core\.fetchReleaseAsset\(url, \{ repo: state\.catalog && state\.catalog\.repo, init \}\);/);
+  assert.match(flashJs, /fetchRelease\(activeManifestUrl\(\), \{ cache: "no-store" \}\)/);
+  assert.match(flashJs, /await fetchRelease\(opts\.entry\.factory, \{ cache: "no-store" \}\)/);
+  assert.match(we2Js, /fetchReleaseAsset\(url, \{ repo: ctx\.catalog && ctx\.catalog\.repo, init \}\)/);
+  assert.match(we2Js, /fromRelease\(m\.manifest_url, \{ cache: "no-store" \}\)/);
+  assert.match(we2Js, /fromRelease\(asset\.url\)/);
+});
+
 // ── WiFi pre-provisioning (NVS image builder + QR payload) ──────────────────
 test("buildNvsWifiImage round-trips through the NVS parser with valid CRCs", async () => {
   const { buildNvsWifiImage, parseNvs, witnessSummary, crc32EspRom } = await core();

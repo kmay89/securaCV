@@ -80,6 +80,15 @@ built commit can never disagree.
 **Use it:** cutting firmware and nothing else, or a dev-channel build
 (`2.4.0-dev.1`) that only dev-channel devices can see.
 
+**It also redeploys the site.** The browser flasher on GitHub Pages reads the
+release from the site's own copy of it (a browser cannot download a GitHub
+release asset at all; see
+[The flasher shows every product as unavailable](#the-flasher-shows-every-product-as-unavailable)),
+so the last step dispatches **pages** on the default branch, and the deploy
+mirrors the new release into the site. A failed dispatch is a warning and a
+line in the run summary, not a failed release: press **Actions → pages → Run
+workflow** to publish the copy by hand.
+
 **Don't:** use it if you haven't bumped `FIRMWARE_VERSION` / `CANARY_FW_VERSION`
 to match — the version-string guard greps each binary and fails closed. And it
 refuses a tag that already exists: bump, don't reuse.
@@ -116,7 +125,10 @@ undone in two steps (`backoffice/src/migrations/README.md`).
 ### Flasher Factory Images
 
 Rebuilds *only* the browser-flasher factory images and `manifest-flash.json`, and
-attaches them to a release. Pick a `channel`.
+attaches them to a release. Pick a `channel`. Either channel ends by dispatching
+**pages**, so the site's copy of the release (what the hosted browser flasher
+actually reads) is replaced with what was just uploaded; the **Vision Model
+Asset** workflow does the same after it attaches a model.
 
 **`channel: release`** — an **existing** `fw-v*` tag.
 
@@ -360,6 +372,18 @@ signed a given build.
 
 ### The flasher shows every product as unavailable
 
+**First: is it the hosted page and a "connection problem"?** Until 2026-10-27
+the browser flasher on GitHub Pages fetched the release straight from
+github.com, and no browser can: the `/releases/download/` redirect and the
+asset host both answer without a CORS header, so every product read
+unavailable on every visit. The release is now mirrored into the site by
+`pages.yml` (`canary-local/firmware/<tag>/`), and the page reads that copy. If
+the hosted page says the pinned release is missing, open the newest **pages**
+run: its summary says, per channel, whether the mirror landed or why it was
+skipped (the release not cut yet, an asset missing, a checksum that disagrees
+with the manifest). **Fix:** once the release exists, **Actions → pages → Run
+workflow**. (The desktop apps fetch natively and never had this problem.)
+
 The catalog pins an **exact** release tag (`gen_flash.py`
 `release_download_base()` — `/latest/` is unsafe because app releases share the
 namespace and would shadow it). If that release hasn't been cut, the fetch 404s
@@ -435,6 +459,7 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
 | A display binary carries the identity it's published under | the product-string check in `firmware-release.yml` |
 | The signing key in CI matches the committed public key | `firmware-release.yml`, fails before building |
 | The flasher's pinned release actually resolves | advisory warning in `canary-local.yml` |
+| The hosted flasher reads its release from its own origin, at the path the site deploy writes it | `canary-local/tools/mirror_release.py` (in `pages.yml`), held to `flash-core.js` by `scripts/tests/test_pages_release_mirror.py`; `canary-local/tests/flash_mirror_probe.mjs` in Chromium |
 | Every updater URL in a published `latest.json` resolves | the consistency guards in `desktop-flasher-release.yml` + `desktop-lab-updater-pointer.yml` |
 | An app release says what it changes, in the body and in the updater notes | `desktop/scripts/release_notes.py` (lint + both app workflows) |
 | Each self-updating app polls its own rolling pointer (`flasher-latest`, `lab-latest`), never `releases/latest`, and the workflow that advances it names the same tag | `desktop_parity.test.js` |

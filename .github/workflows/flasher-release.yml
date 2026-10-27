@@ -56,6 +56,7 @@ on:
 
 permissions:
   contents: write
+  actions: write   # redeploy pages.yml after publishing: the browser flasher reads its same-origin mirror
 
 # One rebuild per target release at a time; never cancel mid-upload — a second
 # dispatch for the same target queues behind the first. The channel is part of
@@ -609,6 +610,7 @@ jobs:
       # all (preserving both), and the dev path — which owns its rolling
       # release outright — sets them every run.
       - name: Attach to the release
+        id: attach
         if: inputs.channel != 'dev'
         # Adds/updates the flasher assets on the tag's release, creating the
         # release if it doesn't exist yet (the pre-key path). Existing release
@@ -622,6 +624,7 @@ jobs:
             /tmp/release/flasher-sha256sums.txt
 
       - name: Publish the rolling dev-channel release
+        id: publish_dev
         if: inputs.channel == 'dev'
         # `prerelease: true` is load-bearing, not cosmetic: `releases/latest` is
         # the URL every fielded Canary polls for OTA, and it must stay on a
@@ -652,3 +655,29 @@ jobs:
             /tmp/release/*-factory.bin
             /tmp/release/manifest-flash.json
             /tmp/release/flasher-sha256sums.txt
+
+      # Both channels just rewrote a manifest-flash.json and the images it
+      # names, which the browser flasher on GitHub Pages reads from the site's
+      # own copy (pages.yml mirrors it: a browser cannot fetch a github.com
+      # release asset, RELEASE_LESSONS 2026-10-27). That copy is the old one
+      # until the site redeploys, and this upload, made with the GITHUB_TOKEN,
+      # fires no event that would redeploy it. The ref is the default branch,
+      # the only one the github-pages environment deploys (and whose flash.json
+      # pins the tag the mirror reads).
+      - name: Redeploy the site so the browser flasher mirrors these assets
+        if: ${{ (success() || failure()) && (steps.attach.outcome == 'success' || steps.publish_dev.outcome == 'success') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.event.repository.default_branch || 'main' }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          # Never a failed release over this: the release is published either
+          # way, and the next deploy (any main push touching canary-local, or
+          # Actions → pages → Run workflow) mirrors it too.
+          if gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref "$REF"; then
+            echo "Dispatched pages.yml on ${REF}: the browser flasher's same-origin mirror picks up ${TAG}."
+            echo "- Site redeploy dispatched (\`pages.yml\` on \`${REF}\`), so the browser flasher mirrors \`${TAG}\`." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::could not dispatch pages.yml — the browser flasher on GitHub Pages serves ${TAG} only after the next site deploy. Run Actions → pages → Run workflow (on ${REF}) to publish it now."
+            echo "- ⚠️ Site redeploy NOT dispatched: the browser flasher on GitHub Pages serves \`${TAG}\` only after the next deploy (Actions → pages → Run workflow)." >> "$GITHUB_STEP_SUMMARY"
+          fi

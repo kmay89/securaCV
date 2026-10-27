@@ -69,6 +69,50 @@ any platform.
   no value, rather than a default that was right for every chip so far.
   firmware/LESSONS_LEARNED.md has the firmware side.
 
+## 2026-10-27 — The browser flasher could never fetch a release: CORS
+
+- **Symptom:** on the hosted Lab (`canary-local/flash.html` on GitHub Pages),
+  after fw-v2.4.17 published, the page reported a connection problem and every
+  product as unavailable. The release was there: `curl` fetched every asset.
+  The desktop Lab and Flasher installed the same release without trouble.
+- **Cause:** a browser cannot read a GitHub release asset. `github.com`
+  answers `/releases/download/<tag>/<file>` with a 302 that carries no
+  `Access-Control-Allow-Origin`, and `release-assets.githubusercontent.com`
+  answers the 200 with none either, so the browser refuses the response
+  whatever the page's own CSP allows. `api.github.com` does send the header,
+  but its asset downloads redirect to the same host, so it is no way out.
+  `flash.js` fetched `flash.json`'s `manifest_url` (and the dev channel's
+  `DEV_FLASH_MANIFEST_URL`) and each manifest's `factory` URL straight from
+  there, and `we2-flash.js` did the same for the Vision model, so on the
+  hosted page none of those reads could succeed. Every test passed: the unit tests stub
+  `fetch`, the browser probes stop at the Connect card (a manifest is fetched
+  only after a chip answers), the CSP probe checks the policy rather than a
+  cross-origin response, and the desktop apps fetch natively (Rust, no CORS),
+  so the one path a browser takes was never run against the real host.
+- **Fix:** `pages.yml` mirrors the pinned releases into the site:
+  `canary-local/tools/mirror_release.py` copies `manifest_url`'s manifest, the
+  Vision model's manifest and the dev channel's, byte for byte, and every file
+  each lists, held to its manifest's SHA-256 and size, to
+  `canary-local/firmware/<tag>/<file>`. A channel lands whole or not at all; a
+  release not cut yet (the push deploy that merges a version bump runs before
+  the tag exists) or one mid-upload is a `::warning::`, and a transport failure
+  fails the deploy so the last good site stays live. `flash-core.js`
+  `fetchReleaseAsset` reads that copy by the URL's own tag and file name: only
+  the copy on a public host, the copy and then the release URL on a local or
+  LAN host. The signed manifests are never rewritten, so the SHA-256 and
+  Ed25519 checks bind the same bytes as before. Because a release made with
+  the GITHUB_TOKEN fires no event, `firmware-release.yml`,
+  `flasher-release.yml` and `vision-model-release.yml` dispatch `pages.yml`
+  (default branch) once they publish, with a warning, never a failure, if
+  that dispatch is refused. `canary-local/tests/flash_mirror_probe.mjs` serves
+  the page and a fixture mirror from one origin in Chromium and fails on any
+  request that leaves for github.com.
+- **Applies to:** any page that fetches a release asset from a browser (a
+  release download URL is for people and native clients, never for a page's
+  `fetch`), and any test of a network path: a stubbed `fetch` proves the code
+  called it, not that the host will answer a browser. Both desktop apps are
+  unaffected and unchanged.
+
 ## 2026-10-10 — The 2.4.16 train: a Flasher release held `releases/latest` for three minutes, and four more things it turned up
 
 - **Symptom:** run 38034898214's Linux leg logged "Couldn't find release

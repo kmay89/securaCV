@@ -6,7 +6,10 @@
   <!--
     Supply-chain hardening (see docs/browser_flasher.md § Trust model): a strict
     Content-Security-Policy so only this site's own vendored code can run, and
-    the page can only fetch firmware from our signed GitHub releases.
+    the page can only fetch firmware from our signed GitHub releases — on the
+    hosted Lab, from this site's own copy of them ('self'): a browser cannot
+    read a github.com release asset (no CORS header), so pages.yml mirrors the
+    pinned release beside this page and flash-core.js reads it there first.
     THE POLICY LINE ABOVE IS GENERATED — by canary-local/tools/gen_csp.py, from
     the one policy table every Lab page shares; this page's additions and the
     reason for each live there, and CI regenerates and diffs the line. Edit the
@@ -16,7 +19,9 @@
       · the 'sha256-…' pins the inline import map below, which carries the
         Subresource-Integrity hashes for those vendored modules. It is the one
         inline script in the Lab: browsers do not load an import map from a file.
-      · connect-src — our signed release host + its asset CDN, plus loopback
+      · connect-src — 'self' (the catalog, and the site's mirror of the
+        release), our signed release host + its asset CDN (the fallback for a
+        page on a local or LAN host with no mirror), plus loopback
         (localhost / 127.0.0.1) for a same-machine manifest server. That is the
         exact set the ?manifest= override accepts (flash-core.js), so the code
         guard and this policy agree; broader private/LAN hosts can't be spelled
@@ -121,8 +126,10 @@
       generated from the firmware tree by <code>tools/gen_flash.py</code> and
       drift-checked in CI, so a board is only ever offered an image built for
       its own silicon. Firmware images come from the project's
-      <strong>signed</strong> GitHub releases; the flasher verifies each one's
-      SHA-256 before writing and the device's own MD5 after. The flashing
+      <strong>signed</strong> GitHub releases, which the hosted Lab serves from
+      its own copy (browsers can't download a release from GitHub directly); the
+      flasher verifies each one's SHA-256 before writing and the device's own
+      MD5 after, wherever the bytes came from. The flashing
       engine is <a href="https://github.com/espressif/esptool-js">esptool-js</a>,
       vendored into this site — not loaded from a CDN. Nothing about your board
       leaves this page.

@@ -3,8 +3,9 @@
 // Everything here is pure and testable (tests/flash.test.js runs it under
 // `node --test`, the repo convention): the chip guard, the ESP32 image
 // parsers that let the page read what firmware is *currently* on a board,
-// the release-manifest resolution, the release-signature verification, and the
-// byte<->binary-string glue esptool-js needs. No DOM, no Web Serial, no
+// the release-manifest resolution, where a release asset is fetched from (the
+// site's same-origin mirror, releaseFetchPlan), the release-signature
+// verification, and the byte<->binary-string glue esptool-js needs. No DOM, no Web Serial, no
 // esptool import — flash.js owns all of that and imports this.
 
 import * as ed25519 from "./vendor/ed25519/ed25519.mjs";
@@ -829,6 +830,130 @@ export function channelFromSearch(search) {
   } catch {
     return "release";
   }
+}
+
+// ── the same-origin release mirror (pages.yml) ──────────────────────────────
+// A browser cannot fetch a GitHub release asset at all. github.com answers
+// /releases/download/ with a 302 that carries no Access-Control-Allow-Origin,
+// and the asset host it redirects to answers 200 with none either, so the
+// browser refuses every manifest and every image. On the hosted Lab the page
+// reported a connection problem and every product as unavailable
+// (.github/RELEASE_LESSONS.md, 2026-10-27). So pages.yml copies the releases
+// this page pins (flash.json manifest_url, we2_module.manifest_url, and
+// DEV_FLASH_MANIFEST_URL), with every file each manifest lists, into the
+// deployed site at firmware/<tag>/<file>, next to the pages
+// (canary-local/tools/mirror_release.py checks each file's SHA-256 against
+// its manifest before publishing any of them). The page maps a release URL
+// to that path by the URL's own tag and file name. The URLs themselves (in
+// flash.json, and inside the signed manifests) are never rewritten, so the
+// SHA-256 and Ed25519 checks bind exactly the bytes they always did, wherever
+// those bytes were served from.
+//
+// The desktop apps never come here: their native side (flash-native.js →
+// Rust) fetches the release itself, and no browser rule applies to it.
+export const RELEASE_MIRROR_DIR = "firmware";
+// One path segment of a tag or asset name: fw-v2.4.17, fw-dev-latest,
+// canary-2.5.0-dev.1-factory.bin, person-detection-we2-v2.4.17.tflite. The
+// mirror script refuses the same set (its SEGMENT_RE), so neither side can
+// write or read a path the other would not.
+const RELEASE_SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+// Where this module's copy of the mirror lives: canary-local/firmware/, a
+// sibling of assets/. Resolved from the module (assets/ → its parent →
+// firmware/), not the page, so the answer does not depend on which page
+// imported it, and it never leaves canary-local.
+// Guarded: this module also loads inside the desktop apps' webviews, where a
+// throw at module scope would take the whole flasher down with it; there a
+// missing base only means "no mirror" (releaseFetchPlan answers [url]).
+const DEFAULT_MIRROR_BASE = (() => {
+  try {
+    return new URL(`${RELEASE_MIRROR_DIR}/`, new URL("..", import.meta.url)).href;
+  } catch { return ""; }
+})();
+
+// { repo, tag, file } for a GitHub release-download URL
+// (https://github.com/<owner>/<repo>/releases/download/<tag>/<file>), or null
+// for anything else. With `repo`, only that repository's assets answer: the
+// mirror carries the project's own releases and nothing else.
+export function releaseAssetParts(url, repo) {
+  let u;
+  try { u = new URL(String(url || "")); } catch { return null; }
+  if (u.protocol !== "https:" || u.hostname !== "github.com" || u.port ||
+      u.username || u.password || u.search || u.hash) return null;
+  const m = /^\/([^/]+)\/([^/]+)\/releases\/download\/([^/]+)\/([^/]+)$/.exec(u.pathname);
+  if (!m) return null;
+  let tag, file;
+  try { tag = decodeURIComponent(m[3]); file = decodeURIComponent(m[4]); } catch { return null; }
+  if (!RELEASE_SEGMENT_RE.test(tag) || !RELEASE_SEGMENT_RE.test(file)) return null;
+  const owner = `${m[1]}/${m[2]}`;
+  if (repo && owner.toLowerCase() !== String(repo).toLowerCase()) return null;
+  return { repo: owner, tag, file };
+}
+
+// Is this page served from this machine or the local network? A dev server
+// (`python3 -m http.server`), a hub on the LAN, a desktop webview on
+// *.localhost. Those may not carry the mirror at all, so a release fetch there
+// falls back to the release URL itself, which is what the page did before the
+// mirror existed. A public host (GitHub Pages, a custom domain) gets no such
+// fallback: the browser would refuse it anyway, and the refusal would turn an
+// honest "HTTP 404 from this site" into a false "connection problem".
+export function isLocalHost(hostname) {
+  const h = String(hostname || "").toLowerCase().replace(/^\[|\]$/g, "");
+  if (!h) return false;
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return true;
+  if (h === "::1" || /^f[cd][0-9a-f]{0,2}:/.test(h) || /^fe[89ab][0-9a-f]?:/.test(h)) return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (!m) return false;
+  const a = Number(m[1]), b = Number(m[2]);
+  return a === 127 || a === 10 || a === 0 || (a === 192 && b === 168) ||
+    (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254);
+}
+
+// The URLs a release asset is fetched from, in order.
+//   · a page that is not on http(s) (file:, a native webview scheme): [url],
+//     exactly as before;
+//   · a URL that is not one of `repo`'s release assets (a ?manifest= override,
+//     a self-hosted image): [url];
+//   · a mirror base that is not on the page's own origin: [url] (the mirror
+//     is same-origin by definition; anything else is not this mirror);
+//   · a public host: [mirror] only;
+//   · a local or LAN host: [mirror, url].
+export function releaseFetchPlan(url, { pageHref, mirrorBase = DEFAULT_MIRROR_BASE, repo } = {}) {
+  let page;
+  try { page = new URL(String(pageHref || "")); } catch { return [url]; }
+  if (page.protocol !== "http:" && page.protocol !== "https:") return [url];
+  const parts = releaseAssetParts(url, repo);
+  if (!parts || !mirrorBase) return [url];
+  let base;
+  try { base = new URL(String(mirrorBase), page.href); } catch { return [url]; }
+  if (base.origin !== page.origin) return [url];
+  const mirror = new URL(
+    `${encodeURIComponent(parts.tag)}/${encodeURIComponent(parts.file)}`,
+    base.href.endsWith("/") ? base.href : base.href + "/").href;
+  return isLocalHost(page.hostname) ? [mirror, url] : [mirror];
+}
+
+// Fetch a release asset by its plan. Returns the first OK response, or the
+// LAST candidate's answer (a non-OK Response, or its network error, thrown),
+// so a caller's `r.ok` / HTTP-status handling reads exactly as it did with a
+// bare fetch(url). Nothing here touches the bytes: the caller's SHA-256 and
+// signature checks run on whatever arrives, from whichever candidate.
+export async function fetchReleaseAsset(url, {
+  repo, init,
+  pageHref = globalThis.location ? globalThis.location.href : undefined,
+  mirrorBase = DEFAULT_MIRROR_BASE,
+  fetchImpl = (...args) => globalThis.fetch(...args),
+} = {}) {
+  const plan = releaseFetchPlan(url, { pageHref, mirrorBase, repo });
+  for (let i = 0; i < plan.length; i++) {
+    const last = i === plan.length - 1;
+    try {
+      const resp = await fetchImpl(plan[i], init);
+      if (resp.ok || last) return resp;
+    } catch (err) {
+      if (last) throw err;
+    }
+  }
+  throw new Error("no URL to fetch"); // unreachable: a plan always holds one
 }
 
 // ── WiFi pre-provisioning (write NVS, not just read it) ────────────────────

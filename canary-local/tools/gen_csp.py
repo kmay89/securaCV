@@ -125,8 +125,12 @@ RELEASE = (
     "connect-src",
     ["https://github.com", "https://*.githubusercontent.com"],
     "signed firmware releases: manifest-flash.json, the factory images and the camera "
-    "module's model come from the project's GitHub release host and its asset CDN "
-    "(flash.json manifest_url) — fetched by flash.js and we2-flash.js.",
+    "module's model are the project's GitHub release assets (flash.json manifest_url). "
+    "On the hosted Lab they are read from the site's own mirror of the release ('self'; "
+    "pages.yml writes it, since a browser cannot read a github.com release asset: no CORS "
+    "header); a page on a local or LAN host that carries no mirror falls back to the "
+    "release host and its asset CDN, which is what these two sources are for "
+    "(flash-core.js releaseFetchPlan) — fetched by flash.js and we2-flash.js.",
 )
 # The modules that fetch from the release hosts. A page whose <script src>
 # graph reaches one of these needs RELEASE, or the fetch fails behind a click.
