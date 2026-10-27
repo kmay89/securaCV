@@ -198,11 +198,16 @@ static void api_auth_send_lockout(httpd_req_t* req) {
 // The caller should return ESP_OK immediately if this returns false.
 //
 // Two entry points over one body. api_auth_check() takes a valid cv_session
-// cookie OR a Bearer token: every admin route. api_auth_check_bearer() takes
-// ONLY the Bearer token, with the same lockout, the same failure accounting
-// and the same 401/403/429 answers: the routes whose answer carries a
-// credential (sweep F289 — the pairing QR), where a session the landing page
-// mints for any LAN host must not stand in for the token.
+// cookie OR a Bearer token, for a route a landing session may use.
+// api_auth_check_bearer() takes ONLY the Bearer token, with the same lockout,
+// the same failure accounting and the same 401/403/429 answers, for a route
+// where a session the landing page mints for any LAN host must not stand in
+// for the token: an answer that carries a credential (sweep F289, the
+// pairing QR), a write that grants one (the vault key, F335; the Bluetooth
+// and mesh pairing confirms, F346), the four routes that move the network
+// (Disconnect and Forget in every mode, Connect and AP-only after setup
+// through wifi_change_authorize(); F334, F345) and the two reboot routes
+// (F361). SECURITY_MODEL.md keeps the list.
 
 static bool api_auth_check_bearer(httpd_req_t* req, const char* expected_token) {
   // ── Check this source's lockout ──

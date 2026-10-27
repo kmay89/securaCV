@@ -6299,8 +6299,9 @@ so — see D2 below.)
   held 51 BANNED and 766 RETIRED_IN rows over 212 files, 837 retired forms
   and 747 replacements, in 26 tests). The merge's first review added 24
   rows (790 RETIRED_IN over 214 files, 861 retired forms, 770
-  replacements) and its second 5 (795 over 214 files, 866 retired forms,
-  773 replacements), with 51 BANNED rows and 26 tests throughout. The
+  replacements), its second 5 (795 over 214 files, 866 retired forms, 773
+  replacements) and its third 9 (804 over 214 files, 875 retired forms, 781
+  replacements), with 51 BANNED rows and 26 tests throughout. The
   second review's rows retire what F333, F334 and F346 left untrue in
   five places: #1835's CHANGELOG bullet and LESSONS_LEARNED's QR-road
   bullet, which still gave the session a road to the hub re-point through
@@ -6309,7 +6310,26 @@ so — see D2 below.)
   on `POST /api/wifi/connect` as the way out under the lockout and a
   session-made bond (amended in place, as its siblings were);
   `household_api.h`'s comment citing that bond; and the BOOT-release
-  comment that called Forget the network-only reset.
+  comment that called Forget the network-only reset. The third review's
+  rows retire nine sentences: `api_auth.h`'s two (`api_auth_check()` for
+  every admin route, and the bearer-only routes as the ones whose answer
+  carries a credential, beside the nine places the route code calls
+  `api_auth_check_bearer()`, one of which answers with a credential); the
+  Wi-Fi wrappers' "meaningful only after setup", though Disconnect and
+  Forget gate during it; `bluetooth_api.h`'s every handler on
+  `bt_auth_gated`, beside the bearer-gated confirm; Forget's confirm on the
+  dashboard and two FAQ sentences, which promised the door (and the
+  camera's code) to a standalone unit, which Forget leaves standalone and
+  `keyless_join_open()` keeps shut (`test_wifi_authority`'s
+  forget_leaves_a_standalone_unit_standalone now holds that, and its text
+  pin holds Forget and `wifi_clear_credentials()` to never writing the
+  standalone choice); F353's "only post-setup grant of a network move",
+  while a bonded peer's Bluetooth credentials write still moves the
+  network with no token; and the 2026-07 audit's Trust-on-LAN note, which
+  of what this PR took off the session named only the QR road's part (the
+  scan's `404`, and that Forget takes the bearer and clears the broker
+  login), not the reboot routes, the other network moves, the vault key or
+  the two pairing confirms.
 - [x] **F346 [decision] canary-wap: a session reads the Bluetooth passkey and
   the mesh confirmation code.** `GET /api/bluetooth` (`bt_auth_gated`,
   `api_auth_check`) answers `pairing.pin` while a passkey is displayed, and
@@ -6773,11 +6793,15 @@ so — see D2 below.)
   `derive_api_token()` derives the token from the identity key, and the 10 s
   BOOT hold keeps both (`factory_reset_by_hold()`), so the token a unit was
   set up with is its token for life. After F334, F345, F346 and F361 it is the
-  only post-setup grant of a network move, a bond, a vault key or a reboot (a
-  session can still remove a bond or the vault key, rejoin the stored
-  network, and start the firmware install, which restarts the unit only into
-  a newer signed image), and the setup door's winner after the owner's own
-  Forget or hold keeps it (magic_pairing.md §3.7, §8). Options: a
+  only post-setup grant of a new bond, a vault key or a reboot, and the only
+  one of a network move over HTTP (a session can still remove a bond or the
+  vault key, rejoin the stored network, and start the firmware install,
+  which restarts the unit only into a newer signed image; and a peer already
+  bonded, one a session confirmed before F346 among them, still moves the
+  network with no token, over the Bluetooth credentials write that
+  `ble_provision.cpp` hands to `ble_request_wifi_provisioning()`), and the
+  setup door's winner after the owner's own Forget or hold keeps it
+  (magic_pairing.md §3.7, §8). Options: a
   rotation counter in the derivation (the iPhone and Home Assistant pairings
   then run again), or keep, documented. Whoever implements it must make
   `nvs_load_token()` answer Loaded, Absent or Refused, as F360 did for the key

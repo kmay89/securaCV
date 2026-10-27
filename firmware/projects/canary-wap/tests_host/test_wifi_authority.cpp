@@ -54,6 +54,9 @@
 //     runs each once;
 //     Reconnect, which only rejoins the stored network, still takes the
 //     session;
+//   - Forget leaves a standalone unit standalone: a bearer Forget on a unit
+//     standalone with a network on file leaves the setup door shut and the
+//     boot scan's rule false;
 //   - the reboot and the safe-mode retry: a session alone is 401 and the
 //     unit does not restart (before: it did), a wrong bearer is 403 and a
 //     strike, the bearer restarts it once;
@@ -65,8 +68,9 @@
 //     frame, before a code can act, whether it may still act (a boot window
 //     that rule, a phone session's window whether setup still runs:
 //     scan_window_open()); Forget clears the broker login
-//     after the networks and reports it; the six routes are registered on
-//     these handlers.
+//     after the networks and reports it, and neither it nor
+//     wifi_clear_credentials() writes the standalone choice, which the 10 s
+//     hold clears; the six routes are registered on these handlers.
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host run-wifi-authority
 
@@ -440,6 +444,29 @@ void test_forget_and_disconnect_take_the_bearer() {
   std::printf("PASS forget_and_disconnect_take_the_bearer\n");
 }
 
+// Forget leaves a standalone unit standalone (F333). A unit can be standalone
+// with a network still on file (the wizard's Connect saved one, then "Use
+// without home WiFi" set the choice and left it), and the dashboard shows
+// Remove credentials whenever a network is on file. The bearer's Forget
+// clears the network, not the standalone choice, so neither keyless join
+// opens: the setup door stays shut, and the camera's boot scan, which asks
+// keyless_join_open() over the same two facts, stays off. The dashboard's
+// confirm and the FAQ say so; test_sketch_text holds the real Forget and the
+// wipe it runs to never touching the choice.
+void test_forget_leaves_a_standalone_unit_standalone() {
+  reset_device();
+  g_wifi_ap_only = true;
+  CHECK(!ble_improv_door_should_open());
+  Req b;
+  b.bearer(kToken);
+  CHECK(handle_wifi_forget_auth(&b.r) == ESP_OK);
+  CHECK(b.r.status == "200 OK" && g_forgets == 1 && !g_wifi_creds.configured);
+  CHECK(g_wifi_ap_only);
+  CHECK(!ble_improv_door_should_open());
+  CHECK(!provisioning_logic::keyless_join_open(g_wifi_creds.configured, g_wifi_ap_only));
+  std::printf("PASS forget_leaves_a_standalone_unit_standalone\n");
+}
+
 // Reconnect only rejoins the network already on file: it stays on
 // api_auth_check, so the session still reaches it.
 void test_reconnect_still_takes_the_session() {
@@ -662,6 +689,22 @@ void test_sketch_text() {
   const int says = first_with(forget, "doc[\"broker_login_cleared\"] = login_cleared;");
   CHECK(wipe >= 0 && clear > wipe && when == clear + 1 && reinit == when + 1 && says > reinit);
 
+  // And Forget leaves the standalone choice where it was: neither Forget nor
+  // the wipe it runs writes it, and the 10 s hold is what clears it
+  // (factory_reset_by_hold()), so a standalone unit's keyless joins stay shut
+  // after a Forget, as the dashboard's confirm and the FAQ say.
+  const auto wipe_fn = statements_of(code, "static bool wifi_clear_credentials() {");
+  CHECK(!forget.empty() && !wipe_fn.empty());
+  for (const auto* body : {&forget, &wipe_fn}) {
+    CHECK(first_with(*body, "g_wifi_ap_only") == -1);
+    CHECK(first_with(*body, "NVS_KEY_WIFI_AP_ONLY") == -1);
+  }
+  const auto hold = statements_of(code, "static void factory_reset_by_hold() {");
+  const int hold_wipe = first_with(hold, "wifi_clear_credentials();");
+  CHECK(hold_wipe >= 0 &&
+        first_with(hold, "if (nvs.isOpen()) nvs->remove(NVS_KEY_WIFI_AP_ONLY);") > hold_wipe &&
+        first_with(hold, "g_wifi_ap_only = false;") > hold_wipe);
+
   // The six routes are registered on the handlers this suite holds.
   for (const char* reg : {
            "httpd_uri_t reboot = { .uri = \"/api/reboot\", .method = HTTP_POST, .handler = handle_reboot_auth };",
@@ -685,6 +728,7 @@ int main() {
   test_nine_striking_addresses_hold_the_owners_bearer();
   test_during_setup_the_wizard_gate_is_unchanged();
   test_forget_and_disconnect_take_the_bearer();
+  test_forget_leaves_a_standalone_unit_standalone();
   test_reconnect_still_takes_the_session();
   test_the_reboot_routes_take_the_bearer();
   test_the_door_asks_the_keyless_join_rule();

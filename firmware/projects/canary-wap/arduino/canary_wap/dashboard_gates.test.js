@@ -849,6 +849,9 @@ describe('The network moves on the bearer alone (F334, F345)', () => {
     assert.match(asked[0], /saved broker login/);
     assert.match(asked[0], /if its build has the Bluetooth setup door and Bluetooth is on, that door is open for 30 minutes to the first phone or computer nearby that connects/);
     assert.match(asked[0], /a camera unit takes a Wi-Fi code shown to its lens/);
+    // Neither keyless join opens on a standalone unit (keyless_join_open()),
+    // and Forget leaves a standalone unit standalone, so the confirm says so.
+    assert.match(asked[0], /Until this Canary is set up again \(unless it runs standalone\), a camera unit/);
     assert.match(asked[0], /use Connect instead: it keeps the broker login/);
   });
 

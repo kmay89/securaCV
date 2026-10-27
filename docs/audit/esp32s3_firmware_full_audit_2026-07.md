@@ -131,9 +131,13 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   GET keeps write-only cannot be read through a broker the session names that way; host-tested. The
   QR hub-provision path still moves it on a scanned code, in a scan window the session can open with
   the pair token it mints (`GET /api/pair/token` takes the cookie), but only for a code in front of
-  the camera. (Since #<PR>, sweep F333 and F334: after setup `POST /api/wifi/qr-scan` answers `404`,
-  so the session opens no scan window, and the boot scan runs only while no network is stored and
-  the unit is not standalone; a Forget, which takes the bearer, clears the stored broker login.)
+  the camera. (Since #<PR> the session buys less again: after setup the four routes that move the
+  network (F334, F345), the two reboot routes (F361), the vault key (F335) and the Bluetooth and
+  mesh pairing confirms (F346) take the bearer alone, so the reboot and the Wi-Fi change in the
+  list above are no longer the session's (its firmware install still restarts the unit, only into
+  a newer signed image); and `POST /api/wifi/qr-scan` answers `404` (F333, F334),
+  so the session opens no scan window, the boot scan runs only while no network is stored and the
+  unit is not standalone, and a Forget, which takes the bearer, clears the stored broker login.)
   F289's follow-up (#1832) adds that the receipt's bearer grant counts a wrong token
   toward the lockout (`api_auth_bearer_grant`), also host-tested only. See
   `docs/audit/repo_todo_sweep_2026-09.md` F289.)*

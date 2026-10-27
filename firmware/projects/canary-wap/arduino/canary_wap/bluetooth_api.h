@@ -57,8 +57,9 @@ namespace bluetooth_api {
 // GET /api/bluetooth only to a bearer (sweep F346).
 //
 // Mechanism: register_routes() stashes the API token pointer in a
-// module-local static, then wraps every real handler in the bt_auth_gated
-// function template. The trampoline runs api_auth_check + delegates;
+// module-local static, then wraps every real handler but the bond's confirm
+// in the bt_auth_gated function template (the confirm takes bt_bearer_gated,
+// below). The trampoline runs api_auth_check + delegates;
 // non-authenticated callers receive the standard 401 response that
 // api_auth_check writes back, and the real handler never runs.
 //

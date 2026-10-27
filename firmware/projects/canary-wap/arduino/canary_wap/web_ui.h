@@ -5201,7 +5201,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     async function forgetWifi() {
-      if (!confirm('Forget every saved Wi-Fi network and the saved broker login? Until this Canary is set up again, a camera unit takes a Wi-Fi code shown to its lens, and if its build has the Bluetooth setup door and Bluetooth is on, that door is open for 30 minutes to the first phone or computer nearby that connects, so have yours ready. To change networks, use Connect instead: it keeps the broker login.')) return;
+      if (!confirm('Forget every saved Wi-Fi network and the saved broker login? Until this Canary is set up again (unless it runs standalone), a camera unit takes a Wi-Fi code shown to its lens, and if its build has the Bluetooth setup door and Bluetooth is on, that door is open for 30 minutes to the first phone or computer nearby that connects, so have yours ready. To change networks, use Connect instead: it keeps the broker login.')) return;
       stopWifiPolling();
       const data = await api('/api/wifi/forget', 'POST');
       if (!data.ok) { if (!signInRaised(data)) alert('Failed to remove credentials'); return; }

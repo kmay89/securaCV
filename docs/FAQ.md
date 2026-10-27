@@ -502,9 +502,10 @@ rebooted, you changed the password) does **not** open it — it raises its
 it. So the setup door offers nothing to a stranger's phone while a Canary
 stays on your network, on a good day or a bad one. On a WAP from this
 release on, after setup Forget Wi-Fi, which reopens the door for half an
-hour, asks for the API token, and so does the confirm that bonds a phone to
-the WAP's other Bluetooth lane, which takes a new Wi-Fi network; a page any
-device on your network opens no longer sends either. A bond confirmed on an
+hour unless the WAP runs standalone, asks for the API token, and so does
+the confirm that bonds a phone to the WAP's other Bluetooth lane, which
+takes a new Wi-Fi network; a page any device on your network opens no
+longer sends either. A bond confirmed on an
 earlier release stays until you remove it under Settings → Bluetooth (the
 [security model](security/SECURITY_MODEL.md) has the details).
 
@@ -547,12 +548,14 @@ among its saved networks, which the WAP tries by itself when its own
 network is not found; the forget below clears every one). Or tell it to
 forget its Wi-Fi from the dashboard (Settings → WiFi → Remove credentials,
 the `/api/wifi/forget` route, which also asks for the token or a tap and
-clears the saved broker login too), which clears every saved network and
-opens the door again for half an hour from that moment, to the first phone
-or computer nearby that connects, so have yours ready: until it is set up
-again the door, and the receipt its claim buys, goes to that first one, and
-a camera unit takes a Wi-Fi code shown to its lens. To change networks and
-keep the broker login, use Connect instead. Before you forget it, check
+clears the saved broker login too), which clears every saved network and,
+unless the WAP runs standalone, opens the door again for half an hour from
+that moment, to the first phone or computer nearby that connects, so have
+yours ready: until it is set up again the door, and the receipt its claim
+buys, goes to that first one, and a camera unit takes a Wi-Fi code shown to
+its lens. A forget leaves a standalone WAP standalone: its door stays shut
+and a camera unit takes no code. To change networks and keep the broker
+login, use Connect instead. Before you forget it, check
 that Bluetooth Enabled is on under Settings → Bluetooth: forgetting does
 not turn it back on, the 10-second hold below does not either, and with it
 off no phone reaches the door. Holding a WAP's BOOT button

@@ -9700,18 +9700,20 @@ static esp_err_t handle_safe_mode_retry_auth(httpd_req_t* req) {
   return handle_safe_mode_retry(req);
 }
 
-// WiFi-management auth wrappers, meaningful only AFTER first-boot setup
-// (they ask nothing about setup). The handlers were originally registered
-// without an _auth wrapper, so a LAN-local curl could hit /api/wifi/forget
-// with no credential at all. Disconnect drops the unit off its network
-// and Forget wipes every saved network and re-opens the Bluetooth setup
-// door's first-boot window, whose claim buys the receipt: both take the
-// bearer alone (sweep F334, F345), never the landing page's session, which
-// any host on the network can mint. Reconnect only rejoins the network
-// already stored, so it stays on api_auth_check. (/api/wifi and
-// /api/wifi/scan stay unauthenticated by design: both are read-only and
-// work during captive-portal setup. /api/wifi/connect and /ap-only take
-// wifi_change_authorize's gate.)
+// WiFi-management auth wrappers. They ask nothing about setup, so they gate
+// during it as after it: a session the receipt route mints then (on a BOOT
+// tap or the setup door's claim) gets 401 from Disconnect and Forget. The
+// handlers were originally registered without an _auth wrapper, so a
+// LAN-local curl could hit /api/wifi/forget with no credential at all.
+// Disconnect drops the unit off its network and Forget wipes every saved
+// network and re-opens the Bluetooth setup door's first-boot window (on a
+// unit not running standalone: keyless_join_open()), whose claim buys the
+// receipt: both take the bearer alone (sweep F334, F345), never the landing
+// page's session, which any host on the network can mint. Reconnect only
+// rejoins the network already stored, so it stays on api_auth_check.
+// (/api/wifi and /api/wifi/scan stay unauthenticated by design: both are
+// read-only and work during captive-portal setup. /api/wifi/connect and
+// /ap-only take wifi_change_authorize's gate.)
 static esp_err_t handle_wifi_disconnect_auth(httpd_req_t* req) {
   if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_wifi_disconnect(req);
