@@ -61,9 +61,12 @@ any platform.
   esptool's table), the bootloader's header must name that chip, an unknown
   chip is refused without an explicit offset, and the merged file is read
   back before it is kept (`firmware/scripts/test_make_factory.py`, run in
-  firmware.yml). This change leaves the published 2.4.17 assets alone;
-  `docs/RELEASE_BUTTONS.md` § Flasher Factory Images says what a rebuild of a
-  published tag would replace.
+  firmware.yml). Both flashers now also refuse, before writing, an image
+  whose bootloader is not where the connected chip's ROM loads it (the same
+  table, held equal by `desktop_parity.test.js`). This change leaves the
+  published 2.4.17 assets alone; `docs/RELEASE_BUTTONS.md` § Flasher Factory
+  Images says what a rebuild of a published tag would replace, and why the
+  desktop apps' compiled-in catalog weighs on that choice.
 - **Applies to:** every packaging step with a per-chip constant (bootloader
   offset, flash mode, chip guard): key it on the chip and refuse a chip with
   no value, rather than a default that was right for every chip so far.

@@ -170,7 +170,7 @@
   token first), and `test_docs_claims.py` retires each where it stood. No
   route or gate changed in the merge that brought #1884 in.
 
-### Factory images put the bootloader where each chip's ROM loads it: the classic-ESP32 images move it to 0x1000
+### Factory images put the bootloader where each chip's ROM loads it: the classic-ESP32 images move it to 0x1000, both flashers refuse an image laid out for the wrong chip, and the capacity check reads past a classic ESP32's empty first 4 KB
 
 - **fw-v2.4.17's ESP32-CAM and ESP32 DevKit factory images cannot boot.**
   `canary-esp32cam-2.4.17-factory.bin` and `canary-wroom-2.4.17-factory.bin`
@@ -178,9 +178,12 @@
   0x0, and a classic ESP32 loads its bootloader from 0x1000. Read from the
   published bytes; both boards are compile-tested reach ports that nobody has
   booted. A board installed from either file is recovered over USB with a
-  correct image. Nothing else on that release is affected: those two boards'
-  OTA channels are not published, and the other 19 factory images (S3, C3,
-  C6) carry their own chip's bootloader at 0x0, where their ROM loads it.
+  correct image: one from fw-v2.4.18, or from the dev channel (**Advanced →
+  dev channel**) once `fw-dev-latest` is rebuilt from main. Until then the
+  release channel has no correct Canary image for these two boards. Nothing
+  else on that release is affected: those two boards' OTA channels are not
+  published, and the other 19 factory images (S3, C3, C6) carry their own
+  chip's bootloader at 0x0, where their ROM loads it.
 - **`make_factory.py` takes the bootloader offset from `--chip`**: 0x1000 for
   `esp32` and `esp32s2`, 0x0 for the S3/C3/C6/C2/H2, held to esptool's own
   table. It used to default to 0x0 for every chip and no caller passed the
@@ -193,15 +196,45 @@
   instead of `esp32s3` for an env with no `board_build.mcu` (the
   classic-ESP32 reach envs). `firmware/scripts/test_make_factory.py` merges
   real images from synthetic parts with esptool 4.12.0 and checks 0xE9 at
-  0x1000 for `esp32`/`esp32s2` and at 0x0 for the S3/C3/C6; the Mesh + Scout
-  Host Tests job runs it.
+  0x1000 for `esp32`/`esp32s2` and at 0x0 for the S3/C3/C6, and holds that
+  esptool to the release workflows' pin; the Mesh + Scout Host Tests job runs
+  it, and `firmware.yml` now also runs on an edit to `flasher-release.yml`.
+- **Both flashers refuse, before writing, an image whose bootloader is not
+  where the connected chip's ROM loads it.** The partition-table check passed
+  fw-v2.4.17's two classic-ESP32 images. Now the catalog install and the
+  local-file install each look for the 0xE9 image magic at 0x1000 on an ESP32
+  or S2 and at 0x0 on the S3/C3/C6/C2/H2: the browser in
+  `flash-core.js` `bootloaderPlacement`, the desktop Flasher and the Lab in
+  the shared flash engine's `check_bootloader_offset` (the Flasher's
+  `flash_local_file` now takes the detected chip). The refusal says where the
+  chip looks, where the image has its bootloader, that nothing was written,
+  and that SecuraCV factory images from fw-v2.4.18 on are laid out right, in
+  the same words on both; all three error classifiers name it (`layout`)
+  instead of coaching download mode. A chip the table does not list is not
+  judged, so the check refuses only an image that chip's ROM would not start;
+  the other 19 images on fw-v2.4.17 pass it. One table, held equal to
+  `make_factory.py`'s `ROM_BOOTLOADER` by
+  `desktop_parity.test.js`, which also requires a row for every chip in
+  `flash.json` (that check moved there from `test_make_factory.py`, so it runs
+  when the catalog changes). The hosted browser flasher refuses fw-v2.4.17's
+  two classic-ESP32 images from the next site deploy; the desktop Flasher and
+  the Lab do from their next release. A backup restore is not checked: it puts
+  back the board's own bytes.
+- **The counterfeit-capacity check reads 8 KB, not 4.** Both flashers took
+  the flash-size probe's fingerprint from the first 4 KB of flash, which a
+  correctly installed classic ESP32 leaves erased: every such board read "the
+  chip is blank", and a 2 MB die sold as 4 MB was never caught. The window is
+  now 0x2000, past a classic ESP32's bootloader at 0x1000, in both flashers
+  (`intake.js` `FLASH_ALIAS_WINDOW`, `intake.rs` `ALIAS_WINDOW`, held equal by
+  `desktop_parity.test.js`), with a classic-layout case on each side.
 - **The desktop Flasher's local-file note looks at 0x1000 too.** It warned
   that a file not starting with 0xE9 was unusual, which is every correct
-  classic-ESP32 factory image; it now looks for the magic at 0x0 or 0x1000.
-  The comment in `flash.rs` that called 0x0 right for every merged image now
-  says why it is: the merge placed each part at its address inside the file.
-  Not compiled here (formatting and the two expressions checked with rustfmt
-  and rustc only).
+  classic-ESP32 factory image; it now looks for the magic at 0x0 or 0x1000
+  and says such a file will be refused, and the write's "writing anyway"
+  warning gave way to the refusal above. The comment in `flash.rs` that
+  called 0x0 right for every merged image now says why it is: the merge
+  placed each part at its address inside the file. Host-tested (node and
+  cargo unit tests); not bench-tested.
 
 ## [2.4.17] - 2026-10-27
 

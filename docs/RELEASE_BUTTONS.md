@@ -133,7 +133,9 @@ Asset** workflow does the same after it attaches a model.
 **`channel: release`** — an **existing** `fw-v*` tag.
 
 **Use it** in two situations:
-1. A packaging-tooling fix should reach an already-cut tag without a new version.
+1. A packaging-tooling fix should reach a tag nobody installs from yet, or one
+   whose factory images are all wrong, without a new version (on a tag people
+   already install from, read "Know what it replaces" below first).
 2. **Before the OTA key exists.** The browser flasher's integrity rests on
    SHA-256 + same-origin, not the Ed25519 release key, so these assets can ship
    pre-ceremony. If `Firmware Release` hard-stops on the missing key, this lights
@@ -151,14 +153,22 @@ names. The builds are not byte-reproducible (the images embed their compile
 date through `__DATE__`), so every image gets a new SHA-256, the good ones
 too, and the tag's `sha256sums.txt` and build-provenance attestation (written
 by `Firmware Release`) go on describing the old bytes; this path attests
-nothing, on purpose. The firmware source is the tag's, but the build steps,
-core and library pins and the display env list are the dispatch ref's. A
-product whose rebuild fails drops out of `manifest-flash.json` with only a
-`::warning::`: this path has no completeness gate. The OTA manifests and app
-images are left alone. So for a defect in one or two products' factory images
-on a release people already install from (the fw-v2.4.17 classic-ESP32
-bootloader offset), ship the fixed images in the next version rather than
-re-cutting every image under the old tag.
+nothing, on purpose. The firmware source is the tag's, and the PlatformIO
+builds keep the tag's platform and library pins; the build steps, the
+arduino-cli cores, libraries and FQBNs, the PlatformIO CLI and esptool pins,
+and the display env list are the dispatch ref's. A product whose rebuild fails
+drops out of `manifest-flash.json` with only a `::warning::`: this path has no
+completeness gate. The OTA manifests and app images are left alone. So for a
+defect in one or two products' factory images on a release people already
+install from (the fw-v2.4.17 classic-ESP32 bootloader offset), ship the fixed
+images in the next version rather than re-cutting every image under the old
+tag. Weigh one thing against that: the desktop Flasher and the Lab carry
+`flash.json` compiled in, and it pins the tag's `manifest-flash.json`, so the
+next version reaches their users only once they update the app, while a
+rebuild in place reaches them at once, at the cost above. Until the next
+version, a `channel: dev` dispatch from `main` publishes the fixed images to
+`fw-dev-latest` (both flashers' **Advanced → dev channel**) and leaves the tag
+alone.
 
 **`channel: dev`** — **no tag, no version, no signing key.** Builds the branch
 you dispatch from and publishes to the rolling `fw-dev-latest` prerelease, which

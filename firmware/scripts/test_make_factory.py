@@ -15,8 +15,8 @@ esptool fails there instead of passing silently.
 """
 
 import importlib.util
-import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -34,6 +34,8 @@ import make_factory  # noqa: E402
 
 APP_OFFSET = 0x10000
 HAVE_ESPTOOL = importlib.util.find_spec("esptool") is not None
+# The workflows that build every published factory image with make_factory.py.
+RELEASE_WORKFLOWS = ("firmware-release.yml", "flasher-release.yml")
 
 
 @pytest.fixture()
@@ -99,12 +101,32 @@ def test_classic_esp32_and_s2_load_from_0x1000_the_rest_from_0x0():
         assert make_factory.bootloader_offset(chip, None) == 0x0, chip
 
 
-def test_every_catalog_chip_has_a_rom_offset():
-    # flash.json is the catalog both release paths build from; a chip it names
-    # that the table does not list would drop that product from every release.
-    catalog = json.loads((REPO / "canary-local/devices/flash.json").read_text(encoding="utf-8"))
-    chips = {build_flash_manifest.esptool_chip(p["chip"]) for p in catalog["products"]}
-    assert chips <= set(make_factory.ROM_BOOTLOADER), chips - set(make_factory.ROM_BOOTLOADER)
+# A chip flash.json ships with no row in the table would drop that product from
+# every release. That check lives in canary-local/tests/desktop_parity.test.js
+# ("bootloader placement"), which holds the table to both flashers' copies and
+# runs whenever flash.json changes; firmware.yml, which runs this file, does not
+# watch flash.json.
+
+
+def test_the_merge_runs_on_the_esptool_the_releases_pin(esptool_present):
+    # firmware.yml installs esptool for these tests by hand, and the two
+    # release workflows pin theirs in setup-platformio's extras. A release pin
+    # bumped alone would leave these tests merging with an esptool the images
+    # are not built with, so the three are tied here.
+    pins = {}
+    for wf in RELEASE_WORKFLOWS:
+        text = (REPO / ".github/workflows" / wf).read_text(encoding="utf-8")
+        found = set(re.findall(r"\besptool==([0-9][0-9A-Za-z.]*)", text))
+        assert len(found) == 1, f"{wf}: expected one esptool pin, found {sorted(found)}"
+        pins[wf] = found.pop()
+    assert len(set(pins.values())) == 1, f"the release workflows pin different esptools: {pins}"
+    import esptool
+    pinned = next(iter(pins.values()))
+    if esptool.__version__ != pinned and os.environ.get("MAKE_FACTORY_ESPTOOL") != "require":
+        pytest.skip(f"esptool {esptool.__version__} installed; the releases pin {pinned}")
+    assert esptool.__version__ == pinned, (
+        f"these tests ran on esptool {esptool.__version__}, the releases pin {pinned} — "
+        f"bump firmware.yml's install with {', '.join(RELEASE_WORKFLOWS)}")
 
 
 # ── merged images, read back ─────────────────────────────────────────────────

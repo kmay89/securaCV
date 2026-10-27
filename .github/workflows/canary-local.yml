@@ -198,6 +198,9 @@ on:
       - "desktop-lab/ipad-guide.html"
       - ".github/workflows/flasher-release.yml"
       - "firmware/scripts/build_flash_manifest.py"
+      # desktop_parity holds both flashers' ROM bootloader offsets to the
+      # table the factory images are merged by
+      - "firmware/scripts/make_factory.py"
       - "firmware/canary/lib/securacv_network/src/securacv_network.cpp"
       # we2.test.js: the Vision model-release workflow reads the WE2 burn
       # address from flash.json and never hardcodes a second copy
@@ -428,6 +431,9 @@ on:
       - "desktop-lab/ipad-guide.html"
       - ".github/workflows/flasher-release.yml"
       - "firmware/scripts/build_flash_manifest.py"
+      # desktop_parity holds both flashers' ROM bootloader offsets to the
+      # table the factory images are merged by
+      - "firmware/scripts/make_factory.py"
       - "firmware/canary/lib/securacv_network/src/securacv_network.cpp"
       # we2.test.js: the Vision model-release workflow reads the WE2 burn
       # address from flash.json and never hardcodes a second copy

@@ -150,13 +150,19 @@ the *top of the real part* and holds something other than the head. Two unequal
 blocks, counterfeit declared genuine. The first version of this shipped that
 bug; the addresses that actually alias offset 0 are the **candidate capacities
 themselves**, because on a real 4 MB die address `0x400000` *is* address 0. So
-we read 4 KB at each power-of-two capacity below the declared size and look for
+we read 8 KB at each power-of-two capacity below the declared size and look for
 the one that mirrors the head. The smallest hit is the true size, and we name
 it.
 
 The probe is only conclusive when offset 0 holds something distinguishable. On
 a blank chip every read is `0xFF` and a mirror is indistinguishable from an
-honest chip, so the verdict is **inconclusive**, never an accusation.
+honest chip, so the verdict is **inconclusive**, never an accusation. The
+window is 8 KB, not 4, because a classic ESP32 (the ESP32-CAM, the WROOM
+DevKit) keeps its bootloader at `0x1000`: on a correctly installed one the
+first 4 KB are erased flash, and a 4 KB window read every such board as blank
+and could never catch a mirrored one. Both flashers read the same window
+(`intake.js` `FLASH_ALIAS_WINDOW`, `intake.rs` `ALIAS_WINDOW`; held equal by
+`desktop_parity.test.js`).
 
 ### 3. The MAC
 

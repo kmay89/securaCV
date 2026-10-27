@@ -577,7 +577,10 @@ different questions.
   tooling (it overlays `make_factory.py`, `build_flash_manifest.py`, and the
   `flash.json` catalog from the dispatch ref), so the fix reaches already-cut
   tags, and re-attaches the images in place. (A firmware *source* change still
-  needs a new tag — the overlay is packaging only.)
+  needs a new tag — the overlay is packaging only.) It replaces every image on
+  the tag, the good ones too: for a tag people already install from, read
+  `docs/RELEASE_BUTTONS.md` § Flasher Factory Images, "Know what it replaces on
+  a published tag", first.
 - **Publish before the OTA key ceremony.** The browser channel's integrity is
   SHA-256 + same-origin, **not** the Ed25519 OTA key (see Trust model above), so
   it doesn't need `OTA_SIGNING_KEY_PEM`. If you want the one-click flow live

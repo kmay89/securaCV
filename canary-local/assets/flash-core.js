@@ -88,12 +88,13 @@ export function parsePartitionTable(bytes) {
 
 // A local file is written at offset 0, where only a MERGED factory image
 // belongs (bootloader + partition table + app — make_factory.py's output).
-// An app-only build also starts with the 0xE9 image magic, so the only
-// honest discriminator is the partition table at 0x8000: no table, no
-// factory image. Refusing app-only files here is what keeps "install a
-// local file" from writing an app over the bootloader and leaving the
-// board unbootable until a USB re-flash (same check, same reason, as the
-// desktop Flasher's flash_local_file).
+// An app-only build starts with the 0xE9 image magic, and so does an
+// S3/C3/C6 factory image, so the only honest discriminator is the partition
+// table at 0x8000: no table, no factory image. Refusing app-only files here
+// is what keeps "install a local file" from writing an app over the
+// bootloader and leaving the board unbootable until a USB re-flash (same
+// check, same reason, as the desktop Flasher's flash_local_file). Where the
+// bootloader itself sits is bootloaderPlacement's question, below.
 export function localImageShape(bytes) {
   if (!bytes || bytes.length <= 0x8000 + 32) {
     return { factory: false, reason: "shorter than the 0x8000 partition-table offset — an app-only build, not a merged factory image" };
@@ -103,6 +104,53 @@ export function localImageShape(bytes) {
     return { factory: false, reason: "no partition table at 0x8000 — an app-only build, not a merged factory image" };
   }
   return { factory: true, reason: "" };
+}
+
+// Where each chip's mask ROM loads the second-stage bootloader from, which is
+// where a factory image (a picture of flash from address 0) must hold it.
+// Keyed by esptool's chip names, which normalizeChip folds the detected name
+// to ("ESP32-S3" → "esp32s3"). The same table as
+// firmware/scripts/make_factory.py's ROM_BOOTLOADER and the desktop's
+// flash-engine image.rs ROM_BOOTLOADER_OFFSET; desktop_parity.test.js holds
+// the three equal.
+export const ROM_BOOTLOADER_OFFSET = {
+  esp32: 0x1000,
+  esp32s2: 0x1000,
+  esp32s3: 0x0,
+  esp32c3: 0x0,
+  esp32c2: 0x0,
+  esp32c6: 0x0,
+  esp32h2: 0x0,
+};
+export const IMAGE_MAGIC = 0xe9;
+
+// The ROM bootloader offset for a detected chip, or null for a chip the table
+// does not list (the P4 and the C5 load from 0x2000).
+export function romBootloaderOffset(chip) {
+  const key = normalizeChip(chip).toLowerCase();
+  return Object.prototype.hasOwnProperty.call(ROM_BOOTLOADER_OFFSET, key)
+    ? ROM_BOOTLOADER_OFFSET[key] : null;
+}
+
+// The chip-aware half of the factory-shape gate, for every write at 0x0 (the
+// catalog image and a local file alike): the image must carry a bootloader
+// (0xE9) where the connected chip's ROM loads it from. fw-v2.4.17's
+// ESP32-CAM and WROOM images carried theirs at 0x0, where a classic ESP32
+// never looks, and the partition-table check passed them. A chip the table
+// does not list is not judged, so this can only refuse an image the ROM would
+// not start. The desktop's twin is flash-engine image.rs
+// check_bootloader_offset, in the same words.
+export function bootloaderPlacement(bytes, chip) {
+  const at = romBootloaderOffset(chip);
+  if (at === null || (bytes && bytes[at] === IMAGE_MAGIC)) return { ok: true, reason: "" };
+  const hex = (o) => `0x${o.toString(16)}`;
+  const other = [0x0, 0x1000].find((o) => o !== at && bytes && bytes[o] === IMAGE_MAGIC);
+  const elsewhere = other === undefined ? "" : ` (it has one at ${hex(other)} instead)`;
+  return { ok: false,
+    reason: `This image would not start on the ${chip}: that chip loads its bootloader ` +
+      `from ${hex(at)}, and the image has none there${elsewhere}. Nothing was written. ` +
+      `Use an image laid out for the ${chip}: SecuraCV factory images from fw-v2.4.18 on ` +
+      "put the bootloader where each chip loads it." };
 }
 
 // Which app partition to read a version out of: prefer ota_0, then factory,
@@ -1364,6 +1412,16 @@ export function wifiBannerState(fieldSsid, fieldPass, saved, persisted) {
 export function classifyFlashError(err) {
   const msg = String((err && (err.message || err.name)) || err || "").toLowerCase();
   const has = (...subs) => subs.some((s) => msg.includes(s));
+
+  // An image refused before the write because its bootloader isn't where
+  // this chip's ROM loads it (bootloaderPlacement; the desktop engine's
+  // check_bootloader_offset says the same words). First, because no retry,
+  // cable or download mode changes where an image keeps its bootloader.
+  if (has("would not start on the"))
+    return { kind: "layout", title: "That image wouldn't start on this board",
+      hint: "Nothing was written. Its bootloader isn't where this chip loads it from, " +
+        "so the board couldn't start from it (the details say where). Use an image " +
+        "laid out for this chip: SecuraCV factory images from fw-v2.4.18 on are." };
 
   // Another program/tab already holds the port (Arduino IDE, PlatformIO
   // monitor, a second flasher tab). The single most common real failure.

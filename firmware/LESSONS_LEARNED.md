@@ -40,6 +40,13 @@
   back to `auto`), and the merged file is read back before it is kept: a
   bootloader at the offset, the partition table at 0x8000, the app at its
   slot. An explicit `--bootloader-offset` still overrides, with a warning.
+- **The same assumption sat in both flashers, twice:** their shape gate
+  looked only for the partition table at 0x8000, and their
+  counterfeit-capacity probe took its fingerprint from the first 4 KB of
+  flash, which a correctly installed classic ESP32 leaves erased (every such
+  board read as blank, and a mirrored part was never caught). Both flashers
+  now refuse an image with no bootloader where the connected chip's ROM loads
+  it, from the same table as `make_factory.py`, and read an 8 KB head.
 - **The rule:** a per-chip constant is never a default the caller has to
   remember to override. Key it on the chip and refuse a chip you have no
   value for; the first board of a new chip family is when every "0x0 on our

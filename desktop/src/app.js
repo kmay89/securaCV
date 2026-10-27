@@ -369,6 +369,16 @@ function classifyFlashError(err) {
         "Apple Silicon and Intel; the Linux one is for x86-64 PCs). If the newest one " +
         "fails the same way, please report it, with the reason the system gave." };
 
+  // An image refused before the write because its bootloader isn't where
+  // this chip's ROM loads it (flash-engine image.rs check_bootloader_offset;
+  // the browser's bootloaderPlacement says the same words). No retry, cable
+  // or download mode changes where an image keeps its bootloader.
+  if (has("would not start on the"))
+    return { kind: "layout", title: "That image wouldn't start on this board",
+      hint: "Nothing was written. Its bootloader isn't where this chip loads it from, " +
+        "so the board couldn't start from it (the details say where). Use an image " +
+        "laid out for this chip: SecuraCV factory images from fw-v2.4.18 on are." };
+
   if (has("failed to open serial port", "port is already open", "already open",
           "resource temporarily unavailable", "resource busy", "device or resource busy") ||
       (has("open") && has("access", "busy", "in use")))
@@ -4874,15 +4884,18 @@ async function onPickLocalFile() {
     const magic = $("local-magic");
     magic.classList.toggle("hidden", state.localFile.esp_magic);
     if (!state.localFile.esp_magic) {
-      // Advisory only: the backend already required the factory shape (the
-      // partition table at 0x8000), and esp_magic looks where a factory
-      // image keeps its bootloader (0x0 on the S3/C3/C6, 0x1000 on a classic
-      // ESP32) — so a missing 0xE9 is worth a sentence, never a refusal.
+      // A sentence here, the refusal at the write: the backend already
+      // required the factory shape (the partition table at 0x8000), and
+      // esp_magic looks where a factory image keeps its bootloader (0x0 on
+      // the S3/C3/C6, 0x1000 on a classic ESP32). Which of the two the board
+      // needs depends on the chip, which may not be read yet —
+      // flash_local_file checks it against the connected one.
       magic.textContent =
         "⚠ This file has no 0xE9 — the ESP32's own “program starts here” " +
         "marker — where a factory image keeps its bootloader (the first " +
-        "byte, or 4 KB in for a classic ESP32). It can still be written; " +
-        "the board can't be bricked.";
+        "byte, or 4 KB in for a classic ESP32). An ESP32, S3, C3 or C6 " +
+        "wouldn't start from it, so the write will be refused before " +
+        "anything is written.";
     }
     $("local-info").classList.remove("hidden");
   } catch (e) {
@@ -4944,13 +4957,15 @@ async function onFlashLocalFile() {
   try {
     // The inspected size + fingerprint ride along so the backend can prove
     // the confirmed bytes are the ones still on disk — a changed file is
-    // refused, never silently written.
+    // refused, never silently written — and so does the connected chip,
+    // whose ROM decides where the image's bootloader has to sit.
     const receipt = await invoke("flash_local_file", {
       port: state.port,
       baud: state.catalog.flash_baud || 921600,
       path: file.path,
       expectedSize: file.size,
       expectedSha256: file.sha256,
+      detectedChip: state.chip,
     });
     state.vision.hostFlash = receipt;
     state.vision.hostBoot = null;

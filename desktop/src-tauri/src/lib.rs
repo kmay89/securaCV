@@ -37,7 +37,7 @@ mod whoami;
 // resolving for we2.rs / we2_bench.rs.
 use flash_engine::catalog::Catalog;
 use flash_engine::flash::{ChipInfo, FlashReceipt, FlashRequest};
-use flash_engine::image::{check_local_image, stage_firmware};
+use flash_engine::image::{check_bootloader_offset, check_local_image, stage_firmware};
 use flash_engine::ports::PortDto;
 use flash_engine::provisioning::Provisioning;
 use flash_engine::{health, port_hint, release, rescue};
@@ -395,7 +395,9 @@ async fn flash(
 /// "program starts here" marker — where a merged factory image keeps its
 /// bootloader: at 0x0 on the S3/C3/C6, at 0x1000 on a classic ESP32 (whose
 /// ROM loads it from there; the first 4 KB of its factory image are erased
-/// flash). A missing magic only informs; the write path never blocks on it.
+/// flash). Here a missing magic only informs, since the chip may not be read
+/// yet; the write (flash_local_file) refuses an image with no bootloader
+/// where the connected chip's ROM loads it.
 #[derive(Serialize)]
 pub struct LocalFileInfo {
     size: u64,
@@ -421,9 +423,11 @@ async fn inspect_local_file(path: String) -> Result<LocalFileInfo, String> {
 /// all the receipt claims. `expected_size`/`expected_sha256` are the values
 /// inspect_local_file showed and the user confirmed — the file is re-read and
 /// re-hashed here, so a file that changed on disk between the two calls is
-/// refused rather than silently written. The write mechanics are identical to
-/// flash(): private staged temp file, `write-bin 0x0` via the bundled
-/// espflash, `flash:log` streaming.
+/// refused rather than silently written. `detected_chip` is the chip the
+/// frontend read: the image's bootloader must sit where that chip's ROM loads
+/// it (check_bootloader_offset, the catalog path's gate too). The write
+/// mechanics are identical to flash(): private staged temp file,
+/// `write-bin 0x0` via the bundled espflash, `flash:log` streaming.
 #[tauri::command]
 async fn flash_local_file(
     app: AppHandle,
@@ -432,6 +436,7 @@ async fn flash_local_file(
     path: String,
     expected_size: u64,
     expected_sha256: String,
+    detected_chip: String,
 ) -> Result<FlashReceipt, String> {
     let emit = |app: &AppHandle, line: String| {
         let _ = app.emit("flash:log", line);
@@ -444,6 +449,7 @@ async fn flash_local_file(
     emit(&app, format!("→ reading {file_name} from this computer…"));
     let bytes = std::fs::read(&path).map_err(|e| format!("couldn't read that file: {e}"))?;
     check_local_image(&bytes)?;
+    check_bootloader_offset(&bytes, &detected_chip)?;
     let sha = release::sha256_hex(&bytes);
     // The confirm was over the inspected fingerprint, not over a path — a
     // path can point at different bytes a moment later.
@@ -457,21 +463,6 @@ async fn flash_local_file(
             &sha[..16]
         ),
     );
-    if bytes[0] != 0xE9 && bytes.get(0x1000) != Some(&0xE9) {
-        // Warn, never block: the partition table at 0x8000 already vouched
-        // for the factory shape. A factory image keeps its bootloader, which
-        // opens with the 0xE9 image magic, where the chip's ROM loads it: 0x0
-        // on the C3/C6/S3, 0x1000 on a classic ESP32 (the ESP32-CAM and the
-        // WROOM DevKit). A file with the magic at neither place is unusual —
-        // but the board can't be bricked either way.
-        emit(
-            &app,
-            format!(
-                "⚠ no ESP32 image magic 0xE9 at 0x0 (C3/C6/S3) or 0x1000 (classic ESP32); the first byte is 0x{:02X} — unusual for a factory image. Writing anyway; the board can't be bricked.",
-                bytes[0]
-            ),
-        );
-    }
 
     // Same staging discipline as the release path: a private, RAII-removed
     // temp file, alive until espflash exits.

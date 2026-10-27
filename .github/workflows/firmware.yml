@@ -30,6 +30,9 @@ on:
       # one that nothing signs. Without this path, a PR that only edits the
       # publishing side skips the very guard that covers it.
       - '.github/workflows/firmware-release.yml'
+      # test_make_factory.py ties the esptool its merges run on to the pin in
+      # both release workflows, so an edit to either must run it.
+      - '.github/workflows/flasher-release.yml'
   pull_request:
     branches: [main]
     paths:
@@ -59,6 +62,9 @@ on:
       # one that nothing signs. Without this path, a PR that only edits the
       # publishing side skips the very guard that covers it.
       - '.github/workflows/firmware-release.yml'
+      # test_make_factory.py ties the esptool its merges run on to the pin in
+      # both release workflows, so an edit to either must run it.
+      - '.github/workflows/flasher-release.yml'
 
 # A new push to a PR branch supersedes its in-flight run; main is never
 # canceled.
@@ -1463,8 +1469,9 @@ jobs:
         # the bootloader at 0x0, where that chip's ROM never looks (it loads
         # from 0x1000); the offset now comes from --chip. These tests merge
         # real images from synthetic parts with the esptool the release
-        # workflows pin and read the bytes back. MAKE_FACTORY_ESPTOOL=require
-        # turns a missing esptool into a failure, not a skip.
+        # workflows pin and read the bytes back (a test holds this install to
+        # their pins). MAKE_FACTORY_ESPTOOL=require turns a missing esptool,
+        # or one off that pin, into a failure, not a skip.
         env:
           MAKE_FACTORY_ESPTOOL: require
         run: |

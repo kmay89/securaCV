@@ -207,6 +207,14 @@ export function efuseFindings(scan) {
 // distinguishable. On a blank (all-0xFF) chip both ends match legitimately, so
 // we say "inconclusive" rather than crying fraud — and the caller can re-run
 // it after the write, when the bootloader gives the head a fingerprint.
+//
+// The head is 8 KB, not 4: a classic ESP32 (and an S2) keeps its bootloader at
+// 0x1000, so on a correctly installed one the first 4 KB are erased flash and
+// a 4 KB head would read as a blank chip forever. 8 KB reaches the bootloader
+// on every chip family. The desktop twin (intake.rs ALIAS_WINDOW) reads the
+// same window; desktop_parity.test.js holds the two equal.
+export const FLASH_ALIAS_WINDOW = 0x2000;
+
 export function looksUniform(bytes) {
   if (!bytes || bytes.length === 0) return true;
   const first = bytes[0];

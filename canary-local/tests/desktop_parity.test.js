@@ -305,7 +305,7 @@ test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnost
   assert.match(appJs, /function classifyFlashError/,
     "desktop lost classifyFlashError — raw String(e) is not a diagnosis");
   for (const kind of ["port-busy", "device-lost", "permission", "integrity",
-                      "download", "not-in-download", "read-stall"]) {
+                      "download", "not-in-download", "read-stall", "layout"]) {
     assert.ok(appJs.includes(`"${kind}"`), `desktop lost the ${kind} error kind`);
     assert.ok(flashCore.includes(`"${kind}"`), `browser lost the ${kind} error kind`);
   }
@@ -749,6 +749,25 @@ test("parity wave 4a: the counterfeit-capacity check the desktop got for free", 
       `${name} must not call a blank chip's capacity confirmed`);
   }
 
+  // Both read the same head window, wide enough to reach a classic ESP32's
+  // bootloader at 0x1000: with 4 KB, every correctly installed classic board
+  // read as blank, and a mirrored one was never caught.
+  const jsWindow = /export const FLASH_ALIAS_WINDOW = (0x[0-9a-fA-F]+);/.exec(intakeJs);
+  const rsWindow = /pub const ALIAS_WINDOW: usize = (0x[0-9a-fA-F]+);/.exec(intakeRs);
+  assert.ok(jsWindow && rsWindow, "couldn't read the alias window out of intake.js / intake.rs");
+  assert.strictEqual(Number(jsWindow[1]), Number(rsWindow[1]),
+    "intake.js FLASH_ALIAS_WINDOW and intake.rs ALIAS_WINDOW drifted apart");
+  assert.ok(Number(jsWindow[1]) > 0x1000, "the alias window must reach past 0x1000");
+  const runIntake = jsFnText(read(join(CANARY, "assets/flash.js")), "runIntake", "flash.js");
+  assert.match(runIntake, /const win = intake\.FLASH_ALIAS_WINDOW;/,
+    "the browser's capacity probe no longer reads intake.FLASH_ALIAS_WINDOW");
+  assert.match(runIntake, /readFlashChunked\(esploader, 0, win\)/,
+    "the browser's head read no longer uses the alias window");
+  assert.match(runIntake, /readFlashChunked\(esploader, candidates\[i\], win\)/,
+    "the browser's probe reads no longer use the alias window");
+  assert.match(nativeRs, /declared >= 2 \* intake::ALIAS_WINDOW as u64/,
+    "the desktop's capacity check no longer gates on its own window");
+
   // And it runs where it can still stop the write.
   assert.match(libRsSrc, /intake::flash_alias_verdict/,
     "the capacity check must run before the image is written");
@@ -1158,9 +1177,10 @@ test("Hatchery spec: browser and native draw the whimsy from the SAME hatch.json
 });
 
 test("offset-0 write guard: both flashers refuse an app-only image before writing 0x0", () => {
-  // A merged factory image and an app-only PlatformIO build BOTH open with the
-  // 0xE9 image magic, so byte 0 can't tell them apart — the only honest
-  // discriminator is the partition table at 0x8000. Anything written from offset
+  // An app-only PlatformIO build opens with the 0xE9 image magic, and so does
+  // an S3/C3/C6 factory image (a classic ESP32's keeps 4 KB of erased flash
+  // before its bootloader), so byte 0 can't tell an app from a factory image —
+  // the only honest discriminator is the partition table at 0x8000. Anything written from offset
   // 0 without that table lands on the bootloader and the board won't boot. This
   // is a shared SAFETY contract: both surfaces must gate their offset-0 local
   // writes on it, and EVERY native command that does such a write must route
@@ -1198,6 +1218,106 @@ test("offset-0 write guard: both flashers refuse an app-only image before writin
       `native ${fn} hands the on-disk path to espflash instead of staging the ` +
       `validated bytes — a file changed after the check would bypass the shape/size ` +
       `guards. Stage with stage_firmware(&bytes, …) and write the staged temp.`);
+  }
+});
+
+test("bootloader placement: both flashers refuse an image whose bootloader isn't where the chip's ROM loads it", async () => {
+  // fw-v2.4.17's classic-ESP32 factory images (ESP32-CAM, WROOM DevKit) carried
+  // their bootloader at 0x0; a classic ESP32's ROM loads it from 0x1000, so
+  // neither could boot, and the partition-table gate above passed both. Each
+  // flasher now checks the image against the chip in hand before any write, on
+  // the catalog path and the local-file path, from ONE table that
+  // firmware/scripts/make_factory.py also merges by.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const nativeJs = read(join(CANARY, "assets/flash-native.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const imageRs = engineRs("image");
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+
+  // 1. One table, three copies, held equal.
+  const pyBlock = /\nROM_BOOTLOADER = \{([\s\S]*?)\n\}/.exec(read(join(ROOT, "firmware/scripts/make_factory.py")));
+  assert.ok(pyBlock, "couldn't find ROM_BOOTLOADER in firmware/scripts/make_factory.py");
+  const py = Object.fromEntries([...pyBlock[1].matchAll(/"(esp32\w*)":\s*\((0x[0-9a-fA-F]+),/g)]
+    .map((m) => [m[1], Number(m[2])]));
+  const rsBlock = /pub const ROM_BOOTLOADER_OFFSET: \[\(&str, usize\); \d+\] = \[([\s\S]*?)\];/.exec(imageRs);
+  assert.ok(rsBlock, "couldn't find ROM_BOOTLOADER_OFFSET in flash-engine image.rs");
+  const rs = Object.fromEntries([...rsBlock[1].matchAll(/\("(esp32\w*)",\s*(0x[0-9a-fA-F]+)\)/g)]
+    .map((m) => [m[1], Number(m[2])]));
+  assert.ok(py.esp32 === 0x1000 && py.esp32s3 === 0x0, `make_factory.py's table didn't parse: ${JSON.stringify(py)}`);
+  assert.deepStrictEqual({ ...core.ROM_BOOTLOADER_OFFSET }, py,
+    "flash-core.js ROM_BOOTLOADER_OFFSET drifted from make_factory.py's ROM_BOOTLOADER");
+  assert.deepStrictEqual(rs, py,
+    "flash-engine image.rs ROM_BOOTLOADER_OFFSET drifted from make_factory.py's ROM_BOOTLOADER");
+  // Every chip the catalog ships has a row: a chip with none is never judged
+  // by the flashers, and make_factory.py refuses to merge it, which drops that
+  // product from every release. (This runs whenever flash.json changes.)
+  for (const p of catalog.products) {
+    assert.notStrictEqual(core.romBootloaderOffset(p.chip), null,
+      `${p.id} is a ${p.chip}, which ROM_BOOTLOADER has no offset for — add the chip's ROM ` +
+      "bootloader offset to make_factory.py, flash-core.js and image.rs together");
+  }
+
+  // 2. The same words. The desktop's refusal, rendered from its own format
+  //    strings, equals the browser's for the same image and chip.
+  const body = nativeFnBody(imageRs, "check_bootloader_offset");
+  const fmt = /Err\(format!\(\s*"([\s\S]*?)"\s*\)\)/.exec(body);
+  const elseFmt = /format!\("( \(it has one at )\{o:#x\}( instead\))"\)/.exec(body);
+  assert.ok(fmt && elseFmt, "couldn't read check_bootloader_offset's refusal out of image.rs");
+  const template = fmt[1].replace(/\\\n\s*/g, "");
+  const hex = (n) => `0x${n.toString(16)}`;
+  const nativeWords = (chip, at, other) => template.replaceAll("{chip}", chip)
+    .replace("{at:#x}", hex(at))
+    .replace("{elsewhere}", other === null ? "" : elseFmt[1] + hex(other) + elseFmt[2]);
+  const image = (at) => {
+    const b = new Uint8Array(0x8100).fill(0xff);
+    if (at !== null) b[at] = 0xe9;
+    b[0x8000] = 0xaa; b[0x8001] = 0x50;
+    return b;
+  };
+  for (const [chip, at, rom, other] of [
+    ["ESP32", 0x0, 0x1000, 0x0],        // fw-v2.4.17's classic-ESP32 shape
+    ["ESP32-S3", 0x1000, 0x0, 0x1000],  // a classic image on an S3
+    ["ESP32-C6", null, 0x0, null],      // no bootloader anywhere
+  ]) {
+    const v = core.bootloaderPlacement(image(at), chip);
+    assert.strictEqual(v.ok, false, `the browser passed a ${chip} image with its bootloader at ${at}`);
+    assert.strictEqual(v.reason, nativeWords(chip, rom, other),
+      `the two flashers word the ${chip} refusal differently — keep flash-core.js bootloaderPlacement ` +
+      "and image.rs check_bootloader_offset in the same words");
+  }
+  // …and a correct image of each family passes.
+  assert.ok(core.bootloaderPlacement(image(0x1000), "ESP32").ok);
+  assert.ok(core.bootloaderPlacement(image(0x0), "ESP32-S3").ok);
+
+  // 3. Both flashers run it before writing, on every path that writes an image
+  //    at 0x0 for a chip it has read.
+  const startFlash = jsFnText(flashJs, "startFlash", "flash.js");
+  const gateAt = startFlash.indexOf("core.bootloaderPlacement(bytes, state.chip)");
+  assert.ok(gateAt >= 0, "the browser's catalog install (flash.js:startFlash) no longer runs core.bootloaderPlacement");
+  for (const later of ["esploader.eraseFlash(", "esploader.writeFlash("]) {
+    assert.ok(gateAt < startFlash.indexOf(later), `startFlash calls ${later} before the bootloader check`);
+  }
+  assert.match(jsFnText(flashJs, "onLocalFile", "flash.js"), /core\.bootloaderPlacement\(bytes, state\.chip\)/,
+    "the browser's local-file install (flash.js:onLocalFile) no longer runs core.bootloaderPlacement");
+  const engineFlash = nativeFnBody(engineRs("flash"), "flash");
+  const nativeGateAt = engineFlash.indexOf("check_bootloader_offset(&downloaded, &detected_chip)?");
+  assert.ok(nativeGateAt >= 0, "the shared engine's catalog flash no longer runs check_bootloader_offset");
+  assert.ok(nativeGateAt < engineFlash.indexOf("stage_firmware("),
+    "the engine stages (and writes) the image before the bootloader check");
+  assert.match(nativeFnBody(libRs, "flash_local_file"), /check_bootloader_offset\(&bytes, &detected_chip\)\?/,
+    "the desktop's local-file install (lib.rs flash_local_file) no longer runs check_bootloader_offset");
+  assert.match(jsFnText(appJs, "onFlashLocalFile", "desktop/src/app.js"), /detectedChip: state\.chip/,
+    "the desktop frontend no longer tells flash_local_file which chip is connected");
+
+  // 4. The refusal reads as itself in every classifier — not "unknown", which
+  //    coaches download mode at an image no retry can fix.
+  const refusal = new Error(nativeWords("ESP32", 0x1000, 0x0));
+  for (const [where, classify] of [
+    ["flash-core.js", core.classifyFlashError],
+    ["desktop/src/app.js", new Function(jsFnText(appJs, "classifyFlashError", "desktop/src/app.js") + "\nreturn classifyFlashError;")()],
+    ["flash-native.js", new Function(jsFnText(nativeJs, "classifyFlashError", "flash-native.js") + "\nreturn classifyFlashError;")()],
+  ]) {
+    assert.strictEqual(classify(refusal).kind, "layout", `${where} doesn't name a bootloader-placement refusal`);
   }
 });
 

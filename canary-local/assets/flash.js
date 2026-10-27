@@ -1496,18 +1496,21 @@ async function runIntake(narrate) {
   //    address lines, so reading AT a candidate capacity returns offset zero
   //    again. Probing "declared − 4 KB" would not do it: on a 4 MB die
   //    pretending to be 16 MB that address wraps to 0x3FF000, the top of the
-  //    real part, which holds something other than the head.
+  //    real part, which holds something other than the head. The window is
+  //    8 KB (intake.FLASH_ALIAS_WINDOW) so it reaches a classic ESP32's
+  //    bootloader at 0x1000.
   let alias = { level: "unknown", label: "Flash size not checked" };
   try {
     const declared = state.flashBytes;
-    if (declared && declared > 0x2000) {
+    const win = intake.FLASH_ALIAS_WINDOW;
+    if (declared && declared > 2 * win) {
       const candidates = intake.flashAliasCandidates(declared);
       say(`Customs — probing the flash is really ${core.formatBytes(declared)} (1 of ${candidates.length + 1})…`);
-      const head = await readFlashChunked(esploader, 0, 0x1000);
+      const head = await readFlashChunked(esploader, 0, win);
       const probes = [];
       for (let i = 0; i < candidates.length; i++) {
         say(`Customs — probing the flash is really ${core.formatBytes(declared)} (${i + 2} of ${candidates.length + 1})…`);
-        probes.push({ atBytes: candidates[i], bytes: await readFlashChunked(esploader, candidates[i], 0x1000) });
+        probes.push({ atBytes: candidates[i], bytes: await readFlashChunked(esploader, candidates[i], win) });
       }
       alias = intake.flashAliasVerdict({ declaredBytes: declared, head, probes });
     }
@@ -2178,12 +2181,14 @@ function renderPicker() {
   if (localHelp) localP.append(localHelp);
   local.append(localP);
   // Name the chip that is actually connected, and say plainly which check a
-  // local file skips. The factory-shape gate (localImageShape) still runs, but
-  // the catalog's chip GUARD cannot — there's no product to compare against —
-  // so a .bin built for a different ESP32 variant would be written with no
-  // warning at all. The desktop Flasher has said this since it grew the local
-  // path (app.js:updateLocalFlashUi); same words here, so the risk is visible
-  // on both flashers rather than hidden on one.
+  // local file skips. The factory-shape gates (localImageShape, and
+  // bootloaderPlacement, which turns away an image laid out for the other
+  // bootloader offset) still run, but the catalog's chip GUARD cannot —
+  // there's no product to compare against — so a .bin built for a different
+  // ESP32 variant whose ROM loads from the same offset (an S3 image on a C3)
+  // would be written with no warning at all. The desktop Flasher has said
+  // this since it grew the local path (app.js:updateLocalFlashUi); same words
+  // here, so the risk is visible on both flashers rather than hidden on one.
   local.append(el("p", "fineprint",
     `Connected: ${state.chipDesc || state.chip || "not read yet"}. A local file skips the ` +
     "catalog’s chip guard — there’s no product to compare against — so make " +
@@ -3344,6 +3349,16 @@ async function onLocalFile(ev) {
       phaseConnected));
     return;
   }
+  // …and its bootloader must sit where THIS chip's ROM loads it from
+  // (core.bootloaderPlacement — the catalog path runs it too, after the
+  // download). Same refusal, same words, as the desktop Flasher.
+  const placed = core.bootloaderPlacement(bytes, state.chip);
+  if (!placed.ok) {
+    ev.target.value = "";
+    setPhase(errorRetry("That image wouldn’t start on this board", new Error(placed.reason),
+      phaseConnected));
+    return;
+  }
   // Advanced → local file goes straight to startFlash without passing through
   // phaseConfirm, so it has to apply the first-contact erase itself. It is
   // exactly the same board and exactly the same leftover partitions; picking
@@ -4298,6 +4313,13 @@ async function startFlash(opts) {
             "trust anyway, use Advanced → flash a local file.)");
         }
       }
+      // 2c) The image is written at 0x0, so its bootloader must already sit
+      // where this chip's ROM loads it. The signature vouches for who built
+      // the bytes, not for their layout: fw-v2.4.17's signed ESP32-CAM and
+      // WROOM images carried the bootloader at 0x0, where a classic ESP32
+      // never looks.
+      const placed = core.bootloaderPlacement(bytes, state.chip);
+      if (!placed.ok) throw new Error(placed.reason);
     }
     imageBytesRef.bytes = bytes;
     state.lastImage = bytes; // lets the done card replay the tour with real hex

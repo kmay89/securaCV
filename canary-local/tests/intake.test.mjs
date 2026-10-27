@@ -22,6 +22,7 @@ const {
   securityFieldsFor, readSecurityEfuses, looksUniform, flashAliasVerdict,
   macChecks, parseMac, duplicateMacCheck, shippedWith, intakeVerdict, efuseFindings,
   coldBootVerdict, isFirstContact, KNOWN_STOCK, oddParity, flashAliasCandidates,
+  FLASH_ALIAS_WINDOW,
 } = mod;
 
 // A virgin block 0: six zero words. Everything below starts here and burns in
@@ -305,6 +306,33 @@ test("a blank chip is inconclusive, never an accusation", () => {
   const v = flashAliasVerdict({ declaredBytes: 4 * MB, head: blank, probes });
   assert.equal(v.level, "inconclusive");
   assert.match(v.detail, /after firmware is written/);
+});
+
+test("a classic ESP32's head reaches its bootloader at 0x1000", () => {
+  // A correctly installed classic ESP32 (or S2): erased flash below 0x1000,
+  // the bootloader from 0x1000 on. The probe used to read 4 KB, which is all
+  // 0xFF there, so every such board read as blank and a mirrored one was
+  // never caught. The window the flasher reads now reaches the bootloader.
+  assert.ok(FLASH_ALIAS_WINDOW > 0x1000);
+  const chip = (realBytes) => {
+    const flash = new Uint8Array(realBytes);
+    for (let i = 0x1000; i < realBytes; i++) flash[i] = (i ^ (i >> 8) ^ (i >> 16)) & 0xff;
+    flash.fill(0xff, 0, 0x1000);
+    return flash;
+  };
+  // What runIntake reads: the window at 0 and at each candidate, wrapping
+  // modulo the part's real size.
+  const read = (flash, declared) => {
+    const at = (a) => Uint8Array.from({ length: FLASH_ALIAS_WINDOW }, (_, i) => flash[(a + i) % flash.length]);
+    const probes = flashAliasCandidates(declared).map((c) => ({ atBytes: c, bytes: at(c) }));
+    return { declaredBytes: declared, head: at(0), probes };
+  };
+  const honest = chip(4 * MB);
+  assert.ok(looksUniform(honest.subarray(0, 0x1000)), "the first 4 KB alone read as blank");
+  assert.equal(flashAliasVerdict(read(honest, 4 * MB)).level, "clear");
+  const v = flashAliasVerdict(read(chip(2 * MB), 4 * MB)); // a 2 MB die sold as 4 MB
+  assert.equal(v.level, "stop");
+  assert.match(v.label, /Flash is 2 MB, not the 4 MB/);
 });
 
 test("missing evidence is 'not checked', which never fails the verdict", () => {
