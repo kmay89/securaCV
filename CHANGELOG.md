@@ -306,8 +306,9 @@
   they are pinned to and say newer, the same version, or older on the dev
   banner (`devChannelStanding`, the same sentence in both flashers,
   `desktop_parity.test.js`). They do not call it stable or ahead of stable:
-  the desktop Flasher and the Lab pin the train they were built with. The device needed no change: a stable version on
-  the dev channel is an ordinary update to a dev unit running anything older.
+  the desktop Flasher and the Lab pin the train they were built with. The
+  device needed no change: a stable version on the dev channel is an ordinary
+  update to a dev unit running anything older.
 
 ## [2.4.17] - 2026-10-27
 

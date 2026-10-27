@@ -37,8 +37,8 @@ name: Flasher Factory Images
 # the dev channel carries nothing newer: .github/scripts/dev_channel.py). This
 # workflow has no such tag, so it uploads the binaries to fw-dev-latest too and
 # points the manifest there. Both are self-consistent, and each names its own
-# binaries by absolute URL. The dev channel never goes below stable, so this
-# one refuses a branch whose fw_train is older than releases/latest, and a
+# binaries by absolute URL. This path refuses a branch whose fw_train is older
+# than releases/latest, so it never puts the dev channel behind stable, and a
 # firmware release (or Refresh the dev channel) replaces its
 # manifest-flash.json unless it carries a newer fw_train.
 
@@ -242,8 +242,8 @@ jobs:
             ${{ runner.os }}-pio-canary-release-
             ${{ runner.os }}-pio-canary-
 
-      # The dev channel never goes below stable (.github/scripts/dev_channel.py):
-      # a branch whose train is older than releases/latest would put both
+      # This path never puts the dev channel below stable (dev_channel.py
+      # --check-train): a branch whose train is older than releases/latest would put both
       # flashers' dev toggle behind it, offering an older factory image over
       # boards already on stable. Refused here, before an hour of building,
       # and again right before publishing, since a release can land between.

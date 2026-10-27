@@ -165,9 +165,13 @@ before creating a tag by hand.
 **Know what it replaces on a published tag.** It cannot pick products: it
 compiles the tag's firmware for every product in today's `flash.json` and
 re-attaches every `*-factory.bin` plus `manifest-flash.json` under the same
-names (and when the dev channel carries a copy of that release's catalog, it
-copies the rebuilt one there too, through `dev_channel.py`). The builds are not byte-reproducible (the images embed their compile
-date through `__DATE__`), so every image gets a new SHA-256, the good ones
+names. Then, through `dev_channel.py`, it runs the same rule as **Refresh the
+dev channel** with this tag as the source: when the tag is at or above stable,
+it copies whatever the dev channel is behind on and replaces a same-version
+bring-up catalog there, so the dev channel never keeps a catalog naming the
+old images. The builds are not byte-reproducible (the images embed their
+compile date through `__DATE__`), so every image gets a new SHA-256, the good
+ones
 too, and the tag's `sha256sums.txt` and build-provenance attestation (written
 by `Firmware Release`) go on describing the old bytes; this path attests
 nothing, on purpose. The firmware source is the tag's, and the PlatformIO
@@ -187,7 +191,7 @@ version, a `channel: dev` dispatch from `main` publishes the fixed images to
 `fw-dev-latest` (both flashers' **Advanced → dev channel**) and leaves the tag
 alone.
 
-**`channel: dev`** — **no tag, no version, no signing key.** Builds the branch
+**`channel: dev`** — **no tag, no version.** Builds the branch
 you dispatch from and publishes to the rolling `fw-dev-latest` prerelease, which
 is exactly what the flasher's **Advanced → dev channel** toggle reads.
 
@@ -195,10 +199,10 @@ is exactly what the flasher's **Advanced → dev channel** toggle reads.
 — a new board, a demo, a bring-up. It's the shortest path from "the code is on a
 branch" to "the product is installable", and it burns no version.
 
-**Don't:** point a stranger at it. Dev images are unsigned *while the key
-ceremony is pending*: verified by SHA-256 against the manifest, and both
-flashers say so on the banner and the receipt. Stable installs belong on a
-signed release. It also cannot reach `releases/latest` — it publishes a
+**Don't:** point a stranger at it. Dev images are signed with the release key
+like every other path (see "refuses to run" below), but they are a branch's
+build, not a release: both flashers say so on the dev banner, and stable
+installs belong on a release. It also cannot reach `releases/latest` — it publishes a
 prerelease, on purpose, so the fleet's OTA URL never lands on it.
 
 **Know what replaces it.** It writes the flashers' catalog only. It refuses a
@@ -207,9 +211,9 @@ again before publishing (`dev_channel.py --check-train`), so dispatch it from
 `main` or a branch cut after the last release; a branch cut before that
 check existed runs its own older copy of this workflow, which does not
 refuse. The next firmware release, or a press of **Refresh the dev
-channel**, copies its own catalog over this one unless this one carries a
-newer `fw_train`: a bring-up build at stable's own version is replaced by
-the tagged one.
+channel**, or a release-channel rebuild of a tag at or above stable, copies
+its own catalog over this one unless this one carries a newer `fw_train`: a
+bring-up build at stable's own version is replaced by the tagged one.
 
 Once the key exists this button signs like every other path, and **refuses to
 run** if the key is pinned but `OTA_SIGNING_KEY_PEM` isn't set — an unsigned
