@@ -111,16 +111,21 @@
   a `desktop_parity.test.js` case holds the firmware's boot lines and the
   proof record's `module_ok` value to the engine, and two Home Assistant
   tests hold the radar-link gate (both fail on the old one). Built with
-  PlatformIO here, on this change over the 2.4.17 train: the four Vision
-  build envs (`flavors.json`) and all five Sentinel envs compile. Against
-  the same envs built from the 2.4.17 release commit (#1885), the Vision
-  images grow by 32 to 96 bytes and the Sentinel door and Lite images by
-  240 and 128 bytes, and all five images `flavors.json` guards for the two
-  projects stay inside their slots: `canary-vision-default` 1,439,488 of
-  1,966,080 bytes, `canary-vision-xiao-c3` 1,449,536 of 1,966,080,
-  `canary-vision-xiao-s3` 1,333,456 of 3,342,336, `canary-sentinel-door`
-  1,451,312 of 1,966,080 and `canary-sentinel-lite` 1,160,736 of 1,310,720.
-  Neither change is compiled into the emulator, so its dist does not move.
+  PlatformIO here, on this change over the 2.4.17 train, the way
+  `firmware.yml`'s build leg builds them: with the `secrets/secrets.h` its
+  "Generate CI secrets header" step writes into the project, and with
+  `-DVALIDATION_BUILD=1` (with no `secrets/secrets.h` a build compiles the
+  project's committed `include/secrets.ci.h` stub instead, a different
+  image). The four Vision build envs (`flavors.json`) and all five
+  Sentinel envs compile. Against the same envs built the same way from the
+  2.4.17 release commit (#1885), the Vision images grow by 32 to 96 bytes
+  and the Sentinel door and Lite images by 256 and 128 bytes, and the five
+  images `flavors.json` guards for the two projects all stay inside their
+  slots: `canary-vision-default` 1,439,568 of 1,966,080 bytes,
+  `canary-vision-xiao-c3` 1,449,600 of 1,966,080, `canary-vision-xiao-s3`
+  1,333,488 of 3,342,336, `canary-sentinel-door` 1,451,376 of 1,966,080
+  and `canary-sentinel-lite` 1,160,816 of 1,310,720. Neither change is
+  compiled into the emulator, so its dist does not move.
   Host-tested; not run on a device.
 
 ## [2.4.17] - 2026-10-27
