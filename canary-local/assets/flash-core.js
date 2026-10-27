@@ -2633,7 +2633,11 @@ export function displaysIn(catalog) {
 
 // Match a board-read project name (or an explicit id) to a catalog display —
 // an exact id wins; otherwise the loose match string ("display") names the
-// family off a bare project name (first entry is fine for naming).
+// family off a bare project name (the first entry: a guess, fit only for a
+// name that carries no flavor). A stamped descriptor names its product by
+// asset_stem, and four stems are no displays[] id, so the role line resolves
+// those through the product's own flash_product instead (flash.js
+// renderRoleLine; flash_epic.test.js runs every stem).
 export function displayFor(catalog, projectNameOrId) {
   const s = String(projectNameOrId || "").toLowerCase();
   if (!s) return null;

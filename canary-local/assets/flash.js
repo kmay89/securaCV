@@ -1980,10 +1980,23 @@ function renderRoleLine() {
   if (!cur || cur.unknown) return null;
   // A display build read off the wire: name it and offer the live glass.
   if (core.looksLikeDisplayProject(cur.projectName)) {
-    const d = core.displayFor(state.catalog, cur.projectName) || core.displaysIn(state.catalog)[0];
+    // A release stamps each product's asset_stem into the descriptor, so a
+    // stamped board names its own product: the glass is that product's own
+    // displays[] entry (its flash_product), or none. displayFor's loose
+    // "display" match would answer the first entry, the Watch Station, for
+    // every stem that is not a displays[] id (Dash · Modes, Nightstand 7,
+    // Nightstand C6, and the Nightlight, whose display id is
+    // canary-nightlight). That family guess is kept for a name that carries
+    // no flavor ("canary_display"), which is all a pre-stamp image says.
+    const exact = core.matchProjectToProduct(state.catalog, cur.projectName);
+    const named = exact && (exact.role || core.productRole(exact.id)) === "display" ? exact : null;
+    const d = named
+      ? core.displaysIn(state.catalog).find((x) => x.flash_product === named.id) || null
+      : core.displayFor(state.catalog, cur.projectName) || core.displaysIn(state.catalog)[0];
+    const who = d ? d.name : named && named.name;
     const p = el("p", "flash-role flash-role-display");
     p.append(el("span", null,
-      `🖼 This board is a display — it SHOWS${d ? `. It looks like the ${d.name}.` : "."} `));
+      `🖼 This board is a display — it SHOWS${who ? `. It looks like the ${who}.` : "."} `));
     if (d) {
       const b = el("button", "ghost small", "see its screen, live →");
       b.addEventListener("click", () => setPhase(phaseDisplayBench(d, phaseConnected)));
