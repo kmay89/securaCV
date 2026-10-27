@@ -181,7 +181,8 @@ list are the dispatch ref's. A product whose rebuild fails drops out of
 gate. The OTA manifests and app images are left alone. The rebuilt apps are
 stamped with their product and version like a new release's
 (`stamp_app_desc.py` is overlay tooling), so on a tag up to fw-v2.4.17 the
-rebuilt factory images name themselves while the tag's OTA images still read
+rebuilt factory images name themselves (each app that carries its product id
+string, as all 21 fw-v2.4.17 apps do) while the tag's OTA images still read
 `arduino-lib-builder`. So for a defect in one or two products' factory images
 on a release people already install from (the fw-v2.4.17 classic-ESP32
 bootloader offset), ship the fixed images in the next version rather than
@@ -201,11 +202,16 @@ is exactly what the flasher's **Advanced → dev channel** toggle reads.
 — a new board, a demo, a bring-up. It's the shortest path from "the code is on a
 branch" to "the product is installable", and it burns no version.
 
+Burning no version has one visible cost: each image is stamped with the version
+its sources compile in (`registry.json`'s `fw_train`, the last release's number
+until the next bump), so both flashers read a board running one as that release,
+"already on 2.4.17", although it runs newer code (`docs/browser_flasher.md`).
+
 **Don't:** point a stranger at it. Dev images are signed with the release key
 like every other path (see "refuses to run" below), but they are a branch's
 build, not a release: both flashers say so on the dev banner, and stable
-installs belong on a release. It also cannot reach `releases/latest` — it publishes a
-prerelease, on purpose, so the fleet's OTA URL never lands on it.
+installs belong on a release. It also cannot reach `releases/latest` — it
+publishes a prerelease, on purpose, so the fleet's OTA URL never lands on it.
 
 **Know what replaces it.** It writes the flashers' catalog only. It refuses a
 branch whose `fw_train` is older than `releases/latest`, before building and

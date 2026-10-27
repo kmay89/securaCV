@@ -31,10 +31,14 @@
   appended SHA-256, and touches nothing else (`app_elf_sha256`,
   `secure_version`, date, time and `idf_ver` stay the build's). It runs in
   both release workflows after the last build and before anything signs or
-  merges an app, reads each image back with esptool, and writes a version
-  only over a literal the image already carries, so the `strings | grep -Fx`
-  version guards still test the firmware. Host-tested; no stamped image has
-  been booted yet.
+  merges an app, reads each image back with esptool, and stamps only an
+  image that already carries its version literal and its product id, so the
+  `strings | grep -Fx` version guards still test the firmware. Host-tested;
+  no stamped image has been booted yet. The descriptor's date was the same
+  kind of trap: it is the Arduino core's build date (Mar 5 2024 on most
+  2.4.17 images), so beside "Canary 2.4.18" it misdated the release, and
+  both flashers now show it only in the health report, labeled as the
+  descriptor's.
 - **The rule:** before code trusts a field read off a board, read that field
   out of a real release image once. A test that writes the field by hand
   proves the reader, not that anything writes what the reader expects.

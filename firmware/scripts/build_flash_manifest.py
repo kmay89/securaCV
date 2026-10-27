@@ -98,8 +98,13 @@ def image_has_version(path: pathlib.Path, expected: str) -> bool:
     the manual pre-key path can't publish a manifest whose version disagrees
     with the firmware a board would actually boot as.
     """
-    data = path.read_bytes()
-    target = expected.encode()
+    return carries_run(path.read_bytes(), expected)
+
+
+def carries_run(data: bytes, text: str) -> bool:
+    """Is `text` one whole printable run of `data` (`strings | grep -Fx`)?
+    The one rule image_has_version and stamp_app_desc.carries both apply."""
+    target = text.encode()
     return any(run == target for run in re.split(rb"[^\x20-\x7e]+", data))
 
 

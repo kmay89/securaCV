@@ -183,8 +183,9 @@ board. (Read for *description*, never for a trust decision: see the
 first-contact rule below for why that distinction matters.) A partition sector
 we read and found empty is a blank chip; one we could not read at all is
 reported **unchecked**, because letting a failed read render as "arrived
-erased" would turn missing evidence into the cleanest verdict on the page. MicroPython, CircuitPython, ESP-AT, Arduino, ESPHome, Tasmota and the
-usual factory blink sketches are named as known stock. Anything else is
+erased" would turn missing evidence into the cleanest verdict on the page. MicroPython, CircuitPython, ESP-AT, ESPHome, Tasmota and the
+usual factory blink sketches are named as known stock; an Arduino build is
+named too, but not called stock (below). Anything else is
 reported as *unrecognized*, which is an invitation to look at the backup before
 erasing, not an accusation.
 
@@ -195,8 +196,10 @@ name equal to a catalog stem reads as that product ("Arrived running Canary
 WAP"), with the reminder that the name is the image's own claim; a name that
 only contains a stem is unrecognized. And `arduino-lib-builder` is what the
 Arduino core's libraries call every Arduino build, SecuraCV's releases up to
-2.4.17 included, so that finding says the check cannot tell the two apart
-rather than calling it a stock image. Both flashers word these alike
+2.4.17 included, and so is any SecuraCV build made outside a release (only the
+release workflows stamp: `pio run -t upload`, `dev_flash.sh` and an OTA push
+do not), so that finding says the check cannot tell the two apart rather than
+calling it a stock image. Both flashers word these alike
 (`desktop_parity.test.js`).
 
 We do **not** claim a corpus of known-good image hashes. We don't have one, and

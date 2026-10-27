@@ -612,10 +612,17 @@ jobs:
         # place, AFTER every build above and BEFORE anything below copies,
         # hashes, signs or merges one: the OTA manifests' sha256 and
         # signatures and the factory images all cover the stamped bytes.
-        # A version the image does not already carry is never written (it
-        # stays unstamped, and the version guards below fail or skip it as
-        # before), and each stamped image is read back with esptool
-        # image_info: an invalid checksum or hash fails the run here.
+        # An image that does not already carry its version string and its
+        # product id is never stamped (it stays as built, and the version and
+        # product guards below treat it as they always have). An image the
+        # stamper refuses outright (empty, truncated, malformed) is moved
+        # aside to <app>.refused, so that product drops out the way a failed
+        # build does: non-blocking ones go to the completeness gate, and the
+        # assemble step's `cp` fails on one this release cannot ship without.
+        # Each stamped image is read back with esptool image_info, and an
+        # invalid checksum or hash, or a name or version it does not read
+        # back, fails the run HERE, whichever product shows it (as does a
+        # name or version too long for the descriptor's 31 characters).
         # scripts/tests/test_release_app_desc_stamp.py pins the order.
         env:
           VERSION: ${{ steps.ver.outputs.version }}

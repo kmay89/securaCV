@@ -330,30 +330,47 @@
   descriptor moves: not `app_elf_sha256` (the boot guard's image identity),
   `secure_version`, the date, the time or `idf_ver`. It refuses an image of
   the wrong shape or with an already-wrong checksum or hash, and a value that
-  does not fit; it writes a version only when the image already carries that
-  string outside the descriptor, so the release's version guards still test
-  the firmware and not the stamp; stamping twice changes nothing.
-  `firmware-release.yml` and `flasher-release.yml` run it after their last
-  build and before anything copies, hashes, signs or merges an app, so the
-  OTA manifests' sha256 and signatures and the factory images cover the
-  stamped bytes; each stamped image is read back with esptool's `image_info`
-  and the run fails unless esptool calls the checksum and hash valid and
-  reads the name and version written. A flasher rebuild of an older tag
-  stamps that tag's factory images too (the stamper is overlaid with the
-  other packaging tools).
+  does not fit; it stamps only an image that already carries the version
+  string and its product's id outside the descriptor, so the release's
+  version guards still test the firmware and not the stamp, and a build that
+  identifies as another product (a `modes` display build without its flavor
+  staged is a gearless dash) is never named for the slot it sits in;
+  stamping twice changes nothing. `firmware-release.yml` and
+  `flasher-release.yml` run it after their last build and before anything
+  copies, hashes, signs or merges an app, so the OTA manifests' sha256 and
+  signatures and the factory images cover the stamped bytes; each stamped
+  image is read back with esptool's `image_info` and the run fails unless
+  esptool calls the checksum and hash valid and reads the name and version
+  written. An app it refuses (empty, truncated, malformed) is moved aside, so
+  that product drops out like a failed build instead of sinking the release
+  (a product the signed release cannot ship without still fails it). A
+  flasher rebuild of an older tag stamps that tag's factory images too (the
+  stamper is overlaid with the other packaging tools).
 - **Both flashers.** A stamped board reads as running, say, "Canary WAP" and
   its version, and the existing install verdicts work on it: update, reinstall, downgrade, and
   switch from another product. Customs says "Arrived running Canary WAP" for
   an exact stem (that name is the image's own claim, and the finding says
   so). An `arduino-lib-builder` image still reads as "an Arduino sketch",
   whose detail no longer calls it a stock image: SecuraCV releases up to
-  2.4.17 read that way too, and the check cannot tell them apart.
+  2.4.17, and any SecuraCV build made outside a release (`pio run -t
+  upload`, `dev_flash.sh`, an OTA push), read that way too, and the check
+  cannot tell them apart. Prerelease versions now order field by field,
+  numerically where both are digits, so a board on `2.4.18-dev.10` offered
+  `-dev.9` reads as a downgrade (as strings, `dev.10` sorted first). The
+  descriptor's date is no longer shown beside the product and version: on
+  an Arduino build it is the Arduino core's (fw-v2.4.17's read Mar 5 2024),
+  and the stamp leaves it alone, so only the health report shows it,
+  labeled "descriptor dated".
 - **From the next release on.** Images already published, fw-v2.4.17's
   included, are unchanged, and boards running them keep reading as an Arduino
-  sketch until they update. Host-tested only: `test_stamp_app_desc.py` builds
+  sketch until they update. A dev-channel build (`fw-dev-latest`) is stamped
+  with the train's version, the number its sources compile in, so a board
+  running one reads as that release, "already on 2.4.17", though it runs
+  newer code. Host-tested only: `test_stamp_app_desc.py` builds
   images for the ESP32, S3, C3 and C6 with esptool 4.12.0, stamps them and
-  reads them back (and four downloaded fw-v2.4.17 apps round-trip through it
-  when named in `STAMP_APP_DESC_FACTORY`, done by hand for this change);
+  reads them back, failing side included (and all 21 downloaded fw-v2.4.17
+  apps round-trip through it when named in `STAMP_APP_DESC_FACTORY`, done by
+  hand for this change);
   `scripts/tests/test_release_app_desc_stamp.py` holds both workflows to the
   order. No stamped image has been flashed to a board or installed over the
   air yet.

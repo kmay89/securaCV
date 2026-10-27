@@ -233,6 +233,27 @@ test("a stamped board gets the downgrade and same-version verdicts; an Arduino-n
   assert.strictEqual(installVerdict({ ...old, product: wap, version: "2.4.17-wap" }).kind, "unknown");
 });
 
+// Stamped versions parse, so the verdict now compares real dev-train
+// versions. Prerelease fields compare numerically where both are digits:
+// as plain strings "dev.10" sorted before "dev.9", and a board on -dev.10
+// offered -dev.9 read as an Update instead of a Downgrade.
+test("a dev train past .9 still orders numerically, with or without the WAP suffix", async () => {
+  const { compareVersions, installVerdict } = await core();
+  for (const [a, b] of [["2.4.18-dev.9", "2.4.18-dev.10"], ["2.4.18-dev.9-wap", "2.4.18-dev.10-wap"],
+                        ["2.4.18-dev.10", "2.4.18-rc.1"], ["2.4.18-rc.2", "2.4.18-rc.10"],
+                        ["2.4.18-dev.10", "2.4.18"], ["2.4.18-dev.2-wap", "2.4.18-wap"],
+                        ["2.2.0-rc1", "2.2.0-rc2"], ["2.4.18-rc.1", "2.4.18-rc.1.1"]]) {
+    assert.strictEqual(compareVersions(a, b), -1, `${a} < ${b}`);
+    assert.strictEqual(compareVersions(b, a), 1, `${b} > ${a}`);
+  }
+  assert.strictEqual(compareVersions("2.4.18-dev.10-wap", "2.4.18-dev.10-wap"), 0);
+  const wap = catalog.products.find((p) => p.id === "securacv-canary-wap");
+  const v = installVerdict({ current: { version: "2.4.18-dev.10-wap" }, currentProduct: wap,
+                             product: wap, version: "2.4.18-dev.9-wap" });
+  assert.strictEqual(v.kind, "downgrade");
+  assert.strictEqual(v.label, "Downgrade · 2.4.18-dev.10-wap → 2.4.18-dev.9-wap");
+});
+
 // ── release manifest resolution ─────────────────────────────────────────────
 function goodManifest() {
   return {

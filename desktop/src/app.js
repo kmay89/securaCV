@@ -1850,7 +1850,11 @@ function productForProject(catalog, projectName) {
 }
 
 // Semver-ish compare returning -1/0/1, or null when either side can't be
-// parsed. A prerelease sorts BELOW its release (2.4.7-rc1 < 2.4.7).
+// parsed. A prerelease sorts BELOW its release (2.4.7-rc1 < 2.4.7), and two
+// prereleases compare field by field, split on "." and "-", numerically where
+// both fields are digits (semver §11): 2.4.18-dev.10 is after -dev.9, the
+// WAP's -dev.10-wap after -dev.9-wap. The browser's compareVersions
+// (flash-core.js) orders them the same (desktop_parity.test.js).
 function compareVersions(a, b) {
   const parse = (v) => {
     const m = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-+](.+))?$/.exec(String(v || "").trim());
@@ -1863,7 +1867,20 @@ function compareVersions(a, b) {
     if (pa.parts[i] !== pb.parts[i]) return pa.parts[i] < pb.parts[i] ? -1 : 1;
   }
   if (!!pa.pre !== !!pb.pre) return pa.pre ? -1 : 1;
-  if (pa.pre && pb.pre && pa.pre !== pb.pre) return pa.pre < pb.pre ? -1 : 1;
+  const fa = String(pa.pre || "").split(/[.-]/), fb = String(pb.pre || "").split(/[.-]/);
+  for (let i = 0; i < Math.max(fa.length, fb.length); i++) {
+    const x = fa[i], y = fb[i];
+    if (x === y) continue;
+    if (x === undefined || y === undefined) return x === undefined ? -1 : 1;
+    const nx = /^\d+$/.test(x), ny = /^\d+$/.test(y);
+    if (nx && ny) {
+      if (Number(x) !== Number(y)) return Number(x) < Number(y) ? -1 : 1;
+    } else if (nx !== ny) {
+      return nx ? -1 : 1;
+    } else {
+      return x < y ? -1 : 1;
+    }
+  }
   return 0;
 }
 
@@ -2657,15 +2674,16 @@ async function identify(portInfo) {
 // Matched on the `esp_app_desc_t` project name — a real string read off the
 // board, not a hash of an image we'd have to claim to have cataloged. The
 // Arduino entry's own detail says why that name is no evidence of a stock
-// image: SecuraCV's releases up to 2.4.17 carry it too (the browser's comment).
+// image: SecuraCV's releases up to 2.4.17, and any SecuraCV build made outside
+// a release, carry it too (the browser's comment).
 const KNOWN_STOCK = [
   { match: /^micropython/i, name: "MicroPython" },
   { match: /^circuitpython/i, name: "CircuitPython" },
   { match: /^(esp-at|at)$/i, name: "Espressif AT firmware" },
   { match: /^arduino/i, name: "an Arduino sketch",
-    detail: "Many boards ship with one. SecuraCV releases up to 2.4.17 read this way too, " +
-            "because their descriptor names the Arduino core and not the product, so this " +
-            "check can't tell the two apart." },
+    detail: "Many boards ship with one. SecuraCV releases up to 2.4.17, and any SecuraCV build " +
+            "made outside a release, read this way too, because their descriptor names the " +
+            "Arduino core and not the product, so this check can't tell the two apart." },
   { match: /^esphome/i, name: "ESPHome" },
   { match: /^tasmota/i, name: "Tasmota" },
   { match: /^(hello[-_ ]?world|blink)/i, name: "a factory test sketch" },
@@ -2698,8 +2716,8 @@ function shippedWith({ projectName, product, blank, read = "ok" } = {}) {
   if (product && product.asset_stem === projectName) {
     return { level: "clear", kind: "securacv", name: product.name,
       label: `Arrived running ${product.name}`,
-      detail: "Its descriptor names a SecuraCV release, so it has been set up before. " +
-              "That name is the image's own claim, not proof of what it runs." };
+      detail: "Its descriptor names a SecuraCV release, so SecuraCV was likely installed on it " +
+              "before. That name is the image's own claim, not proof of what it runs." };
   }
   const hit = KNOWN_STOCK.find((k) => k.match.test(projectName));
   if (hit) {
@@ -2868,7 +2886,6 @@ async function readPassport(port) {
       state.resident = {
         version: p.resident.version,
         projectName: p.resident.projectName,
-        built: p.resident.built,
         slot: p.resident.slot,
         product: matchProjectToProduct(state.catalog, p.resident.projectName),
       };
@@ -2969,12 +2986,6 @@ function renderPassport() {
     box.appendChild(seen);
   }
 
-  if (r.built) {
-    const b = document.createElement("div");
-    b.className = "pp-built muted";
-    b.textContent = "Built " + r.built;
-    box.appendChild(b);
-  }
   // The MAC intake finding, but only when it is worth saying: a normal
   // factory address is the expected case and needs no line of its own.
   const mc = state.macCheck;
@@ -4765,6 +4776,16 @@ async function onHealthCheck() {
   }
 }
 
+// The date an app descriptor carries is whatever compiled that record: on an
+// Arduino build, the core's precompiled libraries, and the release stamp
+// leaves it alone. So the passport never shows it beside the product and
+// version, and the report labels it. The browser's DESCRIPTOR_DATE_NOTE
+// (flash.js) is the same sentence (desktop_parity.test.js).
+const DESCRIPTOR_DATE_NOTE =
+  "The date is the one in the image’s app descriptor. On an Arduino build, every SecuraCV " +
+  "release included, that is when the Arduino core was built, not this firmware, so it says " +
+  "nothing about when the board was flashed.";
+
 // Build the report DOM from the object the backend returns. Everything read off
 // flash (project names, versions, labels) goes in via textContent, never HTML.
 function renderHealthReport(r) {
@@ -4813,9 +4834,10 @@ function renderHealthReport(r) {
     for (const s of r.slots) {
       const val = s.empty
         ? "empty"
-        : `${s.project || "?"} ${s.version || ""}`.trim() + (s.built ? ` · built ${s.built}` : "");
+        : `${s.project || "?"} ${s.version || ""}`.trim() + (s.built ? ` · descriptor dated ${s.built}` : "");
       row(s.label + (s.active ? " — running now" : ""), val, s.active ? "ok" : null);
     }
+    box.append(h("p", "muted", DESCRIPTOR_DATE_NOTE));
   }
 
   if (r.ota) {

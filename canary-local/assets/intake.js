@@ -343,15 +343,17 @@ export function duplicateMacCheck(roster, mac) {
 // The Arduino entry carries its own detail: the Arduino core's libraries name
 // every Arduino build `arduino-lib-builder`, SecuraCV's releases up to 2.4.17
 // included, so that name is no evidence of a stock image. Releases after it
-// carry the product's asset_stem instead (firmware/scripts/stamp_app_desc.py).
+// carry the product's asset_stem instead (firmware/scripts/stamp_app_desc.py);
+// only the release workflows stamp, so a SecuraCV build made anywhere else
+// (`pio run -t upload`, dev_flash.sh, an OTA push) still reads as Arduino.
 export const KNOWN_STOCK = [
   { match: /^micropython/i, name: "MicroPython" },
   { match: /^circuitpython/i, name: "CircuitPython" },
   { match: /^(esp-at|at)$/i, name: "Espressif AT firmware" },
   { match: /^arduino/i, name: "an Arduino sketch",
-    detail: "Many boards ship with one. SecuraCV releases up to 2.4.17 read this way too, " +
-            "because their descriptor names the Arduino core and not the product, so this " +
-            "check can't tell the two apart." },
+    detail: "Many boards ship with one. SecuraCV releases up to 2.4.17, and any SecuraCV build " +
+            "made outside a release, read this way too, because their descriptor names the " +
+            "Arduino core and not the product, so this check can't tell the two apart." },
   { match: /^esphome/i, name: "ESPHome" },
   { match: /^tasmota/i, name: "Tasmota" },
   { match: /^(hello[-_ ]?world|blink)/i, name: "a factory test sketch" },
@@ -388,8 +390,8 @@ export function shippedWith({ projectName, product, blank, read = "ok" } = {}) {
   if (product && product.asset_stem === projectName) {
     return { level: "clear", kind: "securacv", name: product.name,
       label: `Arrived running ${product.name}`,
-      detail: "Its descriptor names a SecuraCV release, so it has been set up before. " +
-              "That name is the image's own claim, not proof of what it runs." };
+      detail: "Its descriptor names a SecuraCV release, so SecuraCV was likely installed on it " +
+              "before. That name is the image's own claim, not proof of what it runs." };
   }
   const hit = KNOWN_STOCK.find((k) => k.match.test(projectName));
   if (hit) {

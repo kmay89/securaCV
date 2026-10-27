@@ -5242,6 +5242,57 @@ test("customs names a board running SecuraCV, and stays honest about the Arduino
     "the desktop's customs finding no longer gets the product it matched");
   assert.match(flashJs, /product: core\.matchProjectToProduct\(state\.catalog, projectName\)/,
     "the browser's customs finding no longer gets the product it matched");
+  // Every stem a release stamps maps back to its own product on the desktop
+  // too (flash.test.js holds the browser's copies to the same loop).
+  const lookup = new Function([fnSource(appJs, "matchProjectToProduct"), fnSource(appJs, "productForProject")]
+    .join("\n") + "\nreturn { matchProjectToProduct, productForProject };")();
+  for (const p of catalog.products) {
+    assert.equal(lookup.matchProjectToProduct(catalog, p.asset_stem).id, p.id, `desktop match ${p.asset_stem}`);
+    assert.equal(lookup.productForProject(catalog, p.asset_stem).id, p.id, `desktop productForProject ${p.asset_stem}`);
+  }
+});
+
+test("both flashers order a stamped board's version the same way, a dev train past .9 included", async () => {
+  // Stamped versions parse, so the install verdict compares real versions:
+  // as plain strings "dev.10" sorted before "dev.9", and an older dev image
+  // over a newer one read as an Update. Same cases, same answers, both sides.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const desktop = new Function(jsFnText(appJs, "compareVersions", "desktop/src/app.js") +
+    "\nreturn compareVersions;")();
+  const pairs = [["2.4.18-dev.9", "2.4.18-dev.10"], ["2.4.18-dev.9-wap", "2.4.18-dev.10-wap"],
+                 ["2.4.18-dev.10", "2.4.18-rc.1"], ["2.4.18-rc.1", "2.4.18"], ["2.4.17-wap", "2.4.18-wap"],
+                 ["2.4.18-wap", "2.4.18-wap"], ["2.2.0-rc1", "2.2.0-rc2"], ["esp-idf: v4.4.7 38eeba213a", "2.4.18"]];
+  for (const [a, b] of pairs) {
+    for (const [x, y] of [[a, b], [b, a]]) {
+      assert.strictEqual(desktop(x, y), core.compareVersions(x, y), `${x} vs ${y}`);
+    }
+  }
+  assert.strictEqual(desktop("2.4.18-dev.10", "2.4.18-dev.9"), 1);
+});
+
+test("neither flasher shows the descriptor's date as the firmware's build date", () => {
+  // An Arduino build's descriptor date is the Arduino core's (fw-v2.4.17's
+  // read Mar 5 2024 and Mar 31 2026) and the release stamp leaves it alone,
+  // so beside "Canary 2.4.18" it told people a 2026 release was built in
+  // 2024. The readback line and the passport drop it; the health report
+  // keeps it, labeled, with the same note on both sides.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const note = (src, where) => {
+    const m = /^const DESCRIPTOR_DATE_NOTE =\n((?:  "[^"\n]*"(?: \+|;)\n)+)/m.exec(src);
+    assert.ok(m, `${where} lost DESCRIPTOR_DATE_NOTE`);
+    return new Function(`return ${m[1].trim().replace(/;$/, "")};`)();
+  };
+  assert.equal(note(appJs, "desktop/src/app.js"), note(flashJs, "flash.js"), "the two flashers say it in the same words");
+  assert.match(note(flashJs, "flash.js"), /when the Arduino core was built, not this firmware/);
+  for (const [src, where] of [[flashJs, "flash.js"], [appJs, "desktop/src/app.js"]]) {
+    assert.match(src, /\(s\.built \? ` · descriptor dated \$\{s\.built\}` : ""\)/, `${where}: the report's date is labeled`);
+    assert.match(src, /DESCRIPTOR_DATE_NOTE\)\);/, `${where}: the report shows the note`);
+    assert.doesNotMatch(src, /\(built \$\{|"Built " \+|· built \$\{/, `${where}: a date is shown as the build date again`);
+  }
+  assert.doesNotMatch(read(join(ROOT, "desktop/src-tauri/src/lib.rs")), /"built": if built/,
+    "the passport's resident record carries the descriptor date again");
 });
 
 test("wave 5: the picker leads with one detection-led recommendation on both flashers", () => {

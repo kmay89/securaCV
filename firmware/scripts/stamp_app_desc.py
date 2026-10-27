@@ -25,6 +25,13 @@ The identity, defined here once:
                 descriptor, so the release's `strings | grep -Fx` version
                 guards still test the firmware and never this stamp.
 
+Both are written only into an image that also carries the product's flash.json
+`id` (the SECURACV_OTA_PRODUCT string it reports over the air) the same way.
+The release stamps whatever sits at a product's build path, and a build can
+land there as another product: a `modes` display build without its flavor
+staged is a gearless dash. Such an image is left unstamped, not named for the
+slot it sits in.
+
 Only those two char[32] fields change, then the image's checksum byte and,
 when its header says one is appended, its SHA-256. app_elf_sha256 (the boot
 guard's image identity, health/boot_guard.h), secure_version (anti-rollback),
@@ -42,8 +49,17 @@ and the hash valid and reads back the name and version written.
 firmware-release.yml and flasher-release.yml run it after their last build
 step and before anything hashes, signs or merges an app, so the OTA
 manifest's sha256 and signature and the factory image all cover the stamped
-bytes. An image whose version literal is missing is left unstamped with a
-warning: the version guards after this step say which header to bump.
+bytes. An image that does not carry its version or product string is left
+unstamped with a warning (the version guards after this step name the header
+to bump; the display product guard keeps a mislabeled build off OTA). An
+image this tool refuses (empty, truncated, the wrong shape, an already-wrong
+checksum) is moved aside to `<app>.refused`, so that product drops out of the
+release the way a failed build does: firmware-release.yml's assemble step
+then fails on a product it cannot ship without, and the rest are left to the
+per-product paths and the completeness gate the workflows already have. What
+fails this step is never one build's: a name or version the field cannot hold
+(the catalog's or the release's), or a stamped image esptool reads back wrong
+(this tool's defect), whichever product shows it.
 """
 from __future__ import annotations
 
@@ -78,7 +94,11 @@ class Refused(ValueError):
 
 
 class NotCarried(Refused):
-    """The image does not carry the version literal it would be stamped with."""
+    """The image does not carry the version or product string it would be stamped with."""
+
+
+class Unfit(Refused):
+    """A value the field cannot hold: the catalog's or the release's fault, not the build's."""
 
 
 @dataclass(frozen=True)
@@ -142,50 +162,38 @@ def check_integrity(image: bytes, lay: Layout) -> None:
         raise Refused("its appended SHA-256 does not match its bytes")
 
 
-def field(image: bytes, name: str) -> str:
-    off, size = FIELDS[name]
-    raw = image[DESC_OFFSET + off:DESC_OFFSET + off + size]
-    return raw.split(b"\0", 1)[0].decode("ascii", "replace")
-
-
-def identity(image: bytes) -> tuple[str, str]:
-    """(project_name, version) as the image's descriptor states them."""
-    layout(image)
-    return field(image, "project_name"), field(image, "version")
-
-
 def check_value(name: str, value: str) -> bytes:
     """The field's bytes for `value`, or Refused: printable ASCII, 1 to 31
     characters, so the char[32] keeps its NUL (31 + NUL is the whole field)."""
     size = FIELDS[name][1]
     if not value or not re.fullmatch(r"[\x20-\x7e]+", value):
-        raise Refused(f"{name} {value!r} is not printable ASCII")
+        raise Unfit(f"{name} {value!r} is not printable ASCII")
     if len(value) > size - 1:
-        raise Refused(f"{name} {value!r} is {len(value)} characters; the field holds {size - 1}")
+        raise Unfit(f"{name} {value!r} is {len(value)} characters; the field holds {size - 1}")
     return value.encode("ascii").ljust(size, b"\0")
 
 
 def carries(image: bytes, text: str) -> bool:
     """Does the image hold `text` as a whole printable run OUTSIDE the two
-    stamped fields? The same test as build_flash_manifest.image_has_version,
-    with the fields blanked, so the stamp can never satisfy a version guard."""
+    stamped fields? build_flash_manifest's version-guard rule, with the fields
+    blanked, so the stamp can never satisfy a guard."""
     blanked = bytearray(image)
     for off, size in FIELDS.values():
         blanked[DESC_OFFSET + off:DESC_OFFSET + off + size] = bytes(size)
-    target = text.encode()
-    return any(run == target for run in re.split(rb"[^\x20-\x7e]+", bytes(blanked)))
+    return build_flash_manifest.carries_run(bytes(blanked), text)
 
 
-def stamp(image: bytes, project: str, version: str) -> bytes:
+def stamp(image: bytes, project: str, version: str, product_id: str) -> bytes:
     """The image with project_name and version stamped and its checksum and
-    hash recomputed. Raises Refused (NotCarried for a missing version literal)."""
+    hash recomputed. Raises Refused, or NotCarried when the image does not
+    carry `version` or its product's flash.json id `product_id`."""
     values = {"project_name": check_value("project_name", project),
               "version": check_value("version", version)}
     lay = layout(image)
     check_integrity(image, lay)
-    if not carries(image, version):
-        raise NotCarried(f"the image does not carry the version string {version!r} "
-                         f"outside its descriptor")
+    for what, text in (("version string", version), ("product id", product_id)):
+        if not carries(image, text):
+            raise NotCarried(f"the image does not carry the {what} {text!r} outside its descriptor")
     out = bytearray(image)
     for name, raw in values.items():
         off, size = FIELDS[name]
@@ -216,17 +224,18 @@ def esptool_readback(path: Path, project: str, version: str, hashed: bool) -> li
     return problems
 
 
-def stamp_file(path: Path, project: str, version: str) -> list[str]:
+def stamp_file(path: Path, project: str, version: str, product_id: str) -> list[str]:
     """Stamp one image file in place and read it back with esptool."""
     data = path.read_bytes()
-    stamped = stamp(data, project, version)
+    stamped = stamp(data, project, version, product_id)
     if stamped != data:
         path.write_bytes(stamped)
     return esptool_readback(path, project, version, layout(stamped).hash_at is not None)
 
 
 def release(version: str, catalog: dict, builds: dict) -> int:
-    """Stamp every built product app; 0 when every stamped image reads back right."""
+    """Stamp every built product app; 0 unless a value cannot fit its field or
+    esptool reads a stamped image back wrong."""
     errors = []
     for p in catalog["products"]:
         pid, build = p["id"], builds.get(p["id"])
@@ -238,13 +247,19 @@ def release(version: str, catalog: dict, builds: dict) -> int:
             continue
         want = version + build["vsuffix"]
         try:
-            problems = stamp_file(path, p["asset_stem"], want)
+            problems = stamp_file(path, p["asset_stem"], want, pid)
         except NotCarried as e:
-            print(f"::warning::{pid}: left unstamped — {e}. The version guards after this step "
-                  f"name the header to bump.")
+            print(f"::warning::{pid}: left unstamped, so it ships with the descriptor its build "
+                  f"wrote — {e}.")
+            continue
+        except Unfit as e:
+            errors.append(f"{pid}: {e}")
             continue
         except Refused as e:
-            errors.append(f"{pid} ({path}): {e}")
+            aside = path.with_name(path.name + ".refused")
+            path.replace(aside)
+            print(f"::warning::{pid}: not stamped — {e}. Moved aside to {aside}, so this "
+                  f"product drops out of the release the way a failed build does.")
             continue
         if problems:
             errors.append(f"{pid} ({path}): " + "; ".join(problems))
@@ -266,11 +281,14 @@ def main() -> None:
     one.add_argument("path", type=Path)
     args = ap.parse_args()
 
+    catalog = json.loads(build_flash_manifest.FLASH_JSON.read_text(encoding="utf-8"))
     if args.cmd == "release":
-        catalog = json.loads(build_flash_manifest.FLASH_JSON.read_text(encoding="utf-8"))
         sys.exit(release(args.version, catalog, build_flash_manifest.BUILD))
+    product = next((p for p in catalog["products"] if p["asset_stem"] == args.project), None)
+    if product is None:
+        sys.exit(f"stamp_app_desc: {args.project!r} is no product's asset_stem in {build_flash_manifest.FLASH_JSON}")
     try:
-        problems = stamp_file(args.path, args.project, args.version)
+        problems = stamp_file(args.path, args.project, args.version, product["id"])
     except Refused as e:
         sys.exit(f"stamp_app_desc: {args.path}: {e}")
     if problems:

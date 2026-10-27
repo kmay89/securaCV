@@ -37,10 +37,15 @@ WORKFLOWS = REPO / ".github" / "workflows"
 JOBS = {"firmware-release.yml": "build-sign-release", "flasher-release.yml": "factory-images"}
 STAMP = re.compile(r"python3? firmware/scripts/stamp_app_desc\.py release\b")
 BUILD = re.compile(r"\bpio run\b|\barduino-cli compile\b")
-# What a step does to an app that must see the stamped bytes: run a tool on
-# it, checksum it, grep it, attest it or publish it.
+# What a step does to an app that must see the stamped bytes: copy it (a
+# copy taken first would be signed or shipped unstamped), run a tool on it,
+# checksum it, grep it, attest it or publish it. An app is a PlatformIO
+# firmware.bin, an arduino-cli <sketch>.ino.bin, or anything in the
+# arduino-cli output dirs the release builds into.
+APP = r"(?:firmware\.bin|\.ino\.bin|/tmp/wap-build|/tmp/display-)"
 CONSUMER = re.compile(r"python3? firmware/scripts/(?:ota_release\.py manifest|build_flash_manifest\.py"
-                      r"|make_factory\.py|check_slot_budget\.py)|\bsha256sum\b|\bstrings \"")
+                      r"|make_factory\.py|check_slot_budget\.py)|\bsha256sum\b|\bstrings \""
+                      r"|\bcp\b[^\n]*" + APP)
 CONSUMING_ACTIONS = ("actions/attest-build-provenance", "softprops/action-gh-release")
 
 
@@ -82,6 +87,14 @@ class TheRule(unittest.TestCase):
         self.assertEqual(len(order_problems([build, sign, stamp])), 1)
         self.assertEqual(len(order_problems([stamp, build, sign])), 1)
         self.assertEqual(len(order_problems([build, attest, stamp])), 1)
+        # A copy taken before the stamp is the copy a later step signs.
+        copy = {"name": "Copy", "run": 'cp /tmp/wap-build/canary_wap.ino.bin "/tmp/release/canary-wap-1.bin"'}
+        self.assertEqual(len(order_problems([build, copy, stamp, sign])), 1)
+        self.assertEqual(order_problems([build, stamp, copy, sign]), [])
+        # Staging a whole build dir, as the display env loop does, is part of
+        # building, not a read of the app.
+        stage = {"name": "Stage", "run": 'cp -R ".pio/build/$E" "$STAGE/$E"\ncp lv_conf.h "${LIBDIR}/lv_conf.h"'}
+        self.assertEqual(order_problems([build, stage, stamp, sign]), [])
         self.assertEqual(order_problems([build, sign]), ["expected one stamp_app_desc.py release step, found 0"])
         # A tool named in a comment is not a step that runs it.
         prose = {"name": "Prose", "run": "# make_factory.py and `strings` come later\necho hi"}

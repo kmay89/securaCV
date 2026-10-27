@@ -1293,12 +1293,13 @@ async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value
         )
         .await
         {
+            // No descriptor date: beside the product and version it reads as
+            // the release's build date, and an Arduino build's is the core's.
+            // The health report's slots carry it, labeled (app.js).
             if let Some(d) = health::parse_app_descriptor(&db) {
-                let built = format!("{} {}", d.date, d.time).trim().to_string();
                 resident = json!({
                     "version": d.version,
                     "projectName": d.project_name,
-                    "built": if built.is_empty() { Value::Null } else { json!(built) },
                     "idf": d.idf_ver,
                     "slot": booted.label,
                 });

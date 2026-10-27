@@ -392,6 +392,8 @@ test("a board whose descriptor names a SecuraCV product says so, by its exact st
   assert.equal(r.kind, "securacv");
   assert.equal(r.label, "Arrived running Canary WAP");
   assert.match(r.detail, /own claim, not proof/);
+  // The name is evidence SecuraCV was flashed, not that anyone configured it.
+  assert.doesNotMatch(r.detail, /set up before/);
   // No worse than the Arduino reading the same firmware got up to 2.4.17.
   assert.equal(r.level, shippedWith({ projectName: "arduino-lib-builder" }).level);
   const flagship = { id: "securacv-canary", name: "Canary", asset_stem: "canary" };
@@ -399,11 +401,14 @@ test("a board whose descriptor names a SecuraCV product says so, by its exact st
   assert.equal(shippedWith({ projectName: "canary-wap" }).kind, "unknown");
 });
 
-test("an Arduino descriptor is not called a stock image: SecuraCV up to 2.4.17 reads that way too", () => {
+test("an Arduino descriptor is not called a stock image: SecuraCV up to 2.4.17, or built outside a release, reads that way too", () => {
   const r = shippedWith({ projectName: "arduino-lib-builder" });
   assert.equal(r.kind, "known");
   assert.equal(r.level, "clear");
-  assert.match(r.detail, /SecuraCV releases up to 2\.4\.17 read this way too/);
+  // Only the release workflows stamp: a 2.4.18 built from source and
+  // uploaded with PlatformIO is still `arduino-lib-builder`, so the line
+  // must not imply only an old SecuraCV reads this way.
+  assert.match(r.detail, /SecuraCV releases up to 2\.4\.17, and any SecuraCV build made outside a release, read this way too/);
   assert.doesNotMatch(r.detail, /stock image/);
   // Every other stock entry keeps the stock sentence.
   assert.match(shippedWith({ projectName: "micropython" }).detail, /common stock image/);

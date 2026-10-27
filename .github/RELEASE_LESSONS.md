@@ -85,15 +85,23 @@ any platform.
   before anything copies, hashes, signs or merges an app
   (`scripts/tests/test_release_app_desc_stamp.py` holds the order), and is in
   `flasher-release.yml`'s tooling overlay, so a rebuild of an older tag
-  stamps that tag's factory images too. It writes a version only over a
-  literal the image already carries, so the `strings | grep -Fx` version
-  guards keep testing the firmware. Published images are unchanged.
+  stamps that tag's factory images too. It stamps only an image that
+  already carries its version literal and its product id, so the `strings |
+  grep -Fx` version guards keep testing the firmware and a build that
+  identifies as another product is never named for its slot. An app it
+  refuses is moved aside, so that product drops out like a failed build
+  rather than sinking the release. Published images are unchanged.
 - **Applies to:** any step that edits an artifact's bytes (a stamp, a pad, a
   re-sign): it runs before the first step that hashes, signs, merges or
-  attests that artifact, a test reads the workflow to hold that order, and
-  the artifact is read back with the tool the device side trusts. A guard
-  that greps an artifact for a string is void once a later step can write
-  that string; the writer must refuse to be the guard's only witness.
+  attests that artifact (a `cp` included), a test reads the workflow to hold
+  that order, and the artifact is read back with the tool the device side
+  trusts. Test that readback failing, not only passing: esptool `image_info`
+  exits 0 on an invalid checksum, so a gate that trusted the exit status, or
+  stopped reading the words, would pass anything. A guard that greps an
+  artifact for a string is void once a later step can write that string; the
+  writer must refuse to be the guard's only witness. And a gate added to
+  every product inherits the strictest product's stakes: keep the
+  per-product failures per-product.
 
 ## 2026-10-27 — Signed and notarized, and the installer still said "open Terminal"; the reinstall link searched for a release GitHub's search does not list
 

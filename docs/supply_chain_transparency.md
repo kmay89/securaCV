@@ -115,6 +115,16 @@ $ cd firmware/canary && pio run -e release_ha      # see firmware-release.yml fo
 $ sha256sum .pio/build/release_ha/firmware.bin     # compare bytes; expect minor toolchain noise
 ```
 
+From the release after fw-v2.4.17, the release edits each app after the build:
+it stamps the product's `asset_stem` and the version into the app descriptor's
+`project_name` and `version` fields, then recomputes the image's checksum byte
+and appended SHA-256 (`firmware/scripts/stamp_app_desc.py`, run in
+`firmware-release.yml` before anything is signed). Do the same to your rebuild
+before comparing, from the repo root (`python3 firmware/scripts/stamp_app_desc.py
+image --project canary --version <ver>
+firmware/canary/.pio/build/release_ha/firmware.bin`), or expect those two
+32-byte fields, the checksum byte and the appended 32-byte hash to differ.
+
 Reducing that noise toward true reproducibility (`SOURCE_DATE_EPOCH`, hermetic
 toolchains) is on the roadmap; this doc will get more confident, not more vague,
 as it lands.

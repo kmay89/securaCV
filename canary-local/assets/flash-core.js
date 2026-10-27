@@ -2437,7 +2437,11 @@ export function parseVersion(v) {
 }
 
 // -1 a<b · 0 equal · 1 a>b · null when either side is unparseable.
-// A prerelease sorts before its own release (2.2.0-rc1 < 2.2.0).
+// A prerelease sorts before its own release (2.2.0-rc1 < 2.2.0). Two
+// prereleases compare field by field, split on "." and "-", numerically
+// where both fields are digits (semver §11): 2.4.18-dev.10 is after
+// 2.4.18-dev.9, and so is the WAP's 2.4.18-dev.10-wap after -dev.9-wap.
+// desktop/src/app.js orders them the same (desktop_parity.test.js).
 export function compareVersions(a, b) {
   const pa = parseVersion(a), pb = parseVersion(b);
   if (!pa || !pb) return null;
@@ -2447,7 +2451,20 @@ export function compareVersions(a, b) {
     if (x !== y) return x < y ? -1 : 1;
   }
   if (!!pa.pre !== !!pb.pre) return pa.pre ? -1 : 1;
-  if (pa.pre && pb.pre && pa.pre !== pb.pre) return pa.pre < pb.pre ? -1 : 1;
+  const fa = String(pa.pre || "").split(/[.-]/), fb = String(pb.pre || "").split(/[.-]/);
+  for (let i = 0; i < Math.max(fa.length, fb.length); i++) {
+    const x = fa[i], y = fb[i];
+    if (x === y) continue;
+    if (x === undefined || y === undefined) return x === undefined ? -1 : 1;
+    const nx = /^\d+$/.test(x), ny = /^\d+$/.test(y);
+    if (nx && ny) {
+      if (Number(x) !== Number(y)) return Number(x) < Number(y) ? -1 : 1;
+    } else if (nx !== ny) {
+      return nx ? -1 : 1;
+    } else {
+      return x < y ? -1 : 1;
+    }
+  }
   return 0;
 }
 

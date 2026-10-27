@@ -42,9 +42,13 @@ On top of the silicon guarantee, the page adds:
   the release stamps them into each app after the build
   (`firmware/scripts/stamp_app_desc.py`: `project_name` is the product's
   `asset_stem`, `version` the firmware's own version string). Images up to
-  fw-v2.4.17 carry the Arduino core's descriptor instead
-  (`arduino-lib-builder`, `esp-idf: v4.4.7 …`), so a board running one reads
-  as an Arduino sketch and its verdict as "Version unknown".
+  fw-v2.4.17, and any build made outside the release workflows (`pio run -t
+  upload`, `dev_flash.sh`, an OTA push), carry the Arduino core's descriptor
+  instead (`arduino-lib-builder`, `esp-idf: v4.4.7 …`), so a board running
+  one reads as an Arduino sketch and its verdict as "Version unknown". The
+  descriptor's date is not shown beside the version: on an Arduino build it
+  is when the Arduino core was built, so only the health report shows it,
+  labeled "descriptor dated".
 - **Recovery always in reach.** The BOOT/RESET download-mode gesture (the same
   one the WAP first-boot lesson teaches) is one panel away throughout, and a
   non-Chromium browser is met with the guided PlatformIO/Arduino path instead
@@ -651,6 +655,13 @@ Two consequences worth knowing:
   policy becomes `require-signature`, both flashers refuse every image in the
   manifest, and a bring-up run would have replaced a working rolling release
   with an uninstallable one.
+- **Its images carry the train's version.** The stamp writes the version the
+  sources compile in, `registry.json`'s `fw_train` (the last release's number
+  until the next bump), which is also what the board reports over the air. So
+  a board running a `fw-dev-latest` image reads in either flasher as that
+  release: on the stable channel, "already on 2.4.17" and up to date, though
+  it runs newer code. Nothing is blocked; the verdict just cannot tell the two
+  builds apart until a dev build carries a version of its own.
 - `firmware-release.yml` mirrors only *manifests* to `fw-dev-latest` (its
   binaries live at the real `fw-v*` tag: a dev release's, or a stable one's
   when the dev channel carries nothing newer, `.github/scripts/dev_channel.py`);

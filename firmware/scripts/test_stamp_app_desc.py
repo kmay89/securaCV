@@ -68,7 +68,8 @@ def app_desc(version: bytes = ARDUINO_VERSION, project: bytes = ARDUINO_PROJECT)
     return bytes(d)
 
 
-DROM_TAIL = b"\0canary-vision\x002.4.18\0" + bytes(range(256)) * 3
+VISION = "securacv-canary-vision"
+DROM_TAIL = b"\0securacv-canary-vision\x002.4.18\0" + bytes(range(256)) * 3
 
 
 def esptool_image(tmp_path: Path, chip: str, *, hashed: bool = True,
@@ -116,6 +117,19 @@ def desc_of(image: bytes) -> bytes:
     return image[sad.DESC_OFFSET:sad.DESC_OFFSET + sad.DESC_LEN]
 
 
+def corrupt(image: bytes, at: int, value: int) -> bytes:
+    b = bytearray(image)
+    b[at] = value
+    return bytes(b)
+
+
+def identity(image: bytes) -> tuple[str, str]:
+    """(project_name, version) as the image's descriptor states them."""
+    sad.layout(image)
+    return tuple(desc_of(image)[off:off + size].split(b"\0", 1)[0].decode("ascii", "replace")
+                 for off, size in (sad.FIELDS["project_name"], sad.FIELDS["version"]))
+
+
 def esptool_says(path: Path) -> dict:
     r = subprocess.run([sys.executable, "-m", "esptool", "image_info", "--version", "2", str(path)],
                        capture_output=True, text=True, check=True)
@@ -130,14 +144,14 @@ def test_a_stamped_image_is_one_esptool_calls_valid(tmp_path, esptool_present, c
     before = path.read_bytes()
     assert esptool_says(path)["Project name"] == "arduino-lib-builder"
 
-    assert sad.stamp_file(path, "canary-vision", "2.4.18") == []
+    assert sad.stamp_file(path, "canary-vision", "2.4.18", VISION) == []
     after = path.read_bytes()
     said = esptool_says(path)
     assert said["Checksum"].endswith("(valid)")
     assert said["Validation hash"].endswith("(valid)")
     assert said["Project name"] == "canary-vision"
     assert said["App version"] == "2.4.18"
-    assert sad.identity(after) == ("canary-vision", "2.4.18")
+    assert identity(after) == ("canary-vision", "2.4.18")
     assert len(after) == len(before)
 
 
@@ -145,7 +159,7 @@ def test_a_stamped_image_is_one_esptool_calls_valid(tmp_path, esptool_present, c
 def test_only_the_two_fields_the_checksum_and_the_hash_move(tmp_path, esptool_present, chip):
     path = esptool_image(tmp_path, chip)
     before = path.read_bytes()
-    sad.stamp_file(path, "canary-vision", "2.4.18")
+    sad.stamp_file(path, "canary-vision", "2.4.18", VISION)
     after = path.read_bytes()
     lay = sad.layout(after)
     moved = {i for i in range(len(before)) if before[i] != after[i]}
@@ -165,7 +179,7 @@ def test_an_image_without_an_appended_hash_gets_none(tmp_path, esptool_present):
     path = esptool_image(tmp_path, "esp32c3", hashed=False)
     size = path.stat().st_size
     assert sad.layout(path.read_bytes()).hash_at is None
-    assert sad.stamp_file(path, "canary-vision", "2.4.18") == []
+    assert sad.stamp_file(path, "canary-vision", "2.4.18", VISION) == []
     assert path.stat().st_size == size
     said = esptool_says(path)
     assert said["Checksum"].endswith("(valid)")
@@ -174,27 +188,34 @@ def test_an_image_without_an_appended_hash_gets_none(tmp_path, esptool_present):
 
 def test_stamping_again_changes_nothing(tmp_path, esptool_present):
     path = esptool_image(tmp_path, "esp32s3")
-    sad.stamp_file(path, "canary-vision", "2.4.18")
+    sad.stamp_file(path, "canary-vision", "2.4.18", VISION)
     once = path.read_bytes()
-    assert sad.stamp(once, "canary-vision", "2.4.18") == once
-    sad.stamp_file(path, "canary-vision", "2.4.18")
+    assert sad.stamp(once, "canary-vision", "2.4.18", VISION) == once
+    sad.stamp_file(path, "canary-vision", "2.4.18", VISION)
     assert path.read_bytes() == once
 
 
 def test_a_31_character_name_fills_the_field_and_keeps_its_nul(tmp_path, esptool_present):
     name = "c" * 31
     path = esptool_image(tmp_path, "esp32c6", tail=DROM_TAIL)
-    assert sad.stamp_file(path, name, "2.4.18") == []
+    assert sad.stamp_file(path, name, "2.4.18", VISION) == []
     assert esptool_says(path)["Project name"] == name
     assert desc_of(path.read_bytes())[48 + 31] == 0
 
 
 def test_the_command_line_stamps_in_place(tmp_path, esptool_present):
-    path = esptool_image(tmp_path, "esp32")
-    r = subprocess.run([sys.executable, str(STAMP), "image", "--project", "canary-wroom",
-                        "--version", "2.4.18", str(path)], capture_output=True, text=True)
+    # The product id the image must carry comes from flash.json, by stem
+    # (whichever product is first there, so a catalog edit cannot break this).
+    product = json.loads(build_flash_manifest.FLASH_JSON.read_text(encoding="utf-8"))["products"][0]
+    tail = b"\0" + product["id"].encode() + b"\x002.4.18\0" + bytes(300)
+    path = esptool_image(tmp_path, "esp32", tail=tail)
+    run = lambda stem: subprocess.run([sys.executable, str(STAMP), "image", "--project", stem,  # noqa: E731
+                                       "--version", "2.4.18", str(path)], capture_output=True, text=True)
+    r = run(product["asset_stem"])
     assert r.returncode == 0, r.stdout + r.stderr
-    assert esptool_says(path)["Project name"] == "canary-wroom"
+    assert esptool_says(path)["Project name"] == product["asset_stem"]
+    r = run("canary-nope")
+    assert r.returncode != 0 and "no product's asset_stem" in r.stderr
 
 
 def test_the_hand_built_image_is_one_esptool_accepts(tmp_path, esptool_present):
@@ -206,18 +227,50 @@ def test_the_hand_built_image_is_one_esptool_accepts(tmp_path, esptool_present):
     assert said["Project name"] == "arduino-lib-builder"
 
 
+# ── the readback is the release gate: it must say when esptool objects ──────
+# esptool image_info exits 0 on an invalid checksum or hash, so the gate
+# reads its words. These hold each word it reads to a real objection.
+
+def reseal(image: bytes, lay, *, checksum: bool) -> bytes:
+    """`image` with its appended hash (and, if asked, its checksum) recomputed."""
+    out = bytearray(image)
+    if checksum:
+        out[lay.checksum_at] = sad.checksum(out, lay)
+    out[lay.hash_at:] = hashlib.sha256(out[:lay.hash_at]).digest()
+    return bytes(out)
+
+
+def test_the_readback_names_a_bad_checksum_a_bad_hash_and_a_wrong_name(tmp_path, esptool_present):
+    path = esptool_image(tmp_path, "esp32s3")
+    assert sad.stamp_file(path, "canary-vision", "2.4.18", VISION) == []
+    good = path.read_bytes()
+    lay = sad.layout(good)
+    readback = lambda: sad.esptool_readback(path, "canary-vision", "2.4.18", True)  # noqa: E731
+
+    path.write_bytes(reseal(corrupt(good, lay.checksum_at, good[lay.checksum_at] ^ 1), lay, checksum=False))
+    (problem,) = readback()
+    assert problem.startswith("esptool reads its checksum as") and "invalid" in problem
+
+    path.write_bytes(corrupt(good, lay.hash_at + 7, good[lay.hash_at + 7] ^ 1))
+    (problem,) = readback()
+    assert problem.startswith("esptool reads its hash as") and "invalid" in problem
+
+    path.write_bytes(good)
+    assert sad.esptool_readback(path, "canary-wap", "2.4.18-wap", True) == [
+        "esptool reads Project name 'canary-vision', not 'canary-wap'",
+        "esptool reads App version '2.4.18', not '2.4.18-wap'"]
+
+    path.write_bytes(b"\xff" * 64)
+    (problem,) = readback()
+    assert problem.startswith("esptool image_info failed")
+
+
 # ── what it refuses (no esptool needed: nothing is written) ─────────────────
 
 def test_the_hand_built_image_stamps():
-    stamped = sad.stamp(hand_image(), "canary-vision", "2.4.18")
+    stamped = sad.stamp(hand_image(), "canary-vision", "2.4.18", VISION)
     sad.check_integrity(stamped, sad.layout(stamped))
-    assert sad.identity(stamped) == ("canary-vision", "2.4.18")
-
-
-def corrupt(image: bytes, at: int, value: int) -> bytes:
-    b = bytearray(image)
-    b[at] = value
-    return bytes(b)
+    assert identity(stamped) == ("canary-vision", "2.4.18")
 
 
 @pytest.mark.parametrize("image, why", [
@@ -233,7 +286,7 @@ def corrupt(image: bytes, at: int, value: int) -> bytes:
 ])
 def test_an_image_of_the_wrong_shape_is_refused(image, why):
     with pytest.raises(sad.Refused, match=why):
-        sad.stamp(image, "canary-vision", "2.4.18")
+        sad.stamp(image, "canary-vision", "2.4.18", VISION)
 
 
 def test_a_segment_that_overruns_the_file_is_refused():
@@ -247,13 +300,13 @@ def test_an_image_already_corrupt_is_refused_not_resealed():
     image = hand_image()
     lay = sad.layout(image)
     with pytest.raises(sad.Refused, match="checksum byte"):
-        sad.stamp(corrupt(image, lay.checksum_at, image[lay.checksum_at] ^ 1), "canary", "2.4.18")
+        sad.stamp(corrupt(image, lay.checksum_at, image[lay.checksum_at] ^ 1), "canary-vision", "2.4.18", VISION)
     with pytest.raises(sad.Refused, match="SHA-256"):
-        sad.stamp(corrupt(image, lay.hash_at, image[lay.hash_at] ^ 1), "canary", "2.4.18")
+        sad.stamp(corrupt(image, lay.hash_at, image[lay.hash_at] ^ 1), "canary-vision", "2.4.18", VISION)
     # A flipped data byte: the checksum catches it before the stamp would
     # recompute both and bless the damage.
     with pytest.raises(sad.Refused, match="checksum byte"):
-        sad.stamp(corrupt(image, sad.DESC_OFFSET + 300, image[sad.DESC_OFFSET + 300] ^ 1), "canary", "2.4.18")
+        sad.stamp(corrupt(image, sad.DESC_OFFSET + 300, image[sad.DESC_OFFSET + 300] ^ 1), "canary-vision", "2.4.18", VISION)
 
 
 @pytest.mark.parametrize("name, value, why", [
@@ -265,9 +318,9 @@ def test_an_image_already_corrupt_is_refused_not_resealed():
     ("project_name", "canäry", "not printable ASCII"),
 ])
 def test_a_value_the_field_cannot_hold_is_refused(name, value, why):
-    args = {"project_name": "canary", "version": "2.4.18", name: value}
+    args = {"project_name": "canary-vision", "version": "2.4.18", name: value}
     with pytest.raises(sad.Refused, match=why):
-        sad.stamp(hand_image(), args["project_name"], args["version"])
+        sad.stamp(hand_image(), args["project_name"], args["version"], VISION)
 
 
 def test_a_version_the_firmware_does_not_carry_is_never_stamped():
@@ -275,16 +328,31 @@ def test_a_version_the_firmware_does_not_carry_is_never_stamped():
     # stamp itself, so the stamp is written only over a literal the firmware
     # already carries — never as a whole run inside a longer string, and
     # never satisfied by the descriptor's own field.
+    with pytest.raises(sad.NotCarried, match="version string '2.4.19'"):
+        sad.stamp(hand_image(), "canary-vision", "2.4.19", VISION)
     with pytest.raises(sad.NotCarried):
-        sad.stamp(hand_image(), "canary-vision", "2.4.19")
-    with pytest.raises(sad.NotCarried):
-        sad.stamp(hand_image(), "canary-vision", "2.4.1")
+        sad.stamp(hand_image(), "canary-vision", "2.4.1", VISION)
     only_in_desc = hand_image(desc=app_desc(version=b"2.4.20"), tail=b"\0no literal here\0" + bytes(300))
     with pytest.raises(sad.NotCarried):
-        sad.stamp(only_in_desc, "canary-vision", "2.4.20")
-    stamped = sad.stamp(hand_image(), "canary-vision", "2.4.18")
+        sad.stamp(only_in_desc, "canary-vision", "2.4.20", VISION)
+    stamped = sad.stamp(hand_image(), "canary-vision", "2.4.18", VISION)
     with pytest.raises(sad.NotCarried):
-        sad.stamp(stamped, "canary-vision", "2.4.19")
+        sad.stamp(stamped, "canary-vision", "2.4.19", VISION)
+
+
+def test_a_build_that_identifies_as_another_product_is_never_stamped():
+    # The stamp names whatever sits at a product's build path, and a build
+    # can land there as another product: a `modes` display build without its
+    # flavor staged compiles in "securacv-canary-display-dash". The image
+    # must carry its own product id, as a whole run, or it keeps the
+    # descriptor its build wrote.
+    gearless = hand_image(tail=b"\0securacv-canary-display-dash\x002.4.18\0" + bytes(300))
+    with pytest.raises(sad.NotCarried, match="product id 'securacv-canary-display-dash-modes'"):
+        sad.stamp(gearless, "canary-display-dash-modes", "2.4.18", "securacv-canary-display-dash-modes")
+    assert identity(sad.stamp(gearless, "canary-display-dash", "2.4.18", "securacv-canary-display-dash")) == \
+        ("canary-display-dash", "2.4.18")
+    with pytest.raises(sad.NotCarried):
+        sad.stamp(hand_image(), "canary-vision-xiao-s3", "2.4.18", "securacv-canary-vision-xiao-s3")
 
 
 # ── the release pass ─────────────────────────────────────────────────────────
@@ -295,14 +363,20 @@ def test_release_stamps_every_built_product_and_skips_what_did_not_build(tmp_pat
     esptool_image(tmp_path, "esp32c3").rename(pio / "firmware.bin")
     wap = tmp_path / "wap-build"
     wap.mkdir()
-    esptool_image(tmp_path, "esp32s3", tail=b"\x002.4.18-wap\0" + bytes(300)).rename(wap / "canary_wap.ino.bin")
+    esptool_image(tmp_path, "esp32s3", tail=b"\0securacv-canary-wap\x002.4.18-wap\0" + bytes(300)
+                  ).rename(wap / "canary_wap.ino.bin")
     old = tmp_path / "pio-old"
     old.mkdir()
-    esptool_image(tmp_path, "esp32", tail=b"\x002.4.9\0" + bytes(300)).rename(old / "firmware.bin")
+    esptool_image(tmp_path, "esp32", tail=b"\0securacv-canary-old\x002.4.9\0" + bytes(300)).rename(old / "firmware.bin")
+    modes = tmp_path / "display-modes-build"
+    modes.mkdir()
+    esptool_image(tmp_path, "esp32s3", tail=b"\0securacv-canary-display-dash\x002.4.18\0" + bytes(300)
+                  ).rename(modes / "canary_display.ino.bin")
     catalog = {"products": [
         {"id": "securacv-canary-vision", "asset_stem": "canary-vision"},
         {"id": "securacv-canary-wap", "asset_stem": "canary-wap"},
         {"id": "securacv-canary-old", "asset_stem": "canary-old"},
+        {"id": "securacv-canary-display-dash-modes", "asset_stem": "canary-display-dash-modes"},
         {"id": "securacv-canary-missing", "asset_stem": "canary-missing"},
         {"id": "securacv-canary-unmapped", "asset_stem": "canary-unmapped"},
     ]}
@@ -310,27 +384,80 @@ def test_release_stamps_every_built_product_and_skips_what_did_not_build(tmp_pat
         "securacv-canary-vision": {"toolchain": "pio", "dir": str(pio), "vsuffix": ""},
         "securacv-canary-wap": {"toolchain": "arduino", "dir": str(wap), "sketch": "canary_wap", "vsuffix": "-wap"},
         "securacv-canary-old": {"toolchain": "pio", "dir": str(old), "vsuffix": ""},
+        "securacv-canary-display-dash-modes": {"toolchain": "arduino", "dir": str(modes),
+                                               "sketch": "canary_display", "vsuffix": ""},
         "securacv-canary-missing": {"toolchain": "pio", "dir": str(tmp_path / "nope"), "vsuffix": ""},
     }
     assert sad.release("2.4.18", catalog, builds) == 0
     out = capsys.readouterr().out
-    assert sad.identity((pio / "firmware.bin").read_bytes()) == ("canary-vision", "2.4.18")
-    assert sad.identity((wap / "canary_wap.ino.bin").read_bytes()) == ("canary-wap", "2.4.18-wap")
-    # A forgotten version bump is left for the version guards to name.
-    assert sad.identity((old / "firmware.bin").read_bytes()) == ("arduino-lib-builder", ARDUINO_VERSION.decode())
+    assert identity((pio / "firmware.bin").read_bytes()) == ("canary-vision", "2.4.18")
+    assert identity((wap / "canary_wap.ino.bin").read_bytes()) == ("canary-wap", "2.4.18-wap")
+    # A forgotten version bump is left for the version guards to name, and a
+    # build that identifies as another product is never named for its slot.
+    unstamped = ("arduino-lib-builder", ARDUINO_VERSION.decode())
+    assert identity((old / "firmware.bin").read_bytes()) == unstamped
+    assert identity((modes / "canary_display.ino.bin").read_bytes()) == unstamped
     assert "::warning::securacv-canary-old: left unstamped" in out
+    assert "::warning::securacv-canary-display-dash-modes: left unstamped" in out
     assert "securacv-canary-missing: nothing built" in out
     assert "unmapped" not in out
+    assert "::error::" not in out
 
 
-def test_release_fails_on_an_image_it_cannot_stamp(tmp_path, capsys):
+@pytest.mark.parametrize("app", [b"", hand_image()[:-1], b"\xff" * 64], ids=["empty", "truncated", "not-an-image"])
+def test_release_moves_aside_an_image_it_cannot_stamp(tmp_path, capsys, app):
+    # What a failed build can leave behind is that product's problem, not the
+    # release's: it drops out the way a failed build does, and nothing
+    # downstream can sign or merge it. (firmware-release.yml's assemble step
+    # still fails on a product it cannot ship without: its `cp` finds nothing.)
     d = tmp_path / "pio"
     d.mkdir()
-    (d / "firmware.bin").write_bytes(hand_image()[:-1])
-    catalog = {"products": [{"id": "securacv-canary", "asset_stem": "canary"}]}
-    builds = {"securacv-canary": {"toolchain": "pio", "dir": str(d), "vsuffix": ""}}
+    (d / "firmware.bin").write_bytes(app)
+    catalog = {"products": [{"id": "securacv-canary-esp32cam", "asset_stem": "canary-esp32cam"}]}
+    builds = {"securacv-canary-esp32cam": {"toolchain": "pio", "dir": str(d), "vsuffix": ""}}
+    assert sad.release("2.4.18", catalog, builds) == 0
+    out = capsys.readouterr().out
+    assert "::warning::securacv-canary-esp32cam: not stamped" in out
+    assert not (d / "firmware.bin").exists()
+    assert (d / "firmware.bin.refused").read_bytes() == app
+
+
+def test_release_fails_on_a_version_the_field_cannot_hold_and_moves_nothing(tmp_path, capsys):
+    # A value that does not fit is the release's or the catalog's fault, not
+    # one build's: every product would show it, so it fails the step rather
+    # than moving every app aside.
+    d = tmp_path / "pio"
+    d.mkdir()
+    (d / "firmware.bin").write_bytes(hand_image())
+    catalog = {"products": [{"id": VISION, "asset_stem": "canary-vision"}]}
+    builds = {VISION: {"toolchain": "pio", "dir": str(d), "vsuffix": ""}}
+    assert sad.release("2.4.18-" + "x" * 25, catalog, builds) == 1
+    assert f"::error::{VISION}: version" in capsys.readouterr().out
+    assert (d / "firmware.bin").read_bytes() == hand_image()
+
+
+def test_release_fails_when_esptool_reads_a_stamp_back_wrong(tmp_path, esptool_present, capsys, monkeypatch):
+    # The gate's own failing side: a stamper that forgot to reseal the image
+    # (checksum and hash left as the build wrote them) must fail the run,
+    # whichever product shows it, before anything signs or merges it.
+    d = tmp_path / "pio-vision"
+    d.mkdir()
+    esptool_image(tmp_path, "esp32c3").rename(d / "firmware.bin")
+    real = sad.stamp
+
+    def forgot_to_reseal(image, *args):
+        out = bytearray(real(image, *args))
+        at = sad.layout(image).checksum_at
+        out[at:] = image[at:]
+        return bytes(out)
+
+    monkeypatch.setattr(sad, "stamp", forgot_to_reseal)
+    catalog = {"products": [{"id": VISION, "asset_stem": "canary-vision"}]}
+    builds = {VISION: {"toolchain": "pio", "dir": str(d), "vsuffix": ""}}
     assert sad.release("2.4.18", catalog, builds) == 1
-    assert "::error::securacv-canary" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert f"::error::{VISION} (" in out
+    assert "esptool reads its hash as" in out
 
 
 def test_release_reads_the_app_where_the_factory_merge_does():
@@ -371,7 +498,7 @@ def test_a_real_release_app_round_trips(tmp_path, esptool_present, factory):
     before = esptool_says(app)
     assert before["Checksum"].endswith("(valid)"), before
 
-    assert sad.stamp_file(app, stem, want) == []
+    assert sad.stamp_file(app, stem, want, product["id"]) == []
     after = esptool_says(app)
     assert (after["Project name"], after["App version"]) == (stem, want)
     for key in ("ELF file SHA256", "Compile time", "ESP-IDF", "Secure version"):

@@ -1454,8 +1454,6 @@ async function readCurrentFirmware() {
       version: d.version,
       projectName: d.projectName,
       productName: product ? product.name : null,
-      date: d.date,
-      built: d.date ? `${d.date} ${d.time || ""}`.trim() : null,
       idf: d.idfVer || null,
     };
   } catch {
@@ -1608,8 +1606,11 @@ function phaseConnected() {
     cur.append(el("span", "flash-current-dot flash-dot-ok", "●"));
     const name = state.current.productName || state.current.projectName || "firmware";
     const ver = state.current.version ? ` ${state.current.version}` : "";
-    const built = state.current.built ? ` (built ${state.current.built})` : "";
-    cur.append(document.createTextNode(`Looks like it’s running ${name}${ver}${built} right now.`));
+    // No date here: next to a product and version it reads as that
+    // release's build date, and on an Arduino build (every SecuraCV
+    // release) the descriptor's date is the Arduino core's. The diagnostics
+    // report shows it, labeled for what it is (DESCRIPTOR_DATE_NOTE).
+    cur.append(document.createTextNode(`Looks like it’s running ${name}${ver} right now.`));
   }
   ht.append(cur);
   // Batch guard: if THIS exact board already hatched this session, say so
@@ -5490,6 +5491,16 @@ function reportRow(label, value, tone) {
   return row;
 }
 
+// The date an app descriptor carries is whatever compiled that record. An
+// Arduino build's comes from the core's precompiled libraries (fw-v2.4.17's
+// read Mar 5 2024 and Mar 31 2026), and the release stamp leaves it alone
+// (firmware/scripts/stamp_app_desc.py), so it is never "when this firmware
+// was built". desktop/src/app.js says the same (desktop_parity.test.js).
+const DESCRIPTOR_DATE_NOTE =
+  "The date is the one in the image’s app descriptor. On an Arduino build, every SecuraCV " +
+  "release included, that is when the Arduino core was built, not this firmware, so it says " +
+  "nothing about when the board was flashed.";
+
 function renderReport(r) {
   const box = el("section", "flash-card flash-report");
   box.dataset.step = "2";
@@ -5516,12 +5527,10 @@ function renderReport(r) {
       const text = s.empty
         ? "empty"
         : `${s.project || "unknown"} ${s.version || ""}`.trim() +
-          (s.built ? ` · built ${s.built}` : "");
+          (s.built ? ` · descriptor dated ${s.built}` : "");
       sec.append(reportRow(s.label + badge, text, s.active ? "ok" : null));
     });
-    const note = el("p", "fineprint",
-      "“Built” is the firmware’s own compile stamp — the closest thing a board keeps to “when it was last flashed”.");
-    sec.append(note);
+    sec.append(el("p", "fineprint", DESCRIPTOR_DATE_NOTE));
     box.append(sec);
   }
 
