@@ -1228,7 +1228,7 @@ rather than `PEER_CONNECTED` again when the difference wraps after about
 | `/api/mesh/alerts` | DELETE | Clear the alert history |
 | `/api/mesh/pair/start` | POST | Enter pairing mode (initiator) |
 | `/api/mesh/pair/join` | POST | Enter join mode (joiner) |
-| `/api/mesh/pair/confirm` | POST | Confirm pairing code |
+| `/api/mesh/pair/confirm` | POST | Confirm pairing code (canary-wap: the bearer alone, never the dashboard session, F346) |
 | `/api/mesh/pair/cancel` | POST | Cancel pairing |
 | `/api/mesh/leave` | POST | Leave current opera |
 | `/api/mesh/name` | POST | Rename the opera, body `{"name": "..."}` |

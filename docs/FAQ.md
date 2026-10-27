@@ -492,20 +492,23 @@ device with no network saved (a new one nobody owns yet, or one whose
 network was cleared), and for an owner's own tap — never for a device that
 has an owner and a bad day.* A Canary with no Wi-Fi saved opens it for 30 minutes after
 power-on (unplug and replug to get another 30). That includes one you
-cleared yourself with the 10-second BOOT hold or, on a WAP, Forget Wi-Fi: it
-keeps its identity and is still yours, but for that half hour the door goes
-to whichever phone or computer nearby connects first, so do it where no
+cleared yourself with the 10-second BOOT hold or, on a WAP that does not run
+standalone, Forget Wi-Fi: it keeps its identity and is still yours, but for
+that half hour the door goes to whichever phone or computer nearby connects
+first, so do it where no
 stranger is in Bluetooth range. A Sense or
 Vision that already has Wi-Fi opens it for 60 seconds when you tap its BOOT
 button. A Canary whose saved Wi-Fi has merely *stopped working* (the router
 rebooted, you changed the password) does **not** open it — it raises its
 `SecuraCV-<kind>-XXXX` recovery network instead, which needs the key printed for
 it. So the setup door offers nothing to a stranger's phone while a Canary
-stays on your network, on a good day or a bad one. Two caveats on a WAP: any
-device on your network can open its dashboard and send Forget Wi-Fi, which
-reopens the door for half an hour; and a device on your network that is also
-in Bluetooth range can bond a phone of its own to the WAP's other Bluetooth
-lane, which takes a new Wi-Fi network (the
+stays on your network, on a good day or a bad one. On a WAP running a
+release after 2.4.17, once it is set up, Forget Wi-Fi, which reopens the
+door for half an hour unless the WAP runs standalone, asks for the API
+token, and so does the confirm that bonds a phone to the WAP's other
+Bluetooth lane, which takes a new Wi-Fi network; a page any device on your
+network opens no longer sends either. A bond confirmed on 2.4.17 or
+earlier stays until you remove it under Settings → Bluetooth (the
 [security model](security/SECURITY_MODEL.md) has the details).
 
 The older paths stay as the fallback: the `SecuraCV-<kind>-XXXX` setup network with
@@ -538,24 +541,49 @@ yourself: on a **Sense or Vision**, tap its BOOT button once (a short press
 — under a second) and the door opens for 60 seconds; or power-cycle a unit
 that has no Wi-Fi saved. On a **WAP**, which has no tap door in this
 version, use its own setup page (Settings → WiFi on the dashboard, or the
-`SecuraCV-wap-XXXX` network when it is off your home network) — or tell it to
-forget its Wi-Fi from the dashboard (Settings → WiFi → Remove credentials,
-the `/api/wifi/forget` route), which clears every saved network and opens
-the door again for half an hour from that moment, to the first phone or
-computer nearby that connects, so have yours ready. Before you forget it,
-check that Bluetooth Enabled is on under Settings → Bluetooth: forgetting
-does not turn it back on, the 10-second hold below does not either, and
-with it off no phone reaches the door. Holding a WAP's BOOT button
+`SecuraCV-wap-XXXX` network when it is off your home network). Once a WAP
+running a release after 2.4.17 is set up, changing its Wi-Fi there asks for
+the API token (paste it from your recovery kit) or one BOOT tap, on the
+recovery network too: a page your home network opened, or that network's
+printed key, no longer moves it on its own (a network such a page moved it
+to on 2.4.17 or earlier can stay among its saved networks, which the WAP
+tries by itself when its own network is not found; the forget below clears
+every one). Or tell it to forget its Wi-Fi from the dashboard (Settings →
+WiFi → Remove credentials, the `/api/wifi/forget` route), which clears
+every saved network and, unless the WAP runs standalone, opens the door
+again for half an hour from that moment, to the first phone or computer
+nearby that connects, so have yours ready: until it is set up again the
+door, and the receipt its claim buys, goes to that first one, and a camera
+unit takes a Wi-Fi code shown to its lens. A forget leaves a standalone
+WAP's door shut. On a release after 2.4.17 the forget also asks for the
+token or a tap and clears the saved broker login (to change networks and
+keep that login, use Connect instead), and a standalone camera unit takes
+no code after it; on 2.4.17 a forget takes any dashboard session with no
+token or tap, keeps the broker login, and leaves a standalone camera unit
+taking a code shown to its lens. Before you forget it, check
+that Bluetooth Enabled is on under Settings → Bluetooth: forgetting does
+not turn it back on, the 10-second hold below does not either, and with it
+off no phone reaches the door. Holding a WAP's BOOT button
 for 10 seconds (the serial console says "keep holding" at 3 s) is its
 factory reset: the saved Wi-Fi networks, the broker settings, the device
 name and the first-boot flag are cleared and the setup wizard runs again;
 the Ed25519 identity key, the witness chain and the sealed records are
 kept, so every hub and display that pinned the key still recognizes it
 (every Canary with a BOOT button has the same 10-second hold —
-`docs/OTA.md` and `docs/TRUST_MODEL.md` say why the key survives). A
-Canary whose saved network is just
+`docs/OTA.md` and `docs/TRUST_MODEL.md` say why the key survives). The
+hold needs no token and no tap and works whatever the lockout is doing, but
+it keeps the API token and opens the setup door to whichever Bluetooth
+device connects first, so it is the last way out when BOOT taps keep
+closing because another device is asking. First paste the API token from
+your recovery kit (the iPhone app pairs from the kit), or read it from the
+USB serial console, which prints it at every boot. Hold BOOT 10 s only when
+the asking device is on your network and not in Bluetooth range of the
+WAP, with the iPhone ready to set it up again through the setup door
+(`docs/design/magic_pairing.md` §3.7 says why). A Canary whose saved network is just
 down right now keeps the door shut and raises its recovery network
-instead; fix the router, or use that network's printed key.
+instead; fix the router, or use that network's printed key (on a WAP
+running a release after 2.4.17, then the API token or one BOOT tap to
+change its Wi-Fi there).
 
 ### Can Home Assistant's app set a new Canary up?
 

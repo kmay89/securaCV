@@ -40,6 +40,10 @@ on:
       - 'desktop/hub-io/src/**'
       - 'desktop/flash-engine/Cargo.toml'
       - 'desktop/flash-engine/src/**'
+      # test_release_body.py runs the release workflows' body steps, which
+      # call desktop/scripts/release_notes.py (CI.md: a filtered test lists
+      # every file it reads outside its own trees).
+      - 'desktop/scripts/release_notes.py'
   pull_request:
     branches: [main]
     paths:
@@ -69,6 +73,10 @@ on:
       - 'desktop/hub-io/src/**'
       - 'desktop/flash-engine/Cargo.toml'
       - 'desktop/flash-engine/src/**'
+      # test_release_body.py runs the release workflows' body steps, which
+      # call desktop/scripts/release_notes.py (CI.md: a filtered test lists
+      # every file it reads outside its own trees).
+      - 'desktop/scripts/release_notes.py'
 
 permissions:
   contents: read

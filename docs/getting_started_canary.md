@@ -534,19 +534,29 @@ the device ID, the dashboard's access token, and the Canary's own Wi-Fi
 name and password. Keep it somewhere private — anyone holding it can use
 the dashboard, and the iPhone app pairs from it.
 
+**On a WAP, changing its Wi-Fi after setup takes that token.** No WAP page
+carries the token: the landing page signs your browser in with a session
+that opens the dashboard but no longer moves the Canary's network. So
+**Settings → WiFi** (Connect, Remove credentials, Disconnect) brings up the
+sign-in for the token — paste it from the recovery kit, or use **BOOT Tap
+Once**, then press the button again — on your home network and on the
+Canary's own `SecuraCV-wap-XXXX` network alike.
+That is why the kit comes first.
+
 **Why the all-rounder Canary's dashboard asks to be unlocked on your home
 network.** (This paragraph and its list are the all-rounder Canary's,
-`firmware/canary`. A WAP's dashboard shows no such banner: its sign-in's
-**Use BOOT Tap Once** asks first, and you press BOOT only when the page
-says to.) The page
-you load carries the key that every button on it uses. Over the Canary's
-own Wi-Fi only your phone can reach it, so the key comes with the page.
+`firmware/canary`. A WAP's pages never carry the key, on either network
+(above), and its dashboard shows no such banner: its sign-in's **Use BOOT
+Tap Once** asks first, and you press BOOT only when the page says to.) The
+page you load carries the key that every button on it uses. Over the
+Canary's own Wi-Fi only your phone can reach it, so the key comes with the
+page.
 On your home network any device could load that page, so the Canary sends
 it *without* the key and shows a banner with three ways in:
 
 - tap the **BOOT** button on the Canary, then reload within 30 seconds
   (one tap unlocks one page load; reloading it later needs another tap);
-- join the Canary's own Wi-Fi (`SecuraCV-wap-XXXX`) while it is still
+- join the Canary's own Wi-Fi (`SecuraCV-canary-XXXX`) while it is still
   broadcasting (it stops once your home Wi-Fi is working); or
 - paste the token from your recovery kit into the banner. It is kept only
   for that browser tab, never saved.

@@ -67,6 +67,16 @@ struct httpd_uri_t {
   esp_err_t (*handler)(httpd_req_t* r);
   void* user_ctx;
 };
-inline esp_err_t httpd_register_uri_handler(httpd_handle_t, const httpd_uri_t*) { return ESP_OK; }
+// The routes register_routes() made, so a test drives the handler a route
+// actually has (sweep F346: the bond confirm's gate is the registration's).
+#include <vector>
+inline std::vector<httpd_uri_t>& registered_routes() {
+  static std::vector<httpd_uri_t> routes;
+  return routes;
+}
+inline esp_err_t httpd_register_uri_handler(httpd_handle_t, const httpd_uri_t* u) {
+  registered_routes().push_back(*u);
+  return ESP_OK;
+}
 
 #endif

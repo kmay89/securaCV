@@ -9,11 +9,15 @@
  * already be declared via an include, or the build fails with
  * "'WifiChangeAuth' does not name a type".
  *
- *   PROCEED       — a valid pair token or admin credential was presented.
- *   INVALID_TOKEN — no credential at all (wizard path): caller replies with
- *                   the friendly invalid_token JSON so the token self-heals.
- *   RESPONDED     — an admin credential was presented but api_auth_check
- *                   rejected it and already sent its own 401/403/429; the
+ *   PROCEED       — after first-boot setup, a valid bearer (sweep F334:
+ *                   the network moves on the bearer alone); during setup,
+ *                   a valid pair token or admin credential.
+ *   INVALID_TOKEN — during setup only: no credential at all (wizard path);
+ *                   caller replies with the friendly invalid_token JSON so
+ *                   the token self-heals.
+ *   RESPONDED     — the gate refused and already sent its own 401/403/429
+ *                   (after setup api_auth_check_bearer's, during setup
+ *                   api_auth_check's on a presented admin credential); the
  *                   caller just returns ESP_OK.
  *
  * Copyright (c) 2026 ERRERlabs / Karl May
