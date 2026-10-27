@@ -41,20 +41,24 @@ What is pinned and why:
     a missing or unparsable upstream file stops it before any of its writes;
   • the downloads carry moves each app-v<x.y.z> / flasher-v<x.y.z> token in
     download.html to its family's newest PUBLISHED release (not a draft, not a
-    prerelease, not an -rc tag; numeric order, not the API's listing order)
-    and nothing else, so the website's tests/download-facts.test.mjs reads one
-    version per family; a current page keeps its bytes; --check exits 1 on a
-    stale page and writes nothing; a release list that cannot be read, or that
-    shows no published release of a family, leaves the page as it was and
-    says why (and fails --check); the API reader follows every page, sends
-    GH_TOKEN when set, retries a network error, a 5xx and a 429, and takes
-    any other answer as final. No test here reaches the network.
+    prerelease, not an -rc tag, not one without its installers uploaded;
+    numeric order, not the API's listing order) and nothing else, so the
+    website's tests/download-facts.test.mjs reads one version per family; a
+    current page keeps its bytes; --check exits 1 on a stale page and writes
+    nothing; a release list that cannot be read, one that shows no published
+    release of a family, or a page that names no token of a family, leaves
+    the page as it was and says why (and fails --check), and a default run
+    still writes every other carry; the API reader follows every page, sends
+    GH_TOKEN when set, retries a network error, a body cut off or not JSON, a
+    5xx and a 429, and takes any other HTTP status, or an answer that is not
+    a list, as final. No test here reaches the network.
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
 from __future__ import annotations
 
 import hashlib
+import http.client
 import importlib.util
 import io
 import json
@@ -144,15 +148,39 @@ SAMPLE_DOWNLOAD = (
 # The oracle, by plain replacement rather than the carry's own pattern.
 STAMPED_DOWNLOAD = (SAMPLE_DOWNLOAD.replace("app-v0.3.1", "app-v0.3.2")
                     .replace("flasher-v0.11.9", "flasher-v0.12.2"))
+# The page as website main still has it: the buttons open GitHub's release
+# search, so no token names a version and there is nothing to stamp.
+SEARCH_DOWNLOAD = (
+    '<!doctype html>\n<title>Download</title>\n'
+    '<a class="go" href="https://github.com/kmay89/securaCV/releases?q=app-v&amp;expanded=true">'
+    'macOS</a>\n'
+    '<a class="go" href="https://github.com/kmay89/securaCV/releases?q=flasher-v&amp;expanded=true">'
+    'Get</a>\n'
+    '<p>The newest <code>app-v</code> release; the Flasher the newest <code>flasher-v</code>.</p>\n'
+)
 
-PUBLISHED = {"draft": False, "prerelease": False, "published_at": "2026-10-27T04:43:13Z"}
+# What a release carries once its builds are up (today's app-v0.3.2 and
+# flasher-v0.12.2 have these, versioned): the three installers the page names,
+# with signatures, the updater bundle and manifest that do not stand in for them.
+ASSETS = [{"name": n, "state": "uploaded"} for n in (
+    "SecuraCV.App_1.0.0_universal.dmg", "SecuraCV.App_1.0.0_universal.app.tar.gz",
+    "SecuraCV.App_1.0.0_amd64.AppImage", "SecuraCV.App_1.0.0_amd64.AppImage.sig",
+    "SecuraCV.App_1.0.0_amd64.deb", "SecuraCV.App_1.0.0_amd64.deb.sig", "latest.json")]
+PUBLISHED = {"draft": False, "prerelease": False, "published_at": "2026-10-27T04:43:13Z",
+             "assets": ASSETS}
 # The release list as the API answers it: newest first by date, not by
 # version, with drafts (one re-drafted after it was published, so it keeps a
 # publish date), prereleases, -rc tags (one not flagged prerelease), a row
-# with no flags, one with no publish date, the rolling pointers and the
-# firmware mixed in. The newest published are app-v0.3.2 and flasher-v0.12.2;
-# a string compare would pick flasher-v0.4.1.
+# with no flags, one with no publish date, published releases whose installers
+# are not all up (none yet, Linux only, a .dmg still uploading), the rolling
+# pointers and the firmware mixed in. The newest published are app-v0.3.2 and
+# flasher-v0.12.2; a string compare would pick flasher-v0.4.1.
 RELEASES = [
+    {"tag_name": "flasher-v0.15.0", **PUBLISHED, "assets": []},
+    {"tag_name": "flasher-v0.14.1", **PUBLISHED,
+     "assets": [a for a in ASSETS if "universal" not in a["name"]]},
+    {"tag_name": "app-v0.4.1", **PUBLISHED,
+     "assets": [{**a, "state": "open"} if a["name"].endswith(".dmg") else a for a in ASSETS]},
     {"tag_name": "app-v0.4.0", "draft": True, "prerelease": False, "published_at": None},
     {"tag_name": "flasher-v0.14.0", **PUBLISHED, "draft": True},
     {"tag_name": "app-v0.5.0-rc.1", **PUBLISHED},
@@ -341,7 +369,7 @@ class EndToEnd(unittest.TestCase):
         # A default run includes the downloads carry: answer it here, never
         # from the network.
         releases = mock.patch.object(cs, "read_releases", return_value=RELEASES)
-        releases.start()
+        self.releases = releases.start()
         self.addCleanup(releases.stop)
 
     def tearDown(self):
@@ -379,20 +407,22 @@ class EndToEnd(unittest.TestCase):
             self.assertTrue(header.endswith(b"\n\n"), f"{rel}: a blank line closes the header")
             self.assertNotIn(b"\r", header, f"{rel}: the header is written with LF line ends")
 
+    EVERY_FILE = {
+        "onboarding-spec.json", "js/onboarding-spec.js", "kernel-status.json",
+        "download.html",
+        "tv/vendor/verify_core.js", "tv/vendor/PROVENANCE.txt",
+        *(f"tests/fixtures/envelope/{f}" for f in cs.ENVELOPE_FIXTURES),
+        *(f"tests/fixtures/export_bundle/{f}" for f in cs.BUNDLE_FIXTURES),
+        SITE_VECTORS,
+        *PLAYGROUND_FILES,
+    }
+
     def test_full_run_is_byte_reproducible_and_complete(self):
         first_out = self.run_carry()
         first = self.snapshot()
         self.assertEqual(self.run_carry(), first_out)
         self.assertEqual(self.snapshot(), first, "a second carry changed bytes")
-        self.assertEqual(set(first), {
-            "onboarding-spec.json", "js/onboarding-spec.js", "kernel-status.json",
-            "download.html",
-            "tv/vendor/verify_core.js", "tv/vendor/PROVENANCE.txt",
-            *(f"tests/fixtures/envelope/{f}" for f in cs.ENVELOPE_FIXTURES),
-            *(f"tests/fixtures/export_bundle/{f}" for f in cs.BUNDLE_FIXTURES),
-            SITE_VECTORS,
-            *PLAYGROUND_FILES,
-        })
+        self.assertEqual(set(first), self.EVERY_FILE)
         # the verifier and its fixtures are the upstream bytes, and PROVENANCE says so
         self.assertEqual(first["tv/vendor/verify_core.js"], cs.VERIFIER.read_bytes())
         prov = first["tv/vendor/PROVENANCE.txt"].decode()
@@ -416,6 +446,22 @@ class EndToEnd(unittest.TestCase):
                          cs.kernel_status_module().site_document())
         self.assert_playground_bytes(first)
         self.assertEqual(first["download.html"], STAMPED_DOWNLOAD.encode("utf-8"))
+
+    def test_a_page_with_no_release_tokens_is_left_and_every_other_carry_lands(self):
+        # The weekly job's default run against website main, whose buttons
+        # still open the release search: one carry with nothing to stamp
+        # must not exit 1 and stop the rest from reaching the carry PR.
+        (self.tmp / "download.html").write_text(SEARCH_DOWNLOAD, encoding="utf-8")
+        with redirect_stderr(io.StringIO()) as err:
+            out = self.run_carry()
+        snap = self.snapshot()
+        self.assertEqual(set(snap), self.EVERY_FILE)
+        self.assertEqual(snap["download.html"], SEARCH_DOWNLOAD.encode("utf-8"))
+        written = {line.removeprefix("wrote ") for line in out.splitlines()}
+        self.assertEqual(written, self.EVERY_FILE - {"download.html"})
+        self.assertIn("download.html left as it is — it names no app-v<x.y.z> to move",
+                      err.getvalue())
+        self.releases.assert_not_called()
 
     def test_only_selects_a_single_carry(self):
         self.run_carry("--only", "verifier")
@@ -607,11 +653,28 @@ class DownloadsStamp(unittest.TestCase):
     def test_a_family_with_nothing_published_has_no_newest(self):
         self.assertIsNone(cs.newest_published([], "app-v"))
         unpublished = [r for r in RELEASES if r["tag_name"] in
-                       ("app-v0.4.0", "app-v0.5.0-rc.1", "app-v0.8.0", "app-v0.9.0",
-                        "flasher-v0.14.0",
-                        "flasher-v0.13.0", "flasher-v0.13.0-rc.1")]
+                       ("app-v0.4.1", "app-v0.4.0", "app-v0.5.0-rc.1", "app-v0.8.0",
+                        "app-v0.9.0", "flasher-v0.15.0", "flasher-v0.14.1",
+                        "flasher-v0.14.0", "flasher-v0.13.0", "flasher-v0.13.0-rc.1")]
         self.assertIsNone(cs.newest_published(unpublished, "app-v"))
         self.assertIsNone(cs.newest_published(unpublished, "flasher-v"))
+
+    def test_a_published_release_counts_only_with_every_installer_uploaded(self):
+        # desktop-flasher-release.yml creates the release published before
+        # either build leg uploads, and a failed run leaves it that way.
+        last_good = {"tag_name": "flasher-v0.12.2", **PUBLISHED}
+        for why, assets in (
+                ("nothing uploaded", []),
+                ("no .dmg", [a for a in ASSETS if not a["name"].endswith(".dmg")]),
+                ("only the .AppImage's signature", [a for a in ASSETS
+                                                    if not a["name"].endswith(".AppImage")]),
+                ("no .deb", [a for a in ASSETS if not a["name"].endswith(".deb")]),
+                ("every asset still uploading", [{**a, "state": "open"} for a in ASSETS])):
+            with self.subTest(why):
+                newer = {"tag_name": "flasher-v0.13.0", **PUBLISHED, "assets": assets}
+                self.assertEqual(cs.newest_published([newer, last_good], "flasher-v"), "0.12.2")
+        newer = {"tag_name": "flasher-v0.13.0", **PUBLISHED}
+        self.assertEqual(cs.newest_published([newer, last_good], "flasher-v"), "0.13.0")
 
     def test_stamp_moves_only_the_two_token_families(self):
         out = cs.stamp_downloads(SAMPLE_DOWNLOAD, {"app-v": "0.3.2", "flasher-v": "0.12.2"})
@@ -626,6 +689,14 @@ class DownloadsStamp(unittest.TestCase):
         once = cs.stamp_downloads(mixed, newest)
         self.assertEqual(once, STAMPED_DOWNLOAD)
         self.assertEqual(cs.stamp_downloads(once, newest), once)
+
+    def test_a_token_after_a_non_ascii_letter_moves_as_the_website_test_counts_it(self):
+        # JavaScript's \b is ASCII, so the website test counts "éapp-v0.3.1";
+        # Python's Unicode \b would not, and the two would disagree.
+        page = "<p>éapp-v0.3.1, ñflasher-v0.11.9</p>\n"
+        self.assertEqual(website_versions(page, "app-v"), {"0.3.1"})
+        self.assertEqual(cs.stamp_downloads(page, {"app-v": "0.3.2", "flasher-v": "0.12.2"}),
+                         "<p>éapp-v0.3.2, ñflasher-v0.12.2</p>\n")
 
 
 class DownloadsCarry(unittest.TestCase):
@@ -701,12 +772,19 @@ class DownloadsCarry(unittest.TestCase):
         self.assertIn("no published flasher-v<x.y.z> release of the Flasher", err)
         self.assertEqual(self.page.read_text(encoding="utf-8"), SAMPLE_DOWNLOAD)
 
-    def test_a_page_without_a_family_token_stops_the_carry(self):
-        self.page.write_text(SAMPLE_DOWNLOAD.replace("flasher-v0.11.9", "the Flasher"),
-                             encoding="utf-8")
-        with self.assertRaises(SystemExit) as stop:
-            self.run_main()
-        self.assertIn("names no flasher-v<x.y.z>", str(stop.exception.code))
+    def test_a_page_without_a_family_token_is_left_and_fails_check(self):
+        page = SAMPLE_DOWNLOAD.replace("flasher-v0.11.9", "the Flasher")
+        self.page.write_text(page, encoding="utf-8")
+        out, err = self.run_main()
+        self.assertEqual(out, "")
+        self.assertIn("download.html left as it is — it names no flasher-v<x.y.z> to move", err)
+        self.assertEqual(self.page.read_text(encoding="utf-8"), page)
+        self.releases.assert_not_called()
+        # a check with nothing to move must not read as current
+        with redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as stop:
+            cs.main(["--site", str(self.tmp), "--only", "downloads", "--check"])
+        self.assertIn("cannot check download.html — it names no flasher-v<x.y.z>",
+                      str(stop.exception.code))
 
     def test_check_is_the_downloads_carry_alone(self):
         for args in (["--check"], ["--only", "builds", "--check"],
@@ -720,10 +798,15 @@ class DownloadsCarry(unittest.TestCase):
 
 class FakeResponse:
     def __init__(self, body, link: str | None = None):
-        self.body = json.dumps(body).encode("utf-8")
+        # bytes are the body as sent (a malformed answer), an exception is
+        # what read() raises (a body cut off), anything else is sent as JSON
+        self.body = (body if isinstance(body, (bytes, Exception))
+                     else json.dumps(body).encode("utf-8"))
         self.headers = {"Link": link} if link else {}
 
     def read(self) -> bytes:
+        if isinstance(self.body, Exception):
+            raise self.body
         return self.body
 
     def __enter__(self):
@@ -768,12 +851,30 @@ class ReleasesApi(unittest.TestCase):
         self.assertEqual(self.urlopen.call_count, 3)
         self.assertEqual(self.sleep.call_count, 2)
 
+    def test_retries_a_body_cut_off_mid_transfer(self):
+        # IncompleteRead is an http.client.HTTPException, not an OSError
+        self.urlopen.side_effect = [FakeResponse(http.client.IncompleteRead(b'[{"tag', 4000)),
+                                    FakeResponse(RELEASES)]
+        self.assertEqual(cs.read_releases(None), RELEASES)
+        self.assertEqual(self.urlopen.call_count, 2)
+
+    def test_retries_a_body_that_is_not_json(self):
+        self.urlopen.side_effect = [FakeResponse(b"<html>unicorn</html>"),
+                                    FakeResponse(RELEASES)]
+        self.assertEqual(cs.read_releases(None), RELEASES)
+        self.assertEqual(self.urlopen.call_count, 2)
+
     def test_gives_up_after_the_last_attempt(self):
-        self.urlopen.side_effect = [self.http_error(429)] * cs.API_ATTEMPTS
-        with self.assertRaises(cs.ReleasesUnavailable) as stop:
-            cs.read_releases(None)
-        self.assertIn(f"{cs.API_ATTEMPTS} attempts", str(stop.exception))
-        self.assertEqual(self.urlopen.call_count, cs.API_ATTEMPTS)
+        for why, answer in (("429", lambda: self.http_error(429)),
+                            ("cut off", lambda: FakeResponse(http.client.IncompleteRead(b"["))),
+                            ("not JSON", lambda: FakeResponse(b"<html>"))):
+            with self.subTest(why):
+                self.urlopen.reset_mock()
+                self.urlopen.side_effect = [answer() for _ in range(cs.API_ATTEMPTS)]
+                with self.assertRaises(cs.ReleasesUnavailable) as stop:
+                    cs.read_releases(None)
+                self.assertIn(f"{cs.API_ATTEMPTS} attempts", str(stop.exception))
+                self.assertEqual(self.urlopen.call_count, cs.API_ATTEMPTS)
 
     def test_another_http_error_is_the_answer_not_retried(self):
         self.urlopen.side_effect = [self.http_error(401)]

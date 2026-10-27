@@ -217,15 +217,21 @@ updater manifest fails the publish run instead of passing quietly. (A human
 clicking Publish in the UI *does* fire the event, so that path still works.)
 
 **The website's download buttons follow the publish, not the build.**
-securacv.com/download links exact releases (`app-v<x.y.z>`,
+securacv.com/download's buttons open exact releases (`app-v<x.y.z>`,
 `flasher-v<x.y.z>`), stamped by `scripts/carry_to_site.py`'s `downloads`
 carry from the newest release of each app that the GitHub API shows as
-published (not a draft, not a prerelease). A version that is only in
-`tauri.conf.json`, or only a draft, never reaches them. The website's weekly
-carry job runs it; to move them the day you publish (the Lab here, or a
-Flasher the master button cut):
+published (not a draft, not a prerelease) with its `.dmg`, `.AppImage` and
+`.deb` uploaded. A version that is only in `tauri.conf.json`, only a draft,
+or a Flasher release whose builds have not uploaded (or whose run failed
+after creating it) never reaches them. To move them after you publish (the
+Lab here, or a Flasher the master button cut):
 `python3 scripts/carry_to_site.py --site <website-checkout> --only downloads`
-(`--check` asks without writing, and exits 1 on a stale page).
+(`--check` asks without writing, and exits 1 on a stale page). That command
+is, for now, the only thing that moves them: the website's weekly carry job
+runs every carry but commits only the paths in its `CARRY_PATHS`, which does
+not list `download.html` yet, and its carry step sets no `GH_TOKEN`. A page
+with no exact release link to move is left as it is, with the reason, and
+the other carries still land.
 
 ### Fix a release's notes (rewrite the body from the repo)
 

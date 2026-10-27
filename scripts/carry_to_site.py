@@ -31,8 +31,9 @@ and several of its pages state facts whose source of truth lives HERE:
                                                    port, each drift-gated here
   download.html's app-v<x.y.z> and              this repo's newest PUBLISHED app-v*
     flasher-v<x.y.z> tokens: the /download         and flasher-v* releases (not draft,
-    buttons' exact release pages and the           not prerelease), read off the GitHub
-    note that names them                           REST API: never tauri.conf.json
+    buttons' exact release pages and the           not prerelease, installers uploaded),
+    note that names them                           read off the GitHub REST API: never
+                                                   tauri.conf.json
 
 (The CAD carries — /scad, js/builder-data.js, scad/cad-dims.json — have their
 own tool, docs/hardware/enclosure/gen_builder_manifest.py --site.)
@@ -50,6 +51,8 @@ website hand copies headed HAND-COPIED, and every firmware version bump left
 playground-data.js's fw_version behind. The downloads carry joined them the
 same month: the /download buttons had opened GitHub's release search, which
 matches text, not tags, and a hand-typed tag goes stale with the next release.
+(The weekly job commits only the paths in its CARRY_PATHS, which does not list
+download.html yet; until the website adds it, run `--only downloads` by hand.)
 
 Direction, honestly: onboarding-spec.json as a whole is WEBSITE-authored (the
 probe fixes, the serial-command copy, the OS table). Only its `builds` block is
@@ -68,7 +71,8 @@ produces the same bytes, so "did anything change?" is an exact answer. The
 downloads carry's one input outside the tree is the release list: the same
 published releases always stamp the same bytes, and a run that cannot read
 the list (offline, rate-limited, an API error after retries) writes nothing
-and says why. It never stamps a guess.
+and says why. It never stamps a guess. Nor does it stop the other carries: a
+page that names no token of a family is left as it is, with the reason.
 Transforms live here, never on the website; the website only receives files.
 
 Usage (DIR is the website checkout root):
@@ -93,6 +97,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import importlib.util
 import json
 import os
@@ -564,11 +569,22 @@ RELEASES_API = "https://api.github.com/repos/kmay89/securaCV/releases"
 SITE_DOWNLOAD = "download.html"
 DOWNLOAD_FAMILIES = {"app-v": "the Lab", "flasher-v": "the Flasher"}
 SEMVER = r"[0-9]+\.[0-9]+\.[0-9]+"
+# The files the page's cards send readers to: the universal .dmg, the
+# .AppImage and the .deb. A release counts only once all three are uploaded:
+# desktop-flasher-release.yml creates the Flasher's release published, before
+# either build leg uploads, and a run that fails after that leaves it up
+# without installers until someone deletes it.
+INSTALLERS = ("_universal.dmg", ".AppImage", ".deb")
 API_ATTEMPTS = 3
 API_PAGE_LIMIT = 20
 
 
-class ReleasesUnavailable(Exception):
+class NotStamped(Exception):
+    """download.html cannot be stamped this run: a write leaves it as it is and
+    says why, a --check fails."""
+
+
+class ReleasesUnavailable(NotStamped):
     """The API cannot say which release of a family is the newest published one."""
 
 
@@ -580,7 +596,8 @@ def _token_re(prefix: str) -> re.Pattern:
 
 def _api_page(url: str, token: str | None) -> tuple[list, str | None]:
     """One page of the release list and the next page's URL. Retries a network
-    error, a 5xx and a 429; any other HTTP error is the answer."""
+    error, a body cut off or not JSON, a 5xx and a 429; any other HTTP status,
+    or an answer that is not a list, is final."""
     req = urllib.request.Request(url, headers={
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
@@ -599,7 +616,8 @@ def _api_page(url: str, token: str | None) -> tuple[list, str | None]:
             if e.code < 500 and e.code != 429:
                 raise ReleasesUnavailable(why) from None
             continue
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException,
+                ValueError) as e:
             why = f"{url}: {e}"
             continue
         if not isinstance(page, list):
@@ -625,14 +643,19 @@ def read_releases(token: str | None) -> list[dict]:
 def newest_published(releases: list[dict], prefix: str) -> str | None:
     """The highest x.y.z among the family's published releases, or None. A
     release counts only when the API says so outright: draft and prerelease
-    both false and a publish date. A tag with anything after x.y.z (an -rc)
-    is not a stable release and would stamp a token the page cannot hold."""
+    both false, a publish date, and every one of INSTALLERS among its uploaded
+    assets. A tag with anything after x.y.z (an -rc) is not a stable release
+    and would stamp a token the page cannot hold."""
     tag = re.compile(re.escape(prefix) + f"({SEMVER})", re.ASCII)
     best = None
     for r in releases:
         m = tag.fullmatch(str(r.get("tag_name") or ""))
         if not m or r.get("draft") is not False or r.get("prerelease") is not False \
                 or not r.get("published_at"):
+            continue
+        uploaded = [str(a.get("name") or "") for a in r.get("assets") or ()
+                    if a.get("state") == "uploaded"]
+        if not all(any(n.endswith(i) for n in uploaded) for i in INSTALLERS):
             continue
         version = tuple(int(n) for n in m.group(1).split("."))
         if best is None or version > best:
@@ -650,17 +673,18 @@ def stamp_downloads(html: str, newest: dict[str, str]) -> str:
 
 def stamped_download_page(site: Path) -> tuple[Path, str, str, dict[str, str]]:
     """download.html, its text, the stamped text and the versions stamped.
-    Raises ReleasesUnavailable when the API cannot name a family's newest
-    published release; a page without a family's token stops the carry."""
+    Raises NotStamped when the page names no token of a family (nothing to
+    move, so a check must not read it as current), and ReleasesUnavailable
+    when the API cannot name a family's newest published release."""
     path = site / SITE_DOWNLOAD
     if not path.is_file():
         fail(f"{path} is missing — this carry stamps release tags INTO the website's "
              "page, it does not author it")
     html = path.read_text(encoding="utf-8")
-    for prefix in DOWNLOAD_FAMILIES:
+    for prefix, app in DOWNLOAD_FAMILIES.items():
         if not _token_re(prefix).search(html):
-            fail(f"{SITE_DOWNLOAD} names no {prefix}<x.y.z> — the page changed shape, "
-                 "and a stamp with nothing to move would say it is current")
+            raise NotStamped(f"it names no {prefix}<x.y.z> to move: no link on it opens "
+                             f"an exact release of {app}")
     token = os.environ.get("GH_TOKEN") or None
     try:
         releases = read_releases(token)
@@ -672,14 +696,14 @@ def stamped_download_page(site: Path) -> tuple[Path, str, str, dict[str, str]]:
         newest[prefix] = newest_published(releases, prefix)
         if newest[prefix] is None:
             raise ReleasesUnavailable(f"the API shows no published {prefix}<x.y.z> "
-                                      f"release of {app}")
+                                      f"release of {app} with its installers uploaded")
     return path, html, stamp_downloads(html, newest), newest
 
 
 def carry_downloads(site: Path) -> list[Path]:
     try:
         path, _html, stamped, _newest = stamped_download_page(site)
-    except ReleasesUnavailable as e:
+    except NotStamped as e:
         print(f"carry_to_site.py: downloads: {SITE_DOWNLOAD} left as it is — {e}",
               file=sys.stderr)
         return []
@@ -691,7 +715,7 @@ def check_downloads(site: Path) -> int:
     """0 when download.html names the newest published releases, 1 when not."""
     try:
         _path, html, stamped, newest = stamped_download_page(site)
-    except ReleasesUnavailable as e:
+    except NotStamped as e:
         fail(f"downloads: cannot check {SITE_DOWNLOAD} — {e}")
     if stamped == html:
         print(f"{SITE_DOWNLOAD} names the newest published releases: "
