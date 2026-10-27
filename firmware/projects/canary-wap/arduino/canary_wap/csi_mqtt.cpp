@@ -180,9 +180,10 @@ std::atomic<bool>        s_retire_done{false};
  * default stack (CONFIG_MQTT_TASK_STACK_SIZE, 6144) is the measure. */
 constexpr uint32_t       kRetireStackBytes   = 6144;
 /* A settings save in progress, and how many have finished (sweep F289, the
- * third road's review). config_save(), ca_save() and config_clear() write
- * the row key by key on the caller's task (the httpd task's config POST, the
- * QR scanner's provisioning, the loop task's own factory reset), and nothing
+ * third road's review). config_save(), ca_save(), config_clear() and
+ * login_clear() write the row key by key on the caller's task (the httpd
+ * task's config POST and Forget Wi-Fi, the QR scanner's provisioning, the
+ * loop task's own factory reset), and nothing
  * stops the loop task from serving a re-init between two of those writes: a
  * row holding the new host beside the old password, which the new client
  * would carry to the new host — the password move_needs_password() exists
@@ -680,6 +681,22 @@ bool config_clear() {
   for (const char* key : kKeys) {
     /* remove() also reports false for a key that never existed — the
      * readback is the truth (ca_save's rule). */
+    if (prefs.isKey(key)) prefs.remove(key);
+    ok = ok && !prefs.isKey(key);
+  }
+  prefs.end();
+  return ok;
+}
+
+bool login_clear() {
+  static const char* const kKeys[] = {NVS_KEY_USER, NVS_KEY_PASS};
+  SaveScope saving;
+  if (!saving.ok()) return false;
+  Preferences prefs;
+  if (!prefs.begin(SETTINGS_NS, /*readOnly=*/false)) return false;
+  bool ok = true;
+  for (const char* key : kKeys) {
+    /* config_clear()'s rule: the readback is the truth. */
     if (prefs.isKey(key)) prefs.remove(key);
     ok = ok && !prefs.isKey(key);
   }
@@ -2440,7 +2457,14 @@ esp_err_t handle_config_post(httpd_req_t* req) {
   Config c;
   config_load(&c);
   /* What NVS holds before any field is applied: move_needs_password()
-   * compares the destination the body leaves against it. */
+   * compares the destination the body leaves against it. Neither copy, nor
+   * buf below, nor the heap body buffer, is wiped on return, by decision
+   * (sweep F349): while the row holds a broker password it also sits in RAM
+   * in s_active_cfg from the bridge's first settings load at boot, enabled
+   * or not, and in the esp-mqtt client while one is open, other readers of
+   * the row (GET /api/fleet among them) load it onto this task's stack too,
+   * and NVS holds it in plain bytes, so a wipe here would remove no copy a
+   * reader of this device's memory or flash would take. */
   const Config before = c;
 
   json_extract_bool  (body, "\"enabled\"",   &c.enabled);

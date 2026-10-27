@@ -60,8 +60,10 @@
  *
  *   - NO CREDENTIALS STORED (first boot, or after they were cleared: the
  *     10 s factory-reset hold on every board with this door, or on a WAP
- *     Forget Wi-Fi, which any landing session can send, ledger F345, so it
- *     is no proof of the owner. The hold keeps the witness identity on a
+ *     that does not run standalone Forget Wi-Fi, which takes the API
+ *     token in every mode, ledger F345, since a Forget leaves a standalone WAP
+ *     standalone and the WAP's glue keeps its door shut; either way the
+ *     open door is first-come. The hold keeps the witness identity on a
  *     Sense, a Vision and a WAP, and a WAP's hold and Forget Wi-Fi keep its
  *     token too, so a cleared unit still has an owner, and the door goes to
  *     whichever client connects first, docs/design/magic_pairing.md §2.2): the
@@ -360,9 +362,9 @@ struct Timing {
   /// the setup portal's own wizard timeout, so both doors agree.
   uint32_t provisioning_timeout_ms = 30000;
   /// A device with no stored credentials opens the door for this long after
-  /// power-on (and again when they vanish at runtime: a WAP's Forget Wi-Fi,
-  /// or the 10 s hold before the restart its release brings, after which the
-  /// window runs from that boot).
+  /// power-on (and again when they vanish at runtime: a WAP's Forget Wi-Fi
+  /// on a unit not set standalone, or the 10 s hold before the restart its
+  /// release brings, after which the window runs from that boot).
   /// 0 = never on its own: tap-only.
   uint32_t first_boot_window_ms = 30u * 60u * 1000u;
   /// Two accepted WIFI_SETTINGS writes are at least this far apart; a
@@ -474,11 +476,13 @@ inline uint32_t session_window_used_ms(const Session& s, uint32_t now_ms, const 
 /// The glue's word on credentials, every pass. Credentials appearing (the
 /// join persisted them) shuts the NoCredentials door; the state stays
 /// Provisioned or Provisioning for the phone to read. Credentials vanishing
-/// at runtime (the 10 s hold before its restart, or a WAP's Forget Wi-Fi,
-/// which any landing session can send, ledger F345) re-arms the window from
-/// now, and the door goes to whichever client connects first: not proof of
-/// the owner. A recovery portal is NOT "no credentials": the caller
-/// must pass the stored-credentials fact, never the portal's.
+/// at runtime (the 10 s hold before its restart, or a WAP's Forget Wi-Fi
+/// on a unit not set standalone, which takes the API token in every mode,
+/// ledger F345; a standalone WAP's glue never reports no credentials)
+/// re-arms the window from now, and the door goes to whichever client
+/// connects first, whoever cleared it. A recovery portal is NOT "no
+/// credentials": the caller must pass the stored-credentials fact, never
+/// the portal's.
 inline void session_set_no_credentials(Session& s, bool no_credentials, uint32_t now_ms,
                                        const Timing& t = Timing{}) {
   const bool wiped = no_credentials && !s.no_credentials;

@@ -987,8 +987,9 @@ static uint32_t g_claim_refusal_logged_ms = 0;
 // while its no-credentials window runs (ble_improv_note_window_used), read
 // once at the door's init (ble_improv_window_used_ms), zeroed by a
 // credential wipe (wifi_clear_credentials: the 10 s hold, or Forget Wi-Fi,
-// which any landing session can send, ledger F345, re-arms the window, as
-// improv_core.h's session does in RAM). Loop task only after setup().
+// which takes the bearer in every mode, sweep F345: the owner's own act
+// re-arms the window, as improv_core.h's session does in RAM). Loop task
+// only after setup().
 RTC_NOINIT_ATTR uint32_t g_improv_window_magic;
 RTC_NOINIT_ATTR uint32_t g_improv_window_used_ms;
 static constexpr uint32_t IMPROV_WINDOW_MAGIC = 0x444F4F52;  // "DOOR"
@@ -3762,10 +3763,11 @@ static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_l
 // browser: SameSite=Strict compares sites, and only a browser that counts
 // the scheme in the site (Chromium does) keeps the session cookie off its
 // requests; in one that does not, it can still write blind with the owner's
-// session (a reboot, or any other write a session may make). F15 narrows
-// nothing for a page served over https at that name whose certificate
-// warning the owner accepted, nor for any page during the first-boot setup
-// or on a unit whose HTTPS start failed.
+// session (any write a session may make, of which since F361 only the
+// firmware install restarts the unit, and only into a newer signed image).
+// F15 narrows nothing for a page served over https at that name whose
+// certificate warning the owner accepted, nor for any page during the
+// first-boot setup or on a unit whose HTTPS start failed.
 //
 // No SoftAP or interface exemption, unlike the flagship's: the WAP's captive
 // DNS answers every name with the device (setup_wizard.h), so an exemption
@@ -7074,22 +7076,34 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
   return http_send_json(req, response.c_str());
 }
 
-// Credential gate shared by /api/wifi/connect and /api/wifi/ap-only. The
-// wizard carries a live pair token; the settings panel carries an admin
-// credential (session cookie / Bearer) instead. A *presented* admin
-// credential is validated through the lockout-aware `api_auth_check` so
-// Bearer guessing is throttled exactly like every other admin route —
-// `api_auth_check_optional` (used before, and silent until sweep F339)
-// skipped the 429 backoff and never recorded a failure, turning this
-// fallback into an unthrottled token oracle: an on-AP/LAN client could
-// spray Authorization guesses and tell a
-// valid token from the handler proceeding. A bare pair-token miss (no
-// admin credential presented at all) stays a friendly `invalid_token` so
-// the wizard can silently re-issue its RAM-backed token and retry.
+// Credential gate shared by /api/wifi/connect and /api/wifi/ap-only.
+// After first-boot setup the bearer alone moves the network the unit joins
+// over HTTP (sweep F334), on every interface, the recovery portal's SoftAP
+// included (a peer already bonded through the pairing confirm or a passkey,
+// one a session made before F346 among them, still moves it with no token,
+// over the Bluetooth credentials write, ble_request_wifi_provisioning()):
+// the landing page hands any caller on the home network a pair token and a
+// 24 h session, and the AP key is printed in too many places to be a
+// network-move credential.
+// api_auth_check_bearer() takes no cookie, sits under the per-address
+// lockout and sends its own 401/403/429.
+// During setup the wizard carries a live pair token, and a *presented* admin
+// credential (the bearer, or a session: handle_ui mints none during setup,
+// but the receipt route mints one on a BOOT tap or the setup door's claim,
+// and the SoftAP is the boundary then) is checked
+// through the lockout-aware `api_auth_check` so Bearer guessing is throttled
+// like every other admin route (the silent `api_auth_check_optional` used
+// before sweep F339 turned this fallback into an unthrottled token oracle).
+// A bare pair-token miss (no admin credential presented at all) stays a
+// friendly `invalid_token` so the wizard can silently re-issue its
+// RAM-backed token and retry.
 // (WifiChangeAuth is declared in wifi_provisioning_auth.h — included at the
 // top — so arduino-cli's hoisted prototype for this function sees the type.)
 static WifiChangeAuth wifi_change_authorize(httpd_req_t* req,
                                             const char* pair_token) {
+  if (!setup_wizard::is_active())
+    return api_auth_check_bearer(req, g_device.api_token_str) ? WifiChangeAuth::PROCEED
+                                                              : WifiChangeAuth::RESPONDED;
   if (csi_integration::pair_token_valid(pair_token)) return WifiChangeAuth::PROCEED;
   const bool has_bearer = httpd_req_get_hdr_value_len(req, "Authorization") > 0;
   const bool has_cookie = (cv_session_validate && cv_session_validate(req));
@@ -7129,9 +7143,9 @@ static esp_err_t handle_wifi_ap_only(httpd_req_t* req) {
   if (ret <= 0 || deserializeJson(body, content) != DeserializationError::Ok) {
     return http_send_json(req, "{\"ok\":false,\"error\":\"Invalid JSON\"}");
   }
-  // Pair token (wizard) OR a lockout-throttled admin credential (settings
-  // panel). See wifi_change_authorize — the admin fallback must go through
-  // the throttled path so it can't be used as a token-guessing oracle.
+  // During setup: the wizard's pair token, or a lockout-throttled admin
+  // credential. After setup: the bearer alone (sweep F334). See
+  // wifi_change_authorize.
   const char* token = body["token"] | "";
   switch (wifi_change_authorize(req, token)) {
     case WifiChangeAuth::PROCEED: break;
@@ -7197,18 +7211,15 @@ static esp_err_t handle_wifi_connect(httpd_req_t* req) {
     return http_send_json(req, response.c_str());
   }
 
-  // Pairing-token gate. The captive-portal QR + manual fallback link both
-  // bake a fresh pairing token into /companion?token=<hex>, and the wizard
-  // JS forwards that token in the body of every POST here. pair_token_valid
-  // rejects empty/short/wrong-hex too, and validates WITHOUT consuming so
-  // the wizard can retry within the TTL (e.g. mistyped password).
-  //
-  // Settings-panel path: no pair token, but an admin credential (session
-  // cookie / Bearer). wifi_change_authorize routes that through the
-  // lockout-aware api_auth_check so it can't become a token-guessing oracle;
-  // a bare pair-token miss still returns invalid_token so the wizard
-  // self-heals. (Without any admin fallback the panel's Connect could never
-  // succeed post-setup — it holds no pair token.)
+  // During setup, the pairing-token gate: the captive-portal QR and the
+  // manual fallback link bake a fresh pairing token into
+  // /companion?token=<hex>, and the wizard JS forwards it in the body of
+  // every POST here. pair_token_valid rejects empty/short/wrong-hex too, and
+  // validates WITHOUT consuming so the wizard can retry within the TTL (e.g.
+  // mistyped password); a bare miss returns invalid_token so the wizard
+  // self-heals. After setup the settings panel's Connect, here or on the
+  // recovery portal's SoftAP, takes the bearer alone (sweep F334: the
+  // landing page hands any caller a pair token and a session).
   const char* token = body["token"] | "";
   switch (wifi_change_authorize(req, token)) {
     case WifiChangeAuth::PROCEED: break;
@@ -7508,9 +7519,11 @@ static bool g_improv_join_pending = false;
 // the stored-credentials fact alone, never the portal's state), and never
 // for a standalone unit the owner keeps AP-only on purpose (that one must
 // never take a stranger's network). A saved network that stopped working
-// raises the SoftAP recovery portal, not this door.
+// raises the SoftAP recovery portal, not this door. The rule is
+// keyless_join_open(), the camera's boot scan's too (sweep F333).
 bool ble_improv_door_should_open() {
-  return (!g_wifi_creds.configured || g_improv_join_pending) && !g_wifi_ap_only;
+  return provisioning_logic::keyless_join_open(g_wifi_creds.configured && !g_improv_join_pending,
+                                               g_wifi_ap_only);
 }
 
 // Credentials from the setup door: applied in RAM for one join attempt
@@ -7848,10 +7861,22 @@ static esp_err_t handle_wifi_forget(httpd_req_t* req) {
 
   WiFi.disconnect(true);
   wifi_clear_credentials();
+  // The broker login goes with the networks (sweep F333): on a unit not
+  // running standalone Forget re-opens the keyless joins (the setup door,
+  // the camera's boot scan, keyless_join_open()), and every
+  // code also chooses the network, so whoever wins one could answer the
+  // stored broker host. Host, port, TLS mode, CA, prefix and discovery stay.
+  const bool login_cleared = csi_mqtt::login_clear();
+  if (login_cleared) {
+    (void)csi_mqtt::request_reinit();
+  } else {
+    log_health(SCV_LOG_WARNING, SCV_CAT_NETWORK, "Forget: broker login NOT cleared (NVS)", nullptr);
+  }
 
   JsonDocument doc;
   doc["ok"] = true;
   doc["message"] = "WiFi credentials forgotten";
+  doc["broker_login_cleared"] = login_cleared;
 
   String response;
   serializeJson(doc, response);
@@ -8475,6 +8500,19 @@ static void qr_scan_task_fn(void* param) {
     int result = qr_scanner::scan_frame(fb, payload, sizeof(payload));
     esp_camera_fb_return(fb);
 
+    // A window holds its rule for its whole run, not only at its start, and
+    // ends here, before a code read in this frame can act on it: a boot
+    // window the setup door's rule (sweep F333's review: the wizard's
+    // standalone choice, or a network any path stored), a phone session's
+    // window setup itself (F334: setup ended by another path, the Bluetooth
+    // door's join or a second tab's standalone choice, and after setup a
+    // network move takes the bearer).
+    if (!provisioning_logic::scan_window_open(g_qr_auto_scan, g_wifi_creds.configured,
+                                              g_wifi_ap_only, setup_wizard::is_active())) {
+      memset(payload, 0, sizeof(payload));
+      break;
+    }
+
     if (result == 1) {
       char ssid[33] = {};
       char pass[65] = {};
@@ -8518,7 +8556,14 @@ static void qr_scan_task_fn(void* param) {
             // celebration keys on that. The re-init runs on the loop task
             // (sweep F106): this is the scanner's task, and init() tears
             // down the client a loop-task publish may hold. setup() gave
-            // the bridge its identity (csi_mqtt::set_identity).
+            // the bridge its identity (csi_mqtt::set_identity). A code
+            // carries no login and keeps the row's, outside
+            // move_needs_password() on purpose (sweep F333, F348): every
+            // code also chooses the network, so a host compare here would
+            // protect nothing, and the road is closed where it opens. A
+            // keyless join reaches a set-up unit only after the owner's
+            // bearer Forget, which clears the login (csi_mqtt::
+            // login_clear()), or the 10 s hold, which clears the row.
             csi_mqtt::Config mc;
             if (csi_mqtt::config_load(&mc)) {
               strlcpy(mc.host, prov.host, sizeof(mc.host));
@@ -8602,11 +8647,16 @@ static void qr_scan_task_fn(void* param) {
 // Boot scan-to-join tick (called every loop pass while FEATURE_QR_PROVISION):
 // an unprovisioned canary with a usable camera runs 60 s scan windows with a
 // short breather, forever, until WiFi is configured — power it on, point it
-// at the display's add-a-canary code, done. A phone captive-portal session
-// can still run the classic wizard at any time (its start handler simply
-// takes over; this tick stands down while any scan or peek is live).
+// at the display's add-a-canary code, done. It follows the Bluetooth setup
+// door's rule (sweep F333: one predicate for both keyless joins), so a unit
+// set standalone does not scan: any code held to its lens used to take it
+// off standalone. A window already running asks the rule again after every
+// frame (qr_scan_task_fn). A phone captive-portal session can still run the
+// classic wizard during setup (its start handler simply takes over; this
+// tick stands down while any scan or peek is live), and its window ends at
+// the first frame after setup does.
 static void qr_auto_scan_tick(uint32_t now) {
-  if (g_wifi_creds.configured) return;
+  if (!provisioning_logic::keyless_join_open(g_wifi_creds.configured, g_wifi_ap_only)) return;
   if (g_qr_scan_active ||
       __atomic_load_n(&g_qr_scan_task, __ATOMIC_ACQUIRE) != nullptr)
     return;
@@ -8643,6 +8693,13 @@ static void qr_auto_scan_tick(uint32_t now) {
 
 static esp_err_t handle_qr_scan_start(httpd_req_t* req) {
   g_health.http_requests++;
+  // Setup only (sweep F334), handle_wifi_pair_token's posture: a scan joins
+  // whatever network the code names, its token is the wizard's pair token,
+  // and after setup the landing page hands that token to any caller.
+  if (!setup_wizard::is_active()) {
+    httpd_resp_set_status(req, "404 Not Found");
+    return http_send_json(req, "{\"ok\":false}");
+  }
 
   if (g_qr_scan_active) {
     if (!g_qr_auto_scan) {
@@ -9557,7 +9614,10 @@ static esp_err_t handle_device_name(httpd_req_t* req) {
 // These wrappers put api_auth_check() in front of existing handlers: the
 // session cookie first (__Host-cv_session over HTTPS, cv_session over plain
 // HTTP, F337), which the landing page mints for any host on the network
-// (ledger F346), then the bearer token under the lockout.
+// (ledger F346), then the bearer token under the lockout. Six wrappers
+// below take the bearer alone and say so: the two reboot routes (F361),
+// Disconnect and Forget (F334, F345), the vault key (F335) and the mesh
+// pair confirm (F346); Reconnect stays on api_auth_check().
 
 static esp_err_t handle_status_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
@@ -9636,34 +9696,41 @@ static esp_err_t handle_export_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_export(req);
 }
+// The two reboot routes take the bearer alone (sweep F361), in every mode, as
+// Disconnect and Forget do (Connect and AP-only take it after setup): the
+// landing page mints a session for any host on the network, and a reboot at
+// will is a LAN denial that also empties the RAM lockout table, resetting a
+// token guesser's budget. The flagship's reboot takes the bearer too.
 static esp_err_t handle_reboot_auth(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_reboot(req);
 }
 
 static esp_err_t handle_safe_mode_retry_auth(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_safe_mode_retry(req);
 }
 
-// WiFi-management auth wrappers. These three endpoints mutate provisioning
-// state (disable WiFi, wipe NVS-stored credentials, re-enable) and are only
-// meaningful AFTER first-setup. The handlers were originally registered
-// without an _auth wrapper, so a LAN-local curl could hit /api/wifi/forget
-// with no credential at all. They now take api_auth_check(): the cookie or
-// the bearer, and the landing page mints that cookie for any host on the
-// network, so any LAN host can still forget the Wi-Fi, which reopens the
-// first-come setup door (ledger F345). That session is also the owner's
-// way out under the lockout (F343). (/api/wifi and /api/wifi/scan stay
-// unauthenticated by design — both are read-only and need to work during
-// captive-portal setup before any API token exists. /api/wifi/connect
-// gets its own pre-credential gate from pair_token_valid as of #434.)
+// WiFi-management auth wrappers. They ask nothing about setup, so they gate
+// during it as after it: a session the receipt route mints then (on a BOOT
+// tap or the setup door's claim) gets 401 from Disconnect and Forget. The
+// handlers were originally registered without an _auth wrapper, so a
+// LAN-local curl could hit /api/wifi/forget with no credential at all.
+// Disconnect drops the unit off its network and Forget wipes every saved
+// network and re-opens the Bluetooth setup door's first-boot window (on a
+// unit not running standalone: keyless_join_open()), whose claim buys the
+// receipt: both take the bearer alone (sweep F334, F345), never the landing
+// page's session, which any host on the network can mint. Reconnect only
+// rejoins the network already stored, so it stays on api_auth_check.
+// (/api/wifi and /api/wifi/scan stay unauthenticated by design: both are
+// read-only and work during captive-portal setup. /api/wifi/connect and
+// /ap-only take wifi_change_authorize's gate.)
 static esp_err_t handle_wifi_disconnect_auth(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_wifi_disconnect(req);
 }
 static esp_err_t handle_wifi_forget_auth(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_wifi_forget(req);
 }
 static esp_err_t handle_wifi_reconnect_auth(httpd_req_t* req) {
@@ -9682,7 +9749,8 @@ static esp_err_t handle_wifi_reconnect_auth(httpd_req_t* req) {
 // (secureFetch sends a bearer only when the page holds a token), so
 // wrapping mirrors the same plumbing-only fix as #435 for the WiFi-mgmt
 // handlers; api_auth_check() takes the landing session any LAN host can
-// mint, so these are not owner-only (F346).
+// mint, so these are not owner-only (F346), the pair confirm aside, which
+// takes the bearer alone (below).
 // Fenced like the handlers and registrations they bridge: with the mesh
 // off (DEV/MINIMAL profiles) the wrapped handle_mesh_* symbols don't
 // exist, and an unfenced wrapper is a build break the FULL-only CI of
@@ -9716,8 +9784,10 @@ static esp_err_t handle_mesh_pair_join_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_mesh_pair_join(req);
 }
+// The confirm hands this opera's secret to the radio, or takes the
+// initiator's in place of this device's (sweep F346): the bearer alone.
 static esp_err_t handle_mesh_pair_confirm_auth(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_mesh_pair_confirm(req);
 }
 static esp_err_t handle_mesh_pair_cancel_auth(httpd_req_t* req) {
@@ -10020,8 +10090,10 @@ static esp_err_t handle_vault_config_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
   return handle_vault_config(req);
 }
+// The recipient key is who can open every frame sealed from now on (sweep
+// F335): the bearer alone, never the landing page's session.
 static esp_err_t handle_vault_key_set_auth(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_vault_key_set(req);
 }
 static esp_err_t handle_vault_key_clear_auth(httpd_req_t* req) {
@@ -10143,7 +10215,8 @@ static void register_api_routes(httpd_handle_t server) {
   httpd_register_uri_handler(server, &prov);
 
   // Authenticated API endpoints (api_auth_check(): a landing session or the
-  // bearer token, F346)
+  // bearer token, F346; each _auth wrapper says when it takes the bearer
+  // alone, as the reboot routes below do, F361)
   httpd_uri_t status = { .uri = "/api/status", .method = HTTP_GET, .handler = handle_status_auth };
   httpd_register_uri_handler(server, &status);
 
@@ -10524,7 +10597,8 @@ register_extra_routes:
   httpd_uri_t wifi_pair_token = { .uri = "/api/wifi/pair-token", .method = HTTP_GET, .handler = handle_wifi_pair_token };
   httpd_register_uri_handler(active_server, &wifi_pair_token);
 
-  // Standalone mode: pairing-token-gated like /api/wifi/connect.
+  // Standalone mode: wifi_change_authorize's gate, like /api/wifi/connect
+  // (the wizard's pair token during setup, the bearer alone after it).
   httpd_uri_t wifi_ap_only = { .uri = "/api/wifi/ap-only", .method = HTTP_POST, .handler = handle_wifi_ap_only };
   httpd_register_uri_handler(active_server, &wifi_ap_only);
 
@@ -10978,9 +11052,10 @@ static bool wifi_clear_credentials() {
   g_improv_join_pending = false;   // a door join in flight has nothing left to prove
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
   g_wifi_status.last_fail_reason[0] = '\0';
-  // A credential wipe (the 10 s hold, or Forget Wi-Fi, which any landing
-  // session can send, ledger F345) re-arms the Bluetooth setup door's
-  // first-boot window: improv_core.h's session does so in RAM the moment the door reads
+  // A credential wipe (the 10 s hold, or Forget Wi-Fi, which takes the
+  // bearer in every mode, sweep F345: the owner's own act either way) re-arms
+  // the Bluetooth setup door's first-boot window: improv_core.h's session
+  // does so in RAM the moment the door reads
   // "no credentials" where it read credentials before (its wiped
   // transition), and the carried record must agree, or a software restart
   // right after a Forget would start the door on the spent time instead of
@@ -12620,9 +12695,19 @@ void setup() {
       while (true) { delay(1000); }
     }
     Serial.println();
-    Serial.println("[!!] PROVISIONING FAILED - HALTING");
-    // Don't infinite loop - just log and continue with limited function
-    // The device should still serve HTTP so user can diagnose
+    // No halt (sweep F336): the loop keeps the serial console, Bluetooth and
+    // the BOOT hold. start_http_server() below runs only behind
+    // start_wifi_ap(), and a release build's resolve_ap_password() refuses an
+    // identity provisioning did not finish, so a release build serves no web
+    // page this boot. Whether to halt instead is F58's call; what else still
+    // runs is in the ledger's F336. Both lines keep the "[!!] PROVISIONING
+    // FAILED" prefix and name no credential word, so a flasher's boot
+    // diagnosis can key on the prefix and its report scrubber keeps the line.
+#if SECURACV_RELEASE_BUILD
+    Serial.println("[!!] PROVISIONING FAILED - storage refused the identity; no web server this boot. Reflash with a clean install (full erase)");
+#else
+    Serial.println("[!!] PROVISIONING FAILED - debug build: the AP may still start, on a random debug key this log does not show");
+#endif
     log_health(SCV_LOG_CRITICAL, SCV_CAT_CRYPTO, "Provisioning failed", nullptr);
   }
 
@@ -13865,7 +13950,8 @@ void loop() {
 
   #if FEATURE_QR_PROVISION
   // Onboarding wave: unprovisioned + camera up = scanning for a code is
-  // the safe idle. Stands down the moment WiFi is configured or a phone
+  // the safe idle. Stands down the moment WiFi is configured, on a
+  // standalone unit (keyless_join_open, sweep F333), or while a phone
   // session / peek owns the camera.
   qr_auto_scan_tick(millis());
   #endif
@@ -14024,10 +14110,12 @@ void loop() {
     if (duration >= BOOT_LONG_PRESS_MS) {
       // Released between the 3 s warning and the 10 s reset: nothing
       // happened. The reset fires at 10 s while the button is still held
-      // (ResetHold above); Forget Wi-Fi on the dashboard
-      // (wifi_clear_credentials) stays the network-only reset, and still
-      // re-arms the Bluetooth setup door's first-boot window.
-      Serial.println("[BOOT] Released before 10 s: nothing reset (hold 10 s for a factory reset; Forget Wi-Fi on the dashboard clears only the saved Wi-Fi; on a unit that had Wi-Fi, either reopens the Bluetooth setup door for half an hour, to the first client that connects)");
+      // (ResetHold above); Forget Wi-Fi on the dashboard (handle_wifi_forget:
+      // wifi_clear_credentials() and, since F333, the stored broker login,
+      // csi_mqtt::login_clear()) is the narrower reset, takes the bearer
+      // alone (F334, F345), and still re-arms the Bluetooth setup door's
+      // first-boot window.
+      Serial.println("[BOOT] Released before 10 s: nothing reset (hold 10 s for a factory reset; Forget Wi-Fi on the dashboard clears only the saved Wi-Fi and broker login; on a unit that had Wi-Fi, the hold, and Forget unless the unit runs standalone, reopen the Bluetooth setup door for half an hour, to the first client that connects)");
     } else if (duration >= BOOT_BUTTON_HOLD_MS) {
       // Medium hold: print device info (existing behavior)
       if (g_device.initialized) {

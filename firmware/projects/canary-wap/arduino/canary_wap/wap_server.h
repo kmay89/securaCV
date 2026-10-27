@@ -18,7 +18,11 @@
  * - While HTTPS is up, port 80 serves the probes and /api/fleet and redirects
  *   the rest to HTTPS (301)
  * - api_auth_check() on protected endpoints: the session cookie the landing
- *   page mints for any host on the network (F346), or the bearer token
+ *   page mints for any host on the network (F346), or the bearer token; the
+ *   bearer alone for the pairing QR (F289), the Wi-Fi moves (Connect and
+ *   AP-only after setup, Disconnect and Forget in every mode; F334, F345),
+ *   the reboot routes (F361), the vault key (F335) and the two pair
+ *   confirms (F346)
  * - Constant-time token comparison (timing attack mitigation)
  * - Exponential backoff on auth failures (brute-force mitigation)
  * - Provisioning receipt only for the bearer token, the setup door's claim, or
@@ -157,8 +161,8 @@ struct RateLimitEntry {
  * GET    /api/config                      - Get current configuration
  * POST   /api/config                      - Update configuration
  * POST   /api/export                      - Create export bundle
- * POST   /api/reboot                      - Reboot device
- * POST   /api/safe-mode/retry             - Leave safe mode and retry
+ * POST   /api/reboot                      - Reboot device (bearer alone, F361)
+ * POST   /api/safe-mode/retry             - Leave safe mode and retry (bearer alone, F361)
  * POST   /api/identify                    - Blink to identify
  * POST   /api/device-name                 - Set the device name
  * GET    /api/selftest                    - Run the self-test
@@ -182,7 +186,9 @@ struct RateLimitEntry {
  * ── Wi-Fi and updates ──
  * GET    /api/wifi                        - Wi-Fi status
  * *      /api/wifi/*                      - Scan, pair token, AP-only, connect, disconnect, forget, reconnect
- * *      /api/wifi/qr-scan                - Camera QR provisioning (FEATURE_QR_PROVISION)
+ *                                           (bearer alone: disconnect and forget in every mode, connect and
+ *                                           AP-only after setup; F334, F345)
+ * *      /api/wifi/qr-scan                - Camera QR provisioning (FEATURE_QR_PROVISION; the POST start during setup only, F334)
  * *      /api/ota/*                       - Signed pull-OTA: status, check, install, config
  *
  * ── Camera (FEATURE_CAMERA_PEEK) and sealed snapshots (FEATURE_VAULT_SNAPSHOT) ──
@@ -197,7 +203,7 @@ struct RateLimitEntry {
  * POST   /api/mesh/enable                 - Enable/disable mesh networking
  * POST   /api/mesh/pair/start             - Start pairing (initiator mode)
  * POST   /api/mesh/pair/join              - Start pairing (joiner mode)
- * POST   /api/mesh/pair/confirm           - Confirm pairing code
+ * POST   /api/mesh/pair/confirm           - Confirm pairing code (bearer alone, F346)
  * POST   /api/mesh/pair/cancel            - Cancel ongoing pairing
  * POST   /api/mesh/leave                  - Leave current opera
  * POST   /api/mesh/remove                 - Remove peer from opera

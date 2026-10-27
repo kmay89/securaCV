@@ -1214,7 +1214,10 @@
   reboots after every few seconds of guessing gets about 37 a minute if the
   unit is back 45 s later and about 155 if it is back in 5 s. The docs
   listed the reboot as a denial left open, never as a reset of the guess
-  budget.
+  budget. *(Amended 2026-10-27, the owner-authority PR, #1887: since F361
+  both routes take the bearer alone, so no landing session reboots the
+  unit; a session's firmware install still restarts it, only into a newer
+  signed image.)*
 - **Fix:** the docs state the bound between reboots and the rates with them
   (lockout third review, F343); `test_auth_backoff.cpp` models both over the
   real table, so a change to its numbers fails until the docs follow. The
@@ -2037,14 +2040,19 @@
   a cleared unit still has an owner, and its door goes to whichever client
   connects first (`docs/design/magic_pairing.md` §2.2). The "no owner yet"
   above covers that cleared unit too, as does the factory reset it names as
-  re-arming the window.)*
+  re-arming the window.)* *(Amended 2026-10-27, the owner-authority PR,
+  #1887: a WAP's Forget Wi-Fi takes the API token in every mode, F345, so
+  no landing session sends it; the door it reopens on a unit not running
+  standalone is still first-come.)*
 - **Regression check:** `tests_host/test_improv_core.cpp` — a session begun
   with credentials stays shut while the caller reports the portal up; a
   window that ran out does not reopen without a tap or a power cycle;
   credentials vanishing at runtime (factory reset) *(amended 2026-10-22,
   #1843's sweep: on a WAP also Forget Wi-Fi, which any landing session can
   send, F345, so the re-arm is not the owner's act alone)* re-arm the window,
-  credentials appearing (the join persisted) shut the no-credentials door.
+  credentials appearing (the join persisted) shut the no-credentials door
+  *(amended 2026-10-27, #1887: a WAP's Forget Wi-Fi takes the API token in
+  every mode, F345)*.
   `test_short_tap.cpp` pins what counts as a tap (≥40 ms, <700 ms; a hold
   is somebody else's gesture). Design: `docs/design/magic_pairing.md`.
   Bench: not yet — a saved network failing with the router off must raise
@@ -3322,7 +3330,14 @@
   The camera is what the session does not hold: a code must be in front of
   it (`FEATURE_QR_PROVISION`, off in several profiles). Accepted as
   proximity-bound; the ledger's F289 amendment says what it is owed if that
-  ever widens. A second review found this bullet calling the grant "not
+  ever widens. *(Superseded 2026-10-27, the owner-authority PR, #1887: F333
+  closes this road where it opens. After setup `POST /api/wifi/qr-scan`
+  answers `404` (F334), so the pair token the cookie mints starts no scan;
+  the boot scan asks the Bluetooth setup door's rule
+  (`provisioning_logic::keyless_join_open()`), so on a set-up unit it runs
+  only after a Forget Wi-Fi, which takes the API token, or the 10 s hold;
+  and Forget clears the stored broker login, as the hold clears the whole
+  broker row.)* A second review found this bullet calling the grant "not
   the session's": a chain's gate is its weakest link's, and the token's
   minter is a link — name the minter before calling a token-gated route
   something the session cannot reach.
@@ -3480,7 +3495,11 @@
   all still offering the hold. And a way out has to be judged against everything else the attacker can
   reach: the bonded lane takes away the striking host's network reach, but
   a host also in radio range can bond through the landing session the
-  network gives it, and then use the lane itself. A guard that every row
+  network gives it, and then use the lane itself *(amended 2026-10-27, the
+  owner-authority PR, #1887: since F346 the bond's confirm and a Passkey
+  Entry's digits take the API token, so a host bonds through its session no
+  longer; a bond a session confirmed on 2.4.17 or earlier stays until the
+  owner removes it)*. A guard that every row
   passes without needs a row from the state it guards: every companion row
   tapped Save first, so the stop's `if (!ctl) return;` was never reached
   with no save running, the state most pane changes are made in.
@@ -3492,7 +3511,12 @@
   keeps, or deletes the phone's bond, from anywhere on the network; the
   owner's own landing session reaches the same routes, and
   `POST /api/wifi/connect`, so the owner's browser can turn Bluetooth back
-  on, or move the WAP with no Bluetooth at all. List
+  on, or move the WAP with no Bluetooth at all. *(Amended 2026-10-27, the
+  owner-authority PR, #1887: the Bluetooth routes still take the session,
+  but after setup `POST /api/wifi/connect` takes the API token alone, F334,
+  so the browser's move takes the token, and under a host striking from
+  nine or more addresses it waits until that host stops; the merge's
+  bullet below says so.)* List
   the routes by what they touch (Bluetooth's switch, its bonds, the Wi-Fi
   it would change), and a denial's length by what the attacker pays: a
   refused write the lane does not charge keeps the owner's refused for as
@@ -3535,6 +3559,19 @@
   timers run at once needs a bound of its own: a page loop that stopped
   counting its asks never yielded to node:test's timeout, so the run hung
   rather than failing a row; both harnesses now answer `409` past 64 asks.
+- **Found in the owner-authority PR's merge of #1884 (2026-10-27):** a
+  decision that moves a route behind the bearer moves every way out that
+  route was. #1843's lockout posture rested on the owner's landing session
+  reaching `POST /api/wifi/connect` and `POST /api/wifi/forget` under the
+  lockout (the third and second rounds' bullets above); F334 and F345 put
+  both on the bearer alone (Connect after setup, Forget in every mode), and
+  the overflow holds that bearer with every untracked address, so the
+  browser's move now waits until the striking host stops. The two branches
+  merged without a conflict in most of the
+  sentences that disagreed: the dependency surfaced only because #1843's
+  fifth-review note on F345 named it. Before deciding a route's gate,
+  search the ledger and the docs for the route as a remedy, not only as an
+  attack.
 - **Date learned:** 2026-10
 
 ### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)
@@ -3578,6 +3615,58 @@
   slot functions cut from `csi_integration.cpp`: a session and a pair token
   end at their TTLs and are not valid again 2^32 ms + 5 s after issue).
   Host-tested; the wraps cannot be bench-tested.
+- **Date learned:** 2026-10
+
+### A setup-window grant outlived setup, and a pasted token passed on the cookie beside it (canary-wap, F334, F335, F345, F346, F361)
+- **What happened:** after first-boot setup any host on a WAP's home network
+  could move it to another network, Forget it (which re-opened the
+  Bluetooth setup door, whose claim buys the receipt), confirm its own
+  phone's Bluetooth bond or its own radio's opera pairing, re-key the
+  sealed-snapshot vault and reboot the unit at will. Separately, the
+  dashboard's sign-in accepted any mistyped `cv_` token on a page that held
+  a session, and the owner met the refusal one step later, with a strike, at
+  whatever needed the bearer (inside a phone's 30 s pairing window, at a
+  Bluetooth confirm).
+- **Root cause:** three things, each reasonable alone. Two consumers shared
+  one pair-token pool: the wizard's validate-only token (a first-boot grant
+  for a phone on the SoftAP) and the landing page's `?cv_pair` link (minted
+  for any caller on the home network), with no token kind between them, so
+  the wizard's grant on `/api/wifi/connect` became every caller's. A comment
+  said "the AP itself is the gate", true during setup and stated as if it
+  were true forever; `wifi_change_authorize()` took the pair token and then
+  `api_auth_check()`, which takes the session cookie before it compares
+  anything, and the Forget, Disconnect, reboot, vault-key and two pairing
+  confirm wrappers were `api_auth_check()` too. And the sign-in checked a
+  pasted token on `GET /api/status` with the cookie attached, so the cookie
+  answered the check the token was meant to pass.
+- **Fix:** after setup the bearer alone (`api_auth_check_bearer()`) gates
+  every HTTP route that changes the network the unit joins, on every
+  interface (a peer already bonded through the pairing confirm or a
+  passkey, one a session made before F346 among them, still moves it with
+  no token, over the Bluetooth credentials write,
+  `ble_request_wifi_provisioning()`), and every
+  write that grants a credential (the vault key, the two confirms), and the
+  two reboot routes; `POST /api/wifi/qr-scan` answers `404` outside setup.
+  The firmware install stays on the session and restarts the unit only into
+  a newer signed image.
+  The setup window is a branch in code (`setup_wizard::is_active()`), not a
+  comment. The setup door and the camera's boot scan, two doors to one act
+  (a join that asks for no credential), share one predicate,
+  `provisioning_logic::keyless_join_open()`, where the scan had asked only
+  half of the door's question. The sign-in sends a pasted token with
+  `credentials: 'omit'`. Rules: state a setup-window grant in code, at the
+  gate; give two doors to one act one predicate; and a check of a credential
+  must not pass on another credential the request carries beside it.
+- **Regression check:** `tests_host/test_wifi_authority.cpp` (the gate and
+  the wrappers cut from the sketch over the real `api_auth.h` and
+  `provisioning_logic.h`: after setup the landing's pair token and session
+  are `401`, Forget by a session leaves the door shut, a session's reboot
+  restarts nothing; text pins for the scan's `404` and the boot scan's
+  predicate), `test_receipt_grant.cpp`'s
+  `test_credential_grants_take_the_bearer`, `test_bluetooth_commands_wap.cpp`
+  (the bond confirm through the route `register_routes()` registers, the
+  Passkey Entry field) and `dashboard_gates.test.js` ('The shared sign-in':
+  `cv_wrong` stays refused on a page whose cookie answers 200).
 - **Date learned:** 2026-10
 
 ## Build profiles: a configuration nobody compiles is a configuration that rots

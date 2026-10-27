@@ -187,6 +187,19 @@ downloads, like the peek stream): `GET /api/vault/status`,
 `POST /api/vault/config`, `POST`/`DELETE /api/vault/key`,
 `GET /api/vault/list`, `GET /api/vault/download?name=`,
 `DELETE /api/vault/item?name=`, `POST /api/vault/test`.
+`POST /api/vault/key` takes the bearer alone (sweep F335): the recipient key
+decides who can open every frame sealed from then on, and the landing page
+mints the dashboard's session for any host on the home network, so a
+session is refused `401`. On the dashboard that is the API token pasted
+from the recovery kit, or BOOT Tap Once, which goes to the one address
+asking for it (F342); the card says so beside the key box. The iPhone app
+sends its bearer (and the token never rotates, F353). The other routes stay
+on the session by design: a key clear and an item delete are health-logged,
+a frame's `frame_sealed` record survives its delete, and clearing the key
+turns every trigger off, so a session can destroy sealed frames but not
+redirect them. A key a session registered before this change stays the
+recipient: compare the vault card's key id with your own key's once, and if
+they differ, Remove it and Register yours.
 
 ## Testing
 
