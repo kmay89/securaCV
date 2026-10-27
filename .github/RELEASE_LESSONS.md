@@ -39,11 +39,12 @@ any platform.
   nothing. Every firmware release runs it with its own tag, stable included,
   **Actions → Refresh the dev channel (catch up to stable)** runs it with
   `releases/latest` (or the `fw-v*` tag its `source` input names: a dev
-  release whose own copy failed, since re-running that release's job stops at
-  its tag-exists check), then redeploys pages, and **Flasher Factory Images**
-  refuses a `channel: dev` branch older than stable and brings the dev
-  channel's copy along after a tag rebuild. The copies
-  stay valid because every file a manifest names is an absolute URL on its own
+  release whose own copy failed, finished without rebuilding anything; a
+  dispatched release's re-run stops at its tag-exists check, and a pushed
+  tag's re-run rebuilds and re-uploads every asset), then redeploys pages,
+  and **Flasher Factory Images** refuses a `channel: dev` branch older than
+  stable and brings the dev channel's copy along after a tag rebuild. The
+  copies stay valid because every file a manifest names is an absolute URL on its own
   `fw-v*` tag, which the script checks before writing, and the Ed25519
   signatures cover those URLs rather than where the manifest is served from.
   It passes `--prerelease --latest=false` on every create and edit, deletes
@@ -60,7 +61,7 @@ any platform.
   needed nothing: its comparator already ranks stable above rc and dev at an
   equal triple, so a stable build on the dev channel is an ordinary update.
   Host-tested and dry-run against the public releases (read-only); the button
-  has not been pressed yet.
+  had not been pressed when this was written.
 - **Applies to:** every rolling pointer (`fw-dev-latest`, `flasher-latest`,
   `lab-latest`): something that runs on every release must keep it at least
   as new as what it shadows, or it rots on the day nobody cuts the release

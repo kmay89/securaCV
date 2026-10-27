@@ -369,10 +369,11 @@ class Sync(unittest.TestCase):
         self.assertEqual(fake.writes(), [])
 
     def test_a_dev_release_refused_by_a_race_is_finished_by_the_button_with_its_tag(self):
-        # The release's own step cannot be re-run (its version step refuses
-        # the tag it just created), and the button's default source,
-        # releases/latest, is never the prerelease. So the refusal names the
-        # button with this run's source, and a run with that source finishes it.
+        # Re-running the release's own job is no way to finish it (a
+        # dispatched one stops at its tag-exists check; a pushed tag's
+        # rebuilds and re-uploads the whole release), and the button's default
+        # source, releases/latest, is never the prerelease. So the refusal
+        # names the button with this run's source, and a run with it finishes.
         fake = world(dev_today(), extra={"fw-v2.4.18-dev.1": firmware_release("2.4.18-dev.1")})
         landed = []
 
@@ -386,7 +387,10 @@ class Sync(unittest.TestCase):
             self.assertEqual(dc.main(["--repo", SLUG, "--source", "fw-v2.4.18-dev.1"], fake), 1)
         self.assertIn("Run it again: Actions → Refresh the dev channel, with source fw-v2.4.18-dev.1",
                       out.getvalue())
-        self.assertIn("tag-exists check", out.getvalue())
+        # The reason is scoped: only a dispatched release's re-run stops short.
+        self.assertIn("a dispatched release's re-run stops at its tag-exists check", out.getvalue())
+        self.assertIn("a pushed tag's (or a Flasher Factory Images) re-run rebuilds, re-signs and "
+                      "re-uploads every asset", out.getvalue())
         self.assertEqual(fake.writes(), [])
         with redirect_stdout(io.StringIO()):
             self.assertEqual(dc.main(["--repo", SLUG, "--source", "fw-v2.4.18-dev.1"], fake), 0)
@@ -394,6 +398,57 @@ class Sync(unittest.TestCase):
         self.assertEqual(json.loads(dev["manifest-canary.json"])["version"], "2.4.18-dev.1")
         self.assertEqual(json.loads(dev["manifest-flash.json"])["fw_train"], "2.4.18-dev.1")
         self.assertEqual(fake.latest, "fw-v2.4.17", "releases/latest never moves")
+
+    def test_a_blank_press_refused_by_a_race_says_press_it_blank_again(self):
+        # Pressed blank, the source is releases/latest as read at the start.
+        # When a stable release lands meanwhile, a run named after the old
+        # tag would be a green no-op below stable: the refusal says blank.
+        fake = world(dev_today(), extra={"fw-v2.4.18": firmware_release("2.4.18")})
+
+        def publish(argv):
+            if argv[2] == "fw-v2.4.17" and "manifest-canary-wap.json" in argv:
+                fake.latest = "fw-v2.4.18"
+        fake.on_download = publish
+        with redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(dc.main(["--repo", SLUG], fake), 1)
+        self.assertIn("moved from fw-v2.4.17 to fw-v2.4.18", out.getvalue())
+        self.assertIn("Press Actions → Refresh the dev channel again, with source blank.", out.getvalue())
+        self.assertNotIn("with source fw-v2.4.17", out.getvalue())
+        self.assertEqual(fake.writes(), [])
+        fake.on_download = None
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(dc.main(["--repo", SLUG], fake), 0)
+        dev = fake.releases[dc.DEV_TAG]["assets"]
+        self.assertEqual(json.loads(dev["manifest-canary.json"])["version"], "2.4.18")
+
+    def test_a_blank_press_beaten_by_another_writer_says_press_it_blank_again(self):
+        fake = world(dev_today())
+
+        def bring_up(argv):
+            if argv[2] == "fw-v2.4.17" and "manifest-canary-wap.json" in argv:
+                fake.releases[dc.DEV_TAG]["assets"]["manifest-flash.json"] = json.dumps(
+                    {"fw_train": "2.4.17"}).encode()
+        fake.on_download = bring_up
+        with redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(dc.main(["--repo", SLUG], fake), 1)
+        self.assertIn("changed while this run was deciding", out.getvalue())
+        self.assertIn("with source blank.", out.getvalue())
+        self.assertNotIn("with source fw-v", out.getvalue())
+
+    def test_a_named_source_overtaken_by_stable_says_press_it_blank(self):
+        # A stable release's own step (source = its tag) loses the race to the
+        # next stable release: a run with the old tag would write nothing.
+        fake = world(dev_today(), extra={"fw-v2.4.18": firmware_release("2.4.18")})
+
+        def publish(argv):
+            if argv[2] == "fw-v2.4.17" and "manifest-canary-wap.json" in argv:
+                fake.latest = "fw-v2.4.18"
+        fake.on_download = publish
+        with redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(dc.main(["--repo", SLUG, "--source", "fw-v2.4.17"], fake), 1)
+        self.assertIn("fw-v2.4.17 is below stable 2.4.18 now. Press Actions → Refresh the dev "
+                      "channel again, with source blank.", out.getvalue())
+        self.assertEqual(fake.writes(), [])
 
     def test_latest_off_the_firmware_refuses_before_anything(self):
         fake = world(dev_today(), latest="flasher-v0.12.2")
@@ -459,6 +514,19 @@ class Sync(unittest.TestCase):
             with self.subTest(tag=tag):
                 self.assertFalse(run(fake, tag))
         self.assertEqual([c for c in fake.calls if c[0] == "release"], [])
+
+    def test_a_mistyped_tag_below_stable_is_refused_not_a_green_no_op(self):
+        # fw-v2.4.17-dev.1 typed for fw-v2.4.18-dev.1: below stable, but no
+        # such release, so the button goes red instead of "nothing to do".
+        fake = world(dev_today(), extra={"fw-v2.4.18-dev.1": firmware_release("2.4.18-dev.1")})
+        for tag in ("fw-v2.4.17-dev.1", "fw-v2.4.16"):
+            with self.subTest(tag=tag), redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(dc.main(["--repo", SLUG, "--source", tag], fake), 1)
+                self.assertIn(f"::error::{tag} is not a published release", out.getvalue())
+        fake.releases["fw-v2.4.16"] = {**firmware_release("2.4.16"), "draft": True}
+        with self.assertRaisesRegex(dc.Refusal, "fw-v2.4.16 is not a published release"):
+            run(fake, "fw-v2.4.16")
+        self.assertEqual(fake.writes(), [])
 
     def test_the_same_version_in_other_bytes_is_replaced(self):
         # A bring-up catalog cut at 2.4.17 (or fw-v2.4.17's own, before a

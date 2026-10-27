@@ -460,10 +460,8 @@
   published bytes; both boards are compile-tested reach ports that nobody has
   booted. A board installed from either file is recovered over USB with a
   correct image: one from fw-v2.4.18, or from the dev channel (**Advanced →
-  dev channel**) once `fw-dev-latest` is rebuilt from main (press **Refresh
-  the dev channel** before that bring-up, not after: main's train is still
-  2.4.17, and a later press replaces a same-version bring-up catalog with
-  fw-v2.4.17's). Until then the release channel has no correct Canary image
+  dev channel**) once `fw-dev-latest` carries a build from main with this
+  fix. Until fw-v2.4.18, the release channel has no correct Canary image
   for these two boards. Nothing else on that release is affected: those two
   boards' OTA channels are not published, and the other 19 factory images (S3,
   C3, C6) carry their own chip's bootloader at 0x0, where their ROM loads it.
@@ -583,10 +581,14 @@
   catalog along. A stable release whose dev-channel step fails leaves the
   channel behind until the button is pressed; a dev release's step fails the
   run, and the button with that release's tag as `source` finishes the copy
-  (re-running the release's job stops at its tag-exists check).
+  without rebuilding anything. Re-running the release's job is not the way: a
+  dispatched release's re-run stops at its tag-exists check, and a pushed
+  tag's rebuilds and re-uploads every asset of the release. The button refuses
+  a `source` that is not a published release, so a mistyped tag goes red
+  rather than passing as "nothing to do".
   Host-tested (`.github/scripts/test_dev_channel.py`, its version order held to
   the device's own cases) and dry-run read-only against the public releases;
-  the button has not been pressed yet.
+  the button had not been pressed when this was written.
 - **Both flashers stop calling the dev channel "ahead of stable" by
   assumption.** The browser page, the Lab's native bench and the desktop
   Flasher compare the dev catalog's `fw_train` with the train of the release

@@ -433,10 +433,12 @@ host) is refused on the USB channel too, not just over the air. Three anchors:
    SHA-256 before publishing. Anchors 1 and 2 are what bind the bytes, wherever
    they were served from.
 
-**Honest fallbacks.** Until the signing-key ceremony happens the pinned key is
-all-zero, and images built by the out-of-band `flasher-release.yml` (the pre-key
-path) carry no signature — in both cases the flasher verifies **SHA-256 only**
-and says so plainly (the receipts show "checksum only, unsigned build"). A
+**Honest fallbacks.** Before the signing-key ceremony the pinned key was
+all-zero (`flash.json` pins a real key now), and the out-of-band
+`flasher-release.yml` (the pre-key path) published unsigned images; in both
+cases the flasher checks **SHA-256 only** and says so plainly (the receipts
+show "checksum only, unsigned build"). With a real key pinned, an official
+manifest with no signature is refused, not downgraded. A
 **local file** (Advanced) is checksum-fingerprinted but, by definition, not
 signature-checked. What it never does is *silently* accept an unverified image
 when it claimed it would verify one.
@@ -614,13 +616,15 @@ different questions.
   the tag, the good ones too: for a tag people already install from, read
   `docs/RELEASE_BUTTONS.md` § Flasher Factory Images, "Know what it replaces on
   a published tag", first.
-- **Publish before the OTA key ceremony.** The browser channel's integrity is
-  SHA-256 + same-origin, **not** the Ed25519 OTA key (see Trust model above), so
-  it doesn't need `OTA_SIGNING_KEY_PEM`. If you want the one-click flow live
-  before setting up OTA signing — where `firmware-release.yml` hard-stops for
-  the missing key — tag the release, then run `flasher-release.yml` by hand for
-  that tag. It builds the images and **creates the release if one doesn't exist
-  yet**, so the flasher lights up while OTA waits on the key.
+- **Publish before the OTA key ceremony (no longer).** Before the ceremony
+  (it has happened: `flash.json` pins a real key), the browser channel's
+  integrity rested on SHA-256 + same-origin, so this path could publish
+  without `OTA_SIGNING_KEY_PEM` while `firmware-release.yml` hard-stopped for
+  the missing key: tag the release, run `flasher-release.yml` by hand for that
+  tag, and it built the images and **created the release if one didn't exist
+  yet**. Now it signs like `firmware-release.yml` and refuses to run without
+  the secret, since both flashers refuse an unsigned image once a key is
+  pinned (see Trust model above).
 
 This channel checks the tag *out*, so the tag has to exist; the workflow now
 says so by name (and points at `channel: dev`) instead of dying in

@@ -1191,11 +1191,13 @@ jobs:
       # It runs even when the Vision chain went red (the firmware is
       # published either way), and a stable release is not failed over it —
       # the button catches the dev channel up — so only a dev release, whose
-      # whole point is this channel, goes red here. Re-running this job cannot
-      # finish that copy (the version step refuses the tag the publish just
-      # created): the button's `source` input, set to this tag, does. A red
-      # job also skips the sbom job; sbom.yml's dispatch with the tag
-      # backfills it.
+      # whole point is this channel, goes red here. The button's `source`
+      # input, set to this tag, finishes that copy without rebuilding
+      # anything. Re-running this job is not the way: a dispatched run's
+      # re-run stops at the version step (the tag exists now), and a pushed
+      # tag's re-run has no such check, so it rebuilds, re-signs and
+      # re-uploads every asset of the published release. A red job also
+      # skips the sbom job; sbom.yml's dispatch with the tag backfills it.
       - name: Bring the rolling dev channel up to this release
         id: dev_channel
         if: ${{ (success() || failure()) && steps.publish.outcome == 'success' }}

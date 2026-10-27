@@ -102,11 +102,12 @@ you do, the dev channel stays where it was, behind stable. When that step
 fails, the run asserts `releases/latest` again (and re-points it at the
 firmware if something moved it), outside the step's tolerance. On a dev
 release it fails the run, since that channel is the release's whole point.
-Re-running the job cannot finish it (its first step refuses the tag the run
-just published): press **Refresh the dev channel** with `source` set to the
-dev tag. The red job also skips the SBOM job, so the published prerelease
-has no SBOMs until **Actions → SBOM Generation → Run workflow** with that
-tag attaches them.
+Re-running this button's job cannot finish it (its first step refuses the tag
+the run just published; a tag pushed by hand has no such check, and its
+re-run rebuilds, re-signs and re-uploads the whole release, so don't): press
+**Refresh the dev channel** with `source` set to the dev tag. The red job also
+skips the SBOM job, so the published prerelease has no SBOMs until
+**Actions → SBOM Generation → Run workflow** with that tag attaches them.
 
 **Don't:** use it if you haven't bumped `FIRMWARE_VERSION` / `CANARY_FW_VERSION`
 to match — the version-string guard greps each binary and fails closed. And it
@@ -153,14 +154,17 @@ a rebuild of an older tag that branch no longer pins never reaches the site.
 
 **`channel: release`** — an **existing** `fw-v*` tag.
 
-**Use it** in two situations:
-1. A packaging-tooling fix should reach a tag nobody installs from yet, or one
-   whose factory images are all wrong, without a new version (on a tag people
-   already install from, read "Know what it replaces" below first).
-2. **Before the OTA key exists.** The browser flasher's integrity rests on
-   SHA-256 + same-origin, not the Ed25519 release key, so these assets can ship
-   pre-ceremony. If `Firmware Release` hard-stops on the missing key, this lights
-   the flasher up anyway.
+**Use it** when a packaging-tooling fix should reach a tag nobody installs
+from yet, or one whose factory images are all wrong, without a new version (on
+a tag people already install from, read "Know what it replaces" below first).
+
+It had a second use **before the OTA key existed** (it does now: `flash.json`
+pins a real key): the browser flasher's integrity rested on SHA-256 +
+same-origin then, so these assets could ship pre-ceremony, and this lit the
+flasher up while `Firmware Release` hard-stopped on the missing key. Not any
+more: this workflow signs like `Firmware Release` and refuses to run without
+`OTA_SIGNING_KEY_PEM`, since both flashers refuse an unsigned image once a
+key is pinned.
 
 **Don't:** expect it to help a tag that doesn't exist — it checks out the tag, so
 the tag has to be there first. It now fails with that sentence rather than a raw
@@ -331,7 +335,10 @@ bring-up at stable's version, never after one; and after a stable release
 whose dev-channel step went red. After a dev or rc release whose dev-channel
 step went red, press it with `source` set to that release's tag:
 `releases/latest` is never that prerelease, so the blank default cannot
-finish it, and re-running the release's job stops at its tag-exists check.
+finish it, and the button finishes it without rebuilding anything.
+Re-running the release's job is not the way: a dispatched release's re-run
+stops at its tag-exists check, but a pushed tag's has no such check and
+rebuilds, re-signs and re-uploads every asset of the published release.
 Pressing it twice writes nothing the second time, unless a same-version
 bring-up build landed in between.
 
@@ -340,14 +347,17 @@ release `releases/latest` already is, or the published release `source`
 names, and don't press it to keep a bring-up build at stable's own version:
 it replaces that with the tagged catalog (until fw-v2.4.18 ships, that
 includes the classic-ESP32 fix a `channel: dev` dispatch from main put
-there). A `source` below stable writes nothing. It refuses, and writes
-nothing, when `releases/latest` is not a `fw-v*` release, when `source` is
-not a `fw-v<version>` tag of a published release, when `fw-dev-latest` is
-not a prerelease, when the dev channel's version is unreadable, when a stable
-manifest names a file that is not an asset of that release by absolute URL (a
-copy elsewhere would stop resolving), or when `releases/latest` or the dev
-channel changed while it was deciding (another writer got there first: press it
-again).
+there). A published `source` below stable writes nothing and the run stays
+green. It refuses, and writes nothing, when `releases/latest` is not a
+`fw-v*` release, when `source` is not a `fw-v<version>` tag of a published
+release, whatever its version (so a mistyped tag goes red rather than passing
+as "nothing to do"), when `fw-dev-latest` is not a prerelease, when the dev
+channel's version is unreadable, when a stable manifest names a file that is
+not an asset of that release by absolute URL (a copy elsewhere would stop
+resolving), or when `releases/latest` or the dev channel changed while it was
+deciding (another writer got there first: press it again as the refusal says,
+with the same `source`, or blank when it was blank or a new stable has
+overtaken it).
 
 **What it never does:** move `releases/latest`, delete an asset (the old dev
 factory images stay), or make `fw-dev-latest` anything but a prerelease. Every

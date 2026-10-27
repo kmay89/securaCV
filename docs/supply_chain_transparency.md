@@ -143,9 +143,10 @@ the firmware's tag and the tooling's commit — and a single provenance statemen
 whose source ref comes from the workflow run itself, can't honestly name both; a
 statement that quietly recorded the dispatch commit as "the source" of
 tag-built firmware would be exactly the kind of misleading claim this doc exists
-to avoid. So that path keeps the SHA-256 + same-origin trust it always had
-([browser_flasher.md § Trust model](browser_flasher.md)); the factory images it
-serves are the ones the normal release already attests.
+to avoid. So that path has no provenance statement, only what the flashers
+check on every image: its SHA-256 and, now that a release key is pinned, its
+Ed25519 signature ([browser_flasher.md § Trust model](browser_flasher.md)); the
+factory images it serves are the ones the normal release already attests.
 
 The **desktop flasher** ([`desktop-flasher-release.yml`](../.github/workflows/desktop-flasher-release.yml))
 and the **Vision AI model** ([`vision-model-release.yml`](../.github/workflows/vision-model-release.yml))

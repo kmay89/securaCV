@@ -159,9 +159,10 @@ source can never disagree.
   `channel: release` targets an existing tag (blank = the current
   `releases/latest`) — e.g. after a packaging-tooling fix. `channel: dev`
   targets no tag at all: it builds the dispatch branch's HEAD onto the rolling
-  `fw-dev-latest` prerelease, needing neither a version bump nor
-  `OTA_SIGNING_KEY_PEM`. That is the bring-up path — bench hardware flashable
-  from a branch, unsigned and honest about it.
+  `fw-dev-latest` prerelease without a version bump, signed with the release
+  key like every other path (it refuses to run without `OTA_SIGNING_KEY_PEM`
+  now that a key is pinned). That is the bring-up path — bench hardware
+  flashable from a branch, checked by both flashers like a release's images.
 
 Which products appear (flashable) in the in-browser flasher is decided by
 `manifest-flash.json` in the release the page reads — the stable channel's
@@ -227,8 +228,11 @@ every Lab user unable to switch channels at all.
   script with `releases/latest`, for the catch-up and for a stable release
   whose refresh failed, or with the `fw-v*` tag its `source` input names,
   for a dev or rc release whose refresh failed: `releases/latest` is never
-  that prerelease, and re-running the release's job stops at its tag-exists
-  check (see [`RELEASE_BUTTONS.md`](RELEASE_BUTTONS.md)).
+  that prerelease, and the button finishes the copy without rebuilding
+  anything. Re-running the release's job is not the way: a dispatched
+  release's re-run stops at its tag-exists check, and a pushed tag's (the
+  `git tag` ceremony above) rebuilds, re-signs and re-uploads every asset of
+  the published release (see [`RELEASE_BUTTONS.md`](RELEASE_BUTTONS.md)).
 - **Flasher Factory Images** with `channel: dev` publishes flasher images there
   straight from a branch, with no tag (signed the same way, now that the
   release key is pinned). That is the bring-up path, and it writes the

@@ -5,9 +5,11 @@ Shared by both release paths so they can't drift:
   - .github/workflows/firmware-release.yml — on a fw-v* tag, alongside the
     signed OTA artifacts (one build, no duplication).
   - .github/workflows/flasher-release.yml  — a manual (workflow_dispatch) run
-    that rebuilds the flasher assets for an existing tag, independent of the
-    OTA signing key (the browser channel's integrity is SHA-256 + same-origin,
-    not the Ed25519 release key — see docs/browser_flasher.md § Trust model).
+    that rebuilds the flasher assets for an existing tag (or a branch, onto
+    fw-dev-latest). It signs with --signing-key like the release does now that
+    a release key is pinned; only while the key was the all-zero placeholder
+    did it publish checksum-only images (docs/browser_flasher.md § Trust
+    model).
 
 Product ids, chips, and asset stems come from canary-local/devices/flash.json —
 the same drift-gated catalog the flasher page trusts for its chip guard — so

@@ -18,12 +18,18 @@
 # at the source's version landed in between.
 #
 # The source is releases/latest unless the `source` input names a fw-v* tag.
-# That input finishes a dev or rc release whose own dev-channel step failed:
-# releases/latest is never that prerelease, and re-running the release job
-# stops at its tag-exists check. The script refuses a tag that is not
-# fw-v<version>, a release that is not published, and a source below stable
-# (it writes nothing then). The input reaches the script through the
-# environment, never spliced into the command.
+# That input finishes a dev or rc release whose own dev-channel step failed,
+# without rebuilding anything: releases/latest is never that prerelease, and
+# re-running the release's job is not the way (a dispatched release's re-run
+# stops at its tag-exists check; a pushed tag's rebuilds, re-signs and
+# re-uploads every asset of the release). The script refuses, writing
+# nothing, a tag that is not fw-v<version> and one that is not a published
+# release, whatever its version, so a mistyped tag goes red; a published
+# source below stable is not refused but writes nothing and exits 0. When a
+# race refuses a run, the refusal says how to press it again: with the same
+# `source`, or blank (when it was blank, or a new stable overtook it). The
+# input reaches the script through the environment, never spliced into the
+# command.
 #
 # What it never does: move releases/latest, delete an asset (the old dev
 # factory images stay), or make fw-dev-latest anything but a prerelease. Every

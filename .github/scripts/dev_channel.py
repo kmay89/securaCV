@@ -26,8 +26,10 @@ catalog), and each is copied when fw-dev-latest lacks it, carries an older
 version than the source, or carries the same version in other bytes (a
 bring-up build of that version, or the source's catalog before a rebuild:
 the tagged release's bytes win). A newer dev build is left alone, and a
-source older than stable writes nothing: this never takes the dev channel
-below `releases/latest`. Versions are ordered the way the device orders them
+source older than stable writes nothing and exits 0: this never takes the dev
+channel below `releases/latest`. A source that is not a published release is
+refused first, whatever its version, so a mistyped tag is never a green
+no-op. Versions are ordered the way the device orders them
 (`securacv_version_compare`: the triple, then stable > rc.N > dev.N, numeric
 within a band), so 2.4.18-dev.1 > 2.4.17 > 2.4.17-rc.1.
 
@@ -46,8 +48,9 @@ fw-dev-latest anything but a prerelease, or move `releases/latest`. Every
 create and edit passes `--prerelease --latest=false`, and it fails unless
 `releases/latest` names the same fw-v* release afterwards as before. It
 writes nothing if `releases/latest` or fw-dev-latest's markers moved while it
-was deciding (another writer got there first; run it again, through the
-button's `source` input when the source was a release's own tag).
+was deciding (another writer got there first): the refusal says how to run it
+again, the button with this run's `source` when it was given one, blank when
+it was not.
 
     python3 .github/scripts/dev_channel.py --repo owner/name [--source fw-vX.Y.Z] [--dry-run]
     python3 .github/scripts/dev_channel.py --repo owner/name --check-train X.Y.Z
@@ -79,11 +82,6 @@ SUMS = "sha256sums.txt"
 FLAGSHIP = "manifest-canary.json"
 PRODUCT_GLOB = "manifest-canary*.json"
 REQUIRED = (FLASH, INDEX, SUMS, FLAGSHIP)
-# A run that wrote nothing because another writer moved first is redone with
-# the button and this run's source. A firmware release's own run cannot be
-# re-run: its version step refuses the tag the run just created.
-AGAIN = ("Run it again: Actions → Refresh the dev channel, with source {source} "
-         "(re-running a release's job stops at its tag-exists check)")
 
 
 class Refusal(Exception):
@@ -152,13 +150,38 @@ def tag_version(tag: str) -> str:
     return tag[4:]
 
 
+def retry_hint(asked: str | None, latest_now: str | None = None) -> str:
+    """How to redo a run that wrote nothing because another writer moved first.
+
+    `asked` is the source this run was given (None: the button pressed blank,
+    which means releases/latest). The button finishes the copy without
+    rebuilding anything. Re-running the release job that ran this is not the
+    way, and not a harmless no-op either: a dispatched release's re-run stops
+    at its tag-exists check, but a pushed tag's re-run (and a Flasher Factory
+    Images re-run) rebuilds, re-signs and re-uploads every asset of the
+    release. A named source that `latest_now` has since overtaken is below
+    stable, where a run with it writes nothing, so the blank press is the one
+    that catches up.
+    """
+    blank = "Press Actions → Refresh the dev channel again, with source blank"
+    if asked is None:
+        return f"{blank}."
+    if latest_now and latest_now.startswith("fw-v") and version_key(latest_now[4:]) is not None \
+            and compare(asked[4:], latest_now[4:]) < 0:
+        return f"{asked} is below stable {latest_now[4:]} now. {blank}."
+    return (f"Run it again: Actions → Refresh the dev channel, with source {asked}; that finishes "
+            f"the copy without rebuilding anything. Not by re-running a release's job: a "
+            f"dispatched release's re-run stops at its tag-exists check, and a pushed tag's (or a "
+            f"Flasher Factory Images) re-run rebuilds, re-signs and re-uploads every asset")
+
+
 # ─────────────────────────────── decisions ─────────────────────────────────
 
 
 def decide(source: str, trains: dict[str, str | None], differs=frozenset()) -> dict[str, tuple[bool, str]]:
     """Per group: (copy it?, why). `trains` is what fw-dev-latest carries now;
     `differs` names the groups whose marker there is not the source's, byte
-    for byte. The caller has already refused a source below stable."""
+    for byte. The caller has already stopped short of a source below stable."""
     out = {}
     for g in GROUPS:
         train = trains.get(g.name)
@@ -371,15 +394,18 @@ def sync(gh: GitHub, source: str | None = None, dry_run: bool = False,
     """Bring fw-dev-latest up to `source` (default releases/latest) where it is
     older. Returns whether anything was written."""
     latest, stable = _stable(gh)
+    asked = source
     source = source or latest
     version = tag_version(source)
+    # Before the below-stable no-op, so a mistyped tag is refused rather than
+    # passed as green "nothing to do".
+    rel = gh.release(source)
+    if rel is None or rel.get("draft"):
+        raise Refusal(f"{source} is not a published release")
     if compare(version, stable) < 0:
         log(f"{source} is older than stable {stable}, and this never takes the dev channel below "
             f"stable: nothing to do")
         return False
-    rel = gh.release(source)
-    if rel is None or rel.get("draft"):
-        raise Refusal(f"{source} is not a published release")
     names = _names(rel)
     missing = [n for n in REQUIRED if n not in names]
     if missing:
@@ -422,7 +448,7 @@ def sync(gh: GitHub, source: str | None = None, dry_run: bool = False,
         now = gh.latest_tag()
         if now != latest:
             raise Refusal(f"releases/latest moved from {latest} to {now} while this run was "
-                          f"deciding, so nothing was written. {AGAIN.format(source=source)}")
+                          f"deciding, so nothing was written. {retry_hint(asked, now)}")
         again = gh.release(DEV_TAG)
         moved = (again is None) != (dev is None) or [m for m in markers if m in _names(again)] != on_dev
         if not moved and on_dev:
@@ -431,7 +457,7 @@ def sync(gh: GitHub, source: str | None = None, dry_run: bool = False,
                         for m in on_dev)
         if moved:
             raise Refusal(f"{DEV_TAG} changed while this run was deciding (another writer got "
-                          f"there first), so nothing was written. {AGAIN.format(source=source)}")
+                          f"there first), so nothing was written. {retry_hint(asked)}")
         # The body goes first: it says where this run takes the channel, and a
         # run cut short after it is redone whole by the next (the markers are
         # still the old ones), body included. Each group's marker goes up last,

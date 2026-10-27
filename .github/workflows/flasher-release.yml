@@ -9,8 +9,10 @@ name: Flasher Factory Images
 #       a new version (e.g. after a make_factory.py / packaging fix). The
 #       firmware built is still the tag's; only the packaging tooling is
 #       today's (overlay below), so a builder fix reaches already-cut tags.
-#     - Pre-key publishing for a tag that exists but whose signed release
-#       hard-stopped on the missing OTA_SIGNING_KEY_PEM.
+#     - Before the key ceremony it was also the pre-key path: a tag whose
+#       signed release hard-stopped on the missing OTA_SIGNING_KEY_PEM still
+#       got its factory images here. Not since a real key is pinned: this
+#       workflow then stops on the missing secret too (see below).
 #
 #   • channel: dev — the rolling `fw-dev-latest` prerelease, built from the
 #     DISPATCH REF's HEAD. No tag, no version bump; signed with the release
@@ -645,9 +647,11 @@ jobs:
       # source ref (the dispatch commit) doesn't equal the firmware's tag — a
       # single SLSA statement can't honestly name one source. The normal signed
       # release (firmware-release.yml) builds the SAME factory images from the
-      # tag itself and attests them accurately; this out-of-band path keeps the
-      # SHA-256 + same-origin trust it always had (docs/browser_flasher.md
-      # § Trust model, docs/supply_chain_transparency.md § Scope).
+      # tag itself and attests them accurately; this out-of-band path has no
+      # provenance statement, only what the flashers check on every image:
+      # its SHA-256 and, now that a release key is pinned, its Ed25519
+      # signature (docs/browser_flasher.md § Trust model,
+      # docs/supply_chain_transparency.md § Scope).
       # Two publish steps, not one with conditional inputs: passing an empty
       # `body` to action-gh-release would blank an existing release's notes,
       # and the release channel's whole contract is that it ADDS flasher assets
