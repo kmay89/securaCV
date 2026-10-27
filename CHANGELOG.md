@@ -1,6 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+### The backoffice can say it has not been breached (backoffice 0.8.0)
+
+- The audit log is an HMAC chain under a key outside the database, verified
+  daily and on demand, anchored off the box by the morning digest; a SECURITY
+  block that answers the questions a person asks about the last 24 hours;
+  lockdown in one step; tripwire paths; blocks that survive a restart; a
+  self-check at boot; `MAINTENANCE.md`.
+
 ### canary-wap: after setup the API token alone moves its network over HTTP (a Bluetooth peer bonded through the pairing confirm or a passkey still moves it; a network joined before the update can stay saved), re-keys its vault, confirms a pairing and reboots it (the firmware install aside), and the sign-in checks a pasted token by itself; a failed provisioning says what the unit does (sweep F333, F334, F335, F336, F345, F346, F348, F349, F361, #1887)
 
 - **canary-wap: one dashboard sign-in, which checks a pasted token by itself

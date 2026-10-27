@@ -103,6 +103,9 @@ arriving, that is itself the alarm.
 1. Open Home. Read the cards. Do what they say.
 2. Open Health. Everything green? Then nothing is silently wrong.
 3. Open Exceptions. Empty? Then nothing needs a decision.
-4. Once a month, read the Audit log for the word *failed*.
+4. Read the SECURITY block at the end of the digest: *quiet* is the word you want; anything else is named.
+5. Once a month, `backoffice verify --anchor <the anchor line from a digest a week old>`.
+
+The longer version, with the day something looks wrong, is `MAINTENANCE.md`.
 
 That is the whole practice. Everything else is automated and recorded.
