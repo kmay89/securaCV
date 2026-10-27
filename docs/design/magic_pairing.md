@@ -603,7 +603,7 @@ sessions could end it before its save. Before F346 a host also in radio
 range could bond a Bluetooth peer of its own through its session and write
 the WAP's Wi-Fi over the bonded lane, `ble_provision.cpp`'s CREDS,
 `WRITE_ENC | WRITE_AUTHEN`; the bond's confirm and a Passkey Entry's digits
-take the bearer now, and a bond a session confirmed before that release
+take the bearer now, and a bond a session confirmed on 2.4.17 or earlier
 persists until the owner removes it.) And the move lasts only
 while the new network stays up. The WAP keeps every network it has joined
 (up to four, `wifi_store.h`), the striking host's among them, and when the

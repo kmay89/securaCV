@@ -556,7 +556,7 @@ it *without* the key and shows a banner with three ways in:
 
 - tap the **BOOT** button on the Canary, then reload within 30 seconds
   (one tap unlocks one page load; reloading it later needs another tap);
-- join the Canary's own Wi-Fi (`SecuraCV-wap-XXXX`) while it is still
+- join the Canary's own Wi-Fi (`SecuraCV-canary-XXXX`) while it is still
   broadcasting (it stops once your home Wi-Fi is working); or
 - paste the token from your recovery kit into the banner. It is kept only
   for that browser tab, never saved.

@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### canary-wap: after setup the API token alone moves its network (a network joined before the update can stay saved), re-keys its vault, confirms a pairing and reboots it (the firmware install aside), and the sign-in checks a pasted token by itself; a failed provisioning says what the unit does (sweep F333, F334, F335, F336, F345, F346, F348, F349, F361, #<PR>)
+### canary-wap: after setup the API token alone moves its network over HTTP (a peer already bonded over Bluetooth still moves it; a network joined before the update can stay saved), re-keys its vault, confirms a pairing and reboots it (the firmware install aside), and the sign-in checks a pasted token by itself; a failed provisioning says what the unit does (sweep F333, F334, F335, F336, F345, F346, F348, F349, F361, #<PR>)
 
 - **canary-wap: one dashboard sign-in, which checks a pasted token by itself
   (the owner-authority items' shared sign-in).** On a page holding the
@@ -22,7 +22,7 @@
   pasting the token first. Host-tested (`dashboard_gates.test.js`,
   `recovery_kit.test.js`).
 - **canary-wap: after setup the API token alone moves the network the WAP
-  joins (sweep F334, F345, F333).** The landing page hands any caller on the
+  joins over HTTP (sweep F334, F345, F333).** The landing page hands any caller on the
   home network a pair token and a 24-hour session, and both moved the
   network: `POST /api/wifi/connect` and `/api/wifi/ap-only` went ahead on
   the pair token or the cookie, and `/api/wifi/disconnect` and
@@ -35,7 +35,10 @@
   frame). During setup Connect and AP-only are unchanged (the wizard's pair
   token still moves the network), while Disconnect and Forget take the
   bearer in every mode, so a session the receipt route minted during setup
-  no longer reaches them. On the dashboard, Settings → Wi-Fi
+  no longer reaches them. A Bluetooth peer already bonded, one a session
+  confirmed on 2.4.17 or earlier among them, still moves the network with
+  no token, over the Wi-Fi credentials write (the bond's confirm takes the
+  token since F346, below). On the dashboard, Settings → Wi-Fi
   says the token is needed and asks for it (paste it from the recovery kit,
   or use BOOT Tap Once); on the recovery network the tap is reliable, since
   the SoftAP takes one client. Forget now also clears the stored broker
@@ -143,7 +146,7 @@
   dashboard's token box and Forget confirm, and the iPhone's
   set-it-up-again advice, which now says Remove credentials asks for the
   token first), and `test_docs_claims.py` retires each where it stood. No
-  route or gate changed in the merge.
+  route or gate changed in the merge that brought #1884 in.
 
 ## [2.4.17] - 2026-10-27
 
@@ -1162,14 +1165,15 @@ owners updating from 2.4.16.
   ledger entry names connect and ap-only, not the scan *(amended 2026-10-27,
   the owner-authority PR, #<PR>, after 2.4.17: F334 is done; after setup
   connect and ap-only take the bearer alone and the scan's start answers
-  `404`, so the pair token serves only the first-boot wizard)*. And a
+  `404`, so after setup a carried pair token no longer works on connect,
+  ap-only or the scan's start, though its status and stop still take one)*. And a
   standalone unit with a camera keeps scanning for a Wi-Fi QR code after
   setup, so a carried token reads that scan's status and stops it *(amended
-  the same day, same PR: since F333 the boot scan runs only while no network
-  is stored and the unit is not standalone, `keyless_join_open()`, so a
-  standalone unit does not scan, and after setup a carried token reads and
-  stops a boot scan only on a unit with no network stored that is not
-  standalone)*.) The WAP now stages the shared
+  the same day, same PR, after 2.4.17: since F333 the boot scan runs only
+  while no network is stored and the unit is not standalone,
+  `keyless_join_open()`, so a standalone unit does not scan, and after setup
+  a carried token reads and stops a boot scan only on a unit with no network
+  stored that is not standalone)*.) The WAP now stages the shared
   `firmware/common/network/host_guard.h` that the flagship and the display
   already use (byte-identical, held by `check_improv_sync.sh`). After setup,
   `/`, `/?cv_pair=`, `/admin`, `/settings` and `/companion` answer a Host that

@@ -370,10 +370,11 @@ as a bearer header or the dashboard's session cookie, except where the
 bearer header alone is taken, because the landing page mints that session
 for any host on the home network: `/api/pairing-qr` (it carries the token)
 here, and among the routes not listed `POST /api/vault/key` (F335), `POST
-/api/bluetooth/pair/confirm` and `POST /api/mesh/pair/confirm` (F346), after
-setup `POST /api/wifi/connect`, `/ap-only`, `/disconnect` and `/forget`
-(F334, F345; `POST /api/wifi/qr-scan` answers `404` after setup), and `POST
-/api/reboot` and `POST /api/safe-mode/retry` (F361). The
+/api/bluetooth/pair/confirm` and `POST /api/mesh/pair/confirm` (F346), `POST
+/api/wifi/disconnect` and `/forget` in every mode and, after setup,
+`/connect` and `/ap-only` (F334, F345; `POST /api/wifi/qr-scan` answers
+`404` after setup), and `POST /api/reboot` and `POST /api/safe-mode/retry`
+(F361). The
 `/api/mqtt/config` row names the one save the session alone cannot make
 there. The dashboard asks for the token at those actions: before Start
 Pairing and the opera's Create/Join begin, and when any of the others is

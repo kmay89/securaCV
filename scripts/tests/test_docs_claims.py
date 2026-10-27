@@ -3161,6 +3161,87 @@ RETIRED_IN = (
     ('firmware/projects/canary-wap/arduino/canary_wap/household_api.h',
      'the routes SECURITY_MODEL.md lists take the bearer alone.',
      'they take the bearer, never the session: the receipt on that list also takes its BOOT tap and the setup door\'s claim'),
+    # The review of the merge with the 2.4.17 train: the FAQ's "from this
+    # release on" and "an earlier release", which now read as 2.4.17 (the
+    # answer names it, and 2.4.17's Forget, bond confirm and Wi-Fi change
+    # take a landing session), and their siblings in the security models,
+    # the pairing design, the lesson and ble_console.h; the [Unreleased]
+    # heading, the F334 bullet's lead and the checklist heading, which gave
+    # the token every network move though a bonded peer's Bluetooth
+    # credentials write moves it with no token; the F344 amendment and the
+    # security models' "the pair token serves only the first-boot wizard",
+    # though after setup a pair token still opens a session at /?cv_pair=
+    # and takes the scan's status and stop; the F333 amendment, which did
+    # not name after 2.4.17; "the merge", which the PR now holds two of;
+    # the WAP README's and wap_server.h's lists, which put Disconnect and
+    # Forget on the bearer after setup only; and the all-rounder's unlock
+    # list, which gave it the WAP's network name.
+    ("docs/FAQ.md",
+     "On a WAP from this release on, after setup Forget Wi-Fi, which reopens the door for half an hour unless the WAP runs standalone",
+     "on a WAP running a release after 2.4.17, once it is set up: the answer names 2.4.17, whose Forget and bond confirm take a landing session (api_auth_check()), so 'this release' read as 2.4.17 was false"),
+    ("docs/FAQ.md",
+     "A bond confirmed on an earlier release stays until you remove it",
+     "a bond confirmed on 2.4.17 or earlier, the release the answer names"),
+    ("docs/FAQ.md",
+     "a network such a page moved it to on an older release can stay",
+     "on 2.4.17 or earlier, whose landing session and pair token moved the network"),
+    ("docs/FAQ.md",
+     "Once a WAP is set up, changing its Wi-Fi there asks for the API token",
+     "once a WAP running a release after 2.4.17 is set up: on 2.4.17 a landing session or a pair token moves it"),
+    ("CHANGELOG.md",
+     "after setup the API token alone moves its network (a network joined before the update can stay saved)",
+     "over HTTP: a peer already bonded over Bluetooth still moves it with no token, over the credentials write (ble_request_wifi_provisioning())"),
+    ("CHANGELOG.md",
+     "the API token alone moves the network the WAP joins (sweep F334, F345, F333).",
+     "joins over HTTP; the bullet says a peer already bonded over Bluetooth still moves it with no token"),
+    ("CHANGELOG.md",
+     "answers `404`, so the pair token serves only the first-boot wizard)*",
+     "after setup a pair token still opens a session at /?cv_pair= and takes the scan's status and stop (qr_scan_request_allowed()); what F334 ended is a carried pair token on connect, ap-only and the scan's start"),
+    ("CHANGELOG.md",
+     "so a carried token reads that scan's status and stops it *(amended the same day, same PR: since F333",
+     "the amendment names after 2.4.17, as the ledger's merge note says each F344 amendment does"),
+    ("CHANGELOG.md",
+     "retires each where it stood. No route or gate changed in the merge.",
+     "the merge that brought #1884 in: the PR holds a second merge, with the 2.4.17 train"),
+    ("docs/security/SECURITY_MODEL.md",
+     "Since F334 the pair token serves only the first-boot wizard",
+     "since F334, after setup a carried pair token no longer works on connect, ap-only or the scan's start; it still opens a session at /?cv_pair= and takes the scan's status and stop"),
+    ("docs/security/THREAT_MODEL.md",
+     "Since F334 the pair token serves only the first-boot wizard",
+     "the same, in the DNS-rebinding row"),
+    ("docs/security/THREAT_MODEL.md",
+     "A key a session registered before this release stays the recipient",
+     "on 2.4.17 or earlier: 'this release' in a living doc reads as the reader's own"),
+    ("docs/security/THREAT_MODEL.md",
+     "Bonds a session confirmed before this release persist",
+     "on 2.4.17 or earlier, whose bond confirm took a landing session"),
+    ("docs/security/THREAT_MODEL.md",
+     "Peers a session paired before this release persist",
+     "on 2.4.17 or earlier, whose mesh confirm took a landing session"),
+    ("docs/security/SECURITY_MODEL.md",
+     "a bond a session confirmed before that release persists",
+     "on 2.4.17 or earlier: 'that release' had only 'now' and F346, a ledger item, to point to"),
+    ("docs/design/magic_pairing.md",
+     "a bond a session confirmed before that release persists",
+     "on 2.4.17 or earlier, as the security model says"),
+    ("firmware/LESSONS_LEARNED.md",
+     "a bond a session confirmed on an earlier release stays",
+     "on 2.4.17 or earlier, as the CHANGELOG's amendments say"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/ble_console.h",
+     "a bond a session confirmed before that release persists",
+     "on 2.4.17 or earlier"),
+    ("docs/getting_started_canary.md",
+     "join the Canary's own Wi-Fi (`SecuraCV-wap-XXXX`) while it is still broadcasting",
+     "the list is the all-rounder's, whose own network is SecuraCV-canary-XXXX (onboarding_fsm.h's NODE_CANARY, securacv_witness.h)"),
+    ("firmware/projects/canary-wap/README.md",
+     "(F346), after setup `POST /api/wifi/connect`, `/ap-only`, `/disconnect` and `/forget`",
+     "Disconnect and Forget take the bearer alone in every mode, Connect and AP-only after setup (api_auth.h, the wrappers in canary_wap.ino)"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/wap_server.h",
+     "(after setup connect, AP-only, disconnect and forget: bearer alone, F334)",
+     "disconnect and forget in every mode, connect and AP-only after setup"),
+    ("docs/audit/hardware_verification_checklist.md",
+     "## canary-wap: after setup the API token alone moves the network, re-keys the vault,",
+     "over HTTP: a peer already bonded over Bluetooth still moves it with no token"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -3246,8 +3327,9 @@ MUST_PASS = [
     # The owner-authority PR's replacements.
     "The camera's QR hub re-point stays outside that rule on purpose (sweep "
     "F333): every code also chooses the network the unit joins",
-    "Since F334 the pair token serves only the first-boot wizard: after setup "
-    "the first two take the bearer alone and the scan's start answers `404`.",
+    "Since F334, after setup a carried pair token no longer works on the first "
+    "two or on the scan's start: the first two take the bearer alone and the "
+    "start answers `404`.",
     "pairs by Passkey Entry, which needs the six digits the WAP shows in the "
     "PIN box of a page signed in with the API token (since F346 no longer in "
     "the health log)",
@@ -4354,7 +4436,7 @@ MUST_PASS_IN = [
     ('docs/firmware_ota.md',
      "Reconnect via dashboard (canary/WAP), or join the setup network from a phone and enter the new password (vision/sense). A USB install also works, but either flasher's install starts the board's settings over: a new witness key and, on most boards, a new device id and new Home Assistant entities (the canary-vision section above), so keep it for when neither path can be reached |"),
     ("docs/FAQ.md",
-     "`SecuraCV-<kind>-XXXX` recovery network instead, which needs the key printed for it. So the setup door offers nothing to a stranger's phone while a Canary stays on your network, on a good day or a bad one. On a WAP from this release on, after setup Forget Wi-Fi, which reopens the door for half an hour unless the WAP runs standalone, asks for the API token, and so does the confirm that bonds a phone to the WAP's other Bluetooth lane, which takes a new Wi-Fi network; a page any device on your network opens no longer sends either. A bond confirmed on an earlier release stays until you remove it under Settings → Bluetooth (the [security model](security/SECURITY_MODEL.md) has the details)."),
+     "`SecuraCV-<kind>-XXXX` recovery network instead, which needs the key printed for it. So the setup door offers nothing to a stranger's phone while a Canary stays on your network, on a good day or a bad one. On a WAP running a release after 2.4.17, once it is set up, Forget Wi-Fi, which reopens the door for half an hour unless the WAP runs standalone, asks for the API token, and so does the confirm that bonds a phone to the WAP's other Bluetooth lane, which takes a new Wi-Fi network; a page any device on your network opens no longer sends either. A bond confirmed on 2.4.17 or earlier stays until you remove it under Settings → Bluetooth (the [security model](security/SECURITY_MODEL.md) has the details)."),
     ('docs/security/THREAT_MODEL.md',
      '- Private keys are not "access-controlled" — the firmware has no read\n'
      '  interface for them (a whole-flash read, over USB through the ROM download\n'
@@ -4511,7 +4593,7 @@ MUST_PASS_IN = [
     ("firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h",
      "// 10 an hour leaves a fumbling user room to retype a password. The\n// cooldown and the cap are one budget for every bonded peer together, so a\n// bonded peer that keeps writing keeps the owner's write refused for the\n// hour (SECURITY_MODEL.md, ledger F346): they slow a guesser and do not\n// keep out a bonded peer, such as one a landing session bonded before F346\n// moved the bond's confirm and a Passkey Entry's digits to the bearer."),
     ("firmware/projects/canary-wap/arduino/canary_wap/ble_console.h",
-     "* The bond is established via Numeric Comparison (MITM-safe after PR A), * and since F346 its confirm, and a Passkey Entry's digits, take the * bearer; a bond a session confirmed before that release persists until * the owner removes it, so the console still exposes nothing a landing * session cannot already read over WiFi."),
+     "* The bond is established via Numeric Comparison (MITM-safe after PR A), * and since F346 its confirm, and a Passkey Entry's digits, take the * bearer; a bond a session confirmed on 2.4.17 or earlier persists until * the owner removes it, so the console still exposes nothing a landing * session cannot already read over WiFi."),
     ('firmware/projects/canary-wap/arduino/canary_wap/household_api.h',
      ' * Every endpoint passes api_auth_check, which takes the bearer or a\n'
      ' * dashboard session cookie, and the landing page mints that cookie for\n'
@@ -5095,9 +5177,10 @@ MUST_PASS_IN = [
      "number of older sessions before the app's and each session minted in a second of uptime of its own, the eighth session minted after it is the one that ends it"),
     # The owner-authority PR review's replacements.
     ("CHANGELOG.md",
-     "after setup the API token alone moves its network (a network joined "
-    "before the update can stay saved), re-keys its vault, confirms a pairing "
-    "and reboots it (the firmware install aside)"),
+     "after setup the API token alone moves its network over HTTP (a peer "
+    "already bonded over Bluetooth still moves it; a network joined before the "
+    "update can stay saved), re-keys its vault, confirms a pairing and reboots "
+    "it (the firmware install aside)"),
     ("CHANGELOG.md",
      "canary-wap: the API token alone reboots the unit, the firmware install "
     "aside (sweep F361)."),
@@ -5105,8 +5188,9 @@ MUST_PASS_IN = [
      "every write that grants a credential (the vault key, the two confirms), "
     "and the two reboot routes;"),
     ("docs/audit/hardware_verification_checklist.md",
-     "after setup the API token alone moves the network, re-keys the vault, "
-    "confirms a pairing and, the firmware install aside, reboots the unit"),
+     "after setup the API token alone moves the network over HTTP, re-keys the "
+    "vault, confirms a pairing and, the firmware install aside, reboots the "
+    "unit"),
     # The second review's replacements.
     ("firmware/projects/canary-wap/arduino/canary_wap/README.md",
      "it can still write blind with the owner's session (any write a session "
@@ -5169,9 +5253,11 @@ MUST_PASS_IN = [
      "ledger entry names connect and ap-only, not the scan *(amended 2026-10-27, "
     "the owner-authority PR, #<PR>, after 2.4.17: F334 is done; after setup "
     "connect and ap-only take the bearer alone and the scan's start answers "
-    "`404`, so the pair token serves only the first-boot wizard)*. And a"),
+    "`404`, so after setup a carried pair token no longer works on connect, "
+    "ap-only or the scan's start, though its status and stop still take one)*. "
+    "And a"),
     ("CHANGELOG.md",
-     "scan's status and stops it *(amended the same day, same PR: since F333 "
+     "scan's status and stops it *(amended the same day, same PR, after 2.4.17: since F333 "
     "the boot scan runs only while no network is stored and the unit is not "
     "standalone, `keyless_join_open()`, so a standalone unit does not scan"),
     ("docs/csi_developer_api.md",
@@ -5243,9 +5329,9 @@ MUST_PASS_IN = [
     ("docs/audit/repo_todo_sweep_2026-09.md",
      "  held), and `nine_striking_addresses_hold_the_owners_bearer` in the same\n  `test_wifi_authority.cpp` (nine addresses strike, then a tenth's right\n  bearer gets `429` on the Wi-Fi gate and on Forget while the overflow runs,"),
     ("docs/FAQ.md",
-     "On a WAP from this\nrelease on, after setup Forget Wi-Fi, which reopens the door for half an\nhour unless the WAP runs standalone, asks for the API token,"),
+     "On a WAP running a\nrelease after 2.4.17, once it is set up, Forget Wi-Fi, which reopens the\ndoor for half an hour unless the WAP runs standalone, asks for the API\ntoken,"),
     ("docs/FAQ.md",
-     "A bond confirmed on an\nearlier release stays until you remove it under Settings → Bluetooth (the"),
+     "A bond confirmed on 2.4.17 or\nearlier stays until you remove it under Settings → Bluetooth (the"),
     ("ios/Sources/SecuraCV/Views/PairView.swift",
      "Remove credentials, which asks for its API token first: choose Use BOOT Tap Once in the sign-in and short-tap BOOT when the page says to, then press Remove credentials again"),
     ("CHANGELOG.md",
@@ -5355,9 +5441,9 @@ MUST_PASS_IN = [
      "  choice set and the door shut), and the door's claim goes to the first\n"
      "  phone in range (magic_pairing.md §8). Host-tested, not bench-tested."),
     ("docs/security/THREAT_MODEL.md",
-     "confirmed before this release persist until the owner removes them. Since F345, Forget Wi-Fi takes the bearer, so a session cannot re-open the Bluetooth setup door and buy the receipt with its claim. Only the owner's own bearer Forget, or the 10 s BOOT hold, re-arms the door; until the unit is set up again it is in first-boot trust (after a Forget, unless it runs standalone: Forget leaves that choice set and the door shut), and the door's claim goes to the first phone in range (magic_pairing.md §8)."),
+     "confirmed on 2.4.17 or earlier persist until the owner removes them. Since F345, Forget Wi-Fi takes the bearer, so a session cannot re-open the Bluetooth setup door and buy the receipt with its claim. Only the owner's own bearer Forget, or the 10 s BOOT hold, re-arms the door; until the unit is set up again it is in first-boot trust (after a Forget, unless it runs standalone: Forget leaves that choice set and the door shut), and the door's claim goes to the first phone in range (magic_pairing.md §8)."),
     ("docs/security/THREAT_MODEL.md",
-     "before this release stays the recipient until the owner removes it. Since F345, Forget Wi-Fi takes the bearer, so a session cannot re-open the Bluetooth setup door and buy the receipt with its claim. Only the owner's own bearer Forget, or the 10 s BOOT hold, re-arms the door; until the unit is set up again it is in first-boot trust (after a Forget, unless it runs standalone: Forget leaves that choice set and the door shut), and the door's claim goes to the first phone in range (magic_pairing.md §8)."),
+     "on 2.4.17 or earlier stays the recipient until the owner removes it. Since F345, Forget Wi-Fi takes the bearer, so a session cannot re-open the Bluetooth setup door and buy the receipt with its claim. Only the owner's own bearer Forget, or the 10 s BOOT hold, re-arms the door; until the unit is set up again it is in first-boot trust (after a Forget, unless it runs standalone: Forget leaves that choice set and the door shut), and the door's claim goes to the first phone in range (magic_pairing.md §8)."),
     ("docs/design/magic_pairing.md",
      "  After the owner's own Forget or the 10 s hold the unit is in first-boot\n"
      "  trust again (after a Forget, unless it runs standalone: Forget leaves\n"
@@ -5406,6 +5492,48 @@ MUST_PASS_IN = [
      'except the receipt, which takes the accounted `api_auth_bearer_grant()`\n'
      'beside its own BOOT tap and setup-door claim; `api_auth.h` points here for\n'
      'the list):'),
+    # The review of the merge with the 2.4.17 train: the replacements an
+    # updated pin above does not already hold.
+    ("docs/FAQ.md",
+     "Once a WAP\nrunning a release after 2.4.17 is set up, changing its Wi-Fi there asks for\n"
+     "the API token (paste it from your recovery kit) or one BOOT tap, on the\nrecovery network too:"),
+    ("docs/FAQ.md",
+     "(a network such a page moved it\nto on 2.4.17 or earlier can stay among its saved networks,"),
+    ("CHANGELOG.md",
+     "- **canary-wap: after setup the API token alone moves the network the WAP\n"
+     "  joins over HTTP (sweep F334, F345, F333).**"),
+    ("CHANGELOG.md",
+     "A Bluetooth peer already bonded, one a session\n"
+     "  confirmed on 2.4.17 or earlier among them, still moves the network with\n"
+     "  no token, over the Wi-Fi credentials write (the bond's confirm takes the\n"
+     "  token since F346, below)."),
+    ("CHANGELOG.md",
+     "No\n  route or gate changed in the merge that brought #1884 in."),
+    ("docs/security/SECURITY_MODEL.md",
+     "Since F334, after setup a carried\npair token no longer works on the first two or on the scan's start: the\n"
+     "first two take the bearer alone and the start answers `404`."),
+    ("docs/security/THREAT_MODEL.md",
+     "Since F334, after setup a carried pair token no longer works on the first two or on the scan's start: the first two take the bearer alone and the start answers `404`."),
+    ("docs/security/THREAT_MODEL.md",
+     "  `auth_gate()`. Peers a session paired on 2.4.17 or earlier persist until\n"
+     "  the owner removes them."),
+    ("docs/security/SECURITY_MODEL.md",
+     "bond's confirm and a Passkey Entry's digits take the bearer now, and a\n"
+     "bond a session confirmed on 2.4.17 or earlier persists until the owner\nremoves it.)"),
+    ("docs/design/magic_pairing.md",
+     "take the bearer now, and a bond a session confirmed on 2.4.17 or earlier\n"
+     "persists until the owner removes it.)"),
+    ("firmware/LESSONS_LEARNED.md",
+     "  longer; a bond a session confirmed on 2.4.17 or earlier stays until the\n"
+     "  owner removes it)*."),
+    ("docs/getting_started_canary.md",
+     "- join the Canary's own Wi-Fi (`SecuraCV-canary-XXXX`) while it is still\n  broadcasting"),
+    ("firmware/projects/canary-wap/README.md",
+     "`POST\n/api/wifi/disconnect` and `/forget` in every mode and, after setup,\n"
+     "`/connect` and `/ap-only` (F334, F345;"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/wap_server.h",
+     " *                                           (bearer alone: disconnect and forget in every mode, connect and\n"
+     " *                                           AP-only after setup; F334, F345)"),
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -7773,6 +7901,74 @@ MUST_FAIL_IN = [
     ('firmware/projects/canary-wap/arduino/canary_wap/household_api.h',
      ' * any host on the network (ledger F346). Most of the API takes the same\n'
      ' * gate; the routes SECURITY_MODEL.md lists take the bearer alone.'),
+    # The review of the merge with the 2.4.17 train: the forms as they stood
+    # at 13c17f1d.
+    ("docs/FAQ.md",
+     "stays on your network, on a good day or a bad one. On a WAP from this\n"
+     "release on, after setup Forget Wi-Fi, which reopens the door for half an\n"
+     "hour unless the WAP runs standalone, asks for the API token, and so does"),
+    ("docs/FAQ.md",
+     "longer sends either. A bond confirmed on an\n"
+     "earlier release stays until you remove it under Settings → Bluetooth (the"),
+    ("docs/FAQ.md",
+     "its own (a network such a page moved it to on an older release can stay\n"
+     "among its saved networks, which the WAP tries by itself when its own"),
+    ("docs/FAQ.md",
+     "`SecuraCV-wap-XXXX` network when it is off your home network). Once a WAP is\n"
+     "set up, changing its Wi-Fi there asks for the API token (paste it from your\n"
+     "recovery kit) or one BOOT tap,"),
+    ("CHANGELOG.md",
+     "### canary-wap: after setup the API token alone moves its network (a network "
+     "joined before the update can stay saved), re-keys its vault, confirms a "
+     "pairing and reboots it"),
+    ("CHANGELOG.md",
+     "- **canary-wap: after setup the API token alone moves the network the WAP\n"
+     "  joins (sweep F334, F345, F333).** The landing page hands any caller on the"),
+    ("CHANGELOG.md",
+     "  connect and ap-only take the bearer alone and the scan's start answers\n"
+     "  `404`, so the pair token serves only the first-boot wizard)*. And a"),
+    ("CHANGELOG.md",
+     "  standalone unit with a camera keeps scanning for a Wi-Fi QR code after\n"
+     "  setup, so a carried token reads that scan's status and stops it *(amended\n"
+     "  the same day, same PR: since F333 the boot scan runs only while no network"),
+    ("CHANGELOG.md",
+     "  token first), and `test_docs_claims.py` retires each where it stood. No\n"
+     "  route or gate changed in the merge.\n"),
+    ("docs/security/SECURITY_MODEL.md",
+     "its ten minutes during first-boot setup. Since F334 the pair token serves\n"
+     "only the first-boot wizard: after setup the first two take the bearer alone\n"
+     "and the scan's start answers `404`."),
+    ("docs/security/THREAT_MODEL.md",
+     "Since F334 the pair token serves only the first-boot wizard: after setup the first two take the bearer alone and the scan's start answers `404`."),
+    ("docs/security/THREAT_MODEL.md",
+     "A LAN session can destroy sealed frames but not redirect them. A key a session registered before this release stays the recipient until the owner removes it."),
+    ("docs/security/THREAT_MODEL.md",
+     "since the phone computes the same six. Bonds a session confirmed before this release persist until the owner removes them."),
+    ("docs/security/THREAT_MODEL.md",
+     "  `auth_gate()`. Peers a session paired before this release persist until\n"
+     "  the owner removes them."),
+    ("docs/security/SECURITY_MODEL.md",
+     "bond's confirm and a Passkey Entry's digits take the bearer now, and a\n"
+     "bond a session confirmed before that release persists until the owner\nremoves it.)"),
+    ("docs/design/magic_pairing.md",
+     "take the bearer now, and a bond a session confirmed before that release\n"
+     "persists until the owner removes it.)"),
+    ("firmware/LESSONS_LEARNED.md",
+     "  longer; a bond a session confirmed on an earlier release stays until the\n"
+     "  owner removes it)*."),
+    ("firmware/projects/canary-wap/arduino/canary_wap/ble_console.h",
+     " *   bearer; a bond a session confirmed before that release persists until\n"
+     " *   the owner removes it,"),
+    ("docs/getting_started_canary.md",
+     "- join the Canary's own Wi-Fi (`SecuraCV-wap-XXXX`) while it is still\n"
+     "  broadcasting (it stops once your home Wi-Fi is working); or"),
+    ("firmware/projects/canary-wap/README.md",
+     "/api/bluetooth/pair/confirm` and `POST /api/mesh/pair/confirm` (F346), after\n"
+     "setup `POST /api/wifi/connect`, `/ap-only`, `/disconnect` and `/forget`\n(F334, F345;"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/wap_server.h",
+     " *                                           (after setup connect, AP-only, disconnect and forget: bearer alone, F334)"),
+    ("docs/audit/hardware_verification_checklist.md",
+     "## canary-wap: after setup the API token alone moves the network, re-keys the vault, confirms a pairing and, the firmware install aside, reboots the unit (F334, F345, F333, F335, F346, F361) — on-device verification"),
 ]
 
 

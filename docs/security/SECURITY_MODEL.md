@@ -421,10 +421,10 @@ a rebinding page that holds the bearer token itself is F57's open question,
 and a pair token's value carried off the LAN is read with no Host on
 `/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` (start,
 status and stop; a started scan acts only on a code held to the camera) for
-its ten minutes during first-boot setup. Since F334 the pair token serves
-only the first-boot wizard: after setup the first two take the bearer alone
-and the scan's start answers `404`. The scan's status and stop still take a
-pair token, and since F333 a camera unit's boot scan runs only while no
+its ten minutes during first-boot setup. Since F334, after setup a carried
+pair token no longer works on the first two or on the scan's start: the
+first two take the bearer alone and the start answers `404`. The scan's
+status and stop still take a pair token, and since F333 a camera unit's boot scan runs only while no
 network is stored and the unit is not standalone (after setup, only after
 the owner's bearer Forget or the 10 s hold), so a carried token reads that
 scan's status (the network name the code held, the error text) and stops
@@ -670,7 +670,7 @@ sessions could end it before its save. Before F346 a host also in radio
 range could bond a Bluetooth peer of its own through its session and write
 the WAP's Wi-Fi over the bonded lane, `ble_provision.cpp`'s CREDS; the
 bond's confirm and a Passkey Entry's digits take the bearer now, and a
-bond a session confirmed before that release persists until the owner
+bond a session confirmed on 2.4.17 or earlier persists until the owner
 removes it.) And the move lasts only while the new network stays up. The WAP keeps
 every network it has joined (up to four, `wifi_store.h`), the striking
 host's among them, and when the one it is on is not found twice running (a

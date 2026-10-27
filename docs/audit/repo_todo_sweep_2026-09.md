@@ -6330,7 +6330,10 @@ so — see D2 below.)
   replacements), its third 9 (804 over 214 files, 875 retired forms, 781
   replacements), its fourth 15 (819 over 214 files, 890 retired forms,
   795 replacements) and its fifth 20 (839 over 214 files, 910 retired
-  forms, 802 replacements), with 51 BANNED rows and 26 tests throughout. The
+  forms, 802 replacements); the merge with the 2.4.17 train split one
+  CHANGELOG pin in two (803 replacements), and the review of that merge
+  added 22 (861 over 214 files, 932 retired forms, 817 replacements), with
+  51 BANNED rows and 26 tests throughout. The
   second review's rows retire what F333, F334 and F346 left untrue in
   five places: #1835's CHANGELOG bullet and LESSONS_LEARNED's QR-road
   bullet, which still gave the session a road to the hub re-point through

@@ -23,7 +23,7 @@
  * - Bond-only read: NimBLE rejects unencrypted/unauthenticated peers.
  *   The bond is established via Numeric Comparison (MITM-safe after PR A),
  *   and since F346 its confirm, and a Passkey Entry's digits, take the
- *   bearer; a bond a session confirmed before that release persists until
+ *   bearer; a bond a session confirmed on 2.4.17 or earlier persists until
  *   the owner removes it, so the console still exposes nothing a landing
  *   session cannot already read over WiFi.
  * - Read-only in v1. Provisioning / write actions land in PR-3.

@@ -3497,7 +3497,7 @@
   network gives it, and then use the lane itself *(amended 2026-10-27, the
   owner-authority PR, #<PR>: since F346 the bond's confirm and a Passkey
   Entry's digits take the API token, so a host bonds through its session no
-  longer; a bond a session confirmed on an earlier release stays until the
+  longer; a bond a session confirmed on 2.4.17 or earlier stays until the
   owner removes it)*. A guard that every row
   passes without needs a row from the state it guards: every companion row
   tapped Save first, so the stop's `if (!ctl) return;` was never reached

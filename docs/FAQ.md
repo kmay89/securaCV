@@ -502,13 +502,13 @@ button. A Canary whose saved Wi-Fi has merely *stopped working* (the router
 rebooted, you changed the password) does **not** open it — it raises its
 `SecuraCV-<kind>-XXXX` recovery network instead, which needs the key printed for
 it. So the setup door offers nothing to a stranger's phone while a Canary
-stays on your network, on a good day or a bad one. On a WAP from this
-release on, after setup Forget Wi-Fi, which reopens the door for half an
-hour unless the WAP runs standalone, asks for the API token, and so does
-the confirm that bonds a phone to the WAP's other Bluetooth lane, which
-takes a new Wi-Fi network; a page any device on your network opens no
-longer sends either. A bond confirmed on an
-earlier release stays until you remove it under Settings → Bluetooth (the
+stays on your network, on a good day or a bad one. On a WAP running a
+release after 2.4.17, once it is set up, Forget Wi-Fi, which reopens the
+door for half an hour unless the WAP runs standalone, asks for the API
+token, and so does the confirm that bonds a phone to the WAP's other
+Bluetooth lane, which takes a new Wi-Fi network; a page any device on your
+network opens no longer sends either. A bond confirmed on 2.4.17 or
+earlier stays until you remove it under Settings → Bluetooth (the
 [security model](security/SECURITY_MODEL.md) has the details).
 
 The older paths stay as the fallback: the `SecuraCV-<kind>-XXXX` setup network with
@@ -541,13 +541,13 @@ yourself: on a **Sense or Vision**, tap its BOOT button once (a short press
 — under a second) and the door opens for 60 seconds; or power-cycle a unit
 that has no Wi-Fi saved. On a **WAP**, which has no tap door in this
 version, use its own setup page (Settings → WiFi on the dashboard, or the
-`SecuraCV-wap-XXXX` network when it is off your home network). Once a WAP is
-set up, changing its Wi-Fi there asks for the API token (paste it from your
-recovery kit) or one BOOT tap, on the recovery network too: a page your
-home network opened, or that network's printed key, no longer moves it on
-its own (a network such a page moved it to on an older release can stay
-among its saved networks, which the WAP tries by itself when its own
-network is not found; the forget below clears every one). Or tell it to
+`SecuraCV-wap-XXXX` network when it is off your home network). Once a WAP
+running a release after 2.4.17 is set up, changing its Wi-Fi there asks for
+the API token (paste it from your recovery kit) or one BOOT tap, on the
+recovery network too: a page your home network opened, or that network's
+printed key, no longer moves it on its own (a network such a page moved it
+to on 2.4.17 or earlier can stay among its saved networks, which the WAP
+tries by itself when its own network is not found; the forget below clears every one). Or tell it to
 forget its Wi-Fi from the dashboard (Settings → WiFi → Remove credentials,
 the `/api/wifi/forget` route, which also asks for the token or a tap and
 clears the saved broker login too), which clears every saved network and,

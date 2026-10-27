@@ -3263,7 +3263,7 @@ the compile is CI's; nothing here ran on a device or in a browser. Owner: U1.
     `docs/audit/repro/F341/flagship-receipt/`; step 7:
     `docs/audit/repro/F340/refused-token/`).
 
-## canary-wap: after setup the API token alone moves the network, re-keys the vault, confirms a pairing and, the firmware install aside, reboots the unit (F334, F345, F333, F335, F346, F361) — on-device verification
+## canary-wap: after setup the API token alone moves the network over HTTP, re-keys the vault, confirms a pairing and, the firmware install aside, reboots the unit (F334, F345, F333, F335, F346, F361) — on-device verification
 
 Host-tested (`test_wifi_authority`, `test_receipt_grant`,
 `test_bluetooth_commands_wap`, `test_mqtt_reinit`, `test_provisioning_logic`,
