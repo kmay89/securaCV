@@ -122,19 +122,22 @@ Two rules make it safe to run without a human per ticket:
     form, and filter the log tail against known-sensitive lines (the AP
     password print above all). "Public-only by construction" has to be true
     of the required artifact, not just intended by the voluntary one.
-    **Status: DONE in both flashers** — `buildDiagnosticReport()` carries
-    no hardware address at all, not even a tail: the base MAC is the
-    station address in every Wi-Fi frame, so any part of it matches the
-    board in radio range. Its serial tail is scrubbed with visible markers
-    before inclusion: credential lines (`TAIL_REDACT`) and identity lines
-    (`TAIL_IDENTITY`: the Hardware ID, the self-manifest, the device id,
-    key-fingerprint (the flagship's key randomart too), TLS-certificate,
-    `.local`-name and household-peer lines, and any MAC-shaped token). Its error line is scrubbed the same way, with any
-    hardware address in it masked first: a desktop install's error ends in
-    espflash's own last lines, board info included.
-    `desktop_parity.test.js` item 12 pins both frontends to one list each,
-    so neither can regress alone. What remains for the claims lane is the
-    intake itself (Phase 3 proper), not the report.
+    **Status: DONE in both flashers** — `buildDiagnosticReport()` carries no
+    hardware address at all, not even a tail: the base MAC is the station
+    address in every Wi-Fi frame, so any part of it matches the board in
+    radio range. Its serial tail is scrubbed with visible markers before
+    inclusion: credential lines (`TAIL_REDACT`) and identity lines
+    (`TAIL_IDENTITY`: the self-manifest line and the lines the firmware
+    prints with this board's Hardware ID, device id, key fingerprint (the
+    flagship's key randomart too), TLS certificate or host name, a household
+    peer's fingerprint or name, or any MAC-shaped token). It is a list of
+    the lines it names, so a line it does not name passes (ledger A118). Its
+    error line is scrubbed the same way, with any hardware address in it
+    masked first: a desktop install's error ends in espflash's own last
+    lines, board info included. `desktop_parity.test.js` item 12 pins both
+    frontends to one list each, so neither can regress alone. What remains
+    for the claims lane is the intake itself (Phase 3 proper), not the
+    report.
 
 - **Phase 4 — the loop.** "This didn't help" buttons (shipped in Phase 1)
   feed batched catalog curation; a human tends the corpus, never a ticket.

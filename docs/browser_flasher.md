@@ -163,11 +163,15 @@ The flasher tries to fix the common failures before asking the user to:
 - **"Copy a diagnostic report"** — every stuck screen offers one click to copy
   a paste-able report (browser, OS, chip, baud, error, log tail) for
   Discussions. Public-only by construction — never Wi-Fi credentials or keys,
-  no hardware address (not even a tail of it), and the log tail's Hardware ID,
-  self-manifest, device id, key-fingerprint (the flagship's key randomart
-  too), TLS-certificate, `.local`-name, household-peer and MAC-bearing lines
-  replaced by a visible marker; the error line is
-  scrubbed the same way, with any hardware address in it masked
+  no hardware address (not even a tail of it), and the log tail's
+  self-manifest line and the lines that carry this board's Hardware ID, device
+  id (the MQTT client id among them), key fingerprint (the flagship's key
+  randomart too), TLS certificate or host name, a household peer's fingerprint
+  or name, or a MAC-shaped token replaced by a visible marker. The patterns
+  name the lines the firmware prints (the tests render each from its source);
+  a line no pattern names passes, among them the flagship's chain-head rows
+  and the lines that name the network a board joins (ledger A118). The error
+  line is scrubbed the same way, with any hardware address in it masked
   (`buildDiagnosticReport`). esptool's own "MAC: …" connect line is masked in
   the technical log too (`maskHardwareAddress`).
 - **About this board** — the hello card shows the chip and its revision, the

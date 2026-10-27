@@ -20755,23 +20755,27 @@ so — see D2 below.)
   the browser stores that card before the burn, while the module still
   answers, and again after it; when the module takes neither write, the
   done screen says it may still carry the model card an earlier burn
-  stored. The done screen says a pinned burn's module carries SecuraCV's
-  card only when it acknowledged the write. `desktop_parity.test.js` runs
-  the browser's post-burn step for a pinned release and for a local file
-  (the card it sends, and a later bench reading it back), the burn and the
-  step after it together on a module that starts with SecuraCV's card and
-  answers before the burn, after it, both times or neither, both benches for
-  no card, another card and a person card, and each bench's drawing code on
-  a detection, held to the labels its id line promised; `we2.test.js` tests
-  the card choice; `we2_bench.rs` tests the card reader.
+  stored, and when the card went on but the burn then failed, the failure
+  screen says that until a burn completes the module's model sits under a
+  card that names no model and lists no class. The done screen says a
+  pinned burn's module carries SecuraCV's card only when it acknowledged
+  the write. `desktop_parity.test.js` runs the browser's post-burn step for
+  a pinned release and for a local file (the card it sends, and a later
+  bench reading it back), the burn and the step after it together on a
+  module that starts with SecuraCV's card and answers before the burn,
+  after it, both times or neither (with and without acknowledging the
+  card), and a burn that throws, both benches for no card, another card and
+  a person card, and each bench's drawing code on a detection, held to the
+  labels its id line promised; `we2.test.js` tests the card choice;
+  `we2_bench.rs` tests the card reader.
   Found on the way: the browser base64'd the card with `btoa()`, which threw
   on its em dash, so the post-burn card write and proof inference never ran;
   it now sends base64 of the card's UTF-8 bytes, as `we2.rs` does
   (`modelInfoBase64`, `we2.test.js`). Host-tested; not run on a device.
-- [ ] **A118 [code] The shareable report's tail scrubber misses identity lines
-  (device-details design §11, P14).** `TAIL_REDACT` matched credential words
-  only, so the boot banner's Hardware ID (the WAP's `sys_monitor.h` line and
-  `boot_kv` on the display, Sense, Vision and Sentinel) and the
+- [ ] **A118 [code] The shareable report's tail scrubber misses identity
+  lines (device-details design §11, P14).** `TAIL_REDACT` matched credential
+  words only, so the boot banner's Hardware ID (the WAP's `sys_monitor.h`
+  line and `boot_kv` on the display, Sense, Vision and Sentinel) and the
   self-manifest line (key fingerprint, device id, boot count) rode into the
   last 12 lines of a pasted report. *Partly done (#<PR>):* both flashers'
   `TAIL_IDENTITY` replaces both kinds of line with a visible marker, and
@@ -20779,21 +20783,31 @@ so — see D2 below.)
   (`boot_kv`, the WAP's `[PROV]` line and identity box, the flagship's
   `[OK]` line); the key-fingerprint lines (the flagship's `Key FP`, the
   WAP's `Public key fingerprint`, `FP8`, `Pubkey` and receipt `pubkey_fp`,
-  the Sense's, Vision's and Sentinel's `Ed25519 ready  fp=…`) and a
-  household peer's on the flagship's mesh lines; the TLS certificate lines
-  (the WAP's `CN: securacv-<fingerprint>`, the WAP's and the flagship's
-  `Cert fingerprint`, the receipt's `tls_cert_fp`); the `.local` name the
-  display, Sense, Vision and Sentinel advertise; the flagship's console
-  cards (the boot welcome card's `(that's me: <device id>)`, the last card
-  it prints at boot; the trust card's `Device` row and key randomart; the
-  attestation card's `Device` line; the identity card's whole `Public Key`;
-  the nearby card's `This Canary` row); and a peer's fingerprint or name on
-  the WAP's `[BLE] Canary discovered:` and `lost:` lines and the display's
-  `Fleet referral: … (from <name>)` (`flash.test.js` renders the lines from
-  the firmware's own sources; `desktop_parity.test.js` holds the two lists
-  equal). Open: a line no pattern names passes (the flagship's chain-head
-  rows on its `l` and `c` cards are not replaced); and once the firmware
-  answers `q` (the design's PR 10), `sanitizeLogTail()` replaces each
+  the Sense's, Vision's and Sentinel's `Ed25519 ready  fp=…`); the TLS
+  certificate lines (the WAP's `CN: securacv-<fingerprint>`, the WAP's and
+  the flagship's `Cert fingerprint`, the receipt's `tls_cert_fp`); the
+  `.local` name the display, Sense, Vision and Sentinel advertise; the MQTT
+  client id they connect as (`securacv-<device id>-<Hardware ID>`); the
+  WAP's host name and Bluetooth names in its health log and its chirp's
+  `device prefix:` and Opera's `device name:` (its key fingerprint's last
+  two bytes); the flagship's console cards (the boot welcome card's
+  `(that's me: <device id>)`, the last card it prints at boot; the trust
+  card's `Device` row and key randomart; the attestation card's `Device`
+  line; the identity card's whole `Public Key`; the nearby card's
+  `This Canary` row and every peer row); and a household peer's fingerprint
+  or name on the flagship's mesh lines (`fp=…`) and opera lines (a peer's
+  whole fingerprint, and their health-log echoes), the WAP's
+  `[BLE] Canary discovered:` and `lost:` lines and its `Peer removed`,
+  `Peer state changed` and `Opera alert received` health lines, and the
+  display's `Fleet referral: … (from <name>)` and restored `… muted for …`
+  lines (`flash.test.js` renders the lines from the firmware's own sources;
+  `desktop_parity.test.js` holds the two lists equal). Open: a line no
+  pattern names passes, among them the flagship's chain-head rows on its
+  `l`, `a` and `c` cards and the attestation's `Signature` on `c`, the
+  network name a board joins or reconnects to (`Joined "<name>"`,
+  `Connecting SSID="<name>"`), the peer link's `Fleet key <id>` line and the
+  WAP's `Opera name changed` health line; and once the firmware answers `q`
+  (the design's PR 10), `sanitizeLogTail()` replaces each
   `securacv.canary.details/v1` line with its share projection.
 - [x] **A119 [code] Both flashers' saved health reports carry this board's
   life (device-details design §11, P24).** The saved report, which reads as

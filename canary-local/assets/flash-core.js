@@ -2263,11 +2263,14 @@ const TAIL_REDACT = [
 // a .local name (built from the device id; on the WAP from the name the person
 // gave it, or else the key fingerprint), the flagship's welcome, trust,
 // attestation, identity and nearby cards' rows with its device id or key (the
-// trust card's key randomart among them), a peer's fingerprint or name on the
-// WAP's nearby scan and the display's fleet referral, and any line with a
-// MAC-shaped token in it (the ROM tools print the board's own). Shown in the
-// flasher, never pasted. A line no pattern names passes: flash.test.js renders
-// the ones these patterns are for from the firmware's own sources.
+// trust card's key randomart among them), the MQTT client id (the device id
+// and the Hardware ID), the WAP's host name and Bluetooth names in its health
+// log, a peer's fingerprint or name (the flagship's nearby card and opera
+// lines, the WAP's nearby scan and opera lines, the display's fleet referral
+// and restored mutes), and any line with a MAC-shaped token in it (the ROM
+// tools print the board's own). Shown in the flasher, never pasted. A line no
+// pattern names passes: flash.test.js renders the ones these patterns are for
+// from the firmware's own sources.
 const TAIL_IDENTITY = [
   /hardware\s*id\b/i,               // "    Hardware ID 3f7a9e21b4c5d6e8", "  Hardware ID    : …"
   /securacv\.canary\.manifest\//,   // {"schema":"securacv.canary.manifest/v1",…}
@@ -2280,8 +2283,16 @@ const TAIL_IDENTITY = [
   /\bdevice {2,}(?:: *)?[^\s║│|]/i,   // the flagship's trust card "Device    <id>" and attestation card "  Device    : <id>"
   /\bpublic\s*key\s*:/i,             // the flagship's identity card, "  Public Key: <the whole key>"
   /\bthis canary {2,}/i,              // the nearby card, "This Canary  <id>   fp <fingerprint>"
+  /\b[0-9a-f]{4} +\S+ +\S+ +\S+ +#[0-9a-f]{4}\b/i, // the nearby card's peer rows, "a1b2   3s 100%  87% #4210  ok"
+  /^(?=.*\b(?:opera|peer|member)\b).*\b[0-9a-f]{16}\b/i, // a peer's whole fingerprint: the flagship's opera lines and their health-log echoes, the WAP's "Peer removed"
   /\bcanary (?:discovered|lost):/i,  // the WAP's nearby scan, a peer's fingerprint
+  /\bdevice (?:prefix|name):/i,      // the WAP's chirp prefix and Opera Bluetooth name: its key fingerprint's last two bytes
+  /\b(?:peer state changed|opera alert received) \|/i, // the WAP's opera health lines, a peer's name
+  /\bBLE initialized(?: \(scanners held\))? \||\bsaved bluetooth name held a control byte\b/i, // the WAP's Bluetooth name
+  /\b(?:mdns (?:started|begin failed|re-announced on sta|re-announce failed)|identify requested) \|/i, // the WAP's host name, without its .local
+  /\bconnecting \S+ as securacv-/i,  // the MQTT client id, "securacv-<device id>-<Hardware ID>"
   /\bfleet referral:.*\(from /i,     // the display's referral, a peer's name
+  /\bmuted for \d+s more\b/i,        // the display's restored mute, a peer's device id
   /\|[ .o+=*BOX@%&#\/^SE]{17}\|/,     // a row of the trust card's key randomart
 ];
 

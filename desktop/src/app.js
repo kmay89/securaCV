@@ -781,8 +781,12 @@ function maskHardwareAddress(text) {
 // carry it) and of identity lines (the boot banner's Hardware ID, the
 // self-manifest, the lines the firmware prints with the device id, a key
 // fingerprint, the TLS certificate or a .local name, the flagship's cards'
-// id, key and randomart rows, and a household peer's fingerprint or name).
-// The patterns are the browser's, held equal by desktop_parity.test.js.
+// id, key and randomart rows, the MQTT client id, the WAP's host and
+// Bluetooth names, and the lines that name a household peer by fingerprint
+// or name: the flagship's nearby card and opera lines, the WAP's nearby scan
+// and opera lines, the display's referral and restored mutes). A line no
+// pattern names passes. The patterns are the browser's, held equal by
+// desktop_parity.test.js.
 const TAIL_REDACT = [
   /password/i,
   /passphrase|\bpsk\b/i,
@@ -802,8 +806,16 @@ const TAIL_IDENTITY = [
   /\bdevice {2,}(?:: *)?[^\s║│|]/i,
   /\bpublic\s*key\s*:/i,
   /\bthis canary {2,}/i,
+  /\b[0-9a-f]{4} +\S+ +\S+ +\S+ +#[0-9a-f]{4}\b/i,
+  /^(?=.*\b(?:opera|peer|member)\b).*\b[0-9a-f]{16}\b/i,
   /\bcanary (?:discovered|lost):/i,
+  /\bdevice (?:prefix|name):/i,
+  /\b(?:peer state changed|opera alert received) \|/i,
+  /\bBLE initialized(?: \(scanners held\))? \||\bsaved bluetooth name held a control byte\b/i,
+  /\b(?:mdns (?:started|begin failed|re-announced on sta|re-announce failed)|identify requested) \|/i,
+  /\bconnecting \S+ as securacv-/i,
   /\bfleet referral:.*\(from /i,
+  /\bmuted for \d+s more\b/i,
   /\|[ .o+=*BOX@%&#\/^SE]{17}\|/,
 ];
 function sanitizeLogTail(text) {

@@ -79,25 +79,39 @@
   These lines are replaced by a visible marker, in both flashers: the boot
   banner's Hardware ID (the WAP's line and `boot_kv` on the display, Sense,
   Vision and Sentinel), the self-manifest line (key fingerprint, device id,
-  boot count), the Device ID boot lines (`boot_kv` on the WAP, display,
-  Sense, Vision and Sentinel, the WAP's `[PROV]` line and identity box, the
-  flagship's `[OK]` line), the key-fingerprint lines (the flagship's `Key
-  FP`, the WAP's `Public key fingerprint`, `FP8`, `Pubkey` and its
-  provisioning receipt's `pubkey_fp`, the Sense's, Vision's and Sentinel's
-  `Ed25519 ready  fp=…`), a household peer's fingerprint on the flagship's
-  mesh lines (`fp=…`), the TLS certificate lines (the WAP's `CN:
-  securacv-<fingerprint>`, the WAP's and the flagship's `Cert fingerprint`,
-  the receipt's `tls_cert_fp`), the `.local` name the display, Sense, Vision
-  and Sentinel advertise (`Fleet advert up as <name>.local`, a name built
-  from the device id), the flagship's console cards (the boot welcome card's
-  `(that's me: <device id>)`, the last card the flagship prints at boot, the
-  trust card's `Device` row and key randomart on `l` and `a`, the
-  attestation card's `Device` line on `c`, the identity card's whole `Public
-  Key` on `i`, the nearby card's `This Canary` row on `n`), and a peer's
-  fingerprint or name on the WAP's `[BLE] Canary discovered:` and `lost:`
-  lines and the display's `Fleet referral: … (from <name>)`. The tests
-  render each from the firmware's own source. A line no pattern names
-  passes: the flagship's chain-head rows on `l` and `c` are not replaced.
+  boot count), the Device ID boot lines (`boot_kv` on the WAP, display, Sense,
+  Vision and Sentinel, the WAP's `[PROV]` line and identity box, the
+  flagship's `[OK]` line), the key-fingerprint lines (the flagship's `Key FP`,
+  the WAP's `Public key fingerprint`, `FP8`, `Pubkey` and its provisioning
+  receipt's `pubkey_fp`, the Sense's, Vision's and Sentinel's
+  `Ed25519 ready  fp=…`), the TLS certificate lines (the WAP's
+  `CN: securacv-<fingerprint>`, the WAP's and the flagship's
+  `Cert fingerprint`, the receipt's `tls_cert_fp`), the `.local` name the
+  display, Sense, Vision and Sentinel advertise
+  (`Fleet advert up as <name>.local`, a name built from the device id), the
+  MQTT client id the display, Sense, Vision and Sentinel connect as
+  (`Connecting … as securacv-<device id>-<Hardware ID>`), the WAP's host name
+  and Bluetooth names (its `mDNS started`, `mDNS begin failed`,
+  `mDNS re-announced on STA`, `mDNS re-announce failed` and
+  `Identify requested` health lines, its `BLE initialized` and saved-name
+  repair lines, and the chirp's `device prefix:` and Opera's `device name:`,
+  its key fingerprint's last two bytes), the flagship's console cards (the
+  boot welcome card's `(that's me: <device id>)`, the last card the flagship
+  prints at boot, the trust card's `Device` row and key randomart on `l` and
+  `a`, the attestation card's `Device` line on `c`, the identity card's whole
+  `Public Key` on `i`, the nearby card's `This Canary` row and every peer row
+  on `n`), and a household peer's fingerprint or name: the flagship's mesh
+  lines with `fp=…`, its opera lines with a peer's whole fingerprint
+  (`Peer … left the opera`, `Paired peer …`, `Opera pairing refused`,
+  `Peer …: its stored radio address …`, `Stored radio address of …`) and their
+  health-log echoes, the WAP's `[BLE] Canary discovered:` and `lost:` lines
+  and its `Peer removed`, `Peer state changed` and `Opera alert received`
+  health lines, and the display's `Fleet referral: … (from <name>)` and
+  restored `… muted for …` lines. The tests render each from the firmware's
+  own source. A line no pattern names passes, among them the flagship's
+  chain-head rows on `l`, `a` and `c`, the attestation's `Signature` on `c`,
+  the network name a board joins or reconnects to, the peer link's fleet-key
+  id and the WAP's `Opera name changed` line.
 - **The Grove Vision module's id and text stay off screen (P13).** Neither
   flasher sends `ID?` any more, and the desktop's module receipt drops the id
   it carried. Neither bench shows the module's own model-card text, or names
@@ -122,9 +136,11 @@
   them: for a file the person picked the card goes on before the burn, while
   the module still answers, and again after it, and when the module takes
   neither write the done screen says it may still carry the model card an
-  earlier burn stored, which is what a bench labels by. The done screen says
-  a pinned burn's module carries SecuraCV's card only when it acknowledged
-  the write.
+  earlier burn stored, which is what a bench labels by; when the card went
+  on and the burn then failed, the failure screen says that until a burn
+  completes, whatever model the module holds sits under a card that names
+  no model and lists no class. The done screen says a pinned burn's module
+  carries SecuraCV's card only when it acknowledged the write.
 - Host-tested (`flash.test.js`, `intake.test.mjs`, `desktop_parity.test.js`,
   `we2.test.js`, `cargo test` in `desktop/flash-engine`; the `efuse.rs`,
   `we2.rs` and `we2_bench.rs` tests outside the Tauri build, through a stub

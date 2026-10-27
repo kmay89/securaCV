@@ -425,6 +425,15 @@ function phaseModuleFlash(ctx, s, job) {
       ctx.setPhase(phaseModuleDone(ctx, s, { ...job, cardFirst }));
     } catch (e) {
       log.textContent += "✗ " + e.message + "\n";
+      // The card went on, the model did not: the module keeps whatever model
+      // it held (an earlier pinned burn's, or part of this one) under a card
+      // that claims nothing, so a bench labels nothing "person" until a burn
+      // completes. Said here, where the person decides whether to retry.
+      if (cardFirst) {
+        box.append(el("p", "fineprint", "This file’s model card went on before the burn, so until a burn " +
+          "completes, whatever model the module holds sits under a card that names no model and lists " +
+          "no class, and a bench labels its detections “object”."));
+      }
       const retry = el("button", "primary", "Reset and retry");
       retry.addEventListener("click", () => ctx.setPhase(phaseModuleFlash(ctx, s, job)));
       const back = el("button", "ghost", "← start over");

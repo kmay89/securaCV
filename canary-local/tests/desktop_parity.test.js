@@ -6136,6 +6136,8 @@ test("an espflash failure: the address its board info printed reaches no screen,
       ...["esc", "eventLogText", "renderAbout"].map((n) => fnSource(appJs, n))], ["renderAbout"], {
       document: doc, $: (id) => (id === "about-body" ? sink : null), state: { appInfo: { version: "0" } },
       prefs: { log: [{ t: 0, kind: "err", msg: `Flash failed [not-in-download]: MAC address: ${HW}` },
+        // …or with no label in front of it, where only the whole-address mask reaches
+        { t: 0, kind: "err", msg: `Rescue failed: the board at ${HW} stopped answering` },
         // …or cut partway through the address, which no whole-address mask matches
         { t: 0, kind: "err", msg: `Health check failed: MAC address:       ${HW.slice(0, 7)}` },
         // …or a safety copy named by the address's last six hex digits, whole or cut
@@ -6146,6 +6148,7 @@ test("an espflash failure: the address its board info printed reaches no screen,
     about.renderAbout();
     assert.match(html, /Flash failed \[not-in-download\]: MAC address: /, "the About view never listed the saved entry");
     assert.match(html, /Health check failed: MAC address: /, "the About view never listed the cut entry");
+    assert.match(html, /Rescue failed: the board at .* stopped answering/, "the About view never listed the unlabeled entry");
     assert.strictEqual(html.split("Safety copy saved: /Users/me/backups/canary-").length - 1, 2,
       "the About view never listed the safety-copy entries");
     // Today's names are the day and a counter, and stay readable.
@@ -6334,11 +6337,12 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
   // The stand-in module's SSCMA firmware keeps one model card, apart from
   // the model a burn writes, so a burn alone leaves the card it found. This
   // one starts with SecuraCV's person card (an earlier pinned burn). It
-  // answers AT while `up` is true, and acknowledges a card write when `ack` is.
+  // answers AT while `up` is true, and acknowledges a card write when `ack` is;
+  // with `burnFails` the burn throws before it writes the module.
   const we2Flash = read(join(CANARY, "assets/we2-flash.js"));
   const we2 = await import(pathToFileURL(join(CANARY, "assets/we2-core.js")).href);
   const OURS = Buffer.from(JSON.stringify(we2.modelInfoJson({ version: "1", sha256: "cd".repeat(32) }))).toString("base64");
-  const run = async ({ pinned, upBefore, upAfter, ack = true }) => {
+  const run = async ({ pinned, upBefore, upAfter, ack = true, burnFails = false }) => {
     const mod = { card: OURS, up: upBefore };
     const order = [];
     const at = { start() {}, stop() {}, onEvent() {},
@@ -6350,7 +6354,9 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
         if (w) { if (!ack) return null; mod.card = w[1]; return { code: 0 }; }
         return { code: 0, data: { software: "2025.01.02" } };
       } };
-    class We2Flasher { async flashModel() { order.push("BURN"); mod.up = upAfter; } }
+    class We2Flasher {
+      async flashModel() { order.push("BURN"); if (burnFails) throw new Error("no bootloader menu"); mod.up = upAfter; }
+    }
     const doc = pageDoc();
     let shown = null;
     const page = runCut([flashJsEl(we2Flash), ...["phaseModuleFlash", "phaseModuleDone", "phaseModuleBench"].map((n) => fnSource(we2Flash, n))],
@@ -6362,8 +6368,16 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
       });
     const ctx = { catalog: { products: [], we2_module: { model_addr: "0x00400000" } }, back() {}, setPhase: (p) => { shown = p; } };
     const s = { t: { close: async () => {} } };
-    page.phaseModuleFlash(ctx, s, { bytes: new Uint8Array(4), label: "mine.tflite", sha256: "ab".repeat(32), version: "1", pinned });
+    const flashing = page.phaseModuleFlash(ctx, s,
+      { bytes: new Uint8Array(4), label: "mine.tflite", sha256: "ab".repeat(32), version: "1", pinned });
     await ticks(20);
+    const card = () => JSON.parse(Buffer.from(mod.card, "base64").toString("utf8"));
+    if (burnFails) {
+      assert.ok(!shown, "a burn that threw reached its done screen");
+      const said = nodesOf(flashing).filter((n) => n.tagName === "p").map((n) => n._text).join("\n");
+      assert.match(flashing.textContent, /✗ no bootloader menu/, "the failed burn's screen never landed");
+      return { order, said, card: card() };
+    }
     assert.ok(shown, "the burn never reached its done screen");
     const proof = nodesOf(shown).map((n) => n._text || "").find((t) => /AT answer|^✓ |test inference/.test(t));
     assert.ok(proof, "the done screen's proof line never landed");
@@ -6371,9 +6385,10 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
     const later = page.phaseModuleBench(ctx, s);
     await ticks();
     const idLine = nodesOf(later).map((n) => n._text || "").find((t) => /^SSCMA firmware /.test(t));
-    return { order, proof, idLine, card: JSON.parse(Buffer.from(mod.card, "base64").toString("utf8")) };
+    return { order, proof, idLine, card: card() };
   };
   const KEPT = /may still carry the model card an earlier burn stored/;
+  const UNDER_LOCAL = /until a burn completes, whatever model the module holds sits under a card that names no model/;
 
   // A file the person picked: its card goes on before the burn, while the
   // module still answers, so a module that never answers after the burn
@@ -6387,20 +6402,40 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
     assert.ok(!KEPT.test(r.proof), `the card did go on, but the done screen says it may not have: ${r.proof}`);
     assert.match(r.idLine, /lists no person class — labels will read “object”/);
   }
-  // It answers neither before nor after the burn, or answers after it but
-  // never acknowledges the card: the done screen says the module may still
-  // carry the card an earlier burn stored, which is what a later bench reads.
-  for (const c of [{ upBefore: false, upAfter: false }, { upBefore: false, upAfter: true, ack: false }]) {
+  // It answers neither before nor after the burn, or answers but never
+  // acknowledges the card (before the burn, or after it): the done screen
+  // says the module may still carry the card an earlier burn stored, which
+  // is what a later bench reads.
+  for (const c of [{ upBefore: false, upAfter: false }, { upBefore: false, upAfter: true, ack: false },
+    { upBefore: true, upAfter: false, ack: false }]) {
     const r = await run({ pinned: false, ...c });
     assert.match(r.proof, KEPT, `${JSON.stringify(c)}: the module kept the old card and the done screen says nothing: ${r.proof}`);
     assert.match(r.idLine, /labels will read “person”/, "the stand-in module should still hold the earlier card");
   }
-  // It answers only after the burn: the card goes on then.
-  {
-    const r = await run({ pinned: false, upBefore: false, upAfter: true });
+  // It answers only after the burn, or both times: the card goes on after it
+  // (and before it too, when it answered then).
+  for (const upBefore of [false, true]) {
+    const r = await run({ pinned: false, upBefore, upAfter: true });
+    assert.deepStrictEqual(r.order.filter((c) => c === "INFO=" || c === "BURN"), upBefore ? ["INFO=", "BURN", "INFO="] : ["BURN", "INFO="],
+      `upBefore ${upBefore}: ${r.order.join(" ")}`);
     assert.deepStrictEqual(r.card, we2.localModelInfoJson({ sha256: "ab".repeat(32) }));
     assert.match(r.proof, /^✓ Your model file, installed\. /);
     assert.ok(!KEPT.test(r.proof), r.proof);
+  }
+  // A burn that fails after its card went on leaves the module's model, an
+  // earlier pinned one among them, under the card that claims nothing: the
+  // failure screen says so. When no card went on first (no answer, or no ok
+  // reply), the module keeps its earlier card and model together, and a
+  // pinned burn writes no card before its bytes: nothing to say then.
+  {
+    const r = await run({ pinned: false, upBefore: true, upAfter: true, burnFails: true });
+    assert.deepStrictEqual(r.card, we2.localModelInfoJson({ sha256: "ab".repeat(32) }));
+    assert.match(r.said, UNDER_LOCAL, `the card claims nothing over the old model and the failure screen says nothing: ${r.said}`);
+  }
+  for (const c of [{ pinned: false, upBefore: false }, { pinned: false, upBefore: true, ack: false }, { pinned: true, upBefore: true }]) {
+    const r = await run({ ...c, upAfter: true, burnFails: true });
+    assert.deepStrictEqual(r.card, JSON.parse(Buffer.from(OURS, "base64").toString("utf8")), `${JSON.stringify(c)}: the card moved`);
+    assert.ok(!UNDER_LOCAL.test(r.said), `${JSON.stringify(c)}: no card went on, but the failure screen says one did: ${r.said}`);
   }
   // The pinned model's card waits for its bytes: before the burn the person
   // card would describe a model the module does not carry yet.
@@ -6415,6 +6450,9 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
     const r = await run({ pinned: true, upBefore: true, upAfter: true, ack: false });
     assert.match(r.proof, /^✓ SecuraCV person detection, installed and checked\. The module answered and ran one inference/);
     assert.ok(!/carries our model card/.test(r.proof), `an unacknowledged card write is reported as stored: ${r.proof}`);
+    // The local file's warning is not the pinned model's: its "burn this
+    // file again … its card goes on first" is false for a pinned burn.
+    assert.ok(!KEPT.test(r.proof), `a pinned burn gets the local file's warning: ${r.proof}`);
   }
 });
 

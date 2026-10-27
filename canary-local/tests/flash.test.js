@@ -1377,16 +1377,26 @@ test("buildDiagnosticReport: the serial tail is scrubbed of credential lines", a
   assert.ok(!sanitizeLogTail("psk=hunter2").includes("hunter2"));
 });
 
-// printf's %s and %-Ns, enough to render a firmware format string the way
-// the board prints it.
+// printf's %s, %-Ns and %0Nx, enough to render a firmware format string the
+// way the board prints it.
 function printf(fmt, ...args) {
   let i = 0;
-  return fmt.replace(/%(-?)(\d*)(?:\.(\d+))?(s|lu|u|d)/g, (_, left, width, prec, conv) => {
-    let v = String(args[i++]);
+  return fmt.replace(/%(-?)(0?)(\d*)(?:\.(\d+))?(s|lu|u|d|x)/g, (_, left, zero, width, prec, conv) => {
+    let v = conv === "x" ? Number(args[i++]).toString(16) : String(args[i++]);
     if (conv === "s" && prec) v = v.slice(0, Number(prec)); // "%.16s"
     const w = Number(width || 0);
-    return left ? v.padEnd(w) : v.padStart(w);
+    return left ? v.padEnd(w) : v.padStart(w, zero ? "0" : " ");
   });
+}
+
+// The C string a call's adjacent literals make ("…not bound " "(another …"),
+// from the literal that starts with `head`: its escapes undone, its last "\n"
+// dropped.
+function cLiteral(src, head, what) {
+  const at = src.indexOf('"' + head);
+  assert.ok(at >= 0, `${what} moved — re-point this test`);
+  const run = /^(?:\s*"(?:[^"\\]|\\.)*")+/.exec(src.slice(at))[0];
+  return run.match(/"(?:[^"\\]|\\.)*"/g).map((s) => JSON.parse(s)).join("").replace(/\n$/, "");
 }
 
 test("sanitizeLogTail: the boot banner's Hardware ID and the self-manifest never reach a report", async () => {
@@ -1595,6 +1605,149 @@ test("sanitizeLogTail: the flagship's identity cards, the WAP's nearby lines and
   }
 });
 
+test("sanitizeLogTail: a household peer's fingerprint or name, the MQTT client id and the WAP's names never reach a report", async () => {
+  // A peer's fingerprint is identity wherever it is printed: the WAP's
+  // "[BLE] Canary discovered:" line carries two of its bytes, the flagship's
+  // nearby card the same two on every peer row, and the flagship's opera
+  // lines all eight. So are a peer's name, this board's device id and
+  // Hardware ID inside the MQTT client id, and the names the WAP's health
+  // log prints for it. Rendered from the firmware's own sources.
+  const { buildDiagnosticReport, sanitizeLogTail } = await core();
+  const fw = (p) => readFileSync(join(ROOT, "..", p), "utf8");
+  const has = (src, re, what) => assert.match(src, re, `${what} moved — re-point this test`);
+  const framed = (text) => "│ " + text.padEnd(50) + " │";
+  const peer = "0123456789abcdef";   // an opera peer's whole fingerprint (FINGERPRINT_LEN 8)
+  const fp4 = ["a1b2", "c3d4", "ef56", "9e33"];
+  const peerName = "canary-porch";
+  const id = "canary-kids-room";
+  const token = "3f7a9e21b4c5d6e8";
+  const host = "canary-kitchen";
+  const lines = [];
+
+  // The flagship's nearby card ('n'): one row per peer, its fingerprint first.
+  const view = fw("firmware/common/ui/fleet_view.h");
+  has(view, /static const int FLEET_INNER = 52;/, "the nearby card's width");
+  has(view, /snprintf\(ch, sizeof ch, "#%04x", \(unsigned\)p\.chain_lo\);/, "the nearby card's chain column");
+  const rowFmt = /rowf\(r, inner, col, "([^"]+)",\s*p\.fp4 \? p\.fp4 : "\?", age, hl, bt, ch, st\);/.exec(view);
+  assert.ok(rowFmt, "the nearby card's peer row moved — re-point this test");
+  for (const [fp, age, hl, bt, chain, st] of [[fp4[0], "3s", "100%", "87%", 0x4210, "ok"],
+    [fp4[1], "47s", "72%", "--", 0x31, "alert, degraded"], [fp4[2], ">1d", "--", "--", 0x1000, "muted"],
+    [fp4[3], "2m", "--", "40%", 0, "tamper"]]) {
+    lines.push(framed(printf(rowFmt[1], fp, age, hl, bt, printf("#%04x", chain), st)));
+  }
+  // The flagship's opera lines, each with a peer's whole fingerprint, and the
+  // health-log echoes of them (log_health prints "[lvl/cat] msg | detail").
+  const flagship = fw("firmware/canary/src/main.cpp");
+  lines.push(
+    printf(cLiteral(flagship, "[MESH] Peer %s left the opera", "the opera's leave line"), peer, "removed from NVS"),
+    printf(cLiteral(flagship, "[WARN] Paired peer %s:", "the unbound pairing line"), peer),
+    printf(cLiteral(flagship, "[WARN] Opera pairing refused: this Canary cannot hold %s", "the refused pairing line"), peer),
+    printf(cLiteral(flagship, "[WARN] Peer %s: its stored radio address", "the shared address line"), peer, ", entry dropped"),
+    printf(cLiteral(flagship, "[INFO] Stored radio address of %s", "the dropped address line"), peer, "dropped"),
+  );
+  const health = (src, what) => {
+    const m = /Serial\.printf\("(\[%s\/%s\] %s)", log_level_name\(level\), log_category_name\(category\), message\);\s*if \(detail && detail\[0\]\) \{\s*Serial\.printf\("( \| %s)", detail\);/.exec(src);
+    assert.ok(m, `${what}'s health-log line moved — re-point this test`);
+    return (lvl, cat, msg, detail) => printf(m[1], lvl, cat, msg) + printf(m[2], detail);
+  };
+  const flagshipHealth = health(fw("firmware/canary/lib/securacv_witness/src/securacv_witness.cpp"), "the flagship");
+  const echoes = [...flagship.matchAll(/log_health\([^;]*?LOG_CAT_NETWORK,\s*"([^"]+)",\s*hex\)/g)].map((m) => m[1]);
+  assert.deepStrictEqual(echoes.sort(), ["Opera pairing address refused", "Opera pairing refused", "Opera peer left",
+    "Opera peer revoked (7-day deny-list)", "Opera stored address shared; re-pair"],
+  "a health-log line with a peer's fingerprint came or went — render it here");
+  for (const msg of echoes) lines.push(flagshipHealth("WARNING", "NETWORK", msg, peer));
+  // The WAP: its chirp prefix and Opera Bluetooth name (its key
+  // fingerprint's last two bytes, which ble_manager hands both as the
+  // "device id hash"), its opera health lines with a peer's fingerprint or
+  // name, and its host name and Bluetooth name in the health log.
+  const wapDir = "firmware/projects/canary-wap/arduino/canary_wap/";
+  const ino = fw(wapDir + "canary_wap.ino");
+  has(ino, /hex_to_str\(ble_device_id_hex, g_device\.pubkey_fp, 8\);\s*if \(ble_manager::init\(ble_device_id_hex,/,
+    "the WAP's Bluetooth id source");
+  const wapHealth = health(ino, "the WAP");
+  lines.push(
+    printf(cLiteral(fw(wapDir + "ble_chirp.h"), "[BLE] Chirp initialized — device prefix: ", "the chirp's prefix line"), 0x3f, 0x7a),
+    printf(cLiteral(fw(wapDir + "ble_opera.h"), "[BLE] Opera initialized — device name: ", "the Opera name line"), "SCV-3f7a"),
+  );
+  has(ino, /log_health\(SCV_LOG_WARNING, SCV_CAT_MESH, "Peer removed", fp_hex\);/, "the WAP's peer removal line");
+  has(ino, /snprintf\(detail, sizeof\(detail\), "%s: %s -> %s",\s*peer->name,[\s\S]{0,200}log_health\(SCV_LOG_INFO, SCV_CAT_MESH, "Peer state changed", detail\);/,
+    "the WAP's peer state line");
+  has(ino, /snprintf\(detail, sizeof\(detail\), "From %s: %s",\s*alert->sender_name, alert->detail\);\s*log_health\(\(LogLevel\)alert->severity, SCV_CAT_MESH, "Opera alert received", detail\);/,
+    "the WAP's received alert line");
+  lines.push(
+    wapHealth("WARNING", "MESH", "Peer removed", peer.toUpperCase()),
+    wapHealth("WARNING", "MESH", "Peer removed", peer),
+    wapHealth("INFO", "MESH", "Peer state changed", printf("%s: %s -> %s", peerName, "ONLINE", "STALE")),
+    wapHealth("ALERT", "MESH", "Opera alert received", printf("From %s: %s", peerName, "tamper")),
+  );
+  const bt = fw(wapDir + "bluetooth_channel.cpp");
+  has(bt, /scanners_held \? "BLE initialized \(scanners held\)" : "BLE initialized",\s*b\.applied\.device_name\);/, "the WAP's Bluetooth up line");
+  has(bt, /"Saved Bluetooth name held a control byte: the default name is used",\s*saved\.device_name\);/, "the WAP's Bluetooth name repair line");
+  lines.push(
+    wapHealth("INFO", "BLUETOOTH", "BLE initialized (scanners held)", "Kids room"),
+    wapHealth("INFO", "BLUETOOTH", "BLE initialized", "Kids room"),
+    wapHealth("INFO", "BLUETOOTH", "Saved Bluetooth name held a control byte: the default name is used", "Kids room"),
+  );
+  const hostLines = [...ino.matchAll(/log_health\(SCV_LOG_\w+, SCV_CAT_NETWORK,\s*"([^"]+)",\s*g_device\.mdns_hostname\);/g)].map((m) => m[1]);
+  for (const msg of ["mDNS started", "mDNS begin failed", "mDNS re-announced on STA", "mDNS re-announce failed", "Identify requested"]) {
+    assert.ok(hostLines.includes(msg), `the WAP's "${msg}" host-name line moved — re-point this test`);
+  }
+  for (const msg of new Set(hostLines)) lines.push(wapHealth("INFO", "NETWORK", msg, host));
+  // The display's restored mute (a peer's device id) and the MQTT client id
+  // the display, Sense, Vision and Sentinel connect as (the device id and the
+  // Hardware ID).
+  const mute = fw("firmware/projects/canary-display/src/fleet/mute_store.cpp");
+  has(mute, /printf\("%s muted for %lus more \(persisted\)\\n",\s*sid\.c_str\(\)/, "the display's mute line");
+  lines.push(printf(cLiteral(mute, "%s muted for ", "the display's mute line"), peerName, 3600));
+  for (const fam of ["canary-display", "canary-sense", "canary-vision", "canary-sentinel"]) {
+    const mqtt = fw(`firmware/projects/${fam}/src/net/mqtt_mgr.cpp`);
+    has(mqtt, /String clientId = String\("securacv-"\) \+ cfg\.device_id \+ "-" \+ devid_hex;/, `${fam}'s MQTT client id`);
+    lines.push(printf(cLiteral(mqtt, "Connecting %s:%u as %s", `${fam}'s MQTT connect line`), "192.168.1.5", 1883, `securacv-${id}-${token}`));
+  }
+
+  const scrubbed = sanitizeLogTail(lines.join("\n")).split("\n");
+  lines.forEach((ln, i) => assert.strictEqual(scrubbed[i], "[identity line: shown in the flasher, not in reports]", `kept: ${ln}`));
+  // Through the builder, whose tail is the last 12 lines: in elevens.
+  for (let at = 0; at < lines.length; at += 11) {
+    const part = lines.slice(at, at + 11);
+    const r = buildDiagnosticReport({ logTail: [...part, "Brownout detector was triggered"].join("\n") });
+    for (const leak of [peer, peer.toUpperCase(), ...fp4, peerName, id, token, host, "3f7a", "Kids room"]) {
+      assert.ok(!r.includes(leak), `"${leak}" survived into the report:\n${r}`);
+    }
+    assert.strictEqual((r.match(/\[identity line: shown in the flasher, not in reports\]/g) || []).length, part.length);
+    assert.ok(r.includes("Brownout detector was triggered"), "diagnosis survives");
+  }
+  // The firmware's own golden render of the card: its peer rows go, its
+  // other rows stay (the "This Canary" row went in the test above).
+  const golden = /GOLDEN\[\] = \{([\s\S]*?)\};/.exec(fw("firmware/tests_host/test_fleet_view.cpp"));
+  assert.ok(golden, "the nearby card's golden render moved — re-point this test");
+  const card = golden[1].match(/"(?:[^"\\]|\\.)*"/g).map((s) => JSON.parse(s));
+  const peerRows = card.filter((ln) => /^\| [0-9a-f]{4} /.test(ln));
+  assert.strictEqual(peerRows.length, 3, "the golden card's peer rows moved — re-point this test");
+  const cardOut = sanitizeLogTail(card.join("\n")).split("\n");
+  card.forEach((ln, i) => {
+    if (peerRows.includes(ln) || /This Canary/.test(ln)) {
+      assert.strictEqual(cardOut[i], "[identity line: shown in the flasher, not in reports]", `kept: ${ln}`);
+    } else {
+      assert.strictEqual(cardOut[i], ln, `collateral damage: ${ln}`);
+    }
+  });
+  // Lines that only look like them are not collateral damage.
+  const header = /rowf\(r, inner, COL_DIM, "([^"]+)",\s*"peer", "age", "hlth", "batt", "chain", "status"\);/.exec(view);
+  assert.ok(header, "the nearby card's column header moved — re-point this test");
+  for (const keep of [
+    framed(printf(header[1], "peer", "age", "hlth", "batt", "chain", "status")),
+    printf(cLiteral(flagship, "[OK] Registered %u/%u trusted peer pubkeys", "the peer count line"), 3, 3),
+    printf(cLiteral(flagship, "[OK] Bound %u/%u peer radio MACs", "the bound count line"), 2, 2),
+    printf(cLiteral(flagship, "[INFO] Opera pairing ended: %s", "the pairing end line"), "timeout"),
+    "[mesh.channel] hop 1→6 (util=55.00%, peers=3)",
+    "ELF file SHA256: 0123456789abcdef...",
+    "[MQTT] Connected",
+  ]) {
+    assert.strictEqual(sanitizeLogTail(keep), keep);
+  }
+});
+
 test("the ROM tools' own MAC lines are masked where drawn, and never reach a report", async () => {
   // esptool-js's connect logs "MAC: …" unasked (the vendored bundle's main()),
   // and espflash prints "MAC address: …" in its board info before every
@@ -1610,11 +1763,12 @@ test("the ROM tools' own MAC lines are masked where drawn, and never reach a rep
     assert.ok(masked.includes(HW_ADDRESS_MASK) && !/c1.22.30/i.test(masked), masked);
   }
   // Nothing else is collateral damage.
-  // Another separator or a non-hex digit is not a MAC either: the flash
-  // engine's mask_hardware_address test holds the same cases.
+  // Another separator, or a non-hex digit in either place of an octet, is
+  // not a MAC either: the flash engine's mask_hardware_address test holds
+  // the same cases.
   for (const keep of ["Chip is ESP32-S3 (QFN56) (revision v0.2)", "Uptime 12:34:56", "fe80::1",
                       "sha256 a1b2c3d4e5f60718", "Crystal is 40MHz", "dc.54.75.c1.22.30", "dc:54:75 c1:22:30",
-                      "gg:54:75:c1:22:30", "dc:54:75:c1:22:3g"]) {
+                      "gg:54:75:c1:22:30", "g0:54:75:c1:22:30", "dc:54:75:c1:22:3g"]) {
     assert.strictEqual(maskHardwareAddress(keep), keep);
   }
   // A board-info block in the tail: no MAC bytes survive into the report.
