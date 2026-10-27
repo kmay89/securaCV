@@ -20688,6 +20688,15 @@ so — see D2 below.)
   repos/kmay89/securaCV/releases/latest --jq .tag_name` still prints
   `fw-v2.4.16`. The fw-v2.4.16 OTA manifests' `release_notes` are signed and
   stay as published. Found by the 2.4.16 release audit (2026-10-10).
+  *A button now (2026-10-27):* **Actions → "Fix a release's notes (rewrite
+  the body from the repo)"** (`release-notes-refresh.yml`) takes the tag and
+  writes the body its own release workflow would publish today:
+  `.github/scripts/release_body.py` runs that workflow's body step with `gh`
+  stood in (it reproduces fw-v2.4.17's, flasher-v0.12.2's and app-v0.3.2's
+  published bodies byte for byte), so no text is pasted by hand and none can
+  drift. The edit passes `--latest` explicitly and the run fails unless
+  `releases/latest` and the asset list are unchanged. Done when the five
+  runs are green.
 
 ---
 
