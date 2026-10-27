@@ -605,12 +605,21 @@ mod tests {
     }
 
     /// A catalog with a pinned test key, a manifest that key signed, and the
-    /// image the manifest describes. The image opens with the 0xE9 image
-    /// magic, where the S3's and the C3's ROM load the bootloader from.
+    /// image the manifest describes. The image opens with an ESP32-S3
+    /// bootloader's header, where the S3's ROM loads it from.
     fn fixture() -> Fixture {
         let mut image: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
-        image[0] = 0xE9;
+        s3_bootloader_head(&mut image);
         fixture_with(image)
+    }
+
+    /// Stamp an ESP32-S3 bootloader's header at 0x0: the 0xE9 image magic and
+    /// the S3's chip id, which check_bootloader_offset reads.
+    fn s3_bootloader_head(image: &mut [u8]) {
+        let (_, chip_id) = crate::image::rom_bootloader("ESP32-S3").unwrap();
+        image[0] = crate::image::IMAGE_MAGIC;
+        let at = crate::image::IMAGE_CHIP_ID_AT;
+        image[at..at + 2].copy_from_slice(&chip_id.to_le_bytes());
     }
 
     /// [`fixture`] around a given release image (signed like any other).
@@ -1097,16 +1106,16 @@ mod tests {
         );
     }
 
-    /// A factory-shaped image: a bootloader-ish head (0xE9 at 0x0, where the
-    /// S3's ROM looks), a partition table at 0x8000 (nvs at 0x9000, the app at
-    /// 0x10000 — `app_size` long), and each region filled with its own byte,
-    /// so a test chooses what differs.
+    /// A factory-shaped image: a bootloader-ish head (an S3 bootloader's
+    /// header at 0x0, where the S3's ROM looks), a partition table at 0x8000
+    /// (nvs at 0x9000, the app at 0x10000 — `app_size` long), and each region
+    /// filled with its own byte, so a test chooses what differs.
     fn partitioned(nvs_byte: u8, app_byte: u8, app_size: u32) -> Vec<u8> {
         let mut img = vec![0xff; 0x20000];
         for (i, b) in img[..0x1000].iter_mut().enumerate() {
             *b = (i % 253) as u8; // not blank: the capacity check has a pattern
         }
-        img[0] = 0xE9;
+        s3_bootloader_head(&mut img);
         let mut entry = |i: usize, ptype: u8, subtype: u8, off: u32, size: u32, label: &str| {
             let base = 0x8000 + i * 32;
             img[base] = 0xaa;

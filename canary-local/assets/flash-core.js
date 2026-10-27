@@ -107,50 +107,60 @@ export function localImageShape(bytes) {
 }
 
 // Where each chip's mask ROM loads the second-stage bootloader from, which is
-// where a factory image (a picture of flash from address 0) must hold it.
-// Keyed by esptool's chip names, which normalizeChip folds the detected name
-// to ("ESP32-S3" → "esp32s3"). The same table as
-// firmware/scripts/make_factory.py's ROM_BOOTLOADER and the desktop's
-// flash-engine image.rs ROM_BOOTLOADER_OFFSET; desktop_parity.test.js holds
-// the three equal.
-export const ROM_BOOTLOADER_OFFSET = {
-  esp32: 0x1000,
-  esp32s2: 0x1000,
-  esp32s3: 0x0,
-  esp32c3: 0x0,
-  esp32c2: 0x0,
-  esp32c6: 0x0,
-  esp32h2: 0x0,
+// where a factory image (a picture of flash from address 0) must hold it, and
+// the chip id a bootloader built for that chip names in its image header
+// (esp_image_header_t.chip_id, a u16 at byte 12). Keyed by esptool's chip
+// names, which normalizeChip folds the detected name to ("ESP32-S3" →
+// "esp32s3"). The same table as firmware/scripts/make_factory.py's
+// ROM_BOOTLOADER and the desktop's flash-engine image.rs ROM_BOOTLOADER;
+// desktop_parity.test.js holds the three equal.
+export const ROM_BOOTLOADER = {
+  esp32: [0x1000, 0],
+  esp32s2: [0x1000, 2],
+  esp32s3: [0x0, 9],
+  esp32c3: [0x0, 5],
+  esp32c2: [0x0, 12],
+  esp32c6: [0x0, 13],
+  esp32h2: [0x0, 16],
 };
 export const IMAGE_MAGIC = 0xe9;
+const IMAGE_CHIP_ID_AT = 12;
 
-// The ROM bootloader offset for a detected chip, or null for a chip the table
-// does not list (the P4 and the C5 load from 0x2000).
-export function romBootloaderOffset(chip) {
+// A detected chip's [ROM bootloader offset, image chip id], or null for a chip
+// the table does not list (the P4 and the C5 load from 0x2000).
+export function romBootloader(chip) {
   const key = normalizeChip(chip).toLowerCase();
-  return Object.prototype.hasOwnProperty.call(ROM_BOOTLOADER_OFFSET, key)
-    ? ROM_BOOTLOADER_OFFSET[key] : null;
+  return Object.prototype.hasOwnProperty.call(ROM_BOOTLOADER, key)
+    ? ROM_BOOTLOADER[key] : null;
 }
 
 // The chip-aware half of the factory-shape gate, for every write at 0x0 (the
 // catalog image and a local file alike): the image must carry a bootloader
-// (0xE9) where the connected chip's ROM loads it from. fw-v2.4.17's
-// ESP32-CAM and WROOM images carried theirs at 0x0, where a classic ESP32
-// never looks, and the partition-table check passed them. A chip the table
-// does not list is not judged, so this can only refuse an image the ROM would
-// not start. The desktop's twin is flash-engine image.rs
+// built for the connected chip (0xE9, and the chip's id in the header) where
+// that chip's ROM loads it from. fw-v2.4.17's ESP32-CAM and WROOM images
+// carried theirs at 0x0, where a classic ESP32 never looks, and the
+// partition-table check passed them; the chip id keeps a stray 0xE9 byte at
+// the ROM offset, or another chip's image with the same offset, from passing.
+// A chip the table does not list is not judged, so this can only refuse an
+// image the ROM would not start. The desktop's twin is flash-engine image.rs
 // check_bootloader_offset, in the same words.
 export function bootloaderPlacement(bytes, chip) {
-  const at = romBootloaderOffset(chip);
-  if (at === null || (bytes && bytes[at] === IMAGE_MAGIC)) return { ok: true, reason: "" };
+  const rom = romBootloader(chip);
+  if (rom === null) return { ok: true, reason: "" };
+  const [at, chipId] = rom;
+  // The chip id named by an image header at `o`, or null when none starts there.
+  const idAt = (o) => (bytes && bytes.length >= o + IMAGE_CHIP_ID_AT + 2 && bytes[o] === IMAGE_MAGIC)
+    ? bytes[o + IMAGE_CHIP_ID_AT] | (bytes[o + IMAGE_CHIP_ID_AT + 1] << 8) : null;
+  if (idAt(at) === chipId) return { ok: true, reason: "" };
   const hex = (o) => `0x${o.toString(16)}`;
-  const other = [0x0, 0x1000].find((o) => o !== at && bytes && bytes[o] === IMAGE_MAGIC);
-  const elsewhere = other === undefined ? "" : ` (it has one at ${hex(other)} instead)`;
+  const other = [0x0, 0x1000].find((o) => o !== at && idAt(o) === chipId);
+  const elsewhere = other !== undefined ? ` (it has one at ${hex(other)} instead)`
+    : idAt(at) !== null ? " (the one there was built for another chip)" : "";
   return { ok: false,
     reason: `This image would not start on the ${chip}: that chip loads its bootloader ` +
-      `from ${hex(at)}, and the image has none there${elsewhere}. Nothing was written. ` +
-      `Use an image laid out for the ${chip}: SecuraCV factory images from fw-v2.4.18 on ` +
-      "put the bootloader where each chip loads it." };
+      `from ${hex(at)}, and the image has no bootloader for it there${elsewhere}. Nothing ` +
+      `was written. Use an image laid out for the ${chip}: SecuraCV factory images from ` +
+      "fw-v2.4.18 on put the bootloader where each chip loads it." };
 }
 
 // Which app partition to read a version out of: prefer ota_0, then factory,
@@ -1413,15 +1423,15 @@ export function classifyFlashError(err) {
   const msg = String((err && (err.message || err.name)) || err || "").toLowerCase();
   const has = (...subs) => subs.some((s) => msg.includes(s));
 
-  // An image refused before the write because its bootloader isn't where
-  // this chip's ROM loads it (bootloaderPlacement; the desktop engine's
+  // An image refused before the write because it has no bootloader for this
+  // chip where its ROM loads one (bootloaderPlacement; the desktop engine's
   // check_bootloader_offset says the same words). First, because no retry,
-  // cable or download mode changes where an image keeps its bootloader.
+  // cable or download mode changes what an image keeps there.
   if (has("would not start on the"))
     return { kind: "layout", title: "That image wouldn't start on this board",
-      hint: "Nothing was written. Its bootloader isn't where this chip loads it from, " +
-        "so the board couldn't start from it (the details say where). Use an image " +
-        "laid out for this chip: SecuraCV factory images from fw-v2.4.18 on are." };
+      hint: "Nothing was written. It has no bootloader for this chip where the chip " +
+        "loads one from, so the board couldn't start from it (the details say where). " +
+        "Use an image laid out for this chip: SecuraCV factory images from fw-v2.4.18 on are." };
 
   // Another program/tab already holds the port (Arduino IDE, PlatformIO
   // monitor, a second flasher tab). The single most common real failure.

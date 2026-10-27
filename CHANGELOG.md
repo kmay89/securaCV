@@ -202,17 +202,24 @@
 - **Both flashers refuse, before writing, an image whose bootloader is not
   where the connected chip's ROM loads it.** The partition-table check passed
   fw-v2.4.17's two classic-ESP32 images. Now the catalog install and the
-  local-file install each look for the 0xE9 image magic at 0x1000 on an ESP32
-  or S2 and at 0x0 on the S3/C3/C6/C2/H2: the browser in
+  local-file install each look for a bootloader built for the connected chip
+  (the 0xE9 image magic, and that chip's id in the header's byte 12) at
+  0x1000 on an ESP32 or S2 and at 0x0 on the S3/C3/C6/C2/H2: the browser in
   `flash-core.js` `bootloaderPlacement`, the desktop Flasher and the Lab in
   the shared flash engine's `check_bootloader_offset` (the Flasher's
-  `flash_local_file` now takes the detected chip). The refusal says where the
-  chip looks, where the image has its bootloader, that nothing was written,
-  and that SecuraCV factory images from fw-v2.4.18 on are laid out right, in
-  the same words on both; all three error classifiers name it (`layout`)
-  instead of coaching download mode. A chip the table does not list is not
-  judged, so the check refuses only an image that chip's ROM would not start;
-  the other 19 images on fw-v2.4.17 pass it. One table, held equal to
+  `flash_local_file` now takes the detected chip). The chip id keeps a stray
+  0xE9 byte at the ROM offset, or a local file built for another chip that
+  loads from the same place (an S3 image on a C3), from passing. The refusal
+  says where the chip looks, where the image has its bootloader or that the
+  one there is another chip's, that nothing was written, and that SecuraCV
+  factory images from fw-v2.4.18 on are laid out right, in the same words on
+  both; all three error classifiers name it (`layout`) instead of coaching
+  download mode, and neither failure card then offers a clean install (nor,
+  on the desktop, "Try again"), which would refuse the same image again. A
+  chip the table does not list is not judged, so the check refuses only an
+  image that chip's ROM would not start; the other 19 images on fw-v2.4.17,
+  and every factory image on `fw-dev-latest` but the same two boards', pass
+  it (their first 8 KB read from the releases). One table, held equal to
   `make_factory.py`'s `ROM_BOOTLOADER` by
   `desktop_parity.test.js`, which also requires a row for every chip in
   `flash.json` (that check moved there from `test_make_factory.py`, so it runs
@@ -226,7 +233,9 @@
   chip is blank", and a 2 MB die sold as 4 MB was never caught. The window is
   now 0x2000, past a classic ESP32's bootloader at 0x1000, in both flashers
   (`intake.js` `FLASH_ALIAS_WINDOW`, `intake.rs` `ALIAS_WINDOW`, held equal by
-  `desktop_parity.test.js`), with a classic-layout case on each side.
+  `desktop_parity.test.js`, which also holds the window past every offset in
+  the ROM table, so a chip that loads from 0x2000 cannot join it unseen), with
+  a classic-layout case on each side.
 - **The desktop Flasher's local-file note looks at 0x1000 too.** It warned
   that a file not starting with 0xE9 was unusual, which is every correct
   classic-ESP32 factory image; it now looks for the magic at 0x0 or 0x1000

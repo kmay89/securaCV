@@ -62,8 +62,9 @@ any platform.
   chip is refused without an explicit offset, and the merged file is read
   back before it is kept (`firmware/scripts/test_make_factory.py`, run in
   firmware.yml). Both flashers now also refuse, before writing, an image
-  whose bootloader is not where the connected chip's ROM loads it (the same
-  table, held equal by `desktop_parity.test.js`). This change leaves the
+  with no bootloader built for the connected chip where that chip's ROM loads
+  it (the same table, chip ids included, held equal by
+  `desktop_parity.test.js`). This change leaves the
   published 2.4.17 assets alone; `docs/RELEASE_BUTTONS.md` § Flasher Factory
   Images says what a rebuild of a published tag would replace, and why the
   desktop apps' compiled-in catalog weighs on that choice.

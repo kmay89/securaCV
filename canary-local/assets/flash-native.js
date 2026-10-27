@@ -102,15 +102,16 @@ function classifyFlashError(err) {
         "Apple Silicon and Intel; the Linux one is for x86-64 PCs). If the newest one " +
         "fails the same way, please report it, with the reason the system gave." };
 
-  // An image refused before the write because its bootloader isn't where
-  // this chip's ROM loads it (flash-engine image.rs check_bootloader_offset;
-  // the browser's bootloaderPlacement says the same words). No retry, cable
-  // or download mode changes where an image keeps its bootloader.
+  // An image refused before the write because it has no bootloader for this
+  // chip where its ROM loads one (flash-engine image.rs
+  // check_bootloader_offset; the browser's bootloaderPlacement says the same
+  // words). No retry, cable or download mode changes what an image keeps
+  // there.
   if (has("would not start on the"))
     return { kind: "layout", title: "That image wouldn't start on this board",
-      hint: "Nothing was written. Its bootloader isn't where this chip loads it from, " +
-        "so the board couldn't start from it (the details say where). Use an image " +
-        "laid out for this chip: SecuraCV factory images from fw-v2.4.18 on are." };
+      hint: "Nothing was written. It has no bootloader for this chip where the chip " +
+        "loads one from, so the board couldn't start from it (the details say where). " +
+        "Use an image laid out for this chip: SecuraCV factory images from fw-v2.4.18 on are." };
 
   if (has("failed to open serial port", "port is already open", "already open",
           "resource temporarily unavailable", "resource busy", "device or resource busy") ||

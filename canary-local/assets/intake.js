@@ -211,8 +211,10 @@ export function efuseFindings(scan) {
 // The head is 8 KB, not 4: a classic ESP32 (and an S2) keeps its bootloader at
 // 0x1000, so on a correctly installed one the first 4 KB are erased flash and
 // a 4 KB head would read as a blank chip forever. 8 KB reaches the bootloader
-// on every chip family. The desktop twin (intake.rs ALIAS_WINDOW) reads the
-// same window; desktop_parity.test.js holds the two equal.
+// on every chip the flashers' ROM bootloader table lists (flash-core.js
+// ROM_BOOTLOADER); a chip that loads it from 0x2000 (the C5, the P4) needs a
+// wider window. The desktop twin (intake.rs ALIAS_WINDOW) reads the same
+// window; desktop_parity.test.js holds the two equal, and past the table.
 export const FLASH_ALIAS_WINDOW = 0x2000;
 
 export function looksUniform(bytes) {

@@ -369,15 +369,16 @@ function classifyFlashError(err) {
         "Apple Silicon and Intel; the Linux one is for x86-64 PCs). If the newest one " +
         "fails the same way, please report it, with the reason the system gave." };
 
-  // An image refused before the write because its bootloader isn't where
-  // this chip's ROM loads it (flash-engine image.rs check_bootloader_offset;
-  // the browser's bootloaderPlacement says the same words). No retry, cable
-  // or download mode changes where an image keeps its bootloader.
+  // An image refused before the write because it has no bootloader for this
+  // chip where its ROM loads one (flash-engine image.rs
+  // check_bootloader_offset; the browser's bootloaderPlacement says the same
+  // words). No retry, cable or download mode changes what an image keeps
+  // there.
   if (has("would not start on the"))
     return { kind: "layout", title: "That image wouldn't start on this board",
-      hint: "Nothing was written. Its bootloader isn't where this chip loads it from, " +
-        "so the board couldn't start from it (the details say where). Use an image " +
-        "laid out for this chip: SecuraCV factory images from fw-v2.4.18 on are." };
+      hint: "Nothing was written. It has no bootloader for this chip where the chip " +
+        "loads one from, so the board couldn't start from it (the details say where). " +
+        "Use an image laid out for this chip: SecuraCV factory images from fw-v2.4.18 on are." };
 
   if (has("failed to open serial port", "port is already open", "already open",
           "resource temporarily unavailable", "resource busy", "device or resource busy") ||
@@ -3818,7 +3819,7 @@ async function onFlash() {
     );
     // …and hand over the next steps, rather than a diagnosis with nowhere to
     // go (parity: the browser's error card carries them).
-    renderFlashFailureActions({ retry: onFlash });
+    renderFlashFailureActions({ retry: onFlash, kind: c.kind });
     logEvent("err", "Flash failed [" + c.kind + "]: " + e);
     hideHatchCard();
   } finally {
@@ -3860,16 +3861,24 @@ function renderFlashFailureActions(opts) {
     return b;
   };
 
-  button("Try again", "btn-primary", () => {
-    renderFlashFailureActions(null);
-    opts.retry();
-  });
+  // An image refused by the bootloader check ("layout") gets neither retry:
+  // the same install, with or without a full erase, refuses the same image
+  // again. The fix is another image, from the picker above; the report
+  // stays. (The browser's card keeps its "Try again", which reconnects and
+  // returns to its picker — the only way off that card.)
+  const refused = opts.kind === "layout";
+  if (!refused) {
+    button("Try again", "btn-primary", () => {
+      renderFlashFailureActions(null);
+      opts.retry();
+    });
+  }
 
   // Only offer the escalation when there is one left to make: if the chip was
   // already being fully erased, a "clean install" is the same install again,
   // and offering it as the next step would be a false promise.
   const first = $("first-contact");
-  if (first && !first.checked) {
+  if (!refused && first && !first.checked) {
     button("Clean install (full erase) →", "btn-ghost", () => {
       // Tick the real control rather than passing a hidden flag: the checkbox
       // stays the one place the erase is decided, and the user can see what

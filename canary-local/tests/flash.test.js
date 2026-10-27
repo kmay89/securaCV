@@ -335,39 +335,51 @@ test("localImageShape refuses app-only builds and passes merged factory images",
 // a classic ESP32's ROM loads it from 0x1000: the partition table was there,
 // so the shape gate above passed them, and neither board could boot.
 test("bootloaderPlacement refuses an image whose bootloader isn't where the chip's ROM loads it", async () => {
-  const { bootloaderPlacement, romBootloaderOffset } = await core();
-  const imageWithBootloaderAt = (at) => {
+  const { bootloaderPlacement, romBootloader } = await core();
+  // A factory image with a bootloader for chip id `id` at `at` (the header's
+  // u16le chip id at +12), the partition table at 0x8000, the rest erased.
+  const imageWithBootloaderAt = (at, id) => {
     const b = new Uint8Array(0x10000).fill(0xff);
     b[at] = 0xe9;
+    b[at + 12] = id & 0xff; b[at + 13] = id >> 8;
     b[0x8000] = 0xaa; b[0x8001] = 0x50;
     return b;
   };
-  const classic = imageWithBootloaderAt(0x1000);
-  const s3Shape = imageWithBootloaderAt(0x0);
   // Correct images pass, in every spelling the detector and the catalog use.
-  for (const chip of ["ESP32", "esp32", "ESP32-S2"]) {
-    assert.ok(bootloaderPlacement(classic, chip).ok, chip);
-  }
-  for (const chip of ["ESP32-S3", "ESP32-C3", "ESP32-C6", "ESP32-C2", "ESP32-H2", "esp32 s3"]) {
-    assert.ok(bootloaderPlacement(s3Shape, chip).ok, chip);
+  for (const [chip, at, id] of [["ESP32", 0x1000, 0], ["esp32", 0x1000, 0], ["ESP32-S2", 0x1000, 2],
+    ["ESP32-S3", 0x0, 9], ["esp32 s3", 0x0, 9], ["ESP32-C3", 0x0, 5], ["ESP32-C6", 0x0, 13],
+    ["ESP32-C2", 0x0, 12], ["ESP32-H2", 0x0, 16]]) {
+    assert.ok(bootloaderPlacement(imageWithBootloaderAt(at, id), chip).ok, chip);
   }
   // The fw-v2.4.17 shape on a classic ESP32: refused, saying where the ROM
   // looks, where the image has it, that nothing was written and what to use.
-  const v = bootloaderPlacement(s3Shape, "ESP32");
+  const misplaced = imageWithBootloaderAt(0x0, 0);
+  const v = bootloaderPlacement(misplaced, "ESP32");
   assert.strictEqual(v.ok, false);
-  assert.match(v.reason, /loads its bootloader from 0x1000, and the image has none there \(it has one at 0x0 instead\)/);
+  assert.match(v.reason, /loads its bootloader from 0x1000, and the image has no bootloader for it there \(it has one at 0x0 instead\)/);
   assert.match(v.reason, /Nothing was written/);
   assert.match(v.reason, /fw-v2\.4\.18/);
-  // The mirror image on an S3, and an image with no bootloader at all.
-  assert.match(bootloaderPlacement(classic, "ESP32-S3").reason, /from 0x0, .*\(it has one at 0x1000 instead\)/);
+  // …and when that bootloader's body happens to hold 0xE9 at 0x1000: a stray
+  // byte there is not a header naming the ESP32, so it is still refused.
+  const stray = misplaced.slice();
+  stray[0x1000] = 0xe9; stray[0x100c] = 0x3a;
+  assert.match(bootloaderPlacement(stray, "ESP32").reason, /\(it has one at 0x0 instead\)/);
+  // A classic image on an S3 (its bootloader at 0x1000 is an ESP32's), an S3
+  // image on a C3 (the right place, another chip's bootloader), and an image
+  // with no bootloader at all.
+  const onS3 = bootloaderPlacement(imageWithBootloaderAt(0x1000, 0), "ESP32-S3");
+  assert.strictEqual(onS3.ok, false);
+  assert.match(onS3.reason, /from 0x0, and the image has no bootloader for it there\. Nothing/);
+  assert.match(bootloaderPlacement(imageWithBootloaderAt(0x0, 9), "ESP32-C3").reason,
+    /from 0x0, and the image has no bootloader for it there \(the one there was built for another chip\)/);
   const none = bootloaderPlacement(new Uint8Array(0x10000).fill(0xff), "ESP32-C6");
   assert.strictEqual(none.ok, false);
-  assert.doesNotMatch(none.reason, /instead/);
+  assert.doesNotMatch(none.reason, /instead|another chip/);
   // A chip the table doesn't list is never judged, so the gate can't block
   // a correct image for it.
-  assert.strictEqual(romBootloaderOffset("ESP32-P4"), null);
+  assert.strictEqual(romBootloader("ESP32-P4"), null);
   assert.ok(bootloaderPlacement(new Uint8Array(0x10000).fill(0xff), "ESP32-P4").ok);
-  assert.ok(bootloaderPlacement(s3Shape, null).ok, "no chip read, nothing judged");
+  assert.ok(bootloaderPlacement(misplaced, null).ok, "no chip read, nothing judged");
 });
 
 // ── partition kinds (board report vocabulary) ───────────────────────────────
@@ -1437,7 +1449,7 @@ test("classifyFlashError maps the real Web Serial / esptool failures to advice",
   assert.strictEqual(kindOf("short read at 0x1a0000"), "read-stall");
   // An image refused for where it keeps its bootloader: no retry fixes that.
   assert.strictEqual(kindOf("This image would not start on the ESP32: that chip loads its " +
-    "bootloader from 0x1000, and the image has none there."), "layout");
+    "bootloader from 0x1000, and the image has no bootloader for it there."), "layout");
   // Unknown → generic, but still actionable + no hijacked title.
   const u = classifyFlashError(new Error("kernel panic in the toaster"));
   assert.strictEqual(u.kind, "unknown");

@@ -424,8 +424,8 @@ async fn inspect_local_file(path: String) -> Result<LocalFileInfo, String> {
 /// inspect_local_file showed and the user confirmed — the file is re-read and
 /// re-hashed here, so a file that changed on disk between the two calls is
 /// refused rather than silently written. `detected_chip` is the chip the
-/// frontend read: the image's bootloader must sit where that chip's ROM loads
-/// it (check_bootloader_offset, the catalog path's gate too). The write
+/// frontend read: the image must carry that chip's bootloader where its ROM
+/// loads it (check_bootloader_offset, the catalog path's gate too). The write
 /// mechanics are identical to flash(): private staged temp file,
 /// `write-bin 0x0` via the bundled espflash, `flash:log` streaming.
 #[tauri::command]

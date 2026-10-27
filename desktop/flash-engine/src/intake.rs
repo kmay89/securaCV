@@ -58,8 +58,10 @@ fn format_size(bytes: u64) -> String {
 /// ESP32 (and an S2) keeps its bootloader at 0x1000, so on a correctly
 /// installed one the first 4 KB are erased flash, and a 4 KB head would read
 /// as a blank chip forever (and miss a mirrored part). 8 KB reaches the
-/// bootloader on every chip family. The browser twin reads the same window
-/// (intake.js FLASH_ALIAS_WINDOW); desktop_parity.test.js holds the two equal.
+/// bootloader on every chip in [`crate::image::ROM_BOOTLOADER`]; a chip that
+/// loads it from 0x2000 (the C5, the P4) needs a wider window. The browser
+/// twin reads the same window (intake.js FLASH_ALIAS_WINDOW);
+/// desktop_parity.test.js holds the two equal, and past the table.
 pub const ALIAS_WINDOW: usize = 0x2000;
 
 /// Compare the head of the chip against each aliasing candidate inside the

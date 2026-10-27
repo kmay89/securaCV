@@ -2182,13 +2182,14 @@ function renderPicker() {
   local.append(localP);
   // Name the chip that is actually connected, and say plainly which check a
   // local file skips. The factory-shape gates (localImageShape, and
-  // bootloaderPlacement, which turns away an image laid out for the other
-  // bootloader offset) still run, but the catalog's chip GUARD cannot —
-  // there's no product to compare against — so a .bin built for a different
-  // ESP32 variant whose ROM loads from the same offset (an S3 image on a C3)
-  // would be written with no warning at all. The desktop Flasher has said
-  // this since it grew the local path (app.js:updateLocalFlashUi); same words
-  // here, so the risk is visible on both flashers rather than hidden on one.
+  // bootloaderPlacement, which turns away an image whose bootloader is
+  // misplaced or another chip's) still run, but the catalog's chip GUARD
+  // cannot — there's no product to compare against — so a .bin for another
+  // board on the same chip (or with another chip's app behind this chip's
+  // bootloader) would be written with no warning at all. The desktop Flasher
+  // has said this since it grew the local path (app.js:updateLocalFlashUi);
+  // same words here, so the risk is visible on both flashers rather than
+  // hidden on one.
   local.append(el("p", "fineprint",
     `Connected: ${state.chipDesc || state.chip || "not read yet"}. A local file skips the ` +
     "catalog’s chip guard — there’s no product to compare against — so make " +
@@ -3349,7 +3350,7 @@ async function onLocalFile(ev) {
       phaseConnected));
     return;
   }
-  // …and its bootloader must sit where THIS chip's ROM loads it from
+  // …and it must carry THIS chip's bootloader where the chip's ROM loads it
   // (core.bootloaderPlacement — the catalog path runs it too, after the
   // download). Same refusal, same words, as the desktop Flasher.
   const placed = core.bootloaderPlacement(bytes, state.chip);
@@ -4546,8 +4547,12 @@ function flashError(e, opts) {
   row.append(retry);
   // Escalate: if a plain install failed, offer a full-erase clean install as
   // the next self-heal step (reconnect → the rescue flow, which also restores
-  // a backup if one exists). Skip when we're already erasing/rescuing.
-  if (!opts.rescue && !opts.eraseAll) {
+  // a backup if one exists). Skip when we're already erasing/rescuing, and
+  // when the image itself was refused ("layout"): erasing the chip doesn't
+  // move an image's bootloader, so the rescue would refuse it again. "Try
+  // again" stays — it reconnects and returns to the picker, where another
+  // image is the fix (the desktop, whose picker stays on screen, drops it).
+  if (!opts.rescue && !opts.eraseAll && v.kind !== "layout") {
     const clean = el("button", "ghost", "Clean install (full erase) →");
     clean.addEventListener("click", async () => {
       await onDisconnect(true);

@@ -162,7 +162,9 @@ DevKit) keeps its bootloader at `0x1000`: on a correctly installed one the
 first 4 KB are erased flash, and a 4 KB window read every such board as blank
 and could never catch a mirrored one. Both flashers read the same window
 (`intake.js` `FLASH_ALIAS_WINDOW`, `intake.rs` `ALIAS_WINDOW`; held equal by
-`desktop_parity.test.js`).
+`desktop_parity.test.js`, which also holds the window past every offset in the
+flashers' ROM bootloader table, so a chip that loads from `0x2000` cannot join
+the table before the window grows).
 
 ### 3. The MAC
 

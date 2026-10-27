@@ -751,13 +751,13 @@ test("parity wave 4a: the counterfeit-capacity check the desktop got for free", 
 
   // Both read the same head window, wide enough to reach a classic ESP32's
   // bootloader at 0x1000: with 4 KB, every correctly installed classic board
-  // read as blank, and a mirrored one was never caught.
+  // read as blank, and a mirrored one was never caught. (The bootloader-
+  // placement test below holds the window past every offset in the ROM table.)
   const jsWindow = /export const FLASH_ALIAS_WINDOW = (0x[0-9a-fA-F]+);/.exec(intakeJs);
   const rsWindow = /pub const ALIAS_WINDOW: usize = (0x[0-9a-fA-F]+);/.exec(intakeRs);
   assert.ok(jsWindow && rsWindow, "couldn't read the alias window out of intake.js / intake.rs");
   assert.strictEqual(Number(jsWindow[1]), Number(rsWindow[1]),
     "intake.js FLASH_ALIAS_WINDOW and intake.rs ALIAS_WINDOW drifted apart");
-  assert.ok(Number(jsWindow[1]) > 0x1000, "the alias window must reach past 0x1000");
   const runIntake = jsFnText(read(join(CANARY, "assets/flash.js")), "runIntake", "flash.js");
   assert.match(runIntake, /const win = intake\.FLASH_ALIAS_WINDOW;/,
     "the browser's capacity probe no longer reads intake.FLASH_ALIAS_WINDOW");
@@ -1234,60 +1234,83 @@ test("bootloader placement: both flashers refuse an image whose bootloader isn't
   const imageRs = engineRs("image");
   const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
 
-  // 1. One table, three copies, held equal.
-  const pyBlock = /\nROM_BOOTLOADER = \{([\s\S]*?)\n\}/.exec(read(join(ROOT, "firmware/scripts/make_factory.py")));
+  // 1. One table, three copies, held equal: where each chip's ROM loads the
+  //    bootloader, and the chip id that bootloader's header names.
+  const makeFactory = read(join(ROOT, "firmware/scripts/make_factory.py"));
+  const pyBlock = /\nROM_BOOTLOADER = \{([\s\S]*?)\n\}/.exec(makeFactory);
   assert.ok(pyBlock, "couldn't find ROM_BOOTLOADER in firmware/scripts/make_factory.py");
-  const py = Object.fromEntries([...pyBlock[1].matchAll(/"(esp32\w*)":\s*\((0x[0-9a-fA-F]+),/g)]
-    .map((m) => [m[1], Number(m[2])]));
-  const rsBlock = /pub const ROM_BOOTLOADER_OFFSET: \[\(&str, usize\); \d+\] = \[([\s\S]*?)\];/.exec(imageRs);
-  assert.ok(rsBlock, "couldn't find ROM_BOOTLOADER_OFFSET in flash-engine image.rs");
-  const rs = Object.fromEntries([...rsBlock[1].matchAll(/\("(esp32\w*)",\s*(0x[0-9a-fA-F]+)\)/g)]
-    .map((m) => [m[1], Number(m[2])]));
-  assert.ok(py.esp32 === 0x1000 && py.esp32s3 === 0x0, `make_factory.py's table didn't parse: ${JSON.stringify(py)}`);
-  assert.deepStrictEqual({ ...core.ROM_BOOTLOADER_OFFSET }, py,
-    "flash-core.js ROM_BOOTLOADER_OFFSET drifted from make_factory.py's ROM_BOOTLOADER");
+  const py = Object.fromEntries([...pyBlock[1].matchAll(/"(esp32\w*)":\s*\((0x[0-9a-fA-F]+),\s*(\d+)\)/g)]
+    .map((m) => [m[1], [Number(m[2]), Number(m[3])]]));
+  const rsBlock = /pub const ROM_BOOTLOADER: \[\(&str, usize, u16\); \d+\] = \[([\s\S]*?)\];/.exec(imageRs);
+  assert.ok(rsBlock, "couldn't find ROM_BOOTLOADER in flash-engine image.rs");
+  const rs = Object.fromEntries([...rsBlock[1].matchAll(/\("(esp32\w*)",\s*(0x[0-9a-fA-F]+),\s*(\d+)\)/g)]
+    .map((m) => [m[1], [Number(m[2]), Number(m[3])]]));
+  assert.ok(py.esp32?.[0] === 0x1000 && py.esp32s3?.[1] === 9,
+    `make_factory.py's table didn't parse: ${JSON.stringify(py)}`);
+  assert.deepStrictEqual({ ...core.ROM_BOOTLOADER }, py,
+    "flash-core.js ROM_BOOTLOADER drifted from make_factory.py's ROM_BOOTLOADER");
   assert.deepStrictEqual(rs, py,
-    "flash-engine image.rs ROM_BOOTLOADER_OFFSET drifted from make_factory.py's ROM_BOOTLOADER");
+    "flash-engine image.rs ROM_BOOTLOADER drifted from make_factory.py's ROM_BOOTLOADER");
+  // …and the header byte the chip id sits at.
+  const pyIdAt = /\nIMAGE_CHIP_ID_AT = (\d+)/.exec(makeFactory);
+  const rsIdAt = /pub const IMAGE_CHIP_ID_AT: usize = (\d+);/.exec(imageRs);
+  assert.ok(pyIdAt && rsIdAt, "couldn't read IMAGE_CHIP_ID_AT out of make_factory.py / image.rs");
+  const idAt = Number(pyIdAt[1]);
+  assert.strictEqual(Number(rsIdAt[1]), idAt, "image.rs IMAGE_CHIP_ID_AT drifted from make_factory.py's");
   // Every chip the catalog ships has a row: a chip with none is never judged
   // by the flashers, and make_factory.py refuses to merge it, which drops that
   // product from every release. (This runs whenever flash.json changes.)
   for (const p of catalog.products) {
-    assert.notStrictEqual(core.romBootloaderOffset(p.chip), null,
-      `${p.id} is a ${p.chip}, which ROM_BOOTLOADER has no offset for — add the chip's ROM ` +
-      "bootloader offset to make_factory.py, flash-core.js and image.rs together");
+    assert.notStrictEqual(core.romBootloader(p.chip), null,
+      `${p.id} is a ${p.chip}, which ROM_BOOTLOADER has no row for — add the chip's ROM ` +
+      "bootloader offset and image chip id to make_factory.py, flash-core.js and image.rs together");
   }
+  // The capacity probe's head window must reach past every offset the table
+  // lists, or every correctly installed board of that chip reads as blank and
+  // a mirrored part is never caught: a chip that loads from 0x2000 (the C5,
+  // the P4) needs a wider window first. (Wave 4a holds intake.rs's to it.)
+  const hex = (n) => `0x${n.toString(16)}`;
+  const intake = await import(pathToFileURL(join(CANARY, "assets/intake.js")).href);
+  const furthest = Math.max(...Object.values(py).map(([at]) => at));
+  assert.ok(intake.FLASH_ALIAS_WINDOW > furthest,
+    `intake.js FLASH_ALIAS_WINDOW (${hex(intake.FLASH_ALIAS_WINDOW)}) doesn't reach a bootloader ` +
+    `at ${hex(furthest)} — widen it and intake.rs ALIAS_WINDOW together`);
 
   // 2. The same words. The desktop's refusal, rendered from its own format
   //    strings, equals the browser's for the same image and chip.
   const body = nativeFnBody(imageRs, "check_bootloader_offset");
   const fmt = /Err\(format!\(\s*"([\s\S]*?)"\s*\)\)/.exec(body);
   const elseFmt = /format!\("( \(it has one at )\{o:#x\}( instead\))"\)/.exec(body);
-  assert.ok(fmt && elseFmt, "couldn't read check_bootloader_offset's refusal out of image.rs");
+  const anotherFmt = /None if id_at\(at\)\.is_some\(\) => "([^"]*)"\.into\(\)/.exec(body);
+  assert.ok(fmt && elseFmt && anotherFmt, "couldn't read check_bootloader_offset's refusal out of image.rs");
   const template = fmt[1].replace(/\\\n\s*/g, "");
-  const hex = (n) => `0x${n.toString(16)}`;
   const nativeWords = (chip, at, other) => template.replaceAll("{chip}", chip)
     .replace("{at:#x}", hex(at))
-    .replace("{elsewhere}", other === null ? "" : elseFmt[1] + hex(other) + elseFmt[2]);
-  const image = (at) => {
+    .replace("{elsewhere}", other === null ? "" : other === "another" ? anotherFmt[1]
+      : elseFmt[1] + hex(other) + elseFmt[2]);
+  // A factory image with a bootloader for chip id `id` at `at` (null: none).
+  const image = (at, id) => {
     const b = new Uint8Array(0x8100).fill(0xff);
-    if (at !== null) b[at] = 0xe9;
+    if (at !== null) { b[at] = 0xe9; b[at + idAt] = id & 0xff; b[at + idAt + 1] = id >> 8; }
     b[0x8000] = 0xaa; b[0x8001] = 0x50;
     return b;
   };
-  for (const [chip, at, rom, other] of [
-    ["ESP32", 0x0, 0x1000, 0x0],        // fw-v2.4.17's classic-ESP32 shape
-    ["ESP32-S3", 0x1000, 0x0, 0x1000],  // a classic image on an S3
-    ["ESP32-C6", null, 0x0, null],      // no bootloader anywhere
+  for (const [chip, at, id, rom, other] of [
+    ["ESP32", 0x0, 0, 0x1000, 0x0],               // fw-v2.4.17's classic-ESP32 shape
+    ["ESP32-S3", 0x1000, 0, 0x0, null],           // a classic image on an S3
+    ["ESP32-C3", 0x0, py.esp32s3[1], 0x0, "another"], // an S3 image on a C3
+    ["ESP32-C6", null, 0, 0x0, null],             // no bootloader anywhere
   ]) {
-    const v = core.bootloaderPlacement(image(at), chip);
+    const v = core.bootloaderPlacement(image(at, id), chip);
     assert.strictEqual(v.ok, false, `the browser passed a ${chip} image with its bootloader at ${at}`);
     assert.strictEqual(v.reason, nativeWords(chip, rom, other),
       `the two flashers word the ${chip} refusal differently — keep flash-core.js bootloaderPlacement ` +
       "and image.rs check_bootloader_offset in the same words");
   }
-  // …and a correct image of each family passes.
-  assert.ok(core.bootloaderPlacement(image(0x1000), "ESP32").ok);
-  assert.ok(core.bootloaderPlacement(image(0x0), "ESP32-S3").ok);
+  // …and an image laid out by each row of the table passes on its chip.
+  for (const [chip, [at, id]] of Object.entries(py)) {
+    assert.ok(core.bootloaderPlacement(image(at, id), chip).ok, `a correct ${chip} image was refused`);
+  }
 
   // 3. Both flashers run it before writing, on every path that writes an image
   //    at 0x0 for a chip it has read.
@@ -1319,6 +1342,21 @@ test("bootloader placement: both flashers refuse an image whose bootloader isn't
   ]) {
     assert.strictEqual(classify(refusal).kind, "layout", `${where} doesn't name a bootloader-placement refusal`);
   }
+
+  // 5. …and neither failure card offers a next attempt that refuses the same
+  //    image again: no clean install (erasing the chip doesn't move an image's
+  //    bootloader), and on the desktop no "Try again" either (it re-runs the
+  //    same install; the browser's reconnects to its picker, its only exit).
+  assert.match(jsFnText(flashJs, "flashError", "flash.js"),
+    /if \(!opts\.rescue && !opts\.eraseAll && v\.kind !== "layout"\)/,
+    "the browser's failure card offers a clean install after a layout refusal");
+  assert.match(appJs, /renderFlashFailureActions\(\{ retry: onFlash, kind: c\.kind \}\)/,
+    "the desktop's failure card no longer hears which kind of failure it follows");
+  const actions = jsFnText(appJs, "renderFlashFailureActions", "desktop/src/app.js");
+  assert.match(actions, /const refused = opts\.kind === "layout";\s*if \(!refused\) \{\s*button\("Try again"/,
+    "the desktop's failure card offers \"Try again\" after a layout refusal");
+  assert.match(actions, /if \(!refused && first && !first\.checked\)/,
+    "the desktop's failure card offers a clean install after a layout refusal");
 });
 
 test("rescue bench: both flashers can back up, restore, and erase — native wired end-to-end", () => {
@@ -5052,7 +5090,7 @@ test("wave 5: a failed install offers the same next steps on both flashers", () 
     "desktop/src/index.html has nowhere to put the failure's next steps");
   assert.match(appJs, /function renderFlashFailureActions/,
     "desktop lost the failure-actions renderer");
-  assert.match(appJs, /renderFlashFailureActions\(\{ retry: onFlash \}\)/,
+  assert.match(appJs, /renderFlashFailureActions\(\{ retry: onFlash, kind: c\.kind \}\)/,
     "the desktop flash catch no longer offers any next step");
 
   // The escalation must actually ARM the erase, not merely say it will —
@@ -5061,7 +5099,7 @@ test("wave 5: a failed install offers the same next steps on both flashers", () 
     "the desktop clean-install button doesn't tick the first-contact erase");
   // …and it must not be offered when the erase was already on, where it
   // would promise a different attempt and deliver the same one.
-  assert.match(appJs, /if \(first && !first\.checked\)/,
+  assert.match(appJs, /if \(!refused && first && !first\.checked\)/,
     "the desktop must not offer a clean install to someone already doing one");
   // A previous failure's buttons must not outlive the run that produced them.
   assert.match(appJs, /function resetOutcome[\s\S]{0,300}renderFlashFailureActions\(null\)/,
