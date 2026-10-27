@@ -987,7 +987,7 @@ static uint32_t g_claim_refusal_logged_ms = 0;
 // while its no-credentials window runs (ble_improv_note_window_used), read
 // once at the door's init (ble_improv_window_used_ms), zeroed by a
 // credential wipe (wifi_clear_credentials: the 10 s hold, or Forget Wi-Fi,
-// which after setup takes the bearer, sweep F345: the owner's own act
+// which takes the bearer in every mode, sweep F345: the owner's own act
 // re-arms the window, as improv_core.h's session does in RAM). Loop task
 // only after setup().
 RTC_NOINIT_ATTR uint32_t g_improv_window_magic;
@@ -7079,11 +7079,12 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
 // Credential gate shared by /api/wifi/connect and /api/wifi/ap-only.
 // After first-boot setup the bearer alone moves the network the unit joins
 // over HTTP (sweep F334), on every interface, the recovery portal's SoftAP
-// included (a peer already bonded, one a session confirmed before F346
-// among them, still moves it with no token, over the Bluetooth credentials
-// write, ble_request_wifi_provisioning()): the landing page hands any caller
-// on the home network a pair token and a 24 h session, and the AP key is
-// printed in too many places to be a network-move credential.
+// included (a peer already bonded through the pairing confirm or a passkey,
+// one a session made before F346 among them, still moves it with no token,
+// over the Bluetooth credentials write, ble_request_wifi_provisioning()):
+// the landing page hands any caller on the home network a pair token and a
+// 24 h session, and the AP key is printed in too many places to be a
+// network-move credential.
 // api_auth_check_bearer() takes no cookie, sits under the per-address
 // lockout and sends its own 401/403/429.
 // During setup the wizard carries a live pair token, and a *presented* admin
@@ -7860,8 +7861,9 @@ static esp_err_t handle_wifi_forget(httpd_req_t* req) {
 
   WiFi.disconnect(true);
   wifi_clear_credentials();
-  // The broker login goes with the networks (sweep F333): Forget re-opens
-  // the keyless joins (the setup door, the camera's boot scan), and every
+  // The broker login goes with the networks (sweep F333): on a unit not
+  // running standalone Forget re-opens the keyless joins (the setup door,
+  // the camera's boot scan, keyless_join_open()), and every
   // code also chooses the network, so whoever wins one could answer the
   // stored broker host. Host, port, TLS mode, CA, prefix and discovery stay.
   const bool login_cleared = csi_mqtt::login_clear();
@@ -11050,8 +11052,8 @@ static bool wifi_clear_credentials() {
   g_improv_join_pending = false;   // a door join in flight has nothing left to prove
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
   g_wifi_status.last_fail_reason[0] = '\0';
-  // A credential wipe (the 10 s hold, or Forget Wi-Fi, which after setup
-  // takes the bearer, sweep F345: the owner's own act either way) re-arms
+  // A credential wipe (the 10 s hold, or Forget Wi-Fi, which takes the
+  // bearer in every mode, sweep F345: the owner's own act either way) re-arms
   // the Bluetooth setup door's first-boot window: improv_core.h's session
   // does so in RAM the moment the door reads
   // "no credentials" where it read credentials before (its wiped

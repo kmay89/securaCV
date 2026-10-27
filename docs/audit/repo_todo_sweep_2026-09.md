@@ -1837,8 +1837,10 @@ so — see D2 below.)
   *Decided (2026-10-19, under the maintainer's instruction to fix the
   remaining open items in best engineering practice and best value for the
   user and security); done (2026-10-26, #<PR>):* after first-boot setup, the
-  network the WAP joins moves on the bearer alone, on every interface, the
-  SoftAP recovery portal included.
+  network the WAP joins moves on the bearer alone over HTTP, on every
+  interface, the SoftAP recovery portal included (a peer already bonded
+  through the pairing confirm or a passkey still moves it over the
+  Bluetooth credentials write, as F353 below says).
   - `wifi_change_authorize()` answers `api_auth_check_bearer()` whenever
     `setup_wizard::is_active()` is false (connect, ap-only).
   - The forget and disconnect wrappers take `api_auth_check_bearer()`;
@@ -1846,7 +1848,8 @@ so — see D2 below.)
   - POST /api/wifi/qr-scan answers 404 outside setup.
   The ledger named only the pair token, but the session cookie moved the
   network too, through `api_auth_check`. The Bluetooth bond was a second road,
-  closed by F346's gate in the same PR.
+  closed to new bonds by F346's gate in the same PR (a bond a session made
+  before this release persists until the owner removes it).
   During setup Connect and AP-only are unchanged: the wizard's pair token
   works as before, and so does a presented credential (`handle_ui` mints no
   session during setup, but the receipt route mints one on a BOOT tap or the
@@ -4986,7 +4989,8 @@ so — see D2 below.)
       cards left out the flagship's 10 s hold, which drops a seeded token.
     - The rest: `TRUST_MODEL.md` said the Improv window and the tap minute
       are the only times a node takes Wi-Fi from a phone (a WAP's bonded
-      lane takes it from any bonded peer, F346); the roadmap's row 13, a
+      lane takes it from a peer bonded through the pairing confirm or a
+      passkey, F346); the roadmap's row 13, a
       lesson and a CHANGELOG walkthrough entry offered the Bluetooth lane
       no WAP fills (A65) and carry amendments; `magic_pairing.md` §2.3
       called a no-credentials unit one nobody owns; the FAQ left the setup
@@ -6280,8 +6284,9 @@ so — see D2 below.)
   *Decided (2026-10-19, under the maintainer's instruction to fix the
   remaining open items in best engineering practice and best value for the
   user and security), with F334; done (2026-10-26, #<PR>):* POST
-  /api/wifi/forget takes the bearer alone after setup
-  (`api_auth_check_bearer()`). The landing page's session can no longer wipe
+  /api/wifi/forget takes the bearer alone in every mode
+  (`api_auth_check_bearer()`; its wrapper asks nothing about setup). The
+  landing page's session can no longer wipe
   the stored networks, re-open the Bluetooth setup door and buy the receipt
   with the door's claim. With F346's bond gate, it cannot move the device
   through a bond either.
@@ -6311,7 +6316,8 @@ so — see D2 below.)
   `tapContendedText()`): the hold is last. Each now says so, and
   `test_docs_claims.py`'s `RETIRED_IN` holds the four files to it.
   *Merge of #1884 (2026-10-27, same PR):* #1843's fifth-review note above
-  held. With connect and Forget on the bearer after setup, the overflow
+  held. With connect (after setup) and Forget (in every mode) on the
+  bearer, the overflow
   that a host striking from nine or more addresses keeps running holds the
   owner's bearer too, so the owner waits until that host stops, then moves
   the WAP with the token; F343's seventh amendment has the sentence the docs
@@ -6319,7 +6325,9 @@ so — see D2 below.)
   (the glossary, `TRUST_MODEL.md`, `ble_protocol.md`, `magic_pairing.md`,
   the FAQ, the WAP README, `improv_core.h` in both copies, the sketch's
   wipe comments, `ENTERPRISE_READINESS_TODO.md` and `test_improv_core.cpp`'s
-  comment) now say it takes the API token after setup, `LESSONS_LEARNED.md`
+  comment) now say it takes the API token (in every mode since the second
+  review of the 2.4.17 merge, which dropped the "after setup" they said
+  until then), `LESSONS_LEARNED.md`
   carries an amendment, the iPhone's set-it-up-again advice says Remove
   credentials asks for the token first, and `test_docs_claims.py` retires
   each where it stood (33 rows of the merge's own; at the merge the guard
@@ -6332,8 +6340,9 @@ so — see D2 below.)
   795 replacements) and its fifth 20 (839 over 214 files, 910 retired
   forms, 802 replacements); the merge with the 2.4.17 train split one
   CHANGELOG pin in two (803 replacements), and the review of that merge
-  added 22 (861 over 214 files, 932 retired forms, 817 replacements), with
-  51 BANNED rows and 26 tests throughout. The
+  added 22 (861 over 214 files, 932 retired forms, 817 replacements) and
+  its second review 54 (915 over 217 files, 986 retired forms, 842
+  replacements), with 51 BANNED rows and 26 tests throughout. The
   second review's rows retire what F333, F334 and F346 left untrue in
   five places: #1835's CHANGELOG bullet and LESSONS_LEARNED's QR-road
   bullet, which still gave the session a road to the hub re-point through
@@ -6402,15 +6411,55 @@ so — see D2 below.)
   door's claim; three copies that gave the bearer every move of the
   network on every interface (the lesson's Fix, the comment above
   `wifi_change_authorize()` and `test_wifi_authority`'s header),
-  though a peer already bonded still moves it with no token over the
-  Bluetooth credentials write, now "over HTTP" with that exception named,
+  though a peer already bonded through the pairing confirm or a passkey
+  still moves it with no token over the Bluetooth credentials write, now
+  "over HTTP" with that exception named,
   as F353's text below already was; and six door sentences (nine copies)
   that gave a standalone WAP's Forget a fresh first-boot window
   (`magic_pairing.md` §2.1's table row, which also gains a row for a
   standalone unit, and §4.2's row for credentials vanishing, the glossary,
   and three sentences of `improv_core.h` in both copies), though Forget
   leaves the standalone choice set and the WAP's glue, through
-  `keyless_join_open()`, keeps the door shut.
+  `keyless_join_open()`, keeps the door shut. The 2.4.17 merge review's
+  rows retire twenty-two sentences: the FAQ's four that, beside 2.4.17,
+  named no release (Forget and the bond's confirm "from this release on",
+  a bond "on an earlier release", a saved network "on an older release",
+  the Wi-Fi change once set up), now "a release after 2.4.17" or "on
+  2.4.17 or earlier", as are seven release-relative bond, peer and key
+  sentences (the threat model's three, the security model's,
+  `magic_pairing.md`'s,
+  the lesson's and `ble_console.h`'s); the [Unreleased] heading, the F334
+  bullet's lead and the checklist heading, which gave the API token every
+  network move, now "over HTTP"; the F344 amendment and the two security
+  models' "the pair token serves only the first-boot wizard", though
+  after setup a pair token still opens a session at `/?cv_pair=` and
+  takes the scan's status and stop; the F333 amendment, which did not name
+  after 2.4.17; "No route or gate changed in the merge", now naming the
+  merge that brought #1884 in; the WAP README's and `wap_server.h`'s
+  lists, which put Disconnect and Forget on the bearer after setup only;
+  and the all-rounder's unlock list, which gave it the WAP's network name.
+  Its second review's rows retire fifty-four sentences: the FAQ's four
+  that still stated what a release after 2.4.17 does with no release
+  named (Forget's token and broker-login clear, a standalone camera unit
+  taking no code after it, Connect to keep the login, the token a change
+  over the printed key's network takes), now scoped to such a release
+  beside what 2.4.17 does; thirty-two that gave Forget Wi-Fi (and, in five
+  lists of the four network routes, Disconnect) the token after setup
+  only, though its wrapper asks nothing about setup (the glossary,
+  `ble_protocol.md`,
+  `improv_core.h`'s two in both copies and `test_improv_core.cpp`, eight
+  in `magic_pairing.md`, `TRUST_MODEL.md`, the sketch's two wipe comments,
+  the threat model's two, the two audits' amendments, three in the
+  lessons, the WAP README, two sketch tests, three in this entry, F345's
+  own done sentence among them, and the [Unreleased] account of #1884's
+  sweep), now "in every mode"; five that had Forget re-open the keyless
+  joins or re-arm the first-come door with no exception for a standalone
+  unit;
+  eleven that let any bonded peer move the network over the Bluetooth
+  credentials write, which is `WRITE_AUTHEN`, so only a bond the pairing
+  confirm or a passkey authenticated reaches it (a Just Works bond, which
+  NimBLE stores, does not); and F334's done sentence, now "over HTTP",
+  with its note that F346 closed the bond road, now to new bonds.
 - [x] **F346 [decision] canary-wap: a session reads the Bluetooth passkey and
   the mesh confirmation code.** `GET /api/bluetooth` (`bt_auth_gated`,
   `api_auth_check`) answers `pairing.pin` while a passkey is displayed, and
@@ -6883,8 +6932,9 @@ so — see D2 below.)
   one of a network move over HTTP (a session can still remove a bond or the
   vault key, rejoin the stored network, and start the firmware install,
   which restarts the unit only into a newer signed image; and a peer already
-  bonded, one a session confirmed before F346 among them, still moves the
-  network with no token, over the Bluetooth credentials write that
+  bonded through the pairing confirm or a passkey, one a session made
+  before F346 among them, still moves the network with no token, over the
+  Bluetooth credentials write that
   `ble_provision.cpp` hands to `ble_request_wifi_provisioning()`), and the
   setup door's winner after the owner's own Forget or hold keeps it
   (magic_pairing.md §3.7, §8). Options: a

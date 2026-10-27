@@ -60,8 +60,8 @@
  *
  *   - NO CREDENTIALS STORED (first boot, or after they were cleared: the
  *     10 s factory-reset hold on every board with this door, or on a WAP
- *     that does not run standalone Forget Wi-Fi, which after setup takes
- *     the API token, ledger F345, since a Forget leaves a standalone WAP
+ *     that does not run standalone Forget Wi-Fi, which takes the API
+ *     token in every mode, ledger F345, since a Forget leaves a standalone WAP
  *     standalone and the WAP's glue keeps its door shut; either way the
  *     open door is first-come. The hold keeps the witness identity on a
  *     Sense, a Vision and a WAP, and a WAP's hold and Forget Wi-Fi keep its
@@ -477,7 +477,7 @@ inline uint32_t session_window_used_ms(const Session& s, uint32_t now_ms, const 
 /// join persisted them) shuts the NoCredentials door; the state stays
 /// Provisioned or Provisioning for the phone to read. Credentials vanishing
 /// at runtime (the 10 s hold before its restart, or a WAP's Forget Wi-Fi
-/// on a unit not set standalone, which after setup takes the API token,
+/// on a unit not set standalone, which takes the API token in every mode,
 /// ledger F345; a standalone WAP's glue never reports no credentials)
 /// re-arms the window from now, and the door goes to whichever client
 /// connects first, whoever cleared it. A recovery portal is NOT "no

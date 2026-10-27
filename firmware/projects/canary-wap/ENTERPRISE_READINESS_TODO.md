@@ -140,7 +140,8 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
         alone should not be able to reopen the setup door, is not today's
         posture: `POST /api/wifi/forget` takes the bearer alone since F345
         (`api_auth_check_bearer()`, so no landing session sends it), and a
-        bearer Forget reopens the same first-come door.
+        bearer Forget on a unit not running standalone reopens the same
+        first-come door (`keyless_join_open()`).
   - [x] Credential reset path without the serial monitor: one BOOT tap,
         pressed while the owner's page or the wizard's Save is already
         asking, releases the provisioning receipt to that one asker

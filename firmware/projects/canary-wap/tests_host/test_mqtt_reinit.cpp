@@ -2838,8 +2838,9 @@ void test_two_writers_never_interleave() {
 
 // ── Forget Wi-Fi drops the broker login (sweep F333) ─────────────────────
 //
-// Forget re-opens the keyless joins (the Bluetooth setup door, the camera's
-// boot scan), and every code also chooses the network the unit joins, so
+// On a unit not running standalone Forget re-opens the keyless joins (the
+// Bluetooth setup door, the camera's boot scan, keyless_join_open()), and
+// every code also chooses the network the unit joins, so
 // whoever wins one can answer the stored broker host there. Before F333 a
 // Forget left the stored user and password on file for that host to take.
 // Now handle_wifi_forget() calls csi_mqtt::login_clear(), and asks for the

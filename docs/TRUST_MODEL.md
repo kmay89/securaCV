@@ -121,13 +121,14 @@ over its key's storage tier (`key_at_rest.h` rule 1); no MAC, stable id or
 timestamp finer than the ten-minute bucket crosses the wire in any of the
 above (Invariants II/III); the Improv door takes Wi-Fi over Bluetooth only
 in its 30-minute window while no network is saved (a first boot, or after
-it was cleared: the 10 s hold, or on a WAP Forget Wi-Fi, which after setup
-takes the API token, ledger F345) and in the BOOT-tap minute. A WAP also takes it over
+it was cleared: the 10 s hold, or on a WAP Forget Wi-Fi, which takes the
+API token in every mode, ledger F345) and in the BOOT-tap minute. A WAP also takes it over
 its bonded Bluetooth lane (`ble_provision.cpp`'s CREDS, an authenticated
-link, one write per 5 s and ten an hour) from any peer that holds a bond,
-with or without credentials saved: the iPhone app never reaches that lane
-(ledger A65), but a peer that bonds does, and since F346 the bond's confirm
-takes the API token.
+link, one write per 5 s and ten an hour) from any peer whose bond the
+pairing confirm or a passkey authenticated (a Just Works bond gets no such
+link), with or without credentials saved: the iPhone app never reaches
+that lane (ledger A65), but such a peer does, and since F346 the bond's
+confirm and a Passkey Entry's digits take the API token.
 
 ## 6. Where each rule is enforced and tested
 

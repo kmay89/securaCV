@@ -53,8 +53,8 @@ sentence from `improv_core.h`:
 > yet, or one whose network was cleared), and for an owner's own tap — never
 > for a device that has an owner and a bad day.
 
-A cleared unit (the 10 s hold, or Forget Wi-Fi on a WAP, which after setup
-takes the API token, ledger F345) still has an owner, and its door goes to
+A cleared unit (the 10 s hold, or Forget Wi-Fi on a WAP, which takes the
+API token in every mode, ledger F345) still has an owner, and its door goes to
 whichever client connects first (§2.2).
 
 ---
@@ -65,7 +65,7 @@ whichever client connects first (§2.2).
 
 | Situation | Door | Why |
 |---|---|---|
-| No credentials stored (first boot, or after a factory reset or Forget Wi-Fi) on a unit not set standalone (a WAP's AP-only choice, which Forget Wi-Fi leaves set and the hold clears), within **30 minutes** of power-on (after Forget Wi-Fi, of the credentials vanishing; after a WAP's hold, of the restart on release) | **Open** (`Door::NoCredentials`) | A device nobody owns yet — or, after a reset or a Forget Wi-Fi, a cleared unit that still has an owner (on a WAP Forget Wi-Fi takes the API token after setup, ledger F345): the hold keeps the witness identity on a Sense, a Vision and a WAP, a WAP's hold and Forget Wi-Fi keep its token too, and the door goes to whichever client connects first (§2.2). The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, and so does the credentials vanishing (Forget Wi-Fi re-arms it at that moment; a WAP's hold zeroes the carried record and restarts on release, so its fresh window runs from the restart); compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on, a brownout, a power glitch or a reset a host asserted from the USB / JTAG port — the Flasher's, so a re-flashed unit never inherits the old image's spent window (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |
+| No credentials stored (first boot, or after a factory reset or Forget Wi-Fi) on a unit not set standalone (a WAP's AP-only choice, which Forget Wi-Fi leaves set and the hold clears), within **30 minutes** of power-on (after Forget Wi-Fi, of the credentials vanishing; after a WAP's hold, of the restart on release) | **Open** (`Door::NoCredentials`) | A device nobody owns yet — or, after a reset or a Forget Wi-Fi, a cleared unit that still has an owner (on a WAP Forget Wi-Fi takes the API token in every mode, ledger F345): the hold keeps the witness identity on a Sense, a Vision and a WAP, a WAP's hold and Forget Wi-Fi keep its token too, and the door goes to whichever client connects first (§2.2). The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, and so does the credentials vanishing (Forget Wi-Fi re-arms it at that moment; a WAP's hold zeroes the carried record and restarts on release, so its fresh window runs from the restart); compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on, a brownout, a power glitch or a reset a host asserted from the USB / JTAG port — the Flasher's, so a re-flashed unit never inherits the old image's spent window (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |
 | No credentials stored on a WAP set standalone | **Shut** (`keyless_join_open()`, sweep F333) | A unit its owner keeps AP-only on purpose must never take a stranger's network; the camera's boot QR scan asks the same rule. |
 | No credentials stored, the window has run out | Shut | "A unit forgotten in a drawer is not claimable from the street for the rest of its life." A power cycle or a tap reopens it; a software restart does not. |
 | Credentials stored, the network is fine | Shut | A device that has an owner offers nothing. |
@@ -83,8 +83,8 @@ identity on serial, and a **10 s hold factory-resets the WAP**
 row, the device name and the first-boot flag, keeps the identity key and the
 API token (the one the WAP derived from the key, or the one a flasher
 seeded), and restarts into first-boot setup when BOOT is released. A WAP's door is the first-boot window alone. **Forget Wi-Fi** on the
-dashboard (`POST /api/wifi/forget`, which after setup takes the API token,
-F345: the dashboard asks for it, or for one BOOT tap) and the 10 s hold,
+dashboard (`POST /api/wifi/forget`, which takes the API token in every
+mode, F345: the dashboard asks for it, or for one BOOT tap) and the 10 s hold,
 which needs neither and works whatever the lockout or the tap is doing,
 re-arm it, both the owner's acts: both clear the credentials through
 `wifi_clear_credentials()`, which on a unit that had credentials also zeroes
@@ -107,8 +107,8 @@ While the door is **shut** (the steady state of every owned Canary):
   write earns `NotAuthorized` (`0x04`) and starts nothing.
 
 While the door is **open** (a new unit, one cleared with the hold or with
-Forget Wi-Fi, which on a WAP takes the API token after setup, or the owner
-tapped it):
+Forget Wi-Fi, which on a WAP takes the API token in every mode, or the
+owner tapped it):
 
 - They can connect and, after the Just Works pairing, write credentials for
   *their* network. That is the inherent exposure of any "no network saved"
@@ -522,8 +522,8 @@ names (`403 password_needed`). Nor does the session buy the writes that
 grant a credential or move the unit off its network: `POST /api/vault/key`
 (the vault's recipient key, F335), `POST /api/bluetooth/pair/confirm` and
 `POST /api/mesh/pair/confirm` (a lasting bond, an opera's secret, F346),
-after setup the four Wi-Fi changes (connect, ap-only, disconnect, forget;
-F334, F345), and `POST /api/reboot` and `POST /api/safe-mode/retry` (F361)
+the four Wi-Fi changes (disconnect and forget in every mode, connect and
+ap-only after setup; F334, F345), and `POST /api/reboot` and `POST /api/safe-mode/retry` (F361)
 take the bearer alone, and a Passkey Entry's digits ride `GET
 /api/bluetooth` only with a bearer (F346). The receipt's row 2 is also under the lockout
 every admin route keeps (`api_auth_bearer_grant()` in `api_auth.h`, F289's
@@ -830,7 +830,7 @@ Host-tested (`firmware/tests_host/test_provisioning_gate.cpp`,
 | a `WIFI_SETTINGS` that did not parse | `InvalidRpc`, and it **counts against the cap** |
 | the join succeeded | state Provisioned; credentials persist; the no-credentials door shuts (the state stays Provisioned for the phone to read) |
 | the join failed | back to Authorized if the door is still open (the person can retry with the right password), else AwaitingAuthorization; `UnableToConnect` |
-| credentials vanish at runtime (the 10 s hold before its restart, or a WAP's Forget Wi-Fi, which after setup takes the API token, F345, on a unit not set standalone: a standalone WAP's glue never reports no credentials, `keyless_join_open()`) | the window is re-armed from now, and the door goes to whichever client connects first (§2.2) |
+| credentials vanish at runtime (the 10 s hold before its restart, or a WAP's Forget Wi-Fi, which takes the API token in every mode, F345, on a unit not set standalone: a standalone WAP's glue never reports no credentials, `keyless_join_open()`) | the window is re-armed from now, and the door goes to whichever client connects first (§2.2) |
 | a connected client silent for 3 min | dropped (never mid-join: the verdict is owed to it) |
 | the join is done and ~20 s have passed | the link is dropped; the device goes back to its beacon |
 
@@ -866,7 +866,7 @@ portal).
 | Stack | NimBLE-Arduino 2.x (core 3.x) | NimBLE-Arduino 1.4.x (core 2.x) | the pairing channel's NimBLE server | — | — |
 | Flag | `FEATURE_IMPROV` in `include/canary/config.h` (default 1; `-DFEATURE_IMPROV=0` compiles it out) | same | `FEATURE_IMPROV` = `FEATURE_BLUETOOTH && FEATURE_BLE` in `build_config.h` (FULL; 0 in DEV and MINIMAL) | — | — |
 | First-boot window | 30 min (`IMPROV_FIRST_BOOT_WINDOW_MS`) | 30 min | 30 min | — | — |
-| Tap door | ✅ 60 s, `BOOT_BUTTON_PIN` from the board's `pins.h` (XIAO ESP32-C6: GPIO9); on an installed witness the tap raises the setup portal under the door for the minute | ✅ 60 s (XIAO ESP32-C3 hosts: GPIO9; XIAO ESP32-S3: GPIO0); same | ❌ none in this version (a short BOOT press stays the receipt gate; Forget Wi-Fi, with the API token after setup, or the 10 s BOOT hold re-arms the window) | — | — |
+| Tap door | ✅ 60 s, `BOOT_BUTTON_PIN` from the board's `pins.h` (XIAO ESP32-C6: GPIO9); on an installed witness the tap raises the setup portal under the door for the minute | ✅ 60 s (XIAO ESP32-C3 hosts: GPIO9; XIAO ESP32-S3: GPIO0); same | ❌ none in this version (a short BOOT press stays the receipt gate; Forget Wi-Fi, which takes the API token, or the 10 s BOOT hold re-arms the window) | — | — |
 | Window across a software restart | the glue's RTC record (`improv_ble.cpp`) | same | the sketch's RTC record (`provisioning_logic::door_window_record_valid`); door activity restarts the first-boot wizard's 15-minute idle timer | — | — |
 | Network list (`GET_WIFI_NETWORKS`) | ✅ the glue's own scan | ✅ same | ✅ the sketch's scan cache — the wizard's picker's list, under one lock | — | — |
 | Connectable with the door shut | no | no | yes (the channel's bonded services) | — | — |
@@ -1120,7 +1120,7 @@ a user.
   authentication beyond the device's rule) are ours; the rule is the
   mitigation.
 - **A home-network session cannot re-arm the WAP's door.** Forget Wi-Fi
-  takes the API token after setup (F345), so the landing page's session can
+  takes the API token in every mode (F345), so the landing page's session can
   no longer wipe the networks and buy the receipt with the door's claim.
   After the owner's own Forget or the 10 s hold the unit is in first-boot
   trust again (after a Forget, unless it runs standalone: Forget leaves

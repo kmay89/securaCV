@@ -49,10 +49,11 @@
 //     Entry's digits a session is not sent, leads with "Don't match" for a
 //     comparison on a page without the token, and asks nobody for a PIN once
 //     a pairing is over.
-//   * The network moves on the bearer alone (F334, F345): after setup the
-//     Wi-Fi card's Connect and Forget take the API token, so a session-only
-//     page's refusal brings the sign-in up and alerts nothing (the typed
-//     network stays in the form), the card says so first, Forget's confirm
+//   * The network moves on the bearer alone (F334, F345): the Wi-Fi card's
+//     Forget (in every mode) and Connect (after setup) take the API token,
+//     so a session-only page's refusal brings the sign-in up and alerts
+//     nothing (the typed network stays in the form), the card says so
+//     first, Forget's confirm
 //     names what it re-opens (the setup door, a camera's code scan) and the
 //     broker login it drops (F333), and a Forget whose login clear the
 //     device could not make says where to clear it.

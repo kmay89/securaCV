@@ -190,9 +190,9 @@ re-opened the door forever: the spent time rides in RTC-noinit memory
 (`provisioning_logic::door_window_record_valid`, host-tested; cleared after
 a power-on, brownout, power-glitch, USB / JTAG-asserted or unknown reset,
 and by **Forget Wi-Fi** or the 10 s BOOT hold on a unit that had
-credentials, each of which re-arms the window, both the owner's acts: after
-setup Forget takes the API token, so a home-network session cannot re-arm
-it, F345), a phone at the door is a sign of life
+credentials, each of which re-arms the window, both the owner's acts:
+Forget takes the API token in every mode, so a home-network session cannot
+re-arm it, F345), a phone at the door is a sign of life
 for that wizard timer, and the restart waits while the door is open at all
 (`provisioning_logic::wizard_restart_due`, host-tested: a person watching the
 door's card on their phone has touched nothing yet) — so it cannot land

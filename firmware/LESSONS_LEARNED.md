@@ -2041,8 +2041,9 @@
   connects first (`docs/design/magic_pairing.md` §2.2). The "no owner yet"
   above covers that cleared unit too, as does the factory reset it names as
   re-arming the window.)* *(Amended 2026-10-27, the owner-authority PR,
-  #<PR>: after setup a WAP's Forget Wi-Fi takes the API token, F345, so no
-  landing session sends it; the door it reopens is still first-come.)*
+  #<PR>: a WAP's Forget Wi-Fi takes the API token in every mode, F345, so
+  no landing session sends it; the door it reopens on a unit not running
+  standalone is still first-come.)*
 - **Regression check:** `tests_host/test_improv_core.cpp` — a session begun
   with credentials stays shut while the caller reports the portal up; a
   window that ran out does not reopen without a tap or a power cycle;
@@ -2050,8 +2051,8 @@
   #1843's sweep: on a WAP also Forget Wi-Fi, which any landing session can
   send, F345, so the re-arm is not the owner's act alone)* re-arm the window,
   credentials appearing (the join persisted) shut the no-credentials door
-  *(amended 2026-10-27, #<PR>: after setup a WAP's Forget Wi-Fi takes the API
-  token, F345)*.
+  *(amended 2026-10-27, #<PR>: a WAP's Forget Wi-Fi takes the API token in
+  every mode, F345)*.
   `test_short_tap.cpp` pins what counts as a tap (≥40 ms, <700 ms; a hold
   is somebody else's gesture). Design: `docs/design/magic_pairing.md`.
   Bench: not yet — a saved network failing with the router off must raise
@@ -3563,9 +3564,10 @@
   route was. #1843's lockout posture rested on the owner's landing session
   reaching `POST /api/wifi/connect` and `POST /api/wifi/forget` under the
   lockout (the third and second rounds' bullets above); F334 and F345 put
-  both on the bearer alone after setup, and the overflow holds that bearer
-  with every untracked address, so the browser's move now waits until the
-  striking host stops. The two branches merged without a conflict in most of the
+  both on the bearer alone (Connect after setup, Forget in every mode), and
+  the overflow holds that bearer with every untracked address, so the
+  browser's move now waits until the striking host stops. The two branches
+  merged without a conflict in most of the
   sentences that disagreed: the dependency surfaced only because #1843's
   fifth-review note on F345 named it. Before deciding a route's gate,
   search the ledger and the docs for the route as a remedy, not only as an
@@ -3639,9 +3641,10 @@
   answered the check the token was meant to pass.
 - **Fix:** after setup the bearer alone (`api_auth_check_bearer()`) gates
   every HTTP route that changes the network the unit joins, on every
-  interface (a peer already bonded, one a session confirmed before F346
-  among them, still moves it with no token, over the Bluetooth credentials
-  write, `ble_request_wifi_provisioning()`), and every
+  interface (a peer already bonded through the pairing confirm or a
+  passkey, one a session made before F346 among them, still moves it with
+  no token, over the Bluetooth credentials write,
+  `ble_request_wifi_provisioning()`), and every
   write that grants a credential (the vault key, the two confirms), and the
   two reboot routes; `POST /api/wifi/qr-scan` answers `404` outside setup.
   The firmware install stays on the session and restarts the unit only into

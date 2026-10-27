@@ -1048,7 +1048,7 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.ok(at > 0);
     assert.match(ino.slice(at, ino.indexOf('\n}\n', at)), /\n {2}wifi_clear_credentials\(\);/);
     assert.match(ino, /\.uri = "\/api\/wifi\/forget", \.method = HTTP_POST, \.handler = handle_wifi_forget_auth \}/);
-    // After setup that route takes the bearer alone (sweep F345), so a
+    // That route takes the bearer alone in every mode (sweep F345), so a
     // landing session's Remove credentials opens the sign-in first, and the
     // advice says so before the phone is brought near.
     const fw = ino.indexOf('static esp_err_t handle_wifi_forget_auth(httpd_req_t* req) {');

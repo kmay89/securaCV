@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### canary-wap: after setup the API token alone moves its network over HTTP (a peer already bonded over Bluetooth still moves it; a network joined before the update can stay saved), re-keys its vault, confirms a pairing and reboots it (the firmware install aside), and the sign-in checks a pasted token by itself; a failed provisioning says what the unit does (sweep F333, F334, F335, F336, F345, F346, F348, F349, F361, #<PR>)
+### canary-wap: after setup the API token alone moves its network over HTTP (a Bluetooth peer bonded through the pairing confirm or a passkey still moves it; a network joined before the update can stay saved), re-keys its vault, confirms a pairing and reboots it (the firmware install aside), and the sign-in checks a pasted token by itself; a failed provisioning says what the unit does (sweep F333, F334, F335, F336, F345, F346, F348, F349, F361, #<PR>)
 
 - **canary-wap: one dashboard sign-in, which checks a pasted token by itself
   (the owner-authority items' shared sign-in).** On a page holding the
@@ -35,11 +35,13 @@
   frame). During setup Connect and AP-only are unchanged (the wizard's pair
   token still moves the network), while Disconnect and Forget take the
   bearer in every mode, so a session the receipt route minted during setup
-  no longer reaches them. A Bluetooth peer already bonded, one a session
-  confirmed on 2.4.17 or earlier among them, still moves the network with
-  no token, over the Wi-Fi credentials write (the bond's confirm takes the
-  token since F346, below). On the dashboard, Settings → Wi-Fi
-  says the token is needed and asks for it (paste it from the recovery kit,
+  no longer reaches them. A Bluetooth peer already bonded through the
+  pairing confirm or a passkey, one a session made before this release
+  among them, still moves the network with no token, over the Wi-Fi
+  credentials write (the confirm and a Passkey Entry's digits take the
+  token since F346, below; a Just Works bond never reaches that write).
+  On the dashboard, Settings → Wi-Fi says the token is needed and asks for
+  it (paste it from the recovery kit,
   or use BOOT Tap Once); on the recovery network the tap is reliable, since
   the SoftAP takes one client. Forget now also clears the stored broker
   username and password (keeping the host, port, TLS mode, CA, prefix and
@@ -131,10 +133,11 @@
   passkey and confirms a bond, and that under a host striking from nine or
   more addresses the owner's way out is the landing page's session on
   `POST /api/wifi/connect`. Each was true of its tree and is not of this
-  release: after setup the four routes that move the network (connect,
-  ap-only, disconnect, forget), the bond and opera confirms and a Passkey
-  Entry's digits take the API token, and the shared overflow such a
-  host keeps running holds that token with every untracked address, the
+  release: the four routes that move the network over HTTP (Disconnect
+  and Forget in every mode, Connect and AP-only after setup), the bond and
+  opera confirms and a Passkey Entry's digits take the API token, and the
+  shared overflow such a host keeps running holds that token with every
+  untracked address, the
   owner's among them. So the owner waits until that host stops, then
   changes the Wi-Fi with the token pasted into the sign-in; last, for a host
   on the network only, with the iPhone ready, the 10 s hold and a setup onto
@@ -1809,8 +1812,8 @@ hold keeps; and the per-address lockout's ways out.
   owner-authority entries above, after 2.4.17: Forget Wi-Fi takes the API
   token alone, F345, and so does the bond's confirm, F346, so after 2.4.17
   neither is a landing session's; a bond a session confirmed on 2.4.17 or
-  earlier stays until the owner removes it, and the door Forget re-arms is
-  still first-come.) Both flashers' smart pick ("installing
+  earlier stays until the owner removes it, and the door Forget re-arms on
+  a unit not running standalone is still first-come.) Both flashers' smart pick ("installing
   keeps it, updated in place") and settings verdicts, the desktop change
   map, the SD recovery comments and guides and the token's lifetime say an
   install starts NVS over under a new key; `SECURITY_MODEL.md`,

@@ -3242,6 +3242,174 @@ RETIRED_IN = (
     ("docs/audit/hardware_verification_checklist.md",
      "## canary-wap: after setup the API token alone moves the network, re-keys the vault,",
      "over HTTP: a peer already bonded over Bluetooth still moves it with no token"),
+    # The second review of the merge with the 2.4.17 train: the FAQ's
+    # Wi-Fi answer, whose Forget clauses named no release; Forget's gate,
+    # which every copy put after setup though it asks nothing about setup;
+    # the bonded lane, which takes an authenticated bond only; the keyless
+    # joins Forget re-opens only on a unit not running standalone; and
+    # the ledger's F334 decision, which gave the bearer every interface.
+    ("docs/GLOSSARY.md",
+     "on a WAP that does not run standalone, Forget Wi-Fi, which after setup takes the API token, ledger F345 (a Forget",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("docs/ble_protocol.md",
+     "Forget Wi-Fi, which after setup takes the API token, ledger F345; a Forget leaves a standalone WAP standalone",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("firmware/common/network/improv_core.h",
+     "Forget Wi-Fi, which after setup takes * the API token, ledger F345, since a Forget leaves",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/improv_core.h",
+     "Forget Wi-Fi, which after setup takes * the API token, ledger F345, since a Forget leaves",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("firmware/common/network/improv_core.h",
+     "on a unit not set standalone, which after setup takes the API token, /// ledger F345;",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/improv_core.h",
+     "on a unit not set standalone, which after setup takes the API token, /// ledger F345;",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("firmware/tests_host/test_improv_core.cpp",
+     "(a WAP's Forget Wi-Fi, which after // setup takes the API token, ledger F345,",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("docs/design/magic_pairing.md",
+     "or Forget Wi-Fi on a WAP, which after setup takes the API token, ledger F345) still has an owner",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("docs/design/magic_pairing.md",
+     "which Forget Wi-Fi leaves set and the hold clears), within **30 minutes** of power-on (after Forget Wi-Fi, of the credentials vanishing; after a WAP's hold, of the restart on release) | **Open** (`Door::NoCredentials`) | A device nobody owns yet — or, after a reset or a Forget Wi-Fi, a cleared unit that still has an owner (on a WAP Forget Wi-Fi takes the API token after setup, ledger F345)",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("docs/design/magic_pairing.md",
+     "(`POST /api/wifi/forget`, which after setup takes the API token, F345: the dashboard asks for it",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("docs/design/magic_pairing.md",
+     "Forget Wi-Fi, which on a WAP takes the API token after setup, or the owner tapped it)",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("docs/design/magic_pairing.md",
+     "after setup the four Wi-Fi changes (connect, ap-only, disconnect, forget; F334, F345)",
+     "Disconnect and Forget take the bearer in every mode, Connect and AP-only after setup (api_auth.h, the wrappers in canary_wap.ino)"),
+    ("docs/design/magic_pairing.md",
+     "or a WAP's Forget Wi-Fi, which after setup takes the API token, F345, on a unit not set standalone",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("docs/design/magic_pairing.md",
+     "Forget Wi-Fi, with the API token after setup, or the 10 s BOOT hold re-arms the window",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("docs/design/magic_pairing.md",
+     "Forget Wi-Fi takes the API token after setup (F345), so the landing page's session can",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("docs/TRUST_MODEL.md",
+     "or on a WAP Forget Wi-Fi, which after setup takes the API token, ledger F345) and in the BOOT-tap minute",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+     "the 10 s hold, or Forget Wi-Fi, // which after setup takes the bearer, sweep F345: the owner's own act // re-arms",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+     "or Forget Wi-Fi, which after setup // takes the bearer, sweep F345: the owner's own act either way",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("docs/security/THREAT_MODEL.md",
+     "and Forget Wi-Fi, which takes the bearer after setup (F345), clears the stored user and password",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("docs/security/THREAT_MODEL.md",
+     "(after setup the four routes that move the network, connect, ap-only, disconnect and forget, take the bearer alone, the recovery portal included)",
+     "Disconnect and Forget take the bearer in every mode, Connect and AP-only after setup"),
+    ("docs/security/SECURITY-AUDIT.md",
+     "after setup the four routes that move the network (connect, ap-only, disconnect, forget) take the bearer alone (F334, F345)",
+     "Disconnect and Forget take the bearer in every mode, Connect and AP-only after setup"),
+    ("docs/audit/esp32s3_firmware_full_audit_2026-07.md",
+     "after setup the four routes that move the network (connect, ap-only, disconnect, forget) take the bearer alone (F334, F345)",
+     "Disconnect and Forget take the bearer in every mode, Connect and AP-only after setup"),
+    ("firmware/LESSONS_LEARNED.md",
+     "after setup a WAP's Forget Wi-Fi takes the API token, F345, so no landing session sends it; the door it reopens is still first-come.",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup; and on a standalone unit Forget reopens no door (keyless_join_open())"),
+    ("firmware/LESSONS_LEARNED.md",
+     "*(amended 2026-10-27, #<PR>: after setup a WAP's Forget Wi-Fi takes the API token, F345)*",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("firmware/LESSONS_LEARNED.md",
+     "F334 and F345 put both on the bearer alone after setup, and the overflow holds that bearer",
+     "Connect takes the bearer after setup, Forget in every mode"),
+    ("firmware/projects/canary-wap/README.md",
+     "both the owner's acts: after setup Forget takes the API token, so a home-network session cannot re-arm it, F345)",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js",
+     "// After setup that route takes the bearer alone (sweep F345), so a // landing session's Remove credentials",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/dashboard_gates.test.js",
+     "(F334, F345): after setup the // Wi-Fi card's Connect and Forget take the API token",
+     "Forget takes the token in every mode, Connect after setup"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "POST /api/wifi/forget takes the bearer alone after setup (`api_auth_check_bearer()`).",
+     "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "With connect and Forget on the bearer after setup, the overflow",
+     "Forget takes the bearer in every mode, connect after setup"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "comment) now say it takes the API token after setup, `LESSONS_LEARNED.md`",
+     "those copies now say every mode: Forget's wrapper asks nothing about setup"),
+    ("CHANGELOG.md",
+     "release: after setup the four routes that move the network (connect, ap-only, disconnect, forget), the bond and opera confirms",
+     "Disconnect, Forget and both confirms take the token in every mode, Connect and AP-only after setup"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+     "(sweep F333): Forget re-opens // the keyless joins (the setup door, the camera's boot scan)",
+     "Forget leaves the standalone choice set and keyless_join_open() keeps both joins shut on a standalone unit"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.h",
+     "keep the rest of the row (host, port, TLS mode, CA, prefix, discovery). * Forget re-opens the keyless joins",
+     "Forget leaves the standalone choice set and keyless_join_open() keeps both joins shut on a standalone unit"),
+    ("firmware/projects/canary-wap/tests_host/test_mqtt_reinit.cpp",
+     "// Forget re-opens the keyless joins (the Bluetooth setup door, the camera's // boot scan), and every code",
+     "Forget leaves the standalone choice set and keyless_join_open() keeps both joins shut on a standalone unit"),
+    ("firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md",
+     "so no landing session sends it), and a bearer Forget reopens the same first-come door.",
+     "on a standalone unit Forget reopens no door: it leaves the choice set and keyless_join_open() keeps the door shut"),
+    ("CHANGELOG.md",
+     "(a peer already bonded over Bluetooth still moves it; a network joined before the update can stay saved)",
+     "the credentials write is WRITE_AUTHEN (ble_provision.cpp): only a bond the pairing confirm or a passkey authenticated reaches it, never a Just Works bond NimBLE stores"),
+    ("CHANGELOG.md",
+     "A Bluetooth peer already bonded, one a session confirmed on 2.4.17 or earlier among them, still moves the network",
+     "only an authenticated bond reaches the WRITE_AUTHEN credentials write; and 'before this release', as the F346 bullet of the same section says"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+     "// included (a peer already bonded, one a session confirmed before F346 // among them, still moves it",
+     "only a bond the pairing confirm or a passkey authenticated reaches the WRITE_AUTHEN credentials write"),
+    ("firmware/LESSONS_LEARNED.md",
+     "interface (a peer already bonded, one a session confirmed before F346 among them, still moves it",
+     "only a bond the pairing confirm or a passkey authenticated reaches the WRITE_AUTHEN credentials write"),
+    ("firmware/projects/canary-wap/tests_host/test_wifi_authority.cpp",
+     "(sweep F334, F345, F333; a peer already bonded still moves // it over the Bluetooth credentials write",
+     "only a bond the pairing confirm or a passkey authenticated reaches the WRITE_AUTHEN credentials write"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "and a peer already bonded, one a session confirmed before F346 among them, still moves the network with no token",
+     "only a bond the pairing confirm or a passkey authenticated reaches the WRITE_AUTHEN credentials write"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "though a peer already bonded still moves it with no token over the Bluetooth credentials write",
+     "only a bond the pairing confirm or a passkey authenticated reaches the WRITE_AUTHEN credentials write"),
+    ("docs/TRUST_MODEL.md",
+     "from any peer that holds a bond, with or without credentials saved:",
+     "the lane's link is authenticated (WRITE_AUTHEN): a Just Works bond, which NimBLE stores, never reaches it"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h",
+     "WRITE_ENC + WRITE_AUTHEN. NimBLE rejects unbonded peers. * - CREDS has no READ property at all.",
+     "WRITE_AUTHEN refuses a Just Works bond as well, which NimBLE stores (THREAT_MODEL.md's pairing row)"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "the network the WAP joins moves on the bearer alone, on every interface, the SoftAP recovery portal included.",
+     "over HTTP: ble_provision.cpp hands a bonded peer's credentials write to ble_request_wifi_provisioning(), which saves and joins with no token"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "The Bluetooth bond was a second road, closed by F346's gate in the same PR.",
+     "F346 closes it to new bonds only: a bond a session made before this release persists"),
+    ("docs/FAQ.md",
+     "which also asks for the token or a tap and clears the saved broker login too), which clears every saved network and, unless the WAP runs standalone",
+     "on a release after 2.4.17: the answer names 2.4.17, whose Forget takes any dashboard session (api_auth_check() in handle_wifi_forget_auth at e4d07edb), keeps the broker login (no login_clear()) and leaves a standalone camera unit scanning (qr_auto_scan_tick asks only g_wifi_creds.configured)"),
+    ("docs/FAQ.md",
+     "A forget leaves a standalone WAP standalone: its door stays shut and a camera unit takes no code.",
+     "the door stays shut on 2.4.17 too, but a standalone camera unit takes no code only on a release after 2.4.17: the answer names 2.4.17, whose Forget takes any dashboard session (api_auth_check() in handle_wifi_forget_auth at e4d07edb), keeps the broker login (no login_clear()) and leaves a standalone camera unit scanning (qr_auto_scan_tick asks only g_wifi_creds.configured)"),
+    ("docs/FAQ.md",
+     "To change networks and keep the broker login, use Connect instead.",
+     "on a release after 2.4.17, where Forget clears the login: on 2.4.17 Forget keeps it"),
+    ("docs/FAQ.md",
+     "use that network's printed key (on a WAP, then the API token or one BOOT tap to change its Wi-Fi there)",
+     "on a WAP running a release after 2.4.17: on 2.4.17 wifi_change_authorize() takes a pair token or a cookie in every mode, so a page opened over that network moves it"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "(a WAP's bonded lane takes it from any bonded peer, F346)",
+     "only a bond the pairing confirm or a passkey authenticated reaches the WRITE_AUTHEN credentials write"),
+    ("CHANGELOG.md",
+     "earlier stays until the owner removes it, and the door Forget re-arms is still first-come.)",
+     "on a standalone unit Forget re-arms no door: it leaves the choice set and keyless_join_open() keeps the door shut"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h",
+     "* A bonded peer can write the WAP's Wi-Fi over BLE (CREDS).",
+     "only a bond the pairing confirm or a passkey authenticated reaches the WRITE_AUTHEN credentials write"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -3815,7 +3983,7 @@ MUST_PASS_IN = [
      '   signing scheme; the fuse steps are partly tooled (not the crypt counter or a\n'
      '   Secure Boot key digest, so the kit turns neither on yet), and NVS encryption, without'),
     ('docs/design/magic_pairing.md',
-     "| No credentials stored (first boot, or after a factory reset or Forget Wi-Fi) on a unit not set standalone (a WAP's AP-only choice, which Forget Wi-Fi leaves set and the hold clears), within **30 minutes** of power-on (after Forget Wi-Fi, of the credentials vanishing; after a WAP's hold, of the restart on release) | **Open** (`Door::NoCredentials`) | A device nobody owns yet — or, after a reset or a Forget Wi-Fi, a cleared unit that still has an owner (on a WAP Forget Wi-Fi takes the API token after setup, ledger F345): the hold keeps the witness identity on a Sense, a Vision and a WAP, a WAP's hold and Forget Wi-Fi keep its token too, and the door goes to whichever client connects first (§2.2). The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, and so does the credentials vanishing (Forget Wi-Fi re-arms it at that moment; a WAP's hold zeroes the carried record and restarts on release, so its fresh window runs from the restart); compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on, a brownout, a power glitch or a reset a host asserted from the USB / JTAG port — the Flasher's, so a re-flashed unit never inherits the old image's spent window (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |"),
+     "| No credentials stored (first boot, or after a factory reset or Forget Wi-Fi) on a unit not set standalone (a WAP's AP-only choice, which Forget Wi-Fi leaves set and the hold clears), within **30 minutes** of power-on (after Forget Wi-Fi, of the credentials vanishing; after a WAP's hold, of the restart on release) | **Open** (`Door::NoCredentials`) | A device nobody owns yet — or, after a reset or a Forget Wi-Fi, a cleared unit that still has an owner (on a WAP Forget Wi-Fi takes the API token in every mode, ledger F345): the hold keeps the witness identity on a Sense, a Vision and a WAP, a WAP's hold and Forget Wi-Fi keep its token too, and the door goes to whichever client connects first (§2.2). The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, and so does the credentials vanishing (Forget Wi-Fi re-arms it at that moment; a WAP's hold zeroes the carried record and restarts on release, so its fresh window runs from the restart); compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on, a brownout, a power glitch or a reset a host asserted from the USB / JTAG port — the Flasher's, so a re-flashed unit never inherits the old image's spent window (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |"),
     ('docs/design/onboarding_shared_module.md',
      "- **No credentials stored** (first boot, or a factory reset: the owner's\n"
      '  act, which keeps the witness identity, so the unit still has an owner):'),
@@ -3885,7 +4053,11 @@ MUST_PASS_IN = [
      '  which never leaves the secure element." *(Amended 2026-10-22: do not use\n'
      '  this phrasing. No Canary has a secure element: the key is plaintext in NVS'),
     ("firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md",
-     "        alone should not be able to reopen the setup door, is not today's\n        posture: `POST /api/wifi/forget` takes the bearer alone since F345\n        (`api_auth_check_bearer()`, so no landing session sends it), and a\n        bearer Forget reopens the same first-come door."),
+     "alone should not be able to reopen the setup door, is not today's\n"
+     "        posture: `POST /api/wifi/forget` takes the bearer alone since F345\n"
+     "        (`api_auth_check_bearer()`, so no landing session sends it), and a\n"
+     "        bearer Forget on a unit not running standalone reopens the same\n"
+     "        first-come door (`keyless_join_open()`)."),
     ('firmware/FEATURES.md',
      '| API token NVS storage | ✅ | ✅ (`api_tkn`) | ✅ (`api_token`) | ✅ (same sketch as Arduino IDE via `src_dir`) |'),
     ('firmware/FEATURES.md',
@@ -4425,9 +4597,9 @@ MUST_PASS_IN = [
      'console: it dials only a peripheral advertising the console service, which a\n'
      "WAP does not, ledger A65). The flasher's"),
     ('docs/design/magic_pairing.md',
-     "| credentials vanish at runtime (the 10 s hold before its restart, or a WAP's Forget Wi-Fi, which after setup takes the API token, F345, on a unit not set standalone: a standalone WAP's glue never reports no credentials, `keyless_join_open()`) | the window is re-armed from now, and the door goes to whichever client connects first (§2.2) |"),
+     "| credentials vanish at runtime (the 10 s hold before its restart, or a WAP's Forget Wi-Fi, which takes the API token in every mode, F345, on a unit not set standalone: a standalone WAP's glue never reports no credentials, `keyless_join_open()`) | the window is re-armed from now, and the door goes to whichever client connects first (§2.2) |"),
     ("docs/design/magic_pairing.md",
-     "A device nobody owns yet — or, after a reset or a Forget Wi-Fi, a cleared unit that still has an owner (on a WAP Forget Wi-Fi takes the API token after setup, ledger F345):"),
+     "A device nobody owns yet — or, after a reset or a Forget Wi-Fi, a cleared unit that still has an owner (on a WAP Forget Wi-Fi takes the API token in every mode, ledger F345):"),
     ('docs/design/iphone_companion_app.md',
      '   Snapshot char `8fc1cee1-…`, bonded) + chirp/beacon scan — off-grid status\n'
      '   (as shipped, the console reaches no WAP: `BLEConsole` dials only a\n'
@@ -4488,7 +4660,10 @@ MUST_PASS_IN = [
      '        re-reveals the API token and the AP password; the wizard\'s "Save\n'
      '        your recovery kit" block walks it.'),
     ("firmware/projects/canary-wap/README.md",
-     "and by **Forget Wi-Fi** or the 10 s BOOT hold on a unit that had credentials, each of which re-arms the window, both the owner's acts: after setup Forget takes the API token, so a home-network session cannot re-arm it, F345), a phone at the door is a sign of life"),
+     "and by **Forget Wi-Fi** or the 10 s BOOT hold on a unit that had\n"
+     "credentials, each of which re-arms the window, both the owner's acts:\n"
+     "Forget takes the API token in every mode, so a home-network session cannot\n"
+     "re-arm it, F345), a phone at the door is a sign of life"),
     ('firmware/README.md',
      '- Local-first data storage\n'
      '- RF-presence session tokens rotate (the API token does not: an OTA update\n'
@@ -4529,28 +4704,34 @@ MUST_PASS_IN = [
      '  /// on a unit not set standalone, or the 10 s hold before the restart its\n'
      '  /// release brings, after which the window runs from that boot).'),
     ('firmware/common/network/improv_core.h',
-     '/// Provisioned or Provisioning for the phone to read. Credentials vanishing\n'
+     "/// Provisioned or Provisioning for the phone to read. Credentials vanishing\n"
      "/// at runtime (the 10 s hold before its restart, or a WAP's Forget Wi-Fi\n"
-     '/// on a unit not set standalone, which after setup takes the API token,\n'
+     "/// on a unit not set standalone, which takes the API token in every mode,\n"
      "/// ledger F345; a standalone WAP's glue never reports no credentials)\n"
-     '/// re-arms the window from now, and the door goes to whichever client\n'
-     '/// connects first, whoever cleared it. A recovery portal'),
+     "/// re-arms the window from now, and the door goes to whichever client\n"
+     "/// connects first, whoever cleared it. A recovery portal"),
     ('firmware/projects/canary-wap/arduino/canary_wap/improv_core.h',
      '  /// A device with no stored credentials opens the door for this long after\n'
      "  /// power-on (and again when they vanish at runtime: a WAP's Forget Wi-Fi\n"
      '  /// on a unit not set standalone, or the 10 s hold before the restart its\n'
      '  /// release brings, after which the window runs from that boot).'),
     ('firmware/projects/canary-wap/arduino/canary_wap/improv_core.h',
-     '/// Provisioned or Provisioning for the phone to read. Credentials vanishing\n'
+     "/// Provisioned or Provisioning for the phone to read. Credentials vanishing\n"
      "/// at runtime (the 10 s hold before its restart, or a WAP's Forget Wi-Fi\n"
-     '/// on a unit not set standalone, which after setup takes the API token,\n'
+     "/// on a unit not set standalone, which takes the API token in every mode,\n"
      "/// ledger F345; a standalone WAP's glue never reports no credentials)\n"
-     '/// re-arms the window from now, and the door goes to whichever client\n'
-     '/// connects first, whoever cleared it. A recovery portal'),
+     "/// re-arms the window from now, and the door goes to whichever client\n"
+     "/// connects first, whoever cleared it. A recovery portal"),
     ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
-     "// once at the door's init (ble_improv_window_used_ms), zeroed by a // credential wipe (wifi_clear_credentials: the 10 s hold, or Forget Wi-Fi, // which after setup takes the bearer, sweep F345: the owner's own act // re-arms the window, as improv_core.h's session does in RAM). Loop task // only after setup()."),
+     "// once at the door's init (ble_improv_window_used_ms), zeroed by a\n"
+     "// credential wipe (wifi_clear_credentials: the 10 s hold, or Forget Wi-Fi,\n"
+     "// which takes the bearer in every mode, sweep F345: the owner's own act\n"
+     "// re-arms the window, as improv_core.h's session does in RAM). Loop task\n"
+     "// only after setup()."),
     ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
-     "// A credential wipe (the 10 s hold, or Forget Wi-Fi, which after setup // takes the bearer, sweep F345: the owner's own act either way) re-arms // the Bluetooth setup door's first-boot window: improv_core.h's session"),
+     "// A credential wipe (the 10 s hold, or Forget Wi-Fi, which takes the\n"
+     "  // bearer in every mode, sweep F345: the owner's own act either way) re-arms\n"
+     "  // the Bluetooth setup door's first-boot window: improv_core.h's session"),
     ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
      "// tap or the setup door's claim) gets 401 from Disconnect and Forget. The\n// handlers were originally registered without an _auth wrapper, so a\n// LAN-local curl could hit /api/wifi/forget with no credential at all.\n// Disconnect drops the unit off its network and Forget wipes every saved"),
     ("firmware/projects/canary-wap/arduino/canary_wap/bluetooth_api.h",
@@ -4581,10 +4762,10 @@ MUST_PASS_IN = [
      '        # of them today) answered, which F199 removed, back without a\n'
      '        # mesh_state call.'),
     ('firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h',
-     " * A bonded peer can write the WAP's Wi-Fi over BLE (CREDS). The iPhone\n"
-     ' * app never reaches this service on a WAP (ledger A65): a phone sets a WAP\n'
-     ' * up through the Improv setup door (ble_improv.h), and the SoftAP page\n'
-     ' * stays the fallback.'),
+     "* A peer bonded through the pairing confirm or a passkey can write the\n"
+     " * WAP's Wi-Fi over BLE (CREDS). The iPhone app never reaches this service\n"
+     " * on a WAP (ledger A65): a phone sets a WAP up through the Improv setup\n"
+     " * door (ble_improv.h), and the SoftAP page stays the fallback."),
     ('firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h',
      ' * - Write rate-limited to 1 / 5 s and capped at 10 per hour, one budget\n'
      ' *   shared by every bonded peer. A refused write costs the writer nothing,\n'
@@ -4631,7 +4812,9 @@ MUST_PASS_IN = [
      '// with the press after the device has answered the new ask with 403 (the\n'
      '// line says when).'),
     ("firmware/tests_host/test_improv_core.cpp",
-     "// The credentials were wiped at runtime (a WAP's Forget Wi-Fi, which after // setup takes the API token, ledger F345, or the 10 s hold before its // restart): the door reopens, first-come, for the window."),
+     "// The credentials were wiped at runtime (a WAP's Forget Wi-Fi, which takes\n"
+     "  // the API token in every mode, ledger F345, or the 10 s hold before its\n"
+     "  // restart): the door reopens, first-come, for the window."),
     ('firmware/tests_host/test_improv_core.cpp',
      '  // A tap reopens it here (on a board whose firmware reads one; the WAP has\n'
      '  // none). The credentials vanishing would reopen it too (the 10 s hold, or a\n'
@@ -4917,9 +5100,11 @@ MUST_PASS_IN = [
     ('docs/design/magic_pairing.md',
      "> yet, or one whose network was cleared), and for an owner's own tap — never"),
     ("docs/design/magic_pairing.md",
-     "A cleared unit (the 10 s hold, or Forget Wi-Fi on a WAP, which after setup\ntakes the API token, ledger F345) still has an owner,"),
+     "A cleared unit (the 10 s hold, or Forget Wi-Fi on a WAP, which takes the\n"
+     "API token in every mode, ledger F345) still has an owner,"),
     ("docs/design/magic_pairing.md",
-     "dashboard (`POST /api/wifi/forget`, which after setup takes the API token,\nF345: the dashboard asks for it, or for one BOOT tap) and the 10 s hold,"),
+     "dashboard (`POST /api/wifi/forget`, which takes the API token in every\n"
+     "mode, F345: the dashboard asks for it, or for one BOOT tap) and the 10 s hold,"),
     ('docs/design/magic_pairing.md',
      'While the door is **open** (a new unit, one cleared with the hold or with'),
     ('docs/design/magic_pairing.md',
@@ -4927,7 +5112,7 @@ MUST_PASS_IN = [
     ('docs/ble_protocol.md',
      "From `improv_core.h`: the door is open for a device with NO NETWORK SAVED (a new one nobody owns yet, or one whose network was cleared), and for an owner's own tap — never for a device that has an owner and a bad day."),
     ("docs/ble_protocol.md",
-     "- **No credentials stored** (first boot, or after they were cleared with the 10 s factory-reset hold or, on a WAP that does not run standalone, Forget Wi-Fi, which after setup takes the API token, ledger F345; a Forget leaves a standalone WAP standalone, and its door stays shut): open for a first-boot window of **30 minutes** after power-on (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle re-arms it, and so does clearing the credentials; compile-time 0 = tap-only). A cleared unit still has an owner: the hold keeps the witness identity on a Sense, a Vision and a WAP, and a WAP's hold and Forget Wi-Fi keep its token too. The door still goes to whichever client connects first, so for that half hour a stranger in radio range can give it their network ([`design/magic_pairing.md`](design/magic_pairing.md) §2.2; on a WAP, ledger F345)."),
+     "- **No credentials stored** (first boot, or after they were cleared with the 10 s factory-reset hold or, on a WAP that does not run standalone, Forget Wi-Fi, which takes the API token in every mode, ledger F345; a Forget leaves a standalone WAP standalone, and its door stays shut): open for a first-boot window of **30 minutes** after power-on (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle re-arms it, and so does clearing the credentials; compile-time 0 = tap-only). A cleared unit still has an owner: the hold keeps the witness identity on a Sense, a Vision and a WAP, and a WAP's hold and Forget Wi-Fi keep its token too. The door still goes to whichever client connects first, so for that half hour a stranger in radio range can give it their network ([`design/magic_pairing.md`](design/magic_pairing.md) §2.2; on a WAP, ledger F345)."),
     ('docs/GLOSSARY.md',
      'device with no network saved (a new one nobody owns yet, or one whose'),
     ('docs/GLOSSARY.md',
@@ -4937,7 +5122,8 @@ MUST_PASS_IN = [
     ('docs/README.md',
      "- [**Magic pairing — the Bluetooth setup door (design)**](design/magic_pairing.md) — built, host-tested, **not bench-tested**: a new Sense, Vision or WAP takes its Wi-Fi from the iPhone app with one tap over the open Improv Wi-Fi standard. The door rule (open for a device with no network saved — a new one nobody owns yet, or one whose network was cleared, which still has an owner — for 30 minutes after power-on, to whichever client connects first, or for 60 s after the owner's own BOOT tap; never because a saved network is failing), the bounds a stranger in radio range runs into, the WAP's claim ticket that gets the phone paired without the bearer token ever riding Bluetooth, the UUIDs and byte layouts, the per-family lifecycle, the iOS flow, the residual risks and the bench checklist"),
     ("docs/TRUST_MODEL.md",
-     "it was cleared: the 10 s hold, or on a WAP Forget Wi-Fi, which after setup\ntakes the API token, ledger F345) and in the BOOT-tap minute. A WAP also takes it over"),
+     "it was cleared: the 10 s hold, or on a WAP Forget Wi-Fi, which takes the\n"
+     "API token in every mode, ledger F345) and in the BOOT-tap minute. A WAP also takes it over"),
     ('firmware/LESSONS_LEARNED.md',
      '  new one nobody owns yet, or one whose network was cleared), and for an'),
     ('firmware/projects/canary-sense/README.md',
@@ -5177,10 +5363,7 @@ MUST_PASS_IN = [
      "number of older sessions before the app's and each session minted in a second of uptime of its own, the eighth session minted after it is the one that ends it"),
     # The owner-authority PR review's replacements.
     ("CHANGELOG.md",
-     "after setup the API token alone moves its network over HTTP (a peer "
-    "already bonded over Bluetooth still moves it; a network joined before the "
-    "update can stay saved), re-keys its vault, confirms a pairing and reboots "
-    "it (the firmware install aside)"),
+     "after setup the API token alone moves its network over HTTP (a Bluetooth peer bonded through the pairing confirm or a passkey still moves it; a network joined before the update can stay saved), re-keys its vault, confirms a pairing and reboots it (the firmware install aside)"),
     ("CHANGELOG.md",
      "canary-wap: the API token alone reboots the unit, the firmware install "
     "aside (sweep F361)."),
@@ -5273,20 +5456,20 @@ MUST_PASS_IN = [
     ("firmware/projects/canary-wap/arduino/canary_wap/bluetooth_api.h",
      "// landing page mints that cookie for any host on the network, so any\n// landing session can turn Bluetooth off and delete every bond (ledger\n// F346, SECURITY_MODEL.md's lockout paragraph). The bond's confirm takes\n// bt_bearer_gated, the bearer alone, and a Passkey Entry's digits ride\n// GET /api/bluetooth only to a bearer (sweep F346)."),
     ('docs/GLOSSARY.md',
-     'factory-reset hold or, on a WAP that does not run standalone, Forget Wi-Fi,\n'
-     'which after setup takes the API token, ledger F345 (a Forget leaves a\n'
-     'standalone WAP standalone, and `keyless_join_open()` keeps its door shut) —\n'
-     'a software restart does not, the spent time rides'),
+     "factory-reset hold or, on a WAP that does not run standalone, Forget Wi-Fi,\n"
+     "which takes the API token in every mode, ledger F345 (a Forget leaves a\n"
+     "standalone WAP standalone, and `keyless_join_open()` keeps its door shut) —\n"
+     "a software restart does not, the spent time rides"),
     ('firmware/common/network/improv_core.h',
-     ' *     that does not run standalone Forget Wi-Fi, which after setup takes\n'
-     ' *     the API token, ledger F345, since a Forget leaves a standalone WAP\n'
+     "*     that does not run standalone Forget Wi-Fi, which takes the API\n"
+     " *     token in every mode, ledger F345, since a Forget leaves a standalone WAP\n"
      " *     standalone and the WAP's glue keeps its door shut; either way the\n"
-     ' *     open door is first-come.'),
+     " *     open door is first-come."),
     ('firmware/projects/canary-wap/arduino/canary_wap/improv_core.h',
-     ' *     that does not run standalone Forget Wi-Fi, which after setup takes\n'
-     ' *     the API token, ledger F345, since a Forget leaves a standalone WAP\n'
+     "*     that does not run standalone Forget Wi-Fi, which takes the API\n"
+     " *     token in every mode, ledger F345, since a Forget leaves a standalone WAP\n"
      " *     standalone and the WAP's glue keeps its door shut; either way the\n"
-     ' *     open door is first-come.'),
+     " *     open door is first-come."),
     ("docs/security/SECURITY_MODEL.md",
      "stops, and change the WAP's Wi-Fi from a browser on the network, with the\nAPI token pasted into the sign-in, to a network that host is not on. After\nfirst-boot setup that move takes the bearer alone\n(`wifi_change_authorize()`, F334):"),
     ("docs/security/SECURITY_MODEL.md",
@@ -5296,7 +5479,9 @@ MUST_PASS_IN = [
     ("docs/design/magic_pairing.md",
      "Wi-Fi (`POST /api/wifi/forget`, which takes the bearer alone, F345, so it\nwaits for the overflow too) and the 10 s hold drop them all,"),
     ("docs/design/magic_pairing.md",
-     "While the door is **open** (a new unit, one cleared with the hold or with\nForget Wi-Fi, which on a WAP takes the API token after setup, or the owner\ntapped it):"),
+     "While the door is **open** (a new unit, one cleared with the hold or with\n"
+     "Forget Wi-Fi, which on a WAP takes the API token in every mode, or the\n"
+     "owner tapped it):"),
     # The owner-authority PR's first repair round after the merge of #1884.
     ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
      "// below take the bearer alone and say so: the two reboot routes (F361),\n// Disconnect and Forget (F334, F345), the vault key (F335) and the mesh\n// pair confirm (F346); Reconnect stays on api_auth_check()."),
@@ -5313,13 +5498,16 @@ MUST_PASS_IN = [
     ("firmware/LESSONS_LEARNED.md",
      "  on, or move the WAP with no Bluetooth at all. *(Amended 2026-10-27, the\n  owner-authority PR, #<PR>: the Bluetooth routes still take the session,\n  but after setup `POST /api/wifi/connect` takes the API token alone, F334,"),
     ("CHANGELOG.md",
-     "  release: after setup the four routes that move the network (connect,\n  ap-only, disconnect, forget), the bond and opera confirms and a Passkey\n  Entry's digits take the API token"),
+     "release: the four routes that move the network over HTTP (Disconnect\n"
+     "  and Forget in every mode, Connect and AP-only after setup), the bond and\n"
+     "  opera confirms and a Passkey Entry's digits take the API token,"),
     ("docs/audit/esp32s3_firmware_full_audit_2026-07.md",
-     "  #<PR>: after setup the four routes that move the network (connect, ap-only, disconnect,\n  forget) take the bearer alone (F334, F345)"),
+     "#<PR>: the four routes that move the network over HTTP take the bearer alone (Disconnect\n"
+     "  and Forget in every mode, Connect and AP-only after setup; F334, F345), and the overflow holds"),
     ("docs/security/SECURITY-AUDIT.md",
-     "(Amended 2026-10-27 by the owner-authority PR, #<PR>: after setup the four routes that move the network (connect, ap-only, disconnect, forget) take the bearer alone (F334, F345)"),
+     "(Amended 2026-10-27 by the owner-authority PR, #<PR>: the four routes that move the network over HTTP take the bearer alone (Disconnect and Forget in every mode, Connect and AP-only after setup; F334, F345), and the overflow holds"),
     ("docs/security/THREAT_MODEL.md",
-     "Since F334 the session can no longer move the WAP to a network the caller runs (after setup the four routes that move the network, connect, ap-only, disconnect and forget, take the bearer alone, the recovery portal included)."),
+     "Since F334 the session can no longer move the WAP to a network the caller runs (the four routes that move the network over HTTP take the bearer alone, disconnect and forget in every mode and connect and ap-only after setup, the recovery portal included)."),
     ("docs/audit/repo_todo_sweep_2026-09.md",
      "  are `api_auth_check_bearer()`, as Disconnect and Forget are (Connect and\n  AP-only after setup). The"),
     ("firmware/projects/canary-wap/arduino/canary_wap/csi_integration.cpp",
@@ -5379,11 +5567,13 @@ MUST_PASS_IN = [
     ("firmware/projects/canary-wap/arduino/canary_wap/web_ui.h",
      "Until this Canary is set up again (unless it runs standalone), a camera unit takes a Wi-Fi code shown to its lens"),
     ("docs/FAQ.md",
-     "A forget leaves a standalone WAP standalone: its door stays shut\n"
-     "and a camera unit takes no code."),
+     "A forget leaves a standalone\n"
+     "WAP's door shut. On a release after 2.4.17 the forget also asks for the\n"
+     "token or a tap and clears the saved broker login"),
     ("docs/audit/repo_todo_sweep_2026-09.md",
-     "  bonded, one a session confirmed before F346 among them, still moves the\n"
-     "  network with no token, over the Bluetooth credentials write that\n"
+     "which restarts the unit only into a newer signed image; and a peer already\n"
+     "  bonded through the pairing confirm or a passkey, one a session made\n"
+     "  before F346 among them, still moves the network with no token, over the Bluetooth credentials write that\n"
      "  `ble_provision.cpp` hands to `ble_request_wifi_provisioning()`)"),
     ("docs/audit/esp32s3_firmware_full_audit_2026-07.md",
      "the session buys less again: after setup the four routes that move the\n"
@@ -5473,20 +5663,25 @@ MUST_PASS_IN = [
      '  firmware install restarts the unit, and only into a newer signed\n'
      '  image)*); a page'),
     ('firmware/LESSONS_LEARNED.md',
-     '  every HTTP route that changes the network the unit joins, on every\n'
-     '  interface (a peer already bonded, one a session confirmed before F346\n'
-     '  among them, still moves it with no token, over the Bluetooth credentials\n'
-     '  write, `ble_request_wifi_provisioning()`), and every'),
+     "every HTTP route that changes the network the unit joins, on every\n"
+     "  interface (a peer already bonded through the pairing confirm or a\n"
+     "  passkey, one a session made before F346 among them, still moves it with\n"
+     "  no token, over the Bluetooth credentials write,\n"
+     "  `ble_request_wifi_provisioning()`), and every"),
     ('firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino',
-     '// After first-boot setup the bearer alone moves the network the unit joins\n'
+     "// After first-boot setup the bearer alone moves the network the unit joins\n"
      "// over HTTP (sweep F334), on every interface, the recovery portal's SoftAP\n"
-     '// included (a peer already bonded, one a session confirmed before F346\n'
-     '// among them, still moves it with no token, over the Bluetooth credentials\n'
-     '// write, ble_request_wifi_provisioning()): the landing page hands any caller'),
+     "// included (a peer already bonded through the pairing confirm or a passkey,\n"
+     "// one a session made before F346 among them, still moves it with no token,\n"
+     "// over the Bluetooth credentials write, ble_request_wifi_provisioning()):\n"
+     "// the landing page hands any caller on the home network a pair token and a\n"
+     "// 24 h session, and the AP key is printed in too many places to be a\n"
+     "// network-move credential."),
     ('firmware/projects/canary-wap/tests_host/test_wifi_authority.cpp',
-     '// After first-boot setup, the bearer alone moves the network a canary-wap\n'
-     '// joins over HTTP (sweep F334, F345, F333; a peer already bonded still moves\n'
-     '// it over the Bluetooth credentials write, which this file does not drive),'),
+     "// After first-boot setup, the bearer alone moves the network a canary-wap\n"
+     "// joins over HTTP (sweep F334, F345, F333; a peer already bonded through the\n"
+     "// pairing confirm or a passkey still moves it over the Bluetooth credentials\n"
+     "// write, which this file does not drive),"),
     ('docs/security/SECURITY_MODEL.md',
      'These routes take the bearer, never the session (`api_auth_check_bearer()`,\n'
      'except the receipt, which takes the accounted `api_auth_bearer_grant()`\n'
@@ -5503,10 +5698,11 @@ MUST_PASS_IN = [
      "- **canary-wap: after setup the API token alone moves the network the WAP\n"
      "  joins over HTTP (sweep F334, F345, F333).**"),
     ("CHANGELOG.md",
-     "A Bluetooth peer already bonded, one a session\n"
-     "  confirmed on 2.4.17 or earlier among them, still moves the network with\n"
-     "  no token, over the Wi-Fi credentials write (the bond's confirm takes the\n"
-     "  token since F346, below)."),
+     "no longer reaches them. A Bluetooth peer already bonded through the\n"
+     "  pairing confirm or a passkey, one a session made before this release\n"
+     "  among them, still moves the network with no token, over the Wi-Fi\n"
+     "  credentials write (the confirm and a Passkey Entry's digits take the\n"
+     "  token since F346, below; a Just Works bond never reaches that write)."),
     ("CHANGELOG.md",
      "No\n  route or gate changed in the merge that brought #1884 in."),
     ("docs/security/SECURITY_MODEL.md",
@@ -5534,6 +5730,103 @@ MUST_PASS_IN = [
     ("firmware/projects/canary-wap/arduino/canary_wap/wap_server.h",
      " *                                           (bearer alone: disconnect and forget in every mode, connect and\n"
      " *                                           AP-only after setup; F334, F345)"),
+    # The second review of the merge with the 2.4.17 train: the
+    # replacements a moved pin above does not already hold.
+    ("docs/design/magic_pairing.md",
+     "`POST /api/mesh/pair/confirm` (a lasting bond, an opera's secret, F346),\n"
+     "the four Wi-Fi changes (disconnect and forget in every mode, connect and\n"
+     "ap-only after setup; F334, F345), and `POST /api/reboot`"),
+    ("docs/design/magic_pairing.md",
+     "Forget Wi-Fi, which takes the API token, or the 10 s BOOT hold re-arms the window"),
+    ("docs/design/magic_pairing.md",
+     "- **A home-network session cannot re-arm the WAP's door.** Forget Wi-Fi\n"
+     "  takes the API token in every mode (F345), so the landing page's session can"),
+    ("docs/security/THREAT_MODEL.md",
+     "and Forget Wi-Fi, which takes the bearer in every mode (F345), clears the stored user and password"),
+    ("firmware/LESSONS_LEARNED.md",
+     "#<PR>: a WAP's Forget Wi-Fi takes the API token in every mode, F345, so\n"
+     "  no landing session sends it; the door it reopens on a unit not running\n"
+     "  standalone is still first-come.)*"),
+    ("firmware/LESSONS_LEARNED.md",
+     "*(amended 2026-10-27, #<PR>: a WAP's Forget Wi-Fi takes the API token in\n"
+     "  every mode, F345)*."),
+    ("firmware/LESSONS_LEARNED.md",
+     "lockout (the third and second rounds' bullets above); F334 and F345 put\n"
+     "  both on the bearer alone (Connect after setup, Forget in every mode), and\n"
+     "  the overflow holds that bearer"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js",
+     "// That route takes the bearer alone in every mode (sweep F345), so a"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/dashboard_gates.test.js",
+     "//   * The network moves on the bearer alone (F334, F345): the Wi-Fi card's\n"
+     "//     Forget (in every mode) and Connect (after setup) take the API token,\n"
+     "//     so a session-only"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "user and security), with F334; done (2026-10-26, #<PR>):* POST\n"
+     "  /api/wifi/forget takes the bearer alone in every mode\n"
+     "  (`api_auth_check_bearer()`; its wrapper asks nothing about setup)."),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "held. With connect (after setup) and Forget (in every mode) on the bearer, the overflow"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "comment) now say it takes the API token (in every mode since the second\n"
+     "  review of the 2.4.17 merge, which dropped the \"after setup\" they said\n"
+     "  until then), `LESSONS_LEARNED.md`"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+     "// The broker login goes with the networks (sweep F333): on a unit not\n"
+     "  // running standalone Forget re-opens the keyless joins (the setup door,\n"
+     "  // the camera's boot scan, keyless_join_open()), and every"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.h",
+     "* On a unit not running standalone Forget re-opens the keyless joins\n"
+     " * (keyless_join_open()), and every code also chooses the"),
+    ("firmware/projects/canary-wap/tests_host/test_mqtt_reinit.cpp",
+     "// On a unit not running standalone Forget re-opens the keyless joins (the\n"
+     "// Bluetooth setup door, the camera's boot scan, keyless_join_open()), and\n"
+     "// every code also chooses the network the unit joins, so"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "though a peer already bonded through the pairing confirm or a passkey\n"
+     "  still moves it with no token over the Bluetooth credentials write,"),
+    ("docs/TRUST_MODEL.md",
+     "link, one write per 5 s and ten an hour) from any peer whose bond the\n"
+     "pairing confirm or a passkey authenticated (a Just Works bond gets no such\n"
+     "link), with or without credentials saved: the iPhone app never reaches\n"
+     "that lane (ledger A65), but such a peer does, and since F346 the bond's\n"
+     "confirm and a Passkey Entry's digits take the API token."),
+    ("firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h",
+     "*   WRITE_ENC + WRITE_AUTHEN. NimBLE rejects unbonded peers and, under\n"
+     " *   the _AUTHEN flags, a Just Works bond too: only a bond the pairing\n"
+     " *   confirm or a passkey authenticated reaches these (THREAT_MODEL.md's\n"
+     " *   BLE pairing row)."),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "user and security); done (2026-10-26, #<PR>):* after first-boot setup, the\n"
+     "  network the WAP joins moves on the bearer alone over HTTP, on every\n"
+     "  interface, the SoftAP recovery portal included (a peer already bonded\n"
+     "  through the pairing confirm or a passkey still moves it over the\n"
+     "  Bluetooth credentials write, as F353 below says)."),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "The ledger named only the pair token, but the session cookie moved the\n"
+     "  network too, through `api_auth_check`. The Bluetooth bond was a second road,\n"
+     "  closed to new bonds by F346's gate in the same PR (a bond a session made\n"
+     "  before this release persists until the owner removes it)."),
+    ("docs/FAQ.md",
+     "On a release after 2.4.17 the forget also asks for the\n"
+     "token or a tap and clears the saved broker login (to change networks and\n"
+     "keep that login, use Connect instead)"),
+    ("docs/FAQ.md",
+     "and a standalone camera unit takes\n"
+     "no code after it; on 2.4.17 a forget takes any dashboard session with no\n"
+     "token or tap, keeps the broker login, and leaves a standalone camera unit\n"
+     "taking a code shown to its lens."),
+    ("docs/FAQ.md",
+     "use that network's printed key (on a WAP\n"
+     "running a release after 2.4.17, then the API token or one BOOT tap to\n"
+     "change its Wi-Fi there)."),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "are the only times a node takes Wi-Fi from a phone (a WAP's bonded\n"
+     "      lane takes it from a peer bonded through the pairing confirm or a\n"
+     "      passkey, F346); the roadmap's row 13, a"),
+    ("CHANGELOG.md",
+     "earlier stays until the owner removes it, and the door Forget re-arms on\n"
+     "  a unit not running standalone is still first-come.)"),
+
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -7969,6 +8262,177 @@ MUST_FAIL_IN = [
      " *                                           (after setup connect, AP-only, disconnect and forget: bearer alone, F334)"),
     ("docs/audit/hardware_verification_checklist.md",
      "## canary-wap: after setup the API token alone moves the network, re-keys the vault, confirms a pairing and, the firmware install aside, reboots the unit (F334, F345, F333, F335, F346, F361) — on-device verification"),
+    # The second review of the merge with the 2.4.17 train: the forms as
+    # they stood at 86f5a463.
+    ("docs/GLOSSARY.md",
+     "factory-reset hold or, on a WAP that does not run standalone, Forget Wi-Fi,\n"
+     "which after setup takes the API token, ledger F345 (a Forget leaves a\n"),
+    ("docs/ble_protocol.md",
+     "- **No credentials stored** (first boot, or after they were cleared with the 10 s factory-reset hold or, on a WAP that does not run standalone, Forget Wi-Fi, which after setup takes the API token, ledger F345; a Forget leaves a standalone WAP standalone, and its door stays shut):"),
+    ("firmware/common/network/improv_core.h",
+     " *     that does not run standalone Forget Wi-Fi, which after setup takes\n"
+     " *     the API token, ledger F345, since a Forget leaves a standalone WAP\n"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/improv_core.h",
+     " *     that does not run standalone Forget Wi-Fi, which after setup takes\n"
+     " *     the API token, ledger F345, since a Forget leaves a standalone WAP\n"),
+    ("firmware/common/network/improv_core.h",
+     "/// on a unit not set standalone, which after setup takes the API token,\n"
+     "/// ledger F345; a standalone WAP's glue never reports no credentials)\n"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/improv_core.h",
+     "/// on a unit not set standalone, which after setup takes the API token,\n"
+     "/// ledger F345; a standalone WAP's glue never reports no credentials)\n"),
+    ("firmware/tests_host/test_improv_core.cpp",
+     "  // The credentials were wiped at runtime (a WAP's Forget Wi-Fi, which after\n"
+     "  // setup takes the API token, ledger F345, or the 10 s hold before its\n"),
+    ("docs/design/magic_pairing.md",
+     "A cleared unit (the 10 s hold, or Forget Wi-Fi on a WAP, which after setup\n"
+     "takes the API token, ledger F345) still has an owner,"),
+    ("docs/design/magic_pairing.md",
+     "| No credentials stored (first boot, or after a factory reset or Forget Wi-Fi) on a unit not set standalone (a WAP's AP-only choice, which Forget Wi-Fi leaves set and the hold clears), within **30 minutes** of power-on (after Forget Wi-Fi, of the credentials vanishing; after a WAP's hold, of the restart on release) | **Open** (`Door::NoCredentials`) | A device nobody owns yet — or, after a reset or a Forget Wi-Fi, a cleared unit that still has an owner (on a WAP Forget Wi-Fi takes the API token after setup, ledger F345):"),
+    ("docs/design/magic_pairing.md",
+     "dashboard (`POST /api/wifi/forget`, which after setup takes the API token,\n"
+     "F345: the dashboard asks for it, or for one BOOT tap)"),
+    ("docs/design/magic_pairing.md",
+     "Forget Wi-Fi, which on a WAP takes the API token after setup, or the owner\n"
+     "tapped it):"),
+    ("docs/design/magic_pairing.md",
+     "`POST /api/mesh/pair/confirm` (a lasting bond, an opera's secret, F346),\n"
+     "after setup the four Wi-Fi changes (connect, ap-only, disconnect, forget;\n"
+     "F334, F345), and `POST /api/reboot`"),
+    ("docs/design/magic_pairing.md",
+     "or a WAP's Forget Wi-Fi, which after setup takes the API token, F345, on a unit not set standalone"),
+    ("docs/design/magic_pairing.md",
+     "Forget Wi-Fi, with the API token after setup, or the 10 s BOOT hold re-arms the window"),
+    ("docs/design/magic_pairing.md",
+     "- **A home-network session cannot re-arm the WAP's door.** Forget Wi-Fi\n"
+     "  takes the API token after setup (F345), so the landing page's session can\n"),
+    ("docs/TRUST_MODEL.md",
+     "it was cleared: the 10 s hold, or on a WAP Forget Wi-Fi, which after setup\n"
+     "takes the API token, ledger F345) and in the BOOT-tap minute."),
+    ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+     "// credential wipe (wifi_clear_credentials: the 10 s hold, or Forget Wi-Fi,\n"
+     "// which after setup takes the bearer, sweep F345: the owner's own act\n"
+     "// re-arms the window, as improv_core.h's session does in RAM)."),
+    ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+     "  // A credential wipe (the 10 s hold, or Forget Wi-Fi, which after setup\n"
+     "  // takes the bearer, sweep F345: the owner's own act either way) re-arms\n"),
+    ("docs/security/THREAT_MODEL.md",
+     "and Forget Wi-Fi, which takes the bearer after setup (F345), clears the stored user and password"),
+    ("docs/security/THREAT_MODEL.md",
+     "(after setup the four routes that move the network, connect, ap-only, disconnect and forget, take the bearer alone, the recovery portal included)"),
+    ("docs/security/SECURITY-AUDIT.md",
+     "#<PR>: after setup the four routes that move the network (connect, ap-only, disconnect, forget) take the bearer alone (F334, F345), and the overflow holds"),
+    ("docs/audit/esp32s3_firmware_full_audit_2026-07.md",
+     "  #<PR>: after setup the four routes that move the network (connect, ap-only, disconnect,\n"
+     "  forget) take the bearer alone (F334, F345), and the overflow holds\n"),
+    ("firmware/LESSONS_LEARNED.md",
+     "  #<PR>: after setup a WAP's Forget Wi-Fi takes the API token, F345, so no\n"
+     "  landing session sends it; the door it reopens is still first-come.)*\n"),
+    ("firmware/LESSONS_LEARNED.md",
+     "  *(amended 2026-10-27, #<PR>: after setup a WAP's Forget Wi-Fi takes the API\n"
+     "  token, F345)*.\n"),
+    ("firmware/LESSONS_LEARNED.md",
+     "  lockout (the third and second rounds' bullets above); F334 and F345 put\n"
+     "  both on the bearer alone after setup, and the overflow holds that bearer\n"),
+    ("firmware/projects/canary-wap/README.md",
+     "credentials, each of which re-arms the window, both the owner's acts: after\n"
+     "setup Forget takes the API token, so a home-network session cannot re-arm\n"
+     "it, F345)"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/recovery_kit.test.js",
+     "    // After setup that route takes the bearer alone (sweep F345), so a\n"
+     "    // landing session's Remove credentials opens the sign-in first, and the\n"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/dashboard_gates.test.js",
+     "//   * The network moves on the bearer alone (F334, F345): after setup the\n"
+     "//     Wi-Fi card's Connect and Forget take the API token, so a session-only\n"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "  user and security), with F334; done (2026-10-26, #<PR>):* POST\n"
+     "  /api/wifi/forget takes the bearer alone after setup\n"
+     "  (`api_auth_check_bearer()`)."),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "  held. With connect and Forget on the bearer after setup, the overflow\n"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "  comment) now say it takes the API token after setup, `LESSONS_LEARNED.md`\n"),
+    ("CHANGELOG.md",
+     "  release: after setup the four routes that move the network (connect,\n"
+     "  ap-only, disconnect, forget), the bond and opera confirms and a Passkey\n"
+     "  Entry's digits take the API token,"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+     "  // The broker login goes with the networks (sweep F333): Forget re-opens\n"
+     "  // the keyless joins (the setup door, the camera's boot scan), and every\n"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.h",
+     " * keep the rest of the row (host, port, TLS mode, CA, prefix, discovery).\n"
+     " * Forget re-opens the keyless joins, and every code also chooses the\n"),
+    ("firmware/projects/canary-wap/tests_host/test_mqtt_reinit.cpp",
+     "// Forget re-opens the keyless joins (the Bluetooth setup door, the camera's\n"
+     "// boot scan), and every code also chooses the network the unit joins, so\n"),
+    ("firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md",
+     "        (`api_auth_check_bearer()`, so no landing session sends it), and a\n"
+     "        bearer Forget reopens the same first-come door.\n"),
+    ("CHANGELOG.md",
+     "(a peer already bonded over Bluetooth still moves it; a network joined before the update can stay saved)"),
+    ("CHANGELOG.md",
+     "  no longer reaches them. A Bluetooth peer already bonded, one a session\n"
+     "  confirmed on 2.4.17 or earlier among them, still moves the network with\n"
+     "  no token, over the Wi-Fi credentials write (the bond's confirm takes the\n"
+     "  token since F346, below)."),
+    ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+     "// included (a peer already bonded, one a session confirmed before F346\n"
+     "// among them, still moves it with no token, over the Bluetooth credentials\n"
+     "// write, ble_request_wifi_provisioning()): the landing page hands any caller\n"
+     "// on the home network a pair token and a 24 h session, and the AP key is\n"
+     "// printed in too many places to be a network-move credential.\n"),
+    ("firmware/LESSONS_LEARNED.md",
+     "  interface (a peer already bonded, one a session confirmed before F346\n"
+     "  among them, still moves it with no token, over the Bluetooth credentials\n"
+     "  write, `ble_request_wifi_provisioning()`), and every\n"),
+    ("firmware/projects/canary-wap/tests_host/test_wifi_authority.cpp",
+     "// joins over HTTP (sweep F334, F345, F333; a peer already bonded still moves\n"
+     "// it over the Bluetooth credentials write, which this file does not drive),\n"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "  which restarts the unit only into a newer signed image; and a peer already\n"
+     "  bonded, one a session confirmed before F346 among them, still moves the\n"
+     "  network with no token,"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "  though a peer already bonded still moves it with no token over the\n"
+     "  Bluetooth credentials write,"),
+    ("docs/TRUST_MODEL.md",
+     "link, one write per 5 s and ten an hour) from any peer that holds a bond,\n"
+     "with or without credentials saved: the iPhone app never reaches that lane\n"
+     "(ledger A65), but a peer that bonds does, and since F346 the bond's confirm\n"
+     "takes the API token."),
+    ("firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h",
+     " *   WRITE_ENC + WRITE_AUTHEN. NimBLE rejects unbonded peers.\n"
+     " * - CREDS has no READ property at all. A bonded peer can SET credentials\n"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "  user and security); done (2026-10-26, #<PR>):* after first-boot setup, the\n"
+     "  network the WAP joins moves on the bearer alone, on every interface, the\n"
+     "  SoftAP recovery portal included.\n"),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "  The ledger named only the pair token, but the session cookie moved the\n"
+     "  network too, through `api_auth_check`. The Bluetooth bond was a second road,\n"
+     "  closed by F346's gate in the same PR.\n"),
+    ("docs/FAQ.md",
+     "the `/api/wifi/forget` route, which also asks for the token or a tap and\n"
+     "clears the saved broker login too), which clears every saved network and,\n"
+     "unless the WAP runs standalone, opens the door again for half an hour from\n"),
+    ("docs/FAQ.md",
+     "its lens. A forget leaves a standalone WAP standalone: its door stays shut\n"
+     "and a camera unit takes no code."),
+    ("docs/FAQ.md",
+     "and a camera unit takes no code. To change networks and keep the broker\n"
+     "login, use Connect instead. Before you forget it, check"),
+    ("docs/FAQ.md",
+     "instead; fix the router, or use that network's printed key (on a WAP, then\n"
+     "the API token or one BOOT tap to change its Wi-Fi there)."),
+    ("docs/audit/repo_todo_sweep_2026-09.md",
+     "      are the only times a node takes Wi-Fi from a phone (a WAP's bonded\n"
+     "      lane takes it from any bonded peer, F346); the roadmap's row 13, a\n"),
+    ("CHANGELOG.md",
+     "  earlier stays until the owner removes it, and the door Forget re-arms is\n"
+     "  still first-come.)"),
+    ("firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h",
+     " * A bonded peer can write the WAP's Wi-Fi over BLE (CREDS). The iPhone\n"
+     " * app never reaches this service on a WAP (ledger A65): a phone sets a WAP\n"),
 ]
 
 

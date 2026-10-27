@@ -410,8 +410,8 @@ static void a_factory_reset_at_runtime_rearms_the_window() {
   Session s;
   Timing t;
   session_begin(s, false, 1000, t);
-  // The credentials were wiped at runtime (a WAP's Forget Wi-Fi, which after
-  // setup takes the API token, ledger F345, or the 10 s hold before its
+  // The credentials were wiped at runtime (a WAP's Forget Wi-Fi, which takes
+  // the API token in every mode, ledger F345, or the 10 s hold before its
   // restart): the door reopens, first-come, for the window.
   session_set_no_credentials(s, true, 60000, t);
   CHECK(s.door == Door::NoCredentials && s.state == State::Authorized, "no credentials now: open");

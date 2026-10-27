@@ -207,7 +207,8 @@ bool config_clear();
 /* Forget Wi-Fi's share (canary_wap.ino handle_wifi_forget, sweep F333):
  * remove the stored broker user and password, under the writer lock, and
  * keep the rest of the row (host, port, TLS mode, CA, prefix, discovery).
- * Forget re-opens the keyless joins, and every code also chooses the
+ * On a unit not running standalone Forget re-opens the keyless joins
+ * (keyless_join_open()), and every code also chooses the
  * network, so whoever wins one could answer the stored broker host. True
  * when neither key remains (a row without them is true and unwritten);
  * false when another save holds the lock, NVS will not open, or a key is

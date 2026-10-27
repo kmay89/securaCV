@@ -1,6 +1,7 @@
 // After first-boot setup, the bearer alone moves the network a canary-wap
-// joins over HTTP (sweep F334, F345, F333; a peer already bonded still moves
-// it over the Bluetooth credentials write, which this file does not drive),
+// joins over HTTP (sweep F334, F345, F333; a peer already bonded through the
+// pairing confirm or a passkey still moves it over the Bluetooth credentials
+// write, which this file does not drive),
 // and the bearer alone reaches its two reboot routes (F361, decided by the
 // same rule; the firmware install, which restarts the unit only into a newer
 // signed image, stays on the session).

@@ -547,17 +547,20 @@ the API token (paste it from your recovery kit) or one BOOT tap, on the
 recovery network too: a page your home network opened, or that network's
 printed key, no longer moves it on its own (a network such a page moved it
 to on 2.4.17 or earlier can stay among its saved networks, which the WAP
-tries by itself when its own network is not found; the forget below clears every one). Or tell it to
-forget its Wi-Fi from the dashboard (Settings → WiFi → Remove credentials,
-the `/api/wifi/forget` route, which also asks for the token or a tap and
-clears the saved broker login too), which clears every saved network and,
-unless the WAP runs standalone, opens the door again for half an hour from
-that moment, to the first phone or computer nearby that connects, so have
-yours ready: until it is set up again the door, and the receipt its claim
-buys, goes to that first one, and a camera unit takes a Wi-Fi code shown to
-its lens. A forget leaves a standalone WAP standalone: its door stays shut
-and a camera unit takes no code. To change networks and keep the broker
-login, use Connect instead. Before you forget it, check
+tries by itself when its own network is not found; the forget below clears
+every one). Or tell it to forget its Wi-Fi from the dashboard (Settings →
+WiFi → Remove credentials, the `/api/wifi/forget` route), which clears
+every saved network and, unless the WAP runs standalone, opens the door
+again for half an hour from that moment, to the first phone or computer
+nearby that connects, so have yours ready: until it is set up again the
+door, and the receipt its claim buys, goes to that first one, and a camera
+unit takes a Wi-Fi code shown to its lens. A forget leaves a standalone
+WAP's door shut. On a release after 2.4.17 the forget also asks for the
+token or a tap and clears the saved broker login (to change networks and
+keep that login, use Connect instead), and a standalone camera unit takes
+no code after it; on 2.4.17 a forget takes any dashboard session with no
+token or tap, keeps the broker login, and leaves a standalone camera unit
+taking a code shown to its lens. Before you forget it, check
 that Bluetooth Enabled is on under Settings → Bluetooth: forgetting does
 not turn it back on, the 10-second hold below does not either, and with it
 off no phone reaches the door. Holding a WAP's BOOT button
@@ -578,8 +581,9 @@ the asking device is on your network and not in Bluetooth range of the
 WAP, with the iPhone ready to set it up again through the setup door
 (`docs/design/magic_pairing.md` §3.7 says why). A Canary whose saved network is just
 down right now keeps the door shut and raises its recovery network
-instead; fix the router, or use that network's printed key (on a WAP, then
-the API token or one BOOT tap to change its Wi-Fi there).
+instead; fix the router, or use that network's printed key (on a WAP
+running a release after 2.4.17, then the API token or one BOOT tap to
+change its Wi-Fi there).
 
 ### Can Home Assistant's app set a new Canary up?
 
