@@ -3593,7 +3593,10 @@
   pasted token on `GET /api/status` with the cookie attached, so the cookie
   answered the check the token was meant to pass.
 - **Fix:** after setup the bearer alone (`api_auth_check_bearer()`) gates
-  every change to the network the unit joins, on every interface, and every
+  every HTTP route that changes the network the unit joins, on every
+  interface (a peer already bonded, one a session confirmed before F346
+  among them, still moves it with no token, over the Bluetooth credentials
+  write, `ble_request_wifi_provisioning()`), and every
   write that grants a credential (the vault key, the two confirms), and the
   two reboot routes; `POST /api/wifi/qr-scan` answers `404` outside setup.
   The firmware install stays on the session and restarts the unit only into

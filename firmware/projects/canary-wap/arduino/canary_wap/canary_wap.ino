@@ -7072,11 +7072,14 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
 
 // Credential gate shared by /api/wifi/connect and /api/wifi/ap-only.
 // After first-boot setup the bearer alone moves the network the unit joins
-// (sweep F334), on every interface, the recovery portal's SoftAP included:
-// the landing page hands any caller on the home network a pair token and a
-// 24 h session, and the AP key is printed in too many places to be a
-// network-move credential. api_auth_check_bearer() takes no cookie, sits
-// under the per-address lockout and sends its own 401/403/429.
+// over HTTP (sweep F334), on every interface, the recovery portal's SoftAP
+// included (a peer already bonded, one a session confirmed before F346
+// among them, still moves it with no token, over the Bluetooth credentials
+// write, ble_request_wifi_provisioning()): the landing page hands any caller
+// on the home network a pair token and a 24 h session, and the AP key is
+// printed in too many places to be a network-move credential.
+// api_auth_check_bearer() takes no cookie, sits under the per-address
+// lockout and sends its own 401/403/429.
 // During setup the wizard carries a live pair token, and a *presented* admin
 // credential (the bearer, or a session: handle_ui mints none during setup,
 // but the receipt route mints one on a BOOT tap or the setup door's claim,

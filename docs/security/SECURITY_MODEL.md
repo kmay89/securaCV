@@ -587,9 +587,10 @@ with `POST /api/ota/config`, or the MQTT update entity's Install or
 auto-update switch, sent from whatever broker the bridge points at, which a
 session may re-point with a password typed), which installs only a newer
 signed image.
-These routes take the bearer alone, never the session
-(`api_auth_check_bearer()`, or for one answer field the accounted
-`api_auth_bearer_grant()`; `api_auth.h` points here for the list):
+These routes take the bearer, never the session (`api_auth_check_bearer()`,
+except the receipt, which takes the accounted `api_auth_bearer_grant()`
+beside its own BOOT tap and setup-door claim; `api_auth.h` points here for
+the list):
 - `GET /api/provisioning-receipt` and `GET /api/pairing-qr` (F289);
 - `POST /api/vault/key`, the vault's recipient key, which decides who can
   open every frame sealed from then on (F335);

@@ -874,7 +874,12 @@ so — see D2 below.)
   bearer-gated API routes read no Host *(amended 2026-10-26, #1843's sweep:
   those routes are behind `api_auth_check()`, which takes a landing
   session's cookie before the bearer, F346; the cookie path asks the Host,
-  the bearer path does not)*, so a rebinding page that holds the
+  the bearer path does not)* *(amended 2026-10-27, the owner-authority PR,
+  #<PR>: not all of them; the routes `api_auth.h` names, the pairing QR,
+  the vault key, the two pairing confirms, Disconnect and Forget in every
+  mode, Connect and AP-only after setup, and the two reboot routes, take
+  `api_auth_check_bearer()`, the bearer alone, which asks no Host
+  either)*, so a rebinding page that holds the
   bearer token itself is not refused (and a pair token's value carried off
   the LAN works on `/api/wifi/connect` with no Host question for its ten
   minutes, until F334 removes that road after setup). Left open for the
@@ -884,11 +889,19 @@ so — see D2 below.)
   with no Host on `/api/wifi/ap-only` and `/api/wifi/qr-scan` (start, status
   and stop) as well as `/api/wifi/connect`. F334, still open, asks whether
   Wi-Fi changes after setup take a bearer (its entry names connect and
-  ap-only, not the scan); the scan's status and stop take the pair token
+  ap-only, not the scan) *(amended 2026-10-27, the owner-authority PR,
+  #<PR>: F334 is done; after setup a carried pair token no longer works on
+  connect, ap-only or the scan's start, since connect and ap-only take the
+  bearer alone and the start answers `404`)*; the scan's status and stop
+  take the pair token
   through `qr_scan_request_allowed()`, and `qr_auto_scan_tick()` runs
   whenever no Wi-Fi is configured, so a standalone unit with a camera keeps
   scanning after setup and a carried token reads that scan's status and
-  stops it. And
+  stops it *(amended the same day, same PR: since F333 the boot scan runs
+  only while no network is stored and the unit is not standalone,
+  `keyless_join_open()`, so a standalone unit does not scan, and after
+  setup a carried token reads and stops a boot scan only on a unit with no
+  network stored that is not standalone)*. And
   `host_guard.h` accepts a name because public DNS cannot mint it, which is
   not the same as only this device answering to it: every WAP claims
   `canary.local` over mDNS, and the SoftAP's captive DNS answers every name
@@ -912,7 +925,11 @@ so — see D2 below.)
   these (it reads nothing; but `SameSite=Strict` compares sites, so in a
   browser that does not count the scheme in the site, as Chromium does, its
   requests still carry the session cookie and it can write blind with the
-  owner's session: a reboot, or any other write a session may make); a page
+  owner's session: a reboot, or any other write a session may make
+  *(amended 2026-10-27, the owner-authority PR, #<PR>: since F361 the two
+  reboot routes take the bearer alone, and of a session's writes only the
+  firmware install restarts the unit, and only into a newer signed
+  image)*); a page
   served over https at that name whose certificate warning
   the owner accepted still does, and so does any page during the first-boot
   setup or on a unit whose HTTPS start failed, which serve plain HTTP.
@@ -1892,6 +1909,10 @@ so — see D2 below.)
   unreleased section, still called F334 open and the standalone camera's
   scan running after setup; it now points to F334 and F333 in this release.
   `RETIRED_IN` holds the three files to it.
+  Fifth merge review fix (same PR): F57's note, an open item, still called
+  F334 open and the standalone camera's scan running after setup; it now
+  carries inline amendments, the form #1843 used in that note, and
+  `RETIRED_IN` holds the ledger to them.
 - [x] **F335 [decision] canary-wap: a session re-keys the vault.** `POST
   /api/vault/key` (`api_auth_check`, so any session) replaces the X25519
   unlock key that future snapshots are sealed to, and `GET
@@ -6302,8 +6323,9 @@ so — see D2 below.)
   rows (790 RETIRED_IN over 214 files, 861 retired forms, 770
   replacements), its second 5 (795 over 214 files, 866 retired forms, 773
   replacements), its third 9 (804 over 214 files, 875 retired forms, 781
-  replacements) and its fourth 15 (819 over 214 files, 890 retired forms,
-  795 replacements), with 51 BANNED rows and 26 tests throughout. The
+  replacements), its fourth 15 (819 over 214 files, 890 retired forms,
+  795 replacements) and its fifth 20 (839 over 214 files, 910 retired
+  forms, 802 replacements), with 51 BANNED rows and 26 tests throughout. The
   second review's rows retire what F333, F334 and F346 left untrue in
   five places: #1835's CHANGELOG bullet and LESSONS_LEARNED's QR-road
   bullet, which still gave the session a road to the hub re-point through
@@ -6356,7 +6378,31 @@ so — see D2 below.)
   is what holds the sketch. Two dated notes carry an amendment instead:
   F289's 2026-10 note in `SECURITY-AUDIT.md` ("for every other route") and
   FW9's correction in `feature_gaps_2026-09.md` ("The API is behind
-  `api_auth_check()`").
+  `api_auth_check()`"). The fifth review's rows retire seventeen sentences
+  (twenty copies): four in F57's note, an open item, which carries
+  inline amendments instead, as #1843 left it one (F334 called still open,
+  a standalone camera unit scanning after setup, a blind write that could
+  reboot the unit, and #1843's amendment putting every bearer-gated route
+  behind `api_auth_check()`); FW9's amendment in `feature_gaps_2026-09.md`
+  and the label in `check_route_security.py`, which gave
+  `api_auth_check_bearer()` every route `SECURITY_MODEL.md` lists, the
+  receipt among them, though the receipt asks the Host first and takes
+  `api_auth_bearer_grant()`; that list's own opening, which put the
+  receipt on the bearer alone and named a grant "for one answer field",
+  and `household_api.h`'s summary of the list, which put it on the bearer
+  alone too, though the receipt also takes its BOOT tap and the setup
+  door's claim; three copies that gave the bearer every move of the
+  network on every interface (the lesson's Fix, the comment above
+  `wifi_change_authorize()` and `test_wifi_authority`'s header),
+  though a peer already bonded still moves it with no token over the
+  Bluetooth credentials write, now "over HTTP" with that exception named,
+  as F353's text below already was; and six door sentences (nine copies)
+  that gave a standalone WAP's Forget a fresh first-boot window
+  (`magic_pairing.md` §2.1's table row, which also gains a row for a
+  standalone unit, and §4.2's row for credentials vanishing, the glossary,
+  and three sentences of `improv_core.h` in both copies), though Forget
+  leaves the standalone choice set and the WAP's glue, through
+  `keyless_join_open()`, keeps the door shut.
 - [x] **F346 [decision] canary-wap: a session reads the Bluetooth passkey and
   the mesh confirmation code.** `GET /api/bluetooth` (`bt_auth_gated`,
   `api_auth_check`) answers `pairing.pin` while a passkey is displayed, and
@@ -7365,7 +7411,10 @@ so — see D2 below.)
   CHANGELOG's F344 entry, in the same unreleased section. Each now says only
   the firmware install restarts the unit, and `test_docs_claims.py`'s
   `RETIRED_IN` holds each file to it (F344's own entry above keeps the
-  sentence as it stood then).
+  sentence as it stood then). *(Amended by the merge's fifth review, same
+  PR: F57's note, an open item, held a fourth copy, which this fix missed;
+  it now carries an inline amendment, and `RETIRED_IN` holds the ledger to
+  it.)*
   Third review fix (same PR): `SECURITY_MODEL.md` named two routes to the
   install a session can start; the MQTT update entity is a third. The bridge
   subscribes to `<prefix>/<device id>/update/cmd` and `update/auto/cmd` on

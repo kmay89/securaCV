@@ -217,9 +217,11 @@ network was cleared), and for an owner's own tap — never for a device that
 has an owner and a bad day. So: with **no stored credentials**, for **30
 minutes after power-on** (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle
 re-arms it, and so does clearing the credentials with the 10 s
-factory-reset hold or, on a WAP, Forget Wi-Fi, which after setup takes the
-API token, ledger F345 — a software restart does not, the spent time rides
-across it in RTC memory); or for **60 s after a short BOOT tap** on a
+factory-reset hold or, on a WAP that does not run standalone, Forget Wi-Fi,
+which after setup takes the API token, ledger F345 (a Forget leaves a
+standalone WAP standalone, and `keyless_join_open()` keeps its door shut) —
+a software restart does not, the spent time rides across it in RTC
+memory); or for **60 s after a short BOOT tap** on a
 Sense or Vision (the WAP has no tap door yet). A cleared unit still has an
 owner (the hold keeps the witness identity, and a WAP's hold and Forget
 Wi-Fi keep its token), but the door goes to whichever client connects

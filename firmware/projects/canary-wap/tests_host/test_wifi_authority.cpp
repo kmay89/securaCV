@@ -1,7 +1,9 @@
 // After first-boot setup, the bearer alone moves the network a canary-wap
-// joins (sweep F334, F345, F333), and the bearer alone reaches its two
-// reboot routes (F361, decided by the same rule; the firmware install, which
-// restarts the unit only into a newer signed image, stays on the session).
+// joins over HTTP (sweep F334, F345, F333; a peer already bonded still moves
+// it over the Bluetooth credentials write, which this file does not drive),
+// and the bearer alone reaches its two reboot routes (F361, decided by the
+// same rule; the firmware install, which restarts the unit only into a newer
+// signed image, stays on the session).
 //
 // Before, POST /api/wifi/connect and /api/wifi/ap-only went through
 // wifi_change_authorize(), which took the wizard's pair token first and then
