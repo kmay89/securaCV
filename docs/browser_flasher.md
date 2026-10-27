@@ -647,10 +647,12 @@ Two consequences worth knowing:
   binaries live at the real `fw-v*` tag: a dev release's, or a stable one's
   when the dev channel carries nothing newer, `.github/scripts/dev_channel.py`);
   this path has no such tag, so it uploads binaries there too and points the
-  manifest at them. Each is self-consistent. A firmware release replaces this
-  path's `manifest-flash.json` only when it carries an older `fw_train`, and
-  both flashers' dev banners say whether the dev channel is ahead of stable,
-  the same version, or older.
+  manifest at them. Each is self-consistent. This path refuses a branch whose
+  `fw_train` is older than `releases/latest`, and a firmware release (or
+  **Refresh the dev channel**) replaces its `manifest-flash.json` unless it
+  carries a newer `fw_train`. Both flashers' dev banners say how the dev
+  catalog's `fw_train` compares with the release the flasher is pinned to:
+  newer, the same version, or older.
 
 On a normal signed release you don't touch this — `firmware-release.yml` already
 produces the flasher assets in the same run. It's dispatch-only precisely so it

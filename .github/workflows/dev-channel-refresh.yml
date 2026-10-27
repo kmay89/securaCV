@@ -6,14 +6,15 @@
 # -dev.N / -rc.N firmware release wrote those, none had ever been cut, and the
 # dev channel held no per-product manifest (every dev unit 404'd, so none ever
 # updated) and a 2.4.15 flash catalog under stable 2.4.17. Every firmware
-# release now keeps it at or ahead of stable itself; this button is the same
-# rule on demand, for the catch-up and for a release whose refresh failed.
+# release now brings it up to stable itself; this button is the same rule on
+# demand, for the catch-up and for a release whose refresh failed.
 #
 # .github/scripts/dev_channel.py does the deciding and the copying, the same
 # script firmware-release.yml runs: releases/latest's channel manifests are
-# copied, byte for byte, where fw-dev-latest carries something older or none
-# at all, and a newer dev build is left alone. Pressing it twice writes
-# nothing the second time.
+# copied, byte for byte, where fw-dev-latest carries something older, none at
+# all, or the same version in other bytes (a bring-up build of that version),
+# and a newer dev build is left alone. Pressing it twice writes nothing the
+# second time.
 #
 # What it never does: move releases/latest, delete an asset (the old dev
 # factory images stay), or make fw-dev-latest anything but a prerelease. Every
@@ -106,7 +107,10 @@ jobs:
             *) echo "::error::releases/latest is ${now}, not a firmware release: every Canary's OTA manifest URL now points at it. Re-point it (keep-firmware-latest)."; exit 1 ;;
           esac
           if [ "$now" != "$LATEST" ]; then
-            echo "::error::releases/latest moved from ${LATEST} to ${now}. Re-point it (keep-firmware-latest) and find what moved it."
+            # Still firmware, so most likely a firmware release published
+            # meanwhile (this run passes --latest=false on every write), and
+            # this run's copy of ${LATEST} may have landed over its own.
+            echo "::error::releases/latest moved from ${LATEST} to ${now} during this run, most likely a firmware release publishing meanwhile. Press this button again so the dev channel carries ${now}."
             exit 1
           fi
           if ! rel="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/fw-dev-latest")"; then

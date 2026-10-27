@@ -281,7 +281,7 @@
   the stamp is not built yet) names this carry; until then the buttons move
   only by `--only downloads` run by hand.
 
-### The dev channel never falls behind stable, and the flashers say where it stands
+### Every release brings the dev channel up to stable, and the flashers say where it stands
 
 - **A stable release now refreshes the dev channel when it is older.** The
   rolling `fw-dev-latest` prerelease held no per-product OTA manifest (a Canary
@@ -293,15 +293,20 @@
   runs it, and **Actions → Refresh the dev channel (catch up to stable)** runs
   it with `releases/latest`, then redeploys the site. It never moves
   `releases/latest`, deletes nothing and keeps `fw-dev-latest` a prerelease.
+  **Flasher Factory Images** (`channel: dev`) now refuses a branch older than
+  stable, and its tag rebuild brings the dev channel's copy of that release's
+  catalog along. A stable release whose dev-channel step fails leaves the
+  channel behind until the button is pressed.
   Host-tested (`.github/scripts/test_dev_channel.py`, its version order held to
   the device's own cases) and dry-run read-only against the public releases;
   the button has not been pressed yet.
 - **Both flashers stop calling the dev channel "ahead of stable" by
   assumption.** The browser page, the Lab's native bench and the desktop
-  Flasher compare the dev catalog's `fw_train` with the stable one and say
-  ahead, the same version, or older on the dev banner
-  (`devChannelStanding`, the same sentence in both flashers,
-  `desktop_parity.test.js`). The device needed no change: a stable version on
+  Flasher compare the dev catalog's `fw_train` with the train of the release
+  they are pinned to and say newer, the same version, or older on the dev
+  banner (`devChannelStanding`, the same sentence in both flashers,
+  `desktop_parity.test.js`). They do not call it stable or ahead of stable:
+  the desktop Flasher and the Lab pin the train they were built with. The device needed no change: a stable version on
   the dev channel is an ordinary update to a dev unit running anything older.
 
 ## [2.4.17] - 2026-10-27

@@ -31,21 +31,29 @@ any platform.
   asserted an order nothing checked.
 - **Fix:** `.github/scripts/dev_channel.py` holds the rule: a release's
   channel manifests are copied, byte for byte, wherever `fw-dev-latest` carries
-  an older version or none, over-the-air manifests and flash catalog decided
-  separately, in the device's version order (`securacv_version_compare`, held
-  to its host cases by the test); a newer dev build is left alone and nothing
-  below `releases/latest` lands. Every firmware release runs it with its own
-  tag, stable included, and **Actions → Refresh the dev channel (catch up to
-  stable)** runs it with `releases/latest`, then redeploys pages. The copies
+  an older version, none, or the same version in other bytes, over-the-air
+  manifests and flash catalog decided separately, in the device's version
+  order (`securacv_version_compare`, held to its host cases by the test); a
+  newer dev build is left alone and a release below `releases/latest` writes
+  nothing. Every firmware release runs it with its own tag, stable included,
+  **Actions → Refresh the dev channel (catch up to stable)** runs it with
+  `releases/latest`, then redeploys pages, and **Flasher Factory Images**
+  refuses a `channel: dev` branch older than stable and brings the dev
+  channel's copy along after a tag rebuild. The copies
   stay valid because every file a manifest names is an absolute URL on its own
   `fw-v*` tag, which the script checks before writing, and the Ed25519
   signatures cover those URLs rather than where the manifest is served from.
   It passes `--prerelease --latest=false` on every create and edit, deletes
   nothing, and fails if `releases/latest` moved; the button's last step checks
   that too, and that no asset was lost. Both flashers (and the Lab's native
-  bench) now say whether the dev channel is ahead, the same version, or older,
-  from the dev catalog's `fw_train` against the stable one
-  (`devChannelStanding`, pinned by `desktop_parity.test.js`). The device side
+  bench) now say whether the dev catalog's `fw_train` is newer, the same
+  version, or older than the release the flasher is pinned to
+  (`devChannelStanding`, pinned by `desktop_parity.test.js`), and never
+  "ahead of stable": the desktop Flasher and the Lab pin the train they were
+  built with, so after the next stable release copies itself to the dev
+  channel an installed app would call that stable build ahead of stable.
+  A stable release whose dev-channel step fails still leaves the channel
+  behind until the button is pressed; the banner then says so. The device side
   needed nothing: its comparator already ranks stable above rc and dev at an
   equal triple, so a stable build on the dev channel is an ordinary update.
   Host-tested and dry-run against the public releases (read-only); the button

@@ -1130,11 +1130,13 @@ test("dev channel: the publishing workflow targets the tag the flashers read", (
     "releases/latest can drift off the firmware and the fleet stops seeing updates");
 });
 
-test("dev channel: every flasher says whether it is ahead of stable from the two trains, in the same words", async () => {
+test("dev channel: every flasher says where it stands against its pin from the two trains, in the same words", async () => {
   // fw-dev-latest held a 2.4.15 catalog and no OTA manifest under stable 2.4.17
   // while all three frontends called it "cut ahead of stable" (RELEASE_LESSONS
   // 2026-10-27). A stable release now copies itself there whenever no newer
-  // dev build is, so "ahead" is a fact about two fw_train values, said by
+  // dev build is, and the train a flasher compares with is its own pin (built
+  // in, for the desktop Flasher and the Lab), not stable's live version: so
+  // the sentence is the dev train against the pin, said by
   // devChannelStanding: flash-core.js for the browser page and the Lab bench,
   // its copy in desktop/src/app.js for the Flasher.
   const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
@@ -1143,10 +1145,12 @@ test("dev channel: every flasher says whether it is ahead of stable from the two
     jsFnText(appJs, "compareVersions", "desktop/src/app.js") + "\n" +
     jsFnText(appJs, "devChannelStanding", "desktop/src/app.js") + "\nreturn devChannelStanding;")();
   const cases = [
-    ["2.4.18-dev.1", "2.4.17", /is ahead of stable/],
-    ["2.4.17", "2.4.17", /same version as stable \(2\.4\.17\)/],
-    ["2.4.15", "2.4.17", /2\.4\.15, older than stable 2\.4\.17/],
-    ["2.4.17-rc.1", "2.4.17", /older than stable/],
+    ["2.4.18-dev.1", "2.4.17", /2\.4\.18-dev\.1, newer than the 2\.4\.17 release this flasher is pinned to/],
+    // the next stable, copied to the dev channel, seen by an app pinned to the last one
+    ["2.4.18", "2.4.17", /^The dev channel carries 2\.4\.18, newer than the 2\.4\.17 release this flasher is pinned to\.$/],
+    ["2.4.17", "2.4.17", /2\.4\.17, the same version as the release this flasher is pinned to/],
+    ["2.4.15", "2.4.17", /2\.4\.15, older than the 2\.4\.17 release/],
+    ["2.4.17-rc.1", "2.4.17", /older than the 2\.4\.17 release/],
     [undefined, "2.4.17", /^$/],
     ["not-a-version", "2.4.17", /^$/],
   ];
@@ -1164,11 +1168,11 @@ test("dev channel: every flasher says whether it is ahead of stable from the two
   assert.match(nativeJs, /core\.devChannelStanding\(st\.manifest && st\.manifest\.fw_train, catalog\.fw_train\)/);
   assert.match(appJs, /\$\("dev-standing"\)\.textContent = state\.devChannel\s*\?\s*devChannelStanding\(m && m\.fw_train, state\.catalog\.fw_train\)/);
   assert.match(html, /id="dev-banner"[\s\S]{0,300}<span id="dev-standing"><\/span>/);
-  // ...and no copy promises it unconditionally.
+  // ...and no copy promises it unconditionally, or calls the pin "stable".
   for (const [label, src] of [["canary-local/assets/flash.js", flashJs], ["canary-local/assets/flash-native.js", nativeJs],
-    ["desktop/src/index.html", html], ["desktop/src/app.js", appJs]]) {
-    assert.doesNotMatch(src, /cut ahead of stable|images are cut ahead|dev prerelease, ahead of stable|not yet promoted to stable/,
-      `${label} calls the dev channel ahead of stable without comparing the trains`);
+    ["desktop/src/index.html", html], ["desktop/src/app.js", appJs], ["canary-local/assets/flash-core.js", read(join(CANARY, "assets/flash-core.js"))]]) {
+    assert.doesNotMatch(src, /cut ahead of stable|images are cut ahead|dev prerelease, ahead of stable|not yet promoted to stable|channel is ahead of stable|when one is ahead of stable/,
+      `${label} calls the dev channel ahead of stable without knowing stable's version`);
   }
 });
 

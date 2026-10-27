@@ -1,4 +1,4 @@
-"""dev_channel.py keeps fw-dev-latest at or ahead of stable — held to that.
+"""dev_channel.py brings fw-dev-latest up to stable — held to that.
 
 The `gh` it drives is a stand-in that answers the same argv a runner would
 send, over in-memory releases shaped like the real ones (fw-v2.4.17 and the
@@ -80,6 +80,8 @@ class FakeGh:
         self.latest = latest
         self.calls: list[list[str]] = []
         self.on_upload = None  # hook(argv) run before an upload lands
+        self.on_download = None  # hook(argv) run before a download
+        self.on_edit = None  # hook(argv) run before a release edit lands
 
     @staticmethod
     def opt(argv, flag):
@@ -103,6 +105,8 @@ class FakeGh:
                 return "c0ffee\n"
         verb = argv[:2]
         if verb == ["release", "download"]:
+            if self.on_download:
+                self.on_download(argv)
             rel = self.releases[argv[2]]
             dest = Path(self.opt(argv, "--dir")[0])
             dest.mkdir(parents=True, exist_ok=True)
@@ -123,6 +127,8 @@ class FakeGh:
                                       "body": Path(self.opt(argv, "--notes-file")[0]).read_text()}
             return ""
         if verb == ["release", "edit"]:
+            if self.on_edit:
+                self.on_edit(argv)
             rel = self.releases[argv[2]]
             rel["body"] = Path(self.opt(argv, "--notes-file")[0]).read_text()
             rel["prerelease"] = rel["prerelease"] or "--prerelease" in argv
@@ -178,26 +184,29 @@ class VersionOrder(unittest.TestCase):
 
 class Decide(unittest.TestCase):
     def test_a_missing_group_is_copied(self):
-        d = dc.decide("2.4.17", "2.4.17", {"ota": None, "flash": "2.4.15"})
+        d = dc.decide("2.4.17", {"ota": None, "flash": "2.4.15"})
         self.assertEqual({k: v[0] for k, v in d.items()}, {"ota": True, "flash": True})
         self.assertIn("no manifest-canary.json", d["ota"][1])
 
-    def test_an_equal_train_is_left(self):
-        d = dc.decide("2.4.17", "2.4.17", {"ota": "2.4.17", "flash": "2.4.17"})
+    def test_an_equal_train_in_the_same_bytes_is_left(self):
+        d = dc.decide("2.4.17", {"ota": "2.4.17", "flash": "2.4.17"})
         self.assertFalse(any(v[0] for v in d.values()))
 
+    def test_an_equal_train_in_other_bytes_is_copied(self):
+        # A bring-up catalog built at the release's version before its tag, or
+        # this release's catalog from before a Flasher Factory Images rebuild:
+        # the tagged release's bytes win.
+        d = dc.decide("2.4.17", {"ota": "2.4.17", "flash": "2.4.17"}, differs={"flash"})
+        self.assertEqual({k: v[0] for k, v in d.items()}, {"ota": False, "flash": True})
+
     def test_a_newer_dev_build_is_left_alone(self):
-        d = dc.decide("2.4.17", "2.4.17", {"ota": "2.4.18-dev.1", "flash": "2.4.17-rc.1"})
+        d = dc.decide("2.4.17", {"ota": "2.4.18-dev.1", "flash": "2.4.17-rc.1"}, differs={"ota", "flash"})
         self.assertEqual({k: v[0] for k, v in d.items()}, {"ota": False, "flash": True})
         self.assertIn("left alone", d["ota"][1])
 
-    def test_a_source_below_stable_never_lands(self):
-        d = dc.decide("2.4.17-rc.2", "2.4.17", {"ota": None, "flash": "2.4.15"})
-        self.assertFalse(any(v[0] for v in d.values()))
-
     def test_an_unreadable_train_is_refused(self):
         with self.assertRaises(dc.Refusal):
-            dc.decide("2.4.17", "2.4.17", {"ota": "None", "flash": None})
+            dc.decide("2.4.17", {"ota": "None", "flash": None})
 
     def test_which_files(self):
         names = set(firmware_release("2.4.17")["assets"])
@@ -235,6 +244,7 @@ class Sync(unittest.TestCase):
         self.assert_never_latest(fake)
         self.assertIn("Currently carrying firmware **2.4.17**, the stable release", dev["body"])
         self.assertIn("had no newer build", dev["body"])
+        self.assertIn("`flasher-sha256sums.txt`, when present, covers only", dev["body"])
 
     def test_each_marker_goes_up_last_in_its_own_call(self):
         fake = world(dev_today())
@@ -288,8 +298,10 @@ class Sync(unittest.TestCase):
         assets = fake.releases[dc.DEV_TAG]["assets"]
         self.assertEqual(json.loads(assets["manifest-flash.json"])["fw_train"], "2.4.18-dev.2")
         self.assertIn("manifest-canary.json", assets)
-        self.assertIn("Except the flashers' catalog (`manifest-flash.json`), left on **2.4.18-dev.2** (newer).",
-                      fake.releases[dc.DEV_TAG]["body"])
+        body = fake.releases[dc.DEV_TAG]["body"]
+        self.assertIn("Except the flashers' catalog (`manifest-flash.json`), left on **2.4.18-dev.2**, "
+                      "which is newer.", body)
+        self.assertNotIn("had no newer build", body, "a newer build is right there")
 
     def test_no_dev_release_is_created_as_a_prerelease_never_latest(self):
         fake = world(None)
@@ -301,14 +313,60 @@ class Sync(unittest.TestCase):
         self.assertFalse([c for c in fake.writes() if c[1] == "edit"])
         self.assert_never_latest(fake)
 
-    def test_latest_moving_during_the_write_fails_the_run(self):
+    def test_latest_moving_off_the_firmware_during_the_write_fails_the_run(self):
         fake = world(dev_today())
 
         def move(_argv):
             fake.latest = "flasher-v9.9.9"
         fake.on_upload = move
-        with self.assertRaisesRegex(dc.Refusal, "releases/latest moved"):
+        with self.assertRaisesRegex(dc.Refusal, "releases/latest is now flasher-v9.9.9, not a firmware release"):
             run(fake)
+
+    def test_a_newer_release_during_the_write_says_run_it_again(self):
+        fake = world(dev_today())
+
+        def move(_argv):
+            fake.latest = "fw-v2.4.18"
+        fake.on_upload = move
+        with self.assertRaisesRegex(dc.Refusal, "moved from fw-v2.4.17 to fw-v2.4.18 .* Refresh the dev channel again"):
+            run(fake)
+
+    def test_latest_is_checked_even_when_a_write_fails(self):
+        # The check after the writes sits in `finally`: a run cut short by a
+        # failed upload still says releases/latest moved, not just the upload.
+        fake = world(dev_today())
+
+        def move_and_fail(_argv):
+            fake.latest = "app-v9.9.9"
+            raise dc.GhError("upload interrupted")
+        fake.on_upload = move_and_fail
+        with self.assertRaisesRegex(dc.Refusal, "releases/latest is now app-v9.9.9"):
+            run(fake)
+
+    def test_latest_moving_before_the_write_writes_nothing(self):
+        fake = world(dev_today())
+
+        def move(argv):
+            if argv[2] == "fw-v2.4.17" and "manifest-canary-wap.json" in argv:
+                fake.latest = "fw-v2.4.18"
+        fake.on_download = move
+        with self.assertRaisesRegex(dc.Refusal, "moved from fw-v2.4.17 to fw-v2.4.18 while this run was deciding"):
+            run(fake)
+        self.assertEqual(fake.writes(), [])
+
+    def test_another_writer_between_the_decision_and_the_write_stops_it(self):
+        # A Flasher Factory Images dev run (or a release) lands a catalog after
+        # this run read the old one: its decision is stale, so it writes nothing.
+        fake = world(dev_today())
+
+        def bring_up(argv):
+            if argv[2] == "fw-v2.4.17" and "manifest-canary-wap.json" in argv:
+                fake.releases[dc.DEV_TAG]["assets"]["manifest-flash.json"] = json.dumps(
+                    {"fw_train": "2.4.18"}).encode()
+        fake.on_download = bring_up
+        with self.assertRaisesRegex(dc.Refusal, "changed while this run was deciding"):
+            run(fake)
+        self.assertEqual(fake.writes(), [])
 
     def test_latest_off_the_firmware_refuses_before_anything(self):
         fake = world(dev_today(), latest="flasher-v0.12.2")
@@ -325,6 +383,87 @@ class Sync(unittest.TestCase):
         with self.assertRaisesRegex(dc.Refusal, "not an asset of fw-v2.4.17 by absolute URL"):
             run(fake)
         self.assertEqual(fake.writes(), [])
+
+    def test_an_index_entry_off_the_tag_is_refused(self):
+        for url in ("manifest-canary-wap.json", f"{DL}/fw-v2.4.16/manifest-canary-wap.json",
+                    f"{DL}/fw-v2.4.17/manifest-canary-gone.json"):
+            with self.subTest(url=url):
+                fake = world(dev_today())
+                assets = fake.releases["fw-v2.4.17"]["assets"]
+                doc = json.loads(assets["manifest-index.json"])
+                doc["products"]["securacv-canary-wap"] = url
+                assets["manifest-index.json"] = json.dumps(doc).encode()
+                with self.assertRaisesRegex(dc.Refusal, "manifest-index.json entry securacv-canary-wap"):
+                    run(fake)
+                self.assertEqual(fake.writes(), [])
+
+    def test_a_flagship_that_disagrees_with_its_tag_is_refused(self):
+        fake = world(dev_today())
+        assets = fake.releases["fw-v2.4.17"]["assets"]
+        doc = json.loads(assets["manifest-canary.json"])
+        doc["version"] = "2.4.16"
+        assets["manifest-canary.json"] = json.dumps(doc).encode()
+        with self.assertRaisesRegex(dc.Refusal, "manifest-canary.json says version '2.4.16', not 2.4.17"):
+            run(fake)
+        self.assertEqual(fake.writes(), [])
+
+    def test_a_draft_or_incomplete_or_non_firmware_source_is_refused(self):
+        fake = world(dev_today())
+        fake.releases["fw-v2.4.17"]["draft"] = True
+        with self.assertRaisesRegex(dc.Refusal, "fw-v2.4.17 is not a published release"):
+            run(fake)
+        fake.releases["fw-v2.4.17"]["draft"] = False
+        del fake.releases["fw-v2.4.17"]["assets"]["manifest-index.json"]
+        with self.assertRaisesRegex(dc.Refusal, "carries no manifest-index.json"):
+            run(fake)
+        # "hub-2.4.18" parses as a version past its first four characters.
+        for tag in ("flasher-v1.0.0", "fw-dev-latest", "fw-v2.4", "hub-2.4.18"):
+            with self.subTest(tag=tag), self.assertRaisesRegex(dc.Refusal, "not a fw-v<version> firmware tag"):
+                run(fake, tag)
+        self.assertEqual(fake.writes(), [])
+
+    def test_a_source_below_stable_writes_nothing_and_is_not_even_read(self):
+        # A Flasher Factory Images rebuild of an old tag runs this too; that
+        # tag may predate manifest-index.json, and that is no reason to go red.
+        old = firmware_release("2.4.16")
+        del old["assets"]["manifest-index.json"]
+        fake = world(dev_today(), extra={"fw-v2.4.16": old, "fw-v2.4.17-rc.2": firmware_release("2.4.17-rc.2")})
+        for tag in ("fw-v2.4.16", "fw-v2.4.17-rc.2"):
+            with self.subTest(tag=tag):
+                self.assertFalse(run(fake, tag))
+        self.assertEqual([c for c in fake.calls if c[0] == "release"], [])
+
+    def test_the_same_version_in_other_bytes_is_replaced(self):
+        # A bring-up catalog cut at 2.4.17 (or fw-v2.4.17's own, before a
+        # rebuild re-signed its images): the tagged release's bytes win, once.
+        fake = world(dev_today())
+        run(fake)
+        dev = fake.releases[dc.DEV_TAG]["assets"]
+        dev["manifest-flash.json"] = json.dumps({"fw_train": "2.4.17", "products": {}}).encode()
+        fake.calls.clear()
+        self.assertTrue(run(fake))
+        uploaded = [Path(p).name for c in fake.writes() if c[1] == "upload" for p in c[3:c.index("--clobber")]]
+        self.assertEqual(uploaded, ["manifest-flash.json"])
+        self.assertEqual(dev["manifest-flash.json"], fake.releases["fw-v2.4.17"]["assets"]["manifest-flash.json"])
+        fake.calls.clear()
+        self.assertFalse(run(fake))
+        self.assertEqual(fake.writes(), [])
+
+    def test_the_body_goes_up_before_the_markers_and_a_failed_edit_is_redone(self):
+        fake = world(dev_today())
+        writes = []
+        fake.on_upload = lambda argv: writes.append("upload")
+
+        def fail_once(_argv):
+            fake.on_edit = lambda _argv: writes.append("edit")
+            raise dc.GhError("HTTP 502")
+        fake.on_edit = fail_once
+        with self.assertRaises(dc.GhError):
+            run(fake)
+        self.assertEqual(writes, [], "nothing uploaded after a failed body edit")
+        self.assertTrue(run(fake))
+        self.assertEqual(writes[0], "edit")
+        self.assertIn("Currently carrying firmware **2.4.17**", fake.releases[dc.DEV_TAG]["body"])
 
     def test_a_url_to_a_missing_asset_is_refused(self):
         fake = world(dev_today())
@@ -353,6 +492,29 @@ class Sync(unittest.TestCase):
     def test_dry_run_writes_nothing(self):
         fake = world(dev_today())
         self.assertFalse(run(fake, dry_run=True))
+        self.assertEqual(fake.writes(), [])
+
+    def test_check_train_refuses_a_bring_up_below_stable(self):
+        fake = world(dev_today())
+        gh = dc.GitHub(SLUG, fake)
+        for ok in ("2.4.17", "2.4.18", "2.4.18-dev.1"):
+            with self.subTest(ok=ok):
+                dc.check_train(gh, ok, log=lambda _line: None)
+        for bad, why in (("2.4.16", "older than stable 2.4.17"), ("2.4.17-rc.3", "older than stable 2.4.17"),
+                         ("2.4", "not a firmware version")):
+            with self.subTest(bad=bad), self.assertRaisesRegex(dc.Refusal, why):
+                dc.check_train(gh, bad, log=lambda _line: None)
+        fake.latest = "app-v0.3.2"
+        with self.assertRaisesRegex(dc.Refusal, "not a firmware release"):
+            dc.check_train(gh, "2.4.18", log=lambda _line: None)
+        self.assertEqual([c for c in fake.calls if c[0] == "release"], [], "a check writes nothing")
+
+    def test_main_check_train_exits_by_the_verdict(self):
+        fake = world(dev_today())
+        with redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(dc.main(["--repo", SLUG, "--check-train", "2.4.17"], fake), 0)
+            self.assertEqual(dc.main(["--repo", SLUG, "--check-train", "2.4.16"], fake), 1)
+        self.assertIn("::error::2.4.16 is older than stable 2.4.17", out.getvalue())
         self.assertEqual(fake.writes(), [])
 
     def test_main_reports_a_refusal_in_the_summary(self):
@@ -387,6 +549,48 @@ class Wiring(unittest.TestCase):
         names = [s.get("name") for s in steps]
         redeploy = next(i for i, s in enumerate(steps) if "pages.yml" in s.get("run", ""))
         self.assertLess(names.index(step["name"]), redeploy, "the site must redeploy after the copy")
+
+    def test_a_failed_dev_step_on_a_stable_release_still_guards_latest(self):
+        # continue-on-error would swallow the script's alarm that
+        # releases/latest left the firmware; the action after it does not.
+        steps = self.steps("firmware-release.yml", "build-sign-release")
+        i = next(i for i, s in enumerate(steps) if "dev_channel.py" in s.get("run", ""))
+        self.assertEqual(steps[i]["id"], "dev_channel")
+        guard = steps[i + 1]
+        self.assertEqual(guard["uses"], "./.github/actions/keep-firmware-latest")
+        self.assertIn("steps.dev_channel.outcome == 'failure'", guard["if"])
+        self.assertIn("failure()", guard["if"], "a dev release's failed step fails the job; the guard must still run")
+        self.assertNotIn("continue-on-error", guard)
+
+    def test_flasher_factory_images_never_publishes_a_dev_build_below_stable(self):
+        steps = self.steps("flasher-release.yml", "factory-images")
+        names = [s.get("name", "") for s in steps]
+        checks = [i for i, s in enumerate(steps) if "--check-train" in s.get("run", "")]
+        self.assertEqual(len(checks), 2, "once before the hour of building, once right before publishing")
+        first_build = next(i for i, n in enumerate(names) if n.startswith("Build "))
+        publish = names.index("Publish the rolling dev-channel release")
+        self.assertLess(checks[0], first_build)
+        self.assertEqual(checks[1], publish - 1, "stable can move during the build")
+        for i in checks:
+            self.assertEqual(steps[i]["if"], "inputs.channel == 'dev'")
+            self.assertIn('--check-train "$VERSION"', steps[i]["run"])
+            self.assertEqual(steps[i]["env"]["VERSION"], "${{ steps.ver.outputs.version }}")
+            self.assertNotIn("continue-on-error", steps[i])
+
+    def test_a_tag_rebuild_brings_the_dev_channel_copy_along(self):
+        steps = self.steps("flasher-release.yml", "factory-images")
+        names = [s.get("name", "") for s in steps]
+        i = next(i for i, s in enumerate(steps) if '--source "$TAG"' in s.get("run", ""))
+        self.assertIn("dev_channel.py", steps[i]["run"])
+        self.assertEqual(steps[i]["env"]["TAG"], "${{ steps.tag.outputs.tag }}")
+        self.assertEqual(steps[i]["if"], "steps.attach.outcome == 'success'")
+        self.assertLess(names.index("Attach to the release"), i)
+        self.assertLess(i, next(j for j, s in enumerate(steps) if "pages.yml" in s.get("run", "")),
+                        "the site must redeploy after the copy")
+        # The release channel builds the TAG's tree, which may predate the
+        # script: the overlay brings today's.
+        overlay = next(s for s in steps if s.get("name") == "Apply the tooling overlay")
+        self.assertIn("cp _tooling/.github/scripts/dev_channel.py .github/scripts/dev_channel.py", overlay["run"])
 
     def test_the_button_refreshes_from_latest_then_guards(self):
         steps = self.steps("dev-channel-refresh.yml", "refresh")

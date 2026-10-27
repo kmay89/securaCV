@@ -437,9 +437,9 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     devChk.type = "checkbox";
     devChk.checked = st.devChannel;
     dev.append(devChk, document.createTextNode(
-      " Dev channel — the rolling fw-dev-latest prerelease: the newest dev build when one is " +
-      "ahead of stable, the stable build when none is, checked exactly the same way (chip " +
-      "guard, SHA-256, the release signature)"));
+      " Dev channel — the rolling fw-dev-latest prerelease: usually the newest dev build, or " +
+      "the stable one when none is newer (the note above says which version), checked exactly " +
+      "the same way (chip guard, SHA-256, the release signature)"));
     devChk.addEventListener("change", async () => {
       if (st.busy) { devChk.checked = st.devChannel; return; }
       st.devChannel = devChk.checked;
@@ -451,7 +451,7 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     // Loud on purpose, like the Flasher's banner: nobody should flash a
     // prerelease without a line saying so.
     if (st.devChannel) {
-      // Whether it is ahead of stable is the two catalogs' fw_train, said by
+      // Where it stands is the two catalogs' fw_train, said by
       // core.devChannelStanding ("" until the dev manifest has loaded).
       const standing = core.devChannelStanding(st.manifest && st.manifest.fw_train, catalog.fw_train);
       pick.append(el("p", "flash-note",

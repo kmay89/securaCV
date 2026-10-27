@@ -1867,17 +1867,17 @@ function compareVersions(a, b) {
   return 0;
 }
 
-// Where the dev channel stands against stable, in one sentence: the dev
-// catalog's fw_train against the stable catalog's. It is not ahead by
-// definition: a stable release copies itself there whenever no newer dev build
-// is. "" when either train is missing or unreadable. Same function as
+// Where the dev channel stands, in one sentence: the dev catalog's fw_train
+// against the train this app's bundled catalog pins. Never "ahead of
+// stable": the pin is this build's, not stable's live version, and a stable
+// release copies itself to the dev channel when no newer dev build is
+// there. "" when either train is missing or unreadable. Same function as
 // flash-core.js devChannelStanding (desktop_parity.test.js).
-function devChannelStanding(devTrain, stableTrain) {
-  const cmp = compareVersions(devTrain, stableTrain);
+function devChannelStanding(devTrain, pinnedTrain) {
+  const cmp = compareVersions(devTrain, pinnedTrain);
   if (cmp === null) return "";
-  if (cmp > 0) return `The dev channel is ahead of stable: it carries ${devTrain}, stable is ${stableTrain}.`;
-  if (cmp === 0) return `The dev channel currently carries the same version as stable (${stableTrain}).`;
-  return `The dev channel currently carries ${devTrain}, older than stable ${stableTrain}.`;
+  if (cmp === 0) return `The dev channel carries ${devTrain}, the same version as the release this flasher is pinned to.`;
+  return `The dev channel carries ${devTrain}, ${cmp > 0 ? "newer" : "older"} than the ${pinnedTrain} release this flasher is pinned to.`;
 }
 
 // What every USB install does to a board already set up, whichever way the
@@ -3099,7 +3099,7 @@ function refreshManifest() {
       if (generation !== manifestGeneration) return; // superseded by a newer refresh
       state.manifest = m;
       state.manifestError = null;
-      // The banner says whether dev is ahead of stable from the two trains,
+      // The banner says where the dev channel stands from the two trains,
       // never by assumption (it held 2.4.15 under stable 2.4.17 once).
       $("dev-standing").textContent = state.devChannel
         ? devChannelStanding(m && m.fw_train, state.catalog.fw_train)

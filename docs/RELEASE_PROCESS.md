@@ -18,8 +18,10 @@ entities *cannot* learn it exists — there is nothing to hide because nothing
 arrives. The same CI run mirrors the prerelease's **manifests** to a rolling
 `fw-dev-latest` release, which is the dev channel's one stable address. A
 stable release copies its own manifests there too whenever the dev channel
-carries something older, so the dev channel is never behind stable: with no
-newer dev build, it carries the stable one.
+carries something older, so with no newer dev build it carries the stable
+one. Every firmware release and **Refresh the dev channel** bring it up to
+stable; a stable release's refresh that failed leaves it behind until the
+button is pressed, and the flashers' dev banner says where it stands.
 
 Dev builds are **full production builds** — same features, same signing key,
 same workflow. The only difference is the version suffix. You test exactly
@@ -209,31 +211,40 @@ every Lab user unable to switch channels at all.
   `.github/scripts/dev_channel.py` with its own tag. It copies the release's
   channel manifests (`manifest-flash.json`, every `manifest-canary*.json`,
   `manifest-index.json`, `sha256sums.txt`), byte for byte, wherever the dev
-  channel carries an older version or none: a `-dev.N` / `-rc.N` build when it
-  is newer than what is there, a stable build when no newer dev build is. The
-  over-the-air manifests and the flashers' catalog are decided separately,
-  each from what it carries now (`manifest-canary.json` `version`,
-  `manifest-flash.json` `fw_train`), in the device's order (stable > rc.N >
-  dev.N at an equal triple, so 2.4.18-dev.1 > 2.4.17 > 2.4.17-rc.1). A newer
-  dev build is left alone, and nothing below `releases/latest` ever lands
-  there. The copies stay valid because each manifest names its files by
-  absolute URL on its own `fw-v*` tag, and the signatures cover those URLs,
-  not where the manifest is served from.
+  channel carries an older version, none, or the same version in other bytes
+  (a bring-up build of that version: the tagged release wins): a `-dev.N` /
+  `-rc.N` build when it is newer than what is there, a stable build when no
+  newer dev build is. The over-the-air manifests and the flashers' catalog
+  are decided separately, each from what it carries now
+  (`manifest-canary.json` `version`, `manifest-flash.json` `fw_train`), in
+  the device's order (stable > rc.N > dev.N at an equal triple, so
+  2.4.18-dev.1 > 2.4.17 > 2.4.17-rc.1). A newer dev build is left alone, and
+  a release below `releases/latest` writes nothing. The copies stay valid
+  because each manifest names its files by absolute URL on its own `fw-v*`
+  tag, and the signatures cover those URLs, not where the manifest is served
+  from. On a stable release a failed copy is a red step in a green run.
 - **Actions → Refresh the dev channel (catch up to stable)** runs the same
   script with `releases/latest`, for the catch-up and for a release whose
   refresh failed (see [`RELEASE_BUTTONS.md`](RELEASE_BUTTONS.md)).
 - **Flasher Factory Images** with `channel: dev` publishes flasher images there
   straight from a branch, with no tag (signed the same way, now that the
   release key is pinned). That is the bring-up path, and it writes the
-  flashers' catalog only.
+  flashers' catalog only. It refuses a branch whose `fw_train` is older than
+  `releases/latest` (`dev_channel.py --check-train`, before the build and
+  again before publishing); a branch cut before that check existed carries
+  the old workflow, which has no such refusal. Its `channel: release`
+  rebuild of a tag runs `dev_channel.py` with that tag afterwards, so a dev
+  channel carrying that release's catalog follows the rebuilt images.
 
 Until 2026-10-27 only a dev release copied its manifests there, and none had
 ever been cut, so `fw-dev-latest` held no per-product manifest (a Canary on
 the dev channel got a 404 on every check, so it never updated) and a 2.4.15
 flash catalog under stable 2.4.17
 ([`RELEASE_LESSONS.md`](../.github/RELEASE_LESSONS.md)).
-Both flashers now say whether the dev channel is ahead of stable from the two
-catalogs' `fw_train`, rather than assuming it.
+Both flashers now say how the dev catalog's `fw_train` compares with the
+release the flasher is pinned to, rather than calling it ahead of stable: the
+desktop Flasher and the Lab pin the train they were built with, so an
+installed copy cannot know stable's live version.
 
 ## Rollback (when a stable release goes wrong)
 

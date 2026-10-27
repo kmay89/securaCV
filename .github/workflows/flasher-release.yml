@@ -37,8 +37,10 @@ name: Flasher Factory Images
 # the dev channel carries nothing newer: .github/scripts/dev_channel.py). This
 # workflow has no such tag, so it uploads the binaries to fw-dev-latest too and
 # points the manifest there. Both are self-consistent, and each names its own
-# binaries by absolute URL; a firmware release replaces this one's
-# manifest-flash.json only when this one carries an older fw_train.
+# binaries by absolute URL. The dev channel never goes below stable, so this
+# one refuses a branch whose fw_train is older than releases/latest, and a
+# firmware release (or Refresh the dev channel) replaces its
+# manifest-flash.json unless it carries a newer fw_train.
 
 on:
   workflow_dispatch:
@@ -185,6 +187,10 @@ jobs:
           # step below prefers this copy when it exists.
           cp _tooling/firmware/scripts/flavor_envs.py firmware/scripts/flavor_envs.py
           cp _tooling/firmware/flavors.json /tmp/flavors.today.json
+          # The dev channel's rule, for the step after "Attach to the release"
+          # (a tag cut before it existed has none).
+          mkdir -p .github/scripts
+          cp _tooling/.github/scripts/dev_channel.py .github/scripts/dev_channel.py
           # The local composite actions below resolve from the WORKSPACE, which
           # on this channel is the tag's tree — so `uses: ./.github/actions/...`
           # would load whatever that tag shipped. A tag cut before
@@ -235,6 +241,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pio-canary-release-
             ${{ runner.os }}-pio-canary-
+
+      # The dev channel never goes below stable (.github/scripts/dev_channel.py):
+      # a branch whose train is older than releases/latest would put both
+      # flashers' dev toggle behind it, offering an older factory image over
+      # boards already on stable. Refused here, before an hour of building,
+      # and again right before publishing, since a release can land between.
+      - name: Refuse a dev build older than stable
+        if: inputs.channel == 'dev'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: python3 .github/scripts/dev_channel.py --repo "$GITHUB_REPOSITORY" --check-train "$VERSION"
 
       - name: Build canary (release + Home Assistant MQTT)
         working-directory: firmware/canary
@@ -547,6 +565,7 @@ jobs:
           cd "$GITHUB_WORKSPACE"
 
       - name: Build factory images + manifest-flash.json
+        id: factory
         env:
           VERSION: ${{ steps.ver.outputs.version }}
           TAG: ${{ steps.tag.outputs.tag }}
@@ -578,6 +597,7 @@ jobs:
             printf '%s' "$OTA_SIGNING_KEY_PEM" > /tmp/releaser.pem
             chmod 600 /tmp/releaser.pem
             SIGN_ARGS=(--signing-key /tmp/releaser.pem)
+            echo "signed=true" >> "$GITHUB_OUTPUT"
             echo "Release key is in force — factory images will be signed."
           else
             echo "No release signing key pinned yet — publishing checksum-only images (the flasher verifies SHA-256 and reports them as unsigned)."
@@ -625,6 +645,15 @@ jobs:
             /tmp/release/manifest-flash.json
             /tmp/release/flasher-sha256sums.txt
 
+      # The check before the build, again: a stable release can land during
+      # the hour of building.
+      - name: Refuse a dev build older than stable (again, before publishing)
+        if: inputs.channel == 'dev'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: python3 .github/scripts/dev_channel.py --repo "$GITHUB_REPOSITORY" --check-train "$VERSION"
+
       - name: Publish the rolling dev-channel release
         id: publish_dev
         if: inputs.channel == 'dev'
@@ -638,14 +667,20 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: Canary Firmware — dev channel (rolling)
           prerelease: true
+          # The whole body, every run: say what this run put here and only
+          # that. The over-the-air manifests are dev_channel.py's.
           body: |
-            Rolling **dev channel** build of the browser-flasher factory
-            images, cut straight from `${{ github.sha }}` — no version tag and
-            no OTA signing key, so these images are verified by **SHA-256
-            against this manifest**, not by an Ed25519 release signature. The
-            flasher says exactly that on the receipt.
+            Rolling pointer for the **dev update channel**. The flashers'
+            catalog here (`manifest-flash.json`, firmware
+            **${{ steps.ver.outputs.version }}**) and its factory images are a
+            bring-up build cut straight from `${{ github.sha }}` by **Flasher
+            Factory Images** (`channel: dev`), with no version tag. ${{ steps.factory.outputs.signed == 'true' && 'They are signed with the release key, the same one stable is signed with.' || 'No release key is pinned yet, so the flashers check them by SHA-256 against this manifest, not by signature, and say so on the receipt.' }}
+            `flasher-sha256sums.txt` covers this build's catalog and images.
 
-            Currently carrying firmware **${{ steps.ver.outputs.version }}**.
+            The over-the-air manifests (`manifest-canary*.json`,
+            `manifest-index.json`) and `sha256sums.txt`, when present, are the
+            ones the last firmware release or **Refresh the dev channel**
+            copied here; each manifest names its own version.
 
             Reach it from the flasher's **Advanced → dev channel** toggle (or
             `?channel=dev`). Devices and flashers on the release channel never
@@ -657,6 +692,20 @@ jobs:
             /tmp/release/*-factory.bin
             /tmp/release/manifest-flash.json
             /tmp/release/flasher-sha256sums.txt
+
+      # A rebuild replaces this tag's factory images and catalog. When the dev
+      # channel carries a copy of this release's catalog (dev_channel.py
+      # copies stable there when nothing newer is), that copy now names the
+      # old images' SHA-256s and signatures, and both flashers would refuse
+      # every image in it. The same version in other bytes is copied again;
+      # an older tag, or a newer dev build there, writes nothing. Before the
+      # redeploy below, so the site mirrors the copy too.
+      - name: Bring the dev channel's copy of this release along
+        if: steps.attach.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: python3 .github/scripts/dev_channel.py --repo "$GITHUB_REPOSITORY" --source "$TAG"
 
       # Both channels just rewrote a manifest-flash.json and the images it
       # names, which the browser flasher on GitHub Pages reads from the site's

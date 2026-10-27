@@ -2160,11 +2160,11 @@ function renderPicker() {
   devWrap.append(el("span", null,
     " Use the dev channel — install from the rolling " +
     "fw-dev-latest prerelease instead of the pinned stable release. It " +
-    "carries the newest dev build when one is ahead of stable, and the " +
-    "stable build when none is (the banner says which), checked exactly the " +
-    "same way (chip guard, SHA-256 against the manifest, and the release " +
-    "signature once the signing ceremony lands). It's also where a board " +
-    "shows up first: a product with no stable release yet is often already on dev."));
+    "usually carries the newest dev build, or the stable one when none is " +
+    "newer (the banner says which version), checked exactly the same way " +
+    "(chip guard, SHA-256 against the manifest, and the release signature). " +
+    "It's also where a board shows up first: a product with no stable " +
+    "release yet is often already on dev."));
   adv.append(devWrap);
   // A disabled checkbox with no reason beside it reads as a broken control.
   if (devBox.disabled) {
@@ -3258,8 +3258,8 @@ function refreshManifestState() {
     // Say what's actually true of THESE images. Claiming "signed" while the
     // signing ceremony hasn't happened would be the one lie this banner exists
     // to prevent — the per-image line below reports the real verification.
-    // Same for "ahead of stable": the dev catalog's train against the stable
-    // one says whether it is (core.devChannelStanding), never this copy.
+    // Same for where the dev channel stands: the dev catalog's train against
+    // the pinned one says it (core.devChannelStanding), never this copy.
     const how = core.isRealPubkey(state.catalog.release_pubkey)
       ? "DEV CHANNEL — these images come from the rolling dev prerelease, signed with the same release key as stable."
       : "DEV CHANNEL — these images come from the rolling dev prerelease. No release signing key is in force yet, so they're checked by SHA-256 against the manifest, not by signature.";

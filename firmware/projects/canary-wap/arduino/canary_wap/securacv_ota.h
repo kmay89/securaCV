@@ -630,9 +630,9 @@ bool securacv_ota_manifest_url_is_override(void);
  * RELEASE (the default) polls the compiled-in manifest URL, which rides
  * GitHub's `releases/latest` — an address the release pipeline guarantees
  * is always a signed stable firmware release. DEV polls the same product's
- * manifest on the rolling `fw-dev-latest` prerelease, which each dev-channel
- * firmware release re-points (see docs/RELEASE_PROCESS.md). Both channels
- * carry the same Ed25519 manifest signatures from the same release key;
+ * manifest on the rolling `fw-dev-latest` prerelease, which each firmware
+ * release re-points unless it holds a newer build (docs/RELEASE_PROCESS.md).
+ * Both channels carry the same Ed25519 manifest signatures from one release key;
  * the channel changes WHICH release is followed, never how it is verified.
  *
  * The channel applies only while no explicit manifest-URL override is set:

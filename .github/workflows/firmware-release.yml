@@ -1149,7 +1149,7 @@ jobs:
           echo "::error::vision model asset never landed on $TAG — the chained vision-model-release.yml run failed or stalled. The firmware is published but the Vision module flasher will 404 until it is attached; re-run via Actions → Vision Model Asset with tag=$TAG."
           exit 1
 
-      # The dev channel's stable address, kept at or ahead of stable. Devices
+      # The dev channel's stable address, brought up to this release. Devices
       # opt in by polling releases/download/fw-dev-latest/manifest-<product>.json,
       # and both flashers' dev toggle reads its manifest-flash.json. Only the
       # MANIFESTS are copied, byte for byte: each names its files by absolute
@@ -1168,13 +1168,28 @@ jobs:
       # published either way), and a stable release is not failed over it —
       # the button catches the dev channel up — so only a dev release, whose
       # whole point is this channel, goes red here.
-      - name: Keep the rolling dev channel at or ahead of this release
+      - name: Bring the rolling dev channel up to this release
+        id: dev_channel
         if: ${{ (success() || failure()) && steps.publish.outcome == 'success' }}
         continue-on-error: ${{ steps.ver.outputs.prerelease != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.ver.outputs.tag }}
         run: python3 .github/scripts/dev_channel.py --repo "$GITHUB_REPOSITORY" --source "$TAG"
+
+      # One of the step's refusals is an alarm, not a copy that can wait:
+      # "releases/latest is not a firmware release" (every Canary polls it).
+      # The step cannot cause it (every write passes --latest=false), but on
+      # a stable release continue-on-error would leave it a red step in a
+      # green run. So whenever the step failed, assert releases/latest again
+      # outside continue-on-error: the action re-points it at the newest
+      # firmware release, and fails the run only if it cannot.
+      - name: Keep releases/latest healthy after the dev-channel step
+        if: ${{ (success() || failure()) && steps.dev_channel.outcome == 'failure' }}
+        uses: ./.github/actions/keep-firmware-latest
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          context: ${{ steps.ver.outputs.tag }} dev channel
 
       # The browser flasher on GitHub Pages reads this release from the site's
       # own origin: pages.yml copies it in, because a browser cannot fetch a
@@ -1183,10 +1198,11 @@ jobs:
       # with the GITHUB_TOKEN, fires no event, and the push deploy that merged
       # the version bump ran before the tag existed, so until the next
       # unrelated push the hosted flasher would call every product
-      # unavailable. Last, so the dev channel's rolling manifest (the step
-      # above) is in place too; it runs even when the Vision chain went red,
-      # since the firmware is published either way. The ref is the default
-      # branch, the only one the github-pages environment deploys.
+      # unavailable. Last, so the dev channel's rolling manifests (the
+      # dev-channel step above) are in place too; it runs even when the
+      # Vision chain went red, since the firmware is published either way.
+      # The ref is the default branch, the only one the github-pages
+      # environment deploys.
       - name: Redeploy the site so the browser flasher's copy of the pinned releases is current
         if: ${{ (success() || failure()) && steps.publish.outcome == 'success' }}
         env:

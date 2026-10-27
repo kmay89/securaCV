@@ -767,17 +767,23 @@ test("channelFromSearch: only an explicit channel=dev switches; URL is a fixed c
   assert.ok(DEV_FLASH_MANIFEST_URL.startsWith("https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/"));
 });
 
-test("devChannelStanding: the dev channel is ahead only when its train is newer than stable's", async () => {
+test("devChannelStanding: the dev train against the pinned one, never a claim about stable", async () => {
   const { devChannelStanding } = await core();
   assert.strictEqual(devChannelStanding("2.4.18-dev.1", "2.4.17"),
-    "The dev channel is ahead of stable: it carries 2.4.18-dev.1, stable is 2.4.17.");
+    "The dev channel carries 2.4.18-dev.1, newer than the 2.4.17 release this flasher is pinned to.");
   // What a stable release leaves there when no newer dev build is.
   assert.strictEqual(devChannelStanding("2.4.17", "2.4.17"),
-    "The dev channel currently carries the same version as stable (2.4.17).");
+    "The dev channel carries 2.4.17, the same version as the release this flasher is pinned to.");
   // fw-dev-latest's catalog on 2026-10-27, under stable 2.4.17.
   assert.strictEqual(devChannelStanding("2.4.15", "2.4.17"),
-    "The dev channel currently carries 2.4.15, older than stable 2.4.17.");
-  assert.match(devChannelStanding("2.4.17-rc.1", "2.4.17"), /older than stable 2\.4\.17/);
+    "The dev channel carries 2.4.15, older than the 2.4.17 release this flasher is pinned to.");
+  assert.match(devChannelStanding("2.4.17-rc.1", "2.4.17"), /older than the 2\.4\.17 release/);
+  // A Flasher built for 2.4.17, after fw-v2.4.18 shipped and copied itself to
+  // the dev channel: 2.4.18 IS stable, so "ahead of stable" would be false.
+  // The sentence says only what the two trains show.
+  assert.strictEqual(devChannelStanding("2.4.18", "2.4.17"),
+    "The dev channel carries 2.4.18, newer than the 2.4.17 release this flasher is pinned to.");
+  assert.doesNotMatch(devChannelStanding("2.4.18", "2.4.17"), /stable/);
   // No train, no claim.
   assert.strictEqual(devChannelStanding(undefined, catalog.fw_train), "");
   assert.strictEqual(devChannelStanding("2.4.17", null), "");

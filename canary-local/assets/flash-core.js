@@ -892,20 +892,21 @@ export function channelFromSearch(search) {
   }
 }
 
-// Where the dev channel stands against stable, in one sentence: the dev
-// catalog's fw_train against the stable catalog's. It is not ahead by
-// definition: a stable release copies itself there whenever no newer dev
-// build is, and then the dev channel carries the stable version. Both
-// flashers used to call it "ahead of stable" unconditionally, while it held
-// 2.4.15 under stable 2.4.17. "" when either train is missing or unreadable:
-// no claim beats a guessed one. desktop/src/app.js carries the same function
+// Where the dev channel stands, in one sentence: the dev catalog's fw_train
+// against the train of the release this flasher is pinned to. Never "ahead
+// of stable": the pin is not stable's live version (the desktop Flasher and
+// the Lab bundle theirs at build time, so an installed copy pins the stable
+// of its day), and a stable release copies itself to the dev channel when
+// no newer dev build is there, so an older app would call the new stable
+// build "ahead of stable". Both flashers once said that of 2.4.15 under
+// stable 2.4.17. "" when either train is missing or unreadable: no claim
+// beats a guessed one. desktop/src/app.js carries the same function
 // (desktop_parity.test.js holds the two to the same sentences).
-export function devChannelStanding(devTrain, stableTrain) {
-  const cmp = compareVersions(devTrain, stableTrain);
+export function devChannelStanding(devTrain, pinnedTrain) {
+  const cmp = compareVersions(devTrain, pinnedTrain);
   if (cmp === null) return "";
-  if (cmp > 0) return `The dev channel is ahead of stable: it carries ${devTrain}, stable is ${stableTrain}.`;
-  if (cmp === 0) return `The dev channel currently carries the same version as stable (${stableTrain}).`;
-  return `The dev channel currently carries ${devTrain}, older than stable ${stableTrain}.`;
+  if (cmp === 0) return `The dev channel carries ${devTrain}, the same version as the release this flasher is pinned to.`;
+  return `The dev channel carries ${devTrain}, ${cmp > 0 ? "newer" : "older"} than the ${pinnedTrain} release this flasher is pinned to.`;
 }
 
 // ── the same-origin release mirror (pages.yml) ──────────────────────────────
