@@ -18,39 +18,37 @@ Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
 ## 0.3.3 — 2026-10-27
 
-**The 2.4.18 firmware catalog is baked in, a board on 2.4.18 says what it
-runs, and an image the board could not start is refused before anything is
-written.**
+**The 2.4.18 firmware catalog is baked in, and the Flash page refuses an
+image the board could not start before anything is written.**
 
-- **Firmware 2.4.18 on the Flash page.** On a Canary WAP, after setup,
-  changing its Wi-Fi, rebooting it, registering a vault key or confirming a
-  pairing takes its API token: save its recovery kit before you update one
-  you cannot easily reach. Update both units of a WAP Opera before pairing
-  them. Built by CI; not bench-tested.
-- **A board on 2.4.18 or later says what it runs.** Its image now carries
-  its product and version, so the Flash page reads it as, say, Canary WAP
-  2.4.18-wap, and the install verdicts work on it: update, reinstall,
-  downgrade, or switch from another product. A board on 2.4.17 or older
-  still reads as an Arduino sketch until it updates. Host-tested; no
-  stamped image has been flashed to a board yet.
-- **ESP32-CAM and ESP32 DevKit images start.** fw-v2.4.17's two images for
-  these boards put the bootloader where a classic ESP32 does not look, and
-  0.3.2 wrote them anyway. 2.4.18's are laid out right: if one of these
-  boards did not start after a 2.4.17 install, install 2.4.18 from here.
-- **An image laid out for another chip is refused before anything is
-  written,** from the catalog or a local file, on the Flash page and on the
-  native bench, with the same message as the Flasher.
-- **The fake-capacity check reads 8 KB, not 4,** so a correctly installed
-  classic ESP32 no longer reads as blank.
-- **Connecting no longer starts the board's own firmware** unless you say
-  it is already plugged in: a board you held BOOT on stays in download
-  mode until the install. Asking the board itself and the serial monitor
-  still start it on a click.
-- **The dev-channel banner says where the dev channel stands** against the
-  release this app carries (newer, the same version, or older) instead of
-  calling it ahead.
-- **The display benches run 2.4.18's firmware,** so the splash bird sits
-  clear of its bubble.
+- **Firmware 2.4.18 on the Flash page.** On a Canary WAP, save its recovery
+  kit before you update one you cannot easily reach: after setup, changing
+  its Wi-Fi, rebooting it, registering a vault key or confirming a pairing
+  takes its API token. Update both units of a WAP Opera before pairing them.
+  Built by CI; not bench-tested.
+- **ESP32-CAM and ESP32 DevKit images are laid out to start.** Every image
+  for these boards up to 2.4.17 put the bootloader where a classic ESP32
+  does not look, so a board installed from one would not start, and 0.3.2
+  wrote them anyway. 2.4.18's carry it at 0x1000, where the chip loads it:
+  if one of these boards did not start, install 2.4.18 from here. Built by
+  CI; nobody has booted one of these boards yet.
+- **An image the board could not start is refused before anything is
+  written:** if a release image has no bootloader for the connected chip
+  where that chip loads one, the Flash page says so, in the Flasher's
+  words, and writes nothing.
+- **With the dev channel on, the Flash page says where it stands** against
+  the release this app carries (newer, the same version, or older), and its
+  checkbox no longer calls it ahead of stable.
+- **The enclosure tab explains more of each case.** 21 on/off options that
+  showed a bare name (such as `opt_btn`) now say what they do, and 133 more
+  knobs in the parameter list carry help, 38 of them listed for the first
+  time. No part changed shape.
+- **The display benches run 2.4.18's firmware.** The first meeting's speech
+  bubble now has its tail, and the bird rises clear of the bubble wherever
+  the glass has room; on the round watch it keeps its seat and the tail
+  reaches into it. Checked in native renders, not yet in the browser build.
+- **On a Mac,** the disk image window says what first launch takes: click
+  Open when macOS asks. It no longer shows a Terminal command.
 - Under the hood: Tauri 2.12.5, tokio 1.54.1.
 
 ## 0.3.2 — 2026-10-27

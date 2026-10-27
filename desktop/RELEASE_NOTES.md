@@ -20,38 +20,49 @@ and what to expect after updating. Heading grammar is
 ## 0.12.3 — 2026-10-27
 
 **The 2.4.18 firmware catalog is baked in, a board on 2.4.18 says what it
-runs, and an image the board could not start is refused before anything is
+runs, and an image laid out for another chip is refused before anything is
 written.**
 
-- **Firmware 2.4.18 in the picker.** On a Canary WAP, after setup, changing
-  its Wi-Fi, rebooting it, registering a vault key or confirming a pairing
-  takes its API token: save its recovery kit before you update one you
-  cannot easily reach. Update both units of a WAP Opera before pairing them.
-  Built by CI; not bench-tested.
+- **Firmware 2.4.18 in the picker.** On a Canary WAP, save its recovery kit
+  before you update one you cannot easily reach: after setup, changing its
+  Wi-Fi, rebooting it, registering a vault key or confirming a pairing takes
+  its API token. Update both units of a WAP Opera before pairing them. Built
+  by CI; not bench-tested.
 - **A board on 2.4.18 or later says what it runs.** Its image now carries
-  its product and version, so the Flasher reads it as, say, Canary WAP
-  2.4.18-wap, and the install verdicts work on it: update, reinstall,
-  downgrade, or switch from another product. A board on 2.4.17 or older
-  still reads as an Arduino sketch until it updates. Host-tested; no
-  stamped image has been flashed to a board yet.
-- **ESP32-CAM and ESP32 DevKit images start.** fw-v2.4.17's two images for
-  these boards put the bootloader where a classic ESP32 does not look, and
-  0.12.2 wrote them anyway. 2.4.18's are laid out right: if one of these
-  boards did not start after a 2.4.17 install, install 2.4.18 from here.
+  its product and version, so the Flasher names it (Canary WAP, 2.4.18-wap)
+  and the install verdicts work on it: update, reinstall, downgrade, or
+  switch from another product. A board on 2.4.17 or older still reads as an
+  Arduino sketch until it updates. Host-tested; no stamped image has been
+  flashed to a board yet.
+- **ESP32-CAM and ESP32 DevKit images are laid out to start.** Every image
+  for these boards up to 2.4.17 put the bootloader where a classic ESP32
+  does not look, so a board installed from one would not start, and 0.12.2
+  wrote them anyway. 2.4.18's carry it at 0x1000, where the chip loads it:
+  if one of these boards did not start, install 2.4.18 from here. Built by
+  CI; nobody has booted one of these boards yet.
 - **An image laid out for another chip is refused before anything is
   written,** from the catalog or a local file. The message says where the
-  chip looks for its bootloader and where the image puts it, and that
-  nothing was written.
+  chip loads its bootloader from, where the image has one if it does, and
+  that nothing was written. SecuraCV's images are laid out right from 2.4.18
+  on.
 - **The fake-capacity check reads 8 KB, not 4,** so a correctly installed
   classic ESP32 no longer reads as blank, and a smaller chip sold as a
   bigger one is caught there too.
-- **After *Read its security fuses*, the board waits in download mode.**
-  The read no longer ends by restarting the board into its own firmware:
-  install, or unplug it. On a native-USB board it enters download mode with
-  that port's own reset. Host-tested; not yet tried on a board.
-- **The dev-channel banner says where the dev channel stands** against the
-  release this app carries (newer, the same version, or older) instead of
-  calling it ahead.
+- **After *Read its security fuses* on an S3, C3 or C6, the board waits in
+  download mode.** A good read no longer ends by restarting the board into
+  its own firmware: install, or unplug it. On a native-USB board it enters
+  download mode with that port's own reset. Host-tested; not yet tried on a
+  board.
+- **The dev-channel banner says which version the dev channel carries** and
+  whether it is newer than, the same as, or older than the release this app
+  is pinned to. The Advanced panel no longer calls the dev channel ahead of
+  stable.
+- **The board card no longer shows a "Built" date.** On an Arduino build,
+  every SecuraCV release included, that date is when the Arduino core was
+  built, not the firmware. The health check still lists it, labeled as the
+  descriptor's date.
+- **On a Mac,** the disk image window says what first launch takes: click
+  Open when macOS asks. It no longer shows a Terminal command.
 - Under the hood: ureq 3.5.0.
 
 ## 0.12.2 — 2026-10-27

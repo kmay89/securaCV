@@ -4,9 +4,9 @@
 
 ## [2.4.18] - 2026-10-27
 
-> **Before you update.** Canary WAP: after setup, changing its Wi-Fi, rebooting it, registering a vault key or confirming a pairing takes its API token. Save its recovery kit first.
+> **Before you update.** Canary WAP: save its recovery kit first. After setup, a Wi-Fi change, a reboot, a vault key or a pairing takes its API token.
 > Canary WAP Opera: update both units before pairing them.
-> An ESP32-CAM or ESP32 DevKit that would not start after a 2.4.17 install: install 2.4.18 over USB.
+> An ESP32-CAM or ESP32 DevKit that would not start after a USB install: install 2.4.18 with Flasher 0.12.3, Lab 0.3.3 or the browser flasher.
 
 ### release: the 2.4.18 train (Flasher 0.12.3, Lab 0.3.3, iOS 0.8.1)
 
@@ -20,65 +20,94 @@
     in the recovery kit) or use BOOT Tap Once. Save the recovery kit
     (Settings → Device) before updating a unit you cannot easily reach. If
     the router changes, rejoining from the recovery network now takes the
-    token or a BOOT tap. The iPhone app's fleet Wi-Fi update already sends
-    the token and keeps working; Home Assistant 0.9.0 calls none of these.
+    token or a BOOT tap. To change networks, use Connect, not Remove
+    credentials: Connect keeps the broker login. The iPhone app's fleet
+    Wi-Fi update already sends the token and keeps working; Home Assistant
+    0.9.0 calls none of these.
   - **Canary WAP, after it updates:** what a landing-page session changed
-    before 2.4.18 stays. Compare the vault card's key id with your own key's
-    id (if they differ, Remove, then Register yours); remove any unknown
-    entry under Settings → Bluetooth → Paired devices and in the Opera's
-    peers. If the unit was ever moved to a network you did not choose, use
-    Remove credentials (it asks for the token): it now clears every saved
-    network **and** the stored MQTT username and password, so retype the
-    broker login on `/mqtt` afterward or Home Assistant stops hearing that
-    unit.
+    before 2.4.18 stays. On the Sealed Alarm Snapshots card, compare the key
+    id with your own key's id; if they differ, Remove, Register yours, then
+    turn its triggers back on (Remove turns them all off). Remove any entry
+    you do not recognize under Settings → Bluetooth → Paired Devices and
+    under Opera Members. If the unit was ever moved to a network you did not
+    choose, use Remove credentials (it asks for the token): it clears every
+    saved network and, new in 2.4.18, the stored MQTT username and password
+    (the broker address and the rest stay). Set the unit up again, then
+    retype the broker login on `/mqtt`; until you do, Home Assistant does
+    not hear that unit if your broker needs a login.
   - **Canary WAP Opera:** a 2.4.17 unit and a 2.4.18 unit cannot pair (each
-    side's pairing confirm is now bound to its role). Update both, with
-    Check now or by waiting a day, before pairing them; peers already
-    paired are not affected.
-  - **Canary WAP Bluetooth:** to pair a phone, start Pair on the dashboard
-    first (it asks for the token). A peer bonded without a passkey on an
-    older release is dropped when it next connects; remove the WAP from that
-    device's Bluetooth settings and pair again inside Pair.
-  - **Canary WAP set standalone** no longer reads a Wi-Fi code held to its
-    lens: hold BOOT 10 seconds first, then show the code.
-  - **Canary WAP counters:** `ambient_dropped` now counts every Wi-Fi
-    channel-activity row it keeps off the broker and the card (up to one
-    every 5 seconds, about 17,000 a day), which is expected and not a loss;
-    Home Assistant stops receiving those rows. Turning Chirp off and on no
-    longer resets an escalated cooldown (a reboot still does).
-  - **ESP32-CAM and ESP32 DevKit:** fw-v2.4.17's two factory images for
-    these boards put the bootloader where a classic ESP32 does not look, so
-    a board installed from them did not start. Install 2.4.18 over USB; its
-    images carry the bootloader at 0x1000. Update the Flasher (0.12.3) or
-    the Lab (0.3.3) first: 0.12.2 and 0.3.2 still write the 2.4.17 images.
-    These two boards have no over-the-air channel.
+    side's pairing confirm is now bound to its role). Update both before
+    pairing them: Settings → Device → Software Update, Check for Updates,
+    then Install Update. A unit updates itself within a day only with
+    Install updates automatically on, which is off by default. Units
+    already paired are not affected.
+  - **Canary WAP Bluetooth:** to pair a phone, press Start Pairing first
+    (Settings → Bluetooth; it asks for the token). A device that bonded with
+    no code check on an older release (no passkey typed, no numbers
+    compared) is dropped when it next connects: remove the WAP from that
+    device's Bluetooth settings and pair again after Start Pairing. A device
+    that can neither show nor type the six digits can no longer keep a bond.
+  - **Canary WAP set standalone** no longer joins a network from a Wi-Fi
+    code held to its lens. To add it to a display's fleet, hold BOOT 10
+    seconds first, then show the code: the hold is a reset that clears its
+    networks, its standalone choice, its broker settings and its name (it
+    keeps its keys and its API token). Or join it to the display's network
+    from the dashboard (it asks for the token) and set the hub as its broker
+    on `/mqtt`.
+  - **Canary WAP counters and Chirp:** `ambient_dropped` now counts every
+    Wi-Fi channel-activity row it keeps off the broker and the card (up to
+    one every 5 seconds, about 17,000 a day), which is expected and not a
+    loss; Home Assistant stops receiving those rows. Chirp's cooldown tiers
+    now reset only after 24 hours with no chirp (they used to reset a day
+    after the run's first chirp), and turning Chirp off and on no longer
+    resets an escalated cooldown of up to 4 hours (a reboot still does).
+  - **ESP32-CAM and ESP32 DevKit:** every factory image for these boards
+    from fw-v2.4.7 to fw-v2.4.17 put the bootloader at 0x0, where a classic
+    ESP32 does not look, so a board installed from one would not start (read
+    from the published files). 2.4.18's carry it at 0x1000, where the chip
+    loads it; nobody has booted these two boards on any release, 2.4.18
+    included. Install 2.4.18 over USB with Flasher 0.12.3, Lab 0.3.3, or the
+    browser flasher once it shows 2.4.18: Flasher 0.12.2, Lab 0.3.2 and
+    every earlier version still write the old images. These two boards have
+    no over-the-air channel.
   - **Still a USB install, as in 2.4.17:** the seven displays and the C3
     Vision that 2.4.17's notes list as needing one USB install, if they
-    have not had it yet (updates arrive over the air after it); a Dash
-    installed from a release image (one app slot, so no room for an
-    update); and every board that has no published update channel.
-  - **Desktop Flasher:** after *Read its security fuses*, the board now
-    waits in download mode; install, or unplug it.
-- **Firmware 2.4.18**: the seven version strings and `fw_train`. Everything
-  in the sections below ships in it: the WAP's owner authority over HTTP
-  (#1887), wave 20's Bluetooth, egress, Opera, Chirp, dash and splash work
-  (#1836) and the setup-network wording. The emulator dist, `flash.json`, the
-  device pages' data and the firmware SBOM move with it. It is the first
-  release whose app images name their product and version
-  (`stamp_app_desc.py`; both flashers read it), and whose ESP32-CAM and
-  ESP32 DevKit factory images carry the bootloader at 0x1000. The stamped
-  images were checked with esptool and a host harness built from
-  fw-v2.4.17's own OTA parser; no board has yet booted one. Built in CI;
-  not bench-tested.
+    have not had it yet (updates arrive over the air after it, except on a
+    Dash · Modes installed from a flasher); a Dash or Dash · Modes installed
+    from either flasher (its image has one app slot, so every update is a
+    USB install); and the boards with no published update channel: the
+    ESP32-CAM, the ESP32 DevKit, the Freenove S3 and the Vision on a C3
+    Super Mini.
+  - **Desktop Flasher 0.12.3:** after a successful *Read its security fuses*
+    on an S3, C3 or C6, the board now waits in download mode; install, or
+    unplug it. Host-tested; not yet checked on a board.
+- **Firmware 2.4.18**: the seven version strings and `fw_train`. Its
+  firmware changes are in the sections below: the WAP's owner authority over
+  HTTP (#1887), wave 20's Bluetooth, egress, Opera, Chirp, dash and splash
+  work (#1836) and the setup-network wording. The backoffice, website,
+  dev-channel and desktop entries there are not part of it. The emulator
+  dist, `flash.json`, the device pages' data and the firmware SBOM move with
+  it. It is the first release whose app images name their product and
+  version (`stamp_app_desc.py`; the desktop Flasher and the browser flasher
+  read it), and whose ESP32-CAM and ESP32 DevKit factory images carry the
+  bootloader at 0x1000. The release reads every stamped image back with
+  esptool and stops if one is not valid. Before it, fw-v2.4.17's apps were
+  stamped by hand and read back the same way, and a one-off host check
+  built from fw-v2.4.17's own OTA code accepted stamped images signed with
+  a test key; no board has yet booted a stamped image. Built in CI; not
+  bench-tested.
 - **Flasher 0.12.3** and **Lab 0.3.3**: see `desktop/RELEASE_NOTES.md` and
   `desktop-lab/RELEASE_NOTES.md`. Both bake in the 2.4.18 catalog and refuse
-  an image laid out for another chip. Released after fw-v2.4.18 so the
-  release they pin exists.
+  a release image whose bootloader is not where the connected chip loads
+  it. Released after fw-v2.4.18, so the release they pin exists.
 - **iOS 0.8.1** (`MARKETING_VERSION`, `ios/project.yml`; the Apple Watch app
   inherits it): the set-it-up-again advice says Remove credentials asks for
   the API token on a 2.4.18 WAP. No synced CloudKit record changed since
   `ios-v0.8.0`. Ships after the firmware, since the advice is wrong for a
-  2.4.17 WAP.
+  2.4.17 WAP. It reaches iPhones once it passes App Review; before
+  submitting it, run `ios/scripts/cloudkit_schema.sh check` (and `promote`
+  if Production is short): `PairedDevice.tlsCertFP` is still unconfirmed
+  there (A111).
 - **Not moving:** tvOS stays 0.3.1 and the kernel, Home Assistant
   integration and add-on stay 0.9.0 (one new test file, no runtime change).
   The backoffice 0.8.0 entry below runs on staging; production moves only
@@ -320,7 +349,8 @@
   follows as a site PR now that #1832 has merged; if the website's next
   scheduled carry opens its PR first, merge the site PR before it. Filed:
   A113, A114, F374, W40, W41. **Already shipped:** #1832 merged before
-  fw-v2.4.17, so tvOS 0.3.1, Flasher 0.12.2 and Lab 0.3.2 carry this line;
+  fw-v2.4.17, so Flasher 0.12.2, Lab 0.3.2 and the tvOS 0.3.1 build carry
+  this line (tvOS 0.3.1 reaches an Apple TV once it passes App Review);
   2.4.18 brings no Wall update.
 ### The backoffice can say it has not been breached (backoffice 0.8.0)
 
