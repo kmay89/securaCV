@@ -123,7 +123,7 @@
   gate, as F333 decided; F333's Forget clears the stored login instead.
   Comment and docs only.
 - **canary-wap: what #1884's sweep says of the landing session, as this
-  release ships it.** #1884 (#1842's follow-up, in this same section) wrote
+  release ships it.** #1884 (#1842's follow-up, which 2.4.17 carries) wrote
   that Forget Wi-Fi is any landing session's, that a session reads the
   passkey and confirms a bond, and that under a host striking from nine or
   more addresses the owner's way out is the landing page's session on
@@ -144,6 +144,214 @@
   set-it-up-again advice, which now says Remove credentials asks for the
   token first), and `test_docs_claims.py` retires each where it stood. No
   route or gate changed in the merge.
+
+## [2.4.17] - 2026-10-27
+
+> **Before you update.** Vision Doorbell: move the amplifier's input wire from D3 to D10.
+> All-rounder Canary: its setup network gets a new name and key; save its recovery kit again.
+> Setup networks are now `SecuraCV-<kind>-XXXX`: update the iPhone app to 0.8.0.
+> A C3 Vision installed over USB before 2.4.16 needs one USB install first.
+
+### release: the 2.4.17 train and every app that moved (iOS 0.8.0, tvOS 0.3.1, Flasher 0.12.2, Lab 0.3.2, kernel / HA / add-on 0.9.0)
+
+- **What to do after updating.**
+  - **All-rounder Canary:** its setup network is now `SecuraCV-canary-XXXX`
+    with a new, longer key (F350, below); save its recovery kit again and
+    reprint any card.
+  - **Every other Canary:** its setup network is now `SecuraCV-<kind>-XXXX`
+    (`SecuraCV-sense-K7MZ`); the key is unchanged. Use iPhone app 0.8.0,
+    which reads the new names; 0.7.0's QR join misses them (tap *Join its
+    setup network* if you are still on 0.7.0).
+  - **Vision Doorbell built from the old wiring page:** move the amplifier's
+    input from D3 to D10. 2.4.16 drove D3, the stacked camera module's reset
+    line, on every XIAO Vision image, so a XIAO Vision that saw nothing on
+    2.4.16 may start detecting again, and Home Assistant automations may
+    start firing (read from the code and the module's pinout; not
+    bench-tested).
+  - **Seven displays need one USB install to reach 2.4.17:** the Dash modes
+    build, the 7" and S3 nightstands, the C6 nightstand, the 1.69" touch, the
+    2.41" AMOLED and the C3 nightlight. Their product names were too long for
+    the update check of every earlier release, so none of them ever passed
+    it; 2.4.17 holds them, so later updates arrive over the air. A C3 Vision
+    last installed over USB before 2.4.16 needs the same one USB install, and
+    a Dash installed from a flasher still has no space for updates (F366).
+  - **Canary WAP:** after setup it answers only at its `.local` name, its IP
+    address or its bare router name; a `canary-x.fritz.box`-style name or a
+    reverse proxy now gets a `403`.
+  - **BOOT holds:** 10 seconds resets Wi-Fi and settings and keeps the
+    identity; only a 30-second hold on the all-rounder wipes the identity
+    (2.4.16 wiped everything at 5 seconds).
+  - **Home Assistant:** integration 0.9.0 needs Home Assistant 2026.5.0 or
+    newer and replaces the `pwk_*` entities with `securacv_*` ones (the
+    witness log entry below lists them).
+  - **Update the Flasher and the Lab** before pasting a diagnostic report
+    from a board on 2.4.17: only 0.12.2 and 0.3.2 strip the setup key that
+    2.4.17 also prints inside a Wi-Fi QR line.
+- **Firmware 2.4.17**: the seven version strings and `fw_train`.
+  Everything below ships in it: the parity work of #1816, the fixes to
+  when an update counts as kept (the next section), the canary-wap security
+  series (F289 to F360), the flagship's setup key (F350) and the Vision
+  Doorbell's speaker pin. The emulator dist, `flash.json`, the device pages'
+  data and the firmware SBOM move with it. The WAP image is built on
+  Arduino-ESP32 core 3.3.8, the pin its sketch now carries; fw-v2.4.16's
+  WAP was built on the floating latest core, 3.3.12. Built in CI; not
+  bench-tested.
+- **iOS 0.8.0** (`MARKETING_VERSION`, `ios/project.yml`; the Apple Watch
+  app inherits it): a Sense or Vision on this train's firmware gets its hub
+  from the phone at the end of the one-tap join, and the done card says it
+  reports to your hub or what is still yours to do; a Sense or Vision on
+  2.4.16 or older is told to take the Flasher's MQTT fields once. Turning
+  discovery on raises one iOS prompt, Bluetooth; Local Network waits until
+  there is something on your Wi-Fi to find. A new `bluetooth-central`
+  background mode keeps a narrow scan for a brand-new Canary while the app
+  is in the background (not after it is closed) and posts one notification
+  per Canary per app session, only when notifications are already allowed.
+  The Wi-Fi picker no longer preselects the strongest network; a remembered
+  household Wi-Fi the Canary can see joins by itself after a 3-second
+  "Change?"; a wrong password costs a retype, not a reconnect; the password
+  field asks for the network's existing password (no minimum, at most 64
+  characters). The app reads the typed setup networks. A 1.47" C6
+  nightstand on this firmware is drawn as itself on the iPhone and the
+  Watch. **Tested in CI's simulator; not bench-tested** (the hub hand-off
+  and the background scan on a locked iPhone are the open bench rows). No
+  synced CloudKit record changed since `ios-v0.7.0`, but
+  `PairedDevice.tlsCertFP` (first written by 0.6.0) is still unconfirmed in
+  Production: **before 0.8.0 goes to App Review**, run
+  `ios/scripts/cloudkit_schema.sh check` and `promote` if Production is
+  short. App Review will see the new background mode; the review notes
+  should say what it does.
+- **tvOS 0.3.1**: a device's detail screen says when its key was born, in
+  the device's own words ("Born <day>" only when the Canary says the day is
+  exact, "First dated <day>" when it met a clock later than it was made,
+  nothing when it cannot say; today only a Canary WAP sends it). Several
+  displays on one broker are drawn once each, a 1.47" C6 nightstand on this
+  firmware is drawn as itself, and the timeline's boundary events read
+  "Person or vehicle" and "Animal or small object". Tested on CI's tvOS
+  simulator; not run on an Apple TV. Whether the store build carries its
+  iCloud and app-group entitlements is still unconfirmed (A112).
+- **Flasher 0.12.2** and **Lab 0.3.2**: see `desktop/RELEASE_NOTES.md` and
+  `desktop-lab/RELEASE_NOTES.md`. Both bake in the 2.4.17 catalog.
+- **Kernel, HA integration and add-on 0.9.0** (`scripts/bump_version.sh`):
+  the Frigate witness log (#1799) reaches add-on users with this release,
+  with its breaking changes (Home Assistant 2026.5.0 or newer, `securacv_*`
+  entities for `pwk_*`, alerts mode instead of events when it is on, a
+  sidecar that publishes port 8799, still without TLS, so its paired token
+  crosses the LAN as plain HTTP). Also in it: `securacv.staged_update`
+  (#1816), the #1802 sensor fixes and the October TLS-root and
+  constant-time fixes in the kernel's lockfile (#1873). The add-on and
+  sidecar images tagged `0.8.0` were rebuilt from `main` after 2026-10-10,
+  and 0.9.0 is what makes the store offer the update and lets the add-on
+  refresh its own copy of the integration. `homeassistant.json`,
+  `hub_image.json` and `start.json` regenerated.
+
+### An update counts as kept only once it is, on every Canary, and the record says how it ended
+
+#1816 made a new image prove itself (60 seconds healthy) before it stays.
+The check before this release found that some Canaries could never pass it,
+and that every Canary recorded the update as applied before it knew. Fixed
+here, before any of it shipped:
+
+- **Displays, Sense, Vision and Sentinel count the minute on Wi-Fi alone.**
+  It used to count only while the device was connected to its MQTT broker,
+  so a display with no hub that installed from its own Install button
+  never kept the update, and any of the four that came back to an
+  unreachable broker went back to the old firmware at its next restart. A
+  new guard in `regression_check.sh` keeps each loop's confirm tick ahead
+  of the broker gate. The display README no longer says a hub-less display
+  checks for updates on its own: the daily check runs while it has a
+  broker; without one it updates when you ask.
+- **A Canary WAP without home Wi-Fi keeps an update.** It judged health by
+  its home Wi-Fi link only, so a standalone WAP ("Use without home WiFi")
+  updated over Bluetooth went back at its next restart. It now checks the
+  link it is set up to hold: home Wi-Fi when it joins one, its own access
+  point otherwise (standalone, home Wi-Fi turned off, or none saved). It
+  also waits to install a network update while its battery is at or below
+  15% and not charging, because the low-battery sleep would interrupt the
+  install or its minute.
+- **The all-rounder Canary keeps an update across a restart you ask for.**
+  A Home Assistant or dashboard restart, the serial `x`, the setup wizard's
+  reboot or a planned deep sleep inside the first 30 seconds plus the
+  minute after an update now confirms the update first, once its boot
+  checks have passed. On the other products a restart you trigger inside
+  that minute (a WAP dashboard Reboot, a display mode switch, Forget Wi-Fi)
+  still sends the board back to its previous firmware, and the update is
+  offered again (`docs/firmware_ota.md`).
+- **"Applied" is recorded only once the update is kept.** Every Canary read
+  and erased its install marker on the new firmware's first boot and
+  recorded the update then (the WAP and the all-rounder in the witness
+  chain). If the minute then failed and the board went back, nothing
+  recorded the rollback, and the chain kept an update that did not stick.
+  The marker now waits until the image is confirmed; a board that goes back
+  finds it and records the rollback (2.4.16 does this too, as the image it
+  goes back to).
+- **Seven displays can check an update's signature.** The engine cut the
+  manifest's product name to 31 bytes before rebuilding the signed message,
+  so the Dash modes build, the 7" and S3 nightstands, the C6 nightstand, the
+  1.69" touch, the 2.41" AMOLED and the C3 nightlight failed every update's
+  signature check, in every release so far. 2.4.17 holds 47 bytes and
+  refuses any manifest field too long for it instead of cutting it short;
+  versions hold 32 (a dev WAP version is 16). A unit already in the field
+  cannot get this fix over the air: install 2.4.17 once with the browser
+  flasher or the Flasher app. `ota_release.py` checks the device's field
+  sizes before anything is published, and its `verify` notes what units
+  below 2.4.17 cannot read.
+- **Tested:** `test_ota_logic.cpp` (772 checks: every field's boundary,
+  every product id in the tree through parse and signed message, the marker
+  rule through a confirm, a power cut inside the minute and the old image's
+  rollback record), the WAP's host suites (the standalone health rule and
+  the battery gate), a new flagship host test of the outcome record
+  (`test_canary_ota_outcome.cpp`, three feature configurations), and the
+  sync guards. CI builds every image; nothing here was run on a board.
+
+### Firmware parity (#1816): every Canary goes online the same way, its setup network is named for its kind, Sense and Vision find each other, and an update must run healthy before it stays
+
+#1816 (1f4e564d) shipped without a CHANGELOG entry; this is it, written for
+owners updating from 2.4.16.
+
+- **Setup networks are named for their kind.** A Canary's setup network is
+  now `SecuraCV-<kind>-XXXX` (`SecuraCV-sense-K7MZ`, `SecuraCV-wap-…`,
+  `SecuraCV-vision-…`, `SecuraCV-display-…`, `SecuraCV-canary-…`); 2.4.16
+  named them all `SecuraCV-XXXX`. The four characters stay the same, and so
+  does the key, except on the all-rounder Canary (its new key is the F350
+  entry). A printed card or a phone that saved the old name holds a stale
+  one. **iPhone app 0.7.0 does not recognize the new names**: its QR join
+  and its name check miss them, though *Join its setup network* still
+  works. iPhone app 0.8.0, released with this train, reads them.
+- **One way online on every Canary.** Sense, Vision, the WAP, the
+  all-rounder and the displays follow one onboarding rule set (the WAP, the
+  all-rounder and the displays keep their own setup pages): a Canary
+  remembers up to four home networks; after 10 minutes offline it raises
+  its setup network again without forgetting anything (the all-rounder at
+  once; on the WAP the setup network only, not the Bluetooth door). The
+  Wi-Fi password field means the picked network's own password: no
+  8-character minimum, up to 64 characters, and open networks are allowed.
+- **Holding BOOT for 10 seconds** resets Wi-Fi and settings and keeps the
+  device's identity. On the all-rounder Canary a 30-second hold also wipes
+  its identity; 2.4.16 wiped everything at 5 seconds. The 7" Dash has no
+  button and resets from Settings.
+- **Sense and Vision answer on your network.** They serve `GET /api/status`
+  on port 80 (coarse: no presence or wellbeing values; it does include the
+  IP address, time zone, update target and whether Wi-Fi credentials are
+  stored), and every Canary serves `/api/fleet` for the Witness Wall. Sense
+  and Vision also send authenticated multicast heartbeats on the LAN
+  (239.83.67.86:5867), keyed from your Wi-Fi name and password, and elect a
+  coordinator that steps aside for a hub (`peer` and `coord` in
+  `/api/status` and the mDNS record). Anyone with your Wi-Fi password counts
+  as a peer; no released board sends events across this link, and on an open
+  network it stays off. `docs/TRUST_MODEL.md` has the reasoning.
+- **An update must run healthy before it stays.** 2.4.16 kept a new version
+  as soon as it booted. From 2.4.17, a new version is kept only after it has
+  run healthy for 60 seconds; a restart before then sends the Canary back to
+  the version it had, and the update is offered again (the fixes to when a
+  board counts as healthy are the section above). An update manifest can
+  name the board and chip it was built for, and a Canary refuses one for
+  another board; `min_version` is enforced. Release manifests stay in the
+  2.4.16 format until no Canary below 2.4.17 remains, because a 2.4.16
+  Canary cannot check the new one. Home Assistant gains
+  `securacv.staged_update`, which updates one Canary at a time and stops at
+  the first failure.
+- **Tested:** host tests and CI builds of every target. The bench plan in
+  `docs/PARITY.md` has not been run.
 
 ### The flagship's route check holds every answer that carries a credential to a bearer-only grant, on the grants as #1838 left them (sweep F338, #1852)
 
@@ -882,6 +1090,7 @@
   unprovisioned), and
   an edit to pinned glue or a pinned statement updates its row in the same
   review (the failure prints the row as it now is).
+
 ### After the 2.4.16 train: an OTA image too big for its slot is refused before it downloads, no app release can take `releases/latest`, and long release notes end with a link instead of mid-sentence
 
 - **Firmware: the pull-OTA engine checks the slot first.** Once the signed
@@ -893,9 +1102,10 @@
   fit in the space your Canary keeps for updates. Install it over USB
   instead." It used to download and write until the slot ran out, then start
   again on the next poll: the C3 Visions still on 0x140000 slots against
-  2.4.16's 1.4 MB images. This helps only boards already running it; a C3
-  Vision on the old table still needs the one USB reflash the 2.4.16 notice
-  below describes. **Host-tested only** (`test_ota_logic.cpp`): the ESP32
+  2.4.16's 1.4 MB images. This helps only boards already running it: a C3
+  Vision (C3 DevKit or XIAO C3) last installed over USB before 2.4.16 still
+  needs one USB install from the browser flasher or the Flasher app before it
+  can update over the air. **Host-tested only** (`test_ota_logic.cpp`): the ESP32
   builds are CI's, and nothing was checked on a bench.
 - **Firmware release: every signed OTA image is measured, or says why
   not.** `flavors.json` budgets seven more images against their slots
@@ -931,108 +1141,6 @@
   build goes: App Store Connect, then TestFlight, and to App Store users only
   after someone submits it for review.
 
-### The backoffice guards its door (backoffice 0.7.0)
-
-- Sign-in links that stand in for the password, never the authenticator,
-  bound to the browser that asked; a watch that blocks scanners, pushes on
-  lockouts and on sign-ins from a new network, an admin allowlist and
-  session-to-network binding; outsider text scrubbed at every ingress and
-  marked as data in the API; no indexing, no AI training, on every answer.
-
-### The backoffice edits the store listing without a commit, sets the phone in Settings, and watches sales-tax nexus (backoffice 0.6.0)
-
-- Price, name, batch cap, hidden and a sale window per product, live on the
-  site at once (the website reads them from the live catalog); the patch for
-  `store.json` printed for later. An ntfy topic and a test push in Settings.
-  Where sales tax is owed, from the orders, on Books and in the doctor.
-
-### The backoffice closes the Shopify gaps (backoffice 0.5.0)
-
-- Labels bought from the ship bench (Shippo), the tracking and postage written
-  back, the customer mailed, the PDF to print; the customer fixes their own
-  address on their signed page while the order is on the shelf; every hosted
-  checkout counted (opened, paid, abandoned, recovered — conversion without a
-  pixel) and an abandoned one followed up once with Stripe's recovery link; a
-  new order mails and, by choice, pushes to the operator's phone.
-
-### The customer always knows where their order is (backoffice 0.4.0)
-
-- The promise made at checkout (ships on, arrives by) is written on the order
-  and read everywhere: the customer's page has one honest line per state
-  (waiting, packed, running late with an apology and a refund offer, in
-  transit, carrier problem, delivered, canceled, refunded); a cancel and a
-  refund mail by themselves; the late apology, the carrier-problem note and
-  the address question are one-click Decide cards, once per order; every
-  order page lists what the customer has been told and whether it went;
-  urgency follows the promised ship day, not a flat window.
-
-### The backoffice shows where attention goes: one urgency scale from stated deadlines, the same on every page (backoffice 0.3.0)
-
-- **`backoffice/src/attention.mjs`** ranks everything that wants the admin into
-  *now* (a clock has run out, or a person is already being failed), *soon*
-  (inside a stated window) and *calm*, from windows stated once (`WINDOWS`: two
-  days to ship, six hours before an SLA, a week on a claim). The sidebar count
-  on each section, the home page's focus strip and cards, the Decide queue's
-  order, a table row's left edge, a due date in a cell ("overdue 15 h",
-  "waiting 4 d") and the morning digest's TODAY list all read that one list.
-- Support opens on what needs us, ordered by SLA, subject widest; Orders names
-  the orders past the shipping promise above the list and how long each has
-  waited; the home feed names the person, sits routine system rows back, and
-  the sales chart wears a series color so the brand gold means "an action".
-- `tests/attention.test.mjs` holds the levels to the clock and every surface
-  to the same marks, over HTTP.
-
-### The backoffice says which environment and build it is, guards its migrations, carries feature flags, and reaches production only through a promote button (backoffice 0.2.0)
-
-- **Environment label and build** (`backoffice/src/env.mjs`, `version.mjs`):
-  `BACKOFFICE_ENV` on every page, the title, `/healthz` (`ok <env> <build>`)
-  and the doctor; production refuses a demo seed, a database another
-  environment labeled and a plain-http base; staging mutes mail, issues and
-  off-site writes and refuses a live Stripe key. CI stamps the commit into the
-  image; the first boot of a build on a database is a `deploy.boot` audit row.
-- **Migration safety:** a `VACUUM INTO` copy before the first pending migration
-  on a file database (newest five kept), a refusal to open a database a newer
-  build migrated, and `src/migrations/README.md`'s additive-only rule held by a
-  test.
-- **Feature flags** (`src/flags.mjs`): declared once with kind, default, owner
-  and date; `FLAG_<NAME>` from the environment, then Settings, then the
-  default; every flip audited; `stripe_tax` first (`TAX_MODE=stripe` still
-  reads as it). The doctor names a rollout flag past its date.
-- **Staging and the promote button** (`infra/apps/backoffice-staging`,
-  `kit refresh|tag|cron`, `backoffice-promote.yml`): every merge deploys to
-  staging, which runs last night's production copy with test keys; the
-  forced SSH command answers `tag <app>`; "Promote backoffice to production"
-  sends the tag staging runs and proves production answers it from outside.
-  The owner's manual, the infra README, GO_LIVE and RELEASE_BUTTONS carry the
-  story; `backoffice/CHANGELOG.md` starts, held to `package.json` by a test.
-
-### Dependency advisories of 2026-10-19 to -23: the TLS roots and verifier, two constant-time crates, and body-parser (Dependency Audit #330)
-
-- **Five advisories, every one with a reachable fix, so none is ignored.**
-  The Monday audit on `main` failed on five of the seven Rust lockfiles and
-  on canary-vision's npm tree. `webpki-roots` and `webpki-root-certs` 1.0.9
-  bundled roots that trust distrusted emSign intermediates
-  (RUSTSEC-2026-0381, -0383) and `rustls-webpki` 0.103.15 could accept a
-  distrusted intermediate (RUSTSEC-2026-0382): both sit under every outbound
-  HTTPS call the kernel, the Flasher, the Lab, hub-io and flash-engine make
-  (`ureq`, `reqwest`, `rustls`). `crypto-bigint` 0.7.5 (also yanked) and
-  `ctutils` 0.4.2/0.4.3 had timing variability in operations meant to be
-  constant-time (RUSTSEC-2026-0387, -0385), under `elliptic-curve` and `srp`
-  in the kernel and the household-key checker. The lockfiles now carry
-  `webpki-roots` and `webpki-root-certs` 1.0.11, `rustls-webpki` 0.103.16,
-  `crypto-bigint` 0.7.10 and `ctutils` 0.4.6, each inside its manifest's
-  range. The root lockfile's second `crypto-bigint`, the 0.5.5 that
-  `elliptic-curve` 0.13 needed and that has no fixed 0.5 release, leaves the
-  tree with `c2pa` 0.91.6 (`c2pa_raw_crypto` 0.2 takes `elliptic-curve`
-  0.14), so no ignore was added. `body-parser` 2.3.0's denial of service via
-  trailing bytes after a compressed body (GHSA-27r3-jxmh-p828) went to 2.4.0
-  in #1857.
-- **Dependabot's four cargo bumps ride along** (c2pa, libc, mdns-sd, tauri
-  and its build crates): the Lab and the Flasher must lock the same
-  `mdns-sd` (`desktop_parity.test.js`), which is why #1864 and #1865, each
-  bumping one app, failed that test on their own. Lockfile bumps only; no
-  source changed. `cargo audit` is CI's.
-
 ### canary-wap answers the receipt, the setup mints and, after setup, its pages only to a Host that names it, and its HTTPS session cookie has a name of its own (sweep F344, F337, #1848)
 
 - **A DNS-rebinding page under a public name gets no session, no pair token
@@ -1049,12 +1157,19 @@
   pair token only to a Host that names the device, but a live one's value,
   wherever it is carried, still works for its ten minutes on
   `/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` with no
-  Host question. Since F334 and F333, in this release, the pair token serves
-  only the first-boot wizard: after setup the first two take the bearer
-  alone and the scan's start answers `404`. The scan's status and stop still
-  take a pair token, and a camera unit's boot scan runs only while no network
-  is stored and the unit is not standalone, so a carried token reads that
-  scan's status and stops it then.) The WAP now stages the shared
+  Host question. F334, still open, asks whether Wi-Fi changes after setup take
+  a bearer, so that the pair token serves only the first-boot wizard; its
+  ledger entry names connect and ap-only, not the scan *(amended 2026-10-27,
+  the owner-authority PR, #<PR>, after 2.4.17: F334 is done; after setup
+  connect and ap-only take the bearer alone and the scan's start answers
+  `404`, so the pair token serves only the first-boot wizard)*. And a
+  standalone unit with a camera keeps scanning for a Wi-Fi QR code after
+  setup, so a carried token reads that scan's status and stops it *(amended
+  the same day, same PR: since F333 the boot scan runs only while no network
+  is stored and the unit is not standalone, `keyless_join_open()`, so a
+  standalone unit does not scan, and after setup a carried token reads and
+  stops a boot scan only on a unit with no network stored that is not
+  standalone)*.) The WAP now stages the shared
   `firmware/common/network/host_guard.h` that the flagship and the display
   already use (byte-identical, held by `check_improv_sync.sh`). After setup,
   `/`, `/?cv_pair=`, `/admin`, `/settings` and `/companion` answer a Host that
@@ -1115,9 +1230,11 @@
   of these (it reads nothing; but `SameSite=Strict` compares sites, so in a
   browser that does not count the scheme in the site, as Chromium does, its
   requests still carry the session cookie and it can write blind with the
-  owner's session: any write a session may make, of which since F361 only
-  the firmware install restarts the unit, and only into a newer signed
-  image); a page served over https at that name whose certificate warning
+  owner's session: a reboot, or any other write a session may make
+  *(amended 2026-10-27, the owner-authority PR, #<PR>, after 2.4.17: since
+  F361 the two reboot routes take the bearer alone, and of a session's
+  writes only the firmware install restarts the unit, and only into a newer
+  signed image)*); a page served over https at that name whose certificate warning
   the owner accepted still does, and so does any page during the first-boot
   setup or on a unit whose HTTPS start failed, which serve plain HTTP.
   Host-tested
@@ -1386,14 +1503,14 @@ hold keeps; and the per-address lockout's ways out.
   leaves it alone: it can mint sessions until the owner's is evicted, and
   a host also in radio range can bond a Bluetooth peer of its own through
   its session and write the WAP back to a network it is on over the bonded
-  lane. (Amended by #<PR>, the owner-authority entries at the top of this
-  section: since F334 that move takes the API token after setup, and
+  lane. (Amended by #<PR>, the owner-authority entries above, after
+  2.4.17: since F334 that move takes the API token after setup, and
   `api_auth_check_bearer()` answers an address the overflow holds `429`
   before it compares anything, so the browser waits with every other
   untracked address until that host stops, then pastes the token; since
   F346 the bond's confirm and a Passkey Entry's digits take the API token,
   so a host's peer bonds through its session no longer, and a bond a
-  session confirmed on an earlier release stays until the owner removes
+  session confirmed on 2.4.17 or earlier stays until the owner removes
   it.) And it lasts only while the new network stays up: the WAP keeps
   the networks it joined before, the host's among them, and goes back to
   one on its own when the new network is not found twice running (a
@@ -1685,11 +1802,11 @@ hold keeps; and the per-address lockout's ways out.
   Bluetooth lane (F346), so the WAP's door and wipe comments,
   `improv_core.h`, the README and `magic_pairing.md` no longer call a
   re-armed door, or the lane, the owner's alone. (Amended by #<PR>, the
-  owner-authority entries at the top of this section: Forget Wi-Fi now takes
-  the API token alone, F345, and so does the bond's confirm, F346, so
-  neither is a landing session's in this release; a bond a session
-  confirmed on an earlier release stays until the owner removes it, and the
-  door Forget re-arms is still first-come.) Both flashers' smart pick ("installing
+  owner-authority entries above, after 2.4.17: Forget Wi-Fi takes the API
+  token alone, F345, and so does the bond's confirm, F346, so after 2.4.17
+  neither is a landing session's; a bond a session confirmed on 2.4.17 or
+  earlier stays until the owner removes it, and the door Forget re-arms is
+  still first-come.) Both flashers' smart pick ("installing
   keeps it, updated in place") and settings verdicts, the desktop change
   map, the SD recovery comments and guides and the token's lifetime say an
   install starts NVS over under a new key; `SECURITY_MODEL.md`,
@@ -2181,9 +2298,9 @@ hold keeps; and the per-address lockout's ways out.
   guess budget, so a guesser that reboots the unit every few seconds gets
   more than the 30 a minute the table allows between reboots; ARP
   spoofing, httpd's connection purge; `magic_pairing.md` §3.7). (Amended by
-  #<PR>, the owner-authority entries at the top of this section: since F361
-  both reboot routes take the API token alone, so no landing session
-  reboots the unit; a session's firmware install still restarts it, only
+  #<PR>, the owner-authority entries above, after 2.4.17: since F361 both
+  reboot routes take the API token alone, so no landing session reboots the
+  unit; a session's firmware install still restarts it, only
   into a newer signed image.) Found on
   the way and fixed with it: the `static` in the header gave `canary_wap.ino`,
   `csi_integration.cpp` and `csi_mqtt.cpp` a table each (now one C++17
@@ -2331,8 +2448,8 @@ hold keeps; and the per-address lockout's ways out.
   seconds of guessing gets about 37 a minute if the unit is back on the
   LAN 45 s later, about 100 at 10 s, about 155 at 5 s (the WAP's boot time
   is not measured; the flagship's reboot needs the bearer). (Amended by
-  #<PR>, the owner-authority entries at the top of this section: since F361
-  the WAP's two reboot routes take the API token alone too, so no landing
+  #<PR>, the owner-authority entries above, after 2.4.17: since F361 the
+  WAP's two reboot routes take the API token alone too, so no landing
   session reboots it; a session's firmware install still restarts it, only
   into a newer signed image.)
   `THREAT_MODEL.md` scenario 10, `SECURITY_MODEL.md` and `magic_pairing.md`
@@ -2415,8 +2532,9 @@ hold keeps; and the per-address lockout's ways out.
   `flash.test.js` feeds it the real lines and `desktop_parity.test.js` now
   holds the two lists equal. The gap predates F350 (the WAP prints the same
   line); F350 is what made the flagship's key worth leaking.
-- **Owner step: the setup network's key changes once, on update.** Its name
-  (`SecuraCV-canary-XXXX`) does not. No marker keeps the old key, because
+- **Owner step: the setup network's key changes once, on update.** Updating
+  from 2.4.16 changes its name too: 2.4.16 named it `SecuraCV-XXXX`, and
+  this release names it `SecuraCV-canary-XXXX` (#1816, below). No marker keeps the old key, because
   anyone who has seen the fingerprint can compute it. A printed card, a phone that
   saved the network and a recovery kit saved before the update hold the old
   key. The current one is on the serial banner (`Password`) and the
@@ -2565,8 +2683,8 @@ nothing ran on a device or in a browser.
   still re-points the broker with the stored password — behind the pair
   token, which the session can mint (`GET /api/pair/token` takes the
   cookie), and a code in front of the camera, which it cannot; named in
-  the ledger. (Amended by #<PR>, the owner-authority entries at the top of
-  this section: F333 closes that road where it opens. After setup `POST
+  the ledger. (Amended by #<PR>, the owner-authority entries above, after
+  2.4.17: F333 closes that road where it opens. After setup `POST
   /api/wifi/qr-scan` answers `404` (F334), so a pair token a session mints
   starts no scan; the camera's boot scan asks the Bluetooth setup door's
   rule (`keyless_join_open()`), so on a set-up unit it runs only after a
@@ -3469,6 +3587,7 @@ CI9's one-word fix), so the HACS mirror needs a carry after #1802 merges.
   gates on d9e4977b and did not catch that link error. No carried
   Home Assistant file changed, so no HACS mirror carry is needed. Nothing is
   bench-tested, and no running Home Assistant was seen.
+
 ### Vision Doorbell: the speaker moves off the camera module's reset pin (D3 → D10)
 
 The doorbell speaker's PWM was on XIAO D3, documented as the stacked Grove
@@ -3905,6 +4024,108 @@ and [`docs/frigate_integration.md`](docs/frigate_integration.md).
 fingerprint `pair` prints and Home Assistant pins). Until it lands the
 paired bearer crosses the LAN as plaintext HTTP, which the security model,
 the compose quickstarts and the setup guide all state.
+
+### The backoffice guards its door (backoffice 0.7.0)
+
+- Sign-in links that stand in for the password, never the authenticator,
+  bound to the browser that asked; a watch that blocks scanners, pushes on
+  lockouts and on sign-ins from a new network, an admin allowlist and
+  session-to-network binding; outsider text scrubbed at every ingress and
+  marked as data in the API; no indexing, no AI training, on every answer.
+
+### The backoffice edits the store listing without a commit, sets the phone in Settings, and watches sales-tax nexus (backoffice 0.6.0)
+
+- Price, name, batch cap, hidden and a sale window per product, live on the
+  site at once (the website reads them from the live catalog); the patch for
+  `store.json` printed for later. An ntfy topic and a test push in Settings.
+  Where sales tax is owed, from the orders, on Books and in the doctor.
+
+### The backoffice closes the Shopify gaps (backoffice 0.5.0)
+
+- Labels bought from the ship bench (Shippo), the tracking and postage written
+  back, the customer mailed, the PDF to print; the customer fixes their own
+  address on their signed page while the order is on the shelf; every hosted
+  checkout counted (opened, paid, abandoned, recovered — conversion without a
+  pixel) and an abandoned one followed up once with Stripe's recovery link; a
+  new order mails and, by choice, pushes to the operator's phone.
+
+### The customer always knows where their order is (backoffice 0.4.0)
+
+- The promise made at checkout (ships on, arrives by) is written on the order
+  and read everywhere: the customer's page has one honest line per state
+  (waiting, packed, running late with an apology and a refund offer, in
+  transit, carrier problem, delivered, canceled, refunded); a cancel and a
+  refund mail by themselves; the late apology, the carrier-problem note and
+  the address question are one-click Decide cards, once per order; every
+  order page lists what the customer has been told and whether it went;
+  urgency follows the promised ship day, not a flat window.
+
+### The backoffice shows where attention goes: one urgency scale from stated deadlines, the same on every page (backoffice 0.3.0)
+
+- **`backoffice/src/attention.mjs`** ranks everything that wants the admin into
+  *now* (a clock has run out, or a person is already being failed), *soon*
+  (inside a stated window) and *calm*, from windows stated once (`WINDOWS`: two
+  days to ship, six hours before an SLA, a week on a claim). The sidebar count
+  on each section, the home page's focus strip and cards, the Decide queue's
+  order, a table row's left edge, a due date in a cell ("overdue 15 h",
+  "waiting 4 d") and the morning digest's TODAY list all read that one list.
+- Support opens on what needs us, ordered by SLA, subject widest; Orders names
+  the orders past the shipping promise above the list and how long each has
+  waited; the home feed names the person, sits routine system rows back, and
+  the sales chart wears a series color so the brand gold means "an action".
+- `tests/attention.test.mjs` holds the levels to the clock and every surface
+  to the same marks, over HTTP.
+
+### The backoffice says which environment and build it is, guards its migrations, carries feature flags, and reaches production only through a promote button (backoffice 0.2.0)
+
+- **Environment label and build** (`backoffice/src/env.mjs`, `version.mjs`):
+  `BACKOFFICE_ENV` on every page, the title, `/healthz` (`ok <env> <build>`)
+  and the doctor; production refuses a demo seed, a database another
+  environment labeled and a plain-http base; staging mutes mail, issues and
+  off-site writes and refuses a live Stripe key. CI stamps the commit into the
+  image; the first boot of a build on a database is a `deploy.boot` audit row.
+- **Migration safety:** a `VACUUM INTO` copy before the first pending migration
+  on a file database (newest five kept), a refusal to open a database a newer
+  build migrated, and `src/migrations/README.md`'s additive-only rule held by a
+  test.
+- **Feature flags** (`src/flags.mjs`): declared once with kind, default, owner
+  and date; `FLAG_<NAME>` from the environment, then Settings, then the
+  default; every flip audited; `stripe_tax` first (`TAX_MODE=stripe` still
+  reads as it). The doctor names a rollout flag past its date.
+- **Staging and the promote button** (`infra/apps/backoffice-staging`,
+  `kit refresh|tag|cron`, `backoffice-promote.yml`): every merge deploys to
+  staging, which runs last night's production copy with test keys; the
+  forced SSH command answers `tag <app>`; "Promote backoffice to production"
+  sends the tag staging runs and proves production answers it from outside.
+  The owner's manual, the infra README, GO_LIVE and RELEASE_BUTTONS carry the
+  story; `backoffice/CHANGELOG.md` starts, held to `package.json` by a test.
+
+### Dependency advisories of 2026-10-19 to -23: the TLS roots and verifier, two constant-time crates, and body-parser (Dependency Audit #330)
+
+- **Five advisories, every one with a reachable fix, so none is ignored.**
+  The Monday audit on `main` failed on five of the seven Rust lockfiles and
+  on canary-vision's npm tree. `webpki-roots` and `webpki-root-certs` 1.0.9
+  bundled roots that trust distrusted emSign intermediates
+  (RUSTSEC-2026-0381, -0383) and `rustls-webpki` 0.103.15 could accept a
+  distrusted intermediate (RUSTSEC-2026-0382): both sit under every outbound
+  HTTPS call the kernel, the Flasher, the Lab, hub-io and flash-engine make
+  (`ureq`, `reqwest`, `rustls`). `crypto-bigint` 0.7.5 (also yanked) and
+  `ctutils` 0.4.2/0.4.3 had timing variability in operations meant to be
+  constant-time (RUSTSEC-2026-0387, -0385), under `elliptic-curve` and `srp`
+  in the kernel and the household-key checker. The lockfiles now carry
+  `webpki-roots` and `webpki-root-certs` 1.0.11, `rustls-webpki` 0.103.16,
+  `crypto-bigint` 0.7.10 and `ctutils` 0.4.6, each inside its manifest's
+  range. The root lockfile's second `crypto-bigint`, the 0.5.5 that
+  `elliptic-curve` 0.13 needed and that has no fixed 0.5 release, leaves the
+  tree with `c2pa` 0.91.6 (`c2pa_raw_crypto` 0.2 takes `elliptic-curve`
+  0.14), so no ignore was added. `body-parser` 2.3.0's denial of service via
+  trailing bytes after a compressed body (GHSA-27r3-jxmh-p828) went to 2.4.0
+  in #1857.
+- **Dependabot's four cargo bumps ride along** (c2pa, libc, mdns-sd, tauri
+  and its build crates): the Lab and the Flasher must lock the same
+  `mdns-sd` (`desktop_parity.test.js`), which is why #1864 and #1865, each
+  bumping one app, failed that test on their own. Lockfile bumps only; no
+  source changed. `cargo audit` is CI's.
 
 ## [2.4.16] - 2026-10-10
 

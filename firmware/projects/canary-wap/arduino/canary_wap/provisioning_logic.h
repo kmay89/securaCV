@@ -69,6 +69,26 @@ inline bool ap_teardown_due(bool ap_only, bool sta_connected, uint32_t now_ms,
          (uint32_t)(now_ms - connected_since_ms) > grace_ms;
 }
 
+// The health signal the A/B confirm dwell reads (securacv_ota_health_tick,
+// docs/OTA.md §2). A new image is confirmed only after this has held for the
+// dwell; a restart before then boots the previous image again. The signal is
+// the link this unit is set up to hold. A unit that joins home Wi-Fi
+// (sta_join_allowed, above) is healthy while its station link is up, so an
+// image that cannot hold the home network rolls back. A unit with no home
+// network to join runs on its own access point: the standalone choice ("Use
+// without home WiFi"), home Wi-Fi turned off, or nothing saved yet. For that
+// unit the AP being up is the link. The old signal read only the station link,
+// so a standalone unit updated over Bluetooth (ble_ota.cpp needs no Wi-Fi)
+// never confirmed, and its next restart put the old firmware back. How many
+// phones are on the AP is not the test: an AP nobody has joined is still the
+// unit doing its job. Arguments in sta_join_allowed's order, then the two
+// link facts.
+inline bool ota_confirm_link_healthy(bool ap_only, bool configured, bool enabled,
+                                     bool sta_connected, bool ap_up) {
+  if (sta_join_allowed(ap_only, configured, enabled)) return sta_connected;
+  return ap_up;
+}
+
 // Deferred post-provisioning reboot: armed (deadline != 0) once the STA
 // joins during first-boot setup, due when the grace elapses. Rebooting the
 // moment WL_CONNECTED fired killed the AP ~1 s after the join — before the

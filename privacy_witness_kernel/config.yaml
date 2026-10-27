@@ -6,7 +6,7 @@
 
 name: "SecuraCV"
 description: "The verified witness log for Frigate — signed events, no footage, no identity"
-version: "0.8.0"
+version: "0.9.0"
 slug: "privacy_witness_kernel"
 url: "https://github.com/kmay89/securaCV"
 # Pre-built multi-arch image published by .github/workflows/addon-image.yml.

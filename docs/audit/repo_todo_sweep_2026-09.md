@@ -1908,7 +1908,12 @@ so — see D2 below.)
   (`qr_scan_request_allowed()`). The CHANGELOG's F344 entry, in the same
   unreleased section, still called F334 open and the standalone camera's
   scan running after setup; it now points to F334 and F333 in this release.
-  `RETIRED_IN` holds the three files to it.
+  `RETIRED_IN` holds the three files to it. *(Amended by the merge with the
+  2.4.17 train, same PR: main cut `[Unreleased]` into `[2.4.17]`, so that
+  entry is now under 2.4.17, which carries neither F334 nor F333. It keeps
+  both sentences as 2.4.17 has them, each with an inline amendment that
+  names F334 and F333 as after 2.4.17, and its `RETIRED_IN` rows read each
+  sentence through its close.)*
   Fifth merge review fix (same PR): F57's note, an open item, still called
   F334 open and the standalone camera's scan running after setup; it now
   carries inline amendments, the form #1843 used in that note, and
@@ -7414,7 +7419,11 @@ so — see D2 below.)
   sentence as it stood then). *(Amended by the merge's fifth review, same
   PR: F57's note, an open item, held a fourth copy, which this fix missed;
   it now carries an inline amendment, and `RETIRED_IN` holds the ledger to
-  it.)*
+  it.)* *(Amended by the merge with the 2.4.17 train, same PR: the
+  CHANGELOG's F344 entry is now under 2.4.17, which carries no F361, so it
+  keeps "a reboot, or any other write a session may make" as 2.4.17 has it,
+  with an inline amendment that names F361 as after 2.4.17, and its
+  `RETIRED_IN` row reads that sentence through its close.)*
   Third review fix (same PR): `SECURITY_MODEL.md` named two routes to the
   install a session can start; the MQTT update entity is a third. The bridge
   subscribes to `<prefix>/<device id>/update/cmd` and `update/auto/cmd` on

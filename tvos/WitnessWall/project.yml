@@ -25,7 +25,7 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.3.0"
+    MARKETING_VERSION: "0.3.1"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: "$(APPLE_DEVELOPMENT_TEAM)"   # from env / CI, never committed

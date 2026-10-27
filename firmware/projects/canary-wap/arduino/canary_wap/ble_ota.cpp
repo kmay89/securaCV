@@ -332,10 +332,13 @@ class DataCallbacks : public NimBLECharacteristicCallbacks {
     g_state = OTA_REBOOTING;
     notify_status();
 
-    // Same outcome bookkeeping as the pull-OTA path: the next boot reads
-    // this marker to witness applied vs rolled-back, and the image boots
+    // Same outcome bookkeeping as the pull-OTA path: the image boots
     // PENDING_VERIFY (the engine owns rollback confirmation), so a broken
-    // BLE-pushed image also auto-reverts on its first bad boot.
+    // BLE-pushed image also auto-reverts on its first bad boot. This marker
+    // is witnessed as applied once the new image passes its confirm dwell,
+    // or as rolled back by the old image if it does not. No Wi-Fi is needed
+    // here, and none for the dwell either: a standalone unit's dwell reads
+    // its own AP (canary_wap.ino ota_confirm_healthy_now).
     securacv_ota_mark_pending_install(g_version);
 
     log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH, "OTA complete — rebooting", nullptr);
