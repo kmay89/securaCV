@@ -1214,7 +1214,7 @@
   reboots after every few seconds of guessing gets about 37 a minute if the
   unit is back 45 s later and about 155 if it is back in 5 s. The docs
   listed the reboot as a denial left open, never as a reset of the guess
-  budget. *(Amended 2026-10-27, the owner-authority PR, #<PR>: since F361
+  budget. *(Amended 2026-10-27, the owner-authority PR, #1887: since F361
   both routes take the bearer alone, so no landing session reboots the
   unit; a session's firmware install still restarts it, only into a newer
   signed image.)*
@@ -2041,7 +2041,7 @@
   connects first (`docs/design/magic_pairing.md` §2.2). The "no owner yet"
   above covers that cleared unit too, as does the factory reset it names as
   re-arming the window.)* *(Amended 2026-10-27, the owner-authority PR,
-  #<PR>: a WAP's Forget Wi-Fi takes the API token in every mode, F345, so
+  #1887: a WAP's Forget Wi-Fi takes the API token in every mode, F345, so
   no landing session sends it; the door it reopens on a unit not running
   standalone is still first-come.)*
 - **Regression check:** `tests_host/test_improv_core.cpp` — a session begun
@@ -2051,7 +2051,7 @@
   #1843's sweep: on a WAP also Forget Wi-Fi, which any landing session can
   send, F345, so the re-arm is not the owner's act alone)* re-arm the window,
   credentials appearing (the join persisted) shut the no-credentials door
-  *(amended 2026-10-27, #<PR>: a WAP's Forget Wi-Fi takes the API token in
+  *(amended 2026-10-27, #1887: a WAP's Forget Wi-Fi takes the API token in
   every mode, F345)*.
   `test_short_tap.cpp` pins what counts as a tap (≥40 ms, <700 ms; a hold
   is somebody else's gesture). Design: `docs/design/magic_pairing.md`.
@@ -3330,7 +3330,7 @@
   The camera is what the session does not hold: a code must be in front of
   it (`FEATURE_QR_PROVISION`, off in several profiles). Accepted as
   proximity-bound; the ledger's F289 amendment says what it is owed if that
-  ever widens. *(Superseded 2026-10-27, the owner-authority PR, #<PR>: F333
+  ever widens. *(Superseded 2026-10-27, the owner-authority PR, #1887: F333
   closes this road where it opens. After setup `POST /api/wifi/qr-scan`
   answers `404` (F334), so the pair token the cookie mints starts no scan;
   the boot scan asks the Bluetooth setup door's rule
@@ -3496,7 +3496,7 @@
   reach: the bonded lane takes away the striking host's network reach, but
   a host also in radio range can bond through the landing session the
   network gives it, and then use the lane itself *(amended 2026-10-27, the
-  owner-authority PR, #<PR>: since F346 the bond's confirm and a Passkey
+  owner-authority PR, #1887: since F346 the bond's confirm and a Passkey
   Entry's digits take the API token, so a host bonds through its session no
   longer; a bond a session confirmed on 2.4.17 or earlier stays until the
   owner removes it)*. A guard that every row
@@ -3512,7 +3512,7 @@
   owner's own landing session reaches the same routes, and
   `POST /api/wifi/connect`, so the owner's browser can turn Bluetooth back
   on, or move the WAP with no Bluetooth at all. *(Amended 2026-10-27, the
-  owner-authority PR, #<PR>: the Bluetooth routes still take the session,
+  owner-authority PR, #1887: the Bluetooth routes still take the session,
   but after setup `POST /api/wifi/connect` takes the API token alone, F334,
   so the browser's move takes the token, and under a host striking from
   nine or more addresses it waits until that host stops; the merge's

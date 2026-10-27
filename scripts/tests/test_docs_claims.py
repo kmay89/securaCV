@@ -2891,10 +2891,10 @@ RETIRED_IN = (
      "release: after setup the Wi-Fi routes, the bond and opera confirms and a Passkey Entry's digits take the API token",
      "after setup the four routes that move the network take it; Reconnect, which rejoins the stored network, stays on the session"),
     ("docs/audit/esp32s3_firmware_full_audit_2026-07.md",
-     "#<PR>: after setup the Wi-Fi routes take the bearer alone (F334, F345)",
+     "#1887: after setup the Wi-Fi routes take the bearer alone (F334, F345)",
      "after setup the four routes that move the network take it; Reconnect stays on the session"),
     ("docs/security/SECURITY-AUDIT.md",
-     "#<PR>: after setup the Wi-Fi routes take the bearer alone (F334, F345)",
+     "#1887: after setup the Wi-Fi routes take the bearer alone (F334, F345)",
      "the same"),
     ("docs/security/THREAT_MODEL.md",
      "(after setup the Wi-Fi routes take the bearer alone, the recovery portal included)",
@@ -3318,7 +3318,7 @@ RETIRED_IN = (
      "after setup a WAP's Forget Wi-Fi takes the API token, F345, so no landing session sends it; the door it reopens is still first-come.",
      "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup; and on a standalone unit Forget reopens no door (keyless_join_open())"),
     ("firmware/LESSONS_LEARNED.md",
-     "*(amended 2026-10-27, #<PR>: after setup a WAP's Forget Wi-Fi takes the API token, F345)*",
+     "*(amended 2026-10-27, #1887: after setup a WAP's Forget Wi-Fi takes the API token, F345)*",
      "Forget's wrapper asks nothing about setup: it takes the bearer in every mode (api_auth_check_bearer(), api_auth.h), so 'after setup' read as a session reaching it during setup"),
     ("firmware/LESSONS_LEARNED.md",
      "F334 and F345 put both on the bearer alone after setup, and the overflow holds that bearer",
@@ -3532,7 +3532,7 @@ MUST_PASS_IN = [
     ('docs/audit/repo_todo_sweep_2026-09.md',
      "and the session reaches it: a scan window opens from the boot auto-scan or from `POST /api/wifi/qr-scan`, which takes the wizard's one-shot pair token (`pair_token_valid()`) and not the cookie — but the session buys that token"),
     ('CHANGELOG.md',
-     'which it cannot; named in the ledger. (Amended by #<PR>, the owner-authority entries above, after 2.4.17: F333 closes that road where it opens. After setup `POST /api/wifi/qr-scan` answers `404` (F334), so a pair token a session mints starts no scan;'),
+     'which it cannot; named in the ledger. (Amended by #1887, the owner-authority entries above, after 2.4.17: F333 closes that road where it opens. After setup `POST /api/wifi/qr-scan` answers `404` (F334), so a pair token a session mints starts no scan;'),
     ('spec/beacon_channel_v0.md',
      "A holder of one member's Ed25519 private key — readable from flash on every tier today: it is plaintext in NVS, which flash encryption does not cover"),
     ('docs/design/magic_pairing.md',
@@ -5279,7 +5279,7 @@ MUST_PASS_IN = [
      '  those routes are behind `api_auth_check()`, which takes a landing\n'
      "  session's cookie before the bearer, F346; the cookie path asks the Host,\n"
      '  the bearer path does not)* *(amended 2026-10-27, the owner-authority PR,\n'
-     '  #<PR>: not all of them; the routes `api_auth.h` names, the pairing QR,\n'
+     '  #1887: not all of them; the routes `api_auth.h` names, the pairing QR,\n'
      '  the vault key, the two pairing confirms, Disconnect and Forget in every\n'
      '  mode, Connect and AP-only after setup, and the two reboot routes, take\n'
      '  `api_auth_check_bearer()`, the bearer alone, which asks no Host\n'
@@ -5381,7 +5381,7 @@ MUST_PASS_IN = [
     "unit, and only into a newer signed image)"),
     ("CHANGELOG.md",
      "owner's session: a reboot, or any other write a session may make "
-    "*(amended 2026-10-27, the owner-authority PR, #<PR>, after 2.4.17: since "
+    "*(amended 2026-10-27, the owner-authority PR, #1887, after 2.4.17: since "
     "F361 the two reboot routes take the bearer alone, and of a session's "
     "writes only the firmware install restarts the unit, and only into a newer "
     "signed image)*); a page"),
@@ -5434,7 +5434,7 @@ MUST_PASS_IN = [
      "During setup the\n// wizard's gate on Connect and AP-only is unchanged (handle_ui mints no\n// session then,"),
     ("CHANGELOG.md",
      "ledger entry names connect and ap-only, not the scan *(amended 2026-10-27, "
-    "the owner-authority PR, #<PR>, after 2.4.17: F334 is done; after setup "
+    "the owner-authority PR, #1887, after 2.4.17: F334 is done; after setup "
     "connect and ap-only take the bearer alone and the scan's start answers "
     "`404`, so after setup a carried pair token no longer works on connect, "
     "ap-only or the scan's start, though its status and stop still take one)*. "
@@ -5496,16 +5496,16 @@ MUST_PASS_IN = [
     ("firmware/projects/canary-wap/arduino/canary_wap/wap_server.h",
      " *   bearer alone for the pairing QR (F289), the Wi-Fi moves (Connect and\n *   AP-only after setup, Disconnect and Forget in every mode; F334, F345),"),
     ("firmware/LESSONS_LEARNED.md",
-     "  on, or move the WAP with no Bluetooth at all. *(Amended 2026-10-27, the\n  owner-authority PR, #<PR>: the Bluetooth routes still take the session,\n  but after setup `POST /api/wifi/connect` takes the API token alone, F334,"),
+     "  on, or move the WAP with no Bluetooth at all. *(Amended 2026-10-27, the\n  owner-authority PR, #1887: the Bluetooth routes still take the session,\n  but after setup `POST /api/wifi/connect` takes the API token alone, F334,"),
     ("CHANGELOG.md",
      "release: the four routes that move the network over HTTP (Disconnect\n"
      "  and Forget in every mode, Connect and AP-only after setup), the bond and\n"
      "  opera confirms and a Passkey Entry's digits take the API token,"),
     ("docs/audit/esp32s3_firmware_full_audit_2026-07.md",
-     "#<PR>: the four routes that move the network over HTTP take the bearer alone (Disconnect\n"
+     "#1887: the four routes that move the network over HTTP take the bearer alone (Disconnect\n"
      "  and Forget in every mode, Connect and AP-only after setup; F334, F345), and the overflow holds"),
     ("docs/security/SECURITY-AUDIT.md",
-     "(Amended 2026-10-27 by the owner-authority PR, #<PR>: the four routes that move the network over HTTP take the bearer alone (Disconnect and Forget in every mode, Connect and AP-only after setup; F334, F345), and the overflow holds"),
+     "(Amended 2026-10-27 by the owner-authority PR, #1887: the four routes that move the network over HTTP take the bearer alone (Disconnect and Forget in every mode, Connect and AP-only after setup; F334, F345), and the overflow holds"),
     ("docs/security/THREAT_MODEL.md",
      "Since F334 the session can no longer move the WAP to a network the caller runs (the four routes that move the network over HTTP take the bearer alone, disconnect and forget in every mode and connect and ap-only after setup, the recovery portal included)."),
     ("docs/audit/repo_todo_sweep_2026-09.md",
@@ -5523,22 +5523,22 @@ MUST_PASS_IN = [
     ("ios/Sources/SecuraCV/Views/PairView.swift",
      "Remove credentials, which asks for its API token first: choose Use BOOT Tap Once in the sign-in and short-tap BOOT when the page says to, then press Remove credentials again"),
     ("CHANGELOG.md",
-     "  re-armed door, or the lane, the owner's alone. (Amended by #<PR>, the\n  owner-authority entries above, after 2.4.17: Forget Wi-Fi takes the API\n  token alone, F345, and so does the bond's confirm, F346, so after 2.4.17\n  neither is a landing session's;"),
+     "  re-armed door, or the lane, the owner's alone. (Amended by #1887, the\n  owner-authority entries above, after 2.4.17: Forget Wi-Fi takes the API\n  token alone, F345, and so does the bond's confirm, F346, so after 2.4.17\n  neither is a landing session's;"),
     ("CHANGELOG.md",
-     "  spoofing, httpd's connection purge; `magic_pairing.md` §3.7). (Amended by\n  #<PR>, the owner-authority entries above, after 2.4.17: since F361 both\n  reboot routes take the API token alone, so no landing session reboots the\n  unit;"),
+     "  spoofing, httpd's connection purge; `magic_pairing.md` §3.7). (Amended by\n  #1887, the owner-authority entries above, after 2.4.17: since F361 both\n  reboot routes take the API token alone, so no landing session reboots the\n  unit;"),
     ("CHANGELOG.md",
-     "  is not measured; the flagship's reboot needs the bearer). (Amended by\n  #<PR>, the owner-authority entries above, after 2.4.17: since F361 the\n  WAP's two reboot routes take the API token alone too, so no landing\n  session reboots it;"),
+     "  is not measured; the flagship's reboot needs the bearer). (Amended by\n  #1887, the owner-authority entries above, after 2.4.17: since F361 the\n  WAP's two reboot routes take the API token alone too, so no landing\n  session reboots it;"),
     ("docs/audit/repo_todo_sweep_2026-09.md",
-     "      the bonded lane is no owner gate either (F346) *(amended 2026-10-27,\n      the owner-authority PR, #<PR>: since F345's fix Forget takes the bearer\n      alone, and since F346's so does the bond's confirm)*"),
+     "      the bonded lane is no owner gate either (F346) *(amended 2026-10-27,\n      the owner-authority PR, #1887: since F345's fix Forget takes the bearer\n      alone, and since F346's so does the bond's confirm)*"),
     ("firmware/LESSONS_LEARNED.md",
-     "  network gives it, and then use the lane itself *(amended 2026-10-27, the\n  owner-authority PR, #<PR>: since F346 the bond's confirm and a Passkey\n  Entry's digits take the API token,"),
+     "  network gives it, and then use the lane itself *(amended 2026-10-27, the\n  owner-authority PR, #1887: since F346 the bond's confirm and a Passkey\n  Entry's digits take the API token,"),
     ("CHANGELOG.md",
-     "  lane. (Amended by #<PR>, the owner-authority entries above, after\n"
+     "  lane. (Amended by #1887, the owner-authority entries above, after\n"
      "  2.4.17: since F334 that move takes the API token after setup, and\n"
      "  `api_auth_check_bearer()` answers an address the overflow holds `429`\n"
      "  before it compares anything,"),
     ("firmware/LESSONS_LEARNED.md",
-     "  ever widens. *(Superseded 2026-10-27, the owner-authority PR, #<PR>: F333\n"
+     "  ever widens. *(Superseded 2026-10-27, the owner-authority PR, #1887: F333\n"
      "  closes this road where it opens. After setup `POST /api/wifi/qr-scan`\n"
      "  answers `404` (F334), so the pair token the cookie mints starts no scan;"),
     ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
@@ -5617,9 +5617,9 @@ MUST_PASS_IN = [
      "  door over a stand-in Forget that leaves the choice alone as the real one\n"
      "  does)"),
     ("docs/security/SECURITY-AUDIT.md",
-     "(Amended 2026-10-27 by the owner-authority PR, #<PR>: no longer every other route. The vault key (F335), the two pairing confirms (F346), Disconnect and Forget in every mode, Connect and AP-only after setup (F334, F345) and the two reboot routes (F361) take `api_auth_check_bearer()` too; `SECURITY_MODEL.md` keeps the list.)"),
+     "(Amended 2026-10-27 by the owner-authority PR, #1887: no longer every other route. The vault key (F335), the two pairing confirms (F346), Disconnect and Forget in every mode, Connect and AP-only after setup (F334, F345) and the two reboot routes (F361) take `api_auth_check_bearer()` too; `SECURITY_MODEL.md` keeps the list.)"),
     ('docs/audit/feature_gaps_2026-09.md',
-     '*(Amended 2026-10-27, the owner-authority PR, #<PR>: not the whole API. The routes `api_auth.h` names, the pairing QR, the vault key, the two pairing confirms, Disconnect and Forget in every mode, Connect and AP-only after setup, and the two reboot routes, take `api_auth_check_bearer()`, the bearer alone, which asks no Host either; the receipt asks the Host first.)*'),
+     '*(Amended 2026-10-27, the owner-authority PR, #1887: not the whole API. The routes `api_auth.h` names, the pairing QR, the vault key, the two pairing confirms, Disconnect and Forget in every mode, Connect and AP-only after setup, and the two reboot routes, take `api_auth_check_bearer()`, the bearer alone, which asks no Host either; the receipt asks the Host first.)*'),
     ("docs/security/SECURITY_MODEL.md",
      "BOOT hold, re-arms the door; until the unit is set up again it is in\n"
      "first-boot trust (after a Forget, unless it runs standalone: Forget leaves\n"
@@ -5648,7 +5648,7 @@ MUST_PASS_IN = [
     # not already hold them.
     ('docs/audit/repo_todo_sweep_2026-09.md',
      '*(amended 2026-10-27, the owner-authority PR,\n'
-     '  #<PR>: F334 is done; after setup a carried pair token no longer works on\n'
+     '  #1887: F334 is done; after setup a carried pair token no longer works on\n'
      "  connect, ap-only or the scan's start, since connect and ap-only take the\n"
      "  bearer alone and the start answers `404`)*; the scan's status and stop"),
     ('docs/audit/repo_todo_sweep_2026-09.md',
@@ -5658,7 +5658,7 @@ MUST_PASS_IN = [
      '  setup a carried token reads and stops a boot scan only on a unit with no\n'
      '  network stored that is not standalone)*. And'),
     ('docs/audit/repo_todo_sweep_2026-09.md',
-     '  *(amended 2026-10-27, the owner-authority PR, #<PR>: since F361 the two\n'
+     '  *(amended 2026-10-27, the owner-authority PR, #1887: since F361 the two\n'
      "  reboot routes take the bearer alone, and of a session's writes only the\n"
      '  firmware install restarts the unit, and only into a newer signed\n'
      '  image)*); a page'),
@@ -5744,11 +5744,11 @@ MUST_PASS_IN = [
     ("docs/security/THREAT_MODEL.md",
      "and Forget Wi-Fi, which takes the bearer in every mode (F345), clears the stored user and password"),
     ("firmware/LESSONS_LEARNED.md",
-     "#<PR>: a WAP's Forget Wi-Fi takes the API token in every mode, F345, so\n"
+     "#1887: a WAP's Forget Wi-Fi takes the API token in every mode, F345, so\n"
      "  no landing session sends it; the door it reopens on a unit not running\n"
      "  standalone is still first-come.)*"),
     ("firmware/LESSONS_LEARNED.md",
-     "*(amended 2026-10-27, #<PR>: a WAP's Forget Wi-Fi takes the API token in\n"
+     "*(amended 2026-10-27, #1887: a WAP's Forget Wi-Fi takes the API token in\n"
      "  every mode, F345)*."),
     ("firmware/LESSONS_LEARNED.md",
      "lockout (the third and second rounds' bullets above); F334 and F345 put\n"
@@ -5761,7 +5761,7 @@ MUST_PASS_IN = [
      "//     Forget (in every mode) and Connect (after setup) take the API token,\n"
      "//     so a session-only"),
     ("docs/audit/repo_todo_sweep_2026-09.md",
-     "user and security), with F334; done (2026-10-26, #<PR>):* POST\n"
+     "user and security), with F334; done (2026-10-26, #1887):* POST\n"
      "  /api/wifi/forget takes the bearer alone in every mode\n"
      "  (`api_auth_check_bearer()`; its wrapper asks nothing about setup)."),
     ("docs/audit/repo_todo_sweep_2026-09.md",
@@ -5796,7 +5796,7 @@ MUST_PASS_IN = [
      " *   confirm or a passkey authenticated reaches these (THREAT_MODEL.md's\n"
      " *   BLE pairing row)."),
     ("docs/audit/repo_todo_sweep_2026-09.md",
-     "user and security); done (2026-10-26, #<PR>):* after first-boot setup, the\n"
+     "user and security); done (2026-10-26, #1887):* after first-boot setup, the\n"
      "  network the WAP joins moves on the bearer alone over HTTP, on every\n"
      "  interface, the SoftAP recovery portal included (a peer already bonded\n"
      "  through the pairing confirm or a passkey still moves it over the\n"
@@ -7981,9 +7981,9 @@ MUST_FAIL_IN = [
     ("CHANGELOG.md",
      "  release: after setup the Wi-Fi routes, the bond and opera confirms and a\n  Passkey Entry's digits take the API token, and the shared overflow such a"),
     ("docs/audit/esp32s3_firmware_full_audit_2026-07.md",
-     "  #<PR>: after setup the Wi-Fi routes take the bearer alone (F334, F345), and the overflow holds"),
+     "  #1887: after setup the Wi-Fi routes take the bearer alone (F334, F345), and the overflow holds"),
     ("docs/security/SECURITY-AUDIT.md",
-     "(Amended 2026-10-27 by the owner-authority PR, #<PR>: after setup the Wi-Fi routes take the bearer alone (F334, F345), and the overflow holds"),
+     "(Amended 2026-10-27 by the owner-authority PR, #1887: after setup the Wi-Fi routes take the bearer alone (F334, F345), and the overflow holds"),
     ("docs/security/THREAT_MODEL.md",
      "Since F334 the session can no longer move the WAP to a network the caller runs (after setup the Wi-Fi routes take the bearer alone, the recovery portal included)."),
     ("docs/audit/repo_todo_sweep_2026-09.md",
@@ -8058,7 +8058,7 @@ MUST_FAIL_IN = [
      "  only post-setup grant of a network move, a bond, a vault key or a reboot (a\n"
      "  session can still remove a bond or the vault key, rejoin the stored"),
     ("docs/audit/esp32s3_firmware_full_audit_2026-07.md",
-     "  the camera. (Since #<PR>, sweep F333 and F334: after setup `POST /api/wifi/qr-scan` answers `404`,\n"
+     "  the camera. (Since #1887, sweep F333 and F334: after setup `POST /api/wifi/qr-scan` answers `404`,\n"
      "  so the session opens no scan window, and the boot scan runs only while no network is stored and"),
     # The owner-authority PR's merge review, fourth round: the forms as they
     # stood at 67fc1bb5.
@@ -8137,7 +8137,7 @@ MUST_FAIL_IN = [
      '  requests still carry the session cookie and it can write blind with the\n'
      "  owner's session: a reboot, or any other write a session may make); a page"),
     ('docs/audit/feature_gaps_2026-09.md',
-     '*(Amended 2026-10-27, the owner-authority PR, #<PR>: not the whole API. The routes `SECURITY_MODEL.md` lists, the pairing confirms, the network moves and the reboots among them, take `api_auth_check_bearer()`, the bearer alone, which asks no Host either.)*'),
+     '*(Amended 2026-10-27, the owner-authority PR, #1887: not the whole API. The routes `SECURITY_MODEL.md` lists, the pairing confirms, the network moves and the reboots among them, take `api_auth_check_bearer()`, the bearer alone, which asks no Host either.)*'),
     ('firmware/projects/canary-wap/tests_host/check_route_security.py',
      '    # lockout + 401/403/429, for the routes SECURITY_MODEL.md lists: the\n'
      '    # pairing QR, the vault key, the two pair confirms, the four network\n'
@@ -8321,15 +8321,15 @@ MUST_FAIL_IN = [
     ("docs/security/THREAT_MODEL.md",
      "(after setup the four routes that move the network, connect, ap-only, disconnect and forget, take the bearer alone, the recovery portal included)"),
     ("docs/security/SECURITY-AUDIT.md",
-     "#<PR>: after setup the four routes that move the network (connect, ap-only, disconnect, forget) take the bearer alone (F334, F345), and the overflow holds"),
+     "#1887: after setup the four routes that move the network (connect, ap-only, disconnect, forget) take the bearer alone (F334, F345), and the overflow holds"),
     ("docs/audit/esp32s3_firmware_full_audit_2026-07.md",
-     "  #<PR>: after setup the four routes that move the network (connect, ap-only, disconnect,\n"
+     "  #1887: after setup the four routes that move the network (connect, ap-only, disconnect,\n"
      "  forget) take the bearer alone (F334, F345), and the overflow holds\n"),
     ("firmware/LESSONS_LEARNED.md",
-     "  #<PR>: after setup a WAP's Forget Wi-Fi takes the API token, F345, so no\n"
+     "  #1887: after setup a WAP's Forget Wi-Fi takes the API token, F345, so no\n"
      "  landing session sends it; the door it reopens is still first-come.)*\n"),
     ("firmware/LESSONS_LEARNED.md",
-     "  *(amended 2026-10-27, #<PR>: after setup a WAP's Forget Wi-Fi takes the API\n"
+     "  *(amended 2026-10-27, #1887: after setup a WAP's Forget Wi-Fi takes the API\n"
      "  token, F345)*.\n"),
     ("firmware/LESSONS_LEARNED.md",
      "  lockout (the third and second rounds' bullets above); F334 and F345 put\n"
@@ -8345,7 +8345,7 @@ MUST_FAIL_IN = [
      "//   * The network moves on the bearer alone (F334, F345): after setup the\n"
      "//     Wi-Fi card's Connect and Forget take the API token, so a session-only\n"),
     ("docs/audit/repo_todo_sweep_2026-09.md",
-     "  user and security), with F334; done (2026-10-26, #<PR>):* POST\n"
+     "  user and security), with F334; done (2026-10-26, #1887):* POST\n"
      "  /api/wifi/forget takes the bearer alone after setup\n"
      "  (`api_auth_check_bearer()`)."),
     ("docs/audit/repo_todo_sweep_2026-09.md",
@@ -8404,7 +8404,7 @@ MUST_FAIL_IN = [
      " *   WRITE_ENC + WRITE_AUTHEN. NimBLE rejects unbonded peers.\n"
      " * - CREDS has no READ property at all. A bonded peer can SET credentials\n"),
     ("docs/audit/repo_todo_sweep_2026-09.md",
-     "  user and security); done (2026-10-26, #<PR>):* after first-boot setup, the\n"
+     "  user and security); done (2026-10-26, #1887):* after first-boot setup, the\n"
      "  network the WAP joins moves on the bearer alone, on every interface, the\n"
      "  SoftAP recovery portal included.\n"),
     ("docs/audit/repo_todo_sweep_2026-09.md",

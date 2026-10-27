@@ -131,7 +131,7 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   GET keeps write-only cannot be read through a broker the session names that way; host-tested. The
   QR hub-provision path still moves it on a scanned code, in a scan window the session can open with
   the pair token it mints (`GET /api/pair/token` takes the cookie), but only for a code in front of
-  the camera. (Since #<PR> the session buys less again: after setup the four routes that move the
+  the camera. (Since #1887 the session buys less again: after setup the four routes that move the
   network (F334, F345), the two reboot routes (F361), the vault key (F335) and the Bluetooth and
   mesh pairing confirms (F346) take the bearer alone, so the reboot and the Wi-Fi change in the
   list above are no longer the session's (its firmware install still restarts the unit, only into
@@ -181,7 +181,7 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   taking it away needs no radio: any landing session can turn the WAP's Bluetooth
   off, a saved setting that restarts and the 10 s hold keep, or delete the phone's bond.
   `magic_pairing.md` §3.7 has the whole posture.) (Amended 2026-10-27 by the owner-authority PR,
-  #<PR>: the four routes that move the network over HTTP take the bearer alone (Disconnect
+  #1887: the four routes that move the network over HTTP take the bearer alone (Disconnect
   and Forget in every mode, Connect and AP-only after setup; F334, F345), and the overflow holds
   that bearer with every untracked address, the owner's among them, so the browser's move waits
   until that host stops and then takes the API token pasted into the sign-in; last, for a host
@@ -189,7 +189,7 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   not on. A host's peer no longer bonds through its session: the bond's confirm and a Passkey
   Entry's digits take the bearer, F346.) Clients behind one address share a backoff, and a
   deliberate LAN denial stays open (a landing session's `POST /api/reboot`, ARP spoofing, httpd's
-  connection purge; `magic_pairing.md` §3.7; since #<PR>, sweep F361, `POST /api/reboot` and `POST
+  connection purge; `magic_pairing.md` §3.7; since #1887, sweep F361, `POST /api/reboot` and `POST
   /api/safe-mode/retry` take the bearer alone). Host-tested, not run on a device. The wildcard
   `Access-Control-Allow-Origin` is unchanged.)*
 

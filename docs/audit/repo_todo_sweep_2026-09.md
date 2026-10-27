@@ -875,7 +875,7 @@ so — see D2 below.)
   those routes are behind `api_auth_check()`, which takes a landing
   session's cookie before the bearer, F346; the cookie path asks the Host,
   the bearer path does not)* *(amended 2026-10-27, the owner-authority PR,
-  #<PR>: not all of them; the routes `api_auth.h` names, the pairing QR,
+  #1887: not all of them; the routes `api_auth.h` names, the pairing QR,
   the vault key, the two pairing confirms, Disconnect and Forget in every
   mode, Connect and AP-only after setup, and the two reboot routes, take
   `api_auth_check_bearer()`, the bearer alone, which asks no Host
@@ -890,7 +890,7 @@ so — see D2 below.)
   and stop) as well as `/api/wifi/connect`. F334, still open, asks whether
   Wi-Fi changes after setup take a bearer (its entry names connect and
   ap-only, not the scan) *(amended 2026-10-27, the owner-authority PR,
-  #<PR>: F334 is done; after setup a carried pair token no longer works on
+  #1887: F334 is done; after setup a carried pair token no longer works on
   connect, ap-only or the scan's start, since connect and ap-only take the
   bearer alone and the start answers `404`)*; the scan's status and stop
   take the pair token
@@ -926,7 +926,7 @@ so — see D2 below.)
   browser that does not count the scheme in the site, as Chromium does, its
   requests still carry the session cookie and it can write blind with the
   owner's session: a reboot, or any other write a session may make
-  *(amended 2026-10-27, the owner-authority PR, #<PR>: since F361 the two
+  *(amended 2026-10-27, the owner-authority PR, #1887: since F361 the two
   reboot routes take the bearer alone, and of a session's writes only the
   firmware install restarts the unit, and only into a newer signed
   image)*); a page
@@ -1467,7 +1467,7 @@ so — see D2 below.)
   flow; owed, if it ever opens wider (a code the camera need not see), the
   same question (a display-minted code could carry the password, or the WAP
   could refuse a host move with a stored password from a code). (Superseded
-  2026-10-26, #<PR>: F333 closes this road where it opens — the boot scan
+  2026-10-26, #1887: F333 closes this road where it opens — the boot scan
   asks the setup door's rule, the phone-session scan answers `404` after
   setup (F334), and Forget clears the stored login.) (The second
   review found this paragraph, LESSONS_LEARNED and the CHANGELOG calling the
@@ -1541,7 +1541,7 @@ so — see D2 below.)
   `wizard_logic.test.js` block tested F325's answer shape, so it was not
   ported. Not covered: a QR code shown to the camera (F333, the road F289's
   amendment names) and a broker link a host on the network answers for
-  (F334). Both decided 2026-10-26 (#<PR>): F333 closes the QR road where it
+  (F334). Both decided 2026-10-26 (#1887): F333 closes the QR road where it
   opens, and F334 moves the Wi-Fi onto the bearer after setup and keeps the
   plain link as posture.
 - [x] **F326 [code] canary-wap: the session cookie carries no `Secure` over
@@ -1760,7 +1760,7 @@ so — see D2 below.)
   *Decided (2026-10-19, under the maintainer's instruction to fix the
   remaining open items in best engineering practice and best value for the
   user and security), superseding F289's 'accepted as proximity-bound'; done
-  (2026-10-26, #<PR>):* three changes.
+  (2026-10-26, #1887):* three changes.
   - (1) The camera's boot scan follows the setup door's rule through
     `provisioning_logic::keyless_join_open()`, the one predicate both keyless
     joins ask. A standalone unit no longer scans; until now any code held to
@@ -1836,7 +1836,7 @@ so — see D2 below.)
   not the link, and a body that carries `password` passes the gate.
   *Decided (2026-10-19, under the maintainer's instruction to fix the
   remaining open items in best engineering practice and best value for the
-  user and security); done (2026-10-26, #<PR>):* after first-boot setup, the
+  user and security); done (2026-10-26, #1887):* after first-boot setup, the
   network the WAP joins moves on the bearer alone over HTTP, on every
   interface, the SoftAP recovery portal included (a peer already bonded
   through the pairing confirm or a passkey still moves it over the
@@ -1933,7 +1933,7 @@ so — see D2 below.)
   follow-up (#1832).
   *Decided (2026-10-19, under the maintainer's instruction to fix the
   remaining open items in best engineering practice and best value for the
-  user and security); done (2026-10-26, #<PR>).* `POST /api/vault/key` takes
+  user and security); done (2026-10-26, #1887).* `POST /api/vault/key` takes
   the bearer alone (`api_auth_check_bearer()`, the pairing QR's gate), never
   the landing page's session. The recipient key decides who can open every
   frame sealed from then on, so a session must not name it: the rule #1835
@@ -2017,7 +2017,7 @@ so — see D2 below.)
   BOOT hold keeps the key and token rows, so it may not free the space; the
   sure recovery is a clean install (full erase), which also erases the
   identity key, so a hub that knew the unit sees a new one. Done (2026-10-26,
-  #<PR>):
+  #1887):
   `setup()`'s storage-failure "HALTING" line and its "should still serve
   HTTP" comment are replaced by the posture per build (F360's line for an
   identity key that cannot be used still says "HALTING", and halts), both lines keeping the `[!!]
@@ -3883,7 +3883,7 @@ so — see D2 below.)
     hold and a fresh iPhone setup): on a page the landing session signed in,
     `connectWithToken()` still takes the cookie's word for a pasted token.
     The owner-authority PR (F334, F335, F346) revisits this copy once that
-    box checks the token itself (`credentials: 'omit'`). (Since #<PR>, that
+    box checks the token itself (`credentials: 'omit'`). (Since #1887, that
     PR: `connectWithToken()` sends the pasted token with `credentials:
     'omit'`, and `tapContendedText()` says to paste the token from the
     recovery kit if the refusal keeps happening, ahead of the 10 s hold.)
@@ -5020,7 +5020,7 @@ so — see D2 below.)
     - Forget Wi-Fi takes `api_auth_check()`, which any landing session
       passes (F345), so a re-armed first-come door is not the owner's act;
       the bonded lane is no owner gate either (F346) *(amended 2026-10-27,
-      the owner-authority PR, #<PR>: since F345's fix Forget takes the bearer
+      the owner-authority PR, #1887: since F345's fix Forget takes the bearer
       alone, and since F346's so does the bond's confirm)*: `improv_core.h` (both
       copies), the WAP's wipe comments, `ble_improv.cpp`, the README,
       `magic_pairing.md`'s table rows, `bluetooth_api.h`, `ble_console.h`,
@@ -5509,7 +5509,7 @@ so — see D2 below.)
   that door. From code and a host probe of `wifi_store.h`; not run on a
   device.
   *Amended a seventh time 2026-10-27 (the owner-authority PR's merge of
-  #1884, #<PR>):* the browser's move takes the token and waits for that
+  #1884, #1887):* the browser's move takes the token and waits for that
   host to stop. Since F334, after first-boot setup `POST /api/wifi/connect`
   and `/api/wifi/ap-only` take the bearer alone (`wifi_change_authorize()`
   returns `api_auth_check_bearer()`), and since F345 so does
@@ -5543,7 +5543,7 @@ so — see D2 below.)
     session, which also clears the RAM table, and with it the guess budget:
     about 30 guesses a minute from any number of addresses between reboots,
     more for a guesser that reboots the unit every few seconds (third round,
-    below; closed by F361, #<PR>: both routes take the bearer alone);
+    below; closed by F361, #1887: both routes take the bearer alone);
   - ARP spoofing;
   - httpd's LRU purge;
   - clients behind one address share a backoff;
@@ -5591,7 +5591,7 @@ so — see D2 below.)
   token's entropy stays the bound, and holding the guess budget across a
   reboot (the bearer for the reboot routes, or a persisted or rate-limited
   reset) would be its own item: F361, filed and decided by the
-  owner-authority PR (#<PR>; both routes take the bearer alone). Tests added to
+  owner-authority PR (#1887; both routes take the bearer alone). Tests added to
   `test_receipt_grant.cpp` (`test_qr_bearer_shapes`, through the pairing QR,
   which is `api_auth_check_bearer()`, the gate behind every admin route):
   a `Basic` or lowercase `bearer` header and one too long for the 128-byte
@@ -6283,7 +6283,7 @@ so — see D2 below.)
   (`magic_pairing.md` §2.2 and §8 now say so). From code; not probed.
   *Decided (2026-10-19, under the maintainer's instruction to fix the
   remaining open items in best engineering practice and best value for the
-  user and security), with F334; done (2026-10-26, #<PR>):* POST
+  user and security), with F334; done (2026-10-26, #1887):* POST
   /api/wifi/forget takes the bearer alone in every mode
   (`api_auth_check_bearer()`; its wrapper asks nothing about setup). The
   landing page's session can no longer wipe
@@ -6498,7 +6498,7 @@ so — see D2 below.)
   amendment). From code; not probed.
   *Decided (2026-10-19, under the maintainer's instruction to fix the
   remaining open items in best engineering practice and best value for the
-  user and security); done (2026-10-26, #<PR>).* Reading the codes was not the
+  user and security); done (2026-10-26, #1887).* Reading the codes was not the
   path. A Numeric Comparison's six digits and the mesh code are computed by
   both ends; the step that grants is the confirm. Two confirms were session
   POSTs:
@@ -6716,7 +6716,7 @@ so — see D2 below.)
   (`test_mqtt_reinit`'s login-clear tests, `test_provisioning_logic`'s
   predicate table, and `test_docs_claims.py`'s pins that the hub branch names
   no `mc.pass` and that Forget calls `login_clear()`). No code, check or doc
-  change here. Done (2026-10-26, #<PR>): recorded, with F333's road
+  change here. Done (2026-10-26, #1887): recorded, with F333's road
   closed in the same PR.
 - [x] **F349 [decision] canary-wap: `handle_config_post()` wipes no copy of
   the stored broker password.** The handler's `config_load()` copy (`c`) and
@@ -6754,7 +6754,7 @@ so — see D2 below.)
   without the password for the four sketch readers that use only `enabled`,
   `host` and `port` (`handle_status`, `handle_fleet`, `handle_help_qr`,
   `mdns_sync_broker_txt()`), which ends the public route's copy; recorded,
-  not done. Done (2026-10-26, #<PR>): the comment beside `before` in
+  not done. Done (2026-10-26, #1887): the comment beside `before` in
   `handle_config_post()` says why nothing there is wiped, and `docs/security/SECURITY_MODEL.md` ("Physical
   extraction and the flash-encryption default") says where the broker
   password lives at rest and in RAM while it is stored, and states the rule
@@ -6943,7 +6943,7 @@ so — see D2 below.)
   `nvs_load_token()` answer Loaded, Absent or Refused, as F360 did for the key
   (reuse `stored_key_length()`'s IDF probe shape), and close F365 in the same
   PR, with a test that a rotated token survives a failed read. Filed by the
-  owner-authority PR (#<PR>), allocated by the network-authority decisions
+  owner-authority PR (#1887), allocated by the network-authority decisions
   (2026-10-20).
 - [ ] **F354 [code] The flagship's BOOT tap still goes to the first asker.**
   The WAP's receipt hands its tap only to the sole address asking for it
@@ -7432,7 +7432,7 @@ so — see D2 below.)
   `handle_reboot` already takes the bearer (`auth_gate()`). Found by the third
   review of the lockout PR (#1838), allocated to the network-authority
   decisions (2026-10-20).
-  *Decided and done (2026-10-26, #<PR>), under the maintainer's instruction to
+  *Decided and done (2026-10-26, #1887), under the maintainer's instruction to
   fix the remaining open items in best engineering practice and best value for
   the user and security, by F334's post-setup authority rule:* both wrappers
   are `api_auth_check_bearer()`, as Disconnect and Forget are (Connect and
@@ -11662,7 +11662,7 @@ so — see D2 below.)
   pairing mode, and by keeping the digits out of the health log. From NimBLE
   2.3.8 source and the host harness; not probed. Found by F171's security
   review (#1762).
-  *Note (2026-10-26, #<PR>):* its log half (keep the digits out of the health
+  *Note (2026-10-26, #1887):* its log half (keep the digits out of the health
   log) is done by F346; deleting Just Works bonds and refusing a passkey
   display outside pairing mode stay open here. Since F346 a Passkey Entry's
   digits also reach only a page holding the API token (`pin_hidden` to a
@@ -20759,7 +20759,7 @@ so — see D2 below.)
   verdict no longer offer the lane; they name the https re-pair and the
   WAP's own setup network. The lane's code (`FleetWiFiRollout.Path.ble`)
   stays until this is settled.
-  *(2026-10-27, the owner-authority PR's merge of #1884, #<PR>:)* the
+  *(2026-10-27, the owner-authority PR's merge of #1884, #1887:)* the
   browser's move named above now takes the API token after setup (F334),
   and the overflow holds that bearer with every untracked address, so it
   waits until the striking host stops (F343's seventh amendment). The lane,

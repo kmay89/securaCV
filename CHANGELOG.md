@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### canary-wap: after setup the API token alone moves its network over HTTP (a Bluetooth peer bonded through the pairing confirm or a passkey still moves it; a network joined before the update can stay saved), re-keys its vault, confirms a pairing and reboots it (the firmware install aside), and the sign-in checks a pasted token by itself; a failed provisioning says what the unit does (sweep F333, F334, F335, F336, F345, F346, F348, F349, F361, #<PR>)
+### canary-wap: after setup the API token alone moves its network over HTTP (a Bluetooth peer bonded through the pairing confirm or a passkey still moves it; a network joined before the update can stay saved), re-keys its vault, confirms a pairing and reboots it (the firmware install aside), and the sign-in checks a pasted token by itself; a failed provisioning says what the unit does (sweep F333, F334, F335, F336, F345, F346, F348, F349, F361, #1887)
 
 - **canary-wap: one dashboard sign-in, which checks a pasted token by itself
   (the owner-authority items' shared sign-in).** On a page holding the
@@ -1166,7 +1166,7 @@ owners updating from 2.4.16.
   Host question. F334, still open, asks whether Wi-Fi changes after setup take
   a bearer, so that the pair token serves only the first-boot wizard; its
   ledger entry names connect and ap-only, not the scan *(amended 2026-10-27,
-  the owner-authority PR, #<PR>, after 2.4.17: F334 is done; after setup
+  the owner-authority PR, #1887, after 2.4.17: F334 is done; after setup
   connect and ap-only take the bearer alone and the scan's start answers
   `404`, so after setup a carried pair token no longer works on connect,
   ap-only or the scan's start, though its status and stop still take one)*. And a
@@ -1238,7 +1238,7 @@ owners updating from 2.4.16.
   browser that does not count the scheme in the site, as Chromium does, its
   requests still carry the session cookie and it can write blind with the
   owner's session: a reboot, or any other write a session may make
-  *(amended 2026-10-27, the owner-authority PR, #<PR>, after 2.4.17: since
+  *(amended 2026-10-27, the owner-authority PR, #1887, after 2.4.17: since
   F361 the two reboot routes take the bearer alone, and of a session's
   writes only the firmware install restarts the unit, and only into a newer
   signed image)*); a page served over https at that name whose certificate warning
@@ -1510,7 +1510,7 @@ hold keeps; and the per-address lockout's ways out.
   leaves it alone: it can mint sessions until the owner's is evicted, and
   a host also in radio range can bond a Bluetooth peer of its own through
   its session and write the WAP back to a network it is on over the bonded
-  lane. (Amended by #<PR>, the owner-authority entries above, after
+  lane. (Amended by #1887, the owner-authority entries above, after
   2.4.17: since F334 that move takes the API token after setup, and
   `api_auth_check_bearer()` answers an address the overflow holds `429`
   before it compares anything, so the browser waits with every other
@@ -1808,7 +1808,7 @@ hold keeps; and the per-address lockout's ways out.
   passes (F345), and a landing session can bond a peer to the WAP's
   Bluetooth lane (F346), so the WAP's door and wipe comments,
   `improv_core.h`, the README and `magic_pairing.md` no longer call a
-  re-armed door, or the lane, the owner's alone. (Amended by #<PR>, the
+  re-armed door, or the lane, the owner's alone. (Amended by #1887, the
   owner-authority entries above, after 2.4.17: Forget Wi-Fi takes the API
   token alone, F345, and so does the bond's confirm, F346, so after 2.4.17
   neither is a landing session's; a bond a session confirmed on 2.4.17 or
@@ -2305,7 +2305,7 @@ hold keeps; and the per-address lockout's ways out.
   guess budget, so a guesser that reboots the unit every few seconds gets
   more than the 30 a minute the table allows between reboots; ARP
   spoofing, httpd's connection purge; `magic_pairing.md` §3.7). (Amended by
-  #<PR>, the owner-authority entries above, after 2.4.17: since F361 both
+  #1887, the owner-authority entries above, after 2.4.17: since F361 both
   reboot routes take the API token alone, so no landing session reboots the
   unit; a session's firmware install still restarts it, only
   into a newer signed image.) Found on
@@ -2455,7 +2455,7 @@ hold keeps; and the per-address lockout's ways out.
   seconds of guessing gets about 37 a minute if the unit is back on the
   LAN 45 s later, about 100 at 10 s, about 155 at 5 s (the WAP's boot time
   is not measured; the flagship's reboot needs the bearer). (Amended by
-  #<PR>, the owner-authority entries above, after 2.4.17: since F361 the
+  #1887, the owner-authority entries above, after 2.4.17: since F361 the
   WAP's two reboot routes take the API token alone too, so no landing
   session reboots it; a session's firmware install still restarts it, only
   into a newer signed image.)
@@ -2690,7 +2690,7 @@ nothing ran on a device or in a browser.
   still re-points the broker with the stored password — behind the pair
   token, which the session can mint (`GET /api/pair/token` takes the
   cookie), and a code in front of the camera, which it cannot; named in
-  the ledger. (Amended by #<PR>, the owner-authority entries above, after
+  the ledger. (Amended by #1887, the owner-authority entries above, after
   2.4.17: F333 closes that road where it opens. After setup `POST
   /api/wifi/qr-scan` answers `404` (F334), so a pair token a session mints
   starts no scan; the camera's boot scan asks the Bluetooth setup door's
