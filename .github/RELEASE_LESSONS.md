@@ -100,17 +100,26 @@ any platform.
   `canary-local/firmware/<tag>/<file>`. A channel lands whole or not at all; a
   release not cut yet (the push deploy that merges a version bump runs before
   the tag exists) or one mid-upload is a `::warning::`, and a transport failure
-  fails the deploy so the last good site stays live. `flash-core.js`
-  `fetchReleaseAsset` reads that copy by the URL's own tag and file name: only
-  the copy on a public host, the copy and then the release URL on a local or
-  LAN host. The signed manifests are never rewritten, so the SHA-256 and
-  Ed25519 checks bind the same bytes as before. Because a release made with
-  the GITHUB_TOKEN fires no event, `firmware-release.yml`,
+  fails the deploy so the last good site stays live (a body cut off
+  mid-read is retried like any transport error). `flash-core.js`
+  `fetchReleaseAsset` reads that copy by the URL's own tag and file name, and
+  nothing else, on every http(s) host: a fallback to the release URL, even on
+  loopback, could never succeed, and would only turn the copy's honest 404
+  into a false "connection problem". `flash.html`'s CSP dropped `github.com`
+  and `*.githubusercontent.com` for the same reason. A 404 from the copy says
+  *this site's copy* of the release is not available yet, never that the
+  release was not cut: the release is live for some minutes before the
+  redeploy that copies it lands. The signed manifests are never rewritten,
+  so the SHA-256 and Ed25519 checks bind the same bytes as before. Because a
+  release made with the GITHUB_TOKEN fires no event, `firmware-release.yml`,
   `flasher-release.yml` and `vision-model-release.yml` dispatch `pages.yml`
   (default branch) once they publish, with a warning, never a failure, if
-  that dispatch is refused. `canary-local/tests/flash_mirror_probe.mjs` serves
-  the page and a fixture mirror from one origin in Chromium and fails on any
-  request that leaves for github.com.
+  that dispatch is refused; the copy holds what that branch's `flash.json`
+  pins, plus `fw-dev-latest`, and the run summary says so rather than naming
+  a tag it may not carry. `canary-local/tests/flash_mirror_probe.mjs` serves
+  the page and a fixture mirror from one origin in Chromium, from a public
+  host and from loopback, and fails on any request that leaves for
+  github.com.
 - **Applies to:** any page that fetches a release asset from a browser (a
   release download URL is for people and native clients, never for a page's
   `fetch`), and any test of a network path: a stubbed `fetch` proves the code

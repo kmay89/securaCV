@@ -7,18 +7,21 @@
 // called every product unavailable (.github/RELEASE_LESSONS.md, 2026-10-27).
 // pages.yml now copies the pinned releases beside the pages, at
 // firmware/<tag>/<file> (tools/mirror_release.py), and flash-core.js
-// fetchReleaseAsset reads that copy first. flash.test.js pins the mapping and
-// that flash.js / we2-flash.js route every release read through it; this
-// probe proves it in Chromium, with flash.html's generated CSP enforced:
+// fetchReleaseAsset reads that copy and nothing else. flash.test.js pins the
+// mapping and that flash.js / we2-flash.js route every release read through
+// it; this probe proves it in Chromium, with flash.html's generated CSP
+// enforced:
 //
-//   · a PUBLIC host (lab.example.test, mapped to loopback): the stable
-//     manifest, one of its images, the Vision model manifest and its model,
-//     and the dev channel's manifest and an image it names under another tag
-//     all come from the page's own origin, each image's SHA-256 matches its
-//     manifest, a release that is not mirrored answers the mirror's 404, and
-//     not one request leaves for github.com or its asset host;
-//   · a LOOPBACK page (127.0.0.1): the mirror answers when it has the file,
-//     and only when it does not is the release URL tried, after the mirror.
+//   · a PUBLIC host (lab.example.test, mapped to loopback) and a LOOPBACK
+//     page (127.0.0.1) alike: the stable manifest, one of its images, the
+//     Vision model manifest and its model, and the dev channel's manifest and
+//     an image it names under another tag all come from the page's own
+//     origin, each image's SHA-256 matches its manifest, a release that is not
+//     mirrored answers the mirror's 404, and not one request leaves for
+//     github.com or its asset host. The loopback page is the one that used to
+//     fall back to the release URL, which no browser can read from any
+//     origin; the policy names neither host, so a fallback that came back
+//     would show here as a request or a CSP violation.
 //
 // The mirror served here is a fixture built in memory (the release's real
 // layout, made-up bytes): the probe proves where the page looks, not what a
@@ -200,52 +203,35 @@ const digests = (got) => {
 };
 const mirrorPaths = [...MIRROR.keys()];
 const MISSING_PATH = at("fw-v0.0.0-probe", "manifest-flash.json");
-const MISSING_REL = `https://github.com/${catalog.repo}/releases/download/fw-v0.0.0-probe/manifest-flash.json`;
-// Every error but the deliberate miss: the mirror's 404 for it (both pages)
-// and, on loopback, the refused fallback to the release URL.
+// Every error but the deliberate miss: the mirror's 404 for it.
 const unexpected = (errors, origin) => errors
-  .filter((e) => !(/Failed to load resource/.test(e.text) && (e.url === origin + MISSING_PATH || e.url === MISSING_REL)))
+  .filter((e) => !(/Failed to load resource/.test(e.text) && e.url === origin + MISSING_PATH))
   .map((e) => `${e.text}${e.url ? " @ " + e.url : ""}`);
 try {
-  // ── a public host: the mirror, and only the mirror ────────────────────────
-  served.length = 0;
-  const pub = await openPage(PUBLIC);
-  const got = digests(await readReleases(pub.page, product.id, DEV_TAG));
-  for (const k of ["image", "model", "dev"]) {
-    if (got[k].want !== got[k].got) fail(`public host: ${k} SHA-256 ${got[k].got} != manifest ${got[k].want}`);
+  // ── a public host, then a loopback page: the copy, and only the copy ─────
+  for (const [label, origin] of [["public host", PUBLIC], ["loopback", `http://127.0.0.1:${port}`]]) {
+    served.length = 0;
+    const { page, errors } = await openPage(origin);
+    const got = digests(await readReleases(page, product.id, DEV_TAG));
+    for (const k of ["image", "model", "dev"]) {
+      if (got[k].want !== got[k].got) fail(`${label}: ${k} SHA-256 ${got[k].got} != manifest ${got[k].want}`);
+    }
+    if (got.image.size !== image.length) fail(`${label}: image is ${got.image.size} bytes, not ${image.length}`);
+    if (!got.dev.tagged) fail(`${label}: the dev manifest's image did not name the dev tag`);
+    for (const p of mirrorPaths) {
+      if (!served.includes(p)) fail(`${label}: ${p} was never read from the page's own origin`);
+    }
+    if (got.missing.status !== 404) {
+      fail(`${label}: an unmirrored release answered ${JSON.stringify(got.missing)}, not the mirror's 404`);
+    }
+    if (!served.includes(MISSING_PATH)) fail(`${label}: the unmirrored release was not looked for in the mirror`);
+    if (offsite.length) fail(`${label}: requests left the origin:\n  ${offsite.join("\n  ")}`);
+    if (got.csp.length) fail(`${label}: CSP violations:\n  ${got.csp.join("\n  ")}`);
+    const pageErrors = unexpected(errors, origin);
+    if (pageErrors.length) fail(`${label}: page errors:\n  ` + pageErrors.join("\n  "));
+    console.log(`${label}: ${mirrorPaths.length} mirror files read same-origin, ` +
+      "SHA-256 matches, unmirrored release → 404, 0 off-origin requests");
   }
-  if (got.image.size !== image.length) fail(`public host: image is ${got.image.size} bytes, not ${image.length}`);
-  if (!got.dev.tagged) fail("public host: the dev manifest's image did not name the dev tag");
-  for (const p of mirrorPaths) {
-    if (!served.includes(p)) fail(`public host: ${p} was never read from the page's own origin`);
-  }
-  if (got.missing.status !== 404) {
-    fail(`public host: an unmirrored release answered ${JSON.stringify(got.missing)}, not the mirror's 404`);
-  }
-  if (!served.includes(MISSING_PATH)) fail("public host: the unmirrored release was not looked for in the mirror");
-  if (offsite.length) fail(`public host: requests left the origin:\n  ${offsite.join("\n  ")}`);
-  if (got.csp.length) fail(`public host: CSP violations:\n  ${got.csp.join("\n  ")}`);
-  const pubErrors = unexpected(pub.errors, PUBLIC);
-  if (pubErrors.length) fail("public host: page errors:\n  " + pubErrors.join("\n  "));
-  console.log(`public host: ${mirrorPaths.length} mirror files read same-origin, ` +
-    "SHA-256 matches, unmirrored release → 404, 0 off-origin requests");
-
-  // ── a loopback page: mirror first, the release URL only on a miss ─────────
-  served.length = 0;
-  const loop = await openPage(`http://127.0.0.1:${port}`);
-  const local = digests(await readReleases(loop.page, product.id, DEV_TAG));
-  for (const k of ["image", "model", "dev"]) {
-    if (local[k].want !== local[k].got) fail(`loopback: ${k} SHA-256 ${local[k].got} != manifest ${local[k].want}`);
-  }
-  if (offsite.length !== 1 || offsite[0] !== MISSING_REL) {
-    fail(`loopback: expected exactly one fallback (${MISSING_REL}), got:\n  ${offsite.join("\n  ")}`);
-  }
-  if (!served.includes(MISSING_PATH)) fail("loopback: the release URL was tried without asking the mirror first");
-  if (!local.missing.threw) fail(`loopback: the refused fallback should surface as a network error, got ${JSON.stringify(local.missing)}`);
-  if (local.csp.length) fail(`loopback: CSP violations:\n  ${local.csp.join("\n  ")}`);
-  const loopErrors = unexpected(loop.errors, `http://127.0.0.1:${port}`);
-  if (loopErrors.length) fail("loopback: page errors:\n  " + loopErrors.join("\n  "));
-  console.log("loopback: mirror answered every mirrored file; the one miss fell back to the release URL, after the mirror");
 
   console.log("FLASH_MIRROR_PROBE_OK");
   process.exit(0);

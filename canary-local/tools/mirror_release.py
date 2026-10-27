@@ -22,7 +22,7 @@ For each one: the manifest, byte for byte (the page's Ed25519 check reads it
 unchanged), and every file it lists, each checked against the manifest's
 SHA-256 and size. They land at <site>/firmware/<tag>/<file>, where <tag> and
 <file> come from each URL itself (a dev manifest may name images under the
-real fw-v*-dev.* tag). flash-core.js `releaseFetchPlan` reads that same path,
+real fw-v*-dev.* tag). flash-core.js `releaseFetchUrl` reads that same path,
 and scripts/tests/test_pages_release_mirror.py holds the two layouts to each
 other through node.
 
@@ -30,13 +30,15 @@ A channel is published whole or not at all. These skip it with a ::warning::
 and leave the deploy green, because the deploy must survive them:
 
   * the release does not exist yet: the push deploy that merges a version bump
-    runs BEFORE firmware-release.yml cuts the tag. The page then says the
-    pinned release is missing, which is true, and firmware-release.yml /
-    flasher-release.yml / vision-model-release.yml dispatch pages.yml again
-    once they publish;
+    runs BEFORE firmware-release.yml cuts the tag. The page then says this
+    site's copy of the pinned release is not available (never that the
+    release was not cut: it cannot see the release itself), and
+    firmware-release.yml / flasher-release.yml / vision-model-release.yml
+    dispatch pages.yml again once they publish;
   * an asset is missing, a SHA-256 or size disagrees with its manifest, or a
     manifest is unreadable: a release mid-upload, or a broken one. Nothing of
-    that channel is published; the next dispatch tries again.
+    that channel is published (the page says the same); the next dispatch
+    tries again.
 
 A transport failure that outlasts the retries, or a catalog this script cannot
 read the pins from, exits 1. Failing the deploy keeps the last good site, and
@@ -51,6 +53,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -256,8 +259,11 @@ class GitHubReleases:
                 if err.code < 500 and err.code != 429:
                     raise TransportError(f"{url}: HTTP {err.code}") from None
                 last = f"HTTP {err.code}"
-            except (urllib.error.URLError, TimeoutError, ConnectionError) as err:
-                last = str(getattr(err, "reason", err))
+            except (http.client.HTTPException, OSError) as err:
+                # A body cut off mid-read is http.client.IncompleteRead, an
+                # HTTPException and not an OSError; URLError, a timeout, a
+                # reset and ssl.SSLError are all OSErrors.
+                last = str(getattr(err, "reason", err)) or type(err).__name__
             if attempt + 1 < self.attempts:
                 self.sleep(2 * 3 ** attempt)
         raise TransportError(f"{url}: {last} after {self.attempts} attempts")

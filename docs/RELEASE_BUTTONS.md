@@ -85,9 +85,10 @@ release from the site's own copy of it (a browser cannot download a GitHub
 release asset at all; see
 [The flasher shows every product as unavailable](#the-flasher-shows-every-product-as-unavailable)),
 so the last step dispatches **pages** on the default branch, and the deploy
-mirrors the new release into the site. A failed dispatch is a warning and a
-line in the run summary, not a failed release: press **Actions → pages → Run
-workflow** to publish the copy by hand.
+copies into the site the releases that branch's `flash.json` pins (the new
+one, once the version bump naming it is merged there), plus `fw-dev-latest`.
+A failed dispatch is a warning and a line in the run summary, not a failed
+release: press **Actions → pages → Run workflow** to publish the copy by hand.
 
 **Don't:** use it if you haven't bumped `FIRMWARE_VERSION` / `CANARY_FW_VERSION`
 to match — the version-string guard greps each binary and fails closed. And it
@@ -126,9 +127,11 @@ undone in two steps (`backoffice/src/migrations/README.md`).
 
 Rebuilds *only* the browser-flasher factory images and `manifest-flash.json`, and
 attaches them to a release. Pick a `channel`. Either channel ends by dispatching
-**pages**, so the site's copy of the release (what the hosted browser flasher
-actually reads) is replaced with what was just uploaded; the **Vision Model
-Asset** workflow does the same after it attaches a model.
+**pages**, which re-copies into the site (what the hosted browser flasher
+actually reads) the releases the default branch's `flash.json` pins, plus
+`fw-dev-latest`; the **Vision Model Asset** workflow does the same after it
+attaches a model. So an upload to one of those replaces the site's copy, and
+a rebuild of an older tag that branch no longer pins never reaches the site.
 
 **`channel: release`** — an **existing** `fw-v*` tag.
 
@@ -387,12 +390,15 @@ the browser flasher on GitHub Pages fetched the release straight from
 github.com, and no browser can: the `/releases/download/` redirect and the
 asset host both answer without a CORS header, so every product read
 unavailable on every visit. The release is now mirrored into the site by
-`pages.yml` (`canary-local/firmware/<tag>/`), and the page reads that copy. If
-the hosted page says the pinned release is missing, open the newest **pages**
-run: its summary says, per channel, whether the mirror landed or why it was
-skipped (the release not cut yet, an asset missing, a checksum that disagrees
-with the manifest). **Fix:** once the release exists, **Actions → pages → Run
-workflow**. (The desktop apps fetch natively and never had this problem.)
+`pages.yml` (`canary-local/firmware/<tag>/`), and the page reads only that
+copy. If the hosted page says *this site's copy* of the pinned release isn't
+available, open the newest **pages** run: its summary says, per channel,
+whether the mirror landed or why it was skipped (the release not cut yet, an
+asset missing, a checksum that disagrees with the manifest). Right after a
+release it is expected until that redeploy lands: the release workflow
+dispatches it as its last step. **Fix:** once the release exists, **Actions →
+pages → Run workflow**. (The desktop apps fetch natively and never had this
+problem.)
 
 The catalog pins an **exact** release tag (`gen_flash.py`
 `release_download_base()` — `/latest/` is unsafe because app releases share the

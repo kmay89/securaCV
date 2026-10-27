@@ -17,7 +17,7 @@
 // canvas and are never stored or sent anywhere (this page fetches nothing
 // but its own JSON and, when you ask, the pinned model: the project's GitHub
 // release, read from this site's same-origin copy of it, since a browser
-// cannot fetch the release URL itself — flash-core.js releaseFetchPlan).
+// cannot fetch the release URL itself — flash-core.js releaseFetchUrl).
 // Day-to-day aiming stays boxes-only over MQTT.
 //
 // Same failure posture as the ESP32 flow: every error names the fix, and
@@ -315,7 +315,7 @@ function phaseModuleConnected(ctx, s) {
     try {
       // Both reads go through the site's mirror of the release (a bare fetch
       // of the github.com URL is refused by every browser: no CORS header).
-      // The SHA-256 and signature checks below bind the bytes either way.
+      // The SHA-256 and signature checks below bind the bytes to the release.
       const fromRelease = (url, init) =>
         fetchReleaseAsset(url, { repo: ctx.catalog && ctx.catalog.repo, init });
       const man = await fromRelease(m.manifest_url, { cache: "no-store" }).then((r) => {

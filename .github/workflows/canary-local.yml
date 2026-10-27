@@ -998,9 +998,9 @@ jobs:
       - name: Flash mirror probe — the flasher reads its release from its own origin (no github.com fetch a browser would refuse)
         # pages.yml mirrors the pinned releases into the site because a browser
         # cannot read a github.com release asset (no CORS header). Served from
-        # one origin with a fixture mirror: on a public host every manifest and
-        # image comes from that origin and nothing leaves it; on loopback the
-        # release URL is tried only after the mirror misses.
+        # one origin with a fixture mirror: on a public host and on loopback
+        # alike every manifest and image comes from that origin, a release it
+        # does not carry answers its 404, and nothing leaves it.
         run: node canary-local/tests/flash_mirror_probe.mjs
       - name: Workshop probe — the configurator drives the real catalog
         run: node canary-local/tests/workshop_probe.mjs

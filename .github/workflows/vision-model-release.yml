@@ -338,21 +338,25 @@ jobs:
       # upload made with the GITHUB_TOKEN fires no event that would redeploy
       # it. When firmware-release.yml chained this run it redeploys again once
       # it finishes (the pages group keeps only the newest); this dispatch is
-      # what covers a run pressed by hand to repair a release's model.
-      - name: Redeploy the site so the browser flasher mirrors this model
+      # what covers a run pressed by hand to repair a release's model, when
+      # that release is the one the default branch's flash.json pins (the
+      # mirror carries no other tag's model).
+      - name: Redeploy the site so the browser flasher's copy of the pinned releases is current
         if: ${{ (success() || failure()) && steps.attach.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           REF: ${{ github.event.repository.default_branch || 'main' }}
-          TAG: ${{ steps.tag.outputs.tag }}
         run: |
           # Never a failed release over this: the release is published either
           # way, and the next deploy (any main push touching canary-local, or
-          # Actions → pages → Run workflow) mirrors it too.
+          # Actions → pages → Run workflow) refreshes the copy too. The copy
+          # holds the releases flash.json on REF pins, plus fw-dev-latest: a
+          # tag REF does not pin (an older fw-v* rebuilt) is not in it, so
+          # these lines name no tag.
           if gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref "$REF"; then
-            echo "Dispatched pages.yml on ${REF}: the browser flasher's same-origin mirror picks up ${TAG}."
-            echo "- Site redeploy dispatched (\`pages.yml\` on \`${REF}\`), so the browser flasher mirrors \`${TAG}\`." >> "$GITHUB_STEP_SUMMARY"
+            echo "Dispatched pages.yml on ${REF}: the browser flasher's same-origin mirror carries the releases flash.json pins there, plus fw-dev-latest."
+            echo "- Site redeploy dispatched (\`pages.yml\` on \`${REF}\`); the mirror carries the releases \`flash.json\` pins there, plus \`fw-dev-latest\`." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "::warning::could not dispatch pages.yml — the browser flasher on GitHub Pages serves ${TAG} only after the next site deploy. Run Actions → pages → Run workflow (on ${REF}) to publish it now."
-            echo "- ⚠️ Site redeploy NOT dispatched: the browser flasher on GitHub Pages serves \`${TAG}\` only after the next deploy (Actions → pages → Run workflow)." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::could not dispatch pages.yml — the browser flasher on GitHub Pages keeps its current copy of the releases flash.json pins on ${REF} until the next site deploy. Run Actions → pages → Run workflow (on ${REF}) to refresh it now."
+            echo "- ⚠️ Site redeploy NOT dispatched: the browser flasher on GitHub Pages keeps its current copy of the pinned releases until the next deploy (Actions → pages → Run workflow on \`${REF}\`)." >> "$GITHUB_STEP_SUMMARY"
           fi

@@ -301,7 +301,8 @@ firmware-release.yml (fw-v* tag)
 - The flasher catalog (`flash.json`) supplies chips + human copy and is honest
   even before any release exists; the release manifest (`manifest-flash.json`)
   supplies the actual binaries. If no release is published yet, the page says
-  so and points to **Advanced → flash a local file**.
+  the release is not available (on an http(s) page, that this site's copy of
+  it is not) and points to **Advanced → flash a local file**.
 
 ### Where the page reads the release from (the same-origin mirror)
 
@@ -329,36 +330,54 @@ So the site carries its own copy of the releases it pins:
   SHA-256 and size, and a channel lands whole or not at all. A release that
   does not exist yet (the push deploy that merges a version bump runs before
   `firmware-release.yml` cuts the tag), or one mid-upload, is skipped with a
-  `::warning::` and the deploy goes on: the page then says the pinned release
-  is missing, which is true. A transport failure that outlasts the retries
-  fails the deploy, which leaves the last good site, and its copy, live.
+  `::warning::` and the deploy goes on: the page then says *this site's copy*
+  of the pinned release is not available, which is true, and never that the
+  release was not cut (it cannot see the release itself). A transport failure
+  that outlasts the retries, a body cut off mid-read included, fails the
+  deploy, which leaves the last good site, and its copy, live.
 - **Kept current.** Every deploy mirrors afresh, and because a release made
   with the GITHUB_TOKEN fires no event, `firmware-release.yml`,
   `flasher-release.yml` and `vision-model-release.yml` dispatch `pages.yml` on
   the default branch once they publish (a refused dispatch is a warning and a
-  run-summary line, never a failed release).
+  run-summary line, never a failed release). What a deploy carries is what
+  the default branch's `flash.json` pins, plus `fw-dev-latest`: an older tag
+  rebuilt with **Flasher Factory Images**, or a Vision model repaired for one,
+  is not copied at all.
 - **How the page reads it.** `flash-core.js` `fetchReleaseAsset` maps a
   release URL to `firmware/<tag>/<file>` beside the page, by the URL's own tag
   and file name; the URLs in `flash.json` and inside the signed manifests are
-  never rewritten. On a public host (GitHub Pages, a custom domain) it reads
-  **only** that copy: the release URL would be refused anyway, and the
-  refusal would turn an honest "HTTP 404" into a false "connection problem".
-  On a local or LAN host (a dev server, a hub) it reads the copy first and
-  falls back to the release URL, which is what the page did before; a page
-  that is not on http(s) and a URL that is not the project's release (a
-  `?manifest=` override) are fetched exactly as given. `flash.js` (manifest
-  and factory image) and `we2-flash.js` (model manifest and model) read every
-  release asset through it.
+  never rewritten. On any http(s) page, public, loopback or LAN, it reads
+  **only** that copy. There is no fallback to the release URL: no browser can
+  read it from any origin, so a fallback would only turn the copy's honest
+  "HTTP 404" into a false "connection problem", and the page's CSP names no
+  GitHub host. A page that is not on http(s) and a URL that is not the
+  project's release (a `?manifest=` override) are fetched exactly as given.
+  `flash.js` (manifest and factory image) and `we2-flash.js` (model manifest
+  and model) read every release asset through it. When the copy answers an
+  HTTP error, the page says *this site's copy* of that release is not
+  available and that a release published moments ago appears once the site
+  redeploys; "no release is published yet" is kept for an answer from the
+  release host itself.
 - **Trust is unchanged.** The SHA-256 check, and the Ed25519 check once the
-  key is in force, run on the bytes that arrive, from whichever URL answered,
-  against the manifest as published.
+  key is in force, run on the bytes that arrive, from wherever they were
+  served, against the manifest as published.
 - **From a checkout.** `python3 -m http.server` over the repo serves no copy,
-  so the page falls back to the release URL, which the browser still refuses.
-  To try the hosted path locally, mirror into a scratch copy of the site
-  rather than the checkout (the page-logic tests walk `canary-local/`):
-  `cp -rL canary-local /tmp/site/ && python3 canary-local/tools/mirror_release.py
-  --site /tmp/site/canary-local && python3 -m http.server -d /tmp/site 8000`.
-  Or use **Advanced → flash a local file**.
+  so the page reports this site's copy of the release as not available. To
+  try the hosted path locally, mirror into a scratch copy of the site rather
+  than the checkout (the page-logic tests walk `canary-local/`), starting
+  from an empty directory (with `/tmp/site` missing, `cp` would copy
+  `canary-local`'s contents into it rather than the directory itself), and
+  with a token (one run is about fifty API requests; unauthenticated, a
+  second run within the hour hits GitHub's limit of sixty):
+
+  ```sh
+  rm -rf /tmp/site && mkdir -p /tmp/site && cp -rL canary-local /tmp/site/ &&
+    GH_TOKEN=$(gh auth token) python3 canary-local/tools/mirror_release.py --site /tmp/site/canary-local &&
+    python3 -m http.server -d /tmp/site 8000
+  ```
+
+  then open <http://localhost:8000/canary-local/flash.html>. Or use
+  **Advanced → flash a local file**.
 - **The desktop apps are untouched.** The Lab's native bench and the Flasher
   fetch the release natively (`flash-native.js` → Rust), where no CORS rule
   applies, and never read the copy.
@@ -423,18 +442,17 @@ world-class installer guards its own supply chain.
 - **A strict Content-Security-Policy** (a `<meta http-equiv>` in `flash.html`,
   since GitHub Pages can't set response headers). The line is **generated** by
   [`canary-local/tools/gen_csp.py`](../canary-local/tools/gen_csp.py) from the
-  one policy table every Lab page shares — the flasher's additions (release
-  hosts, loopback, the import-map hash) are rows there with a reason each, and
+  one policy table every Lab page shares — the flasher's additions (loopback,
+  the import-map hash) are rows there with a reason each, and
   CI regenerates and diffs it (`canary-local/README.md` § 9). `default-src 'none'` denies
   everything by default; `script-src 'self'` / `style-src 'self'` allow only
   this site's own code with **no inline and no `eval`** — the vendored engines
   use neither (verified in CI), so the policy needs no `'unsafe-*'` escape.
   `base-uri`, `object-src`, and `form-action` are `'none'`: no `<base>` rewrite
   of the relative asset paths, no plugins, no form posts. `connect-src` is
-  narrowed to `'self'` (the catalog, and the site's copy of the release) + our
-  signed release host and its asset CDN (the fallback a local or LAN page uses
-  when it carries no copy) + **loopback**
-  (`localhost` / `127.0.0.1`) for a same-machine manifest server, so not even a
+  narrowed to `'self'` (the catalog, and the site's copy of the release) +
+  **loopback** (`localhost` / `127.0.0.1`) for a same-machine manifest server,
+  and names no GitHub host (no browser can read a release asset there), so not even a
   first-party bug could beam your backup or MAC to a third party. That loopback
   set is exactly what the `?manifest=` override accepts (see below), so the code
   guard and the CSP agree — no accepted host is silently blocked at the browser
@@ -674,11 +692,13 @@ fully offline posture the OTA engine also offers.
 - **Drift:** CI runs `gen_flash.py` and diffs `flash.json`; a board change in
   firmware that isn't regenerated is a red X.
 - **Where the release is read from:** `flash.test.js` pins the mapping
-  (`releaseAssetParts`, `releaseFetchPlan`, `fetchReleaseAsset`) and that
-  `flash.js` / `we2-flash.js` read no release asset by a bare `fetch`;
-  `canary-local/tests/flash_mirror_probe.mjs` serves the page and a fixture
-  copy from one origin in Chromium and fails on any request that leaves for
-  github.com from a public host; `scripts/tests/test_pages_release_mirror.py`
+  (`releaseAssetParts`, `releaseFetchUrl`, `fetchReleaseAsset`), that
+  `flash.js` / `we2-flash.js` read no release asset by a bare `fetch`, and the
+  banner's two readings of a 404 (this site's copy missing, a release never
+  cut); `canary-local/tests/flash_mirror_probe.mjs` serves the page and a
+  fixture copy from one origin in Chromium and fails on any request that
+  leaves for github.com, from a public host or from loopback;
+  `scripts/tests/test_pages_release_mirror.py`
   holds the deploy's writer to the page's reader (through node) and the
   workflows' dispatches to their order.
 - **Policy:** `node --test canary-local/tests/csp.test.js` pins the page's CSP

@@ -89,18 +89,19 @@ jobs:
       # sends none either, so the browser refuses every manifest and image
       # (.github/RELEASE_LESSONS.md, 2026-10-27). So the releases the page pins
       # are copied into the site and served from its own origin, at
-      # canary-local/firmware/<tag>/<file>, where flash-core.js reads first:
-      # flash.json's manifest_url (an exact fw-v* tag), the Vision model's
+      # canary-local/firmware/<tag>/<file>, the only place flash-core.js reads
+      # them: flash.json's manifest_url (an exact fw-v* tag), the Vision model's
       # manifest (we2_module.manifest_url), the dev channel's rolling
       # fw-dev-latest manifest (flash-core.js DEV_FLASH_MANIFEST_URL), and
       # every file each manifest lists. Manifests are copied byte for byte (the
       # page checks the Ed25519 image signatures they carry, as published); each
       # image is held to its manifest's SHA-256 and size here, and a channel is
-      # published whole or not at all. A release that does not exist yet (this push deploy runs
-      # BEFORE firmware-release.yml cuts the tag a version bump names), or one
-      # mid-upload, is skipped with a ::warning:: and the deploy goes on; the
-      # page then says that release is missing, which is true until the
-      # publishing workflow dispatches this one again. A transport failure
+      # published whole or not at all. A release that does not exist yet (this
+      # push deploy runs BEFORE firmware-release.yml cuts the tag a version
+      # bump names), or one mid-upload, is skipped with a ::warning:: and the
+      # deploy goes on; the page then says this site's copy of that release is
+      # not available, which is true until the publishing workflow dispatches
+      # this one again. A transport failure
       # that outlasts the retries fails the run, which keeps the last good
       # site and its mirror live. The desktop apps fetch natively and never
       # read this copy.

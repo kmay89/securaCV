@@ -4,7 +4,7 @@
 // `node --test`, the repo convention): the chip guard, the ESP32 image
 // parsers that let the page read what firmware is *currently* on a board,
 // the release-manifest resolution, where a release asset is fetched from (the
-// site's same-origin mirror, releaseFetchPlan), the release-signature
+// site's same-origin mirror, releaseFetchUrl), the release-signature
 // verification, and the byte<->binary-string glue esptool-js needs. No DOM, no Web Serial, no
 // esptool import — flash.js owns all of that and imports this.
 
@@ -921,7 +921,7 @@ const RELEASE_SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 // imported it, and it never leaves canary-local.
 // Guarded: this module also loads inside the desktop apps' webviews, where a
 // throw at module scope would take the whole flasher down with it; there a
-// missing base only means "no mirror" (releaseFetchPlan answers [url]).
+// missing base only means "no mirror" (releaseFetchUrl answers the url).
 const DEFAULT_MIRROR_BASE = (() => {
   try {
     return new URL(`${RELEASE_MIRROR_DIR}/`, new URL("..", import.meta.url)).href;
@@ -947,71 +947,45 @@ export function releaseAssetParts(url, repo) {
   return { repo: owner, tag, file };
 }
 
-// Is this page served from this machine or the local network? A dev server
-// (`python3 -m http.server`), a hub on the LAN, a desktop webview on
-// *.localhost. Those may not carry the mirror at all, so a release fetch there
-// falls back to the release URL itself, which is what the page did before the
-// mirror existed. A public host (GitHub Pages, a custom domain) gets no such
-// fallback: the browser would refuse it anyway, and the refusal would turn an
-// honest "HTTP 404 from this site" into a false "connection problem".
-export function isLocalHost(hostname) {
-  const h = String(hostname || "").toLowerCase().replace(/^\[|\]$/g, "");
-  if (!h) return false;
-  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return true;
-  if (h === "::1" || /^f[cd][0-9a-f]{0,2}:/.test(h) || /^fe[89ab][0-9a-f]?:/.test(h)) return true;
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
-  if (!m) return false;
-  const a = Number(m[1]), b = Number(m[2]);
-  return a === 127 || a === 10 || a === 0 || (a === 192 && b === 168) ||
-    (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254);
-}
-
-// The URLs a release asset is fetched from, in order.
-//   · a page that is not on http(s) (file:, a native webview scheme): [url],
-//     exactly as before;
+// The URL a release asset is fetched from:
+//   · one of `repo`'s release assets, on an http(s) page: the site's copy,
+//     <mirrorBase><tag>/<file>, and nothing else. There is no fallback to the
+//     release URL on any host, loopback and LAN included: no browser can read
+//     it from any origin, so a fallback would only turn the copy's honest
+//     "HTTP 404 from this site" into a false "connection problem" (and
+//     flash.html's CSP does not name github.com or its asset host);
+//   · a page that is not on http(s) (file:, a native webview scheme): `url`,
+//     exactly as before (there is no origin to hold a copy);
 //   · a URL that is not one of `repo`'s release assets (a ?manifest= override,
-//     a self-hosted image): [url];
-//   · a mirror base that is not on the page's own origin: [url] (the mirror
-//     is same-origin by definition; anything else is not this mirror);
-//   · a public host: [mirror] only;
-//   · a local or LAN host: [mirror, url].
-export function releaseFetchPlan(url, { pageHref, mirrorBase = DEFAULT_MIRROR_BASE, repo } = {}) {
+//     a self-hosted image): `url`, as given;
+//   · a mirror base that is not on the page's own origin, or none: `url` (the
+//     mirror is same-origin by definition; anything else is not this mirror).
+export function releaseFetchUrl(url, { pageHref, mirrorBase = DEFAULT_MIRROR_BASE, repo } = {}) {
   let page;
-  try { page = new URL(String(pageHref || "")); } catch { return [url]; }
-  if (page.protocol !== "http:" && page.protocol !== "https:") return [url];
+  try { page = new URL(String(pageHref || "")); } catch { return url; }
+  if (page.protocol !== "http:" && page.protocol !== "https:") return url;
   const parts = releaseAssetParts(url, repo);
-  if (!parts || !mirrorBase) return [url];
+  if (!parts || !mirrorBase) return url;
   let base;
-  try { base = new URL(String(mirrorBase), page.href); } catch { return [url]; }
-  if (base.origin !== page.origin) return [url];
-  const mirror = new URL(
+  try { base = new URL(String(mirrorBase), page.href); } catch { return url; }
+  if (base.origin !== page.origin) return url;
+  return new URL(
     `${encodeURIComponent(parts.tag)}/${encodeURIComponent(parts.file)}`,
     base.href.endsWith("/") ? base.href : base.href + "/").href;
-  return isLocalHost(page.hostname) ? [mirror, url] : [mirror];
 }
 
-// Fetch a release asset by its plan. Returns the first OK response, or the
-// LAST candidate's answer (a non-OK Response, or its network error, thrown),
-// so a caller's `r.ok` / HTTP-status handling reads exactly as it did with a
-// bare fetch(url). Nothing here touches the bytes: the caller's SHA-256 and
-// signature checks run on whatever arrives, from whichever candidate.
+// Fetch a release asset from releaseFetchUrl's answer. The response (or the
+// network error, thrown) is exactly what a bare fetch of that URL gives, so a
+// caller's `r.ok` / HTTP-status handling reads as it did. Nothing here touches
+// the bytes: the caller's SHA-256 and signature checks run on whatever
+// arrives.
 export async function fetchReleaseAsset(url, {
   repo, init,
   pageHref = globalThis.location ? globalThis.location.href : undefined,
   mirrorBase = DEFAULT_MIRROR_BASE,
   fetchImpl = (...args) => globalThis.fetch(...args),
 } = {}) {
-  const plan = releaseFetchPlan(url, { pageHref, mirrorBase, repo });
-  for (let i = 0; i < plan.length; i++) {
-    const last = i === plan.length - 1;
-    try {
-      const resp = await fetchImpl(plan[i], init);
-      if (resp.ok || last) return resp;
-    } catch (err) {
-      if (last) throw err;
-    }
-  }
-  throw new Error("no URL to fetch"); // unreachable: a plan always holds one
+  return fetchImpl(releaseFetchUrl(url, { pageHref, mirrorBase, repo }), init);
 }
 
 // ── WiFi pre-provisioning (write NVS, not just read it) ────────────────────

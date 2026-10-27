@@ -116,14 +116,14 @@ read a GitHub release asset (no CORS header on the download or the asset
 host), so the deployed site carries its own copy of the releases the flasher
 pins, at `firmware/<tag>/<file>` (`pages.yml` runs `tools/mirror_release.py`,
 which holds every image to its manifest's SHA-256 first), and
-`flash-core.js` `fetchReleaseAsset` reads it there. The flasher's policy
-still names the release host and its asset CDN, for a page on a local or LAN
-host that carries no copy and falls back to them, and a same-machine manifest
-server on loopback, each a row with a reason in the policy table (§9). Served
-straight from a checkout, as above, there is no copy: the flasher's official
-images stay unavailable there (`docs/browser_flasher.md` § Where the page
-reads the release from says how to try it locally). Invariant IV extends to
-the docs.
+`flash-core.js` `fetchReleaseAsset` reads it there and nowhere else, on any
+host. The flasher's policy names no GitHub host; beyond `'self'` it adds only
+a same-machine manifest server on loopback, a row with a reason in the policy
+table (§9). Served straight from a checkout, as above, there is no copy: the
+flasher's official images stay unavailable there, and the page says this
+site's copy of the release is missing (`docs/browser_flasher.md` § Where the
+page reads the release from says how to try it locally). Invariant IV extends
+to the docs.
 
 ---
 
@@ -1187,14 +1187,14 @@ The rules, which the generator enforces rather than documents:
   `form-action 'none'`); everything a page needs beyond it is a row in
   `PAGES` inside `gen_csp.py` naming the directive, the sources and *why*:
   `'wasm-unsafe-eval'` for the pages that boot the firmware wasm,
-  `frame-src 'self'` for the two pages that frame another, the flasher's
-  signed release hosts (the fallback for a local or LAN page with no copy of
-  the release; the hosted page reads its copy under `'self'`) and loopback. The tool cross-checks the grants against
-  the page, both ways — a page that loads `emulator/dist/` without the wasm
-  row fails, and so does a row whose page no longer loads it; the same holds
-  for `frame-src` and the page's iframes, and for the release hosts and the
-  modules that fetch a release (`flash.js`, `we2-flash.js`), which would
-  otherwise fail behind a click where the browser probe never looks.
+  `frame-src 'self'` for the two pages that frame another, and the
+  flasher's loopback manifest server. No page names the GitHub release host
+  or its asset CDN: no browser can read a release asset from them, so the
+  flasher reads the site's copy of the release under `'self'`
+  (`tests/csp.test.js` holds every page to that). The tool cross-checks the
+  grants against the page, both ways — a page that loads `emulator/dist/`
+  without the wasm row fails, and so does a row whose page no longer loads
+  it; the same holds for `frame-src` and the page's iframes.
 - **Every hash is computed from bytes, on purpose.** `flash.html`'s
   import map (the SRI pins for the vendored flasher engines) cannot be an
   external file, so it is the single entry in `INLINE_SCRIPT_OK` and its
@@ -1214,8 +1214,9 @@ The rules, which the generator enforces rather than documents:
   the document; discovery rides the native side of the desktop Lab
   (`witness-host.js` → `invoke`), so `connect-src` is `'self'` plus the Tauri
   IPC origins (`ipc:`, `http://ipc.localhost` — dead letters in a browser)
-  and, on the flasher only, the signed release hosts. A scheme source such as
-  `http:` would be a table entry with a reason, and today there is none.
+  and, on the flasher only, loopback for a same-machine manifest server. A
+  scheme source such as `http:` would be a table entry with a reason, and
+  today there is none.
 - **Unused directives are trimmed, not granted.** The floor could carry
   `blob:` in `img-src`, a `worker-src` and a `media-src`; no page needs them
   (the benches synthesize audio, the eyes bench's `<video>` takes a

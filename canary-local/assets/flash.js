@@ -3107,12 +3107,22 @@ function productRow(p) {
 
 // ── release manifest (lazy) ─────────────────────────────────────────────────
 // Every release asset this page reads (the manifest, the factory image) goes
-// through here: the site's same-origin mirror first (pages.yml writes it), the
-// release URL itself only where that can still answer (a local host, a page
-// off http(s)). A bare fetch() of a github.com release URL can never succeed
-// in a browser (tests/flash.test.js holds this file to that).
+// through here: on an http(s) page, from the site's same-origin copy of the
+// release (pages.yml writes it; core.releaseFetchUrl), never from the
+// github.com URL, which no browser can read (tests/flash.test.js holds this
+// file to that).
 function fetchRelease(url, init) {
   return core.fetchReleaseAsset(url, { repo: state.catalog && state.catalog.repo, init });
+}
+
+// Does fetchRelease read `url` from this site's copy of the release? Then an
+// HTTP error is about the copy: the site has not redeployed since the release
+// was published, or its deploy skipped that release. It says nothing about
+// whether the release itself was cut.
+function readsSiteCopy(url) {
+  return core.releaseFetchUrl(url, {
+    pageHref: location.href, repo: state.catalog && state.catalog.repo,
+  }) !== url;
 }
 
 function activeManifestUrl() {
@@ -3140,9 +3150,11 @@ function ensureManifest() {
   if (state.manifest) { refreshManifestState(); return; }
   const gen = ++manifestGeneration;
   const stale = () => gen !== manifestGeneration;
-  // Through the site's same-origin mirror (core.releaseFetchPlan): a browser
+  const url = activeManifestUrl();
+  const siteCopy = readsSiteCopy(url);
+  // Through the site's same-origin mirror (core.releaseFetchUrl): a browser
   // cannot fetch the GitHub release URL itself (no CORS header on it).
-  fetchRelease(activeManifestUrl(), { cache: "no-store" })
+  fetchRelease(url, { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : Promise.reject(new Error("no release manifest (HTTP " + r.status + ")"))))
     .then((m) => {
       if (stale()) return;
@@ -3164,7 +3176,7 @@ function ensureManifest() {
       if (stale()) return;
       const why = String((err && err.message) || err);
       const status = /\bHTTP (\d{3})\b/.exec(why);
-      state.manifest = { __missing: true, why, httpStatus: status ? status[1] : null };
+      state.manifest = { __missing: true, why, httpStatus: status ? status[1] : null, siteCopy };
     })
     .finally(() => { if (!stale()) refreshManifestState(); });
 }
@@ -3203,16 +3215,6 @@ function refreshManifestState() {
     // the wrong thing to wait for. Only claim the release is uncut when the
     // server actually answered (parity: the desktop's renderProducts).
     const answered = !!m.httpStatus;
-    note.textContent = m.__invalid
-      ? "The published release manifest didn’t validate, so official images are hidden. You can still install a local file under Advanced."
-      : !answered
-        ? "The firmware manifest didn’t load — this looks like a connection problem here, " +
-          "not a missing release. The official images appear once you’re back online. " +
-          "Until then you can install a local file under Advanced."
-        : state.devChannel
-          ? `The dev channel has nothing published yet — no rolling prerelease has been cut (HTTP ${m.httpStatus}). Turn the dev channel off under Advanced for the stable release, or install a local file.`
-          : `No signed firmware release is published yet (HTTP ${m.httpStatus}). When the maintainer cuts one, the official images appear here automatically. Until then, try Advanced → dev channel (products often land there first), or install a local file.`;
-    banner.append(note);
     // Name the release we were pinned to. Every product reading "unavailable"
     // because a tag was bumped but never released is indistinguishable from
     // "no releases exist" without this line. releaseTagFromManifestUrl only
@@ -3222,13 +3224,36 @@ function refreshManifestState() {
     const pinned = m.__missing &&
       (core.releaseTagFromManifestUrl(activeManifestUrl()) ||
         (state.devChannel ? "fw-dev-latest" : null));
+    // An answer from this site's copy of the release (m.siteCopy) is a THIRD
+    // reading of an HTTP error. The release can be live on GitHub while the
+    // copy is not: the site redeploys a few minutes after a release
+    // publishes, and a deploy skips a release it could not copy whole
+    // (tools/mirror_release.py). "No release has been cut" would be false
+    // there, so only the release host's own answer may say it. Browser only:
+    // the desktop apps read the release itself, natively, and have no copy.
+    note.textContent = m.__invalid
+      ? "The published release manifest didn’t validate, so official images are hidden. You can still install a local file under Advanced."
+      : !answered
+        ? "The firmware manifest didn’t load — this looks like a connection problem here, " +
+          "not a missing release. The official images appear once you’re back online. " +
+          "Until then you can install a local file under Advanced."
+        : m.siteCopy
+          ? state.devChannel
+            ? `This site’s copy of the dev channel (${pinned}) isn’t available (HTTP ${m.httpStatus}). If a dev build was just published, the site picks it up when it redeploys, shortly after; reload then. Until then, turn the dev channel off under Advanced for the stable release, or install a local file.`
+            : `This site’s copy of firmware release ${pinned} isn’t available (HTTP ${m.httpStatus}). If that release was just published, the site picks it up when it redeploys, shortly after; reload then. Until then, try Advanced → dev channel, or install a local file.`
+          : state.devChannel
+            ? `The dev channel has nothing published yet — no rolling prerelease has been cut (HTTP ${m.httpStatus}). Turn the dev channel off under Advanced for the stable release, or install a local file.`
+            : `No signed firmware release is published yet (HTTP ${m.httpStatus}). When the maintainer cuts one, the official images appear here automatically. Until then, try Advanced → dev channel (products often land there first), or install a local file.`;
+    banner.append(note);
     if (pinned) {
       banner.append(el("p", "fineprint",
         `This page is pinned to firmware release ${pinned}` +
         (m.why ? ` — ${m.why}.` : ".") +
-        (answered
-          ? " If that release exists, the images will appear on reload."
-          : " If that release exists, the images will appear once you’re back online.")));
+        (!answered
+          ? " If that release exists, the images will appear once you’re back online."
+          : m.siteCopy
+            ? " The images appear on reload once this site carries its copy of that release."
+            : " If that release exists, the images will appear on reload.")));
     }
     return;
   }

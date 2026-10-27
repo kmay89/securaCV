@@ -804,8 +804,8 @@ test("releaseTagFromManifestUrl: names the pinned firmware tag, and only that", 
 
 // ── the same-origin release mirror (pages.yml → firmware/<tag>/<file>) ──────
 // A browser can never fetch a github.com release asset (no CORS header on the
-// redirect or on the asset host), so the hosted page reads the copy pages.yml
-// writes beside it. These pin where the page looks; scripts/tests/
+// redirect or on the asset host), so the page reads the copy pages.yml writes
+// beside it, and only that copy. These pin where the page looks; scripts/tests/
 // test_pages_release_mirror.py holds the writer (tools/mirror_release.py) to
 // the same layout through node, and tests/flash_mirror_probe.mjs proves it in
 // Chromium from one origin.
@@ -853,44 +853,29 @@ test("releaseAssetParts: the project's release-download URLs, and nothing else",
   }
 });
 
-test("isLocalHost: loopback, *.localhost, mDNS and private ranges; never a public host", async () => {
-  const { isLocalHost } = await core();
-  for (const h of ["localhost", "LOCALHOST", "tauri.localhost", "canary.local", "127.0.0.1",
-    "127.8.9.1", "10.0.0.7", "192.168.1.20", "172.16.0.1", "172.31.255.255", "169.254.3.4",
-    "0.0.0.0", "[::1]", "::1", "[fd12:3456::1]", "[fe80::1]"]) {
-    assert.strictEqual(isLocalHost(h), true, h);
-  }
-  for (const h of ["kmay89.github.io", "securacv.com", "local.securacv.com", "172.32.0.1",
-    "172.15.0.1", "192.169.0.1", "8.8.8.8", "[2001:db8::1]", "localhost.example.com",
-    "notlocal", "", null, undefined]) {
-    assert.strictEqual(isLocalHost(h), false, String(h));
-  }
-});
-
-test("releaseFetchPlan: a public host reads ONLY its mirror; a local host falls back; nothing else is mapped", async () => {
-  const { releaseFetchPlan, DEV_FLASH_MANIFEST_URL } = await core();
+test("releaseFetchUrl: an http(s) page reads ONLY its copy, on every host; nothing else is mapped", async () => {
+  const { releaseFetchUrl, DEV_FLASH_MANIFEST_URL } = await core();
   const tag = `fw-v${registry.fw_train}`;
   const opts = { pageHref: PAGES, mirrorBase: PAGES_MIRROR, repo: catalog.repo };
-  // The hosted Lab: the mirror and nothing else. A github.com fallback there
-  // is refused by the browser and would turn an honest 404 into a "connection
-  // problem".
-  assert.deepStrictEqual(releaseFetchPlan(catalog.manifest_url, opts),
-    [`${PAGES_MIRROR}${tag}/manifest-flash.json`]);
-  assert.deepStrictEqual(releaseFetchPlan(catalog.we2_module.manifest_url, opts),
-    [`${PAGES_MIRROR}${tag}/manifest-vision-model.json`]);
-  assert.deepStrictEqual(releaseFetchPlan(DEV_FLASH_MANIFEST_URL, opts),
-    [`${PAGES_MIRROR}fw-dev-latest/manifest-flash.json`]);
+  // The hosted Lab: the copy, and nothing else.
+  assert.strictEqual(releaseFetchUrl(catalog.manifest_url, opts), `${PAGES_MIRROR}${tag}/manifest-flash.json`);
+  assert.strictEqual(releaseFetchUrl(catalog.we2_module.manifest_url, opts),
+    `${PAGES_MIRROR}${tag}/manifest-vision-model.json`);
+  assert.strictEqual(releaseFetchUrl(DEV_FLASH_MANIFEST_URL, opts), `${PAGES_MIRROR}fw-dev-latest/manifest-flash.json`);
   // A relative mirror base resolves against the page.
-  assert.deepStrictEqual(releaseFetchPlan(REL(tag, "canary-x-factory.bin"), { ...opts, mirrorBase: "firmware/" }),
-    [`${PAGES_MIRROR}${tag}/canary-x-factory.bin`]);
-  // A dev server or a hub on the LAN may not carry the mirror: mirror first,
-  // then the release URL (what the page did before the mirror existed).
-  for (const page of ["http://localhost:8000/canary-local/flash.html",
-    "http://192.168.1.20/canary-local/flash.html", "http://hub.local/canary-local/flash.html"]) {
+  assert.strictEqual(releaseFetchUrl(REL(tag, "canary-x-factory.bin"), { ...opts, mirrorBase: "firmware/" }),
+    `${PAGES_MIRROR}${tag}/canary-x-factory.bin`);
+  // A dev server, a hub on the LAN, the desktop Lab's Windows webview: the
+  // copy too, with no fallback to the release URL. No browser can read that
+  // URL from any origin, loopback included, so a fallback could only turn
+  // this site's honest 404 into a false "connection problem".
+  for (const page of ["http://localhost:8000/canary-local/flash.html", "http://127.0.0.1:8000/canary-local/flash.html",
+    "http://192.168.1.20/canary-local/flash.html", "http://hub.local/canary-local/flash.html",
+    "http://tauri.localhost/flash.html"]) {
     const base = new URL("firmware/", page).href;
-    assert.deepStrictEqual(
-      releaseFetchPlan(catalog.manifest_url, { pageHref: page, mirrorBase: base, repo: catalog.repo }),
-      [`${base}${tag}/manifest-flash.json`, catalog.manifest_url], page);
+    assert.strictEqual(
+      releaseFetchUrl(catalog.manifest_url, { pageHref: page, mirrorBase: base, repo: catalog.repo }),
+      `${base}${tag}/manifest-flash.json`, page);
   }
   // Unchanged: a page off http(s) (file:, a native webview scheme), a URL
   // that is not the project's release (a ?manifest= override, a self-hosted
@@ -905,11 +890,11 @@ test("releaseFetchPlan: a public host reads ONLY its mirror; a local host falls 
     [catalog.manifest_url, { ...opts, mirrorBase: "https://cdn.example/firmware/" }],
     [catalog.manifest_url, { ...opts, mirrorBase: "" }],
   ]) {
-    assert.deepStrictEqual(releaseFetchPlan(url, o), [url], `${url} from ${o.pageHref} / ${o.mirrorBase}`);
+    assert.strictEqual(releaseFetchUrl(url, o), url, `${url} from ${o.pageHref} / ${o.mirrorBase}`);
   }
 });
 
-test("fetchReleaseAsset: the first OK answer wins; otherwise the LAST candidate's answer, as a bare fetch gave it", async () => {
+test("fetchReleaseAsset: one request, to releaseFetchUrl's answer, handed back as a bare fetch gave it", async () => {
   const { fetchReleaseAsset } = await core();
   const tag = `fw-v${registry.fw_train}`;
   const mirrorUrl = `${PAGES_MIRROR}${tag}/manifest-flash.json`;
@@ -928,47 +913,30 @@ test("fetchReleaseAsset: the first OK answer wins; otherwise the LAST candidate'
   };
   const base = { repo: catalog.repo, init: { cache: "no-store" } };
 
-  // Hosted page, mirror present: one same-origin request, init passed through.
+  // Hosted page, copy present: one same-origin request, init passed through.
   let r = recorder({ [mirrorUrl]: res(200) });
   let got = await fetchReleaseAsset(catalog.manifest_url,
     { ...base, pageHref: PAGES, mirrorBase: PAGES_MIRROR, fetchImpl: r.fetchImpl });
   assert.strictEqual(got.status, 200);
   assert.deepStrictEqual(r.calls, [{ url: mirrorUrl, init: { cache: "no-store" } }]);
 
-  // Hosted page, release not mirrored (not cut yet): the 404 comes back as a
-  // Response, so the page's "HTTP 404" story is the true one, and github.com
-  // is never asked.
-  r = recorder({});
-  got = await fetchReleaseAsset(catalog.manifest_url,
-    { ...base, pageHref: PAGES, mirrorBase: PAGES_MIRROR, fetchImpl: r.fetchImpl });
-  assert.strictEqual(got.status, 404);
-  assert.deepStrictEqual(r.calls.map((c) => c.url), [mirrorUrl]);
-
-  // Local page, no mirror: mirror 404, then the release URL.
+  // No copy (the site has not redeployed since the release, or its deploy
+  // skipped it), on a hosted or a local page: the copy's 404 comes back as a
+  // Response, so the page can say the copy is missing, and github.com is
+  // never asked.
   const localMirror = `${LOCAL_MIRROR}${tag}/manifest-flash.json`;
-  r = recorder({ [catalog.manifest_url]: res(200) });
-  got = await fetchReleaseAsset(catalog.manifest_url,
-    { ...base, pageHref: LOCAL, mirrorBase: LOCAL_MIRROR, fetchImpl: r.fetchImpl });
-  assert.strictEqual(got.status, 200);
-  assert.deepStrictEqual(r.calls.map((c) => c.url), [localMirror, catalog.manifest_url]);
+  for (const [pageHref, mirrorBase, want] of [[PAGES, PAGES_MIRROR, mirrorUrl], [LOCAL, LOCAL_MIRROR, localMirror]]) {
+    r = recorder({});
+    got = await fetchReleaseAsset(catalog.manifest_url, { ...base, pageHref, mirrorBase, fetchImpl: r.fetchImpl });
+    assert.strictEqual(got.status, 404, pageHref);
+    assert.deepStrictEqual(r.calls.map((c) => c.url), [want], pageHref);
+  }
 
-  // Local page, mirror present: the release URL is never touched.
-  r = recorder({ [localMirror]: res(200) });
-  await fetchReleaseAsset(catalog.manifest_url,
-    { ...base, pageHref: LOCAL, mirrorBase: LOCAL_MIRROR, fetchImpl: r.fetchImpl });
-  assert.deepStrictEqual(r.calls.map((c) => c.url), [localMirror]);
-
-  // Local page, both fail: the release URL's failure is what surfaces — its
-  // network error thrown (the page's "connection problem", as before the
-  // mirror), or its HTTP status returned.
-  const cors = new TypeError("Failed to fetch");
-  r = recorder({ [localMirror]: new TypeError("refused"), [catalog.manifest_url]: cors });
+  // A network error is thrown, as a bare fetch would throw it.
+  const down = new TypeError("Failed to fetch");
+  r = recorder({ [localMirror]: down });
   await assert.rejects(fetchReleaseAsset(catalog.manifest_url,
-    { ...base, pageHref: LOCAL, mirrorBase: LOCAL_MIRROR, fetchImpl: r.fetchImpl }), (e) => e === cors);
-  r = recorder({ [catalog.manifest_url]: res(503) });
-  got = await fetchReleaseAsset(catalog.manifest_url,
-    { ...base, pageHref: LOCAL, mirrorBase: LOCAL_MIRROR, fetchImpl: r.fetchImpl });
-  assert.strictEqual(got.status, 503);
+    { ...base, pageHref: LOCAL, mirrorBase: LOCAL_MIRROR, fetchImpl: r.fetchImpl }), (e) => e === down);
 
   // Not a release URL (a ?manifest= override): fetched exactly as given.
   const override = "http://127.0.0.1:9000/manifest-flash.json";
@@ -995,11 +963,59 @@ test("flash.js / we2-flash.js read every release asset through the mirror, never
     }
   }
   assert.match(flashJs, /function fetchRelease\(url, init\) \{\s*return core\.fetchReleaseAsset\(url, \{ repo: state\.catalog && state\.catalog\.repo, init \}\);/);
-  assert.match(flashJs, /fetchRelease\(activeManifestUrl\(\), \{ cache: "no-store" \}\)/);
+  assert.match(flashJs, /const url = activeManifestUrl\(\);\s*const siteCopy = readsSiteCopy\(url\);/);
+  assert.match(flashJs, /fetchRelease\(url, \{ cache: "no-store" \}\)/);
   assert.match(flashJs, /await fetchRelease\(opts\.entry\.factory, \{ cache: "no-store" \}\)/);
   assert.match(we2Js, /fetchReleaseAsset\(url, \{ repo: ctx\.catalog && ctx\.catalog\.repo, init \}\)/);
   assert.match(we2Js, /fromRelease\(m\.manifest_url, \{ cache: "no-store" \}\)/);
   assert.match(we2Js, /fromRelease\(asset\.url\)/);
+});
+
+test("a missing manifest from this site's copy is told apart from a release that was never cut", async () => {
+  // The release can be live on GitHub while the site's copy of it is not: the
+  // site redeploys a few minutes after a release publishes, and a deploy
+  // skips a release it cannot copy whole. A 404 from the copy saying "no
+  // release has been cut" is a false statement about the project. Run the
+  // banner's own sentence chain, as written in flash.js, on each case.
+  const flashJs = readFileSync(join(ROOT, "assets/flash.js"), "utf8");
+  const m = /note\.textContent = (m\.__invalid\s*\?[\s\S]*?);\n\s*banner\.append\(note\);/.exec(flashJs);
+  assert.ok(m, "flash.js: the manifest banner's sentence chain moved; point this test at it");
+  const say = new Function("m", "state", "pinned", "answered", `return ${m[1]};`);
+  const tag = `fw-v${registry.fw_train}`;
+  const missing = (siteCopy) => ({ __missing: true, httpStatus: "404", siteCopy });
+
+  // From the copy: the copy is what is missing, named by its tag.
+  const stable = say(missing(true), { devChannel: false }, tag, true);
+  assert.strictEqual(stable, `This site’s copy of firmware release ${tag} isn’t available (HTTP 404). ` +
+    "If that release was just published, the site picks it up when it redeploys, shortly after; reload then. " +
+    "Until then, try Advanced → dev channel, or install a local file.");
+  const dev = say(missing(true), { devChannel: true }, "fw-dev-latest", true);
+  assert.strictEqual(dev, "This site’s copy of the dev channel (fw-dev-latest) isn’t available (HTTP 404). " +
+    "If a dev build was just published, the site picks it up when it redeploys, shortly after; reload then. " +
+    "Until then, turn the dev channel off under Advanced for the stable release, or install a local file.");
+  for (const s of [stable, dev]) assert.doesNotMatch(s, /published yet|been cut/, s);
+
+  // From the release host itself (a page off http(s), which reads the URL as
+  // given): the existing "not published" sentences, unchanged.
+  assert.strictEqual(say(missing(false), { devChannel: false }, tag, true),
+    "No signed firmware release is published yet (HTTP 404). When the maintainer cuts one, the official " +
+    "images appear here automatically. Until then, try Advanced → dev channel (products often land there " +
+    "first), or install a local file.");
+  assert.match(say(missing(false), { devChannel: true }, "fw-dev-latest", true),
+    /^The dev channel has nothing published yet — no rolling prerelease has been cut \(HTTP 404\)/);
+  // No answer at all is a connection problem, wherever it was read from.
+  assert.match(say({ __missing: true, httpStatus: null, siteCopy: true }, { devChannel: false }, tag, false),
+    /connection problem here, not a missing release/);
+
+  // The flag is the core's own mapping: the hosted page reads both channels'
+  // manifests from its copy, and a ?manifest= override as given.
+  const { releaseFetchUrl, DEV_FLASH_MANIFEST_URL } = await core();
+  const opts = { pageHref: PAGES, mirrorBase: PAGES_MIRROR, repo: catalog.repo };
+  assert.notStrictEqual(releaseFetchUrl(catalog.manifest_url, opts), catalog.manifest_url);
+  assert.notStrictEqual(releaseFetchUrl(DEV_FLASH_MANIFEST_URL, opts), DEV_FLASH_MANIFEST_URL);
+  assert.strictEqual(releaseFetchUrl("http://127.0.0.1:9000/m.json", opts), "http://127.0.0.1:9000/m.json");
+  assert.match(flashJs, /function readsSiteCopy\(url\) \{\s*return core\.releaseFetchUrl\(url, \{\s*pageHref: location\.href, repo: state\.catalog && state\.catalog\.repo,\s*\}\) !== url;/);
+  assert.match(flashJs, /state\.manifest = \{ __missing: true, why, httpStatus: status \? status\[1\] : null, siteCopy \};/);
 });
 
 // ── WiFi pre-provisioning (NVS image builder + QR payload) ──────────────────
@@ -2156,11 +2172,12 @@ test("flash.html: ships a strict, eval-free Content-Security-Policy", () => {
   assert.match(csp, /base-uri 'none'/);
   assert.match(csp, /object-src 'none'/);
   assert.match(csp, /form-action 'none'/);
-  // Firmware fetches: our release host + its asset CDN, plus 'self' for the
-  // catalog / a same-origin manifest. No open wildcard host.
+  // Firmware fetches: 'self' for the catalog, the site's copy of the release
+  // and a same-origin manifest. No GitHub host: no browser can read a release
+  // asset from it (no CORS header), so naming it would only invite a fetch
+  // that cannot work. No open wildcard host.
   assert.match(csp, /connect-src[^;]*'self'/);
-  assert.match(csp, /connect-src[^;]*https:\/\/github\.com/);
-  assert.match(csp, /connect-src[^;]*https:\/\/\*\.githubusercontent\.com/);
+  assert.doesNotMatch(csp, /github\.com|githubusercontent\.com/);
   // Loopback (a same-machine manifest server) is pinned to exact hosts, and
   // there is NO open http:/https: scheme-source — the override guard in
   // flash-core.js accepts exactly this set, so code and CSP can't disagree.

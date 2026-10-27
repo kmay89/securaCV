@@ -6,8 +6,8 @@ redirect and the asset host both answer without Access-Control-Allow-Origin),
 so the hosted flasher called every product unavailable
 (.github/RELEASE_LESSONS.md, 2026-10-27). pages.yml now runs
 canary-local/tools/mirror_release.py, which copies the releases the page pins
-into the site at firmware/<tag>/<file>, and flash-core.js releaseFetchPlan
-reads that path first. What this holds:
+into the site at firmware/<tag>/<file>, and flash-core.js releaseFetchUrl
+reads that path and nothing else. What this holds:
 
   * the writer reads the tag the way flash.json pins it (manifest_url is
     release_download + /manifest-flash.json, an exact fw-v* tag), the Vision
@@ -20,8 +20,9 @@ reads that path first. What this holds:
     asset, a SHA-256 or size that disagrees, an image outside the repo, or two
     channels disagreeing about one path each leave that channel out and the
     deploy green; a transport failure that outlasts the retries exits 1;
-  * the REST client retries 5xx and transport errors, answers 404 as "absent",
-    and never forwards the token across the asset download's redirect;
+  * the REST client retries 5xx and transport errors (a body cut off mid-read
+    and a TLS error among them), answers 404 as "absent", and never forwards
+    the token across the asset download's redirect;
   * pages.yml runs it after the site is assembled and before the upload, with
     a token; the three publishing workflows dispatch pages.yml after they
     publish, on the default branch, with `actions: write`, and never fail the
@@ -36,10 +37,12 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import http.client
 import io
 import json
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -127,7 +130,7 @@ const { page, base, repo, urls } = JSON.parse(process.argv[2]);
 const out = {};
 for (const u of urls) {
   out[u] = { parts: core.releaseAssetParts(u, repo),
-             plan: core.releaseFetchPlan(u, { pageHref: page, mirrorBase: base, repo }) };
+             fetched: core.releaseFetchUrl(u, { pageHref: page, mirrorBase: base, repo }) };
 }
 out.__dev = core.DEV_FLASH_MANIFEST_URL;
 process.stdout.write(JSON.stringify(out));
@@ -177,9 +180,8 @@ class WriterAndReaderAgree(unittest.TestCase):
     def test_every_pin_is_written_where_the_hosted_page_reads_it(self):
         self.assertEqual(self.js["__dev"], mr.dev_manifest_url(CORE_SRC))
         for ch in mr.plan_channels(CATALOG, CORE_SRC):
-            plan = self.js[ch.url]["plan"]
-            # A public host: the mirror, and only the mirror.
-            self.assertEqual(plan, [self.BASE.rsplit("firmware/", 1)[0] + ch.asset.path], ch.name)
+            # The mirror, and only the mirror.
+            self.assertEqual(self.js[ch.url]["fetched"], self.BASE.rsplit("firmware/", 1)[0] + ch.asset.path, ch.name)
 
     def test_the_two_url_readers_agree_on_every_edge(self):
         for url in EDGE_URLS:
@@ -398,6 +400,13 @@ class FakeResponse(io.BytesIO):
         return False
 
 
+class TruncatedResponse(FakeResponse):
+    """A response whose body is cut off mid-read, as a reset transfer leaves it."""
+
+    def read(self, *args):
+        raise http.client.IncompleteRead(b"x" * 10, 2_000_000)
+
+
 class FakeOpener:
     def __init__(self, answers):
         self.answers = list(answers)
@@ -408,7 +417,7 @@ class FakeOpener:
         a = self.answers.pop(0)
         if isinstance(a, Exception):
             raise a
-        return FakeResponse(a)
+        return a if isinstance(a, FakeResponse) else FakeResponse(a)
 
 
 def http_error(code):
@@ -424,6 +433,17 @@ class TheRestClient(unittest.TestCase):
         c, opener = self.client([http_error(502), urllib.error.URLError("reset"), http_error(429), b"bytes"])
         self.assertEqual(c.download("https://api.github.com/repos/kmay89/securaCV/releases/assets/1"), b"bytes")
         self.assertEqual(len(opener.requests), 4)
+
+    def test_retries_a_body_cut_off_mid_read_and_a_tls_error(self):
+        # IncompleteRead is an http.client.HTTPException, not an OSError: it
+        # used to escape the retry loop and main() as a raw traceback, failing
+        # the whole Pages deploy on one truncated 2 MB download.
+        c, opener = self.client([TruncatedResponse(), ssl.SSLError("bad record mac"), b"bytes"])
+        self.assertEqual(c.download("https://api.github.com/repos/kmay89/securaCV/releases/assets/1"), b"bytes")
+        self.assertEqual(len(opener.requests), 3)
+        c, _ = self.client([TruncatedResponse() for _ in range(mr.ATTEMPTS)])
+        with self.assertRaisesRegex(mr.TransportError, rf"IncompleteRead.*after {mr.ATTEMPTS} attempts"):
+            c.download("https://api.github.com/x")
 
     def test_gives_up_after_the_attempts(self):
         c, _ = self.client([http_error(503)] * mr.ATTEMPTS)

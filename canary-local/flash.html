@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-EktR3SFf0lLCbyovl7Zr3tGJNxikCFvtZ3djuXGsas0='; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://github.com https://*.githubusercontent.com http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-EktR3SFf0lLCbyovl7Zr3tGJNxikCFvtZ3djuXGsas0='; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <!--
     Supply-chain hardening (see docs/browser_flasher.md § Trust model): a strict
     Content-Security-Policy so only this site's own vendored code can run, and
-    the page can only fetch firmware from our signed GitHub releases — on the
-    hosted Lab, from this site's own copy of them ('self'): a browser cannot
-    read a github.com release asset (no CORS header), so pages.yml mirrors the
-    pinned release beside this page and flash-core.js reads it there first.
+    the page reads our signed GitHub releases only from this site's own copy
+    of them ('self'): a browser cannot read a github.com release asset from
+    any origin (no CORS header), so pages.yml mirrors the pinned releases
+    beside this page and flash-core.js reads them there, and nowhere else.
     THE POLICY LINE ABOVE IS GENERATED — by canary-local/tools/gen_csp.py, from
     the one policy table every Lab page shares; this page's additions and the
     reason for each live there, and CI regenerates and diffs the line. Edit the
@@ -19,15 +19,14 @@
       · the 'sha256-…' pins the inline import map below, which carries the
         Subresource-Integrity hashes for those vendored modules. It is the one
         inline script in the Lab: browsers do not load an import map from a file.
-      · connect-src — 'self' (the catalog, and the site's mirror of the
-        release), our signed release host + its asset CDN (the fallback for a
-        page on a local or LAN host with no mirror), plus loopback
-        (localhost / 127.0.0.1) for a same-machine manifest server. That is the
-        exact set the ?manifest= override accepts (flash-core.js), so the code
-        guard and this policy agree; broader private/LAN hosts can't be spelled
-        as a static CSP allowlist, so those self-host same-origin or use a local
-        file. ipc: / http://ipc.localhost are the desktop Lab's Tauri IPC
-        origins (every Lab page carries them; dead letters in a browser).
+      · connect-src — 'self' (the catalog, and the site's copy of the
+        release), plus loopback (localhost / 127.0.0.1) for a same-machine
+        manifest server. That is the exact set the ?manifest= override accepts
+        (flash-core.js), so the code guard and this policy agree; broader
+        private/LAN hosts can't be spelled as a static CSP allowlist, so those
+        self-host same-origin or use a local file. ipc: / http://ipc.localhost
+        are the desktop Lab's Tauri IPC origins (every Lab page carries them;
+        dead letters in a browser). No GitHub host: none answers a browser.
       · base-uri / object-src / form-action 'none' — no <base> rewrite of our
         relative asset paths, no plugins, no form posts.
     frame-ancestors is omitted on purpose: it is ignored in a <meta> CSP, and
@@ -128,8 +127,9 @@
       its own silicon. Firmware images come from the project's
       <strong>signed</strong> GitHub releases, which the hosted Lab serves from
       its own copy (browsers can't download a release from GitHub directly); the
-      flasher verifies each one's SHA-256 before writing and the device's own
-      MD5 after, wherever the bytes came from. The flashing
+      flasher checks each one's SHA-256 (and its Ed25519 signature against the
+      pinned key) before writing and the device's own MD5 after, wherever the
+      bytes came from. The flashing
       engine is <a href="https://github.com/espressif/esptool-js">esptool-js</a>,
       vendored into this site — not loaded from a CDN. Nothing about your board
       leaves this page.
