@@ -107,9 +107,10 @@ any platform.
   loopback, could never succeed, and would only turn the copy's honest 404
   into a false "connection problem". `flash.html`'s CSP dropped `github.com`
   and `*.githubusercontent.com` for the same reason. A 404 from the copy says
-  *this site's copy* of the release is not available yet, never that the
-  release was not cut: the release is live for some minutes before the
-  redeploy that copies it lands. The signed manifests are never rewritten,
+  *this site's copy* of the release (or of its Vision model) is not available
+  yet, never that the release was not cut: the release is live for some
+  minutes before the redeploy that copies it lands. A `?manifest=` override's
+  404 names the override's server. The signed manifests are never rewritten,
   so the SHA-256 and Ed25519 checks bind the same bytes as before. Because a
   release made with the GITHUB_TOKEN fires no event, `firmware-release.yml`,
   `flasher-release.yml` and `vision-model-release.yml` dispatch `pages.yml`

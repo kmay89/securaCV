@@ -243,7 +243,7 @@ test("no page grants the GitHub release hosts: the flasher reads the site's copy
   // 2026-10-27).
   for (const page of PAGES) {
     for (const s of parse(policyOf(page)).get("connect-src")) {
-      assert.doesNotMatch(s, /(?:^|[/.])(?:github\.com|githubusercontent\.com)(?::|$)/,
+      assert.doesNotMatch(s, /(?:^|[/.])(?:github\.com|githubusercontent\.com)(?:[:/]|$)/,
         `${page}: connect-src ${s} — no browser can read a release asset there`);
     }
   }

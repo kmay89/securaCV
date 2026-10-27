@@ -356,9 +356,19 @@ function phaseModuleConnected(ctx, s) {
         pinned: true,
       }));
     } catch (e) {
-      note.textContent = "Couldn’t fetch the pinned model (" + e.message + "). The asset ships " +
-        "with the project’s releases — if this is a fresh fork or the release train hasn’t cut " +
-        "one yet, use a local file, or load it once with SenseCraft (the Vision page stages that).";
+      // An HTTP status is this site's copy of the release answering: on an
+      // http(s) page fetchReleaseAsset reads both files from it, and the
+      // release host answers no browser. The copy can be missing while the
+      // release is live (the site redeploys a few minutes after a release or
+      // a model repair publishes, and a deploy skips a release it could not
+      // copy whole), so the fork / uncut-train reading is for the rest.
+      note.textContent = /^HTTP \d{3}$/.test(e.message)
+        ? "This site’s copy of the release’s model isn’t available (" + e.message + "). If the " +
+          "release or its model was just published, it appears once the site redeploys; until then " +
+          "use a local file, or load it once with SenseCraft (the Vision page stages that)."
+        : "Couldn’t fetch the pinned model (" + e.message + "). The asset ships " +
+          "with the project’s releases — if this is a fresh fork or the release train hasn’t cut " +
+          "one yet, use a local file, or load it once with SenseCraft (the Vision page stages that).";
     }
   });
   local.addEventListener("click", () => file.click());

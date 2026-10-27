@@ -963,59 +963,93 @@ test("flash.js / we2-flash.js read every release asset through the mirror, never
     }
   }
   assert.match(flashJs, /function fetchRelease\(url, init\) \{\s*return core\.fetchReleaseAsset\(url, \{ repo: state\.catalog && state\.catalog\.repo, init \}\);/);
-  assert.match(flashJs, /const url = activeManifestUrl\(\);\s*const siteCopy = readsSiteCopy\(url\);/);
-  assert.match(flashJs, /fetchRelease\(url, \{ cache: "no-store" \}\)/);
+  assert.match(flashJs, /fetchRelease\(activeManifestUrl\(\), \{ cache: "no-store" \}\)/);
   assert.match(flashJs, /await fetchRelease\(opts\.entry\.factory, \{ cache: "no-store" \}\)/);
   assert.match(we2Js, /fetchReleaseAsset\(url, \{ repo: ctx\.catalog && ctx\.catalog\.repo, init \}\)/);
   assert.match(we2Js, /fromRelease\(m\.manifest_url, \{ cache: "no-store" \}\)/);
   assert.match(we2Js, /fromRelease\(asset\.url\)/);
 });
 
-test("a missing manifest from this site's copy is told apart from a release that was never cut", async () => {
-  // The release can be live on GitHub while the site's copy of it is not: the
-  // site redeploys a few minutes after a release publishes, and a deploy
-  // skips a release it cannot copy whole. A 404 from the copy saying "no
-  // release has been cut" is a false statement about the project. Run the
-  // banner's own sentence chain, as written in flash.js, on each case.
+test("an HTTP error on the manifest is told as the server that answered: this site's copy, or a ?manifest= override", async () => {
+  // The release host never answers a browser (releaseFetchUrl reads the
+  // site's copy instead), so "no release has been cut" is not a reading the
+  // page can make. The release can be live on GitHub while the site's copy of
+  // it is not: the site redeploys a few minutes after a release publishes,
+  // and a deploy skips a release it cannot copy whole. A ?manifest= override
+  // is read as given, from its own server, which is what a 404 there names.
+  // Run the banner's own sentence chain and fine print, as written in
+  // flash.js, on each case.
   const flashJs = readFileSync(join(ROOT, "assets/flash.js"), "utf8");
   const m = /note\.textContent = (m\.__invalid\s*\?[\s\S]*?);\n\s*banner\.append\(note\);/.exec(flashJs);
   assert.ok(m, "flash.js: the manifest banner's sentence chain moved; point this test at it");
   const say = new Function("m", "state", "pinned", "answered", `return ${m[1]};`);
+  const f = /`This page is pinned to firmware release \$\{pinned\}` \+\s*\(m\.why \? ` — \$\{m\.why\}\.` : "\."\) \+\s*(\(!answered[\s\S]*?\))\)\);/.exec(flashJs);
+  assert.ok(f, "flash.js: the manifest banner's fine print moved; point this test at it");
+  const fine = new Function("m", "state", "answered", `return ${f[1]};`);
   const tag = `fw-v${registry.fw_train}`;
-  const missing = (siteCopy) => ({ __missing: true, httpStatus: "404", siteCopy });
+  const missing = { __missing: true, httpStatus: "404" };
 
   // From the copy: the copy is what is missing, named by its tag.
-  const stable = say(missing(true), { devChannel: false }, tag, true);
+  const copy = { devChannel: false, manifestOverride: false };
+  const stable = say(missing, copy, tag, true);
   assert.strictEqual(stable, `This site’s copy of firmware release ${tag} isn’t available (HTTP 404). ` +
     "If that release was just published, the site picks it up when it redeploys, shortly after; reload then. " +
     "Until then, try Advanced → dev channel, or install a local file.");
-  const dev = say(missing(true), { devChannel: true }, "fw-dev-latest", true);
+  const dev = say(missing, { devChannel: true, manifestOverride: false }, "fw-dev-latest", true);
   assert.strictEqual(dev, "This site’s copy of the dev channel (fw-dev-latest) isn’t available (HTTP 404). " +
     "If a dev build was just published, the site picks it up when it redeploys, shortly after; reload then. " +
     "Until then, turn the dev channel off under Advanced for the stable release, or install a local file.");
-  for (const s of [stable, dev]) assert.doesNotMatch(s, /published yet|been cut/, s);
+  assert.strictEqual(fine(missing, copy, true),
+    " The images appear on reload once this site carries its copy of that release.");
 
-  // From the release host itself (a page off http(s), which reads the URL as
-  // given): the existing "not published" sentences, unchanged.
-  assert.strictEqual(say(missing(false), { devChannel: false }, tag, true),
-    "No signed firmware release is published yet (HTTP 404). When the maintainer cuts one, the official " +
-    "images appear here automatically. Until then, try Advanced → dev channel (products often land there " +
-    "first), or install a local file.");
-  assert.match(say(missing(false), { devChannel: true }, "fw-dev-latest", true),
-    /^The dev channel has nothing published yet — no rolling prerelease has been cut \(HTTP 404\)/);
+  // From a ?manifest= override's own server: that server is what to check.
+  // Not the official release, and not the dev channel (both are off while
+  // the override is in force).
+  const override = { devChannel: false, manifestOverride: true };
+  const own = say(missing, override, null, true);
+  assert.strictEqual(own, "The self-hosted manifest at this page’s ?manifest= address answered HTTP 404. " +
+    "Check that server, remove ?manifest= from the address to use the official release, or install a " +
+    "local file under Advanced.");
+  assert.strictEqual(fine(missing, override, true), "");
+  for (const s of [stable, dev, own]) assert.doesNotMatch(s, /published yet|been cut/, s);
+
   // No answer at all is a connection problem, wherever it was read from.
-  assert.match(say({ __missing: true, httpStatus: null, siteCopy: true }, { devChannel: false }, tag, false),
-    /connection problem here, not a missing release/);
+  const silent = { __missing: true, httpStatus: null };
+  assert.match(say(silent, copy, tag, false), /connection problem here, not a missing release/);
+  assert.strictEqual(fine(silent, copy, false),
+    " If that release exists, the images will appear once you’re back online.");
 
-  // The flag is the core's own mapping: the hosted page reads both channels'
-  // manifests from its copy, and a ?manifest= override as given.
+  // The two readings are the core's own mapping: the hosted page reads both
+  // channels' manifests from its copy, and a ?manifest= override as given.
   const { releaseFetchUrl, DEV_FLASH_MANIFEST_URL } = await core();
   const opts = { pageHref: PAGES, mirrorBase: PAGES_MIRROR, repo: catalog.repo };
   assert.notStrictEqual(releaseFetchUrl(catalog.manifest_url, opts), catalog.manifest_url);
   assert.notStrictEqual(releaseFetchUrl(DEV_FLASH_MANIFEST_URL, opts), DEV_FLASH_MANIFEST_URL);
   assert.strictEqual(releaseFetchUrl("http://127.0.0.1:9000/m.json", opts), "http://127.0.0.1:9000/m.json");
-  assert.match(flashJs, /function readsSiteCopy\(url\) \{\s*return core\.releaseFetchUrl\(url, \{\s*pageHref: location\.href, repo: state\.catalog && state\.catalog\.repo,\s*\}\) !== url;/);
-  assert.match(flashJs, /state\.manifest = \{ __missing: true, why, httpStatus: status \? status\[1\] : null, siteCopy \};/);
+  assert.match(flashJs, /if \(override\) \{ state\.devChannel = false; return override; \}/);
+});
+
+test("we2-flash.js: an HTTP error on the pinned model names this site's copy, not an uncut release", () => {
+  // The Vision model reads the same copy as the firmware (fetchReleaseAsset),
+  // so its 404 has the same reading: the copy is missing, perhaps only until
+  // the site redeploys. A failure with no HTTP answer keeps the fork /
+  // uncut-train hint. Run the catch's own sentence, as written, on each case.
+  const we2Js = readFileSync(join(ROOT, "assets/we2-flash.js"), "utf8");
+  const m = /note\.textContent = (\/\^HTTP [\s\S]*?");\n/.exec(we2Js);
+  assert.ok(m, "we2-flash.js: the pinned model's error sentence moved; point this test at it");
+  const say = new Function("e", `return ${m[1]};`);
+  assert.strictEqual(say(new Error("HTTP 404")),
+    "This site’s copy of the release’s model isn’t available (HTTP 404). If the release or its model " +
+    "was just published, it appears once the site redeploys; until then use a local file, or load it " +
+    "once with SenseCraft (the Vision page stages that).");
+  for (const why of ["Failed to fetch", "manifest has no model entry"]) {
+    assert.strictEqual(say(new Error(why)),
+      `Couldn’t fetch the pinned model (${why}). The asset ships with the project’s releases — if this ` +
+      "is a fresh fork or the release train hasn’t cut one yet, use a local file, or load it once with " +
+      "SenseCraft (the Vision page stages that).");
+  }
+  // The status reaches the catch as "HTTP <n>", from both reads.
+  assert.strictEqual([...we2Js.matchAll(/if \(!r\.ok\) throw new Error\("HTTP " \+ r\.status\);/g)].length, 2);
 });
 
 // ── WiFi pre-provisioning (NVS image builder + QR payload) ──────────────────

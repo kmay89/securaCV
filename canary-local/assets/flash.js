@@ -3115,16 +3115,6 @@ function fetchRelease(url, init) {
   return core.fetchReleaseAsset(url, { repo: state.catalog && state.catalog.repo, init });
 }
 
-// Does fetchRelease read `url` from this site's copy of the release? Then an
-// HTTP error is about the copy: the site has not redeployed since the release
-// was published, or its deploy skipped that release. It says nothing about
-// whether the release itself was cut.
-function readsSiteCopy(url) {
-  return core.releaseFetchUrl(url, {
-    pageHref: location.href, repo: state.catalog && state.catalog.repo,
-  }) !== url;
-}
-
 function activeManifestUrl() {
   // `?manifest=<url>` lets a self-hosted / air-gapped user point at their own
   // manifest — but only if it's same-origin or a private/LAN host (see
@@ -3150,11 +3140,9 @@ function ensureManifest() {
   if (state.manifest) { refreshManifestState(); return; }
   const gen = ++manifestGeneration;
   const stale = () => gen !== manifestGeneration;
-  const url = activeManifestUrl();
-  const siteCopy = readsSiteCopy(url);
   // Through the site's same-origin mirror (core.releaseFetchUrl): a browser
   // cannot fetch the GitHub release URL itself (no CORS header on it).
-  fetchRelease(url, { cache: "no-store" })
+  fetchRelease(activeManifestUrl(), { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : Promise.reject(new Error("no release manifest (HTTP " + r.status + ")"))))
     .then((m) => {
       if (stale()) return;
@@ -3176,7 +3164,7 @@ function ensureManifest() {
       if (stale()) return;
       const why = String((err && err.message) || err);
       const status = /\bHTTP (\d{3})\b/.exec(why);
-      state.manifest = { __missing: true, why, httpStatus: status ? status[1] : null, siteCopy };
+      state.manifest = { __missing: true, why, httpStatus: status ? status[1] : null };
     })
     .finally(() => { if (!stale()) refreshManifestState(); });
 }
@@ -3224,26 +3212,27 @@ function refreshManifestState() {
     const pinned = m.__missing &&
       (core.releaseTagFromManifestUrl(activeManifestUrl()) ||
         (state.devChannel ? "fw-dev-latest" : null));
-    // An answer from this site's copy of the release (m.siteCopy) is a THIRD
-    // reading of an HTTP error. The release can be live on GitHub while the
-    // copy is not: the site redeploys a few minutes after a release
-    // publishes, and a deploy skips a release it could not copy whole
-    // (tools/mirror_release.py). "No release has been cut" would be false
-    // there, so only the release host's own answer may say it. Browser only:
-    // the desktop apps read the release itself, natively, and have no copy.
+    // An HTTP error never comes from the release host: no browser gets an
+    // answer from it (core.releaseFetchUrl reads the site's copy instead), so
+    // "no release has been cut" is not a reading this page can make. The
+    // answer is from one of two servers: a ?manifest= override's own
+    // (state.manifestOverride; the official release is not what it read, and
+    // the dev channel is off), or this site's copy of the release, which can
+    // be missing while the release is live on GitHub: the site redeploys a few
+    // minutes after a release publishes, and a deploy skips a release it
+    // could not copy whole (tools/mirror_release.py). Browser only: the
+    // desktop apps read the release itself, natively, and have no copy.
     note.textContent = m.__invalid
       ? "The published release manifest didn’t validate, so official images are hidden. You can still install a local file under Advanced."
       : !answered
         ? "The firmware manifest didn’t load — this looks like a connection problem here, " +
           "not a missing release. The official images appear once you’re back online. " +
           "Until then you can install a local file under Advanced."
-        : m.siteCopy
-          ? state.devChannel
-            ? `This site’s copy of the dev channel (${pinned}) isn’t available (HTTP ${m.httpStatus}). If a dev build was just published, the site picks it up when it redeploys, shortly after; reload then. Until then, turn the dev channel off under Advanced for the stable release, or install a local file.`
-            : `This site’s copy of firmware release ${pinned} isn’t available (HTTP ${m.httpStatus}). If that release was just published, the site picks it up when it redeploys, shortly after; reload then. Until then, try Advanced → dev channel, or install a local file.`
+        : state.manifestOverride
+          ? `The self-hosted manifest at this page’s ?manifest= address answered HTTP ${m.httpStatus}. Check that server, remove ?manifest= from the address to use the official release, or install a local file under Advanced.`
           : state.devChannel
-            ? `The dev channel has nothing published yet — no rolling prerelease has been cut (HTTP ${m.httpStatus}). Turn the dev channel off under Advanced for the stable release, or install a local file.`
-            : `No signed firmware release is published yet (HTTP ${m.httpStatus}). When the maintainer cuts one, the official images appear here automatically. Until then, try Advanced → dev channel (products often land there first), or install a local file.`;
+            ? `This site’s copy of the dev channel (${pinned}) isn’t available (HTTP ${m.httpStatus}). If a dev build was just published, the site picks it up when it redeploys, shortly after; reload then. Until then, turn the dev channel off under Advanced for the stable release, or install a local file.`
+            : `This site’s copy of firmware release ${pinned} isn’t available (HTTP ${m.httpStatus}). If that release was just published, the site picks it up when it redeploys, shortly after; reload then. Until then, try Advanced → dev channel, or install a local file.`;
     banner.append(note);
     if (pinned) {
       banner.append(el("p", "fineprint",
@@ -3251,9 +3240,9 @@ function refreshManifestState() {
         (m.why ? ` — ${m.why}.` : ".") +
         (!answered
           ? " If that release exists, the images will appear once you’re back online."
-          : m.siteCopy
-            ? " The images appear on reload once this site carries its copy of that release."
-            : " If that release exists, the images will appear on reload.")));
+          : state.manifestOverride
+            ? ""
+            : " The images appear on reload once this site carries its copy of that release.")));
     }
     return;
   }
@@ -4273,8 +4262,9 @@ async function startFlash(opts) {
       // network is minutes, and a bar parked at 0 with no counter was the
       // step that most read as "hung". The release's own size is the honest
       // total (Content-Length can be the compressed transfer size).
-      // From the site's mirror of the release (fetchRelease). Whichever URL
-      // answers, the SHA-256 and signature checks below bind these bytes.
+      // From this site's copy of the release (fetchRelease →
+      // core.releaseFetchUrl; a ?manifest= override's image as given). The
+      // SHA-256 and signature checks below bind these bytes to the manifest.
       const resp = await fetchRelease(opts.entry.factory, { cache: "no-store" });
       if (!resp.ok) throw new Error("download failed (HTTP " + resp.status + ")");
       const dlTotal = Number(opts.entry.size) ||

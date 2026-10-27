@@ -126,7 +126,7 @@
       drift-checked in CI, so a board is only ever offered an image built for
       its own silicon. Firmware images come from the project's
       <strong>signed</strong> GitHub releases, which the hosted Lab serves from
-      its own copy (browsers can't download a release from GitHub directly); the
+      its own copy (a web page can't fetch a release from GitHub directly); the
       flasher checks each one's SHA-256 (and its Ed25519 signature against the
       pinned key) before writing and the device's own MD5 after, wherever the
       bytes came from. The flashing

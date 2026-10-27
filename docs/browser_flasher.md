@@ -301,8 +301,9 @@ firmware-release.yml (fw-v* tag)
 - The flasher catalog (`flash.json`) supplies chips + human copy and is honest
   even before any release exists; the release manifest (`manifest-flash.json`)
   supplies the actual binaries. If no release is published yet, the page says
-  the release is not available (on an http(s) page, that this site's copy of
-  it is not) and points to **Advanced → flash a local file**.
+  this site's copy of it is not available (it cannot tell an uncut release
+  from a copy not deployed yet) and points to **Advanced → flash a local
+  file**.
 
 ### Where the page reads the release from (the same-origin mirror)
 
@@ -354,10 +355,12 @@ So the site carries its own copy of the releases it pins:
   project's release (a `?manifest=` override) are fetched exactly as given.
   `flash.js` (manifest and factory image) and `we2-flash.js` (model manifest
   and model) read every release asset through it. When the copy answers an
-  HTTP error, the page says *this site's copy* of that release is not
-  available and that a release published moments ago appears once the site
-  redeploys; "no release is published yet" is kept for an answer from the
-  release host itself.
+  HTTP error, the page says *this site's copy* of that release (or of its
+  Vision model) is not available and that a release published moments ago
+  appears once the site redeploys; when a `?manifest=` override's server
+  answers one, the page names that server. It never says a release was not
+  cut: the release host answers no browser, so no answer the page gets can
+  mean that.
 - **Trust is unchanged.** The SHA-256 check, and the Ed25519 check once the
   key is in force, run on the bytes that arrive, from wherever they were
   served, against the manifest as published.

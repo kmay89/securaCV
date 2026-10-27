@@ -853,8 +853,8 @@ Three tiers, no lock-in, one source of truth:
 2. **GitHub Pages** — `.github/workflows/pages.yml` publishes
    `canary-local/` (+ the enclosure files it references) on every main
    push, with a same-origin copy of the firmware releases the flasher pins
-   under `canary-local/firmware/` (a browser cannot download a release from
-   GitHub itself); the release workflows dispatch it again once they
+   under `canary-local/firmware/` (a page in a browser cannot fetch a release
+   from GitHub itself); the release workflows dispatch it again once they
    publish. Enable once: Settings → Pages → Source → "GitHub Actions".
 3. **securacv.com** — the marketing site adopts it whenever ready,
    either by pointing a custom domain/subdomain at Pages

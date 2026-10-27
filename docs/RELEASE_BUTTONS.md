@@ -81,8 +81,8 @@ built commit can never disagree.
 (`2.4.0-dev.1`) that only dev-channel devices can see.
 
 **It also redeploys the site.** The browser flasher on GitHub Pages reads the
-release from the site's own copy of it (a browser cannot download a GitHub
-release asset at all; see
+release from the site's own copy of it (a page in a browser cannot fetch a
+GitHub release asset; see
 [The flasher shows every product as unavailable](#the-flasher-shows-every-product-as-unavailable)),
 so the last step dispatches **pages** on the default branch, and the deploy
 copies into the site the releases that branch's `flash.json` pins (the new
