@@ -1336,10 +1336,10 @@ function makeTerminal() {
 
 // ── self-healing: the "I'm stuck" escape hatch ──────────────────────────────
 // One click turns a stuck moment into a paste-able report for Discussions.
-// Public-only is enforced inside buildDiagnosticReport itself (fixed field
-// allowlist with no hardware address, a serial tail scrubbed of credential
-// and identity lines) — this caller only gathers; it can't leak what the
-// builder won't print.
+// What the report carries is decided inside buildDiagnosticReport itself
+// (fixed field allowlist with no hardware address, a serial tail scrubbed of
+// credential lines and of the identity lines it names) — this caller only
+// gathers; it can't add what the builder won't print.
 const hex4 = (n) => (n == null ? null : "0x" + n.toString(16).padStart(4, "0"));
 
 function gatherDiagnostics(extra = {}) {
@@ -5355,7 +5355,7 @@ async function runHealthCheck() {
   const { esploader } = state.session;
 
   // No hardware address in the report object at all — it is shown on the
-  // report's own page behind a reveal, from state, and never saved.
+  // report's own page behind a reveal, from state, and never saved with it.
   const report = {
     generatedAt: new Date().toISOString(),
     chip: state.chipDesc || state.chip,

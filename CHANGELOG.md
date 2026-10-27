@@ -102,10 +102,12 @@
   name the board sends in every beacon while that network is up: the
   flagship's `SETUP MODE` line, ready banner `WiFi AP` row and `AP:` health
   line, the WAP's `[PROV]` quick-connect line, `w` key line, receipt
-  `ap_ssid` row and `AP:` health line, and the display's `AP up:` line), the
-  flagship's name (its ready banner `Name` row, and its `Device name updated`
-  and `Device name NOT persisted` health lines), the WAP's host name,
-  Bluetooth names and opera name (its `mDNS started`, `mDNS begin failed`,
+  `ap_ssid` row, `AP:` health line and boot banner `WiFi AP` row, and the
+  display's `AP up:` line), the flagship's name (its `[OK] Device name:`
+  boot line, its ready banner `Name` row, and its `Device name updated` and
+  `Device name NOT persisted` health lines), the WAP's name on its
+  `[OK] Device name:` boot line, and its host name, Bluetooth names and
+  opera name (its `mDNS started`, `mDNS begin failed`,
   `mDNS re-announced on STA`, `mDNS re-announce failed` and
   `Identify requested` health lines, its `BLE initialized`, saved-name
   repair, `Device name changed` and `Opera name changed` health lines, and
@@ -124,10 +126,13 @@
   and its `Peer removed`, `Peer state changed` and `Opera alert received`
   health lines, and the display's `Fleet referral: … (from <name>)` and
   restored `… muted for …` lines. The tests render each from the firmware's
-  own source. A line no pattern names passes, among them the flagship's
+  own source. A line no pattern names passes, so the report is not
+  public-only by construction; among the lines that pass are the flagship's
   chain-head rows on `l`, `a` and `c`, the attestation's `Signature` on `c`,
-  the network name a board joins or reconnects to and the peer link's
-  fleet-key id.
+  the WAP's witness-table rows (a location printed to 3 decimals, about
+  110 m, and a chain-head prefix, one row per record) and its `g` card's
+  latitude and longitude, the network name a board joins or reconnects to
+  and the peer link's fleet-key id.
 - **The Grove Vision module's id and text stay off screen (P13).** Neither
   flasher sends `ID?` any more, and the desktop's module receipt drops the id
   it carried. Neither bench shows the module's own model-card text, or names

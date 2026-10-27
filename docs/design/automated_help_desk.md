@@ -122,24 +122,29 @@ Two rules make it safe to run without a human per ticket:
     form, and filter the log tail against known-sensitive lines (the AP
     password print above all). "Public-only by construction" has to be true
     of the required artifact, not just intended by the voluntary one.
-    **Status: DONE in both flashers** — `buildDiagnosticReport()` carries no
-    hardware address at all, not even a tail: the base MAC is the station
-    address in every Wi-Fi frame, so any part of it matches the board in
-    radio range. Its serial tail is scrubbed with visible markers before
-    inclusion: credential lines (`TAIL_REDACT`) and identity lines
-    (`TAIL_IDENTITY`: the self-manifest line and the lines the firmware
-    prints with this board's Hardware ID, device id (its MQTT topics among
-    them), key fingerprint (the flagship's key randomart too), TLS
-    certificate, host name, setup network name or a name the person typed
-    for it, a household peer's fingerprint or name, or any MAC-shaped
-    token). It is a list of the lines it names, so a line it does not name
-    passes (ledger A118). Its
-    error line is scrubbed the same way, with any hardware address in it
-    masked first: a desktop install's error ends in espflash's own last
-    lines, board info included. `desktop_parity.test.js` item 12 pins both
-    frontends to one list each, so neither can regress alone. What remains
-    for the claims lane is the intake itself (Phase 3 proper), not the
-    report.
+    **Status: partly done in both flashers (ledger A118)** —
+    `buildDiagnosticReport()` carries no hardware address at all, not even
+    a tail: the base MAC is the station address in every Wi-Fi frame, so
+    any part of it matches the board in radio range. Its serial tail is
+    scrubbed with visible markers before inclusion: credential lines
+    (`TAIL_REDACT`) and identity lines (`TAIL_IDENTITY`: the self-manifest
+    line and the lines the firmware prints with this board's Hardware ID,
+    device id (its MQTT topics among them), key fingerprint (the flagship's
+    key randomart too), TLS certificate, host name, setup network name or a
+    name the person typed for it, a household peer's fingerprint or name,
+    or any MAC-shaped token). Its error line is scrubbed the same way, with
+    any hardware address in it masked first: a desktop install's error ends
+    in espflash's own last lines, board info included.
+    `desktop_parity.test.js` item 12 pins both frontends to one list each,
+    so neither can regress alone. The tail is a list of the lines it names,
+    so a line it does not name passes, and the report is not
+    "public-only by construction": the flagship's chain-head rows, the
+    WAP's witness-table rows (a location printed to 3 decimals, about
+    110 m, and a chain-head prefix, one row per record) and its `g` card's
+    latitude and longitude, and the lines that name the network a board
+    joins all pass today. What remains for the report before the claims
+    lane can require it is those lines (A118); then the intake itself
+    (Phase 3 proper).
 
 - **Phase 4 — the loop.** "This didn't help" buttons (shipped in Phase 1)
   feed batched catalog curation; a human tends the corpus, never a ticket.

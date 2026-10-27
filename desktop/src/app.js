@@ -770,25 +770,26 @@ function maskHardwareAddress(text) {
 // END ABOUT-BOARD
 
 // One-click copyable diagnostic (parity: flash-core.js buildDiagnosticReport)
-// — everything a bug report needs, gathered instead of asked for.
-// Public-only is enforced HERE, in the builder, same as the browser side:
-// a fixed field allowlist with no hardware address in it (not even a tail:
-// the base MAC is the station address in every Wi-Fi frame the board sends),
-// and the console tail scrubbed of credential lines (the WAP prints its AP
-// password to serial at boot, and every setup surface prints it again inside
-// the "[SETUP] QR WIFI:…;P:" line when its setup network comes up, the
-// flagship on every re-raise too; a report someone is ASKED to paste must not
-// carry it) and of identity lines (the boot banner's Hardware ID, the
-// self-manifest, the lines the firmware prints with the device id (the MQTT
-// client id and topics, the Bluetooth status line among them), a key
-// fingerprint, the TLS certificate or a .local name, the board's own setup
-// network, the flagship's cards' id, key and randomart rows, the names the
-// person typed (the flagship's, on its banner and in its Bluetooth and rename
-// lines; the WAP's host, Bluetooth and opera names), and the lines that name a
+// — everything a bug report needs, gathered instead of asked for. What it
+// carries is decided HERE, in the builder, same as the browser side: a fixed
+// field allowlist with no hardware address in it (not even a tail: the base MAC
+// is the station address in every Wi-Fi frame the board sends), and the console
+// tail scrubbed of credential lines (the WAP prints its AP password to serial
+// at boot, and every setup surface prints it again inside the "[SETUP] QR
+// WIFI:…;P:" line when its setup network comes up, the flagship on every
+// re-raise too; a report someone is ASKED to paste must not carry it) and of
+// identity lines (the boot banner's Hardware ID, the self-manifest, the lines
+// the firmware prints with the device id (the MQTT client id and topics, the
+// Bluetooth status line among them), a key fingerprint, the TLS certificate or
+// a .local name, the board's own setup network, the flagship's cards' id, key
+// and randomart rows, the names the person typed (the flagship's, on its boot
+// line and banner and in its Bluetooth and rename lines; the WAP's on its boot
+// line, and its host, Bluetooth and opera names), and the lines that name a
 // household peer by fingerprint or name: the flagship's nearby card and opera
 // lines, the WAP's nearby scan and opera lines, the display's referral and
-// restored mutes). A line no pattern names passes. The patterns are the
-// browser's, held equal by desktop_parity.test.js.
+// restored mutes). A line no pattern names passes, so the tail is not
+// public-only by construction. The patterns are the browser's, held equal by
+// desktop_parity.test.js.
 const TAIL_REDACT = [
   /password/i,
   /passphrase|\bpsk\b/i,
@@ -811,7 +812,7 @@ const TAIL_IDENTITY = [
   /\b[0-9a-f]{4} +\S+ +\S+ +\S+ +#[0-9a-f]{4}\b/i,
   /^(?=.*\b(?:opera|peer|member)\b).*\b[0-9a-f]{16}\b/i,
   /\bcanary (?:discovered|lost):/i,
-  /\bdevice (?:prefix|name):/i,
+  /(?:— |\[OK\] )device (?:prefix|name):/i,
   /\b(?:peer state changed|opera alert received) \|/i,
   /\bBLE initialized(?: \(scanners held\))? \||\bsaved bluetooth name held a control byte\b/i,
   /\b(?:mdns (?:started|begin failed|re-announced on sta|re-announce failed)|identify requested) \|/i,
@@ -821,7 +822,7 @@ const TAIL_IDENTITY = [
   /\|[ .o+=*BOX@%&#\/^SE]{17}\|/,
   / => (?:OK|FAIL) \(retain=/,
   /\bSecuraCV-(?:[a-z]{1,8}-)?[A-Za-z0-9]{4}(?:-[A-Za-z0-9]{2})?\b/,
-  /\b(?:device|opera) name (?:changed|updated|not persisted)\b/i,
+  /\b(?:device|opera) name (?:changed|updated|not persisted)\b[^|—]*[|—]/i,
   /\bGATT status service started\b/i,
   /\[ERROR(?:\/BLUETOOTH)?\] NimBLE init failed [|—]/,
   /\bname {2,}: *[^\s║]/i,

@@ -2224,21 +2224,22 @@ export function visionChecklistModel(parts) {
 
 // ── self-healing: a copy-paste diagnostic report (never get stuck) ──────────
 // One click turns "I'm stuck" into an actionable, paste-into-Discussions block.
-// Public-only by construction — enforced HERE, in the builder, not by hoping
-// callers pass safe facts: the field list is a fixed allowlist with no
-// hardware address in it at all (not even a tail: the base MAC is the station
-// address in every Wi-Fi frame the board sends, so any slice of it matches
-// the board in radio range), and the serial tail is scrubbed before it is
-// included. Credentials first: the WAP legitimately prints its device-unique
-// AP password to serial at boot ("[WIFI] AP started: … (password: …)",
-// acknowledged in build_config.h), every setup surface prints the same key
-// inside a Wi-Fi QR payload when its setup network comes up ("[SETUP] QR
-// WIFI:…;P:<key>;;", onboarding_fsm.h qr_line; the WAP once, at boot, the
-// flagship again on every re-raise after a home-link drop), and a report
-// someone is ASKED to paste must not carry it. Then identity: the boot
-// banner's salted Hardware ID and the self-manifest line name this one board.
-// Pure + testable; the desktop app mirrors this byte-for-byte in spirit
-// (desktop_parity.test.js pins both sides).
+// What it carries is decided HERE, in the builder, not by hoping callers pass
+// safe facts: the field list is a fixed allowlist with no hardware address in
+// it at all (not even a tail: the base MAC is the station address in every
+// Wi-Fi frame the board sends, so any slice of it matches the board in radio
+// range), and the serial tail is scrubbed before it is included. Credentials
+// first: the WAP legitimately prints its device-unique AP password to serial at
+// boot ("[WIFI] AP started: … (password: …)", acknowledged in build_config.h),
+// every setup surface prints the same key inside a Wi-Fi QR payload when its
+// setup network comes up ("[SETUP] QR WIFI:…;P:<key>;;", onboarding_fsm.h
+// qr_line; the WAP once, at boot, the flagship again on every re-raise after a
+// home-link drop), and a report someone is ASKED to paste must not carry it.
+// Then identity: the boot banner's salted Hardware ID and the self-manifest
+// line name this one board, and TAIL_IDENTITY names the rest. The tail is a
+// list of the lines it names, not public-only by construction: a line no
+// pattern names passes. Pure + testable; the desktop app mirrors this
+// byte-for-byte in spirit (desktop_parity.test.js pins both sides).
 
 // Lines the serial tail may never carry into a report. Matched per line and
 // replaced with a marker (not silently dropped — a redaction you can see is
@@ -2258,25 +2259,25 @@ const TAIL_REDACT = [
 // ID" (boot_kv on the display, Sense, Vision and Sentinel; the WAP's
 // "  Hardware ID    : …" in sys_monitor.h — the flagship prints none), the
 // self-manifest line, which carries the key fingerprint, the device id and the
-// boot count, the lines the firmware prints with the device id (its boot
-// lines, every MQTT publish and discovery line, whose topic carries it, and
-// the Bluetooth status line), a key fingerprint, the TLS
-// certificate (per device, its CN the key fingerprint) or a .local name (built
-// from the device id; on the WAP from the name the person gave it, or else the
-// key fingerprint), the board's own setup network (SecuraCV-[<type>-]<four>,
-// the four from the device id or the Hardware ID, sent in every beacon while
-// it is up), the flagship's welcome, trust, attestation, identity and nearby
-// cards' rows with its device id or key (the trust card's key randomart among
-// them), the MQTT client id (the device id and the Hardware ID), the names the
-// person typed (the flagship's, which is also its Bluetooth name, on its ready
+// boot count, the lines the firmware prints with the device id (its boot lines,
+// every MQTT publish and discovery line, whose topic carries it, and the
+// Bluetooth status line), a key fingerprint, the TLS certificate (per device,
+// its CN the key fingerprint) or a .local name (built from the device id; on
+// the WAP from the name the person gave it, or else the key fingerprint), the
+// board's own setup network (SecuraCV-[<type>-]<four>, the four from the device
+// id or the Hardware ID, sent in every beacon while it is up), the flagship's
+// welcome, trust, attestation, identity and nearby cards' rows with its device
+// id or key (the trust card's key randomart among them), the MQTT client id
+// (the device id and the Hardware ID), the names the person typed (the
+// flagship's, which is also its Bluetooth name, on its boot line and ready
 // banner and in its Bluetooth and rename lines, its 'e' card's recent events
-// among them; the WAP's host name, Bluetooth names and opera name in its
-// health log), a peer's fingerprint or name (the flagship's nearby card and
-// opera lines, the WAP's nearby scan and opera lines, the display's fleet
-// referral and restored mutes), and any line with a MAC-shaped token in it
-// (the ROM tools print the board's own). Shown in the flasher, never pasted.
-// A line no pattern names passes: flash.test.js renders the ones these
-// patterns are for from the firmware's own sources.
+// among them; the WAP's on its boot line, and its host name, Bluetooth names
+// and opera name in its health log), a peer's fingerprint or name (the
+// flagship's nearby card and opera lines, the WAP's nearby scan and opera
+// lines, the display's fleet referral and restored mutes), and any line with a
+// MAC-shaped token in it (the ROM tools print the board's own). Shown in the
+// flasher, never pasted. A line no pattern names passes: flash.test.js renders
+// the ones these patterns are for from the firmware's own sources.
 const TAIL_IDENTITY = [
   /hardware\s*id\b/i,               // "    Hardware ID 3f7a9e21b4c5d6e8", "  Hardware ID    : …"
   /securacv\.canary\.manifest\//,   // {"schema":"securacv.canary.manifest/v1",…}
@@ -2292,7 +2293,7 @@ const TAIL_IDENTITY = [
   /\b[0-9a-f]{4} +\S+ +\S+ +\S+ +#[0-9a-f]{4}\b/i, // the nearby card's peer rows, "a1b2   3s 100%  87% #4210  ok"
   /^(?=.*\b(?:opera|peer|member)\b).*\b[0-9a-f]{16}\b/i, // a peer's whole fingerprint: the flagship's opera lines and their health-log echoes, the WAP's "Peer removed"
   /\bcanary (?:discovered|lost):/i,  // the WAP's nearby scan, a peer's fingerprint
-  /\bdevice (?:prefix|name):/i,      // the WAP's chirp prefix and Opera Bluetooth name: its key fingerprint's last two bytes
+  /(?:— |\[OK\] )device (?:prefix|name):/i, // the flagship's and the WAP's "[OK] Device name:" boot line (the name the person typed); the WAP's chirp prefix and Opera Bluetooth name, its key fingerprint's last two bytes
   /\b(?:peer state changed|opera alert received) \|/i, // the WAP's opera health lines, a peer's name
   /\bBLE initialized(?: \(scanners held\))? \||\bsaved bluetooth name held a control byte\b/i, // the WAP's Bluetooth name
   /\b(?:mdns (?:started|begin failed|re-announced on sta|re-announce failed)|identify requested) \|/i, // the WAP's host name, without its .local
@@ -2302,7 +2303,7 @@ const TAIL_IDENTITY = [
   /\|[ .o+=*BOX@%&#\/^SE]{17}\|/,     // a row of the trust card's key randomart
   / => (?:OK|FAIL) \(retain=/,        // an MQTT publish or discovery line: its topic carries the device id
   /\bSecuraCV-(?:[a-z]{1,8}-)?[A-Za-z0-9]{4}(?:-[A-Za-z0-9]{2})?\b/, // the board's own setup network (SETUP_SSID_RE's shapes), its four from the device id or Hardware ID
-  /\b(?:device|opera) name (?:changed|updated|not persisted)\b/i, // a rename: the flagship's name, the WAP's Bluetooth and opera names
+  /\b(?:device|opera) name (?:changed|updated|not persisted)\b[^|—]*[|—]/i, // a rename with its name after " | " or " — ": the flagship's name, the WAP's Bluetooth and opera names
   /\bGATT status service started\b/i, // the Bluetooth status line: the WAP's device id, the flagship's Bluetooth name
   /\[ERROR(?:\/BLUETOOTH)?\] NimBLE init failed [|—]/, // the flagship's Bluetooth failure, with its Bluetooth name
   /\bname {2,}: *[^\s║]/i,           // the flagship's ready banner, "║  Name       : <the name the person typed>"

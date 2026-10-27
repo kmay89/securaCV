@@ -6351,7 +6351,8 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
   // reply (the SSCMA frame's nonzero code), and either way nothing is stored.
   // With `burnFails` the burn throws before it writes the module; `retry`
   // then presses "Reset and retry" with the module as `retry.upBefore` says
-  // the failed burn left it, and burns again as `retry` says.
+  // the failed burn left it, and burns again as `retry` says. A retry that
+  // fails can carry its own `retry`, so a chain of attempts runs.
   const we2Flash = read(join(CANARY, "assets/we2-flash.js"));
   const we2 = await import(pathToFileURL(join(CANARY, "assets/we2-core.js")).href);
   const OURS = Buffer.from(JSON.stringify(we2.modelInfoJson({ version: "1", sha256: "cd".repeat(32) }))).toString("base64");
@@ -6396,23 +6397,30 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
       return nodesOf(box).filter((n) => n.tagName === "p").map((n) => n._text).join("\n");
     };
     let shown = phases[0];
-    let said = null;
+    // Each failed attempt's screen, in order: `said` is the first's,
+    // `retrySaid` the second's.
+    const failures = [];
     if (burnFails) {
       assert.ok(!shown, "a burn that threw reached its done screen");
-      said = failed(flashing);
-      if (!retry) return { order, said, card: card() };
-      mod.up = retry.upBefore;
-      burn = retry;
-      const again = nodesOf(flashing).find((n) => n.tagName === "button" && n._text === "Reset and retry");
-      assert.ok(again, "the failed burn's screen offers no retry");
-      again.fire("click");
-      await ticks(20);
-      if (retry.burnFails) {
-        assert.strictEqual(phases.length, 1, "a retry that threw reached its done screen");
-        return { order, said, retrySaid: failed(phases[0]), card: card() };
+      failures.push(failed(flashing));
+      let at = flashing;
+      for (let next = retry; next; next = next.retry) {
+        mod.up = next.upBefore;
+        burn = next;
+        const again = nodesOf(at).find((n) => n.tagName === "button" && n._text === "Reset and retry");
+        assert.ok(again, `attempt ${failures.length}'s failure screen offers no retry`);
+        const before = phases.length;
+        again.fire("click");
+        await ticks(20);
+        at = phases[before];
+        assert.ok(at, `attempt ${failures.length + 1} never drew its screen`);
+        if (!next.burnFails) { shown = phases[before + 1]; break; }
+        assert.strictEqual(phases.length, before + 1, `attempt ${failures.length + 1} threw and reached its done screen`);
+        failures.push(failed(at));
       }
-      shown = phases[1];
+      if (!shown) return { order, said: failures[0], retrySaid: failures[1], failures, card: card() };
     }
+    const said = failures[0] || null;
     assert.ok(shown, "the burn never reached its done screen");
     const proof = nodesOf(shown).map((n) => n._text || "").find((t) => /AT answer|^✓ |test inference/.test(t));
     assert.ok(proof, "the done screen's proof line never landed");
@@ -6420,7 +6428,7 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
     const later = page.phaseModuleBench(ctx, s);
     await ticks();
     const idLine = nodesOf(later).map((n) => n._text || "").find((t) => /^SSCMA firmware /.test(t));
-    return { order, said, proof, idLine, card: card() };
+    return { order, said, failures, proof, idLine, card: card() };
   };
   const KEPT = /may still carry the model card an earlier burn stored/;
   const UNDER_LOCAL = /until a burn completes, whatever model the module holds sits under a card that names no model/;
@@ -6438,12 +6446,13 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
     assert.match(r.idLine, /lists no person class — labels will read “object”/);
   }
   // It answers neither before nor after the burn, or answers but never takes
-  // the card, with no reply or with an error reply (before the burn, or after
-  // it): the done screen says the module may still carry the card an earlier
-  // burn stored, which is what a later bench reads.
+  // the card, with no reply or with an error reply (before the burn, after it,
+  // or both times): the done screen says the module may still carry the card
+  // an earlier burn stored, which is what a later bench reads.
   for (const c of [{ upBefore: false, upAfter: false }, { upBefore: false, upAfter: true, ack: false },
     { upBefore: true, upAfter: false, ack: false }, { upBefore: true, upAfter: false, ack: "err" },
-    { upBefore: false, upAfter: true, ack: "err" }, { upBefore: true, upAfter: true, ack: "err" }]) {
+    { upBefore: false, upAfter: true, ack: "err" }, { upBefore: true, upAfter: true, ack: false },
+    { upBefore: true, upAfter: true, ack: "err" }]) {
     const r = await run({ pinned: false, ...c });
     assert.match(r.proof, KEPT, `${JSON.stringify(c)}: the module kept the old card and the done screen says nothing: ${r.proof}`);
     assert.match(r.idLine, /labels will read “person”/, "the stand-in module should still hold the earlier card");
@@ -6499,6 +6508,24 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
       retry: { upBefore: false, burnFails: true } });
     assert.ok(!UNDER_LOCAL.test(r.retrySaid), `no attempt put a card on, but the retry's failure says one did: ${r.retrySaid}`);
     assert.deepStrictEqual(r.card, JSON.parse(Buffer.from(OURS, "base64").toString("utf8")));
+  }
+  // The flag rides every retry, not only the first: the first attempt's card
+  // goes on and its burn fails, the next two fail inside the bootloader, and
+  // the fourth completes with no answer after it. Each failure screen says
+  // the card is on, and the done screen does not say the module kept an
+  // earlier burn's card.
+  {
+    const inBootloader = (then) => ({ upBefore: false, upAfter: false, burnFails: true, retry: then });
+    const r = await run({ pinned: false, upBefore: true, upAfter: true, burnFails: true,
+      retry: inBootloader(inBootloader({ upBefore: false, upAfter: false, burnFails: false })) });
+    assert.strictEqual(r.failures.length, 3, "three attempts should have failed");
+    r.failures.forEach((said, i) => assert.match(said, UNDER_LOCAL,
+      `attempt ${i + 1}: the first attempt's card is still on and this failure says nothing: ${said}`));
+    assert.deepStrictEqual(r.order.filter((c) => c === "INFO=" || c === "BURN"), ["INFO=", "BURN", "BURN", "BURN", "BURN"],
+      `only the first attempt could write the card: ${r.order.join(" ")}`);
+    assert.match(r.proof, /No AT answer after reboot/);
+    assert.ok(!KEPT.test(r.proof), `attempt 4: the first attempt's card is on, but the done screen says the module didn't take it: ${r.proof}`);
+    assert.match(r.idLine, /lists no person class — labels will read “object”/);
   }
   // The pinned model's card waits for its bytes: before the burn the person
   // card would describe a model the module does not carry yet.

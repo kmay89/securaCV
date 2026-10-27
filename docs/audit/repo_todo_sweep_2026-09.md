@@ -20764,11 +20764,12 @@ so — see D2 below.)
   reply. `desktop_parity.test.js` runs the browser's post-burn step for a
   pinned release and for a local file (the card it sends, and a later bench
   reading it back), the burn and the step after it together on a module
-  that starts with SecuraCV's card and answers before the burn, after it,
-  both times or neither (with an ok reply, no reply and an error reply to
-  the card write), and a burn that throws and its retry, both benches for
-  no card, another card and
-  a person card, and each bench's drawing code on a detection, held to the
+  that starts with SecuraCV's card and answers before the burn, after it or
+  both times (each with an ok reply, no reply and an error reply to the
+  card write) or neither, a burn that throws and a chain of retries of it
+  (two more failures inside the bootloader, then a burn that completes
+  with no answer after it), both benches for no card, another card and a
+  person card, and each bench's drawing code on a detection, held to the
   labels its id line promised; `we2.test.js` tests the card choice;
   `we2_bench.rs` tests the card reader.
   Found on the way: the browser base64'd the card with `btoa()`, which threw
@@ -20799,31 +20800,37 @@ so — see D2 below.)
   Bluetooth name, the name the person typed or else its device id); the
   board's own setup network wherever it is printed
   (`SecuraCV-<type>-<four>` and the older shapes, the four from the device
-  id or the Hardware ID); the flagship's name (its ready banner `Name` row,
-  its `Device name updated` and `Device name NOT persisted` health lines);
-  the WAP's host name, Bluetooth names (`Device name changed` among them)
-  and opera name (`Opera name changed`) in its health log and its chirp's
-  `device prefix:` and Opera's `device name:` (its key fingerprint's last
-  two bytes); the flagship's console cards (the boot welcome card's
-  `(that's me: <device id>)`, the last card it prints at boot; the trust
-  card's `Device` row and key randomart; the attestation card's `Device`
-  line; the identity card's whole `Public Key`; the nearby card's
-  `This Canary` row and every peer row; the `e` card's recent events, which
-  print those health lines again); and a household peer's fingerprint
-  or name on the flagship's mesh lines (`fp=…`) and opera lines (a peer's
+  id or the Hardware ID); the flagship's name (its `[OK] Device name:` boot
+  line, its ready banner `Name` row, its `Device name updated` and
+  `Device name NOT persisted` health lines); the WAP's name on its
+  `[OK] Device name:` boot line, its host name, Bluetooth names
+  (`Device name changed` among them) and opera name (`Opera name changed`)
+  in its health log and its chirp's `device prefix:` and Opera's
+  `device name:` (its key fingerprint's last two bytes); the flagship's
+  console cards (the boot welcome card's `(that's me: <device id>)`, the
+  last card it prints at boot; the trust card's `Device` row and key
+  randomart; the attestation card's `Device` line; the identity card's
+  whole `Public Key`; the nearby card's `This Canary` row and every peer
+  row; the `e` card's recent events, which print those health lines
+  again); and a household peer's fingerprint or name on the flagship's
+  mesh lines (`fp=…`) and opera lines (a peer's
   whole fingerprint, and their health-log echoes), the WAP's
   `[BLE] Canary discovered:` and `lost:` lines and its `Peer removed`,
   `Peer state changed` and `Opera alert received` health lines, and the
   display's `Fleet referral: … (from <name>)` and restored `… muted for …`
   lines (`flash.test.js` renders the lines from the firmware's own sources;
   `desktop_parity.test.js` holds the two lists equal). Open: a line no
-  pattern names passes, among them the flagship's chain-head rows on its
-  `l`, `a` and `c` cards and the attestation's `Signature` on `c`, the
-  network name a board joins or reconnects to (`Joined "<name>"`,
-  `Connecting SSID="<name>"`) and the peer link's `Fleet key <id>` line;
-  and once the firmware answers `q` (the design's PR 10),
-  `sanitizeLogTail()` replaces each `securacv.canary.details/v1` line with
-  its share projection.
+  pattern names passes, so the report is not public-only by construction.
+  Among the lines that pass: the flagship's chain-head rows on its `l`, `a`
+  and `c` cards and the attestation's `Signature` on `c`, the WAP's
+  witness-table rows (a location printed to 3 decimals, about 110 m, and a
+  chain-head prefix, one row per record) and its `g` card's `Latitude` and
+  `Longitude` lines, the network name a board joins or reconnects to
+  (`Joined "<name>"`, `Connecting SSID="<name>"`, the flagship's
+  `WiFi credentials saved` health line) and the peer link's
+  `Fleet key <id>` line. And once the firmware answers `q` (the design's
+  PR 10), `sanitizeLogTail()` replaces each `securacv.canary.details/v1`
+  line with its share projection.
 - [x] **A119 [code] Both flashers' saved health reports carry this board's
   life (device-details design §11, P24).** The saved report, which reads as
   shareable, carried the lifetime boot counter, the witness record count, a

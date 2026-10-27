@@ -162,17 +162,21 @@ The flasher tries to fix the common failures before asking the user to:
   FTDI) *only* when the board actually uses that bridge. (`usbBridgeInfo`.)
 - **"Copy a diagnostic report"** — every stuck screen offers one click to copy
   a paste-able report (browser, OS, chip, baud, error, log tail) for
-  Discussions. Public-only by construction — never Wi-Fi credentials or keys,
-  no hardware address (not even a tail of it), and the log tail's
-  self-manifest line and the lines that carry this board's Hardware ID, device
-  id (the MQTT client id and topics among them), key fingerprint (the
-  flagship's key randomart too), TLS certificate, host name, setup network
-  name or a name the person typed for it, a household peer's fingerprint or
-  name, or a MAC-shaped token replaced by a visible marker. The patterns name
-  the lines the firmware prints (the tests render each from its source); a
-  line no pattern names passes, among them the flagship's chain-head rows and
-  the lines that name the network a board joins (ledger A118). The error
-  line is scrubbed the same way, with any hardware address in it masked
+  Discussions. Its fields are a fixed list with no hardware address in it
+  (not even a tail of it). The log tail's credential lines (a password,
+  passphrase, PSK, token or Wi-Fi QR key), its self-manifest line and the
+  lines that carry this board's Hardware ID, device id (the MQTT client id
+  and topics among them), key fingerprint (the flagship's key randomart too),
+  TLS certificate, host name, setup network name or a name the person typed
+  for it, a household peer's fingerprint or name, or a MAC-shaped token are
+  replaced by a visible marker. The patterns name the lines the firmware
+  prints (the tests render each from its source), so the tail is not
+  public-only by construction: a line no pattern names passes (ledger A118).
+  Among those: the flagship's chain-head rows, the WAP's witness-table rows
+  (a location printed to 3 decimals, about 110 m, and a chain-head prefix,
+  one row per record) and its `g` card's latitude and longitude, and the
+  lines that name the network a board joins. The error line is scrubbed the
+  same way, with any hardware address in it masked
   (`buildDiagnosticReport`). esptool's own "MAC: …" connect line is masked in
   the technical log too (`maskHardwareAddress`).
 - **About this board** — the hello card shows the chip and its revision, the

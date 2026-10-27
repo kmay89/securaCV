@@ -1829,6 +1829,10 @@ test("sanitizeLogTail: the MQTT topic lines, the board's own setup network and t
   const wapAp = fmt(ino, /snprintf\(msg, sizeof\(msg\), "(AP: %s)", shown_ssid\);\s*log_health\(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, g_wifi_status\.ap_ip\);/, "the WAP's AP health line");
   const prov = fw("firmware/projects/canary-display/src/net/provision.cpp");
   has(prov, /printf\("AP up: \\"%s\\" on channel %d - portal live\\n",\s*ap_ssid, kApChannel\);/, "the display's AP line");
+  // The WAP's boot banner prints its setup network on every boot, through
+  // its own copy of the shared banner's boot_kv.
+  const wapKv = fmt(fw(wapDir + "boot_banner.cpp"), /void boot_kv\(const char\* key, const char\* value\) \{\s*out\("([^"]+)\\n"/, "the WAP's boot_kv");
+  has(ino, /boot_kv\("WiFi AP", +g_device\.ap_ssid\);/, "the WAP's banner AP row");
   const sites = [
     (s) => printf(fmt(flagship, /Serial\.printf\("(\[\.\.\] SETUP MODE: AP SSID = %s)\\n", ap_ssid\);/, "the flagship's setup line"), s),
     (s) => printf(fmt(flagship, /Serial\.printf\("(║  WiFi AP    : %-45s  ║)\\n", device\.ap_ssid\);/, "the flagship's banner AP row"), s),
@@ -1838,12 +1842,14 @@ test("sanitizeLogTail: the MQTT topic lines, the board's own setup network and t
     (s) => printf(fmt(ino, /Serial\.printf\("(WiFi AP: %s)\\n", g_device\.ap_ssid\);/, "the WAP's 'w' line"), s),
     (s) => printf(cLiteral(ino, "║    \\\"ap_ssid\\\": \\\"%s\\\",", "the WAP's receipt row"), s),
     (s) => wapHealth("INFO", "NETWORK", printf(wapAp, s), "192.168.4.1"),
+    (s) => printf(wapKv, "WiFi AP", s),
     (s) => printf(cLiteral(prov, "AP up: ", "the display's AP line"), s, 6),
   ];
   for (const s of ssids) for (const site of sites) lines.push(site(s));
 
-  // 3. The Bluetooth status lines and the renames. The flagship's Bluetooth
-  // name is the name the person typed, or else its device id.
+  // 3. The Bluetooth status lines, the renames and the boot line that prints
+  // the stored name. The flagship's Bluetooth name is the name the person
+  // typed, or else its device id.
   const flagId = fmt(fw("firmware/canary/include/canary_config.h"), /#define DEVICE_ID_PREFIX +"([^"]+)"/, "the flagship's device id prefix") + sfx;
   const wapId = fmt(ino, /static const char\* DEVICE_ID_PREFIX = "([^"]+)";/, "the WAP's device id prefix") + sfx;
   const bs = fw("firmware/canary/lib/securacv_ble_status/src/securacv_ble_status.cpp");
@@ -1861,6 +1867,12 @@ test("sanitizeLogTail: the MQTT topic lines, the board's own setup network and t
     flagshipHealth("INFO", "SYSTEM", renamed[1], name), recent("INFO", renamed[1], name),
     flagshipHealth("WARNING", "SYSTEM", renamed[2], name), recent("WARNING", renamed[2], name),
     printf(fmt(flagship, /Serial\.printf\("(║  Name       : %-45s  ║)\\n", banner_name\);/, "the flagship's banner name row"), name),
+    // The boot line the flagship and the WAP print whenever a name is stored:
+    // the setup wizard's, the one the person typed.
+    printf(fmt(flagship, /if \(setup_get_device_name\(dev_name, sizeof\(dev_name\)\)\) \{\s*Serial\.printf\("(\[OK\] Device name: %s)\\n", dev_name\);/,
+      "the flagship's device-name boot line"), name),
+    printf(fmt(ino, /const char\* dn = setup_wizard::get_device_name\(\);\s*if \(dn\) Serial\.printf\("(\[OK\] Device name: %s)\\n", dn\);/,
+      "the WAP's device-name boot line"), name),
   );
   has(fw(wapDir + "bluetooth_channel.cpp"), /log_health\(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Device name changed", name\);/, "the WAP's Bluetooth rename line");
   has(ino, /log_health\(SCV_LOG_INFO, SCV_CAT_MESH, "Opera name changed", name\);/, "the WAP's opera rename line");
@@ -1884,7 +1896,9 @@ test("sanitizeLogTail: the MQTT topic lines, the board's own setup network and t
   }
   // Lines that only look like them are not collateral damage: the setup
   // network's fixed fallback name, the Bluetooth failures that print no name,
-  // the WAP's status line that prints none, and the MQTT lines without a topic.
+  // the WAP's status line that prints none, the MQTT lines without a topic,
+  // and the two fixed lines that say "name" and print none (a factory reset
+  // that could not clear it, an opera name that could not be kept).
   const logLine = fmt(fw("firmware/projects/canary-sense/include/canary/log.h"),
     /dbg_serial\(\)\.printf\("(\[%s\] %s)\\n", tag \? tag : "", msg \? msg : ""\);/, "the trio's log_line");
   const fallback = fmt(flagship, /strncpy\(setup_ssid, "([^"]+)", sizeof\(setup_ssid\) - 1\);/, "the flagship's fallback setup network");
@@ -1904,6 +1918,8 @@ test("sanitizeLogTail: the MQTT topic lines, the board's own setup network and t
     printf(cLiteral(fw("firmware/projects/canary-display/src/net/mqtt_mgr.cpp"), "Connect FAIL rc=%d", "the display's connect failure"), -2),
     printf(cLiteral(fw(wapDir + "csi_mqtt.cpp"), "[MQTT] discovery: %u/%u entities announced", "the WAP's discovery count"), 12, 12),
     recent("INFO", "MQTT connected", "192.168.1.5"),
+    cLiteral(ino, "[RESET] Setup flag / device name: ", "the WAP's factory-reset failure line"),
+    cLiteral(flagship, "[WARN] Opera name not persisted", "the flagship's opera-name failure line"),
   ]) {
     assert.strictEqual(sanitizeLogTail(keep), keep);
   }
