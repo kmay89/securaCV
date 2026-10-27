@@ -206,8 +206,9 @@ pub fn parse_flash_size(board_info: &str) -> Option<u64> {
 /// "MAC address: aa:bb:cc:dd:ee:ff" line — lowercased. `detect_chip` reads it
 /// from the same board-info call that already names the chip, for the intake
 /// MAC check and to know the same board again. The frontends never draw it
-/// unless asked, and no saved file, report or file name carries it. None if
-/// no MAC-shaped token.
+/// unless asked, and no report or file name carries it (a backup is the
+/// flash's own bytes, which hold it in NVS beside the PHY calibration). None
+/// if no MAC-shaped token.
 pub fn parse_mac(board_info: &str) -> Option<String> {
     for line in board_info.lines() {
         if !line.to_ascii_lowercase().contains("mac") {

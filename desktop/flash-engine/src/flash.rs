@@ -1180,8 +1180,13 @@ mod tests {
             ("aa:bb:cc:dd:ee:ff:00", "[hardware address hidden]:00"),
             ("— dc:54:75:c1:22:30 —", "— [hardware address hidden] —"),
             // Not a MAC: a word character on either side, too few octets,
-            // three-digit octets, a time, an IPv6 address.
+            // three-digit octets, another separator, a non-hex digit, a
+            // time, an IPv6 address.
             ("xdc:54:75:c1:22:30", "xdc:54:75:c1:22:30"),
+            ("dc.54.75.c1.22.30", "dc.54.75.c1.22.30"),
+            ("dc:54:75 c1:22:30", "dc:54:75 c1:22:30"),
+            ("gg:54:75:c1:22:30", "gg:54:75:c1:22:30"),
+            ("dc:54:75:c1:22:3g", "dc:54:75:c1:22:3g"),
             ("dc:54:75:c1:22:30x", "dc:54:75:c1:22:30x"),
             ("_dc:54:75:c1:22:30", "_dc:54:75:c1:22:30"),
             ("dc:54:75:c1:22", "dc:54:75:c1:22"),

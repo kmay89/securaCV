@@ -97,7 +97,9 @@ const state = {
   // The factory hardware address, or null: kept to know this board again
   // (the backup dedupe, the fleet book, the intake check). Never drawn unless
   // asked ("Hardware address · Show"), never copied, and never written into a
-  // saved file, a report or a file name.
+  // report or a file name; the fleet book in prefs is keyed by it. (A backup
+  // is the flash's own bytes, and ESP-IDF keeps the address in NVS with its
+  // PHY calibration, so a backup holds it the way the board does.)
   mac: null,
   // About this board: the allowlisted eFuse fields, decoded (undefined until
   // the fuse read runs, null when it could not read them).
@@ -777,8 +779,10 @@ function maskHardwareAddress(text) {
 // the "[SETUP] QR WIFI:…;P:" line when its setup network comes up, the
 // flagship on every re-raise too; a report someone is ASKED to paste must not
 // carry it) and of identity lines (the boot banner's Hardware ID, the
-// self-manifest, and every line carrying the device id, a key fingerprint,
-// the TLS certificate or a .local name).
+// self-manifest, the lines the firmware prints with the device id, a key
+// fingerprint, the TLS certificate or a .local name, the flagship's cards'
+// id, key and randomart rows, and a household peer's fingerprint or name).
+// The patterns are the browser's, held equal by desktop_parity.test.js.
 const TAIL_REDACT = [
   /password/i,
   /passphrase|\bpsk\b/i,
@@ -794,6 +798,13 @@ const TAIL_IDENTITY = [
   /\bCN:\s*securacv-|cert[\s_-]*(?:fp|fingerprint)\b/i,
   /[\w-]\.local\b/i,
   /\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b/i,
+  /\bthat's me:/i,
+  /\bdevice {2,}(?:: *)?[^\s║│|]/i,
+  /\bpublic\s*key\s*:/i,
+  /\bthis canary {2,}/i,
+  /\bcanary (?:discovered|lost):/i,
+  /\bfleet referral:.*\(from /i,
+  /\|[ .o+=*BOX@%&#\/^SE]{17}\|/,
 ];
 function sanitizeLogTail(text) {
   return String(text || "").split("\n").map((ln) =>
@@ -1116,6 +1127,20 @@ function profileSaveFromFlash(p) {
       }
     }).catch(() => {});
   } catch (_) {}
+}
+
+// An event-log entry as the About view lists it. logEvent masks the hardware
+// address before it stores an entry, but an entry an earlier version saved was
+// cut to 160 characters as it came: it can hold espflash's "MAC address: …"
+// line, whole or ending partway through the address (which no whole-address
+// mask matches: the octets after the label, up to a space or the end), or a
+// safety copy's old path, …/canary-<the address's last six hex digits>-…
+// (rescue::backup_filename before names were the day and a counter), whole
+// or cut. Both are masked here too.
+function eventLogText(msg) {
+  return maskHardwareAddress(msg)
+    .replace(/(\bMAC(?:\s+address)?\s*:\s*)[0-9a-f]{1,2}(?:[:-][0-9a-f]{0,2}){0,5}(?=\s|$)/gi, "$1" + HW_ADDRESS_MASK)
+    .replace(/([\\/])canary-(?:[0-9a-f]{6}(?=-)|[0-9a-f]{1,6}$)/gi, "$1canary-" + HW_ADDRESS_MASK);
 }
 
 // A short, local event log — so a failure is visible and recoverable, never
@@ -5260,6 +5285,9 @@ function macRevealRow(cls, mac = state.mac) {
   const k = document.createElement("span");
   k.className = cls === "health-row" ? "health-row-k" : "tb-k";
   k.textContent = "Hardware address";
+  // Why it is hidden (settings_help.mac), as the browser's row says it.
+  const hd = helpDot("mac");
+  if (hd) k.append(hd);
   const v = document.createElement("span");
   v.className = cls === "health-row" ? "health-row-v" : "tb-v";
   const show = document.createElement("button");
@@ -6714,7 +6742,7 @@ function renderAbout() {
   const log = (prefs.log || []);
   const logHtml = log.length
     ? log.map((e) =>
-        `<div class="log-row ${esc(e.kind || "")}"><time>${esc(fmtTime(e.t))}</time><span class="l-msg">${esc(e.msg)}</span></div>`).join("")
+        `<div class="log-row ${esc(e.kind || "")}"><time>${esc(fmtTime(e.t))}</time><span class="l-msg">${esc(eventLogText(e.msg))}</span></div>`).join("")
     : `<div class="log-row"><span class="l-msg muted">Nothing logged yet — a clean run.</span></div>`;
 
   $("about-body").innerHTML = `

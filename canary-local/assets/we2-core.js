@@ -283,8 +283,11 @@ export function modelInfoJson({ version, sha256 }) {
 // nothing about it, so its card names no model and lists no class: both
 // benches pick their label map from the card, any other tool that reads
 // AT+INFO? sees it as the module's own description, and this one must not
-// claim to be the pinned person detector. The burn still writes it, so a card
-// left by an earlier pinned burn cannot speak for the new file.
+// claim to be the pinned person detector. we2-flash.js stores it before the
+// burn, while the module's SSCMA firmware still answers, and again after, so
+// a card an earlier pinned burn left is replaced whenever the module takes
+// either write; when it takes neither, the done screen says the old card may
+// still be there.
 export function localModelInfoJson({ sha256 }) {
   return {
     name: "",

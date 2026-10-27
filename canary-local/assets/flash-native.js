@@ -34,7 +34,7 @@
 // has no fuse read and no passport read (desktop-lab exposes neither
 // command), so the eFuse and installed-image rows say "Read with the
 // Flasher" instead of guessing. The hardware address detect_chip returns is
-// kept to know the board again and never drawn — this bench shows none.
+// kept in st.mac, never read and never drawn — this bench shows none.
 
 import * as core from "./flash-core.js";
 
@@ -284,8 +284,8 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       det.append(el("h4", null, g.title));
       det.append(el("p", "fineprint", g.source));
       for (const r of g.rows) {
-        // The hardware address: this bench keeps it to know the board again
-        // and shows none of it — the Flasher reveals it on request.
+        // The hardware address: this bench keeps it (st.mac) but never reads
+        // or shows it — the Flasher reveals it on request.
         if (r.reveal) continue;
         const row = el("div", "flash-report-row");
         row.append(el("span", "flash-report-label", r.label), el("span", "flash-report-val", r.value));

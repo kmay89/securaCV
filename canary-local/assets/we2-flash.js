@@ -387,17 +387,42 @@ function phaseModuleFlash(ctx, s, job) {
   box.append(bar, log);
 
   (async () => {
+    const say = (l) => { log.textContent += "· " + l + "\n"; log.scrollTop = log.scrollHeight; };
     const f = new We2Flasher(s.t, {
-      onLog: (l) => { log.textContent += "· " + l + "\n"; log.scrollTop = log.scrollHeight; },
+      onLog: say,
       onProgress: (p) => { fill.style.width = Math.round(p * 100) + "%"; },
     });
+    // A file the person picked gets its card (the one that claims nothing,
+    // burnCardBase64) BEFORE the burn, while the module's SSCMA firmware can
+    // still answer AT. The card is that firmware's, not part of the model a
+    // burn writes, so a burn alone can leave whatever card an earlier one
+    // stored, SecuraCV's person card among them; if the module then never
+    // answers after the burn, that card would go on speaking for this file.
+    // The pinned model's card waits for its bytes (phaseModuleDone): before
+    // the burn it would describe a model the module does not carry yet.
+    let cardFirst = false;
+    if (job.pinned !== true) {
+      const at = makeAtClient(s.t);
+      at.start();
+      let answered = false;
+      try {
+        const ver = await at.cmd("VER?", { timeoutMs: 1200 });
+        answered = !!(ver && ver.code === 0);
+        const wrote = answered ? await at.cmd('INFO="' + burnCardBase64(job) + '"', { timeoutMs: 3000 }) : null;
+        cardFirst = !!(wrote && wrote.code === 0);
+      } catch { /* the burn below does not need it; phaseModuleDone tries again */ }
+      at.stop();
+      say(cardFirst ? "stored this file’s model card first (it names no model and lists no class)"
+        : answered ? "the module didn’t take this file’s model card before the burn — it goes on after it"
+          : "no AT answer before the burn — this file’s model card goes on after it");
+    }
     try {
       await f.flashModel(job.bytes);
       // Two-port Vision: the camera module's model is now burned — record it
       // (once, here at the completion transition) so the done screen can insist
       // on both ports and celebrate only when both are in.
       visionSession.markDone("we2");
-      ctx.setPhase(phaseModuleDone(ctx, s, job));
+      ctx.setPhase(phaseModuleDone(ctx, s, { ...job, cardFirst }));
     } catch (e) {
       log.textContent += "✗ " + e.message + "\n";
       const retry = el("button", "primary", "Reset and retry");
@@ -776,30 +801,42 @@ function phaseModuleDone(ctx, s, job) {
     // from its burn is the normal case here, not a failure.
     await sleep(1200);
     const ver = await wakeModule(at, s.t, (line) => { proof.textContent = line; });
+    // A file the person picked whose card reached the module neither before
+    // the burn (phaseModuleFlash) nor after it: the module may still hold a
+    // card an earlier burn stored, and both benches take their labels from it.
+    const keptCard = (stored) => (job.pinned !== true && !job.cardFirst && !stored
+      ? " The module didn’t take this file’s model card, so it may still carry the model card an " +
+        "earlier burn stored, and a bench takes its labels from that card. Burn this file again " +
+        "once the module answers, and its card goes on first."
+      : "");
     if (ver) {
       // store a model card on-device (what SenseCraft does after a flash),
       // then a one-shot invoke as the "it actually runs" proof. Our card only
       // for the pinned model; a local file's card names nothing and lists no
-      // class (burnCardBase64), so no later bench labels it "person".
+      // class (burnCardBase64), so a bench that reads it labels nothing
+      // "person". The module stores it only if it acknowledges the write.
       const info = burnCardBase64(job);
-      await at.cmd('INFO="' + info + '"', { timeoutMs: 3000 });
+      const wrote = await at.cmd('INFO="' + info + '"', { timeoutMs: 3000 });
+      const stored = !!(wrote && wrote.code === 0);
       const inv = await at.cmd("INVOKE=1,0,1", { timeoutMs: 8000 });
       // The one place a model is named: this flasher just wrote it, and its
       // SHA-256 (and, once a release key is pinned, its signature) matched
       // manifest-vision-model.json before a byte went out. A local file is
       // the person's own, so it is never named for them.
       const named = job.pinned === true
-        ? "SecuraCV person detection, installed and checked. The module answered, carries our model card, "
+        ? "SecuraCV person detection, installed and checked. The module answered" +
+          (stored ? ", carries our model card, " : " ")
         : "Your model file, installed. The module answered ";
-      proof.textContent = inv && inv.code === 0
+      proof.textContent = (inv && inv.code === 0
         ? "✓ " + named + "and ran one inference. Done — the " +
           "model persists across power cycles and every host reflash."
         : "The module answers AT but the test inference didn’t reply — power-cycle it once. " +
-          "If it keeps refusing: the module may be running non-SSCMA firmware; see the device guide §4.";
+          "If it keeps refusing: the module may be running non-SSCMA firmware; see the device guide §4.") +
+        keptCard(stored);
     } else {
       proof.textContent = "No AT answer after reboot, even after an automatic reset — unplug/" +
         "replug the module and it should come up with the new model. The burn itself completed — " +
-        "every block was acknowledged.";
+        "every block was acknowledged." + keptCard(false);
     }
   })();
 

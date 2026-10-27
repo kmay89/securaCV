@@ -5770,6 +5770,16 @@ function pageDoc() {
   proto.appendChild = function (n) { this.append(n); return n; };
   proto.insertBefore = function (n) { this.append(n); return n; };
   proto.replaceWith = function (n) { if (this.parent) { this.parent.append(n); this.remove(); } };
+  proto.after = function (n) {
+    const p = this.parent;
+    if (!p) return;
+    if (n.parent) n.remove();
+    n.parent = p;
+    p.children.splice(p.children.indexOf(this) + 1, 0, n);
+  };
+  Object.defineProperty(proto, "nextElementSibling", {
+    get() { return this.parent ? this.parent.children[this.parent.children.indexOf(this) + 1] || null : null; },
+  });
   proto.focus = proto.select = function () {};
   return doc;
 }
@@ -5873,6 +5883,40 @@ test("the hardware address: each flasher's own drawing code shows no byte of it 
     page.renderHealthReport({ chip: "ESP32-S3", flashBytes: 8 << 20,
       slots: [{ label: "app0", subtype: 0x10, empty: false, project: "canary_wap", version: "2.4.16", active: true }] });
     holdsTheAddressBack("desktop health report", nodes["health-report"], []);
+  }
+});
+
+test("the hardware address: both flashers' reveal rows carry the help dot that says why it is hidden", async () => {
+  // The same settings_help.mac text, drawn by each flasher's own help dot.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const help = catalog.settings_help.mac;
+  assert.ok(help && help.what, "flash.json lost settings_help.mac");
+  {
+    const doc = pageDoc();
+    const page = runCut([flashJsEl(flashJs), ...["helpDot", "macRevealFact"].map((n) => fnSource(flashJs, n))], ["macRevealFact"],
+      { document: doc, core, state: { catalog, mac: HW }, installHelpManagers() {} });
+    const row = page.macRevealFact();
+    const what = row.find((n) => /\bflash-help-what\b/.test(n.className));
+    assert.strictEqual(what && what.textContent, help.what, "the browser's Hardware address row lost its help dot");
+    assert.ok(!HW_BYTES.test(drawnText(row)), "the browser's row draws the address before Show");
+  }
+  {
+    const doc = pageDoc();
+    const overrides = appJs.match(/const HELP_DESKTOP_OVERRIDES = \{[\s\S]*?\n\};/);
+    assert.ok(overrides, "app.js moved HELP_DESKTOP_OVERRIDES");
+    const page = runCut([overrides[0], ...["helpTopic", "helpDot", "macRevealRow"].map((n) => fnSource(appJs, n))], ["macRevealRow"],
+      { document: doc, state: { catalog, mac: HW } });
+    for (const cls of ["tb-cell", "health-row"]) {
+      const row = page.macRevealRow(cls);
+      const dot = row.find((n) => n.tagName === "button" && n.className === "help-dot");
+      assert.ok(dot, `the desktop's Hardware address row (${cls}) has no help dot`);
+      dot.fire("click");
+      const pop = row.find((n) => n.className === "help-pop");
+      assert.strictEqual(pop && pop.textContent, help.what, `the desktop's help dot (${cls}) says something else`);
+      assert.ok(!HW_BYTES.test(drawnText(row)), `the desktop's row (${cls}) draws the address before Show`);
+    }
   }
 });
 
@@ -6004,6 +6048,36 @@ test("an espflash failure: the address its board info printed reaches no screen,
   page.logEvent("err", `espflash said: MAC address: ${HW}`);
   assert.strictEqual(prefs.log.length, 3, "the install, the health check and the direct entry should each be logged");
   for (const entry of prefs.log) assert.ok(!HW_BYTES.test(entry.msg), `the event log keeps the address: ${entry.msg}`);
+  // An entry saved before the store masked (earlier versions kept its first
+  // 160 characters as they came) is masked where the About view lists it.
+  {
+    let html = "";
+    const sink = { set innerHTML(v) { html = v; }, querySelectorAll: () => [] };
+    const about = runCut([appJs.match(/\/\/ BEGIN ABOUT-BOARD\n([\s\S]*?)\/\/ END ABOUT-BOARD/)[1],
+      ...["esc", "eventLogText", "renderAbout"].map((n) => fnSource(appJs, n))], ["renderAbout"], {
+      document: doc, $: (id) => (id === "about-body" ? sink : null), state: { appInfo: { version: "0" } },
+      prefs: { log: [{ t: 0, kind: "err", msg: `Flash failed [not-in-download]: MAC address: ${HW}` },
+        // …or cut partway through the address, which no whole-address mask matches
+        { t: 0, kind: "err", msg: `Health check failed: MAC address:       ${HW.slice(0, 7)}` },
+        // …or a safety copy named by the address's last six hex digits, whole or cut
+        { t: 0, kind: "ok", msg: `Safety copy saved: /Users/me/backups/canary-${HW.replace(/:/g, "").slice(-6)}-20261020T1230-backup.bin` },
+        { t: 0, kind: "ok", msg: `Safety copy saved: /Users/me/backups/canary-${HW.replace(/:/g, "").slice(-6, -2)}` }] },
+      ATLAS_LINKS: [], ATLAS_FAMILY_GROUP: "family", secretStore: { where: () => "the keychain" },
+    });
+    about.renderAbout();
+    assert.match(html, /Flash failed \[not-in-download\]: MAC address: /, "the About view never listed the saved entry");
+    assert.match(html, /Health check failed: MAC address: /, "the About view never listed the cut entry");
+    assert.strictEqual(html.split("Safety copy saved: /Users/me/backups/canary-").length - 1, 2,
+      "the About view never listed the safety-copy entries");
+    // Today's names are the day and a counter, and stay readable.
+    const today = runCut([fnSource(appJs, "eventLogText")], ["eventLogText"],
+      { document: doc, maskHardwareAddress: (t) => t, HW_ADDRESS_MASK: "[hidden]" });
+    for (const keep of ["Safety copy saved: /b/canary-2026-10-22-1-backup.bin", "MAC check: clear", "MAC: clear",
+                        "canary-beef12 hatched"]) {
+      assert.strictEqual(today.eventLogText(keep), keep);
+    }
+    assert.ok(!HW_BYTES.test(html), "the About view lists an earlier version's event-log entry with the address in it");
+  }
 
   // 3. The Lab's native bench: its failure card's Details, as well as its log.
   const run = await runNativeBench({ flashAnswers: Array(8).fill(writeErr) });
@@ -6119,10 +6193,10 @@ test("the Grove module: a model is named only after this flasher's SHA-256-match
     await ticks();
     const proof = nodesOf(box).find((n) => n.tagName === "p" && /^✓ /.test(n._text));
     assert.ok(proof, `pinned=${pinned}: the proof line never landed`);
-    // The burn always replaces the card, so one left by an earlier pinned
-    // burn can never speak for a file the person picked.
+    // The step after the burn writes one card (a file the person picked
+    // gets it before the burn too: the test below).
     const writes = sent.filter((c) => c.startsWith("INFO="));
-    assert.strictEqual(writes.length, 1, `pinned=${pinned}: the burn should write exactly one card`);
+    assert.strictEqual(writes.length, 1, `pinned=${pinned}: the step after the burn should write exactly one card`);
     const stored = /^INFO="([A-Za-z0-9+/=]+)"$/.exec(writes[0]);
     assert.ok(stored, `pinned=${pinned}: the card write is not INFO="<base64>": ${writes[0]}`);
     const written = JSON.parse(Buffer.from(stored[1], "base64").toString("utf8"));
@@ -6175,6 +6249,94 @@ test("the Grove module: a model is named only after this flasher's SHA-256-match
   assert.strictEqual(appJs.split("SecuraCV person detection").length - 1, 1);
   assert.match(fnSource(appJs, "onFlashModule"),
     /invoke\("flash_vision_module", \{\s*port: state\.port,\s*manifestUrl: state\.catalog\.we2_module\.manifest_url,\s*\}\)/);
+});
+
+test("the Grove module: a burn of a file the person picked replaces the card an earlier pinned burn left, or says it could not", async () => {
+  // The stand-in module's SSCMA firmware keeps one model card, apart from
+  // the model a burn writes, so a burn alone leaves the card it found. This
+  // one starts with SecuraCV's person card (an earlier pinned burn). It
+  // answers AT while `up` is true, and acknowledges a card write when `ack` is.
+  const we2Flash = read(join(CANARY, "assets/we2-flash.js"));
+  const we2 = await import(pathToFileURL(join(CANARY, "assets/we2-core.js")).href);
+  const OURS = Buffer.from(JSON.stringify(we2.modelInfoJson({ version: "1", sha256: "cd".repeat(32) }))).toString("base64");
+  const run = async ({ pinned, upBefore, upAfter, ack = true }) => {
+    const mod = { card: OURS, up: upBefore };
+    const order = [];
+    const at = { start() {}, stop() {}, onEvent() {},
+      cmd: async (c) => {
+        const w = /^INFO="([A-Za-z0-9+/=]+)"$/.exec(c);
+        order.push(w ? "INFO=" : c);
+        if (!mod.up) return null;
+        if (c === "INFO?") return { code: 0, data: mod.card };
+        if (w) { if (!ack) return null; mod.card = w[1]; return { code: 0 }; }
+        return { code: 0, data: { software: "2025.01.02" } };
+      } };
+    class We2Flasher { async flashModel() { order.push("BURN"); mod.up = upAfter; } }
+    const doc = pageDoc();
+    let shown = null;
+    const page = runCut([flashJsEl(we2Flash), ...["phaseModuleFlash", "phaseModuleDone", "phaseModuleBench"].map((n) => fnSource(we2Flash, n))],
+      ["phaseModuleFlash", "phaseModuleBench"], {
+        document: doc, burnCardBase64: we2.burnCardBase64, makeAtClient: () => at, We2Flasher,
+        wakeModule: async () => (mod.up ? { code: 0, data: { software: "2025.01.02" } } : null), sleep: async () => {},
+        visionSession: { parts: () => ({ esp32: false, we2: true }), markDone() {} },
+        mountBench: () => ({ node: doc.createElement("div"), stop: async () => {} }),
+      });
+    const ctx = { catalog: { products: [], we2_module: { model_addr: "0x00400000" } }, back() {}, setPhase: (p) => { shown = p; } };
+    const s = { t: { close: async () => {} } };
+    page.phaseModuleFlash(ctx, s, { bytes: new Uint8Array(4), label: "mine.tflite", sha256: "ab".repeat(32), version: "1", pinned });
+    await ticks(20);
+    assert.ok(shown, "the burn never reached its done screen");
+    const proof = nodesOf(shown).map((n) => n._text || "").find((t) => /AT answer|^✓ |test inference/.test(t));
+    assert.ok(proof, "the done screen's proof line never landed");
+    mod.up = true; // replugged: a later bench reads whatever card the module kept
+    const later = page.phaseModuleBench(ctx, s);
+    await ticks();
+    const idLine = nodesOf(later).map((n) => n._text || "").find((t) => /^SSCMA firmware /.test(t));
+    return { order, proof, idLine, card: JSON.parse(Buffer.from(mod.card, "base64").toString("utf8")) };
+  };
+  const KEPT = /may still carry the model card an earlier burn stored/;
+
+  // A file the person picked: its card goes on before the burn, while the
+  // module still answers, so a module that never answers after the burn
+  // keeps no card that speaks for an earlier model.
+  {
+    const r = await run({ pinned: false, upBefore: true, upAfter: false });
+    assert.ok(r.order.indexOf("INFO=") >= 0 && r.order.indexOf("INFO=") < r.order.indexOf("BURN"),
+      `a local file's card should go on before the burn: ${r.order.join(" ")}`);
+    assert.deepStrictEqual(r.card, we2.localModelInfoJson({ sha256: "ab".repeat(32) }));
+    assert.match(r.proof, /No AT answer after reboot/);
+    assert.ok(!KEPT.test(r.proof), `the card did go on, but the done screen says it may not have: ${r.proof}`);
+    assert.match(r.idLine, /lists no person class — labels will read “object”/);
+  }
+  // It answers neither before nor after the burn, or answers after it but
+  // never acknowledges the card: the done screen says the module may still
+  // carry the card an earlier burn stored, which is what a later bench reads.
+  for (const c of [{ upBefore: false, upAfter: false }, { upBefore: false, upAfter: true, ack: false }]) {
+    const r = await run({ pinned: false, ...c });
+    assert.match(r.proof, KEPT, `${JSON.stringify(c)}: the module kept the old card and the done screen says nothing: ${r.proof}`);
+    assert.match(r.idLine, /labels will read “person”/, "the stand-in module should still hold the earlier card");
+  }
+  // It answers only after the burn: the card goes on then.
+  {
+    const r = await run({ pinned: false, upBefore: false, upAfter: true });
+    assert.deepStrictEqual(r.card, we2.localModelInfoJson({ sha256: "ab".repeat(32) }));
+    assert.match(r.proof, /^✓ Your model file, installed\. /);
+    assert.ok(!KEPT.test(r.proof), r.proof);
+  }
+  // The pinned model's card waits for its bytes: before the burn the person
+  // card would describe a model the module does not carry yet.
+  {
+    const r = await run({ pinned: true, upBefore: true, upAfter: true });
+    assert.ok(r.order.indexOf("INFO=") > r.order.indexOf("BURN"), `the pinned card went on before its burn: ${r.order.join(" ")}`);
+    assert.deepStrictEqual(r.card, we2.modelInfoJson({ version: "1", sha256: "ab".repeat(32) }));
+    assert.match(r.proof, /carries our model card/);
+  }
+  // …and the done screen says the module carries it only when it acknowledged the write.
+  {
+    const r = await run({ pinned: true, upBefore: true, upAfter: true, ack: false });
+    assert.match(r.proof, /^✓ SecuraCV person detection, installed and checked\. The module answered and ran one inference/);
+    assert.ok(!/carries our model card/.test(r.proof), `an unacknowledged card write is reported as stored: ${r.proof}`);
+  }
 });
 
 test("the Grove bench draws the labels its id line promised, on both flashers", async () => {

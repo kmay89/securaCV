@@ -1381,7 +1381,7 @@ test("buildDiagnosticReport: the serial tail is scrubbed of credential lines", a
 // the board prints it.
 function printf(fmt, ...args) {
   let i = 0;
-  return fmt.replace(/%(-?)(\d*)(?:\.(\d+))?(s|lu|u)/g, (_, left, width, prec, conv) => {
+  return fmt.replace(/%(-?)(\d*)(?:\.(\d+))?(s|lu|u|d)/g, (_, left, width, prec, conv) => {
     let v = String(args[i++]);
     if (conv === "s" && prec) v = v.slice(0, Number(prec)); // "%.16s"
     const w = Number(width || 0);
@@ -1522,6 +1522,79 @@ test("sanitizeLogTail: every other line carrying a key fingerprint, the TLS cert
   }
 });
 
+test("sanitizeLogTail: the flagship's identity cards, the WAP's nearby lines and the display's referral never reach a report", async () => {
+  // Lines that carry this board's device id or key, or a household peer's
+  // fingerprint or name, outside the boot banner: the flagship's boot welcome
+  // card (the last lines of every flagship boot, FEATURE_CONSOLE_THEME), its
+  // trust card ('l', 'a'; its key randomart too), attestation card ('c'),
+  // identity card ('i') and nearby card ('n'), the WAP's nearby scan and the
+  // display's fleet referral. Rendered from the firmware's own sources.
+  const { buildDiagnosticReport, sanitizeLogTail } = await core();
+  const fw = (p) => readFileSync(join(ROOT, "..", p), "utf8");
+  const fmt = (src, re, what) => { const m = re.exec(src); assert.ok(m, `${what} moved — re-point this test`); return m[1]; };
+  const scenes = fw("firmware/common/ui/console_scenes.h");
+  const flagship = fw("firmware/canary/src/main.cpp");
+  const id = "canary-kids-room";
+  const key = "5e".repeat(32);
+  const peer = "a1b2";
+  const host = "canary-porch";
+  // A panel row as console_theme.h's row() draws it: one space of margin
+  // inside the bars, the text padded to the 52-column interior.
+  const framed = (text) => "│ " + text.padEnd(50) + " │";
+  assert.match(scenes, /static const int TRUST_INNER = 52;/, "the trust card's width moved — re-point framed()");
+  assert.match(flagship, /print_boot_welcome\(\);/, "the flagship no longer prints its welcome card at boot");
+  const lines = [
+    framed(printf(fmt(scenes, /rowf\(r, inner, COL_DIM, "(\s*\(that's me: %s\))", device_id\)/, "the welcome card's id row"), id)),
+    framed(printf(fmt(scenes, /rowf\(r, inner, COL_NONE, "(Device {4}%s)", t\.device_id/, "the trust card's Device row"), id)),
+    printf(fmt(flagship, /Serial\.printf\("(  Device    : %s)\\n", dev\.device_id\)/, "the attestation card's Device line"), id),
+    fmt(flagship, /Serial\.print\("(  Public Key: )"\);\s*for \(int i = 0; i < 32; i\+\+\) Serial\.printf\("%02x", device\.pubkey\[i\]\)/,
+      "the identity card's key line") + key,
+    framed(printf(fmt(fw("firmware/common/ui/fleet_view.h"), /rowf\(r, inner, COL_NONE, "(This Canary  %s%s%s)",/, "the nearby card's own row"),
+      id, "   fp ", peer)),
+  ];
+  const ble = fw("firmware/projects/canary-wap/arduino/canary_wap/ble_nearby.h");
+  lines.push(
+    printf(fmt(ble, /Serial\.printf\("(\[BLE\] Canary discovered: %s RSSI=%d)\\n", prefix,/, "the WAP's nearby discovered line"), peer, -61),
+    printf(fmt(ble, /Serial\.printf\("(\[BLE\] Canary lost: %s)\\n", g_nearbyCanaries\[i\]\.deviceIdPrefix\)/, "the WAP's nearby lost line"), peer),
+  );
+  const discovery = fw("firmware/projects/canary-display/src/net/discovery.cpp");
+  lines.push(printf(fmt(discovery, /printf\("(Fleet referral: broker %s:%u \(from %s\))\\n",/, "the display's referral line"),
+    "192.168.1.5", 1883, host));
+  // The trust card's key randomart: OpenSSH's 17-wide field of the ramp's
+  // glyphs, boxed in '|' and centered in a panel row.
+  const ramp = fmt(fw("firmware/common/ui/randomart.h"), /RANDOMART_RAMP\[\] = "([^"]+)";/, "the randomart ramp");
+  assert.match(fw("firmware/common/ui/randomart.h"), /static const int RANDOMART_W = 17;/);
+  assert.match(scenes, /boxed\[0\] = '\|';[\s\S]{0,120}boxed\[1 \+ RANDOMART_W\] = '\|';/, "the randomart box moved — re-point this test");
+  const art = [];
+  for (let y = 0; y < 9; y++) {
+    const row = Array.from({ length: 17 }, (_, x) => ramp[(x * 7 + y * 3) % ramp.length]).join("");
+    art.push(framed(" ".repeat(15) + "|" + row + "|"));
+  }
+  const all = [...lines, ...art];
+  const scrubbed = sanitizeLogTail(all.join("\n")).split("\n");
+  all.forEach((ln, i) => assert.strictEqual(scrubbed[i], "[identity line: shown in the flasher, not in reports]", `kept: ${ln}`));
+  // Through the builder, whose tail is the last 12 lines.
+  for (const part of [lines, art]) {
+    const r = buildDiagnosticReport({ logTail: [...part, "Brownout detector was triggered"].join("\n") });
+    for (const leak of [id, key.slice(0, 16), `: ${peer}`, host, ...part.filter((l) => l.includes("|")).map((l) => l.trim())]) {
+      assert.ok(!r.includes(leak), `"${leak}" survived into the report:\n${r}`);
+    }
+    assert.strictEqual((r.match(/\[identity line: shown in the flasher, not in reports\]/g) || []).length, part.length);
+    assert.ok(r.includes("Brownout detector was triggered"), "diagnosis survives");
+  }
+  // Lines that only look like them are not collateral damage.
+  for (const keep of [
+    "║     SecuraCV Canary — Production Witness Device              ║",
+    "Install deferred by device: battery below 30%",
+    framed("Firmware  2.4.16 (a1b2c3d)   built 2026-10-01"),
+    "├─ public-key randomart  (eyeball this) ─────────────┤",
+    "[BLE] Nearby scan task started",
+    "fleet referral: 192.168.1.5:1883",
+  ]) {
+    assert.strictEqual(sanitizeLogTail(keep), keep);
+  }
+});
+
 test("the ROM tools' own MAC lines are masked where drawn, and never reach a report", async () => {
   // esptool-js's connect logs "MAC: …" unasked (the vendored bundle's main()),
   // and espflash prints "MAC address: …" in its board info before every
@@ -1537,8 +1610,11 @@ test("the ROM tools' own MAC lines are masked where drawn, and never reach a rep
     assert.ok(masked.includes(HW_ADDRESS_MASK) && !/c1.22.30/i.test(masked), masked);
   }
   // Nothing else is collateral damage.
+  // Another separator or a non-hex digit is not a MAC either: the flash
+  // engine's mask_hardware_address test holds the same cases.
   for (const keep of ["Chip is ESP32-S3 (QFN56) (revision v0.2)", "Uptime 12:34:56", "fe80::1",
-                      "sha256 a1b2c3d4e5f60718", "Crystal is 40MHz"]) {
+                      "sha256 a1b2c3d4e5f60718", "Crystal is 40MHz", "dc.54.75.c1.22.30", "dc:54:75 c1:22:30",
+                      "gg:54:75:c1:22:30", "dc:54:75:c1:22:3g"]) {
     assert.strictEqual(maskHardwareAddress(keep), keep);
   }
   // A board-info block in the tail: no MAC bytes survive into the report.

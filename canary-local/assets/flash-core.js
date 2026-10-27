@@ -2251,15 +2251,20 @@ const TAIL_REDACT = [
 ];
 
 // Lines that are no secret but name this one board (or, for a peer's
-// fingerprint, another in the household): the boot banner's "Hardware ID"
-// (boot_kv on the display, Sense, Vision and Sentinel; the WAP's
+// fingerprint or name, another in the household): the boot banner's "Hardware
+// ID" (boot_kv on the display, Sense, Vision and Sentinel; the WAP's
 // "  Hardware ID    : …" in sys_monitor.h — the flagship prints none), the
 // self-manifest line, which carries the key fingerprint, the device id and the
-// boot count, every line carrying a key fingerprint, the TLS certificate
-// (per device, its CN the key fingerprint) or a .local name (built from the
-// device id; on the WAP from the name the person gave it, or else the key
-// fingerprint), and any line with a MAC-shaped token in it (the ROM tools
-// print the board's own). Shown in the flasher, never pasted.
+// boot count, the lines the firmware prints with the device id, a key
+// fingerprint, the TLS certificate (per device, its CN the key fingerprint) or
+// a .local name (built from the device id; on the WAP from the name the person
+// gave it, or else the key fingerprint), the flagship's welcome, trust,
+// attestation, identity and nearby cards' rows with its device id or key (the
+// trust card's key randomart among them), a peer's fingerprint or name on the
+// WAP's nearby scan and the display's fleet referral, and any line with a
+// MAC-shaped token in it (the ROM tools print the board's own). Shown in the
+// flasher, never pasted. A line no pattern names passes: flash.test.js renders
+// the ones these patterns are for from the firmware's own sources.
 const TAIL_IDENTITY = [
   /hardware\s*id\b/i,               // "    Hardware ID 3f7a9e21b4c5d6e8", "  Hardware ID    : …"
   /securacv\.canary\.manifest\//,   // {"schema":"securacv.canary.manifest/v1",…}
@@ -2268,6 +2273,13 @@ const TAIL_IDENTITY = [
   /\bCN:\s*securacv-|cert[\s_-]*(?:fp|fingerprint)\b/i, // the TLS certificate's CN (the key fingerprint), its own fingerprint lines
   /[\w-]\.local\b/i,                 // the advertised .local name (from the device id, a name the person typed, or the key fingerprint)
   /\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b/i, // a ROM tool's "MAC: …" / "MAC address: …", any MAC-shaped token
+  /\bthat's me:/i,                   // the flagship's boot welcome card, "(that's me: <device id>)"
+  /\bdevice {2,}(?:: *)?[^\s║│|]/i,   // the flagship's trust card "Device    <id>" and attestation card "  Device    : <id>"
+  /\bpublic\s*key\s*:/i,             // the flagship's identity card, "  Public Key: <the whole key>"
+  /\bthis canary {2,}/i,              // the nearby card, "This Canary  <id>   fp <fingerprint>"
+  /\bcanary (?:discovered|lost):/i,  // the WAP's nearby scan, a peer's fingerprint
+  /\bfleet referral:.*\(from /i,     // the display's referral, a peer's name
+  /\|[ .o+=*BOX@%&#\/^SE]{17}\|/,     // a row of the trust card's key randomart
 ];
 
 // Scrub a serial tail for inclusion in a shareable report. Exported so the

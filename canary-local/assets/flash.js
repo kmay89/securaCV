@@ -66,7 +66,9 @@ const state = {
   // The factory hardware address, kept in memory to recognize this board
   // again this session (the roster, the backup dedupe, the intake checks).
   // Never drawn unless the person asks ("Hardware address · Show"), never
-  // copied, and never written into a saved file, a report or a file name.
+  // copied, and never written into a report or a file name. (A backup is the
+  // flash's own bytes, and ESP-IDF keeps the address in NVS with its PHY
+  // calibration, so a backup holds it the way the board does.)
   mac: null,
   flashBytes: null,
   // About this board (aboutFacts): the allowlisted eFuse fields

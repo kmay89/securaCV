@@ -16,14 +16,18 @@
   fixed strings there rather than reading anything). "Show technical names"
   adds each row's technical name and the raw allowlisted field values; "Copy
   these details" copies every row but the hardware address. A fact a flasher
-  cannot give says "Not checked yet", "Not checked", "Not on this chip", "Not
-  reported" or, on the Lab's bench (which has no fuse or image read), "Read
-  with the Flasher" — never a zero or a guess. The desktop carries a copy of
-  the browser's row model; `desktop_parity.test.js` runs both over 4,140 fact
-  sets and fails on any difference. The desktop's `detect_chip` now keeps
-  espflash's chip line, revision, crystal and features (`ChipInfo`), and its
-  passport reads the bootloader's image header and the descriptor's
-  `secure_version` and ELF hash.
+  cannot give says "Not checked yet", "Not checked", "Not on this chip",
+  "Not reported" or, on the Lab's bench (which has no fuse or image read),
+  "Read with the Flasher" — never a zero or a guess. The desktop carries a
+  copy of the browser's row model; `desktop_parity.test.js` runs both over
+  4,140 fact sets and fails on any difference. The desktop's `detect_chip`
+  now keeps espflash's chip line, revision, crystal and features
+  (`ChipInfo`), and its passport reads the bootloader's image header and the
+  descriptor's `secure_version` and ELF hash. Not built from the design
+  (§6.2, §6.9): the This Board card's groups stack in one column, not a
+  sidebar; one "Copy these details" copies the card, with no copy per row;
+  and the desktop's connect line names the chip, its revision and its flash,
+  with no PSRAM size or bus mode.
 - **eFuse fields, never words.** Both flashers read the package, wafer,
   in-package flash and PSRAM and block-version fields from eFuse blocks 1
   and 2 by a per-chip FIELD allowlist (espefuse 5.6.0's tables, the same in
@@ -33,54 +37,67 @@
   or saved; a word with every trim bit set decodes exactly like one with
   none, on each chip. "Factory calibration" comes from the block version
   alone, as IDF decides it.
-- **No hardware address on screen until asked, and none in anything saved
-  (device-details findings P12 and P24).** The browser's hello card and Board
-  report and the desktop's health card and connect line drew the full MAC,
-  and both nursery strips drew its last two bytes; the base MAC is the
-  station address in every Wi-Fi frame, so even that tail matches the board
-  in radio range. The address now sits behind "Show", on that page only, with
-  no copy. The ROM tools print it unasked — esptool-js's connect logs "MAC:
-  …" and espflash prints "MAC address: …" before every flash, write-bin and
-  read-flash — so every console that draws their output (the browser's
-  technical log, the desktop's consoles, the Lab bench's log) masks a
-  MAC-shaped token. A failed espflash run carries the same line into its
-  error, so the flash engine masks the address in every error it builds from
-  espflash's output (a failed write's last lines, a failed region read's log,
-  a board-info it could not use), and the desktop's status lines and saved
-  event log and the Lab bench's failure details mask it where they draw it.
-  The diagnostic report carries none of it (it kept a two-byte tail): its
-  error line is masked and scrubbed the way its log tail is, and the
-  log-tail scrubber replaces any line still holding one with a visible
-  marker. Neither nursery strip draws any of the address its records keep
-  (the browser's roster, to recognize a board that comes back; the desktop's
+- **No hardware address on screen until asked, and none in a report or a
+  file name (device-details findings P12 and P24).** The browser's hello
+  card and Board report and the desktop's health card and connect line drew
+  the full MAC, and both nursery strips drew its last two bytes; the base
+  MAC is the station address in every Wi-Fi frame, so even that tail matches
+  the board in radio range. The address now sits behind "Show", on that page
+  only, with no copy. The ROM tools print it unasked — esptool-js's connect
+  logs "MAC: …" and espflash prints "MAC address: …" before every flash,
+  write-bin and read-flash — so every console that draws their output (the
+  browser's technical log, the desktop's consoles, the Lab bench's log)
+  masks a MAC-shaped token. A failed espflash run carries the same line into
+  its error, so the flash engine masks the address in every error it builds
+  from espflash's output (a failed write's last lines, a failed region
+  read's log, a board-info it could not use), and the desktop's status
+  lines, its event log (where it stores an entry, and again where About
+  lists one, so an entry an earlier version saved is masked too: one cut
+  partway through the address, or one naming a safety copy by the address's
+  last six digits) and the Lab bench's failure details mask it. The
+  diagnostic report carries none of it (it kept a two-byte tail): its error
+  line is masked and scrubbed the way its log tail is, and the log-tail
+  scrubber replaces any line still holding one with a visible marker.
+  Neither nursery strip draws any of the address its records keep (the
+  browser's roster, to recognize a board that comes back; the desktop's
   fleet book, keyed by it), and the browser's strip now says it keeps it.
-  "Save report" writes the share projection —
-  chip, image and partition facts, each image's build day and the day of the
-  save, never a time of day; no counters, crash or update state, chain head
-  or hardware address — and a second button, "Save full report for your own
-  records", keeps the rest and says it describes this one board; the
-  desktop's `health_check` no longer takes or returns the MAC. Reports and
-  backups are named by the local date and a counter
-  (`canary-2026-10-22-1-backup.bin`), never by the MAC's last six digits; the
-  desktop's automatic safety copies take the next free counter in their
-  folder. The help copy that said the firmware never broadcasts the address
-  is corrected.
+  "Save report" writes the share projection — chip, image and partition
+  facts, each image's build day and the day of the save, never a time of
+  day; no counters, crash or update state, chain head or hardware address —
+  and a second button, "Save full report for your own records", keeps the
+  rest and says it describes this one board; the desktop's `health_check` no
+  longer takes or returns the MAC. Reports and backups are named by the
+  local date and a counter (`canary-2026-10-22-1-backup.bin`), never by the
+  MAC's last six digits; the desktop's automatic safety copies take the next
+  free counter in their folder. The help copy that said the firmware never
+  broadcasts the address is corrected, and both flashers' reveal rows carry
+  the help dot that shows it. A backup is a byte copy of the flash, so it
+  holds what the board stores, the address among it: ESP-IDF keeps the base
+  MAC in NVS with its PHY calibration once Wi-Fi has started (both Arduino
+  cores this repo builds with).
 - **The diagnostic report's log tail replaces identity lines too (P14).**
-  The boot banner's Hardware ID (the WAP's line and `boot_kv` on the display,
-  Sense, Vision and Sentinel), the self-manifest line (key fingerprint,
-  device id, boot count), every Device ID line (`boot_kv` on the WAP,
-  display, Sense, Vision and Sentinel, the WAP's `[PROV]` line and identity
-  box, the flagship's `[OK]` line), every key-fingerprint line (the
-  flagship's `Key FP`, the WAP's `Public key fingerprint`, `FP8`, `Pubkey`
-  and its provisioning receipt's `pubkey_fp`, the Sense's, Vision's and
-  Sentinel's `Ed25519 ready  fp=…`), a household peer's fingerprint on the
-  flagship's mesh lines (`fp=…`), the TLS certificate lines (the WAP's
-  `CN: securacv-<fingerprint>`, the WAP's and the flagship's `Cert
-  fingerprint`, the receipt's `tls_cert_fp`) and the `.local` name the
-  display, Sense, Vision and Sentinel advertise (`Fleet advert up as
-  <name>.local`, a name built from the device id) are replaced by a visible
-  marker, in both flashers; the tests render the lines from the firmware's
-  own format strings.
+  These lines are replaced by a visible marker, in both flashers: the boot
+  banner's Hardware ID (the WAP's line and `boot_kv` on the display, Sense,
+  Vision and Sentinel), the self-manifest line (key fingerprint, device id,
+  boot count), the Device ID boot lines (`boot_kv` on the WAP, display,
+  Sense, Vision and Sentinel, the WAP's `[PROV]` line and identity box, the
+  flagship's `[OK]` line), the key-fingerprint lines (the flagship's `Key
+  FP`, the WAP's `Public key fingerprint`, `FP8`, `Pubkey` and its
+  provisioning receipt's `pubkey_fp`, the Sense's, Vision's and Sentinel's
+  `Ed25519 ready  fp=…`), a household peer's fingerprint on the flagship's
+  mesh lines (`fp=…`), the TLS certificate lines (the WAP's `CN:
+  securacv-<fingerprint>`, the WAP's and the flagship's `Cert fingerprint`,
+  the receipt's `tls_cert_fp`), the `.local` name the display, Sense, Vision
+  and Sentinel advertise (`Fleet advert up as <name>.local`, a name built
+  from the device id), the flagship's console cards (the boot welcome card's
+  `(that's me: <device id>)`, the last card the flagship prints at boot, the
+  trust card's `Device` row and key randomart on `l` and `a`, the
+  attestation card's `Device` line on `c`, the identity card's whole `Public
+  Key` on `i`, the nearby card's `This Canary` row on `n`), and a peer's
+  fingerprint or name on the WAP's `[BLE] Canary discovered:` and `lost:`
+  lines and the display's `Fleet referral: … (from <name>)`. The tests
+  render each from the firmware's own source. A line no pattern names
+  passes: the flagship's chain-head rows on `l` and `c` are not replaced.
 - **The Grove Vision module's id and text stay off screen (P13).** Neither
   flasher sends `ID?` any more, and the desktop's module receipt drops the id
   it carried. Neither bench shows the module's own model-card text, or names
@@ -90,17 +107,24 @@
   release: "SecuraCV person detection, installed and checked"; a file the
   person picked reads "Your model file, installed". Each bench draws the
   labels its id line promises.
-- **The browser's Grove proof runs again, and stores a card only for what
-  it checked.** After a burn the browser stores a model card on the module
-  and runs one inference as proof, but it base64'd the card with `btoa()`,
-  which takes Latin-1 only and threw on the card's em dash, so neither step
-  ran. The card now goes out as base64 of its UTF-8 bytes, as the desktop
-  sends it. It is SecuraCV's person-detection card only after a burn of the
-  pinned model whose SHA-256 matched (the desktop burns nothing else); after
-  a file the person picked, the card names no model and lists no class, so
-  it claims nothing about that file to whatever reads `AT+INFO?`, and
-  neither bench labels its detections "person". The burn always writes one,
-  so an earlier pinned burn's card cannot speak for a later file.
+- **The browser's Grove proof runs again, and stores SecuraCV's card only
+  for what it checked.** After a burn the browser stores a model card on the
+  module and runs one inference as proof, but it base64'd the card with
+  `btoa()`, which takes Latin-1 only and threw on the card's em dash, so
+  neither step ran. The card now goes out as base64 of its UTF-8 bytes, as
+  the desktop sends it. It is SecuraCV's person-detection card only after a
+  burn of the pinned model whose SHA-256 matched (the desktop burns nothing
+  else); after a file the person picked, the card names no model and lists
+  no class, so it claims nothing about that file to whatever reads
+  `AT+INFO?`, and a bench that reads it labels nothing "person". The card is
+  the module's SSCMA firmware's, not part of the model a burn writes, so a
+  burn alone can leave the card it found, an earlier pinned burn's among
+  them: for a file the person picked the card goes on before the burn, while
+  the module still answers, and again after it, and when the module takes
+  neither write the done screen says it may still carry the model card an
+  earlier burn stored, which is what a bench labels by. The done screen says
+  a pinned burn's module carries SecuraCV's card only when it acknowledged
+  the write.
 - Host-tested (`flash.test.js`, `intake.test.mjs`, `desktop_parity.test.js`,
   `we2.test.js`, `cargo test` in `desktop/flash-engine`; the `efuse.rs`,
   `we2.rs` and `we2_bench.rs` tests outside the Tauri build, through a stub

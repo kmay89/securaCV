@@ -17860,7 +17860,7 @@ so — see D2 below.)
   (`{"docs/hardware/enclosure": [".py", ".sh"]}`); `lab_bundle.test.js`
   already parses every `find` line there and will demand the pair. A
   maintainer's call.
-- [x] **A111 [code] The flashers show the full hardware address, save it, and
+- [x] **A116 [code] The flashers show the full hardware address, save it, and
   name files with half of it (device-details design §11, P12).** The browser
   drew "ID (MAC)" on the hello card and the Board report and saved it in the
   health report; the desktop drew it on the health card and the health
@@ -17879,25 +17879,33 @@ so — see D2 below.)
   masked where it is built — the flash engine's `mask_hardware_address` in
   `write_failure`, `rescue::read_failure` and `detect_chip`'s errors — and
   again where the desktop draws or keeps it (`setStatus`, the `logEvent`
-  store) and in the Lab bench's failure details. No saved file, diagnostic
-  report or file name carries it: `health_check` takes and returns no MAC,
-  the diagnostic builders have no MAC field and mask and scrub the error
-  line like the tail, and reports and backups are named
-  `canary-<local day>-<n>-…` (`fileStamp`,
-  `rescue::backup_filename(day, n)`, `rescue::next_backup_filename` for the
-  desktop's shared backups folder). `settings_help.mac` and
-  `settings_help.roster` are corrected. Pinned in `desktop_parity.test.js`,
-  which runs each flasher's own drawing code for its connect card (the
-  browser's hello card, the desktop's This Board card), its report and its
-  nursery strip on a stand-in page — no address byte in the text, an
-  attribute or a title before Show, the whole address after, none in a copy
-  — drives the Lab bench's page, and runs a failed install, the report
-  copied from it, a failed health check and a failed Lab-bench flash with an
-  unmasked board-info error; in `flash.test.js`; and in `cargo test`
-  (`desktop/flash-engine`). The
-  fleet book and the keychain item are still keyed by the MAC; re-keying them
-  by device id is the design's PR 18. Host-tested; not run on a device.
-- [x] **A112 [code] Both flashers send `ID?` to the Grove Vision module, and
+  store, and the About view's event log, `eventLogText`, which also masks an
+  entry an earlier version saved: one cut partway through the address, or
+  one naming a safety copy by the address's last six digits) and in the Lab
+  bench's failure details. No diagnostic report, saved report or file name
+  carries it: `health_check` takes and returns no MAC, the diagnostic
+  builders have no MAC field and mask and scrub the error line like the
+  tail, and reports and backups are named `canary-<local day>-<n>-…`
+  (`fileStamp`, `rescue::backup_filename(day, n)`,
+  `rescue::next_backup_filename` for the desktop's shared backups folder).
+  A backup is a byte copy of the flash, so it holds the address the way the
+  board does: ESP-IDF stores the base MAC in NVS with its PHY calibration
+  (`cal_mac`, `CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE=y` in both
+  Arduino cores this repo builds with) once Wi-Fi has started.
+  `settings_help.mac` and `settings_help.roster` are corrected, and both
+  flashers' reveal rows carry the `mac` help dot. Pinned in
+  `desktop_parity.test.js`, which runs each flasher's own drawing code for
+  its connect card (the browser's hello card, the desktop's This Board
+  card), its report, its reveal row's help dot and its nursery strip on a
+  stand-in page — no address byte in the text, an attribute or a title
+  before Show, the whole address after, none in a copy — drives the Lab
+  bench's page, runs a failed install, the report copied from it, a failed
+  health check and a failed Lab-bench flash with an unmasked board-info
+  error, and lists an earlier version's event-log entries in the About
+  view; in `flash.test.js`; and in `cargo test` (`desktop/flash-engine`).
+  The fleet book and the keychain item are still keyed by the MAC; re-keying
+  them by device id is the design's PR 18. Host-tested; not run on a device.
+- [x] **A117 [code] Both flashers send `ID?` to the Grove Vision module, and
   the browser shows the module's own model text (device-details design §11,
   P13).** The module's id is treated as a per-unit identifier, and its model
   card is the module's say-so: its stock catalog includes models that would
@@ -17913,36 +17921,53 @@ so — see D2 below.)
   installed"). The card the browser stores after a burn is SecuraCV's
   person card only for the pinned model whose SHA-256 matched; after a file
   the person picked it names no model and lists no class
-  (`burnCardBase64`), so no bench labels that file's detections "person".
-  `desktop_parity.test.js` runs the browser's post-burn step for a pinned
-  release and for a local file (the card it sends, and a later bench reading
-  it back), both benches for no card, another card and a person card, and
-  each bench's drawing code on a detection, held to the labels its id line
-  promised; `we2.test.js` tests the card choice; `we2_bench.rs` tests the
-  card reader.
+  (`burnCardBase64`), so a bench that reads it labels nothing "person". A
+  burn alone can leave the card an earlier one stored (the card is the
+  SSCMA firmware's, not part of the model), so for a file the person picked
+  the browser stores that card before the burn, while the module still
+  answers, and again after it; when the module takes neither write, the
+  done screen says it may still carry the model card an earlier burn
+  stored. The done screen says a pinned burn's module carries SecuraCV's
+  card only when it acknowledged the write. `desktop_parity.test.js` runs
+  the browser's post-burn step for a pinned release and for a local file
+  (the card it sends, and a later bench reading it back), the burn and the
+  step after it together on a module that starts with SecuraCV's card and
+  answers before the burn, after it, both times or neither, both benches for
+  no card, another card and a person card, and each bench's drawing code on
+  a detection, held to the labels its id line promised; `we2.test.js` tests
+  the card choice; `we2_bench.rs` tests the card reader.
   Found on the way: the browser base64'd the card with `btoa()`, which threw
   on its em dash, so the post-burn card write and proof inference never ran;
   it now sends base64 of the card's UTF-8 bytes, as `we2.rs` does
   (`modelInfoBase64`, `we2.test.js`). Host-tested; not run on a device.
-- [ ] **A113 [code] The shareable report's tail scrubber misses identity lines
+- [ ] **A118 [code] The shareable report's tail scrubber misses identity lines
   (device-details design §11, P14).** `TAIL_REDACT` matched credential words
   only, so the boot banner's Hardware ID (the WAP's `sys_monitor.h` line and
   `boot_kv` on the display, Sense, Vision and Sentinel) and the
   self-manifest line (key fingerprint, device id, boot count) rode into the
   last 12 lines of a pasted report. *Partly done (#<PR>):* both flashers'
-  `TAIL_IDENTITY` replaces both kinds of line with a visible marker, and the
-  same handles' own lines too: every Device ID line; every key-fingerprint
-  line (the flagship's `Key FP`, the WAP's `Public key fingerprint`, `FP8`,
-  `Pubkey` and receipt `pubkey_fp`, the Sense's, Vision's and Sentinel's
-  `Ed25519 ready  fp=…`) and a household peer's on the flagship's mesh lines;
-  the TLS certificate lines (the WAP's `CN: securacv-<fingerprint>`, the
-  WAP's and the flagship's `Cert fingerprint`, the receipt's `tls_cert_fp`);
-  and the `.local` name the display, Sense, Vision and Sentinel advertise
-  (`flash.test.js` renders the lines from the firmware's own format strings;
-  `desktop_parity.test.js` holds the two lists equal). Open:
-  once the firmware answers `q` (the design's PR 10), `sanitizeLogTail()`
-  replaces each `securacv.canary.details/v1` line with its share projection.
-- [x] **A114 [code] Both flashers' saved health reports carry this board's
+  `TAIL_IDENTITY` replaces both kinds of line with a visible marker, and
+  these lines carrying the same handles too: the Device ID boot lines
+  (`boot_kv`, the WAP's `[PROV]` line and identity box, the flagship's
+  `[OK]` line); the key-fingerprint lines (the flagship's `Key FP`, the
+  WAP's `Public key fingerprint`, `FP8`, `Pubkey` and receipt `pubkey_fp`,
+  the Sense's, Vision's and Sentinel's `Ed25519 ready  fp=…`) and a
+  household peer's on the flagship's mesh lines; the TLS certificate lines
+  (the WAP's `CN: securacv-<fingerprint>`, the WAP's and the flagship's
+  `Cert fingerprint`, the receipt's `tls_cert_fp`); the `.local` name the
+  display, Sense, Vision and Sentinel advertise; the flagship's console
+  cards (the boot welcome card's `(that's me: <device id>)`, the last card
+  it prints at boot; the trust card's `Device` row and key randomart; the
+  attestation card's `Device` line; the identity card's whole `Public Key`;
+  the nearby card's `This Canary` row); and a peer's fingerprint or name on
+  the WAP's `[BLE] Canary discovered:` and `lost:` lines and the display's
+  `Fleet referral: … (from <name>)` (`flash.test.js` renders the lines from
+  the firmware's own sources; `desktop_parity.test.js` holds the two lists
+  equal). Open: a line no pattern names passes (the flagship's chain-head
+  rows on its `l` and `c` cards are not replaced); and once the firmware
+  answers `q` (the design's PR 10), `sanitizeLogTail()` replaces each
+  `securacv.canary.details/v1` line with its share projection.
+- [x] **A119 [code] Both flashers' saved health reports carry this board's
   life (device-details design §11, P24).** The saved report, which reads as
   shareable, carried the lifetime boot counter, the witness record count, a
   chain-head prefix, crash-record and OTA pending-verify state and a

@@ -128,8 +128,8 @@ Two rules make it safe to run without a human per ticket:
     board in radio range. Its serial tail is scrubbed with visible markers
     before inclusion: credential lines (`TAIL_REDACT`) and identity lines
     (`TAIL_IDENTITY`: the Hardware ID, the self-manifest, the device id,
-    key-fingerprint, TLS-certificate and `.local`-name lines, and any
-    MAC-shaped token). Its error line is scrubbed the same way, with any
+    key-fingerprint (the flagship's key randomart too), TLS-certificate,
+    `.local`-name and household-peer lines, and any MAC-shaped token). Its error line is scrubbed the same way, with any
     hardware address in it masked first: a desktop install's error ends in
     espflash's own last lines, board info included.
     `desktop_parity.test.js` item 12 pins both frontends to one list each,
