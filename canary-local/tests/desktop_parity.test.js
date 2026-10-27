@@ -1130,6 +1130,48 @@ test("dev channel: the publishing workflow targets the tag the flashers read", (
     "releases/latest can drift off the firmware and the fleet stops seeing updates");
 });
 
+test("dev channel: every flasher says whether it is ahead of stable from the two trains, in the same words", async () => {
+  // fw-dev-latest held a 2.4.15 catalog and no OTA manifest under stable 2.4.17
+  // while all three frontends called it "cut ahead of stable" (RELEASE_LESSONS
+  // 2026-10-27). A stable release now copies itself there whenever no newer
+  // dev build is, so "ahead" is a fact about two fw_train values, said by
+  // devChannelStanding: flash-core.js for the browser page and the Lab bench,
+  // its copy in desktop/src/app.js for the Flasher.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const desktop = new Function(
+    jsFnText(appJs, "compareVersions", "desktop/src/app.js") + "\n" +
+    jsFnText(appJs, "devChannelStanding", "desktop/src/app.js") + "\nreturn devChannelStanding;")();
+  const cases = [
+    ["2.4.18-dev.1", "2.4.17", /is ahead of stable/],
+    ["2.4.17", "2.4.17", /same version as stable \(2\.4\.17\)/],
+    ["2.4.15", "2.4.17", /2\.4\.15, older than stable 2\.4\.17/],
+    ["2.4.17-rc.1", "2.4.17", /older than stable/],
+    [undefined, "2.4.17", /^$/],
+    ["not-a-version", "2.4.17", /^$/],
+  ];
+  for (const [dev, stable, said] of cases) {
+    const browser = core.devChannelStanding(dev, stable);
+    assert.match(browser, said, `browser: ${dev} against ${stable}`);
+    assert.equal(desktop(dev, stable), browser, `the two flashers disagree on ${dev} against ${stable}`);
+  }
+  // Said where the user reads it: each dev banner, from the loaded dev
+  // manifest's train and the stable catalog's...
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const nativeJs = read(join(CANARY, "assets/flash-native.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  assert.match(flashJs, /core\.devChannelStanding\(m\.fw_train, state\.catalog\.fw_train\)/);
+  assert.match(nativeJs, /core\.devChannelStanding\(st\.manifest && st\.manifest\.fw_train, catalog\.fw_train\)/);
+  assert.match(appJs, /\$\("dev-standing"\)\.textContent = state\.devChannel\s*\?\s*devChannelStanding\(m && m\.fw_train, state\.catalog\.fw_train\)/);
+  assert.match(html, /id="dev-banner"[\s\S]{0,300}<span id="dev-standing"><\/span>/);
+  // ...and no copy promises it unconditionally.
+  for (const [label, src] of [["canary-local/assets/flash.js", flashJs], ["canary-local/assets/flash-native.js", nativeJs],
+    ["desktop/src/index.html", html], ["desktop/src/app.js", appJs]]) {
+    assert.doesNotMatch(src, /cut ahead of stable|images are cut ahead|dev prerelease, ahead of stable|not yet promoted to stable/,
+      `${label} calls the dev channel ahead of stable without comparing the trains`);
+  }
+});
+
 test("flasher publishing signs once a key is in force, and refuses to ship a refusable manifest", () => {
   // imageVerificationPolicy() is fail-closed by design: with a REAL pinned
   // release_pubkey, an official manifest carrying no signature returns

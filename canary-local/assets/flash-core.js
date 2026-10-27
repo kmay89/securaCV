@@ -859,9 +859,11 @@ export function detectBrowser(ua, maxTouchPoints = 0) {
 
 // ── release channels (docs/RELEASE_PROCESS.md) ─────────────────────────────
 // The dev channel's one stable address: the rolling fw-dev-latest prerelease
-// that CI re-points on every fw-v*-dev.*/-rc.* tag. This is a fixed
-// first-party constant, deliberately NOT routed through manifestOverrideUrl
-// (which guards arbitrary URLs) — ?channel=dev can only ever mean this URL.
+// that CI re-points on every fw-v*-dev.*/-rc.* tag, and on every stable tag
+// when no newer dev build is there (.github/scripts/dev_channel.py). This is a
+// fixed first-party constant, deliberately NOT routed through
+// manifestOverrideUrl (which guards arbitrary URLs) — ?channel=dev can only
+// ever mean this URL.
 export const DEV_FLASH_MANIFEST_URL =
   "https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/manifest-flash.json";
 
@@ -888,6 +890,22 @@ export function channelFromSearch(search) {
   } catch {
     return "release";
   }
+}
+
+// Where the dev channel stands against stable, in one sentence: the dev
+// catalog's fw_train against the stable catalog's. It is not ahead by
+// definition: a stable release copies itself there whenever no newer dev
+// build is, and then the dev channel carries the stable version. Both
+// flashers used to call it "ahead of stable" unconditionally, while it held
+// 2.4.15 under stable 2.4.17. "" when either train is missing or unreadable:
+// no claim beats a guessed one. desktop/src/app.js carries the same function
+// (desktop_parity.test.js holds the two to the same sentences).
+export function devChannelStanding(devTrain, stableTrain) {
+  const cmp = compareVersions(devTrain, stableTrain);
+  if (cmp === null) return "";
+  if (cmp > 0) return `The dev channel is ahead of stable: it carries ${devTrain}, stable is ${stableTrain}.`;
+  if (cmp === 0) return `The dev channel currently carries the same version as stable (${stableTrain}).`;
+  return `The dev channel currently carries ${devTrain}, older than stable ${stableTrain}.`;
 }
 
 // ── the same-origin release mirror (pages.yml) ──────────────────────────────

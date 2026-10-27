@@ -767,6 +767,22 @@ test("channelFromSearch: only an explicit channel=dev switches; URL is a fixed c
   assert.ok(DEV_FLASH_MANIFEST_URL.startsWith("https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/"));
 });
 
+test("devChannelStanding: the dev channel is ahead only when its train is newer than stable's", async () => {
+  const { devChannelStanding } = await core();
+  assert.strictEqual(devChannelStanding("2.4.18-dev.1", "2.4.17"),
+    "The dev channel is ahead of stable: it carries 2.4.18-dev.1, stable is 2.4.17.");
+  // What a stable release leaves there when no newer dev build is.
+  assert.strictEqual(devChannelStanding("2.4.17", "2.4.17"),
+    "The dev channel currently carries the same version as stable (2.4.17).");
+  // fw-dev-latest's catalog on 2026-10-27, under stable 2.4.17.
+  assert.strictEqual(devChannelStanding("2.4.15", "2.4.17"),
+    "The dev channel currently carries 2.4.15, older than stable 2.4.17.");
+  assert.match(devChannelStanding("2.4.17-rc.1", "2.4.17"), /older than stable 2\.4\.17/);
+  // No train, no claim.
+  assert.strictEqual(devChannelStanding(undefined, catalog.fw_train), "");
+  assert.strictEqual(devChannelStanding("2.4.17", null), "");
+});
+
 test("releaseTagFromManifestUrl: names the pinned firmware tag, and only that", async () => {
   const { releaseTagFromManifestUrl, DEV_FLASH_MANIFEST_URL } = await core();
   // The catalog's own pin — the case that matters. A tag bumped but never

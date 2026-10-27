@@ -644,10 +644,13 @@ Two consequences worth knowing:
   manifest, and a bring-up run would have replaced a working rolling release
   with an uninstallable one.
 - `firmware-release.yml` mirrors only *manifests* to `fw-dev-latest` (its
-  binaries live at the real `fw-v*-dev.*` tag); this path has no such tag, so it
-  uploads binaries there too and points the manifest at them. Each is
-  self-consistent — whichever ran last owns that release's
-  `manifest-flash.json`.
+  binaries live at the real `fw-v*` tag: a dev release's, or a stable one's
+  when the dev channel carries nothing newer, `.github/scripts/dev_channel.py`);
+  this path has no such tag, so it uploads binaries there too and points the
+  manifest at them. Each is self-consistent. A firmware release replaces this
+  path's `manifest-flash.json` only when it carries an older `fw_train`, and
+  both flashers' dev banners say whether the dev channel is ahead of stable,
+  the same version, or older.
 
 On a normal signed release you don't touch this — `firmware-release.yml` already
 produces the flasher assets in the same run. It's dispatch-only precisely so it

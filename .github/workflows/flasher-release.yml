@@ -33,10 +33,12 @@ name: Flasher Factory Images
 #
 # One asset-layout difference to know about, on the dev channel only:
 # firmware-release.yml mirrors ONLY the manifests to fw-dev-latest, because its
-# binaries live at the real fw-v*-dev.* tag. This workflow has no such tag, so
-# it uploads the binaries to fw-dev-latest too and points the manifest there.
-# Both are self-consistent; whichever ran last owns that release's
-# manifest-flash.json, and each names its own binaries by absolute URL.
+# binaries live at the real fw-v* tag (a dev release's, or a stable one's when
+# the dev channel carries nothing newer: .github/scripts/dev_channel.py). This
+# workflow has no such tag, so it uploads the binaries to fw-dev-latest too and
+# points the manifest there. Both are self-consistent, and each names its own
+# binaries by absolute URL; a firmware release replaces this one's
+# manifest-flash.json only when this one carries an older fw_train.
 
 on:
   workflow_dispatch:

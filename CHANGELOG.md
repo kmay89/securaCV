@@ -281,6 +281,29 @@
   the stamp is not built yet) names this carry; until then the buttons move
   only by `--only downloads` run by hand.
 
+### The dev channel never falls behind stable, and the flashers say where it stands
+
+- **A stable release now refreshes the dev channel when it is older.** The
+  rolling `fw-dev-latest` prerelease held no per-product OTA manifest (a Canary
+  on the dev channel got a 404 on every check) and a 2.4.15 flash catalog
+  under stable 2.4.17: only a `-dev.N` / `-rc.N` release ever wrote it, and none
+  had been cut. `.github/scripts/dev_channel.py` copies a release's channel
+  manifests there, byte for byte, wherever the dev channel carries an older
+  version or none, and leaves a newer dev build alone; every firmware release
+  runs it, and **Actions → Refresh the dev channel (catch up to stable)** runs
+  it with `releases/latest`, then redeploys the site. It never moves
+  `releases/latest`, deletes nothing and keeps `fw-dev-latest` a prerelease.
+  Host-tested (`.github/scripts/test_dev_channel.py`, its version order held to
+  the device's own cases) and dry-run read-only against the public releases;
+  the button has not been pressed yet.
+- **Both flashers stop calling the dev channel "ahead of stable" by
+  assumption.** The browser page, the Lab's native bench and the desktop
+  Flasher compare the dev catalog's `fw_train` with the stable one and say
+  ahead, the same version, or older on the dev banner
+  (`devChannelStanding`, the same sentence in both flashers,
+  `desktop_parity.test.js`). The device needed no change: a stable version on
+  the dev channel is an ordinary update to a dev unit running anything older.
+
 ## [2.4.17] - 2026-10-27
 
 > **Before you update.** Vision Doorbell: move the amplifier's input wire from D3 to D10.

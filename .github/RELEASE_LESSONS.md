@@ -12,6 +12,50 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-10-27 — The dev channel sat two releases behind stable, with nothing a device could poll
+
+- **Symptom:** with stable at fw-v2.4.17, the rolling `fw-dev-latest`
+  prerelease held 181 assets: factory images for 2.3.0 to 2.4.15, a
+  `manifest-flash.json` with `fw_train` 2.4.15 and `flasher-sha256sums.txt`,
+  and no `manifest-canary*.json` or `manifest-index.json` at all (read from the
+  public API). A Canary on the dev channel polls
+  `fw-dev-latest/manifest-<product>.json`, so it got a 404 on every check and
+  never updated, and both flashers' dev toggle offered 2.4.15 while calling it
+  "cut ahead of stable" (a silent downgrade for a board on 2.4.17, where the
+  per-board verdict was the only warning).
+- **Cause:** `firmware-release.yml` copied a release's manifests to
+  `fw-dev-latest` only when the release was a prerelease, and no `-dev.N` /
+  `-rc.N` release had ever been cut. The only writer left was **Flasher
+  Factory Images** with `channel: dev`, which writes the flashers' catalog
+  alone. Nothing made the dev channel follow stable, and the flashers' copy
+  asserted an order nothing checked.
+- **Fix:** `.github/scripts/dev_channel.py` holds the rule: a release's
+  channel manifests are copied, byte for byte, wherever `fw-dev-latest` carries
+  an older version or none, over-the-air manifests and flash catalog decided
+  separately, in the device's version order (`securacv_version_compare`, held
+  to its host cases by the test); a newer dev build is left alone and nothing
+  below `releases/latest` lands. Every firmware release runs it with its own
+  tag, stable included, and **Actions → Refresh the dev channel (catch up to
+  stable)** runs it with `releases/latest`, then redeploys pages. The copies
+  stay valid because every file a manifest names is an absolute URL on its own
+  `fw-v*` tag, which the script checks before writing, and the Ed25519
+  signatures cover those URLs rather than where the manifest is served from.
+  It passes `--prerelease --latest=false` on every create and edit, deletes
+  nothing, and fails if `releases/latest` moved; the button's last step checks
+  that too, and that no asset was lost. Both flashers (and the Lab's native
+  bench) now say whether the dev channel is ahead, the same version, or older,
+  from the dev catalog's `fw_train` against the stable one
+  (`devChannelStanding`, pinned by `desktop_parity.test.js`). The device side
+  needed nothing: its comparator already ranks stable above rc and dev at an
+  equal triple, so a stable build on the dev channel is an ordinary update.
+  Host-tested and dry-run against the public releases (read-only); the button
+  has not been pressed yet.
+- **Applies to:** every rolling pointer (`fw-dev-latest`, `flasher-latest`,
+  `lab-latest`): something that runs on every release must keep it at least
+  as new as what it shadows, or it rots on the day nobody cuts the release
+  that used to feed it. And copy that orders two channels must read both
+  versions, never assume the order.
+
 ## 2026-10-27 — Signed and notarized, and the installer still said "open Terminal"; the reinstall link searched for a release GitHub's search does not list
 
 - **Symptom:** after 2.4.17, `flasher-v0.12.2` and `app-v0.3.2` were
