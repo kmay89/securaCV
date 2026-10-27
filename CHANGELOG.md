@@ -32,7 +32,10 @@
   bearer alone, on every interface, the recovery network
   (`SecuraCV-wap-XXXX`) included, and `POST /api/wifi/qr-scan` answers
   `404` (a phone's scan still running when setup ends stops at its next
-  frame); during setup nothing changes. On the dashboard, Settings → Wi-Fi
+  frame). During setup Connect and AP-only are unchanged (the wizard's pair
+  token still moves the network), while Disconnect and Forget take the
+  bearer in every mode, so a session the receipt route minted during setup
+  no longer reaches them. On the dashboard, Settings → Wi-Fi
   says the token is needed and asks for it (paste it from the recovery kit,
   or use BOOT Tap Once); on the recovery network the tap is reliable, since
   the SoftAP takes one client. Forget now also clears the stored broker
@@ -125,8 +128,9 @@
   passkey and confirms a bond, and that under a host striking from nine or
   more addresses the owner's way out is the landing page's session on
   `POST /api/wifi/connect`. Each was true of its tree and is not of this
-  release: after setup the Wi-Fi routes, the bond and opera confirms and a
-  Passkey Entry's digits take the API token, and the shared overflow such a
+  release: after setup the four routes that move the network (connect,
+  ap-only, disconnect, forget), the bond and opera confirms and a Passkey
+  Entry's digits take the API token, and the shared overflow such a
   host keeps running holds that token with every untracked address, the
   owner's among them. So the owner waits until that host stops, then
   changes the Wi-Fi with the token pasted into the sign-in; last, for a host
@@ -1672,7 +1676,12 @@ hold keeps; and the per-address lockout's ways out.
   passes (F345), and a landing session can bond a peer to the WAP's
   Bluetooth lane (F346), so the WAP's door and wipe comments,
   `improv_core.h`, the README and `magic_pairing.md` no longer call a
-  re-armed door, or the lane, the owner's alone. Both flashers' smart pick ("installing
+  re-armed door, or the lane, the owner's alone. (Amended by #<PR>, the
+  owner-authority entries at the top of this section: Forget Wi-Fi now takes
+  the API token alone, F345, and so does the bond's confirm, F346, so
+  neither is a landing session's in this release; a bond a session
+  confirmed on an earlier release stays until the owner removes it, and the
+  door Forget re-arms is still first-come.) Both flashers' smart pick ("installing
   keeps it, updated in place") and settings verdicts, the desktop change
   map, the SD recovery comments and guides and the token's lifetime say an
   install starts NVS over under a new key; `SECURITY_MODEL.md`,
@@ -2163,7 +2172,11 @@ hold keeps; and the per-address lockout's ways out.
   `POST /api/reboot` also empties the table, kept in RAM, and with it the
   guess budget, so a guesser that reboots the unit every few seconds gets
   more than the 30 a minute the table allows between reboots; ARP
-  spoofing, httpd's connection purge; `magic_pairing.md` §3.7). Found on
+  spoofing, httpd's connection purge; `magic_pairing.md` §3.7). (Amended by
+  #<PR>, the owner-authority entries at the top of this section: since F361
+  both reboot routes take the API token alone, so no landing session
+  reboots the unit; a session's firmware install still restarts it, only
+  into a newer signed image.) Found on
   the way and fixed with it: the `static` in the header gave `canary_wap.ino`,
   `csi_integration.cpp` and `csi_mqtt.cpp` a table each (now one C++17
   `inline` table); the `uint8_t` count wrapped to a clean 0 after 256 strikes
@@ -2309,7 +2322,11 @@ hold keeps; and the per-address lockout's ways out.
   table it keeps in RAM, so a guesser that reboots it after every few
   seconds of guessing gets about 37 a minute if the unit is back on the
   LAN 45 s later, about 100 at 10 s, about 155 at 5 s (the WAP's boot time
-  is not measured; the flagship's reboot needs the bearer).
+  is not measured; the flagship's reboot needs the bearer). (Amended by
+  #<PR>, the owner-authority entries at the top of this section: since F361
+  the WAP's two reboot routes take the API token alone too, so no landing
+  session reboots it; a session's firmware install still restarts it, only
+  into a newer signed image.)
   `THREAT_MODEL.md` scenario 10, `SECURITY_MODEL.md` and `magic_pairing.md`
   §3.7 now say so, and `test_auth_backoff.cpp` models both figures over
   `auth_backoff.h`, so a change to its numbers fails the suite until the

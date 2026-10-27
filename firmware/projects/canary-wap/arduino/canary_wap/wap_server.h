@@ -19,8 +19,10 @@
  *   the rest to HTTPS (301)
  * - api_auth_check() on protected endpoints: the session cookie the landing
  *   page mints for any host on the network (F346), or the bearer token; the
- *   bearer alone for the Wi-Fi moves after setup, the reboot routes, the
- *   vault key and the two pair confirms (F334, F345, F361, F335, F346)
+ *   bearer alone for the pairing QR (F289), the Wi-Fi moves (Connect and
+ *   AP-only after setup, Disconnect and Forget in every mode; F334, F345),
+ *   the reboot routes (F361), the vault key (F335) and the two pair
+ *   confirms (F346)
  * - Constant-time token comparison (timing attack mitigation)
  * - Exponential backoff on auth failures (brute-force mitigation)
  * - Provisioning receipt only for the bearer token, the setup door's claim, or

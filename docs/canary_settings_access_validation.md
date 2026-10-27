@@ -11,7 +11,7 @@ Confirm that Settings is easy to reach without weakening the threat model:
   landing page at `/` mints a session for any host on the network with one
   tap ("Open dashboard"), and that session reaches the settings API (ledger
   F346), all but the actions the security checks below name, which take the
-  API token (F334, F335, F345, F346, F361).
+  API token (F289, F334, F335, F345, F346, F361).
 - A valid dashboard session opens Settings without another BOOT tap.
 - API token and BOOT-tap fallback remain clear and usable.
 
@@ -43,6 +43,7 @@ Confirm that Settings is easy to reach without weakening the threat model:
 - Confirm no full API token appears in page source for `/` or `/settings`.
 - Confirm `Set-Cookie` includes `HttpOnly`, `SameSite=Strict`, `Path=/`, and `Max-Age=86400`, and `Secure` when the page is `https://` (the first-boot setup at `http://192.168.4.1` sets it without `Secure`, which the browser keeps).
 - Confirm a session alone does not fetch the recovery kit: **Settings**, **Device**, **Recovery kit** on a page signed in only by the cookie brings the sign-in back, which reads "Your session does not cover this, or has ended", and BOOT Tap Once then saves the kit.
+- Confirm a session alone does not show the pairing QR, whose payload carries the API token: **Settings**, **Device**, **Pair with the Canary Vision app**, **Show QR** on a cookie-only page brings the sign-in up with no alert, and a curl to `/api/pairing-qr` with the cookie alone answers 401 (F289).
 - Confirm a session alone does not register a vault key: Register on a cookie-only page brings the sign-in back with no alert; Not now returns; a mistyped token is refused at the sign-in; pasting the right token then registers it.
 - Confirm a cookie-only page cannot confirm a Bluetooth or opera pairing: Start Pairing and Create/Join bring the sign-in up first (Not now goes back), a mistyped token is refused there, and a curl confirm with the cookie alone answers 401.
 - Confirm a cookie-only page cannot change the Wi-Fi, or reboot the unit with Reboot Device or Retry full boot, after setup: Connect, Remove credentials, Disconnect, Reboot Device and Retry full boot bring the sign-in up with no "Failed" alert and the typed network kept, and a curl to `/api/wifi/connect`, `/api/wifi/forget` or `/api/reboot` with the cookie alone answers 401.

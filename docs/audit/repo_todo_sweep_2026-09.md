@@ -1830,10 +1830,14 @@ so — see D2 below.)
   The ledger named only the pair token, but the session cookie moved the
   network too, through `api_auth_check`. The Bluetooth bond was a second road,
   closed by F346's gate in the same PR.
-  During setup nothing changes: the wizard's pair token works as before, and
-  so does a presented credential (`handle_ui` mints no session during setup,
-  but the receipt route mints one on a BOOT tap or the setup door's claim,
-  and the SoftAP is the boundary then). After setup the landing's pair token
+  During setup Connect and AP-only are unchanged: the wizard's pair token
+  works as before, and so does a presented credential (`handle_ui` mints no
+  session during setup, but the receipt route mints one on a BOOT tap or the
+  setup door's claim, and the SoftAP is the boundary then). Disconnect and
+  Forget ask nothing about setup: they take the bearer in every mode, so a
+  session the receipt route minted during setup is refused there too
+  (`test_wifi_authority.cpp`'s `forget_and_disconnect_take_the_bearer` runs
+  both modes). After setup the landing's pair token
   and session still open the dashboard, but no longer move the device. On the recovery
   portal the AP key opens the dashboard, and Connect then takes the recovery
   kit's token or one BOOT tap. There the STA is down and the SoftAP takes one
@@ -4985,7 +4989,9 @@ so — see D2 below.)
       design note.
     - Forget Wi-Fi takes `api_auth_check()`, which any landing session
       passes (F345), so a re-armed first-come door is not the owner's act;
-      the bonded lane is no owner gate either (F346): `improv_core.h` (both
+      the bonded lane is no owner gate either (F346) *(amended 2026-10-27,
+      the owner-authority PR, #<PR>: since F345's fix Forget takes the bearer
+      alone, and since F346's so does the bond's confirm)*: `improv_core.h` (both
       copies), the WAP's wipe comments, `ble_improv.cpp`, the README,
       `magic_pairing.md`'s table rows, `bluetooth_api.h`, `ble_console.h`,
       `ble_provision.h`, `household_api.h`, the beacon and chirp
@@ -5498,8 +5504,10 @@ so — see D2 below.)
   `a_hosts_wrong_bearers_hold_only_its_address` (a held address's right
   bearer, sent with a session cookie, gets `429` on the Wi-Fi gate) and
   `test_auth_backoff.cpp`'s overflow row (a tenth untracked source is
-  held); the overflow on the Wi-Fi gate itself is not run, and nothing is
-  run on a device.
+  held), and `nine_striking_addresses_hold_the_owners_bearer` in the same
+  `test_wifi_authority.cpp` (nine addresses strike, then a tenth's right
+  bearer gets `429` on the Wi-Fi gate and on Forget while the overflow runs,
+  and moves the network once it ends); nothing is run on a device.
   Not closed:
   - `POST /api/reboot` (or `POST /api/safe-mode/retry`) from any landing
     session, which also clears the RAM table, and with it the guess budget:
@@ -7255,7 +7263,8 @@ so — see D2 below.)
   *Decided and done (2026-10-26, #<PR>), under the maintainer's instruction to
   fix the remaining open items in best engineering practice and best value for
   the user and security, by F334's post-setup authority rule:* both wrappers
-  are `api_auth_check_bearer()`, as the Wi-Fi routes are after setup. The
+  are `api_auth_check_bearer()`, as Disconnect and Forget are (Connect and
+  AP-only after setup). The
   wrappers ask nothing about setup: the bearer is the rule in every mode,
   and a session the receipt route minted during setup (on a BOOT tap or the
   setup door's claim; `handle_ui` mints none then) is refused too. The

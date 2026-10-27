@@ -177,7 +177,8 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   taking it away needs no radio: any landing session can turn the WAP's Bluetooth
   off, a saved setting that restarts and the 10 s hold keep, or delete the phone's bond.
   `magic_pairing.md` §3.7 has the whole posture.) (Amended 2026-10-27 by the owner-authority PR,
-  #<PR>: after setup the Wi-Fi routes take the bearer alone (F334, F345), and the overflow holds
+  #<PR>: after setup the four routes that move the network (connect, ap-only, disconnect,
+  forget) take the bearer alone (F334, F345), and the overflow holds
   that bearer with every untracked address, the owner's among them, so the browser's move waits
   until that host stops and then takes the API token pasted into the sign-in; last, for a host
   on the network only, with the iPhone ready, the hold and a setup onto a network that host is

@@ -116,7 +116,10 @@ AUTH_MARKERS = (
     "api_auth_check(",            # Bearer + session cookie (401/403/429)
     "api_auth_check_bearer(",     # Bearer ONLY, never the cookie (F289: the
                                   # pairing QR, whose answer carries the token;
-                                  # F334/F345: the Wi-Fi routes after setup)
+                                  # F334/F345: connect and ap-only after
+                                  # setup, disconnect and forget always;
+                                  # F361: the reboots; F335: the vault key;
+                                  # F346: the two pair confirms)
     "api_auth_check_or_query(",   # + ?token= for <img>/stream tags
     "api_auth_check_optional(",   # the cookie or the accounted grant, nothing
                                   # sent (caller enforces)

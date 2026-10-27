@@ -9603,8 +9603,10 @@ static esp_err_t handle_device_name(httpd_req_t* req) {
 // These wrappers put api_auth_check() in front of existing handlers: the
 // session cookie first (__Host-cv_session over HTTPS, cv_session over plain
 // HTTP, F337), which the landing page mints for any host on the network
-// (ledger F346), then the bearer token under the lockout. The reboot and
-// Wi-Fi wrappers below take the bearer alone and say so (F361, F334).
+// (ledger F346), then the bearer token under the lockout. Six wrappers
+// below take the bearer alone and say so: the two reboot routes (F361),
+// Disconnect and Forget (F334, F345), the vault key (F335) and the mesh
+// pair confirm (F346); Reconnect stays on api_auth_check().
 
 static esp_err_t handle_status_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
@@ -9684,10 +9686,10 @@ static esp_err_t handle_export_auth(httpd_req_t* req) {
   return handle_export(req);
 }
 // The two reboot routes take the bearer alone (sweep F361), in every mode, as
-// the Wi-Fi routes do after setup: the landing page
-// mints a session for any host on the network, and a reboot at will is a
-// LAN denial that also empties the RAM lockout table, resetting a token
-// guesser's budget. The flagship's reboot takes the bearer too.
+// Disconnect and Forget do (Connect and AP-only take it after setup): the
+// landing page mints a session for any host on the network, and a reboot at
+// will is a LAN denial that also empties the RAM lockout table, resetting a
+// token guesser's budget. The flagship's reboot takes the bearer too.
 static esp_err_t handle_reboot_auth(httpd_req_t* req) {
   if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   return handle_reboot(req);

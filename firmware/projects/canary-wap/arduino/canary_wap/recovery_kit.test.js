@@ -1054,11 +1054,14 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     const fw = ino.indexOf('static esp_err_t handle_wifi_forget_auth(httpd_req_t* req) {');
     assert.ok(fw > 0);
     assert.match(ino.slice(fw, ino.indexOf('\n}\n', fw)), /if \(!api_auth_check_bearer\(req, g_device\.api_token_str\)\) return ESP_OK;/);
-    const signIn = advice.indexOf('Remove credentials, which asks for its API token first: sign in there with a short BOOT tap when the page says to, then press Remove credentials again');
+    // It names the sign-in's button before the press, as the kit footer does
+    // (F342: the page asks first, and the tap goes to the one asker).
+    const signIn = advice.indexOf('Remove credentials, which asks for its API token first: choose Use BOOT Tap Once in the sign-in and short-tap BOOT when the page says to, then press Remove credentials again');
     assert.ok(signIn > forget && signIn < advice.indexOf('bring it near this phone'), advice);
     // The button it names: Remove credentials, in Settings → WiFi, posting
     // that route.
     const ui = read(UI);
+    assert.match(ui, /onclick="requestFromDevice\(\)">Use BOOT Tap Once<\/button>/);
     assert.match(ui, /onclick="switchSettingsTab\('wifi'\)">[^<]*WiFi<\/button>/);
     assert.match(ui, /<button class="btn btn-danger" onclick="forgetWifi\(\)" id="wifiForgetBtn"[^>]*>Remove credentials<\/button>/);
     assert.match(uiFunction(ui, 'forgetWifi', true), /await api\('\/api\/wifi\/forget', 'POST'\);/);
@@ -1071,7 +1074,12 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.match(swift, /if let page = canary\.host\.flatMap\(DeviceAPI\.url\(forDiscoveredHost:\)\) \{\n\s+Link\("Open its page", destination: page\)/);
     const api = read(path.join(__dirname, '../../../../../ios/Sources/SecuraCV/Transport/DeviceAPI.swift'));
     assert.match(api, /static func url\(forDiscoveredHost host: String\) -> URL\? \{[\s\S]*?return URL\(string: "http:\/\/\\\(name\)"\)\n {4}\}/);
-    assert.doesNotMatch(advice, /Use BOOT Tap Once/);
+    // The advice names Use BOOT Tap Once once, and only as a button of the
+    // sign-in that Remove credentials opens on the dashboard (the row above
+    // walks it there), never as one on the landing page.
+    assert.doesNotMatch(advice, /Use BOOT Tap Once there/);
+    assert.equal(advice.split('Use BOOT Tap Once').length, 2, advice);
+    assert.ok(advice.indexOf('choose Use BOOT Tap Once in the sign-in') > forget, advice);
     const footer = swift.match(/Text\("(Its own page saves a recovery kit [^"]*)"\)/);
     assert.ok(footer, 'PairView\'s kit footer not found');
     const steps = ['open the page, choose Open dashboard there, then Settings → Device → Save my recovery kit; ',

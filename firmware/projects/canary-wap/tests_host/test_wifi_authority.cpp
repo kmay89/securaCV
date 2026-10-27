@@ -15,13 +15,14 @@
 // Bluetooth setup door, whose claim buys the receipt. Now, whenever
 // setup_wizard::is_active() is false, the gate is api_auth_check_bearer():
 // no cookie, the per-address lockout, its own 401/403/429. During setup the
-// wizard's gate is unchanged (handle_ui mints no session then, but the
-// receipt route does on a BOOT tap or the setup door's claim, and that
-// cookie takes the presented-credential branch). POST /api/reboot
-// and POST /api/safe-mode/retry were api_auth_check() wrappers too, so any
-// landing session rebooted the unit at will: a LAN denial, and each reboot
-// emptied the RAM lockout table, resetting a guesser's budget (F361). Both
-// wrappers are api_auth_check_bearer() now.
+// wizard's gate on Connect and AP-only is unchanged (handle_ui mints no
+// session then, but the receipt route does on a BOOT tap or the setup door's
+// claim, and that cookie takes the presented-credential branch); Forget and
+// Disconnect ask nothing about setup and take the bearer then too. POST
+// /api/reboot and POST /api/safe-mode/retry were api_auth_check() wrappers
+// too, so any landing session rebooted the unit at will: a LAN denial, and
+// each reboot emptied the RAM lockout table, resetting a guesser's budget
+// (F361). Both wrappers are api_auth_check_bearer() now.
 //
 // This runs the REAL api_auth.h (the lockout table, sweep F343) and
 // provisioning_logic.h (keyless_join_open(), the one rule for the setup door
@@ -44,9 +45,13 @@
 //     right bearer gets 429 with Retry-After and another host's is served;
 //   - during setup: the pair token goes ahead, nothing at all is the
 //     wizard's invalid_token, a presented credential takes api_auth_check;
-//   - Forget and Disconnect after setup: a session alone is 401, the handler
-//     never runs, the network stays on file and the setup door stays shut
-//     (before: Forget ran and the door opened); the bearer runs each once;
+//   - under a host striking from nine addresses, the owner's right bearer
+//     from an untracked tenth: 429 on the Wi-Fi gate and on Forget while the
+//     shared overflow runs, served once it ends;
+//   - Forget and Disconnect, after setup and during it: a session alone is
+//     401, the handler never runs, the network stays on file and the setup
+//     door stays shut (before: Forget ran and the door opened); the bearer
+//     runs each once;
 //     Reconnect, which only rejoins the stored network, still takes the
 //     session;
 //   - the reboot and the safe-mode retry: a session alone is 401 and the
@@ -326,6 +331,43 @@ void test_a_hosts_wrong_bearers_hold_only_its_address() {
   std::printf("PASS a_hosts_wrong_bearers_hold_only_its_address\n");
 }
 
+// A host that strikes from nine addresses fills the eight tracked slots and
+// starts the shared overflow, which holds every untracked address (F343), the
+// owner's among them: the owner's right bearer, from a tenth address, is 429
+// with Retry-After on the Wi-Fi gate and on Forget, compared with nothing and
+// counted nowhere, and nothing moves; once the overflow's backoff ends, the
+// same bearer moves the network. The way out the docs give under such a host
+// (wait until it stops, then the token) rests on both halves.
+void test_nine_striking_addresses_hold_the_owners_bearer() {
+  reset_device();
+  for (uint8_t i = 1; i <= 9; ++i) {
+    Req w;
+    w.from(10, 0, 0, i).bearer(kWrong);
+    CHECK(wifi_change_authorize(&w.r, "") == WifiChangeAuth::RESPONDED);
+    CHECK_MSG(w.r.status == "403 Forbidden", std::to_string(i));
+  }
+  CHECK(g_auth_table.overflow.failures == 1);
+  const uint32_t kOwner = 0xC0A8011E;   // 192.168.1.30, tracked by no slot
+  CHECK(held(kOwner) && strikes(kOwner) == 0);
+  Req a;
+  a.from(192, 168, 1, 30).cookie().bearer(kToken);
+  CHECK(wifi_change_authorize(&a.r, "") == WifiChangeAuth::RESPONDED);
+  CHECK(a.r.status == "429 Too Many Requests" && has_header(a.r, "Retry-After"));
+  Req f;
+  f.from(192, 168, 1, 30).bearer(kToken);
+  CHECK(handle_wifi_forget_auth(&f.r) == ESP_OK);
+  CHECK(f.r.status == "429 Too Many Requests" && has_header(f.r, "Retry-After"));
+  CHECK(g_forgets == 0 && g_wifi_creds.configured);
+  CHECK(g_auth_table.overflow.failures == 1 && strikes(kOwner) == 0);
+  wait_out(kOwner);
+  CHECK(!held(kOwner));
+  Req later;
+  later.from(192, 168, 1, 30).bearer(kToken);
+  CHECK(wifi_change_authorize(&later.r, "") == WifiChangeAuth::PROCEED);
+  CHECK(later.r.sends == 0);
+  std::printf("PASS nine_striking_addresses_hold_the_owners_bearer\n");
+}
+
 // During first-boot setup the wizard's gate is as it was: its pair token
 // goes ahead, a request with nothing is the friendly invalid_token (the
 // wizard re-issues and retries; nothing sent here), and a presented
@@ -359,7 +401,10 @@ void test_during_setup_the_wizard_gate_is_unchanged() {
 // and the Bluetooth setup door stays shut; a wrong bearer beside it is 403
 // and a strike; the bearer runs the handler once, and only then does Forget
 // open the door. Before, the session ran both, and Forget opened the door
-// for the first phone in radio range to claim.
+// for the first phone in radio range to claim. The same during setup: the
+// wrappers ask nothing about it, unlike wifi_change_authorize(), so a session
+// the receipt route minted then (on a BOOT tap or the setup door's claim) is
+// refused too, where before F334 it ran both.
 void test_forget_and_disconnect_take_the_bearer() {
   struct Route { const char* name; esp_err_t (*wrapper)(httpd_req_t*); int* ran; bool opens_door; };
   const Route routes[] = {
@@ -367,26 +412,30 @@ void test_forget_and_disconnect_take_the_bearer() {
       {"disconnect", handle_wifi_disconnect_auth, &g_disconnects, false},
   };
   for (const Route& rt : routes) {
-    reset_device();
-    CHECK_MSG(!ble_improv_door_should_open(), rt.name);
-    Req s;
-    s.cookie();
-    CHECK(rt.wrapper(&s.r) == ESP_OK);
-    CHECK_MSG(s.r.status == "401 Unauthorized" && has_header(s.r, "WWW-Authenticate"), rt.name);
-    CHECK_MSG(*rt.ran == 0 && g_wifi_creds.configured, rt.name);
-    CHECK_MSG(!ble_improv_door_should_open(), rt.name);
-    CHECK_MSG(strikes(kHostA) == 0, rt.name);
-    Req w;
-    w.cookie().bearer(kWrong);
-    CHECK(rt.wrapper(&w.r) == ESP_OK);
-    CHECK_MSG(w.r.status == "403 Forbidden" && *rt.ran == 0, rt.name);
-    CHECK_MSG(strikes(kHostA) == 1, rt.name);
-    wait_out(kHostA);
-    Req b;
-    b.bearer(kToken);
-    CHECK(rt.wrapper(&b.r) == ESP_OK);
-    CHECK_MSG(b.r.status == "200 OK" && *rt.ran == 1, rt.name);
-    CHECK_MSG(ble_improv_door_should_open() == rt.opens_door, rt.name);
+    for (bool during_setup : {false, true}) {
+      const std::string name = std::string(rt.name) + (during_setup ? " (setup)" : "");
+      reset_device();
+      setup_wizard::g_active = during_setup;
+      CHECK_MSG(!ble_improv_door_should_open(), name);
+      Req s;
+      s.cookie();
+      CHECK(rt.wrapper(&s.r) == ESP_OK);
+      CHECK_MSG(s.r.status == "401 Unauthorized" && has_header(s.r, "WWW-Authenticate"), name);
+      CHECK_MSG(*rt.ran == 0 && g_wifi_creds.configured, name);
+      CHECK_MSG(!ble_improv_door_should_open(), name);
+      CHECK_MSG(strikes(kHostA) == 0, name);
+      Req w;
+      w.cookie().bearer(kWrong);
+      CHECK(rt.wrapper(&w.r) == ESP_OK);
+      CHECK_MSG(w.r.status == "403 Forbidden" && *rt.ran == 0, name);
+      CHECK_MSG(strikes(kHostA) == 1, name);
+      wait_out(kHostA);
+      Req b;
+      b.bearer(kToken);
+      CHECK(rt.wrapper(&b.r) == ESP_OK);
+      CHECK_MSG(b.r.status == "200 OK" && *rt.ran == 1, name);
+      CHECK_MSG(ble_improv_door_should_open() == rt.opens_door, name);
+    }
   }
   std::printf("PASS forget_and_disconnect_take_the_bearer\n");
 }
@@ -633,6 +682,7 @@ int main() {
   test_the_landing_grants_move_no_network();
   test_the_bearer_moves_the_network();
   test_a_hosts_wrong_bearers_hold_only_its_address();
+  test_nine_striking_addresses_hold_the_owners_bearer();
   test_during_setup_the_wizard_gate_is_unchanged();
   test_forget_and_disconnect_take_the_bearer();
   test_reconnect_still_takes_the_session();

@@ -500,12 +500,12 @@ button. A Canary whose saved Wi-Fi has merely *stopped working* (the router
 rebooted, you changed the password) does **not** open it — it raises its
 `SecuraCV-XXXX` recovery network instead, which needs the key printed for
 it. So the setup door offers nothing to a stranger's phone while a Canary
-stays on your network, on a good day or a bad one. On a WAP that takes the
-API token: after setup, Forget Wi-Fi, which reopens the door for half an
-hour, asks for it, and so does the confirm that bonds a phone to the WAP's
-other Bluetooth lane, which takes a new Wi-Fi network; a page any device on
-your network opens no longer sends either. A bond confirmed before that
-release stays until you remove it under Settings → Bluetooth (the
+stays on your network, on a good day or a bad one. On a WAP from this
+release on, after setup Forget Wi-Fi, which reopens the door for half an
+hour, asks for the API token, and so does the confirm that bonds a phone to
+the WAP's other Bluetooth lane, which takes a new Wi-Fi network; a page any
+device on your network opens no longer sends either. A bond confirmed on an
+earlier release stays until you remove it under Settings → Bluetooth (the
 [security model](security/SECURITY_MODEL.md) has the details).
 
 The older paths stay as the fallback: the `SecuraCV-XXXX` setup network with

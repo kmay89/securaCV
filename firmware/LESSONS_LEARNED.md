@@ -3442,7 +3442,11 @@
   all still offering the hold. And a way out has to be judged against everything else the attacker can
   reach: the bonded lane takes away the striking host's network reach, but
   a host also in radio range can bond through the landing session the
-  network gives it, and then use the lane itself. A guard that every row
+  network gives it, and then use the lane itself *(amended 2026-10-27, the
+  owner-authority PR, #<PR>: since F346 the bond's confirm and a Passkey
+  Entry's digits take the API token, so a host bonds through its session no
+  longer; a bond a session confirmed on an earlier release stays until the
+  owner removes it)*. A guard that every row
   passes without needs a row from the state it guards: every companion row
   tapped Save first, so the stop's `if (!ctl) return;` was never reached
   with no save running, the state most pane changes are made in.
@@ -3454,7 +3458,12 @@
   keeps, or deletes the phone's bond, from anywhere on the network; the
   owner's own landing session reaches the same routes, and
   `POST /api/wifi/connect`, so the owner's browser can turn Bluetooth back
-  on, or move the WAP with no Bluetooth at all. List
+  on, or move the WAP with no Bluetooth at all. *(Amended 2026-10-27, the
+  owner-authority PR, #<PR>: the Bluetooth routes still take the session,
+  but after setup `POST /api/wifi/connect` takes the API token alone, F334,
+  so the browser's move takes the token, and under a host striking from
+  nine or more addresses it waits until that host stops; the merge's
+  bullet below says so.)* List
   the routes by what they touch (Bluetooth's switch, its bonds, the Wi-Fi
   it would change), and a denial's length by what the attacker pays: a
   refused write the lane does not charge keeps the owner's refused for as
@@ -3501,10 +3510,10 @@
   decision that moves a route behind the bearer moves every way out that
   route was. #1843's lockout posture rested on the owner's landing session
   reaching `POST /api/wifi/connect` and `POST /api/wifi/forget` under the
-  lockout (the third round's bullet above); F334 and F345 put both on the
-  bearer alone after setup, and the overflow holds that bearer with every
-  untracked address, so the browser's move now waits until the striking
-  host stops. The two branches merged without a conflict in most of the
+  lockout (the third and second rounds' bullets above); F334 and F345 put
+  both on the bearer alone after setup, and the overflow holds that bearer
+  with every untracked address, so the browser's move now waits until the
+  striking host stops. The two branches merged without a conflict in most of the
   sentences that disagreed: the dependency surfaced only because #1843's
   fifth-review note on F345 named it. Before deciding a route's gate,
   search the ledger and the docs for the route as a remedy, not only as an
