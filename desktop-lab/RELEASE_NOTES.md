@@ -16,6 +16,43 @@ version, newest first. Same contract as the Flasher's
 
 Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
+## 0.3.2 — 2026-10-27
+
+**The 2.4.17 firmware catalog is baked in, the monitor after a flash takes
+commands, and every printable part says which revision it is.**
+
+- **Firmware 2.4.17 on the Flash page.** Setup networks are named for the
+  kind of device (`SecuraCV-sense-XXXX`), and a Sense or Vision can take
+  its Home Assistant link from iPhone app 0.8.0. From 2.4.17 on, an update
+  for another board is refused before it downloads, and one that has not
+  run healthy for a minute is rolled back at the next restart. Host-tested
+  and built by CI; not bench-tested.
+- **A plain Canary's setup network changes once when it updates:** a new
+  name (`SecuraCV-canary-` and the same four characters) and a new key.
+  Save its recovery kit again afterward.
+- **Seven displays take 2.4.17 over USB, not over the air** (the Dash
+  modes build, the 7" and S3 nightstands, the C6 nightstand, the 1.69"
+  touch, the 2.41" AMOLED and the C3 nightlight); a C3 Vision last flashed
+  before 2.4.16 needs the same one USB flash. A Vision Doorbell built from
+  the old wiring page moves its amp input from D3 to D10.
+- **The monitor after a flash takes commands:** that firmware's own as
+  buttons (single keys for the Canary, WAP and Vision, the Sense's console
+  words, none for a display) and a box to type in; host-tested, not yet
+  tried on a board.
+- **Every printable part has a revision.** The enclosure and Assemble tabs
+  tint what the newest one moved, and the enclosure tab names the revision
+  of an STL you already have. Audited fixes moved parts of the released
+  WAP, Vision, Vision Doorbell and Sense cases; no print of a moved part is
+  on record, so print one before relying on it.
+- **Each bench tells its own board's story:** its chip's ROM lines where a
+  source quotes them, whether its firmware reads BOOT, the WAP's real BOOT
+  gestures; the Nightlight's Try it bench turns its running glass.
+- **Short Wi-Fi passwords are accepted:** no 8-character minimum, up to 64.
+- **The Witness Wall shows the day a Canary's key was born** (or first
+  dated) when the Canary answers for itself.
+- Under the hood: rustls 0.23.46, rustls-webpki 0.103.16 and newer root
+  certificates (RUSTSEC-2026-0346 to -0349, -0381 to -0383); Tauri 2.12.4.
+
 ## 0.3.1 — 2026-10-16
 
 **A 1.47" C6 display is offered as a display, and every Canary on your

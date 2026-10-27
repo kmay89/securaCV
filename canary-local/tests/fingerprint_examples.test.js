@@ -357,8 +357,9 @@ function* allStrings() {
   for (const page of PAGES)
     for (const [path, s] of strings(DATA[page], "")) yield { page, path, s };
 }
-// Placeholders a page may show instead of a value: a SoftAP name nobody owns.
-const SSID_PLACEHOLDER = "SecuraCV-XXXX";
+// Placeholders a page may show instead of a value: a SoftAP name nobody owns,
+// with or without the kind 2.4.17 puts in it ("SecuraCV-canary-XXXX").
+const SSID_PLACEHOLDER = /^SecuraCV-(?:[a-z]{1,8}-)?XXXX$/;
 
 test("the WAP's names derive from the test key the way canary_wap.ino derives them", () => {
   for (const pin of WAP_NAME_PINS) assert.ok(INO.includes(pin), `canary_wap.ino no longer has ${JSON.stringify(pin)}`);
@@ -381,7 +382,7 @@ test("every WAP device id, SSID and unnamed host a generated page shows is the t
     // printf conversion) is the shape, not a name: the lookahead refuses a
     // match that runs into another "-" or a "%".
     for (const m of s.matchAll(/\bSecuraCV-(?:[a-z]{1,8}-)?[A-Za-z0-9]+(?![-A-Za-z0-9%])/g))
-      if (m[0] !== SSID_PLACEHOLDER) found.ssid.push({ page, path, v: m[0] });
+      if (!SSID_PLACEHOLDER.test(m[0])) found.ssid.push({ page, path, v: m[0] });
     for (const m of s.matchAll(/\bcanary-[0-9A-Fa-f]{4}\.local\b/g)) found.host.push({ page, path, v: m[0] });
   }
   for (const kind of ["id", "ssid", "host"])

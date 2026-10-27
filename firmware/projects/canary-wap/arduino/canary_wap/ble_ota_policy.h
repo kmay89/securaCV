@@ -65,8 +65,9 @@
  *
  * The floor is not raised by this module: like the pull path, the install
  * only records securacv_ota_mark_pending_install(); the new image raises
- * the floor to its own compiled version once its boot self-test confirms it
- * (securacv_ota_boot_self_test / securacv_ota_init). Raising it earlier
+ * the floor to its own compiled version once it is confirmed (the boot
+ * self-test, then the confirm dwell: securacv_ota_boot_self_test /
+ * securacv_ota_init / securacv_ota_health_tick). Raising it earlier
  * would, after a rollback, block ever re-offering that version.
  */
 

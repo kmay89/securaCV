@@ -2,7 +2,8 @@
  * @file power_gate_logic.h
  * @brief Pure decisions for "battery gates round two" — which advisory
  *        power-policy feature bits the main loop actually enforces, and
- *        how routine MQTT heartbeat cadence stretches under battery load.
+ *        how routine MQTT heartbeat cadence stretches under battery load —
+ *        and whether a firmware update may install on the battery at hand.
  *
  * PR #847 wired the first enforced gates (camera_peek, record-interval
  * floor, CPU/WiFi-PS, deep sleep). This header holds the round-two
@@ -86,6 +87,23 @@ inline uint32_t routine_interval_ms(uint32_t base_ms, uint8_t mode) {
   if (factor <= 1) return base_ms;
   if (base_ms > 0xFFFFFFFFu / factor) return 0xFFFFFFFFu;
   return base_ms * factor;
+}
+
+/**
+ * May the pull engine install an update on this power? (ota_can_install in
+ * canary_wap.ino, the engine's install veto.) Refused only on a battery the
+ * monitor has classified as discharging (on_battery: not charging, not full,
+ * not on USB) at or below low_pct, the monitor's own "low" line
+ * (power_monitor::SOC_LOW_PCT). Lower down, the power policy deep-sleeps and
+ * then shuts down, and a deep sleep is a restart: one during the download
+ * wastes it, and one inside the confirm dwell (docs/OTA.md §2) boots the
+ * previous firmware again. No battery, a battery charging or full, or a
+ * reading not yet classified is allowed, so a unit on USB, or one whose gauge
+ * has not settled since boot, is never held back by this.
+ */
+inline bool ota_install_power_ok(bool battery_present, bool on_battery,
+                                 uint8_t soc_pct, uint8_t low_pct) {
+  return !(battery_present && on_battery && soc_pct <= low_pct);
 }
 
 }  // namespace power_gate

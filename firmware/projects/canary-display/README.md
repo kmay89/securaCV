@@ -306,8 +306,13 @@ Every display flavor rides the same signed pull-OTA engine the rest of the
 device line uses (`firmware/common/ota`, fronted here by `net/ota_mgr.*`):
 a daily jittered HTTPS check of a per-product manifest, Ed25519-verified
 against the committed release key before a byte is flashed, with automatic
-rollback if the new image fails to boot. The check needs only WiFi — a
-hub-less glass (no broker configured) still updates itself.
+rollback if the new image fails to boot. The daily check runs only while the
+glass is connected to its MQTT broker. A hub-less glass (no broker
+configured) does not check on a schedule; it updates when you ask it to —
+Settings → firmware on a touch glass, or the desktop Flasher's "Update over
+the air" button (`POST /api/ota/install`). Either way a new image keeps
+itself only after a healthy minute on Wi-Fi, broker or no broker; a restart
+inside that minute returns the glass to the previous firmware.
 
 - **Product identity is per flavor, and the release pipeline enforces it.**
   Each env compiles in its own `SECURACV_OTA_PRODUCT` / manifest URL — the
@@ -320,7 +325,9 @@ hub-less glass (no broker configured) still updates itself.
   shows the installed version and opens the full pipeline: check now,
   install, and the auto-update toggle (plus the dev/release channel the
   HA update entity can switch). Progress and outcome render on the glass;
-  the rollback verdict is logged at the next boot.
+  the log (serial, and the web page's serial monitor) says "Firmware update
+  applied." once the new image has kept itself, and names a rollback at the
+  boot that restored the previous one.
 - **The flashers carry every flavor.** The browser flasher and the desktop
   Flasher app both read the same catalog (`canary-local/devices/flash.json`),
   so a factory USB install and the later self-updates offer the same set of

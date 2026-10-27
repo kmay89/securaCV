@@ -1,6 +1,7 @@
 /* Host tests for power_gate_logic.h — the round-two power-policy gate
- * decisions: advisory-feature run/skip and routine MQTT heartbeat cadence
- * stretch. Build & run (CI: firmware.yml host tests):
+ * decisions: advisory-feature run/skip, routine MQTT heartbeat cadence
+ * stretch, and the pull-OTA install veto on a low battery. Build & run (CI:
+ * firmware.yml host tests):
  *
  *   g++ -std=c++17 -Wall -Wextra -Werror \
  *       -I firmware/projects/canary-wap/arduino/canary_wap \
@@ -63,10 +64,28 @@ static void test_routine_interval() {
   CHECK(routine_interval_ms(0x3FFFFFFFu, MODE_BATTERY_SAVER) == 0xFFFFFFFCu);
 }
 
+static void test_ota_install_power() {
+  const uint8_t low_line = 15;  /* power_monitor::SOC_LOW_PCT */
+  /* Args: (battery_present, on_battery, soc_pct, low_pct). */
+  /* On a discharging battery: refused at and below the low line. */
+  CHECK(!ota_install_power_ok(true, true, low_line, low_line));
+  CHECK(!ota_install_power_ok(true, true, 5, low_line));
+  CHECK(!ota_install_power_ok(true, true, 0, low_line));
+  CHECK(ota_install_power_ok(true, true, low_line + 1, low_line));
+  CHECK(ota_install_power_ok(true, true, 100, low_line));
+  /* Charging, full or on USB (not on_battery): allowed at any charge. */
+  CHECK(ota_install_power_ok(true, false, 0, low_line));
+  CHECK(ota_install_power_ok(true, false, 3, low_line));
+  /* No battery: allowed (soc reads 0 there and means nothing). */
+  CHECK(ota_install_power_ok(false, false, 0, low_line));
+  CHECK(ota_install_power_ok(false, true, 0, low_line));
+}
+
 int main() {
   test_feature_runs();
   test_stretch_factor_by_mode();
   test_routine_interval();
+  test_ota_install_power();
 
   if (g_failures != 0) {
     std::printf("%d CHECK(S) FAILED\n", g_failures);

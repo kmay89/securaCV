@@ -1,10 +1,10 @@
 {
   "$generated_by": "canary-local/tools/gen_flash.py — do not edit by hand",
   "$doc": "Browser flasher catalog. Live binaries come from manifest_url (the signed release); this file supplies the chip guard and the human copy, and is honest even before a release exists.",
-  "fw_train": "2.4.16",
+  "fw_train": "2.4.17",
   "repo": "kmay89/securaCV",
-  "release_download": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.16",
-  "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.16/manifest-flash.json",
+  "release_download": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.17",
+  "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.17/manifest-flash.json",
   "release_pubkey": "ae123a5c220c5499e579dc449e66392d83d5ad70d100747574eb7b2bac49b244",
   "flash_baud": 921600,
   "console_baud": 115200,
@@ -74,7 +74,7 @@
       "board": "seeed_xiao_esp32s3",
       "asset_stem": "canary",
       "provisioning": "ap",
-      "provisioning_note": "When it boots it raises a WiFi network of its own (SecuraCV-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically.",
+      "provisioning_note": "When it boots it raises a WiFi network of its own (SecuraCV-canary-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically.",
       "setup_door": false,
       "wifi_nvs": "blob",
       "broker_nvs": false,
@@ -84,7 +84,7 @@
         "title": "Your Canary is on its perch.",
         "body": "The magical first proof is local and physical: join its setup network with the key it printed, open the dashboard, then make one harmless signal it can witness.",
         "steps": [
-          "Join the SecuraCV-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-…, the Password line of its boot banner) — the setup page opens on its own; if not, open canary.local.",
+          "Join the SecuraCV-canary-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-…, the Password line of its boot banner) — the setup page opens on its own; if not, open canary.local.",
           "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
           "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
         ]
@@ -162,7 +162,7 @@
       "board": "esp32cam",
       "asset_stem": "canary-esp32cam",
       "provisioning": "ap",
-      "provisioning_note": "When it boots it raises a WiFi network of its own (SecuraCV-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically.",
+      "provisioning_note": "When it boots it raises a WiFi network of its own (SecuraCV-canary-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically.",
       "setup_door": false,
       "wifi_nvs": "blob",
       "broker_nvs": false,
@@ -172,7 +172,7 @@
         "title": "Your Canary is on its perch.",
         "body": "The magical first proof is local and physical: join its setup network with the key it printed, open the dashboard, then make one harmless signal it can witness.",
         "steps": [
-          "Join the SecuraCV-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-…, the Password line of its boot banner) — the setup page opens on its own; if not, open canary.local.",
+          "Join the SecuraCV-canary-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-…, the Password line of its boot banner) — the setup page opens on its own; if not, open canary.local.",
           "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
           "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
         ]
@@ -264,7 +264,7 @@
       "board": "esp32dev",
       "asset_stem": "canary-wroom",
       "provisioning": "ap",
-      "provisioning_note": "When it boots it raises a WiFi network of its own (SecuraCV-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically.",
+      "provisioning_note": "When it boots it raises a WiFi network of its own (SecuraCV-canary-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically.",
       "setup_door": false,
       "wifi_nvs": "blob",
       "broker_nvs": false,
@@ -274,7 +274,7 @@
         "title": "Your Canary is on its perch.",
         "body": "The magical first proof is local and physical: join its setup network with the key it printed, open the dashboard, then make one harmless signal it can witness.",
         "steps": [
-          "Join the SecuraCV-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-…, the Password line of its boot banner) — the setup page opens on its own; if not, open canary.local.",
+          "Join the SecuraCV-canary-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-…, the Password line of its boot banner) — the setup page opens on its own; if not, open canary.local.",
           "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
           "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
         ]
@@ -365,7 +365,7 @@
       "board": "esp32-s3-devkitc-1",
       "asset_stem": "canary-freenove-s3",
       "provisioning": "ap",
-      "provisioning_note": "When it boots it raises a WiFi network of its own (SecuraCV-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically.",
+      "provisioning_note": "When it boots it raises a WiFi network of its own (SecuraCV-canary-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically.",
       "setup_door": false,
       "wifi_nvs": "blob",
       "broker_nvs": false,
@@ -375,7 +375,7 @@
         "title": "Your Canary is on its perch.",
         "body": "The magical first proof is local and physical: join its setup network with the key it printed, open the dashboard, then make one harmless signal it can witness.",
         "steps": [
-          "Join the SecuraCV-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-…, the Password line of its boot banner) — the setup page opens on its own; if not, open canary.local.",
+          "Join the SecuraCV-canary-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-…, the Password line of its boot banner) — the setup page opens on its own; if not, open canary.local.",
           "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
           "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
         ]
@@ -452,7 +452,7 @@
       "board": "seeed_xiao_esp32s3",
       "asset_stem": "canary-wap",
       "provisioning": "ap",
-      "provisioning_note": "Power it on near the SecuraCV iPhone app and tap the card that appears — it hands over your WiFi in one tap. No iPhone? It also raises a WiFi network of its own (SecuraCV-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically.",
+      "provisioning_note": "Power it on near the SecuraCV iPhone app and tap the card that appears — it hands over your WiFi in one tap. No iPhone? It also raises a WiFi network of its own (named for its kind, like SecuraCV-wap-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically.",
       "setup_door": true,
       "wifi_nvs": "blob",
       "broker_nvs": false,
@@ -463,7 +463,7 @@
         "body": "The magical first proof is local and physical: hand it your Wi-Fi from your phone, open the dashboard, then make one harmless signal it can witness.",
         "steps": [
           "Open the SecuraCV iPhone app near it and tap the card that appears — it hands over your Wi-Fi.",
-          "No card? Join the SecuraCV-XXXX Wi-Fi network it creates, using the key it prints on its serial console at boot (cv-… on a WAP; eight characters on a Sense or Vision) — the setup page opens on its own; if not, open canary.local.",
+          "No card? Join the Wi-Fi network it creates (SecuraCV-wap-XXXX, SecuraCV-sense-XXXX or SecuraCV-vision-XXXX), using the key it prints on its serial console at boot (cv-… on a WAP; eight characters on a Sense or Vision) — the setup page opens on its own; if not, open canary.local.",
           "Tap Identify so the bird blinks and chirps — you know this is the board in your hand.",
           "Knock once near it or use the acoustic self-test card; Home Assistant automations are not fired by the self-test."
         ]
@@ -2582,7 +2582,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-watch.js",
         "factory": "createCanaryEmuWatch",
-        "fw_version": "2.4.16",
+        "fw_version": "2.4.17",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -2609,7 +2609,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-dash.js",
         "factory": "createCanaryEmuDash",
-        "fw_version": "2.4.16",
+        "fw_version": "2.4.17",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -2636,7 +2636,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-nightstand.js",
         "factory": "createCanaryEmuNightstand",
-        "fw_version": "2.4.16",
+        "fw_version": "2.4.17",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -2663,7 +2663,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-touch169.js",
         "factory": "createCanaryEmuTouch169",
-        "fw_version": "2.4.16",
+        "fw_version": "2.4.17",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -2691,7 +2691,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-amoled241.js",
         "factory": "createCanaryEmuAmoled241",
-        "fw_version": "2.4.16",
+        "fw_version": "2.4.17",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -2718,7 +2718,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-dash.js",
         "factory": "createCanaryEmuDash",
-        "fw_version": "2.4.16",
+        "fw_version": "2.4.17",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -2745,7 +2745,7 @@
       "emulator": {
         "module": "emulator/dist/canary-display-nightlight.js",
         "factory": "createCanaryEmuNightlight",
-        "fw_version": "2.4.16",
+        "fw_version": "2.4.17",
         "lvgl": "v8.4.0"
       },
       "build_note": "Flashable right here — the display flavors ship in the firmware release train now. The emulator is the SAME firmware compiled for the browser: try the glass before (or after) you flash it.",
@@ -3113,7 +3113,7 @@
     "usb_pid": "0x55d3",
     "baud": 921600,
     "model_addr": "0x400000",
-    "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.16/manifest-vision-model.json",
+    "manifest_url": "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.17/manifest-vision-model.json",
     "model": {
       "name": "Person Detection",
       "arch": "Swift-YOLO (tiny) · 192×192×3 RGB · compiled for the Ethos-U55",

@@ -276,7 +276,9 @@ EVVERIFY_SOURCES = test_evidence_update_verify.cpp \
 # and the accept / refuse / break-glass decision matrix — product binding,
 # the anti-rollback floor shared with the pull engine, the legacy v1 header
 # admitted only when armed — with real Ed25519 (OpenSSL). Links the OTA
-# engine's pure subset for securacv_ota_update_decision().
+# engine's pure subset for securacv_ota_update_decision(), and drives its
+# confirm dwell with provisioning_logic.h's health signal: a standalone unit
+# updated over Bluetooth keeps the update.
 BLEOTA_BIN     = test_ble_ota_policy
 BLEOTA_SOURCES = test_ble_ota_policy.cpp \
                  $(SRC_DIR)/securacv_ota.cpp
@@ -1683,8 +1685,9 @@ clean: clean-wander-jitter
 # `run` and `clean` by prerequisite so it adds no hunk to their lists.
 
 # The first-run wizard's pure decisions (setup-window keep-alive, scan-cache
-# freshness, AP-only join suppression, AP teardown grace), so the
-# phone-visible provisioning behavior is pinned on the host.
+# freshness, AP-only join suppression, AP teardown grace, the link the OTA
+# confirm dwell reads), so the phone-visible provisioning behavior is pinned
+# on the host.
 PROV_BIN = test_provisioning_logic
 PROV_SRC = test_provisioning_logic.cpp
 
@@ -1776,7 +1779,8 @@ HEALTH_SRC = test_health_store_logic.cpp
 # Round-two power-policy gates (power_gate_logic.h): advisory feature run/skip
 # (CSI drain) and routine MQTT heartbeat cadence stretch by power mode
 # (life-safety and event publishes bypass; overflow saturates rather than
-# wraps).
+# wraps), and the pull-OTA install veto on a discharging battery at or below
+# the monitor's low line.
 PWRGATE_BIN = test_power_gate_logic
 PWRGATE_SRC = test_power_gate_logic.cpp
 

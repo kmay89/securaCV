@@ -167,7 +167,7 @@
 // ════════════════════════════════════════════════════════════════
 
 #define DEVICE_TYPE           "canary"
-#define FIRMWARE_VERSION      "2.4.16"
+#define FIRMWARE_VERSION      "2.4.17"
 
 // What this build is, in the words a person reads. A name a surface shows
 // comes from the build, never from one literal every env shares: the mDNS

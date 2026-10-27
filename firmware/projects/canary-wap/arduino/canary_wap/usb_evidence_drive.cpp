@@ -122,23 +122,42 @@ static void run_update_check() {
     fat16_write_result(s_staging, "the manifest is not valid JSON - re-download it from the release");
     return;
   }
+  // The engine's own copy rule (securacv_ota_manifest_from_fields): every
+  // field whole or the manifest is refused, never cut to fit — a cut field
+  // could only fail the signature check below, and say so less clearly.
+  securacv_ota_manifest_fields_t fields;
+  memset(&fields, 0, sizeof fields);
+  fields.product            = doc["product"].as<const char*>();
+  fields.version            = doc["version"].as<const char*>();
+  fields.url                = doc["url"].as<const char*>();
+  fields.sha256             = doc["sha256"].as<const char*>();
+  fields.min_version        = doc["min_version"].as<const char*>();
+  fields.signature          = doc["signature"].as<const char*>();
+  fields.manifest_signature = doc["manifest_signature"].as<const char*>();
+  fields.signing_key_id     = doc["signing_key_id"].as<const char*>();
+  fields.release_notes      = doc["release_notes"].as<const char*>();
+  fields.release_url        = doc["release_url"].as<const char*>();
+  fields.board              = doc["board"].as<const char*>();
+  fields.chip               = doc["chip"].as<const char*>();
+  fields.size               = doc["size"] | 0u;
+  fields.manifest_version   = doc["manifest_version"] | 1;
   securacv_ota_manifest_t m;
-  memset(&m, 0, sizeof m);
-  snprintf(m.product, sizeof m.product, "%s", (const char*)(doc["product"] | ""));
-  snprintf(m.version, sizeof m.version, "%s", (const char*)(doc["version"] | ""));
-  snprintf(m.min_version, sizeof m.min_version, "%s", (const char*)(doc["min_version"] | ""));
-  snprintf(m.url, sizeof m.url, "%s", (const char*)(doc["url"] | ""));
-  snprintf(m.sha256, sizeof m.sha256, "%s", (const char*)(doc["sha256"] | ""));
-  m.size = doc["size"] | 0u;
-  snprintf(m.signature, sizeof m.signature, "%s", (const char*)(doc["signature"] | ""));
-  snprintf(m.manifest_signature, sizeof m.manifest_signature, "%s",
-           (const char*)(doc["manifest_signature"] | ""));
-  snprintf(m.signing_key_id, sizeof m.signing_key_id, "%s",
-           (const char*)(doc["signing_key_id"] | ""));
-  snprintf(m.release_notes, sizeof m.release_notes, "%s",
-           (const char*)(doc["release_notes"] | ""));
-  snprintf(m.release_url, sizeof m.release_url, "%s",
-           (const char*)(doc["release_url"] | ""));
+  if (securacv_ota_manifest_from_fields(&fields, &m, nullptr) != SECURACV_OTA_FIELDS_OK) {
+    fat16_write_result(s_staging, "the manifest is incomplete or malformed - re-download it from the release");
+    return;
+  }
+  // The hardware binding a manifest_version 2 manifest signs, checked as the
+  // network path checks it (this sketch has no board token, so only the chip
+  // binds). A v1 manifest binds nothing.
+#ifdef CONFIG_IDF_TARGET
+  const char* build_chip = CONFIG_IDF_TARGET;
+#else
+  const char* build_chip = nullptr;
+#endif
+  if (!securacv_ota_board_ok(&m, nullptr, build_chip)) {
+    fat16_write_result(s_staging, "that update is for a different kind of Canary - nothing was changed");
+    return;
+  }
 
   // Image: stage into its own PSRAM buffer for hashing + writing.
   uint8_t* image = (uint8_t*)ps_malloc(bin.size);
@@ -153,7 +172,7 @@ static void run_update_check() {
   }
 
   // The exact network-OTA acceptance pipeline (host-tested end to end).
-  char floor_buf[16] = {0};
+  char floor_buf[SECURACV_OTA_VERSION_MAX] = {0};  // a dev floor ("2.4.18-dev.1-wap") is 16 bytes
   {
     Preferences p;
     if (p.begin("securacv_ota", /*readOnly=*/true)) {

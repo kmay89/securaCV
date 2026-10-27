@@ -20,14 +20,29 @@
  *      ota_release.py (shared fixture in test_ota_release.py)
  *   8. Inactive-slot pre-check — an image an old partition table's slot
  *      cannot hold is refused before any download (fw-v2.4.16 Vision C3)
+ *   9. Manifest fields → struct: every field whole or refused, never cut
+ *      (securacv_ota_manifest_from_fields)
+ *  10. Every product id the build files declare fits product[] and comes
+ *      back out of parse + the signed message byte for byte (reads
+ *      firmware/flavors.json and every .ini in firmware/envs/platformio, so
+ *      run it from anywhere inside the checkout)
+ *  11. The pending-marker rule: kept while the image is pending, handed back
+ *      once it is confirmed, handed back on a rollback boot
  */
 
 #include "securacv_ota.h"
 
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <set>
+#include <sstream>
+#include <string>
+#include <vector>
 
 static int tests_run = 0;
 
@@ -461,6 +476,532 @@ static int test_channel_manifest_url()
     return 0;
 }
 
+// ── Manifest fields → struct (securacv_ota_manifest_from_fields) ─────────────
+
+static const char k_sha_hex[] = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
+static const char k_sig_hex[] =
+    "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+    "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+
+// A manifest the release workflow could have written, as the parser hands it over.
+static securacv_ota_manifest_fields_t release_fields(const char *product)
+{
+    securacv_ota_manifest_fields_t f;
+    memset(&f, 0, sizeof(f));
+    f.product = product;
+    f.version = "2.4.17";
+    f.min_version = "2.4.0";
+    f.url = "https://github.com/kmay89/securaCV/releases/download/fw-v2.4.17/canary-2.4.17.bin";
+    f.sha256 = k_sha_hex;
+    f.signature = k_sig_hex;
+    f.manifest_signature = k_sig_hex;
+    f.signing_key_id = "532429078dc47c04";
+    f.release_notes = "Updates confirm only after a healthy minute.";
+    f.release_url = "https://github.com/kmay89/securaCV/releases/tag/fw-v2.4.17";
+    f.size = 1409952;
+    f.manifest_version = 1;
+    return f;
+}
+
+// The canonical message, built here independently of the engine: the bytes
+// ota_release.py signs for these fields.
+static std::string signed_bytes_for(const securacv_ota_manifest_fields_t &f)
+{
+    const bool v2 = (f.manifest_version == 2);
+    std::string s(v2 ? "scv-manifest-v2" : "scv-manifest-v1");
+    s.push_back('\0');
+    const auto add = [&s](const char *v) {
+        if (v != NULL) s += v;
+        s.push_back('\0');
+    };
+    std::string sha = f.sha256 ? f.sha256 : "";
+    for (char &c : sha) {
+        if (c >= 'A' && c <= 'F') c = (char)(c - 'A' + 'a');
+    }
+    add(f.product);
+    add(f.version);
+    add(f.min_version);
+    add(f.url);
+    add(sha.c_str());
+    add(std::to_string(f.size).c_str());
+    add(f.release_notes);
+    add(f.release_url);
+    if (v2) {
+        add(f.board);
+        add(f.chip);
+    }
+    return s;
+}
+
+static bool manifest_is_zero(const securacv_ota_manifest_t &m)
+{
+    const unsigned char *p = (const unsigned char *)&m;
+    for (size_t i = 0; i < sizeof(m); i++) {
+        if (p[i] != 0) return false;
+    }
+    return true;
+}
+
+static int test_manifest_from_fields()
+{
+    securacv_ota_manifest_t m;
+    const char *bad = NULL;
+
+    // A whole manifest comes through whole, and builds the bytes that were signed.
+    securacv_ota_manifest_fields_t f = release_fields("securacv-canary");
+    CHECK(securacv_ota_manifest_from_fields(&f, &m, &bad) == SECURACV_OTA_FIELDS_OK);
+    CHECK(bad == NULL);
+    CHECK(strcmp(m.product, f.product) == 0 && strcmp(m.version, f.version) == 0);
+    CHECK(strcmp(m.min_version, f.min_version) == 0 && strcmp(m.url, f.url) == 0);
+    CHECK(strcmp(m.sha256, f.sha256) == 0 && strcmp(m.signature, f.signature) == 0);
+    CHECK(strcmp(m.manifest_signature, f.manifest_signature) == 0);
+    CHECK(strcmp(m.signing_key_id, f.signing_key_id) == 0);
+    CHECK(strcmp(m.release_notes, f.release_notes) == 0 && strcmp(m.release_url, f.release_url) == 0);
+    CHECK(m.size == f.size && m.manifest_version == 1 && m.board[0] == '\0' && m.chip[0] == '\0');
+    {
+        uint8_t msg[SECURACV_OTA_MANIFEST_MSG_MAX];
+        size_t len = 0;
+        CHECK(securacv_ota_build_manifest_message(&m, msg, sizeof(msg), &len));
+        const std::string want = signed_bytes_for(f);
+        CHECK(len == want.size() && memcmp(msg, want.data(), len) == 0);
+    }
+
+    // Each string field: one byte short of its buffer fits; a full buffer's
+    // worth (no room for the NUL) refuses the WHOLE manifest — never a cut
+    // field, which could only fail the signature check later, and quietly.
+    struct FieldCase {
+        const char *name;
+        const char *securacv_ota_manifest_fields_t::*in;
+        size_t cap;
+    };
+    const FieldCase cases[] = {
+        {"product", &securacv_ota_manifest_fields_t::product, sizeof(m.product)},
+        {"version", &securacv_ota_manifest_fields_t::version, sizeof(m.version)},
+        {"min_version", &securacv_ota_manifest_fields_t::min_version, sizeof(m.min_version)},
+        {"url", &securacv_ota_manifest_fields_t::url, sizeof(m.url)},
+        {"sha256", &securacv_ota_manifest_fields_t::sha256, sizeof(m.sha256)},
+        {"signature", &securacv_ota_manifest_fields_t::signature, sizeof(m.signature)},
+        {"manifest_signature", &securacv_ota_manifest_fields_t::manifest_signature, sizeof(m.manifest_signature)},
+        {"signing_key_id", &securacv_ota_manifest_fields_t::signing_key_id, sizeof(m.signing_key_id)},
+        {"release_notes", &securacv_ota_manifest_fields_t::release_notes, sizeof(m.release_notes)},
+        {"release_url", &securacv_ota_manifest_fields_t::release_url, sizeof(m.release_url)},
+        {"board", &securacv_ota_manifest_fields_t::board, sizeof(m.board)},
+        {"chip", &securacv_ota_manifest_fields_t::chip, sizeof(m.chip)},
+    };
+    for (const FieldCase &c : cases) {
+        const std::string fits(c.cap - 1, 'x');
+        const std::string over(c.cap, 'x');
+        f = release_fields("securacv-canary");
+        f.manifest_version = 2;  // so board / chip are allowed at all
+        f.*c.in = fits.c_str();
+        CHECK(securacv_ota_manifest_from_fields(&f, &m, &bad) == SECURACV_OTA_FIELDS_OK);
+        f.*c.in = over.c_str();
+        bad = NULL;
+        CHECK(securacv_ota_manifest_from_fields(&f, &m, &bad) == SECURACV_OTA_FIELDS_TOO_LONG);
+        CHECK(bad != NULL && strcmp(bad, c.name) == 0);
+        CHECK(manifest_is_zero(m));  // nothing half-filled survives a refusal
+    }
+
+    // The product buffer holds what the old one could not: a 47-byte id fits.
+    CHECK(sizeof(m.product) == SECURACV_OTA_PRODUCT_MAX && SECURACV_OTA_PRODUCT_MAX >= 48);
+    CHECK(sizeof(m.version) == SECURACV_OTA_VERSION_MAX && sizeof(m.min_version) == SECURACV_OTA_VERSION_MAX);
+
+    // Required fields: absent or empty refuses, and names the field.
+    const char *securacv_ota_manifest_fields_t::*const required[] = {
+        &securacv_ota_manifest_fields_t::product, &securacv_ota_manifest_fields_t::version,
+        &securacv_ota_manifest_fields_t::url, &securacv_ota_manifest_fields_t::sha256,
+    };
+    const char *required_names[] = {"product", "version", "url", "sha256"};
+    for (size_t i = 0; i < 4; i++) {
+        f = release_fields("securacv-canary");
+        f.*required[i] = NULL;
+        CHECK(securacv_ota_manifest_from_fields(&f, &m, &bad) == SECURACV_OTA_FIELDS_MISSING);
+        CHECK(bad != NULL && strcmp(bad, required_names[i]) == 0);
+        f.*required[i] = "";
+        CHECK(securacv_ota_manifest_from_fields(&f, &m, &bad) == SECURACV_OTA_FIELDS_MISSING);
+    }
+    // Optional fields may be absent: they read as empty, and sign as empty.
+    f = release_fields("securacv-canary");
+    f.min_version = NULL;
+    f.release_notes = NULL;
+    f.release_url = NULL;
+    CHECK(securacv_ota_manifest_from_fields(&f, &m, NULL) == SECURACV_OTA_FIELDS_OK);
+    CHECK(m.min_version[0] == '\0' && m.release_notes[0] == '\0' && m.release_url[0] == '\0');
+
+    // manifest_version: 1 and 2 only; the hardware binding only under 2.
+    f = release_fields("securacv-canary");
+    f.manifest_version = 0;
+    CHECK(securacv_ota_manifest_from_fields(&f, &m, &bad) == SECURACV_OTA_FIELDS_UNKNOWN_VERSION);
+    f.manifest_version = 3;
+    CHECK(securacv_ota_manifest_from_fields(&f, &m, &bad) == SECURACV_OTA_FIELDS_UNKNOWN_VERSION);
+    f.manifest_version = 1;
+    f.board = "xiao-esp32c6-mr60";
+    CHECK(securacv_ota_manifest_from_fields(&f, &m, &bad) == SECURACV_OTA_FIELDS_UNSIGNED_BINDING);
+    CHECK(strcmp(bad, "board") == 0);
+    f.board = NULL;
+    f.chip = "esp32c6";
+    CHECK(securacv_ota_manifest_from_fields(&f, &m, &bad) == SECURACV_OTA_FIELDS_UNSIGNED_BINDING);
+    CHECK(strcmp(bad, "chip") == 0);
+    f.chip = "";
+    CHECK(securacv_ota_manifest_from_fields(&f, &m, &bad) == SECURACV_OTA_FIELDS_OK);  // empty binds nothing
+    f.manifest_version = 2;
+    f.board = "xiao-esp32c6-mr60";
+    f.chip = "esp32c6";
+    CHECK(securacv_ota_manifest_from_fields(&f, &m, &bad) == SECURACV_OTA_FIELDS_OK);
+    CHECK(m.manifest_version == 2 && strcmp(m.board, "xiao-esp32c6-mr60") == 0 && strcmp(m.chip, "esp32c6") == 0);
+    {
+        uint8_t msg[SECURACV_OTA_MANIFEST_MSG_MAX];
+        size_t len = 0;
+        CHECK(securacv_ota_build_manifest_message(&m, msg, sizeof(msg), &len));
+        const std::string want = signed_bytes_for(f);
+        CHECK(len == want.size() && memcmp(msg, want.data(), len) == 0);
+    }
+
+    // Every field at its full length still builds within the message buffer.
+    {
+        const std::string p(sizeof(m.product) - 1, 'p'), v(sizeof(m.version) - 1, '9');
+        const std::string u(sizeof(m.url) - 1, 'u'), s(sizeof(m.sha256) - 1, 'A');
+        const std::string n(sizeof(m.release_notes) - 1, 'n'), r(sizeof(m.release_url) - 1, 'r');
+        const std::string b(sizeof(m.board) - 1, 'b'), c(sizeof(m.chip) - 1, 'c');
+        f = release_fields(p.c_str());
+        f.version = v.c_str();
+        f.min_version = v.c_str();
+        f.url = u.c_str();
+        f.sha256 = s.c_str();
+        f.release_notes = n.c_str();
+        f.release_url = r.c_str();
+        f.board = b.c_str();
+        f.chip = c.c_str();
+        f.size = UINT32_MAX;
+        f.manifest_version = 2;
+        CHECK(securacv_ota_manifest_from_fields(&f, &m, NULL) == SECURACV_OTA_FIELDS_OK);
+        uint8_t msg[SECURACV_OTA_MANIFEST_MSG_MAX];
+        size_t len = 0;
+        CHECK(securacv_ota_build_manifest_message(&m, msg, sizeof(msg), &len));
+        CHECK(len == signed_bytes_for(f).size());
+    }
+
+    // Defensive edges.
+    CHECK(securacv_ota_manifest_from_fields(NULL, &m, NULL) == SECURACV_OTA_FIELDS_MISSING);
+    f = release_fields("securacv-canary");
+    CHECK(securacv_ota_manifest_from_fields(&f, NULL, NULL) == SECURACV_OTA_FIELDS_MISSING);
+    return 0;
+}
+
+// ── Every product id in the tree fits, and round-trips ───────────────────────
+
+namespace fs = std::filesystem;
+
+static std::string slurp(const fs::path &p)
+{
+    std::ifstream in(p, std::ios::binary);
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+// The checkout this test belongs to: walk up from the working directory
+// (CI runs at the repo root), then from this source file's own path.
+static fs::path find_repo_root()
+{
+    const fs::path starts[] = {fs::current_path(), fs::path(__FILE__).parent_path()};
+    for (const fs::path &start : starts) {
+        std::error_code ec;
+        fs::path p = fs::absolute(start, ec);
+        if (ec) continue;
+        while (!p.empty()) {
+            if (fs::exists(p / "firmware" / "flavors.json", ec) &&
+                fs::is_directory(p / "firmware" / "envs" / "platformio", ec)) {
+                return p;
+            }
+            if (p == p.parent_path()) break;
+            p = p.parent_path();
+        }
+    }
+    return fs::path();
+}
+
+static bool id_char(char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+           c == '-' || c == '_' || c == '.';
+}
+
+// Every product id a line declares: an OTA_PRODUCT / SECURACV_OTA_PRODUCT
+// token (a whole word — not SECURACV_OTA_PRODUCT_MAX) followed on the same
+// line by a "securacv-…" string. Covers `#define SECURACV_OTA_PRODUCT "x"`,
+// `-DSECURACV_OTA_PRODUCT="x"` / `=\"x\"` build flags and the WAP sketch's
+// `OTA_PRODUCT = "x"`.
+static void collect_product_ids(const std::string &text, std::set<std::string> &out)
+{
+    static const char token[] = "OTA_PRODUCT";
+    size_t pos = 0;
+    while ((pos = text.find(token, pos)) != std::string::npos) {
+        const size_t end = pos + sizeof(token) - 1;
+        const size_t eol = text.find('\n', end);
+        const size_t line_end = (eol == std::string::npos) ? text.size() : eol;
+        pos = end;
+        if (end < text.size() && (id_char(text[end]) && text[end] != '-' && text[end] != '.')) continue;  // a longer name
+        size_t q = text.find("\"securacv-", end);
+        if (q == std::string::npos || q >= line_end) continue;
+        q += 1;
+        size_t e = q;
+        while (e < line_end && id_char(text[e])) e++;
+        out.insert(text.substr(q, e - q));
+    }
+}
+
+static bool scanned_extension(const fs::path &p)
+{
+    const std::string ext = p.extension().string();
+    return ext == ".ini" || ext == ".h" || ext == ".hpp" || ext == ".ino" || ext == ".cpp";
+}
+
+static int test_every_product_id_fits_and_round_trips()
+{
+    const fs::path root = find_repo_root();
+    if (root.empty()) {
+        fprintf(stderr, "FAILED: could not find the checkout (firmware/flavors.json) from %s or %s — "
+                        "this check reads the build files, it cannot pass without them\n",
+                fs::current_path().string().c_str(), __FILE__);
+        return 1;
+    }
+
+    std::set<std::string> ids;
+    std::error_code ec;
+
+    // 1. The shared PlatformIO env files.
+    for (const fs::directory_entry &e : fs::directory_iterator(root / "firmware" / "envs" / "platformio", ec)) {
+        if (e.path().extension() == ".ini") collect_product_ids(slurp(e.path()), ids);
+    }
+    // 2. Every flavor firmware/flavors.json names: its own build files and
+    //    sources (the config.h fallbacks, the flagship's platformio.ini, the
+    //    WAP sketch).
+    const std::string flavors = slurp(root / "firmware" / "flavors.json");
+    size_t dirs = 0;
+    for (size_t pos = 0; (pos = flavors.find("\"dir\"", pos)) != std::string::npos;) {
+        pos += 5;
+        const size_t open = flavors.find('"', flavors.find(':', pos));
+        const size_t close = flavors.find('"', open + 1);
+        if (open == std::string::npos || close == std::string::npos) break;
+        const fs::path dir = root / flavors.substr(open + 1, close - open - 1);
+        CHECK(fs::is_directory(dir, ec));
+        dirs++;
+        std::error_code walk;
+        fs::recursive_directory_iterator it(dir, walk), end;
+        while (!walk && it != end) {
+            std::error_code entry;  // a dangling link is skipped, not fatal
+            const std::string name = it->path().filename().string();
+            if (it->is_directory(entry) && (name == ".pio" || name == ".git" || name == "node_modules")) {
+                it.disable_recursion_pending();
+            } else if (it->is_regular_file(entry) && scanned_extension(it->path())) {
+                collect_product_ids(slurp(it->path()), ids);
+            }
+            it.increment(walk);
+        }
+        CHECK(!walk);
+    }
+    CHECK(dirs >= 6);  // canary, wap, vision, display, sense, sentinel
+
+    // The scan must actually see the tree: the flagship's id, and the seven
+    // published Canary Display ids the old 32-byte buffer could not hold.
+    static const char *const long_published[] = {
+        "securacv-canary-display-dash-modes", "securacv-canary-display-nightstand7",
+        "securacv-canary-display-nightstand-s3", "securacv-canary-display-touch169",
+        "securacv-canary-display-amoled241", "securacv-canary-display-nightstand-c6",
+        "securacv-canary-display-nightlight-c3",
+    };
+    CHECK(ids.count("securacv-canary") == 1 && ids.count("securacv-canary-wap") == 1);
+    for (const char *id : long_published) {
+        if (ids.count(id) != 1) fprintf(stderr, "scan did not find %s\n", id);
+        CHECK(ids.count(id) == 1);
+        CHECK(strlen(id) >= 32);  // what the pre-2.4.17 engine cut short
+    }
+
+    size_t legacy_cut = 0;
+    for (const std::string &id : ids) {
+        // Fits, with the NUL.
+        if (id.size() >= SECURACV_OTA_PRODUCT_MAX) fprintf(stderr, "product id too long: %s\n", id.c_str());
+        CHECK(id.size() < SECURACV_OTA_PRODUCT_MAX);
+
+        // Through the parser's copy, unchanged.
+        securacv_ota_manifest_fields_t f = release_fields(id.c_str());
+        securacv_ota_manifest_t m;
+        CHECK(securacv_ota_manifest_from_fields(&f, &m, NULL) == SECURACV_OTA_FIELDS_OK);
+        CHECK(id == m.product);
+
+        // Into the signed message, byte for byte: the bytes the signer signs.
+        uint8_t msg[SECURACV_OTA_MANIFEST_MSG_MAX];
+        size_t len = 0;
+        CHECK(securacv_ota_build_manifest_message(&m, msg, sizeof(msg), &len));
+        const std::string want = signed_bytes_for(f);
+        CHECK(len == want.size() && memcmp(msg, want.data(), len) == 0);
+        const size_t at = sizeof("scv-manifest-v1");  // prefix + its NUL
+        CHECK(memcmp(msg + at, id.data(), id.size()) == 0 && msg[at + id.size()] == '\0');
+
+        // ...which is exactly what the old strncpy into char[32] broke.
+        if (id.size() >= 32) {
+            securacv_ota_manifest_t old = m;
+            memset(old.product, 0, sizeof(old.product));
+            memcpy(old.product, id.data(), 31);
+            size_t old_len = 0;
+            uint8_t old_msg[SECURACV_OTA_MANIFEST_MSG_MAX];
+            CHECK(securacv_ota_build_manifest_message(&old, old_msg, sizeof(old_msg), &old_len));
+            CHECK(old_len != len || memcmp(old_msg, msg, len) != 0);
+            legacy_cut++;
+        }
+    }
+    CHECK(ids.size() >= 20);
+    CHECK(legacy_cut >= 7);
+    printf("product ids: %zu found, longest fits %d bytes; %zu would have been cut before 2.4.17\n",
+           ids.size(), SECURACV_OTA_PRODUCT_MAX - 1, legacy_cut);
+    return 0;
+}
+
+// ── The pending-marker rule (securacv_ota_take_marker) ───────────────────────
+
+struct FakeMarker {
+    std::string value;
+    int loads = 0;
+    int erases = 0;
+};
+
+static bool fake_marker_load(void *ctx, char *buf, size_t buf_len)
+{
+    FakeMarker *s = (FakeMarker *)ctx;
+    s->loads++;
+    if (s->value.empty() || s->value.size() + 1 > buf_len) return false;  // NVS refuses a short buffer
+    memcpy(buf, s->value.c_str(), s->value.size() + 1);
+    return true;
+}
+
+static void fake_marker_erase(void *ctx)
+{
+    FakeMarker *s = (FakeMarker *)ctx;
+    s->erases++;
+    s->value.clear();
+}
+
+// One tree's "record the update outcome" function, as the contract asks every
+// tree to write it: called at boot after the probes, and again on the pass the
+// health tick confirmed. Returns "applied", "rolled_back" or "" (nothing yet).
+static std::string record_outcome(FakeMarker *engine, FakeMarker *legacy, bool pending,
+                                  const char *running_version)
+{
+    const securacv_ota_marker_store_t stores[] = {
+        {fake_marker_load, fake_marker_erase, engine},
+        {fake_marker_load, fake_marker_erase, legacy},
+    };
+    char target[SECURACV_OTA_VERSION_MAX];
+    if (!securacv_ota_take_marker(stores, 2, pending, target, sizeof(target))) {
+        return target[0] == '\0' ? "" : "BUG: false with a target";
+    }
+    return strcmp(target, running_version) == 0 ? "applied" : "rolled_back";
+}
+
+static int test_pending_marker_rule()
+{
+    const uint32_t DWELL = 60000;
+
+    // An update that sticks: the old 2.4.16 image recorded the marker when the
+    // boot partition flipped; 2.4.17 boots PENDING_VERIFY.
+    {
+        FakeMarker engine, legacy;
+        engine.value = "2.4.17";
+        bool pending = true;
+
+        // At boot, after the probes: still pending — nothing recorded, and the
+        // marker is neither read nor erased.
+        CHECK(record_outcome(&engine, &legacy, pending, "2.4.17") == "");
+        CHECK(engine.value == "2.4.17" && engine.loads == 0 && engine.erases == 0);
+        CHECK(legacy.loads == 0);
+
+        // The dwell runs (the engine's own pure core); the outcome is asked for
+        // only on the pass that confirmed.
+        securacv_ota_dwell_t d = {false, false, 0};
+        CHECK(securacv_ota_dwell_probes_passed(&d, false, 0) == SECURACV_OTA_DWELL_WAIT);
+        CHECK(securacv_ota_dwell_init(&d, DWELL) == SECURACV_OTA_DWELL_WAIT);
+        int confirmed_passes = 0;
+        for (uint32_t t = 0; t <= DWELL + 5000; t += 1000) {
+            if (securacv_ota_dwell_tick(&d, t, true, DWELL, pending) == SECURACV_OTA_DWELL_CONFIRM) {
+                pending = false;               // esp_ota_mark_app_valid_cancel_rollback() landed
+                securacv_ota_dwell_clear(&d);
+                confirmed_passes++;
+                CHECK(record_outcome(&engine, &legacy, pending, "2.4.17") == "applied");
+            }
+        }
+        CHECK(confirmed_passes == 1);
+        CHECK(engine.value.empty() && engine.erases == 1);
+        // Exactly once: the next boot (confirmed, VALID) finds nothing.
+        CHECK(record_outcome(&engine, &legacy, false, "2.4.17") == "");
+    }
+
+    // Power cut (or a crash, or a watchdog) inside the dwell: the bootloader
+    // goes back to 2.4.16, which finds the marker and records the rollback —
+    // the case engines before 2.4.17 lost, having erased the marker and
+    // recorded "applied" on the new image's first boot.
+    {
+        FakeMarker engine, legacy;
+        engine.value = "2.4.17";
+        CHECK(record_outcome(&engine, &legacy, /*pending=*/true, "2.4.17") == "");
+        securacv_ota_dwell_t d = {false, false, 0};
+        securacv_ota_dwell_probes_passed(&d, false, 0);
+        securacv_ota_dwell_init(&d, DWELL);
+        CHECK(securacv_ota_dwell_tick(&d, 1000, true, DWELL, true) == SECURACV_OTA_DWELL_WAIT);
+        CHECK(securacv_ota_dwell_tick(&d, 30000, true, DWELL, true) == SECURACV_OTA_DWELL_WAIT);
+        // -- power lost here; next boot is the previous image, VALID --
+        CHECK(engine.value == "2.4.17");
+        CHECK(record_outcome(&engine, &legacy, /*pending=*/false, "2.4.16") == "rolled_back");
+        CHECK(engine.value.empty());
+        CHECK(record_outcome(&engine, &legacy, false, "2.4.16") == "");
+    }
+
+    // A deliberate restart after the probes passed confirms first
+    // (securacv_ota_confirm_now): the next boot records "applied".
+    {
+        FakeMarker engine, legacy;
+        engine.value = "2.4.17";
+        CHECK(record_outcome(&engine, &legacy, true, "2.4.17") == "");
+        securacv_ota_dwell_t d = {false, false, 0};
+        securacv_ota_dwell_probes_passed(&d, false, 0);
+        securacv_ota_dwell_init(&d, DWELL);
+        CHECK(securacv_ota_dwell_init(&d, 0) == SECURACV_OTA_DWELL_CONFIRM);  // confirm_now's verdict
+        CHECK(record_outcome(&engine, &legacy, false, "2.4.17") == "applied");
+    }
+
+    // The pre-engine marker (Preferences "securacv"/"ota_target") follows the
+    // same rule, and only the store that held the marker is erased.
+    {
+        FakeMarker engine, legacy;
+        legacy.value = "2.3.0";
+        CHECK(record_outcome(&engine, &legacy, true, "2.3.0") == "");
+        CHECK(legacy.value == "2.3.0" && legacy.loads == 0);
+        CHECK(record_outcome(&engine, &legacy, false, "2.3.0") == "applied");
+        CHECK(legacy.value.empty() && legacy.erases == 1 && engine.erases == 0);
+    }
+
+    // No install, or a confirmed boot with nothing pending: nothing to say.
+    {
+        FakeMarker engine, legacy;
+        CHECK(record_outcome(&engine, &legacy, false, "2.4.17") == "");
+        CHECK(engine.erases == 0 && legacy.erases == 0);
+    }
+
+    // Defensive edges: no buffer, no stores.
+    {
+        FakeMarker engine;
+        engine.value = "2.4.17";
+        const securacv_ota_marker_store_t one[] = {{fake_marker_load, fake_marker_erase, &engine}};
+        char buf[SECURACV_OTA_VERSION_MAX];
+        CHECK(!securacv_ota_take_marker(one, 1, false, NULL, 0));
+        CHECK(!securacv_ota_take_marker(one, 1, false, buf, 0));
+        CHECK(!securacv_ota_take_marker(NULL, 0, false, buf, sizeof(buf)) && buf[0] == '\0');
+        CHECK(engine.value == "2.4.17");
+        CHECK(securacv_ota_take_marker(one, 1, false, buf, sizeof(buf)) && strcmp(buf, "2.4.17") == 0);
+    }
+    return 0;
+}
+
 int main()
 {
     if (test_version_compare()) return 1;
@@ -474,6 +1015,9 @@ int main()
     if (test_confirm_dwell()) return 1;
     if (test_friendly_strings()) return 1;
     if (test_channel_manifest_url()) return 1;
+    if (test_manifest_from_fields()) return 1;
+    if (test_every_product_id_fits_and_round_trips()) return 1;
+    if (test_pending_marker_rule()) return 1;
 
     printf("ALL %d OTA LOGIC CHECKS PASSED\n", tests_run);
     return 0;
