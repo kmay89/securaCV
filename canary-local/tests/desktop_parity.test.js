@@ -1668,22 +1668,39 @@ test("security fuses: both flashers read them, off ONE field table", () => {
   }
 });
 
-test("a board brought up with BOOT held stays in the bootloader until the install, on both flashers", () => {
+test("neither flasher hands a BOOT-held board to its firmware: not at the end of the fuse read, not on the hello card", () => {
   // Holding BOOT is what keeps a marketplace board's firmware from running
   // (on native USB it can type at the desktop). The desktop's fuse read used
-  // to end in a hard reset, and the browser's live voice booted any readable
-  // firmware right after intake: both handed the board back to that firmware
-  // before a byte was written. efuse.rs's own tests replay the read's line
-  // moves; these hold the two places that used to boot it.
+  // to end in a hard reset, and to enter the ROM with the classic sequence on
+  // a USB-Serial/JTAG port, which holds RTS alone first: that port's own hard
+  // reset. The browser's live voice booted any readable firmware right after
+  // intake. efuse.rs's own tests replay the read's line moves against a
+  // scripted board; these hold the places that used to boot it.
   const efuseRs = read(join(ROOT, "desktop/src-tauri/src/efuse.rs"));
   const flashJs = read(join(CANARY, "assets/flash.js"));
   assert.doesNotMatch(efuseRs, /fn hard_reset/,
     "the desktop fuse read can reset the board into its firmware again");
-  assert.match(efuseRs, /let words = read_block0_in_rom\(link, efuse_base\);\s*park\(link\);/,
+  assert.match(efuseRs,
+    /let words = read_block0_in_rom\(link, efuse_base, usb_serial_jtag\);\s*park\(link\);/,
     "the desktop fuse read no longer parks its lines on every way out");
+  assert.match(efuseRs, /if attempt == 0 && !usb_serial_jtag \{\s*classic_reset\(link\)\?;/,
+    "the desktop fuse read runs the classic sequence on a USB-Serial/JTAG port again");
+  // Every reset the module can issue lives in the two enter sequences: outside
+  // them (and the tests' scripted boards) nothing asserts RTS, and the port's
+  // own RTS write is reached only through PortLines::rts.
+  const shipped = efuseRs.slice(0, efuseRs.indexOf("#[cfg(test)]"));
+  const outsideEnter = shipped.replace(/\nfn (classic_reset|usb_jtag_serial_reset)\([\s\S]*?\n\}\n/g, "\n");
+  assert.equal((shipped.match(/\nfn (classic_reset|usb_jtag_serial_reset)\(/g) || []).length, 2,
+    "efuse.rs's two enter sequences moved; re-point this pin");
+  assert.doesNotMatch(outsideEnter, /rts\(true\)/,
+    "the desktop fuse read asserts RTS outside its enter sequences: a reset into the firmware");
+  assert.equal((shipped.match(/write_request_to_send\(/g) || []).length, 1,
+    "the desktop fuse read drives RTS around PortLines::rts");
   assert.match(flashJs,
-    /if \(state\.current && !state\.current\.unknown && !state\.heldBoot\) \{\s*const voice = el\("section", "flash-card flash-voice"\)/,
-    "the browser's live voice boots a board the user held BOOT on");
+    /if \(state\.current && !state\.current\.unknown && state\.heldBoot === false\) \{\s*const voice = el\("section", "flash-card flash-voice"\)/,
+    "the browser's live voice boots a board the user held BOOT on, or didn't say");
+  assert.match(flashJs, /function coldStartCard\(\) \{[\s\S]{0,400}state\.heldBoot = null;/,
+    "the browser's cold-start answer leaks from one board to the next");
 });
 
 test("health check: native parsers pin the browser's byte-magics, and the UI reaches the command", () => {

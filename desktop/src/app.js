@@ -2799,11 +2799,11 @@ function wireEfuseRead() {
     const chip = state.chip;
     btn.disabled = true;
     out.textContent = "Reading eFuse block 0… (read-only — nothing is ever burned)";
-    // The probe resets the board into its ROM (and leaves it there, so the
-    // firmware BOOT kept asleep stays asleep), which on a native-USB board
-    // re-enumerates the port — own the port like the flash path does, so the
-    // watcher can't misread that blink as an unplug and no competing serial
-    // operation can start mid-probe.
+    // The probe resets the board into its ROM, with the sequence its port
+    // calls for, and does not reset it back out (efuse.rs), which on a
+    // native-USB board re-enumerates the port — own the port like the flash
+    // path does, so the watcher can't misread that blink as an unplug and no
+    // competing serial operation can start mid-probe.
     state.busy = true;
     try {
       const scan = await invoke("read_security_efuses", { port, chip });

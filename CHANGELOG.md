@@ -375,30 +375,50 @@
   order. No stamped image has been flashed to a board or installed over the
   air yet.
 
-### A board brought up with BOOT held stays in its bootloader: the desktop fuse read and the browser's hello card stop booting it
+### A board brought up with BOOT held: the desktop fuse read and the browser's hello card stop resetting it into its firmware
 
-- **The desktop Flasher's *Read its security fuses* no longer restarts the
-  board into its own firmware.** The read reset the chip into the ROM, read
-  eFuse block 0, then hard-reset it, on success and on both failure paths.
-  That ran the very firmware the person had held BOOT to keep from running,
-  which on a native-USB board can present itself as a keyboard. The read now
-  parks DTR and RTS released (the state that resets nothing, and the state
-  closing the port would leave them in) and stops there, esptool's `--after
-  no_reset`: after a good read the chip stays in the ROM's download mode
-  until the install or an unplug. An install still connects: espflash
-  resets into the ROM itself before it writes. `efuse.rs`'s tests replay
-  the read against a scripted board and hold every line move after the last
-  SYNC or READ_REG to that park alone, on a good read, on a ROM that never
-  answers and on one that stops answering mid-read.
-- **The browser flasher no longer boots a board you held BOOT on.** After
-  its connect reads, the hello card's live voice reset any board with
-  readable firmware into that firmware, before anything was written. When
-  the cold-start answer is "I held BOOT", the session now stays in the
-  bootloader until the install; the serial monitor still boots it on a
-  click. `desktop_parity.test.js` holds both places.
-- Not bench-tested on a board. The website's advice to unplug and hold BOOT
-  again after a desktop fuse read stays until a Flasher release carries
-  this.
+- **The desktop Flasher's *Read its security fuses* no longer ends by
+  restarting the board into its own firmware.** The read reset the chip
+  into the ROM, read eFuse block 0, then hard-reset it, on success and on
+  both failure paths. That ran the very firmware the person had held BOOT
+  to keep from running, which on a native-USB board can present itself as
+  a keyboard. The read now parks DTR and RTS released (a state that resets
+  nothing, and the one closing the port leaves them in on Linux and macOS)
+  and stops there, esptool's `--after no_reset`: after a good read the chip
+  stays in the ROM's download mode until the install or an unplug. An
+  install still connects: espflash resets into the ROM itself before it
+  writes.
+- **On a native-USB board it enters the ROM with that port's own reset.**
+  It ran the classic bridge sequence first on every port. On the
+  USB-Serial/JTAG port a BOOT-held S3, C3 or C6 presents (`0x303A:0x1001`),
+  that sequence's first move holds RTS alone, which is the port's own hard
+  reset, and releases it before asking for IO0, so the firmware most likely
+  ran through the failed SYNCs until the second sequence pulled it back, if
+  its port survived. The read now looks the port up in the OS's list and
+  gives that PID only the USB-Serial/JTAG sequence, as esptool, the pinned
+  espflash and the vendored esptool-js do. Any other port keeps classic
+  first and USB-Serial/JTAG second; on a bridge board a classic reset that
+  misses the ROM is still followed by one that starts the firmware, as
+  before.
+- `efuse.rs`'s tests replay the read against a scripted board: every line
+  move after the last SYNC or READ_REG is the park alone (a good read, a ROM
+  that never answers, one that stops mid-read), and a USB-Serial/JTAG port
+  never sees a reset before IO0 was asked for. `desktop_parity.test.js`
+  holds every RTS assertion in `efuse.rs` to the two enter sequences, so a
+  reset added around the real port fails too.
+- **The browser flasher's hello card no longer boots a board unless you
+  said it was already plugged in.** After its connect reads, its live
+  voice reset any board with readable firmware into that firmware, before
+  anything was written. The cold-start answer is now unset until you give
+  it and asked afresh on each connect card, so it never carries over to
+  the next board, and the live voice starts only on "It's already plugged
+  in". A board you held BOOT on, or didn't answer for, stays in the
+  bootloader until the install; "ask the board itself" and the serial
+  monitor still boot it on a click.
+- Host-tested only, not bench-tested on a board. The website's advice to
+  unplug and hold BOOT again after a desktop fuse read stays until a
+  Flasher release carries this and a bench read on a native-USB S3 held in
+  BOOT shows it still in the ROM afterward.
 
 ## [2.4.17] - 2026-10-27
 

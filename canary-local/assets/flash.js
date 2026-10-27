@@ -80,8 +80,9 @@ const state = {
   // Customs, for a board we've never met (see intake.js). `heldBoot` is what
   // the user told us on the connect card, not something we measured — on a
   // native-USB board the ROM and a stock firmware present the same descriptor,
-  // so the port genuinely can't tell us.
-  heldBoot: false,
+  // so the port genuinely can't tell us. null until answered: an unanswered
+  // question is neither answer.
+  heldBoot: null,
   intake: null,            // the read-only intake scan, once connected
   ptRead: null,            // "ok" | "failed" — did the partition sector read at all
   // The user's explicit "this board is already mine, skip the full erase". The
@@ -850,6 +851,9 @@ function accessCards() {
 // (docs/browser_flasher.md § What the Canary is called over USB), so there is
 // nothing to measure. Claiming otherwise would be a comforting lie.
 function coldStartCard() {
+  // The answer describes ONE board, so every connect card asks afresh, the
+  // way the desktop clears it for each board that attaches (resetSteps).
+  state.heldBoot = null;
   const card = el("section", "flash-coldstart");
   card.append(el("h3", null, "🛡 New board from a shop or marketplace? Do this first"));
   card.append(el("p", null,
@@ -1694,12 +1698,13 @@ function phaseConnected() {
   // The live voice: a board that carries real firmware BOOTS and talks,
   // right here, before anything is written. (A brand-new board has nothing
   // to say — the bootloader keeps the port and this card doesn't appear.)
-  // Not a board the user held BOOT on, either: booting it here would run the
-  // very firmware the gesture kept from running, before anything is written.
-  // That session stays in the bootloader until the install, as the desktop's
-  // fuse read leaves it (efuse.rs `park`); the serial monitor still boots it
-  // on a click.
-  if (state.current && !state.current.unknown && !state.heldBoot) {
+  // And only for a board the user said was already plugged in: one they held
+  // BOOT on, or didn't say, may be a board whose firmware the gesture kept
+  // from running, and booting it here would run it before anything is
+  // written. That session stays in the bootloader until the install, as the
+  // desktop's fuse read leaves it (efuse.rs `park`); the serial monitor
+  // still boots it on a click.
+  if (state.current && !state.current.unknown && state.heldBoot === false) {
     const voice = el("section", "flash-card flash-voice");
     voice.append(el("h3", null, "🎙 Its live voice — before anything is written"));
     voice.append(el("p", "fineprint",
