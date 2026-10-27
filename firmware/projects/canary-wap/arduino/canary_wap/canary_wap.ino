@@ -14062,7 +14062,7 @@ void loop() {
       // csi_mqtt::login_clear()) is the narrower reset, takes the bearer
       // alone (F334, F345), and still re-arms the Bluetooth setup door's
       // first-boot window.
-      Serial.println("[BOOT] Released before 10 s: nothing reset (hold 10 s for a factory reset; Forget Wi-Fi on the dashboard clears only the saved Wi-Fi and broker login; on a unit that had Wi-Fi, either reopens the Bluetooth setup door for half an hour, to the first client that connects)");
+      Serial.println("[BOOT] Released before 10 s: nothing reset (hold 10 s for a factory reset; Forget Wi-Fi on the dashboard clears only the saved Wi-Fi and broker login; on a unit that had Wi-Fi, the hold, and Forget unless the unit runs standalone, reopen the Bluetooth setup door for half an hour, to the first client that connects)");
     } else if (duration >= BOOT_BUTTON_HOLD_MS) {
       // Medium hold: print device info (existing behavior)
       if (g_device.initialized) {

@@ -88,7 +88,10 @@ which needs neither and works whatever the lockout or the tap is doing,
 re-arm it, both the owner's acts: both clear the credentials through
 `wifi_clear_credentials()`, which on a unit that had credentials also zeroes
 the carried window record, so the door gets a fresh 30 minutes (after the
-hold, from the restart on release). A home-network session cannot re-arm it.
+hold, from the restart on release), except after a Forget on a unit that
+runs standalone: Forget leaves the standalone choice set (the hold clears
+it), and `keyless_join_open()` keeps the door shut on a standalone unit. A
+home-network session cannot re-arm it.
 
 ### 2.2 What a stranger in radio range can and cannot do
 
@@ -1119,11 +1122,14 @@ a user.
   takes the API token after setup (F345), so the landing page's session can
   no longer wipe the networks and buy the receipt with the door's claim.
   After the owner's own Forget or the 10 s hold the unit is in first-boot
-  trust again: the door's claim, and so the receipt, goes to the first
-  phone in range for 30 minutes, and a camera unit's boot scan takes the
-  first code held to its lens. Forget also clears the stored broker login
-  (F333), and the hold clears the whole broker row. The door's winner keeps
-  the permanent bearer token, which cannot be rotated today (F353).
+  trust again (after a Forget, unless it runs standalone: Forget leaves
+  that choice set, and `keyless_join_open()` keeps the door and the boot
+  scan shut on a standalone unit): the door's claim, and so the receipt,
+  goes to the first phone in range for 30 minutes, and a camera unit's
+  boot scan takes the first code held to its lens. Forget also clears the
+  stored broker login (F333), and the hold clears the whole broker row. The
+  door's winner keeps the permanent bearer token, which cannot be rotated
+  today (F353).
 - **When BOOT taps keep closing because another device asks (F342),** the
   ways out are §3.7's, in its order: the recovery kit's token or the USB
   serial console first; the 10 s hold last, and only for a host known to be

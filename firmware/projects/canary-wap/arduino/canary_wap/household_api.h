@@ -13,9 +13,10 @@
  *
  * AUTH MODEL
  * ──────────
- * Every endpoint passes api_auth_check (same as the rest of the API),
- * which takes the bearer or a dashboard session cookie, and the landing
- * page mints that cookie for any host on the network (ledger F346).
+ * Every endpoint passes api_auth_check, which takes the bearer or a
+ * dashboard session cookie, and the landing page mints that cookie for
+ * any host on the network (ledger F346). Most of the API takes the same
+ * gate; the routes SECURITY_MODEL.md lists take the bearer alone.
  * Mutations (POST role, override) are scoped to slots that are ALREADY in
  * the household store — the API can't create new paired devices, only
  * adjust roles on devices that completed the BLE pairing ceremony. Since

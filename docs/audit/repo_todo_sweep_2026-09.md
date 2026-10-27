@@ -6268,8 +6268,9 @@ so — see D2 below.)
   reopens the setup door to whichever Bluetooth client connects first.
   improv_core.h and wifi_clear_credentials() are unchanged.
   Forget also clears the stored broker login (F333). Its confirm says the unit
-  goes back to first-boot trust (the setup door open for 30 minutes to the
-  first phone nearby, a camera unit taking a code shown to its lens), and a
+  goes back to first-boot trust unless it runs standalone (the setup door
+  open for 30 minutes to the first phone nearby, a camera unit taking a code
+  shown to its lens), and a
   Forget whose login clear did not hold says to clear it on the MQTT page. The
   wizard does not run after a Forget, so a dashboard re-setup over the SoftAP
   asks for the token or a tap again.
@@ -6300,8 +6301,9 @@ so — see D2 below.)
   and 747 replacements, in 26 tests). The merge's first review added 24
   rows (790 RETIRED_IN over 214 files, 861 retired forms, 770
   replacements), its second 5 (795 over 214 files, 866 retired forms, 773
-  replacements) and its third 9 (804 over 214 files, 875 retired forms, 781
-  replacements), with 51 BANNED rows and 26 tests throughout. The
+  replacements), its third 9 (804 over 214 files, 875 retired forms, 781
+  replacements) and its fourth 15 (819 over 214 files, 890 retired forms,
+  795 replacements), with 51 BANNED rows and 26 tests throughout. The
   second review's rows retire what F333, F334 and F346 left untrue in
   five places: #1835's CHANGELOG bullet and LESSONS_LEARNED's QR-road
   bullet, which still gave the session a road to the hub re-point through
@@ -6320,16 +6322,41 @@ so — see D2 below.)
   `bt_auth_gated`, beside the bearer-gated confirm; Forget's confirm on the
   dashboard and two FAQ sentences, which promised the door (and the
   camera's code) to a standalone unit, which Forget leaves standalone and
-  `keyless_join_open()` keeps shut (`test_wifi_authority`'s
-  forget_leaves_a_standalone_unit_standalone now holds that, and its text
-  pin holds Forget and `wifi_clear_credentials()` to never writing the
-  standalone choice); F353's "only post-setup grant of a network move",
+  `keyless_join_open()` keeps shut (`test_wifi_authority`'s text pin holds
+  Forget and `wifi_clear_credentials()` to never writing the standalone
+  choice, and its forget_leaves_a_standalone_unit_standalone runs the real
+  door over a stand-in Forget that leaves the choice alone as the real one
+  does); F353's "only post-setup grant of a network move",
   while a bonded peer's Bluetooth credentials write still moves the
   network with no token; and the 2026-07 audit's Trust-on-LAN note, which
   of what this PR took off the session named only the QR road's part (the
   scan's `404`, and that Forget takes the bearer and clears the broker
   login), not the reboot routes, the other network moves, the vault key or
-  the two pairing confirms.
+  the two pairing confirms. The fourth review's rows retire fifteen
+  sentences (seventeen copies; the threat model held one three times):
+  #1884's beacon spec (§10) and `beacon_channel.h` header, which
+  called the `/api/mesh` and `/api/bluetooth` families `api_auth_check()`
+  whole, and `household_api.h`'s "same as the rest of the API", all three
+  giving a landing session both pairing confirms, which F346 moved to the
+  bearer (F346's merge note below had left the two beacon copies out); four
+  door-rule copies (the FAQ's, `magic_pairing.md` §2.1's, `ble_protocol.md`
+  §13.2's and the BOOT-release serial line) that gave Forget Wi-Fi's fresh
+  half hour to a unit that runs standalone, which Forget leaves standalone
+  and `keyless_join_open()` keeps shut, and six more that put every unit
+  back in first-boot trust after a Forget, a standalone one included
+  (`SECURITY_MODEL.md`'s, the threat model's three, `magic_pairing.md`
+  §8's, and this entry's account of Forget's confirm above);
+  `FIRMWARE_MAP.md`'s "every Wi-Fi change" taking the token, though
+  Reconnect still takes the session; `check_route_security.py`'s label for `api_auth_check_bearer()` as the
+  pairing QR's gate alone; and `test_wifi_authority`'s header and the third
+  review's sentence above, which credited
+  forget_leaves_a_standalone_unit_standalone with holding the real Forget:
+  it runs the real wrapper and door over the harness's stand-in Forget, so
+  its check that the choice stays set holds the stand-in, and the text pin
+  is what holds the sketch. Two dated notes carry an amendment instead:
+  F289's 2026-10 note in `SECURITY-AUDIT.md` ("for every other route") and
+  FW9's correction in `feature_gaps_2026-09.md` ("The API is behind
+  `api_auth_check()`").
 - [x] **F346 [decision] canary-wap: a session reads the Bluetooth passkey and
   the mesh confirmation code.** `GET /api/bluetooth` (`bt_auth_gated`,
   `api_auth_check`) answers `pairing.pin` while a passkey is displayed, and
@@ -6428,7 +6455,12 @@ so — see D2 below.)
   (`ble_console.h`, `ble_provision.h`, `bluetooth_api.h`, `THREAT_MODEL.md`'s
   pairing row, `SECURITY_MODEL.md`, `magic_pairing.md` §3.7 and
   `test_bluetooth_commands_wap.cpp`'s comment) now say the bearer; the way
-  out is F343's seventh amendment.
+  out is F343's seventh amendment. The merge's fourth review found two more
+  #1884 copies this list missed, `spec/beacon_channel_v0.md` §10 and
+  `beacon_channel.h`'s header, which still called the mesh and Bluetooth
+  families `api_auth_check()` whole, pair confirms included; both now name
+  the two confirms as the bearer's, and `test_docs_claims.py` retires each
+  where it stood.
 - [x] **F347 [code] canary-wap: the BOOT tap, the setup-door claim, sessions
   and pair tokens age on 32-bit `millis()`.** `provisioning_gate_take()`
   compares `(millis() - opened) < PROVISIONING_GATE_TTL_MS`,

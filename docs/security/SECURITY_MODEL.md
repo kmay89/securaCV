@@ -630,11 +630,13 @@ it and closes on a second (F342). Since F345, Forget Wi-Fi takes the
 bearer, so a session cannot re-open the Bluetooth setup door and buy the
 receipt with its claim. Only the owner's own bearer Forget, or the 10 s
 BOOT hold, re-arms the door; until the unit is set up again it is in
-first-boot trust, and the door's claim goes to the first phone in range
-(magic_pairing.md §8). For the vault key and the two confirms the lockout
-below is availability only: a session can already remove the key, reject a
-pairing or turn Bluetooth off; the owner waits it out (a power cycle also
-clears the RAM table). Host-tested, not bench-tested.
+first-boot trust (after a Forget, unless it runs standalone: Forget leaves
+that choice set and the door shut), and the door's claim goes to the first
+phone in range (magic_pairing.md §8). For the vault key and the two
+confirms the lockout below is availability only: a session can already
+remove the key, reject a pairing or turn Bluetooth off; the owner waits it
+out (a power cycle also clears the RAM table). Host-tested, not
+bench-tested.
 
 Since F289's follow-up (#1832) a wrong bearer on the receipt counts
 toward the same per-address lockout as the admin routes (F343), and the

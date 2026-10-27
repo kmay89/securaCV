@@ -213,7 +213,10 @@ SELF_GATING_HANDLERS = {
 BEARER_GATES = {
     "api_auth_bearer_valid": "api_auth.h",  # the raw compare; only api_auth.h calls it (RAW_COMPARES)
     "api_auth_bearer_grant": "api_auth.h",  # the lockout, nothing sent: the receipt's first grant
-    "api_auth_check_bearer": "api_auth.h",  # lockout + 401/403/429: the pairing QR
+    # lockout + 401/403/429, for the routes SECURITY_MODEL.md lists: the
+    # pairing QR, the vault key, the two pair confirms, the four network
+    # moves and the two reboots (api_auth.h names them)
+    "api_auth_check_bearer": "api_auth.h",
 }
 # The raw compares (sweep F339): each compares a presented token against the
 # device's with no lockout, so outside api_auth.h a call of one is a token

@@ -54,9 +54,12 @@
 //     runs each once;
 //     Reconnect, which only rejoins the stored network, still takes the
 //     session;
-//   - Forget leaves a standalone unit standalone: a bearer Forget on a unit
-//     standalone with a network on file leaves the setup door shut and the
-//     boot scan's rule false;
+//   - the door over a standalone unit's Forget: on a unit standalone with a
+//     network on file, the real Forget wrapper runs the harness's stand-in
+//     Forget for the bearer, and the real door and the keyless-join rule
+//     then stay shut (the stand-in leaves the standalone choice alone, as
+//     the sketch's Forget does: the text pin below is what holds the real
+//     Forget and the wipe to that);
 //   - the reboot and the safe-mode retry: a session alone is 401 and the
 //     unit does not restart (before: it did), a wrong bearer is 403 and a
 //     strike, the bearer restarts it once;
@@ -461,6 +464,10 @@ void test_forget_leaves_a_standalone_unit_standalone() {
   b.bearer(kToken);
   CHECK(handle_wifi_forget_auth(&b.r) == ESP_OK);
   CHECK(b.r.status == "200 OK" && g_forgets == 1 && !g_wifi_creds.configured);
+  // The stand-in's own fact, not the sketch's: it never writes the choice,
+  // so the door checks below run over the state the real Forget leaves.
+  // That the real Forget and wifi_clear_credentials() never write it is
+  // test_sketch_text's to hold.
   CHECK(g_wifi_ap_only);
   CHECK(!ble_improv_door_should_open());
   CHECK(!provisioning_logic::keyless_join_open(g_wifi_creds.configured, g_wifi_ap_only));
