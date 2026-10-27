@@ -21,8 +21,9 @@ any platform.
   public API). A Canary on the dev channel polls
   `fw-dev-latest/manifest-<product>.json`, so it got a 404 on every check and
   never updated, and both flashers' dev toggle offered 2.4.15 while calling it
-  "cut ahead of stable" (a silent downgrade for a board on 2.4.17, where the
-  per-board verdict was the only warning).
+  "cut ahead of stable" (a silent downgrade for a board on 2.4.17: its
+  unstamped descriptor named no product, so the per-board verdict read
+  "Version unknown" and did not warn either; see the next entry).
 - **Cause:** `firmware-release.yml` copied a release's manifests to
   `fw-dev-latest` only when the release was a prerelease, and no `-dev.N` /
   `-rc.N` release had ever been cut. The only writer left was **Flasher
@@ -37,7 +38,9 @@ any platform.
   newer dev build is left alone and a release below `releases/latest` writes
   nothing. Every firmware release runs it with its own tag, stable included,
   **Actions → Refresh the dev channel (catch up to stable)** runs it with
-  `releases/latest`, then redeploys pages, and **Flasher Factory Images**
+  `releases/latest` (or the `fw-v*` tag its `source` input names: a dev
+  release whose own copy failed, since re-running that release's job stops at
+  its tag-exists check), then redeploys pages, and **Flasher Factory Images**
   refuses a `channel: dev` branch older than stable and brings the dev
   channel's copy along after a tag rebuild. The copies
   stay valid because every file a manifest names is an absolute URL on its own
@@ -88,9 +91,13 @@ any platform.
   stamps that tag's factory images too. It stamps only an image that
   already carries its version literal and its product id, so the `strings |
   grep -Fx` version guards keep testing the firmware and a build that
-  identifies as another product is never named for its slot. An app it
-  refuses is moved aside, so that product drops out like a failed build
-  rather than sinking the release. Published images are unchanged.
+  identifies as another product is never named for its slot. In
+  `firmware-release.yml` an app it refuses is moved aside, so that product
+  drops out like a failed build rather than sinking the release, and the
+  completeness gate weighs it; `flasher-release.yml` passes
+  `--fail-on-refused`, which fails the run and leaves the app in place,
+  because nothing gates its catalog's completeness. Published images are
+  unchanged.
 - **Applies to:** any step that edits an artifact's bytes (a stamp, a pad, a
   re-sign): it runs before the first step that hashes, signs, merges or
   attests that artifact (a `cp` included), a test reads the workflow to hold
@@ -125,7 +132,10 @@ any platform.
   and send an unsigned build to `INSTALL.md`; both PNGs regenerated (no CI
   byte-gate draws them). `desktop/INSTALL.md` has the Lab's shape: signed
   first, the `xattr` / Open Anyway steps only under "An unsigned build".
-  The in-app link and the FAQ open `https://securacv.com/download`. The
+  The in-app link and the FAQ open `https://securacv.com/download`, whose
+  Flasher button opens the exact `flasher-v<x.y.z>` tag only once the
+  website's exact-link /download page (and this repo's `downloads` carry
+  into it) merges; until then that button still opens the same search. The
   `flasher-latest` and `lab-latest` bodies link the exact
   `releases/tag/<tag>` they point at.
 - **Applies to:** every app target with committed installer artwork or a

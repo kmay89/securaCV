@@ -224,8 +224,11 @@ every Lab user unable to switch channels at all.
   tag, and the signatures cover those URLs, not where the manifest is served
   from. On a stable release a failed copy is a red step in a green run.
 - **Actions → Refresh the dev channel (catch up to stable)** runs the same
-  script with `releases/latest`, for the catch-up and for a release whose
-  refresh failed (see [`RELEASE_BUTTONS.md`](RELEASE_BUTTONS.md)).
+  script with `releases/latest`, for the catch-up and for a stable release
+  whose refresh failed, or with the `fw-v*` tag its `source` input names,
+  for a dev or rc release whose refresh failed: `releases/latest` is never
+  that prerelease, and re-running the release's job stops at its tag-exists
+  check (see [`RELEASE_BUTTONS.md`](RELEASE_BUTTONS.md)).
 - **Flasher Factory Images** with `channel: dev` publishes flasher images there
   straight from a branch, with no tag (signed the same way, now that the
   release key is pinned). That is the bring-up path, and it writes the

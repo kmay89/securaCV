@@ -13,19 +13,22 @@ name: Flasher Factory Images
 #       hard-stopped on the missing OTA_SIGNING_KEY_PEM.
 #
 #   • channel: dev — the rolling `fw-dev-latest` prerelease, built from the
-#     DISPATCH REF's HEAD. No tag, no version bump, no OTA signing key. This is
-#     the answer to "a board is wired up and I need to flash it TODAY": the
+#     DISPATCH REF's HEAD. No tag, no version bump; signed with the release
+#     key like the release channel, now that one is pinned. This is the
+#     answer to "a board is wired up and I need to flash it TODAY": the
 #     flasher's dev channel (Advanced → dev channel, or ?channel=dev) reads
 #     exactly this release, so one dispatch makes every product — displays
 #     included — installable without touching the version ceremony.
 #
-# Why either can ship without the Ed25519 key: the browser flasher's integrity
-# rests on SHA-256 + same-origin (docs/browser_flasher.md § Trust model), NOT
-# the OTA release key. Unsigned images are published honestly — the manifest
-# carries no `signature`, `imageVerificationPolicy()` resolves to
-# "checksum-only" while `release_pubkey` is the all-zero placeholder, and the
-# flasher says so on the receipt. Once the ceremony lands, the same manifest
-# gains signatures and the policy tightens on its own.
+# Why either could ship without the Ed25519 key before the key ceremony: the
+# browser flasher's integrity rested on SHA-256 + same-origin
+# (docs/browser_flasher.md § Trust model), NOT the OTA release key. Unsigned
+# images were published honestly — the manifest carried no `signature`,
+# `imageVerificationPolicy()` resolved to "checksum-only" while
+# `release_pubkey` was the all-zero placeholder, and the flasher said so on
+# the receipt. A real key is pinned now (ota_key_state.py), so both channels
+# sign, and both refuse to run without OTA_SIGNING_KEY_PEM (the signing step
+# below): both flashers would refuse an unsigned manifest.
 #
 # On a normal signed release, firmware-release.yml already builds these in the
 # same run — via the SAME firmware/scripts/build_flash_manifest.py, so the two
@@ -46,7 +49,7 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: "release = attach to an existing fw-v* tag · dev = publish this branch's HEAD to the rolling fw-dev-latest prerelease (no tag, no signing key)"
+        description: "release = attach to an existing fw-v* tag · dev = publish this branch's HEAD to the rolling fw-dev-latest prerelease (no tag; signed with the release key)"
         type: choice
         options:
           - release
@@ -121,7 +124,7 @@ jobs:
           # rather than letting actions/checkout fail with a bare git error —
           # "the tag isn't cut yet" is the single most likely reason to be here.
           if ! gh api "repos/${{ github.repository }}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
-            echo "::error::tag '${TAG}' does not exist. This channel rebuilds an already-cut tag. To publish flashable images with no tag and no signing key, re-run with channel=dev (it publishes this branch's HEAD to the rolling fw-dev-latest prerelease)."
+            echo "::error::tag '${TAG}' does not exist. This channel rebuilds an already-cut tag. To publish flashable images with no tag, re-run with channel=dev (it publishes this branch's HEAD to the rolling fw-dev-latest prerelease)."
             exit 1
           fi
           {

@@ -406,6 +406,49 @@
   token first), and `test_docs_claims.py` retires each where it stood. No
   route or gate changed in the merge that brought #1884 in.
 
+### The hosted browser flasher reads the pinned release from the site's own copy
+
+- **On the hosted page, every product read unavailable.** No browser can
+  read a GitHub release asset: `github.com` answers
+  `/releases/download/<tag>/<file>` with a redirect that carries no CORS
+  header, and the asset host answers the file with none either. So after
+  fw-v2.4.17 published, the browser flasher on GitHub Pages reported a
+  connection problem and every product as unavailable, and its dev channel
+  and the Vision model's download failed the same way. The desktop Flasher
+  and the Lab fetch natively and were never affected.
+- **The site deploy now copies the pinned releases into the site.**
+  `pages.yml` runs `canary-local/tools/mirror_release.py`, which copies the
+  manifest `flash.json` pins, the Vision model's and the dev channel's
+  (`fw-dev-latest`), byte for byte, and every file each lists, held to its
+  manifest's SHA-256 and size, to `canary-local/firmware/<tag>/<file>`. A
+  channel lands whole or not at all; a release not cut yet, or one still
+  uploading, is a warning, and a transport failure fails the deploy so the
+  last good site stays live. A release made with the `GITHUB_TOKEN` fires no
+  event that would redeploy the site, so `firmware-release.yml`,
+  `flasher-release.yml` and `vision-model-release.yml` dispatch `pages.yml`
+  on the default branch once they publish (a refused dispatch is a warning,
+  not a failed release).
+- **The page reads only that copy.** `flash-core.js` `fetchReleaseAsset`
+  maps a release URL to the copy by its tag and file name, on every host, and
+  `flash.js` and `we2-flash.js` read no release asset any other way. The
+  signed manifests are never rewritten, so the SHA-256 and Ed25519 checks
+  bind the same bytes as before. `flash.html`'s Content-Security-Policy
+  (`gen_csp.py`) no longer names `github.com` or `*.githubusercontent.com` in
+  `connect-src`.
+- **A 404 names the server that answered**: "This site's copy of firmware
+  release … isn't available" (or of the dev channel, or of the Vision
+  model), with the advice to reload once the redeploy that follows a release
+  lands; under a `?manifest=` override, that override's server. The page
+  never says a release was not cut: the release host answers no browser, so
+  no answer the page gets can mean that.
+- Host-tested (`flash.test.js`, `csp.test.js`, and
+  `scripts/tests/test_pages_release_mirror.py`, which holds the deploy's
+  writer to the page's reader and the release workflows' dispatches to their
+  order) and in Chromium by `canary-local/tests/flash_mirror_probe.mjs`,
+  which serves the page and a fixture copy from one origin and fails on any
+  request that leaves for github.com. Not yet run against the live site: it
+  takes effect at the first site deploy after this merges.
+
 ### Factory images put the bootloader where each chip's ROM loads it: the classic-ESP32 images move it to 0x1000, both flashers refuse an image laid out for the wrong chip, and the capacity check reads past a classic ESP32's empty first 4 KB
 
 - **fw-v2.4.17's ESP32-CAM and ESP32 DevKit factory images cannot boot.**
@@ -415,11 +458,13 @@
   published bytes; both boards are compile-tested reach ports that nobody has
   booted. A board installed from either file is recovered over USB with a
   correct image: one from fw-v2.4.18, or from the dev channel (**Advanced →
-  dev channel**) once `fw-dev-latest` is rebuilt from main. Until then the
-  release channel has no correct Canary image for these two boards. Nothing
-  else on that release is affected: those two boards' OTA channels are not
-  published, and the other 19 factory images (S3, C3, C6) carry their own
-  chip's bootloader at 0x0, where their ROM loads it.
+  dev channel**) once `fw-dev-latest` is rebuilt from main (press **Refresh
+  the dev channel** before that bring-up, not after: main's train is still
+  2.4.17, and a later press replaces a same-version bring-up catalog with
+  fw-v2.4.17's). Until then the release channel has no correct Canary image
+  for these two boards. Nothing else on that release is affected: those two
+  boards' OTA channels are not published, and the other 19 factory images (S3,
+  C3, C6) carry their own chip's bootloader at 0x0, where their ROM loads it.
 - **`make_factory.py` takes the bootloader offset from `--chip`**: 0x1000 for
   `esp32` and `esp32s2`, 0x0 for the S3/C3/C6/C2/H2, held to esptool's own
   table. It used to default to 0x0 for every chip and no caller passed the
@@ -427,12 +472,12 @@
   names one, which still overrides, with a warning when it disagrees with the
   ROM. The bootloader's image header must name the same chip (`--chip auto`
   reads it from there), and the merged file is read back before it is kept.
-  `build_flash_manifest.py` is unchanged: both release paths pass `--chip`,
-  so they inherit the fix. `dev_flash.sh -f` falls back to `--chip auto`
-  instead of `esp32s3` for an env with no `board_build.mcu` (the
-  classic-ESP32 reach envs). `firmware/scripts/test_make_factory.py` merges
-  real images from synthetic parts with esptool 4.12.0 and checks 0xE9 at
-  0x1000 for `esp32`/`esp32s2` and at 0x0 for the S3/C3/C6, and holds that
+  `build_flash_manifest.py` needed no change for this: both release paths
+  already pass `--chip`, so they inherit the fix. `dev_flash.sh -f` falls back
+  to `--chip auto` instead of `esp32s3` for an env with no `board_build.mcu`
+  (the classic-ESP32 reach envs). `firmware/scripts/test_make_factory.py`
+  merges real images from synthetic parts with esptool 4.12.0 and checks 0xE9
+  at 0x1000 for `esp32`/`esp32s2` and at 0x0 for the S3/C3/C6, and holds that
   esptool to the release workflows' pin; the Mesh + Scout Host Tests job runs
   it, and `firmware.yml` now also runs on an edit to `flasher-release.yml`.
 - **Both flashers refuse, before writing, an image whose bootloader is not
@@ -483,24 +528,24 @@
 
 ### The website's download buttons are carried from the published releases
 
-- **`scripts/carry_to_site.py` gains a `downloads` carry.** securacv.com's
-  /download page links exact releases (`app-v<x.y.z>` for the Lab,
-  `flasher-v<x.y.z>` for the Flasher) and names the same tags in its note;
-  the carry moves every such token in `download.html` to the newest release
-  of its app that the GitHub REST API shows as published (not a draft, not a
-  prerelease, a bare `x.y.z` tag, its `_universal.dmg`, `.AppImage` and `.deb`
-  uploaded, highest by number) and leaves every other byte alone. The
-  installers count because the Flasher's release is created published before
-  its builds upload, and a failed run leaves it that way. It reads the list
-  with `GH_TOKEN` when set, follows every page and makes three attempts on a
-  network error, a body cut off or not JSON, a 5xx or a 429. It never reads
-  `tauri.conf.json`: a version bump merges before its release exists, and a
-  stamp from the config would point the buttons at a missing page. A run that
-  cannot read the list, finds no published release of an app, or finds a page
-  that names no token of an app, leaves the page as it is and says why, and a
-  default run still writes every other carry; `--only downloads --check`
-  exits 1 on a stale page, an unreadable list and a page with nothing to
-  move. Pinned by
+- **`scripts/carry_to_site.py` gains a `downloads` carry.** Once the
+  website's exact-link /download page merges, it links exact releases
+  (`app-v<x.y.z>` for the Lab, `flasher-v<x.y.z>` for the Flasher) and names
+  the same tags in its note; the carry moves every such token in
+  `download.html` to the newest release of its app that the GitHub REST API
+  shows as published (not a draft, not a prerelease, a bare `x.y.z` tag, its
+  `_universal.dmg`, `.AppImage` and `.deb` uploaded, highest by number) and
+  leaves every other byte alone. The installers count because the Flasher's
+  release is created published before its builds upload, and a failed run
+  leaves it that way. It reads the list with `GH_TOKEN` when set, follows
+  every page and makes three attempts on a network error, a body cut off or
+  not JSON, a 5xx or a 429. It never reads `tauri.conf.json`: a version bump
+  merges before its release exists, and a stamp from the config would point
+  the buttons at a missing page. A run that cannot read the list, finds no
+  published release of an app, or finds a page that names no token of an app,
+  leaves the page as it is and says why, and a default run still writes every
+  other carry; `--only downloads --check` exits 1 on a stale page, an
+  unreadable list and a page with nothing to move. Pinned by
   `scripts/tests/test_carry_to_site.py` (no network: the API reader is tested
   against a stand-in `urlopen`). Run on a scratch copy of the website: a page
   at `app-v0.3.2` / `flasher-v0.12.2` keeps its bytes, and a page faked back
@@ -509,13 +554,13 @@
   passes both: it holds the page to one version per app, not to the newest
   one, which is what this carry adds). Run on website main, whose buttons
   still open the release search: `download.html` is left byte for byte, the
-  other carries are written and the run exits 0, so this can merge before
-  or after the website's exact-link page. The website half is not in this
-  change: its weekly carry job commits only the paths in its `CARRY_PATHS`,
-  so `download.html` joins that list, the carry step needs `GH_TOKEN` in its
-  environment, and its `tests/download-facts.test.mjs` header (which says
-  the stamp is not built yet) names this carry; until then the buttons move
-  only by `--only downloads` run by hand.
+  other carries are written and the run exits 0, so this can merge before or
+  after the website's exact-link page. The website half is not in this change:
+  its weekly carry job commits only the paths in its `CARRY_PATHS`, so
+  `download.html` joins that list, the carry step needs `GH_TOKEN` in its
+  environment, and its `tests/download-facts.test.mjs` header (which says the
+  stamp is not built yet) names this carry; until then the buttons move only
+  by `--only downloads` run by hand.
 
 ### Every release brings the dev channel up to stable, and the flashers say where it stands
 
@@ -525,14 +570,18 @@
   under stable 2.4.17: only a `-dev.N` / `-rc.N` release ever wrote it, and none
   had been cut. `.github/scripts/dev_channel.py` copies a release's channel
   manifests there, byte for byte, wherever the dev channel carries an older
-  version or none, and leaves a newer dev build alone; every firmware release
+  version, none, or the same version in other bytes (a bring-up build, which
+  it replaces), and leaves a newer dev build alone; every firmware release
   runs it, and **Actions → Refresh the dev channel (catch up to stable)** runs
-  it with `releases/latest`, then redeploys the site. It never moves
-  `releases/latest`, deletes nothing and keeps `fw-dev-latest` a prerelease.
+  it with `releases/latest`, or with the `fw-v*` tag its optional `source`
+  input names, then redeploys the site. It never moves `releases/latest`,
+  deletes nothing and keeps `fw-dev-latest` a prerelease.
   **Flasher Factory Images** (`channel: dev`) now refuses a branch older than
   stable, and its tag rebuild brings the dev channel's copy of that release's
   catalog along. A stable release whose dev-channel step fails leaves the
-  channel behind until the button is pressed.
+  channel behind until the button is pressed; a dev release's step fails the
+  run, and the button with that release's tag as `source` finishes the copy
+  (re-running the release's job stops at its tag-exists check).
   Host-tested (`.github/scripts/test_dev_channel.py`, its version order held to
   the device's own cases) and dry-run read-only against the public releases;
   the button has not been pressed yet.
@@ -577,11 +626,14 @@
   signatures and the factory images cover the stamped bytes; each stamped
   image is read back with esptool's `image_info` and the run fails unless
   esptool calls the checksum and hash valid and reads the name and version
-  written. An app it refuses (empty, truncated, malformed) is moved aside, so
-  that product drops out like a failed build instead of sinking the release
-  (a product the signed release cannot ship without still fails it). A
-  flasher rebuild of an older tag stamps that tag's factory images too (the
-  stamper is overlaid with the other packaging tools).
+  written. In `firmware-release.yml` an app it refuses (empty, truncated,
+  malformed) is moved aside, so that product drops out like a failed build
+  instead of sinking the release, and the completeness gate weighs it (a
+  product the signed release cannot ship without still fails it); Flasher
+  Factory Images passes `--fail-on-refused` and fails the run instead,
+  because it uploads its `manifest-flash.json` over the tag's with no
+  completeness gate. A flasher rebuild of an older tag stamps that tag's
+  factory images too (the stamper is overlaid with the other packaging tools).
 - **Both flashers.** A stamped board reads as running, say, "Canary WAP" and
   its version, and the existing install verdicts work on it: update, reinstall, downgrade, and
   switch from another product. Customs says "Arrived running Canary WAP" for

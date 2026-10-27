@@ -628,8 +628,9 @@ says so by name (and points at `channel: dev`) instead of dying in
 
 **`channel: dev`** — no tag at all. It builds the dispatch ref's HEAD and
 publishes to the rolling **`fw-dev-latest`** prerelease, which is the one fixed
-address the flasher's dev channel reads. No version bump, no tag ceremony, no
-signing key:
+address the flasher's dev channel reads. No version bump and no tag. It is
+signed with the release key, the same as a release, now that one is pinned,
+so it needs `OTA_SIGNING_KEY_PEM` and refuses to run without it:
 
 ```
 Actions → Flasher Factory Images → Run workflow
@@ -639,17 +640,18 @@ Actions → Flasher Factory Images → Run workflow
 ```
 
 Then in either flasher: **Advanced → dev channel**. Every product the build
-produced — displays included — becomes installable, verified by SHA-256 against
-the manifest. Use it when hardware is on the bench and you need a real image
-today; use a signed release for anything a stranger will install.
+produced — displays included — becomes installable, checked like a release's
+(its SHA-256, and its Ed25519 signature against the pinned key). Use it when
+hardware is on the bench and you need a real image today; use a release for
+anything a stranger will install.
 
 Two consequences worth knowing:
 
-- The images are **unsigned only while `release_pubkey` is the all-zero
-  placeholder**, so `imageVerificationPolicy()` resolves to `checksum-only` and
-  both the banner and the receipt say so. That is the honest state, not a
-  downgrade. Once the key ceremony lands, this workflow signs too: it reads
-  `ota_key_state.py`, and with a real key pinned it passes `--signing-key` to
+- The images were **unsigned only while `release_pubkey` was the all-zero
+  placeholder**, when `imageVerificationPolicy()` resolved to `checksum-only`
+  and both the banner and the receipt said so. That was the honest state, not
+  a downgrade. Since the key ceremony this workflow signs too: it reads
+  `ota_key_state.py`, and with the real key pinned it passes `--signing-key` to
   `build_flash_manifest.py` — or **stops** if `OTA_SIGNING_KEY_PEM` is missing.
   Publishing unsigned after the ceremony wouldn't degrade gracefully; the
   policy becomes `require-signature`, both flashers refuse every image in the
@@ -669,7 +671,8 @@ Two consequences worth knowing:
   manifest at them. Each is self-consistent. This path refuses a branch whose
   `fw_train` is older than `releases/latest`, and a firmware release (or
   **Refresh the dev channel**) replaces its `manifest-flash.json` unless it
-  carries a newer `fw_train`. Both flashers' dev banners say how the dev
+  carries a newer `fw_train`: press the button before a bring-up at stable's
+  version, never after one. Both flashers' dev banners say how the dev
   catalog's `fw_train` compares with the release the flasher is pinned to:
   newer, the same version, or older.
 
@@ -686,7 +689,8 @@ the page's CSP (`connect-src`) can pin, so the guard and the browser policy
 never disagree. For a manifest on another box on the LAN (a private IP or
 `.local` name), CSP has no way to allowlist arbitrary private ranges, so either
 serve the manifest same-origin alongside the page, or use **Advanced → flash a
-local file**, which flashes any factory `.bin` with no manifest at all — the
+local file**, which flashes any factory `.bin` laid out for the connected chip
+(its bootloader where that chip's ROM loads it), with no manifest at all — the
 fully offline posture the OTA engine also offers.
 
 ## Files
@@ -721,8 +725,9 @@ fully offline posture the OTA engine also offers.
 - **Where the release is read from:** `flash.test.js` pins the mapping
   (`releaseAssetParts`, `releaseFetchUrl`, `fetchReleaseAsset`), that
   `flash.js` / `we2-flash.js` read no release asset by a bare `fetch`, and the
-  banner's two readings of a 404 (this site's copy missing, a release never
-  cut); `canary-local/tests/flash_mirror_probe.mjs` serves the page and a
+  banner's two readings of a 404 (this site's copy missing, or a `?manifest=`
+  override's server answering an error), neither of which says a release was
+  not cut; `canary-local/tests/flash_mirror_probe.mjs` serves the page and a
   fixture copy from one origin in Chromium and fails on any request that
   leaves for github.com, from a public host or from loopback;
   `scripts/tests/test_pages_release_mirror.py`

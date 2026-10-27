@@ -102,6 +102,11 @@ you do, the dev channel stays where it was, behind stable. When that step
 fails, the run asserts `releases/latest` again (and re-points it at the
 firmware if something moved it), outside the step's tolerance. On a dev
 release it fails the run, since that channel is the release's whole point.
+Re-running the job cannot finish it (its first step refuses the tag the run
+just published): press **Refresh the dev channel** with `source` set to the
+dev tag. The red job also skips the SBOM job, so the published prerelease
+has no SBOMs until **Actions → SBOM Generation → Run workflow** with that
+tag attaches them.
 
 **Don't:** use it if you haven't bumped `FIRMWARE_VERSION` / `CANARY_FW_VERSION`
 to match — the version-string guard greps each binary and fails closed. And it
@@ -178,21 +183,26 @@ the tag's platform and library pins; the build steps, the arduino-cli cores,
 libraries and FQBNs, the PlatformIO CLI and esptool pins, and the display env
 list are the dispatch ref's. A product whose rebuild fails drops out of
 `manifest-flash.json` with only a `::warning::`: this path has no completeness
-gate. The OTA manifests and app images are left alone. The rebuilt apps are
-stamped with their product and version like a new release's
-(`stamp_app_desc.py` is overlay tooling), so on a tag up to fw-v2.4.17 the
-rebuilt factory images name themselves (each app that carries its product id
-string, as all 21 fw-v2.4.17 apps do) while the tag's OTA images still read
-`arduino-lib-builder`. So for a defect in one or two products' factory images
-on a release people already install from (the fw-v2.4.17 classic-ESP32
-bootloader offset), ship the fixed images in the next version rather than
-re-cutting every image under the old tag. Weigh one thing against that: the
-desktop Flasher and the Lab carry `flash.json` compiled in, and it pins the
-tag's `manifest-flash.json`, so the next version reaches their users only once
-they update the app, while a rebuild in place reaches them at once, at the cost
-above. Until the next version, a `channel: dev` dispatch from `main` publishes
-the fixed images to `fw-dev-latest` (both flashers' **Advanced → dev channel**)
-and leaves the tag alone.
+gate. An app the descriptor stamper refuses (empty, truncated, malformed) fails
+the run instead (`--fail-on-refused`), so nothing is attached. The OTA
+manifests and app images are left alone. The rebuilt apps are stamped with
+their product and version like a new release's (`stamp_app_desc.py` is overlay
+tooling), so on a tag up to fw-v2.4.17 the rebuilt factory images name
+themselves (each app that carries its product id string, as all 21 fw-v2.4.17
+apps do) while the tag's OTA images still read `arduino-lib-builder`. So for a
+defect in one or two products' factory images on a release people already
+install from (the fw-v2.4.17 classic-ESP32 bootloader offset), ship the fixed
+images in the next version rather than re-cutting every image under the old
+tag. Weigh one thing against that: the desktop Flasher and the Lab carry
+`flash.json` compiled in, and it pins the tag's `manifest-flash.json`, so the
+next version reaches their users only once they update the app, while a rebuild
+in place reaches them at once, at the cost above. Until the next version, a
+`channel: dev` dispatch from `main` publishes the fixed images to
+`fw-dev-latest` (both flashers' **Advanced → dev channel**) and leaves the tag
+alone. Press **Refresh the dev channel** for its one-time catch-up *before*
+this dispatch, never after it: main's train is stable's 2.4.17, so a press
+after it replaces the fixed catalog with fw-v2.4.17's, and the dispatch has to
+be run again.
 
 **`channel: dev`** — **no tag, no version.** Builds the branch
 you dispatch from and publishes to the rolling `fw-dev-latest` prerelease, which
@@ -253,14 +263,18 @@ updater manifest fails the publish run instead of passing quietly. (A human
 clicking Publish in the UI *does* fire the event, so that path still works.)
 
 **The website's download buttons follow the publish, not the build.**
+Once the website's exact-link /download page merges (until then its buttons
+still open the release searches, `releases?q=app-v` and `releases?q=flasher-v`,
+and the Flasher's lists `flasher-latest` and a firmware release),
 securacv.com/download's buttons open exact releases (`app-v<x.y.z>`,
-`flasher-v<x.y.z>`), stamped by `scripts/carry_to_site.py`'s `downloads`
-carry from the newest release of each app that the GitHub API shows as
-published (not a draft, not a prerelease) with its `_universal.dmg`, `.AppImage` and
-`.deb` uploaded. A version that is only in `tauri.conf.json`, only a draft,
-or a Flasher release whose builds have not uploaded (or whose run failed
-after creating it) never reaches them. To move them after you publish (the
-Lab here, or a Flasher the master button cut):
+`flasher-v<x.y.z>`), stamped by `scripts/carry_to_site.py`'s `downloads` carry
+from the newest release of each app that the GitHub API shows as published
+(not a draft, not a prerelease) with its `_universal.dmg`, `.AppImage` and
+`.deb` uploaded. A
+version that is only in `tauri.conf.json`, only a draft, or a Flasher release
+whose builds have not uploaded (or whose run failed after creating it) never
+reaches them. To move them after you publish (the Lab here, or a Flasher the
+master button cut):
 `python3 scripts/carry_to_site.py --site <website-checkout> --only downloads`
 (`--check` asks without writing, and exits 1 on a stale page). That command
 is, for now, the only thing that moves them: the website's weekly carry job
@@ -297,9 +311,10 @@ those are signed bytes, and rewriting them is a new release.
 
 ### Refresh the dev channel (catch up to stable)
 
-Brings the rolling `fw-dev-latest` prerelease up to `releases/latest` where it
-is older, with the same script every firmware release runs
-(`.github/scripts/dev_channel.py`): the stable release's channel manifests
+Brings the rolling `fw-dev-latest` prerelease up to `releases/latest` (or to
+the `fw-v*` release its optional `source` input names) where it is older,
+with the same script every firmware release runs
+(`.github/scripts/dev_channel.py`): that release's channel manifests
 (`manifest-flash.json`, every `manifest-canary*.json`, `manifest-index.json`,
 `sha256sums.txt`) are copied there byte for byte, and its body says which
 version it carries. The over-the-air manifests and the flashers' catalog are
@@ -311,19 +326,28 @@ Its run summary lists what it copied or left, and why.
 
 **Use it:** once, to catch the dev channel up (on 2026-10-27 it held no
 per-product manifest, so a Canary on the dev channel got a 404 on every check,
-and a 2.4.15 flash catalog under stable 2.4.17); and after a stable release
-whose dev-channel step went red. Pressing it twice writes nothing the second
-time.
+and a 2.4.15 flash catalog under stable 2.4.17), before any `channel: dev`
+bring-up at stable's version, never after one; and after a stable release
+whose dev-channel step went red. After a dev or rc release whose dev-channel
+step went red, press it with `source` set to that release's tag:
+`releases/latest` is never that prerelease, so the blank default cannot
+finish it, and re-running the release's job stops at its tag-exists check.
+Pressing it twice writes nothing the second time, unless a same-version
+bring-up build landed in between.
 
 **Don't:** expect it to cut anything or pick a version: it only copies the
-release `releases/latest` already is, and don't press it to keep a bring-up
-build at stable's own version: it replaces that with the tagged catalog. It
-refuses, and writes nothing, when `releases/latest` is not a `fw-v*`
-release, when `fw-dev-latest` is not a prerelease, when the dev channel's
-version is unreadable, when a stable manifest names a file that is not an
-asset of that release by absolute URL (a copy elsewhere would stop
-resolving), or when `releases/latest` or the dev channel changed while it
-was deciding (another writer got there first: press it again).
+release `releases/latest` already is, or the published release `source`
+names, and don't press it to keep a bring-up build at stable's own version:
+it replaces that with the tagged catalog (until fw-v2.4.18 ships, that
+includes the classic-ESP32 fix a `channel: dev` dispatch from main put
+there). A `source` below stable writes nothing. It refuses, and writes
+nothing, when `releases/latest` is not a `fw-v*` release, when `source` is
+not a `fw-v<version>` tag of a published release, when `fw-dev-latest` is
+not a prerelease, when the dev channel's version is unreadable, when a stable
+manifest names a file that is not an asset of that release by absolute URL (a
+copy elsewhere would stop resolving), or when `releases/latest` or the dev
+channel changed while it was deciding (another writer got there first: press it
+again).
 
 **What it never does:** move `releases/latest`, delete an asset (the old dev
 factory images stay), or make `fw-dev-latest` anything but a prerelease. Every
@@ -494,8 +518,12 @@ The catalog pins an **exact** release tag (`gen_flash.py`
 namespace and would shadow it). If that release hasn't been cut, the fetch 404s
 and every product goes dark.
 
-Both flashers now name the tag rather than shrugging — *"pinned to firmware
-release fw-v2.3.0, which has no published images"*. `canary-local` CI also warns
+Both flashers now name the tag rather than shrugging. The desktop Flasher
+says the release itself has none — *"pinned to firmware release fw-v2.3.0,
+and that release has no published images"*; the browser flasher names this
+site's copy of it — *"This site's copy of firmware release fw-v2.3.0 isn't
+available"* — and never says the release was not cut: the copy can lag a
+live release (see the hosted-page check above). `canary-local` CI also warns
 on every run while the pin is unresolvable.
 
 **Fix:** cut that firmware release (master button), or run **Flasher Factory
@@ -564,7 +592,7 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
 | A display binary carries the identity it's published under | the product-string check in `firmware-release.yml` |
 | The signing key in CI matches the committed public key | `firmware-release.yml`, fails before building |
 | The flasher's pinned release actually resolves | advisory warning in `canary-local.yml` |
-| Every firmware release brings the dev channel (`fw-dev-latest`) up to itself unless a newer build is there, and a bring-up build older than stable is refused; both flashers say how its `fw_train` compares with their pinned one. A failed refresh on a stable release leaves it behind until **Refresh the dev channel** | `.github/scripts/dev_channel.py` in `firmware-release.yml` (every release), **Refresh the dev channel** and `flasher-release.yml` (`--check-train`), tested by `.github/scripts/test_dev_channel.py`; `desktop_parity.test.js` holds the flashers' sentence |
+| Every firmware release brings the dev channel (`fw-dev-latest`) up to itself unless a newer build is there, and a bring-up build older than stable is refused; both flashers say how its `fw_train` compares with their pinned one. A failed refresh on a stable release leaves it behind until **Refresh the dev channel**, and a dev release's until that button is pressed with its tag as `source` | `.github/scripts/dev_channel.py` in `firmware-release.yml` (every release), **Refresh the dev channel** and `flasher-release.yml` (`--check-train`), tested by `.github/scripts/test_dev_channel.py`; `desktop_parity.test.js` holds the flashers' sentence |
 | The hosted flasher reads its release from its own origin, at the path the site deploy writes it | `canary-local/tools/mirror_release.py` (in `pages.yml`), held to `flash-core.js` by `scripts/tests/test_pages_release_mirror.py`; `canary-local/tests/flash_mirror_probe.mjs` in Chromium |
 | Every updater URL in a published `latest.json` resolves | the consistency guards in `desktop-flasher-release.yml` + `desktop-lab-updater-pointer.yml` |
 | An app release says what it changes, in the body and in the updater notes | `desktop/scripts/release_notes.py` (lint + both app workflows) |
