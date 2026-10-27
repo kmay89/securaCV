@@ -51,25 +51,26 @@ it should feel like the device is doing the work.
 
 On glass too narrow for `SecuraCV-display-A7K2 • p7Rm2Kqf` on one row (the
 round watch, the 172/180 px nightstand and nightlight, and the 240x280
-touch169 under Heirloom, or at the default type when the unit's four
-characters are wide ones) the name and the key take a row each, the way round
-glass always has. The name and the key stay on the glass for as long as the
-Join scene is up — QR or no QR, hint or no hint: when the QR does not scan (or
-never rendered) that text is the only way in, and the stuck-phone hint
-("forget it on your phone") comes up exactly when the phone needs the key
-again. On that glass the hint gets a row of its own: under the key on the
-nightstand and nightlight, the title's band on the round watch (the title
-yields while the hint stands: with the QR up, the card speaks for itself;
-without one, the hint replaces "On your phone").
+touch169 under Heirloom, or at the default type when the name and the key
+together are wider than its 224 px row, as about three units in ten are) the
+name and the key take a row each, the way round glass always has. The name
+and the key stay on the glass for as long as the Join scene is up — QR or no
+QR, hint or no hint: when the QR does not scan (or never rendered) that text
+is the only way in, and the stuck-phone hint ("forget it on your phone")
+comes up exactly when the phone needs the key again. On that glass the hint
+gets a row of its own: under the key on the nightstand and nightlight, the
+title's band on the round watch (the title yields while the hint stands: with
+the QR up, the card speaks for itself; without one, the hint replaces "On
+your phone").
 None of those rows (the name, the key, the hint) is ever cut to an ellipsis
 (F45), with one exception for the name, which the typed setup name brought: a
 unit whose four characters (and, on the store-refused path, its `-tt` tag) are
 the widest the alphabet mints outruns the 156/164 px portrait rows, and with
-the tag the round watch's 174, even in the floor face
-(`SecuraCV-display-WWWW-WW` is 198 px at 12 px). There the name keeps its head
-and its tail around "..." (`name_line()`), so the four characters a phone's
-list shows stay on the glass; a typical name (`SecuraCV-display-A7K2`, 141 px)
-reads whole on every small glass.
+the tag the round watch's 174 and the turned nightlight's 167 px column, even
+in the floor face (`SecuraCV-display-WWWW-WW` is 198 px at 12 px). There the
+name keeps its head and its tail around "..." (`name_line()`), so the four
+characters a phone's list shows stay on the glass; a typical name
+(`SecuraCV-display-A7K2`, 141 px) reads whole on every small glass.
 
 Nor is any scene's title or body (F65 on small glass, F84 on wide glass).
 Each line is fitted to the width at its own latitude — the disc's chord on
@@ -133,12 +134,13 @@ its 784 px row), which take the same two rows with the whole hint under
 them. A nightlight whose saved rotation is landscape runs it on 320x180,
 too short for the stack
 (F157): there the scene turns sideways. The halo stands at the right, the
-smallest ring that holds the QR card at its floor canvas (150 px, an 88 px
-canvas, still 3 px a module), with the bird at its center in every scene;
-the text takes a 158 px column beside it, every line fitted to the
-column, the rows of the Join scene and the coach lines under the scene's
-body, the block centered down the glass. Every line there reads whole, in
-the same words and shorter forms as the 172 and 180 px portrait glass.
+smallest ring that holds the QR card at its floor canvas (166 px, a 100 px
+canvas, still 3 px a module), running off the panel's right edge, with the
+bird at its center in every scene; the text takes a 167 px column beside
+it, every line fitted to the column, the rows of the Join scene and the
+coach lines under the scene's body, the block centered down the glass.
+Every line there reads whole (the widest tagged name aside, above), in the
+same words and shorter forms as the 172 and 180 px portrait glass.
 
 The one line whose words are not ours is the network name in "Joining
 <HomeNet>": it is whole in the line's face or the default Character's, and

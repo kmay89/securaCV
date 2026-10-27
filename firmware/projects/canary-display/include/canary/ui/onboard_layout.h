@@ -915,8 +915,9 @@ inline SmallJoin wide_join(const Glass& g, const Rows& r) {
 // kWideTypeFmt when no code rendered) in the Character's label face, and
 // the stuck-phone hint on the row under it in the caption face. Turned
 // portrait, a dash or 7" glass runs its onboarding on 480x800, and on its
-// 464 px row the line can be 655 px (773 under Heirloom) and the hint 513
-// (644): content-sized, they ran off both edges.
+// 464 px row the line can be 736 px (867 under Heirloom; 655 and 773 with
+// the typeless name it was found with) and the hint 513 (644):
+// content-sized, they ran off both edges.
 //
 // The rule is the small glass's (join_lines, F45), in the wide glass's words
 // and faces:
