@@ -4262,9 +4262,10 @@ async function startFlash(opts) {
       // network is minutes, and a bar parked at 0 with no counter was the
       // step that most read as "hung". The release's own size is the honest
       // total (Content-Length can be the compressed transfer size).
-      // From this site's copy of the release (fetchRelease →
-      // core.releaseFetchUrl; a ?manifest= override's image as given). The
-      // SHA-256 and signature checks below bind these bytes to the manifest.
+      // fetchRelease → core.releaseFetchUrl: a project release URL comes from
+      // this site's copy (an override manifest's included), any other URL (a
+      // self-hosted override image) as given. The SHA-256 and signature
+      // checks below bind these bytes to the manifest.
       const resp = await fetchRelease(opts.entry.factory, { cache: "no-store" });
       if (!resp.ok) throw new Error("download failed (HTTP " + resp.status + ")");
       const dlTotal = Number(opts.entry.size) ||
