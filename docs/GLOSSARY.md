@@ -212,18 +212,25 @@ its Wi-Fi from a phone with one tap: the open Improv Wi-Fi standard over
 BLE (`firmware/common/network/improv_core.h`, the pure half; `improv_ble`,
 the NimBLE glue; the WAP's `ble_improv`), on an encrypted Just Works link
 with no bond kept. **When it is open**, in the header's own words: for a
-device nobody owns yet, and for an owner's own tap — never for a device
-that has an owner and a bad day. So: with **no stored credentials**, for
-**30 minutes after power-on** (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle
-or a factory reset re-arms it — a software restart does not, the spent time
-rides across it in RTC memory); or for **60 s after a short BOOT tap** on a
-Sense or Vision (the WAP has no tap door yet). A saved network that is
+device with no network saved (a new one nobody owns yet, or one whose
+network was cleared), and for an owner's own tap — never for a device that
+has an owner and a bad day. So: with **no stored credentials**, for **30
+minutes after power-on** (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle
+re-arms it, and so does clearing the credentials with the 10 s
+factory-reset hold or, on a WAP, Forget Wi-Fi, which any landing session
+can send, ledger F345 — a software restart does not, the spent time rides
+across it in RTC memory); or for **60 s after a short BOOT tap** on a
+Sense or Vision (the WAP has no tap door yet). A cleared unit still has an
+owner (the hold keeps the witness identity, and a WAP's hold and Forget
+Wi-Fi keep its token), but the door goes to whichever client connects
+first, so for that half hour a stranger in radio range can give it their
+network ([magic pairing](design/magic_pairing.md) §2.2). A saved network that is
 *failing* raises the SoftAP recovery portal and **never** opens this door.
 While open it is bounded (3 s between credential writes, 10 attempts per
 open door, a 3-minute idle disconnect). The fleet beacon carries a *setup
 open* bit and a "Sense-AB12" name while it is; the iPhone app's "new Canary
 nearby" card (`Shared/NearbyCanary.swift`) is the other half; on a WAP the
-**claim ticket** (next entry) finishes the pairing. The `SecuraCV-XXXX`
+**claim ticket** (next entry) finishes the pairing. The `SecuraCV-<kind>-XXXX`
 setup network stays underneath as the break-glass path with a key. Built
 and host-tested, not bench-tested.
 → [magic pairing (design)](design/magic_pairing.md)
@@ -401,9 +408,10 @@ in sync. It runs over ESP-NOW, which needs the radio on a shared channel but
 not an access-point association (the WiFi bridge and BLE fallback in the spec
 are not built, and the BLE control plane in the tandem doc is design only). An
 `opera_secret` is never written to or read back from NVS on a board without
-flash encryption (audit O2). That keeps the household secret off un-fused
-boards; it does **not** make it confidential at rest on fused ones, because
-flash encryption does not cover NVS.
+flash encryption (audit O2). That keeps the household secret off every
+board without flash encryption; it does **not** make it confidential at rest
+on a board with flash encryption on, because flash encryption does not cover
+NVS.
 → [`spec/canary_mesh_network_v0.md`](../spec/canary_mesh_network_v0.md),
 [BLE mesh + Opera tandem](BLE_MESH_OPERA_TANDEM.md),
 [threat model](security/THREAT_MODEL.md#opera-mesh-household-trusted)

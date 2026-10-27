@@ -40,7 +40,7 @@ Derived from the post-archive Feature-Parity Dashboard in [FEATURES.md](../FEATU
 
 | # | Gap | Current canary (PIO) state | Source to port from | Port complexity | Security impact |
 |---|---|---|---|---|---|
-| 1 | API authentication (bearer token + HKDF derivation + exponential backoff + constant-time compare) | ✅ (Phase 2.5: SPA injects bearer; all read + mutating endpoints gated; since sweep F340 the backoff is the WAP's own table, `firmware/common/network/auth_backoff.h`, read by path rather than ported: per source address (`request_peer_ipv4()`, the socket peer), 2 s doubling capped at 60 s, and a request with no credential is no strike, the WAP's `auth_logic.h` rule, so a dashboard tab loaded without the token arms none. The receipt's and the page's bearer is the accounted grant, `auth_bearer_grant()`, and `auth_check_optional()` is gone; since sweep F341 a BOOT tap that hands an address the token, on the receipt or on the page load, ends that address's backoff through `auth_handed_token()`, as the WAP's tap and claim do; host-tested in `firmware/tests_host/test_securacv_auth.cpp`) | `canary_wap/api_auth.h` (~275 LOC) | **Low** (self-contained, ESP-IDF native) | **High** (every REST endpoint is currently unauthenticated) |
+| 1 | API authentication (bearer token + HKDF derivation + exponential backoff + constant-time compare) | ✅ (Phase 2.5: SPA injects bearer; all read + mutating endpoints gated; since sweep F340 the backoff is the WAP's own table, `firmware/common/network/auth_backoff.h`, read by path rather than ported: per source address (`request_peer_ipv4()`, the socket peer), 2 s doubling capped at 60 s, and a request with no credential is no strike, the WAP's `auth_logic.h` rule, so a dashboard tab loaded without the token arms none. The receipt's and the page's bearer is the accounted grant, `auth_bearer_grant()`, and `auth_check_optional()` is gone; since sweep F341 a BOOT tap that hands an address the token, on the receipt or on the page load, ends that address's own backoff through `auth_handed_token()`, as the WAP's tap and claim do, never the shared overflow's (an address held only through the overflow stays held); host-tested in `firmware/tests_host/test_securacv_auth.cpp`) | `canary_wap/api_auth.h` (~275 LOC) | **Low** (self-contained, ESP-IDF native) | **High** (every REST endpoint is currently unauthenticated) |
 | 2 | Rate limiting on HTTP API | ✅ (already present) | — | N/A | — |
 | 3 | Camera peek MJPEG streaming | ❌ | `canary_wap/wap_server.cpp` peek handlers | High (streaming loop + resolution control) | Medium (no frame storage, still subject to DoS) |
 | 4 | GPS motion FSM (EMA + hysteresis + debounce) | ⚠️ NMEA parse only | `canary_wap/*` motion detection | Medium | Low |
@@ -229,7 +229,27 @@ Phases are ordered by **security impact first**, then **blast radius**, then **r
   is not on its documented public allowlist.
 - **Follow-up (Phase 6, with the web UI port):** the WAP's one-shot pair token
   + 24 h HttpOnly `cv_session` cookie (option A), so a home-LAN reload stops
-  needing a fresh BOOT tap each time.
+  needing a fresh BOOT tap each time. That port must bring canary-wap's
+  any-session class with it (`ANY_SESSION_GATES` in the WAP's route check,
+  sweep F328): a session is a gate the landing page's caller passes, so the
+  receipt, the page token and every other answer that carries a credential
+  must keep refusing it. Until then the flagship's route check
+  (`check_bearer_only_answers`, sweep F338) fails a cookie read or a
+  `Set-Cookie`, any request header but `Authorization` (the auth lib) and
+  `Host`, a URL query outside the witness log's paging and a read of a
+  request's raw path (`->uri`, or `.uri` through any reference to the
+  request, which keeps its query) outside its four readers, and it pins
+  `page_token_inject` and its four inputs whole (the setup input at its
+  source: the setup lib's state, the stored flag first boot is read from and
+  the functions that set and clear them; the SoftAP input with the interface
+  helpers it reads through; the tap with the handler whose press opens it),
+  so a careless edit cannot add a session by widening one of them in that
+  glue or by a macro of a name it calls. The check's threat model is a
+  careless or mistaken firmware edit, not a deliberate evasion of it: its
+  rules against the deliberate spellings (token pasting, a symbol binding, an
+  unread build input, a held name defined by a `-D` flag, a macro named for a
+  C++ keyword) are defense in depth, and gcc's `--define-macro`, the long
+  form of `-D`, passes the flag rule.
 - Gap #10 turns ✅ when the per-peripheral state and the degraded safe mode land; gap #11 is flipped.
 
 ### Phase 4 — Mesh + CSI mesh sensing v1 ✅

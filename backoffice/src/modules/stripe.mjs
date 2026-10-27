@@ -33,6 +33,8 @@ export function eventToOrder(event) {
   // A Checkout in `subscription` or `setup` mode is a plan or a saved card, never a box to pack: those
   // arrive on their own events below. Only a `payment` session (the mode a Payment Link uses) is an order.
   if (o.mode && o.mode !== 'payment' && type.startsWith('checkout.session.')) return { kind: 'ignore', type, why: `checkout mode ${o.mode}` };
+  // A session that timed out: Stripe says whether an email was typed and mints a link that reopens the same cart (recovery.mjs).
+  if (type === 'checkout.session.expired') return { kind: 'expired', type, external_id: o.id, email: o.customer_details?.email || o.customer_email || '', amount_cents: o.amount_total ?? 0, recovery_url: o.after_expiration?.recovery?.url || null, recovery_expires_at: o.after_expiration?.recovery?.expires_at ? new Date(o.after_expiration.recovery.expires_at * 1000).toISOString() : null };
   if ((type === 'checkout.session.completed' && ['paid', 'no_payment_required'].includes(o.payment_status)) || type === 'checkout.session.async_payment_succeeded') {
     const addr = o.shipping_details?.address || o.customer_details?.address || {};
     const items = (o.line_items?.data || []).map(li => ({
@@ -53,6 +55,7 @@ export function eventToOrder(event) {
       discount_code: (() => { const d = o.discounts?.[0]; if (!d) return null; const pc = d.promotion_code; const cp = d.coupon; return (typeof pc === 'object' && pc?.code) || (typeof cp === 'object' && (cp?.name || cp?.id)) || (typeof pc === 'string' ? pc : null) || (typeof cp === 'string' ? cp : null); })(),
       ship: { line1: addr.line1 || '', line2: addr.line2 || '', city: addr.city || '', state: addr.state || '', zip: addr.postal_code || '', country: addr.country || 'US' },
       items, paid_at: new Date((o.created || Date.now() / 1000) * 1000).toISOString(),
+      recovered_from: o.recovered_from?.checkout_session_id || null,   // the expired session this one reopened, if any
     };
   }
   if (type === 'charge.dispute.created' || type === 'charge.dispute.closed' || type === 'charge.dispute.updated') {

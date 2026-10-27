@@ -119,7 +119,9 @@ returns nothing: there is no hardware-key abstraction anywhere yet.
   asks that "vault confidentiality … rely on **distinct, device-local key
   material**"; a `0600` file technically satisfies "device-local," but the honest
   form of that promise is key material a plugged-in **PKCS#11 token** (host) or
-  the **ESP32-S3's own eFuse / flash-encryption / DS peripheral** (device) holds —
+  the **ESP32-S3's own eFuse / NVS encryption / DS peripheral** (device) holds
+  (no released build uses any of them yet; flash encryption alone does not
+  cover NVS) —
   **we have no TPM and no discrete secure element** (§5.5). Trustee hardware
   tokens are likewise the honest form of "**independently controlled** principals
   or devices."
@@ -357,14 +359,23 @@ ATECC608 / SE050 in the BOM; no `esp_ds` / `esp_hmac` in the firmware today). It
 "TPM-equivalent" is the **ESP32-S3's own on-die security block**, which answers
 "secure it" and "sign it" differently:
 
-- **Secure it (protect the key at rest) — already tooled, not yet burned.**
-  `docs/secure_provisioning.md` Phase 2 wraps Espressif's guide: **eFuse +
-  XTS-AES-256 Flash Encryption + NVS encryption** make the NVS Ed25519 key
-  unreadable off-chip; **Secure Boot v2 (RSA-3072)** stops an attacker flashing a
-  key-dumping build; **JTAG disabled via eFuse** closes the debug port. It's
-  irreversible and needs a physical device to validate — which is why it's
-  post-v1. The provisioning kit (`generate_keys.sh`, `provision_canary.sh`,
-  `verify_device.py`) already exists.
+- **Secure it (protect the key at rest) — the fuses are partly tooled, the
+  key's protection is not yet buildable.** `docs/secure_provisioning.md` Phase 2 wraps
+  Espressif's guide: **eFuse + XTS-AES-256 Flash Encryption + NVS encryption**
+  would make the NVS Ed25519 key unreadable off-chip; **Secure Boot v2
+  (RSA-3072)** stops an attacker flashing a key-dumping build; **JTAG disabled
+  via eFuse** closes the debug port. Flash encryption alone does not cover NVS,
+  and NVS encryption is not in any released build: every one builds with
+  `framework = arduino`, under which `firmware/provisioning/platformio_secure.ini`
+  marks the NVS-encryption sdkconfig inert, so on a fused board the key is still
+  plaintext today (`hardware_root_of_trust.md` §5.1, Tier 3; the
+  arduino-as-IDF-component migration, `firmware/ESP32S3_OPTIMIZATION_ROADMAP.md`
+  item 9, brings it). It's irreversible and needs a physical device to
+  validate — which is why it's post-v1. The provisioning kit
+  (`generate_keys.sh`, `provision_canary.sh`, `verify_device.py`) already
+  exists, but as tooled it turns on neither flash encryption nor Secure Boot:
+  it burns no `SPI_BOOT_CRYPT_CNT` and no Secure Boot key digest
+  (`secure_provisioning.md`, Step 3).
 - **Sign it without the key ever entering software — available, unused.** The
   S3's **HMAC** and **Digital Signature (DS)** peripherals can sign with a private
   key decrypted *only inside the peripheral* (via a read-protected eFuse key), so
@@ -374,10 +385,14 @@ ATECC608 / SE050 in the BOM; no `esp_ds` / `esp_hmac` in the firmware today). It
   key *at rest* but cannot do *non-extractable Ed25519 signing*.
 
 **The Ed25519 fork for the device — DECIDED (decision #7): (a) + (b)-optional.**
-- **(a) Ed25519, protected at rest — the path.** Flash-encryption + eFuse +
-  Secure Boot v2 + JTAG-off. Keeps the entire existing signing scheme; the key
-  can't be dumped off a locked device. Largely already tooled in
-  `secure_provisioning.md` (Phase 2). This is opt-in *per device* — burning eFuses
+- **(a) Ed25519, protected at rest — the path.** Flash encryption + NVS
+  encryption + eFuse + Secure Boot v2 + JTAG-off. Keeps the entire existing
+  signing scheme; once NVS encryption is in the build, the key can't be dumped
+  off a locked device (until then it can: flash encryption does not cover NVS,
+  and NVS encryption waits on the arduino-as-IDF-component migration above).
+  The fuse steps are partly tooled in `secure_provisioning.md` (Phase 2 burns
+  the flash-encryption key, `SECURE_BOOT_EN` and JTAG-off, not the crypt counter
+  or a Secure Boot key digest), and the signing step is not tooled at all. This is opt-in *per device* — burning eFuses
   is irreversible, so it's the recommended production-lockdown step, not forced on
   dev units; the software-Ed25519-in-NVS default stays for development.
 - **(b) RSA attestation identity via the DS peripheral — OPTIONAL add-on.**
@@ -455,9 +470,11 @@ with zero crypto risk; the hardware phases are gated on physical validation.
 - Wire `doctor` to report the live backend; add `vault.keystore` config.
 - **Est.:** ~2–3 weeks. **Depends on:** Phase 1; **a PKCS#11 token to validate on.**
 - **Device side (parallel, firmware track — decision #7: (a) + (b)-optional):**
-  path **(a)** hardens the ESP32-S3 Ed25519 identity *at rest* by burning
+  path **(a)** would harden the ESP32-S3 Ed25519 identity *at rest* with
   `secure_provisioning.md` Phase 2 (eFuse + flash encryption + Secure Boot v2 +
-  JTAG-off), opt-in per device; path **(b)** is an *optional*, feature-gated
+  JTAG-off) plus NVS encryption, which waits on the arduino-as-IDF-component
+  migration; burning Phase 2 alone leaves the key plaintext in NVS. Opt-in per
+  device; path **(b)** is an *optional*, feature-gated
   `esp_ds`/`esp_hmac` crypto-HAL that adds a non-extractable RSA **attestation**
   identity (never replaces Ed25519 signatures). Firmware provisioning + HAL, not
   kernel crypto — shares no code with the host `KeyStore`.
@@ -532,8 +549,11 @@ These change what gets built; I'd like your calls before writing code.
    revisit WebAuthn later. (See §7 Phase 3.)
 7. **ESP32-S3 device identity — how far to harden (§5.5). ✅ RESOLVED: (a) + (b)
    optional.** The device path is **(a) Ed25519 protected at rest** (eFuse + flash
-   encryption + Secure Boot v2 + JTAG-off — keeps the existing signing scheme,
-   mostly already tooled), with **(b) an RSA attestation identity via the DS
+   encryption + NVS encryption + Secure Boot v2 + JTAG-off — keeps the existing
+   signing scheme; the fuse steps are partly tooled (not the crypt counter or a
+   Secure Boot key digest, so the kit turns neither on yet), and NVS encryption, without
+   which the key stays plaintext on a fused board, waits on the
+   arduino-as-IDF-component migration), with **(b) an RSA attestation identity via the DS
    peripheral as an optional, feature-gated add-on** (non-extractable hardware
    signing, never replacing the Ed25519 event signatures). **(c)** external secure
    element is **dropped**. Phase-2 provisioning stays **opt-in per device** (eFuse
@@ -552,7 +572,7 @@ the honest fallback):
 | Vault master key (host, **symmetric**) | `master.key`, `0600` | **File-backed by default** (a PIV token can't hold a symmetric key); HSM/TPM with symmetric unwrap where available, or opt-in asymmetric-rewrap of the DEK (new crypto) — decision #1 |
 | Host device signing key (**asymmetric**) | Seed-derived from config | PKCS#11-token-held, non-extractable; pinned pubkey |
 | Trustee signing keys | Hex file / browser seed | PIV/PKCS#11 token per trustee (independently held) |
-| **ESP32-S3 device identity** (separate; §5.5) | Ed25519 in NVS (software) | (a) Ed25519 protected at rest via eFuse + flash encryption + Secure Boot v2 *(opt-in per device)*; (b) optional RSA attestation identity via the DS peripheral *(feature-gated, non-extractable, never replaces Ed25519)* |
+| **ESP32-S3 device identity** (separate; §5.5) | Ed25519 in NVS (software; plaintext on every tier, a fused board included) | (a) Ed25519 protected at rest via eFuse + flash encryption + NVS encryption + Secure Boot v2 *(opt-in per device; NVS encryption needs the arduino-as-IDF-component migration)*; (b) optional RSA attestation identity via the DS peripheral *(feature-gated, non-extractable, never replaces Ed25519)* |
 | DB encryption key | `SECURACV_DB_KEY_SEED`, rotatable | Unchanged (already rotatable) |
 | Break-glass token nonce | Single-use, burned pre-cleartext | Unchanged |
 

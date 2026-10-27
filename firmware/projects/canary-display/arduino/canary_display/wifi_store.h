@@ -24,8 +24,10 @@
  * Credentials at rest: this header does not encrypt. Where the bytes sleep
  * (plaintext NVS on every shipped build today) is reported honestly by
  * `creds_at_rest` in GET /api/status (common/identity/key_at_rest.h labels)
- * and the secure kit in firmware/provisioning/ is the path up —
- * docs/PARITY.md says so per target rather than pretending.
+ * and the path up is NVS encryption, which needs the arduino-as-IDF-component
+ * migration (firmware/ESP32S3_OPTIMIZATION_ROADMAP.md item 9); the secure kit
+ * in firmware/provisioning/ is not it, since flash encryption does not cover
+ * NVS — docs/PARITY.md says so per target rather than pretending.
  */
 
 #pragma once

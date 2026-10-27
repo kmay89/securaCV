@@ -109,8 +109,21 @@ The `v`/`k` guides and the website describe behavior that already exists:
 
 - **Recovery** is the witness chain's existing *SD-wins* reconciliation
   (`witness_recover_from_sd()`): a factory reset erases NVS settings but never
-  the SD evidence; on boot the device adopts the SD tail only when it is
-  strictly ahead and its signature verifies. Re-seat the card, reboot, done.
+  the SD evidence, and when the NVS head cache fell behind the card (a power
+  cut between persists) the next boot adopts the SD tail, but only when it is
+  strictly ahead and its signature verifies under this device's key. The 10 s
+  reset keeps the key and the head. The 30 s wipe, or an install in either
+  flasher, gives a new key, and the device starts a new chain that never
+  adopts the old card's: move `/WITNESS/records.jsonl` off the card first
+  (in a card reader: copy it, then delete it from the card, since the
+  device's USB drive is read-only), or put in a fresh card. A copy alone
+  leaves the old file at the one fixed path the new chain appends to. Left
+  in with the old file on it, that card takes no evidence while its old
+  tail's sequence number is ahead of the new chain (the fork guard refuses
+  every append, and its log line's "reboot" does not reconcile a card the
+  new key never signed), then, from a mount after the new chain passes that
+  tail, takes the new key's records in the same file, which
+  `tools/verify_witness_log.py` fails under either key.
 - **Unsealing** happens **off-device**. Sealed `.svlt` snapshots are encrypted
   to the operator's public key (X25519 + HKDF + ChaCha20-Poly1305 write-only
   escrow); the Canary cannot decrypt them by design. The operator copies them

@@ -241,9 +241,9 @@ the other two:
 
 The device's cryptographic identity (an Ed25519 private key) is:
 - Generated on the device's own hardware random number generator
-- Stored only on the device's internal flash memory
-- Never transmitted over any interface (WiFi, USB, or otherwise)
-- Not backed up, escrowed, or recoverable by anyone — including ERRERlabs
+- Stored on the device's internal flash memory, in plaintext NVS
+- Never sent by the firmware over any interface (WiFi, USB, or otherwise)
+- Not backed up or escrowed by the firmware, and never held by ERRERlabs
 
 There is no "export private key" function. There is no backdoor, master
 key, or recovery mechanism. If the device is lost or destroyed, the
@@ -253,16 +253,24 @@ requires a new device with a new identity.
 **Why no backup?** Because a key that can be exported can be compelled.
 A court order, a warrant, or physical coercion — if the key CAN leave
 the device, an adversary with sufficient power WILL extract it. So there
-is no software path that will hand it over: no API, no export, no
+is no firmware path that will hand it over: no API, no export, no
 diagnostic, no debug interface, and nothing to compel us to hand over
 because we never had it.
 
-**The limit of that promise.** It is a statement about software. Someone
-who physically takes the device and reads the flash chip directly is a
-different adversary, and on a default-configured Canary they can recover
-the key. That is a deliberate trade — the alternative permanently bricks
-devices whose owners lose a key — and it is spelled out, with what it does
-and doesn't let an attacker do, under
+**The limit of that promise.** It is a statement about the firmware.
+Someone who holds the device can read its flash, over its USB port
+through the chip's ROM download mode (which the firmware does not
+control) or off the chip on a bench, and today they can recover the key
+from any Canary, a board with flash encryption fused included: the key is
+in NVS, which flash encryption does not cover, and the NVS encryption that
+would is not in any released build. Our own flashers make that USB read:
+before an install, unless told to skip it, each saves a full copy of the
+flash to your computer as its undo button (the browser's to your
+downloads, the desktop app's to its backups folder), and that file holds
+the key in the clear; restoring it puts the same key back on a board. Leaving the irreversible fuses off by default is a
+deliberate trade — the alternative permanently bricks devices whose owners
+lose a key — and both are spelled out, with what key recovery does and
+doesn't let an attacker do, under
 [Physical extraction and the flash-encryption default](#physical-extraction-and-the-flash-encryption-default).
 
 ---
@@ -337,18 +345,27 @@ else its `403`, which the page reads as "tap BOOT". A request with no
 `Authorization` header is no strike, so a dashboard tab loaded without the
 token, which polls with no header, arms nothing. A BOOT tap that hands an
 address the token, on the receipt or on the page load it unlocks, ends that
-address's backoff as a right bearer would (sweep F341). The dashboard
-drops a token the device refuses and shows its unlock banner again, so a
+address's own backoff as a right bearer would (sweep F341), never the shared
+overflow's (`auth_handed_token()` frees only the address's own slot). The
+dashboard drops a token the device refuses and shows its unlock banner again, so a
 mistyped paste is dropped at its first refusal instead of being sent on
 every poll. A host's wrong
 bearers hold only that host's address (F343). A browser that mistyped the
-token waits at most about 60 s, or taps BOOT, which clears its address
-(F341). A host that strikes from 9 or more addresses within 60 s holds every
-untracked address while the shared overflow slot runs, and a tap does not
-clear that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane,
-or hold BOOT 10 s. The flagship has no Bluetooth lane that changes its
-Wi-Fi, so there the fallbacks are to wait or the 10 s hold. Clients behind
-one address share a backoff. It does not close a deliberate
+token waits at most about 60 s, or taps BOOT, which clears its address when
+the tap is served to it (F341): the flagship's tap still goes to the first
+asker (F354), so it is that browser's own receipt request or page load that
+has to be the one served. A host that strikes from 9 or more addresses
+within 60 s holds every untracked address while the shared overflow slot
+runs, and a tap does not clear that. The flagship has no Bluetooth lane
+that changes its Wi-Fi and no Bluetooth setup door, so there the way out is
+to wait until that host
+stops. Its 10 s hold empties the table (it is in RAM, and the release
+restarts the unit) and clears the saved networks, but it gets the owner out
+only if the unit is then set up on a network that host is not on: set up on
+the same network again, the host's next strikes from nine addresses hold
+every untracked address again, the owner's among them. The WAP's ways out
+are in its lockout paragraph below. Clients behind one address share a
+backoff. It does not close a deliberate
 denial from the LAN: the device-wide request limit (120 requests a minute
 across the rate-limited routes) is still one per device, so two open Status
 tabs reach it by themselves (F351), and ARP spoofing and httpd's connection
@@ -493,12 +510,22 @@ closed with `409` again (the poller case below). The `409` tells the client
 to start its request first and keep it asking, then press BOOT; the `403`,
 the dashboard and the companion give that order too, their `409` text
 included (the click, or the tap on Save, before the press), and both pages
-say to press only once the device has answered their first ask
+say to press only once the device has answered one of their asks with `403`
 (host-tested, not bench-tested). The setup door's claim is spent only by
 a match, so a wrong `?claim=` from a host on the network no longer ends the
 phone's pairing (F342). The tap's asker is the request's socket peer
 (`request_peer_key()`, the same read the per-address lockout keys on, F343),
-never a header. What the tap rule cannot see: a tap no client of the
+never a header. To judge the tap, the WAP keeps the last two distinct
+addresses that asked for the receipt and were not served by a bearer or the
+claim, as 16-byte socket-peer keys (an IPv4 client as `::ffff:a.b.c.d`), each
+with the time of its latest ask. That record is in RAM only: nothing writes
+it to NVS or a file, a restart empties it, and otherwise an address stays
+until two other addresses have asked after its latest ask (no timer ages it
+out, and a served tap clears only the contention, not the addresses). No
+route serves it, and the health log (what `/api/logs` serves) names neither
+address; the one place an address goes is the serial console line printed
+when contention closes a tap, which names both. What the tap rule cannot
+see: a tap no client of the
 owner's was already asking for (an accidental tap, a page or `curl` started
 after it, a tap pressed per a recipe or an older page that says to press
 first, BLE OTA break-glass) still goes to the first asker; hosts behind
@@ -518,7 +545,12 @@ before the phone (a host on the network that is also in radio range, say)
 can join the Canary to a network it is on, spend the claim minted for its
 own link and keep the token, which nothing rotates today. So the hold is
 for a host known to be on the network only, with the phone ready, and the
-phone ends paired unless something in radio range reached the door first.
+phone ends paired unless something in radio range reached the door first,
+or a landing session turned the WAP's Bluetooth off before the hold, which
+any host on the network can (F346): the setting is saved and the hold keeps
+it, and every link is dropped while it is off, so no phone reaches the
+door. That is a denial, not a takeover; the kit's token and the console
+still work.
 
 Until sweep F289 the session cookie
 bought the receipt and the QR too, so any host on the home network could
@@ -544,14 +576,70 @@ holding its cookie can still sign in to a unit it meets over plain HTTP at
 canary.local); host-tested, the ESP32 compile is CI's, not
 bench-tested. The WAP's lockout is per source address. A host's wrong
 bearers hold only that host's address (F343). A browser that mistyped the
-token waits at most about 60 s, or taps BOOT, which clears its address
-(F341). A host that strikes from 9 or more addresses within 60 s holds every
+token waits at most about 60 s, or signs in with Use BOOT Tap Once, which
+clears its address when the tap is served to that browser's ask (F341). A
+host that strikes from 9 or more addresses within 60 s holds every
 untracked address while the shared overflow slot runs, and a tap does not
-clear that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane,
-or hold BOOT 10 s. A wrong bearer on the receipt is a strike even when the
-setup-door claim or the BOOT tap then serves it, and the claim or the tap
-that serves ends that address's backoff, as a right bearer would (sweep
-F341). The key is the request's socket peer address, never a
+clear that; then change the WAP's Wi-Fi from a browser on the network to a
+network that host is not on, or wait until it stops. The browser needs no
+token: the landing page mints a session for any host on the network
+(F346), `api_auth_check()` takes its cookie before the bearer and its
+lockout, and through `wifi_change_authorize()` that session reaches
+`POST /api/wifi/connect` (Settings, WiFi), so the owner's browser moves the
+WAP under the lockout; the overflow's backoff then ends at most 60 s after
+that host's last strike. That gets the owner out only while that host
+leaves it alone. The landing page mints that host sessions too, and the
+eight session slots evict the oldest (`csi_integration.cpp`), so a host
+that keeps minting can end the owner's session before its save. A host
+also in radio range can bond a Bluetooth peer of its own (the peer starts
+the pairing, and its session reads the passkey from `GET /api/bluetooth`
+and confirms it) and write the WAP's Wi-Fi over the bonded lane
+(`ble_provision.cpp`'s CREDS), joining it back to a network that host is
+on. And the move lasts only while the new network stays up. The WAP keeps
+every network it has joined (up to four, `wifi_store.h`), the striking
+host's among them, and when the one it is on is not found twice running (a
+phone's hotspot turned off, a network out of range, one that is down when
+the WAP starts) it tries the next saved one, in turn, with no act of the
+owner's, and stays on the host's network once it joins it. No route
+forgets one saved network (`wifi_store::remove()` has no caller): Forget
+Wi-Fi (`POST /api/wifi/forget`, which the owner's landing session reaches
+under the lockout) and the 10 s hold drop them all, and each reopens the
+first-come setup door, so the move sticks only after Forget Wi-Fi and a
+setup onto the new network. The iPhone's bonded Bluetooth lane is no way
+out today: the iPhone app dials only a Canary that advertises the console
+service, which a WAP does not, so it never writes a WAP's CREDS (ledger
+A65, open). Once A65 is settled the lane would move the WAP with no
+browser, but only while that host leaves it alone and the new network
+stays up (it saves through the same paths), and taking it away needs no
+radio. Any landing
+session can turn the WAP's Bluetooth off (`POST /api/bluetooth/disable`),
+a saved setting that restarts and the 10 s hold keep, under which every
+Bluetooth link is dropped; or delete every bond, the owner's phone's
+included (`DELETE /api/bluetooth/paired/all`), so the phone must pair again
+before the lane takes its write; and a host's own bonded peer can keep the
+owner's write refused for as long as it keeps writing (the lane takes one
+write in 5 s and ten an hour from every peer together, and a refused write
+costs the writer nothing). A host that keeps striking can do any of these
+again at will. The owner's session reaches the same Bluetooth routes, so
+it can turn Bluetooth back on, which that host can turn off again.
+The 10 s BOOT hold is no way out from under that host: it empties the table
+(it is in RAM,
+and the release restarts the unit), as any restart does, but once the unit
+is set up on the same network again, the host's next strikes from nine
+addresses hold every untracked address again, the owner's among them, and
+the claim that pairs the phone does not clear the overflow (it frees only
+the served address's own slot, F341), so the phone ends paired and held.
+The hold helps only with a setup onto a network that host is not on. The
+owner's browser makes that move without it, and without reopening the
+first-boot setup door, which goes to whichever Bluetooth client connects
+first (the tap paragraph above), but that move keeps the host's network
+saved; the hold, or Forget Wi-Fi, followed by that setup drops it, and
+reopens that door. A wrong bearer
+on the receipt is a strike even when the setup-door claim or the BOOT tap
+then serves it, and the claim or the tap
+that serves ends that address's own backoff, as a right bearer would, never
+the shared overflow's: an address held only through the overflow stays held
+(sweep F341). The key is the request's socket peer address, never a
 header, and clients behind one address share a backoff. It does not close a
 deliberate denial from the LAN: a landing session can still reboot the unit
 (`POST /api/reboot`, `POST /api/safe-mode/retry`), and ARP spoofing, httpd's
@@ -803,7 +891,8 @@ The witness chain is append-only:
   who checks
 
 To forge a record, an adversary would need:
-1. The device's Ed25519 private key (which never leaves the device)
+1. The device's Ed25519 private key (which no firmware path exports; a
+   full read of the flash, a flasher's safety copy included, carries it)
 2. To re-hash and re-sign every subsequent record in the chain
 
 To hide a deletion, an adversary would need to re-sign the entire chain
@@ -852,15 +941,22 @@ no undisclosed outbound path — the few it has are named above, two of
 them pinned by host tests — so a compromised blob would have to
 originate traffic of its own, on a network whose expected traffic is
 short and known, and a WAP on its own access point gives it no route
-out at all. Secure boot and flash encryption are additional
-mitigations, but they are **off unless you turn them on** — see
+out at all. Secure boot and flash encryption would be additional
+mitigations, but **neither works on any Canary today**: the provisioning
+kit prepares both and turns on neither (its Phase 2 writes a plaintext
+image and burns no flash-encryption counter, so flash encryption stays
+off, and burns `SECURE_BOOT_EN` with no Secure Boot key digest, so Secure
+Boot is enabled with nothing to verify against) — see
 [Physical extraction and the flash-encryption default](#physical-extraction-and-the-flash-encryption-default).
 
 ### Physical Access
 Physical possession of the device enables forensic analysis of the
-SD card and flash storage. On a device in its default configuration this
-includes recovering the device's private key; the section below states
-exactly what that does and does not let an attacker do.
+SD card and flash storage. On every released firmware tree today this
+includes recovering the device's private key, on every tier: they build
+with `framework = arduino`, where NVS encryption is not available, so the
+key is plaintext in NVS on a board with flash encryption fused too. The
+section below states exactly what that does and does not let an attacker
+do.
 
 ### GPS Spoofing
 The device cannot independently verify GPS signals. A sophisticated
@@ -880,13 +976,16 @@ not necessarily *what happened* in full detail.
 
 ### Physical extraction and the flash-encryption default
 
-**The honest statement: on a Canary in its default configuration, someone
-who takes the device away and opens it up can read the private key out of
-the flash chip.**
+**The honest statement: someone who takes a Canary away can read the
+private key out of its flash, over its USB port or off the chip, in its
+default configuration and, today, on a board with flash encryption fused
+too (the key is in NVS, which flash encryption does not cover:
+`key_at_rest` below), and so can anyone who holds a flasher's safety copy
+of that board.**
 
-This is a deliberate default, not an oversight, and the trade is worth
-understanding because it is the one place where "keys never leave the
-device" needs an asterisk.
+Leaving flash encryption off by default is deliberate, not an oversight,
+and the trade is worth understanding because it is the one place where
+"keys never leave the device" needs an asterisk.
 
 ESP32-family chips support Secure Boot and flash encryption, which together
 make the firmware image unreadable and stop unsigned firmware running.
@@ -899,8 +998,11 @@ that can permanently destroy an owner's device is the wrong default for a
 device people are supposed to be able to keep, repair, and re-flash. So
 [the tiered design](../design/hardware_root_of_trust.md) puts the
 reversible protections in the default path and leaves the irreversible
-lockdown as an explicit, key-backup-enforced opt-in. The settings are
-staged and commented in `firmware/provisioning/sdkconfig.defaults.secure`.
+lockdown as an explicit opt-in. The design calls for that opt-in to
+enforce a key backup (its §5.2); the kit does not yet: `provision_canary.sh`
+checks only that the key files exist. The settings are staged and
+commented in `firmware/provisioning/sdkconfig.defaults.secure`, which is
+inert under `framework = arduino` (`platformio_secure.ini`).
 The PIO canary image (`firmware/canary`) does not leave you to assume
 which case yours is: it reports where its identity key sleeps as
 `key_at_rest` (`plaintext-nvs`, `nvs-encrypted` or
@@ -939,15 +1041,36 @@ divergent chains from the same device key. Two chains that share a prefix
 and then disagree is not something the real device can do, so if both ever
 reach a verifier, the clone is provable.
 
-**If your threat model includes device seizure**, this is the case the
-opt-in tiers exist for. Turn them on deliberately, back up the key first,
-and understand that you are trading recoverability for extraction
-resistance. Read [`../design/hardware_root_of_trust.md`](../design/hardware_root_of_trust.md)
-before you burn a fuse — that decision cannot be walked back.
+**If your threat model includes device seizure**, know what the opt-in
+tiers buy today before you burn anything: nothing yet. The provisioning
+kit's Phase 2 (`provision_canary.sh --phase 2`) burns a flash-encryption
+key, `SECURE_BOOT_EN` and the JTAG fuses, but it writes the app in
+plaintext and burns no `SPI_BOOT_CRYPT_CNT` and no Secure Boot key digest,
+so after it flash encryption is off and Secure Boot is enabled with nothing
+to verify against: neither protects anything (what the chip does with
+`SECURE_BOOT_EN` and no key digest has not been run on a bench).
+Once the kit turns them on they would buy at most the firmware image's
+protection (flash encryption would keep the app image from being read off
+the chip; Secure Boot would refuse unsigned firmware), not the key's.
+The identity key, the saved Wi-Fi and broker passwords and the Bluetooth
+bonds stay plaintext in NVS on a board with flash encryption on too, and
+the WAP's mesh secret, which it saves only on such a board, sits beside
+them in plaintext. They stay so
+until NVS encryption is in the build, which needs the
+arduino-as-IDF-component migration
+(`firmware/ESP32S3_OPTIMIZATION_ROADMAP.md` item 9; the Tier 3 row of
+[`../design/hardware_root_of_trust.md`](../design/hardware_root_of_trust.md)
+§5.1). Until then the defenses against a seizer are the two above, the
+anchored chain it cannot rewrite and the divergent chain a clone leaves
+for a verifier to find, and keeping the device out of reach. Read that
+design note before you burn a fuse — that decision cannot be walked back,
+and today it does not buy key secrecy.
 
-**If your threat model is an intruder, a landlord, or a domestic abuser
-who does not take the device to a lab**, the default is the right one for
-you, and the tamper-evidence properties are unaffected.
+**If your threat model is an intruder, a landlord, or a domestic abuser**,
+the default is still the right one for you (no tier protects the key today),
+and the tamper-evidence properties are unaffected. But anyone who can take
+the device, even for a few minutes with a laptop and a USB cable, can read
+its key, so keep it out of their reach.
 
 ---
 

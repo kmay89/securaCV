@@ -705,8 +705,9 @@ static void on_pairing_succeeded(const uint8_t* secret, uint32_t code) {
   /* Joiner side: persist FIRST so a power cut between save and set
    * leaves the right NVS state on next boot. THEN set in-memory
    * UNCONDITIONALLY so the active session works even when persistence
-   * fails — typical on FE-disabled dev hardware where save refuses
-   * by design. Persistence failure should degrade reboot survivability
+   * fails — on every Canary today, since no released image or
+   * provisioning step turns flash encryption on and save refuses
+   * without it by design. Persistence failure should degrade reboot survivability
    * (user has to re-pair after reboot), not disable the current
    * session that just successfully paired. */
   const bool save_ok = mesh_state::save_opera_secret(secret);
@@ -766,7 +767,7 @@ static void mqtt_publish_ota_update_state();
 /* Sign an update lifecycle event into the witness chain. The chain is the
  * audit trail: a verifier can later prove when the firmware changed and
  * whether a rollback happened. Compiled whenever ANY install channel
- * exists — the boot-outcome witness in setup() uses it too. */
+ * exists — the boot-outcome witness below uses it too. */
 static void ota_witness_event(const char* type, const char* version) {
   uint8_t payload[96];
   CborWriter cbor(payload, sizeof(payload));
@@ -776,6 +777,38 @@ static void ota_witness_event(const char* type, const char* version) {
   WitnessRecord rec;
   if (!witness_create_record(payload, cbor.size(), RECORD_STATE_CHANGE, &rec)) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_WITNESS, "OTA witness record failed", type);
+  }
+}
+
+/* Witness how an install ended, once the bootloader can no longer change the
+ * answer. The ONE place this tree records it, called wherever the answer can
+ * arrive: the healthy gate (a rollback — the previous image is running again —
+ * or a confirm at the probe), the health tick's confirming pass, and a
+ * deliberate stop that confirmed. The engine wrote the install's target the
+ * moment the boot partition flipped and hands it back once: running the
+ * target means the update applied, running anything else means the bootloader
+ * reverted it.
+ *
+ * Never while this boot's image is still PENDING_VERIFY: an image inside its
+ * confirm dwell has not stuck, and if the dwell fails the bootloader boots the
+ * previous image, which must find the target still there and witness the
+ * rollback — a chain that said "applied" first would hold a signed claim the
+ * device then contradicted. The engine holds the target back while pending
+ * (its contract for securacv_ota_take_pending_version); this tree asks too,
+ * so a signed "applied" cannot come from an image that may still revert,
+ * whatever engine it links. Loop task only: it appends a witness record. */
+static void ota_record_update_outcome() {
+  if (securacv_ota_pending_verify()) return;
+  char target[SECURACV_OTA_VERSION_MAX];
+  if (!securacv_ota_take_pending_version(target, sizeof(target))) return;
+  if (strcmp(target, FIRMWARE_VERSION) == 0) {
+    ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
+    log_health(LOG_LEVEL_NOTICE, LOG_CAT_SYSTEM,
+               "Firmware update applied", FIRMWARE_VERSION);
+  } else {
+    ota_witness_event("fw_update_rolled_back", target);
+    log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
+               "Firmware update rolled back", target);
   }
 }
 
@@ -845,6 +878,16 @@ static void ota_scheduler_process(uint32_t now) {
     securacv_ota_check_and_install();
   } else {
     securacv_ota_check();
+  }
+}
+
+/* The A/B confirm dwell (docs/OTA.md §2), every loop pass: once the boot
+ * probes have passed at the healthy gate, a freshly installed image is
+ * confirmed only after a minute of the home link holding. The pass that
+ * confirms it is the one that witnesses the update applied. */
+static void ota_confirm_dwell_tick(uint32_t now) {
+  if (securacv_ota_health_tick(now, WiFi.status() == WL_CONNECTED)) {
+    ota_record_update_outcome();
   }
 }
 
@@ -965,7 +1008,7 @@ static inline uint8_t time_bucket_now() {
 // ════════════════════════════════════════════════════════════════════════════
 //
 // Two nets, one gate (health/boot_policy.h has the full argument):
-//   · a NEW image that falls over before "healthy" is reverted by the
+//   · a NEW image that falls over before it is confirmed is reverted by the
 //     bootloader's A/B rollback — it stays PENDING_VERIFY until this code
 //     confirms it, and any reset before that boots the previous image;
 //   · a CONFIRMED image that keeps falling over lands in safe mode after
@@ -973,6 +1016,10 @@ static inline uint8_t time_bucket_now() {
 //     reached healthy.
 // "Healthy" is setup() returned + loop() ran for kDefaultHealthyDwellMs, or a
 // deliberate restart / deep sleep taken from the running loop before that.
+// The healthy gate runs the image's boot probes. With the pull engine a
+// probe-passing image then waits out the engine's confirm dwell (a minute of
+// the home link holding, ota_confirm_dwell_tick) before it is confirmed; a
+// deliberate restart or sleep confirms it at once, dwell or not.
 
 // Plain bools on purpose: every read and write of these is on the Arduino
 // loop task (setup() and loop()). POST /api/reboot, the one caller from
@@ -986,48 +1033,40 @@ static bootguard::Status g_boot_status = {};
 // /api/reboot); read by loop(). The only cross-task state in this section.
 static bool     g_restart_requested = false;
 
-// Confirm — or roll back — a freshly applied OTA image, then witness the
-// outcome. Runs at the healthy gate, not in setup(): an image that survives
-// setup() but crashes in its first seconds of loop() must still revert. If a
-// required probe fails, the engine marks the image invalid and reboots into
-// the previous firmware (does not return).
+// Run a freshly applied OTA image's boot probes, then witness whatever
+// outcome is already known. Runs at the healthy gate, not in setup(): an
+// image that survives setup() but crashes in its first seconds of loop() must
+// still revert. If a required probe fails, the engine marks the image invalid
+// and reboots into the previous firmware (does not return).
 //
 // Guard covers BOTH install channels: the engine owns rollback confirmation
 // (verifyRollbackLater), so any build that can install an image — pull OTA or
-// the dev push endpoint — must also confirm it here, or the bootloader
-// reverts it on the next boot. The probe alone no longer confirms: with the
-// pull engine (FEATURE_OTA_PULL) the image stays pending until
-// securacv_ota_init() in setup() and then a minute of health
-// (securacv_ota_health_tick in loop(), docs/OTA.md §2) confirm it. A build
-// without the engine (secure, secure_ha: FEATURE_OTA_UPDATE alone) has no
-// init() and no tick, so it confirms at the probe as it always did.
+// the dev push endpoint — must also confirm it, or the bootloader reverts it
+// on the next boot. The probe alone no longer confirms: with the pull engine
+// (FEATURE_OTA_PULL, initialized in setup() before this runs) a passing image
+// stays pending until a minute of health confirms it (ota_confirm_dwell_tick
+// in loop(), docs/OTA.md §2) or a deliberate stop does
+// (boot_health_before_deliberate_stop). A build without the engine (secure,
+// secure_ha: FEATURE_OTA_UPDATE alone) has no init() and no tick, so it
+// confirms at the probe as it always did.
+//
+// The outcome recorded here is a rollback (this boot runs the previous image
+// again) or, in a build without the engine, the confirm just made; a pending
+// image's "applied" waits for the pass that confirms it.
 static void ota_confirm_and_witness() {
 #if FEATURE_OTA_PULL || FEATURE_OTA_UPDATE
   securacv_ota_boot_self_test();
 #if !FEATURE_OTA_PULL
   securacv_ota_confirm_now();   // no engine, no dwell: the probe's verdict is final
 #endif
-
-  // Witness the update outcome. The engine recorded the install target the
-  // moment the boot partition flipped; running the old version again means
-  // the rollback fired.
-  char target[SECURACV_OTA_VERSION_MAX];
-  if (securacv_ota_take_pending_version(target, sizeof(target))) {
-    if (strcmp(target, FIRMWARE_VERSION) == 0) {
-      ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
-      log_health(LOG_LEVEL_NOTICE, LOG_CAT_SYSTEM,
-                 "Firmware update applied", FIRMWARE_VERSION);
-    } else {
-      ota_witness_event("fw_update_rolled_back", target);
-      log_health(LOG_LEVEL_WARNING, LOG_CAT_SYSTEM,
-                 "Firmware update rolled back", target);
-    }
-  }
+  ota_record_update_outcome();
 #endif
 }
 
-// The healthy gate: confirm the image, then clear the crash-loop counter.
-// Idempotent — only the first call per boot does anything. Loop task only:
+// The healthy gate: run the image's boot probes (ota_confirm_and_witness),
+// then clear the crash-loop counter. Reaching the line after the probes means
+// they passed, or that no image was pending. Idempotent — only the first call
+// per boot does anything. Loop task only:
 // ota_confirm_and_witness() appends a witness record (chain + SD), which the
 // witness lib allows from the loop task alone. POST /api/reboot therefore
 // never calls this; it raises g_restart_requested and loop() does.
@@ -1054,8 +1093,25 @@ static void boot_health_tick(uint32_t now) {
 // Called just before a restart or deep sleep the running loop chose to take:
 // the code decided to stop, it did not fall over, so an image that got this
 // far is confirmed rather than reverted by the reset it is about to cause.
+// "This far" is its boot probes: boot_mark_healthy() runs them now if the
+// healthy gate has not opened yet (a failed required probe reverts the image
+// there and never returns). With the pull engine a passing image is still
+// pending — its confirm dwell would outlast the reset, and a pending image
+// rolls back on the next boot — so the stop confirms it here.
+// securacv_ota_confirm_now() confirms only an image whose probes passed this
+// boot and that is still pending, and does nothing otherwise: before setup()
+// returned (boot_mark_healthy ran no probes), on an image the dwell already
+// confirmed, or on a boot that installed nothing. Then the outcome is
+// witnessed. Every caller persists the chain head after this, so that record
+// survives the stop.
 static void boot_health_before_deliberate_stop() {
   boot_mark_healthy("deliberate restart or sleep");
+#if FEATURE_OTA_PULL
+  if (g_boot_healthy) {
+    securacv_ota_confirm_now();
+    ota_record_update_outcome();
+  }
+#endif
 }
 
 // The deliberate-restart sequence, loop task only: the healthy gate, the
@@ -1239,12 +1295,14 @@ void setup() {
                   g_boot_status.reset_counted ? "" : " (power-on reset: not counted)",
                   g_boot_status.image_confirmed ? "" : " (new image, pending confirmation)");
   }
-  // Bench row E6: a re-flash of another build resets the count only if the
-  // build filled app_elf_sha256 in the app descriptor. Say so on every boot.
+  // Bench row E6: a PlatformIO or Arduino IDE upload of another build, which
+  // leaves NVS alone, resets the count only if the build filled
+  // app_elf_sha256 in the app descriptor (an install in either flasher starts
+  // NVS over, the count with it, whatever the identity). Say so on every boot.
   Serial.printf("[..] Image identity (app_elf_sha256): %s\n",
                 bootguard::image_id_present()
                     ? "non-zero"
-                    : "ZERO or unreadable - a re-flash will not reset the crash-loop count");
+                    : "ZERO or unreadable - an upload that keeps NVS will not reset the crash-loop count");
   if (g_boot_status.mode == bootpolicy::BootMode::SafeMode) {
     safe_mode_run();
   }
@@ -1551,8 +1609,10 @@ void setup() {
      * wiped after the call — mesh_session derives + caches the
      * 16-byte opera_id and 8-byte sender_fp and does NOT retain
      * the 32-byte secret. mesh_state::load_opera_secret returns
-     * false on first-boot / factory-reset / FE-disabled devices —
-     * those flows leave the firmware in an unpaired state and the
+     * false on a device that never paired, left its opera (POST
+     * /api/mesh/leave), was wiped (the 30 s BOOT hold) or has flash
+     * encryption off; the 10 s BOOT reset keeps the secret. Those
+     * flows leave the firmware in an unpaired state and the
      * Scout broadcast queue drains harmlessly. */
     uint8_t opera_secret_buf[mesh_crypto::OPERA_SECRET_LEN];
     if (mesh_state::load_opera_secret(opera_secret_buf)) {
@@ -1599,8 +1659,9 @@ void setup() {
 
     /* Load persisted trusted peers (#480) and register each so this
      * boot's receive path can verify inbound BEACON_EVENT frames
-     * from peers paired in previous sessions. Empty-list (first
-     * boot / factory reset) is fine — mesh_session::on_opera_frame
+     * from peers paired in previous sessions. Empty-list (never
+     * paired, a leave, the 30 s wipe; the 10 s reset keeps the list)
+     * is fine — mesh_session::on_opera_frame
      * silently drops unknown senders, and the dashboard / UI will
      * trigger pairing to populate. */
     {
@@ -1829,9 +1890,11 @@ void setup() {
     ota_cfg.chip             = CONFIG_IDF_TARGET;
 #endif
     // Health-gated confirmation (docs/OTA.md §2): the boot probes (identity,
-    // diagnostics >= 50) leave a new image pending; loop()'s
-    // securacv_ota_health_tick() confirms it after a minute of the STA link
-    // holding, so a crash loop inside that minute rolls back.
+    // diagnostics >= 50) at the healthy gate leave a new image pending;
+    // loop()'s ota_confirm_dwell_tick() confirms it after a minute of the STA
+    // link holding, so a crash loop inside that minute rolls back. A
+    // deliberate restart or sleep confirms it sooner
+    // (boot_health_before_deliberate_stop).
     ota_cfg.confirm_dwell_ms = 60000;
     ota_cfg.can_install      = ota_can_install;
     ota_cfg.on_before_reboot = ota_before_reboot;
@@ -2183,9 +2246,10 @@ void setup() {
   // Register the post-update probes. They RUN at the healthy gate
   // (boot_mark_healthy -> ota_confirm_and_witness), not here: a freshly
   // applied image is confirmed only after setup() returned AND loop() ran
-  // for bootpolicy::kDefaultHealthyDwellMs, so a crash in its first seconds
-  // of loop() still reverts it. The probes assert the parts that matter for
-  // the device's job; a failed required probe reverts it too.
+  // for bootpolicy::kDefaultHealthyDwellMs (or chose to stop sooner), so a
+  // crash in its first seconds of loop() still reverts it. With the pull
+  // engine the confirm dwell follows the probes. The probes assert the parts
+  // that matter for the device's job; a failed required probe reverts it too.
 #if FEATURE_OTA_PULL || FEATURE_OTA_UPDATE
   {
     static const securacv_selftest_t k_ota_selftests[] = {
@@ -2305,7 +2369,7 @@ void setup() {
 #endif
   Serial.println("╠══════════════════════════════════════════════════════════════╣");
   Serial.println("║  Commands: h=help, i=identity, s=status, g=gps, r=data       ║");
-  Serial.println("║  BOOT: tap=provisioning gate, 2s=info, 5s=factory reset      ║");
+  Serial.println("║  BOOT: tap=gate, 2s=info, 10s=reset (key kept), 30s=wipe     ║");
   Serial.println("╚══════════════════════════════════════════════════════════════╝");
 #if FEATURE_CONSOLE_THEME
   // The warm hello: the canary greets whoever just plugged in and points them
@@ -2331,12 +2395,14 @@ void loop() {
 #endif
 #if FEATURE_OTA_PULL
   // The A/B confirm dwell (docs/OTA.md §2): a freshly installed image is
-  // confirmed only after a minute of the home link holding.
-  securacv_ota_health_tick(millis(), WiFi.status() == WL_CONNECTED);
+  // confirmed only after a minute of the home link holding, and the pass
+  // that confirms it witnesses the update applied.
+  ota_confirm_dwell_tick(millis());
 #endif
 
-  // The healthy gate: confirm a pending OTA image and clear the crash-loop
-  // counter once this boot has run long enough to count as healthy.
+  // The healthy gate: run a pending OTA image's boot probes and clear the
+  // crash-loop counter once this boot has run long enough to count as
+  // healthy.
   boot_health_tick(millis());
 
   // POST /api/reboot, deferred here from the HTTP task (see
@@ -2447,6 +2513,7 @@ void loop() {
       setup_mark_complete();
       Serial.println("[OK] Setup complete — WiFi connected, rebooting...");
       boot_health_before_deliberate_stop();
+      witness_persist_chain_state();   // the gate may have witnessed an update outcome
       delay(1000);
       ESP.restart();
     }
@@ -2731,6 +2798,14 @@ void loop() {
 #if FEATURE_DEEP_SLEEP
   if (policy_should_deep_sleep() && !power_is_charging()) {
     uint32_t sleep_sec = policy_get_sleep_duration_sec();
+    // A duty-cycled wake can sleep again before the healthy dwell elapses;
+    // choosing to sleep is not a crash, so it must not count toward safe mode
+    // (nor revert a pending image on the wake). First, ahead of the sleep's
+    // own record and the chain persist: the gate may run the boot probes (a
+    // failure reboots from here, with nothing of the sleep half-done) and may
+    // witness an update outcome, which must be in the head the wake resumes
+    // from.
+    boot_health_before_deliberate_stop();
     {
       power_state_t pwr;
       power_get_state(&pwr);
@@ -2751,10 +2826,6 @@ void loop() {
     lowpower_arm_wake_timer((uint64_t)sleep_sec * 1000000ULL);
     lowpower_arm_wake_touch();
     policy_ack_deep_sleep();
-    // A duty-cycled wake can sleep again before the healthy dwell elapses;
-    // choosing to sleep is not a crash, so it must not count toward safe mode
-    // (nor revert a pending image on the wake).
-    boot_health_before_deliberate_stop();
     lowpower_enter_deep_sleep();
   } else if (policy_should_deep_sleep()) {
     policy_ack_deep_sleep();

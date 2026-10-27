@@ -13,8 +13,9 @@
  *     boot and stored in NVS (canary_wap.ino, NVS_KEY_WIFI_SSID / _PASS).
  *   - The setup-AP password: derived per device from the private key
  *     (derive_ap_password) and shown on the serial banner and /enroll page.
- *   - The API token: derived per device from the private key
- *     (derive_api_token), stored in NVS, shown on the serial banner.
+ *   - The API token: the one a flasher seeded at install or, with none,
+ *     one derived per device from the private key (derive_api_token);
+ *     stored in NVS, shown on the serial banner.
  *   - MQTT: configured at runtime through the device web UI.
  *
  * Leave this file empty. Adding macros here does nothing.

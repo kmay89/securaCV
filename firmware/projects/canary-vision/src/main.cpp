@@ -685,7 +685,9 @@ static void fill_node_status(NodeStatus& st) {
   if (m != nullptr && m->version[0] && securacv_ota_update_available()) st.ota_target = m->version;
   st.ota_pending_verify = securacv_ota_pending_verify() ? 1 : 0;  // this boot's image is still unconfirmed (the dwell is running)
   // Honest posture: every shipped build keeps its secrets in plaintext NVS
-  // (common/identity/key_at_rest.h Tier 0); the secure kit is the path up.
+  // (common/identity/key_at_rest.h Tier 0); the path up is NVS encryption
+  // (the arduino-as-IDF-component migration), not the secure kit, whose flash
+  // encryption does not cover NVS.
   st.creds_at_rest = key_at_rest::wire_label(key_at_rest::Tier::PlaintextNvs);
   st.clock = canary::time_sync::source_label(canary::net::wifi_clock_source());
   {
@@ -1302,6 +1304,14 @@ void loop() {
   canary::doorbell_hw::set_hub_ok(canary::net::mqtt_connected());
   canary::doorbell_hw::poll(canary::ms_now(), on_doorbell_event);
 
+  // Confirm a new image only after a healthy minute — before the broker/WiFi
+  // early-returns below, so it runs on EVERY pass. Behind them, a new image
+  // that booted to a dark broker waited on the broker to confirm, and a
+  // restart before the broker came back returned it to the previous
+  // firmware. Healthy is the Wi-Fi station link, the same thing the boot
+  // probe asserts (a pass with no link restarts the dwell).
+  canary::net::ota_health_tick(canary::ms_now(), canary::net::wifi_connected());
+
   if (!canary::net::mqtt_connected()) {
     if (!canary::net::wifi_connected()) {
       // No link, no broker — let wifi_loop() drive recovery.
@@ -1354,7 +1364,6 @@ void loop() {
 
   // Pull-OTA: scheduler + HA command drain + update-entity publishing.
   canary::net::ota_loop(now_ms);
-  canary::net::ota_health_tick(now_ms, canary::net::wifi_connected());  // confirm a new image only after a healthy minute
 
   // Runtime detection settings written from HA. Drained every connected pass,
   // so slider changes land at MQTT speed and the next vision_tick — which

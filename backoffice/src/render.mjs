@@ -13,6 +13,11 @@ export const money = (cents, cur = 'usd') => {
 // Times show in the operator's zone (OPERATOR_TZ); storage stays UTC ISO.
 let TZ = 'UTC';
 export const currentTz = () => TZ;
+// The environment every page names (env.mjs sets it once at boot): a badge beside the company name, a
+// prefix in the title, and for staging a banner — so a production tab and a staging tab are never confused.
+let ENV = { name: 'development', badge: 'dev', banner: '' };
+export function setEnvironment(name, { badge = '', banner = '' } = {}) { ENV = { name, badge, banner }; return ENV; }
+export const currentEnv = () => ENV;
 export function setTimezone(tz) { try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); TZ = tz || 'UTC'; } catch { TZ = 'UTC'; } return TZ; }
 export const timezone = () => TZ;
 const parts = (d, tz = TZ) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: 'short' }).formatToParts(d).map(p => [p.type, p.value]));
@@ -101,6 +106,22 @@ details.more{margin:1rem 0}details.more summary{cursor:pointer;color:var(--muted
 @media(pointer:coarse),(max-width:799px){body{font-size:16px}input,select,textarea{font-size:16px;min-height:44px}input[type=checkbox],input[type=radio]{min-height:0;width:22px;height:22px}.pick input{width:26px;height:26px}button,.btn{min-height:44px;padding:.55rem 1.05rem;font-size:15px}button.x{min-height:32px;min-width:32px;padding:.1rem .5rem}aside .foot button.quiet{min-height:36px;padding:.3rem .7rem!important}.tabs a{min-height:40px;display:inline-flex;align-items:center;font-size:14px}summary{min-height:40px;display:flex;align-items:center}aside form.search input{font-size:16px}nav a{min-height:40px;display:flex;align-items:center}.hp{min-height:40px}}
 /* tables of five or more columns fold into cards on a phone: the first named column leads, every other cell carries its own label */
 @media(max-width:639px){.tw.fold{overflow:visible;border-radius:0}.fold table{display:block;width:100%;background:none;border:0;border-radius:0;box-shadow:none}.fold thead{display:none}.fold tbody{display:grid;gap:.6rem}.fold tr{display:grid;grid-template-columns:1fr 1fr;gap:.2rem .9rem;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:.75rem .95rem .8rem;box-shadow:var(--shadow)}.fold td{display:block;border:0;padding:.05rem 0;white-space:normal;text-align:left;min-width:0;font-size:14px;overflow-wrap:anywhere}.fold td::before{content:attr(data-l);display:block;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em;font-weight:600;line-height:1.3}.fold td.lead{grid-column:1/-1;font-size:16px;font-weight:600;padding-bottom:.15rem}.fold td.lead::before{display:none}.fold td.sel{grid-column:1/-1;padding:0 0 .2rem}.fold td.sel::before{display:none}.fold td:empty{display:none}.fold tbody tr:hover td{background:none}}
+/* attention: one scale, three levels, the same marks everywhere (attention.mjs decides the level; nothing here picks a color by hand)
+   now = red (a deadline passed, a person is being failed), soon = amber (inside a known window), calm = no mark */
+:root{--now:var(--bad);--soon:var(--warn);--now-bg:rgba(176,58,58,.08);--soon-bg:rgba(168,112,26,.1)}@media(prefers-color-scheme:dark){:root{--now-bg:rgba(224,112,112,.12);--soon-bg:rgba(217,162,74,.14)}}
+nav a{display:flex;align-items:center;gap:.5rem}nav a .b{margin-left:auto;min-width:1.45rem;padding:0 .4rem;border-radius:999px;font-size:12px;font-weight:650;line-height:1.5;text-align:center;background:var(--line2);color:var(--muted);font-variant-numeric:tabular-nums}nav a .b.soon{background:var(--soon-bg);color:var(--soon)}nav a .b.now{background:var(--now);color:#fff}
+@media(max-width:799px){nav a .b{margin-left:.35rem}}
+.due{font-size:12.5px;color:var(--muted);white-space:nowrap}.due.soon{color:var(--soon);font-weight:600}.due.now{color:var(--now);font-weight:650}
+time{white-space:nowrap}
+tr.soon td:first-child{box-shadow:inset 3px 0 0 var(--soon)}tr.now td:first-child{box-shadow:inset 3px 0 0 var(--now)}tr.now td:first-child a,tr.now .lead{color:var(--fg)}
+.fold tr.now{border-left:3px solid var(--now)}.fold tr.soon{border-left:3px solid var(--soon)}
+.act{border-left:3px solid transparent}.act.soon{border-left-color:var(--soon)}.act.soon .n{color:var(--soon)}.act.now{border-left-color:var(--now);border-color:rgba(176,58,58,.3);border-left-color:var(--now)}.act.now .n{color:var(--now)}.act.urgent{border-color:var(--line)}.act.urgent .n{color:inherit}.act.now.urgent .n{color:var(--now)}.act .due{margin-top:-.1rem;white-space:normal}
+/* the focus strip: the single most pressing thing, full width, its clock and its one action */
+.focus{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--now);border-radius:14px;padding:.85rem 1.1rem;margin:0 0 .9rem;box-shadow:var(--shadow)}.focus.soon{border-left-color:var(--soon)}.focus .n{font-size:2rem;font-weight:700;letter-spacing:-.02em;line-height:1;color:var(--now);min-width:2.2rem;text-align:center}.focus.soon .n{color:var(--soon)}.focus .w{flex:1;min-width:200px}.focus .w b{display:block;font-size:15.5px}.focus .w .due{display:block;margin-top:.1rem;white-space:normal}.focus .btn{white-space:nowrap}
+.dc{border-left-color:var(--line)}.dc.soon{border-left-color:var(--soon)}.dc.now{border-left-color:var(--now)}.dc .due{margin-top:.1rem}.dc .da button.quiet{font-weight:500}
+/* the feed: a fixed-width time column that never runs into the text; system noise sits back */
+.feed li{grid-template-columns:minmax(0,150px) 1fr}.feed .meta{overflow:hidden;text-overflow:ellipsis}.feed li.sys{color:var(--muted)}.feed li.sys b{font-weight:500}.feed li.sys .meta{opacity:.8}
+.tw .wide{min-width:16rem;white-space:normal}
 @media print{aside,footer,.demo,.noprint,main>h1{display:none!important}body{background:#fff}.frame{display:block}main{max-width:none;padding:0}.slip{border:0;margin:0}}
 `;
 
@@ -112,24 +133,36 @@ export const NAV_GROUPS = [
 ];
 export const NAV = NAV_GROUPS.flatMap(([, items]) => items);
 
+// The sidebar badges read the attention list (attention.mjs) through a provider the app sets once at
+// boot; a page that has no app behind it (a login page, an error page) shows none. The provider is
+// the app's memoized one, so the sidebar costs a lookup per page, not a doctor run.
+let ATTENTION = null;
+export function setAttention(fn) { ATTENTION = fn; }
+const badge = (nav, p) => { const b = nav?.[p]; return b?.n ? ` <span class="b ${b.level === 'calm' ? '' : e(b.level)}" title="${b.n} ${b.level === 'now' ? 'need you now' : b.level === 'soon' ? 'due soon' : 'waiting'}">${b.n}</span>` : ''; };
+// Relative time with the absolute stamp a hover away: "3 h ago", "due in 2 d".
+export const rel = (iso, text) => iso ? `<time datetime="${e(iso)}" title="${e(dt(iso))}">${e(text)}</time>` : '';
+
 export function layout({ title, body, path = '/', flash = null, company = 'Errer Labs', nav = true, csrf = '', demo = false, demoResetMinutes = 0, q = '', h1 = true, user = null }) {
   const groups = (demo ? [...NAV_GROUPS, ['Demo', [['/demo', 'Scenarios']]]] : NAV_GROUPS).map(([g, items]) => [g, user ? items.filter(([p]) => can(user.role, 'GET', p)) : items]).filter(([, items]) => items.length);
   const on = (p) => path === p || (p !== '/' && path.startsWith(p));
-  const navHtml = nav ? `<nav aria-label="Sections">${groups.map(([g, items]) => `${g ? `<div class="g">${e(g)}</div>` : ''}${items.map(([p, l]) => `<a href="${p}" class="${on(p) ? 'on' : ''}">${l}</a>`).join('')}`).join('')}</nav>` : '';
+  let att = null; if (nav && user && ATTENTION) { try { att = ATTENTION().nav; } catch { att = null; } }
+  const navHtml = nav ? `<nav aria-label="Sections">${groups.map(([g, items]) => `${g ? `<div class="g">${e(g)}</div>` : ''}${items.map(([p, l]) => `<a href="${p}" class="${on(p) ? 'on' : ''}"><span>${l}</span>${badge(att, p)}</a>`).join('')}`).join('')}</nav>` : '';
   const flashHtml = flash ? `<div class="flash ${flash.kind === 'err' ? 'err' : ''}">${escapeHtml(flash.text)}</div>` : '';
-  const side = nav ? `<aside><div class="brand">${e(company)}${demo ? ' <span class="pill warn">demo</span>' : ''}</div><form method="get" action="/search" class="search" role="search"><input type="search" name="q" value="${e(q)}" placeholder="Search anything…" aria-label="Search"></form>${navHtml}<div class="foot"><span>${user ? `<a href="/me" title="your account">${e(user.name)}</a> · ${e(user.role)}` : 'one SQLite file'}</span><form method="post" action="/logout" class="inline"><input type="hidden" name="_csrf" value="${e(csrf)}"><button class="quiet" style="padding:.25rem .6rem;font-size:12px">Log out</button></form></div></aside>` : '';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex"><title>${e(title)} · ${e(company)} backoffice</title><style>${CSS}</style></head>
-<body>${demo ? '<div class="demo">Demo — every name, order and dollar is synthetic; nothing is sent, charged or reported anywhere. <a href="/demo">Scenarios</a></div>' : ''}<div class="frame ${nav ? '' : 'solo'}">${side}<div><main>${flashHtml}${h1 ? `<h1>${e(title)}</h1>` : ''}${body}</main>${nav ? '' : `<footer>backoffice · one SQLite file, no SaaS · <a href="/api">API</a> · <a href="/status">public status</a></footer>`}</div></div>${nav ? `<script>${NAV_SCRIPT}</script>` : ''}</body></html>`;
+  const envBadge = demo ? '' : ENV.badge ? ` <span class="pill ${ENV.name === 'staging' ? 'warn' : ''}" title="BACKOFFICE_ENV=${e(ENV.name)}">${e(ENV.badge)}</span>` : '';
+  const side = nav ? `<aside><div class="brand">${e(company)}${demo ? ' <span class="pill warn">demo</span>' : ''}${envBadge}</div><form method="get" action="/search" class="search" role="search"><input type="search" name="q" value="${e(q)}" placeholder="Search anything…" aria-label="Search"></form>${navHtml}<div class="foot"><span>${user ? `<a href="/me" title="your account">${e(user.name)}</a> · ${e(user.role)}` : 'one SQLite file'}</span><form method="post" action="/logout" class="inline"><input type="hidden" name="_csrf" value="${e(csrf)}"><button class="quiet" style="padding:.25rem .6rem;font-size:12px">Log out</button></form></div></aside>` : '';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex"><title>${demo || !ENV.badge ? '' : `[${e(ENV.badge)}] `}${e(title)} · ${e(company)} backoffice</title><style>${CSS}</style></head>
+<body>${demo ? '<div class="demo">Demo — every name, order and dollar is synthetic; nothing is sent, charged or reported anywhere. <a href="/demo">Scenarios</a></div>' : ENV.banner ? `<div class="demo envbar">${e(ENV.banner)}</div>` : ''}<div class="frame ${nav ? '' : 'solo'}">${side}<div><main>${flashHtml}${h1 ? `<h1>${e(title)}</h1>` : ''}${body}</main>${nav ? '' : `<footer>backoffice · one SQLite file, no SaaS · <a href="/api">API</a> · <a href="/status">public status</a></footer>`}</div></div>${nav ? `<script>${NAV_SCRIPT}</script>` : ''}</body></html>`;
 }
 
 // Short, identifying columns never wrap (a number, a date, a status); the table scrolls sideways instead of folding them.
 const NOWRAP = /^(#|status|paid|when|total|batch|opened|updated|sla due|created|last login|expected|sent|issued|due|qty|δ|unit|line|price|flashed|renews|ms|90 d|every|received|ordered|date|month|amount|kind|pri|role|scope|from|to|last order|first order|since|tracking|serial|mac|sku|finished sku|code|number|on hand|reorder at|unit cost|on order|cogs\/unit|per unit|buildable now|uses|orders|units|spent|tickets|marketing|supplier|board|firmware|order|email|to|replies|revenue)$/i;
-export function table(rows, cols, { empty = 'Nothing here.' } = {}) {
+export function table(rows, cols, { empty = 'Nothing here.', rowClass = null } = {}) {
   if (!rows.length) return `<p class="muted">${e(empty)}</p>`;
   const lead = cols.findIndex(c => c.label);   // the first named column leads a folded card (a checkbox column has no name)
-  const cls = (c, i) => [c.num ? 'num' : '', (c.nowrap ?? NOWRAP.test(c.label)) && !c.wrap ? 'nw' : '', i === lead ? 'lead' : '', c.label ? '' : 'sel'].filter(Boolean).join(' ');
+  const cls = (c, i) => [c.num ? 'num' : '', (c.nowrap ?? NOWRAP.test(c.label)) && !c.wrap ? 'nw' : '', c.wide ? 'wide' : '', i === lead ? 'lead' : '', c.label ? '' : 'sel'].filter(Boolean).join(' ');
   const head = cols.map((c, i) => `<th class="${cls(c, i)}">${e(c.label)}</th>`).join('');
-  const body = rows.map(r => `<tr>${cols.map((c, i) => `<td class="${cls(c, i)}" data-l="${e(c.label)}">${c.html ? c.html(r) : e(c.get ? c.get(r) : r[c.key])}</td>`).join('')}</tr>`).join('');
+  // rowClass names the row's attention level ('now' | 'soon' | 'calm' | ''): a mark on its left edge, the same one the sidebar and the home cards wear
+  const body = rows.map(r => { const rc = rowClass ? rowClass(r) : ''; return `<tr${rc && rc !== 'calm' ? ` class="${e(rc)}"` : ''}>${cols.map((c, i) => `<td class="${cls(c, i)}" data-l="${e(c.label)}">${c.html ? c.html(r) : e(c.get ? c.get(r) : r[c.key])}</td>`).join('')}</tr>`; }).join('');
   return `<div class="tw${cols.length >= 5 ? ' fold' : ''}"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 

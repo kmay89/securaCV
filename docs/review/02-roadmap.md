@@ -123,6 +123,9 @@ Each phase lists **deliverable → user-facing acceptance → invariant guardrai
 - **Hardware-backed keys**: decouple DB key from signing key (F-04 prerequisite), then Secure
   Element / ESP32-S3 **eFuse + flash encryption + secure boot** (the secure partition table already
   anticipates `nvs_keys` from eFuse). *Acceptance:* device key not recoverable from a config seed.
+  *(Amended 2026-10-22, #1843: `nvs_keys` is where an ESP-IDF build's NVS encryption would keep its
+  keys; no Canary build reads it, since NVS encryption is not available under `framework = arduino`,
+  and flash encryption alone does not cover the NVS that holds the key.)*
   *Status 2026-09:* the prerequisite is done — the DB key is already decoupled through
   `SECURACV_DB_KEY_SEED`, and the kernel now rotates the signing identity and re-keys the database
   by operator command (`break_glass rotate-identity`, `break_glass rekey-db`; option (a),
@@ -172,7 +175,8 @@ saved ~336 KB). Recommendations:
    multi-camera detection throughput. This matches the README BOM and `docs/strategy/05`.
 5. **Hardware-root-of-trust for the sold kit:** enable S3 **eFuse-derived NVS key + flash
    encryption + secure boot v2**; the `provisioning/partitions_secure.csv` already reserves
-   `nvs_keys` for this (but fix its 4 MB assumption — F-06).
+   `nvs_keys` for this (but fix its 4 MB assumption — F-06). *(Amended 2026-10-22, #1843: no
+   Canary build reads `nvs_keys` yet; NVS encryption waits on leaving `framework = arduino`.)*
 6. **Always keep big buffers in PSRAM** (CSI rings, web scratch). Codify as a build guardrail so the
    DRAM-overflow class of bug doesn't recur (REQ-FW-032).
 

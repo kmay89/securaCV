@@ -344,7 +344,7 @@ static volatile bool g_vault_test_pending = false;
 // (canary-local/tools/figures) holds it to the mDNS and MQTT sites and refuses
 // any other =, compound assignment, ++ or -- of the name (sweep F294).
 static const char* DEVICE_TYPE        = "canary-wap";
-static const char* FIRMWARE_VERSION   = "2.4.16-wap";  // Vision runtime config release train
+static const char* FIRMWARE_VERSION   = "2.4.17-wap";  // Vision runtime config release train
 static const char* RULESET_ID         = "securacv:canary:v1.0";
 static const char* PROTOCOL_VERSION   = "pwk:v0.3.0";
 static const char* CHAIN_ALGORITHM    = "sha256-domain-sep";
@@ -367,6 +367,12 @@ static const char* OTA_PRODUCT = "securacv-canary-wap";
 static volatile bool g_ota_publish_pending = false;
 static securacv_ota_state_t g_ota_last_seen_state = SECURACV_OTA_IDLE;
 static uint32_t g_ota_next_check_ms = 0;
+#if FEATURE_POWER_MONITOR
+/* The install veto's battery fact (power_gate::ota_install_power_ok), set by
+ * the loop on each power-monitor sample. ota_can_install() runs on the OTA
+ * task, so one word crosses instead of the monitor's struct. */
+static bool g_ota_battery_low = false;
+#endif
 
 // ════════════════════════════════════════════════════════════════════════════
 // DEVICE CONFIG
@@ -537,10 +543,14 @@ static const uint32_t BOOT_SHORT_PRESS_MS  = 50;
 static const uint32_t BOOT_LONG_PRESS_MS   = 3000;
 static_assert(BOOT_LONG_PRESS_MS == canary::io::ResetHold{}.warn_ms,
               "the 3 s diagnostic hold and ResetHold's Warn stage share one threshold");
-// Provisioning gate stays open for this long after a BOOT press, so a
-// browser tab that polls every 2 s reliably catches it and a captive
-// portal interstitial can't time the user out. The gate is still
-// single-use: the first successful receipt fetch closes it immediately.
+// The BOOT tap stays open this long for one asker:
+// provisioning_gate.h tap_arbitrate() serves it only to the sole address
+// seen asking from TAP_LOOKBACK_MS before the tap onward (sweep F342), so
+// the owner's page asks first and says when to press. A second address
+// asking in that window closes the tap (409 tap_contended), and a tap no
+// page was asking for goes to the first asker after it. A served receipt
+// closes it at once. (BLE OTA break-glass is press-first and takes the
+// gate directly.)
 static const uint32_t PROVISIONING_GATE_TTL_MS = 30000;
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -976,9 +986,9 @@ static uint32_t g_claim_refusal_logged_ms = 0;
 // never shortens or extends the window. Written every ~2 s by the door
 // while its no-credentials window runs (ble_improv_note_window_used), read
 // once at the door's init (ble_improv_window_used_ms), zeroed by a
-// credential wipe (wifi_clear_credentials: the owner's own act re-arms the
-// window, as improv_core.h's session does in RAM). Loop task only after
-// setup().
+// credential wipe (wifi_clear_credentials: the 10 s hold, or Forget Wi-Fi,
+// which any landing session can send, ledger F345, re-arms the window, as
+// improv_core.h's session does in RAM). Loop task only after setup().
 RTC_NOINIT_ATTR uint32_t g_improv_window_magic;
 RTC_NOINIT_ATTR uint32_t g_improv_window_used_ms;
 static constexpr uint32_t IMPROV_WINDOW_MAGIC = 0x444F4F52;  // "DOOR"
@@ -989,8 +999,8 @@ static constexpr uint32_t IMPROV_WINDOW_MAGIC = 0x444F4F52;  // "DOOR"
 // previous image's spent window: RTC memory survives a flash); or a reset
 // the chip cannot name (the record is RTC garbage as far as anyone can
 // tell, and clearing re-arms the window, which is the safe side — a half
-// hour of door on a unit nobody owns, not a door that never opens or never
-// shuts). A software reset, a watchdog, a panic and a deep-sleep wake keep
+// hour of door on a unit with no network saved, not a door that never opens
+// or never shuts). A software reset, a watchdog, a panic and a deep-sleep wake keep
 // the record. The USB / JTAG / glitch reasons exist from IDF 5.1 (core 3.x).
 // Mirrors firmware/common/network/improv_ble.cpp's reset_is_power_cycle.
 static bool improv_window_reset_is_power_cycle(esp_reset_reason_t why) {
@@ -1014,11 +1024,16 @@ static bool improv_window_reset_is_power_cycle(esp_reset_reason_t why) {
 // OTA header, or a v2 image below the anti-rollback floor, is admitted only
 // if the owner short-tapped BOOT within the last PROVISIONING_GATE_TTL_MS —
 // the identical act that reveals the provisioning receipt. Single-use: the
-// one BEGIN it admits closes the gate, through the same atomic exchange the
-// HTTP-side receipt handler uses (provisioning_gate_take), so the two
-// consumers on their two tasks cannot both spend one tap. ble_ota.cpp
-// writes the health-log line that names what was bypassed; this only
-// records that the gate was spent on it.
+// one BEGIN it admits closes the gate through provisioning_gate_take(), the
+// header's take(), one atomic exchange. The HTTP-side receipt spends a tap
+// through provisioning_gate_take_for() instead, a compare-and-swap of the
+// stamp it judged (take_exact()), and an exchange and a compare-and-swap of
+// one word cannot both win, so the two consumers on their two tasks cannot
+// both spend one tap. This take is press-first by design (no receipt client
+// is asking), so a device on the network whose ask for the receipt is
+// judged between the tap and the BEGIN takes the tap or closes it, and the
+// BEGIN is refused. ble_ota.cpp writes the health-log line that names what
+// was bypassed; this only records that the gate was spent on it.
 static bool ble_ota_break_glass_take() {
   if (!provisioning_gate_take()) return false;
   log_health(SCV_LOG_WARNING, SCV_CAT_AUTH,
@@ -1515,7 +1530,9 @@ static void generate_device_id(char* out, size_t cap) {
   // Encoded in the unambiguous alphabet (no 0/O/o, 1/I/i/l/L) so the handle a
   // user reads off canary.local / a sticker has no confusable glyphs. base-54
   // of 16 bits is injective, so per-device uniqueness matches the old hex form;
-  // it stays stable across reflashes because the keypair persists in NVS.
+  // it stays stable across OTA updates and the 10 s hold because the keypair
+  // persists in NVS (an install in either flasher starts NVS over, so the
+  // next boot has a new keypair and a new suffix).
   char suffix[5];
   unambiguous_suffix16((uint16_t)((g_device.pubkey_fp[0] << 8) | g_device.pubkey_fp[1]),
                        suffix);
@@ -2483,9 +2500,10 @@ static bool sd_append_witness_record(const WitnessRecord* rec) {
 
 // Recover the chain head from the SD log of record at boot / hot-mount.
 // The NVS cache persists only every SD_PERSIST_INTERVAL records, so after
-// a power cut (or an NVS wipe/reflash while the card kept its history) the
-// cached head can be BEHIND the last record actually signed — resuming
-// from it would fork the supposedly append-only chain. SD wins when its
+// a power cut the cached head can be BEHIND the last record actually signed
+// — resuming from it would fork the supposedly append-only chain. (An NVS
+// erase or a flasher install gives a new key, so the old card's tail does
+// not verify below and the chain starts over.) SD wins when its
 // tail is strictly ahead AND the tail record's signature verifies under
 // THIS device's public key: a foreign card (another device's history) or
 // a tampered tail must never move our chain head.
@@ -7379,7 +7397,8 @@ bool ble_log_get_by_index(size_t newest_first_index, BleLogSnapshot* out) {
 
 // Cheap getter so the BLE module can detect chain advancement without
 // rebuilding HEAD just to throw it away. Mirrors `g_health.records_created`
-// 1:1; the value monotonically increases for the device's lifetime.
+// 1:1; the value only increases within a boot (it lives in RAM and starts
+// at 0 on every boot).
 uint32_t ble_witness_get_total_records() {
   return (uint32_t)g_health.records_created;
 }
@@ -8190,8 +8209,9 @@ static esp_err_t handle_fleet_scan_auth(httpd_req_t* req) {
  * The wire shape is built by the ONE shared builder (fleet_selfreport.h, in
  * firmware/common, host-tested), so EVERY networked board answers byte-for-byte
  * identically — a change to the shape is a change to that one header, never a
- * per-board edit. Distinct from /api/fleet-scan above, which is the rich,
- * Bearer-gated mDNS browser for the operator UI; this one is presence-only and
+ * per-board edit. Distinct from /api/fleet/scan above, which is the rich
+ * mDNS browser for the operator UI behind api_auth_check() (the bearer, or a
+ * landing session any LAN host can mint, F346); this one is presence-only and
  * carries no secrets and no media, safe to read anonymously.
  */
 static esp_err_t handle_fleet(httpd_req_t* req) {
@@ -9162,8 +9182,10 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //    do not serve); another address's right token is served. The lockout
   //    never gates the claim or the tap: a page with a stale token, or a
   //    backoff a guesser armed, is still served by the claim or a BOOT tap,
-  //    and the address they serve has its backoff cleared (sweep F341,
-  //    after step 4).
+  //    and the address they serve has its own slot cleared (sweep F341,
+  //    after step 4), never the shared overflow: an address held only
+  //    through the overflow, which a host striking from nine or more
+  //    addresses keeps running, stays held after it is served.
   //    (The lockout is all this decides. Who gets the tap is step 4's.)
   const bool bearer_held = api_auth_bearer_held(req);
   if (api_auth_bearer_grant(req, g_device.api_token_str)) {
@@ -9532,7 +9554,10 @@ static esp_err_t handle_device_name(httpd_req_t* req) {
 }
 
 // ── Auth-wrapped handler helpers ──
-// These wrappers add Bearer token authentication to existing handlers.
+// These wrappers put api_auth_check() in front of existing handlers: the
+// session cookie first (__Host-cv_session over HTTPS, cv_session over plain
+// HTTP, F337), which the landing page mints for any host on the network
+// (ledger F346), then the bearer token under the lockout.
 
 static esp_err_t handle_status_auth(httpd_req_t* req) {
   if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
@@ -9623,11 +9648,13 @@ static esp_err_t handle_safe_mode_retry_auth(httpd_req_t* req) {
 
 // WiFi-management auth wrappers. These three endpoints mutate provisioning
 // state (disable WiFi, wipe NVS-stored credentials, re-enable) and are only
-// meaningful AFTER first-setup. The dashboard's secureFetch already sends
-// `Authorization: Bearer <api_token>` on all three, but the handlers
-// themselves were originally registered without an _auth wrapper, so a
-// LAN-local curl could hit /api/wifi/forget and force a re-provisioning
-// without authenticating. (/api/wifi and /api/wifi/scan stay
+// meaningful AFTER first-setup. The handlers were originally registered
+// without an _auth wrapper, so a LAN-local curl could hit /api/wifi/forget
+// with no credential at all. They now take api_auth_check(): the cookie or
+// the bearer, and the landing page mints that cookie for any host on the
+// network, so any LAN host can still forget the Wi-Fi, which reopens the
+// first-come setup door (ledger F345). That session is also the owner's
+// way out under the lockout (F343). (/api/wifi and /api/wifi/scan stay
 // unauthenticated by design — both are read-only and need to work during
 // captive-portal setup before any API token exists. /api/wifi/connect
 // gets its own pre-credential gate from pair_token_valid as of #434.)
@@ -9651,9 +9678,11 @@ static esp_err_t handle_wifi_reconnect_auth(httpd_req_t* req) {
 // the mesh service doesn't start until WiFi is up — so none of them
 // have a "must work pre-token" exception like /api/wifi/scan does, and
 // none of them have a pre-credential gate like /api/wifi/connect's
-// pair_token_valid. The dashboard's secureFetch already supplies the
-// Bearer token on every call (web_ui.h:3063-3170), so wrapping mirrors
-// the same plumbing-only fix as #435 for the WiFi-mgmt handlers.
+// pair_token_valid. The dashboard reaches them with its session cookie
+// (secureFetch sends a bearer only when the page holds a token), so
+// wrapping mirrors the same plumbing-only fix as #435 for the WiFi-mgmt
+// handlers; api_auth_check() takes the landing session any LAN host can
+// mint, so these are not owner-only (F346).
 // Fenced like the handlers and registrations they bridge: with the mesh
 // off (DEV/MINIMAL profiles) the wrapped handle_mesh_* symbols don't
 // exist, and an unfenced wrapper is a build break the FULL-only CI of
@@ -10113,7 +10142,8 @@ static void register_api_routes(httpd_handle_t server) {
   httpd_uri_t prov = { .uri = "/api/provisioning-receipt", .method = HTTP_GET, .handler = handle_provisioning_receipt };
   httpd_register_uri_handler(server, &prov);
 
-  // Authenticated API endpoints (Bearer token required)
+  // Authenticated API endpoints (api_auth_check(): a landing session or the
+  // bearer token, F346)
   httpd_uri_t status = { .uri = "/api/status", .method = HTTP_GET, .handler = handle_status_auth };
   httpd_register_uri_handler(server, &status);
 
@@ -10515,7 +10545,8 @@ register_extra_routes:
   httpd_uri_t identify = { .uri = "/api/identify", .method = HTTP_POST, .handler = handle_identify };
   httpd_register_uri_handler(active_server, &identify);
 
-  // Rename this device → canary-<name>.local (Bearer-gated).
+  // Rename this device → canary-<name>.local (api_auth_check(): the bearer,
+  // or a landing session any LAN host can mint, F346).
   httpd_uri_t device_name = { .uri = "/api/device-name", .method = HTTP_POST, .handler = handle_device_name };
   httpd_register_uri_handler(active_server, &device_name);
 
@@ -10706,13 +10737,15 @@ register_extra_routes:
 
 #if FEATURE_MESH_NETWORK
   // Chirp Channel v0.2 — anonymous community witness mesh (audit C12).
-  // Every endpoint Bearer-token-gated via the chirp_api template trampoline.
+  // Every endpoint behind the chirp_api template trampoline, api_auth_check:
+  // the bearer or a landing session any host on the network can mint (F346).
   chirp_api::register_routes(active_server, g_device.api_token_str);
 #endif
 
 #if FEATURE_BEACON_CHANNEL
   // Beacon Channel — harm-reduction broadcast with two-pubkey co-signing.
-  // Bearer-gated from day one (see spec/beacon_channel_v0.md §10).
+  // Auth-gated from day one (see spec/beacon_channel_v0.md §10): api_auth_check,
+  // the bearer or a landing session any host on the network can mint (F346).
   beacon_api::register_routes(active_server, g_device.api_token_str);
 #endif
 
@@ -10945,8 +10978,9 @@ static bool wifi_clear_credentials() {
   g_improv_join_pending = false;   // a door join in flight has nothing left to prove
   g_wifi_status.state = WIFI_PROV_AP_ONLY;
   g_wifi_status.last_fail_reason[0] = '\0';
-  // The owner's own act re-arms the Bluetooth setup door's first-boot
-  // window: improv_core.h's session does so in RAM the moment the door reads
+  // A credential wipe (the 10 s hold, or Forget Wi-Fi, which any landing
+  // session can send, ledger F345) re-arms the Bluetooth setup door's
+  // first-boot window: improv_core.h's session does so in RAM the moment the door reads
   // "no credentials" where it read credentials before (its wiped
   // transition), and the carried record must agree, or a software restart
   // right after a Forget would start the door on the spent time instead of
@@ -11557,8 +11591,9 @@ static void wifi_init_provisioning() {
   if (!resolve_ap_password(ap_pass, sizeof(ap_pass))) {
     return;
   }
-  // One stable SSID for the lifetime of the device — the same name during
-  // first-boot setup and in steady state. The SoftAP is broadcast while the
+  // One SSID for as long as the key lasts — the same name during first-boot
+  // setup and in steady state (an install in either flasher starts NVS over,
+  // so the next boot has a new key and a new name). The SoftAP is broadcast while the
   // device is unprovisioned or its STA link is down; once the STA holds the
   // home network past AP_DROP_GRACE_MS the AP is torn down for radio stability
   // and automatically re-raised on STA loss (wifi_raise_ap / wifi_drop_ap).
@@ -12171,6 +12206,41 @@ static void ota_witness_event(const char* type, const char* version) {
   }
 }
 
+/* How the last install ended, witnessed once: the one place it is recorded.
+ * Called after securacv_ota_init() at boot, and again on the loop pass where
+ * securacv_ota_health_tick() confirms the new image. The engine hands out the
+ * install marker only once the running image is confirmed, or on a boot that
+ * is not the image the marker names (a rollback). So an image still inside
+ * its confirm dwell records nothing yet. Recording "applied" on its first
+ * boot, as before, put an update into the chain that a failed dwell then took
+ * back, and the old image found no marker left to say so. */
+static void ota_record_update_outcome() {
+  char ota_target[SECURACV_OTA_VERSION_MAX];
+  if (!securacv_ota_take_pending_version(ota_target, sizeof(ota_target))) return;
+  if (strcmp(ota_target, FIRMWARE_VERSION) == 0) {
+    ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
+    log_health(SCV_LOG_NOTICE, SCV_CAT_SYSTEM,
+               "Firmware update applied", FIRMWARE_VERSION);
+  } else {
+    ota_witness_event("fw_update_rolled_back", ota_target);
+    log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM,
+               "Firmware update rolled back", ota_target);
+  }
+}
+
+/* The confirm dwell's health signal for this pass (docs/OTA.md §2): the
+ * link this unit is set up to hold, home Wi-Fi when it joins one, else its
+ * own access point (provisioning_logic::ota_confirm_link_healthy). A
+ * standalone unit never joins a station network, yet takes updates over
+ * Bluetooth; reading the station link alone left its update unconfirmed,
+ * and the next restart reverted it. The AP is up when the radio is in an
+ * AP mode, the same test the status snapshot's setup_ap uses. */
+static bool ota_confirm_healthy_now() {
+  return provisioning_logic::ota_confirm_link_healthy(
+      g_wifi_ap_only, g_wifi_creds.configured, g_wifi_creds.enabled,
+      WiFi.status() == WL_CONNECTED, (WiFi.getMode() & WIFI_MODE_AP) != 0);
+}
+
 /* Runs on the OTA task — only flips a flag; the main loop publishes. */
 static void ota_on_progress(securacv_ota_state_t state, uint8_t percent,
                             securacv_ota_error_t error, void* user_data) {
@@ -12178,10 +12248,17 @@ static void ota_on_progress(securacv_ota_state_t state, uint8_t percent,
   g_ota_publish_pending = true;
 }
 
-/* Install-permission gate. The BLE OTA channel and the pull engine write
+/* Install-permission gate (runs on the OTA task, before the download and
+ * again before the reboot). The BLE OTA channel and the pull engine write
  * to the same inactive partition, so they strictly exclude each other
- * (ble_ota.cpp holds the mirror-image check). */
+ * (ble_ota.cpp holds the mirror-image check). And a battery at or below
+ * the monitor's low line, not charging, defers the install: lower down
+ * the power policy deep-sleeps, and a deep sleep is a restart that wastes
+ * a download or, inside the confirm dwell, reverts the update
+ * (power_gate::ota_install_power_ok). The Bluetooth channel has no such
+ * gate: the person sending that update is beside the unit. */
 static bool ota_can_install(char* reason, size_t reason_len) {
+  (void)reason; (void)reason_len;
 #if FEATURE_BLUETOOTH && __has_include(<NimBLEDevice.h>)
   const ble_ota::OtaState b = ble_ota::get_state();
   if (b == ble_ota::OTA_RECEIVING || b == ble_ota::OTA_VERIFYING ||
@@ -12189,8 +12266,12 @@ static bool ota_can_install(char* reason, size_t reason_len) {
     snprintf(reason, reason_len, "a Bluetooth update is in progress");
     return false;
   }
-#else
-  (void)reason; (void)reason_len;
+#endif
+#if FEATURE_POWER_MONITOR
+  if (__atomic_load_n(&g_ota_battery_low, __ATOMIC_RELAXED)) {
+    snprintf(reason, reason_len, "the battery is low and not charging; plug it in to update");
+    return false;
+  }
 #endif
   return true;
 }
@@ -13256,8 +13337,9 @@ void setup() {
 #endif
     // Health-gated confirmation (docs/OTA.md §2): the boot probe leaves a new
     // image pending; loop()'s securacv_ota_health_tick() confirms it after a
-    // minute of the STA link holding, so a crash loop inside that minute
-    // rolls back by the bootloader's own rule.
+    // minute of the unit's link holding (the home Wi-Fi it joins, or in
+    // standalone its own AP: ota_confirm_healthy_now), so a crash loop inside
+    // that minute rolls back by the bootloader's own rule.
     ota_cfg.confirm_dwell_ms = 60000;
     if (securacv_ota_init(&ota_cfg) == ESP_OK) {
       Serial.printf("[OK] Pull-OTA engine ready (product=%s, version=%s)\n",
@@ -13271,19 +13353,10 @@ void setup() {
 
     // Witness the outcome of an install reboot. The engine (and the BLE
     // OTA path) recorded the install target the moment the boot partition
-    // flipped; running the old version again means rollback.
-    char ota_target[SECURACV_OTA_VERSION_MAX];
-    if (securacv_ota_take_pending_version(ota_target, sizeof(ota_target))) {
-      if (strcmp(ota_target, FIRMWARE_VERSION) == 0) {
-        ota_witness_event("fw_update_applied", FIRMWARE_VERSION);
-        log_health(SCV_LOG_NOTICE, SCV_CAT_SYSTEM,
-                   "Firmware update applied", FIRMWARE_VERSION);
-      } else {
-        ota_witness_event("fw_update_rolled_back", ota_target);
-        log_health(SCV_LOG_WARNING, SCV_CAT_SYSTEM,
-                   "Firmware update rolled back", ota_target);
-      }
-    }
+    // flipped; running the old version again means rollback. A new image
+    // still in its confirm dwell records nothing here: loop() records it on
+    // the pass that confirms it (ota_record_update_outcome).
+    ota_record_update_outcome();
   }
 
   // Print full provisioning receipt on every boot.
@@ -13336,7 +13409,7 @@ void setup() {
   boot_blank();
   boot_line("    Commands: h=help i=id s=stat t=time g=gps c=cam m=sys r=data b=bat");
   boot_line("    Token + WiFi credentials are printed above on every boot");
-  boot_line("    Press BOOT (<2s)   = receipt gate open 30s; hold 2-3s = print identity");
+  boot_line("    Press BOOT (<2s)   = receipt to one asker: ask first, or the first to ask gets it (30s); hold 2-3s = print identity");
   boot_line("    Hold BOOT 10s      = factory reset (Wi-Fi, broker, name; identity kept)");
   boot_separator();
   Serial.println();
@@ -13652,8 +13725,9 @@ static void ble_scanners_release_if_due() {
 // standalone choice, the MQTT bridge's broker row and CA (csi_mqtt's own
 // keys only), the device name and the first-boot flag (the wizard runs again).
 // Kept: the Ed25519 identity key, the chain state and its NVS records, the
-// witness records and health log on SD, the API token (derived from the
-// key), the OTA settings, the CSI module's tuning. Runs on the loop task
+// witness records and health log on SD, the API token (the one derived from
+// the key, or the one a flasher seeded: api_tkn is not cleared either way),
+// the OTA settings, the CSI module's tuning. Runs on the loop task
 // (the BOOT poll) and RETURNS: the restart is the release edge's
 // (HoldEvent::Released, released_stage >= 2) because GPIO0 is the strapping pin.
 static void factory_reset_by_hold() {
@@ -13686,8 +13760,12 @@ void loop() {
   #endif
 
   // The A/B confirm dwell (docs/OTA.md §2): a freshly installed image is
-  // confirmed only after a minute of the home link holding.
-  securacv_ota_health_tick(millis(), WiFi.status() == WL_CONNECTED);
+  // confirmed only after a minute of the unit's link holding (home Wi-Fi,
+  // or its own AP when it has no home network to join). The pass that
+  // confirms it is the pass that witnesses the update as applied.
+  if (securacv_ota_health_tick(millis(), ota_confirm_healthy_now())) {
+    ota_record_update_outcome();
+  }
 
   // Service the captive DNS redirector whenever it's up (it self-guards on
   // s_dns_running), so it answers AP clients in steady state too — not only
@@ -13949,7 +14027,7 @@ void loop() {
       // (ResetHold above); Forget Wi-Fi on the dashboard
       // (wifi_clear_credentials) stays the network-only reset, and still
       // re-arms the Bluetooth setup door's first-boot window.
-      Serial.println("[BOOT] Released before 10 s: nothing reset (hold 10 s for a factory reset; Forget Wi-Fi on the dashboard resets the network only)");
+      Serial.println("[BOOT] Released before 10 s: nothing reset (hold 10 s for a factory reset; Forget Wi-Fi on the dashboard clears only the saved Wi-Fi; on a unit that had Wi-Fi, either reopens the Bluetooth setup door for half an hour, to the first client that connects)");
     } else if (duration >= BOOT_BUTTON_HOLD_MS) {
       // Medium hold: print device info (existing behavior)
       if (g_device.initialized) {
@@ -13966,7 +14044,7 @@ void loop() {
       // open() stores a millis() of 0 as 1 (0 is "closed"), with a release
       // store.
       canary::net::provisioning_gate::open(g_provisioning_gate, millis());
-      Serial.printf("[AUTH] Provisioning gate OPENED (receipt available for %lu seconds)\n",
+      Serial.printf("[AUTH] Provisioning gate OPENED for %lu seconds: the receipt goes to one asker; with no page asking, the first address to ask gets it (ask first, then tap)\n",
                     (unsigned long)(PROVISIONING_GATE_TTL_MS / 1000));
       log_health(SCV_LOG_INFO, SCV_CAT_AUTH, "Provisioning gate opened", "BOOT button");
       // Blink LED 3x to confirm. Skipped while an SD mount attempt is in
@@ -14266,7 +14344,17 @@ void loop() {
 
   // Update power monitor (ADC sample, SoC, charge state)
   #if FEATURE_POWER_MONITOR
-  power_monitor::process();
+  if (power_monitor::process()) {
+    // A new sample: refresh the pull-OTA install veto's battery fact
+    // (read by ota_can_install on the OTA task). Unclassified, charging,
+    // full or no battery reads as not low.
+    PowerState pwr_ota;
+    const bool low = power_monitor::get_state(&pwr_ota) &&
+        !power_gate::ota_install_power_ok(pwr_ota.battery_present,
+                                          pwr_ota.power_source == POWER_SOURCE_BATTERY,
+                                          pwr_ota.soc_pct, power_monitor::SOC_LOW_PCT);
+    __atomic_store_n(&g_ota_battery_low, low, __ATOMIC_RELAXED);
+  }
 
   // Persist battery health history (runtime minutes, SoC minimum,
   // brownout count, last-full-charge) every 10 minutes so the stats

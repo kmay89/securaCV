@@ -25,7 +25,7 @@ in `Cargo.toml` to `1.0.0` (the tag step).
 | Item | Qty | Notes |
 |---|---|---|
 | XIAO ESP32-S3 (Sense) | **≥ 3** | 3 boards are needed for the Opera mesh / Beacon three-board repro; 2 minimum for Chirp |
-| Boards with **flash encryption** enabled | ≥ 2 | Required for mesh (the `opera_secret` in NVS is only confidential under FE) |
+| Boards with **flash encryption** enabled | ≥ 2 | Required for mesh: the firmware writes the `opera_secret` to NVS only with FE on (audit O2). FE does not make it confidential: NVS is plaintext on a fused board too |
 | USB-C cables, powered hub | — | For simultaneous multi-board flashing + serial |
 | Raspberry Pi 4/5 or x86 box w/ Home Assistant OS | 1 | Operator stack host (Track A) |
 | RTSP IP camera (or the committed mp4 fixture over RTSP) | 1 | Track A |
@@ -78,7 +78,8 @@ Proves the flagship path end-to-end on real infrastructure. (CI already proves t
 Mesh persists its `opera_secret` only on **flash-encryption-enabled** boards built from
 `[env:full]`. The static guard added this cycle (`firmware/scripts/regression_check.sh` → "Mesh
 secret persistence is FE-gated") asserts the FE check stays in the persistence layer; this track
-proves on hardware that **no mesh secret lands in unencrypted NVS**.
+proves on hardware that **no mesh secret lands in NVS on a board without flash encryption** (on an
+FE board it does, in NVS that is plaintext too: flash encryption does not cover NVS).
 
 > **As-built nuance / open design question.** On an FE-off board the persistence layer refuses to
 > write the secret, but `on_pairing_succeeded` (`firmware/canary/src/main.cpp`) **deliberately
@@ -89,9 +90,9 @@ proves on hardware that **no mesh secret lands in unencrypted NVS**.
 
 | # | Step | Command / reference | Expected | Artifact → `docs/audit/repro/` |
 |---|---|---|---|---|
-| C0 | Production-provision FE boards | `firmware/provisioning/` → `./generate_keys.sh` then `./provision_canary.sh --port … --phase 2 --dry-run` then without `--dry-run` (uses `platformio_secure.ini` / `sdkconfig.defaults.secure` / `partitions_secure.csv`) | Secure Boot v2 + Flash Encryption burned; `verify_device.py` confirms | `O2/` |
+| C0 | Production-provision FE boards (**blocked today**) | `firmware/provisioning/` → `./generate_keys.sh` then `./provision_canary.sh --port … --phase 2 --dry-run` (uses `platformio_secure.ini` / `sdkconfig.defaults.secure` / `partitions_secure.csv`); do not run it without `--dry-run` on a C1 board yet | As tooled the kit makes no FE board: it writes a plaintext image and burns no `SPI_BOOT_CRYPT_CNT` (and `SECURE_BOOT_EN` with no key digest, untested on a bench), and its `verify_device.py --expect-locked` fails on the fuses it does not burn (`docs/secure_provisioning.md`, Step 3). C1's FE boards need flash encryption turned on some other way until the kit does it | `O2/` |
 | C1 | Build the mesh image | `pio run -e full -t upload` on ≥3 FE boards | `[OK] Mesh layer active (mesh_transport + mesh_session)` in serial | `O3/` setup log |
-| C2 | **FE secret-at-rest gate** | pair on a **non-FE** board, then dump NVS | serial shows `active for this boot but NVS persist failed`; **NVS contains no `opera_secret`** (O2); session does **not** survive reboot | `O2/` (NVS dump + serial) |
+| C2 | **FE persistence gate** (keeps the secret off non-FE boards; not at-rest secrecy) | pair on a **non-FE** board, then dump NVS | serial shows `active for this boot but NVS persist failed`; **NVS contains no `opera_secret`** (O2); session does **not** survive reboot | `O2/` (NVS dump + serial) |
 | C3 | Chirp v0.2 two-device repro | `docs/audit/hardware_verification_checklist.md` → *Chirp v0.2* | findings reproduce as documented | `chirp/` |
 | C4 | Opera mesh v0.2 three-board repro (O1/O2/O3) | same checklist → *Opera mesh v0.2* | O1 counter freshness, O2 FE-gated provisioning, O3 transactional rekey all pass | `O1/ O2/ O3/` |
 | C5 | Beacon channel v0 three-board repro | same checklist → *Beacon channel v0* | beacon discovery / tamper-revoke as documented | `beacon/` |
@@ -148,7 +149,7 @@ Two things that silently spoil a row:
 | E3 | Same bad image, but flash it **over USB** (a confirmed image — nothing to roll back to) | Each boot panics; the boot whose count reaches 4 prints the `SAFE MODE` card (one boot later if the first came up from power-on); Wi-Fi AP never comes up | serial log |
 | E4 | In safe mode: `c`, then `n` | `Canceled.`; still in safe mode | serial log |
 | E5 | In safe mode: hold BOOT 2 s | `Counter cleared. Restarting normally...`; boots normally (then crash-loops again, since the image is still bad) | serial log |
-| E6 | Flash the good E1 build over USB while in safe mode. On every boot in this track, and once on an image from each toolchain that builds the Canary (PlatformIO and the Arduino IDE / `arduino-cli`), check the `Image identity (app_elf_sha256): non-zero` line — or, for a build without that line, `esptool.py image_info --version 2 <app>.bin` shows a non-zero ELF file SHA256 | Boots normally at `Boot attempt 1` (or `0 ... (power-on reset: not counted)`) — a different build starts the count over. Image identity is `non-zero`; if it is `ZERO`, every build looks like the same image and a re-flash no longer resets the count — file it, the escape hatch is gone | serial log |
+| E6 | Flash the good E1 build over USB while in safe mode, with PlatformIO or the Arduino IDE (an install in either flasher starts NVS over, the count with it, so it would pass this row whatever the image identity). On every boot in this track, and once on an image from each toolchain that builds the Canary (PlatformIO and the Arduino IDE / `arduino-cli`), check the `Image identity (app_elf_sha256): non-zero` line — or, for a build without that line, `esptool.py image_info --version 2 <app>.bin` shows a non-zero ELF file SHA256 | Boots normally at `Boot attempt 1` (or `0 ... (power-on reset: not counted)`) — a different build starts the count over. Image identity is `non-zero`; if it is `ZERO`, every build looks like the same image and a re-flash no longer resets the count — file it, the escape hatch is gone | serial log |
 | E7 | On the good image, pull power within 10 s of boot, six boots in a row | Every boot prints `(power-on reset: not counted)`, the count never climbs, and it never enters safe mode: a power cut is not counted (a design choice, matching the WAP — a switched outlet or storm flicker must not take the radio off the air). A brownout reset still counts | serial log |
 
 ---

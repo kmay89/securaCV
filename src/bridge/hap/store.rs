@@ -17,8 +17,10 @@
 //! device key file takes in `src/crypto`.
 //!
 //! On a Canary the equivalent store is NVS, and the same rule applies one
-//! layer down: pairing keys get the `opera_secret` treatment and are refused
-//! on a device without flash encryption.
+//! layer down: pairing keys get the `opera_secret` treatment, refused on a
+//! device without flash encryption, which keeps them off such a device but
+//! does not make them confidential on one with it (NVS is plaintext there
+//! too until NVS encryption is in the build).
 
 use std::fs;
 use std::io::Write;

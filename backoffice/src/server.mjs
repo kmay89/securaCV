@@ -4,16 +4,28 @@ import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { Router, HttpError, parseCookies, cookie, readBody, parseBody, RateLimiter, Lockout, html, json, text, redirect, clientIp, setTrustedProxies, escapeHtml, safeEqual, int, asArray } from './http.mjs';
 const e = escapeHtml;
-import { layout, setTimezone, dt as fmtDt, day as fmtDay } from './render.mjs';
+import { layout, setTimezone, setEnvironment, dt as fmtDt, day as fmtDay , setAttention } from './render.mjs';
+import { applyEnv, ENV_TEXT } from './env.mjs';
+import { attention } from './attention.mjs';
+import { createHash } from 'node:crypto';
+import { enqueue } from './modules/mail.mjs';
+import { customerLine, orderPromise } from './modules/promise.mjs';
+import { markSessionPaid, markSessionExpired } from './modules/recovery.mjs';
+import { newOrderNudge } from './modules/notify.mjs';
+import { applyOverrides } from './modules/listing.mjs';
+import { Watch, cidrMatcher, netOf, knownNetwork, sanitizeFields, boundary, boundaryEach, BOUNDARY_HEADERS } from './guard.mjs';
+import { securityPush } from './modules/notify.mjs';
+import { build, recordBoot } from './version.mjs';
+import { listFlags, setFlag, clearFlag } from './flags.mjs';
 import { orderToken, deliveryLine, trackingUrl } from './modules/delivery.mjs';
 import { editItems } from './modules/orders.mjs';
-import { sessionFor, login, logout, apiTokenFor, hasOperator, carryLegacyOperator, can } from './auth.mjs';
+import { sessionFor, login, logout, apiTokenFor, hasOperator, carryLegacyOperator, can , requestSignInLink, signInLink, loginWithLink } from './auth.mjs';
 import { actorStore, nowIso } from './db.mjs';
 import { registerUsers } from './admin_users.mjs';
 import { loadCatalog, loadShipping } from './modules/catalog.mjs';
 import { verifyStripeSignature, eventToOrder, fetchLineItems, resolveDiscountCode } from './modules/stripe.mjs';
 import { storefrontCatalog, estimateForZip, createCheckout, sessionStatus, StoreError, oversoldLines } from './modules/storefront.mjs';
-import { recordOrder, refund, orderByNumber, transition, listOrders, timeline, addNote, addEvent, setTags, batches, statusCounts } from './modules/orders.mjs';
+import { recordOrder, refund, orderByNumber, transition, updateShipping, listOrders, timeline, addNote, addEvent, setTags, batches, statusCounts } from './modules/orders.mjs';
 import { listCustomers, contactById, customerStats, setContactTags } from './modules/contacts.mjs';
 import { listDiscounts, createDiscount, setDiscountStatus, evaluate as evaluateDiscount } from './modules/discounts.mjs';
 import { analytics } from './modules/analytics.mjs';
@@ -44,16 +56,29 @@ export function createApp({ db, cfg }) {
   cfg.secret = cfg.secret || db.setting('app:secret') || (() => { const s = randomBytes(32).toString('base64url'); db.setSetting('app:secret', s); return s; })();
   // Demo mode: synthetic data, and a hard rule that nothing reaches a real service.
   if (cfg.demo || isDemo(db)) {
-    cfg.demo = true; cfg.githubToken = ''; cfg.imapUrl = ''; cfg.smtpUrl = ''; cfg.stripeApiKey = '';
+    cfg.demo = true; cfg.githubToken = ''; cfg.imapUrl = ''; cfg.smtpUrl = ''; cfg.stripeApiKey = ''; cfg.shippoToken = ''; cfg.ntfyUrl = '';
     cfg.stripeWebhookSecret = DEMO_WEBHOOK_SECRET;
     cfg.mailFrom = cfg.mailFrom || 'Errer Labs (demo) <demo@backoffice.example.test>';
     cfg.baseUrl = localBase(cfg); cfg.siteOrigin = cfg.baseUrl;   // every link, probe and scenario stays on this machine
     // A demo database from before people existed (or between resets) must have the demo people the login page names, on every boot.
     if (isDemo(db)) seedDemoUsers(db);
   }
+  // The environment: its label on every page, its rules enforced (a fatal one stops here, before the app
+  // listens), its mutes applied, the database labeled; then the build is written down if it is new here.
+  const { env } = applyEnv(cfg, db); setEnvironment(env, ENV_TEXT[env]);
+  recordBoot(db, cfg);
   // In demo mode the catalog is the demo's own, never fetched from the live site.
   setTrustedProxies(cfg.trustedProxies);
-  const app = { db, cfg, json, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), formLimiter: new RateLimiter({ limit: 5, windowMs: 10 * 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), once: new Map(), catalog: cfg.demo ? async () => DEMO_CATALOG : (o) => loadCatalog(cfg, o), shipping: cfg.demo ? async () => DEMO_SHIPPING : (o) => loadShipping(cfg, o) };
+  // The watch (guard.mjs): a scanner is blocked for ten minutes; ADMIN_ALLOW_CIDRS hides the admin from every other network.
+  const watch = new Watch(); const allow = cidrMatcher(cfg.adminAllowCidrs); const pushedLock = new Map();
+  // app.catalog is the file (store.json, or the demo's) with the listing edited in the admin laid over it (listing.mjs).
+  const app = { db, cfg, json, watch, allow, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), formLimiter: new RateLimiter({ limit: 5, windowMs: 10 * 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), once: new Map(), catalog: cfg.demo ? async () => applyOverrides(db, DEMO_CATALOG) : async (o) => applyOverrides(db, await loadCatalog(cfg, o)), shipping: cfg.demo ? async () => DEMO_SHIPPING : (o) => loadShipping(cfg, o) };
+  // What wants the admin, memoized for a few seconds: the sidebar badges on every page read it, and
+  // it runs the doctor (an integrity check among other things), which is not a per-page cost.
+  let attMemo = { at: 0, value: null };
+  app.attention = () => { const ttl = cfg.attentionTtlMs ?? 5000; if (!attMemo.value || Date.now() - attMemo.at > ttl) attMemo = { at: Date.now(), value: attention(db, cfg) }; return attMemo.value; };
+  app.forgetAttention = () => { attMemo = { at: 0, value: null }; };
+  setAttention(app.attention);
   // The website's fulfillment block knows where parcels leave from and how far a scale may drift; the environment can override either.
   app.catalog().then(cat => { const f = cat?.fulfillment || {}; if (f.ship_from?.state && !process.env.SHIP_FROM_STATE) cfg.shipFromState = String(f.ship_from.state).toUpperCase(); if (Number.isFinite(Number(f.weight_tolerance_oz)) && cfg.weightToleranceOz == null) cfg.weightToleranceOz = Number(f.weight_tolerance_oz); }).catch(() => {});
   const { router } = app;
@@ -64,7 +89,9 @@ export function createApp({ db, cfg }) {
   router.get('/healthz', (c) => {
     try { db.get('SELECT key FROM settings LIMIT 1'); } catch (err) { throw new HttpError(503, `database: ${err.message}`); }
     if (app.schedulerTick && Date.now() - app.schedulerTick > 5 * 60_000) throw new HttpError(503, 'scheduler stalled');
-    text(c.res, 'ok');
+    // "ok <environment> <build>": a monitor reads the first word; the promote workflow reads the rest to prove the
+    // server runs the build it just sent (a public commit hash of a public repository; no secret in it)
+    text(c.res, `ok ${cfg.env} ${build(cfg).sha}`);
   });
   router.get('/status', (c) => html(c.res, statusPage(db, cfg), 200, { 'Cache-Control': 'public, max-age=60' }));
   router.get('/status.json', (c) => json(c.res, publicStatus(db), 200, { 'Cache-Control': 'public, max-age=60', 'Access-Control-Allow-Origin': '*' }));
@@ -81,8 +108,22 @@ export function createApp({ db, cfg }) {
   router.get('/o/:number/:token', (c) => {
     const o = orderByNumber(db, c.params.number);
     if (!o || !safeEqual(orderToken(cfg.secret, o.number), c.params.token)) throw new HttpError(404, 'no such order');
-    html(c.res, orderStatusPage(cfg, o), 200, { 'Cache-Control': 'private, no-store' });
+    html(c.res, orderStatusPage(cfg, o, { flash: c.query.get('ok') === 'address' ? { text: 'Address updated — the label will carry it.' } : null }), 200, { 'Cache-Control': 'private, no-store' });
   });
+  // The customer fixes their own address while the order is still on the shelf: the same signed link, the same
+  // validation the label uses, a line on the timeline under "customer". Once a label exists the label is the address.
+  router.post('/o/:number/:token/address', (c) => {
+    const o = orderByNumber(db, c.params.number);
+    if (!o || !safeEqual(orderToken(cfg.secret, o.number), c.params.token)) throw new HttpError(404, 'no such order');
+    if (!app.formLimiter.allow(`addr:${o.number}`)) throw new HttpError(429, 'that order\'s address has been changed enough for now — reply to any of our mails instead');
+    const page = (err) => html(c.res, orderStatusPage(cfg, orderByNumber(db, o.number), { flash: { kind: 'err', text: err } }), 400, { 'Cache-Control': 'private, no-store' });
+    if (!['paid', 'packed'].includes(o.status) || o.label_url) return page('This order already has its label; the address on it is the address. Reply to any of our mails if it must change.');
+    const b = c.body || {};
+    try { updateShipping(db, o.id, { name: b.name, line1: b.line1, line2: b.line2, city: b.city, state: b.state, zip: b.zip }, { actor: 'customer' }); }
+    catch (err) { return page(String(err.message || err)); }
+    db.audit('customer', 'order.address', 'order', o.number, { by: 'the customer, on their page' });
+    redirect(c.res, `/o/${encodeURIComponent(o.number)}/${encodeURIComponent(c.params.token)}?ok=address`);
+  }, { public: true });
 
   router.post('/webhooks/stripe', async (c) => {
     if (!cfg.stripeWebhookSecret) throw new HttpError(503, 'STRIPE_WEBHOOK_SECRET not set');
@@ -117,6 +158,7 @@ export function createApp({ db, cfg }) {
     const b = c.body || {};
     if (b.website || b._hp) return json(c.res, { ok: true }); // honeypot filled → pretend success, store nothing
     if (!app.limiter.allow(`forms:${clientIp(c.req)}`)) throw new HttpError(429, 'slow down');
+    sanitizeFields(b, ['name', 'subject', 'message', 'body', 'org', 'text', 'extra'], { max: 20000 });
     const email = String(b.email || '').trim();
     if (!validEmail(email)) throw new HttpError(400, 'a valid email is required');
     if (!app.formLimiter.allow(`forms:${email.toLowerCase()}`)) throw new HttpError(429, 'that address has sent enough forms for now — try again in ten minutes');
@@ -162,28 +204,74 @@ export function createApp({ db, cfg }) {
 
   // ---------- auth
   router.get('/login', (c) => html(c.res, loginPage(cfg, c.query.get('err'), hasOperator(db), c.query.get('ok'), cfg.demo ? { password: DEMO_PASSWORD, code: totp(DEMO_TOTP_SECRET), email: c.query.get('as') || DEMO_USERS[0].email, users: DEMO_USERS } : null)));
-  router.post('/login', (c) => {
+  router.post('/login', async (c) => {
     const ip = clientIp(c.req);
     if (!app.limiter.allow(`login:${ip}`)) throw new HttpError(429, 'slow down');
     // Eight wrong attempts in fifteen minutes and this address waits the window out; the audit log keeps every attempt.
     if (app.lockout.locked(ip)) { db.audit('web', 'auth.login.locked', 'session', null, { ip }); throw new HttpError(429, 'too many failed logins from this address — try again in fifteen minutes'); }
     const s = login(db, { email: c.body.email, password: c.body.password, code: c.body.code }, { sessionHours: cfg.sessionHours, ip });
-    if (!s) { app.lockout.fail(ip); return redirect(c.res, '/login?err=1'); }
-    app.lockout.clear(ip);
+    if (!s) { app.lockout.fail(ip); if (app.lockout.locked(ip)) await lockedOut(ip); return redirect(c.res, '/login?err=1'); }
+    app.lockout.clear(ip); await signedIn(s, ip);
     redirect(c.res, '/', { 'Set-Cookie': cookie('bo_session', s.id, { maxAge: cfg.sessionHours * 3600, secure: cfg.secure }) });
+  }, { public: true, csrf: false });
+  // The alerts the door raises: an address locked out (the phone, once an hour per address), and a sign-in from a
+  // network this person has not used in a month (the person by mail, the phone, the audit log).
+  const lockedOut = async (ip) => { const k = `lock:${ip}`; if (pushedLock.get(k) && Date.now() - pushedLock.get(k) < 3600_000) return; pushedLock.set(k, Date.now()); db.audit('system', 'guard.lockout', 'ip', ip, {}); await securityPush(db, cfg, k, { title: 'Backoffice: an address is locked out', body: `${ip} failed to sign in ${app.lockout.limit} times in fifteen minutes.` }, { fetchImpl: app.fetchImpl }); };
+  const signedIn = async (s, ip) => {
+    const k = knownNetwork(db, s.email, ip, { skipLatest: true });
+    if (k.known) return;
+    db.audit('system', 'auth.login.new_network', 'user', s.email, { ip, net: k.net, via: s.via });
+    enqueue(db, { to: s.email, subject: `${cfg.company || 'Errer Labs'} backoffice: a sign-in from a new network`, kind: 'transactional', ref: `security:new-network:${s.email}:${k.net}`, text: `Hi ${s.name.split(' ')[0]},\n\nYour backoffice account was just signed into from ${ip} (${k.net}), a network it has not used in the last 30 days.\n\nIf that was you, there is nothing to do. If it was not: open Your account, press "Log out everywhere else", change your password, and tell an owner.\n\n— ${cfg.company || 'Errer Labs'}\n` });
+    await securityPush(db, cfg, `net:${s.email}:${k.net}`, { title: 'Backoffice: sign-in from a new network', body: `${s.email} signed in from ${ip} (${k.net}).` }, { fetchImpl: app.fetchImpl });
+  };
+  // ---------- the sign-in link: stands in for the password, never for the authenticator (auth.mjs)
+  const linksOn = () => !!(cfg.smtpUrl || cfg.demo);
+  router.get('/login/link', (c) => html(c.res, linkRequestPage(cfg, { on: linksOn(), demo: cfg.demo })));
+  router.post('/login/link', async (c) => {
+    const ip = clientIp(c.req);
+    if (!app.limiter.allow(`link:${ip}`)) throw new HttpError(429, 'slow down');
+    const email = String(c.body.email || '').trim().toLowerCase();
+    if (!app.formLimiter.allow(`link:${email}`)) throw new HttpError(429, 'that address has asked for enough links for now — try again in ten minutes');
+    const r = requestSignInLink(db, email, { ip, minutes: cfg.signInLinkMinutes });
+    const nonceCookie = cookie('bo_link', r.nonce, { maxAge: cfg.signInLinkMinutes * 60, secure: cfg.secure });
+    if (r.token && linksOn()) {
+      const url = `${cfg.baseUrl}/login/link/${r.token}`;
+      enqueue(db, { to: r.user.email, subject: `Your ${cfg.company || 'Errer Labs'} backoffice sign-in link`, kind: 'transactional', ref: `signin:${r.user.email}:${Date.now()}`, text: `Hi ${r.user.name.split(' ')[0]},\n\nHere is your sign-in link, good for ${r.minutes} minutes and once: ${url}\n\nIt opens only in the browser you asked from, and your authenticator code is still needed. If you did not ask for it, ignore this mail; nobody can use it without your authenticator.\n\n— ${cfg.company || 'Errer Labs'}\n` });
+      if (cfg.demo) return redirect(c.res, `/login/link/${r.token}`, { 'Set-Cookie': nonceCookie });   // the demo has no mailbox to open: straight to the code step
+    }
+    redirect(c.res, `/login?ok=${encodeURIComponent(`If that address is a person here, a sign-in link is on its way — open it in this browser within ${cfg.signInLinkMinutes} minutes.`)}`, { 'Set-Cookie': nonceCookie });
+  }, { public: true, csrf: false });
+  router.get('/login/link/:token', (c) => {
+    const row = signInLink(db, c.params.token); const nonce = parseCookies(c.req).bo_link || '';
+    const ok = !!row && !!nonce && safeEqual(createHash('sha256').update(nonce).digest('base64url'), row.nonce_hash);
+    html(c.res, linkCodePage(cfg, { token: c.params.token, ok, err: c.query.get('err'), demo: cfg.demo ? { code: totp(DEMO_TOTP_SECRET) } : null }), ok ? 200 : 404);
+  });
+  router.post('/login/link/:token', async (c) => {
+    const ip = clientIp(c.req);
+    if (!app.limiter.allow(`login:${ip}`)) throw new HttpError(429, 'slow down');
+    if (app.lockout.locked(ip)) { db.audit('web', 'auth.login.locked', 'session', null, { ip }); throw new HttpError(429, 'too many failed logins from this address — try again in fifteen minutes'); }
+    const s = loginWithLink(db, { token: c.params.token, code: c.body.code, nonce: parseCookies(c.req).bo_link || '' }, { sessionHours: cfg.sessionHours, ip });
+    if (!s) { app.lockout.fail(ip); if (app.lockout.locked(ip)) await lockedOut(ip); return redirect(c.res, `/login/link/${encodeURIComponent(c.params.token)}?err=1`); }
+    app.lockout.clear(ip); await signedIn(s, ip);
+    redirect(c.res, '/', { 'Set-Cookie': [cookie('bo_session', s.id, { maxAge: cfg.sessionHours * 3600, secure: cfg.secure }), cookie('bo_link', '', { maxAge: -1, secure: cfg.secure })] });
   }, { public: true, csrf: false });
   router.post('/logout', (c) => { if (c.session) logout(db, c.session.id); redirect(c.res, '/login', { 'Set-Cookie': [cookie('bo_session', '', { maxAge: -1, secure: cfg.secure }), cookie('bo_bench', '', { maxAge: -1, secure: cfg.secure })] }); });
 
   // ---------- JSON API (bearer token or a logged-in session)
+  router.get('/robots.txt', (c) => text(c.res, 'User-agent: *\nDisallow: /\n', 200, { 'Cache-Control': 'public, max-age=86400' }), { public: true });
   router.get('/api', (c) => json(c.res, { name: 'securacv-backoffice', endpoints: API_INDEX }));
+  router.get('/api/flags', (c) => json(c.res, listFlags(db, cfg)));
+  router.post('/api/flags/:name', (c) => json(c.res, c.body.on === null || c.body.on === undefined ? clearFlag(db, cfg, c.params.name, { actor: c.actor }) : setFlag(db, cfg, c.params.name, c.body.on === true || c.body.on === 1 || c.body.on === '1' || c.body.on === 'true', { actor: c.actor })));
   router.get('/api/snapshot', (c) => json(c.res, snapshot(db)));
   router.get('/api/orders', (c) => json(c.res, listOrders(db, Object.fromEntries(['status', 'batch', 'q', 'tag', 'from', 'to', 'discount', 'sku'].map(k => [k, c.query.get(k) || ''])))));
   router.get('/api/orders/:number', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, o); });
   router.post('/api/orders', async (c) => json(c.res, recordOrder(db, c.body, { catalog: await app.catalog().catch(() => null), actor: c.actor }), 201));
   router.post('/api/orders/:number/transition', async (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, transition(db, o.id, c.body.to, { actor: c.actor, carrier: c.body.carrier, tracking: c.body.tracking, cfg, shipping: c.body.to === 'packed' ? await app.shipping().catch(() => null) : null, measuredOz: c.body.measured_oz ?? null, postageCents: int(c.body.postage_cents, { name: 'postage_cents', min: 0, fallback: 0 }), shipAnyway: !!c.body.ship_anyway, check: c.body.check && typeof c.body.check === 'object' && !Array.isArray(c.body.check) ? { ticked: asArray(c.body.check.ticked ?? [], 'check.ticked'), measuredOz: c.body.check.measured_oz ?? null, anyway: !!c.body.check.anyway, reason: c.body.check.reason } : null })); });
-  router.post('/api/orders/:number/refund', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, refund(db, o.id, int(c.body.cents, { name: 'cents', min: 1 }), { actor: c.actor, reason: c.body.reason })); });
-  router.get('/api/tickets', (c) => json(c.res, listTickets(db, { status: c.query.get('status') || '', kind: c.query.get('kind') || '', q: c.query.get('q') || '' })));
-  router.get('/api/tickets/:number', (c) => { const t = ticketByNumber(db, c.params.number); if (!t) throw new HttpError(404, 'no such ticket'); json(c.res, t); });
+  router.post('/api/orders/:number/refund', (c) => { const o = orderByNumber(db, c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, refund(db, o.id, int(c.body.cents, { name: 'cents', min: 1 }), { actor: c.actor, reason: c.body.reason , cfg })); });
+  // Outsider-written fields are marked as data, not instructions (guard.mjs): the API is read by an AI operator as often as by a person.
+  const TICKET_UNTRUSTED = ['subject', 'email', 'name', 'messages[].body', 'messages[].from_addr', 'labels'];
+  router.get('/api/tickets', (c) => json(c.res, boundaryEach(listTickets(db, { status: c.query.get('status') || '', kind: c.query.get('kind') || '', q: c.query.get('q') || '' }), TICKET_UNTRUSTED), 200, BOUNDARY_HEADERS(TICKET_UNTRUSTED)));
+  router.get('/api/tickets/:number', (c) => { const t = ticketByNumber(db, c.params.number); if (!t) throw new HttpError(404, 'no such ticket'); json(c.res, boundary(t, TICKET_UNTRUSTED), 200, BOUNDARY_HEADERS(TICKET_UNTRUSTED)); });
   router.post('/api/tickets', (c) => json(c.res, openTicket(db, { ...c.body, channel: 'api', cfg }), 201));
   router.post('/api/tickets/:number/reply', (c) => { const t = ticketByNumber(db, c.params.number); if (!t) throw new HttpError(404, 'no such ticket'); json(c.res, ticketReply(db, t.id, c.body.body, { cfg, actor: c.actor, close: !!c.body.close })); });
   router.post('/api/mail/ingest', (c) => json(c.res, ingestEmail(db, c.body, { cfg })), { raw: false });
@@ -204,7 +292,7 @@ export function createApp({ db, cfg }) {
   router.post('/api/discounts/:code/status', (c) => json(c.res, setDiscountStatus(db, c.params.code, c.body.status)));
   router.get('/api/discounts/:code/evaluate', (c) => json(c.res, evaluateDiscount(db, c.params.code, { subtotal_cents: Number(c.query.get('subtotal') || 0), shipping_cents: Number(c.query.get('shipping') || 0) })));
   router.get('/api/analytics', (c) => json(c.res, analytics(db, { days: Number(c.query.get('days')) || 30 })));
-  router.get('/api/search', (c) => json(c.res, search(db, c.query.get('q') || '')));
+  router.get('/api/search', (c) => json(c.res, boundary(search(db, c.query.get('q') || ''), ['contacts[].name', 'contacts[].email', 'orders[].ship_name', 'tickets[].subject']), 200, BOUNDARY_HEADERS(['name', 'email', 'ship_name', 'subject'])));
   router.get('/api/inventory', (c) => json(c.res, listItems(db)));
   router.post('/api/inventory/move', (c) => json(c.res, invMove(db, String(c.body.sku || ''), int(c.body.delta, { name: 'delta' }), String(c.body.reason || 'adjust'), c.body.ref == null ? null : String(c.body.ref).slice(0, 120))));
   router.get('/api/devices', (c) => json(c.res, listDevices(db, { q: c.query.get('q') || '' })));
@@ -223,7 +311,7 @@ export function createApp({ db, cfg }) {
 
   // ---------- the pipeline
   const server = createServer(async (req, res) => {
-    let url = null, route = null, onceKey = null;
+    let url = null, route = null, onceKey = null, c = null;
     try {
       // inside the try: a request line or a path segment that does not parse is a 400, not a request that never gets an answer
       try { url = new URL(req.url, 'http://x'); } catch { throw new HttpError(400, 'bad request URL'); }
@@ -234,11 +322,22 @@ export function createApp({ db, cfg }) {
       const site = req.headers['sec-fetch-site'];
       // The admin is one origin; a sibling host (the website, a future subdomain) has no business writing here, so same-site is not enough.
       if (site && !['same-origin', 'none'].includes(site) && req.method !== 'GET' && req.method !== 'HEAD' && !route.opts.public) throw new HttpError(403, 'cross-site request refused');
+      const ip = clientIp(req);
+      // ADMIN_ALLOW_CIDRS: the admin (and its door) exist only for these networks; a customer's page, the store, the webhook and the status page are for everyone.
+      const forCustomers = ['/healthz', '/status', '/status.json', '/robots.txt'].includes(url.pathname) || /^\/(o|u|i|confirm)\//.test(url.pathname);
       const cookies = parseCookies(req);
-      const session = sessionFor(db, cookies.bo_session);
+      let session = sessionFor(db, cookies.bo_session);
+      // SESSION_BIND_IP: a session that turns up from another network than it was opened on is over (a stolen cookie travels).
+      // Judged before the allowlist, so a cookie carried off to a hidden network is ended, not merely refused.
+      if (session && cfg.sessionBindIp && session.net && session.net !== netOf(ip)) { logout(db, session.id); db.audit('system', 'auth.session.moved', 'user', session.email, { from: session.net, to: netOf(ip) }); session = null; }
+      // The door itself (/login and its POSTs, registered public so the form needs no session) is the admin's, not a customer's.
+      const door = url.pathname === '/login' || url.pathname.startsWith('/login/');
+      if (allow && (door || (!route.opts.public && !forCustomers)) && !allow(ip)) throw new HttpError(404, 'not found');
+      // A scanner (sixty misses in ten minutes) waits ten minutes; a person with a session, and the public endpoints, never do.
+      if (!session && !route.opts.public && !forCustomers && watch.blocked(ip)) throw new HttpError(429, 'too many requests from this address — try again in ten minutes');
       const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
       const tokenRow = url.pathname.startsWith('/api') ? apiTokenFor(db, bearer) : null;
-      const c = { req, res, url, params: route.params, query: url.searchParams, session, user: session ? { id: session.user_id, email: session.email, name: session.name, role: session.role } : null, csrf: session?.csrf, actor: tokenRow ? `token:${tokenRow.name}` : session ? session.email : 'public', app, db, cfg, body: {}, raw: null };
+      c = { req, res, url, params: route.params, query: url.searchParams, session, user: session ? { id: session.user_id, email: session.email, name: session.name, role: session.role } : null, csrf: session?.csrf, actor: tokenRow ? `token:${tokenRow.name}` : session ? session.email : 'public', app, db, cfg, body: {}, raw: null };
       if (req.method === 'POST' || req.method === 'PUT') { c.raw = await readBody(req); if (!route.opts.raw) c.body = parseBody(c.raw, req.headers['content-type'] || ''); }
       if (!route.opts.public && !url.pathname.startsWith('/login') && !['/healthz', '/status', '/status.json'].includes(url.pathname) && !url.pathname.startsWith('/confirm/') && !url.pathname.startsWith('/u/') && !url.pathname.startsWith('/i/') && !url.pathname.startsWith('/o/') && !url.pathname.startsWith('/invite/')) {
         if (url.pathname.startsWith('/api')) { if (!tokenRow && !session) throw new HttpError(401, 'bearer token or session required'); if (tokenRow?.scope === 'ro' && !['GET', 'HEAD'].includes(req.method)) throw new HttpError(403, 'this token is read-only'); }
@@ -263,8 +362,12 @@ export function createApp({ db, cfg }) {
         }
       }
       await actorStore.run({ actor: c.actor }, () => route.handler(c));
+      // A write may have changed what wants the admin; the next page's badges start fresh.
+      if (req.method === 'POST') app.forgetAttention();
     } catch (err) {
       if (onceKey) app.once.delete(onceKey);   // a refused submission may be corrected and sent again
+      // a miss without a session counts toward the watch; the sixtieth in ten minutes blocks the address and says so once
+      if (!c?.session && [401, 403, 404].includes(err.status) && watch.miss(clientIp(req))) { const ipB = clientIp(req); db.audit('system', 'guard.block', 'ip', ipB, { misses: watch.limit }); securityPush(db, cfg, `scan:${ipB}`, { title: 'Backoffice: a scanner was blocked', body: `${ipB} hit ${watch.limit} missing or refused pages in ten minutes; blocked for ten.` }, { fetchImpl: app.fetchImpl }).catch(() => {}); }
       // A business rule ("cannot move", "unknown SKU") is the caller's mistake: 400. A thrown
       // TypeError or a database error is ours: 500, and it is logged.
       // A row that would collide with one that exists (a second device with the same MAC, a slug
@@ -303,10 +406,10 @@ export async function applyStripeEvent(app, m, event = null) {
     const catalog = await app.catalog().catch(() => null);
     if (!m.line_items_present) { try { const items = await fetchLineItems(cfg, m.external_id, { fetchImpl: app.fetchImpl || timedFetch }); if (items) m.items = items; } catch (e) { db.audit('stripe', 'order.line_items.failed', 'order', m.external_id, { error: String(e.message || e) }); } }
     if (m.discount_code && /^promo_|^[A-Za-z0-9]{8,}$/.test(m.discount_code) && !db.get('SELECT code FROM discounts WHERE code = ?', m.discount_code)) { try { m.discount_code = await resolveDiscountCode(cfg, m.discount_code, { fetchImpl: app.fetchImpl || timedFetch }); } catch { /* the id stays */ } }
-    const { order, created } = recordOrder(db, m, { catalog, actor: 'stripe' });
-    if (created && order.email && order.items.length) {
-      // "We have it": the order, the batch it ships in and the arrival window — the same estimate the store showed before paying.
-      const est = estimateForZip(order.ship_zip, { cfg }); const { enqueue, fill } = await import('./modules/mail.mjs'); const { orderStatusUrl } = await import('./modules/delivery.mjs');
+    // "We have it": the order, the batch it ships in and the arrival window — the same estimate the store showed before paying, written on the order as its promise.
+    const est = estimateForZip(m.ship?.zip || m.ship_zip, { cfg });
+    const { order, created } = recordOrder(db, m, { catalog, actor: 'stripe', promise: { ship_on: est.ships.ships_on, arrive_by: est.delivers?.latest || null } });
+    if (created && order.email && order.items.length) { const { enqueue, fill } = await import('./modules/mail.mjs'); const { orderStatusUrl } = await import('./modules/delivery.mjs');
       enqueue(db, { to: order.email, subject: `We have your ${cfg.product || 'SecuraCV'} order ${order.number}`, kind: 'transactional', ref: `order:${order.number}`, contactId: order.contact_id,
         text: fill(ORDER_TPL, { name: order.ship_name || 'there', number: order.number, items: order.items.map(i => `${i.qty}× ${i.name}`).join('\n'), ships: est.ships.ships_label, closes: est.ships.closes_label, arrives: est.delivers ? est.delivers.label : 'a few business days after it ships', status_url: orderStatusUrl(cfg, order), company: cfg.company || 'Errer Labs', support: cfg.supportAddr || '' }) });
     }
@@ -321,9 +424,11 @@ export async function applyStripeEvent(app, m, event = null) {
         await raiseException(db, cfg, `oversold:${order.number}`, `orders [oversold]: ${order.number} needs more than is there`, `${why}\n\nThe customer has paid. Make or receive the parts and pack it late (tell them the new date), raise the week's cap if it was wrong, or refund it in Stripe: ${cfg.baseUrl}/orders/${order.id}`);
       }
     }
+    if (created) { markSessionPaid(db, { id: m.external_id, order_number: order.number, recovered_from: m.recovered_from || null, at: order.paid_at }); await newOrderNudge(db, cfg, order, { fetchImpl: app.fetchImpl || timedFetch, promise: { ship_on: est.ships.ships_on } }); }
     if (created && !order.items.length) await raiseException(db, cfg, `stripe:line-items:${order.number}`, `orders [no line items]: ${order.number}`, `Stripe's webhook carried no line_items for ${m.external_id} and they could not be fetched${cfg.stripeApiKey ? '' : ' (STRIPE_API_KEY is not set)'}. The order is recorded with no items and cannot be packed until they are added — see ${cfg.baseUrl}/orders/${order.id}.`);
     return { order: order.number, created, items: order.items.length };
   }
+  if (m.kind === 'expired') { markSessionExpired(db, { id: m.external_id, email: m.email || null, recovery_url: m.recovery_url, recovery_expires_at: m.recovery_expires_at, amount_cents: m.amount_cents }); return { expired: m.external_id, recoverable: !!(m.email && m.recovery_url) }; }
   if (m.kind === 'refund') {
     // A refund names the PaymentIntent (or the charge); a Checkout order is stored under its session id too.
     const o = db.get('SELECT * FROM orders WHERE payment_intent = ? OR external_id = ? OR external_id = ?', m.external_id, m.external_id, m.charge || '');
@@ -331,7 +436,7 @@ export async function applyStripeEvent(app, m, event = null) {
     // refusal makes Stripe retry for three days, by which time the order is here; the retry then applies. The
     // stripe:failed exception the pipeline raises names it meanwhile, and resolves on the delivery that works.
     if (!o) throw new Error(`refund for ${m.external_id}: no order carries that PaymentIntent yet — retried until one does`);
-    const delta = m.refunded_cents - o.refunded_cents; if (delta > 0) refund(db, o.id, delta, { actor: 'stripe', reason: 'stripe' });
+    const delta = m.refunded_cents - o.refunded_cents; if (delta > 0) refund(db, o.id, delta, { actor: 'stripe', reason: 'stripe', cfg });
     return { order: o.number, refunded_cents: m.refunded_cents };
   }
   if (m.kind === 'dispute') {
@@ -347,7 +452,7 @@ export async function applyStripeEvent(app, m, event = null) {
     } else if (m.type === 'charge.dispute.closed') {
       const lost = m.status === 'lost';
       addEvent(db, o.id, { kind: 'note', actor: 'stripe', text: `Dispute ${m.status || 'closed'}${lost ? ` — ${(m.amount_cents / 100).toFixed(2)} USD taken back` : ''} (${m.dispute})` });
-      if (lost && m.amount_cents > o.refunded_cents) refund(db, o.id, m.amount_cents - o.refunded_cents, { actor: 'stripe', reason: 'dispute lost' });
+      if (lost && m.amount_cents > o.refunded_cents) refund(db, o.id, m.amount_cents - o.refunded_cents, { actor: 'stripe', reason: 'dispute lost', cfg });
       await resolveException(db, cfg, `dispute:${o.number}`, `Closed: ${m.status || 'closed'}.`);
     }
     return { order: o.number, dispute: m.dispute, status: m.status };
@@ -393,7 +498,7 @@ export function safeLocalPath(referer) {
 
 const corsHeaders = (cfg) => ({ 'Access-Control-Allow-Origin': cfg.siteOrigin, 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type', Vary: 'Origin' });
 
-const API_INDEX = ['GET /api/snapshot', 'GET /api/analytics?days=7|30|90|365', 'GET /api/search?q=', 'GET /api/orders?status=&batch=&q=&tag=&from=&to=&discount=&sku=', 'GET /api/orders/:number', 'POST /api/orders {…, discount_code, tags}', 'POST /api/orders/:number/transition {to, carrier, tracking}', 'POST /api/orders/:number/refund {cents, reason}',
+const API_INDEX = ['GET /api/flags', 'POST /api/flags/:name {on: true|false, or null for the default} (owner)', 'GET /api/snapshot', 'GET /api/analytics?days=7|30|90|365', 'GET /api/search?q=', 'GET /api/orders?status=&batch=&q=&tag=&from=&to=&discount=&sku=', 'GET /api/orders/:number', 'POST /api/orders {…, discount_code, tags}', 'POST /api/orders/:number/transition {to, carrier, tracking}', 'POST /api/orders/:number/refund {cents, reason}',
   'GET /api/orders/:number/events', 'POST /api/orders/:number/note {body}', 'POST /api/orders/:number/tags {tags}', 'GET /api/batches', 'GET /api/customers?q=&tag=&segment=&sort=', 'GET /api/customers/:id', 'POST /api/customers/:id/tags {tags}',
   'GET /api/products?days=', 'GET /api/products/:sku', 'GET /api/discounts', 'POST /api/discounts {code, kind, value, min_subtotal_cents, starts_at, ends_at, max_uses, note}', 'POST /api/discounts/:code/status {status}', 'GET /api/discounts/:code/evaluate?subtotal=&shipping=',
   'GET /api/tickets?status=&kind=&q=', 'GET /api/tickets/:number', 'POST /api/tickets {email, subject, body}', 'POST /api/tickets/:number/reply {body, close}', 'POST /api/mail/ingest {from, subject, text, messageId, inReplyTo}',
@@ -407,19 +512,33 @@ export const plain = (cfg, title, bodyHtml) => layout({ title, body: `<p>${bodyH
 function loginPage(cfg, err, ready, ok = null, demo = null) {
   const hint = demo ? `<div class="flash"><b>Demo mode — synthetic data, nothing leaves this machine.</b><br>The form is filled in: password <code>${e(demo.password)}</code>, authenticator code <code>${e(demo.code)}</code> right now (it changes every 30 s — reload if a login is refused). Just press <b>Log in</b>.<br><span class="muted">Every demo person shares that password and authenticator, so you can see what each role may do: ${demo.users.map(u => `<a href="/login?as=${encodeURIComponent(u.email)}">${e(u.name)}</a> (${e(u.role)})`).join(' · ')}.</span></div>` : '';
   return layout({ title: 'Log in', company: cfg.company, nav: false, demo: !!demo, demoResetMinutes: cfg.demoResetMinutes, flash: ok ? { text: ok } : null, body: hint + (ready
-    ? `${err ? '<div class="flash err">Wrong password or code.' + (demo ? ' The code has probably rolled over — this page now carries the current one; press Log in again.' : '') + '</div>' : ''}<form method="post" action="/login" class="box"><label for="email">Email <span class="muted">(leave empty if you are the only person here)</span></label><input id="email" type="email" name="email" value="${demo ? e(demo.email) : ''}" autocomplete="username"><label for="pw">Password</label><input id="pw" type="${demo ? 'text' : 'password'}" name="password" value="${demo ? e(demo.password) : ''}" required autocomplete="current-password"><label for="code">Authenticator code</label><input id="code" name="code" value="${demo ? e(demo.code) : ''}" inputmode="numeric" pattern="[0-9]{6}" required autocomplete="one-time-code"><div style="margin-top:.8rem"><button>Log in</button></div></form>`
+    ? `${err ? '<div class="flash err">Wrong password or code.' + (demo ? ' The code has probably rolled over — this page now carries the current one; press Log in again.' : '') + '</div>' : ''}<form method="post" action="/login" class="box"><label for="email">Email <span class="muted">(leave empty if you are the only person here)</span></label><input id="email" type="email" name="email" value="${demo ? e(demo.email) : ''}" autocomplete="username"><label for="pw">Password</label><input id="pw" type="${demo ? 'text' : 'password'}" name="password" value="${demo ? e(demo.password) : ''}" required autocomplete="current-password"><label for="code">Authenticator code</label><input id="code" name="code" value="${demo ? e(demo.code) : ''}" inputmode="numeric" pattern="[0-9]{6}" required autocomplete="one-time-code"><div style="margin-top:.8rem"><button>Log in</button></div></form>${cfg.smtpUrl || cfg.demo ? '<p class="muted">Rather not type a password? <a href="/login/link">Email me a sign-in link</a> — your authenticator is still needed.</p>' : ''}`
     : '<p>No operator yet. On the server, run <code>backoffice setup</code> to set the password and get the authenticator QR.</p>') });
 }
 
-function orderStatusPage(cfg, o) {
+function linkRequestPage(cfg, { on, demo }) {
+  return layout({ title: 'Sign in by link', company: cfg.company, nav: false, demo: !!demo, body: on
+    ? `<p>Type your email and a sign-in link is mailed to you: good for ${cfg.signInLinkMinutes} minutes, once, and only in this browser. Your authenticator code is still needed — the link stands in for the password, never for the second factor.</p><form method="post" action="/login/link" class="box"><label for="email">Email</label><input id="email" type="email" name="email" required autocomplete="email" autofocus><div style="margin-top:.8rem"><button>Email me a sign-in link</button></div></form><p><a href="/login">Sign in with a password instead</a></p>`
+    : `<p>Sign-in links need the mail relay (SMTP_URL), which is not set here${cfg.env === 'staging' ? ' — staging sends no mail' : ''}. <a href="/login">Sign in with a password</a>.</p>` });
+}
+function linkCodePage(cfg, { token, ok, err, demo }) {
+  return layout({ title: 'Sign in by link', company: cfg.company, nav: false, demo: !!demo, body: ok
+    ? `${err ? '<div class="flash err">Wrong code.</div>' : ''}${demo ? `<div class="flash">Demo: the authenticator code right now is <code>${e(demo.code)}</code> (it changes every 30 s).</div>` : ''}<p>The link is good. One more thing: the code from your authenticator.</p><form method="post" action="/login/link/${encodeURIComponent(token)}" class="box"><label for="code">Authenticator code</label><input id="code" name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" required autofocus value="${demo ? e(demo.code) : ''}"><div style="margin-top:.8rem"><button>Sign in</button></div></form>`
+    : `<p><b>This link does not open.</b> It has expired, was already used, or was opened in a different browser than the one that asked for it (a link only works where it was requested). <a href="/login/link">Ask for a new one</a>, or <a href="/login">sign in with a password</a>.</p>` });
+}
+const fieldHtml = (name, label, value) => `<div><label for="a_${name}">${e(label)}</label><input id="a_${name}" name="${name}" value="${e(value || '')}" ${name === 'line2' ? '' : 'required'} ${name === 'zip' ? 'inputmode="numeric"' : ''}></div>`;
+function orderStatusPage(cfg, o, { flash = null } = {}) {
   const steps = ['paid', 'packed', 'shipped', 'delivered']; const i = steps.indexOf(o.status); const at = { paid: o.paid_at, packed: o.packed_at, shipped: o.shipped_at, delivered: o.delivered_at };
-  const dl = deliveryLine(o, cfg); const turl = trackingUrl(o.carrier, o.tracking);
-  const stepper = ['canceled', 'refunded'].includes(o.status) ? `<p><span class="pill">${e(o.status)}</span></p>` : `<ol class="steps">${steps.map((st, j) => `<li class="${j < i ? 'done' : j === i ? 'now' : ''}">${st[0].toUpperCase() + st.slice(1)}${at[st] && j <= i ? `<span class="when">${e(fmtDay(at[st]))}</span>` : ''}</li>`).join('')}</ol>`;
-  return layout({ title: `Order ${o.number}`, company: cfg.company, nav: false, demo: cfg.demo, body: `${stepper}
-<div class="card" style="max-width:720px"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Where it is</div><p style="font-size:1.15rem;margin:.3rem 0 .2rem"><b>${e(dl.text)}</b></p>${dl.estimate ? `<p class="muted" style="margin:0">An estimate from the ship date and the distance, not the carrier's word; ${e(dl.estimate.carrier)} usually takes ${dl.estimate.min_days}–${dl.estimate.max_days} business days on this route.</p>` : dl.carrier ? `<p class="muted" style="margin:0">From the carrier${o.tracking_detail ? `: ${e(o.tracking_detail)}` : ''}${o.tracking_checked_at ? `, checked ${e(fmtDt(o.tracking_checked_at))}` : ''}.</p>` : ''}${turl ? `<p style="margin:.6rem 0 0">${e(o.carrier || 'USPS')} <a href="${e(turl)}" rel="noopener">${e(o.tracking)}</a> <span class="muted">(opens the carrier's site)</span></p>` : ''}</div>
+  // One honest line for the state it is in (promise.mjs): the batch it ships in and the window, "running late", the carrier's word, the refund on its way.
+  const line = customerLine(o, cfg); const turl = trackingUrl(o.carrier, o.tracking); const p = orderPromise(o, cfg);
+  const stepper = ['canceled', 'refunded'].includes(o.status) ? `<p><span class="pill">${e(o.status)}</span></p>` : `<ol class="steps">${steps.map((st, j) => `<li class="${j < i ? 'done' : j === i ? 'now' : ''}">${st[0].toUpperCase() + st.slice(1)}${at[st] && j <= i ? `<span class="when">${e(fmtDay(at[st]))}</span>` : j > i && st === 'shipped' && p.ship_on && !p.late ? `<span class="when">${e(p.ships_label)}</span>` : ''}</li>`).join('')}</ol>`;
+  const tone = line.state === 'late' || line.state === 'alert' ? 'var(--warn)' : line.state === 'delivered' ? 'var(--ok)' : 'inherit';
+  return layout({ title: `Order ${o.number}`, company: cfg.company, nav: false, demo: cfg.demo, flash, body: `${stepper}
+<div class="card" style="max-width:720px"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Where it is</div><p style="font-size:1.15rem;margin:.3rem 0 .2rem;color:${tone}"><b>${e(line.text)}</b></p>${line.detail ? `<p class="muted" style="margin:0">${e(line.detail)}</p>` : ''}${turl ? `<p style="margin:.6rem 0 0">${e(o.carrier || 'USPS')} <a href="${e(turl)}" rel="noopener">${e(o.tracking)}</a> <span class="muted">(opens the carrier's site)</span></p>` : ''}</div>
 <h2>In the box</h2><table style="max-width:720px"><thead><tr><th>Item</th><th class="num">Qty</th></tr></thead><tbody>${o.items.map(it => `<tr><td>${e(it.name)}</td><td class="num">${it.qty}</td></tr>`).join('')}</tbody></table>
 <h2>Shipping to</h2><p>${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)}</p>
-<p class="muted">Anything wrong, missing or broken: reply to any email from us — a person reads every one, and we fix rather than ask you to send things back. Your Canary provisions itself at home: power it on and point your phone's camera at the QR card in the box.</p><p><a href="${e(cfg.siteOrigin)}">← ${e(cfg.product || 'the site')}</a></p>` });
+${['paid', 'packed'].includes(o.status) && !o.label_url ? `<details class="fix" ${flash?.kind === 'err' ? 'open' : ''}><summary>Need to change the address?</summary><form method="post" action="/o/${encodeURIComponent(o.number)}/${encodeURIComponent(orderToken(cfg.secret, o.number))}/address" class="box" style="max-width:720px"><p class="muted" style="margin:0 0 .3rem">It has not shipped yet, so the label is not printed: change it here and it goes out to the new address. Once the label exists, reply to any of our mails instead.</p><div class="row">${fieldHtml('name', 'Name', o.ship_name)}${fieldHtml('line1', 'Address line 1', o.ship_line1)}</div><div class="row">${fieldHtml('line2', 'Line 2', o.ship_line2)}${fieldHtml('city', 'City', o.ship_city)}${fieldHtml('state', 'State', o.ship_state)}${fieldHtml('zip', 'ZIP', o.ship_zip)}</div><div style="margin-top:.8rem"><button>Save the new address</button></div></form></details>` : ''}
+<p class="muted">Anything wrong, missing or broken: reply to any email from us${cfg.supportAddr ? `, or write to <a href="mailto:${e(cfg.supportAddr)}?subject=${encodeURIComponent(`Order ${o.number}`)}">${e(cfg.supportAddr)}</a>` : ''} — a person reads every one, and we fix rather than ask you to send things back. Your Canary provisions itself at home: power it on and point your phone's camera at the QR card in the box.</p><p><a href="${e(cfg.siteOrigin)}">← ${e(cfg.product || 'the site')}</a></p>` });
 }
 
 function statusPage(db, cfg) {

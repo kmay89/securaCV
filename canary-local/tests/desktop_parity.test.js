@@ -1335,6 +1335,50 @@ test("the board's own firmware claim never waives the first-contact erase", () =
   assert.match(body[1], /ownerClaimed/, "an explicit human claim must still waive it");
 });
 
+test("no install promises to keep the settings region: both flashers' verdicts and first-contact copy", async () => {
+  // Both flashers write a factory image from offset 0 whose settings region
+  // (NVS) is blank (make_factory.py; flash.js writes { data, address: 0 },
+  // the engine runs write-bin 0x0), so every install, update and reinstall
+  // included, starts the settings over and the next boot makes a new witness
+  // key. The Update verdict said "Your settings region is left alone", the
+  // Reinstall verdict "rewrites it byte-for-byte — harmless", and the
+  // browser's first-contact button "it's mine — keep its data" (#1843's
+  // sweep, fourth pass). Every verdict a board already set up can get (all
+  // but "fresh") now ends on the same sentence, in both frontends.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const said = /^const USB_INSTALL_STARTS_OVER =\n((?:  "[^"\n]*"(?: \+|;)\n)+)/m.exec(appJs);
+  assert.ok(said, "desktop/src/app.js lost USB_INSTALL_STARTS_OVER");
+  const desktopSentence = new Function(`return ${said[1].trim().replace(/;$/, "")};`)();
+  const desktop = new Function(said[0] +
+    jsFnText(appJs, "compareVersions", "desktop/src/app.js") + "\n" +
+    jsFnText(appJs, "installVerdict", "desktop/src/app.js") + "\nreturn installVerdict;")();
+  assert.equal(desktopSentence, core.USB_INSTALL_STARTS_OVER, "the two flashers say it in the same words");
+  assert.match(core.USB_INSTALL_STARTS_OVER, /starts the settings region over/);
+  assert.match(core.USB_INSTALL_STARTS_OVER, /a new one; an over-the-air update keeps both\.$/);
+  const vision = { id: "securacv-canary-vision", name: "Canary Vision" };
+  const wap = { id: "securacv-canary-wap", name: "Canary WAP" };
+  const cases = { update: ["2.1.0", vision], downgrade: ["2.3.0", vision], same: ["2.2.0", vision],
+                  switch: ["2.2.0", wap], unknown: ["??", vision] };
+  for (const [kind, [ver, was]] of Object.entries(cases)) {
+    for (const [who, fn] of [["browser", core.installVerdict], ["desktop", desktop]]) {
+      const v = fn({ current: { version: ver }, currentProduct: was, product: vision, version: "2.2.0" });
+      assert.equal(v.kind, kind, `${who} ${kind}`);
+      assert.ok(v.detail.endsWith(core.USB_INSTALL_STARTS_OVER), `${who} ${kind}: ${v.detail}`);
+      assert.doesNotMatch(v.detail, /left alone|harmless|byte-for-byte/, `${who} ${kind}: ${v.detail}`);
+    }
+  }
+  // The browser's first-contact claim waives the full erase and nothing
+  // more: the install still writes the settings region.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  assert.match(flashJs, /el\("button", "ghost small", "it's mine — skip the full erase"\)/);
+  assert.doesNotMatch(flashJs, /keep its data|keep its\s*" \+\s*"identity key|keep its identity key/);
+  assert.match(flashJs, /Its identity key and settings start over " \+\s*"either way/);
+  // The desktop's box says the same of unticking it.
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  assert.match(html, /so the board comes up with a new identity key either way/);
+});
+
 test("security fuses: both flashers read them, off ONE field table", () => {
   // This used to assert the desktop app disclosed the check as browser-only
   // (espflash has no fuse-read command — still true of v3.3.0 and v4.3.0).
@@ -5196,10 +5240,39 @@ test("rule 7: the desktop offers the browser's Bluetooth 'is it on?' check — a
   }
   assert.match(appJs, /\$\("ble-check-open"\)\.addEventListener\("click", openBleCheck\)/);
   assert.match(appJs, /\$\("prove-ble"\)\.addEventListener\("click", openBleCheck\)/);
-  // For whom: the boards that run the read-only console — the browser's rule,
-  // read off the catalog's role (which IS the browser's productRole).
-  assert.match(flashJs, /core\.productRole\(p\) === "wap" \|\| p\.provisioning === "ap"/);
-  assert.match(fnSource(appJs, "bleCheckable"), /product\.role === "wap" \|\| product\.provisioning === "ap"/);
+  // For whom: the boards that run the read-only console — the WAP alone
+  // (ble_console.h is the only firmware serving it; an AP-provisioned
+  // flagship serves none, so offering it there is a dead end) — the
+  // browser's rule, read off the catalog's role (which IS the browser's
+  // productRole).
+  assert.match(flashJs, /const bleCapable = p && !opts\.isBackup && core\.productRole\(p\) === "wap";/);
+  assert.match(fnSource(appJs, "bleCheckable"), /return !!product && product\.role === "wap";/);
+  assert.doesNotMatch(fnSource(appJs, "bleCheckable"), /provisioning/, "the desktop offers the console check to a board that serves none");
+  const grep = spawnSync("git", ["grep", "-l", "-i", "8fc1cee0", "--", "firmware"], { cwd: ROOT, encoding: "utf8" });
+  assert.strictEqual(grep.status, 0, "git grep for the console's service UUID found nothing: " + (grep.stderr || ""));
+  const consoleFirmware = grep.stdout.split("\n").filter(Boolean);
+  assert.ok(consoleFirmware.length > 0 && consoleFirmware.every((f) => f.startsWith("firmware/projects/canary-wap/")),
+    "the Bluetooth console's service UUID is served outside the WAP now: widen the check to that board: " + consoleFirmware.join(", "));
+  // The console copy names the WAP, the one board that serves it. Read as
+  // the user reads it: string concatenations folded (a sentence split
+  // across `" + "` is one sentence), whitespace collapsed, case ignored and
+  // the quotes optional, so phaseBluetoothCheck's lowercase "a Canary keeps
+  // a read-only Bluetooth " + "“console”" is caught as well as the one-line
+  // notes. Each needle is a sentence the flashers carried before the WAP was
+  // named, which sent a flagship owner to a console it does not serve.
+  const RETIRED_CONSOLE_COPY = [
+    /a Canary keeps a read-only Bluetooth [“"]?console/i,   // both flashers' notes, the check's lead
+    /Reach a Canary over Bluetooth/i,                       // the browser check's heading
+    /running Canary(?:’|'|&rsquo;)s Bluetooth console/i,    // the browser's "Skip the cable" line
+    /Already have a Canary\?/i,                             // both flashers' summary lines
+  ];
+  const folded = (s) => s.replace(/["'`]\s*\+\s*["'`]/g, "").replace(/\s+/g, " ");
+  for (const [label, text] of [["browser flash.js", flashJs], ["desktop app.js", appJs], ["desktop index.html", html]]) {
+    const flatText = folded(text);
+    for (const re of RETIRED_CONSOLE_COPY) {
+      assert.doesNotMatch(flatText, re, `${label}: the console copy names the WAP, the one board that serves it`);
+    }
+  }
   for (const p of catalog.products) {
     assert.strictEqual(p.role, core.productRole(p), `${p.id}: the catalog's role and the browser's productRole disagree`);
   }
@@ -5210,14 +5283,20 @@ test("rule 7: the desktop offers the browser's Bluetooth 'is it on?' check — a
   // "use a Chromium browser" error.
   assert.match(flashJs, /mount\.append\(renderReassurance\(\{ nativeShell: true \}\)\)/);
   const reassure = fnSource(flashJs, "renderReassurance");
-  assert.match(reassure, /if \(nativeShell\) \{[\s\S]*?SecuraCV iPhone app[\s\S]*?\} else \{[\s\S]*?phaseBluetoothCheck/,
+  assert.match(reassure, /if \(nativeShell\) \{[\s\S]*?in Chrome or Edge on this computer[\s\S]*?\} else \{[\s\S]*?phaseBluetoothCheck/,
     "the Lab app's Bluetooth entry must point to where the check runs, and only the browser opens it in-page");
   for (const [label, src] of [["desktop app.js", appJs], ["desktop index.html", html], ["browser flash.js (Lab app)", reassure]]) {
     // String concatenations and line wraps folded, so a sentence split
     // across source lines still reads as one.
     const flat = src.replace(/"\s*\+\s*"/g, "").replace(/\s+/g, " ");
-    assert.ok(flat.includes("the SecuraCV iPhone app") && flat.includes("in Chrome or Edge on this computer"),
-      `${label} must name both places the Bluetooth check runs`);
+    assert.ok(flat.includes("the check runs in the browser Lab in Chrome or Edge on this computer"),
+      `${label} must name where the Bluetooth check runs`);
+    // The check reads a WAP's console, and the iPhone app dials only a
+    // peripheral that advertises the console service, which a WAP does not
+    // (ledger A65): naming the app as a place the check runs sends an iPhone
+    // owner into Bluetooth range for nothing.
+    assert.ok(!/runs in the SecuraCV iPhone app|runs in the iPhone app/.test(flat),
+      `${label} must not name the iPhone app as where the Bluetooth check runs`);
   }
 });
 

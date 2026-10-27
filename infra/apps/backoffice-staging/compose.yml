@@ -1,0 +1,30 @@
+# Staging: the same image on a copy of production, with test keys. Merges to main deploy here first
+# (backoffice-deploy.yml); a build goes to production only when "Promote backoffice to production" is
+# pressed with the tag staging runs. `kit refresh backoffice-staging` (nightly by cron) restores the
+# latest off-site production backup into /srv/data/backoffice-staging; the app labels it staging on boot,
+# mutes mail and issues, and never writes to the backup bucket (BACKOFFICE_ENV=staging, backoffice/src/env.mjs).
+services:
+  backoffice-staging:
+    image: ghcr.io/kmay89/securacv-backoffice:${TAG:-latest}
+    container_name: backoffice-staging
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      BACKOFFICE_ENV: staging
+      BACKOFFICE_HOST: 0.0.0.0
+      BACKOFFICE_PORT: "8787"
+      BACKOFFICE_DATA_DIR: /data
+    volumes:
+      - /srv/data/backoffice-staging:/data
+    networks: [edge]
+    security_opt: [no-new-privileges:true]
+    # the image is read-only at runtime: the app writes only to its data volume and /tmp
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    mem_limit: 384m
+    pids_limit: 256
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+networks:
+  edge:
+    external: true

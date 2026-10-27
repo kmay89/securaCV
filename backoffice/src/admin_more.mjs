@@ -19,14 +19,19 @@ import { trackingConfigured, pollTracking } from './modules/shipping.mjs';
 import { orderToken } from './modules/delivery.mjs';
 import { listItems } from './modules/inventory.mjs';
 import { timedFetch } from './net.mjs';
+import { dueIn, LEVELS } from './attention.mjs';
 
 const KIND_LABEL = { purchasing: 'Purchasing', sales: 'Sales', support: 'Support', orders: 'Orders', books: 'Books', mail: 'Mail' };
 
 // The Decide queue as cards: what the system would do, why, one button to let it — and a link to look first.
 export function decideCards(db, cfg, csrf) {
-  const s = suggestions(db, cfg); if (!s.length) return '';
-  const card = (x) => `<div class="dc"><div class="dk">${e(KIND_LABEL[x.kind] || x.kind)}</div><div class="dt">${e(x.title)}</div><div class="dd">${e(x.detail)}</div><div class="dw">${e(x.why)}</div><div class="da">${x.action ? `<form method="post" action="${e(x.action.href)}" class="inline"><input type="hidden" name="_csrf" value="${e(csrf)}">${Object.entries(x.action.fields || {}).map(([k, v]) => `<input type="hidden" name="${e(k)}" value="${e(v)}">`).join('')}<button>${e(x.action.label)}</button></form>` : ''}${x.link ? `<a href="${e(x.link)}" class="btn quiet">Look first</a>` : ''}</div></div>`;
-  return `<h2 style="margin-top:.2rem">Decide <span class="muted" style="font-weight:400;font-size:13px">· ${s.length} drafted by the system, each waiting for a person</span></h2><div class="decide">${s.map(card).join('')}</div>`;
+  const now = Date.now(); const s = suggestions(db, cfg, { now }); if (!s.length) return '';
+  // ranked by the clock each one is against: overdue first, then due soonest, then the ones with no clock
+  const ranked = s.map(x => ({ ...x, due: x.due_at ? dueIn(x.due_at, { now }) : { ms: null, text: '', level: 'calm' } }))
+    .sort((a, b) => LEVELS.indexOf(a.due.level) - LEVELS.indexOf(b.due.level) || (a.due.ms ?? Infinity) - (b.due.ms ?? Infinity));
+  const card = (x) => `<div class="dc ${x.due.level === 'calm' ? '' : e(x.due.level)}"><div class="dk">${e(KIND_LABEL[x.kind] || x.kind)}</div><div class="dt">${e(x.title)}</div><div class="dd">${e(x.detail)}</div>${x.due.text ? `<div class="due ${e(x.due.level)}">${e(x.due.text)}</div>` : ''}<div class="dw">${e(x.why)}</div><div class="da">${x.action ? `<form method="post" action="${e(x.action.href)}" class="inline"><input type="hidden" name="_csrf" value="${e(csrf)}">${Object.entries(x.action.fields || {}).map(([k, v]) => `<input type="hidden" name="${e(k)}" value="${e(v)}">`).join('')}<button>${e(x.action.label)}</button></form>` : ''}${x.link ? `<a href="${e(x.link)}" class="btn quiet">Look first</a>` : ''}</div></div>`;
+  const pressing = ranked.filter(x => x.due.level !== 'calm').length;
+  return `<h2 style="margin-top:.2rem">Decide <span class="muted" style="font-weight:400;font-size:13px">· ${s.length} drafted by the system, each waiting for a person${pressing ? ` · ${pressing} against a clock` : ''}</span></h2><div class="decide">${ranked.map(card).join('')}</div>`;
 }
 
 export function registerMore(app, { page, back, link, filters, backTo }) {
@@ -37,6 +42,7 @@ export function registerMore(app, { page, back, link, filters, backTo }) {
   router.get('/marketing', (c) => {
     const days = Number(c.query.get('days')) || 30; const m = marketing(db, { days }); const f = m.funnel, p = f.period;
     const funnel = `<div class="kpis">${tile('People we know', f.contacts, { prev: null })}${tile('Opted in to news', `${f.opted_in} <span class="muted" style="font-size:.8rem">${pct(f.contacts ? f.opted_in / f.contacts : 0)}</span>`)}${tile('Bought once', `${f.customers} <span class="muted" style="font-size:.8rem">${pct(f.contacts ? f.customers / f.contacts : 0)}</span>`)}${tile('Bought again', `${f.repeat} <span class="muted" style="font-size:.8rem">${pct(f.customers ? f.repeat / f.customers : 0)}</span>`)}${tile(`Attributed sales`, money(m.attributed_cents))}</div>
+<h2>The checkout <span class="muted" style="font-weight:400;font-size:13px">· every hosted checkout the store opened, from Stripe's own events — no pixel, no cookie</span></h2><div class="kpis">${tile('Checkouts opened', m.checkout.opened)}${tile('Paid', `${m.checkout.paid} <span class="muted" style="font-size:.8rem">${m.checkout.conversion == null ? '' : pct(m.checkout.conversion)}</span>`)}${tile('Abandoned', `${m.checkout.abandoned} <span class="muted" style="font-size:.8rem">${money(m.checkout.abandoned_cents)}</span>`)}${tile('Written to', m.checkout.mailed)}${tile('Came back and paid', m.checkout.recovered)}</div>
 <p class="muted">In the last ${days} days: ${p.contacts} new people, ${p.opted_in} opt-ins, ${p.first_orders} first orders, ${p.repeat_orders} repeat orders. ${link('/marketing?days=7', '7')} · ${link('/marketing?days=30', '30')} · ${link('/marketing?days=90', '90')} · ${link('/marketing?days=365', '365')} days</p>`;
     const sources = hbars({ rows: m.sources.map(s => ({ label: s.source, value: s.contacts, extra: `${s.opted_in} opted in · ${s.customers} bought` })), title: 'Where people come from', color: 'var(--s2)' });
     const maps = `<div class="two">${stateTileMap(m.byState, { title: 'Customers by state', fmt: (v) => String(v), sub: Object.fromEntries(Object.entries(m.ordersByState).map(([k, v]) => [k, `${v} order${v === 1 ? '' : 's'}`])) })}${stateTileMap(m.salesByState, { title: 'Sales by state', fmt: (v) => money(v) })}</div>`;

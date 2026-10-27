@@ -2,7 +2,8 @@
 //
 // The WAP's sensing-event feed, exactly as the firmware serves it:
 // `GET /api/events/today` → `{"events":[ <row>, … ]}`, newest first, at most
-// 64 rows, Bearer-token-gated (csi_integration.cpp:handle_events_today).
+// 64 rows, behind CSI_AUTH_OR_RETURN (csi_integration.cpp:handle_events_today:
+// a landing session's cookie, or the bearer the app sends, ledger F346).
 // This is the transport the DeviceEvent dialect (Shared/EventVocabulary) was
 // built FOR: the row's `type` field carries the same firmware type_name
 // strings — smoke_alarm_t3, presence_changed, frame_sealed — that the
@@ -202,7 +203,8 @@ struct WapEventRow: Codable, Sendable, Equatable {
 
 // MARK: - the 1 Hz stream snapshot
 
-/// `GET /api/csi/stream` — a plain 1 Hz GET snapshot (not SSE), Bearer-gated,
+/// `GET /api/csi/stream` — a plain 1 Hz GET snapshot (not SSE), gated like
+/// `/api/events/today`,
 /// with THREE mutually exclusive body shapes the firmware actually sends:
 ///   * radio HAL never came up → `{"t":0,"status":"unavailable","reason":…}`
 ///     (`status`/`reason` exist ONLY in this variant);

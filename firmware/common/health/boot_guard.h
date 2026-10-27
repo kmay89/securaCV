@@ -153,8 +153,10 @@ inline bool running_image_id(uint8_t out[kImageIdLen]) {
 
 // Is the image identity usable? The build must fill app_elf_sha256 in the app
 // descriptor; if it reads as all zeros, every build looks like the same image
-// and a re-flash of another build silently stops resetting the count (the
-// conservative direction, but a lost escape hatch). main.cpp prints this at
+// and a PlatformIO or Arduino IDE upload of another build (which leaves NVS
+// alone) silently stops resetting the count (the conservative direction, but
+// a lost escape hatch; an install in either flasher starts NVS over, the
+// count with it, whatever the identity). main.cpp prints this at
 // boot so the bench can check it on each toolchain (Track E, row E6).
 inline bool image_id_present() {
   uint8_t id[kImageIdLen];

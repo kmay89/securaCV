@@ -6,7 +6,7 @@
  * been up, where it is on the network, where it stands in onboarding, with
  * its hub, with its peers, with the Witness Wall, and with its updates. The
  * program brief asked for exactly this list on every node; before this header
- * two trees served a rich bearer-gated status and four served none.
+ * two trees served a rich, gated status and four served none.
  *
  * Written ONCE here, in the style of fleet_selfreport.h (the /api/fleet body):
  * PURE, no Arduino / no heap, a fixed-size clamp-safe writer that
@@ -19,9 +19,10 @@
  * secret and nothing is a stable identifier beyond what mDNS already says:
  * no MAC, no key, no broker address, no coordinates. The IP is the address
  * the asker already connected to. (AGENTS.md Invariants II/III.) On the PIO
- * canary and the WAP, whose /api/status is bearer-gated and richer, these
- * keys are FOLDED INTO that body, same spelling, so one reader works
- * everywhere.
+ * canary and the WAP, whose /api/status is gated and richer (the canary's
+ * takes the bearer; the WAP's takes api_auth_check(), the bearer or a
+ * landing session any LAN host can mint, F346), these keys are FOLDED INTO
+ * that body, same spelling, so one reader works everywhere.
  *
  * Every optional key is OMITTED when the node cannot say — the born_day rule
  * from fleet_selfreport.h: absent means "cannot tell you", and a reader must

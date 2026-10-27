@@ -248,7 +248,7 @@ jobs:
         # (exit 2) a source it cannot parse rather than pass with nothing to
         # look for; scripts/tests/test_lint_bench_rows.py pins the shapes.
         run: python3 scripts/lint_bench_rows.py
-      - name: CloudKit container — named, never defaulted, fully deployed
+      - name: CloudKit container — named, never defaulted, schema table matches the sources
         # CKContainer.default() reads an entitlement and raises an ObjC
         # CKException when there isn't one. Swift can't catch that, so an
         # unsigned build (CI builds exactly that) aborts on launch — which is

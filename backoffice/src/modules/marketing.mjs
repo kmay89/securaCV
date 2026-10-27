@@ -1,6 +1,7 @@
 // Marketing, in one view and without a visitor number: the funnel from a
 // signup to a repeat buyer, where people come from, what every campaign and
 // automation did in the week after, the codes, and where the customers are.
+import { checkoutStats } from './recovery.mjs';
 import { audienceStats } from './contacts.mjs';
 import { listCampaigns, campaignReport } from './campaigns.mjs';
 import { listAutomations, automationReport } from './automations.mjs';
@@ -24,5 +25,5 @@ export function marketing(db, { days = 30, now = Date.now() } = {}) {
   for (const r of db.all("SELECT ship_state AS st, COUNT(DISTINCT contact_id) AS customers, COUNT(*) AS orders, SUM(total_cents - refunded_cents) AS sales FROM orders WHERE status != 'canceled' AND total_cents > 0 AND ship_state != '' GROUP BY ship_state")) { byState[r.st] = r.customers; salesByState[r.st] = r.sales; ordersByState[r.st] = r.orders; }
   const cities = db.all("SELECT ship_city || ', ' || ship_state AS place, COUNT(DISTINCT contact_id) AS customers, SUM(total_cents - refunded_cents) AS sales FROM orders WHERE status != 'canceled' AND total_cents > 0 AND ship_city != '' GROUP BY 1 ORDER BY customers DESC, sales DESC LIMIT 8");
   const attributed = campaigns.reduce((s, c) => s + c.report.revenue_cents, 0) + automations.reduce((s, a) => s + a.report.revenue_cents, 0);
-  return { days, funnel, sources, audience: audienceStats(db, { days }), campaigns, automations, codes, byState, salesByState, ordersByState, cities, attributed_cents: attributed };
+  return { days, funnel, sources, audience: audienceStats(db, { days }), campaigns, automations, codes, byState, salesByState, ordersByState, cities, attributed_cents: attributed, checkout: checkoutStats(db, { days, now }) };
 }
