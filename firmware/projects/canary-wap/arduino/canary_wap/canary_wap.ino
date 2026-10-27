@@ -344,7 +344,7 @@ static volatile bool g_vault_test_pending = false;
 // (canary-local/tools/figures) holds it to the mDNS and MQTT sites and refuses
 // any other =, compound assignment, ++ or -- of the name (sweep F294).
 static const char* DEVICE_TYPE        = "canary-wap";
-static const char* FIRMWARE_VERSION   = "2.4.17-wap";  // Vision runtime config release train
+static const char* FIRMWARE_VERSION   = "2.4.18-wap";  // Vision runtime config release train
 static const char* RULESET_ID         = "securacv:canary:v1.0";
 static const char* PROTOCOL_VERSION   = "pwk:v0.3.0";
 static const char* CHAIN_ALGORITHM    = "sha256-domain-sep";
