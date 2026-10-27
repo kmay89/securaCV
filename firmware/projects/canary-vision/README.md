@@ -247,13 +247,17 @@ one tap hands over the home Wi-Fi over an encrypted Just Works link (no bond
 kept; the write handler checks the encryption again) into the portal's own
 join path. Door shut: today's beacon bytes, not connectable.
 
-**When the door is open** — the header's rule: for a device nobody owns
-yet, and for an owner's own tap — never for a device that has an owner and
-a bad day:
+**When the door is open** — the header's rule: for a device with no
+network saved (a new one nobody owns yet, or one whose network was
+cleared), and for an owner's own tap — never for a device that has an
+owner and a bad day:
 
 - **No credentials stored:** for **30 minutes after power-on**
-  (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle or a factory reset re-arms
-  it; 0 = tap-only).
+  (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle or the 10 s factory-reset
+  hold re-arms it; 0 = tap-only). A unit reset with the hold still has an
+  owner (the hold keeps the witness identity and the chain), yet for that
+  half hour its door goes to whichever phone connects first
+  (`docs/design/magic_pairing.md` §2.2).
 - **A short BOOT tap** (`BOOT_BUTTON_PIN` from the host board's `pins.h`:
   GPIO9 on the XIAO ESP32-C3 hosts, GPIO0 on the XIAO ESP32-S3;
   `common/io/short_tap.h`: ≥40 ms, <700 ms): **60 s**, with or without

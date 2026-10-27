@@ -133,7 +133,7 @@ export function send(res, status, body, headers = {}) {
   const buf = typeof body === 'string' ? Buffer.from(body) : body;
   const { 'Content-Type': contentType = 'text/plain; charset=utf-8', ...rest } = headers;
   res.setHeader('Content-Type', contentType);
-  res.writeHead(status, { 'Content-Length': buf.length, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()', 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Resource-Policy': 'same-origin', ...rest });
+  res.writeHead(status, { 'Content-Length': buf.length, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()', 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Resource-Policy': 'same-origin', 'X-Robots-Tag': 'noindex, nofollow, noarchive, noai, noimageai', ...rest });
   res.end(buf);
 }
 // Admin pages are never cached by a browser or a proxy; a public page passes its own Cache-Control.

@@ -72,9 +72,11 @@
  *   · a different image booting (OTA, A/B rollback, or a USB re-flash of
  *     another build; carry_count() below)        -> kFreshImageReset
  *   · an operator "clear & retry" from safe mode -> kOperatorClearReset
- *   Re-flashing the SAME build keeps the count; the operator clear (or an NVS
- *   erase) is the way out of that. (No browser-flasher health tool exists
- *   yet; an earlier draft of this comment named one.)
+ *   Re-uploading the SAME build with PlatformIO or the Arduino IDE (which
+ *   leave NVS alone) keeps the count; the operator clear (or an NVS erase) is
+ *   the way out of that. An install in either flasher starts NVS over, the
+ *   count with it. (No browser-flasher health tool exists yet; an earlier
+ *   draft of this comment named one.)
  *
  * This file must compile hosted for tests_host/test_boot_policy.cpp with
  * -Wall -Wextra -Werror, AND as C++11 (the canary tree's core-2.0.17 default
@@ -195,8 +197,10 @@ inline constexpr Decision decide_uncounted(uint16_t prev, bool image_confirmed,
 // count behind — an OTA install, an A/B rollback, or a USB re-flash of another
 // build — starts from kFreshImageReset: the new image has not failed yet, and
 // a re-flash with a fixed build must never land straight back in safe mode.
-// Re-flashing the SAME build keeps the count (it is still the image that could
-// not come up); the operator clear is the way out of that.
+// Re-uploading the SAME build over PlatformIO or the Arduino IDE keeps the
+// count (it is still the image that could not come up; those uploads leave
+// NVS alone, while an install in either flasher starts NVS over and the count
+// with it); the operator clear is the way out of that.
 inline constexpr uint16_t carry_count(uint16_t prev, bool same_image) {
   return same_image ? prev : kFreshImageReset;
 }

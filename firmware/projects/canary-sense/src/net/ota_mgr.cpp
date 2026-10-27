@@ -93,6 +93,26 @@ void publish_update_state_now() {
   publish_update_state_retained(g_topics, msg);
 }
 
+/* Log the outcome of an install reboot, once the outcome is final. The
+ * engine recorded the install target the moment the boot partition flipped
+ * and hands it back exactly once, when the answer is known: on a boot that
+ * runs the PREVIOUS image (a rollback — the boot probe failed, or a restart
+ * landed inside the confirm dwell), or once THIS image has been confirmed.
+ * While the new image is still pending it keeps the marker, so a restart
+ * inside the dwell — which the bootloader answers with the old image — is
+ * logged as the rollback it is, never as an update that applied. Called at
+ * boot (ota_init) and again on the pass that confirms the image
+ * (ota_health_tick); after an install, exactly one of the two finds it. */
+void record_update_outcome() {
+  char target[SECURACV_OTA_VERSION_MAX];
+  if (!securacv_ota_take_pending_version(target, sizeof(target))) return;
+  if (strcmp(target, CANARY_FW_VERSION) == 0) {
+    log_line("OTA", "Firmware update applied.");
+  } else {
+    log_line("OTA", "Firmware update rolled back — previous software restored.");
+  }
+}
+
 }  // namespace
 
 void ota_boot_validate() {
@@ -142,19 +162,9 @@ void ota_init(const Topics& topics) {
     log_line("OTA", "Pull-OTA engine init FAILED.");
   }
 
-  // Log the outcome of an install reboot. The engine recorded the install
-  // target the moment the boot partition flipped; running the old version
-  // again means rollback.
-  {
-    char target[SECURACV_OTA_VERSION_MAX];
-    if (securacv_ota_take_pending_version(target, sizeof(target))) {
-      if (strcmp(target, CANARY_FW_VERSION) == 0) {
-        log_line("OTA", "Firmware update applied.");
-      } else {
-        log_line("OTA", "Firmware update rolled back — previous software restored.");
-      }
-    }
-  }
+  // A rollback is known now (this boot runs the previous image); a new
+  // image's "applied" waits for its confirmation in ota_health_tick().
+  record_update_outcome();
 
   publish_update_auto_retained(g_topics, securacv_ota_get_auto_update());
   publish_update_state_now();
@@ -165,7 +175,9 @@ void ota_init(const Topics& topics) {
 }
 
 void ota_health_tick(uint32_t now_ms, bool healthy) {
-  securacv_ota_health_tick(now_ms, healthy);
+  // True exactly on the pass that confirmed the image: the update is final,
+  // so this is when "applied" is true to say.
+  if (securacv_ota_health_tick(now_ms, healthy)) record_update_outcome();
 }
 
 void ota_loop(uint32_t now_ms) {

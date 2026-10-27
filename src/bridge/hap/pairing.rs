@@ -21,8 +21,10 @@
 //! No pairing state is written to disk by this module. It hands back a
 //! [`Pairing`] and lets the caller decide where that lives, because on a
 //! Canary the answer is "NVS, and only if flash encryption is on" while on a
-//! hub it is a file — and a long-term pairing key is exactly the kind of
-//! secret the hardware-root-of-trust tiering exists to govern.
+//! hub it is a file. That gate keeps a long-term pairing key off every board
+//! without flash encryption; it does not make the key confidential on one
+//! with it, since flash encryption does not cover NVS and no released build
+//! has NVS encryption (`docs/design/apple_home_integration.md`).
 //!
 //! # Honest limits
 //!

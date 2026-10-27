@@ -1,7 +1,7 @@
 # Manual Test Plan: Canary WAP Captive Portal / `canary.local` Onboarding
 
 ## Purpose
-Validate that a phone joining the Canary's `SecuraCV-XXXX` AP **stays
+Validate that a phone joining the Canary's `SecuraCV-wap-XXXX` AP **stays
 connected** (never flagged "no internet") and can reach the dashboard via
 `canary.local` or the `192.168.4.1` fallback — across iOS/macOS, Android, and
 Windows, during first-boot setup, in steady state after provisioning, and over
@@ -16,13 +16,16 @@ job; this plan covers the parts only real hardware and real OS supplicants can
 exercise.
 
 ## How the firmware behaves (reference)
-- **AP SSID** is `SecuraCV-XXXX` (a 4-char suffix derived from the device's
-  hardware identity, encoded in the unambiguous alphabet — no `0/O/o`,
-  `1/I/i/l/L`) in both setup and steady state. The softAP is up while the
-  device is unprovisioned or its home-Wi-Fi (STA) link is down, and in
-  standalone (AP-only) mode; once the STA has held the home network for
-  120 s (`AP_DROP_GRACE_MS`) the AP is dropped, and it is raised again when
-  the STA link is lost. It does **not** NAT.
+- **AP SSID** is `SecuraCV-wap-XXXX` (a 4-char suffix derived from the
+  device's identity key fingerprint, never the MAC, encoded in the
+  unambiguous alphabet — no `0/O/o`, `1/I/i/l/L`) in both setup and steady
+  state. It lasts as long as the key: an OTA update and the 10 s BOOT hold
+  keep it, and an install in either flasher (which starts NVS over) gives a
+  new key and so a new suffix. The softAP is up while the device is
+  unprovisioned or its home-Wi-Fi (STA) link is down, and in standalone
+  (AP-only) mode; once the STA has held the home network for 120 s
+  (`AP_DROP_GRACE_MS`) the AP is dropped, and it is raised again when the
+  STA link is lost. It does **not** NAT.
 - **Transport**: plain **HTTP on port 80**. First-boot setup is HTTP-only by
   design (a captive sheet shows a blank page for a certificate it does not
   recognize). After setup the WAP serves **HTTPS on port 443** (self-signed)
@@ -69,7 +72,7 @@ exercise.
 
 #### A1) Apple (iOS/macOS)
 **Action**
-- Factory-fresh device (or after NVS `setup_ok` cleared). Join `SecuraCV-XXXX`.
+- Factory-fresh device (or after NVS `setup_ok` cleared). Join `SecuraCV-wap-XXXX`.
 
 **Expected**
 - A "Sign in to network" sheet appears showing the instruction page.
@@ -80,7 +83,7 @@ exercise.
 
 #### A2) Android (Chrome)
 **Action**
-- Join `SecuraCV-XXXX`.
+- Join `SecuraCV-wap-XXXX`.
 
 **Expected**
 - **No** captive sign-in sheet (this is correct — the `204` is what keeps
@@ -93,7 +96,7 @@ exercise.
 
 #### A3) Windows
 **Action**
-- Join `SecuraCV-XXXX`.
+- Join `SecuraCV-wap-XXXX`.
 
 **Expected**
 - Network shows connected (may show limited connectivity, but not flapping).
@@ -112,9 +115,9 @@ exercise.
 **Action**
 - After provisioning (NVS `setup_ok` set), disable the home Wi-Fi network so
   the device's STA link drops (the real trigger: a joined unit drops
-  `SecuraCV-XXXX` 120 s after the join and raises it again on STA loss), or
+  `SecuraCV-wap-XXXX` 120 s after the join and raises it again on STA loss), or
   use a unit in standalone (AP-only) mode. Then forget/rejoin
-  `SecuraCV-XXXX` from each platform.
+  `SecuraCV-wap-XXXX` from each platform.
 
 **Expected**
 - Same connected behavior as Section A on every platform — the AP is **not**
@@ -219,7 +222,9 @@ The shared core is `firmware/common/network/onboarding_fsm.h` (host-tested);
 every case below holds on a Sense, a Vision, a Sentinel, a WAP, a display and a
 PIO canary unless the row says otherwise. `GET /api/status` is the oracle: its
 `onboarding` word is the state (the WAP and the PIO canary answer it inside
-their bearer-gated `/api/status` under `node_status`).
+their gated `/api/status` under `node_status`: the canary's takes the bearer,
+the WAP's `api_auth_check()`, which a landing session passes too, ledger
+F346).
 
 | # | Step | Expect |
 |---|------|--------|

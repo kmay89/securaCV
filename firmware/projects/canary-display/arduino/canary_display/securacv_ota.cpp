@@ -14,9 +14,9 @@
  * - Progress is reported via user-registered callback
  * - Self-test validation runs at boot to confirm or roll back an update
  *
- * The pure-logic subset (version compare, update decision, URL policy,
- * signed-message layout, hex parsing, message strings) compiles on the
- * host under -DSECURACV_OTA_HOST_BUILD for unit testing.
+ * The pure-logic subset (version compare, update decision, slot pre-check,
+ * URL policy, signed-message layout, hex parsing, message strings) compiles
+ * on the host under -DSECURACV_OTA_HOST_BUILD for unit testing.
  */
 
 #include "securacv_ota.h"
@@ -124,6 +124,16 @@ securacv_ota_decision_t securacv_ota_update_decision(
     if (cmp > 0)  return SECURACV_OTA_DECISION_UPDATE;
     if (cmp == 0) return SECURACV_OTA_DECISION_UP_TO_DATE;
     return SECURACV_OTA_DECISION_ROLLBACK;
+}
+
+bool securacv_ota_image_fits_slot(uint32_t image_size, uint32_t slot_size)
+{
+    // No inactive slot: nothing can be written, whatever the size.
+    if (slot_size == 0) return false;
+    // An undeclared size cannot be pre-checked; the download path still
+    // holds the received length to the manifest and the write to the slot.
+    if (image_size == 0) return true;
+    return image_size <= slot_size;
 }
 
 // IPv4 literal parser for the URL policy. Returns true and fills octets
@@ -348,6 +358,123 @@ bool securacv_ota_board_ok(const securacv_ota_manifest_t *m,
     return true;
 }
 
+// ── Manifest fields → struct: whole or refused (host-tested) ─────────────────
+
+// The canonical message's worst case must fit the buffer every caller sizes
+// with SECURACV_OTA_MANIFEST_MSG_MAX: the v2 prefix, then each field at its
+// buffer's full length (buffer - 1 bytes + the NUL separator = the buffer
+// size), the decimal size (10 digits + NUL), board and chip.
+static_assert(sizeof("scv-manifest-v2") +
+                  sizeof(securacv_ota_manifest_t::product) +
+                  sizeof(securacv_ota_manifest_t::version) +
+                  sizeof(securacv_ota_manifest_t::min_version) +
+                  sizeof(securacv_ota_manifest_t::url) +
+                  sizeof(securacv_ota_manifest_t::sha256) +
+                  11 +
+                  sizeof(securacv_ota_manifest_t::release_notes) +
+                  sizeof(securacv_ota_manifest_t::release_url) +
+                  sizeof(securacv_ota_manifest_t::board) +
+                  sizeof(securacv_ota_manifest_t::chip) <=
+              SECURACV_OTA_MANIFEST_MSG_MAX,
+              "SECURACV_OTA_MANIFEST_MSG_MAX no longer holds a full manifest's signed message");
+
+// Copy one field into its fixed buffer whole, or report that it cannot be.
+// NULL is an absent field: an empty buffer.
+static bool manifest_field_copy(char *dst, size_t cap, const char *src)
+{
+    dst[0] = '\0';
+    if (src == NULL) return true;
+    const size_t len = strlen(src);
+    if (len >= cap) return false;
+    memcpy(dst, src, len + 1);
+    return true;
+}
+
+securacv_ota_fields_verdict_t securacv_ota_manifest_from_fields(const securacv_ota_manifest_fields_t *in,
+                                                                securacv_ota_manifest_t *out,
+                                                                const char **field)
+{
+    if (field != NULL) *field = NULL;
+    if (out == NULL) return SECURACV_OTA_FIELDS_MISSING;
+    memset(out, 0, sizeof(*out));
+    if (in == NULL) return SECURACV_OTA_FIELDS_MISSING;
+
+    // Required: an absent or empty one cannot name a product, a version, an
+    // image or its digest, and no release manifest has one.
+    const struct { const char *name; const char *value; } required[] = {
+        {"product", in->product}, {"version", in->version},
+        {"url", in->url},         {"sha256", in->sha256},
+    };
+    for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); i++) {
+        if (required[i].value == NULL || required[i].value[0] == '\0') {
+            if (field != NULL) *field = required[i].name;
+            return SECURACV_OTA_FIELDS_MISSING;
+        }
+    }
+
+    // manifest_version 2 signs the hardware binding; a v1 manifest carrying
+    // board/chip would be an UNSIGNED binding, which is worse than none, so
+    // it is refused the way the signer refuses to emit one.
+    const int mver = in->manifest_version;
+    if (mver != 1 && mver != 2) {
+        if (field != NULL) *field = "manifest_version";
+        return SECURACV_OTA_FIELDS_UNKNOWN_VERSION;
+    }
+    if (mver == 1 && ((in->board != NULL && in->board[0] != '\0') ||
+                      (in->chip != NULL && in->chip[0] != '\0'))) {
+        if (field != NULL) *field = (in->board != NULL && in->board[0] != '\0') ? "board" : "chip";
+        return SECURACV_OTA_FIELDS_UNSIGNED_BINDING;
+    }
+
+    const struct { const char *name; char *dst; size_t cap; const char *src; } copies[] = {
+        {"product",            out->product,            sizeof(out->product),            in->product},
+        {"version",            out->version,            sizeof(out->version),            in->version},
+        {"min_version",        out->min_version,        sizeof(out->min_version),        in->min_version},
+        {"url",                out->url,                sizeof(out->url),                in->url},
+        {"sha256",             out->sha256,             sizeof(out->sha256),             in->sha256},
+        {"signature",          out->signature,          sizeof(out->signature),          in->signature},
+        {"manifest_signature", out->manifest_signature, sizeof(out->manifest_signature), in->manifest_signature},
+        {"signing_key_id",     out->signing_key_id,     sizeof(out->signing_key_id),     in->signing_key_id},
+        {"release_notes",      out->release_notes,      sizeof(out->release_notes),      in->release_notes},
+        {"release_url",        out->release_url,        sizeof(out->release_url),        in->release_url},
+        {"board",              out->board,              sizeof(out->board),              in->board},
+        {"chip",               out->chip,               sizeof(out->chip),               in->chip},
+    };
+    for (size_t i = 0; i < sizeof(copies) / sizeof(copies[0]); i++) {
+        if (!manifest_field_copy(copies[i].dst, copies[i].cap, copies[i].src)) {
+            memset(out, 0, sizeof(*out));
+            if (field != NULL) *field = copies[i].name;
+            return SECURACV_OTA_FIELDS_TOO_LONG;
+        }
+    }
+    out->size = in->size;
+    out->manifest_version = (uint8_t)mver;
+    return SECURACV_OTA_FIELDS_OK;
+}
+
+// ── The pending-marker rule (host-tested) ─────────────────────────────────────
+bool securacv_ota_take_marker(const securacv_ota_marker_store_t *stores, size_t n_stores,
+                              bool running_pending_verify, char *buf, size_t buf_len)
+{
+    if (buf == NULL || buf_len == 0) return false;
+    buf[0] = '\0';
+    // The image this boot runs has not been confirmed: the update has not
+    // stuck, and a restart now reverts it. Leave the marker for the pass that
+    // confirms — or for the previous image, if the bootloader goes back to it.
+    if (running_pending_verify) return false;
+    if (stores == NULL) return false;
+    for (size_t i = 0; i < n_stores; i++) {
+        const securacv_ota_marker_store_t *s = &stores[i];
+        if (s->load == NULL) continue;
+        if (s->load(s->ctx, buf, buf_len) && buf[0] != '\0') {
+            if (s->erase != NULL) s->erase(s->ctx);  // consume exactly once
+            return true;
+        }
+        buf[0] = '\0';
+    }
+    return false;
+}
+
 
 bool securacv_ota_hex_to_bytes(const char *hex, uint8_t *bytes, size_t byte_len)
 {
@@ -382,7 +509,7 @@ const char *securacv_ota_error_str(securacv_ota_error_t error)
         case SECURACV_OTA_ERR_SIZE_MISMATCH:     return "Image size mismatch";
         case SECURACV_OTA_ERR_FLASH_WRITE:       return "Flash write failed";
         case SECURACV_OTA_ERR_FLASH_READ:        return "Flash read failed";
-        case SECURACV_OTA_ERR_PARTITION:         return "Partition error";
+        case SECURACV_OTA_ERR_PARTITION:         return "No inactive OTA slot, or the image is larger than the slot";
         case SECURACV_OTA_ERR_VERSION_ROLLBACK:  return "Version rollback rejected";
         case SECURACV_OTA_ERR_SELF_TEST_FAILED:  return "Self-test failed";
         case SECURACV_OTA_ERR_ALREADY_RUNNING:   return "OTA already running";
@@ -436,8 +563,14 @@ const char *securacv_ota_friendly_error(securacv_ota_error_t error)
             return "The update file failed its security check, so it was not installed.";
         case SECURACV_OTA_ERR_FLASH_WRITE:
         case SECURACV_OTA_ERR_FLASH_READ:
-        case SECURACV_OTA_ERR_PARTITION:
             return "The update could not be saved. Your Canary is still on its current software.";
+        case SECURACV_OTA_ERR_PARTITION:
+            // Retrying never helps here: the space is fixed by how the board
+            // was first flashed over USB, and only a USB install changes it.
+            // "Does not fit", not "too big": this code also covers a board
+            // with no update space at all (a single-app table), where no
+            // smaller update would install either.
+            return "This update does not fit in the space your Canary keeps for updates. Install it over USB instead.";
         case SECURACV_OTA_ERR_VERSION_ROLLBACK:
             return "That update is older than the software already installed, so it was skipped.";
         case SECURACV_OTA_ERR_SELF_TEST_FAILED:
@@ -821,34 +954,60 @@ esp_err_t securacv_ota_mark_pending_install(const char *version)
     return nvs_store_str(NVS_KEY_PENDING_VER, version);
 }
 
+// The install marker's two homes, as securacv_ota_take_marker() reads them.
+static bool marker_engine_load(void *ctx, char *buf, size_t buf_len)
+{
+    (void)ctx;
+    return nvs_load_str(NVS_KEY_PENDING_VER, buf, buf_len) == ESP_OK && buf[0] != '\0';
+}
+
+static void marker_engine_erase(void *ctx)
+{
+    (void)ctx;
+    nvs_store_str(NVS_KEY_PENDING_VER, NULL);
+}
+
+// Migration: firmware released before this engine recorded the target in the
+// Preferences "securacv" namespace as "ota_target" (written by the OLD image
+// at reboot time). Honored once so the very first OTA out of a pre-migration
+// build still gets its outcome witnessed.
+static bool marker_legacy_load(void *ctx, char *buf, size_t buf_len)
+{
+    (void)ctx;
+    nvs_handle_t handle;
+    if (nvs_open("securacv", NVS_READONLY, &handle) != ESP_OK) return false;
+    size_t len = buf_len;
+    const bool found = nvs_get_str(handle, "ota_target", buf, &len) == ESP_OK && buf[0] != '\0';
+    nvs_close(handle);
+    return found;
+}
+
+static void marker_legacy_erase(void *ctx)
+{
+    (void)ctx;
+    nvs_handle_t handle;
+    if (nvs_open("securacv", NVS_READWRITE, &handle) != ESP_OK) return;
+    nvs_erase_key(handle, "ota_target");
+    nvs_commit(handle);
+    nvs_close(handle);
+}
+
+static bool running_image_pending_verify(void);
+
 bool securacv_ota_take_pending_version(char *buf, size_t buf_len)
 {
-    if (buf == NULL || buf_len == 0) return false;
-    buf[0] = '\0';
-    if (nvs_load_str(NVS_KEY_PENDING_VER, buf, buf_len) == ESP_OK && buf[0] != '\0') {
-        nvs_store_str(NVS_KEY_PENDING_VER, NULL);  // erase: consume exactly once
-        return true;
-    }
-
-    // Migration: firmware released before this engine recorded the target
-    // in the Preferences "securacv" namespace as "ota_target" (written by
-    // the OLD image at reboot time). Honor it once so the very first OTA
-    // out of a pre-migration build still gets its outcome witnessed.
-    {
-        nvs_handle_t handle;
-        if (nvs_open("securacv", NVS_READWRITE, &handle) == ESP_OK) {
-            size_t len = buf_len;
-            if (nvs_get_str(handle, "ota_target", buf, &len) == ESP_OK && buf[0] != '\0') {
-                nvs_erase_key(handle, "ota_target");
-                nvs_commit(handle);
-                nvs_close(handle);
-                return true;
-            }
-            nvs_close(handle);
-        }
-    }
-    buf[0] = '\0';
-    return false;
+    // The rule (securacv_ota_take_marker, host-tested): nothing is read or
+    // erased while this boot's image is still PENDING_VERIFY — the dwell has
+    // not confirmed it, and if the board restarts now the bootloader reverts
+    // it, so the previous image must still find the marker and record the
+    // rollback. Engines before 2.4.17 consumed it here on the first boot of
+    // the new image and recorded "applied" for an update that then reverted.
+    static const securacv_ota_marker_store_t stores[] = {
+        {marker_engine_load, marker_engine_erase, NULL},
+        {marker_legacy_load, marker_legacy_erase, NULL},
+    };
+    return securacv_ota_take_marker(stores, sizeof(stores) / sizeof(stores[0]),
+                                    running_image_pending_verify(), buf, buf_len);
 }
 
 /**
@@ -899,7 +1058,7 @@ static void ota_raise_floor_to(const char *version)
 {
     if (version == NULL || version[0] == '\0') return;
 
-    char stored[16] = {0};
+    char stored[SECURACV_OTA_VERSION_MAX] = {0};
     esp_err_t err = nvs_load_min_version(stored, sizeof(stored));
     if (err != ESP_OK || securacv_version_compare(version, stored) > 0) {
         nvs_store_min_version(version);
@@ -1289,6 +1448,12 @@ bool securacv_ota_health_tick(uint32_t now_ms, bool healthy)
     // so it is asked only while a dwell is actually running (the 60 s window),
     // never on every loop pass for the life of the device.
     if (!s_ctx.initialized || !s_dwell.probes_passed || s_ctx.config.confirm_dwell_ms == 0) return false;
+    // An unhealthy pass restarts the dwell (what securacv_ota_dwell_tick does
+    // with it) without the otadata read: the display, Sense, Vision and
+    // Sentinel tick on every loop pass, broker or not, so a Wi-Fi outage
+    // inside the window would otherwise map otadata at loop rate. A pass
+    // that is not pending any more is still cleared, on the next healthy one.
+    if (!healthy) { s_dwell.dwell_started = false; return false; }
     if (securacv_ota_dwell_tick(&s_dwell, now_ms, healthy, s_ctx.config.confirm_dwell_ms,
                                 running_image_pending_verify()) != SECURACV_OTA_DWELL_CONFIRM) {
         return false;
@@ -1377,7 +1542,8 @@ uint32_t securacv_ota_get_last_check_time(void)
  * 1. Fetch manifest (with retry/backoff)
  * 2. Parse and validate manifest (product, signature fields)
  * 3. Compare versions against the anti-rollback floor
- * 4. Gate on can_install (if install_mode)
+ * 4. Refuse an image the inactive slot cannot hold, then gate on
+ *    can_install (if install_mode)
  * 5. Download firmware
  * 6. Verify SHA-256, then the Ed25519 release signature
  * 7. Commit to the inactive OTA partition
@@ -1407,7 +1573,7 @@ static void ota_task(void *arg)
 
     // Anti-rollback: manifest version against max(running, NVS floor).
     {
-        char nvs_min[16] = {0};
+        char nvs_min[SECURACV_OTA_VERSION_MAX] = {0};
         nvs_load_min_version(nvs_min, sizeof(nvs_min));
 
         securacv_ota_decision_t decision = securacv_ota_update_decision(
@@ -1477,6 +1643,38 @@ static void ota_task(void *arg)
         ESP_LOGE(TAG, "Install refused: manifest has no valid signature field");
         ota_set_error(SECURACV_OTA_ERR_SIGNATURE_INVALID);
         goto task_exit;
+    }
+
+    // The image must fit the inactive slot BEFORE a byte is fetched. A
+    // partition table changes only over USB, so a board keeps the slots it
+    // was first flashed with through every OTA (firmware/PARTITIONS.md).
+    // Without this the engine downloaded and wrote until the slot ran out,
+    // failed, and repeated the whole download on every poll: the Vision C3
+    // boards on 0x140000 slots against fw-v2.4.16's 1.40 MB images. The size
+    // is the manifest's, which its signature covers (ota_parse_manifest);
+    // the downloaded length is held to it again after the download.
+    {
+        const esp_partition_t *next = esp_ota_get_next_update_partition(NULL);
+        // A single-app table (huge_app.csv) has no inactive slot: IDF then
+        // hands back the RUNNING partition, which esp_ota_begin refuses.
+        const bool has_slot = (next != NULL && next != esp_ota_get_running_partition());
+        const uint32_t slot_size = has_slot ? (uint32_t)next->size : 0;
+        if (!securacv_ota_image_fits_slot(s_ctx.manifest.size, slot_size)) {
+            if (!has_slot) {
+                ESP_LOGE(TAG, "Install refused: this unit's partition table has no inactive "
+                              "app slot — it needs a USB reflash to a table with A/B slots "
+                              "before it can update over the air");
+            } else {
+                ESP_LOGE(TAG, "Install refused: image is %lu bytes but the inactive app slot "
+                              "'%s' holds %lu — this unit's partition table predates the image; "
+                              "it needs a USB reflash to a newer partition table (nothing was "
+                              "downloaded or written)",
+                         (unsigned long)s_ctx.manifest.size, next->label,
+                         (unsigned long)slot_size);
+            }
+            ota_set_error(SECURACV_OTA_ERR_PARTITION);
+            goto task_exit;
+        }
     }
 
     // Give the device a veto before we spend bandwidth and flash cycles.
@@ -1707,85 +1905,60 @@ static esp_err_t ota_parse_manifest(const char *json_data)
     s_ctx.manifest_valid = false;
     s_ctx.etag[0] = '\0';
 
-    const char *product = doc["product"];
-    const char *version = doc["version"];
-    const char *url = doc["url"];
-    const char *sha256 = doc["sha256"];
+    // Every field into its fixed buffer whole, or the manifest is refused
+    // (securacv_ota_manifest_from_fields, host-tested): the signature below
+    // is checked over a message rebuilt from these buffers, so it has to be
+    // built from exactly the bytes that were signed. This used to strncpy
+    // each field to fit — a 32-byte-or-longer product id came out one byte
+    // short, and seven Canary Display products failed the signature check on
+    // every unit, with nothing in the log but "signature invalid".
+    securacv_ota_manifest_fields_t fields;
+    memset(&fields, 0, sizeof(fields));
+    fields.product            = doc["product"].as<const char *>();
+    fields.version            = doc["version"].as<const char *>();
+    fields.url                = doc["url"].as<const char *>();
+    fields.sha256             = doc["sha256"].as<const char *>();
+    fields.min_version        = doc["min_version"].as<const char *>();
+    fields.signature          = doc["signature"].as<const char *>();
+    fields.manifest_signature = doc["manifest_signature"].as<const char *>();
+    fields.signing_key_id     = doc["signing_key_id"].as<const char *>();
+    fields.release_notes      = doc["release_notes"].as<const char *>();
+    fields.release_url        = doc["release_url"].as<const char *>();
+    fields.board              = doc["board"].as<const char *>();
+    fields.chip               = doc["chip"].as<const char *>();
+    fields.size               = doc["size"] | 0U;
+    fields.manifest_version   = doc["manifest_version"] | 1;
 
-    if (product == NULL || version == NULL || url == NULL || sha256 == NULL) {
-        ESP_LOGE(TAG, "Manifest missing required fields");
+    const char *bad_field = NULL;
+    switch (securacv_ota_manifest_from_fields(&fields, &s_ctx.manifest, &bad_field)) {
+    case SECURACV_OTA_FIELDS_OK:
+        break;
+    case SECURACV_OTA_FIELDS_MISSING:
+        ESP_LOGE(TAG, "Manifest missing required field: %s", bad_field ? bad_field : "?");
+        ota_set_error(SECURACV_OTA_ERR_MANIFEST_INVALID);
+        return ESP_FAIL;
+    case SECURACV_OTA_FIELDS_TOO_LONG:
+        ESP_LOGE(TAG, "Manifest field '%s' is longer than this firmware holds - refused, not truncated",
+                 bad_field ? bad_field : "?");
+        ota_set_error(SECURACV_OTA_ERR_MANIFEST_INVALID);
+        return ESP_FAIL;
+    case SECURACV_OTA_FIELDS_UNKNOWN_VERSION:
+        ESP_LOGE(TAG, "Unknown manifest_version %d", fields.manifest_version);
+        ota_set_error(SECURACV_OTA_ERR_MANIFEST_INVALID);
+        return ESP_FAIL;
+    case SECURACV_OTA_FIELDS_UNSIGNED_BINDING:
+    default:
+        ESP_LOGE(TAG, "board/chip on a manifest_version 1 manifest are unsigned - refused");
         ota_set_error(SECURACV_OTA_ERR_MANIFEST_INVALID);
         return ESP_FAIL;
     }
 
-    if (strcmp(product, s_ctx.config.product) != 0) {
+    if (strcmp(s_ctx.manifest.product, s_ctx.config.product) != 0) {
         ESP_LOGE(TAG, "Product mismatch: expected %s, got %s",
-                 s_ctx.config.product, product);
+                 s_ctx.config.product, s_ctx.manifest.product);
+        memset(&s_ctx.manifest, 0, sizeof(s_ctx.manifest));
         ota_set_error(SECURACV_OTA_ERR_MANIFEST_INVALID);
         return ESP_FAIL;
-    }
-
-    strncpy(s_ctx.manifest.product, product, sizeof(s_ctx.manifest.product) - 1);
-    strncpy(s_ctx.manifest.version, version, sizeof(s_ctx.manifest.version) - 1);
-    strncpy(s_ctx.manifest.url, url, sizeof(s_ctx.manifest.url) - 1);
-    strncpy(s_ctx.manifest.sha256, sha256, sizeof(s_ctx.manifest.sha256) - 1);
-
-    const char *min_version = doc["min_version"];
-    if (min_version != NULL) {
-        strncpy(s_ctx.manifest.min_version, min_version, sizeof(s_ctx.manifest.min_version) - 1);
-    }
-
-    // manifest_version 2 signs the hardware binding; a v1 manifest carrying
-    // board/chip would be an UNSIGNED binding, which is worse than none, so
-    // it is refused the way the signer refuses to emit one.
-    {
-        const int mver = doc["manifest_version"] | 1;
-        if (mver != 1 && mver != 2) {
-            ESP_LOGE(TAG, "Unknown manifest_version %d", mver);
-            ota_set_error(SECURACV_OTA_ERR_MANIFEST_INVALID);
-            return ESP_FAIL;
-        }
-        s_ctx.manifest.manifest_version = (uint8_t)mver;
-        const char *board = doc["board"];
-        const char *chip = doc["chip"];
-        if (mver == 1 && ((board && board[0]) || (chip && chip[0]))) {
-            ESP_LOGE(TAG, "board/chip on a manifest_version 1 manifest are unsigned - refused");
-            ota_set_error(SECURACV_OTA_ERR_MANIFEST_INVALID);
-            return ESP_FAIL;
-        }
-        if (board != NULL) strncpy(s_ctx.manifest.board, board, sizeof(s_ctx.manifest.board) - 1);
-        if (chip != NULL) strncpy(s_ctx.manifest.chip, chip, sizeof(s_ctx.manifest.chip) - 1);
-    }
-
-    s_ctx.manifest.size = doc["size"] | 0U;
-
-    const char *signature = doc["signature"];
-    if (signature != NULL) {
-        strncpy(s_ctx.manifest.signature, signature, sizeof(s_ctx.manifest.signature) - 1);
-    }
-
-    const char *manifest_signature = doc["manifest_signature"];
-    if (manifest_signature != NULL) {
-        strncpy(s_ctx.manifest.manifest_signature, manifest_signature,
-                sizeof(s_ctx.manifest.manifest_signature) - 1);
-    }
-
-    const char *signing_key_id = doc["signing_key_id"];
-    if (signing_key_id != NULL) {
-        strncpy(s_ctx.manifest.signing_key_id, signing_key_id,
-                sizeof(s_ctx.manifest.signing_key_id) - 1);
-    }
-
-    const char *release_notes = doc["release_notes"];
-    if (release_notes != NULL) {
-        strncpy(s_ctx.manifest.release_notes, release_notes,
-                sizeof(s_ctx.manifest.release_notes) - 1);
-    }
-
-    const char *release_url = doc["release_url"];
-    if (release_url != NULL) {
-        strncpy(s_ctx.manifest.release_url, release_url,
-                sizeof(s_ctx.manifest.release_url) - 1);
     }
 
     // Manifest signature: nothing in this manifest — not the version shown

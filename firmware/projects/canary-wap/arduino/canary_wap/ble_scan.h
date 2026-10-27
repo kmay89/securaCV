@@ -76,7 +76,8 @@ constexpr size_t MAX_PAIRED_BEACONS = 16;
  *
  * `per_device_key` is generated once on first boot via
  * esp_fill_random() in PR 5b's integration and persisted to NVS
- * (under flash-encryption gate, mirroring opera_secret's protection).
+ * (with no flash-encryption gate: Tier 0 like the identity key, plaintext
+ * in NVS on every tier today; mesh_state.h, common/identity/key_at_rest.h).
  * This module does NOT generate or store the key — caller-supplied.
  *
  * Returns false on null pointer inputs; otherwise fills `out` and

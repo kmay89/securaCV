@@ -315,7 +315,10 @@ firmware rules applied:
   gate is a measured build on a `verified`-tier board.
 - **Pairing keys are secrets.** HomeKit long-term pairing keys persist in
   NVS; they get the `opera_secret` treatment — refuse to persist on
-  flash-encryption-off devices (the tiered story from
+  flash-encryption-off devices, which keeps them off every board without
+  flash encryption but does not make them confidential (NVS is plaintext on a
+  board with flash encryption on too until NVS encryption is in the build;
+  the tiered story from
   [`hardware_root_of_trust.md`](hardware_root_of_trust.md)).
 - Pairing UX ships in **both flashers** (browser Lab and desktop Flasher) in
   the same phase — the two-flashers rule is repo law, and the setup QR is a
@@ -429,7 +432,7 @@ observable):**
 |---|---|
 | No Apple devices at all | Feature dormant. Zero runtime cost (compile-gated on firmware, opt-in flag elsewhere). The fleet, HA, the Wall, the PWA: unchanged. This column is the product; Apple is enhancement. |
 | Apple Home present, no home hub | Accessories pair, states render live in the Home app; automations don't run (Apple's rule). The app's Doctor card says exactly that, once. |
-| Bridge restarts / Canary reboots | HAP state is **re-derived, never restored**: re-advertise mDNS, republish current signals. Pairings persist (encrypted NVS / hub keystore); nothing else is worth keeping. Stateless projection = nothing to corrupt. |
+| Bridge restarts / Canary reboots | HAP state is **re-derived, never restored**: re-advertise mDNS, republish current signals. Pairings persist (NVS on a Canary — plaintext on every tier today, and under the design above written only on a flash-encrypted board — or the hub keystore); nothing else is worth keeping. Stateless projection = nothing to corrupt. |
 | Canary goes dark | `StatusActive` false → Home app shows "No Response" — Apple's UI carries our dead-man's-switch semantics natively. Fleet-side, the existing silence-is-the-alarm machinery (sentinel, mesh mutual watch) is untouched: HomeKit is an *additional* renderer of darkness, never the detector. |
 | mDNS lost / network partition | Bounded reconnect with full jitter — the `Backoff` pattern from the Wall's `FleetClient` is the house template (base 2 s, cap 60 s, reset on success), and firmware backlog #921 (reconnect jitter) inherits this consumer. |
 | Motion pulse discipline | Motion projects with a hold time (HKSV's own guide models motion the same way), FR-4-bounded: a characteristic is a current-state cell, not a queue — the projection *coalesces by construction*, and a flapping sensor cannot flood anything. |

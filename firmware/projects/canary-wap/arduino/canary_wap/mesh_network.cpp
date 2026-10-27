@@ -1817,10 +1817,13 @@ static void handle_pair_complete(const uint8_t* mac, const uint8_t* payload) {
 // PERSISTENCE
 //
 // v0.2 (audit O2): the opera_secret is a symmetric secret that gates pairing
-// and opera_id derivation. On an unencrypted flash, a physical-access attacker
-// can extract it and become a permanent opera member from outside the
-// household. Both the save and load paths now refuse to operate unless flash
-// encryption is enabled (eFuse FLASH_CRYPT_CNT > 0). Devices that do not
+// and opera_id derivation. A physical-access attacker who reads NVS can
+// extract it and become a permanent opera member from outside the household,
+// on a board with flash encryption on too: flash encryption does not cover
+// NVS, and NVS encryption is not available under framework = arduino
+// (spec/canary_mesh_network_v0.md §5.5). Both the save and load paths refuse
+// to operate unless flash encryption is enabled (eFuse FLASH_CRYPT_CNT > 0),
+// which keeps the secret off boards without it only. Devices that do not
 // support flash encryption simply cannot store an opera_secret in v0.2.
 // ════════════════════════════════════════════════════════════════════════════
 

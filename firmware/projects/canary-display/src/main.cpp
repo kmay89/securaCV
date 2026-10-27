@@ -1952,10 +1952,16 @@ void loop() {
     fleet.set_wall_hour(hh);
   }
 
+  // Confirm a new image only after a healthy minute — on EVERY pass, broker or
+  // no broker. A glass with no hub still installs (Settings → firmware, POST
+  // /api/ota/install), and behind the broker gate its new image never
+  // confirmed: the next restart returned it to the previous firmware. Healthy
+  // is the Wi-Fi station link, the same thing the boot probe asserts.
+  canary::net::ota_health_tick(now, canary::net::wifi_connected());
+
   if (broker) {
     canary::net::mqtt_loop();
     canary::net::ota_loop(now);
-    canary::net::ota_health_tick(now, canary::net::wifi_connected());  // confirm a new image only after a healthy minute
 
     if ((int32_t)(now - g_last_heartbeat_ms) >=
         (int32_t)(HEARTBEAT_MS * canary::diag::period_scale())) {

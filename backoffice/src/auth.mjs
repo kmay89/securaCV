@@ -3,7 +3,8 @@
 // CSRF token, and a name every action is written down under. Invitations
 // are links; nobody ever receives a password from someone else. Bearer
 // tokens for the API/CLI are separate and owner-made.
-import { scryptSync, randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
+import { scryptSync, randomBytes, createHmac, createHash, timingSafeEqual } from 'node:crypto';
+import { netOf } from './guard.mjs';
 import { nowIso } from './db.mjs';
 import { token, safeEqual } from './http.mjs';
 
@@ -63,7 +64,7 @@ export const ROLE_TEXT = {
 };
 // Id segments match any one segment, never only digits: the handler coerces whatever the
 // router decoded (`%31`, `+1`), so the rule must refuse by position, not by spelling.
-const OWNER_ONLY = /^\/(settings|users|books|books\.csv|api\/books|api\/jobs|api\/exceptions|settings\.json)(\/|$|\?)|^\/contacts\/[^/]+\/(forget|export\.json)(\/|$)|^\/api\/customers\/[^/]+\/(forget|export)(\/|$)/;
+const OWNER_ONLY = /^\/(settings|users|books|books\.csv|api\/books|api\/jobs|api\/exceptions|api\/flags|settings\.json)(\/|$|\?)|^\/contacts\/[^/]+\/(forget|export\.json)(\/|$)|^\/api\/customers\/[^/]+\/(forget|export)(\/|$)/;
 const SUPPORT_WRITES = /^\/(tickets|canned|warranty|waitlist|contacts\/(new|[^/]+\/(tags|notes|consent)))(\/|$)|^\/orders\/[^/]+\/(note|tags)\/?$|^\/api\/(tickets|mail\/ingest|customers\/[^/]+\/tags|orders\/[^/]+\/(note|tags))(\/|$)/;
 // The path is checked decoded (what the handler will see), and a path that does not decode is refused.
 export function can(role, method, rawPath) {
@@ -170,28 +171,65 @@ const DUMMY_HASH = hashPassword('the same work for a name nobody has');
 const lockKey = (u, ip) => `${u.id}:${u.email}|${ip || '-'}`;
 export function lockState(user, ip, now = Date.now()) { const k = lockKey(user, ip); const l = LOCKS.get(k); if (l && l.until && l.until <= now) { LOCKS.delete(k); return null; } return l || null; }
 export const clearLocks = () => LOCKS.clear();
+// A wrong try, counted against the person for this address (eight lock the pair for fifteen minutes) and in the audit log.
+function recordFailure(db, r, ip, now, why, via = 'password') {
+  if (r) {
+    db.run('UPDATE users SET failed_logins = failed_logins + 1 WHERE id = ?', r.id);
+    const l = lockState(r, ip, now) || { n: 0, until: null }; l.n++; if (l.n >= 8) { l.until = now + 15 * 60_000; db.run('UPDATE users SET locked_until = ? WHERE id = ?', new Date(l.until).toISOString(), r.id); } LOCKS.set(lockKey(r, ip), l);
+    if (LOCKS.size > 10_000) for (const [kk, v] of LOCKS) if (!v.until || v.until <= now) LOCKS.delete(kk);
+  }
+  db.audit('web', via === 'link' ? 'auth.link.failed' : 'auth.login.failed', 'user', r?.email || null, { ip, why }); return null;
+}
+// The session itself: a new random id, the person's record brought current, the audit row with the address.
+function openSession(db, r, { sessionHours, now, ip, step, via = 'password' }) {
+  const id = token(32); const csrf = token(24); const exp = new Date(now + sessionHours * 3600_000).toISOString();
+  db.run('INSERT INTO sessions (id, created_at, expires_at, csrf, user_id, net) VALUES (?, ?, ?, ?, ?, ?)', id, nowIso(), exp, csrf, r.id, netOf(ip));
+  LOCKS.delete(lockKey(r, ip));
+  db.run('DELETE FROM sessions WHERE expires_at < ?', nowIso()); db.run('UPDATE users SET last_login_at = ?, failed_logins = 0, locked_until = NULL, totp_last_step = ? WHERE id = ?', nowIso(), step, r.id);
+  db.audit(r.email, via === 'link' ? 'auth.link.login' : 'auth.login', 'user', r.email, { ip, via });
+  return { id, csrf, expires_at: exp, user_id: r.id, email: r.email, name: r.name, role: r.role, via };
+}
 export function login(db, { email = '', password, code }, { sessionHours = 12, ip = null, now = Date.now() } = {}) {
   const em = normEmail(email);
   const r = em ? db.get('SELECT * FROM users WHERE email = ?', em) : (() => { const rows = db.all("SELECT * FROM users WHERE status = 'active' AND password_hash IS NOT NULL LIMIT 2"); return rows.length === 1 ? rows[0] : null; })();
-  const fail = (why) => {
-    if (r) {
-      db.run('UPDATE users SET failed_logins = failed_logins + 1 WHERE id = ?', r.id);
-      const l = lockState(r, ip, now) || { n: 0, until: null }; l.n++; if (l.n >= 8) { l.until = now + 15 * 60_000; db.run('UPDATE users SET locked_until = ? WHERE id = ?', new Date(l.until).toISOString(), r.id); } LOCKS.set(lockKey(r, ip), l);
-      if (LOCKS.size > 10_000) for (const [kk, v] of LOCKS) if (!v.until || v.until <= now) LOCKS.delete(kk);
-    }
-    db.audit('web', 'auth.login.failed', 'user', r?.email || em || null, { ip, why }); return null;
-  };
+  const fail = (why) => { if (!r) db.audit('web', 'auth.login.failed', 'user', em || null, { ip, why }); return recordFailure(db, r, ip, now, why); };
   if (!r || r.status !== 'active' || !r.password_hash || !r.totp_secret) { verifyPassword(String(password || ''), DUMMY_HASH); return fail(!r ? (em ? 'unknown' : 'email required') : r.status); }
   if (lockState(r, ip, now)?.until) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
   if (!verifyPassword(password, r.password_hash)) return fail('password');
   const step = verifyTotp(r.totp_secret, code, { time: now, lastStep: r.totp_last_step ?? null });
   if (!step) return fail('code');
-  const id = token(32); const csrf = token(24); const exp = new Date(now + sessionHours * 3600_000).toISOString();
-  db.run('INSERT INTO sessions (id, created_at, expires_at, csrf, user_id) VALUES (?, ?, ?, ?, ?)', id, nowIso(), exp, csrf, r.id);
-  LOCKS.delete(lockKey(r, ip));
-  db.run('DELETE FROM sessions WHERE expires_at < ?', nowIso()); db.run('UPDATE users SET last_login_at = ?, failed_logins = 0, locked_until = NULL, totp_last_step = ? WHERE id = ?', nowIso(), step, r.id);
-  db.audit(r.email, 'auth.login', 'user', r.email, { ip });
-  return { id, csrf, expires_at: exp, user_id: r.id, email: r.email, name: r.name, role: r.role };
+  return openSession(db, r, { sessionHours, now, ip, step });
+}
+
+// ---- the sign-in link: stands in for the password, never for the authenticator ----
+// Asked for by email. The answer is the same whether the address is a person here or not (nothing to enumerate);
+// a person gets a mail with a link good for a few minutes, once, and the browser that asked gets a nonce cookie
+// the link checks — so a link read out of a mailbox somewhere else opens nothing. Both are stored hashed.
+const sha = (s) => createHash('sha256').update(String(s)).digest('base64url');
+export function requestSignInLink(db, email, { ip = null, now = Date.now(), minutes = 15 } = {}) {
+  const em = normEmail(email); const nonce = token(24);
+  const r = em ? db.get("SELECT * FROM users WHERE email = ? AND status = 'active' AND totp_secret IS NOT NULL", em) : null;
+  db.run('DELETE FROM login_links WHERE expires_at < ?', new Date(now).toISOString());
+  if (!r) { db.audit('web', 'auth.link.requested', 'user', em || null, { ip, known: false }); return { nonce, token: null, user: null, minutes }; }
+  const t = token(32);
+  db.run('INSERT INTO login_links (id, user_id, token_hash, nonce_hash, created_at, expires_at, ip) VALUES (?, ?, ?, ?, ?, ?, ?)', token(12), r.id, sha(t), sha(nonce), new Date(now).toISOString(), new Date(now + minutes * 60_000).toISOString(), ip);
+  db.audit('web', 'auth.link.requested', 'user', r.email, { ip, known: true });
+  return { nonce, token: t, user: { id: r.id, email: r.email, name: r.name }, minutes };
+}
+// The link's row, if it is live: not used, not expired.
+export const signInLink = (db, t, { now = Date.now() } = {}) => t ? db.get('SELECT l.*, u.email, u.name FROM login_links l JOIN users u ON u.id = l.user_id WHERE l.token_hash = ? AND l.used_at IS NULL AND l.expires_at > ?', sha(t), new Date(now).toISOString()) || null : null;
+// The link plus the browser's nonce plus a code from the authenticator: a session. Failures count like a wrong password.
+export function loginWithLink(db, { token: t, code, nonce }, { sessionHours = 12, ip = null, now = Date.now() } = {}) {
+  const row = signInLink(db, t, { now });
+  if (!row) { db.audit('web', 'auth.link.failed', 'user', null, { ip, why: 'no such link' }); return null; }
+  const r = db.get('SELECT * FROM users WHERE id = ?', row.user_id);
+  if (!r || r.status !== 'active' || !r.totp_secret) return recordFailure(db, r, ip, now, r ? r.status : 'unknown', 'link');
+  if (!nonce || !safeEqual(sha(nonce), row.nonce_hash)) return recordFailure(db, r, ip, now, 'browser', 'link');   // opened somewhere other than where it was asked for
+  if (lockState(r, ip, now)?.until) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
+  const step = verifyTotp(r.totp_secret, code, { time: now, lastStep: r.totp_last_step ?? null });
+  if (!step) return recordFailure(db, r, ip, now, 'code', 'link');
+  db.run('UPDATE login_links SET used_at = ? WHERE id = ?', new Date(now).toISOString(), row.id);
+  return openSession(db, r, { sessionHours, now, ip, step, via: 'link' });
 }
 export const sessionFor = (db, id) => id ? db.get("SELECT s.*, u.email, u.name, u.role FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > ? AND u.status = 'active'", id, nowIso()) : null;
 export const logout = (db, id) => db.run('DELETE FROM sessions WHERE id = ?', id);

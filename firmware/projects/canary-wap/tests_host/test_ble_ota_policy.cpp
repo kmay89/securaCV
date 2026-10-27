@@ -6,13 +6,17 @@
 // same injected-primitive shape the firmware fills with Crypto's
 // Ed25519::verify. Links the OTA engine's pure subset for
 // securacv_ota_update_decision(), so the floor rule under test is the pull
-// path's own.
+// path's own. Last, the step after the install: a standalone unit (no home
+// Wi-Fi, which a Bluetooth install does not need) driven through the
+// engine's confirm dwell with the sketch's health signal
+// (provisioning_logic::ota_confirm_link_healthy) keeps the update.
 //
 // Build (the tests_host Makefile, which firmware.yml runs): g++ -std=c++17
 // -Wall -Wextra -Werror -DSECURACV_OTA_HOST_BUILD, with the sketch dir on
 // the include path, this file plus the sketch's securacv_ota.cpp, -lcrypto.
 
 #include "ble_ota_policy.h"
+#include "provisioning_logic.h"
 
 #include <openssl/evp.h>
 
@@ -504,6 +508,59 @@ static void test_reason_strings() {
   }
 }
 
+// ── 11. a standalone unit updated over Bluetooth keeps the update ───────────
+//
+// ble_ota.cpp installs with no Wi-Fi gate, so a unit running standalone (on
+// its own access point, never joining home Wi-Fi) takes an update. The image
+// boots PENDING_VERIFY and canary_wap.ino's loop feeds the engine's confirm
+// dwell (the securacv_ota_dwell_* core that securacv_ota_health_tick() runs)
+// with provisioning_logic::ota_confirm_link_healthy(). Driven here at the
+// sketch's 60 s dwell with a loop pass every 250 ms. The signal before this
+// was the station link alone, false on every standalone pass: the image
+// never confirmed and the next restart put the old firmware back.
+
+static const uint32_t WAP_DWELL_MS = 60000;  // canary_wap.ino ota_cfg.confirm_dwell_ms
+static const uint32_t PASS_MS      = 250;
+static const uint32_t FIRST_PASS   = 4000;
+
+// The pass the dwell confirms on (0 = it never does), for a standalone unit
+// whose AP is up except during [ap_down_from, ap_down_to).
+static uint32_t standalone_confirm_at(bool new_signal, uint32_t ap_down_from,
+                                      uint32_t ap_down_to) {
+  securacv_ota_dwell_t d;
+  memset(&d, 0, sizeof(d));
+  // The probes run before init() (the sketch's order): they arm, init waits.
+  CHECK(securacv_ota_dwell_probes_passed(&d, false, WAP_DWELL_MS) == SECURACV_OTA_DWELL_WAIT);
+  CHECK(securacv_ota_dwell_init(&d, WAP_DWELL_MS) == SECURACV_OTA_DWELL_WAIT);
+  for (uint32_t now = FIRST_PASS; now <= FIRST_PASS + 10 * WAP_DWELL_MS; now += PASS_MS) {
+    const bool sta_connected = false;  // standalone: never joins
+    const bool ap_up = !(now >= ap_down_from && now < ap_down_to);
+    const bool healthy = new_signal
+        ? provisioning_logic::ota_confirm_link_healthy(/*ap_only=*/true, /*configured=*/false,
+                                                       /*enabled=*/false, sta_connected, ap_up)
+        : sta_connected;
+    if (securacv_ota_dwell_tick(&d, now, healthy, WAP_DWELL_MS, /*still_pending=*/true) ==
+        SECURACV_OTA_DWELL_CONFIRM)
+      return now;
+  }
+  return 0;
+}
+
+static void test_standalone_keeps_ble_update() {
+  // AP up throughout: confirmed one dwell after the first healthy pass.
+  CHECK(standalone_confirm_at(true, 0, 0) == FIRST_PASS + WAP_DWELL_MS);
+  // The old signal never confirms: the restart that follows reverts.
+  CHECK(standalone_confirm_at(false, 0, 0) == 0);
+  // The AP dropping inside the dwell restarts it: confirmed one full dwell
+  // after the AP is back, not before.
+  const uint32_t down_from = FIRST_PASS + 30000, down_to = down_from + 5000;
+  CHECK(standalone_confirm_at(true, down_from, down_to) == down_to + WAP_DWELL_MS);
+  // Nothing pending (the probes never armed it): the dwell stays idle.
+  securacv_ota_dwell_t idle;
+  memset(&idle, 0, sizeof(idle));
+  CHECK(securacv_ota_dwell_tick(&idle, 100000, true, WAP_DWELL_MS, true) == SECURACV_OTA_DWELL_IDLE);
+}
+
 int main() {
   test_layout();
   test_canonical_fixture();
@@ -515,6 +572,7 @@ int main() {
   test_decide_v1();
   test_decide_gates();
   test_reason_strings();
+  test_standalone_keeps_ble_update();
   printf("ALL %d BLE OTA POLICY CHECKS PASSED\n", tests_run);
   return 0;
 }

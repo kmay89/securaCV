@@ -8,8 +8,11 @@
 // must therefore live in NVS, not in the compiled image, or the first
 // over-the-air update would wipe them. Policy per field:
 //
-//   - device_id: NVS always wins (identity is sticky across reflashes and
-//     OTA updates); the compiled CS_DEVICE_ID only seeds the very first boot.
+//   - device_id: NVS always wins, so it is kept across OTA updates and a
+//     PlatformIO or Arduino IDE upload (which leave NVS alone); the compiled
+//     CS_DEVICE_ID seeds a boot that finds none: the first, and the first after
+//     an install in either flasher, whose factory image starts NVS over
+//     (unless the flasher seeded a dev_id of its own).
 //   - WiFi / MQTT credentials: real compiled values win and are persisted
 //     (flashing a new secrets build over USB updates the unit); placeholder
 //     values (CI stubs / generic release builds) defer to NVS.

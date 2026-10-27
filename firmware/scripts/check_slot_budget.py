@@ -20,10 +20,13 @@ images are arduino-cli builds of the same product an env guards in PR CI).
         /tmp/release/canary-display-nightstand-c6-2.4.6.bin
 
 Exit 0: the image fits its declared budget, or the env declares none (same
-semantics as the PR gate — unguarded envs pass; the absence prints a note so
-a log reader can tell "checked" from "skipped"). Exit 1: the file is missing
-or the image exceeds the budget — the caller decides whether that sinks the
-release (flagship products) or skips the variant (the per-variant loops).
+semantics as the PR gate — unguarded envs pass). The absence is a GitHub
+`::warning::` annotation, not a plain log line: every caller is the release
+workflow, about to sign an OTA manifest, and the plain note let 9 of the 17
+published OTA products (fw-v2.4.16) ship unmeasured with nothing on the
+run's summary page to say so. Exit 1: the file is missing or the image
+exceeds the budget — the caller decides whether that sinks the release
+(flagship products) or skips the variant (the per-variant loops).
 """
 from __future__ import annotations
 
@@ -53,19 +56,22 @@ def load_budgets() -> dict[str, dict]:
     return budgets
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--env", required=True,
                     help="the PlatformIO env that produced (or in PR CI would "
                          "produce) this image, e.g. canary-display-nightstand-c6")
     ap.add_argument("bin", type=pathlib.Path, help="the built image to measure")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     guard = load_budgets().get(args.env)
     if guard is None:
-        print(f"check_slot_budget: no size_guards budget declared for env "
-              f"'{args.env}' — not checked (declare one in firmware/flavors.json "
-              f"if this product OTA-updates into a bounded slot).")
+        # Non-fatal on purpose (an unguarded env passes, as in the PR gate),
+        # but an annotation, so "skipped" reads differently from "checked".
+        print(f"::warning::check_slot_budget: no size_guards budget declared "
+              f"for env '{args.env}' — this OTA image was NOT measured against "
+              f"any slot. Declare one in firmware/flavors.json: an image larger "
+              f"than the fielded boards' slot cannot install on any of them.")
         return
     if not args.bin.is_file():
         sys.exit(f"check_slot_budget: {args.bin} not found — cannot measure it.")

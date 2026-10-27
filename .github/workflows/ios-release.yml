@@ -282,7 +282,14 @@ jobs:
       # embed would publish an iPhone-only app under the same version with
       # nothing red anywhere — so prove the payload where it's bundled
       # (RELEASE_LESSONS Principle 4), before validate/upload spend minutes.
-      - name: Prove the watch app is inside the .ipa
+      # The phone's own two extensions are the same kind of payload and fail
+      # the same quiet way: without SecuraCVWidgets.appex there is no Live
+      # Activity or glance widget, and without SecuraCVNotificationService.appex
+      # every away wake reads as the subscription's generic fallback line
+      # (AwayPush) instead of its class's fixed sentence, and none is ever
+      # raised to a critical alert. Names are the target names in
+      # ios/project.yml, which sets no PRODUCT_NAME of its own.
+      - name: Prove the watch app and the extensions are inside the .ipa
         if: vars.ENABLE_IOS_BUILD == 'true'
         env:
           IPA: ${{ steps.ipa.outputs.path }}
@@ -290,14 +297,16 @@ jobs:
           set -euo pipefail
           listing="$(unzip -l "$IPA")"
           for needle in \
+            "Payload/SecuraCV.app/PlugIns/SecuraCVWidgets.appex/" \
+            "Payload/SecuraCV.app/PlugIns/SecuraCVNotificationService.appex/" \
             "Payload/SecuraCV.app/Watch/SecuraCVWatch.app/" \
             "Payload/SecuraCV.app/Watch/SecuraCVWatch.app/PlugIns/SecuraCVWatchWidgets.appex/"; do
             if ! grep -qF "$needle" <<<"$listing"; then
-              echo "::error::$needle is missing from the exported .ipa — the watch app did not embed."
+              echo "::error::$needle is missing from the exported .ipa — that target did not embed."
               exit 1
             fi
           done
-          echo "watch app + complications present in the .ipa"
+          echo "widgets + notification service + watch app + complications present in the .ipa"
 
       # The actual publish. Shared with the Apple TV target so the validate +
       # retry policy can't drift between them.

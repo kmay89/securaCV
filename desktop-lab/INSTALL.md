@@ -1,18 +1,31 @@
 # Installing the SecuraCV Lab
 
-No App Store, no account, no browser. Download it, run one line the first time
-on macOS, and it's yours.
+No App Store, no account, no browser. Download it, confirm it once on macOS,
+and it's yours.
 
 Every macOS build is **universal**: the same download runs natively on Apple
 Silicon (M1/M2/M3/M4) *and* Intel Macs. You don't pick a version.
 
 ---
 
-## macOS — getting past the safety warning (one time)
+## macOS — first launch (one time)
 
-Because this app doesn't come from the App Store, macOS **quarantines** it on
-first download and refuses to open it — it does this to *everything* from the
-web, signed or not. You'll see one of these the first time:
+Releases are **signed with a Developer ID and notarized by Apple**; the
+release page says *Signed and notarized by Apple*. Open the `.dmg`, drag
+**SecuraCV Lab** into **Applications**, and open it. macOS asks once whether
+you want to open an app downloaded from the internet: click **Open**, and it
+launches normally from then on. No Terminal step.
+
+The `.dmg` window still shows a Terminal command from when releases were
+unsigned. A signed build does not need it — skip it. To see the signature
+for yourself, `spctl -a -vv "/Applications/SecuraCV Lab.app"` prints
+`source=Notarized Developer ID`.
+
+### An unsigned build (a fork, a local build, or a release page that says so)
+
+A build made without the Apple signing secrets is not notarized. macOS
+quarantines every download, and Gatekeeper refuses to open an unsigned app
+that carries the mark. You'll see one of these the first time:
 
 > *"SecuraCV Lab" can't be opened because Apple cannot check it for malicious
 > software.*
@@ -21,11 +34,10 @@ web, signed or not. You'll see one of these the first time:
 >
 > *"SecuraCV Lab" is damaged and can't be opened.*
 
-Neither means anything is wrong with the app — it's just the missing Apple
-notarization. Clear it **once** and it launches normally forever after. The
-`.dmg` window shows this same command; here it is in full.
+Neither means anything is wrong with the app — it's the missing Apple
+notarization. Clear the mark **once** and it launches normally after that.
 
-### The one-liner (works on every macOS version — including Sequoia)
+#### The one-liner (works on every macOS version — including Sequoia)
 
 1. Open the `.dmg` and drag **SecuraCV Lab** into **Applications**.
 2. Open **Terminal** (⌘-Space, type "Terminal", press return).
@@ -35,17 +47,19 @@ notarization. Clear it **once** and it launches normally forever after. The
    xattr -dr com.apple.quarantine "/Applications/SecuraCV Lab.app"
    ```
 
-4. Launch it from Applications or Spotlight. Done — no more warnings, ever.
+4. Launch it from Applications or Spotlight.
 
-That command isn't granting anything risky: it removes the "downloaded from the
-internet" tag Apple stamps on the file. Identical on Apple Silicon and Intel.
+That command removes the "downloaded from the internet" tag Apple stamps on
+the file, which is what Gatekeeper checks — so run it only on a copy you
+downloaded from this project's release page, and never on an app that opens
+by itself. Identical on Apple Silicon and Intel.
 
 > **On recent macOS, use the command above — not right-click → Open.** Apple
 > removed the old right-click bypass in macOS 15 (Sequoia), and the "damaged"
 > variant of the warning has no clickable override at all. The one-liner is the
 > reliable path on every version.
 
-### If you'd rather not use Terminal (macOS 14 Sonoma and earlier only)
+#### If you'd rather not use Terminal (macOS 14 Sonoma and earlier only)
 
 1. **Double-click** the app once; on the *"cannot check it"* warning, click
    **Done** (never "Move to Trash").
@@ -56,11 +70,10 @@ internet" tag Apple stamps on the file. Identical on Apple Silicon and Intel.
 > This path does **not** clear the *"is damaged"* variant — for that, use the
 > one-liner.
 
-> **Why the extra step at all?** The zero-step experience means paying Apple's
-> $99/yr Developer Program and notarizing every release. The app is fully open
-> source, so we ship it directly. To turn on signing later, add the Apple
-> signing secrets and set the `ENABLE_MACOS_SIGNING` repo variable to `true` —
-> see [`README.md`](README.md).
+> **Where the signature comes from.** The release workflow signs and
+> notarizes the macOS build when the `ENABLE_MACOS_SIGNING` repo variable is
+> `true` and the Apple signing secrets are set — see [`README.md`](README.md).
+> Without them the build is unsigned, and the steps above apply.
 
 ---
 

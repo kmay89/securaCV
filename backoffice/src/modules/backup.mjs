@@ -109,6 +109,7 @@ async function s3(cfg, method, name, { body = null, fetchImpl = timedFetch, extr
 }
 // PUT the file and a `latest.txt` pointer; then HEAD it and compare sizes — "uploaded" means "readable back".
 export async function uploadOffsite(cfg, path, { fetchImpl = timedFetch } = {}) {
+  if (cfg.offsiteWrites === false) throw new Error(`off-site writes are off in ${cfg.env}: this environment reads production's copies and never adds its own`);
   if (!offsiteConfigured(cfg)) return { skipped: 'BACKUP_S3_URL / KEY / SECRET not set' };
   const plain = readFileSync(path); const sealed = offsiteEncrypted(cfg);
   const body = sealed ? seal(plain, cfg.backupEncryptionKey) : plain; const name = basename(path) + (sealed ? '.enc' : '');

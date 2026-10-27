@@ -3,11 +3,16 @@
 const { Router } = require('express');
 const { isPrivateOrigin } = require('../lib/private-origin');
 
-// Mirrors the firmware's BOOT-button provisioning gate (wap_server.h):
-// GET /api/provisioning-receipt is unauthenticated — it is how a client
-// obtains the API token in the first place — but returns 403 until the
-// physical BOOT button is short-tapped. The 403 body advertises
-// gate_ttl_seconds so clients can show an accurate countdown.
+// Models the WAP's BOOT-button provisioning gate (canary_wap.ino's
+// handle_provisioning_receipt) only in part: GET /api/provisioning-receipt
+// is unauthenticated — it is how a client obtains the API token in the
+// first place — returns 403 until the physical BOOT button is short-tapped,
+// and spends one tap on one receipt. Unlike the WAP since sweep F342, it
+// hands the tap to the first client that asks: the WAP serves it only to
+// the sole address that asked from 10 s before the tap onward, and a second
+// address closes the tap with 409 tap_contended (provisioning_gate.h's
+// tap_arbitrate()), which this server does not model. The 403 body
+// advertises gate_ttl_seconds so clients can show an accurate countdown.
 function provisionRoutes(state) {
   const router = Router();
 
@@ -20,8 +25,8 @@ function provisionRoutes(state) {
       });
     }
 
-    // One-shot: consume the gate on success so a second client polling in
-    // the same window cannot also capture the token.
+    // One-shot: the first request after the tap consumes it (the WAP
+    // instead closes the tap with 409 when a second address asks).
     state.consumeBootGate();
     state.addLog('INFO', 'Provisioning receipt issued');
 

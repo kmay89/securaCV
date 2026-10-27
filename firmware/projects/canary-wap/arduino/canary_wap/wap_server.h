@@ -17,10 +17,12 @@
  *   HTTPS server); plain HTTP during setup, and if the certificate fails
  * - While HTTPS is up, port 80 serves the probes and /api/fleet and redirects
  *   the rest to HTTPS (301)
- * - Bearer token authentication on protected endpoints
+ * - api_auth_check() on protected endpoints: the session cookie the landing
+ *   page mints for any host on the network (F346), or the bearer token
  * - Constant-time token comparison (timing attack mitigation)
  * - Exponential backoff on auth failures (brute-force mitigation)
- * - Physical BOOT button required for provisioning receipt
+ * - Provisioning receipt only for the bearer token, the setup door's claim, or
+ *   a short BOOT tap, which goes to the one address asking (canary_wap.ino)
  * - No sensitive data in URLs (POST for actions, Authorization header for tokens)
  * - CORS restricted to same-origin
  * - Rate limiting on sensitive endpoints
@@ -44,7 +46,7 @@
 namespace wap_server {
 
 // Access Point configuration
-static const char* AP_SSID_PREFIX    = "SecuraCV-";      // + last 4 chars of MAC
+static const char* AP_SSID_PREFIX    = "SecuraCV-";      // unused: the SSID is SecuraCV-wap-<4 chars of the key fingerprint> (generate_ap_ssid), never the MAC, so a flasher install changes it
 static const char* AP_HOSTNAME       = "canary";
 static const int   AP_CHANNEL        = 1;
 static const int   AP_MAX_CLIENTS    = 1;                // Hardened: max 1 client

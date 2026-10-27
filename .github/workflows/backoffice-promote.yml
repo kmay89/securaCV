@@ -1,0 +1,86 @@
+name: Promote backoffice to production
+
+# The one way production changes: a person presses this, naming an image tag — by default the tag
+# staging runs, read from the server over the same forced SSH command the deploy uses ("tag <app>").
+# It then deploys that tag to the production app ("backoffice <tag>" → `kit deploy`: pull, start,
+# wait for healthy, or roll back to the previous tag by itself), and proves from outside that
+# production answers "ok production <tag>" on /healthz. The app writes a deploy.boot audit row the
+# first time the build runs on its database, so the Home activity feed and the audit log say what
+# went live and when, under "system".
+#
+# Secrets: the same DEPLOY_HOST / DEPLOY_SSH_KEY / DEPLOY_KNOWN_HOSTS as backoffice-deploy.yml.
+# Variable: PRODUCTION_URL (https://ops.…) for the outside check; without it the check is skipped.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to promote (12-char commit, as `kit ps` shows). Empty = the tag staging runs right now."
+        required: false
+        default: ""
+      app:
+        description: "The production app on the server"
+        required: false
+        default: "backoffice"
+      staging_app:
+        description: "The staging app whose tag is promoted when `tag` is empty"
+        required: false
+        default: "backoffice-staging"
+
+permissions:
+  contents: read
+
+# Promotions land one at a time, in the order pressed; none is canceled.
+concurrency:
+  group: backoffice-promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: staging's build → production
+    runs-on: ubuntu-24.04  # the image the job was written against (CI.md R11)
+    timeout-minutes: 10
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+      APP: ${{ inputs.app }}
+      STAGING_APP: ${{ inputs.staging_app }}
+      ASKED_TAG: ${{ inputs.tag }}
+    steps:
+      - name: The server is configured
+        run: |
+          if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_SSH_KEY" ] || [ -z "$DEPLOY_KNOWN_HOSTS" ]; then
+            echo "No DEPLOY_HOST / DEPLOY_SSH_KEY / DEPLOY_KNOWN_HOSTS secrets — nothing to promote to. \`kit deploy-key\` on the server prints all three." >&2; exit 1
+          fi
+          umask 077; mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Which tag
+        id: which
+        run: |
+          set -euo pipefail
+          ssh_cmd() { ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts -o BatchMode=yes -o ConnectTimeout=20 "deploy@$DEPLOY_HOST" "$@"; }
+          tag="$ASKED_TAG"
+          if [ -z "$tag" ]; then tag="$(ssh_cmd "tag $STAGING_APP" | tr -d '[:space:]')"; echo "staging ($STAGING_APP) runs $tag"; fi
+          [[ "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$ ]] || { echo "'$tag' is not an image tag" >&2; exit 1; }
+          [ "$tag" != "latest" ] || { echo "'latest' is not a promotion — name the build (the 12-char commit)" >&2; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Promote ${{ env.APP }} ← ${{ steps.which.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts -o BatchMode=yes -o ConnectTimeout=20 "deploy@$DEPLOY_HOST" "$APP ${{ steps.which.outputs.tag }}"
+          rm -f ~/.ssh/deploy_key
+      - name: Production answers from the outside, on this build
+        if: env.PRODUCTION_URL != ''
+        run: |
+          tag="${{ steps.which.outputs.tag }}"
+          for _ in 1 2 3 4 5 6; do
+            body="$(curl -fsS --max-time 10 "$PRODUCTION_URL/healthz" 2>/dev/null || true)"
+            case "$body" in "ok production $tag") echo "$PRODUCTION_URL/healthz: $body"; exit 0;; esac
+            sleep 10
+          done
+          echo "$PRODUCTION_URL/healthz did not answer 'ok production $tag' after a minute (last: '${body:-nothing}') — kit ps on the server says what runs; kit deploy $APP <previous> rolls back" >&2; exit 1
+      - name: What went live
+        run: |
+          { echo "## Promoted"; echo; echo "- app: \`$APP\`"; echo "- tag: \`${{ steps.which.outputs.tag }}\`"; echo "- by: ${{ github.actor }}"; echo "- at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo; echo "The app's audit log has a \`deploy.boot\` row for this build (Home → Activity)."; } >> "$GITHUB_STEP_SUMMARY"

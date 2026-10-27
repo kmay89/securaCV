@@ -43,10 +43,13 @@
 // the first-boot setup wizard, a bearer-authenticated caller, a request that
 // provably arrived over the Canary's own Wi-Fi (request_on_softap below: the
 // device-unique AP password + max 1 client is that boundary), or an unspent
-// BOOT tap — which the page load then SPENDS (page_token_decide). The tap is
-// one consumer across both paths: one page load or one receipt fetch,
-// whichever asks first. A page that got the token already holds the bearer,
-// so its "Save recovery kit" fetch needs no second tap.
+// BOOT tap — which the page load then SPENDS (page_token_decide). On the
+// flagship, the one tree that serves a page by the tap, the tap is one
+// consumer across both paths: one page load or one receipt fetch, whichever
+// asks first (the ledger's F354). The WAP serves no page by the tap, and its
+// receipt's tap goes to one asker (tap_arbitrate() below). A page that got
+// the token already holds the bearer, so its "Save recovery kit" fetch
+// needs no second tap.
 //
 // And one question comes before all of that, on both paths: can the Host the
 // request targeted name this device (network/host_guard.h), or did it arrive

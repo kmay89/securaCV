@@ -18,7 +18,9 @@ handed a corporation a live feed of your family and a monthly bill forever. Peop
 are waking up to the cost. At the same time, the ground under *evidence itself* is
 moving — in the deepfake era, a video "of what happened" is no longer self-
 evidently true. SecuraCV is built for the world after both realizations: **your
-footage is nobody's business, and your proof is unforgeable.**
+footage is nobody's business, and your proof shows any edit.** (Forging a record
+takes the device's own key, which a seized device gives up: tamper-evident, not
+unforgeable.)
 
 ## 3. Who we're for (and the order we earn them)
 

@@ -6,6 +6,7 @@ import { nowIso } from '../db.mjs';
 import { token } from '../http.mjs';
 import { upsertContact, validEmail, markBounced } from './contacts.mjs';
 import { enqueue, fill } from './mail.mjs';
+import { sanitize } from '../guard.mjs';
 
 export const STATUSES = ['open', 'waiting_on_customer', 'waiting_on_us', 'closed'];
 export const PRIORITIES = ['low', 'normal', 'high', 'urgent'];
@@ -24,6 +25,8 @@ export function classify(subject = '', body = '') {
 }
 
 export function openTicket(db, { email, name = null, subject, body, kind = null, priority = null, channel = 'email', cfg = {}, autoAck = true, messageId = null, inReplyTo = null, fromAddr = null }) {
+  // outsider text: scrubbed of invisible and direction-override characters before it is stored or shown (guard.mjs)
+  subject = sanitize(subject, { max: 400 }); body = sanitize(body); name = name == null ? null : sanitize(name, { max: 120 });
   const guess = classify(subject, body);
   const contact = email && validEmail(email) ? upsertContact(db, { email, name, source: `support:${channel}` }) : null;
   return db.tx(() => {
@@ -49,6 +52,7 @@ export const messageIdOrNull = (s) => (typeof s === 'string' && /^<[^\s<>]{1,500
 export const inReplyToHeaders = (mid) => { const m = messageIdOrNull(mid); return m ? { 'In-Reply-To': m, References: m } : {}; };
 
 export function addMessage(db, ticketId, { direction, body, from_addr = null, to_addr = null, message_id = null, in_reply_to = null, slaHours = 24 }) {
+  if (direction === 'in') body = sanitize(body);
   message_id = messageIdOrNull(message_id); in_reply_to = messageIdOrNull(in_reply_to);
   const now = nowIso();
   if (message_id && db.get('SELECT id FROM ticket_messages WHERE message_id = ?', message_id)) return null;
@@ -67,9 +71,9 @@ export const ticketById = (db, id) => { const t = db.get('SELECT t.*, c.email, c
 export const ticketByNumber = (db, n) => { const t = db.get('SELECT id FROM tickets WHERE number = ?', n); return t ? ticketById(db, t.id) : null; };
 export const listTickets = (db, { status = '', kind = '', q = '', limit = 300 } = {}) => db.all(
   `SELECT t.*, c.email FROM tickets t LEFT JOIN contacts c ON c.id = t.contact_id
-   WHERE (? = '' OR t.status = ?) AND (? = '' OR t.kind = ?) AND (? = '' OR t.subject LIKE ? OR c.email LIKE ? OR t.number LIKE ?)
-   ORDER BY CASE t.status WHEN 'closed' THEN 1 ELSE 0 END, CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, t.updated_at DESC LIMIT ?`,
-  status, status, kind, kind, q, `%${q}%`, `%${q}%`, `%${q}%`, limit);
+   WHERE (? = '' OR t.status = ? OR (? = 'needs' AND t.status IN ('open','waiting_on_us'))) AND (? = '' OR t.kind = ?) AND (? = '' OR t.subject LIKE ? OR c.email LIKE ? OR t.number LIKE ?)
+   ORDER BY CASE t.status WHEN 'closed' THEN 1 ELSE 0 END, CASE WHEN t.first_response_at IS NULL AND t.status IN ('open','waiting_on_us') THEN t.sla_due_at ELSE '9' END, CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, t.updated_at DESC LIMIT ?`,
+  status, status, status, kind, kind, q, `%${q}%`, `%${q}%`, `%${q}%`, limit);
 export const queue = (db) => db.all('SELECT t.*, c.email FROM tickets t LEFT JOIN contacts c ON c.id = t.contact_id WHERE t.status IN (\'open\',\'waiting_on_us\') ORDER BY t.sla_due_at');
 
 export function reply(db, ticketId, body, { cfg = {}, actor = 'web', close = false } = {}) {
@@ -222,6 +226,7 @@ export function htmlToText(html) {
   return out.replace(/&(nbsp|amp|lt|gt|quot|#39|#x27);/g, (_, e) => ({ nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", '#x27': "'" }[e]));
 }
 
+export const ticketCounts = (db) => { const out = { open: 0, waiting_on_us: 0, waiting_on_customer: 0, closed: 0 }; for (const r of db.all('SELECT status, COUNT(*) AS n FROM tickets GROUP BY status')) out[r.status] = r.n; out.needs = out.open + out.waiting_on_us; out.all = out.needs + out.waiting_on_customer + out.closed; return out; };
 export const supportStats = (db) => ({
   open: db.get('SELECT COUNT(*) AS n FROM tickets WHERE status IN (\'open\',\'waiting_on_us\')').n,
   breached: db.get('SELECT COUNT(*) AS n FROM tickets WHERE status IN (\'open\',\'waiting_on_us\') AND first_response_at IS NULL AND sla_due_at < ?', nowIso()).n,

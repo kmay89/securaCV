@@ -10,9 +10,13 @@ is the calm version.
 
 ## What you are running
 
-One small rented computer. It runs two programs: the **backoffice** (orders,
-customers, stock, shipping, support mail, the books) and a **public demo** of
-it with made-up data. The website itself is not on this computer; it is static
+One small rented computer. It runs three copies of one program: the
+**backoffice** (orders, customers, stock, shipping, support mail, the books —
+the real one), a **staging** copy (the same program on last night's data,
+where every change lands first, with test keys so it can charge and mail
+nobody), and a **public demo** with made-up data. Every page of each says
+which it is, in the title and beside the company name, so a tab is never
+mistaken for another. The website itself is not on this computer; it is static
 pages served by Netlify, and the store page keeps working even when this
 computer is off (it falls back to Stripe's own payment links).
 
@@ -31,7 +35,8 @@ to protect here.
 | Where the data lives | On the computer's disk, in one folder per program | Simple to back up, simple to move | It is the only thing on the box that matters; see backups |
 | Backups | Two layers. DigitalOcean snapshots the whole computer weekly (the switch you turned on). The backoffice itself encrypts its data every night and copies it to Backblaze (a separate company, free at this size), and once a week it restores that copy to prove it works | A backup that was never restored is a hope, not a backup. The weekly drill turns it into a fact you can see in the backoffice's health page | Either layer can be swapped; keep two |
 | Certificates (the padlock) | Automatic, from Let's Encrypt | Free, renews itself every two months, nothing to remember | Nothing to do |
-| Deploying new versions | A merge on GitHub ships itself to the server | Nobody has to log in to update anything; the server only accepts one exact command from GitHub and nothing else | Can be turned off by removing three secrets on GitHub |
+| Deploying new versions | A merge on GitHub ships itself to **staging**. Production changes only when you press one button on GitHub ("Promote backoffice to production"), which sends the build staging is running | Nothing reaches the real backoffice without a person deciding it, and what reaches it has already run on yesterday's real data for as long as you cared to look; the server only accepts one exact command from GitHub and nothing else | Can be turned off by removing three secrets on GitHub |
+| Going back | The same button with the previous build's name (`kit ps` shows it), or one command on the server. A new version takes a copy of the data before it changes anything, so a bad one is undone in two steps: the previous build, then that copy | A change you cannot undo is a change you cannot make calmly | Nothing to do |
 
 ## What can break, what it costs, what you do
 
@@ -89,9 +94,12 @@ Stripe's dashboard can resend those events so they are written down again.
 
 ## Your routine
 
-There is none. The server does not need to be looked at. If you want a
-habit, once a month log in and run `kit doctor`; it prints a line per thing
-it checked, green or a one-line fix. The backoffice's own health page shows
+There is none. The server does not need to be looked at. When a change you
+asked for has merged, open staging (it is there within minutes, on
+yesterday's real data), click around what changed, and when you are
+satisfied press **Promote backoffice to production** on GitHub — that is
+the whole release process. If you want a habit, once a month log in and run
+`kit doctor`; it prints a line per thing it checked, green or a one-line fix. The backoffice's own health page shows
 the last backup, the last restore drill, and the mail outbox without logging
 in to the server at all.
 

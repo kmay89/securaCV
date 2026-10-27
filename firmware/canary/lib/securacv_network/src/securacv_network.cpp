@@ -2411,8 +2411,9 @@ static esp_err_t send_html_with_token(httpd_req_t* req, const char* html,
 // exactly one home-LAN page load (or, if the app asks first, one receipt
 // fetch; never both). The page that got the token holds the bearer, so its
 // "Save recovery kit" needs no second tap, and the tap that handed it the
-// token ends its address's backoff (auth_handed_token, sweep F341), so a
-// browser that mistyped the token is not held on its first API call.
+// token ends its address's own backoff (auth_handed_token, sweep F341;
+// never the shared overflow's), so a browser that mistyped the token is not
+// held on its first API call.
 // Everything else (the home LAN) gets the page without the credential.
 static canary::net::provisioning_gate::PageToken page_token_inject(httpd_req_t* req) {
   using canary::net::provisioning_gate::PageToken;
@@ -2522,8 +2523,9 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
   //   3. no valid bearer (none, a wrong one, or a held one): consume the
   //      physical gate in ONE atomic step (a second poll, or a second
   //      consumer on another task, reads it closed). A tap that serves
-  //      also ends the asking address's backoff (auth_handed_token, sweep
-  //      F341): it holds the token now.
+  //      also ends the asking address's own backoff (auth_handed_token,
+  //      sweep F341; never the shared overflow's, so an address held only
+  //      through the overflow stays held): it holds the token now.
   const ReceiptVerdict verdict = receipt_decide(
       host_is_foreign(req),
       [req]() { return bearer_present_and_valid(req); },
@@ -5817,8 +5819,9 @@ static esp_err_t handle_mesh_peers(httpd_req_t* req) {
   // The rows are the members the session holds, from the view the main
   // loop published (F161): what the device enforces, so they equal GET
   // /api/mesh's peers_total, and no NVS is read here (F199: the persisted
-  // pubkeys needed flash encryption, so a dev board answered 500
-  // load_failed, and an NVS write that failed left the two disagreeing
+  // pubkeys needed flash encryption, so every board without it answered 500
+  // load_failed, which is every released board, since no tier turns flash
+  // encryption on; and an NVS write that failed left the two disagreeing
   // until a reboot). Each member's row carries its alerts and, once heard
   // from its binding and while that binding is in the transport table, the
   // state, RSSI and arrival time of its last fully verified frame as that

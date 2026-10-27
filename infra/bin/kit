@@ -24,6 +24,9 @@ kit — one server, many apps
   kit deploy <app> [<tag>]                pull the tag (default: the one deployed, else latest), start, wait for healthy, else roll back
   kit run <app> <cmd…>                    run a command in the app's container
   kit offline <app> <cmd…>                stop the app, run a command in a fresh container of it (same env, same data), start it again — for a restore
+  kit refresh <app>                       staging: stop it, restore the latest off-site PRODUCTION copy into its data, start it (cron runs this nightly)
+  kit tag <app>                           print the tag an app runs (CI's promote button asks for staging's)
+  kit cron                                install the nightly staging refresh in /etc/cron.d (cloud-init does on a new server; this is for an existing one)
   kit site add <host> <app>:<port>|static  write /srv/edge/sites/<host>.caddy and reload the edge
   kit reload                              reload Caddy after editing a site file
   kit deploy-key                          make the CI deploy key (prints the private half ONCE and the known_hosts line)
@@ -140,6 +143,23 @@ cmd_offline() {
   return "$rc"
 }
 
+# Staging runs on a copy of production: the latest off-site backup, restored into the staging app's data
+# directory while it is stopped (the same `restore --offsite` the "server died" drill uses, with staging's
+# own .env, whose bucket values are production's). The app relabels the file staging on boot, mutes mail
+# and issues, and never writes back to the bucket (backoffice/src/env.mjs). Refused for anything whose
+# compose does not say BACKOFFICE_ENV=staging — a typo must never restore a backup over production.
+cmd_refresh() {
+  need_app "${1:-}"; local app="$1"
+  grep -q 'BACKOFFICE_ENV: staging' "$APPS/$app/compose.yml" || die "$app is not a staging app (its compose.yml does not say BACKOFFICE_ENV: staging) — refresh restores a production copy over the app's data, so only staging may be refreshed"
+  echo "refresh $app ← the latest off-site production copy"
+  cmd_offline "$app" node bin/backoffice.mjs restore --offsite --force
+}
+cmd_tag() { need_app "${1:-}"; cat "$APPS/$1/.tag" 2>/dev/null || die "$1 has no deployed tag yet"; }
+cmd_cron() {
+  local f=/etc/cron.d/kit-staging-refresh
+  printf '# the nightly staging refresh (kit refresh): a no-op until a backoffice-staging app exists\n10 4 * * * ops [ -d %s/backoffice-staging ] && /usr/local/bin/kit refresh backoffice-staging >> %s/backoffice-staging/refresh.log 2>&1\n' "$APPS" "$APPS" | sudo -n tee "$f" >/dev/null && sudo -n chmod 644 "$f" && echo "installed $f (04:10 daily, as ops)"
+}
+
 cmd_site_add() {
   local host="${1:-}" target="${2:-}"; [ -n "$host" ] && [ -n "$target" ] || die "kit site add <host> <app>:<port>|static"
   [[ "$host" =~ ^[a-z0-9.-]+$ ]] || die "that is not a hostname"
@@ -173,6 +193,9 @@ case "${1:-help}" in
   deploy) shift; cmd_deploy "$@";;
   run) shift; cmd_run "$@";;
   offline) shift; cmd_offline "$@";;
+  refresh) shift; cmd_refresh "$@";;
+  tag) shift; cmd_tag "$@";;
+  cron) cmd_cron;;
   site) shift; case "${1:-}" in add) shift; cmd_site_add "$@";; *) die "kit site add <host> <app>:<port>|static";; esac;;
   reload) cmd_reload;;
   deploy-key) cmd_deploy_key;;

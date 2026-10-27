@@ -219,9 +219,11 @@ plainly rather than hiding:
   presence payload for the fleet. This is the common local-broker trade-off and
   it is a deliberate default, not an oversight: the intended deployment is a
   broker on the same trusted home LAN. Two honest caveats follow from it — (1)
-  at-rest protection of the NVS-stored broker credentials relies on the
-  flash-encrypted secure build (`provisioning/sdkconfig.defaults.secure`), not
-  the default unencrypted NVS; and (2) an opt-in `WiFiClientSecure` path with a
+  the NVS-stored broker credentials are plaintext at rest on every build: no
+  display env uses the secure sdkconfig
+  (`provisioning/sdkconfig.defaults.secure`), which is inert under
+  `framework = arduino` anyway, and flash encryption does not cover NVS (NVS
+  encryption needs the arduino-as-IDF-component migration); and (2) an opt-in `WiFiClientSecure` path with a
   pinned broker CA is the hardening option for households that want the link
   encrypted end-to-end. Until that ships, do not describe the display's MQTT
   telemetry as confidential on the wire.

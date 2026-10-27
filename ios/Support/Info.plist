@@ -131,7 +131,7 @@
        pairing key never rides Bluetooth: a WAP hands over a one-time claim
        the phone spends over Wi-Fi (Shared/MagicPairPlan.swift). -->
   <key>NSBluetoothAlwaysUsageDescription</key>
-  <string>SecuraCV connects to your Canaries over Bluetooth so you still get status if the network drops, and hands a brand-new Canary your Wi-Fi when you set it up.</string>
+  <string>SecuraCV listens for your Canaries' Bluetooth beacons, and hands a brand-new Canary your Wi-Fi over its Bluetooth setup door when you set it up.</string>
 
   <!-- HomeKit: publish coarse witness state (motion/occupancy/tamper), never video. -->
   <key>NSHomeKitUsageDescription</key>

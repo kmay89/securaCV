@@ -72,8 +72,8 @@
  * sit in plaintext on the flash chip. They would be ciphertext only under
  * NVS encryption, which is not available under framework = arduino (the
  * Arduino core's sdkconfig does not compile it in; roadmap item 9 is the
- * route). So today the gate keeps the secret off un-fused boards; it does
- * not make it confidential at rest on fused ones.
+ * route). So today the gate keeps the secret off every board without flash
+ * encryption; it does not make it confidential at rest on one with it.
  *
  * The device's OWN identity key is deliberately NOT gated this way at the
  * default tier: Tier 0 of docs/design/hardware_root_of_trust.md (§5.1,
@@ -118,7 +118,9 @@ bool save_opera_secret(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN]);
  *              * out is null
  *              * flash encryption disabled (refuse to load too —
  *                matches canary-wap's symmetric load+save FE gate)
- *              * no secret persisted (first boot, factory-reset state)
+ *              * no secret persisted (never paired, after POST
+ *                /api/mesh/leave, or after the 30 s BOOT wipe; the
+ *                10 s BOOT reset keeps it)
  *              * NVS read failure
  *
  * On failure the contents of out[] are NOT modified — callers can
@@ -129,12 +131,15 @@ bool save_opera_secret(const uint8_t secret[mesh_crypto::OPERA_SECRET_LEN]);
  * yet" and skip mesh_session::set_opera_secret(). */
 bool load_opera_secret(uint8_t out[mesh_crypto::OPERA_SECRET_LEN]);
 
-/* Erase the persisted opera_secret. Use on factory reset or
- * "un-pair from this opera" UI.
+/* Erase the persisted opera_secret. Called by POST /api/mesh/leave
+ * (securacv_network.cpp's handle_mesh_leave) and by persist_rotation()'s
+ * failure path. No factory reset calls it: the 10 s BOOT reset keeps the
+ * secret, and the 30 s wipe drops it with the whole namespace
+ * (nvs.clear()).
  *
  * Returns true when:
  *   • the key was removed successfully, OR
- *   • the key was already absent (idempotent — factory-reset semantics)
+ *   • the key was already absent (idempotent)
  *
  * Returns false when the NVS partition can't be opened OR a real
  * remove failed (key still present after remove returned false).
@@ -156,9 +161,12 @@ bool clear_opera_secret();
  *
  * Same flash-encryption gate as opera_secret: the pubkeys themselves
  * aren't secret, but the bond between this device and its set of
- * trusted peers IS sensitive metadata (an attacker who reads the
- * unencrypted partition learns the household graph). canary-wap's
- * opera_config persistence applies the same posture.
+ * trusted peers IS household-graph metadata. The gate keeps it off a
+ * board without flash encryption (every released board), where a flash
+ * read learns nothing of it; on a board with FE on it is still
+ * plaintext NVS (FE does not cover NVS), so a flash read there still
+ * learns the household graph. canary-wap's opera_config persistence
+ * applies the same posture.
  * ────────────────────────────────────────────────────────────────────────── */
 
 constexpr size_t MAX_TRUSTED_PEERS = 8;   /* mirrors mesh_session value */
@@ -181,8 +189,9 @@ bool save_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
  * out_pubkeys are populated.
  *
  * Returns false on null pointer, FE disabled, NVS read failure, or
- * buffer too small. On "no peers persisted" (first boot / factory
- * reset), returns true with *out_count = 0.
+ * buffer too small. On "no peers persisted" (never paired, after POST
+ * /api/mesh/leave or the 30 s BOOT wipe; the 10 s reset keeps the list),
+ * returns true with *out_count = 0.
  *
  * On the host build, always returns true with *out_count = 0
  * (deterministic empty list for tests). */
@@ -190,8 +199,10 @@ bool load_trusted_peers(uint8_t* out_pubkeys,
                         size_t   out_buf_cap,
                         size_t*  out_count);
 
-/* Erase the persisted trusted-peer list. Used on factory reset and
- * "un-pair all" UI. Idempotent — succeeds if the list was empty. Also
+/* Erase the persisted trusted-peer list. Used by POST /api/mesh/leave
+ * (securacv_network.cpp's handle_mesh_leave). No factory reset calls it: the
+ * 10 s BOOT reset keeps the list, and the 30 s wipe drops it with the whole
+ * namespace (nvs.clear()). Idempotent — succeeds if the list was empty. Also
  * erases "peer_macs" (below), best effort: an address with no peer is
  * meaningless, and the return value reports the pubkey list only.
  *
@@ -327,8 +338,9 @@ bool save_elected_hub(const uint8_t fingerprint[mesh_crypto::FINGERPRINT_LEN]);
 
 /* Load the persisted elected-Hub fingerprint into `out`. Returns:
  *   true  — a fingerprint was present and copied into out[].
- *   false — null pointer, FE disabled, nothing persisted (first boot /
- *           factory reset), or NVS read failure.
+ *   false — null pointer, FE disabled, nothing persisted (never elected,
+ *           after POST /api/mesh/leave or the 30 s BOOT wipe; the 10 s
+ *           reset keeps it), or NVS read failure.
  * On failure out[] is left untouched. On the host build, always
  * returns false (no persistence stub). */
 bool load_elected_hub(uint8_t out[mesh_crypto::FINGERPRINT_LEN]);
@@ -363,7 +375,8 @@ bool remove_trusted_peer(const uint8_t pubkey[mesh_crypto::PUBKEY_LEN]);
  * NVS key "mesh_enabled", one byte (1 = on, 0 = off). NOT flash-
  * encryption gated: it is a user preference, not a secret and not
  * household-identifying, and gating it would make "off" silently revert
- * to "on" at every reboot of an FE-off dev board.
+ * to "on" at every reboot of a board without flash encryption, which is
+ * every released board today, a Phase 2 board included.
  *
  * load_mesh_enabled() returns true and writes *out only when the key is
  * present; false (with *out untouched) when absent, on a null pointer,

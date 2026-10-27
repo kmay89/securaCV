@@ -25,8 +25,10 @@ unsigned ("I am here"). **Paired** is defined in §3 below and nowhere else.
 The identity key is the device's birth certificate. That is why the 10-second
 factory reset (`common/io/reset_hold.h`, `onboarding_fsm.h`) clears credentials
 and settings and **keeps the key**: a reset node rejoins as the same device
-every pin knows; shedding the key is the opt-in 30-second stage the PIO canary
-alone enables, with a serial warning first.
+every pin knows; the hold sheds the key only at the opt-in 30-second stage the
+PIO canary alone enables, with a serial warning first. An install in either
+flasher sheds it too, on every Canary that keeps one: its factory image starts
+the settings region over, so the next boot makes a new key.
 
 ## 2. What is signed, what is not
 
@@ -117,8 +119,14 @@ its uptime can only make itself the coordinator, which gives it nothing.
 Things that were true before and remain true: a node never refuses to boot
 over its key's storage tier (`key_at_rest.h` rule 1); no MAC, stable id or
 timestamp finer than the ten-minute bucket crosses the wire in any of the
-above (Invariants II/III); the first-boot 30-minute Improv window and the
-BOOT-tap minute are the only times a node takes Wi-Fi from a phone.
+above (Invariants II/III); the Improv door takes Wi-Fi over Bluetooth only
+in its 30-minute window while no network is saved (a first boot, or after
+it was cleared: the 10 s hold, or on a WAP Forget Wi-Fi, which any landing
+session can send, ledger F345) and in the BOOT-tap minute. A WAP also takes it over
+its bonded Bluetooth lane (`ble_provision.cpp`'s CREDS, an authenticated
+link, one write per 5 s and ten an hour) from any peer that holds a bond,
+with or without credentials saved: the iPhone app never reaches that lane
+(ledger A65), but a peer that bonds does (F346).
 
 ## 6. Where each rule is enforced and tested
 

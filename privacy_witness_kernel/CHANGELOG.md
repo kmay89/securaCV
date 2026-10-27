@@ -1,5 +1,5 @@
 <!-- The Supervisor shows this file on the app's page after an update. Newest first. -->
-## 0.8.0
+## 0.9.0
 
 The app is now "SecuraCV" in the App Store (the slug `privacy_witness_kernel`
 is unchanged, so existing installs upgrade in place).
@@ -41,6 +41,6 @@ is unchanged, so existing installs upgrade in place).
   entities withdraw in favor of the integration's `securacv_*` entities — see
   the Documentation tab's migration table.
 
-## 0.7.0 and earlier
+## 0.8.0 and earlier
 
 See the repository's `CHANGELOG.md`.

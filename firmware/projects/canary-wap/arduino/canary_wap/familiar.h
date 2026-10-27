@@ -32,8 +32,10 @@
  * ==================
  *   • We never store a MAC, a token, a timestamp, or a raw RSSI sample.
  *     Only 11-bit bucketed fingerprints enter the filter via hashed bits.
- *   • Hashes are salted with a per-device secret kept in NVS; flash
- *     dumps alone do not reveal which fingerprints were recorded.
+ *   • Hashes are salted with a per-device value kept in NVS. NVS is
+ *     plaintext on every tier today (key_at_rest.h), so a flash dump holds
+ *     the salt with the filters and can test every fingerprint; the salt
+ *     only keeps one device's filter from meaning anything on another.
  *   • Differential-privacy noise is mixed into yesterday's filter at
  *     every rotation so that flash dumps + the secret give only
  *     probabilistic answers, not certainties.

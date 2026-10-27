@@ -93,8 +93,15 @@ Vision historically compiled its WiFi/MQTT credentials and device id into
 the binary — which would make an OTA-installed generic image forget the
 unit's setup. `canary/runtime_config` fixes this:
 
-- **Identity is sticky:** `device_id` lives in NVS; the compiled value only
-  seeds the very first boot. HA entities survive OTA updates and reflashes.
+- **Identity lives in NVS:** `device_id` is stored there, and the compiled
+  value seeds only a boot that finds none. An OTA update and a PlatformIO
+  upload leave NVS alone, so the `device_id`, and with it the HA entities,
+  survive them. An install in either flasher does not: its factory image
+  starts NVS over, so the next boot takes the id the flasher seeds (both
+  suggest a new random one for every install) or, with none seeded, the
+  compiled `DEVICE_ID` (`canary_vision_001` in `config.h`). A new id is a
+  new device to Home Assistant, and the old id typed in again comes back
+  under a new key, which it reports as a key mismatch.
 - **Credentials follow the most recent real configuration:** a user-compiled
   USB flash (real `secrets/secrets.h`) wins and is persisted to NVS; the
   placeholder secrets baked into generic release builds defer to NVS.
@@ -136,6 +143,24 @@ none. For a product that fits, manifests from earlier releases lack it; a
 BLE client then has only the legacy v1 header, which a current device
 refuses unless break-glass is armed, and `verify` reports such a manifest as
 incomplete.
+
+Every string field must fit the device's buffer whole (2.4.17+:
+`product` 47 bytes, `version` / `min_version` 32, `url` 255,
+`release_notes` 511, `release_url` 127, `board` 47, `chip` 15 — the
+`securacv_ota_manifest_t` sizes, mirrored by `ota_release.DEVICE_FIELD_BYTES`).
+A field that does not fit refuses the manifest; it is never cut to fit,
+because the device rebuilds the signed message from what it kept. The signer
+refuses to write such a manifest and `verify` refuses to pass one. Engines
+before 2.4.17 cut the product id to 31 bytes, so the seven Canary Display
+products with longer ids (`dash-modes`, `nightstand7`, `nightstand-s3`,
+`touch169`, `amoled241`, `nightstand-c6`, `nightlight-c3`) never verified a
+manifest over the air: a unit on 2.4.16 needs one install with the browser
+flasher or the Flasher app to reach 2.4.17, and updates over the air work
+from then on.
+
+`manifest_version` 2 (which signs `board` and `chip` too) needs **2.4.17 or
+newer on the device**; older engines refuse it. Releases stay v1 until the
+fielded units have moved past 2.4.16.
 
 `manifest-index.json` maps products to their manifest URLs for tooling and
 future variants. Devices fetch only their own flat manifest.
@@ -239,7 +264,8 @@ gate relaxes the floor, not the key.
 
 The floor is raised the same way for both channels: the install records
 `securacv_ota_mark_pending_install()`, and the new image raises the floor
-to its own compiled version only once its boot self-test confirms it.
+to its own compiled version only once it is confirmed (its boot self-test
+passed and the health dwell held).
 Raising it at install time would, after a rollback, block ever re-offering
 that version.
 
@@ -343,7 +369,12 @@ that embeds its public half into a dev build.
 
 ## Device API
 
-All endpoints are bearer-token gated on canary and canary-wap. Since 2026-08
+All endpoints are bearer-token gated on canary. On canary-wap they take
+`api_auth_check()`, which passes the bearer token or the landing session the
+dashboard's landing page mints for any host on the network (ledger F346), so
+any LAN host can start an install of the signed release or point the device
+at another update server (it still installs only an image the release key
+signed). Since 2026-08
 canary-display serves `status`/`check`/`install` under the same contract —
 same routes, statuses, and body shapes, so the desktop Flasher's one-click
 update works on displays too — but LAN-open like the rest of the glass web
@@ -404,11 +435,20 @@ user actions through the update system that leaves a device unrecoverable.**
 > matrix as *compile-checked and verified against the upstream sources*, not
 > as hardware-verified, until the rollback rows of
 > [`V1_BENCH_TEST_RUNBOOK.md`](V1_BENCH_TEST_RUNBOOK.md) Track E are signed.
-> Where each product confirms its image (the end of the revert window):
-> `canary` (PlatformIO) at its healthy gate — `setup()` returned and `loop()`
-> ran for 30 s (`bootpolicy::kDefaultHealthyDwellMs`); `canary-wap` at the end
-> of `setup()`; the display, Sense, Vision and Sentinel right after Wi-Fi
-> joins; `canary-ota` seconds into `app_main`.
+> Where each product confirms its image (the end of the revert window): only
+> after the boot probes pass AND the board has then reported itself healthy
+> for the 60 s confirm dwell (`securacv_ota_health_tick`, [`OTA.md`](OTA.md)
+> §2). Healthy means: `canary` (PlatformIO) — the station link up, with the
+> probes run at its healthy gate (`setup()` returned and `loop()` ran 30 s,
+> `bootpolicy::kDefaultHealthyDwellMs`), and a deliberate restart after the
+> probes passed confirms too; `canary-wap` — the station link up when it
+> is set to join home Wi-Fi, otherwise (standalone, home Wi-Fi turned off,
+> or none saved) its own access point up; the display, Sense, Vision and
+> Sentinel — Wi-Fi up, broker not required. Only the flagship confirms on a
+> deliberate stop: on the other products, a restart you trigger inside the
+> window (a dashboard Reboot, a display mode switch, Forget Wi-Fi) sends the
+> board back to its previous image. `canary-ota` (no dwell) confirms
+> seconds into `app_main`.
 
 - **A/B partitions:** updates are written only to the inactive slot; the
   running firmware is never touched. Power loss at any point during the
@@ -436,18 +476,26 @@ user actions through the update system that leaves a device unrecoverable.**
     loop runs the gate and restarts) so a
     crash in the first seconds of `loop()` still reverts; vision validates
     immediately after WiFi, BEFORE its blocking MQTT connect, so a broker
-    outage can't cause a spurious revert.
+    outage can't cause a spurious revert. The same goes for the confirm
+    dwell: every tree feeds `securacv_ota_health_tick()` whether or not a
+    broker is connected, so a node with no MQTT still confirms an update it
+    installed from its own page.
 - **Expected (safe) edge:** power-cycling the device after an update but
-  before the boot self-test confirms the image reverts it to the previous
-  version. On `canary-ota` that window closes seconds into boot — the
-  self-test runs right after the required checks register and calls
-  `esp_ota_mark_app_valid_cancel_rollback()` when they pass — so it is a
-  pending-verification window, not a fixed minute. Nothing is lost; the
-  update is simply offered again.
+  before the image is confirmed — the boot probes plus the 60 s health dwell
+  — reverts it to the previous version. Only the flagship counts a
+  deliberate restart after its probes passed as confirmation; on the other
+  products a restart inside the dwell, deliberate or not, reverts. On
+  `canary-ota` (no dwell) the window closes seconds into boot. Nothing is
+  lost; the update is simply offered again.
 - **Outcome bookkeeping survives every path:** the engine records the
   install target the moment the boot partition flips (not at reboot), so
   deferred reboots, battery-gated installs, and BLE-pushed images all get
-  correct applied/rolled-back records.
+  correct applied/rolled-back records. Since 2.4.17 the record waits for the
+  outcome: while the new image is still pending, `securacv_ota_take_pending_version()`
+  leaves the marker in place, so a revert inside the dwell is recorded by the
+  previous image as a rollback, and "applied" is recorded on the pass that
+  confirmed. Before 2.4.17 the new image consumed the marker on its first
+  boot and recorded "applied" even when the dwell then failed.
 - **Anti-rollback floor rises only after confirmation**, so a rolled-back
   version can always be retried.
 - **Install gating:** the device defers installs while on a low battery
@@ -473,10 +521,10 @@ user actions through the update system that leaves a device unrecoverable.**
 | New firmware crashes or hangs before it confirms itself | Bootloader restores the previous firmware on the next start — every product (compile-checked and source-verified; bench row pending, see the note above) | Nothing |
 | New firmware confirms, then keeps crashing | `canary` (PlatformIO): after 4 boots in a row that never reach healthy (a power-on reset does not count; crash resets do), it stops in a serial safe mode (radio, storage and sensors off) instead of looping. `canary-wap`: its own crash-loop safe mode. Display, Sense, Vision, Sentinel: nothing counts the resets; the task watchdog restarts them | `canary`: serial `c` then `y`, or hold BOOT 2 s, to retry; flashing a different build starts the count over. Others: USB reflash |
 | New firmware boots but fails its health check | Restores the previous firmware automatically (same caveat as the row above) | Nothing |
-| Power cycled after an update, before the boot self-test confirms it | Returns to the previous firmware (unconfirmed images don't stick). The window is product-specific — see the note above | Press Install again |
+| Power cycled (or restarted) after an update, before the image is confirmed — the boot probes plus 60 s of health | Returns to the previous firmware (unconfirmed images don't stick), which records the rollback (2.4.17+). The flagship alone confirms on a deliberate restart once its probes passed. What "healthy" means per product — see the note above | Press Install again |
 | Wrong update server address saved | Checks fail with a clear message; firmware untouched | Clear the field (Settings) to return to the official server |
 | Wrong variant's manifest configured | Product check refuses the image | Fix the address; nothing was installed |
-| WiFi password changed at the router | canary/WAP: own AP + dashboard still up — reconfigure there. vision/sense: after a few failed joins for a fixable reason, the board raises its own `SecuraCV-XXXX` setup network (the shared setup portal); sensing continues underneath | Reconnect via dashboard (canary/WAP), or join the setup network from a phone and enter the new password (vision/sense) — a USB reflash always works too |
+| WiFi password changed at the router | canary/WAP: own AP + dashboard still up — reconfigure there. vision/sense: after a few failed joins for a fixable reason, the board raises its own `SecuraCV-XXXX` setup network (the shared setup portal); sensing continues underneath | Reconnect via dashboard (canary/WAP), or join the setup network from a phone and enter the new password (vision/sense). A USB install also works, but either flasher's install starts the board's settings over: a new witness key and, on most boards, a new device id and new Home Assistant entities (the canary-vision section above), so keep it for when neither path can be reached |
 | Absolute worst case | Device still enters ROM download mode | USB flash — always possible, OTA cannot break it |
 
 ## Adding a new variant (the recipe)

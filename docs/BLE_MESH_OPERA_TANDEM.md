@@ -99,7 +99,7 @@ struct __attribute__((packed)) MsgHeader {
 - **Household NetKey (16 B)** + **AppKey (16 B)** — derived once during multi-device onboarding (when user adds a second Canary to an existing household).
 - Each message: AES-CCM with the AppKey, AAD = `(sender_id, msg_type, seq)`.
 - Replay protection: 32-bit `seq` per sender, household-wide. Out-of-order tolerated up to ±64 (small replay window).
-- The household key never leaves the device cleartext; it lives in NVS, encrypted by the device's secure-element-backed key (where available).
+- The household key never leaves the device over any wire; it would live in NVS, which is plaintext on the flash chip on every tier today (no Canary has a secure element and NVS encryption is in no released build), so a transport that stores it must gate it as the opera_secret is gated and say so.
 
 ## Transport options
 

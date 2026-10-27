@@ -247,15 +247,17 @@ pub fn settings_verdict(
             false,
             "Your settings are replaced with the ones you entered here — the board \
              comes up already on that network. Anything it had stored itself \
-             (its own tuning, witness-chain counters) starts fresh."
+             starts fresh: its witness key, where it keeps one, its own tuning and \
+             the witness chain, so it comes up under a new key."
                 .to_string(),
         ));
     }
     Some((
         false,
         if had_wifi {
-            "Your settings are reset — the saved Wi-Fi is cleared, so the board \
-             comes up with its setup network again, like the first day."
+            "Your settings are reset — the saved Wi-Fi is cleared and, where the \
+             board keeps a witness key, it makes a new one, so it comes up with its \
+             setup network again, like the first day."
                 .to_string()
         } else {
             "The settings area is reset to factory-fresh.".to_string()

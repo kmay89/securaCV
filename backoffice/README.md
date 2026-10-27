@@ -38,6 +38,13 @@ already chose it. Everything *around* Stripe is here.
 | An uptime dashboard, a runbook, a morning report | **Health** | the doctor's checklist (configuration, backups and their proofs, books, probes, jobs, logins, disk) with what to do about each; the same list is `backoffice doctor`, `/api/health` (503 when anything fails, for an outside monitor) and the morning digest email |
 | An audit trail | **Audit log** | every action by anyone or anything, append-only, filterable, CSV |
 | A fulfillment app's pick-and-pack flow | **Pack bench / Ship bench** | one order at a time through the weekly batch: pick list, serial scan, one button; then tracking in, one button, the customer mailed |
+| Buying the label in the admin (Shopify Shipping) | **Ship bench** | with `SHIPPO_API_TOKEN`: one button buys the USPS label for the box the order was packed in, writes the tracking and postage onto the order, ships it and opens the PDF to print; refuses a bad address or a blank return address before any money moves |
+| Abandoned checkout recovery + the conversion number | **Marketing · The checkout** | every hosted checkout counted from Stripe's own events (opened, paid, abandoned, recovered — no pixel, no cookie); an abandoned one with an email gets one follow-up with Stripe's link that reopens the same cart, never a second |
+| Editing products in the admin (Shopify's product editor) | **Products** | a product's price, name, batch cap, hidden flag and sale window edited on its page and live on the site at once; the file (`store.json`) stays the base, the page prints the patch it would need, the doctor counts what is edited here |
+| Launchpad (Shopify Plus): a scheduled launch | **Products** | "on sale from" and "until" on the listing: listed today, sells from the date, the site says when it opens |
+| Sales tax nexus tracking (Avalara, TaxJar) | **Books · Where sales tax is owed** | the trailing year's orders by state against the common thresholds; the home state always; the doctor fails when nothing is collected and tax is owed |
+| Customer account self-service | **The customer's page** | no account to make: the signed link in every mail shows where it is and lets them fix the address while it is on the shelf |
+| The admin app's push notification | **Notify** | a new order mails `OPERATOR_EMAIL` the minute it lands, and pushes to an ntfy topic if you set one |
 | A purchasing module (an ERP's) | **Purchasing** | purchase orders drafted from the reorder points in one click (grouped by supplier, at the reorder quantity), marked ordered with an expected date, received into stock line by line and booked as inventory; "buildable" looks ahead to when the parts land |
 | A marketing dashboard (Klaviyo's) | **Marketing** | the funnel from a signup to a repeat buyer, where people come from, what every campaign and automation did in the week after (orders and replies, no pixels), the codes, and customers and sales by state on a tile map that fetches nothing from a map provider |
 | Carrier tracking + a customer order page (Shopify's) | **Delivery** | a delivery estimate in every tracking mail (business days, a band a day across the country), a signed public status page per order with the stepper, the carrier link and the items, and — with USPS API credentials — the hourly carrier poll that marks delivered on the carrier's day and raises a carrier alert as an exception |
@@ -46,6 +53,7 @@ already chose it. Everything *around* Stripe is here.
 | A privacy desk (GDPR tooling) | **Customers** | the right to a copy (everything held about a person as one JSON) and the right to be forgotten (name, addresses, messages, attachments and mail blanked in one transaction; order numbers, amounts and dates kept so the books still add up), both logged |
 | Attachments in a helpdesk | **Support** | the photo of the warped lid and the PDF of the purchase order travel with the mail, stored with the message (images, PDFs and text, 5 MB each), shown inline, served same-origin and sandboxed |
 | User accounts and permissions (what every SaaS charges per seat for) | **People** | each person with their own password and authenticator, invited by a link that works once (they set their own password and scan a QR off the page — no QR service, the code is drawn here), four roles checked on every request (owner, ops, support, viewer), every action written down under the person's name, lockout per address and per person, a role change or a disable that applies to live sessions at once, *Your account* for password and authenticator rotation |
+| Magic links, device alerts, a WAF's basics (Cloudflare Access, Auth0) | **The door and the watch** | a mailed sign-in link bound to the browser that asked (the authenticator still required); a mail and a push on a sign-in from a new network; scanners blocked, lockouts pushed; an admin allowlist and session-to-network binding; outsider text scrubbed and marked as data for the AI operator. All in [`SECURITY.md`](SECURITY.md) |
 | An admin login | **Auth** | password + authenticator code for everyone, lockout after eight failures, strict cookies, CSRF plus a cross-site refusal, read-only or read-write bearer tokens. The whole model is in [`SECURITY.md`](SECURITY.md) |
 
 What is deliberately **not** here: the attestation service (LICENSING.md §2b
@@ -110,10 +118,15 @@ Room page can carry a "try the demo" link to it.
 
 ## Going live, and staying reliable
 
-[`GO_LIVE.md`](GO_LIVE.md) is the order: a shadow fortnight in Stripe test
-mode, backups proven in two places (sealed off-site, a weekly restore
-drill), an outside monitor on `/api/health`, the morning digest, then the
-live keys. The Health page and `backoffice doctor` show the same checklist,
+[`GO_LIVE.md`](GO_LIVE.md) is the order: three copies that each say which
+they are (production, staging on last night's data, the demo), a shadow
+fortnight in Stripe test mode, backups proven in two places (sealed off-site,
+a weekly restore drill), an outside monitor on `/api/health`, the morning
+digest, then the live keys. Every merge deploys to staging; production
+changes only by the "Promote backoffice to production" button
+([`../docs/RELEASE_BUTTONS.md`](../docs/RELEASE_BUTTONS.md)), and a build
+takes a copy of the data before any migration it applies
+([`src/migrations/README.md`](src/migrations/README.md)). The Health page and `backoffice doctor` show the same checklist,
 green when each is done. [`SECURITY.md`](SECURITY.md) says what is defended
 and what is not.
 
@@ -249,11 +262,12 @@ shows once the webhook has recorded the order).
   both on its shipping option, so Stripe's page says the same thing.
 - **The sale lands by webhook as before**; a site order also gets "We have
   your order" with the batch, the ship date, the window and the status link.
-- **Tax.** `TAX_MODE=none` collects nothing, which is only right while you owe
-  sales tax nowhere; `TAX_MODE=stripe` turns on Stripe Tax (computed by the
-  shipping address at checkout, a per-transaction fee), which is the honest
-  setting from the first taxable sale. The books carry whatever Stripe
-  collected either way.
+- **Tax.** The `stripe_tax` feature flag (Settings → Feature flags, or
+  `FLAG_STRIPE_TAX=1`; `TAX_MODE=stripe` is the old spelling) turns on Stripe
+  Tax (computed by the shipping address at checkout, a per-transaction fee),
+  which is the honest setting from the first taxable sale. Off collects
+  nothing, which is only right while you owe sales tax nowhere. The books
+  carry whatever Stripe collected either way.
 - **Demo mode takes no payments**: `/store/checkout` answers 503 and the site
   falls back to its own cart; the walkthrough drives `createCheckout` against
   a stub Stripe instead. `tests/storefront.test.mjs` holds the cadence across
@@ -309,7 +323,46 @@ Three numbers show up around an order, and each has one source.
   two to seven business days, replaced by the carrier's own word when USPS
   tracking is configured.
 
+## What the customer is told, and when
+
+The customer hears from us at every turn, by mail, and can see the same thing
+any time on their page (`/o/<number>/<token>`, the link in every mail and on the
+thanks page — no login). The promise the store made at checkout is written on
+the order (`promised_ship_on`, `promised_arrive_by`), and every line below reads
+it, so a mail and the page never disagree.
+
+| Moment | Mail | Their page says |
+|---|---|---|
+| Checkout timed out | one mail, an hour later, with Stripe's link that reopens the same cart — only if they typed an email, and never a second | — |
+| Paid | "We have your order": items, the batch it ships in, the arrival window, the page link | "Ships Tue, Nov 3 · arrives Nov 5–Nov 9"; a form to fix the address while it is on the shelf |
+| Packed | — | "Packed and waiting for the label — ships Tue, Nov 3" |
+| The ship day passes | the late apology, **a person's click** (a Decide card counts them; once per order), with a refund offer | "Running later than planned — it was due to ship Tue, Nov 3", and the same offer |
+| Shipped | "On its way": carrier, tracking, the estimate | "On its way · estimated Nov 5–Nov 9", the tracking link |
+| Carrier reports a problem | the carrier note, **a person's click**, once | "The carrier reports a problem", what happens next |
+| Delivered (carrier or a click) | the "settled in?" automation, three days later | "Delivered Nov 6" |
+| The address will not make a label | the address question, **a person's click**, once | unchanged (it still ships on the promise once fixed) |
+| Canceled | by itself: what is coming back and when | "Canceled Oct 28", the money line |
+| Refunded, in part or full | by itself, whoever recorded it (page, API, Stripe) | "Refunded $15.00", keep what arrived |
+| A support ticket | the acknowledgment with the ticket number and the SLA; every reply in the same thread | — |
+
+Every order page has a **The customer knows** card: what their page says right
+now, the promise, every mail with whether it was sent, queued or failed, and the
+nudges still owed. A failed customer mail is *now* on the home page and the
+sidebar: the page says they were told, and they were not.
+
 ## How each piece behaves (the rules it keeps)
+
+- **Where to look is computed, never typed.** `src/attention.mjs` turns every
+  deadline into one of three levels — *now* (red: a clock has run out, or a
+  person is already being failed), *soon* (amber: inside a stated window), *calm*
+  (no mark) — and every page reads it from there: a count on the sidebar section
+  colored by the worst thing inside it, the home page's focus strip and cards, the
+  Decide queue ranked by the clock each card is against, the mark on a table
+  row's left edge, a due date in a cell. The windows are the operator's promises,
+  stated once in `WINDOWS` (two days to ship an order, six hours before an SLA,
+  a week on a warranty claim); a new kind of work gets a level by stating its
+  deadline, not by picking a color. The brand gold means "an action" and nothing
+  else — a chart series never wears it.
 
 - **Orders** — one row per shipment; an unknown SKU is a refused order, not a
   guessed one; idempotent on Stripe's event id, so redelivery is safe;
@@ -343,6 +396,20 @@ Three numbers show up around an order, and each has one source.
   logged in; every write is a POST under the CSRF token and the cross-site
   refusal).
 
+## Feature flags
+
+A change that should exist in the code before it is on for everyone is a
+flag: declared once in `src/flags.mjs` (name, kind, default, owner, what it
+does), read at the one branch with `isOn(db, cfg, 'name')`, flipped on
+Settings or through `POST /api/flags/:name`, every flip an audit row. The
+environment can pin one (`FLAG_<NAME>=1|0`), which is how staging runs
+tomorrow's behavior on yesterday's data; Settings shows which source answers.
+Two kinds: a *rollout* carries a `remove_by` date and the doctor names it once
+that passes (a rollout is temporary — when it is on for good, delete the flag
+and the branch it guarded); a *switch* is an operator's standing choice and
+has no date. `tests/flags.test.mjs` holds the precedence, the refusals and the
+audit.
+
 ## Layout
 
 ```
@@ -350,6 +417,14 @@ bin/backoffice.mjs      the CLI — same functions as the web admin, `backoffice
 src/db.mjs              node:sqlite, migrations/, numbers (EL-, T-, WC-, INV-YYYY-), audit log, savepoint transactions
 src/http.mjs            router, body parsing, cookies, CSRF, rate limiter, escaping
 src/render.mjs          server-rendered HTML; no client JavaScript
+src/modules/listing.mjs the store listing edited here (price, name, cap, hidden, window) laid over store.json; the patch for the file
+src/modules/nexus.mjs   where sales tax is owed: the trailing year by state against the common thresholds; the doctor's sentence
+src/modules/labels.mjs  the label bought from the ship bench (Shippo), the demo's pretend one, the readable fallback
+src/modules/recovery.mjs every hosted checkout written down, the one follow-up an abandoned one gets, the conversion number
+src/modules/notify.mjs  the new-order nudge to the operator: a mail, and a push if NTFY_URL is set
+src/modules/promise.mjs the promise made at checkout, one honest line per state for the customer, the mails a person sends with one click, what the customer has been told
+src/guard.mjs           the watch and the boundary: a scanner blocked, an address allowlist, session-to-network binding, outsider text scrubbed on the way in and marked as data in the API
+src/attention.mjs       the one scale of urgency (now / soon / calm) from stated deadlines; the sidebar badges, the home page, the Decide queue, every table row and the digest read it
 src/auth.mjs            scrypt password, TOTP (RFC 6238), sessions, API tokens
 src/server.mjs          public endpoints, the JSON API, the request pipeline
 src/admin.mjs           one page per module; src/admin_shop.mjs the storefront half (products, customers, discounts, analytics, batches, search, packing slips);

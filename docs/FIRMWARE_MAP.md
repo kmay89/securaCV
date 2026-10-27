@@ -29,7 +29,7 @@ four are a teaching harness, two Phase-0 cores and a concept.
 | Target | Lifecycle (`firmware/VARIANT_POLICY.md`) | MCU / boards | Build system (platform pin, `firmware/envs/platformio/platforms.ini`) | CI envs (`firmware/flavors.json` `build_envs`) | A/B app slots | OTA product |
 |---|---|---|---|---|---|---|
 | **canary (PIO)** `firmware/canary/` | ACTIVE flagship | ESP32-S3 XIAO Sense; reach ports ESP32-CAM, ESP32-WROOM DevKit, Freenove S3 | PlatformIO, `espressif32@6.9.0` (Arduino core 2.0.17 / IDF 4.4.7) for every env but `full`, which is the pioarduino core-3 zip (Arduino 3.3.8 / IDF 5.5.4) | `dev release release_ha full esp32cam esp32-wroom freenove-s3` (+ compile-only `secure`, `secure_ha`, `dev_ha`, `minimal`, `usb-onboard`) | `partitions_ota.csv` 2 × 0x1E0000; `full` uses `default_8MB.csv` | `securacv-canary` (release_ha is the published image); the three reach ports carry product ids with no published manifest |
-| **canary-wap** `firmware/projects/canary-wap/` | COMPATIBILITY | ESP32-S3 XIAO Sense (C3 is a compile-only CI target) | ONE Arduino sketch (`arduino/canary_wap/`, `canary_wap.ino` 13.5k lines) built by arduino-cli (latest core 3.x) AND PlatformIO via `src_dir` on the pioarduino core-3 zip | `canary-wap-default canary-wap-usbdrive` | `default_8MB.csv` 2 × 0x330000 | `securacv-canary-wap` (version `2.4.16-wap`) |
+| **canary-wap** `firmware/projects/canary-wap/` | COMPATIBILITY | ESP32-S3 XIAO Sense (C3 is a compile-only CI target) | ONE Arduino sketch (`arduino/canary_wap/`, `canary_wap.ino` 13.5k lines) built by arduino-cli (latest core 3.x) AND PlatformIO via `src_dir` on the pioarduino core-3 zip | `canary-wap-default canary-wap-usbdrive` | `default_8MB.csv` 2 × 0x330000 | `securacv-canary-wap` (version `2.4.17-wap`) |
 | **canary-vision** `firmware/projects/canary-vision/` | SPECIALIZED | ESP32-C3 DevKit / XIAO C3 / C3 Super Mini / XIAO S3 + Grove Vision AI V2 | PlatformIO, `espressif32@6.9.0` | `canary-vision-default canary-vision-xiao-c3 canary-vision-xiao-s3 canary-vision-c3-super-mini` | `min_spiffs.csv` 2 × 0x1E0000 (S3: `default_8MB.csv`) | `securacv-canary-vision`, `-xiao-c3`, `-xiao-s3` published; `-c3-super-mini` polled, unpublished |
 | **canary-sense** `firmware/projects/canary-sense/` | SPECIALIZED | ESP32-C6 XIAO + MR60BHA2 radar | PlatformIO, pioarduino core-3 zip (the official platform has no C6 Arduino) | `canary-sense-default canary-sense-wellbeing` | `min_spiffs.csv` 2 × 0x1E0000 | `securacv-canary-sense`, `-wellbeing` |
 | **canary-sentinel** `firmware/projects/canary-sentinel/` | SPECIALIZED Phase 1a, **unreleased** | ESP32-C6 XIAO (door/window/hallway/demo-head), XIAO C3 (lite) | PlatformIO, pioarduino core-3 (C6) and `espressif32@6.9.0` (lite) | `canary-sentinel-door canary-sentinel-lite` | `min_spiffs.csv` / `partitions.csv` | one product per preset, all unpublished (pull-OTA 404s by design) |
@@ -176,6 +176,9 @@ MQTT, bearer token and (where present) the Ed25519 private key as plaintext
 NVS entries under namespace `securacv`. No shipped partition table has an
 `encrypted` flag or `nvs_keys` partition; `firmware/provisioning/` holds the
 opt-in secure kit (flash encryption + Secure Boot v2) that no CI leg builds.
+*(Amended 2026-10-21: `firmware.yml` compiles the kit's two envs,
+compile-only, since #1744; the kit stages flash encryption and Secure Boot,
+commented out, rather than enabling them, and neither would encrypt NVS.)*
 NVS encryption is not configurable on either pinned Arduino core as built
 (`platformio_secure.ini:63-76`, `key_at_rest.h:16-33`): the precompiled
 `sdkconfig` leaves it off and `-DSDKCONFIG_DEFAULTS` is inert. Only the PIO
@@ -305,8 +308,9 @@ canary-vision, canary-sense and canary-sentinel. Facts:
   bench-verified** (`V1_BENCH_TEST_RUNBOOK.md` Track E unchecked).
 - **Delivery**: daily jittered manifest pull (first check ~2 min after boot)
   on every linked target; HA update entity + Auto Update switch via
-  device-published discovery; bearer-gated `/api/ota/{status,check,install,config}`
-  on canary and WAP; LAN-open `/api/ota/{status,check,install}` on the
+  device-published discovery; `/api/ota/{status,check,install,config}` gated
+  on canary (the bearer) and WAP (`api_auth_check()`: the bearer, or a landing
+  session any host on the network can mint, ledger F346); LAN-open `/api/ota/{status,check,install}` on the
   display; BLE OTA and USB drop-file (both signed) on the WAP only; the dev-only
   unsigned `POST /api/ota` on canary dev builds. **No signed manual web
   upload on any release build; no hub push; no staged rollout; no OTA state
@@ -346,7 +350,10 @@ canary-vision, canary-sense and canary-sentinel. Facts:
   `/api/fleet`, appear in displays' fleet models via mDNS, rebind an
   uncredentialed display's broker by referral, POST `/api/ota` on a display;
   in radio range spoof the presence beacon for any fingerprint suffix, and
-  claim an unowned device during its 30-minute first-boot window.
+  claim an unowned device during its 30-minute first-boot window *(amended
+  2026-10-22: or an owned one its owner reset or made forget its Wi-Fi,
+  which keeps its identity: the door goes to whichever client connects
+  first, `design/magic_pairing.md` §2.2)*.
 - **The only pairing-grade trust** is the WAP's Opera mesh (owner-confirmed
   code, per-frame Ed25519), which has a documented grindable MITM
   (`spec/canary_mesh_network_v0.md` §11.1), has never paired on a radio, and
@@ -441,7 +448,7 @@ in this program (the matrix with per-target cells is [`PARITY.md`](PARITY.md)).
 | One onboarding state machine for every firmware | four portals; the shared one on three products | a pure `onboarding_fsm.h` core every portal consumes (timers, AP hold, recovery, factory-reset hold), adopted by the shared portal and the display, with the WAP and canary (PIO) consuming the pure rules through staged copies |
 | SoftAP kept alive 2 min after join | 25 s on the shared portal and display; 120 s AP grace on the WAP | 120 s in the shared core |
 | Multiple saved networks + auto-reconnect backoff | one slot everywhere; backoff shared on four trees | a `wifi_store.h` ring of saved networks (pure, host-tested) behind the shared portal |
-| Encrypted credentials at rest | plaintext NVS everywhere; NVS encryption not configurable on the pinned cores | honest `⚠️`: posture reported on every node, the secure kit documented as the path; no fake encryption |
+| Encrypted credentials at rest | plaintext NVS everywhere; NVS encryption not configurable on the pinned cores | honest `⚠️`: posture reported on every node, the secure kit documented as the path *(amended 2026-10-21: the path is NVS encryption, after the arduino-as-IDF-component migration, roadmap item 9; the secure kit's flash encryption does not cover NVS)*; no fake encryption |
 | Recovery re-raise without wipe after N minutes | present on five trees with differing rules; a once-online unit never re-raises on three | the shared core adds the "saved network gone for N minutes" raise |
 | Hold-button factory reset | canary (PIO) only (5 s, wipes identity too) | 10 s hold on every board with a BOOT pin, credentials-only by default, shared pure classifier |
 | Captive portal one shared page | three page templates | the shared portal's page becomes the template; the display's is reconciled to it |
@@ -466,8 +473,10 @@ marks a cell ⚠️ or ❌ with a footnote. The open items, so nobody has to
 re-derive them from the matrix:
 
 - **Credentials at rest** stay plaintext NVS on every shipped build; the
-  posture is reported as `creds_at_rest` on every node and the secure kit is
-  the documented path (PARITY footnote 1).
+  posture is reported as `creds_at_rest` on every node, and NVS encryption,
+  after the arduino-as-IDF-component migration, is the documented path; the
+  secure kit is not, since flash encryption does not cover NVS (PARITY
+  footnote 1).
 - **The WAP and the display keep their own mDNS TXT** (`host`, `role`, `fw`
   are the shared keys; `caps` and `coord` are not emitted yet) and **are not
   on the SCVP peer protocol** — neither is the flagship, whose `release` slot

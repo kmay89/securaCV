@@ -96,7 +96,8 @@ def test_a_fresh_tofu_pin_resets_the_marks() -> None:
     hass = _hass(_entry_data())
     verify_chain = _named(lambda ts, d, p: _trusted(), "verify_chain")
     assert sensor_platform._verify_and_record(hass, ENTRY, "a", {"length": 40}, verify_chain).trusted
-    # Factory reset: the device pins fresh and its chain starts over.
+    # An install or a full erase in a flasher (a new key): the device pins
+    # fresh and its chain starts over.
     async_record_verify(hass, ENTRY, "a", TrustVerdict(trusted=True, reason="tofu_pin"))
     assert sensor_platform._verify_and_record(hass, ENTRY, "a", {"length": 1}, verify_chain).trusted
 

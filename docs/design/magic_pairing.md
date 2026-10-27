@@ -49,8 +49,13 @@ What "magic" does **not** mean: it is not a pairing that happens without the
 person, and it is not open to whoever walks past. The whole design is the
 sentence from `improv_core.h`:
 
-> the door is open for a device NOBODY OWNS YET, and for an owner's own tap —
-> never for a device that has an owner and a bad day.
+> the door is open for a device with NO NETWORK SAVED (a new one nobody owns
+> yet, or one whose network was cleared), and for an owner's own tap — never
+> for a device that has an owner and a bad day.
+
+A cleared unit (the 10 s hold, or Forget Wi-Fi on a WAP, which any landing
+session can send, ledger F345) still has an owner, and its door goes to
+whichever client connects first (§2.2).
 
 ---
 
@@ -60,7 +65,7 @@ sentence from `improv_core.h`:
 
 | Situation | Door | Why |
 |---|---|---|
-| No credentials stored (first boot, after a factory reset), within **30 minutes** of power-on | **Open** (`Door::NoCredentials`) | A device nobody owns yet. The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, a factory reset re-arms it from the moment the credentials vanish; compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on, a brownout, a power glitch or a reset a host asserted from the USB / JTAG port — the Flasher's, so a re-flashed unit never inherits the old image's spent window (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |
+| No credentials stored (first boot, or after a factory reset or Forget Wi-Fi), within **30 minutes** of power-on (after Forget Wi-Fi, of the credentials vanishing; after a WAP's hold, of the restart on release) | **Open** (`Door::NoCredentials`) | A device nobody owns yet — or, after a reset or a Forget Wi-Fi, a cleared unit that still has an owner (on a WAP any landing session can send Forget Wi-Fi, ledger F345, so the owner may not have chosen it): the hold keeps the witness identity on a Sense, a Vision and a WAP, a WAP's hold and Forget Wi-Fi keep its token too, and the door goes to whichever client connects first (§2.2). The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, and so does the credentials vanishing (Forget Wi-Fi re-arms it at that moment; a WAP's hold zeroes the carried record and restarts on release, so its fresh window runs from the restart); compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on, a brownout, a power glitch or a reset a host asserted from the USB / JTAG port — the Flasher's, so a re-flashed unit never inherits the old image's spent window (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |
 | No credentials stored, the window has run out | Shut | "A unit forgotten in a drawer is not claimable from the street for the rest of its life." A power cycle or a tap reopens it; a software restart does not. |
 | Credentials stored, the network is fine | Shut | A device that has an owner offers nothing. |
 | Credentials stored, the saved network is **failing** (the SoftAP recovery portal is up) | **Shut** | The recovery portal has a key printed on the unit; this door does not. See §2.3. |
@@ -68,14 +73,18 @@ sentence from `improv_core.h`:
 | The 11th `WIFI_SETTINGS` attempt on one open door | Shut, until a tap or a power cycle | `Timing::wifi_settings_cap` = 10. A no-credentials door shut this way marks its window spent. |
 
 The WAP has **no tap door in this version**: its BOOT button keeps the
-sketch's own gestures. A short press opens the 30 s receipt gate, a 2 s hold
-prints the identity on serial, and a **10 s hold factory-resets the WAP**
+sketch's own gestures. A short press hands the receipt to one asker for 30 s
+(the page asks first and the press comes second: a second address asking
+from 10 s before the tap closes it, and a tap no page was asking for goes to
+the first address that asks after it, sweep F342), a 2 s hold prints the
+identity on serial, and a **10 s hold factory-resets the WAP**
 (`factory_reset_by_hold()`): it clears the saved Wi-Fi networks, the broker
 row, the device name and the first-boot flag, keeps the identity key and the
-API token derived from it, and restarts into first-boot setup when BOOT is
-released. A WAP's door is the first-boot window alone. The owner re-arms it
-with **Forget Wi-Fi** on the dashboard (`POST /api/wifi/forget`) or with the
-10 s hold: both clear the credentials through `wifi_clear_credentials()`,
+API token (the one the WAP derived from the key, or the one a flasher
+seeded), and restarts into first-boot setup when BOOT is released. A WAP's door is the first-boot window alone. **Forget Wi-Fi** on the
+dashboard (`POST /api/wifi/forget`, which any landing session can send,
+ledger F345, so it is not the owner's act alone) and the 10 s hold re-arm
+it: both clear the credentials through `wifi_clear_credentials()`,
 which on a unit that had credentials also zeroes the carried window record,
 so the door gets a fresh 30 minutes (after the hold, from the restart on
 release).
@@ -92,14 +101,26 @@ While the door is **shut** (the steady state of every owned Canary):
   authorization** (`0x01`) on the state characteristic. A `WIFI_SETTINGS`
   write earns `NotAuthorized` (`0x04`) and starts nothing.
 
-While the door is **open** (a new unit, or the owner tapped it):
+While the door is **open** (a new unit, one cleared with the hold or with
+Forget Wi-Fi, which on a WAP any landing session can send, or the owner
+tapped it):
 
 - They can connect and, after the Just Works pairing, write credentials for
-  *their* network. That is the inherent exposure of any "no owner yet"
-  door, and it is bounded: the window is 30 minutes from power-on, not
-  forever; a join that succeeds stores credentials and shuts the door; an
-  owner who finds the unit on the wrong network holds it, factory-resets it,
-  and starts again.
+  *their* network. That is the inherent exposure of any "no network saved"
+  door, whether or not the unit has an owner, and it is bounded: the window is 30 minutes from power-on, not
+  forever; a join that succeeds stores credentials and shuts the door. An
+  owner who finds the unit on the wrong network still holds it, but on a WAP
+  a reset does not undo a stranger who took the door. The network the WAP
+  joined is one the stranger chose, so the stranger is on it and can spend
+  the claim the door minted for its own link, and the receipt that claim
+  buys carries the bearer token and the SoftAP password (ledger F345). The 10 s
+  hold and Forget Wi-Fi keep both: the SoftAP password derives from the
+  identity key the reset keeps, the token stays as stored (derived from that
+  key, or seeded by a flasher), and nothing rotates the token today; only an install or a
+  full erase in either flasher, whose factory image starts NVS over, replaces
+  them, with the identity. And either reset reopens the
+  same first-come door for 30 minutes, which a stranger still in radio range
+  can take again.
 - They **cannot** hold the door open or hold the single link against the
   owner: a client that sends nothing for **3 minutes** is dropped
   (`Timing::idle_disconnect_ms`); accepted credential writes are at least
@@ -110,10 +131,11 @@ While the door is **open** (a new unit, or the owner tapped it):
   failure is `InvalidRpc` (`0x01`), because "a device that names which byte
   was wrong is a device helping someone probe it."
 - They **cannot** get the WAP's bearer token, its console, its OTA channel,
-  its witness export or its bonded provisioning: the key a Just Works
-  pairing yields is *unauthenticated*, and every `*_AUTHEN` characteristic
-  refuses it. The claim ticket they could read opens nothing from the street
-  (§2.4).
+  its witness export or its bonded provisioning over Bluetooth: the key a
+  Just Works pairing yields is *unauthenticated*, and every `*_AUTHEN`
+  characteristic refuses it. The claim ticket they could read opens nothing
+  from the street (§2.4); from a network they joined the WAP to, it buys the
+  receipt, token included (above).
 - A **passive listener** learns nothing: the command and result
   characteristics require an encrypted link (LE Secure Connections), checked
   by the characteristic's properties *and again in the write handler*. The
@@ -128,8 +150,9 @@ first boot but also when a *saved* network keeps failing (a changed
 password, a router that rebooted, an SSID that went away). That turned "my
 router is down" into "anyone in radio range can re-point my Canary at their
 network." The two cases look alike from the portal's side and are opposite
-from the owner's: the first is a device nobody owns, the second is a device
-that has an owner and a bad day.
+from the owner's: the first is a device with no network saved (a new one, or
+one whose network was cleared, §2.2), the second is a device that has an owner and a
+bad day.
 
 So the door takes the **stored-credentials fact**, never the portal's. The
 glue passes `no_credentials` as what NVS holds; `session_set_no_credentials`
@@ -144,8 +167,10 @@ router is not a claim window") so it is not re-learned.
 A Just Works pairing is the only kind a phone with no prior bond can open in
 one tap, and it yields an encrypted but **unauthenticated** link: it resists
 a passive listener, not an active one who was there first. Nothing that
-*lasts* belongs on such a link. The WAP's bearer token lasts for the life of
-the device. The first version put the whole pairing receipt — token
+*lasts* belongs on such a link. The WAP's bearer token lasts until the board
+is installed again or fully erased in a flasher, or a flasher restores a
+safety copy over it, which puts back the token (and the key) that copy holds:
+OTA updates, the 10 s hold and Forget Wi-Fi keep it, and nothing rotates it. The first version put the whole pairing receipt — token
 included — on that link, and its `base_url` pointed at a SoftAP address that
 is dead the moment the AP drops after a join.
 
@@ -434,7 +459,7 @@ HUB on the WAP is a follow-up, not a claim this page makes.
 | 1 | Is the `Host` foreign (cannot name this device, and the request did not arrive over the SoftAP)? | `403 {"error":"host"}` | The bearer is unread, the claim untouched, the BOOT tap left unspent. |
 | 2 | A valid **bearer**? | serve | The claim and the tap are left alone. |
 | 3 | A **claim** presented as `?claim=<hex>`? | `take_claim()` — serve on a match | Called at most once; **spends the claim only on a match** (a wrong value spends nothing; an expired claim is burned). A claim that serves **leaves the BOOT tap unspent**, so the owner's own page load still finds it. |
-| 4 | An unspent **BOOT tap**? | `take_gate()` — serve | One atomic exchange; the tap is one consumer across every path. On the WAP it is served only to the sole address asking for it (`tap_arbitrate()`); a second address in the window closes the tap with `409 tap_contended`. |
+| 4 | An unspent **BOOT tap**? | `take_gate()` — serve | The tap is one consumer across every path. On the flagship the take is `take()`, one atomic exchange. On the WAP the receipt's take is `take_exact()`, a compare-and-swap of the stamp `tap_arbitrate()` judged, and the tap is served only to the sole address asking for it; a second address in the window closes the tap with `409 tap_contended`. The WAP's BLE OTA break-glass takes the same tap with `take()`'s exchange, and an exchange and a compare-and-swap of one word cannot both win. |
 | — | none of the above | `403 physical_confirmation_required` | The same body the three-grant route always answered (`build_gate_refusal_json`). The WAP answers its own literal with the same fields, whose `hint` and `button` say to start asking first, then short-tap BOOT (F342); the shared builder's "short tap, then poll" moves with F354. |
 
 Every caller the three-grant overload admitted is admitted here too, in the
@@ -527,17 +552,78 @@ load the tap unlocks (`page_token_inject()`), both through
 A request with no credential is no strike, on the receipt and on every
 `auth_gate` route, so the dashboard tab loaded without the token arms
 nothing. The posture is the paragraph below; the flagship has no Bluetooth
-lane that changes its Wi-Fi, so there the fallbacks are to wait or the 10 s
-hold, and its request limit is still one per device (F351). Host-tested in
+lane that changes its Wi-Fi and no Bluetooth setup door, so there the way
+out from under a host striking from 9 or more addresses is to wait until it
+stops, or to hold BOOT 10 s and set the unit up on a network that host is
+not on (the hold empties the table, in RAM, and clears the saved networks;
+set up on the same network again, the host's next strikes from nine
+addresses hold every untracked address again), and its request limit is
+still one per device (F351). Host-tested in
 `firmware/tests_host/test_securacv_auth.cpp`; not run on a device.
 
 **The backoff is per source address.** A host's wrong bearers hold
 only that host's address (F343). A browser that mistyped the token waits at
-most about 60 s, or taps BOOT, which clears its address (F341). A host that
-strikes from 9 or more addresses within 60 s holds every untracked address
-while the shared overflow slot runs, and a tap does not clear that; then
-wait, change Wi-Fi from the iPhone's bonded Bluetooth lane, or hold BOOT
-10 s.
+most about 60 s, or signs in with the BOOT tap (on the WAP, **Use BOOT Tap
+Once**), which clears its address when the tap is served to it (F341). A
+host that strikes from 9 or more addresses within 60 s holds every
+untracked address while the shared overflow slot runs, and a tap does not
+clear that. On the WAP, then change its Wi-Fi from a browser on the
+network to a network that host is not on, or wait until it stops. The
+browser needs no token: the landing page mints a session for any host on
+the network (F346), `api_auth_check()` takes its cookie before the bearer
+and its lockout, and through `wifi_change_authorize()` that session
+reaches `POST /api/wifi/connect` (Settings, WiFi), so the owner's browser
+moves the WAP under the lockout; the overflow's backoff then ends at most
+60 s after that host's last strike. That gets the owner out only while
+that host leaves it alone. The landing page mints that host sessions too,
+and the eight session slots evict the oldest (`csi_integration.cpp`), so a
+host that keeps minting can end the owner's session before its save. A
+host also in radio range can bond a Bluetooth peer of its own (the peer
+starts the pairing, and its session reads the passkey from
+`GET /api/bluetooth` and confirms it) and write the WAP's Wi-Fi over the
+bonded lane (`ble_provision.cpp`'s CREDS, `WRITE_ENC | WRITE_AUTHEN`),
+joining it back to a network that host is on. And the move lasts only
+while the new network stays up. The WAP keeps every network it has joined
+(up to four, `wifi_store.h`), the striking host's among them, and when the
+one it is on is not found twice running (a phone's hotspot turned off, a
+network out of range, one that is down when the WAP starts) it tries the
+next saved one, in turn (`wifi_store_rotate_if_due()`), with no act of the
+owner's, and stays on the host's network once it joins it. No route
+forgets one saved network (`wifi_store::remove()` has no caller): Forget
+Wi-Fi (`POST /api/wifi/forget`, which the owner's landing session reaches
+under the lockout) and the 10 s hold drop them all, and each reopens the
+first-come setup door, so the move sticks only after Forget Wi-Fi and a
+setup onto the new network. The iPhone's bonded Bluetooth lane is no way
+out today: the iPhone app dials only a Canary that advertises the console
+service, which a WAP does not, so it never writes a WAP's CREDS (ledger
+A65, open). Once A65 is settled the lane would move the WAP with no
+browser, but only while that host leaves it alone and the new network
+stays up (it saves through the same paths), and taking it away needs no
+radio. Any landing session can turn the
+WAP's Bluetooth off (`POST /api/bluetooth/disable`), a saved setting that
+restarts and the 10 s hold keep, under which every Bluetooth link is
+dropped; or delete every bond, the owner's phone's included
+(`DELETE /api/bluetooth/paired/all`), so the phone must pair again before
+the lane takes its write; and a host's own bonded peer can keep the
+owner's write refused for as long as it keeps writing (`ble_provision.cpp`:
+one write in 5 s and ten an hour from every peer together, and a refused
+write costs the writer nothing). A host that keeps striking can do any of
+these again at will. The owner's session reaches the same Bluetooth
+routes, so it can turn Bluetooth back on, which that host can turn off
+again. The 10 s
+BOOT hold is no way out from under that host: it
+empties the table (it is in RAM, and the release restarts the unit), as any restart
+does, but once the unit is set up on the same network again, the host's
+next strikes from nine addresses hold every untracked address again, the
+owner's among them, and the claim that pairs the phone does not clear the
+overflow (it frees only the served address's own slot), so the phone ends
+paired and held. The hold helps only with a setup onto a network that host
+is not on. The owner's browser makes that move without it, and without
+reopening the first-boot setup door, which goes to whichever Bluetooth
+client connects first (the polling host's ways out, below), but that move
+keeps the host's network saved; the hold, or Forget Wi-Fi, followed by
+that setup drops it, and reopens that door. The flagship's
+fallbacks are in the paragraph above.
 
 The rule is `firmware/common/network/auth_backoff.h`, staged into the WAP
 sketch, with one table for every file of the sketch (`g_auth_table` in
@@ -575,8 +661,11 @@ reboot needs the bearer); ARP spoofing; httpd's LRU purge (a host that opens
 enough connections closes the owner's); nine or more striking addresses (the
 overflow, above); and a cross-site `<img src=...?token=x>`, which holds the
 visiting browser's own address. A phone that still holds a pairing for a
-unit that was reset keeps polling with the old token, and so holds its own
-address, its new pairing included (F352). Host-tested
+unit that was installed again or fully erased in a flasher (a new key, so a
+new token and device_id; an OTA update and a WAP's 10 s hold keep the token,
+while the flagship's hold replaces a token a flasher seeded with one derived
+from the key, to the same effect) keeps polling with the old token,
+and so holds its own address, its new pairing included (F352). Host-tested
 (`firmware/tests_host/test_auth_backoff.cpp`, `test_receipt_grant.cpp`); not
 run on a device.
 
@@ -611,15 +700,21 @@ serve again when `millis()` comes back round to it 49.7 days later. A `429`
 for a held bearer still comes before the `409`, and the `409` clears no
 backoff. The dashboard's **Use BOOT Tap Once** polls from the click, and the
 companion's recovery-kit save now asks from the Save tap, and every
-instruction a WAP page or answer gives puts the ask first (the `403`'s hint and button
-say to start asking first, then short-tap BOOT; the dashboard's timeout
+instruction for the receipt's tap a WAP page or answer gives puts the ask
+first (the `403`'s hint and button say to start asking first, then
+short-tap BOOT; the dashboard's timeout
 says to click again, then tap; both pages' `409` text says to wait 10 s,
 then click **Use BOOT Tap Once** again, or tap Save again, and only then
-press). Both pages say to press only once the device has answered their
-first ask ("Asking the Canary first. Don't press BOOT yet." until then), so
-a press that follows the page cannot land before the page's ask has
-reached the device (a TLS handshake, a blip or a busy server can hold the
-first ask back). So the owner's client is on record when the press lands:
+press). The companion's BLE OTA line for a v1 manifest ("short-tap BOOT
+within 30 s before Start") stays press-first: that tap is the break-glass
+(below), which no receipt client is asking for. Both pages say to press
+only once the device has answered one of their asks with `403` ("Asking
+the Canary first. Don't press BOOT yet." on the dashboard and "Asking your
+Canary first. Don't press BOOT yet." on the companion until then; an ask
+that never reached the device is asked again), so a
+press that follows the page cannot land before the page's ask has reached
+the device (a TLS handshake, a blip or a busy server can hold the first ask
+back). So the owner's client is on record when the press lands:
 a host that polls the route, one that watches `/api/logs` for the tap, or
 one that delays the owner's next poll is refused loudly instead of handed
 the token, the SoftAP password and the pin. The serial console names both
@@ -653,7 +748,12 @@ What stays open, and is the ledger's, not a claim of this design:
   before the tap's rule is asked) and keep the token, which the hold kept
   and nothing rotates today. So the hold is for a host known to be on the
   network only, with the phone ready before BOOT is released, and the phone
-  ends paired unless something in radio range reached the door first.
+  ends paired unless something in radio range reached the door first, or a
+  landing session turned the WAP's Bluetooth off before the hold, which any
+  host on the network can (F346): the setting is saved and the hold keeps
+  it, and every link is dropped while it is off, so no phone reaches the
+  door. That is a denial, not a takeover; the kit's token and the console
+  still work.
 - A dual-stack browser would count as two askers if the WAP's station
   interface ever enabled IPv6 (it does not today).
 - The flagship's tap, on its receipt and on the page load it unlocks, still
@@ -704,7 +804,7 @@ Host-tested (`firmware/tests_host/test_provisioning_gate.cpp`,
 | a `WIFI_SETTINGS` that did not parse | `InvalidRpc`, and it **counts against the cap** |
 | the join succeeded | state Provisioned; credentials persist; the no-credentials door shuts (the state stays Provisioned for the phone to read) |
 | the join failed | back to Authorized if the door is still open (the person can retry with the right password), else AwaitingAuthorization; `UnableToConnect` |
-| credentials vanish at runtime (factory reset) | the window is re-armed from now — the owner's own act |
+| credentials vanish at runtime (the 10 s hold before its restart, or a WAP's Forget Wi-Fi, which any landing session can send, F345) | the window is re-armed from now, and the door goes to whichever client connects first (§2.2) |
 | a connected client silent for 3 min | dropped (never mid-join: the verdict is owed to it) |
 | the join is done and ~20 s have passed | the link is dropped; the device goes back to its beacon |
 
@@ -972,8 +1072,13 @@ a user.
 - **The first-boot window is a window.** For 30 minutes after a new unit's
   power-on, anyone in radio range with a standard client can hand it a
   network. The bounds (§2.2) keep that from being a denial-of-service on the
-  owner, and a unit joined to the wrong network is a unit its owner holds,
-  not one that has been taken; the fix is a factory reset. A deployment
+  owner, and a unit joined to the wrong network is one its owner still
+  holds. On a WAP a factory reset is not the whole fix: whoever chose that
+  network can spend the claim from it, and with it hold the bearer token and
+  the SoftAP password, which the hold and Forget Wi-Fi keep (nothing rotates the token
+  today; an install or a full erase in either flasher replaces both, with
+  the identity), and either reset
+  reopens the same first-come door for 30 minutes (§2.2, ledger F345). A deployment
   that wants no window at all compiles `IMPROV_FIRST_BOOT_WINDOW_MS` to 0
   (tap-only) — on a WAP, which has no tap door yet, that means no door.
 - **Just Works resists a passive listener, not an active one who paired

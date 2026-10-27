@@ -1061,6 +1061,48 @@ $(BOOTGUARD_BIN): test_boot_guard.cpp $(BOOTGUARD_HDRS) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -std=gnu++11 -I stubs/boot_guard -I ../common test_boot_guard.cpp -o $@_cxx11
 	./$@_cxx11
 
+# The flagship's OTA outcome glue (firmware/canary/src/main.cpp): the healthy
+# gate's boot probes, loop()'s confirm-dwell tick, the confirm a deliberate
+# restart or sleep makes, and ota_record_update_outcome(), the one place the
+# chain says how an install ended — cut verbatim out of main.cpp by
+# cut_functions.awk and driven over a stand-in engine that keeps the 2.4.17
+# contract (the install's target is held back while this boot's image is
+# PENDING_VERIFY), and over one that does not, as every fielded unit's did. An
+# update is witnessed "applied" only once it is confirmed, a failed dwell reads
+# as a rollback, and a deliberate stop inside the gate or the dwell confirms
+# instead of reverting. Built as the envs build main.cpp: the pull engine
+# (FEATURE_OTA_PULL), FEATURE_OTA_UPDATE alone (secure, secure_ha) and neither
+# (minimal), each at gnu++11, the canary tree's default. It also reads main.cpp
+# (path passed in) for the pins the cut cannot show: one caller each of the
+# target's take and the health tick, and the chain head persisted after every
+# deliberate stop's gate.
+CANOTA_MAIN = ../canary/src/main.cpp
+CANOTA_SIGS = static void ota_record_update_outcome() {|static void ota_confirm_dwell_tick(uint32_t now) {|static void ota_confirm_and_witness() {|static void boot_mark_healthy(const char* why) {|static void boot_health_tick(uint32_t now) {|static void boot_health_before_deliberate_stop() {
+CANOTA_INC  = $(BUILD_DIR)/canary_ota_outcome.inc
+CANOTA_HDRS = ../common/ota/src/securacv_ota.h $(BOOTPOL_HDR) ../canary/include/log_level.h
+CANOTA_BIN  = $(BUILD_DIR)/test_canary_ota_outcome
+CANOTA_BINS = $(CANOTA_BIN)_pull $(CANOTA_BIN)_update $(CANOTA_BIN)_none
+$(CANOTA_BIN)_pull:   CANOTA_FLAGS = -DFEATURE_OTA_PULL=1 -DFEATURE_OTA_UPDATE=1
+$(CANOTA_BIN)_update: CANOTA_FLAGS = -DFEATURE_OTA_PULL=0 -DFEATURE_OTA_UPDATE=1
+$(CANOTA_BIN)_none:   CANOTA_FLAGS = -DFEATURE_OTA_PULL=0 -DFEATURE_OTA_UPDATE=0
+
+$(CANOTA_INC): $(CANOTA_MAIN) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(CANOTA_SIGS)' -f cut_functions.awk $(CANOTA_MAIN) > $@.tmp && mv $@.tmp $@
+
+$(CANOTA_BINS): test_canary_ota_outcome.cpp $(CANOTA_INC) $(CANOTA_HDRS) $(CANOTA_MAIN) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -std=gnu++11 $(CANOTA_FLAGS) -DSECURACV_OTA_HOST_BUILD \
+	    -I ../common/ota/src -I ../common -I ../canary/include \
+	    -DCANARY_MAIN_CPP='"$(abspath $(CANOTA_MAIN))"' \
+	    -DCANOTA_INC='"$(abspath $(CANOTA_INC))"' \
+	    test_canary_ota_outcome.cpp -o $@
+
+.PHONY: run-canary-ota-outcome
+run-canary-ota-outcome: $(CANOTA_BINS)
+	./$(CANOTA_BIN)_pull
+	./$(CANOTA_BIN)_update
+	./$(CANOTA_BIN)_none
+run: run-canary-ota-outcome
+
 $(SDMOUNT_BIN): test_sd_mount_policy.cpp $(SDMOUNT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_sd_mount_policy.cpp -o $@
 

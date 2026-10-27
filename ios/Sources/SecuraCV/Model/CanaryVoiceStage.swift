@@ -203,7 +203,7 @@ final class CanaryVoiceStage: ObservableObject {
         case .alerts:
             line = "Quiet is the normal state here. An ordinary week says nothing, so you can believe it when something speaks."
         case .keys:
-            line = "A Canary’s signing key is pinned the first time you meet it — from then on, nothing else speaks for it."
+            line = "A Canary’s signing key is pinned the first time you meet it — from then on, a different key is flagged. Anyone who reads its flash can copy the key, so keep it out of reach."
         }
         guard let line else { return nil }
         return CanaryVoiceEngine.compose(line, tone: .info,

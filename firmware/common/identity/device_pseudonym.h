@@ -111,7 +111,9 @@ inline bool derive(const uint8_t* secret, size_t secret_len,
 // Device-side convenience: lazily load-or-create a per-device random salt in NVS
 // (Arduino Preferences, namespace "securacv_id", key "id_salt") and write the
 // pseudonym token. Reads no hardware MAC; never exposes a trackable ID. The salt is
-// fixed for the device's lifetime, so the result is computed once and cached in RAM.
+// fixed for as long as NVS keeps it (an OTA update keeps it; an install in either
+// flasher starts NVS over, so the next boot mints a new salt and a new pseudonym),
+// so the result is computed once per boot and cached in RAM.
 //
 // This is a single `inline` function with external linkage, so its `cached` static
 // is ONE object shared across every translation unit that includes this header

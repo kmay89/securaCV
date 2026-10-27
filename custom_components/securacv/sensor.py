@@ -123,8 +123,11 @@ def _replay_gate(
     retained last event on reconnect, so an EQUAL counter is benign and passes.
     A lower counter cannot be the device's present state — it is an older
     message, however valid its signature. The high-water mark is reset when a
-    device is (re)pinned via TOFU (async_record_verify), which is what a
-    factory reset looks like from here.
+    device is (re)pinned via TOFU (async_record_verify), which is what an
+    install or a full erase in either flasher (whose factory image starts
+    NVS over), or an all-rounder Canary's 30 s BOOT wipe, looks like from
+    here; an OTA update and the 10 s BOOT reset keep the key and its
+    counters.
 
     Marks are carried into the trust store so they survive a reload: MQTT
     retains the last signed publish, and with an empty mark (`last is None`)

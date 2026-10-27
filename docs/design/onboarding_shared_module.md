@@ -127,16 +127,18 @@ phone in radio range offered, because the router rebooted. The final rule,
 from `improv_core.h` (the glue passes the **stored-credentials fact**, never
 the portal's):
 
-- **No credentials stored** (first boot, factory reset): the door opens on
-  its own for a first-boot window — **30 minutes** after power-on
-  (`IMPROV_FIRST_BOOT_WINDOW_MS`, `Timing::first_boot_window_ms`; a power
-  cycle re-arms it, a factory reset re-arms it from the moment the
-  credentials vanish; compile-time 0 makes the device tap-only).
+- **No credentials stored** (first boot, or a factory reset: the owner's
+  act, which keeps the witness identity, so the unit still has an owner):
+  the door opens on its own for a first-boot window — **30 minutes** after
+  power-on (`IMPROV_FIRST_BOOT_WINDOW_MS`, `Timing::first_boot_window_ms`; a
+  power cycle re-arms it, and so do credentials vanishing at runtime;
+  compile-time 0 makes the device tap-only). It goes to whichever client
+  connects first (`magic_pairing.md` §2.2).
 - **Credentials stored:** shut, whatever the network is doing. The recovery
   portal (a door with a key printed on the unit) raises as before and does
   **not** open this one.
 - **A short BOOT tap** (`common/io/short_tap.h`: at least 40 ms down, up
-  before 700 ms — the WAP's 2 s hold and the 5 s factory-reset hold are
+  before 700 ms — the WAP's 2 s hold and the 10 s factory-reset hold are
   someone else's gesture) opens it for **60 s** on a Sense or Vision, with or
   without credentials; `BOOT_BUTTON_PIN` comes from the board's `pins.h`.
   The WAP has no tap door in this version.
