@@ -30,6 +30,11 @@ on:
         description: "Published release to rewrite: fw-v*, flasher-v* or app-v* (its body only; assets untouched)"
         type: string
         required: true
+      macos_signed:
+        description: "App releases: was that release's macOS build signed? auto = read it from the body it carries now"
+        type: choice
+        options: [auto, "yes", "no"]
+        default: auto
 
 permissions:
   contents: read
@@ -87,13 +92,39 @@ jobs:
         shell: bash
         env:
           TAG: ${{ inputs.tag }}
-          # The same condition the app release workflows sign on; it picks the
-          # macOS install paragraph. The firmware step ignores it.
-          SIGNED: ${{ vars.ENABLE_MACOS_SIGNING }}
+          # Whether THAT release's macOS build was signed picks the install
+          # paragraph, and today's ENABLE_MACOS_SIGNING says nothing about an
+          # old build (Flasher 0.3.5 was the first signed one). auto reads it
+          # from the body the release carries, but only the two sentences the
+          # release workflows write from that same signing switch ("This build
+          # is unsigned" / "signed and notarized by Apple"). Bodies up to
+          # Flasher 0.3.4 came from a static template that said "signed &
+          # notarized" either way, so they match neither and need an explicit
+          # yes or no. The firmware step ignores it.
+          MACOS_SIGNED: ${{ inputs.macos_signed }}
         run: |
           set -euo pipefail
           signed=()
-          if [ "${SIGNED:-}" = "true" ]; then signed=(--signed); fi
+          case "$TAG" in
+            fw-v*) ;;
+            *)
+              case "$MACOS_SIGNED" in
+                yes) signed=(--signed) ;;
+                no) ;;
+                *)
+                  if grep -qiE 'this build is unsigned|builds are \*\*unsigned\*\*' "$RUNNER_TEMP/before.md"; then
+                    echo "${TAG}'s body, written from the signing switch, says its macOS build is unsigned"
+                  elif grep -qi 'signed and notarized by apple' "$RUNNER_TEMP/before.md"; then
+                    echo "${TAG}'s body, written from the signing switch, says its macOS build is signed and notarized"
+                    signed=(--signed)
+                  else
+                    echo "::error::${TAG}'s body carries neither sentence the signing switch writes, so it cannot say whether that build was signed. Run again with macos_signed yes or no."
+                    exit 1
+                  fi
+                  ;;
+              esac
+              ;;
+          esac
           python3 .github/scripts/release_body.py "$TAG" "${signed[@]}" --repo "$GITHUB_REPOSITORY" \
             > "$RUNNER_TEMP/body.md"
           {

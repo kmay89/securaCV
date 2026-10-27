@@ -183,7 +183,11 @@ release with the text its own release workflow would publish today:
 firmware's CHANGELOG extraction and its 120,000-byte cap, the Flasher's and
 the Lab's "says what this version changes"), so the words come from `main`'s
 `CHANGELOG.md` and `RELEASE_NOTES.md`, not from this button. Its run summary
-shows the diff.
+shows the diff. For an app release, `macos_signed` says whether *that*
+release's Mac build was signed (today's signing switch says nothing about an
+old build); `auto` reads it from the sentence the release workflow wrote from
+that switch, and refuses a body from before Flasher 0.3.6, whose static
+template claimed "signed & notarized" either way: say `yes` or `no` there.
 
 **Use it:** after correcting a CHANGELOG or RELEASE_NOTES section that a
 published release already carries. A published body does not follow its
