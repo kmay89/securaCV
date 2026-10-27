@@ -422,15 +422,16 @@
   (`fw-dev-latest`), byte for byte, and every file each lists, held to its
   manifest's SHA-256 and size, to `canary-local/firmware/<tag>/<file>`. A
   channel lands whole or not at all; a release not cut yet, or one still
-  uploading, is a warning, and a transport failure fails the deploy so the
-  last good site stays live. A release made with the `GITHUB_TOKEN` fires no
+  uploading or disagreeing with its manifest, is a warning, and a transport
+  failure fails the deploy so the last good site stays live. A release made with the `GITHUB_TOKEN` fires no
   event that would redeploy the site, so `firmware-release.yml`,
   `flasher-release.yml` and `vision-model-release.yml` dispatch `pages.yml`
   on the default branch once they publish (a refused dispatch is a warning,
   not a failed release).
 - **The page reads only that copy.** `flash-core.js` `fetchReleaseAsset`
-  maps a release URL to the copy by its tag and file name, on every host, and
-  `flash.js` and `we2-flash.js` read no release asset any other way. The
+  maps a release URL to the copy by its tag and file name on every http(s)
+  page, loopback and LAN included, and `flash.js` and `we2-flash.js` read no
+  release asset any other way. The
   signed manifests are never rewritten, so the SHA-256 and Ed25519 checks
   bind the same bytes as before. `flash.html`'s Content-Security-Policy
   (`gen_csp.py`) no longer names `github.com` or `*.githubusercontent.com` in
@@ -446,8 +447,9 @@
   writer to the page's reader and the release workflows' dispatches to their
   order) and in Chromium by `canary-local/tests/flash_mirror_probe.mjs`,
   which serves the page and a fixture copy from one origin and fails on any
-  request that leaves for github.com. Not yet run against the live site: it
-  takes effect at the first site deploy after this merges.
+  request that leaves for github.com. It had not run against the live site
+  when this was written: it takes effect at the first site deploy that
+  carries it.
 
 ### Factory images put the bootloader where each chip's ROM loads it: the classic-ESP32 images move it to 0x1000, both flashers refuse an image laid out for the wrong chip, and the capacity check reads past a classic ESP32's empty first 4 KB
 
