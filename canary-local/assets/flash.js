@@ -1518,7 +1518,10 @@ async function runIntake(narrate) {
     }
   } catch { /* leave it "not checked" — never invent a clean result */ }
 
-  const cold = intake.coldBootVerdict({
+  // Skipped until the cold-start question is answered, as on the desktop:
+  // "we didn't ask" must not render as "they said no", which is the
+  // attention-level verdict. intakeVerdict passes over the null.
+  const cold = state.heldBoot === null ? null : intake.coldBootVerdict({
     heldBoot: state.heldBoot,
     hadResidentFirmware: !!(state.current && !state.current.unknown),
   });

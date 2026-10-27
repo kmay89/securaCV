@@ -5241,6 +5241,8 @@ test("wave 5: customs says what the board arrived running, and whether it was co
   // is not "they said no", and the no-answer verdict is attention-level.
   assert.match(appJs, /state\.heldBoot === undefined \? null : coldBootVerdict/,
     "the desktop renders a cold-start verdict for a question nobody answered");
+  assert.match(browser, /const cold = state\.heldBoot === null \? null : intake\.coldBootVerdict\(/,
+    "the browser renders a cold-start verdict for a question nobody answered");
   // And the answer describes ONE board, so it must not be inherited.
   assert.match(appJs, /function resetSteps[\s\S]{0,2000}state\.heldBoot = undefined/,
     "the cold-start answer leaks from one board to the next");

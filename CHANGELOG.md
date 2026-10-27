@@ -375,7 +375,7 @@
   order. No stamped image has been flashed to a board or installed over the
   air yet.
 
-### A board brought up with BOOT held: the desktop fuse read and the browser's hello card stop resetting it into its firmware
+### A board brought up with BOOT held: the desktop fuse read no longer ends by resetting it into its firmware, and the browser's hello card no longer boots it
 
 - **The desktop Flasher's *Read its security fuses* no longer ends by
   restarting the board into its own firmware.** The read reset the chip
