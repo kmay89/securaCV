@@ -12,6 +12,38 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-10-27 — Signed and notarized, and the installer still said "open Terminal"; the reinstall link searched for a release GitHub's search does not list
+
+- **Symptom:** after 2.4.17, `flasher-v0.12.2` and `app-v0.3.2` were
+  signed and notarized and their release bodies said no Terminal step, yet
+  both `.dmg` windows told people to paste `xattr -dr
+  com.apple.quarantine …`, the Flasher's `desktop/INSTALL.md` still called
+  the build unsigned, and the Flasher's "Get the latest version" button
+  (and the FAQ) opened `releases?q=flasher-v&expanded=true`, which listed
+  `flasher-latest` (an updater manifest, no installer) and a firmware
+  release, not one Flasher release. A reader who landed on the pointer
+  found "the versioned releases" with no link.
+- **Cause:** signing was switched on in the workflow (`ENABLE_MACOS_SIGNING`)
+  and the release body follows that switch, but the committed DMG artwork,
+  one app's install guide and a compiled-in URL do not; nothing holds them
+  to it (the 2026-09-03 lesson, again). And GitHub's release search is
+  not an index of a tag prefix: it ranks by text, so a URL built on it can
+  stop naming the right release without any change on our side.
+- **Fix:** both generators (`desktop*/src-tauri/dmg/generate_background.py`)
+  draw "First launch: macOS asks once" / "Click Open — no Terminal step"
+  and send an unsigned build to `INSTALL.md`; both PNGs regenerated (no CI
+  byte-gate draws them). `desktop/INSTALL.md` has the Lab's shape: signed
+  first, the `xattr` / Open Anyway steps only under "An unsigned build".
+  The in-app link and the FAQ open `https://securacv.com/download`. The
+  `flasher-latest` and `lab-latest` bodies link the exact
+  `releases/tag/<tag>` they point at.
+- **Applies to:** every app target with committed installer artwork or a
+  compiled-in "get a fresh copy" link. Point a link at a page we own or at
+  `releases/tag/<exact tag>`, never at a search; and when a signing switch
+  flips, grep the artwork generators and every `INSTALL.md` in the same
+  change. The DMG windows of `flasher-v0.12.2` / `app-v0.3.2` and earlier
+  keep the old panel until their next release; both guides say so.
+
 ## 2026-10-10 — The 2.4.16 train: a Flasher release held `releases/latest` for three minutes, and four more things it turned up
 
 - **Symptom:** run 38034898214's Linux leg logged "Couldn't find release

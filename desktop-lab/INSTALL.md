@@ -16,10 +16,11 @@ release page says *Signed and notarized by Apple*. Open the `.dmg`, drag
 you want to open an app downloaded from the internet: click **Open**, and it
 launches normally from then on. No Terminal step.
 
-The `.dmg` window still shows a Terminal command from when releases were
-unsigned. A signed build does not need it — skip it. To see the signature
-for yourself, `spctl -a -vv "/Applications/SecuraCV Lab.app"` prints
-`source=Notarized Developer ID`.
+The `.dmg` window of `app-v0.3.2` and earlier still shows a Terminal command
+from when releases were unsigned; later releases' windows say *click Open*
+instead. A signed build does not need the command — skip it. To see the
+signature for yourself, `spctl -a -vv "/Applications/SecuraCV Lab.app"`
+prints `source=Notarized Developer ID`.
 
 ### An unsigned build (a fork, a local build, or a release page that says so)
 

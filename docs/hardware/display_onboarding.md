@@ -222,7 +222,7 @@ look failed on the phone — hard-won WAP lesson.)
 
 ## Security posture
 
-- **AP identity**: SSID `SecuraCV-XXXX` from the salted, MAC-free device
+- **AP identity**: SSID `SecuraCV-display-XXXX` from the salted, MAC-free device
   pseudonym; password **random per session**, 8 chars of the unambiguous
   alphabet (no `0/O/o`, `1/I/l`), ~46 bits. It is displayed on the glass and
   embedded in the join QR — ephemeral beats memorable, and nothing derivable

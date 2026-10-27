@@ -1348,14 +1348,14 @@ async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value
     }))
 }
 
-/// Where a user gets a fresh copy of the app. The versioned `flasher-v*`
-/// releases, not the rolling `flasher-latest` pointer — that one exists for
-/// the updater and carries no installer (see `docs/RELEASE_BUTTONS.md`).
+/// Where a user gets a fresh copy of the app: the website's download page.
+/// Not a GitHub release search — `?q=flasher-v` lists the rolling
+/// `flasher-latest` pointer (an updater manifest, no installer; see
+/// `docs/RELEASE_BUTTONS.md`) and a firmware release, not the Flasher's own.
 pub(crate) fn open_releases_page(app: &AppHandle) {
-    let _ = app.opener().open_url(
-        "https://github.com/kmay89/securaCV/releases?q=flasher-v&expanded=true",
-        None::<&str>,
-    );
+    let _ = app
+        .opener()
+        .open_url("https://securacv.com/download", None::<&str>);
 }
 
 /// The frontend finished `boot()` and the window is usable. This is the signal

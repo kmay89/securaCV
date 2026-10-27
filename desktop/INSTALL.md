@@ -1,6 +1,6 @@
 # Installing the SecuraCV Flasher
 
-No App Store, no account, no Chrome. Download it, run one line the first time,
+No App Store, no account, no Chrome. Download it, confirm it once on macOS,
 and it's yours — and it updates itself from then on.
 
 Every build is **universal**: the same download runs natively on Apple Silicon
@@ -8,11 +8,26 @@ Every build is **universal**: the same download runs natively on Apple Silicon
 
 ---
 
-## macOS — getting past the safety warning (one time)
+## macOS — first launch (one time)
 
-Because this app doesn't come from the App Store, macOS **quarantines** it on
-first download and shows a warning — it does this to *everything* from the web,
-signed or not. You'll see one of these the first time you open it:
+Releases are **signed with a Developer ID and notarized by Apple**; the
+release page says *signed and notarized by Apple*. Open the `.dmg`, drag
+**SecuraCV Flasher** into **Applications**, and open it. macOS asks once
+whether you want to open an app downloaded from the internet: click
+**Open**, and it launches normally from then on. No Terminal step.
+
+The `.dmg` window of `flasher-v0.12.2` and earlier still shows a Terminal
+command from when releases were unsigned; later releases' windows say
+*click Open* instead. A signed build does not need the command — skip it. To
+see the signature for yourself,
+`spctl -a -vv "/Applications/SecuraCV Flasher.app"` prints
+`source=Notarized Developer ID`.
+
+### An unsigned build (a fork, a local build, or a release page that says so)
+
+A build made without the Apple signing secrets is not notarized. macOS
+quarantines every download, and Gatekeeper refuses to open an unsigned app
+that carries the mark. You'll see one of these the first time:
 
 > *"SecuraCV Flasher" can't be opened because Apple cannot check it for
 > malicious software.*
@@ -21,25 +36,27 @@ signed or not. You'll see one of these the first time you open it:
 >
 > *"SecuraCV Flasher" is damaged and can't be opened.*
 
-Neither means anything is wrong with the app — it's just the missing Apple
-notarization. Clear it **once** and it launches normally forever after. When
-you open the `.dmg`, the window shows these same steps; here they are in full.
+Neither means anything is wrong with the app — it's the missing Apple
+notarization. Clear the mark **once** and it launches normally after that.
 
-### Option A — the one-liner (works on every macOS version)
+#### The one-liner (works on every macOS version — including Sequoia)
 
 1. Open the `.dmg` and drag **SecuraCV Flasher** into **Applications**.
-2. Open **Terminal** (⌘-Space, type "Terminal"), paste this line, press return:
+2. Open **Terminal** (⌘-Space, type "Terminal", press return).
+3. Paste this line and press return:
 
    ```sh
    xattr -dr com.apple.quarantine "/Applications/SecuraCV Flasher.app"
    ```
 
-3. Launch it from Applications or Spotlight. Done — no more warnings, ever.
+4. Launch it from Applications or Spotlight.
 
-That command isn't granting anything risky: it removes the "downloaded from the
-internet" tag Apple stamps on the file. Identical on Apple Silicon and Intel.
+That command removes the "downloaded from the internet" tag Apple stamps on
+the file, which is what Gatekeeper checks — so run it only on a copy you
+built yourself or downloaded from this project's release page, and never on
+an app that opens by itself. Identical on Apple Silicon and Intel.
 
-### Option B — no Terminal
+#### If you'd rather not use Terminal
 
 **macOS 14 (Sonoma) and earlier:**
 1. In **Applications**, **right-click** (or Control-click) **SecuraCV Flasher**.
@@ -56,13 +73,13 @@ internet" tag Apple stamps on the file. Identical on Apple Silicon and Intel.
 4. It's remembered from then on.
 
 > If you ever see *"is damaged and can't be opened"*, that's the same
-> quarantine flag being strict — **Option A** clears it directly.
+> quarantine flag being strict — the one-liner clears it directly.
 
-> **Why the extra step at all?** Skipping it would mean paying Apple's $99/yr
-> Developer Program and notarizing every release. The app is fully open source
-> and self-updating, so we ship it directly instead. If you later want the
-> zero-step experience, add an Apple Developer signing identity to the release
-> workflow — see `README.md`.
+> **Where the signature comes from.** The release workflow signs and
+> notarizes the macOS build when the `ENABLE_MACOS_SIGNING` repo variable is
+> `true` and the Apple signing secrets are set — see [`README.md`](README.md)
+> and [`SIGNING.md`](SIGNING.md). Without them the build is unsigned, and the
+> steps above apply.
 
 ---
 

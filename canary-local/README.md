@@ -238,7 +238,7 @@ Three doors into the same live device, all driven by one scenario API
 - **Try it** — free play: link switches, time controls, staged events,
   tamper, household ack-sync from a "sibling display". And the first
   boot: "meet the bird again" reboots a factory-fresh unit (no Wi-Fi
-  stored), the real `net/provision.cpp` raises its `SecuraCV-XXXX`
+  stored), the real `net/provision.cpp` raises its `SecuraCV-display-XXXX`
   SoftAP, and a phone (`assets/onboard-phone.js`) walks the display's own
   portal — join with the key from the glass's QR, the captive DNS answer,
   the firmware's page in a sandboxed `srcdoc` frame, `/scan`, `/join`,
@@ -555,7 +555,7 @@ one line per connection, and the step player walks.
 The Hub teaches the place the fleet converges; **The WAP teaches the first
 five minutes of a single device.** The Canary WAP is the WiFi-CSI witness on
 the XIAO ESP32-S3 Sense — and it is, literally, a **W**ireless **A**ccess
-**P**oint: unprovisioned, it brings up a `SecuraCV-XXXX` network with a
+**P**oint: unprovisioned, it brings up a `SecuraCV-wap-XXXX` network with a
 device-unique WPA2 password and a captive portal, and you set it up from a
 phone. `wap.html` stages that whole experience from the firmware's own bytes:
 
@@ -580,7 +580,7 @@ Anti-rot, same rule as everything here — nothing written twice:
 
 | Fact on the page | Source of truth |
 |---|---|
-| SSID `SecuraCV-XXXX`, `cv-…` password, `192.168.4.1`, NVS keys, timeouts | `arduino/canary_wap/{wap_server.h,setup_wizard.h,canary_wap.ino}` |
+| SSID `SecuraCV-wap-XXXX`, `cv-…` password, `192.168.4.1`, NVS keys, timeouts | `arduino/canary_wap/{wap_server.h,setup_wizard.h,canary_wap.ino}` |
 | The captive landing page (rendered verbatim) | `arduino/canary_wap/setup_page_html.h` |
 | Setup routes + the five wizard steps | `canary_wap.ino` + `companion_pwa.h` |
 | Boot banner + `setup()` log lines | `boot_banner.cpp` + `canary_wap.ino` |
