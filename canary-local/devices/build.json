@@ -655,12 +655,6 @@
         "kind": "wall-screw",
         "spec": "#6 pan wall screw (keyholes)",
         "text": "#6 pan wall screw (keyholes)"
-       },
-       {
-        "qty": 2,
-        "kind": "wall-screw",
-        "spec": "M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)",
-        "text": "M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)"
        }
       ],
       "lid_rib": {
@@ -672,6 +666,71 @@
        "slack": 0.0,
        "batt_hold": true
       }
+     },
+     "wap.battery_weather+inserts": {
+      "case": "WAP",
+      "scad": "canary_wap_enclosure.scad",
+      "overrides": {
+       "preset": "battery_weather",
+       "part": "base",
+       "screw_insert": "true"
+      },
+      "items": [
+       {
+        "qty": 8,
+        "kind": "screw",
+        "spec": "M2 pan x 8 machine (into the inserts)",
+        "text": "M2 pan x 8 machine (into the inserts) (plate to the post ends)"
+       },
+       {
+        "qty": 8,
+        "kind": "insert",
+        "spec": "M2 heat-set insert 3.5 OD x 4",
+        "text": "M2 heat-set insert 3.5 OD x 4"
+       },
+       {
+        "qty": 8,
+        "kind": "o-ring",
+        "spec": "O-ring 2 ID x 1 CS (under the head)",
+        "text": "O-ring 2 ID x 1 CS (under the head)"
+       },
+       {
+        "qty": 1,
+        "kind": "gasket",
+        "spec": "TPU gasket (print part=\"gasket\")",
+        "text": "TPU gasket (print part=\"gasket\")"
+       },
+       {
+        "qty": 1,
+        "kind": "vent",
+        "spec": "Ø12 adhesive ePTFE/GORE vent patch",
+        "text": "Ø12 adhesive ePTFE/GORE vent patch"
+       },
+       {
+        "qty": 1,
+        "kind": "light-pipe",
+        "spec": "Ø3 light pipe",
+        "text": "Ø3 light pipe"
+       },
+       {
+        "qty": 1,
+        "kind": "window",
+        "spec": "Ø12 x 1 clear disc (bond)",
+        "text": "Ø12 x 1 clear disc (bond)"
+       },
+       {
+        "qty": 1,
+        "kind": "magnet",
+        "spec": "Ø6 x 2.2 disc magnet (press + glue)",
+        "text": "Ø6 x 2.2 disc magnet (press + glue)"
+       },
+       {
+        "qty": 2,
+        "kind": "wall-screw",
+        "spec": "#6 pan wall screw (keyholes)",
+        "text": "#6 pan wall screw (keyholes)"
+       }
+      ]
      },
      "wap.battery_weather.shield": {
       "case": "WAP",
@@ -728,12 +787,6 @@
         "kind": "wall-screw",
         "spec": "#6 pan wall screw (keyholes)",
         "text": "#6 pan wall screw (keyholes)"
-       },
-       {
-        "qty": 2,
-        "kind": "wall-screw",
-        "spec": "M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)",
-        "text": "M3 flat-head wall screw x 12 (pierce the anti-lift knockouts after hanging; 90° seat)"
        },
        {
         "qty": 4,
@@ -1727,8 +1780,8 @@
        {
         "qty": 4,
         "kind": "screw",
-        "spec": "M2 pan x 6 self-tap",
-        "text": "M2 pan x 6 self-tap (OV5647 to the front posts)"
+        "spec": "M2 pan x 4 self-tap",
+        "text": "M2 pan x 4 self-tap (OV5647 to the front posts)"
        },
        {
         "qty": 1,
@@ -1751,8 +1804,8 @@
        {
         "qty": 4,
         "kind": "wall-screw",
-        "spec": "#6 pan wall screw (bracket)",
-        "text": "#6 pan wall screw (bracket)"
+        "spec": "#8 / M4 countersunk wall screw (bracket)",
+        "text": "#8 / M4 countersunk wall screw (bracket)"
        }
       ],
       "lid_rib": {
@@ -1783,8 +1836,8 @@
        {
         "qty": 4,
         "kind": "screw",
-        "spec": "M2 pan x 6 self-tap",
-        "text": "M2 pan x 6 self-tap (OV5647 to the front posts)"
+        "spec": "M2 pan x 4 self-tap",
+        "text": "M2 pan x 4 self-tap (OV5647 to the front posts)"
        },
        {
         "qty": 1,
@@ -1807,8 +1860,8 @@
        {
         "qty": 4,
         "kind": "wall-screw",
-        "spec": "#6 pan wall screw (bracket)",
-        "text": "#6 pan wall screw (bracket)"
+        "spec": "#8 / M4 countersunk wall screw (bracket)",
+        "text": "#8 / M4 countersunk wall screw (bracket)"
        }
       ],
       "lid_rib": {
@@ -1840,8 +1893,8 @@
        {
         "qty": 4,
         "kind": "screw",
-        "spec": "M2 pan x 6 self-tap",
-        "text": "M2 pan x 6 self-tap (OV5647 to the front posts)"
+        "spec": "M2 pan x 4 self-tap",
+        "text": "M2 pan x 4 self-tap (OV5647 to the front posts)"
        },
        {
         "qty": 4,
@@ -1870,8 +1923,8 @@
        {
         "qty": 4,
         "kind": "wall-screw",
-        "spec": "#6 pan wall screw (bracket)",
-        "text": "#6 pan wall screw (bracket)"
+        "spec": "#8 / M4 countersunk wall screw (bracket)",
+        "text": "#8 / M4 countersunk wall screw (bracket)"
        }
       ]
      },
@@ -1893,8 +1946,8 @@
        {
         "qty": 4,
         "kind": "screw",
-        "spec": "M2 pan x 6 self-tap",
-        "text": "M2 pan x 6 self-tap (OV5647 to the front posts)"
+        "spec": "M2 pan x 4 self-tap",
+        "text": "M2 pan x 4 self-tap (OV5647 to the front posts)"
        },
        {
         "qty": 6,
@@ -1941,8 +1994,8 @@
        {
         "qty": 4,
         "kind": "wall-screw",
-        "spec": "#6 pan wall screw (bracket)",
-        "text": "#6 pan wall screw (bracket)"
+        "spec": "#8 / M4 countersunk wall screw (bracket)",
+        "text": "#8 / M4 countersunk wall screw (bracket)"
        },
        {
         "qty": 2,
@@ -2212,8 +2265,8 @@
        {
         "qty": 4,
         "kind": "wall-screw",
-        "spec": "#6 pan wall screw (bracket)",
-        "text": "#6 pan wall screw (bracket)"
+        "spec": "#8 / M4 countersunk wall screw (bracket)",
+        "text": "#8 / M4 countersunk wall screw (bracket)"
        }
       ],
       "lid_rib": {
@@ -2261,8 +2314,8 @@
        {
         "qty": 4,
         "kind": "wall-screw",
-        "spec": "#6 pan wall screw (bracket)",
-        "text": "#6 pan wall screw (bracket)"
+        "spec": "#8 / M4 countersunk wall screw (bracket)",
+        "text": "#8 / M4 countersunk wall screw (bracket)"
        }
       ]
      }
