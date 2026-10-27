@@ -16,6 +16,43 @@ version, newest first. Same contract as the Flasher's
 
 Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
+## 0.3.3 — 2026-10-27
+
+**The 2.4.18 firmware catalog is baked in, a board on 2.4.18 says what it
+runs, and an image the board could not start is refused before anything is
+written.**
+
+- **Firmware 2.4.18 on the Flash page.** On a Canary WAP, after setup,
+  changing its Wi-Fi, rebooting it, registering a vault key or confirming a
+  pairing takes its API token: save its recovery kit before you update one
+  you cannot easily reach. Update both units of a WAP Opera before pairing
+  them. Built by CI; not bench-tested.
+- **A board on 2.4.18 or later says what it runs.** Its image now carries
+  its product and version, so the Flash page reads it as, say, Canary WAP
+  2.4.18-wap, and the install verdicts work on it: update, reinstall,
+  downgrade, or switch from another product. A board on 2.4.17 or older
+  still reads as an Arduino sketch until it updates. Host-tested; no
+  stamped image has been flashed to a board yet.
+- **ESP32-CAM and ESP32 DevKit images start.** fw-v2.4.17's two images for
+  these boards put the bootloader where a classic ESP32 does not look, and
+  0.3.2 wrote them anyway. 2.4.18's are laid out right: if one of these
+  boards did not start after a 2.4.17 install, install 2.4.18 from here.
+- **An image laid out for another chip is refused before anything is
+  written,** from the catalog or a local file, on the Flash page and on the
+  native bench, with the same message as the Flasher.
+- **The fake-capacity check reads 8 KB, not 4,** so a correctly installed
+  classic ESP32 no longer reads as blank.
+- **Connecting no longer starts the board's own firmware** unless you say
+  it is already plugged in: a board you held BOOT on stays in download
+  mode until the install. Asking the board itself and the serial monitor
+  still start it on a click.
+- **The dev-channel banner says where the dev channel stands** against the
+  release this app carries (newer, the same version, or older) instead of
+  calling it ahead.
+- **The display benches run 2.4.18's firmware,** so the splash bird sits
+  clear of its bubble.
+- Under the hood: Tauri 2.12.5, tokio 1.54.1.
+
 ## 0.3.2 — 2026-10-27
 
 **The 2.4.17 firmware catalog is baked in, the monitor after a flash takes
