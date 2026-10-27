@@ -59,7 +59,7 @@ boss_dy = 66.0;      // boss spacing (Y) — a placeholder inside the 1554F pane
 boss_screw_d = 4.2;  // Hammond lid/boss screws are typically M4/#6 into inserts
 plate_l = 108.0;     // plate outline: Hammond's 1554FPL inner panel (109.2 x 77.5) less a hair — the panel
 plate_w = 76.0;      // the BOM's 1554F2GYCL (ENC1, 119.4 x 88.9 outside) takes (v0.3: 158 x 88 overran the box)
-plate_t = 2.4;
+plate_t = 2.4;       // plate thickness — the rails, clips and rib bars stand on its top face (the clip beams root there), the slots go through it, and rib_h is held to the rib_lib ceiling for it (asserted)
 
 /* [Boards] — nominal; MEASURE (same meanings as the device enclosures) */
 wap_l = 21.0;                                 // XIAO length — the spec, brd_l("xiao")
@@ -88,7 +88,11 @@ xiao_w = 17.8;       // the measured XIAO (brd_xiao_w_measured) — sets the vis
 xiao_below = 5.5;    // air under a stacked XIAO's USB face (shell + half a plug overmold + clearance)
 
 /* [Board snap clips] */
-clip_w = 6.0;  clip_t = 1.0;  clip_hook = 0.5;  clip_hook_h = 1.2;  clip_clear = 0.25;
+clip_w = 6.0;        // board-clip tab width along the board edge; the rails are notched clip_w + 2 round each clip
+clip_t = 1.0;        // clip beam thickness — 1.0/0.5 is the catalog standard (canary_snap_lib); snap_boardclip asserts the insertion strain on a beam from the plate to the board top
+clip_hook = 0.5;     // clip lip overhang onto the board top (the engagement); for the wap stack the strain check adds the measured XIAO's extra width each side
+clip_hook_h = 1.2;   // clip lip and lead-in height above the board top
+clip_clear = 0.25;   // beam face to board edge gap, a fit: tune it on the coupon
 
 /* [Extras] */
 rib_h     = 3.0;     // two rib bars along the plate's long axis, board side, between the vent columns and
@@ -96,7 +100,7 @@ rib_h     = 3.0;     // two rib bars along the plate's long axis, board side, be
                      // (canary_rib_lib). 0 = flat. They stand on the board side because the plate prints
                      // that way up — the underside is the bed  // [0:0.5:6]
 tie_slots = true;    // zip-tie slots for cable dressing / battery strap
-tol_hole  = 0.30;
+tol_hole  = 0.30;    // clearance per side round the boss screws: the four slots are Ø(boss_screw_d + 2 x this), stretched ±1 along X for the boss grid — core_tol_hole()
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;

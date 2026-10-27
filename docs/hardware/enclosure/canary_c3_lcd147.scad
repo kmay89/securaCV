@@ -392,7 +392,7 @@ usb_cham   = 0.6;  // outer-rim CHAMFER around the stadium — the plug's
 
 /* [Buttons] — BOOT/RST on the two side (±X) walls, mounted on the BACK of
    the PCB with side-facing actuators, flanking the TF cage. */
-opt_btn = true;
+opt_btn = true;      // BOOT/RST press pads in the two side walls: flexure paddles cut free of the wall, printed in place (false = plain walls)
 // The buttons are printed-in-place FLEXURE PADDLES, not holes. Print 2's Ø6.5
 // finger holes worked but bared the switch and the PCB behind it — a porthole
 // onto the guts. Each ear now carries a press-pad cut free of the wall by a
@@ -598,7 +598,7 @@ btn_body_d = 3.5;  // switch body depth IN from its overhanging face (X) — MEA
    at: from the display's front face, 1.0 mm of black, then 2.8 mm of white,
    then black to the back. Both numbers are referenced to the GLASS FRONT
    plane (z = face_t), so the band tracks the panel, not the case. */
-light_seam = true;
+light_seam = true;   // the white light band through the bezel wall, its own part ("light") in the light filament
 // ⚠️ THE BAND STARTS AT THE GLASS NOW, and that is what buys the ring.
 // This was 1.0, measured off the real device's own band, and giving it up was
 // the price of going 360 degrees: the ring has to pass the BUTTON EARS, the
@@ -716,7 +716,7 @@ coupon_y = 18.0;     // how much of the USB end to keep
    top rim exposes the lid plate's edge and gives a fingernail somewhere to
    go. On the +Y wall — the top when the case hangs, and the end away from
    the USB cable, the snap windows and the vents. */
-pry_notch = true;
+pry_notch = true;    // fingernail scallop in the bezel's top (+Y) rim, to start the lid off
 pry_w = 9.0;         // scallop width along the rim
 pry_d = 1.4;         // how far into the 2.2 wall — leaves 0.8 of rim standing
 pry_h = 1.7;         // how far down from the rim; the lid plate is 2.0 thick,
@@ -735,7 +735,7 @@ pry_h = 1.7;         // how far down from the rim; the lid plate is 2.0 thick,
    loc_clear is the number to tune if a board will not seat — it is the only
    interference in the whole cavity, and a rib that fights assembly is worse
    than the float it removes. */
-loc_rib = true;
+loc_rib = true;      // two locating ribs on each side wall that take the board's float out (loc_clear tunes the fit)
 loc_clear = 0.08;    // per-side clearance AT THE RIB — MEASURE on first fit
 loc_rib_l = 5.0;     // rib length in Y
 loc_rib_ys = [-2.0, 12.0];   // clear of the ears, the pillars and the corners
@@ -753,7 +753,7 @@ loc_rib_ys = [-2.0, 12.0];   // clear of the ears, the pillars and the corners
    change that was not already happening.
    A ring's width IS its narrowest feature, which is why a ring survives at a
    size where type would not. 1.6 is four beads at a 0.4 nozzle. */
-egg_ring = true;
+egg_ring = true;     // white ring inlaid round the egg hanger on the lid's back (with a keyhole back: lid_back both or keyhole)
 egg_ring_w = 1.6;    // the white shell, hugging the opening
 
 /* [Branding] — the wordmark, debossed and filled in the mark filament */
@@ -816,10 +816,10 @@ mark_cy = -11.0;         // wordmark center, CASE frame (+Y = up when hung),
    ends, which is not a slot, it is a crack. Nothing goes in the −Y wall
    either — that face sits on the desk when the case is not hung, and an
    intake you can blind by putting the thing down is worse than none. */
-opt_vent = true;
+opt_vent = true;     // heat slots up both side walls behind the light band — a chimney when the case hangs
 vent_n = 6;          // slots per side wall — 12 in all, a column not a band
 vent_pitch = 4.0;    // tightened from 5.0 so six fit under the corner radius
-vent_w = 1.4;
+vent_w = 1.4;        // slot width along the side wall (Y) — vent_n slots up each ±X wall, mirrored, from vent_z0 up to vent_z1, behind the light band, and the top slot's edge is asserted to stay 0.8 short of the cavity's end
 
 /* [Board pillars] — the four M2 positions, off the Waveshare drawing. NOT a
    symmetric pattern: the USB-end pair sits wide, the far pair inboard. The
@@ -838,7 +838,9 @@ hole_iy_far = 1.97;  //           inset from the far (+Y) edge
 brass_d = 3.5;       // pillar body Ø (round brass M2 standoff) — MEASURE
 
 /* [Print tolerances] — tune with canary_fit_coupon.scad */
-tol_slide = 0.20; tol_press = 0.10; tol_hole = 0.30;
+tol_slide = 0.20;    // sliding fit per side: the board's cavity is the board plus 2 x this each way, so the board floats this far in X — the button pads, the USB reach and the locating ribs budget for it — core_tol_slide()
+tol_press = 0.10;    // press fit per side: the lid's pillar bosses are trimmed to the cavity less 2 x this — core_tol_press()
+tol_hole = 0.30;     // printed-hole clearance per side: the egg hanger's base is kh_head_d + 2 x this and its crown kh_shank_d + 2 x this — core_tol_hole()
 
 /* [Shell] */
 wall   = 2.2;    // deviates: snap-shell wall — the band pocket (snap_depth 1.4) + the 0.8 web behind it
@@ -876,7 +878,9 @@ ear_skin = 1.4;  // wall skin left outside a button/USB clearance channel.
    positive click, firm retention), engagement is deeper (snap_proud 0.7),
    and the skirt runs at its own snug clearance (skirt_clear) instead of
    the general press tolerance. */
-snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.7;
+snap_h = 1.6;        // snap window height in the bezel's side walls; each nub's ridge is this - 0.4 tall, and the lid's skirt runs snap_depth + this/2 + 0.4 deep
+snap_depth = 1.4;    // how far in from the bezel's rear rim the windows (and the nubs on the skirt) are centered — the wall vents stop 0.8 short of the windows, and the windows must clear the light band (asserted)
+snap_proud = 0.7;    // each nub's tip stands this far out from the skirt face, low on the nub where the near-square catch faces the plate — the engagement
 // ⚠️ THE WINDOW IS DERIVED FROM THE RIDGE, and it was not before — that is
 // the lid-slide print 3 found (kmay89: "the clips slide a little once
 // connected"). `snap_w` was ONE number used for two different things: it

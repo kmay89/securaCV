@@ -6,8 +6,15 @@
 # nightlight config (the panel's hardware turn). Beside each run,
 # backlight_cap_test.cpp holds the same HAL object's backlight to the board's
 # ceiling (sweep A61: clipped as the C3-LCD-1.47 clips it in the nightlight
-# config, passed through as asked in the dash's). No emsdk: this proves the sources the dist is built from,
-# not the dist's bytes (the browser probe, onboard_probe.mjs, reads those).
+# config, passed through as asked in the dash's). Then it builds
+# glass_splash_test.cpp (F185, F159) in the config of every display env that
+# builds LVGL 8.4, and in the dash's (the emulator's dash flavor is 8.4 too),
+# against the same LVGL objects: the REAL splash.cpp plays the first meeting,
+# and the speech bubble's tail and the bird's seat over it are read off the
+# frame; every one of those suites runs, and the script fails at its end if
+# any did. No emsdk: this proves the sources the dist is
+# built from, not the dist's bytes (the browser probe, onboard_probe.mjs,
+# reads those).
 #
 #   bash canary-local/emulator/test/glass_turn.sh [LVGL_DIR]
 #
@@ -47,6 +54,16 @@ fi
 ver="$(sed -n 's/^#define LVGL_VERSION_MAJOR *\([0-9]*\).*/\1/p;s/^#define LVGL_VERSION_MINOR *\([0-9]*\).*/\1/p' "$LVGL/lvgl.h" | tr '\n' '.')"
 if [[ "$ver" != "8.4." ]]; then
   echo "glass_turn: $LVGL is LVGL ${ver%.}, not the 8.4 build.sh pins" >&2
+  exit 2
+fi
+# The splash's pseudonym (F159, as glass_turn_lvgl9.sh holds it for F246):
+# native9/identity/device_pseudonym.h stands in for the NVS-backed one with
+# HEX_LEN = TOKEN_BYTES * 2 = 16 letters, the length the first meeting's line
+# wraps around; the real header must agree.
+PSEUDO="$FW/common/identity/device_pseudonym.h"
+if ! grep -Eq '^constexpr size_t TOKEN_BYTES = 8;' "$PSEUDO" ||
+   ! grep -Eq '^constexpr size_t HEX_LEN[[:space:]]+= TOKEN_BYTES \* 2;' "$PSEUDO"; then
+  echo "glass_turn: $PSEUDO no longer makes a 16-letter pseudonym (TOKEN_BYTES 8, HEX_LEN TOKEN_BYTES * 2): update native9/identity/device_pseudonym.h" >&2
   exit 2
 fi
 
@@ -115,3 +132,48 @@ g++ -o "$OUT/nl_backlight_cap_test" "$OUT/nl_backlight_cap_test.o" "$OUT/nl_emu_
   "$OUT"/lvgl/*.o -lm
 "$OUT/nl_backlight_cap_test"
 "$OUT/nl_glass_turn_test"
+
+# The boot splash's speech-bubble tail and the bird's seat over it on LVGL
+# 8.4 (F185, F159): glass_splash_test.cpp links the REAL splash.cpp,
+# canary_mark.cpp, theme.cpp, character.cpp and lvgl_port.cpp (its LVGL 8
+# branch) against the LVGL objects above, with test/native9's stand-ins for
+# the board (a recording Arduino_GFX, Preferences, a one-letter pseudonym),
+# in the config and pin map of each display env that builds LVGL 8.4: the
+# round watch, the S3 nightstand, the touch169, the AMOLED and the nightlight
+# (with its env's lean budget, which in LVGL itself drops only faces and
+# widgets, and the refresh period, that a whole-frame read never sees). The
+# nightlight's suite also plays its turned 320x180 canvas. Then the dash's:
+# its hardware line builds LVGL 9.5 (glass_turn_lvgl9.sh renders that), but
+# build.sh compiles the emulator's dash flavor against this 8.4, so its
+# suite plays the 800x480 panel and the 480x800 canvas LVGL's software
+# rotation turns it to. Every suite runs, and the script fails at its end if
+# any did.
+SPLASH_SRC=(lvgl_port splash canary_mark theme character)
+splash_failed=()
+splash_suite() {  # splash_suite <name> <config> <board> [defines...]
+  local name="$1" cfg="$2" board="$3" f
+  shift 3
+  local cxx=(g++ -std=gnu++17 -O1 -fno-exceptions -fno-rtti -Wall -Wno-unused-parameter
+             "${DEFS[@]}" "$@" -I "$HERE/native9" -I "$PROJ/include"
+             -I "$FW/configs/canary-display/$cfg" -I "$FW/boards/$board/pins"
+             -I "$FW/common" -I "$LVGL")
+  local objs=()
+  for f in "${SPLASH_SRC[@]}"; do
+    "${cxx[@]}" -c "$PROJ/src/ui/$f.cpp" -o "$OUT/splash_${name}_$f.o"
+    objs+=("$OUT/splash_${name}_$f.o")
+  done
+  "${cxx[@]}" -c "$HERE/glass_splash_test.cpp" -o "$OUT/splash_${name}_test.o"
+  g++ -o "$OUT/splash_${name}_test" "$OUT/splash_${name}_test.o" "${objs[@]}" \
+    "$OUT"/lvgl/*.o -lm
+  "$OUT/splash_${name}_test" || splash_failed+=("$name")
+}
+splash_suite watch watch xiao-esp32s3-round
+splash_suite nightstand nightstand waveshare-esp32s3-lcd147
+splash_suite touch169 touch169 waveshare-esp32s3-touch-lcd169
+splash_suite amoled241 amoled241 waveshare-esp32s3-amoled241
+splash_suite nightlight nightlight waveshare-esp32c3-lcd147 -DCD_LEAN_BUILD=1
+splash_suite dash dash waveshare-esp32s3-lcd43
+if ((${#splash_failed[@]})); then
+  echo "glass_turn: the splash's tail FAILED in: ${splash_failed[*]}" >&2
+  exit 1
+fi

@@ -283,10 +283,13 @@ static int test_a_night_without_windows_still_owes_the_next_row() {
 // What the row carries, held to docs/csi_modules.md's row: a P0 event row of
 // type daily_summary whose note is "a<active> q<empty> x<anomaly>", counted
 // over the committed ring rows it walked (bundled = how many), with the
-// 23:50 bucket. A day of presence changes still reads "a0 q0 x0": a closed
-// presence bundle never reaches the ring (sweep F77, a decision this does not
-// take). The MQTT events body carries type and bundled but no note, and its
-// event_type is the empty state's "unknown".
+// 23:50 bucket. Since sweep F77 a closed presence bundle reaches the ring, so
+// the quiet two hours' eight closed `empty` bundles count: "a0 q8 x0" (the
+// active hour's rows name `subtle`, which the note does not count). Before
+// F77 it read "a0 q0 x0" on any day. The counts are of bundles, not periods:
+// what the summary should report, and where, is sweep F219's decision. The
+// MQTT events body carries type and bundled but no note, and its event_type
+// is the empty state's "unknown".
 static int test_what_the_summary_row_carries() {
   host_prefs().clear();
   reset_counts();
@@ -299,7 +302,7 @@ static int test_what_the_summary_row_carries() {
   CHECK(s.category == CSI_CATEGORY_EVENT);
   CHECK(s.privacy == CSI_PRIVACY_P0);
   CHECK(s.values.state_name[0] == '\0');
-  CHECK(std::strcmp(s.values.note, "a0 q0 x0") == 0);
+  CHECK(std::strcmp(s.values.note, "a0 q8 x0") == 0);
   CHECK(s.values.time_bucket == 143);                   // 23:50..23:59
   CHECK(s.values.present_fields & CSI_FIELD_BUNDLED_COUNT);
 
@@ -317,7 +320,7 @@ static int test_what_the_summary_row_carries() {
   CHECK(len > 0);
   CHECK(std::strstr(body, "\"type\":\"daily_summary\"") != nullptr);
   CHECK(std::strstr(body, "\"event_type\":\"unknown\"") != nullptr);
-  CHECK(std::strstr(body, "a0 q0 x0") == nullptr);      // the note rides nowhere
+  CHECK(std::strstr(body, "a0 q8 x0") == nullptr);      // the note rides nowhere
   CHECK(std::strstr(body, "\"note\"") == nullptr);
   return 0;
 }

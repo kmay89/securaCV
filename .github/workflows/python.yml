@@ -64,6 +64,38 @@ on:
       - 'firmware/common/csi/src/csi_event_id_floor.h'
       - 'firmware/tests_host/test_csi_event_wire.cpp'
       - 'firmware/tests_host/test_device_signature_common.cpp'
+      # test_wap_mqtt_contract.py builds the canary-wap's MQTT harness
+      # (tests_host/test_wap_mqtt_bodies.cpp: the real csi_mqtt.cpp over
+      # stubs/mqtt) and replays what it records into the integration, so an
+      # edit to anything that compile reads runs it. The test holds this list
+      # to every rule of the harness's dependency file (the includes of both
+      # compiled sources, the harness and csi_mqtt.cpp); csi_mqtt.cpp,
+      # canary_wap.ino, mqtt_identity.h and csi_event_egress.h are listed above.
+      - 'firmware/projects/canary-wap/tests_host/test_wap_mqtt_bodies.cpp'
+      - 'firmware/projects/canary-wap/tests_host/Makefile'
+      - 'firmware/projects/canary-wap/tests_host/arduino_globals.h'
+      - 'firmware/projects/canary-wap/tests_host/json_strict.h'
+      - 'firmware/projects/canary-wap/tests_host/stubs/mqtt/**'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/api_auth.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/auth_backoff.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/auth_logic.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/build_config.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_event.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_event_backfill.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_event_id_floor.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_event_log_line.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_event_wire.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_integration.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_module.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_module_settings_nvs.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_types.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/device_signature.cpp'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/device_signature.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/http_body_reader.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/mqtt_transport_logic.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/tz_rule.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/wap_json_writer.h'
   pull_request:
     branches: [main]
     paths:
@@ -124,6 +156,38 @@ on:
       - 'firmware/common/csi/src/csi_event_id_floor.h'
       - 'firmware/tests_host/test_csi_event_wire.cpp'
       - 'firmware/tests_host/test_device_signature_common.cpp'
+      # test_wap_mqtt_contract.py builds the canary-wap's MQTT harness
+      # (tests_host/test_wap_mqtt_bodies.cpp: the real csi_mqtt.cpp over
+      # stubs/mqtt) and replays what it records into the integration, so an
+      # edit to anything that compile reads runs it. The test holds this list
+      # to every rule of the harness's dependency file (the includes of both
+      # compiled sources, the harness and csi_mqtt.cpp); csi_mqtt.cpp,
+      # canary_wap.ino, mqtt_identity.h and csi_event_egress.h are listed above.
+      - 'firmware/projects/canary-wap/tests_host/test_wap_mqtt_bodies.cpp'
+      - 'firmware/projects/canary-wap/tests_host/Makefile'
+      - 'firmware/projects/canary-wap/tests_host/arduino_globals.h'
+      - 'firmware/projects/canary-wap/tests_host/json_strict.h'
+      - 'firmware/projects/canary-wap/tests_host/stubs/mqtt/**'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/api_auth.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/auth_backoff.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/auth_logic.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/build_config.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_event.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_event_backfill.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_event_id_floor.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_event_log_line.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_event_wire.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_integration.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_module.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_module_settings_nvs.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/csi_types.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/device_signature.cpp'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/device_signature.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/http_body_reader.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/mqtt_transport_logic.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/tz_rule.h'
+      - 'firmware/projects/canary-wap/arduino/canary_wap/wap_json_writer.h'
 
 permissions:
   contents: read
@@ -171,6 +235,11 @@ jobs:
         run: mypy
 
       - name: Pytest (integration suite)
+        # test_wap_mqtt_contract.py builds the canary-wap's MQTT harness with
+        # make and g++ (both on the image, with OpenSSL's headers); required
+        # here, so a missing toolchain fails instead of skipping.
+        env:
+          SECURACV_WAP_HARNESS: require
         run: pytest custom_components/securacv/tests/ -q
 
   ha-lane:

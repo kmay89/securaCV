@@ -44,17 +44,21 @@ The compiled constants in `include/canary/config.h` seed the first boot
 only; live values persist across reboots and OTA installs (see
 `include/canary/detect_config.h`). `include/canary/config.h` (with
 `include/canary/topics.h` for the topic patterns) holds the compiled
-settings the flavor file used to repeat. The flavor file,
-`firmware/configs/canary-vision/default/config.h`, holds only what
+settings the flavor file used to repeat, and the flasher catalog
+(`canary-local/tools/gen_flash.py`) and the Lab's Vision data
+(`gen_vision.py`) read the detection defaults above there. The flavor
+file, `firmware/configs/canary-vision/default/config.h`, holds only what
 something reads from it: the `FEATURE_*` flags and the watchdog timeout,
-which it owns, a copy of the device type the fleet figures key the
-flavor on (`CONFIG_DEVICE_TYPE`, read by `gen_figures.mjs`), and four
-copies of the detection defaults above (`CONFIG_PERSON_TARGET`,
-`CONFIG_SCORE_MIN`, `CONFIG_LOST_TIMEOUT_MS`, `CONFIG_DWELL_START_MS`)
-that the flasher catalog reads. Change a default in
-`include/canary/config.h` and its copy with it;
-`scripts/tests/test_vision_flavor_config_readers.py` fails while the two
-differ, and fails on a `CONFIG_*` in the flavor file that nothing reads.
+which it owns, and a copy of the device type the fleet figures key the
+flavor on (`CONFIG_DEVICE_TYPE`, read by `gen_figures.mjs`). Change a
+default in `include/canary/config.h` alone. It is compiled into the Lab
+emulator's Vision core (`canary-local/emulator/build.sh` builds
+`src/detect_config.cpp`), so dispatch Actions → "Rebuild emulator dist
+(pinned emsdk)" on your branch and pull its commit, then rerun
+`gen_vision.py` and `gen_flash.py`; CI byte-diffs the dist and both
+outputs. `scripts/tests/test_vision_flavor_config_readers.py` fails while
+the device type's copy differs from `DEVICE_TYPE`, and fails on a
+`CONFIG_*` in the flavor file that nothing reads.
 
 **Watch profiles** (`include/canary/detect_profiles.h`) make one firmware
 serve different jobs without a rebuild: `room_presence` (the default —

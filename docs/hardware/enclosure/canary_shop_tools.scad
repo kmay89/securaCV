@@ -48,7 +48,7 @@ guide_h  = 12.0;     // guide height above the ledge — the length that holds t
 /* [Button ring] — matches the doorbell bezel seat */
 bez_d = 16.5;        // bezel seat diameter
 btn_d = 12.0;        // button body diameter
-ring_t = 0.8;
+ring_t = 0.8;        // accent ring thickness — it sits in the bezel seat under the button's flange
 
 /* [Print tolerances] */
 tol_slide = 0.20;    // catalog default — core_tol_slide(), canary_core_lib

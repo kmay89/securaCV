@@ -146,6 +146,10 @@ enum : uint16_t {
 #define BLE_HS_EBUSY                 15
 #define BLE_HS_EUNKNOWN              17
 #define BLE_HS_ESTORE_CAP            27
+// The bond store's size as nimconfig.h defines it (its default; no WAP
+// build sets it), which the channel reports beside the list (sweep F209).
+// host_sim::max_bonds below is the store the stand-in keeps, 3 as well.
+#define CONFIG_BT_NIMBLE_MAX_BONDS   3
 // The record an OVERFLOW names (host/ble_store.h): the stand-in carries the
 // CCCD's, whose peer the default answer spares.
 struct ble_store_value_cccd {

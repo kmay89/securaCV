@@ -296,6 +296,11 @@ test("the splash's tail (F246): the script links the REAL splash.cpp and canary_
   assert.ok(t.includes('#include "story/story_scripts.h"') && t.includes("const canary::story::Scene& sc = canary::story::kHello;") &&
     t.includes("CHECK(same == want.size() && W.typed.size() == want.size(),"),
   "every line of story::kHello typed whole, in order, counted from the script");
+  // F159: the bird at its deepest breath clear of the tail's highest ink, on
+  // every play (a seat() that never raised says not clear, and must fail).
+  assert.ok(t.includes("const int worst = W.ink_top_lo - (W.bird_hi + W.bird_h);") &&
+    t.includes("CHECK(worst >= sl::kGap,") && t.includes("g_unclear.push_back(tag);") &&
+    t.includes("CHECK(unclear.empty(),"), "the bird clear of the tail on every play, pinned");
 });
 
 test("check_lvgl9_quotes.py (F225): fails on each drift from the library and on a missing function", () => {

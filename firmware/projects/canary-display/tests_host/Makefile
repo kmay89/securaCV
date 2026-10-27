@@ -123,9 +123,13 @@ ORIENT_SRC = test_orientation.cpp
 # the glass draws — LVGL 9's lv_display_rotate_area and LVGL 8's
 # draw_buf_rotate, quoted, which agree — the LVGL 9 pointer feed inverted
 # against LVGL's own indev rotation) and the rendered brightness scrim
-# (clamp + the monotone opacity curve). Pure inline logic — no LVGL, no board.
+# (clamp + the monotone opacity curve), and the Orientation page's saved/worn
+# rule (canary/ui/orientation_page.h, F245: the check, the root row and the
+# footer follow the turn worn). Pure inline logic — no LVGL, no board.
 DISPSET_BIN = test_display_settings
 DISPSET_SRC = test_display_settings.cpp
+DISPSET_HDR = ../include/canary/glass_settings.h \
+  ../include/canary/ui/orientation_page.h
 
 .PHONY: all run clean
 all: run
@@ -172,7 +176,7 @@ $(NIGHTLIGHT_BIN): $(NIGHTLIGHT_SRC)
 $(ORIENT_BIN): $(ORIENT_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(ORIENT_SRC)
 
-$(DISPSET_BIN): $(DISPSET_SRC)
+$(DISPSET_BIN): $(DISPSET_SRC) $(DISPSET_HDR)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(DISPSET_SRC)
 
 # Clock-face ring (canary/ui/clock_styles.h): the shared 12-hour conversion
@@ -531,7 +535,10 @@ clean: clean-fieldbus-glue
 # moved the speech bubble hangs under it, its tallest form (the script's
 # lines wrapped the way LVGL 8.4 wraps a label, held to the heights a native
 # harness drew) on the canvas and clear of the bird; the bubble is as wide
-# as bubble_w() gives each canvas (F160). The test is C++17
+# as bubble_w() gives each canvas (F160); where the bubble stays centered,
+# the first meeting's bird sits clear of its tallest form and the tail on
+# it wherever the canvas holds that seat's hop (F159, for every tallest a
+# canvas could measure). The test is C++17
 # (story_scripts.h's inline variables); the header alone is held to gnu++11
 # first, since the core-2.0.17 sketch compiles it there. Hooked into `run`
 # and `clean` by prerequisite.
@@ -563,8 +570,9 @@ clean: clean-splash-layout
 # the bubble sits where seat() says (hung under a moved bird, centered
 # otherwise) in whatever height its typed line wraps to, on the canvas, its
 # sides too (F160), and clear of a moved bird, with its tail object on its
-# top edge at every refresh (F158; only the LVGL 9 builds draw the tail);
-# its tallest is test_splash_layout's measure. Three
+# top edge at every refresh (F158), square and turned about its center
+# (F185), and the bird clear of the tail's reach wherever seat() says so
+# (F159); its tallest is test_splash_layout's measure. Three
 # builds, because the glass family is the config's call: the watch's (the
 # round watch), the nightstand's (every CD_FLAVOR_NIGHTSTAND canvas,
 # the nightlight's turned one included) and the dash's (the wide glass).
@@ -612,14 +620,16 @@ clean: clean-splash-scenes
 # tier (PSRAM first; internal RAM only when the draw buffer fell back there,
 # every request scripted and recorded), and a glass with no turn buffer
 # staying landscape, its face too (dash_face.h, the choice main.cpp makes;
-# F223). Hooked into `run` and `clean` by prerequisite.
+# F223), and its Orientation page checking the turn worn and saying why
+# (orientation_page.h, what settings_ui.cpp draws; F245). Hooked into `run`
+# and `clean` by prerequisite.
 PORTTURN_BIN = test_lvgl_port_turn
 PORTTURN_SRC = test_lvgl_port_turn.cpp ../src/ui/lvgl_port.cpp
 
 $(PORTTURN_BIN): $(PORTTURN_SRC) fake_lvgl9/lvgl.h fake_lvgl9/Arduino.h \
 	  fake_lvgl9/Arduino_GFX_Library.h fake_lvgl9/esp_heap_caps.h \
 	  ../include/canary/glass_settings.h ../include/canary/ui/lvgl_port.h \
-	  ../include/canary/ui/dash_face.h \
+	  ../include/canary/ui/dash_face.h ../include/canary/ui/orientation_page.h \
 	  ../include/canary/hal/display.h ../include/canary/log.h
 	$(CXX) $(CXXFLAGS) -Werror -I fake_lvgl9 $(INC) -I ../../../configs/canary-display/dash \
 	  -I ../../../boards/waveshare-esp32s3-lcd43/pins -o $@ $(PORTTURN_SRC)

@@ -36,6 +36,9 @@ on:
       - "docs/operator_guide.md"
       - "README.md"
       - "firmware/projects/canary-display/**"
+      # dash_orientation.test.js holds the glass copy lint to the header that
+      # carries the Orientation page's words (F245)
+      - "firmware/scripts/microcopy_lint.sh"
       - "firmware/configs/**"
       - "firmware/boards/xiao-esp32s3-round/**"
       - "firmware/boards/xiao-esp32c6-mr60/**"
@@ -242,6 +245,8 @@ on:
       - "scripts/path_filter_reads/**"
       - "scripts/check_path_filter_reads.py"
       - ".github/workflows/canary-local.yml"
+      # the logic job's WASI sysroot step (cores_wasm32.test.js holds it)
+      - ".github/actions/setup-wasi-sysroot/**"
   pull_request:
     paths:
       - "canary-local/**"
@@ -269,6 +274,9 @@ on:
       - "docs/operator_guide.md"
       - "README.md"
       - "firmware/projects/canary-display/**"
+      # dash_orientation.test.js holds the glass copy lint to the header that
+      # carries the Orientation page's words (F245)
+      - "firmware/scripts/microcopy_lint.sh"
       - "firmware/configs/**"
       - "firmware/boards/xiao-esp32s3-round/**"
       - "firmware/boards/xiao-esp32c6-mr60/**"
@@ -475,6 +483,8 @@ on:
       - "scripts/path_filter_reads/**"
       - "scripts/check_path_filter_reads.py"
       - ".github/workflows/canary-local.yml"
+      # the logic job's WASI sysroot step (cores_wasm32.test.js holds it)
+      - ".github/actions/setup-wasi-sysroot/**"
 
 permissions:
   contents: read
@@ -502,7 +512,7 @@ jobs:
         with:
           node-version: "22"
       # The path-filter gate (sweep CI2): every node and python3 process in the
-      # five test steps below records the repo paths it reads (node: opens,
+      # seven test steps below records the repo paths it reads (node: opens,
       # stats, listings, existence checks; python3: opens and listings only,
       # CPython audits no stat or exists call; shell tools such as the Witness
       # Wall step's cmp are not recorded), and the step after the last of them
@@ -535,6 +545,7 @@ jobs:
           node --test canary-local/tests/wap.test.js
           node --test canary-local/tests/fingerprint_examples.test.js
           node --test canary-local/tests/onboard.test.js
+          node --test canary-local/tests/dash_orientation.test.js
           node --test canary-local/tests/glass_turn_lvgl9.test.js
           node --test canary-local/tests/vision.test.js
           node --test canary-local/tests/vision_checklist.test.js
@@ -594,6 +605,30 @@ jobs:
           node --test canary-local/tests/vision.test.js
           node --test canary-local/tests/eyes.test.js
           node --test canary-local/tests/audio.test.js
+      - name: Native cores vs the committed dist, call for call (LAB_CORES=native; red = the dist is stale, or a build disagrees)
+        # Sweep A50. The dist step runs native_cores.test.js too, where it
+        # compiles nothing and its parity scenarios skip. Here it builds the
+        # Vision and WAP audio cores with g++, as the step above does, and
+        # drives each next to its committed dist bundle, call for call, on
+        # the scenarios in tests/native/scenarios.js (3000 Vision ticks, about
+        # 5000 frames of boxes at the int range's ends, the audio cadences),
+        # and the browser probes' stand-in against the same builds. It is its
+        # own step so each red keeps its meaning: red here names the first
+        # call where this tree's sources and the committed dist answer
+        # otherwise. After a core change that means the dist is stale
+        # (Actions -> "Rebuild emulator dist (pinned emsdk)"), so a core
+        # change goes red here as well as above until the rebuild lands; with
+        # no core change it means the two toolchains disagree on that input
+        # (tests/native/README.md). Green in the step above still means the
+        # sources pass the page tests. Same `if:`: it runs whenever the dist
+        # step ran, red or green.
+        if: ${{ (success() || failure()) && steps.dist-node-tests.outcome != 'skipped' }}
+        env:
+          LAB_CORES: native
+          PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
+          NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+          PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
+        run: node --test canary-local/tests/native_cores.test.js
       - name: Vision pipeline as wasm32 from this tree's sources (the runner's clang + wasm-ld, not emscripten)
         # Sweep A49. The dist is wasm32, whose long is 32 bits (the ESP32's
         # too); the step above and every firmware host suite build with the
@@ -616,6 +651,56 @@ jobs:
           NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
           PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
         run: node --test canary-local/tests/vision_wasm32.test.js
+      - name: WASI sysroot for the runner's clang 18 (Ubuntu's wasi-libc, libc++, libc++abi, compiler-rt)
+        # Sweep A58. The next step builds whole cores for wasm32-wasi, which
+        # needs what the image's clang has no copy of for that target: a C
+        # library and its headers, libc++ and libc++abi, and compiler-rt's
+        # wasm32 builtins. The action installs noble's packages for clang 18
+        # (the clang the next step pins; the two move together), about 3 MB
+        # from the Ubuntu archive; no emsdk, nothing fetched from anywhere
+        # else. Its apt retries a dropped fetch and gives up on a stalled
+        # one, and the step timeout bounds the rest, so a hung mirror fails
+        # here in minutes instead of using the job's 20. Same `if:` as the
+        # steps above, so the next step still runs and says what is missing
+        # if this one fails or times out.
+        if: ${{ (success() || failure()) && steps.dist-node-tests.outcome != 'skipped' }}
+        timeout-minutes: 5
+        uses: ./.github/actions/setup-wasi-sysroot
+        with:
+          clang-major: "18"
+      - name: Whole Vision and WAP audio cores as wasm32-wasi, call for call against g++ (the runner's clang 18 + wasi-libc, not emscripten)
+        # Sweep A58. vision_wasm32.test.js, two steps up, builds the Vision
+        # box pipeline alone, freestanding. tests/native/wasi.js builds each
+        # whole core (build.sh's sources, flags and include paths, read by
+        # cores.js) for wasm32-wasi with clang 18 against the sysroot above,
+        # node:wasi runs it, and cores_wasm32.test.js drives it next to the
+        # g++ build on the scenarios native_cores.test.js uses. It then puts
+        # a long back in each core, in a scratch copy (A42's posture products,
+        # the audio RMS's sum of squares), and requires the wasm32 build to
+        # catch what the g++ build misses. Red here on a core change means
+        # the sources compute something else with a 32-bit long (the dist's
+        # and the ESP32's) than with the runner's 64-bit one, or the two
+        # toolchains resolve an input otherwise. It is not emscripten, and not
+        # the dist.
+        # CORES_WASM32=require makes a missing tool or sysroot part a failure
+        # that names it, not a skip; WASM32_CLANGXX pins the clang the
+        # packages above are built for. It reads the sources, not the dist,
+        # so it runs whenever the dist step ran, red or green. node:wasi runs
+        # each call to its end with no deadline of its own, so a call that
+        # never returns in wasm32 (a loop bound wrapped by a 32-bit long, the
+        # kind of bug this step hunts) would hang it; the step timeout, several
+        # times the file's usual run (under a minute on a 4-CPU machine), ends
+        # that. Like a red in the steps above, a red here skips the drift
+        # steps below until it is fixed.
+        if: ${{ (success() || failure()) && steps.dist-node-tests.outcome != 'skipped' }}
+        timeout-minutes: 5
+        env:
+          CORES_WASM32: require
+          WASM32_CLANGXX: clang++-18
+          PATH_FILTER_READS_DIR: ${{ runner.temp }}/path-filter-reads
+          NODE_OPTIONS: --require ${{ github.workspace }}/scripts/path_filter_reads/record.cjs
+          PYTHONPATH: ${{ github.workspace }}/scripts/path_filter_reads
+        run: node --test canary-local/tests/cores_wasm32.test.js
       - name: Witness Wall emulator copies in sync (Flasher <-> Lab)
         # One canonical emulator (the website repo), vendored by
         # scripts/vendor_witness_emulator.sh into both apps — byte-identical,
@@ -745,7 +830,7 @@ jobs:
         run: python3 -m unittest discover -s canary-local/tools/tests -p 'test_*.py'
 
       - name: Every file the logic tests read is inside this workflow's path filter
-        # Reads the recordings the five test steps above left (the suites are
+        # Reads the recordings the seven test steps above left (the suites are
         # not run again) and matches each path against on.pull_request.paths
         # with GitHub's pattern rules. A miss is a test that a PR editing that
         # file never runs: it fails here naming the test, the file, the test
@@ -932,7 +1017,7 @@ jobs:
         with:
           path: canary-local/emulator/third_party
           key: canary-local-tp-${{ hashFiles('canary-local/emulator/build.sh') }}
-      - name: Turned glass — LVGL 8.4's rotation through the emulator's real display HAL (native g++, F184, F204)
+      - name: Turned glass — LVGL 8.4's rotation through the emulator's real display HAL, and the splash's tail on 8.4 (native g++, F184, F204, F185)
         # ui/lvgl_port.cpp's dash rotation and the HAL that turns the emulator's
         # framebuffer with it (src/emu_hal_display.cpp) — and, built a second
         # time with the nightlight's config, its hardware turn
@@ -941,8 +1026,15 @@ jobs:
         # build.sh's LVGL_TAG on a cold cache, which the dist build then
         # reuses): at every quarter turn the glass the page reads equals the
         # scene rendered unturned at the logical size, pixel for pixel, and a
-        # fed touch comes back out of LVGL's pointer where it went in. Proves
-        # the sources, not the dist's bytes (the onboard probe reads those).
+        # fed touch comes back out of LVGL's pointer where it went in. Then the
+        # REAL splash.cpp plays the first meeting through the port's LVGL 8.4
+        # branch in the config of every display env that builds 8.4 and in
+        # the dash's (the emulator's dash flavor is 8.4 too; F185, F159): the
+        # speech bubble's tail is drawn, whole, on the bubble's center line,
+        # and the bird sits on seat()'s seat, at its deepest breath clear of
+        # it where seat() says so; every one of those suites runs, and the
+        # step fails at its end if any did. Proves the sources, not the
+        # dist's bytes (the onboard probe reads those).
         # Runs BEFORE every step that reads the committed dist: a stale dist
         # turns the probes below red and skips every later step, and this is
         # the one proof of these sources that does not need the dist.
@@ -1160,10 +1252,14 @@ jobs:
         # against a plain 172x320 display. And in both configs the boot
         # splash's own speech-bubble tail (F246): the REAL splash.cpp and
         # canary_mark.cpp play the first meeting on the dash's 800x480 and
-        # 480x800 and nightstand-c6's 172x320, typing every line of the
+        # 480x800 and nightstand-c6's 172x320, under both the default
+        # Character and Heirloom, with a plain and a wide-lettered pseudonym,
+        # typing every line of the
         # script, and the tail, read off the frame at each new line, is
         # drawn where its box and styles put it (as each of F185's options
-        # would be; the choice is not taken here).
+        # would be), on the bubble's center line (F185: square, turned about
+        # its center), with the bird on seat()'s seat, clear of it on every
+        # play (F159, pinned).
         # Every suite runs; the step fails at the end if any did.
         # First it holds tests_host/fake_lvgl9's quotes of LVGL 9.5 to the
         # fetched source (check_lvgl9_quotes.py, after its own drift

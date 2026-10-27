@@ -126,6 +126,10 @@ extern "C" {
 #define CHIRP_COOLDOWN_TIER2_MS     (15 * 60 * 1000UL)     // COOLDOWN_TIER_2_MS: after the 2nd
 #define CHIRP_COOLDOWN_TIER3_MS     (60 * 60 * 1000UL)     // COOLDOWN_TIER_3_MS: after the 3rd
 #define CHIRP_COOLDOWN_TIER4_MS     (4 * 60 * 60 * 1000UL) // COOLDOWN_TIER_4_MS: after the 4th and on
+// The tiers reset after this long with no send, counted from the last send,
+// so a reset never ends a running cooldown; a disable and an enable keep
+// them, and the reference keeps them in RAM only, so a reboot clears them
+// (spec §2.5.4, sweep F193).
 #define CHIRP_COOLDOWN_RESET_MS     (24 * 60 * 60 * 1000UL) // COOLDOWN_RESET_MS: tiers reset
 
 // ============================================================================

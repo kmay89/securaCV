@@ -134,6 +134,36 @@ bridge in that order but cannot compile `main.cpp`:
    and `init_modules_from_nvs(`, and `setup()`'s the only call of
    `securacv_csi_modules_init(`.
 
+A planned restart is the tenth (sweep F92). A CSI bundle lives in RAM until
+it closes, up to ten minutes, and the egress commits through a queue and a
+RAM hold a restart wipes, so `csi_event_egress_flush_for_restart()` commits
+every open bundle and pumps the egress dry, bounded by a budget
+(`test_canary_event_egress.cpp` drives it on the real source). No host suite
+compiles `main.cpp`, where the restarts are:
+
+10. The planned restart. `main.cpp`'s `flush_events_before_restart()` is,
+    comments and whitespace aside, exactly `#if FEATURE_CSI` /
+    `#if FEATURE_WATCHDOG` / `esp_task_wdt_reset();` / `#endif` /
+    `[(void)]csi_event_egress_flush_for_restart(kCsiEventEgressRestartBudgetMs);`
+    / `#endif`: the watchdog reset first, the one-second budget, no gate.
+    Across `firmware/canary/src` and `firmware/canary/lib` that is the only
+    call of `csi_event_egress_flush_for_restart(`. In `deliberate_restart_now()`
+    (POST /api/reboot and the serial 'x'), `flush_events_before_restart();`
+    is a statement of the body's own, once, before
+    `witness_persist_chain_state();`, `mqtt_disconnect();` and
+    `ESP.restart();`, so the flushed rows reach the card and the broker
+    before the link closes. And every `ESP.restart(` in `main.cpp` is in
+    `factory_reset()` or `safe_mode_clear_and_restart()` (a reset flushes
+    nothing, as before; safe mode runs no CSI), or has
+    `flush_events_before_restart();` and then `witness_persist_chain_state();`
+    before it, both at the top of its own innermost block: a flushed bundle
+    is a witness record, and the chain head reaches NVS only every few
+    records (sweep F92's review). Every deep sleep (`lowpower_enter_deep_sleep(`,
+    `esp_deep_sleep_start(`; its wake is a reset) takes the same pair, or is
+    the power policy's, in the block of `if (policy_should_deep_sleep() &&
+    !power_is_charging())`, which flushes nothing (documented). A restart or
+    a sleep added to the loop later must take one or the other.
+
 Rule 1 holds the live send's refusal; the other half of the order is what a
 buffered publish does while the offline queue still drains (backlog F107).
 Every row the egress hands over off the card (its RAM hold's flush included)
@@ -163,7 +193,8 @@ from `securacv_mqtt.cpp` kept every gate green. The order now lives in
 
 Each run applies a set of mutations to the sources, in memory, and requires
 the check to fail on every one (rule 8 has its own set, on `main.cpp` and
-the bridge, and so does rule 9, on `securacv_mqtt.cpp` and the header). The reviewers' edits are in that set. So
+the bridge, rule 9 on `securacv_mqtt.cpp` and the header, and rule 10 on
+`main.cpp`). The reviewers' edits are in that set. So
 the check is proven against the code as it stands. If a refactor moves an
 anchor a mutation needs, the run fails and says so; it does not pass quietly.
 
@@ -856,6 +887,106 @@ def check_boot(main_src: str, bridge_src: str, others: dict[str, str]) -> list[s
     return errors
 
 
+SIG_FLUSH_HELPER = r"\bstatic\s+void\s+flush_events_before_restart\s*\(\s*(?:void)?\s*\)"
+SIG_DELIBERATE = r"\bstatic\s+void\s+deliberate_restart_now\s*\(\s*(?:void)?\s*\)"
+SIG_FACTORY_RESET = r"\bstatic\s+void\s+factory_reset\s*\([^)]*\)"
+SIG_SAFE_MODE_RESTART = r"\bstatic\s+void\s+safe_mode_clear_and_restart\s*\(\s*(?:void)?\s*\)"
+FLUSH_STMT = "flush_events_before_restart();"
+PERSIST_STMT = "witness_persist_chain_state();"
+EGRESS_FLUSH = "csi_event_egress_flush_for_restart"
+# The one deep sleep that flushes nothing: the power policy's (rule 10).
+POLICY_SLEEP_GATE = "policy_should_deep_sleep()&&!power_is_charging()"
+STOPS = r"\b(?:ESP\s*\.\s*restart|lowpower_enter_deep_sleep|esp_deep_sleep_start)\s*\("
+# Rule 10: the helper's whole body, comments blanked and whitespace removed.
+FLUSH_HELPER_BODIES = tuple(
+    "#ifFEATURE_CSI#ifFEATURE_WATCHDOGesp_task_wdt_reset();#endif"
+    + cast + "csi_event_egress_flush_for_restart(kCsiEventEgressRestartBudgetMs);#endif"
+    for cast in ("(void)", ""))
+
+
+def innermost_block_start(code: str, pos: int) -> int:
+    """Index just past the `{` of the innermost brace block holding `pos`."""
+    depth = 0
+    for j in range(pos - 1, -1, -1):
+        if code[j] == "}":
+            depth += 1
+        elif code[j] == "{":
+            if depth == 0:
+                return j + 1
+            depth -= 1
+    return 0
+
+
+def check_restart(main_src: str, others: dict[str, str]) -> list[str]:
+    """Rule 10 (sweep F92): every planned restart flushes the open CSI
+    bundles and drains the egress first."""
+    errors: list[str] = []
+    code = blank_comments_and_strings(main_src)
+    span = the_body(code, SIG_FLUSH_HELPER, f"{MAIN_CPP}: flush_events_before_restart()", errors)
+    if span is not None and squash(code[span[0]:span[1]]) not in FLUSH_HELPER_BODIES:
+        errors.append(f"{MAIN_CPP}: flush_events_before_restart() must be exactly the watchdog "
+                      f"reset (under FEATURE_WATCHDOG) then `{EGRESS_FLUSH}("
+                      "kCsiEventEgressRestartBudgetMs);`, under FEATURE_CSI, and nothing else — "
+                      "no gate, the one-second budget (F92)")
+    files = dict(others)
+    files[MAIN_CPP] = main_src
+    sites = call_sites(files, EGRESS_FLUSH)
+    if sites != [MAIN_CPP]:
+        errors.append(f"firmware/canary: `{EGRESS_FLUSH}(` must be called once, in {MAIN_CPP}'s "
+                      f"flush_events_before_restart() (found {len(sites)}: "
+                      f"{', '.join(sorted(set(sites))) or 'none'}) — the loop task's planned "
+                      "restarts are its only callers (F92)")
+    span = the_body(code, SIG_DELIBERATE, f"{MAIN_CPP}: deliberate_restart_now()", errors)
+    if span is not None:
+        body = code[span[0]:span[1]]
+        at = body.find(FLUSH_STMT)
+        if body.count(FLUSH_STMT) != 1 or not top_level_statement(body, at):
+            errors.append(f"{MAIN_CPP}: deliberate_restart_now() must call `{FLUSH_STMT}` once, as "
+                          "a statement of its own body — POST /api/reboot and the serial 'x' "
+                          "commit the open bundles and drain the egress first (F92)")
+        else:
+            for later in ("witness_persist_chain_state();", "mqtt_disconnect();", "ESP.restart();"):
+                pos = body.find(later)
+                if pos >= 0 and pos < at:
+                    errors.append(f"{MAIN_CPP}: deliberate_restart_now() must call `{FLUSH_STMT}` "
+                                  f"before `{later}` — the flushed rows reach the card and the "
+                                  "broker before the link closes (F92)")
+            if body.find("ESP.restart();") < 0:
+                errors.append(f"{MAIN_CPP}: deliberate_restart_now() no longer restarts — the "
+                              "rule's anchor moved; update check_event_egress_order.py rule 10")
+    exempt = []
+    for sig in (SIG_FACTORY_RESET, SIG_SAFE_MODE_RESTART):
+        exempt += [s for s in bodies(code, sig) if code[s[0]:s[1]].strip()]
+    for m in re.finditer(STOPS, code):
+        stop = code[m.start():m.end() - 1].replace(" ", "")
+        sleep = not stop.startswith("ESP")
+        if not sleep and any(a <= m.start() < b for a, b in exempt):
+            continue
+        start = innermost_block_start(code, m.start())
+        if sleep:
+            gate = enclosing_if(code, m.start())
+            if gate is not None and squash(gate[1]) == POLICY_SLEEP_GATE and gate[2] <= start:
+                continue
+        block = code[start:m.start()]
+        flush = block.rfind(FLUSH_STMT)
+        line = code.count("\n", 0, m.start()) + 1
+        if flush < 0 or not top_level_statement(block, flush):
+            errors.append(f"{MAIN_CPP}:{line}: `{stop}()` with no `{FLUSH_STMT}` before it in "
+                          "its own block — every planned restart or sleep on the loop task "
+                          "commits the open CSI bundles and drains the egress first; a reset or "
+                          "safe mode restarts from factory_reset() or "
+                          "safe_mode_clear_and_restart(), and only the power policy's sleep "
+                          "skips it (F92)")
+            continue
+        persist = block.find(PERSIST_STMT, flush)
+        if persist < 0 or not top_level_statement(block, persist):
+            errors.append(f"{MAIN_CPP}:{line}: `{stop}()` after `{FLUSH_STMT}` with no "
+                          f"`{PERSIST_STMT}` between them in its own block — the bundles the "
+                          "flush commits are witness records, and the chain head must reach NVS "
+                          "before the restart, or the next boot reuses their seqs (F92)")
+    return errors
+
+
 def lambda_body(arg: str) -> str | None:
     """The squashed body of a `[...](...) { ... }` lambda argument, or None."""
     m = re.fullmatch(r"\[[^\]]*\]\(\)(?:->bool)?\{(.*)\}", arg)
@@ -1211,6 +1342,91 @@ def self_test_boot(main_src: str, bridge_src: str, others: dict[str, str]) -> li
     return problems
 
 
+RestartMutation = Callable[[str], str]
+
+
+def on_restart(sig: str, pat: str, repl: str) -> RestartMutation:
+    return lambda mn: mutate_in(mn, sig, pat, repl)
+
+
+FLUSH_LINE = r"\n[ \t]*flush_events_before_restart\(\);"
+RESTART_MUTATIONS: list[tuple[str, RestartMutation]] = [
+    ("the deliberate restart flushes nothing",
+     on_restart(SIG_DELIBERATE, FLUSH_LINE, "")),
+    ("the deliberate restart flushes after the chain persist",
+     lambda mn: mutate_in(mutate_in(mn, SIG_DELIBERATE, FLUSH_LINE, ""), SIG_DELIBERATE,
+                          r"(witness_persist_chain_state\(\);)", r"\1 flush_events_before_restart();")),
+    ("the deliberate restart flushes after the MQTT disconnect",
+     lambda mn: mutate_in(mutate_in(mn, SIG_DELIBERATE, FLUSH_LINE, ""), SIG_DELIBERATE,
+                          r"(mqtt_disconnect\(\);)", r"\1 flush_events_before_restart();")),
+    ("the deliberate restart flushes only once healthy",
+     on_restart(SIG_DELIBERATE, r"(flush_events_before_restart\(\);)", r"if (g_boot_healthy) \1")),
+    ("the deliberate restart flushes twice",
+     on_restart(SIG_DELIBERATE, r"(flush_events_before_restart\(\);)", r"\1 \1")),
+    ("setup's restart flushes nothing",
+     on_restart(SIG_LOOP, r"\n[ \t]*flush_events_before_restart\(\);(\s*witness_persist_chain_state\(\);)",
+                r"\1")),
+    ("setup's restart flushes in a block of its own",
+     on_restart(SIG_LOOP, r"(flush_events_before_restart\(\);)(\s*witness_persist_chain_state\(\);)",
+                r"if (WiFi.status() == WL_CONNECTED) { \1 }\2")),
+    ("setup's restart persists no chain head after the flush",
+     on_restart(SIG_LOOP, r"(flush_events_before_restart\(\);)\s*witness_persist_chain_state\(\);",
+                r"\1")),
+    ("setup's restart persists the chain head before the flush",
+     on_restart(SIG_LOOP, r"(flush_events_before_restart\(\);)(\s*)(witness_persist_chain_state\(\);)",
+                r"\3\2\1")),
+    ("setup's restart persists the chain head only once healthy",
+     on_restart(SIG_LOOP, r"(flush_events_before_restart\(\);\s*)(witness_persist_chain_state\(\);)",
+                r"\1if (g_boot_healthy) \2")),
+    ("a new deep sleep in the loop flushes nothing",
+     on_restart(SIG_LOOP, r"(boot_health_tick\(millis\(\)\);)",
+                r"\1 if (g_boot_status.count > 9) lowpower_enter_deep_sleep();")),
+    ("a sleep borrows the power policy's gate in another block",
+     on_restart(SIG_LOOP, r"(boot_health_tick\(millis\(\)\);)",
+                r"\1 if (policy_should_deep_sleep() && !power_is_charging()) { } { esp_deep_sleep_start(); }")),
+    ("a new restart in the loop flushes nothing",
+     on_restart(SIG_LOOP, r"(boot_health_tick\(millis\(\)\);)",
+                r"\1 if (g_boot_status.count > 9) ESP.restart();")),
+    ("the factory reset's restart moves into the loop",
+     on_restart(SIG_LOOP, r"(boot_health_tick\(millis\(\)\);)",
+                r"\1 if (g_reset_hold.released_stage == 3) { delay(2000); ESP.restart(); }")),
+    ("the helper drains nothing",
+     on_restart(SIG_FLUSH_HELPER, r"\(void\)csi_event_egress_flush_for_restart\([^;]*;", "")),
+    ("the helper's budget is zero",
+     on_restart(SIG_FLUSH_HELPER, r"kCsiEventEgressRestartBudgetMs", "0")),
+    ("the helper's budget outlasts the watchdog",
+     on_restart(SIG_FLUSH_HELPER, r"kCsiEventEgressRestartBudgetMs", "10000")),
+    ("the helper skips the watchdog reset",
+     on_restart(SIG_FLUSH_HELPER, r"esp_task_wdt_reset\(\);", "")),
+    ("the helper drains only while the link is up",
+     on_restart(SIG_FLUSH_HELPER, r"(\(void\)csi_event_egress_flush_for_restart\([^;]*;)",
+                r"if (mqtt_connected()) \1")),
+    ("the helper is compiled out on HA builds",
+     on_restart(SIG_FLUSH_HELPER, r"(\(void\)csi_event_egress_flush_for_restart\([^;]*;)",
+                "\n#if !FEATURE_HA_MQTT\n  \\1\n#endif\n")),
+    ("the loop drains the egress for a restart on its own",
+     on_restart(SIG_LOOP, r"(boot_health_tick\(millis\(\)\);)",
+                r"\1 (void)csi_event_egress_flush_for_restart(kCsiEventEgressRestartBudgetMs);")),
+]
+
+
+def self_test_restart(main_src: str, others: dict[str, str]) -> list[str]:
+    problems = []
+    for name, mutate in RESTART_MUTATIONS:
+        try:
+            mn = mutate(main_src)
+        except AnchorMissing as missing:
+            problems.append(f"self-test: restart mutation '{name}' no longer applies "
+                            f"(anchor {missing}) — the source changed shape; update this guard's "
+                            "mutations with it")
+            continue
+        if mn == main_src:
+            problems.append(f"self-test: restart mutation '{name}' changed nothing")
+        elif not check_restart(mn, others):
+            problems.append(f"self-test: the check did not bite on restart mutation '{name}'")
+    return problems
+
+
 QueueMutation = Callable[[str, str], "tuple[str, str]"]
 
 
@@ -1320,11 +1536,11 @@ def main() -> int:
     queue_src = (REPO / QUEUE_H).read_text(encoding="utf-8")
     others = canary_others()
     errors = (check(mqtt_src, egress_src) + check_boot(main_src, bridge_src, others)
-              + check_publish_order(mqtt_src, queue_src))
+              + check_publish_order(mqtt_src, queue_src) + check_restart(main_src, others))
     for err in errors:
         print(f"::error::{err}")
     problems = (self_test(mqtt_src, egress_src) + self_test_boot(main_src, bridge_src, others)
-                + self_test_queue(mqtt_src, queue_src))
+                + self_test_queue(mqtt_src, queue_src) + self_test_restart(main_src, others))
     for problem in problems:
         print(f"::error::{problem}")
     if errors or problems:
@@ -1333,8 +1549,11 @@ def main() -> int:
           f"new record joins the queue's back while it drains (one shared order, run by both "
           f"queued surfaces); the planner's sends never buffer, the tamper bridge goes first, "
           f"the planner gets the id floor and the broker-change epoch; the modules register "
-          f"and run their boot init after the floor and before the first tick "
-          f"({len(MUTATIONS) + len(BOOT_MUTATIONS) + len(QUEUE_MUTATIONS)} mutations refused).")
+          f"and run their boot init after the floor and before the first tick; every planned "
+          f"restart or sleep commits the open bundles, drains the egress and persists the chain "
+          f"first, or is a reset, safe mode or the power policy's sleep "
+          f"({len(MUTATIONS) + len(BOOT_MUTATIONS) + len(QUEUE_MUTATIONS) + len(RESTART_MUTATIONS)}"
+          f" mutations refused).")
     return 0
 
 

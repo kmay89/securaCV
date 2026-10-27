@@ -1040,14 +1040,24 @@ void test_inject_fails_closed() {
   EXPECT(csi_event_inject(&r), "first copy restored");
   EXPECT(!csi_event_inject(&r), "a duplicate id is refused");
 
-  /* Once a live row committed, nothing older may land ahead of it. */
+  /* Once a live row committed, nothing older may land ahead of it: an
+   * earlier boot's row goes beneath it (a card adopted late, sweep F77's
+   * review; until then inject refused every row from here on), and a row
+   * not older than it is refused. The bound on how many live rows it lifts
+   * (CSI_EVENT_INJECT_BENEATH_MAX) is pinned with the reload, in
+   * test_csi_event_log_load.cpp. */
   csi_event_values_t v;
   csi_event_values_init(&v);
   v.category       = CSI_CATEGORY_EVENT;
   v.present_fields = CSI_FIELD_MOTION_SCORE;
-  EXPECT(csi_event_emit("test.module", "test_state", &v) != 0, "live commit");
+  const uint32_t live = csi_event_emit("test.module", "test_state", &v);
+  EXPECT(live != 0, "live commit");
   r = make_persisted(kB + 31, "test_state");
-  EXPECT(!csi_event_inject(&r), "inject refuses after a live commit this boot");
+  EXPECT(csi_event_inject(&r), "an older row is still restored after a live commit this boot");
+  EXPECT(csi_event_recent(out, 8) >= 2 && out[0].event_id == live && out[1].event_id == kB + 31,
+         "beneath the live row, which stays the newest");
+  r = make_persisted(live, "test_state");
+  EXPECT(!csi_event_inject(&r), "a row not older than every live row is refused");
 
   /* No floor restored (NVS lost): the allocator is at kIdSpaceBase, so every
    * id this firmware handed out on an earlier boot is refused (this boot
