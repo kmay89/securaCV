@@ -1386,7 +1386,15 @@ hold keeps; and the per-address lockout's ways out.
   leaves it alone: it can mint sessions until the owner's is evicted, and
   a host also in radio range can bond a Bluetooth peer of its own through
   its session and write the WAP back to a network it is on over the bonded
-  lane. And it lasts only while the new network stays up: the WAP keeps
+  lane. (Amended by #<PR>, the owner-authority entries at the top of this
+  section: since F334 that move takes the API token after setup, and
+  `api_auth_check_bearer()` answers an address the overflow holds `429`
+  before it compares anything, so the browser waits with every other
+  untracked address until that host stops, then pastes the token; since
+  F346 the bond's confirm and a Passkey Entry's digits take the API token,
+  so a host's peer bonds through its session no longer, and a bond a
+  session confirmed on an earlier release stays until the owner removes
+  it.) And it lasts only while the new network stays up: the WAP keeps
   the networks it joined before, the host's among them, and goes back to
   one on its own when the new network is not found twice running (a
   hotspot turned off, a network out of range); no route forgets one saved
@@ -2557,7 +2565,14 @@ nothing ran on a device or in a browser.
   still re-points the broker with the stored password — behind the pair
   token, which the session can mint (`GET /api/pair/token` takes the
   cookie), and a code in front of the camera, which it cannot; named in
-  the ledger. The refusal tests hold NVS byte for byte with the stub's
+  the ledger. (Amended by #<PR>, the owner-authority entries at the top of
+  this section: F333 closes that road where it opens. After setup `POST
+  /api/wifi/qr-scan` answers `404` (F334), so a pair token a session mints
+  starts no scan; the camera's boot scan asks the Bluetooth setup door's
+  rule (`keyless_join_open()`), so on a set-up unit it runs only after a
+  Forget Wi-Fi, which takes the API token, or the 10 s hold; and Forget
+  clears the stored broker login, as the hold clears the whole broker
+  row.) The refusal tests hold NVS byte for byte with the stub's
   write count, the bearer leg covers a TLS-mode and a CA move, and
   `scripts/tests/test_docs_claims.py` retires three sentences this
   change's reviews found untrue (the busy-word mutant's failure, the QR

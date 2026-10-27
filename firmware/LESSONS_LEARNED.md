@@ -3284,7 +3284,14 @@
   The camera is what the session does not hold: a code must be in front of
   it (`FEATURE_QR_PROVISION`, off in several profiles). Accepted as
   proximity-bound; the ledger's F289 amendment says what it is owed if that
-  ever widens. A second review found this bullet calling the grant "not
+  ever widens. *(Superseded 2026-10-27, the owner-authority PR, #<PR>: F333
+  closes this road where it opens. After setup `POST /api/wifi/qr-scan`
+  answers `404` (F334), so the pair token the cookie mints starts no scan;
+  the boot scan asks the Bluetooth setup door's rule
+  (`provisioning_logic::keyless_join_open()`), so on a set-up unit it runs
+  only after a Forget Wi-Fi, which takes the API token, or the 10 s hold;
+  and Forget clears the stored broker login, as the hold clears the whole
+  broker row.)* A second review found this bullet calling the grant "not
   the session's": a chain's gate is its weakest link's, and the token's
   minter is a link — name the minter before calling a token-gated route
   something the session cannot reach.

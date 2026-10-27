@@ -596,10 +596,11 @@ These routes take the bearer alone, never the session
 - `POST /api/bluetooth/pair/confirm`, a lasting bond to the authenticated
   characteristics, the Wi-Fi credentials write among them, and
   `POST /api/mesh/pair/confirm`, an opera's secret (F346);
-- after first-boot setup, `POST /api/wifi/connect`, `/api/wifi/ap-only`,
-  `/api/wifi/disconnect` and `/api/wifi/forget`, on every interface, the
-  recovery portal's SoftAP included (F334, F345); `POST /api/wifi/qr-scan`
-  answers `404` outside setup;
+- `POST /api/wifi/disconnect` and `/api/wifi/forget` in every mode, first-boot
+  setup included, and after first-boot setup `POST /api/wifi/connect` and
+  `/api/wifi/ap-only`, each on every interface, the recovery portal's SoftAP
+  included (F334, F345); `POST /api/wifi/qr-scan` answers `404` outside
+  setup;
 - `POST /api/reboot` and `POST /api/safe-mode/retry` (F361).
 A network a session moved it to before F334 can stay among its saved
 networks: `wifi_store_note_joined()` writes every network the unit joins

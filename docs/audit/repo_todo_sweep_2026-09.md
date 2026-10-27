@@ -6295,9 +6295,21 @@ so — see D2 below.)
   comment) now say it takes the API token after setup, `LESSONS_LEARNED.md`
   carries an amendment, the iPhone's set-it-up-again advice says Remove
   credentials asks for the token first, and `test_docs_claims.py` retires
-  each where it stood (33 rows of the merge's own; the merged guard holds
-  51 BANNED and 766 RETIRED_IN rows over 212 files, 837 retired forms and
-  747 replacements, in 26 tests).
+  each where it stood (33 rows of the merge's own; at the merge the guard
+  held 51 BANNED and 766 RETIRED_IN rows over 212 files, 837 retired forms
+  and 747 replacements, in 26 tests). The merge's first review added 24
+  rows (790 RETIRED_IN over 214 files, 861 retired forms, 770
+  replacements) and its second 5 (795 over 214 files, 866 retired forms,
+  773 replacements), with 51 BANNED rows and 26 tests throughout. The
+  second review's rows retire what F333, F334 and F346 left untrue in
+  five places: #1835's CHANGELOG bullet and LESSONS_LEARNED's QR-road
+  bullet, which still gave the session a road to the hub re-point through
+  the pair token it mints (each now carries an amendment, as F289's note
+  above does); the F342 CHANGELOG passage that named the landing session
+  on `POST /api/wifi/connect` as the way out under the lockout and a
+  session-made bond (amended in place, as its siblings were);
+  `household_api.h`'s comment citing that bond; and the BOOT-release
+  comment that called Forget the network-only reset.
 - [x] **F346 [decision] canary-wap: a session reads the Bluetooth passkey and
   the mesh confirmation code.** `GET /api/bluetooth` (`bt_auth_gated`,
   `api_auth_check`) answers `pairing.pin` while a passkey is displayed, and
