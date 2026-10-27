@@ -7,6 +7,51 @@
 
 ---
 
+## A confirm gate is only as good as the signal every board feeds it
+
+### The 60 s confirm dwell could not be passed by boards it was written for (2026-10, before 2.4.17)
+- **What happened:** #1816 made a new image prove itself (60 s healthy)
+  before the bootloader stops offering a rollback. The engine and its pure
+  core were host-tested and right. The boards were not: the display, Sense,
+  Vision and Sentinel called the tick inside `if (broker)`, so a hub-less
+  unit never confirmed; the WAP fed it `WiFi.status() == WL_CONNECTED`, so a
+  standalone WAP updated over Bluetooth never confirmed; the flagship's
+  deliberate restart inside the window threw a good update away. Every tree
+  also took and erased the install marker on the first boot of the new
+  image, so it recorded "applied" (in the witness chain, on the WAP and the
+  flagship) for updates that the bootloader then undid, with nothing left
+  for the old image to record the rollback from. Each piece passed its own
+  test; the gaps were in what each board passed in and when it asked.
+- **The fix:** each loop ticks before any feature gate, with the link the
+  board is set up to hold (Wi-Fi for the display line, Sense and Vision; the
+  station link or, when the WAP is not joining home Wi-Fi, its own access
+  point); the flagship confirms at a deliberate stop once its probes have
+  passed; `securacv_ota_take_pending_version()` keeps the marker while the
+  running image is pending, and every tree records the outcome in one
+  function called at boot and again on the pass the tick confirms.
+  `regression_check.sh` refuses a confirm tick placed behind the broker gate.
+- **The rule:** when you add a gate whose input comes from the caller,
+  write down for every caller what that input will be in each of its modes
+  (no hub, no home Wi-Fi, on battery, mid-restart) and test the caller, not
+  only the gate. And record an outcome when it is known, not when the
+  question is first asked.
+
+### An id the parser copied short failed a signature it never mentioned (every release through 2.4.16)
+- **What happened:** the OTA manifest parser `strncpy`'d the product id into
+  `char product[32]` after comparing the full string, then rebuilt the
+  signed message from the copy. Seven published display ids are 32 to 37
+  bytes, so every one of those units failed every update's signature check
+  as "signature invalid", for as long as the channels existed. CI's own
+  verify step was Python, which never cuts, so it passed.
+- **The fix:** product ids get 48 bytes, versions 33, and the parser refuses
+  any field longer than its buffer, naming it, instead of cutting it.
+  `ota_release.py` models the device's field sizes and refuses a manifest
+  the device could not hold before anything is published; a host test runs
+  every product id in the tree through parse and signed message.
+- **The rule:** a fixed buffer on the signed path must refuse, never
+  truncate, and the tool that checks a signature for CI must read the bytes
+  the way the device will.
+
 ## A stacked board owns every pin it touches — read its silkscreen, not a guess
 
 ### The doorbell speaker sat on the camera module's reset pin (2026-10)

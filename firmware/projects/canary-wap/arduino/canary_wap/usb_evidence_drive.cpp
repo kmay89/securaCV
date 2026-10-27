@@ -172,7 +172,7 @@ static void run_update_check() {
   }
 
   // The exact network-OTA acceptance pipeline (host-tested end to end).
-  char floor_buf[16] = {0};
+  char floor_buf[SECURACV_OTA_VERSION_MAX] = {0};  // a dev floor ("2.4.18-dev.1-wap") is 16 bytes
   {
     Preferences p;
     if (p.begin("securacv_ota", /*readOnly=*/true)) {

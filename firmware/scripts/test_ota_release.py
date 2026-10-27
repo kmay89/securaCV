@@ -576,6 +576,12 @@ class TestDeviceBuffers:
         manifest = self.build(private_key)
         assert ota_release.legacy_engine_notes(manifest) == []
 
+    def test_a_dev_wap_version_notes_old_engines_cut_it(self, private_key):
+        manifest = self.build(private_key, product="securacv-canary-wap", version="2.4.17-dev.2-wap")
+        assert ota_release.verify_manifest(manifest, FIRMWARE, private_key.public_key()) == []
+        notes = ota_release.legacy_engine_notes(manifest)
+        assert any("version" in n and "2.4.16" in n for n in notes), notes
+
     def test_a_v2_manifest_notes_it_needs_2_4_17(self, private_key):
         manifest = self.build(private_key, board="xiao-esp32c6-mr60", chip="esp32c6")
         assert any("2.4.17" in n for n in ota_release.legacy_engine_notes(manifest))

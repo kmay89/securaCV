@@ -60,7 +60,7 @@ installed from its own page:
 | Product | Healthy while | Also confirms |
 |---|---|---|
 | `firmware/canary` (flagship) | the station link is up (the probes themselves run at its healthy gate, 30 s into `loop()`) | a deliberate restart (Home Assistant or HTTP reboot, serial `x`) once the probes passed — the code chose to stop, so it is not a crash inside the dwell |
-| canary-wap | the station link is up, **or** it runs standalone ("Use without home WiFi") with its own access point up — it can install over Bluetooth with no station network at all | — |
+| canary-wap | the station link is up when it is set to join home Wi-Fi; otherwise (standalone "Use without home WiFi", home Wi-Fi turned off, or none saved) its own access point is up — it can install over Bluetooth with no station network at all | — |
 | canary-display (every flavor) | Wi-Fi is up; the broker is not required | — |
 | canary-vision, canary-sense, canary-sentinel | Wi-Fi is up; the broker is not required | — |
 

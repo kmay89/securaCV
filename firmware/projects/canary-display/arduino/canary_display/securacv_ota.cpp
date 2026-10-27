@@ -1448,6 +1448,12 @@ bool securacv_ota_health_tick(uint32_t now_ms, bool healthy)
     // so it is asked only while a dwell is actually running (the 60 s window),
     // never on every loop pass for the life of the device.
     if (!s_ctx.initialized || !s_dwell.probes_passed || s_ctx.config.confirm_dwell_ms == 0) return false;
+    // An unhealthy pass restarts the dwell (what securacv_ota_dwell_tick does
+    // with it) without the otadata read: the display, Sense, Vision and
+    // Sentinel tick on every loop pass, broker or not, so a Wi-Fi outage
+    // inside the window would otherwise map otadata at loop rate. A pass
+    // that is not pending any more is still cleared, on the next healthy one.
+    if (!healthy) { s_dwell.dwell_started = false; return false; }
     if (securacv_ota_dwell_tick(&s_dwell, now_ms, healthy, s_ctx.config.confirm_dwell_ms,
                                 running_image_pending_verify()) != SECURACV_OTA_DWELL_CONFIRM) {
         return false;

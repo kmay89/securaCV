@@ -429,9 +429,13 @@ user actions through the update system that leaves a device unrecoverable.**
 > §2). Healthy means: `canary` (PlatformIO) — the station link up, with the
 > probes run at its healthy gate (`setup()` returned and `loop()` ran 30 s,
 > `bootpolicy::kDefaultHealthyDwellMs`), and a deliberate restart after the
-> probes passed confirms too; `canary-wap` — the station link up, or
-> standalone mode with its own access point up; the display, Sense, Vision
-> and Sentinel — Wi-Fi up, broker not required. `canary-ota` (no dwell)
+> probes passed confirms too; `canary-wap` — the station link up when it
+> is set to join home Wi-Fi, otherwise (standalone, home Wi-Fi turned off,
+> or none saved) its own access point up; the display, Sense, Vision and
+> Sentinel — Wi-Fi up, broker not required. Only the flagship confirms on a
+> deliberate stop: on the other products, a restart you trigger inside the
+> window (a dashboard Reboot, a display mode switch, Forget Wi-Fi) sends the
+> board back to its previous image. `canary-ota` (no dwell) confirms
 > seconds into `app_main`.
 
 - **A/B partitions:** updates are written only to the inactive slot; the

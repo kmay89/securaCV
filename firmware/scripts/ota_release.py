@@ -132,6 +132,9 @@ DEVICE_FIELD_BYTES: dict[str, int] = {
 # or longer id never verified there. `verify` notes it; it cannot be fixed
 # over the air, only by one USB install of 2.4.17 or newer.
 LEGACY_PRODUCT_BYTES = 32
+# The same engines held version and min_version in char[16]: a dev or rc WAP
+# version ("2.4.17-dev.2-wap", 16 bytes) was cut too.
+LEGACY_VERSION_BYTES = 16
 
 
 def device_field_problems(manifest: dict) -> list[str]:
@@ -170,6 +173,13 @@ def legacy_engine_notes(manifest: dict) -> list[str]:
             f"they need one install with the browser flasher or the Flasher app to reach "
             f"2.4.17, after which updates over the air work"
         )
+    for field in ("version", "min_version"):
+        value = manifest.get(field)
+        if isinstance(value, str) and len(value.encode("utf-8")) >= LEGACY_VERSION_BYTES:
+            notes.append(
+                f"{field} {value!r} is {len(value.encode('utf-8'))} bytes: units running 2.4.16 "
+                f"or older cut it to {LEGACY_VERSION_BYTES - 1} and cannot verify this manifest"
+            )
     if manifest.get("manifest_version", 1) == 2:
         notes.append(
             "manifest_version 2 (board/chip) verifies only on 2.4.17 or newer; units on "
