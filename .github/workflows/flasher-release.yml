@@ -662,8 +662,9 @@ jobs:
         id: attach
         if: inputs.channel != 'dev'
         # Adds/updates the flasher assets on the tag's release, creating the
-        # release if it doesn't exist yet (the pre-key path). Existing release
-        # notes and OTA assets are preserved.
+        # release if it doesn't exist yet (what the pre-key path relied on
+        # before the key ceremony). Existing release notes and OTA assets are
+        # preserved.
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}

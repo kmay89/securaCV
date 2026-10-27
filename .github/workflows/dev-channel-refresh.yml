@@ -140,7 +140,8 @@ jobs:
           if [ "$now" != "$LATEST" ]; then
             # Still firmware, so most likely a firmware release published
             # meanwhile (this run passes --latest=false on every write), and
-            # this run's copy of ${LATEST} may have landed over its own.
+            # this run's copy (of ${LATEST}, or of the `source` input) may have
+            # landed over its own.
             echo "::error::releases/latest moved from ${LATEST} to ${now} during this run, most likely a firmware release publishing meanwhile. Press this button again so the dev channel carries ${now}."
             exit 1
           fi

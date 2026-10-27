@@ -713,7 +713,7 @@ fully offline posture the OTA engine also offers.
 | `firmware/scripts/make_factory.py` | merges a build into one factory image |
 | `firmware/scripts/build_flash_manifest.py` | builds every factory image + `manifest-flash.json` (shared by both release paths) |
 | `.github/workflows/firmware-release.yml` | signed OTA release; also builds flasher assets in the same run, then dispatches `pages.yml` |
-| `.github/workflows/flasher-release.yml` | manual rebuild / pre-key publish of the flasher assets, then dispatches `pages.yml` |
+| `.github/workflows/flasher-release.yml` | manual rebuild of a tag's flasher assets, or a branch onto `fw-dev-latest` (signed), then dispatches `pages.yml` |
 | `.github/workflows/pages.yml` | deploys the Lab, with the same-origin copy of the pinned releases the page reads |
 | `canary-local/tools/mirror_release.py` | writes that copy (`firmware/<tag>/<file>`), each image held to its manifest's SHA-256 |
 
