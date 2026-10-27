@@ -739,7 +739,7 @@ identical white boxes apart while you're labeling rooms.
 
 | | Canary (WAP) | Vision / Sense |
 |---|---|---|
-| First contact | The iPhone app's *new Canary is nearby* card (pairs the phone too), else join its `SecuraCV-<kind>-XXXX` network with the key from its serial console and open `canary.local` | Flash with your credentials over USB, or the *new Canary is nearby* card, or join its `SecuraCV-XXXX` setup network with the key on the Flasher's card |
+| First contact | The iPhone app's *new Canary is nearby* card (pairs the phone too), else join its `SecuraCV-<kind>-XXXX` network with the key from its serial console and open `canary.local` | Flash with your credentials over USB, or the *new Canary is nearby* card, or join its `SecuraCV-<kind>-XXXX` setup network with the key on the Flasher's card |
 | Own dashboard | Yes (full web UI) | No — Home Assistant is the UI (setup wizard only, while unprovisioned) |
 | Wi-Fi setup | Captive portal / Settings → Wi-Fi | Flasher fields or `secrets/secrets.h`; setup network as the fallback |
 | Broker address | Set on the dashboard | Flasher fields or `secrets/secrets.h` |

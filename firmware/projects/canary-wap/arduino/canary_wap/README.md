@@ -183,7 +183,7 @@ same way; no sketch change is needed.)
 1. Upload the sketch to your XIAO ESP32-S3
 2. Open Serial Monitor at **115200 baud**
 3. Note the WiFi SSID and password from the boot banner
-4. Connect your phone/laptop to the `SecuraCV-XXXX` WiFi network
+4. Connect your phone/laptop to the `SecuraCV-wap-XXXX` WiFi network
 5. Open `http://192.168.4.1` or `http://canary.local`: the first-boot setup wizard opens only at those two names, and `/` under any other name gets the static "open canary.local" page. After setup the device's unique mDNS URL reaches the dashboard: `http://canary-<name>.local` once you name it, and until then `http://canary-` plus four lowercase hex digits, the first two bytes of its key fingerprint, e.g. `http://canary-7916.local` (at the default log level the boot log names it on the `[INFO/NETWORK] mDNS started | canary-7916` line)
 6. On first boot, save the **Provisioning Receipt** from Serial output
 

@@ -245,6 +245,17 @@
   lockdown in one step; tripwire paths; blocks that survive a restart; a
   self-check at boot; `MAINTENANCE.md`.
 
+### canary-wap: "Set up the next Canary" names the setup network the way 2.4.17 does
+
+- The setup wizard's guide for the next Canary told the owner to wait for a
+  fresh `SecuraCV-XXXX` network. From 2.4.17 that network carries the
+  device's kind (`SecuraCV-sense-…`, `SecuraCV-wap-…`), so the step now says
+  to wait for a fresh network whose name starts with `SecuraCV-`, as the
+  page's self-test hint already did. `web_assets_gz.h` is regenerated
+  (the device serves the gzipped copy). Ships with the next WAP firmware;
+  checked on the host only (`gen_web_assets_gz.py --check`, the microcopy
+  lint, the WAP page tests).
+
 ### canary-wap: after setup the API token alone moves its network over HTTP (a Bluetooth peer bonded through the pairing confirm or a passkey still moves it; a network joined before the update can stay saved), re-keys its vault, confirms a pairing and reboots it (the firmware install aside), and the sign-in checks a pasted token by itself; a failed provisioning says what the unit does (sweep F333, F334, F335, F336, F345, F346, F348, F349, F361, #1887)
 
 - **canary-wap: one dashboard sign-in, which checks a pasted token by itself
@@ -394,6 +405,312 @@
   set-it-up-again advice, which now says Remove credentials asks for the
   token first), and `test_docs_claims.py` retires each where it stood. No
   route or gate changed in the merge that brought #1884 in.
+
+### The hosted browser flasher reads the pinned release from the site's own copy
+
+- **On the hosted page, every product read unavailable.** No browser can
+  read a GitHub release asset: `github.com` answers
+  `/releases/download/<tag>/<file>` with a redirect that carries no CORS
+  header, and the asset host answers the file with none either. So after
+  fw-v2.4.17 published, the browser flasher on GitHub Pages reported a
+  connection problem and every product as unavailable, and its dev channel
+  and the Vision model's download failed the same way. The desktop Flasher
+  and the Lab fetch natively and were never affected.
+- **The site deploy now copies the pinned releases into the site.**
+  `pages.yml` runs `canary-local/tools/mirror_release.py`, which copies the
+  manifest `flash.json` pins, the Vision model's and the dev channel's
+  (`fw-dev-latest`), byte for byte, and every file each lists, held to its
+  manifest's SHA-256 and size, to `canary-local/firmware/<tag>/<file>`. A
+  channel lands whole or not at all; a release not cut yet, or one still
+  uploading or disagreeing with its manifest, is a warning, and a transport
+  failure fails the deploy so the last good site stays live. A release made with the `GITHUB_TOKEN` fires no
+  event that would redeploy the site, so `firmware-release.yml`,
+  `flasher-release.yml` and `vision-model-release.yml` dispatch `pages.yml`
+  on the default branch once they publish (a refused dispatch is a warning,
+  not a failed release).
+- **The page reads only that copy.** `flash-core.js` `fetchReleaseAsset`
+  maps a release URL to the copy by its tag and file name on every http(s)
+  page, loopback and LAN included, and `flash.js` and `we2-flash.js` read no
+  release asset any other way. The
+  signed manifests are never rewritten, so the SHA-256 and Ed25519 checks
+  bind the same bytes as before. `flash.html`'s Content-Security-Policy
+  (`gen_csp.py`) no longer names `github.com` or `*.githubusercontent.com` in
+  `connect-src`.
+- **A 404 names the server that answered**: "This site's copy of firmware
+  release … isn't available" (or of the dev channel, or of the Vision
+  model), with the advice to reload once the redeploy that follows a release
+  lands; under a `?manifest=` override, that override's server. The page
+  never says a release was not cut: the release host answers no browser, so
+  no answer the page gets can mean that.
+- Host-tested (`flash.test.js`, `csp.test.js`, and
+  `scripts/tests/test_pages_release_mirror.py`, which holds the deploy's
+  writer to the page's reader and the release workflows' dispatches to their
+  order) and in Chromium by `canary-local/tests/flash_mirror_probe.mjs`,
+  which serves the page and a fixture copy from one origin and fails on any
+  request that leaves for github.com. It had not run against the live site
+  when this was written: it takes effect at the first site deploy that
+  carries it.
+
+### Factory images put the bootloader where each chip's ROM loads it: the classic-ESP32 images move it to 0x1000, both flashers refuse an image laid out for the wrong chip, and the capacity check reads past a classic ESP32's empty first 4 KB
+
+- **fw-v2.4.17's ESP32-CAM and ESP32 DevKit factory images cannot boot.**
+  `canary-esp32cam-2.4.17-factory.bin` and `canary-wroom-2.4.17-factory.bin`
+  carry the bootloader at 0x0; both flashers write a factory image at flash
+  0x0, and a classic ESP32 loads its bootloader from 0x1000. Read from the
+  published bytes; both boards are compile-tested reach ports that nobody has
+  booted. A board installed from either file is recovered over USB with a
+  correct image: one from fw-v2.4.18, or from the dev channel (**Advanced →
+  dev channel**) once `fw-dev-latest` carries a build from main with this
+  fix. Until fw-v2.4.18, the release channel has no correct Canary image
+  for these two boards. Nothing else on that release is affected: those two
+  boards' OTA channels are not published, and the other 19 factory images (S3,
+  C3, C6) carry their own chip's bootloader at 0x0, where their ROM loads it.
+- **`make_factory.py` takes the bootloader offset from `--chip`**: 0x1000 for
+  `esp32` and `esp32s2`, 0x0 for the S3/C3/C6/C2/H2, held to esptool's own
+  table. It used to default to 0x0 for every chip and no caller passed the
+  flag. A chip it has no offset for is refused unless `--bootloader-offset`
+  names one, which still overrides, with a warning when it disagrees with the
+  ROM. The bootloader's image header must name the same chip (`--chip auto`
+  reads it from there), and the merged file is read back before it is kept.
+  `build_flash_manifest.py` needed no change for this: both release paths
+  already pass `--chip`, so they inherit the fix. `dev_flash.sh -f` falls back
+  to `--chip auto` instead of `esp32s3` for an env with no `board_build.mcu`
+  (the classic-ESP32 reach envs). `firmware/scripts/test_make_factory.py`
+  merges real images from synthetic parts with esptool 4.12.0 and checks 0xE9
+  at 0x1000 for `esp32`/`esp32s2` and at 0x0 for the S3/C3/C6, and holds that
+  esptool to the release workflows' pin; the Mesh + Scout Host Tests job runs
+  it, and `firmware.yml` now also runs on an edit to `flasher-release.yml`.
+- **Both flashers refuse, before writing, an image whose bootloader is not
+  where the connected chip's ROM loads it.** The partition-table check passed
+  fw-v2.4.17's two classic-ESP32 images. Now the catalog install and the
+  local-file install each look for a bootloader built for the connected chip
+  (the 0xE9 image magic, and that chip's id in the header's byte 12) at
+  0x1000 on an ESP32 or S2 and at 0x0 on the S3/C3/C6/C2/H2: the browser in
+  `flash-core.js` `bootloaderPlacement`, the desktop Flasher and the Lab in
+  the shared flash engine's `check_bootloader_offset` (the Flasher's
+  `flash_local_file` now takes the detected chip). The chip id keeps a stray
+  0xE9 byte at the ROM offset, or a local file built for another chip that
+  loads from the same place (an S3 image on a C3), from passing. The refusal
+  says where the chip looks, where the image has its bootloader or that the
+  one there is another chip's, that nothing was written, and that SecuraCV
+  factory images from fw-v2.4.18 on are laid out right, in the same words on
+  both; all three error classifiers name it (`layout`) instead of coaching
+  download mode, and neither failure card then offers a clean install (nor,
+  on the desktop, "Try again"), which would refuse the same image again. A
+  chip the table does not list is not judged, so the check refuses only an
+  image that chip's ROM would not start; the other 19 images on fw-v2.4.17,
+  and every factory image on `fw-dev-latest` but the same two boards', pass
+  it (their first 8 KB read from the releases). One table, held equal to
+  `make_factory.py`'s `ROM_BOOTLOADER` by
+  `desktop_parity.test.js`, which also requires a row for every chip in
+  `flash.json` (that check moved there from `test_make_factory.py`, so it runs
+  when the catalog changes). The hosted browser flasher refuses fw-v2.4.17's
+  two classic-ESP32 images from the next site deploy; the desktop Flasher and
+  the Lab do from their next release. A backup restore is not checked: it puts
+  back the board's own bytes.
+- **The counterfeit-capacity check reads 8 KB, not 4.** Both flashers took
+  the flash-size probe's fingerprint from the first 4 KB of flash, which a
+  correctly installed classic ESP32 leaves erased: every such board read "the
+  chip is blank", and a 2 MB die sold as 4 MB was never caught. The window is
+  now 0x2000, past a classic ESP32's bootloader at 0x1000, in both flashers
+  (`intake.js` `FLASH_ALIAS_WINDOW`, `intake.rs` `ALIAS_WINDOW`, held equal by
+  `desktop_parity.test.js`, which also holds the window past every offset in
+  the ROM table, so a chip that loads from 0x2000 cannot join it unseen), with
+  a classic-layout case on each side.
+- **The desktop Flasher's local-file note looks at 0x1000 too.** It warned
+  that a file not starting with 0xE9 was unusual, which is every correct
+  classic-ESP32 factory image; it now looks for the magic at 0x0 or 0x1000
+  and says such a file will be refused, and the write's "writing anyway"
+  warning gave way to the refusal above. The comment in `flash.rs` that
+  called 0x0 right for every merged image now says why it is: the merge
+  placed each part at its address inside the file. Host-tested (node and
+  cargo unit tests); not bench-tested.
+
+### The website's download buttons are carried from the published releases
+
+- **`scripts/carry_to_site.py` gains a `downloads` carry.** Once the
+  website's exact-link /download page merges, it links exact releases
+  (`app-v<x.y.z>` for the Lab, `flasher-v<x.y.z>` for the Flasher) and names
+  the same tags in its note; the carry moves every such token in
+  `download.html` to the newest release of its app that the GitHub REST API
+  shows as published (not a draft, not a prerelease, a bare `x.y.z` tag, its
+  `_universal.dmg`, `.AppImage` and `.deb` uploaded, highest by number) and
+  leaves every other byte alone. The installers count because the Flasher's
+  release is created published before its builds upload, and a failed run
+  leaves it that way. It reads the list with `GH_TOKEN` when set, follows
+  every page and makes three attempts on a network error, a body cut off or
+  not JSON, a 5xx or a 429. It never reads `tauri.conf.json`: a version bump
+  merges before its release exists, and a stamp from the config would point
+  the buttons at a missing page. A run that cannot read the list, finds no
+  published release of an app, or finds a page that names no token of an app,
+  leaves the page as it is and says why, and a default run still writes every
+  other carry; `--only downloads --check` exits 1 on a stale page, an
+  unreadable list and a page with nothing to move. Pinned by
+  `scripts/tests/test_carry_to_site.py` (no network: the API reader is tested
+  against a stand-in `urlopen`). Run on a scratch copy of the website: a page
+  at `app-v0.3.2` / `flasher-v0.12.2` keeps its bytes, and a page faked back
+  to `app-v0.2.4`, `app-v0.3.1` and `flasher-v0.11.9` is stamped back to the
+  committed page byte for byte (the website's `tests/download-facts.test.mjs`
+  passes both: it holds the page to one version per app, not to the newest
+  one, which is what this carry adds). Run on website main, whose buttons
+  still open the release search: `download.html` is left byte for byte, the
+  other carries are written and the run exits 0, so this can merge before or
+  after the website's exact-link page. The website half is not in this change:
+  its weekly carry job commits only the paths in its `CARRY_PATHS`, so
+  `download.html` joins that list, the carry step needs `GH_TOKEN` in its
+  environment, and its `tests/download-facts.test.mjs` header (which says the
+  stamp is not built yet) names this carry; until then the buttons move only
+  by `--only downloads` run by hand.
+
+### Every release brings the dev channel up to stable, and the flashers say where it stands
+
+- **A stable release now refreshes the dev channel when it is older.** The
+  rolling `fw-dev-latest` prerelease held no per-product OTA manifest (a Canary
+  on the dev channel got a 404 on every check) and a 2.4.15 flash catalog
+  under stable 2.4.17: only a `-dev.N` / `-rc.N` release ever wrote it, and none
+  had been cut. `.github/scripts/dev_channel.py` copies a release's channel
+  manifests there, byte for byte, wherever the dev channel carries an older
+  version, none, or the same version in other bytes (a bring-up build, which
+  it replaces), and leaves a newer dev build alone; every firmware release
+  runs it, and **Actions → Refresh the dev channel (catch up to stable)** runs
+  it with `releases/latest`, or with the `fw-v*` tag its optional `source`
+  input names, then redeploys the site. It never moves `releases/latest`,
+  deletes nothing and keeps `fw-dev-latest` a prerelease.
+  **Flasher Factory Images** (`channel: dev`) now refuses a branch older than
+  stable, and its tag rebuild brings the dev channel's copy of that release's
+  catalog along. A stable release whose dev-channel step fails leaves the
+  channel behind until the button is pressed; a dev release's step fails the
+  run, and the button with that release's tag as `source` finishes the copy
+  without rebuilding anything. Re-running the release's job is not the way: a
+  dispatched release's re-run stops at its tag-exists check, and a pushed
+  tag's rebuilds and re-uploads every asset of the release. The button refuses
+  a `source` that is not a published release, so a mistyped tag goes red
+  rather than passing as "nothing to do".
+  Host-tested (`.github/scripts/test_dev_channel.py`, its version order held to
+  the device's own cases) and dry-run read-only against the public releases;
+  the button had not been pressed when this was written.
+- **Both flashers stop calling the dev channel "ahead of stable" by
+  assumption.** The browser page, the Lab's native bench and the desktop
+  Flasher compare the dev catalog's `fw_train` with the train of the release
+  they are pinned to and say newer, the same version, or older on the dev
+  banner (`devChannelStanding`, the same sentence in both flashers,
+  `desktop_parity.test.js`). They do not call it stable or ahead of stable:
+  the desktop Flasher and the Lab pin the train they were built with. The
+  device needed no change: a stable version on the dev channel is an ordinary
+  update to a dev unit running anything older.
+
+### Release images name their product and version, so both flashers can say what a board runs
+
+- **Every SecuraCV image up to fw-v2.4.17 introduced itself as an Arduino
+  sketch.** An app image's `esp_app_desc_t` is the record both flashers read
+  off a connected board, and the Arduino core's precompiled libraries define
+  it: all 21 fw-v2.4.17 images say `arduino-lib-builder`, version `esp-idf:
+  v4.4.7 38eeba213a` (or `14a0af9`, `43a8f6d`). So neither flasher named the
+  product on a board already running SecuraCV, the install verdict read
+  "Version unknown", and installing an older image over a newer one gave no
+  downgrade warning. A sketch cannot set the record at compile time.
+- **The release stamps it after the build.** New
+  `firmware/scripts/stamp_app_desc.py` writes the product's `asset_stem` from
+  `flash.json` (`canary-wap`, `canary-display-nightstand-s3`: every stem fits
+  the 31-character field, where product ids do not) and the firmware's own
+  version string (the `CANARY_FW_VERSION` / `FIRMWARE_VERSION` literal, the
+  WAP's `-wap` suffix included) into the descriptor, then recomputes the
+  image's checksum byte and its appended SHA-256. Nothing else in the
+  descriptor moves: not `app_elf_sha256` (the boot guard's image identity),
+  `secure_version`, the date, the time or `idf_ver`. It refuses an image of
+  the wrong shape or with an already-wrong checksum or hash, and a value that
+  does not fit; it stamps only an image that already carries the version
+  string and its product's id outside the descriptor, so the release's
+  version guards still test the firmware and not the stamp, and a build that
+  identifies as another product (a `modes` display build without its flavor
+  staged is a gearless dash) is never named for the slot it sits in;
+  stamping twice changes nothing. `firmware-release.yml` and
+  `flasher-release.yml` run it after their last build and before anything
+  copies, hashes, signs or merges an app, so the OTA manifests' sha256 and
+  signatures and the factory images cover the stamped bytes; each stamped
+  image is read back with esptool's `image_info` and the run fails unless
+  esptool calls the checksum and hash valid and reads the name and version
+  written. In `firmware-release.yml` an app it refuses (empty, truncated,
+  malformed) is moved aside, so that product drops out like a failed build
+  instead of sinking the release, and the completeness gate weighs it (a
+  product the signed release cannot ship without still fails it); Flasher
+  Factory Images passes `--fail-on-refused` and fails the run instead,
+  because it uploads its `manifest-flash.json` over the tag's with no
+  completeness gate. A flasher rebuild of an older tag stamps that tag's
+  factory images too (the stamper is overlaid with the other packaging tools).
+- **Both flashers.** A stamped board reads as running, say, "Canary WAP" and
+  its version, and the existing install verdicts work on it: update, reinstall, downgrade, and
+  switch from another product. Customs says "Arrived running Canary WAP" for
+  an exact stem (that name is the image's own claim, and the finding says
+  so). An `arduino-lib-builder` image still reads as "an Arduino sketch",
+  whose detail no longer calls it a stock image: SecuraCV releases up to
+  2.4.17, and any SecuraCV build made outside a release (`pio run -t
+  upload`, `dev_flash.sh`, an OTA push), read that way too, and the check
+  cannot tell them apart. Prerelease versions now order field by field,
+  numerically where both are digits, so a board on `2.4.18-dev.10` offered
+  `-dev.9` reads as a downgrade (as strings, `dev.10` sorted first). The
+  descriptor's date is no longer shown beside the product and version: on
+  an Arduino build it is the Arduino core's (fw-v2.4.17's read Mar 5 2024),
+  and the stamp leaves it alone, so only the health report shows it,
+  labeled "descriptor dated".
+- **From the next release on.** Images already published, fw-v2.4.17's
+  included, are unchanged, and boards running them keep reading as an Arduino
+  sketch until they update. A dev-channel build (`fw-dev-latest`) is stamped
+  with the train's version, the number its sources compile in, so a board
+  running one reads as that release, "already on 2.4.17", though it runs
+  newer code. Host-tested only: `test_stamp_app_desc.py` builds
+  images for the ESP32, S3, C3 and C6 with esptool 4.12.0, stamps them and
+  reads them back, failing side included (and all 21 downloaded fw-v2.4.17
+  apps round-trip through it when named in `STAMP_APP_DESC_FACTORY`, done by
+  hand for this change);
+  `scripts/tests/test_release_app_desc_stamp.py` holds both workflows to the
+  order. No stamped image has been flashed to a board or installed over the
+  air yet.
+
+### A board brought up with BOOT held: the desktop fuse read no longer ends by resetting it into its firmware, and the browser's hello card no longer boots it
+
+- **The desktop Flasher's *Read its security fuses* no longer ends by
+  restarting the board into its own firmware.** The read reset the chip
+  into the ROM, read eFuse block 0, then hard-reset it, on success and on
+  both failure paths. That ran the very firmware the person had held BOOT
+  to keep from running, which on a native-USB board can present itself as
+  a keyboard. The read now parks DTR and RTS released (a state that resets
+  nothing, and the one closing the port leaves them in on Linux and macOS)
+  and stops there, esptool's `--after no_reset`: after a good read the chip
+  stays in the ROM's download mode until the install or an unplug. An
+  install still connects: espflash resets into the ROM itself before it
+  writes.
+- **On a native-USB board it enters the ROM with that port's own reset.**
+  It ran the classic bridge sequence first on every port. On the
+  USB-Serial/JTAG port a BOOT-held S3, C3 or C6 presents (`0x303A:0x1001`),
+  that sequence's first move holds RTS alone, which is the port's own hard
+  reset, and releases it before asking for IO0, so the firmware most likely
+  ran through the failed SYNCs until the second sequence pulled it back, if
+  its port survived. The read now looks the port up in the OS's list and
+  gives that PID only the USB-Serial/JTAG sequence, as esptool, the pinned
+  espflash and the vendored esptool-js do. Any other port keeps classic
+  first and USB-Serial/JTAG second; on a bridge board a classic reset that
+  misses the ROM is still followed by one that starts the firmware, as
+  before.
+- `efuse.rs`'s tests replay the read against a scripted board: every line
+  move after the last SYNC or READ_REG is the park alone (a good read, a ROM
+  that never answers, one that stops mid-read), and a USB-Serial/JTAG port
+  never sees a reset before IO0 was asked for. `desktop_parity.test.js`
+  holds every RTS assertion in `efuse.rs` to the two enter sequences, so a
+  reset added around the real port fails too.
+- **The browser flasher's hello card no longer boots a board unless you
+  said it was already plugged in.** After its connect reads, its live
+  voice reset any board with readable firmware into that firmware, before
+  anything was written. The cold-start answer is now unset until you give
+  it and asked afresh on each connect card, so it never carries over to
+  the next board, and the live voice starts only on "It's already plugged
+  in". A board you held BOOT on, or didn't answer for, stays in the
+  bootloader until the install; "ask the board itself" and the serial
+  monitor still boot it on a click.
+- Host-tested only, not bench-tested on a board. The website's advice to
+  unplug and hold BOOT again after a desktop fuse read stays until a
+  Flasher release carries this and a bench read on a native-USB S3 held in
+  BOOT shows it still in the ROM afterward.
 
 ## [2.4.17] - 2026-10-27
 

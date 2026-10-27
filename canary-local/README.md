@@ -111,10 +111,19 @@ python3 -m http.server -d /path/to/securaCV 8000
 ```
 
 Nothing phones anywhere: no CDN, no fonts, no analytics. Every fetch stays
-on the page's own origin except the flasher's: the signed release hosts
-(GitHub's release host and its asset CDN) and a same-machine manifest server
-on loopback, each a row with a reason in the policy table (§9). Invariant IV
-extends to the docs.
+on the page's own origin, the flasher's firmware included: a browser cannot
+read a GitHub release asset (no CORS header on the download or the asset
+host), so the deployed site carries its own copy of the releases the flasher
+pins, at `firmware/<tag>/<file>` (`pages.yml` runs `tools/mirror_release.py`,
+which holds every image to its manifest's SHA-256 first), and
+`flash-core.js` `fetchReleaseAsset` reads it there and nowhere else, on any
+host. The flasher's policy names no GitHub host; beyond `'self'` it adds only
+a same-machine manifest server on loopback, a row with a reason in the policy
+table (§9). Served straight from a checkout, as above, there is no copy: the
+flasher's official images stay unavailable there, and the page says this
+site's copy of the release is missing (`docs/browser_flasher.md` § Where the
+page reads the release from says how to try it locally). Invariant IV extends
+to the docs.
 
 ---
 
@@ -238,7 +247,7 @@ Three doors into the same live device, all driven by one scenario API
 - **Try it** — free play: link switches, time controls, staged events,
   tamper, household ack-sync from a "sibling display". And the first
   boot: "meet the bird again" reboots a factory-fresh unit (no Wi-Fi
-  stored), the real `net/provision.cpp` raises its `SecuraCV-XXXX`
+  stored), the real `net/provision.cpp` raises its `SecuraCV-display-XXXX`
   SoftAP, and a phone (`assets/onboard-phone.js`) walks the display's own
   portal — join with the key from the glass's QR, the captive DNS answer,
   the firmware's page in a sandboxed `srcdoc` frame, `/scan`, `/join`,
@@ -564,7 +573,7 @@ one line per connection, and the step player walks.
 The Hub teaches the place the fleet converges; **The WAP teaches the first
 five minutes of a single device.** The Canary WAP is the WiFi-CSI witness on
 the XIAO ESP32-S3 Sense — and it is, literally, a **W**ireless **A**ccess
-**P**oint: unprovisioned, it brings up a `SecuraCV-XXXX` network with a
+**P**oint: unprovisioned, it brings up a `SecuraCV-wap-XXXX` network with a
 device-unique WPA2 password and a captive portal, and you set it up from a
 phone. `wap.html` stages that whole experience from the firmware's own bytes:
 
@@ -797,7 +806,7 @@ live bench preview with the on-module TSCORE/TIOU sliders.
 | Engine (DOM-free: CRC, XMODEM, preamble, state machine, AT parser) | `assets/we2-core.js` |
 | WebSerial transport + the flow UI | `assets/we2-flash.js` (mounted from `flash.js`) |
 | Catalog block + doc drift-gate | `tools/gen_flash.py` → `devices/flash.json` `we2_module` |
-| Release asset pipeline | `.github/workflows/vision-model-release.yml` |
+| Release asset pipeline | `.github/workflows/vision-model-release.yml` (then `pages.yml` copies the model into the site: the page reads it same-origin) |
 | Honesty gate (scripted fake bootloader, byte-level) | `tests/we2.test.js` |
 ## 4l. The Sense Lab: the radar pipeline, on the bench (`senselab.html`)
 
@@ -852,7 +861,10 @@ Three tiers, no lock-in, one source of truth:
    server, fully offline. Versioned with the firmware it teaches.
 2. **GitHub Pages** — `.github/workflows/pages.yml` publishes
    `canary-local/` (+ the enclosure files it references) on every main
-   push. Enable once: Settings → Pages → Source → "GitHub Actions".
+   push, with a same-origin copy of the firmware releases the flasher pins
+   under `canary-local/firmware/` (a page in a browser cannot fetch a release
+   from GitHub itself); the release workflows dispatch it again once they
+   publish. Enable once: Settings → Pages → Source → "GitHub Actions".
 3. **securacv.com** — the marketing site adopts it whenever ready,
    either by pointing a custom domain/subdomain at Pages
    (e.g. `local.securacv.com`, one CNAME) or by copying the built site
@@ -1194,13 +1206,14 @@ The rules, which the generator enforces rather than documents:
   `form-action 'none'`); everything a page needs beyond it is a row in
   `PAGES` inside `gen_csp.py` naming the directive, the sources and *why*:
   `'wasm-unsafe-eval'` for the pages that boot the firmware wasm,
-  `frame-src 'self'` for the two pages that frame another, the flasher's
-  signed release hosts and loopback. The tool cross-checks the grants against
-  the page, both ways — a page that loads `emulator/dist/` without the wasm
-  row fails, and so does a row whose page no longer loads it; the same holds
-  for `frame-src` and the page's iframes, and for the release hosts and the
-  modules that fetch a release (`flash.js`, `we2-flash.js`), which would
-  otherwise fail behind a click where the browser probe never looks.
+  `frame-src 'self'` for the two pages that frame another, and the
+  flasher's loopback manifest server. No page names the GitHub release host
+  or its asset CDN: no browser can read a release asset from them, so the
+  flasher reads the site's copy of the release under `'self'`
+  (`tests/csp.test.js` holds every page to that). The tool cross-checks the
+  grants against the page, both ways — a page that loads `emulator/dist/`
+  without the wasm row fails, and so does a row whose page no longer loads
+  it; the same holds for `frame-src` and the page's iframes.
 - **Every hash is computed from bytes, on purpose.** `flash.html`'s
   import map (the SRI pins for the vendored flasher engines) cannot be an
   external file, so it is the single entry in `INLINE_SCRIPT_OK` and its
@@ -1220,8 +1233,9 @@ The rules, which the generator enforces rather than documents:
   the document; discovery rides the native side of the desktop Lab
   (`witness-host.js` → `invoke`), so `connect-src` is `'self'` plus the Tauri
   IPC origins (`ipc:`, `http://ipc.localhost` — dead letters in a browser)
-  and, on the flasher only, the signed release hosts. A scheme source such as
-  `http:` would be a table entry with a reason, and today there is none.
+  and, on the flasher only, loopback for a same-machine manifest server. A
+  scheme source such as `http:` would be a table entry with a reason, and
+  today there is none.
 - **Unused directives are trimmed, not granted.** The floor could carry
   `blob:` in `img-src`, a `worker-src` and a `media-src`; no page needs them
   (the benches synthesize audio, the eyes bench's `<video>` takes a

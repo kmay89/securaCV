@@ -271,6 +271,92 @@ test("looksLikeDisplayProject + displayFor: naming a screen build off the wire",
   assert.strictEqual(c.displayFor(catalog, "canary-vision"), null);
 });
 
+// The connected card's role line, run as flash.js wrote it. A release stamps
+// each product's asset_stem into the descriptor's project_name, and every
+// display stem says "display", so a stamped display board takes the display
+// branch. displayFor's loose match answers the first entry (the Watch
+// Station) for any stem that is not a displays[] id, so the line must name
+// the product's own glass (its flash_product) or none, never another
+// device's, and offer a live screen only for a glass that exists.
+function fnSource(src, name) {
+  const i = src.indexOf(`function ${name}(`);
+  assert.ok(i >= 0, `couldn't find function ${name}`);
+  const b = src.indexOf("{", src.indexOf(")", i));
+  let d = 0;
+  for (let k = b; k < src.length; k++) {
+    if (src[k] === "{") d++;
+    else if (src[k] === "}") { d--; if (!d) return src.slice(i, k + 1); }
+  }
+  throw new Error(`unbalanced function ${name}`);
+}
+
+async function roleLine(projectName, cat = catalog) {
+  const c = await core();
+  const src = fnSource(readFileSync(join(ROOT, "assets/flash.js"), "utf8"), "renderRoleLine");
+  // Stand-ins for the DOM helper and the phase machinery: a node records its
+  // text and children, a button its click, which opens the bench it names.
+  const el = (tag, cls, text) => {
+    const n = { tag, cls, text: text || "", kids: [], click: null };
+    n.append = (...k) => { n.kids.push(...k); };
+    n.addEventListener = (ev, fn) => { if (ev === "click") n.click = fn; };
+    return n;
+  };
+  let bench = null;
+  const run = new Function("state", "core", "el", "setPhase", "phaseDisplayBench", "phaseConnected",
+    `${src}\nreturn renderRoleLine();`);
+  const node = run({ current: { version: "2.4.18", projectName }, catalog: cat }, c, el,
+    () => {}, (d) => { bench = d; return null; }, () => null);
+  if (!node) return null;
+  const text = [node.text, ...node.kids.map((k) => k.text)].join("");
+  const button = node.kids.find((k) => k.tag === "button");
+  if (button) button.click();
+  return { text, button: !!button, bench };
+}
+
+test("the role line names a stamped display board's own glass, or none", async () => {
+  const c = await core();
+  const displays = c.displaysIn(catalog);
+  const products = catalog.products.filter((p) => p.role === "display");
+  assert.ok(products.length >= 10, "the display products the release stamps");
+  let withGlass = 0, without = 0;
+  for (const p of products) {
+    const line = await roleLine(p.asset_stem);
+    assert.ok(line, `${p.asset_stem}: a stamped display board gets a role line`);
+    assert.match(line.text, /This board is a display — it SHOWS/, p.asset_stem);
+    const own = displays.find((d) => d.flash_product === p.id);
+    if (own) {
+      withGlass++;
+      assert.ok(line.text.includes(`It looks like the ${own.name}.`), `${p.asset_stem}: ${line.text}`);
+      assert.ok(line.button, `${p.asset_stem}: its own glass has a live screen`);
+      assert.strictEqual(line.bench && line.bench.flash_product, p.id,
+        `${p.asset_stem}: the live screen must be its own (${own.id}), not ${line.bench && line.bench.id}`);
+    } else {
+      without++;
+      assert.ok(line.text.includes(`It looks like the ${p.name}.`), `${p.asset_stem}: ${line.text}`);
+      assert.ok(!line.button, `${p.asset_stem}: no displays[] entry, so no live screen to offer`);
+    }
+    for (const other of displays.filter((d) => d.flash_product !== p.id)) {
+      assert.ok(!line.text.includes(`the ${other.name}.`), `${p.asset_stem} named another device: ${line.text}`);
+    }
+  }
+  // Both arms are exercised by the real catalog (the Nightlight's display id
+  // is canary-nightlight, not its stem: the flash_product link carries it).
+  assert.ok(withGlass >= 1 && without >= 1, `${withGlass} with a glass, ${without} without`);
+  const nl = await roleLine("canary-display-nightlight-c3");
+  assert.strictEqual(nl.bench && nl.bench.id, "canary-nightlight");
+  // A name with no flavor (every pre-stamp display image) keeps the family
+  // guess, live screen and all; a catalog with no displays names none.
+  const bare = await roleLine("canary_display");
+  assert.ok(bare.button && bare.bench, "a flavorless display name keeps the family's live screen");
+  assert.strictEqual(bare.bench.id, c.displayFor(catalog, "canary_display").id);
+  const none = await roleLine("canary_display", { ...catalog, displays: [] });
+  assert.match(none.text, /it SHOWS\. $/);
+  assert.ok(!none.button);
+  // A non-display stem takes the other branch: its product, by name.
+  const vision = await roleLine("canary-vision-xiao-s3");
+  assert.match(vision.text, /A Canary Vision · XIAO S3 — it senses people/);
+});
+
 // ── help registry ──────────────────────────────────────────────────────────
 test("helpTopic: lookup, and graceful nulls", async () => {
   const c = await core();

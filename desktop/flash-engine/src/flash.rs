@@ -17,7 +17,7 @@
 
 use crate::catalog::{Catalog, DEV_FLASH_MANIFEST_URL};
 use crate::host::{run_capture, run_streaming, run_streaming_with_tail, FlashHost};
-use crate::image::{read_safety_copy, stage_firmware};
+use crate::image::{check_bootloader_offset, read_safety_copy, stage_firmware};
 use crate::provisioning::Provisioning;
 use crate::{broker_receipt, changemap, intake, port_hint, provisioning, release, rescue, sidecar};
 use serde::Serialize;
@@ -334,6 +334,11 @@ pub async fn flash<H: FlashHost>(
             &release_sha[..16]
         )
     });
+    // The image is written at 0x0, so its bootloader must already sit where
+    // this chip's ROM loads it. The signature vouches for who built the
+    // bytes, not for their layout: fw-v2.4.17's signed ESP32-CAM and WROOM
+    // images carried the bootloader at 0x0, where a classic ESP32 never looks.
+    check_bootloader_offset(&downloaded, &detected_chip)?;
 
     // Provision only after verifying the untouched release. The installed hash
     // records the exact per-device image we actually hand to espflash.
@@ -438,7 +443,7 @@ pub async fn flash<H: FlashHost>(
             // The safety copy was read with the chip's DECLARED size, so the
             // dump's own length is that claim — no extra argument needed.
             let declared = old.len() as u64;
-            if declared >= 0x2000 {
+            if declared >= 2 * intake::ALIAS_WINDOW as u64 {
                 let f = intake::flash_alias_verdict(&old, declared);
                 if f.level == "stop" {
                     emit(format!("✗ {}", f.label));
@@ -512,8 +517,15 @@ pub async fn flash<H: FlashHost>(
         emit("✓ chip erased — nothing of the old firmware is left".into());
     }
 
-    // 3) Flash the merged factory image at 0x0. A factory image already carries
-    //    the bootloader/partition table at their real offsets, so 0x0 is right.
+    // 3) Flash the merged factory image at 0x0. A factory image is a picture of
+    //    flash from address 0, so 0x0 is right for every chip only because
+    //    make_factory.py placed each part at its address INSIDE the file: the
+    //    bootloader where that chip's ROM loads it (0x1000 on a classic ESP32
+    //    or an S2, 0x0 on the S3/C3/C6), the partition table at 0x8000, the
+    //    app at its slot. Writing at 0x0 does not make a bad layout right:
+    //    fw-v2.4.17's classic-ESP32 images carried their bootloader at 0x0 and
+    //    could not have booted (make_factory.py now takes it from --chip, and
+    //    check_bootloader_offset above refuses that shape before the write).
     //    espflash hard-resets the board when it's done.
     let args = rescue::write_bin_args(&port, &path.to_string_lossy(), baud);
     // Keep espflash's last words (run_streaming_with_tail): the frontends
@@ -593,9 +605,21 @@ mod tests {
     }
 
     /// A catalog with a pinned test key, a manifest that key signed, and the
-    /// image the manifest describes.
+    /// image the manifest describes. The image opens with an ESP32-S3
+    /// bootloader's header, where the S3's ROM loads it from.
     fn fixture() -> Fixture {
-        fixture_with((0..4096u32).map(|i| (i % 251) as u8).collect())
+        let mut image: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+        s3_bootloader_head(&mut image);
+        fixture_with(image)
+    }
+
+    /// Stamp an ESP32-S3 bootloader's header at 0x0: the 0xE9 image magic and
+    /// the S3's chip id, which check_bootloader_offset reads.
+    fn s3_bootloader_head(image: &mut [u8]) {
+        let (_, chip_id) = crate::image::rom_bootloader("ESP32-S3").unwrap();
+        image[0] = crate::image::IMAGE_MAGIC;
+        let at = crate::image::IMAGE_CHIP_ID_AT;
+        image[at..at + 2].copy_from_slice(&chip_id.to_le_bytes());
     }
 
     /// [`fixture`] around a given release image (signed like any other).
@@ -898,6 +922,28 @@ mod tests {
     }
 
     #[test]
+    fn a_verified_image_without_a_bootloader_where_the_rom_looks_is_never_written() {
+        // Signed and checksummed, and still unbootable: no 0xE9 at 0x0,
+        // where the S3's ROM loads the bootloader (fw-v2.4.17's classic-ESP32
+        // images had the mirror of this fault). Refused after the release
+        // checks, before a byte is written.
+        let mut image = fixture().image;
+        image[0] = 0xFF;
+        let fx = fixture_with(image);
+        let host = Recorder::new(&fx);
+        let err = block_on(flash(
+            &host,
+            fx.catalog,
+            request(&fx, "canary-s3", "ESP32-S3"),
+        ))
+        .err()
+        .unwrap();
+        assert!(err.contains("loads its bootloader from 0x0,"), "{err}");
+        assert!(err.contains("Nothing was written."), "{err}");
+        assert!(host.calls().is_empty(), "nothing may be written");
+    }
+
+    #[test]
     fn provisioned_firmware_refuses_to_flash_without_its_settings() {
         let fx = fixture();
         let host = Recorder::new(&fx);
@@ -1060,14 +1106,16 @@ mod tests {
         );
     }
 
-    /// A factory-shaped image: a bootloader-ish head, a partition table at
-    /// 0x8000 (nvs at 0x9000, the app at 0x10000 — `app_size` long), and each
-    /// region filled with its own byte, so a test chooses what differs.
+    /// A factory-shaped image: a bootloader-ish head (an S3 bootloader's
+    /// header at 0x0, where the S3's ROM looks), a partition table at 0x8000
+    /// (nvs at 0x9000, the app at 0x10000 — `app_size` long), and each region
+    /// filled with its own byte, so a test chooses what differs.
     fn partitioned(nvs_byte: u8, app_byte: u8, app_size: u32) -> Vec<u8> {
         let mut img = vec![0xff; 0x20000];
         for (i, b) in img[..0x1000].iter_mut().enumerate() {
             *b = (i % 253) as u8; // not blank: the capacity check has a pattern
         }
+        s3_bootloader_head(&mut img);
         let mut entry = |i: usize, ptype: u8, subtype: u8, off: u32, size: u32, label: &str| {
             let base = 0x8000 + i * 32;
             img[base] = 0xaa;

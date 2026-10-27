@@ -200,7 +200,15 @@ on:
       - "desktop-lab/README.md"
       - "desktop-lab/ipad-guide.html"
       - ".github/workflows/flasher-release.yml"
+      # desktop_parity holds the dev channel's other writers (the script every
+      # firmware release and the Refresh button run, and that button's own
+      # record and guard steps) to the tag the flashers read
+      - ".github/scripts/dev_channel.py"
+      - ".github/workflows/dev-channel-refresh.yml"
       - "firmware/scripts/build_flash_manifest.py"
+      # desktop_parity holds both flashers' ROM bootloader offsets to the
+      # table the factory images are merged by
+      - "firmware/scripts/make_factory.py"
       - "firmware/canary/lib/securacv_network/src/securacv_network.cpp"
       # we2.test.js: the Vision model-release workflow reads the WE2 burn
       # address from flash.json and never hardcodes a second copy
@@ -435,7 +443,15 @@ on:
       - "desktop-lab/README.md"
       - "desktop-lab/ipad-guide.html"
       - ".github/workflows/flasher-release.yml"
+      # desktop_parity holds the dev channel's other writers (the script every
+      # firmware release and the Refresh button run, and that button's own
+      # record and guard steps) to the tag the flashers read
+      - ".github/scripts/dev_channel.py"
+      - ".github/workflows/dev-channel-refresh.yml"
       - "firmware/scripts/build_flash_manifest.py"
+      # desktop_parity holds both flashers' ROM bootloader offsets to the
+      # table the factory images are merged by
+      - "firmware/scripts/make_factory.py"
       - "firmware/canary/lib/securacv_network/src/securacv_network.cpp"
       # we2.test.js: the Vision model-release workflow reads the WE2 burn
       # address from flash.json and never hardcodes a second copy
@@ -1081,6 +1097,13 @@ jobs:
         run: node canary-local/tests/csp_probe.mjs
       - name: Flash probe — flasher page boots on both branches (serial + no-serial)
         run: node canary-local/tests/flash_probe.mjs
+      - name: Flash mirror probe — the flasher reads its release from its own origin (no github.com fetch a browser would refuse)
+        # pages.yml mirrors the pinned releases into the site because a browser
+        # cannot read a github.com release asset (no CORS header). Served from
+        # one origin with a fixture mirror: on a public host and on loopback
+        # alike every manifest and image comes from that origin, a release it
+        # does not carry answers its 404, and nothing leaves it.
+        run: node canary-local/tests/flash_mirror_probe.mjs
       - name: Workshop probe — the configurator drives the real catalog
         run: node canary-local/tests/workshop_probe.mjs
       - name: Board Room probe — pin flags + wiring on the committed meshes

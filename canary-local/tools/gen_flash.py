@@ -143,7 +143,9 @@ CHIP_INFO = {
 # .github/workflows/firmware-release.yml — including the display flavors
 # (watch / dash / dash-modes), built there from the sketch's committed
 # profiles. `env` + `board` are re-verified against the firmware tree below;
-# `asset_stem` is the release binary name minus version and extension.
+# `asset_stem` is the release binary name minus version and extension, and
+# the project_name a release stamps into each app's descriptor
+# (firmware/scripts/stamp_app_desc.py), so it stays within 31 characters.
 #
 # Every `id` here must be claimed by exactly one device manifest
 # (devices/<slug>/device.json `flasher.product` or `flasher.variants`); that

@@ -7,6 +7,87 @@
 
 ---
 
+## What an image says about itself is whatever the build left there
+
+### Every release up to 2.4.17 told the flashers it was `arduino-lib-builder` (2026-10-27)
+- **What happened:** both flashers say what a connected board runs by
+  reading the app descriptor (`esp_app_desc_t`, image offset 0x20) off its
+  booted slot, and map its `project_name` to a product. Every fw-v2.4.17
+  image, all 21, carries `arduino-lib-builder` and a version like `esp-idf:
+  v4.4.7 38eeba213a`: the Arduino core's precompiled libraries define the
+  descriptor, so the sketch's name and `CANARY_FW_VERSION` never reach it. A
+  board running SecuraCV read as "an Arduino sketch", the install verdict as
+  "Version unknown", and an older image over a newer one went on with no
+  downgrade warning. The lookup (`matchProjectToProduct`) had been written
+  for names the firmware never produced.
+- **Why nothing caught it:** every test fed the flashers a descriptor written
+  by hand (`canary_wap`, `canary-vision-xiao-s3`); none read one out of a
+  built image. The device side only logs the descriptor
+  (`securacv_ota.cpp`), and the boot guard reads `app_elf_sha256`, which the
+  build does fill.
+- **The fix:** the release stamps it. `firmware/scripts/stamp_app_desc.py`
+  writes the product's `asset_stem` and the firmware's version into
+  `project_name` and `version`, recomputes the checksum byte and the
+  appended SHA-256, and touches nothing else (`app_elf_sha256`,
+  `secure_version`, date, time and `idf_ver` stay the build's). It runs in
+  both release workflows after the last build and before anything signs or
+  merges an app, reads each image back with esptool, and stamps only an
+  image that already carries its version literal and its product id, so the
+  `strings | grep -Fx` version guards still test the firmware. Host-tested;
+  no stamped image has been booted yet. The descriptor's date was the same
+  kind of trap: it is the Arduino core's build date (Mar 5 2024 on most
+  2.4.17 images), so beside "Canary 2.4.18" it misdated the release, and
+  both flashers now show it only in the health report, labeled as the
+  descriptor's.
+- **The rule:** before code trusts a field read off a board, read that field
+  out of a real release image once. A test that writes the field by hand
+  proves the reader, not that anything writes what the reader expects.
+
+## A factory image is a picture of flash: every part sits where its chip reads it
+
+### fw-v2.4.17's classic-ESP32 factory images put the bootloader where the ROM never looks (2026-10-27)
+- **What happened:** `canary-esp32cam-2.4.17-factory.bin` and
+  `canary-wroom-2.4.17-factory.bin`, the factory images of the two
+  classic-ESP32 reach ports (compile-tested, never booted), carry their
+  second-stage bootloader at file offset 0x0 and no image header at 0x1000.
+  Both flashers write a factory image at flash 0x0, and a classic ESP32's
+  mask ROM loads the bootloader from 0x1000, so a board installed from either
+  file would not boot. That is read from the published bytes and the ROM's
+  documented offset, not seen on a bench; USB download mode is in ROM, so a
+  board is recovered by installing a correct image. The other 19 factory
+  images are right: their S3/C3/C6 ROMs load from 0x0, and each carries its
+  own chip's bootloader there.
+- **Why nothing caught it:** `make_factory.py`'s `--bootloader-offset`
+  defaulted to 0x0 for every chip, and its help text asked the caller to pass
+  0x1000 for a classic ESP32. No caller did: `build_flash_manifest.py` (both
+  release paths) passed only `--chip`, and `dev_flash.sh` passed `esp32s3`
+  for any env without a `board_build.mcu`, which is exactly the classic
+  reach envs (they take their chip from `board =`). Every release check
+  passed: the version string is in the image, the app fits its slot, the
+  signature is valid, and both flashers' shape gate looks only for the
+  partition table at 0x8000. The default was right for every chip the tool
+  had ever merged, until the first classic ESP32 joined the catalog.
+- **The fix:** `make_factory.py` takes the offset from `--chip`
+  (`ROM_BOOTLOADER`: 0x1000 for `esp32`/`esp32s2`, 0x0 for the S3/C3/C6/C2/H2,
+  held to esptool's own table by `test_make_factory.py`) and refuses a chip
+  it has no offset for unless `--bootloader-offset` names one (the P4 and C5
+  load from 0x2000). The bootloader's image header must name the chip
+  `--chip` names (`--chip auto` reads it from there; `dev_flash.sh` now falls
+  back to `auto`), and the merged file is read back before it is kept: a
+  bootloader at the offset, the partition table at 0x8000, the app at its
+  slot. An explicit `--bootloader-offset` still overrides, with a warning.
+- **The same assumption sat in both flashers, twice:** their shape gate
+  looked only for the partition table at 0x8000, and their
+  counterfeit-capacity probe took its fingerprint from the first 4 KB of
+  flash, which a correctly installed classic ESP32 leaves erased (every such
+  board read as blank, and a mirrored part was never caught). Both flashers
+  now refuse an image with no bootloader for the connected chip where its ROM
+  loads it, from the same table as `make_factory.py`, and read an 8 KB head.
+- **The rule:** a per-chip constant is never a default the caller has to
+  remember to override. Key it on the chip and refuse a chip you have no
+  value for; the first board of a new chip family is when every "0x0 on our
+  chips" in the packaging path stops being true at once.
+
 ## A confirm gate is only as good as the signal every board feeds it
 
 ### The 60 s confirm dwell could not be passed by boards it was written for (2026-10, before 2.4.17)

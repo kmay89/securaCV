@@ -545,7 +545,7 @@ footer a{color:var(--accent);text-decoration:none}
         <h3 class="wiz-h" style="font-size:1rem;margin:0 0 .25rem" tabindex="-1">Set up the next Canary</h3>
         <ol class="intro" style="margin:0 0 .6rem;padding-left:1.2rem;line-height:1.65">
           <li>Power on the next Canary.</li>
-          <li>Open WiFi settings on your phone. Wait for a fresh <strong>SecuraCV-XXXX</strong> network to appear.</li>
+          <li>Open WiFi settings on your phone. Wait for a fresh network whose name starts with <strong>SecuraCV-</strong> to appear.</li>
           <li>Tap it. The setup page opens by itself.</li>
         </ol>
         <p class="wiz-sub" style="margin:.25rem 0 .6rem">After it finishes, all your Canaries see each other on the home network. You can name and arrange them from the dashboard.</p>
