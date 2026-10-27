@@ -115,11 +115,13 @@
   build envs (`flavors.json`) and all five Sentinel envs compile. Against
   the same envs built from the 2.4.17 release commit (#1885), the Vision
   images grow by 32 to 96 bytes and the Sentinel door and Lite images by
-  240 and 128 bytes, and the guarded images stay inside their slots:
-  `canary-vision-default` 1,439,488 of 1,966,080 bytes,
-  `canary-sentinel-door` 1,451,312 of 1,966,080, `canary-sentinel-lite`
-  1,160,736 of 1,310,720. Neither change is compiled into the emulator, so
-  its dist does not move. Host-tested; not run on a device.
+  240 and 128 bytes, and all five images `flavors.json` guards for the two
+  projects stay inside their slots: `canary-vision-default` 1,439,488 of
+  1,966,080 bytes, `canary-vision-xiao-c3` 1,449,536 of 1,966,080,
+  `canary-vision-xiao-s3` 1,333,456 of 3,342,336, `canary-sentinel-door`
+  1,451,312 of 1,966,080 and `canary-sentinel-lite` 1,160,736 of 1,310,720.
+  Neither change is compiled into the emulator, so its dist does not move.
+  Host-tested; not run on a device.
 
 ## [2.4.17] - 2026-10-27
 
