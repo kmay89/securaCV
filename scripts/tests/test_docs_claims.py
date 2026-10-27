@@ -3751,7 +3751,7 @@ MUST_PASS_IN = [
     ('docs/firmware_ota.md',
      "Reconnect via dashboard (canary/WAP), or join the setup network from a phone and enter the new password (vision/sense). A USB install also works, but either flasher's install starts the board's settings over: a new witness key and, on most boards, a new device id and new Home Assistant entities (the canary-vision section above), so keep it for when neither path can be reached |"),
     ('docs/FAQ.md',
-     '`SecuraCV-XXXX` recovery network instead, which needs the key printed for\n'
+     '`SecuraCV-<kind>-XXXX` recovery network instead, which needs the key printed for\n'
      "it. So the setup door offers nothing to a stranger's phone while a Canary\n"
      'stays on your network, on a good day or a bad one. Two caveats on a WAP: any\n'
      'device on your network can open its dashboard and send Forget Wi-Fi, which\n'
@@ -4088,9 +4088,9 @@ MUST_PASS_IN = [
     ('canary-local/tools/gen_flash.py',
      '               "console at boot — join it and a setup page opens automatically.",'),
     ('canary-local/devices/flash.json',
-     '      "provisioning_note": "Power it on near the SecuraCV iPhone app and tap the card that appears — it hands over your WiFi in one tap. No iPhone? It also raises a WiFi network of its own (SecuraCV-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically.",'),
+     '      "provisioning_note": "Power it on near the SecuraCV iPhone app and tap the card that appears — it hands over your WiFi in one tap. No iPhone? It also raises a WiFi network of its own (named for its kind, like SecuraCV-wap-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically.",'),
     ('canary-local/devices/flash.json',
-     '      "provisioning_note": "When it boots it raises a WiFi network of its own (SecuraCV-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically.",'),
+     '      "provisioning_note": "When it boots it raises a WiFi network of its own (SecuraCV-canary-XXXX) with a key it prints on its serial console at boot — join it and a setup page opens automatically.",'),
     ('canary-local/assets/hatchery.js',
      "// hatches (first successful flash). The name is WHIMSY ONLY: the device's\n"
      '// functional id stays its provisioned slug (kept across OTA updates and the\n'

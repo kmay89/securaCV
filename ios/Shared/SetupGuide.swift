@@ -229,7 +229,7 @@ enum SetupGuide {
                     ? "Scan the QR on its screen — or type its setup network and key."
                     : "No card? Unplug and replug it, or tap BOOT once; then type its setup network and key.",
                 body: keySource == .glassQR
-                    ? "Power it on. Its screen shows a QR code for its own setup network, named SecuraCV-XXXX. Scan it with this phone, or type the four characters and the key printed under it. A good scan starts the next step by itself."
+                    ? "Power it on. Its screen shows a QR code for its own setup network, named SecuraCV-display-XXXX (SecuraCV-XXXX on firmware before 2.4.17). Scan it with this phone, or type that name and the key printed under it. A good scan starts the next step by itself."
                     : "Unplug it and plug it back in — its door opens for another half hour — or tap its BOOT button once for a minute; the card appears within seconds. Still nothing? A camera or radar Canary has no screen, so its setup-network key is in the Flasher's serial console (the [SETUP] line at boot) — and if you typed Wi-Fi into the Flasher, the Canary is already on your network, so skip to the last step. Type the network name and key here; its setup network is the same door with a key, for a phone with Bluetooth off.",
                 action: .readSetupKey))
             steps.append(SetupStep(
