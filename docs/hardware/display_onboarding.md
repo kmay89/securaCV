@@ -58,8 +58,8 @@ and the key stay on the glass for as long as the Join scene is up — QR or no
 QR, hint or no hint: when the QR does not scan (or never rendered) that text
 is the only way in, and the stuck-phone hint ("forget it on your phone")
 comes up exactly when the phone needs the key again. On that glass the hint
-gets a row of its own: under the key on the nightstand and nightlight, the
-title's band on the round watch (the title yields while the hint stands: with
+gets a row of its own: under the key on the nightstand, the nightlight and
+a split touch169, the title's band on the round watch (the title yields while the hint stands: with
 the QR up, the card speaks for itself; without one, the hint replaces "On
 your phone").
 None of those rows (the name, the key, the hint) is ever cut to an ellipsis
