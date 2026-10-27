@@ -220,7 +220,7 @@ clicking Publish in the UI *does* fire the event, so that path still works.)
 securacv.com/download's buttons open exact releases (`app-v<x.y.z>`,
 `flasher-v<x.y.z>`), stamped by `scripts/carry_to_site.py`'s `downloads`
 carry from the newest release of each app that the GitHub API shows as
-published (not a draft, not a prerelease) with its `.dmg`, `.AppImage` and
+published (not a draft, not a prerelease) with its `_universal.dmg`, `.AppImage` and
 `.deb` uploaded. A version that is only in `tauri.conf.json`, only a draft,
 or a Flasher release whose builds have not uploaded (or whose run failed
 after creating it) never reaches them. To move them after you publish (the

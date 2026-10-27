@@ -252,7 +252,7 @@
   `flasher-v<x.y.z>` for the Flasher) and names the same tags in its note;
   the carry moves every such token in `download.html` to the newest release
   of its app that the GitHub REST API shows as published (not a draft, not a
-  prerelease, a bare `x.y.z` tag, its `.dmg`, `.AppImage` and `.deb`
+  prerelease, a bare `x.y.z` tag, its `_universal.dmg`, `.AppImage` and `.deb`
   uploaded, highest by number) and leaves every other byte alone. The
   installers count because the Flasher's release is created published before
   its builds upload, and a failed run leaves it that way. It reads the list
