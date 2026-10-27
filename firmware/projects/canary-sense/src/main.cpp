@@ -785,7 +785,9 @@ static void fill_node_status(NodeStatus& st) {
   if (m != nullptr && m->version[0] && securacv_ota_update_available()) st.ota_target = m->version;
   st.ota_pending_verify = securacv_ota_pending_verify() ? 1 : 0;  // this boot's image is still unconfirmed (the dwell is running)
   // Honest posture: every shipped build keeps its secrets in plaintext NVS
-  // (common/identity/key_at_rest.h Tier 0); the secure kit is the path up.
+  // (common/identity/key_at_rest.h Tier 0); the path up is NVS encryption
+  // (the arduino-as-IDF-component migration), not the secure kit, whose flash
+  // encryption does not cover NVS.
   st.creds_at_rest = key_at_rest::wire_label(key_at_rest::Tier::PlaintextNvs);
   st.clock = canary::time_sync::source_label(canary::net::wifi_clock_source());
   {
@@ -1331,6 +1333,13 @@ void loop() {
           canary::net::setup_portal_active());
 #endif
 
+  // Confirm a new image only after a healthy minute — before the broker
+  // early-return below, so it runs on EVERY pass. Behind it, a new image that
+  // booted to a dark broker waited on the broker to confirm, and a restart
+  // before the broker came back returned it to the previous firmware.
+  // Healthy is the Wi-Fi station link, the same thing the boot probe asserts.
+  canary::net::ota_health_tick(now, canary::net::wifi_connected());
+
   // Bounded, backoff-scheduled broker supervision: while the broker is
   // unreachable the witness keeps sensing (we already drove the FSMs above)
   // and simply skips the publish phase.
@@ -1341,7 +1350,6 @@ void loop() {
 
   canary::net::mqtt_loop();
   canary::net::ota_loop(now);
-  canary::net::ota_health_tick(now, canary::net::wifi_connected());  // confirm a new image only after a healthy minute
 
   // Identify: drain the button press and open the blink window.
   if (canary::net::take_pending_identify()) identify_start(now);

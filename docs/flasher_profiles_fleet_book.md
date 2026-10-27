@@ -108,7 +108,9 @@ Security posture of the bridge (`fleet.rs`, unit-tested):
   `.home.arpa`, single-label names, RFC1918/loopback/link-local literals) —
   mirroring the firmware's own local-transport policy;
 - a 401 is surfaced as "the board refused the stored key" (reflashed
-  elsewhere → reflash here mints a fresh one), never retried blindly.
+  elsewhere, or an all-rounder Canary reset with its 10 s BOOT hold, which
+  removes a seeded token and derives one from the key on the next boot →
+  reflash here mints a fresh one), never retried blindly.
 
 ## Honest limits
 

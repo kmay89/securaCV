@@ -386,7 +386,7 @@ WIZARD = {
          "api": "GET /api/selftest",
          "checks": ["Wi-Fi", "Camera", "Bluetooth", "SD", "Microphone", "GPIO"],
          "blocks": [
-             {"title": "Save your recovery kit", "detail": "Tap Save my recovery kit, then short-press BOOT (downloads canary-recovery-kit.json)"},
+             {"title": "Save your recovery kit", "detail": "Tap Save my recovery kit, then short-press BOOT when it says to (downloads canary-recovery-kit.json)"},
              {"title": "Use Home Assistant? (optional)",
               "fields": [
                   {"name": "host", "placeholder": "Broker address (like 192.168.1.10)"},
@@ -478,14 +478,14 @@ for step in BOOT:
 # boot_line() (pinned, so a sketch edit fails here instead of the page going on
 # saying the old thing). The BOOT lines are the sketch's own summary of its
 # BOOT handler, which section 9 reads for the gestures card: a short press
-# opens the receipt gate, the 2-3 s hold prints the identity block, and the
+# hands the receipt to one asker, the 2-3 s hold prints the identity block, and the
 # factory reset is the 10 s hold that keeps the identity. (This scene once
 # said a >3 s hold was the factory reset; 3 s is only the "keep holding"
 # warning.)
 READY_TAIL = [
     "    Commands: h=help i=id s=stat t=time g=gps c=cam m=sys r=data b=bat",
     "    Token + WiFi credentials are printed above on every boot",
-    "    Press BOOT (<2s)   = receipt gate open 30s; hold 2-3s = print identity",
+    "    Press BOOT (<2s)   = receipt to one asker: ask first, or the first to ask gets it (30s); hold 2-3s = print identity",
     "    Hold BOOT 10s      = factory reset (Wi-Fi, broker, name; identity kept)",
 ]
 for line in READY_TAIL:
@@ -1172,7 +1172,7 @@ RESET_HOLD_MS = int(grab(ONBOARDING_FSM_H, r"factory_reset_hold_ms\s*=\s*(\d+);"
 # so a banner that drifts from the handler fails here rather than on the page.
 for want, label in ((f"Press BOOT (<{BOOT_HOLD_MS // 1000}s)", "the short press"),
                     (f"hold {BOOT_HOLD_MS // 1000}-{BOOT_LONG_MS // 1000}s = print identity", "the identity hold"),
-                    (f"receipt gate open {GATE_TTL_MS // 1000}s", "the gate's window"),
+                    (f"receipt to one asker: ask first, or the first to ask gets it ({GATE_TTL_MS // 1000}s)", "the gate's window"),
                     (f"Hold BOOT {RESET_HOLD_MS // 1000}s      = factory reset", "the factory reset")):
     if not any(want in line for line in READY_TAIL):
         die(f"ready banner: {label} should read {want!r} (BOOT handler, onboarding_fsm.h) — "
@@ -1194,10 +1194,16 @@ must_words(DOC, "The ready banner prints the setup network's name (`WiFi AP`) an
 must_words(DOC, "A WAP repeats them in its `[WIFI] AP started` line at boot, and its serial command `w` "
                 "prints both at any time.", "docs: the WAP's AP-started line and w command")
 must_words(DOC, f"A short BOOT press prints neither: it opens the provisioning gate for "
-                f"{GATE_TTL_MS // 1000} seconds, which hands the recovery kit to the one page already "
-                "asking for it, so click **Use BOOT Tap Once** on the dashboard first and press when "
-                "the page says to.",
-           "docs: a short press opens the gate for the page already asking")
+                f"{GATE_TTL_MS // 1000} seconds.",
+           "docs: a short press opens the gate and prints no key")
+# The one-asker rule is the WAP's (tap_arbitrate()); the all-rounder Canary's
+# tap goes to whichever asks first, so the guide scopes the press-after-asking
+# order to a WAP, and this pin holds that scope.
+must_words(DOC, "On a WAP it hands the recovery kit to one asking address: click **Use BOOT Tap Once** on "
+                "the dashboard first and press when the page says to. A second address asking from 10 seconds "
+                "before the tap closes it, and a tap no page was asking for goes to the first address that "
+                "asks after it.",
+           "docs: a short press on a WAP serves one asker, the first to ask when none was")
 must_words(DOC, f"Held for {RESET_HOLD_MS // 1000} seconds, BOOT resets Wi-Fi and settings and keeps "
                 "the device's keypair", "docs: the reset keeps the keypair")
 must_words(DOC, "A WAP has no such stage, and no BOOT hold changes its key.", "docs: no wipe on a WAP")
@@ -1215,8 +1221,9 @@ FLASH = {
          "what": f"GPIO{BOOT_GPIO}, a strapping pin — the ROM samples it only at reset. While the app runs, the firmware reads it for its own gestures:",
          "gestures": [
              f"short press (under {BOOT_HOLD_MS // 1000} s): opens the provisioning gate for "
-             f"{GATE_TTL_MS // 1000} s and hands the recovery kit to the one page already asking for it "
-             "(click Use BOOT Tap Once on the dashboard first; it prints no key)",
+             f"{GATE_TTL_MS // 1000} s and hands the recovery kit to one asking page "
+             "(click Use BOOT Tap Once on the dashboard first, then press; a tap no page was asking for goes "
+             "to the first address that asks after it; it prints no key)",
              f"hold {BOOT_HOLD_MS // 1000}–{BOOT_LONG_MS // 1000} s: prints the identity block "
              "(device ID, fingerprint, firmware) on serial",
              f"hold {RESET_HOLD_MS // 1000} s: factory reset — Wi-Fi, broker and name are cleared, the identity "
@@ -1225,7 +1232,8 @@ FLASH = {
              "held LOW through a reset: the mask ROM parks in download mode and waits for a flasher",
          ]},
         {"id": "reset", "label": "RESET",
-         "what": "chip reset — RAM clears, NVS flash survives (your WiFi credentials, keys and witness chain ride through every reset)",
+         "what": "chip reset — RAM clears, NVS flash survives (your WiFi credentials, keys and witness chain ride through every "
+                 "tap of RESET; an install in either flasher is what starts NVS over)",
          "gestures": ["tap: reboot the app", "tap while BOOT is held: enter download mode"]},
     ],
     "download_mode": {

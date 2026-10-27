@@ -12,6 +12,7 @@ import { raise, resolve } from './modules/exceptions.mjs';
 import { backup, checkBackup, liveCounts, uploadOffsite, restoreDrill, offsiteConfigured } from './modules/backup.mjs';
 import { reconcile } from './modules/reconcile.mjs';
 import { pollTracking } from './modules/shipping.mjs';
+import { runRecovery } from './modules/recovery.mjs';
 import { hourIn } from './render.mjs';
 import { enqueue } from './modules/mail.mjs';
 import { unreconciledStripeCents } from './modules/ledger.mjs';
@@ -72,8 +73,8 @@ export const JOBS = {
     const checked = checkBackup(b.path, { expect: liveCounts(db) });
     if (!checked.ok) { await raise(db, cfg, 'backup:check', 'backup [unchecked]: the nightly copy failed its checks', checked.errors.join('\n')); throw new Error(`backup check failed: ${checked.errors.join('; ')}`); }
     await resolve(db, cfg, 'backup:check', 'A checked backup exists again.');
-    let offsite = { skipped: 'BACKUP_S3_URL / KEY / SECRET not set' };
-    if (offsiteConfigured(cfg)) {
+    let offsite = { skipped: cfg.offsiteWrites === false ? `off-site writes are off in ${cfg.env}` : 'BACKUP_S3_URL / KEY / SECRET not set' };
+    if (offsiteConfigured(cfg) && cfg.offsiteWrites !== false) {
       try { offsite = await uploadOffsite(cfg, b.path, { fetchImpl: app.fetchImpl || timedFetch }); await resolve(db, cfg, 'backup:offsite', 'The off-site copy is current again.'); }
       catch (e) { offsite = { error: String(e.message || e) }; await raise(db, cfg, 'backup:offsite', 'backup [off-site failed]: the copy did not reach the bucket', `${e.message}\n\nThe local backup is checked; only the off-site copy is missing. Check BACKUP_S3_URL / KEY / SECRET and the bucket's permissions.`); }
     }
@@ -92,6 +93,8 @@ export const JOBS = {
   reconcile: [86400, async (app) => reconcile(app.db, app.cfg, { fetchImpl: app.fetchImpl || timedFetch })],
   // Hourly, with USPS credentials: where every open shipment is; delivered when the carrier says so.
   tracking: [3600, async (app) => pollTracking(app.db, app.cfg, { fetchImpl: app.fetchImpl || timedFetch })],
+  // An abandoned checkout with an email gets its one follow-up, CHECKOUT_RECOVERY_HOURS after it expired (recovery.mjs).
+  recovery: [600, async ({ db, cfg }) => runRecovery(db, cfg)],
   // Once a day at DIGEST_HOUR (UTC): today's list, the numbers, the health checklist, to the operator.
   digest:   [600, async ({ db, cfg }) => {
     if (!cfg.operatorEmail) return { skipped: 'OPERATOR_EMAIL not set' };

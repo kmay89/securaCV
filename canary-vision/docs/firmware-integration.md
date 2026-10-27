@@ -137,7 +137,7 @@ int result = mbedtls_ct_memcmp(provided_token, api_token, token_len);
 
 ### Ed25519 Key Storage
 
-The witness chain signing key pair is generated once during provisioning and stored in NVS. The private key never leaves NVS -- it is read into a stack buffer, used to sign a hash, and immediately zeroed.
+The witness chain signing key pair is generated once during provisioning and stored in NVS. No firmware path exports the private key: it is read into a stack buffer, used to sign a hash, and immediately zeroed. It still sits in plaintext NVS, so a full flash read (a flasher's pre-install safety copy among them) carries it.
 
 ```c
 // Sign a witness hash

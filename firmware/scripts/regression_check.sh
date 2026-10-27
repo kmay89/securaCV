@@ -654,9 +654,12 @@ fi
 echo ""
 
 # ── Check: no partition table flags nvs `encrypted` ──────────────
-# NVS is not compatible with flash encryption: ESP-IDF protects it with NVS
-# encryption (CONFIG_NVS_ENCRYPTION, keys in an nvs_keys partition), and with
-# flash encryption on, IDF v4.3+ refuses to open an nvs partition flagged
+# NVS is not compatible with flash encryption: ESP-IDF's protection for NVS is
+# NVS encryption (CONFIG_NVS_ENCRYPTION, keys in an nvs_keys partition), which
+# no released Canary build has (every released build is framework = arduino, so
+# NVS is plaintext on every tier; the kit's sdkconfig.defaults.secure names
+# CONFIG_NVS_ENCRYPTION but no build reads it, and only the unreleased canary-ota
+# ESP-IDF harness builds with it set); and with flash encryption on, IDF v4.3+ refuses to open an nvs partition flagged
 # `encrypted` (nvs_partition_lookup.cpp -> ESP_ERR_NVS_WRONG_ENCRYPTION). The
 # provisioning kit's partitions_secure.csv carried that flag, so its image
 # could not have opened NVS — the identity key's home — on a fused board
@@ -668,7 +671,7 @@ NVS_ENC_HITS=$(find "$FIRMWARE_DIR" -name "*.csv" -not -path "*/.pio/*" -print0 
 if [ -n "$NVS_ENC_HITS" ]; then
   check_fail "An nvs partition is flagged 'encrypted' — IDF refuses to open it once flash encryption is on:"
   echo "$NVS_ENC_HITS" | while read -r line; do blue "  ${line#"$FIRMWARE_DIR"/}"; done
-  blue "  Fix: drop the flag; NVS is protected by NVS encryption (nvs_keys), not by flash encryption"
+  blue "  Fix: drop the flag; only NVS encryption (nvs_keys) could protect NVS, and it is unavailable under framework = arduino, which every released build uses, so NVS stays plaintext on those either way"
 else
   check_pass "No partition table flags an nvs partition 'encrypted'"
 fi
@@ -839,6 +842,61 @@ if [ -n "$WDT_PRESENT" ]; then
 else
   check_warn "No watchdog timer found — device may hang without recovery"
 fi
+
+echo ""
+
+# ── Check: the OTA confirm tick runs broker or no broker (2.4.17) ──
+# PR #1816 made a new image confirm itself only after a healthy minute: the
+# boot probe leaves it pending and ota_health_tick() confirms it. On the
+# display, Sense, Vision and Sentinel that tick sat behind the MQTT gate
+# (`if (broker)`, or after the loop's broker early-return), so an image that
+# booted to a dark broker — or a hub-less display that installed from its
+# own Settings — never confirmed, and the next restart quietly returned it
+# to the previous firmware. This holds each loop() to one tick, fed the
+# Wi-Fi station link, ahead of the loop's first broker gate.
+section "Reliability: OTA confirm tick runs without the broker"
+
+OTA_TICK_LOOPS=(
+  "$PROJECTS_DIR/canary-display/src/main.cpp"
+  "$PROJECTS_DIR/canary-display/arduino/canary_display/canary_display.ino"
+  "$PROJECTS_DIR/canary-sense/src/main.cpp"
+  "$PROJECTS_DIR/canary-vision/src/main.cpp"
+  "$PROJECTS_DIR/canary-sentinel/src/main.cpp"
+)
+for f in "${OTA_TICK_LOOPS[@]}"; do
+  rel="${f#"$FIRMWARE_DIR"/}"
+  if [ ! -f "$f" ]; then
+    check_fail "$rel missing — update OTA_TICK_LOOPS in $0"
+    continue
+  fi
+  # In loop(), comments dropped: the tick calls, the one with the Wi-Fi
+  # argument, and the first broker gate (`if (broker)`,
+  # `if (!mqtt_supervise(`, `if (!canary::net::mqtt_connected())`).
+  OTA_TICK_VERDICT=$(awk '
+    /^void loop\(\) \{/ { inl = 1; next }
+    inl && /^\}/ { inl = 0 }
+    inl {
+      s = $0; sub(/\/\/.*/, "", s)
+      if (s ~ /ota_health_tick\(/) {
+        ticks++
+        if (s ~ /wifi_connected\(\)/ && !tick_at) tick_at = NR
+      }
+      if (!gate_at && s ~ /if \(!?(broker\)|mqtt_supervise\(|canary::net::mqtt_connected\(\)\))/) gate_at = NR
+    }
+    END {
+      if (ticks != 1) { print "ticks " ticks + 0; exit }
+      if (!tick_at) { print "noarg"; exit }
+      if (!gate_at) { print "nogate"; exit }
+      print (tick_at < gate_at) ? "ok" : "gated (tick at line " tick_at ", broker gate at line " gate_at ")"
+    }' "$f")
+  case "$OTA_TICK_VERDICT" in
+    ok)     check_pass "$rel: loop() runs ota_health_tick(wifi_connected()) ahead of the broker gate" ;;
+    nogate) check_fail "$rel: no broker gate found in loop() — the guard's pattern is stale; update it in $0" ;;
+    noarg)  check_fail "$rel: loop()'s ota_health_tick() is not fed the Wi-Fi station link (wifi_connected())" ;;
+    ticks*) check_fail "$rel: loop() must call ota_health_tick() exactly once (found ${OTA_TICK_VERDICT#ticks })" ;;
+    *)      check_fail "$rel: ota_health_tick() sits behind the broker ${OTA_TICK_VERDICT#gated } — a new image waits on MQTT to confirm and reverts on the next restart" ;;
+  esac
+done
 
 echo ""
 
@@ -1033,8 +1091,8 @@ echo ""
 # see firmware/canary/src/main.cpp on_pairing_succeeded). On an FE-ON board the
 # entry is still plaintext at rest: flash encryption does not cover NVS, and NVS
 # encryption is unavailable under framework = arduino (mesh_state.h; roadmap
-# item 9) — the gate keeps the secret off un-fused boards, it does not encrypt
-# it on fused ones. This guard asserts that FE
+# item 9) — the gate keeps the secret off boards without flash encryption, it
+# does not encrypt it on boards with it. This guard asserts that FE
 # check is not silently removed from the mesh persistence/impl files. It does NOT,
 # and cannot statically, prove the *activation* path fails closed — see issue #610
 # C2 / the bench runbook for the on-device check, and the open design question of
@@ -1053,7 +1111,7 @@ else
     if grep -q "esp_flash_encryption_enabled" "$mf"; then
       check_pass "Mesh FE persistence gate present: $rel"
     else
-      check_fail "Mesh impl '$rel' has no esp_flash_encryption_enabled() gate — the opera_secret must never be persisted to unencrypted NVS (#610)"
+      check_fail "Mesh impl '$rel' has no esp_flash_encryption_enabled() gate — the opera_secret must never be persisted on a board without flash encryption (#610; the gate keeps it off boards without flash encryption, it does not encrypt NVS)"
     fi
   done <<< "$MESH_IMPL_FILES"
 fi

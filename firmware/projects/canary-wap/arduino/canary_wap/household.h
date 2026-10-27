@@ -20,8 +20,10 @@
  *      that phone, even as the phone rotates its MAC every ~15 minutes.
  *   4. The IRK is a symmetric secret. If it leaked, an attacker could de-
  *      anonymize that specific device across RPA rotations. We therefore
- *      store IRKs only in NVS (flash-encrypted at rest on ESP32 with secure
- *      boot) and never export them over any wire, MQTT topic, or web UI.
+ *      store IRKs only in NVS (plaintext on the flash chip on every build
+ *      today: flash encryption does not cover NVS and NVS encryption is in
+ *      no released build; common/identity/key_at_rest.h) and never export
+ *      them over any wire, MQTT topic, or web UI.
  *
  * ENROLLMENT
  * ==========

@@ -1,12 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 # ═══════════════════════════════════════════════════════════════
-# SecuraCV Canary — Production Provisioning Script
+# SecuraCV Canary — Provisioning Script (Phase 2 not usable yet)
 # ═══════════════════════════════════════════════════════════════
 #
-# Full orchestration for production device provisioning:
-#   1. Virgin verify → 2. Flash signed firmware → 3. Burn keys →
+# Full orchestration toward a production lockdown it does not reach yet:
+#   1. Virgin verify → 2. Flash firmware (plaintext, unsigned) → 3. Burn keys →
 #   4. Burn security eFuses → 5. Post-verify → 6. Generate manifest
+# As tooled it turns on neither Secure Boot nor flash encryption: step 4
+# burns SECURE_BOOT_EN with no key digest and no SPI_BOOT_CRYPT_CNT, and
+# step 5 fails on the fuses it does not burn (docs/secure_provisioning.md).
 #
 # IMPORTANT: This script has IRREVERSIBLE operations in Phase 2 mode.
 # Always use --dry-run first to preview what will happen.
@@ -14,12 +17,13 @@ set -euo pipefail
 # Usage:
 #   ./provision_canary.sh --port /dev/ttyACM0 --dry-run
 #   ./provision_canary.sh --port /dev/ttyACM0 --phase 1
-#   ./provision_canary.sh --port /dev/ttyACM0 --phase 2
+#   ./provision_canary.sh --port /dev/ttyACM0 --phase 2 --dry-run   (Phase 2: dry run only today)
 #   ./provision_canary.sh --help
 #
 # Phases:
 #   Phase 1 (default): Development mode - no eFuse burning
-#   Phase 2: Production lockdown - burns security eFuses (IRREVERSIBLE)
+#   Phase 2: burns security eFuses (IRREVERSIBLE) toward the production
+#            lockdown, but turns on neither protection yet (above)
 #
 # ═══════════════════════════════════════════════════════════════
 
@@ -46,7 +50,7 @@ NC='\033[0m'
 print_header() {
     echo ""
     echo "═══════════════════════════════════════════════════════════════"
-    echo " SecuraCV Canary — Production Provisioning"
+    echo " SecuraCV Canary — Provisioning (Phase 2: dry run only today)"
     echo "═══════════════════════════════════════════════════════════════"
     echo ""
 }
@@ -77,11 +81,12 @@ show_help() {
     cat << EOF
 Usage: $0 [OPTIONS]
 
-Provision a SecuraCV Canary device for production deployment.
+Provision a SecuraCV Canary device. Phase 2, the production lockdown's
+target, is not usable yet: run it only with --dry-run (see Phase 2 below).
 
 Options:
   --port, -p PORT       Serial port (required, e.g., /dev/ttyACM0)
-  --phase PHASE         Provisioning phase: 1 (dev) or 2 (production)
+  --phase PHASE         Provisioning phase: 1 (dev) or 2 (lockdown target; dry run only)
   --dry-run             Preview operations without executing
   --firmware PATH       Path to firmware binary (optional)
   --skip-verify         Skip pre/post verification
@@ -94,14 +99,14 @@ Phases:
     - Record device identity
     - NO eFuse burning (safe for development)
 
-  Phase 2 (production):
+  Phase 2 (the production lockdown's target; it does NOT yet turn on Secure
+  Boot or flash encryption and may leave the board unbootable, so run it
+  only with --dry-run; see docs/secure_provisioning.md Step 3):
     - Verify device is virgin
-    - Flash signed firmware
-    - Burn flash encryption key
-    - Enable Secure Boot v2
-    - Disable JTAG
-    - Enable anti-rollback
-    - Verify lockdown
+    - Flash the secure env's app image, in plaintext and unsigned
+    - Burn the flash encryption key (unused: SPI_BOOT_CRYPT_CNT is not burned)
+    - Burn SECURE_BOOT_EN (with no key digest) and the JTAG-disable fuses
+    - Verify lockdown (fails today: it expects fuses this script never burns)
     - Add to fleet manifest
     - IRREVERSIBLE - device cannot return to dev mode
 
@@ -112,11 +117,12 @@ Examples:
   # Execute Phase 1 provisioning (development)
   $0 --port /dev/ttyACM0 --phase 1
 
-  # Preview Phase 2 provisioning (REVIEW CAREFULLY)
+  # Preview Phase 2 provisioning: the only Phase 2 run to make today
   $0 --port /dev/ttyACM0 --phase 2 --dry-run
 
-  # Execute Phase 2 provisioning (IRREVERSIBLE)
-  $0 --port /dev/ttyACM0 --phase 2
+  # Phase 2 without --dry-run is IRREVERSIBLE and not usable yet: it turns
+  # on neither protection, and the board may not boot afterward. Do not run
+  # it on a board you want to keep.
 
 EOF
 }
@@ -422,9 +428,9 @@ print_summary() {
             echo "  Device is ready for development and testing."
             echo "  Security eFuses have NOT been burned."
         else
-            print_success "Phase 2 provisioning complete (production lockdown)"
-            echo "  Device is locked down and ready for production."
-            echo "  Security eFuses have been burned (IRREVERSIBLE)."
+            print_success "Phase 2 provisioning complete"
+            echo "  Security eFuses have been burned (IRREVERSIBLE), but neither"
+            echo "  Secure Boot nor flash encryption is on (docs/secure_provisioning.md)."
         fi
     fi
     echo ""
@@ -492,10 +498,13 @@ if [[ ${PHASE} -eq 2 && "${DRY_RUN}" == "false" ]]; then
     print_warning "═══════════════════════════════════════════════════════════════"
     echo ""
     echo "This will PERMANENTLY:"
-    echo "  - Burn flash encryption key"
-    echo "  - Enable Secure Boot v2"
+    echo "  - Burn the flash encryption key (flash encryption itself stays off:"
+    echo "    no SPI_BOOT_CRYPT_CNT burn, and the image is written in plaintext)"
+    echo "  - Burn SECURE_BOOT_EN with no key digest and no signed bootloader"
+    echo "    (Secure Boot is not set up; what the ROM then does is untested)"
     echo "  - Disable JTAG"
-    echo "  - Enable anti-rollback"
+    echo "No anti-rollback fuse is burned, and the lockdown check after the burn"
+    echo "fails today. See docs/secure_provisioning.md, Step 3."
     echo ""
     echo "The device CANNOT be returned to development mode after this."
     echo ""

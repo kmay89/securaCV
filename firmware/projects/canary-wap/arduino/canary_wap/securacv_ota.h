@@ -28,12 +28,17 @@
  *
  * USAGE:
  * 1. Call securacv_ota_register_selftest() for each boot-validation probe
- * 2. Call securacv_ota_boot_self_test() early in setup() — it confirms or
- *    rolls back a freshly applied update
+ * 2. Call securacv_ota_boot_self_test() early in setup() — it rolls back a
+ *    freshly applied update whose required probe fails, and arms the
+ *    confirmation otherwise
  * 3. Call securacv_ota_init() after WiFi is connected
- * 4. Call securacv_ota_check() / securacv_ota_check_and_install() on the
+ * 4. Call securacv_ota_health_tick() every loop pass — with
+ *    config.confirm_dwell_ms set it confirms the image after the dwell
+ * 5. Record the update outcome (securacv_ota_take_pending_version()) at boot
+ *    and again on the pass the health tick returns true
+ * 6. Call securacv_ota_check() / securacv_ota_check_and_install() on the
  *    24-hour schedule or on user demand
- * 5. Monitor progress via the registered callback
+ * 7. Monitor progress via the registered callback
  *
  * This is the canonical engine at firmware/common/ota/. The canary-wap
  * Arduino sketch carries a committed copy (kept in sync by
@@ -81,12 +86,27 @@ extern "C" {
 #define SECURACV_OTA_VERSION_MAX 33
 
 /**
+ * @brief Buffer size for a manifest's product id (incl. NUL)
+ *
+ * Holds every product id the tree declares with room to spare — the longest
+ * today is 37 bytes (securacv-canary-display-nightlight-c3); test_ota_logic.cpp
+ * reads every id the build files declare and holds each to this. Engines
+ * before 2.4.17 kept 32 bytes here and copied the id with strncpy, so the
+ * seven Canary Display ids of 32 bytes or more were cut short, the rebuilt
+ * signed message no longer matched, and every manifest for them failed its
+ * signature check.
+ */
+#define SECURACV_OTA_PRODUCT_MAX 48
+
+/**
  * @brief Buffer size for the canonical manifest-signature message
  *
  * Upper bound of securacv_ota_build_manifest_message() output: domain
- * prefix + every manifest field at maximum length + NUL separators.
+ * prefix + every manifest field at maximum length + NUL separators (1166
+ * bytes for a manifest_version 2 manifest with every field full; the engine
+ * static_asserts the sum against this).
  */
-#define SECURACV_OTA_MANIFEST_MSG_MAX 1152
+#define SECURACV_OTA_MANIFEST_MSG_MAX 1280
 
 // ============================================================================
 // OTA STATE AND ERROR TYPES
@@ -125,7 +145,9 @@ typedef enum {
     SECURACV_OTA_ERR_SIZE_MISMATCH,         /**< Downloaded image size doesn't match manifest */
     SECURACV_OTA_ERR_FLASH_WRITE,           /**< Failed to write firmware to OTA partition */
     SECURACV_OTA_ERR_FLASH_READ,            /**< Failed to read OTA partition for verification */
-    SECURACV_OTA_ERR_PARTITION,             /**< OTA partition not found or invalid */
+    SECURACV_OTA_ERR_PARTITION,             /**< No inactive OTA slot, or the image is larger than the slot
+                                                 (a table older than the image — USB reflash; see
+                                                 securacv_ota_image_fits_slot()) */
     SECURACV_OTA_ERR_VERSION_ROLLBACK,      /**< Update rejected: version older than minimum */
     SECURACV_OTA_ERR_SELF_TEST_FAILED,      /**< Post-OTA self-test failed, rollback initiated */
     SECURACV_OTA_ERR_ALREADY_RUNNING,       /**< OTA operation already in progress */
@@ -173,11 +195,18 @@ typedef enum {
  *   "release_notes": "Improved detection accuracy",
  *   "release_url": "https://github.com/.../releases/tag/fw-v2.2.0"
  * }
+ *
+ * Every string field holds exactly what the manifest says or the manifest
+ * is refused: securacv_ota_manifest_from_fields() refuses a field longer than
+ * its buffer rather than cutting it, because the manifest signature is
+ * rebuilt from these buffers and a cut field can never verify. The buffer
+ * sizes are mirrored by ota_release.py (DEVICE_FIELD_BYTES), whose `verify`
+ * refuses a manifest this struct cannot hold.
  */
 typedef struct {
-    char product[32];           /**< Product identifier (must match config.product) */
-    char version[16];           /**< New firmware version string (e.g., "2.2.0") */
-    char min_version[16];       /**< Minimum version required to update (for gap-skip) */
+    char product[SECURACV_OTA_PRODUCT_MAX];     /**< Product identifier (must match config.product) */
+    char version[SECURACV_OTA_VERSION_MAX];     /**< New firmware version string (e.g., "2.2.0"; room for a -wap / dev.N / rc.N suffix) */
+    char min_version[SECURACV_OTA_VERSION_MAX]; /**< Minimum version required to update (for gap-skip) */
     char url[256];              /**< URL to download firmware binary */
     char sha256[65];            /**< Hex-encoded SHA-256 hash of firmware binary */
     uint32_t size;              /**< Firmware binary size in bytes */
@@ -190,6 +219,58 @@ typedef struct {
     char board[48];             /**< v2: the board token the image was built for (CANARY_FIGURE_HARDWARE); "" = any */
     char chip[16];              /**< v2: the IDF target the image was built for (esp32s3, esp32c6, ...); "" = any */
 } securacv_ota_manifest_t;
+
+/**
+ * @brief A manifest's fields as the JSON parser found them (NULL = absent)
+ *
+ * The parser's half of the manifest contract, kept out of the JSON library so
+ * the host test drives the same copy rules the device runs: the network
+ * engine (ArduinoJson) and the WAP's USB drop-file path both fill one of
+ * these and hand it to securacv_ota_manifest_from_fields().
+ */
+typedef struct {
+    const char *product;            /**< required */
+    const char *version;            /**< required */
+    const char *url;                /**< required */
+    const char *sha256;             /**< required */
+    const char *min_version;
+    const char *signature;
+    const char *manifest_signature;
+    const char *signing_key_id;
+    const char *release_notes;
+    const char *release_url;
+    const char *board;              /**< manifest_version 2 only */
+    const char *chip;               /**< manifest_version 2 only */
+    uint32_t size;
+    int manifest_version;           /**< 1 or 2, as the manifest says it (a parser reads an absent key as 1) */
+} securacv_ota_manifest_fields_t;
+
+typedef enum {
+    SECURACV_OTA_FIELDS_OK = 0,
+    SECURACV_OTA_FIELDS_MISSING,          /**< product, version, url or sha256 absent or empty */
+    SECURACV_OTA_FIELDS_TOO_LONG,         /**< a string longer than its buffer — refused, never truncated */
+    SECURACV_OTA_FIELDS_UNKNOWN_VERSION,  /**< manifest_version neither 1 nor 2 */
+    SECURACV_OTA_FIELDS_UNSIGNED_BINDING, /**< board / chip on a manifest_version 1 manifest (unsigned) */
+} securacv_ota_fields_verdict_t;
+
+/**
+ * @brief Copy parsed manifest fields into the engine's struct, or refuse
+ *
+ * Pure (host-tested). Every string goes into its fixed buffer whole or not
+ * at all: a field longer than its buffer refuses the whole manifest
+ * (SECURACV_OTA_FIELDS_TOO_LONG), because the manifest signature is rebuilt
+ * from these buffers and must be built from exactly the bytes that were
+ * signed — a truncated field could only ever fail that check, and quietly.
+ * A field is kept up to its first NUL; that is also all the signature check
+ * and every later use ever reads.
+ *
+ * @param in    Parsed fields
+ * @param out   Filled on SECURACV_OTA_FIELDS_OK; zeroed on any refusal
+ * @param field Receives the offending field's name on a refusal (may be NULL)
+ */
+securacv_ota_fields_verdict_t securacv_ota_manifest_from_fields(const securacv_ota_manifest_fields_t *in,
+                                                                securacv_ota_manifest_t *out,
+                                                                const char **field);
 
 // ============================================================================
 // CALLBACKS
@@ -383,9 +464,10 @@ esp_err_t securacv_ota_register_selftest(const securacv_selftest_t *test);
  *
  * Call in setup() after critical subsystems are initialized. If the device
  * just booted into a new OTA image, runs all registered self-tests:
- * pass -> firmware marked valid (rollback canceled); any required test
- * fails -> firmware marked invalid and the device reboots into the
- * previous version.
+ * pass -> the confirmation is armed (securacv_ota_init() confirms at once
+ * when no dwell is set; otherwise securacv_ota_health_tick() confirms after
+ * the dwell); any required test fails -> firmware marked invalid and the
+ * device reboots into the previous version.
  *
  * ROLLBACK OWNERSHIP: the engine overrides the Arduino core's weak
  * verifyRollbackLater() hook so initArduino() does NOT auto-confirm new
@@ -419,13 +501,22 @@ bool securacv_ota_just_updated(void);
 bool securacv_ota_pending_verify(void);
 
 /**
- * For a build that runs NO engine (securacv_ota_init() is never called, so
- * neither is the health tick) but can still install an image some other
- * way — the flagship's `secure` / `secure_ha` envs with the dev push
- * endpoint: confirm the running image now if the boot probes passed and it
- * is still pending. This is the legacy confirm-at-the-probe, chosen by the
- * caller that knows no dwell will ever run. A build with the engine never
- * needs it; calling it there would skip the dwell.
+ * Confirm the running image now if the boot probes passed and it is still
+ * pending; nothing otherwise (no probes yet, a failed probe, or an image
+ * already confirmed). Two callers, each of which knows the dwell is not the
+ * right judge:
+ *
+ * - a build that runs NO engine (securacv_ota_init() is never called, so
+ *   neither is the health tick) but can still install an image some other
+ *   way — the flagship's `secure` / `secure_ha` envs with the dev push
+ *   endpoint. This is the legacy confirm-at-the-probe.
+ * - a deliberate restart (an owner's reboot, a restart the loop chose) on a
+ *   build with the engine, once the probes passed: the code decided to stop,
+ *   it did not fall over, so the restart must not read as a crash inside the
+ *   dwell and revert the update.
+ *
+ * Anywhere else it skips the dwell. After it confirms,
+ * securacv_ota_take_pending_version() hands back the install marker.
  */
 void securacv_ota_confirm_now(void);
 
@@ -440,7 +531,9 @@ void securacv_ota_confirm_now(void);
  * loop, a watchdog) therefore rolls back by the bootloader's own rule. No
  * effect when the dwell is 0 or the image is already confirmed.
  *
- * @return true on the pass that confirmed the image.
+ * @return true on the pass that confirmed the image — the pass to record the
+ *         update as applied on (securacv_ota_take_pending_version() hands
+ *         the marker back from then on).
  */
 bool securacv_ota_health_tick(uint32_t now_ms, bool healthy);
 
@@ -607,17 +700,55 @@ esp_err_t securacv_ota_get_min_version(char *buf, size_t buf_len);
 esp_err_t securacv_ota_mark_pending_install(const char *version);
 
 /**
- * @brief Consume the pending-install marker from the previous boot
+ * @brief Consume the pending-install marker, once the outcome is known
  *
- * Returns true exactly once after an install reboot, with the version the
- * install targeted. Compare against the running version: equal means the
- * update applied; different means the device rolled back to the previous
- * firmware. Call after securacv_ota_boot_self_test() (which may itself
- * trigger the rollback reboot).
+ * Returns true exactly once per install, with the version the install
+ * targeted — but only once the outcome is settled:
  *
- * @param buf Output buffer — size it SECURACV_OTA_VERSION_MAX.
+ * - while THIS boot's image is still PENDING_VERIFY (the probes passed and
+ *   the health dwell is running) it returns false and leaves the marker in
+ *   place: the update has not stuck yet, and a restart now would revert it;
+ * - once the image is confirmed (by securacv_ota_health_tick(), by
+ *   securacv_ota_confirm_now(), or by init() when no dwell is set) it
+ *   returns the marker and erases it — equal to the running version: the
+ *   update applied;
+ * - on a boot that is NOT the new image — the bootloader reverted it — the
+ *   running image is not pending, so it returns the marker: a version other
+ *   than the running one means the update rolled back.
+ *
+ * So record the outcome in ONE function and call it twice: at boot after
+ * securacv_ota_boot_self_test() (which may itself trigger the rollback
+ * reboot) — that records rollbacks and builds without a dwell — and again on
+ * the pass where securacv_ota_health_tick() returns true. Engines before
+ * 2.4.17 erased the marker on the first boot of a still-pending image, so a
+ * revert inside the dwell went unrecorded.
+ *
+ * @param buf Output buffer — size it SECURACV_OTA_VERSION_MAX. Set to "" on false.
  */
 bool securacv_ota_take_pending_version(char *buf, size_t buf_len);
+
+/**
+ * @brief Where an install marker lives, as the marker rule sees it
+ *
+ * The device passes its NVS keys (the engine's own, then the pre-engine
+ * "ota_target" one); the host test passes an in-memory store.
+ */
+typedef struct {
+    bool (*load)(void *ctx, char *buf, size_t buf_len); /**< true with a NUL-terminated non-empty marker in buf */
+    void (*erase)(void *ctx);                           /**< remove the marker */
+    void *ctx;
+} securacv_ota_marker_store_t;
+
+/**
+ * @brief The pending-marker rule, pure (host-tested in test_ota_logic.cpp)
+ *
+ * securacv_ota_take_pending_version() is this with the device's stores and
+ * the running image's otadata state. While @p running_pending_verify it
+ * reads and erases nothing and returns false; otherwise it returns (and
+ * erases) the marker from the first store that holds one.
+ */
+bool securacv_ota_take_marker(const securacv_ota_marker_store_t *stores, size_t n_stores,
+                              bool running_pending_verify, char *buf, size_t buf_len);
 
 // ============================================================================
 // STATE AND STATUS QUERIES
@@ -671,6 +802,32 @@ securacv_ota_decision_t securacv_ota_update_decision(
     const char *manifest_version,
     const char *running_version,
     const char *nvs_floor);
+
+/**
+ * @brief Pre-download slot check: does the image fit the inactive app slot?
+ *
+ * Pure logic (host-tested). The pull engine asks it once the manifest is
+ * parsed and BEFORE a byte is downloaded or written, with the manifest's
+ * `size` (covered by the manifest signature) and the size of
+ * esp_ota_get_next_update_partition(NULL) — or 0 when there is no inactive
+ * slot (none found, or a single-app table, where IDF hands back the running
+ * partition itself).
+ *
+ * Why it exists: OTA ships app-only images, so a fielded board keeps the
+ * partition table it was USB-flashed with (firmware/PARTITIONS.md). Vision
+ * C3 factory images fw-v2.2.0..fw-v2.4.15 laid down 0x140000 slots; the
+ * fw-v2.4.16 images are 1,400,368 / 1,409,952 bytes. The engine used to
+ * download and write until the slot ran out, fail, and start over on every
+ * poll. Refused here, an old-table board costs one manifest fetch per poll
+ * and reports SECURACV_OTA_ERR_PARTITION (it needs a USB reflash).
+ *
+ * @param image_size Manifest-declared image size in bytes. 0 (undeclared)
+ *                   cannot be pre-checked and is not refused here; the
+ *                   post-download length check and the write bound apply.
+ * @param slot_size  Inactive app slot size in bytes (0 = no inactive slot)
+ * @return true if the install may go on to download
+ */
+bool securacv_ota_image_fits_slot(uint32_t image_size, uint32_t slot_size);
 
 /**
  * @brief URL transport policy

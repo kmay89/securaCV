@@ -7,6 +7,7 @@ import { upsertContact } from './contacts.mjs';
 import { resolveSku, cogsCents } from './catalog.mjs';
 import { consumeForOrder, releaseForOrder } from './inventory.mjs';
 import { enqueue, fill } from './mail.mjs';
+import { sanitize } from '../guard.mjs';
 import { postSale, postRefund } from './ledger.mjs';
 import { evaluate as evaluateDiscount } from './discounts.mjs';
 import { normalizeTags } from './contacts.mjs';
@@ -60,7 +61,9 @@ export function weekLabel(d = new Date(), tz = currentTz()) {
   return `${date.getUTCFullYear()}-W${String(Math.ceil((((date - yearStart) / 86400000) + 1) / 7)).padStart(2, '0')}`;
 }
 
-export function recordOrder(db, o, { catalog = null, bomTotals = {}, actor = 'system' } = {}) {
+export function recordOrder(db, o, { catalog = null, bomTotals = {}, actor = 'system', promise = null } = {}) {
+  // the buyer's name and the notes come from Stripe's form or a CSV: scrubbed like any outsider text (guard.mjs)
+  if (o && typeof o === 'object') { if (typeof o.name === 'string') o.name = sanitize(o.name, { max: 120 }); if (typeof o.notes === 'string') o.notes = sanitize(o.notes, { max: 2000 }); }
   if (o.external_id) { const dup = db.get('SELECT id FROM orders WHERE external_id = ?', o.external_id); if (dup) return { order: orderById(db, dup.id), created: false }; }
   const unknown = [];
   if (o.items != null && !Array.isArray(o.items)) throw new Error('items must be a list of {sku, qty, unit_cents}');
@@ -106,6 +109,8 @@ export function recordOrder(db, o, { catalog = null, bomTotals = {}, actor = 'sy
       o.name || contact?.name || '', o.ship?.line1 || '', o.ship?.line2 || '', o.ship?.city || '', (o.ship?.state || '').toUpperCase(), o.ship?.zip || '', (o.ship?.country || 'US').toUpperCase(),
       o.created_at || paidAt, paidAt, weekLabel(new Date(paidAt)), o.notes || null);
     const id = r.lastInsertRowid;
+    // The promise the store made at checkout (promise.mjs): the day it ships and the day it should have arrived, so every page and mail says the same dates whatever the batch settings are later.
+    if (promise?.ship_on) db.run('UPDATE orders SET promised_ship_on = ?, promised_arrive_by = ? WHERE id = ?', promise.ship_on, promise.arrive_by || null, id);
     for (const it of items) db.run('INSERT INTO order_items (order_id, sku, name, qty, unit_cents, cogs_cents) VALUES (?, ?, ?, ?, ?, ?)', id, it.sku, it.name, it.qty, it.unit_cents, it.cogs_cents);
     const order = orderById(db, id);
     postSale(db, order);
@@ -265,6 +270,7 @@ export function transition(db, id, to, { actor = 'web', carrier = null, tracking
     // Unpacking frees the lines for editing, so the plan made for the old lines goes with it; the next pack plans afresh.
     if (to === 'paid' && o.status === 'packed') { releaseForOrder(db, o); db.run('UPDATE orders SET pack_plan = NULL WHERE id = ?', id); }
     // Canceled: the boards scanned into it are not going anywhere; free them for the next order (a shipped one stays on its record).
+    if (to === 'canceled' && cfg && o.email) { const m = canceledMail(o, cfg); enqueue(db, { to: o.email, subject: m.subject, kind: 'transactional', ref: `order:${o.number}:canceled`, contactId: o.contact_id, text: m.text }); }
     if (to === 'canceled') { const freed = db.run("UPDATE devices SET order_id = NULL WHERE order_id = ? AND status != 'shipped'", id).changes; if (freed) addEvent(db, id, { kind: 'note', actor, at: now, text: `${freed} board${freed === 1 ? '' : 's'} released back to stock` }); if (o.status === 'packed') { const back = releaseForOrder(db, o); if (back.length) addEvent(db, id, { kind: 'unpacked', actor, at: now, text: `Canceled after packing — parts returned to stock: ${back.map(([sku, n]) => `${n}× ${sku}`).join(', ')}` }); } }
     if (to === 'shipped') {
       db.run('UPDATE orders SET carrier = ?, tracking = ?, measured_oz = ?, postage_cents = postage_cents + ? WHERE id = ?', carrier, tracking || null, measuredOz, postageCents, id);
@@ -276,7 +282,7 @@ export function transition(db, id, to, { actor = 'web', carrier = null, tracking
     const boxLine = plan?.boxes?.length ? ` · ${plan.boxes.map(b => `${b.box_name.replace(/ \(.*\)$/, '')} ${b.weight_oz} oz`).join(' + ')}${plan.total_cost_est != null ? ` · postage ≈ ${usd(Math.round(plan.total_cost_est * 100))}` : ''}` : plan?.warnings?.length ? ` · box: ${plan.warnings[0]}` : '';
     const scaleLine = scale.checked ? ` · scale ${scale.measured} oz vs ${scale.expected} oz${scale.ok ? ' ✓' : ` (${scale.delta > 0 ? '+' : ''}${scale.delta} oz, ${to === 'packed' ? 'packed' : 'shipped'} anyway)`}` : (to === 'shipped' ? measuredOz : packedOz) != null ? ` · scale ${to === 'shipped' ? measuredOz : packedOz} oz` : '';
     const checkLine = check || skipped.length ? (skipped.length ? ` · ${skipped.join(', ')}` : ' · every line ticked') + (boards.length ? ` · boards ${boards.map(b => b.serial).join(', ')}` : '') + scaleLine : '';
-    const line = { packed: `Packed${o.items.length ? ` · ${o.items.map(i => `${i.qty}× ${i.sku}`).join(', ')} pulled from stock` : ''}${boxLine}${checkLine}`, shipped: `Shipped via ${carrier || 'USPS'}${tracking ? ` · ${tracking}` : ''}${scaleLine}${postageCents ? ` · label ${usd(postageCents)}` : ''}${o.email ? ` · tracking emailed to ${o.email}` : ''}`, delivered: 'Delivered', canceled: `Canceled${o.total_cents - o.refunded_cents > 0 ? ` — ${usd(o.total_cents - o.refunded_cents)} was paid: refund it in Stripe, and the webhook (or "Record refund") writes it here` : ''}`, paid: o.status === 'packed' ? 'Unpacked — parts returned to stock' : 'Marked paid' }[to] || `Now ${to}`;
+    const line = { packed: `Packed${o.items.length ? ` · ${o.items.map(i => `${i.qty}× ${i.sku}`).join(', ')} pulled from stock` : ''}${boxLine}${checkLine}`, shipped: `Shipped via ${carrier || 'USPS'}${tracking ? ` · ${tracking}` : ''}${scaleLine}${postageCents ? ` · label ${usd(postageCents)}` : ''}${o.email ? ` · tracking emailed to ${o.email}` : ''}`, delivered: 'Delivered', canceled: `Canceled${o.total_cents - o.refunded_cents > 0 ? ` — ${usd(o.total_cents - o.refunded_cents)} was paid: refund it in Stripe, and the webhook (or "Record refund") writes it here` : ''}${cfg && o.email ? ` · told ${o.email}` : ''}`, paid: o.status === 'packed' ? 'Unpacked — parts returned to stock' : 'Marked paid' }[to] || `Now ${to}`;
     addEvent(db, id, { kind: to === 'paid' && o.status === 'packed' ? 'unpacked' : to, actor, at: now, text: line });
     db.audit(actor, `order.${to}`, 'order', o.number, { carrier, tracking, boxes: plan?.boxes?.map(b => b.box) || undefined, measured_oz: measuredOz ?? packedOz ?? undefined, postage_cents: postageCents || undefined, scale: scale.checked ? (scale.ok ? 'ok' : 'off, went anyway') : undefined, skipped: skipped.length ? skipped : undefined });
     return orderById(db, id);
@@ -307,7 +313,7 @@ export function importLabels(db, manifest, { cfg = null, actor = 'web', at = nul
   return out;
 }
 
-export function refund(db, id, amountCents, { actor = 'web', reason = '', at = null } = {}) {
+export function refund(db, id, amountCents, { actor = 'web', reason = '', at = null, cfg = null } = {}) {
   const o = orderById(db, id); if (!o) throw new Error('no such order');
   const asked = Number(amountCents); if (!Number.isInteger(asked)) throw new Error('the refund is a whole number of cents');
   const amt = Math.min(asked, o.total_cents - o.refunded_cents);
@@ -320,7 +326,9 @@ export function refund(db, id, amountCents, { actor = 'web', reason = '', at = n
     if (total >= o.total_cents && ['paid', 'packed'].includes(o.status)) { const freed = db.run("UPDATE devices SET order_id = NULL WHERE order_id = ? AND status != 'shipped'", id).changes; if (freed) addEvent(db, id, { kind: 'note', actor, at: at || nowIso(), text: `${freed} board${freed === 1 ? '' : 's'} released back to stock` }); }
     postRefund(db, o, amt, reason, (at || nowIso()).slice(0, 10));
     addEvent(db, id, { kind: 'refund', actor, at: at || nowIso(), text: `${total >= o.total_cents ? 'Full' : 'Partial'} refund of ${usd(amt)}${reason ? ` — ${reason}` : ''}${actor === 'stripe' ? ' (reported by Stripe)' : ' (record only — issue it in Stripe)'}` });
-    db.audit(actor, 'order.refund', 'order', o.number, { cents: amt, reason });
+    // The customer hears it the moment it is recorded, whoever recorded it (Stripe's webhook, the order page, the API): one mail per refund.
+    if (cfg && o.email) { const m = refundMail(o, cfg, { cents: amt, reason, full: total >= o.total_cents, shipped: ['shipped', 'delivered'].includes(o.status) }); enqueue(db, { to: o.email, subject: m.subject, kind: 'transactional', ref: `order:${o.number}:refund:${total}`, contactId: o.contact_id, text: m.text }); }
+    db.audit(actor, 'order.refund', 'order', o.number, { cents: amt, reason, told: !!(cfg && o.email) });
     return orderById(db, id);
   });
 }
@@ -355,6 +363,33 @@ If anything in the box is wrong, missing or broken, reply to this email. We fix,
 
 — {{company}}
 `;
+
+// The mails a state owes the customer, sent by the transition or the refund itself — never by a person remembering to.
+export const CANCELED_TPL = `Hi {{name}},
+
+Order {{number}} is canceled.
+{{money}}
+If this is a surprise, reply to this mail and a person will sort it out.
+
+— {{company}}
+{{support}}
+`;
+export const REFUND_TPL = `Hi {{name}},
+
+{{amount}} is on its way back to your card for order {{number}}{{reason}}. Banks take 5–10 business days to show it.
+{{keep}}
+— {{company}}
+{{support}}
+`;
+const mailVars = (o, cfg) => ({ name: o.ship_name || 'there', number: o.number, company: cfg.company || 'Errer Labs', support: cfg.supportAddr || '', status_url: cfg.secret ? orderStatusUrl(cfg, o) : '' });
+export function canceledMail(o, cfg) {
+  const back = o.total_cents - o.refunded_cents;
+  const money = o.refunded_cents ? `${usd(o.refunded_cents)} goes back to your card; banks take 5–10 business days to show it.\n` : back > 0 ? `The ${usd(back)} you paid is being refunded to your card; banks take 5–10 business days to show it.\n` : 'Nothing was charged.\n';
+  return { subject: `Your ${cfg.product || 'SecuraCV'} order ${o.number} is canceled`, text: fill(CANCELED_TPL, { ...mailVars(o, cfg), money }) };
+}
+export function refundMail(o, cfg, { cents, reason = '', full = false, shipped = false } = {}) {
+  return { subject: `${usd(cents)} refunded on your ${cfg.product || 'SecuraCV'} order ${o.number}`, text: fill(REFUND_TPL, { ...mailVars(o, cfg), amount: usd(cents), reason: reason && !/^stripe$/i.test(reason) ? ` (${reason})` : '', keep: shipped ? 'Keep what arrived.\n' : full ? 'The order will not ship.\n' : '' }) };
+}
 
 export const orderStats = (db) => ({
   open: db.get('SELECT COUNT(*) AS n FROM orders WHERE status IN (\'paid\',\'packed\')').n,

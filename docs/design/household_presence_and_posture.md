@@ -68,10 +68,13 @@ All paths below are under `firmware/projects/canary-wap/arduino/canary_wap/`.
 
 - `household.h` stores up to eight bonded phones' identity resolving keys
   (IRKs) with a user label, in the plaintext NVS keys `hh_slots` and
-  `hh_count`. Its comment says the IRKs are "flash-encrypted at rest on ESP32
-  with secure boot". That is false: flash encryption does not cover NVS, NVS
-  encryption cannot be built under the Arduino 2.0.17 core, and secure boot is
-  opt-in ([`key_at_rest.h`](../../firmware/common/identity/key_at_rest.h)).
+  `hh_count`. Its comment said the IRKs are "flash-encrypted at rest on ESP32
+  with secure boot". That was false, and the comment now says so (2026-10-21):
+  flash encryption does not cover NVS, NVS encryption cannot be built under
+  `framework = arduino` (neither pinned core's precompiled `sdkconfig` has
+  it), and secure boot works on no tier: the provisioning kit prepares it,
+  and its Phase 2 sets `SECURE_BOOT_EN` with no key digest, so nothing is
+  verified ([`key_at_rest.h`](../../firmware/common/identity/key_at_rest.h)).
 - The resolve step sits in the hot path. `rf_presence.cpp`'s `feed_ble_scan`
   returns early on a household match, before the privacy token is derived, so
   a household phone would never count toward the device total, the presence

@@ -148,9 +148,16 @@ struct DeviceDetailView: View {
 
             // The room right now — the WAP's 1 Hz sensing snapshot, mounted
             // only when this row is a paired WAP whose token still resolves
-            // (the stream is Bearer-gated; an unpaired row or a Keychain-
-            // lost token would 401 on every poll, so it gets no tile —
-            // the same up-front guard verifyNow applies).
+            // (the app authenticates the stream with the bearer; a
+            // `cv_session` cookie a claim's receipt set over http may ride
+            // along from the shared URLSession, which the WAP's gate takes
+            // until it expires in 24 h, the WAP reboots, or newer sessions
+            // push it out of the WAP's eight session slots (the eighth
+            // minted after it, though one minted in the same second of
+            // uptime can move that sooner or later), but without the token
+            // every poll 401s once the gate stops taking it, so an unpaired
+            // row or a Keychain-lost token gets no tile — the same up-front
+            // guard verifyNow applies).
             if witness.deviceType == .wap,
                let ref = store.devices.devices.first(where: { $0.id == witness.id }),
                let api = try? store.devices.api(for: ref) {

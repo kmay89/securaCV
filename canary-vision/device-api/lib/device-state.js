@@ -140,8 +140,11 @@ function createDeviceState(overrides = {}) {
   // Reboot tracking
   let lastRebootTime = 0;
 
-  // BOOT-button provisioning gate (mirrors firmware: a short-tap opens a
-  // ~30 s window during which /api/provisioning-receipt returns the token)
+  // BOOT-button provisioning gate (a short tap opens a ~30 s window during
+  // which /api/provisioning-receipt returns the token to the first request;
+  // the WAP firmware hands the tap only to the sole address asking from 10 s
+  // before it and answers 409 tap_contended to a second, which this
+  // reference server does not model)
   const BOOT_GATE_TTL_MS = 30 * 1000;
   let bootGateOpenedAt = 0;
 

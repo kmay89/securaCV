@@ -9,7 +9,7 @@
  * spent setup-door claim, so a receipt fetched over the home LAN while the
  * STA was connected sent its reader to 192.168.4.1: unreachable from the
  * LAN, and gone altogether once the SoftAP drops after its grace window
- * (wifi_drop_ap()). A recovery kit the dashboard saves after a BOOT tap
+ * (wifi_drop_ap()). A recovery kit the dashboard saves with a BOOT tap
  * (F257) is that receipt, so it pointed at nothing. Port 80's redirect to
  * https (handle_https_redirect(), on every TLS unit) made the same choice
  * for every caller, so `http://canary-<suffix>.local/` typed on the home
