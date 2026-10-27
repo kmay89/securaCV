@@ -1357,6 +1357,8 @@ test("bootloader placement: both flashers refuse an image whose bootloader isn't
     "the desktop's failure card offers \"Try again\" after a layout refusal");
   assert.match(actions, /if \(!refused && first && !first\.checked\)/,
     "the desktop's failure card offers a clean install after a layout refusal");
+  assert.match(nativeJs, /c\.kind === "layout"\s*\?\s*"Nothing was written — pick an image laid out for this chip\."/,
+    "the Lab bench's failure card coaches download mode and a retry after a layout refusal");
 });
 
 test("rescue bench: both flashers can back up, restore, and erase — native wired end-to-end", () => {

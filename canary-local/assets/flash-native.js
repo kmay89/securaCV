@@ -634,9 +634,12 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       const details = el("details", "flash-log");
       details.append(el("summary", null, "Details"), el("pre", null, String(e)));
       result.append(details);
-      result.append(el("p", "fineprint",
-        "Nothing is bricked — the ESP32’s first-stage bootloader is in ROM. Put the board " +
-        "back in download mode (hold BOOT, tap RESET, release BOOT) and try again."));
+      // A layout refusal wrote nothing, and no retry or download mode changes
+      // where an image keeps its bootloader: say that instead.
+      result.append(el("p", "fineprint", c.kind === "layout"
+        ? "Nothing was written — pick an image laid out for this chip."
+        : "Nothing is bricked — the ESP32’s first-stage bootloader is in ROM. Put the board " +
+          "back in download mode (hold BOOT, tap RESET, release BOOT) and try again."));
     } finally {
       unlisten();
       unlistenProgress();
