@@ -212,7 +212,10 @@ For ESP32 Canary devices the chain state lives in NVS (on-chip), redundantly
 backed up to `/CHAIN/` on the SD card — swapping the card does not break the
 witness chain. After a swap, the firmware's lifetime counters keep counting
 (they live in NVS, not on the card); if you want them re-zeroed for the new
-card, erase the `diag` NVS namespace or reflash with a full chip erase.
+card, erase the `diag` NVS namespace. (An install in either flasher re-zeroes
+them too, with or without its full erase, but it starts all of NVS over, the
+identity key and the chain state with it, so the device comes back as a new
+witness.)
 
 ## Configuration reference
 

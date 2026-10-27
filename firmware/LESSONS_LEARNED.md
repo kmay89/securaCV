@@ -72,7 +72,10 @@
   at a one-second cadence still places it finely. A wider bucket is not a
   coarse chain. §3 now says so, and keeps coarsening a reader's duty.
   The app pins `tls_cert_fp` and refuses an https device without it; the
-  rollout prefers the bonded BLE lane and discloses plain http.
+  rollout prefers the bonded BLE lane and discloses plain http. *(Amended
+  2026-10-22, #1843: no WAP fills that lane, since the app dials only a
+  peripheral advertising the console service, which no WAP advertises, so
+  a WAP rides http or is unreachable; ledger A65.)*
 - **Guidance:** a contract that exists only as "what the other side sends
   today" is not a contract. Put the shape in `spec/`, put ONE fixture beside
   it, and have every implementer decode the same bytes in its own test —
@@ -582,8 +585,10 @@
   lookup, once the open succeeded, answers only found, not found or a bad
   handle, so a test's other answers are ones the load refuses for not
   knowing them, not ones a device sends today. The
-  way to start fresh on purpose is the flagship's 30 s BOOT wipe, or a clean
-  install on the canary-wap, whose BOOT hold keeps the identity. A read's
+  ways to start fresh on purpose are an install in either flasher, with or
+  without its full erase (its factory image starts NVS over), on either
+  tree, and the flagship's 30 s BOOT wipe; the canary-wap's BOOT hold keeps
+  the identity. A read's
   count is part of its answer; a buffer the read refused, filled or not, is
   zeroed before anything sees it. And a refusal that does not halt is only
   as safe as whatever runs after it: before choosing "return false and go
@@ -758,7 +763,9 @@
   shared `UNAMBIGUOUS_ALPHABET` to **54 chars** — dropping every case variant
   of the confusion classes: `0/O/o` and `1/I/i/l/L` — and routed the device_id
   / AP-SSID suffix through it via a base-54 re-encoding of the same 16 identity
-  bits (injective, so per-board uniqueness and reflash-stability are preserved).
+  bits (injective, so per-board uniqueness is preserved, and the suffix still
+  changes only with the key: an OTA update keeps it, and an install in either
+  flasher, whose factory image starts NVS over, gives a new one).
   Rejection-sampling threshold moves `228` (`57*4`) → `216` (`54*4`) so the
   result stays unbiased. Entropy across 32 chars is ~184 bits — still a UX win.
   Applied identically in both firmware trees (`firmware/canary` PlatformIO and
@@ -1060,8 +1067,10 @@
   in `api_auth.h`: one backoff for every caller, so a host that sent a wrong
   bearer whenever the backoff was not running held every other host's right
   token at `429` (86 of 86 of the owner's polls over ten simulated minutes),
-  and the likeliest such host was the owner's own phone, polling a reset unit
-  with its old token. Because a `static` in a header is a separate object in
+  and the likeliest such host was the owner's own phone, polling a
+  re-installed unit (an install or a full erase in either flasher starts NVS
+  over and gives it a new key and token; the 10 s hold and an OTA update keep
+  the token) with its old token. Because a `static` in a header is a separate object in
   every translation unit that includes it, `canary_wap.ino`,
   `csi_integration.cpp` and `csi_mqtt.cpp` each had their own table, and a
   strike one file's gate recorded never held another file's. Three more
@@ -1160,7 +1169,10 @@
   reboots after every few seconds of guessing gets about 37 a minute if the
   unit is back 45 s later and about 155 if it is back in 5 s. The docs
   listed the reboot as a denial left open, never as a reset of the guess
-  budget.
+  budget. *(Amended 2026-10-27, the owner-authority PR, #<PR>: since F361
+  both routes take the bearer alone, so no landing session reboots the
+  unit; a session's firmware install still restarts it, only into a newer
+  signed image.)*
 - **Fix:** the docs state the bound between reboots and the rates with them
   (lockout third review, F343); `test_auth_backoff.cpp` models both over the
   real table, so a change to its numbers fails until the docs follow. The
@@ -1613,6 +1625,48 @@
   closed early.
 - **Date learned:** 2026-09
 
+### A bigger slot reaches only the boards that get a USB flash; the engine must check the slot before it downloads
+- **What happened:** fw-v2.4.16 grew the Vision C3 envs from `default.csv`
+  (0x140000 slots) to `min_spiffs.csv` (0x1E0000) for the Bluetooth setup
+  door, and shipped 1,400,368 / 1,409,952-byte images. Every C3 board
+  factory-flashed fw-v2.2.0..fw-v2.4.15 still carries the old table, because
+  OTA ships app-only images. The pull engine downloaded the image and wrote
+  it until the slot ran out, failed, and did it all again on the next poll.
+  The release gate did not catch it. `check_slot_budget.py` measures the
+  image against the table in the repo, not the ones in the field, and for 9
+  of the 17 signed products it measured nothing: it printed a plain "not
+  checked" line that no one reads.
+- **Root cause:** The engine learned the slot was too small only from a
+  failed write, after a full download, and nothing it kept stopped the next
+  poll from trying again. The budget script passed an env with no budget,
+  so the gate's coverage gap made no noise.
+- **Fix:** `securacv_ota_image_fits_slot()` (pure, host-tested in
+  `common/ota/test_ota_logic.cpp`) runs once the manifest is parsed and
+  before any download: manifest `size` against
+  `esp_ota_get_next_update_partition(NULL)->size`, with no slot (none found,
+  or a single-app table where IDF returns the running partition) refused
+  outright. The refusal is `SECURACV_OTA_ERR_PARTITION`, a log line that says
+  the unit needs a USB reflash to a newer table, and a UI sentence that says
+  "install it over USB" rather than "try again". BLE OTA already compared
+  `image_size` with the slot before `esp_ota_begin` (`ble_ota.cpp`). The
+  slot-budget script now writes a `::warning::` annotation for a signed
+  product with no budget, and `flavors.json` budgets 7 of the 9. The other
+  two, dash and dash-modes, ship from an arduino-cli build on `huge_app`
+  (one app slot, so no OTA slot at all), while their PlatformIO env says
+  `default_16MB.csv`. They stay unbudgeted, with that reason, until the
+  two tables agree.
+- **Not fixed by this:** a board already in the field runs the engine it was
+  flashed with. The fix stops the next slot change from looping. The C3
+  boards now looping can only be fixed by a USB reflash.
+- **Regression check:** `test_image_fits_slot` in `test_ota_logic.cpp`
+  (firmware.yml's pull-OTA host test). `scripts/tests/test_check_slot_budget.py`
+  fails a signed product with neither a budget nor a declared reason.
+  Before you change a partition table, find every table the fielded boards
+  carry (the factory images of each earlier release). Budget against the
+  smallest one, as nightlight-c3 does, or say in the release notes that
+  those boards need a USB reflash.
+- **Date learned:** 2026-10
+
 ---
 
 ## Security Architecture Principles
@@ -1623,6 +1677,10 @@
 
 ### Private keys must never leave the device
 - **Principle:** The Ed25519 private key has no export, backup, or read interface
+  in the firmware. *(Amended 2026-10-22, #1843: a read of the whole flash goes
+  around it, over USB through the chip's ROM download mode or on a bench, and
+  both flashers make that read for their pre-flash safety copy, a file that
+  holds the key in the clear: the key is plaintext in NVS on every tier.)*
 - **Why:** A key that can be exported can be compelled (court orders, coercion)
 - **Rule:** No API endpoint, log statement, debug output, or export path may
   include private key material. There is no recovery mechanism by design.
@@ -1928,12 +1986,27 @@
   (`common/io/short_tap.h`) opens it for a minute as the owner's own act. The
   rule is stated once, in the header, in one sentence: *the door is open for
   a device nobody owns yet, and for an owner's own tap — never for a device
-  that has an owner and a bad day.*
+  that has an owner and a bad day.* *(Amended 2026-10-22, #1843: the header's
+  sentence now reads "the door is open for a device with NO NETWORK SAVED (a
+  new one nobody owns yet, or one whose network was cleared), and for an
+  owner's own tap". The 10 s hold, and Forget Wi-Fi on a WAP (which any
+  landing session can send, ledger F345), clear the network but keep
+  the witness identity on a Sense, a Vision and a WAP, and a WAP's token, so
+  a cleared unit still has an owner, and its door goes to whichever client
+  connects first (`docs/design/magic_pairing.md` §2.2). The "no owner yet"
+  above covers that cleared unit too, as does the factory reset it names as
+  re-arming the window.)* *(Amended 2026-10-27, the owner-authority PR,
+  #<PR>: after setup a WAP's Forget Wi-Fi takes the API token, F345, so no
+  landing session sends it; the door it reopens is still first-come.)*
 - **Regression check:** `tests_host/test_improv_core.cpp` — a session begun
   with credentials stays shut while the caller reports the portal up; a
   window that ran out does not reopen without a tap or a power cycle;
-  credentials vanishing at runtime (factory reset) re-arm the window,
-  credentials appearing (the join persisted) shut the no-credentials door.
+  credentials vanishing at runtime (factory reset) *(amended 2026-10-22,
+  #1843's sweep: on a WAP also Forget Wi-Fi, which any landing session can
+  send, F345, so the re-arm is not the owner's act alone)* re-arm the window,
+  credentials appearing (the join persisted) shut the no-credentials door
+  *(amended 2026-10-27, #<PR>: after setup a WAP's Forget Wi-Fi takes the API
+  token, F345)*.
   `test_short_tap.cpp` pins what counts as a tap (≥40 ms, <700 ms; a hold
   is somebody else's gesture). Design: `docs/design/magic_pairing.md`.
   Bench: not yet — a saved network failing with the router off must raise
@@ -1953,7 +2026,10 @@
   **Just Works** — the only pairing a phone with no prior bond can open in
   one tap — which is encrypted but *unauthenticated*: it resists a passive
   listener, not an active one who paired first. The bearer token lasts for
-  the life of the device. Nothing that lasts belongs on a link like that.
+  the life of the device *(amended 2026-10-22, #1843's sweep: until an install
+  or a full erase in a flasher; OTA updates, the 10 s hold and Forget Wi-Fi
+  keep it, and nothing rotates it)*. Nothing that lasts belongs on a link like
+  that.
 - **Root cause:** "the link is encrypted" was read as "the link is
   trusted". Encryption answers who can *read*; authentication answers who
   is *there*; a Just Works link has the first and not the second, and the
@@ -2059,8 +2135,8 @@
   window open.
 - **Root cause:** the session modeled *authorization* (is the door open?)
   and not *occupancy* (who is standing in it, for how long, doing what).
-  A door that is open to whoever has no owner yet must still be a door
-  nobody can wedge.
+  A door that is open to whichever client connects while no network is
+  saved must still be a door nobody can wedge.
 - **Fix:** three bounds in `improv_core.h`'s `Timing`, all host-tested:
   accepted `WIFI_SETTINGS` writes at least `wifi_settings_cooldown_ms`
   (3 s) apart — a faster write is `InvalidRpc`, not counted, nothing
@@ -3296,8 +3372,8 @@
   BOOT" before their first ask had left, so a press made as the line
   appeared could land before any ask of the owner's had reached the device
   (a TLS handshake, a blip); they now say it once the device has answered
-  that ask. And a rule a proof leans on needs a behavior row of its own:
-  the two-entry record is exact only because an ask by the address on
+  one of their asks with `403`. And a rule a proof leans on needs a
+  behavior row of its own: the two-entry record is exact only because an ask by the address on
   record refreshes its time, and no row polled the way the pages do (every
   2 s, for longer than the 10 s lookback), so deleting the refresh, which
   serves a host the token under a polling owner, failed only four harness
@@ -3316,6 +3392,123 @@
   an IPv4-mapped key, so comparing four bytes of the 16, or the IPv4 a key
   maps to, passed every suite; rows with IPv6 askers that differ only in the
   prefix, or share the owner's last four bytes, now fail both.
+- **Found in Codex's review of #1842, fixed in its follow-up, #1843:** a
+  poll that can claim a one-time grant belongs to the screen that started it. The companion's kit save
+  kept asking from a step the owner had skipped, so the next BOOT tap went
+  to a page nobody was looking at, the kit downloaded unasked and the
+  hidden Home Assistant step came back. Every function that hides the step
+  now stops the save first (an `AbortController` for the ask in flight,
+  and a check after every await that it is still the running save), and a
+  row holds every such function to that first line, so an exit added
+  later cannot forget it. And a poll's error path has to tell no answer
+  from an answer: a fetch that rejected (a Wi-Fi blip) ended the whole
+  window, though the dashboard's poll of the same route already asked on
+  through one. Two copies of one loop drift; the companion now follows the
+  dashboard's rules, each with a row.
+- **Found in #1842's final review, second round (fixed in #1843):** a rule
+  found for one list of ways out governs every list. The fifth review's fix judged
+  the poller's ways out against the poller and left the lockout's, a
+  paragraph or two away in the same files, offering the same 10 s hold as
+  an equal way out from under a host striking from nine or more addresses.
+  A search for the advice ("hold BOOT 10 s") finds both lists; a search
+  for the scenario finds one. And a branch whose only remaining effect is
+  a log line needs a row that counts the line: the receipt reads a
+  truncated `?claim=` as presented, and since a value that never reaches
+  the compare spends nothing either, deleting the branch passed every
+  suite until a row counted the refusal's health line.
+- **Found in #1842's final review, third round (fixed in #1843):** a reset
+  is a way out only if the attacker cannot simply do again what it did. The second
+  round kept the 10 s hold in the lockout's list because it empties the
+  table, and judged it only against the setup door it reopens; but the host
+  that filled the table is still on the network, and once the unit is set
+  up there again its next strikes from nine addresses fill the slots and
+  arm the overflow, while the claim that pairs the phone frees only the
+  phone's own slot. The way out is the one that takes away the attacker's
+  reach (a network that host is not on), which on the WAP the owner's own
+  browser gives with no hold (its landing session reaches
+  `POST /api/wifi/connect` under the lockout), while that host leaves it
+  alone and the new network stays up (the next four bullets). Run the
+  attack again from the state the remedy leaves before listing it. And a
+  sentence in the security model needs a row of its own even when it reads
+  as obvious: "a served tap clears only the contention, not the
+  addresses" had none, and clearing both at a TAKE, which hands a host
+  that asks first after the owner's next tap the token, passed every
+  suite.
+- **Found in #1843's first review:** a search for the advice has to run
+  over the whole tree, not over the hunks the diff already touches. The
+  second round's own bullet says a search for "hold BOOT 10 s" finds both
+  lists; run over the tree it also found three audit notes in two files the
+  diff did not touch, and three CHANGELOG passages its hunks never reached,
+  all still offering the hold. And a way out has to be judged against everything else the attacker can
+  reach: the bonded lane takes away the striking host's network reach, but
+  a host also in radio range can bond through the landing session the
+  network gives it, and then use the lane itself. A guard that every row
+  passes without needs a row from the state it guards: every companion row
+  tapped Save first, so the stop's `if (!ctl) return;` was never reached
+  with no save running, the state most pane changes are made in.
+- **Found in #1843's second review:** judge a remedy against every route
+  the attacker's session reaches that touches the remedy, not only the
+  routes of the attack you have in mind. The first review judged the lane
+  against pairing and bounded the host by radio range; the same landing
+  session turns the WAP's Bluetooth off, a saved setting the 10 s hold
+  keeps, or deletes the phone's bond, from anywhere on the network; the
+  owner's own landing session reaches the same routes, and
+  `POST /api/wifi/connect`, so the owner's browser can turn Bluetooth back
+  on, or move the WAP with no Bluetooth at all. List
+  the routes by what they touch (Bluetooth's switch, its bonds, the Wi-Fi
+  it would change), and a denial's length by what the attacker pays: a
+  refused write the lane does not charge keeps the owner's refused for as
+  long as the writer keeps at it, not for the hour the cap names. And a
+  security doc's "clears" has to say where the bytes go: the seizure
+  scenario said the WAP's hold clears the saved Wi-Fi and the broker login,
+  which it removes from NVS, leaving their bytes in flash, as the same
+  paragraph already said of the flagship's key.
+- **Found in #1843's third review:** a way out is judged by the client
+  that has to take it, not only by the firmware that would answer. Every
+  list named the iPhone's bonded Bluetooth lane first, and the WAP's CREDS
+  write is real, but the iPhone app dials only a Canary that advertises the
+  console service, which a WAP does not, so it never reaches that write;
+  the same ledger already held it open as A65. Search the ledger's open
+  items for the remedy before offering it. And a tier qualifier has to come
+  from what the tier encrypts: "readable on the default tier" told a reader
+  the secure tier hides those bytes, and flash encryption does not cover
+  NVS, whose encryption is not available under `framework = arduino`, so
+  the erased Wi-Fi and broker passwords, the bonds and both trees' keys are
+  plaintext on the flash chip of a fused board too.
+- **Found in #1843's fourth review:** the state a remedy leaves includes
+  what the device will do from it on its own. The third review ran the
+  attack again from the moment after the move (the WAP on a network the
+  striking host is not on) and stopped there; but the move keeps the
+  host's network saved (`wifi_store.h` keeps up to four), and the WAP's own
+  recovery, a network not found twice running moving on to the next saved
+  one, takes it back there with no act of the owner's once a hotspot is
+  turned off or a guest network drops. Read the device's fallbacks
+  (retries, rotation, what a boot loads) before calling a move permanent:
+  here only Forget Wi-Fi or the hold drop the old network, and both reopen
+  the first-come setup door. A precondition belongs before the step it
+  guards and where the reader can act on it: the dashboard's Bluetooth
+  check followed the hold's sentence, on a sign-in that covers Settings and
+  holds no session, and its row pinned that order; it now comes first and
+  says how the sign-in reaches the switch, and the row walks that way.
+  A row that reads one function for a property has to read the functions
+  it calls to change state: the hold's row read `factory_reset_by_hold()`
+  alone, so a `remove("bt_enabled")` in `wifi_clear_credentials()` or
+  `setup_wizard::reset_to_first_boot()` passed it. And a harness whose
+  timers run at once needs a bound of its own: a page loop that stopped
+  counting its asks never yielded to node:test's timeout, so the run hung
+  rather than failing a row; both harnesses now answer `409` past 64 asks.
+- **Found in the owner-authority PR's merge of #1884 (2026-10-27):** a
+  decision that moves a route behind the bearer moves every way out that
+  route was. #1843's lockout posture rested on the owner's landing session
+  reaching `POST /api/wifi/connect` and `POST /api/wifi/forget` under the
+  lockout (the third round's bullet above); F334 and F345 put both on the
+  bearer alone after setup, and the overflow holds that bearer with every
+  untracked address, so the browser's move now waits until the striking
+  host stops. The two branches merged without a conflict in most of the
+  sentences that disagreed: the dependency surfaced only because #1843's
+  fifth-review note on F345 named it. Before deciding a route's gate,
+  search the ledger and the docs for the route as a remedy, not only as an
+  attack.
 - **Date learned:** 2026-10
 
 ### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)

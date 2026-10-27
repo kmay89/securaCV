@@ -430,9 +430,9 @@ static void test_security_profile_transitions() {
   // Boot, credentials stored, door shut: Numeric Comparison applied.
   CHECK(step(false, false, false) == NUMERIC_COMPARISON);
   CHECK(applied == NUMERIC_COMPARISON);
-  // Factory reset at runtime: the door opens, but the owner's bonded phone
-  // is still connected (the dashboard that issued the reset). Held: the
-  // bonded session keeps the strict profile.
+  // Credentials wiped at runtime (Forget Wi-Fi, or the 10 s hold before its
+  // restart): the door opens, but a bonded phone is still connected. Held:
+  // the bonded session keeps the strict profile.
   CHECK(step(true, false, true) == HOLD);
   CHECK(applied == NUMERIC_COMPARISON);
   // Still held while that link is up, pass after pass.

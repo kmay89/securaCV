@@ -18,7 +18,9 @@ still update, but they're marked as **unverified** in their attributes.
 If you only care about the upshot: **a hostile MQTT broker cannot forge
 a signed publish for a Canary whose key you have pinned**, and **a
 re-flashed Canary will surface a clear "key changed" notification**
-instead of silently going unverified. What a broker *can* still do is
+instead of silently going unverified (an install in either flasher starts
+the Canary's settings over, its key included; an over-the-air update and
+the 10 s BOOT reset keep the key). What a broker *can* still do is
 narrower and stated in ["What's NOT solved yet"](#whats-not-solved-yet)
 below and in [`FLEET_SEMANTICS.md`](FLEET_SEMANTICS.md) §4: replay a
 captured signed publish (the hub's roll-call bounds that to one window
@@ -84,7 +86,7 @@ The PKI sig outcome is stamped onto each signed entity's
 | `tofu_pin` | First sight; we just auto-pinned this device | First publish from a freshly-added Canary |
 | `unsigned` | Payload missing `sig`/`fp`/`alg` | Older firmware that doesn't sign yet |
 | `no_pubkey` | We have a sig but no pinned pubkey yet | Briefly, before the health topic delivers `public_key` for TOFU |
-| `mismatch` | Sig doesn't match the pin, OR fingerprint changed | Re-flashed Canary, MITM, broker compromise |
+| `mismatch` | Sig doesn't match the pin, OR fingerprint changed | Re-flashed Canary (an install or a full erase in either flasher), the all-rounder Canary's 30 s BOOT wipe, a replacement board, a Sense, Vision or Sentinel that could not read its stored key (ledger F362), MITM, broker compromise; never an over-the-air update or the 10 s BOOT reset, which keep the key |
 
 `verified` is a boolean derived from the above: only `ok` and
 `tofu_pin` count as verified.
@@ -132,7 +134,7 @@ but not to set one. Only canary-wap serves an `/enroll` page.
 
 | Product | Full public key, out of band | Fingerprint only |
 |---|---|---|
-| **canary-wap** | The `/enroll` page (and `/api/device/enroll`, the same card as JSON), no login: `device_id`, fingerprint and full key. Open it at `canary-<name>.local/enroll`, or `canary-<first four hex of the fingerprint>.local/enroll` on an unnamed device, or at its IP. Once setup is done the WAP serves HTTPS once a certificate is stored (then `http://` redirects and the browser warns about the self-signed certificate), but no stock build stores one today, so it serves plain HTTP (F15); during first-boot setup it is plain HTTP on the setup network. `GET /api/status` also returns `pubkey` and `fingerprint`, but only with the device's bearer token. On USB serial, `i` prints the identity block with the full key (the line ends in a literal `...` after the 64 characters: don't paste the dots). | `GET /api/device-info` returns `pubkey_fp`, no login. The provisioning receipt it prints on USB serial at every boot carries `pubkey_fp`. |
+| **canary-wap** | The `/enroll` page (and `/api/device/enroll`, the same card as JSON), no login: `device_id`, fingerprint and full key. Open it at `canary-<name>.local/enroll`, or `canary-<first four hex of the fingerprint>.local/enroll` on an unnamed device, or at its IP. Once setup is done the WAP serves HTTPS once a certificate is stored (then `http://` redirects and the browser warns about the self-signed certificate), but no stock build stores one today, so it serves plain HTTP (F15); during first-boot setup it is plain HTTP on the setup network. `GET /api/status` also returns `pubkey` and `fingerprint`, but only to a caller its gate (`api_auth_check()`) admits: one with the device's bearer token, or a landing session, which the landing page mints for any host on the network (F346). On USB serial, `i` prints the identity block with the full key (the line ends in a literal `...` after the 64 characters: don't paste the dots). | `GET /api/device-info` returns `pubkey_fp`, no login. The provisioning receipt it prints on USB serial at every boot carries `pubkey_fp`. |
 | **`firmware/canary` build** (and the ESP32-CAM, Freenove S3 and WROOM builds of it) | No `/enroll`. On USB serial, `i` prints the device ID and full key, and `j` prints the self-manifest (`device_id`, `pubkey`, `pubkey_fp`). `GET /api/status` also returns `pubkey` and `fingerprint`, but only with the device's bearer token. | On USB serial, `f` prints the fingerprint. The dashboard's Device Identity card shows the fingerprint and only the first 16 characters of the key, and only on a page that was handed the token (during setup, over the SoftAP, with the bearer, or after one BOOT tap). The provisioning receipt carries `pubkey_fp` only. |
 | **canary-vision** | No `/enroll`. Its only web page is the shared setup portal, on its own setup network at first boot and when joining Wi-Fi keeps failing, and that page shows no key. On USB serial, `j` prints the self-manifest (`device_id`, `pubkey`, `pubkey_fp`). | The boot log prints `Ed25519 ready  fp=<fingerprint>`. |
 | **canary-sense** | From a firmware release after 2.4.15, the boot log on its serial console. Right after `Ed25519 ready  fp=<fingerprint>` it prints `Ed25519 pubkey <64 hex>`, in lowercase. 2.4.15 and every earlier release print only the fingerprint, so update first. It prints once per boot, so open the serial monitor first, then reset the board. The `device_id` is on the `Device ID` line later in the same boot log. It has no other source: its only web page is the shared setup portal (on its own setup network, at first boot and when joining Wi-Fi keeps failing), which shows no key, and its serial console is the tuning console, which has no identity command. The key line is compiled by CI; it has not been read off a unit on a bench. Which port carries that console is unverified too: the build undefines `ARDUINO_USB_CDC_ON_BOOT` (`firmware/envs/platformio/canary-sense.ini`), and with Arduino-ESP32 3.3.8 that makes `Serial` UART0 on GPIO16/17, the pins the radar's UART also uses, rather than the XIAO ESP32-C6's USB-C port. That is read from the core's headers, not seen on a bench, and it is an open firmware item. | The boot log's `Ed25519 ready  fp=<fingerprint>` line. |
@@ -186,17 +188,28 @@ cannot set one.
 
 ## Key rotation
 
-When you legitimately re-flash a Canary (firmware update that wipes
-NVS, or moving an SD card to fresh hardware), the new keypair won't
+When a Canary legitimately gets a new key, the new keypair won't
 match the pin and HA fires a **persistent notification** plus marks
-the entities unverified.
+the entities unverified. A new key comes from an install in either
+flasher, with or without the full erase (the flashers write a factory
+image whose settings region is blank, so the next boot makes a new key),
+the all-rounder Canary's 30 s BOOT wipe, or a replacement board (moving
+an SD card to fresh hardware moves its records, not the key); a Sense,
+Vision or Sentinel also makes one when it cannot read its stored key at
+boot (ledger F362). An over-the-air update, a PlatformIO or Arduino IDE
+upload (which, without its erase option, leaves the settings region
+alone) and the 10 s BOOT reset keep the key. So after one of those a
+mismatch means either a Sense, Vision or Sentinel that could not read its
+stored key on that boot (F362, above), or something else publishing under
+that `device_id`: read the key off the device itself (the table above) and
+rotate only to that one.
 
 To clear it:
 
 1. **Settings** → **Devices & services** → **SecuraCV** → **Configure**
    → **Rotate a pinned device key**.
-2. Enter the device_id and the new pubkey, read off the re-flashed
-   Canary from its source in
+2. Enter the device_id and the new pubkey, read off the Canary itself
+   from its source in
    [the table above](#where-each-product-shows-its-key). On a
    canary-sense or canary-sentinel, that is the `Ed25519 pubkey` line
    in its boot log. A canary-sense on 2.4.15 or older shows no full
@@ -218,8 +231,14 @@ SecuraCV: device <id> key mismatch
 
 Canary `<id>` published with fingerprint `<new_fp>` but the pinned
 fingerprint is `<old_fp>`. Entities are still updating, marked as
-unverified. If you intentionally re-flashed this device, rotate the
-pin from the integration's options menu.
+unverified. A Canary gets a new key when it is installed again or fully
+erased in either flasher (an install starts its settings over), from the
+all-rounder Canary's 30-second BOOT wipe, or with a replacement board, and
+a Sense, Vision or Sentinel also makes one when it cannot read its stored
+key at boot; an over-the-air update and the 10-second BOOT reset keep it.
+Check the new key on the device itself before you rotate the pin from the
+integration's options menu: if none of those explains it, something else
+may be publishing as this device.
 ```
 
 We dedupe by `(device_id, received_fingerprint)`, so a steady stream
@@ -350,8 +369,10 @@ freshly-installed HA:
    `TOFU-pinning Canary <id> with pubkey <hex>…`.
 3. Open the chain sensor's attributes — `verified: true`, `trust_reason: ok`,
    `pinned_fingerprint` matches `received_fingerprint`.
-4. Flash a different firmware build to the same Canary (or wipe NVS to
-   regenerate the keypair). On the next publish, expect:
+4. Flash a firmware build to the same Canary from either flasher (its
+   factory image starts NVS over, so the next boot makes a new keypair), or
+   wipe NVS another way. An over-the-air update, or a PlatformIO upload,
+   keeps the key, and no mismatch follows. On the next publish, expect:
    - A `SecuraCV: device <id> key mismatch` persistent notification.
    - `verified: false`, `trust_reason: mismatch` on the sensor.
    - Entities continue updating (warn-loudly-accept policy).

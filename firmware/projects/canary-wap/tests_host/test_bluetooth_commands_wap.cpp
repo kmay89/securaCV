@@ -3385,9 +3385,10 @@ void the_dispatcher_is_installed() {
 // does not override it, so NimBLE-Arduino's default answered yes on the
 // NimBLE host task, the owner never saw the six digits, and the channel
 // never saw the link or the bond. Now both go through the dispatcher: the
-// passkey reaches the channel and waits for the owner, only the owner's
-// confirm answers it (once, yes, on the loop task), the bond reaches the
-// paired list, and Opera still counts the link up and down.
+// passkey reaches the channel and waits for a confirm over REST (the bearer
+// alone since F346: the_bond_confirm_takes_the_bearer drives that route),
+// which answers it once, yes, on the loop task; the bond
+// reaches the paired list, and Opera still counts the link up and down.
 void test_full_profile_the_owner_answers_every_pairing() {
   boot();
   opera_init();

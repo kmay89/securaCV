@@ -124,7 +124,8 @@ constexpr size_t SESSION_COOKIE_HEX_LEN = 64;
  * first. A `__Host-` cookie that is present is the one asked, malformed or
  * not: the plain one behind it is not tried. Never sends
  * a response — caller decides what to do on failure (handle_ui shows
- * a pair landing; CSI API handlers fall through to Bearer auth or 401).
+ * a pair landing; CSI API handlers fall through to Bearer auth or 401;
+ * the landing page mints a session for any host on the network, F346).
  *
  * Replaces the previous design where the device's Bearer api_token was
  * injected into dashboard HTML — that approach made the token

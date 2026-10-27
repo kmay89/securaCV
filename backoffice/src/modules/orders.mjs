@@ -7,6 +7,7 @@ import { upsertContact } from './contacts.mjs';
 import { resolveSku, cogsCents } from './catalog.mjs';
 import { consumeForOrder, releaseForOrder } from './inventory.mjs';
 import { enqueue, fill } from './mail.mjs';
+import { sanitize } from '../guard.mjs';
 import { postSale, postRefund } from './ledger.mjs';
 import { evaluate as evaluateDiscount } from './discounts.mjs';
 import { normalizeTags } from './contacts.mjs';
@@ -61,6 +62,8 @@ export function weekLabel(d = new Date(), tz = currentTz()) {
 }
 
 export function recordOrder(db, o, { catalog = null, bomTotals = {}, actor = 'system', promise = null } = {}) {
+  // the buyer's name and the notes come from Stripe's form or a CSV: scrubbed like any outsider text (guard.mjs)
+  if (o && typeof o === 'object') { if (typeof o.name === 'string') o.name = sanitize(o.name, { max: 120 }); if (typeof o.notes === 'string') o.notes = sanitize(o.notes, { max: 2000 }); }
   if (o.external_id) { const dup = db.get('SELECT id FROM orders WHERE external_id = ?', o.external_id); if (dup) return { order: orderById(db, dup.id), created: false }; }
   const unknown = [];
   if (o.items != null && !Array.isArray(o.items)) throw new Error('items must be a list of {sku, qty, unit_cents}');

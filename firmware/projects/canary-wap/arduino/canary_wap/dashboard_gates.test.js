@@ -823,7 +823,7 @@ describe('The network moves on the bearer alone (F334, F345)', () => {
     assert.deepEqual(p.sent, ['POST /api/wifi/connect']);
     assert.deepEqual(p.record.alerts, []);
     assert.equal(p.el('authOverlay').classList.contains('hidden'), false);
-    assert.match(p.el('authStatus').textContent, /Paste the API token, or use BOOT Tap Once/);
+    assert.match(p.el('authStatus').textContent, /Paste the API token \(it is in your recovery kit\), or use BOOT Tap Once\./);
     assert.equal(p.el('authNotNow').style.display, '');
     assert.equal(p.el('wifiProgress').style.display, 'none');
     assert.equal(p.el('wifiPassword').value, 'hunter22');
@@ -847,7 +847,7 @@ describe('The network moves on the bearer alone (F334, F345)', () => {
     assert.deepEqual(p.sent, [], 'a declined confirm sends nothing');
     assert.equal(asked.length, 1);
     assert.match(asked[0], /saved broker login/);
-    assert.match(asked[0], /Bluetooth setup door is open for 30 minutes to the first phone nearby/);
+    assert.match(asked[0], /if its build has the Bluetooth setup door and Bluetooth is on, that door is open for 30 minutes to the first phone or computer nearby that connects/);
     assert.match(asked[0], /a camera unit takes a Wi-Fi code shown to its lens/);
     assert.match(asked[0], /use Connect instead: it keeps the broker login/);
   });
@@ -896,7 +896,7 @@ describe('The reboot takes the API token (F361)', () => {
       assert.deepEqual(p.sent, [`POST ${url}`], fn);
       assert.deepEqual(p.record.alerts, [], fn);
       assert.equal(p.el('authOverlay').classList.contains('hidden'), false, fn);
-      assert.match(p.el('authStatus').textContent, /Paste the API token, or use BOOT Tap Once/);
+      assert.match(p.el('authStatus').textContent, /Paste the API token \(it is in your recovery kit\), or use BOOT Tap Once\./);
     }
   });
 

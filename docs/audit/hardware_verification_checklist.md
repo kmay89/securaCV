@@ -5,8 +5,9 @@ Audit: `docs/audit/mesh_and_chirp_audit_v1.md` §7
 Closeout: `docs/audit/v0.3_closeout.md`
 
 Every item below requires physical XIAO-ESP32S3 boards on the bench
-(or equivalent ESP32-S3 dev kit with flash encryption enabled in
-production builds). Host-side and lint-side gates are already green;
+(or equivalent ESP32-S3 dev kit; the rows that need flash encryption on say
+so, and no released build or provisioning-kit step turns it on today:
+`docs/secure_provisioning.md`, Step 3). Host-side and lint-side gates are already green;
 this is what's still hardware-bound.
 
 When you finish a repro, drop the artifact (terminal log, BLE console
@@ -2739,7 +2740,13 @@ no 301.
 - [ ] **The dashboard offers the recovery kit, signed out (BOOT tap) and signed in (Settings), and the kit pairs the iPhone**
   - Setup: a canary-wap set up through the Bluetooth setup door (so its
     wizard's close-out never ran), a laptop browser with no session for it
-    (a private window), the iPhone app with the WAP under **Ready to pair**.
+    (close every private window, then open a new one: Chrome and Firefox
+    share one private session, and its cookies, across the private windows
+    that are open, so a window opened beside an earlier row's signed-in one
+    resumes it and never shows **Use BOOT Tap Once**; or delete the site's
+    session cookie, `cv_session` over plain HTTP and `__Host-cv_session`
+    over HTTPS, in the developer tools, Application, then Cookies), the
+    iPhone app with the WAP under **Ready to pair**.
   - Repro: open `https://canary-<suffix>.local/settings` (accept the
     certificate warning), choose **Use BOOT Tap Once**, short-tap BOOT; on
     the card, choose **Save my recovery kit**, with the browser's network
@@ -2785,8 +2792,14 @@ lines' `Cookie: cv_session=<hex>` works on both.
 
 - [ ] **A dashboard session minted by the landing page buys neither the receipt nor the pairing QR; a bearer buys both; the tap still buys the receipt**
   - Setup: a canary-wap on this firmware joined to the home Wi-Fi, a laptop
-    on the home network with no session for it (a private window), `curl`,
-    the API token from a recovery kit.
+    on the home network with no session for it (close every private window,
+    then open a new one: Chrome and Firefox share one private session, and
+    its cookies, across the private windows that are open, so a window
+    opened beside an earlier row's signed-in one resumes that session, and
+    `/` then serves it the dashboard, not the landing page with **Open
+    dashboard**; or delete the site's session cookie, `cv_session` over
+    plain HTTP and `__Host-cv_session` over HTTPS, in the developer tools,
+    Application, then Cookies), `curl`, the API token from a recovery kit.
   - Repro: open `https://canary-<suffix>.local/` and follow **Open
     dashboard** (the `?cv_pair=` link): the dashboard loads on the session
     cookie, `__Host-cv_session` over HTTPS and `cv_session` over plain HTTP
@@ -2890,11 +2903,15 @@ is CI's; nothing here ran on a device or in a browser. Owner: U1.
   - Setup: a canary-wap on this firmware joined to the home Wi-Fi with HTTPS
     up, a second unit (or this one after a factory reset) at its first-boot
     SoftAP setup, a browser with developer tools, `curl`.
-  - Repro: in a private window open `https://canary-<suffix>.local/` and
+  - Repro: close every private window (they share one private session and
+    its cookies), then in a new one open `https://canary-<suffix>.local/` and
     follow **Open dashboard**; in the developer tools (Network, then
     Application, Cookies) read the `Set-Cookie` of the `/?cv_pair=` answer
-    and the stored cookie's flags. Sign in once more with **Use BOOT Tap
-    Once** and read the receipt's `Set-Cookie`. On the first-boot unit, join
+    and the stored cookie's flags. Delete that cookie there (with a
+    live session the page resumes it and shows the sign-in only after a
+    refused call), open `https://canary-<suffix>.local/settings`, sign in
+    once more with **Use BOOT Tap Once** and read the receipt's
+    `Set-Cookie`. On the first-boot unit, join
     its SoftAP, run the setup page at `http://192.168.4.1` to its recovery-kit
     save, and read that answer's `Set-Cookie` and whether the cookie is
     stored. Last, `curl -sk -o /dev/null -w '%{http_code}\n' -H "Cookie:
@@ -3059,7 +3076,7 @@ the session and pair-token slots' seconds clock (`uptime_s()`) in
   - With B still running, once B prints `403` again (A's page has been quiet for 10 s; started earlier, A's own asks keep B's `409`s going and A's first answer is `409` too), run `while :; do curl -s http://<STA address>/api/provisioning-receipt; echo; sleep 2; done` on A, and short-tap BOOT after its first `403`: A prints `403` bodies whose `hint` and `button` say to start asking first, then short-tap BOOT (never "short tap, then poll"), then `409` bodies whose `hint` says to start the request first and keep it asking, then press BOOT (never "tap BOOT again"), and never a receipt. Stop A's loop.
   - Stop B, wait 10 s, and do what A's page says (within 30 s of the last tap, too): click **Use BOOT Tap Once** again, and short-tap BOOT only when the line says so. The line says "Now short-tap BOOT…", not "Another device…", and A is signed in within about 2 s of the tap.
 - [ ] **A sole asker is served at once.**
-  - With laptop A alone, close every private window (the sign-in that ended the row above set the `cv_session` cookie in the private session they all share, and a page that resumes it never shows the button), then open a new one at `http://canary-<suffix>.local/settings`: **Use BOOT Tap Once**, and do not tap. After 60 s the page says "Didn't see a tap. Click Use BOOT Tap Once again, then short-tap BOOT."
+  - With laptop A alone, close every private window (the sign-in that ended the row above set the `cv_session` cookie in the private session they all share, and a page that resumes it never shows the button), then open a new one at `http://canary-<suffix>.local/settings`: **Use BOOT Tap Once**, and do not tap. After 60 s the page says "Didn't see a tap. Click Use BOOT Tap Once again, and short-tap BOOT when this line says to."
   - Do as it says: **Use BOOT Tap Once**, then short-tap BOOT once the line says "Now short-tap BOOT…". A is signed in within about 2 s of the tap.
   - Short-tap BOOT and within 30 s run `curl -s http://canary-<suffix>.local/api/provisioning-receipt` from A: `200`. Repeat at `http://<STA address>/api/provisioning-receipt`: `200`.
 - [ ] **The first-boot recovery kit.**
@@ -3067,7 +3084,7 @@ the session and pair-token slots' seconds clock (`uptime_s()`) in
   - Start B's loop against the WAP's home-network address (`http://<STA address>`). Tap **Save my recovery kit**: the note says "Asking your Canary first. Don't press BOOT yet.", then "Now short-press BOOT on your Canary."; short-press BOOT then. The companion shows "Another device on your network asked…" and says to tap Save again before pressing, and Save stays on screen.
   - Stop B, wait 10 s, and tap Save again: the note says "Asking your Canary first. Don't press BOOT yet.", then "Now short-press BOOT on your Canary."; short-press BOOT then, and the kit downloads. (A served save hides Save, so this case runs second.)
 - [ ] **A wrong claim spends nothing, and the 10 s hold is a way out under a poller.**
-  - B is a host on the network only, with its Bluetooth off: the hold reopens the setup door, which goes to the first Bluetooth client that connects, and a host also in radio range could reach it before the phone (`magic_pairing.md` §3.7). With B's loop running, have the iPhone ready, hold BOOT 10 s, release, and set the Canary up again from the iPhone through the Bluetooth setup door. During the pairing B also sends `curl -s 'http://<STA address>/api/provisioning-receipt?claim=00000000000000000000000000000000'` every second.
+  - B is a host on the network only, with its Bluetooth off: the hold reopens the setup door, which goes to the first Bluetooth client that connects, and a host also in radio range could reach it before the phone (`magic_pairing.md` §3.7). Before the hold, on a signed-in page (the WAP's main page, **Open dashboard**, then **Settings**), check that **Bluetooth Enabled** is on under Settings → Bluetooth: a saved Bluetooth-off outlives the hold, and with it off no phone reaches the door. With B's loop running, have the iPhone ready, hold BOOT 10 s, release, and set the Canary up again from the iPhone through the Bluetooth setup door. During the pairing B also sends `curl -s 'http://<STA address>/api/provisioning-receipt?claim=00000000000000000000000000000000'` every second.
   - Expect: the iPhone ends paired; once the WAP is back on the home Wi-Fi, every answer B gets is `403` (while the WAP restarts into first-boot setup, B's requests get no HTTP answer); `/api/logs` shows at most one "setup-door claim did not match" line per 10 s; the serial console's boot receipt shows the same token as before the hold.
 - Artifact: `docs/audit/repro/F342/`.
 

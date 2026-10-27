@@ -394,9 +394,10 @@ static key_at_rest::Facts key_at_rest_facts() {
   // Flash encryption does NOT encrypt NVS (ESP-IDF encrypts only the app,
   // otadata and nvs_keys partitions; this tree's tables leave nvs unflagged,
   // so it is written in plaintext). NVS is ciphertext only under NVS
-  // encryption, which the Arduino core this tree builds on does not compile
-  // in (2.0.17's precompiled sdkconfig leaves CONFIG_SECURE_FLASH_ENC_ENABLED,
-  // and with it CONFIG_NVS_ENCRYPTION, unset). So on every canary image the
+  // encryption, which neither Arduino core this tree builds on compiles in
+  // (2.0.17's precompiled sdkconfig leaves CONFIG_SECURE_FLASH_ENC_ENABLED,
+  // and with it CONFIG_NVS_ENCRYPTION, unset; 3.3.8's, env:full's, leaves
+  // CONFIG_NVS_ENCRYPTION unset). So on every canary image the
   // key's NVS is plaintext, fused board or not, and this fact is false — set
   // here, not read, so no core's sdkconfig can make it claim more. It learns
   // to read true with the arduino-as-IDF-component migration (roadmap item 9)
@@ -726,8 +727,10 @@ static void unambiguous_suffix16(uint16_t v, char out[5]) {
 // The suffix is derived from the Ed25519 public-key fingerprint, never the
 // hardware MAC (event_contract §10 / privacy Invariant III: no raw MAC in any
 // API payload, log, or advertised identifier). The keypair persists in NVS, so
-// the handle is stable for the device's lifetime — a *device* handle, not a
-// per-boot token — and matches the canary-wap tree's derivation.
+// the handle lasts as long as the key — a *device* handle, not a per-boot
+// token: an OTA update and the 10 s BOOT reset keep it, and an install in
+// either flasher (its factory image starts NVS over) or the 30 s wipe gives a
+// new keypair and so a new suffix. It matches the canary-wap tree's derivation.
 static uint16_t fingerprint16(const uint8_t fp[2]) {
   return (uint16_t)((fp[0] << 8) | fp[1]);
 }

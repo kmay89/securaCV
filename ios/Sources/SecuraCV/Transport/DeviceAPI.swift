@@ -39,7 +39,10 @@ struct DeviceInfo: Codable, Sendable {
     }
 }
 
-/// The one-shot receipt handed over after a physical BOOT-tap (Trust-on-Pair).
+/// The provisioning receipt a Canary serves (`GET /api/provisioning-receipt`)
+/// to its bearer, to a WAP's setup-door claim, or after a short BOOT tap. This
+/// app takes it from a WAP's claim or from a recovery kit the device's own
+/// pages saved; it has no BOOT-tap pairing of its own.
 struct ProvisioningReceipt: Codable, Sendable {
     var deviceID: String
     var baseURL: URL
@@ -269,8 +272,11 @@ enum DeviceError: Error, LocalizedError {
         case .certificateMismatch:
             return "This Canary's secure certificate doesn't match the one in its pairing "
                 + "receipt, so the connection was refused. Something may be answering in its "
-                + "place — check the device itself. If you reset or replaced it, re-pair it "
-                + "to get its new receipt."
+                + "place — check the device itself. If you installed it again or fully erased "
+                + "it in a flasher (or held an all-rounder Canary's BOOT to 30 seconds) or "
+                + "replaced it, re-pair it to get its new receipt. An over-the-air update and a "
+                + "10-second BOOT reset keep its certificate, so after one of those this "
+                + "mismatch means something else is answering."
         case .tlsPinMissing:
             return "This Canary uses a secure (https) connection, but its pairing receipt "
                 + "carried no certificate fingerprint, so the connection can't be checked and "
@@ -338,14 +344,23 @@ actor DeviceAPI {
 
     // MARK: - the WAP dialect (the device-api this repo's firmware actually serves)
 
-    /// `GET /api/status` — the WAP's Bearer-gated status body, decoded down
-    /// to what the poll needs. This is the liveness-plus-identity read for
+    /// `GET /api/status` — the WAP's gated status body (the app sends the
+    /// bearer; the WAP's api_auth_check() also passes a landing session's
+    /// cookie, ledger F346, and over http the shared URLSession, by its
+    /// default cookie handling, keeps the `cv_session` a claim's receipt
+    /// sets and sends it back to that host, which the gate takes until it
+    /// expires in 24 h, the WAP reboots, or newer sessions push it out of
+    /// the WAP's eight session slots: the eighth minted after it, though
+    /// one minted in the same second of uptime can move that sooner or
+    /// later), decoded down to what the poll needs. This is the
+    /// liveness-plus-identity read for
     /// WAP-class devices: no firmware in this repo serves `/api/v1/info`,
     /// so a poll that insists on the v1 contract marks every real WAP dark.
     func wapStatus() async throws -> WapStatus { try await get("/api/status") }
 
     /// `GET /api/events/today` — the WAP's sensing-event feed (open bundles
-    /// first, then committed ring rows newest-first, ≤72 rows, Bearer-gated;
+    /// first, then committed ring rows newest-first, ≤72 rows, gated like
+    /// `/api/status`;
     /// Wire/WapEvents.swift documents the row). An empty array is normal —
     /// the ring is RAM-only and empties on reboot.
     func wapEventsToday() async throws -> WapEventsToday {
@@ -353,8 +368,8 @@ actor DeviceAPI {
     }
 
     /// `GET /api/csi/stream` — the 1 Hz sensing snapshot (a plain GET, not
-    /// SSE; Bearer-gated; Wire/WapEvents.swift documents its three variant
-    /// bodies). The Sensing-now tile polls this while visible.
+    /// SSE; gated like `/api/status`; Wire/WapEvents.swift documents its
+    /// three variant bodies). The Sensing-now tile polls this while visible.
     func wapStream() async throws -> WapStream { try await get("/api/csi/stream") }
 
     // MARK: - the fleet-wide surface
@@ -493,7 +508,11 @@ actor DeviceAPI {
 
     // MARK: - the sealed-snapshot surface (/api/vault/*, canary-wap only)
     //
-    // Auth-gated like the Wi-Fi routes (Bearer). The Canary holds only the
+    // Gated by api_auth_check(), which takes the bearer the app sends or a
+    // landing session's cookie (ledger F346), except POST /api/vault/key,
+    // which takes the bearer alone since F335, so a host that mints a
+    // session can clear the registered key but not replace it (download
+    // takes ?token= as well). The Canary holds only the
     // operator's PUBLIC key and serves back files it cannot open itself; the
     // private key never travels (VaultKeyStore, SnapshotSealer). A 404 on a
     // route is "this firmware has no sealed snapshots" — the display family

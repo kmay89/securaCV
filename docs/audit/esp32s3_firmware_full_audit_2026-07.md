@@ -158,7 +158,31 @@ degradation, and TLS that persists to NVS and falls back rather than bricking.
   BOOT, which clears its address (F341). A host that strikes from 9 or more addresses within
   60 s holds every untracked address while the shared overflow slot runs, and a tap does not
   clear that; then wait, change Wi-Fi from the iPhone's bonded Bluetooth lane, or hold BOOT
-  10 s. Clients behind one address share a backoff, and a
+  10 s. (Amended 2026-10-21 by #1843, #1842's follow-up, from F342's final review: a tap
+  clears an address only when it is served to that address's own ask, so a browser that
+  mistyped the token signs in with Use BOOT Tap Once. Under a host striking from 9 or more
+  addresses the hold is no way out: it empties the table, as any restart does, but once the
+  unit is set up on the same network again that host's next strikes hold every untracked
+  address again. The way out is to change the WAP's Wi-Fi from a browser to a network that
+  host is not on (the landing page's session reaches `POST /api/wifi/connect` under the
+  lockout, F346), or waiting until it stops. That holds only while that host leaves it alone:
+  it can mint sessions until the owner's is evicted, and a host also in radio range can bond a
+  Bluetooth peer of its own and write the WAP back to a network it is on over the bonded lane.
+  And it lasts only while the new network stays up: the WAP keeps the networks it joined
+  before, the host's among them, and goes back to one on its own when the new network is not
+  found twice running; no route forgets one saved network, so only Forget Wi-Fi or the hold
+  drop them, and both reopen the first-come setup door. The iPhone's bonded Bluetooth lane is
+  no way out today: the iPhone app never dials a WAP's lane (ledger A65, open). Once that is
+  settled the lane holds only while that host leaves it alone and the new network stays up, and
+  taking it away needs no radio: any landing session can turn the WAP's Bluetooth
+  off, a saved setting that restarts and the 10 s hold keep, or delete the phone's bond.
+  `magic_pairing.md` §3.7 has the whole posture.) (Amended 2026-10-27 by the owner-authority PR,
+  #<PR>: after setup the Wi-Fi routes take the bearer alone (F334, F345), and the overflow holds
+  that bearer with every untracked address, the owner's among them, so the browser's move waits
+  until that host stops and then takes the API token pasted into the sign-in; last, for a host
+  on the network only, with the iPhone ready, the hold and a setup onto a network that host is
+  not on. A host's peer no longer bonds through its session: the bond's confirm and a Passkey
+  Entry's digits take the bearer, F346.) Clients behind one address share a backoff, and a
   deliberate LAN denial stays open (a landing session's `POST /api/reboot`, ARP spoofing, httpd's
   connection purge; `magic_pairing.md` §3.7; since #<PR>, sweep F361, `POST /api/reboot` and `POST
   /api/safe-mode/retry` take the bearer alone). Host-tested, not run on a device. The wildcard
@@ -423,7 +447,10 @@ pure-logic pieces are host-tested.
   and **reuse sequence numbers**, weakening the tamper-evidence chain.
 
 Full-potential gaps: Secure Boot v2 + Flash Encryption exist as a reference (`partitions_secure.csv`)
-but aren't wired into the FULL build — identity keys and the chain sit in plaintext flash today; a
+but aren't wired into the FULL build — identity keys and the chain sit in plaintext flash today
+*(amended 2026-10-21: and would on a FULL build with Secure Boot and flash encryption too, since
+flash encryption does not cover NVS and NVS encryption is not available under
+`framework = arduino`; `key_at_rest.h`)*; a
 PSRAM-backed deferred-write ring would stop record loss while the SD card is absent (the mechanism
 already exists for other rings); the ULP-RISC-V / RTC domain is used only for a crash breadcrumb.
 

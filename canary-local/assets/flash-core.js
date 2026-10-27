@@ -535,7 +535,7 @@ export function witnessSummary(items) {
     tamper: get("tamper")?.value ?? null,    // firmware's own tamper flag
     logSeq: get("logseq")?.value ?? null,
     chainHeadFp: chain?.bytes ? hex(chain.bytes.subarray(0, 8)) : null,
-    provisioned: !!get("privkey"),           // identity key exists (never read)
+    provisioned: !!get("privkey"),           // identity key exists (presence only; its bytes are never shown)
     wifiConfigured: !!get("wifi_ssid"),      // presence only, never the value
   };
 }
@@ -776,7 +776,7 @@ export function settingsVerdict(diff, hadWifi) {
       : "The settings area is untouched." };
   }
   return { kept: false, text: hadWifi
-    ? "Your settings are reset — the saved WiFi is cleared, so the board comes up with its setup network again, like the first day."
+    ? "Your settings are reset — the saved WiFi is cleared and, where the board keeps a witness key, it makes a new one, so it comes up with its setup network again, like the first day."
     : "The settings area is reset to factory-fresh." };
 }
 
@@ -1388,8 +1388,8 @@ export function smartPick(catalog, opts = {}) {
     const cur = matchProjectToProduct(catalog, currentProject);
     if (cur && byChip.some((x) => x.id === cur.id)) {
       return { product: cur, kind: "current", shortlist: [cur],
-        why: `This board already runs ${cur.name} — installing keeps it, ` +
-             `updated in place.` };
+        why: `This board already runs ${cur.name}, so it is preselected. An install starts its ` +
+             `settings over (a new witness key, where it keeps one); an over-the-air update keeps them.` };
     }
   }
   // The size filter is productsForBoard's — the tested function IS the
@@ -1575,8 +1575,10 @@ const BOOT_SIGNATURES = [
     signature: "panic",
     test: /guru meditation|backtrace:|panic'?ed|abort\(\) was called|assert failed/i,
     means: "The new firmware crashed as it started up.",
-    fix: "A clean install usually clears this — it wipes stale settings a previous " +
-      "firmware may have left behind. Reconnect and choose “clean install”.",
+    fix: "A clean install usually clears this. Every install starts the settings " +
+      "region over; the full erase also wipes the partitions an install never writes " +
+      "(the second firmware slot, the file system), where a previous firmware may have " +
+      "left stale data. Reconnect and choose “clean install”.",
     action: "clean-install",
   },
   {
@@ -1804,7 +1806,8 @@ export function formatFingerprint(hex, maxBytes = 8) {
 // blob of live device state — the same fields the SPA shows over WiFi, but on a
 // path that keeps working when WiFi is down. Contract + payload are pinned by
 // firmware/projects/canary-wap/arduino/canary_wap/ble_console.h (the iOS app's
-// BLEConsole.swift speaks the same UUIDs). Web Serial owns *flashing*; this is
+// BLEConsole.swift knows the same UUIDs, but never dials a WAP for them:
+// ledger A65). Web Serial owns *flashing*; this is
 // the after-the-fact "prove it's alive over the air" test — is Bluetooth on,
 // can the browser reach the board, and what is it reporting. Pure + host-tested
 // here; flash.js owns navigator.bluetooth and the GATT dance.
@@ -2262,6 +2265,17 @@ export function compareVersions(a, b) {
   return 0;
 }
 
+// What every USB install does to a board already set up, whichever way the
+// version moved: both flashers write a factory image from offset 0, and its
+// settings region (NVS) is blank (firmware/scripts/make_factory.py), so the
+// saved settings go and the next boot makes a new witness key. Only an
+// over-the-air update, which writes the spare app slot alone, keeps them.
+// desktop/src/app.js carries the same sentence (desktop_parity.test.js).
+export const USB_INSTALL_STARTS_OVER =
+  "A USB install starts the settings region over, so the board comes up with no saved " +
+  "settings beyond what you type in before installing and, where it keeps a witness key, " +
+  "a new one; an over-the-air update keeps both.";
+
 // The one-line verdict for a candidate install, given what the board runs now.
 //   current       state.current ({version, projectName, productName} | {unknown} | null)
 //   currentProduct the catalog product matched off the board (may be null)
@@ -2282,33 +2296,35 @@ export function installVerdict({ current, currentProduct, product, version }) {
     return {
       kind: "switch", icon: "⇄", label: `Switch from ${currentProduct.name}`,
       detail: `The board runs ${currentProduct.name} ${current.version || ""} today. `.replace("  ", " ") +
-              `Installing ${product.name} changes what this Canary is — settings from the old role don’t carry over.`,
+              `Installing ${product.name} changes what this Canary is — settings from the old role don’t carry over. ` +
+              USB_INSTALL_STARTS_OVER,
     };
   }
   const cmp = compareVersions(current.version, version);
   if (cmp === null) {
     return {
       kind: "unknown", icon: "•", label: "Version unknown",
-      detail: "The board’s current version couldn’t be compared — the install itself is unaffected.",
+      detail: "The board’s current version couldn’t be compared — the install itself is unaffected. " +
+              USB_INSTALL_STARTS_OVER,
     };
   }
   if (cmp < 0) {
     return {
       kind: "update", icon: "↑", label: `Update · ${current.version} → ${version}`,
-      detail: "A newer build of the same firmware. Your settings region is left alone unless the map below says otherwise.",
+      detail: "A newer build of the same firmware. " + USB_INSTALL_STARTS_OVER,
     };
   }
   if (cmp > 0) {
     return {
       kind: "downgrade", icon: "↓", label: `Downgrade · ${current.version} → ${version}`,
       detail: "This is OLDER than what the board runs now. That’s allowed — useful when a release misbehaves — " +
-              "but newer settings may not be understood by older firmware. The automatic safety copy is your way back.",
+              "and the automatic safety copy is your way back. " + USB_INSTALL_STARTS_OVER,
     };
   }
   return {
     kind: "same", icon: "=", label: `Reinstall · already on ${version}`,
-    detail: "The board already runs this exact version. Installing again rewrites it byte-for-byte — " +
-            "harmless, and occasionally exactly what a misbehaving board needs.",
+    detail: "The board already runs this exact version. Installing again is a clean start, " +
+            "occasionally exactly what a misbehaving board needs. " + USB_INSTALL_STARTS_OVER,
   };
 }
 

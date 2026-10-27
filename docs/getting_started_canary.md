@@ -537,15 +537,18 @@ the dashboard, and the iPhone app pairs from it.
 **On a WAP, changing its Wi-Fi after setup takes that token.** No WAP page
 carries the token: the landing page signs your browser in with a session
 that opens the dashboard but no longer moves the Canary's network. So
-**Settings → Wi-Fi** (Connect, Remove credentials, Disconnect) brings up the
+**Settings → WiFi** (Connect, Remove credentials, Disconnect) brings up the
 sign-in for the token — paste it from the recovery kit, or use **BOOT Tap
 Once**, then press the button again — on your home network and on the
 Canary's own `SecuraCV-wap-XXXX` network alike.
 That is why the kit comes first.
 
 **Why the all-rounder Canary's dashboard asks to be unlocked on your home
-network.** (A WAP's pages never carry the key, on either network: above.)
-The page you load carries the key that every button on it uses. Over the
+network.** (This paragraph and its list are the all-rounder Canary's,
+`firmware/canary`. A WAP's pages never carry the key, on either network
+(above), and its dashboard shows no such banner: its sign-in's **Use BOOT
+Tap Once** asks first, and you press BOOT only when the page says to.) The
+page you load carries the key that every button on it uses. Over the
 Canary's own Wi-Fi only your phone can reach it, so the key comes with the
 page.
 On your home network any device could load that page, so the Canary sends
@@ -558,11 +561,18 @@ it *without* the key and shows a banner with three ways in:
 - paste the token from your recovery kit into the banner. It is kept only
   for that browser tab, never saved.
 
-Each BOOT tap unlocks exactly one thing within those 30 seconds: one
-page load, or one app or browser fetching the recovery kit — whichever
-asks first. A page you unlocked with the tap can save the recovery kit
-without a second tap; the iPhone app fetching the kit on its own needs a
-fresh tap. That is how you get the kit back later without a USB cable. *(New in 2026-09; checked by automated tests, with its first automated build pending; not
+On the all-rounder Canary each BOOT tap unlocks exactly one thing within
+those 30 seconds: one page load, or one browser fetching the recovery kit —
+whichever asks first. A page you unlocked with the tap can save the
+recovery kit without a second tap: that is how you get the kit back later
+without a USB cable. On a WAP the tap unlocks no page load: it hands the
+recovery kit to one asking address, so click **Use BOOT Tap Once** (or
+**Save my recovery kit**) first and press BOOT when the page says to. If a
+second address on your network asks between 10 seconds before the tap and
+the kit going out, the WAP hands out nothing and the page says so, and a
+tap no page was asking for goes to the first address that asks within its
+30 seconds. The iPhone app never fetches the
+kit with a tap: it pairs during setup, or from a kit you open in it. *(New in 2026-09; checked by automated tests, with its first automated build pending; not
 yet on a bench device.)*
 
 **Encrypted dashboard (development and full images only, not running
@@ -576,9 +586,13 @@ setup is done and typing `http://` sends you there. Setup itself stays on
 plain `http://`, because the phone's sign-in sheet shows a blank page for a
 certificate it does not recognize. Your browser will then warn that the
 certificate is not trusted: the Canary made it for itself, and the iPhone
-app checks it against the fingerprint in your recovery kit instead. A
-factory reset will make a new certificate, so you pair the iPhone app again
-afterwards. The standard release image does not turn this on yet.
+app checks it against the fingerprint in your recovery kit instead. The
+10-second BOOT reset and an over-the-air update will keep the certificate,
+so that fingerprint will stay right; holding BOOT to 30 seconds, or
+installing again in a flasher (with or without its full erase: an install
+starts the Canary's settings over), will make a new one, so you pair the
+iPhone app again after either. The standard release
+image does not turn this on yet.
 *(New in 2026-09; its first automated build is pending, and it is not yet on a bench
 device.)*
 
@@ -799,10 +813,14 @@ The all-rounder Canary (`firmware/canary`) repeats both in its
 `[SETUP] Setup network up` line whenever the setup network comes up, a
 home Wi-Fi outage included. A WAP repeats them in its `[WIFI] AP started`
 line at boot, and its serial command `w` prints both at any time. A short
-BOOT press prints neither: it opens the provisioning gate for 30 seconds,
-which hands the recovery kit to the one page already asking for it, so
-click **Use BOOT Tap Once** on the dashboard first and press when the page
-says to.
+BOOT press prints neither: it opens the provisioning gate for 30 seconds.
+On the all-rounder Canary that unlocks one home-network page load or one
+recovery-kit fetch, whichever asks first, so tap BOOT and then reload the
+dashboard within the 30 seconds. On a WAP it hands the recovery kit to one
+asking address: click **Use BOOT Tap Once** on the dashboard first and press
+when the page says to. A second address asking from 10 seconds before the
+tap closes it, and a tap no page was asking for goes to the first address
+that asks after it.
 
 Either flasher's done card shows the same pair after a flash, and a
 recovery kit saved from the dashboard carries the key as `ap_password`
@@ -814,7 +832,10 @@ BOOT resets Wi-Fi and settings and keeps the device's keypair, and the
 key is made from that keypair. Only the all-rounder Canary has a longer
 stage: held to 30 seconds it wipes the keypair too, so the setup
 network's name and key both change, and the new ones print on serial. A
-WAP has no such stage, and no BOOT hold changes its key.
+WAP has no such stage, and no BOOT hold changes its key. An install in
+either flasher does change both, on the all-rounder Canary and a WAP alike:
+it starts the settings region over, so the next boot makes a new keypair,
+and the new name and key print on serial and on the flasher's done card.
 
 **After a firmware update.** Older firmware for the all-rounder Canary
 (`firmware/canary`) made the setup network's key from the device's
@@ -867,10 +888,14 @@ crosses the privacy barrier just because the chain is involved.
 ## What you can break
 
 You can't brick the device through the dashboard. You *can* lose your
-witness chain by factory-resetting it (the Ed25519 device key is
-re-derived from a fresh hardware-RNG seed and the previous chain is no
-longer signable). If you've been using the Canary as a witness device
-for evidence, **export the chain before you factory-reset** —
+witness chain by erasing the board: installing again in a flasher, with or
+without its full erase (an install starts the Canary's settings over), or,
+on the all-rounder Canary, holding BOOT to 30 seconds removes the Ed25519
+device key, the next boot makes a new one from a fresh hardware-RNG seed,
+and the previous chain is no longer signable. The 10-second BOOT reset and
+an over-the-air update keep the key and the chain. If you've been using the
+Canary as a witness device for evidence, **export the chain before you
+reinstall or erase it** —
 **Settings → Export → Witness chain**.
 
 ---
@@ -880,7 +905,7 @@ for evidence, **export the chain before you factory-reset** —
 | Symptom | Likely cause |
 |---|---|
 | Phone can't see `SecuraCV-XXXX` | Power LED off → check USB cable. (Safe mode does *not* hide the network — the Wi-Fi AP keeps running.) |
-| The iPhone app shows no *new Canary is nearby* card | Only a Sense, Vision or WAP has the door — the all-rounder Canary build from `firmware/canary` never shows a card and uses its `SecuraCV-XXXX` setup network instead. On a Sense, Vision or WAP the door is open only for 30 minutes after power-on on a unit with no Wi-Fi saved — unplug and replug it. A unit whose saved Wi-Fi has stopped working keeps the door shut on purpose and raises `SecuraCV-XXXX` instead. Nothing here is bench-tested yet; the setup network always works. |
+| The iPhone app shows no *new Canary is nearby* card | Only a Sense, Vision or WAP has the door — the all-rounder Canary build from `firmware/canary` never shows a card and uses its `SecuraCV-XXXX` setup network instead. On a Sense, Vision or WAP the door is open for 30 minutes after power-on on a unit with no Wi-Fi saved (a new one, or one whose Wi-Fi you cleared), and on a Sense or Vision for a minute after a short BOOT tap — unplug and replug it, or tap BOOT. A unit whose saved Wi-Fi has stopped working keeps the door shut on purpose and raises `SecuraCV-XXXX` instead. Nothing here is bench-tested yet; the setup network always works. |
 | Dashboard shows a yellow **Safe mode active** bar | The Canary *crashed* (firmware panic / watchdog / brownout) several times in a row and disabled optional peripherals (camera, SD, mesh, BLE, presence, GPS) to protect the core witness functions. Ordinary power cycling, unplugging, or pressing reset does **not** trigger this — only genuine crashes do. It auto-reboots once it has run stably for ~60 s. If a persistent fault keeps crashing it back into safe mode it stops retrying and stays put — fix the underlying issue (reseat the SD card, check power), then click **Retry full boot** on the bar. |
 | `canary.local` doesn't load | Some Android browsers don't resolve `.local` names. Use **http://192.168.4.1** instead — it works on every phone. |
 | Phone drops the Wi-Fi or warns "no internet" | This shouldn't happen on current firmware (the Canary answers the connectivity check to stay connected). If it does, update the firmware, then reconnect. |

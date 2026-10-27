@@ -47,11 +47,14 @@ namespace bluetooth_api {
 //
 // Every /api/bluetooth/* endpoint in this module is post-setup-only — BLE
 // initializes after WiFi is up, so there's no captive-portal flow that
-// needs to hit these routes without an API token. api_auth_check takes the
-// dashboard's session or a bearer (the dashboard's secureFetch attaches
-// `Authorization: Bearer` only when the page holds the token), mirroring
-// #435/#436 for the wifi-mgmt + mesh families. The bond's confirm takes
-// bt_bearer_gated, the bearer alone (sweep F346).
+// needs to hit these routes before setup. Wrapping handlers in
+// api_auth_check is a plumbing-only fix (mirrors #435/#436 for the
+// wifi-mgmt + mesh families), and it takes the cookie or the bearer: the
+// landing page mints that cookie for any host on the network, so any
+// landing session can turn Bluetooth off and delete every bond (ledger
+// F346, SECURITY_MODEL.md's lockout paragraph). The bond's confirm takes
+// bt_bearer_gated, the bearer alone, and a Passkey Entry's digits ride
+// GET /api/bluetooth only to a bearer (sweep F346).
 //
 // Mechanism: register_routes() stashes the API token pointer in a
 // module-local static, then wraps every real handler in the bt_auth_gated

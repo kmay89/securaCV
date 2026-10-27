@@ -190,25 +190,31 @@ re-opened the door forever: the spent time rides in RTC-noinit memory
 (`provisioning_logic::door_window_record_valid`, host-tested; cleared after
 a power-on, brownout, power-glitch, USB / JTAG-asserted or unknown reset,
 and by **Forget Wi-Fi** or the 10 s BOOT hold on a unit that had
-credentials, which are the owner's ways to re-arm the window: after setup
-Forget takes the API token, so a home-network session cannot re-arm it,
-F345), a phone at the door is a sign of life
+credentials, each of which re-arms the window, both the owner's acts: after
+setup Forget takes the API token, so a home-network session cannot re-arm
+it, F345), a phone at the door is a sign of life
 for that wizard timer, and the restart waits while the door is open at all
 (`provisioning_logic::wizard_restart_due`, host-tested: a person watching the
 door's card on their phone has touched nothing yet) — so it cannot land
 mid-provisioning or under the card. A WAP on its own
 Wi-Fi offers nothing here — not even when that Wi-Fi is failing (the
-dashboard, the bonded rescue service and the BOOT-tap receipt are the
-owner's paths; after setup a Wi-Fi change on the dashboard, on the home
-network or on the `SecuraCV-wap-XXXX` recovery network, takes the API token
-or one BOOT tap, so the recovery network's key alone opens the dashboard
-and does not re-point the unit, F334). **There is no tap door on the WAP in this version:** the
-BOOT button keeps the sketch's own gestures: a short press opens the 30 s
-receipt gate, a 2 s hold prints the identity on serial, and a 10 s hold is
+dashboard, the SoftAP recovery portal with its printed key, and the BOOT-tap
+receipt are the owner's paths; after setup a Wi-Fi change on the dashboard,
+on the home network or on the `SecuraCV-wap-XXXX` recovery network, takes
+the API token or one BOOT tap, so the recovery network's key alone opens the
+dashboard and does not re-point the unit, F334; the bonded rescue service is
+there too, but the iPhone app never reaches it on a WAP, and whether the
+companion page's Bluetooth chooser lists a WAP waits on a bench, ledger A65). **There is no tap door on the WAP in this version:** the
+BOOT button keeps the sketch's own gestures: a short press hands the
+receipt to one asker for 30 s (click Use BOOT Tap Once first and press when
+the page says to; a second address asking from 10 s before the tap closes
+it, and a tap no page was asking for goes to the first address that asks
+after it, sweep F342), a 2 s hold prints the identity on serial, and a 10 s hold is
 the factory reset (`factory_reset_by_hold()`). The hold clears the saved
 Wi-Fi networks, the broker row, the device name and the first-boot flag,
-keeps the identity key and the API token derived from it, and restarts
-into first-boot setup when BOOT is released. It clears the Wi-Fi through
+keeps the identity key and the API token (derived from the key, or the
+one a flasher seeded), and restarts into first-boot setup when BOOT is
+released. It clears the Wi-Fi through
 the same `wifi_clear_credentials()` as Forget Wi-Fi, so on a unit that had
 credentials it re-arms the door's first-boot window the same way. A join over the door
 is held in RAM until WiFi proves it (`ble_improv_submit_join` /
@@ -401,7 +407,7 @@ beforehand); paste it from the recovery kit, or use BOOT Tap Once.
 - **No MAC Addresses Stored:** RF detection counts devices, not identities
 - **Time Buckets:** Coarsened timestamps (ten-minute buckets in every build profile)
 - **Local-First:** All data stays on device unless explicitly exported
-- **Session Rotation:** Tokens rotate every 4 hours
+- **Session Rotation:** the RF presence detector's ephemeral session tokens rotate every 4 hours. The API token does not rotate: the 10 s hold and Forget Wi-Fi keep it, an install or a full erase in a flasher replaces it, and a flasher's restore of a safety copy puts back the token that copy holds
 
 ## Project Structure
 

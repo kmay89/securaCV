@@ -148,7 +148,11 @@ Prerequisite: each board individually passes Track A steps A1–A3.
 On a board **without** flash encryption enabled, attempt mesh provisioning.
 
 **Pass:** the device **refuses** to provision the opera secret (audit O2 behavior).
-Then enable flash encryption on all fleet boards and proceed.
+Then enable flash encryption on all fleet boards and proceed. The provisioning
+kit does not do that today (its Phase 2 burns no flash-encryption counter:
+`docs/secure_provisioning.md`, Step 3), and flash encryption does not make the
+stored secret confidential: NVS is plaintext on a board with flash encryption
+on too.
 
 ### C2. Opera pairing
 

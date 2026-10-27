@@ -12,17 +12,19 @@
 // BOOT button — I'm ready, start" button. That button set a state variable and
 // did nothing else. The firmware DOES gate a receipt behind a BOOT tap
 // (canary-wap and the flagship `firmware/canary` serve
-// GET /api/provisioning-receipt for 30 s after the tap, 403 before it) — but
-// the receipt a WAP writes points at its own setup-network address, and a
-// display serves exactly four API routes, none of them a pairing route. So
-// the primary action on the primary onboarding screen was a spinner that
-// could never finish for most of the fleet.
+// GET /api/provisioning-receipt for 30 s after the tap, 403 before it; the
+// WAP serves it only to the one address asking, and answers 409
+// tap_contended when a second address asked in the 10 s before the tap or
+// during it, F342) — but the receipt a WAP writes points at its own
+// setup-network address, and a display serves exactly four API routes, none
+// of them a pairing route. So the primary action on the primary onboarding
+// screen was a spinner that could never finish for most of the fleet.
 //
 // It now says what is actually true of the device in front of you, and offers
 // an action only where one exists. For a WAP that joined but never paired
 // (the one-tap claim was refused, or expired), the real paths are two: its
-// recovery kit — the receipt its own setup page saves after a short BOOT
-// tap — opened from Files or pasted, a kit of this device moved onto the
+// recovery kit — the receipt its own page saves once a save started there
+// is asking and BOOT is then short-tapped — opened from Files or pasted, a kit of this device moved onto the
 // address the WAP answers at now, whatever address it named (the setup
 // network's, or a `.local` name from before the WAP was named;
 // ProvisioningReceipt.rebased; the certificate pin is the kit's own); or a
@@ -116,10 +118,10 @@ struct PairView: View {
                     } header: {
                         Text("Add it with its recovery kit")
                     } footer: {
-                        Text("Its own setup page saves a recovery kit (canary-recovery-kit.json) after a short BOOT tap — that file is its key.")
+                        Text("Its own page saves a recovery kit (canary-recovery-kit.json): open the page, choose Open dashboard there, then Settings → Device → Save my recovery kit; when the sign-in opens, choose Use BOOT Tap Once and short-tap BOOT when the page says to. That file is its key.")
                     }
                     Section {
-                        Text("Or set it up again from this phone: forget its Wi-Fi on its own page (a short BOOT tap lets you in), then bring it near this phone — the card pairs it in one tap.")
+                        Text("Or set it up again from this phone: open its page below and choose Open dashboard there, then Settings. First check that Bluetooth Enabled is on under Settings → Bluetooth (forgetting its Wi-Fi does not turn it back on, and with it off this phone cannot reach it), then forget its Wi-Fi there (Settings → WiFi → Remove credentials, which asks for its API token first: sign in there with a short BOOT tap when the page says to, then press Remove credentials again) and bring it near this phone — the card pairs it in one tap. For half an hour after that, Bluetooth setup goes to the first phone or computer nearby that connects, so have this phone ready first.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

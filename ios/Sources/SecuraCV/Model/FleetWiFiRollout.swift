@@ -11,8 +11,9 @@
 // every Canary into a hands-on recovery job. So the plan always starts with
 // a single PILOT — the healthiest reachable Canary — and the rest of the
 // fleet is not touched until the pilot has actually come back on the new
-// network. A wrong password strands one device (which the BLE provisioning
-// service and the BOOT-button portal can still rescue), never the fleet.
+// network. A wrong password strands one device (which its own setup network
+// can still rescue; the BLE provisioning service would too, but this app
+// never reaches a WAP's today, ledger A65), never the fleet.
 //
 // The second rule is about what the password crosses on its way (roadmap
 // row 13): the Bluetooth lane is bonded — encrypted end to end — and an
@@ -29,7 +30,10 @@
 //     checked (DeviceAPI pins it); the normal fast path.
 //   * BLE — a WAP-class Canary heard over its bonded provisioning service:
 //     the rescue for one that has gone dark on Wi-Fi, and the preferred lane
-//     for one that is online but not pinned.
+//     for one that is online but not pinned. Empty for a WAP today:
+//     BLEConsole offers the lane only for a peripheral it dialed for
+//     advertising the console service, which a WAP does not advertise
+//     (ledger A65).
 //   * HTTP (cleartext) — a WAP-class Canary answering over plain http with
 //     no bonded lane in range. Works, but the password crosses the LAN
 //     unencrypted; the plan says so and asks first.
@@ -177,14 +181,17 @@ enum FleetWiFiRollout {
     // MARK: - the cleartext disclosure
 
     /// Shown once, above the plan, whenever a push would ride plain http.
-    /// It names the exposure plainly and the two ways out of it.
+    /// It names the exposure plainly and the way out of it. Every rollout
+    /// candidate is a WAP, whose Bluetooth lane this app never reaches
+    /// (ledger A65), so the copy offers only the https re-pair.
     static let cleartextDisclosure =
         "Some of these Canaries can only take the new password over plain "
         + "HTTP right now, which sends it across your Wi-Fi unencrypted — "
         + "anyone already on this network could read it while it's in "
-        + "flight. Their encrypted lanes aren't available: Bluetooth needs "
-        + "you within a room or two, and a secure (https) connection needs "
-        + "a pairing receipt that carried the Canary's certificate."
+        + "flight. The encrypted way is a secure (https) connection, which "
+        + "needs a pairing receipt that carried the Canary's certificate: "
+        + "re-pair it with one. This app has no Bluetooth lane to these "
+        + "Canaries yet."
 
     /// The acknowledgment the user has to switch on before such a push runs.
     static let cleartextAcknowledgment = "Send it over plain HTTP anyway"
@@ -192,8 +199,9 @@ enum FleetWiFiRollout {
     /// The verdict for a cleartext target the user did not approve.
     static let cleartextDeclined =
         "Not sent — sending the password over unencrypted Wi-Fi wasn't "
-        + "approved. Move within Bluetooth range for its encrypted lane, or "
-        + "re-pair it with a secure (https) receipt, then try again."
+        + "approved. Re-pair it with a secure (https) receipt, then try "
+        + "again. Or, once it drops off your Wi-Fi, its own setup network "
+        + "(SecuraCV-wap-XXXX) takes the new password."
 
     /// The per-row note for a cleartext lane, before and during the run.
     static let cleartextNote = "Plain HTTP — the password crosses your Wi-Fi unencrypted"
@@ -222,8 +230,15 @@ enum FleetWiFiRollout {
     static let didNotReturn =
         "Didn't answer on the new network within 90 seconds. It may still be "
         + "rejoining — pull down to check again in a moment. If the password "
-        + "was wrong, this Canary's Bluetooth rescue or its setup portal "
-        + "(hold BOOT) will take the correction."
+        + "was wrong, this Canary's own setup network (SecuraCV-wap-XXXX, which "
+        + "it raises while it is off your Wi-Fi) will take the correction."
+
+    /// The verdict for a Canary that answers on no lane. Every rollout
+    /// candidate is a WAP, whose Bluetooth lane this app never reaches
+    /// (ledger A65), so it names the setup network, never Bluetooth.
+    static let unreachableReason =
+        "Not answering on your network. Off your Wi-Fi, its own setup network "
+        + "(SecuraCV-wap-XXXX) takes the new password."
 
     /// Why the fleet is still waiting, said plainly on every follower row.
     static let waitingReason = "Waiting for the first Canary to prove the password."

@@ -226,8 +226,10 @@ commented out even in `sdkconfig.defaults.secure:35-52`, and NVS "encryption"
 without flash encryption stores its own keys in the clear. `esptool
 read_flash` recovers the key — directly against the stated principle that a
 key which can be exported can be compelled. This is a documented Phase-2
-deferral, but it ships today: either enable flash encryption + secure boot for
-production builds, or state the exposure explicitly in the threat model and on
+deferral, but it ships today: either enable flash encryption + NVS encryption
+(which needs the arduino-as-IDF-component migration; flash encryption alone
+does not cover NVS) + secure boot for production builds, or state the exposure
+explicitly in the threat model and on
 the trust page. (The app-level anti-rollback floor is NVS-erasable for the
 same reason.)
 

@@ -876,7 +876,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <div class="form-group">
         <label class="form-label">API Token</label>
         <input type="text" class="form-input" id="tokenInput" placeholder="cv_..." autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" style="font-family:var(--mono);letter-spacing:0.02em;">
-        <p style="font-size:0.7rem;color:var(--muted);margin-top:0.3rem;">Paste the token from the device receipt or Serial output. It starts with <code>cv_</code>. Type it exactly as shown.</p>
+        <p style="font-size:0.7rem;color:var(--muted);margin-top:0.3rem;">From your recovery kit or the USB console. Connect checks it by itself, even on a signed-in page.</p>
       </div>
       <button class="btn btn-primary" style="width:100%" onclick="connectWithToken()">Connect</button>
       <div class="auth-divider">or</div>
@@ -2864,7 +2864,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         apiToken = null;
         showAuthModal(sentToken
           ? 'Invalid or expired token. Please re-enter.'
-          : 'Your session does not cover this, or has ended. Paste the API token, or use BOOT Tap Once.');
+          : 'Your session does not cover this, or has ended. Paste the API token (it is in your recovery kit), or use BOOT Tap Once.');
         throw new Error('auth_required');
       }
       if (resp.status === 429) {
@@ -2991,7 +2991,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           // Save the device answers 403 opens it (secureFetch above).
           err.textContent = tapContendedText(
             'click Save my recovery kit again; when the sign-in opens, click Use BOOT Tap Once there, ' +
-            'and only then short-tap BOOT.');
+            'and short-tap BOOT when the sign-in says to.');
           err.style.display = 'block';
           return;
         }
@@ -3011,12 +3011,18 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // page's way back in and names the click before the press. The token
     // comes first: the sign-in checks a pasted one by itself (no tap, and
     // not the cookie's word). The hold comes last: it reopens the first-boot
-    // Bluetooth setup door, which goes to the first client in range.
+    // Bluetooth setup door, which goes to the first client in range. Just
+    // before it, the Bluetooth check (#1843): any landing session can save
+    // Bluetooth off (F346) and the hold keeps that; the sign-in covers the
+    // page, so the copy says how to reach Settings from it.
     function tapContendedText(retry) {
       return "Another device on your network asked for this Canary's keys at the same time, so it said no. " +
              'Close any other Canary pages and wait 10 seconds, then ' + retry + ' ' +
              'If this keeps happening, paste the token instead: it is in your recovery kit, and the USB console ' +
-             'prints it each time the Canary starts. Last, with your iPhone ready: hold BOOT for 10 seconds ' +
+             'prints it each time the Canary starts. Last, check that Bluetooth Enabled is on under ' +
+             'Settings → Bluetooth (if this page is asking you to sign in, first open the Canary\'s main page, ' +
+             'choose Open dashboard, then Settings there): the hold below does not turn it back on, and with it ' +
+             'off the iPhone app cannot set the Canary up. Then, with your iPhone ready: hold BOOT for 10 seconds ' +
              '(this clears its Wi-Fi, its Home Assistant link and its name, and keeps the token) and set it up ' +
              'again from the iPhone app right away. For half an hour after that, Bluetooth setup goes to the ' +
              'first phone or computer nearby that connects.';
@@ -3026,10 +3032,11 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const s = document.getElementById('authStatus');
       s.className = 'auth-status info';
       // 30 ticks × 2 s = 60 s, past the device's gate TTL (the 403's
-      // gate_ttl_seconds). The poll starts at the click, before the tap: a
-      // tap goes only to the one address that asked from 10 s before it
-      // (sweep F342). The line says to press only once the device answered
-      // an ask: a press the first ask has not reached is no page's.
+      // gate_ttl_seconds); a press lands while the page alone asks. The poll
+      // starts at the click, before the tap: a tap goes only to the one
+      // address that asked from 10 s before it (sweep F342). The line says
+      // to press only once the device answered an ask with 403: a press the
+      // first ask has not reached is no page's.
       const POLL_INTERVAL_MS = 2000;
       const POLL_TICKS = 30;
       let gateTtl = 30;
@@ -3050,7 +3057,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           if (resp.status === 409) {
             // Another device asked during the same tap (sweep F342): the
             // device closed the tap and gave out nothing, so stop here.
-            s.textContent = tapContendedText('click Use BOOT Tap Once again, and only then short-tap BOOT.');
+            s.textContent = tapContendedText('click Use BOOT Tap Once again, and short-tap BOOT when this line says to.');
             s.className = 'auth-status error';
             return;
           }
@@ -3080,7 +3087,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       // page the device never answered never said to press, so it does not
       // say it missed a tap.
       s.textContent = gotFirst403
-        ? "Didn't see a tap. Click Use BOOT Tap Once again, then short-tap BOOT."
+        ? "Didn't see a tap. Click Use BOOT Tap Once again, and short-tap BOOT when this line says to."
         : "The Canary didn't answer. Click Use BOOT Tap Once again, and press BOOT only when this line says to.";
       s.className = 'auth-status error';
     }
@@ -5194,7 +5201,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     async function forgetWifi() {
-      if (!confirm('Forget the saved Wi-Fi networks and the saved broker login? Until this Canary is set up again, its Bluetooth setup door is open for 30 minutes to the first phone nearby, and a camera unit takes a Wi-Fi code shown to its lens. To change networks, use Connect instead: it keeps the broker login.')) return;
+      if (!confirm('Forget every saved Wi-Fi network and the saved broker login? Until this Canary is set up again, a camera unit takes a Wi-Fi code shown to its lens, and if its build has the Bluetooth setup door and Bluetooth is on, that door is open for 30 minutes to the first phone or computer nearby that connects, so have yours ready. To change networks, use Connect instead: it keeps the broker login.')) return;
       stopWifiPolling();
       const data = await api('/api/wifi/forget', 'POST');
       if (!data.ok) { if (!signInRaised(data)) alert('Failed to remove credentials'); return; }

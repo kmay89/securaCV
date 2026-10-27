@@ -123,19 +123,31 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
         — maintainer to confirm (changing them is a `COPY` edit only).
 
 - [ ] **Recovery-safe flows**
-  - [ ] Guided factory-reset confirmation UX (with explicit data-loss warning).
+  - [ ] Guided factory-reset confirmation UX (with an explicit warning of
+        what it clears and that it reopens the setup door).
         **Open — its own change, blocked on a maintainer decision:** today the
-        WAP has no factory-reset route at all (BOOT held ≥ 3 s is the only
-        path). Whether `POST /api/factory-reset` may exist is the decision;
+        WAP has no factory-reset route at all (BOOT held 10 s,
+        `factory_reset_by_hold()`, is the only path; it clears the saved
+        Wi-Fi, the broker row and the name, keeps the identity, the chain and
+        the token, and, on a unit that had Wi-Fi, reopens the first-come
+        Bluetooth setup door, unless Bluetooth was turned off, which the hold
+        keeps). Whether
+        `POST /api/factory-reset` may exist is the decision;
         the recommendation is yes, but only behind the Bearer credential AND
-        a BOOT-tap `provisioning_gate_take()` (a remote credential alone must
-        never be able to wipe a witness), with a two-step confirmation in the
+        a BOOT-tap `provisioning_gate_take()`, with a two-step confirmation in the
         companion PWA, `total_handlers` raised, and both route audits kept
-        green.
-  - [x] Credential reset path without the serial monitor: one BOOT tap
-        releases the provisioning receipt (`GET /api/provisioning-receipt`,
-        one tap = one fetch), which re-reveals the API token and the AP
-        password; the wizard's "Save your recovery kit" block walks it.
+        green. The rule that recommendation serves, that a remote credential
+        alone should not be able to reopen the setup door, is not today's
+        posture: `POST /api/wifi/forget` takes the bearer alone since F345
+        (`api_auth_check_bearer()`, so no landing session sends it), and a
+        bearer Forget reopens the same first-come door.
+  - [x] Credential reset path without the serial monitor: one BOOT tap,
+        pressed while the owner's page or the wizard's Save is already
+        asking, releases the provisioning receipt to that one asker
+        (`GET /api/provisioning-receipt`; a second address asking in the
+        window closes the tap, 409 `tap_contended`, sweep F342), which
+        re-reveals the API token and the AP password; the wizard's "Save
+        your recovery kit" block walks it.
 
 - [x] **Provisioning confirmation artifacts**
   - [x] Downloadable setup receipt — `/api/provisioning-receipt` (BOOT-tap gated),

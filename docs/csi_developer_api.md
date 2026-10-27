@@ -264,9 +264,11 @@ those bodies `"replay":true`. On the canary base
   space survives it; only the 30 s hold (`ResetScope::Everything`) clears the
   `securacv` namespace, the floor and the ceiling with it, and the witness
   identity and chain too, so every hub and display that pinned the device
-  sees a stranger; a canary-wap has no reset path, so its owner flashes it with the
-  flasher's full erase, which clears the floor (`ev.next`) and `csi.evsent`
-  with the rest of NVS, and does not restore the flasher's pre-erase backup
+  sees a stranger; a canary-wap's 10 s BOOT hold (`factory_reset_by_hold()`)
+  keeps both, so its owner installs it again in a flasher (with or without
+  the full erase: the factory image starts NVS over either way), which clears
+  the floor (`ev.next`) and `csi.evsent` with the rest of NVS, the identity
+  key included, and does not restore the flasher's pre-install backup
   afterwards (it would bring the counter back). Either way the owner then
   re-pins the device in Home Assistant, whose mark is above the restarted
   ids. Home Assistant shows the flag as the device's
