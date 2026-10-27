@@ -232,7 +232,7 @@
       }
     ],
     "nvs_policy": [
-      "device_id: NVS always wins \u2014 identity is sticky across reflashes and OTA updates; the compiled seed only fills the very first boot",
+      "device_id: NVS always wins \u2014 it is kept across OTA updates and a re-run of the upload above (which leaves NVS alone); the compiled seed fills only a boot that finds none, and an install in either flasher starts NVS over, so the id it seeds (or the compiled one) replaces the old",
       "WiFi / MQTT credentials: real compiled values win and are persisted; placeholder builds (CI stubs, generic OTA releases) defer to NVS",
       "net effect: provision once over USB, then every signed OTA release build inherits the unit's setup"
     ],

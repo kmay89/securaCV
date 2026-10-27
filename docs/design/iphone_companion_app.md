@@ -115,8 +115,11 @@ you *raise slowly* beats chasing every new API.
 > already scaffolds a Tauri v2 wrapper of the web Lab, and that is the right call
 > for *reusing the Lab* on a tablet. But the living-with-it app wants three
 > things a WebView fights you on: **CoreBluetooth** (iOS Safari has no Web
-> Bluetooth — the device's own `/companion` PWA has to tell people to install
-> Bluefy; a native app erases that footnote), **Secure Enclave key custody**,
+> Bluetooth, so the device's own `/companion` PWA sends an iPhone owner to the
+> WAP's dashboard instead of its Bluetooth console; a native app has
+> CoreBluetooth, but today it reaches only the Bluetooth setup door and the
+> beacons, not a WAP's console or bonded lane, ledger A65), **Secure Enclave
+> key custody**,
 > and **reliable background notifications**. Those are exactly the native
 > capabilities the `desktop-lab` `native_capabilities()` seam marks as "Phase
 > 2." This app *is* Phase 2.
@@ -195,8 +198,9 @@ This is the crux, and the honest answer is layered. **The default is no account
 at all**, and we add identity *only* at the exact seams that require it.
 
 **Layer 0 — Local: no identity, no login.** On your own network, the app needs
-nothing but the per-device tokens it earned by the BOOT-button tap, held in
-**Keychain**. This is the whole product for most people, and it keeps the store's
+nothing but the per-device tokens it was handed when it paired (the setup door's
+claim, or a WAP's recovery kit opened in it, §3; the app has no BOOT-tap pairing),
+held in **Keychain**. This is the whole product for most people, and it keeps the store's
 promise literally true: *"no account, no app store, nothing that expires."* You
 can use the app for a decade having never typed an email.
 
@@ -452,7 +456,9 @@ never have to trust us not to do.
 1. **Skeleton + discovery.** SwiftUI shell, four tabs, Network.framework mDNS
    browse for `_securacv._tcp`, render the fleet list from TXT records.
    Reference: `canary-vision/docs/discovery.md`.
-2. **Pairing + local read.** Trust-on-Pair BOOT-button receipt → Keychain token;
+2. **Pairing + local read.** The setup door's claim, or a WAP's recovery kit
+   opened in the app, → Keychain token (as shipped, §3; the Trust-on-Pair
+   BOOT-button receipt this step first planned was never built into the app);
    `GET /info`, `/config`, `/witness` (the one page contract,
    `spec/witness_api_v1.md`, which canary-wap and the reference device-api
    both serve); render Today + Fleet. Mirror the existing
@@ -460,7 +466,10 @@ never have to trust us not to do.
 3. **Live + verify.** SSE witness stream; Ed25519 chain verify on-device with
    CryptoKit (mirror `lib/witness-chain.js`); local notifications on Wi-Fi.
 4. **BLE.** CoreBluetooth against the GATT console (Service `8fc1cee0-…`,
-   Snapshot char `8fc1cee1-…`, bonded) + chirp/beacon scan — off-grid status.
+   Snapshot char `8fc1cee1-…`, bonded) + chirp/beacon scan — off-grid status
+   (as shipped, the console reaches no WAP: `BLEConsole` dials only a
+   peripheral advertising the console service, which a WAP does not, ledger
+   A65; the connectionless beacon and chirp scan are what work off-grid).
 5. **Keys.** On-phone unseal of `.svlt` (key unwrapped through the Secure
    Enclave); trustee approve/deny flow (see
    `docs/design/vault_operator_ux_v1_1.md`).

@@ -6,10 +6,11 @@
  * Philosophy: "Witness authority, not neighbors"
  *
  * v0.2 update (audit C12 closure):
- *   - register_routes() now Bearer-gates every endpoint via the
- *     same template-trampoline pattern used by bluetooth_api.h (#437)
- *     and household_api.h (#438). Callers pass the device api_token
- *     and every handler is wrapped in chirp_auth_gated<>.
+ *   - register_routes() now gates every endpoint via the same
+ *     template-trampoline pattern used by bluetooth_api.h (#437) and
+ *     household_api.h (#438). Callers pass the device api_token and every
+ *     handler is wrapped in chirp_auth_gated<>, which runs api_auth_check():
+ *     the bearer, or a landing session any LAN host can mint (F346).
  *   - register_routes() must be called from canary_wap.ino after the
  *     HTTPS server is up.
  *
@@ -799,7 +800,9 @@ static inline void register_api_handler(httpd_handle_t server, const char* uri,
   httpd_register_uri_handler(server, &route);
 }
 
-// Register all chirp API routes with the HTTP server, Bearer-gated.
+// Register all chirp API routes with the HTTP server, each behind
+// chirp_auth_gated (api_auth_check: the bearer, or a landing session any host
+// on the network can mint, ledger F346).
 // api_token: device's persistent api_token_str (must outlive the server).
 // nullptr keeps legacy open behavior for non-production callers; production
 // callers MUST supply a real token.

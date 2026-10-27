@@ -50,7 +50,9 @@ final class FleetWiFiRolloutTests: XCTestCase {
         XCTAssertEqual(candidate("a", online: false, pinned: true).path, .unreachable)
     }
 
-    func testADarkWAPInRangeRidesTheBLERescue() {
+    // Policy only: no WAP fills bleReachable today, since the app dials only
+    // a peripheral advertising the console service (ledger A65).
+    func testADarkCanaryOnTheBondedLaneRidesBLE() {
         XCTAssertEqual(candidate("a", online: false, ble: true).path, .ble)
     }
 
@@ -58,7 +60,7 @@ final class FleetWiFiRolloutTests: XCTestCase {
         XCTAssertEqual(candidate("d", updatable: false).path, .handsOn)
     }
 
-    func testADarkOutOfRangeWAPIsUnreachable() {
+    func testADarkCanaryOffTheBondedLaneIsUnreachable() {
         XCTAssertEqual(candidate("a", online: false).path, .unreachable)
     }
 

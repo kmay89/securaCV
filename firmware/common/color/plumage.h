@@ -67,8 +67,8 @@ enum class Syllable : uint8_t {
   Churr,
 };
 
-// A device's personality, all 0..255. Derived from the device id; stable for
-// the life of the device.
+// A device's personality, all 0..255. Derived from the device id, which is
+// kept across reboots and OTA updates, not always across a flasher install.
 struct Voice {
   uint8_t chatter;       // how often it speaks (gap between phrases)
   uint8_t boldness;      // how far the song swells above the resting glow

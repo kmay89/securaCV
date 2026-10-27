@@ -497,8 +497,14 @@ static bool sd_append_fail(const char* why) {
 // generation: reads the tail line and compares seqs. On a fork the card is
 // left untouched (records keep chaining in RAM/NVS; the verifier reports
 // the gap honestly) until a reboot reconciles — and a foreign card whose
-// history is ahead of ours is refused for the same reason, instead of
-// having our chain interleaved into someone else's file.
+// history is ahead of ours is refused for the same reason, but only while
+// its tail is ahead: a card from before a new key (the 30 s wipe, a flasher
+// install) or another device's never reconciles (witness_recover_from_sd()
+// refuses its signature), and once our seq passes its tail, a later mount
+// appends our records to that same file, which the offline verifier then
+// fails under either key. Such a card's records.jsonl is to be moved off
+// it (copied, then deleted from the card: this path is fixed, so a copy
+// alone leaves the file here), or the card swapped for a fresh one.
 //
 // Torn tail: a power cut mid-append leaves the in-flight line without its
 // '\n'. Boot recovery skips it (witness_store::tail_parse), which is right,
@@ -555,7 +561,7 @@ static bool sd_append_record(const WitnessRecord* rec) {
     s_fork_blocked = sd_tail_forks_chain(rec->seq, &s_tail_torn);
   }
   if (s_fork_blocked)
-    return sd_append_fail("SD history ahead of this chain - reboot to reconcile");
+    return sd_append_fail("SD log ahead of chain: reboot or use new card");
 
   // A torn tail is sealed by a leading '\n' in the SAME write as the record,
   // so a second power cut cannot leave the terminator without its line: if
@@ -614,10 +620,11 @@ static bool sd_append_record(const WitnessRecord* rec) {
 bool witness_recover_from_sd() {
 #if FEATURE_SD_STORAGE
   // The NVS cache persists only every SD_PERSIST_INTERVAL records, so
-  // after a power cut (or an NVS wipe/reflash while the card kept its
-  // history) the cached head can be BEHIND the last record actually
-  // signed — resuming from it would fork the supposedly append-only
-  // chain. SD wins when its tail is strictly ahead AND the tail record's
+  // after a power cut the cached head can be BEHIND the last record
+  // actually signed — resuming from it would fork the supposedly
+  // append-only chain. (An NVS wipe or a flasher install gives a new key,
+  // so the old card's tail does not verify below and the chain starts
+  // over at genesis.) SD wins when its tail is strictly ahead AND the tail record's
   // signature verifies under THIS device's public key: a foreign card
   // (another device's history) or a tampered tail must never move our
   // chain head. Call once, right after the SD card mounts and BEFORE the

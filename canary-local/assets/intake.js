@@ -83,7 +83,7 @@ const COMMON_EFUSES = [
     meaning: "This board is locked to somebody else's signing key. Its ROM will refuse our bootloader, and there is no way to undo it — eFuses are one-way." },
   { key: "SPI_BOOT_CRYPT_CNT", bit: 82, width: 3, severity: "stop",
     label: "Flash encryption",
-    meaning: "Flash is encrypted with a key burned into this chip. Reads come back as ciphertext and a plaintext image won't boot. Not reversible.",
+    meaning: "Flash encryption is on, with a key burned into this chip: the firmware image (and any partition flagged encrypted) reads back as ciphertext, and a plaintext image won't boot. Not reversible.",
     // Odd number of BITS set = encryption on (0b001, 0b111); an even count
     // means it was turned on and then off again (0b011). Both mean a person
     // was here, so an even count is still worth saying out loud — just not
@@ -443,7 +443,9 @@ export function coldBootVerdict({ heldBoot, hadResidentFirmware } = {}) {
 //
 // Two things can waive it, and both originate outside the board:
 //   - `rosterHit`    — this exact MAC was onboarded by US, earlier this session
-//   - `ownerClaimed` — the human said "this is my board, keep its data"
+//   - `ownerClaimed` — the human said "this is my board, skip the full erase"
+//     (its identity key and settings start over anyway: every install starts
+//     the settings region over)
 // Everything else, including a board confidently announcing itself as one of
 // ours, is first contact.
 export function isFirstContact({ rosterHit, ownerClaimed } = {}) {

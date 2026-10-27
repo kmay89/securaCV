@@ -2742,8 +2742,9 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </p>
         <p style="font-size:0.85rem;color:var(--muted);line-height:1.6;margin-top:0.75rem;">
           <strong>Security:</strong> All connections use encrypted communication. Pairing requires
-          PIN confirmation to prevent unauthorized access. Paired devices are stored securely and
-          can be managed from this panel.
+          PIN confirmation to prevent unauthorized access. Paired devices are kept in the device's
+          settings storage (NVS), which is plaintext on the flash chip on every build today, so
+          someone holding the board can read them; manage them from this panel.
         </p>
       </div>
     </div>

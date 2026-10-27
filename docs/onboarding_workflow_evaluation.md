@@ -8,9 +8,13 @@ File references are to
 ## The onboarding flow (as traced)
 
 1. **Boot / identity** — `provision_device()` loads/creates the Ed25519
-   keypair, then derives a stable `device_id` (`canary-s3-4dC2`) and AP SSID
+   keypair, then derives a `device_id` (`canary-s3-4dC2`) and AP SSID
    (`SecuraCV-wap-4dC2`) from its public-key fingerprint (never the MAC —
-   event_contract §10), and derives the API token. (`canary_wap.ino`)
+   event_contract §10), stable while the keypair is (an OTA update and the
+   10 s hold keep it; an install in either flasher starts NVS over, so the
+   next boot makes a new one), and loads the API token from NVS (a flasher's
+   seeded one, or one an earlier boot derived), deriving it from the key only
+   when none is stored. (`canary_wap.ino`)
 2. **AP + captive portal** — `wifi_init_provisioning()` brings up
    `WIFI_AP_STA`, starts the SoftAP with a device-unique password, and (on first
    boot) a captive-portal DNS that redirects to `192.168.4.1`. The static

@@ -17,8 +17,8 @@ build of the design in [`docs/design/iphone_companion_app.md`](../docs/design/ip
 The desktop apps wrap the web Lab in a WebView, which is right for *reusing* the
 Lab. This app instead goes native because it needs things a WebView fights:
 **Dynamic Island / Live Activities**, **CoreBluetooth** (iOS Safari has no Web
-Bluetooth — the device's own PWA has to send people to Bluefy; native erases
-that), **HomeKit**, **Keychain** key custody, **AirPlay** + mic/speaker,
+Bluetooth; the app uses it for the fleet beacons and the setup door, and does
+not yet reach a WAP's console or bonded lane, ledger A65), **HomeKit**, **Keychain** key custody, **AirPlay** + mic/speaker,
 and reliable **background notifications**. These are the exact capabilities the
 `desktop-lab` `native_capabilities()` seam marks as "Phase 2." This is Phase 2.
 
@@ -132,9 +132,10 @@ Four rules keep "beautiful" from decaying into "busy":
   sentinel also watches each Canary's witness-chain head (`HeadWatch`,
   host-tested — first sight is a baseline, any movement including backwards
   is news): the moment a head moves, the full refresh runs NOW instead of
-  waiting out the 20-second cycle. Tamper heard over a BLE console NOTIFY
-  re-evaluates immediately — sub-second, the fastest transport the fleet
-  has. And the Test Alert now runs a stopwatch: the provably-alive card
+  waiting out the 20-second cycle. A console NOTIFY would re-evaluate tamper
+  at once, sub-second, but the app reaches no WAP's console today (ledger
+  A65), so tamper arrives by the chirp and the 5-second sentinel. And the
+  Test Alert now runs a stopwatch: the provably-alive card
   shows "posted and accepted in _n_ ms", a number it measured, never a vibe
   (non-negotiable #4).
 - **Find this Canary — hot/cold over its own beacon, and it answers back.**
@@ -164,12 +165,15 @@ Four rules keep "beautiful" from decaying into "busy":
   Options → "Update fleet Wi-Fi…". The staged plan (`FleetWiFiRollout`,
   host-tested) sends ONE pilot Canary first and touches nothing else until
   the pilot actually answers on the new network — a typo'd password strands
-  one device (which keeps its rescues), never the fleet. Each device rides
+  one device (which keeps its own setup network for the correction), never
+  the fleet. Each device rides
   the transport it can actually use right now — and the sheet names the
   wire: a pinned https Canary takes `/api/wifi/connect` over its checked
   TLS connection, a Canary whose console is connected takes the firmware's
   bonded BLE provisioning service (preferred over plain http even while it
-  is online), plain http is offered only when nothing encrypted reaches the
+  is online; no WAP's console connects today, since the app dials a console
+  only for a peripheral advertising the console service and a WAP does not,
+  so that lane stays empty until ledger A65 is settled), plain http is offered only when nothing encrypted reaches the
   device and then only behind a disclosure you switch on ("sends it across
   your Wi-Fi unencrypted"), and the display family is named hands-on up
   front (its credentials live in its own first-boot portal).
@@ -413,8 +417,8 @@ parts a phone can. Adding a Canary comes first everywhere; the hub second:
     yet) the claim is unspent, so the card offers **Try again** while it
     lives (180 s). A refused or expired claim ends on the device's row under
     **Ready to pair** on the Fleet tab, where `PairView` takes its recovery
-    kit (the receipt its own pages save after a BOOT tap; opened from
-    Files or pasted, a kit of that WAP is moved onto the address it
+    kit (the receipt its own pages save once a save started there is asking
+    and BOOT is then short-tapped; opened from Files or pasted, a kit of that WAP is moved onto the address it
     answers at now by `ProvisioningReceipt.rebased`, whatever address the
     kit named — the setup network's, or a `.local` name from before the
     WAP was named — the scheme, port and pin still the kit's own; another

@@ -2,18 +2,20 @@
 # SecuraCV Canary — Secure ESP-IDF Configuration
 # ═══════════════════════════════════════════════════════════════
 #
-# This configuration file prepares the firmware for production
-# security features. It is designed for PHASE 2 provisioning.
+# This configuration file stages the ESP-IDF settings for PHASE 2
+# provisioning. It never reaches a build today: the only env that names
+# it, platformio_secure.ini's [env:secure], builds with framework = arduino,
+# whose precompiled core ignores it (that file's "KNOWN INERT" note).
 #
-# IMPORTANT: Secure Boot and Flash Encryption are PREPARED but
-# NOT ENABLED by default. Enable them only when ready for
-# irreversible production lockdown.
-#
-# To enable full security (Phase 2):
-# 1. Uncomment the Secure Boot and Flash Encryption sections below
-# 2. Generate keys with: ./generate_keys.sh
-# 3. Build with: pio run -e secure
-# 4. Provision with: ./provision_canary.sh --phase 2
+# IMPORTANT: Secure Boot and Flash Encryption are commented out below,
+# and uncommenting them changes nothing under framework = arduino. No
+# step of the kit turns either on: provision_canary.sh --phase 2 writes
+# the image in plaintext, burns SECURE_BOOT_EN with no Secure Boot key
+# digest and no SPI_BOOT_CRYPT_CNT, and its own lockdown check then fails,
+# so a Phase 2 board has flash encryption off and Secure Boot enabled with
+# nothing to verify against (what the ROM then does has not been run on a
+# bench; treat the board as possibly unbootable). The burn cannot be
+# undone. docs/secure_provisioning.md, Step 3.
 #
 # ═══════════════════════════════════════════════════════════════
 
@@ -22,15 +24,19 @@
 # ─────────────────────────────────────────────────────────────────
 # No proprietary BT binary blobs = eliminates CVE-2025-27840 class
 # of attacks (hidden HCI commands). This is a SECURITY FEATURE.
+# Inert under framework = arduino, like the rest of this file: what keeps
+# Bluetooth code out of the secure env is its -DFEATURE_BLE=0,
+# -DFEATURE_BLE_SCAN=0 and -DFEATURE_BLE_STATUS=0 build flags
+# (platformio_secure.ini), not these lines.
 # ─────────────────────────────────────────────────────────────────
 CONFIG_BT_ENABLED=n
 CONFIG_BLUEDROID_ENABLED=n
 CONFIG_BLE_MESH=n
 
 # ─────────────────────────────────────────────────────────────────
-# SECURE BOOT V2 (Phase 2 - Currently DISABLED for development)
+# SECURE BOOT V2 (staged, commented out; inert under framework = arduino)
 # ─────────────────────────────────────────────────────────────────
-# Uncomment these lines for production lockdown:
+# What an ESP-IDF build would set; no Canary build reads them today:
 #
 # CONFIG_SECURE_BOOT=y
 # CONFIG_SECURE_BOOT_V2_ENABLED=y
@@ -44,9 +50,9 @@ CONFIG_BLE_MESH=n
 # ─────────────────────────────────────────────────────────────────
 
 # ─────────────────────────────────────────────────────────────────
-# FLASH ENCRYPTION (Phase 2 - Currently DISABLED for development)
+# FLASH ENCRYPTION (staged, commented out; inert under framework = arduino)
 # ─────────────────────────────────────────────────────────────────
-# Uncomment these lines for production lockdown:
+# What an ESP-IDF build would set; no Canary build reads them today:
 #
 # CONFIG_SECURE_FLASH_ENC_ENABLED=y
 # CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y
@@ -57,10 +63,14 @@ CONFIG_BLE_MESH=n
 # ─────────────────────────────────────────────────────────────────
 
 # ─────────────────────────────────────────────────────────────────
-# NVS ENCRYPTION (Protects stored keys and settings)
+# NVS ENCRYPTION (would protect stored keys and settings; inert)
 # ─────────────────────────────────────────────────────────────────
-# This can be enabled independently of flash encryption for Phase 1.
-# It encrypts NVS partition contents using a key stored in eFuse.
+# An ESP-IDF build would encrypt the NVS partition's contents with it. No
+# Canary build is one, so it protects nothing on any board, Phase 1 or
+# Phase 2.
+# KNOWN INERT under framework = arduino (platformio_secure.ini): the line
+# below never reaches the Arduino core's precompiled build, so no released
+# image has NVS encryption, and NVS stays plaintext on every board.
 #
 CONFIG_NVS_ENCRYPTION=y
 

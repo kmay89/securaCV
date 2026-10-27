@@ -303,8 +303,9 @@ static void on_peer_hub_election(
     s_has_current_hub = true;
   } else {
     /* Non-fatal: failover still works from the live election broadcast;
-     * we just won't have the hint cached across the next reboot (e.g.
-     * flash encryption disabled on a dev board). Leave the cache
+     * we just won't have the hint cached across the next reboot (on
+     * every released board: the gate needs flash encryption, which no
+     * tier turns on today, a Phase 2 board included). Leave the cache
      * untouched so a later election re-attempts the persist. */
     Serial.println("[mesh.election] note: elected hub not persisted "
                    "(NVS write refused or failed)");

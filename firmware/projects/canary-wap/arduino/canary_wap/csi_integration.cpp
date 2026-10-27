@@ -36,7 +36,7 @@
 #include "csi_mqtt.h"             // optional MQTT bridge (publishes events)
 #include "csi_event_log.h"        // SD-backed event persistence + backfill
 #include "csi_event_egress.h"     // committed events -> SD log + MQTT, in id order
-#include "api_auth.h"             // api_auth_check() — Bearer token gate
+#include "api_auth.h"             // api_auth_check() — session cookie or bearer token (F346)
 #include "host_guard.h"           // the cookie gates' Host question (staged copy of firmware/common/network; F344)
 
 #include <Arduino.h>

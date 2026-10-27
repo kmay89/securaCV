@@ -114,8 +114,9 @@ boundary**, and that's already true:
 - **Discovery is read-only.** mDNS is advertise-only; discovering a Canary opens
   no control channel.
 - **Status is public-only, and must be *authenticated* over the LAN.** The
-  self-manifest leaks nothing (no secret ever leaves the device — same rule as the
-  trust card), so reading it is safe. But it is **not signed as transmitted**: over
+  self-manifest carries no secret (the firmware has no path that exports the key;
+  a full flash read, which is what either flasher's safety copy is, does carry it,
+  as the trust card says), so reading it is safe. But it is **not signed as transmitted**: over
   USB you trust it by physical connection; over the LAN a spoofer could serve a
   fake or stale one. So the fleet view must **verify each device against its pinned
   key via challenge-response** — the `SECURACV-ATTEST-v1` attestation already in

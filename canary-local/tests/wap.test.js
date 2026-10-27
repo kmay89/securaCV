@@ -588,11 +588,14 @@ test("flash: BOOT/RESET facts match the .ino constants and the ROM's own strings
   assert.ok(short && short.includes(`under ${holdMs / 1000} s`) && short.includes("provisioning gate") &&
     short.includes(`${gateMs / 1000} s`) && /prints no key/.test(short),
     "a short press opens the provisioning gate and prints no key: " + short);
-  // The tap goes to the one page already asking (sweep F342): the card says
-  // to start the dashboard's ask first, never that the press opens a window
-  // the dashboard then uses.
-  assert.ok(/to the one page already asking for it/.test(short) &&
-    /click Use BOOT Tap Once on the dashboard first/.test(short) && !/can hand over/.test(short),
+  // The tap goes to one asker (sweep F342): the card says to start the
+  // dashboard's ask first, never that the press opens a window the dashboard
+  // then uses, and names who gets a tap no page was asking for (the first
+  // address that asks after it, tap_arbitrate()).
+  assert.ok(/hands the recovery kit to one asking page/.test(short) &&
+    /click Use BOOT Tap Once on the dashboard first, then press/.test(short) &&
+    /a tap no page was asking for goes to the first address that asks after it/.test(short) &&
+    !/already asking/.test(short) && !/can hand over/.test(short),
     "the short press's card puts the dashboard's ask first: " + short);
   assert.ok(boot.gestures.some((g) => g.startsWith(`hold ${holdMs / 1000}–${longMs / 1000} s: prints the identity block`)),
     "the medium hold prints the identity block");

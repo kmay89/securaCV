@@ -47,6 +47,10 @@ final class SetupGuideTests: XCTestCase {
         XCTAssertTrue(page?.title.hasPrefix("If no card appears") ?? false)
         XCTAssertFalse(SetupGuide.canary(.wap).contains { $0.body.contains("bonded Bluetooth") },
                        "no step promises the bonded path")
+        // canary_wap.ino generate_ap_ssid(): SecuraCV-wap-<4>, the node type
+        // between the prefix and the suffix (onboarding_fsm.h).
+        XCTAssertTrue(page?.body.contains("SecuraCV-wap-XXXX") ?? false,
+                      "the page step names the WAP's setup network as it is broadcast")
         XCTAssertEqual(CanaryFamily.display.path, .setupNetwork(keySource: .glassQR))
         XCTAssertEqual(CanaryFamily.vision.path, .setupNetwork(keySource: .flasher))
         XCTAssertEqual(CanaryFamily.sense.path, .setupNetwork(keySource: .flasher))

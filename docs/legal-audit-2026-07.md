@@ -135,7 +135,12 @@ weaker and are *defensible*:
 - "can't be bricked" → "an A/B partition with signed images and **automatic
   rollback**, so a failed update returns to the last good firmware."
 - "no one can forge" → "forging a record requires the device's private key,
-  which never leaves the secure element."
+  which never leaves the secure element." *(Amended 2026-10-22: do not use
+  this phrasing. No Canary has a secure element: the key is plaintext in NVS
+  on every tier today, and readable off the flash chip by someone holding the
+  board (`security/SECURITY_MODEL.md`, "Physical extraction and the
+  flash-encryption default"). A defensible swap: "forging a record requires
+  the device's private key, which no software path on the device exports.")*
 
 **Changed now:** I aligned the highest-stakes instances — the "tamper-proof"
 language in the shipped **evidence** document (`SECURITY_MODEL.md`) and in

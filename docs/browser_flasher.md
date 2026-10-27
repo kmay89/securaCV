@@ -101,9 +101,10 @@ generic serial/modem device. The honest picture, because it's silicon-deep:
 
 Net: the branded USB name is a **build-flag** property of an **OTG/TinyUSB,
 S3-only** build, shown in the picker label (never the macOS device path), and
-promoting it to default is gated on a real-board test. The BLE console (above)
-is the cleaner cross-board "it's a *branded* Canary" signal — every board, C3/C6
-included, advertises `SecuraCV-Canary` by name.
+promoting it to default is gated on a real-board test. The BLE console (below)
+is a cleaner over-the-air "it's a *branded* Canary" signal, but on a WAP only:
+`ble_console.h` is the one firmware that serves it, so the flagship and the
+C3/C6 boards offer no console to find.
 
 ### Showing up on an iPhone over USB-C (the Files app)
 
@@ -242,9 +243,11 @@ console** running — one GATT service, one snapshot characteristic (READ +
 NOTIFY) carrying a ≤220-byte UTF-8 JSON blob of live state — the same fields the
 SPA shows over WiFi, on the path that keeps working when WiFi is down
 ([`firmware/.../ble_console.h`](../firmware/projects/canary-wap/arduino/canary_wap/ble_console.h);
-the iOS app's `BLEConsole.swift` speaks the same UUIDs). The flasher's
+the iOS app's `BLEConsole.swift` knows the same UUIDs but never reaches a WAP's
+console: it dials only a peripheral advertising the console service, which a
+WAP does not, ledger A65). The flasher's
 **Bluetooth check** (reachable any time from the reassurance strip, and offered
-after flashing an AP/WAP board) answers three plain questions with **Web
+after flashing a WAP, the one board that serves the console) answers three plain questions with **Web
 Bluetooth** — is Bluetooth on (`navigator.bluetooth.getAvailability()`), can this
 browser reach a Canary (`requestDevice` matched to the board's **advertised**
 identity — its branded GAP name `SecuraCV-Canary` and its pairing service UUID,
@@ -394,8 +397,9 @@ evidence in plain words on the page:
 1. **What you asked for** — `?product=…` (arriving from /checkup or a doc
    link) wins outright: "Showing X — the firmware you picked."
 2. **What the board already runs** — the app descriptor read off the wire
-   names the product: "This board already runs X — installing keeps it,
-   updated in place."
+   names the product: "This board already runs X, so it is preselected. An
+   install starts its settings over (a new witness key, where it keeps one);
+   an over-the-air update keeps them."
 3. **What the silicon says** — the chip guard plus the *measured flash
    size* (catalog `flash_mb`, derived from the firmware's own board
    settings). An ESP32-S3 with 16 MB flash can only be the Waveshare panel

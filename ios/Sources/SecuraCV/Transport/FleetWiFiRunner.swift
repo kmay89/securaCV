@@ -67,7 +67,7 @@ final class FleetWiFiRunner: ObservableObject {
         // The lanes that never get a push start honest, not blank.
         for c in plan.handsOn { steps[c.id] = .handsOn }
         for c in plan.unreachable {
-            steps[c.id] = .failed("Not reachable right now — over Wi-Fi or Bluetooth.")
+            steps[c.id] = .failed(FleetWiFiRollout.unreachableReason)
         }
         for c in plan.followers { steps[c.id] = .waiting }
 
@@ -150,7 +150,7 @@ final class FleetWiFiRunner: ObservableObject {
         case .handsOn:
             steps[candidate.id] = .handsOn
         case .unreachable:
-            steps[candidate.id] = .failed("Not reachable right now — over Wi-Fi or Bluetooth.")
+            steps[candidate.id] = .failed(FleetWiFiRollout.unreachableReason)
         }
     }
 

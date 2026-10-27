@@ -6,7 +6,11 @@ Manual test pass for the `canary.local/settings` flow on Canary WAP firmware.
 
 Confirm that Settings is easy to reach without weakening the threat model:
 
-- WiFi access alone does not authorize settings API calls.
+- A browser with no session for the device gets no settings data or actions
+  until it signs in. That is not a boundary against a host on the WiFi: the
+  landing page at `/` mints a session for any host on the network with one
+  tap ("Open dashboard"), and that session reaches the settings API (ledger
+  F346).
 - A valid dashboard session opens Settings without another BOOT tap.
 - API token and BOOT-tap fallback remain clear and usable.
 
@@ -26,9 +30,9 @@ Confirm that Settings is easy to reach without weakening the threat model:
 | Direct Settings route | Open `http://canary.local/settings`. | Legacy dashboard loads with the Settings panel selected. If not signed in, auth modal is shown. |
 | Dashboard Settings button | Open `http://canary.local`, complete normal dashboard pairing if prompted, then click Settings. | Browser navigates to `/settings` and opens Settings directly. |
 | Existing session reuse | With a valid dashboard session, refresh `/settings`. | Settings API calls work without entering the API token or pressing BOOT. |
-| WiFi-only access blocked | In a fresh/private browser with no session, open `/settings` and do not enter a token or press BOOT. | UI shell may load, but protected data/actions stay behind auth. |
-| API token fallback | Paste the `cv_...` API token into the auth modal and click Connect. | Modal closes and Settings data loads. Invalid token shows a clear error. |
-| BOOT-tap fallback | Click "Use BOOT Tap Once", then short-tap BOOT when the page says to (within 60 seconds). | Device returns provisioning receipt, sets the browser session, and Settings loads. |
+| WiFi-only access blocked | In a browser with no session for the device (close every private window first: Chrome and Firefox share one private session, and its cookies, across the private windows that are open; or delete the site's `cv_session` in the developer tools), open `/settings` and do not enter a token or press BOOT. | UI shell may load, but protected data/actions stay behind auth. |
+| API token fallback | In a browser with no session for the device (as in the WiFi-only row), open `/settings`, paste the `cv_...` API token into the auth modal and click Connect. | Modal closes and Settings data loads. Invalid token shows a clear error. (On a page a session already signed in, the box takes the session's word for any token: do not test or advise pasting there.) |
+| BOOT-tap fallback | In a browser with no session for the device (as in the WiFi-only row), open `/settings`; in the auth modal click "Use BOOT Tap Once", then short-tap BOOT when the page says to (within 60 seconds). | Device returns provisioning receipt, sets the browser session, and Settings loads. |
 | BOOT tap not repeated | After BOOT-tap fallback succeeds, refresh `/settings`. | Settings loads from the saved `cv_session`; no second BOOT tap needed. |
 | Reboot behavior | Reboot the Canary, then open `/settings` in the same browser before the 24-hour session expires. | Existing session continues to authorize browser API calls if firmware session state survives as expected; otherwise auth modal offers token/BOOT fallback. |
 | API token not persisted | Reload the page after connecting with token. | Token is not stored in localStorage; user may need token/BOOT unless `cv_session` was set by pairing or BOOT fallback. |

@@ -8,7 +8,7 @@
 import Foundation
 
 struct Witness: Identifiable, Codable, Hashable, Sendable {
-    var id: String                       // stable device_id, e.g. "canary-a3f7"
+    var id: String                       // device_id, e.g. "canary-a3f7" (kept across OTA updates and the 10 s hold; a flasher install can change it)
     var deviceType: DeviceType = .unknown
     /// The device type EXACTLY as the witness published it (`/api/fleet`
     /// "product", mDNS TXT `dt`) — kept beside the decoded enum because the

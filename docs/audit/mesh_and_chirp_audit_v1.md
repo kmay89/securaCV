@@ -79,7 +79,7 @@ if (timestamp > now_sec + 30 ||
 
 **Where:** `mesh_network.h:170-178` (struct), `mesh_network.cpp` NVS save path
 
-`OperaConfig.opera_secret[32]` is the 32-byte symmetric secret from which `opera_id` is derived and which gates pairing. If the device's flash is not encrypted (ESP32 flash encryption is opt-in, not on by default outside production builds), a physical-access attacker can pull the secret with `esptool.py read_flash` and become a permanent opera member from outside the household.
+`OperaConfig.opera_secret[32]` is the 32-byte symmetric secret from which `opera_id` is derived and which gates pairing. If the device's flash is not encrypted (ESP32 flash encryption is opt-in, not on by default outside production builds), a physical-access attacker can pull the secret with `esptool.py read_flash` and become a permanent opera member from outside the household. *(Amended 2026-10-21: flash encryption does not stop it either. It does not cover NVS, so on a board with flash encryption on the secret is still plaintext, and no released build turns flash encryption on. The O2 gate keeps the secret off boards without flash encryption only; `spec/canary_mesh_network_v0.md` §5.5.)*
 
 **Fix in this branch:** in `mesh_network::init`, call `esp_efuse_read_field_bit(ESP_EFUSE_FLASH_CRYPT_CNT)` (or the equivalent SDK helper) and refuse to load/save the opera_secret if flash encryption is not active. Log loudly to the health log at `LOG_LEVEL_ALERT, LOG_CAT_SECURITY`. Document the requirement in `spec/canary_mesh_network_v0.md` and `docs/security/SECURITY_MODEL.md`.
 
@@ -224,7 +224,7 @@ The file's own header warns:
 
 If wired naively, `POST /api/chirp/send` becomes a free origination endpoint accessible by anyone on the LAN. Comparable risk to a smart bulb that auto-pairs without challenge.
 
-**Fix in this branch:** register `chirp_api::register_routes()` in `canary_wap.ino` using the same Bearer-token template trampoline as `bluetooth_api.h` (PR #437) and `household_api.h` (PR #438). `POST /api/chirp/send` additionally requires a 2-second hold timestamp from the UI per `spec/chirp_channel_v0.md` §4.1.
+**Fix in this branch:** register `chirp_api::register_routes()` in `canary_wap.ino` using the same Bearer-token template trampoline as `bluetooth_api.h` (PR #437) and `household_api.h` (PR #438) *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)*. `POST /api/chirp/send` additionally requires a 2-second hold timestamp from the UI per `spec/chirp_channel_v0.md` §4.1.
 
 ### C13 — Presence requirement gates only `send_chirp` (High)
 
@@ -323,7 +323,7 @@ For each section of the two specs, a one-line status. C means contradicted by co
 | §3.4 Opera isolation | I | `mesh_network.cpp:493`. |
 | §4.1 CBOR encoding | P | Not actually CBOR — packed-struct binary. Spec should be updated to match reality or code switched to CBOR. |
 | Peer removal | P | Removes locally; no re-keying (O3). |
-| NVS confidentiality | M | No FE gate (O2). |
+| NVS confidentiality | M | No FE gate (O2). *(Amended 2026-10-21: the O2 gate keeps the secret off boards without flash encryption; it does not give NVS confidentiality, since flash encryption does not cover NVS.)* |
 
 **`spec/chirp_channel_v0.md`:**
 
@@ -406,7 +406,8 @@ The Beacon channel is the harm-reduction layer specified in `spec/beacon_channel
 - [x] Audit log honors AGENTS.md Beacon invariant 9 (append-only, no
   rotate/delete, export-only): the log of record is `/beacon/audit.jsonl` on
   SD — pure append, never truncated — with the 64-entry flash-encrypted NVS
-  ring demoted to a recent-view cache (`beacon_channel.cpp::sd_append_audit_entry`).
+  ring *(amended 2026-10-21: an NVS ring written only on a board with flash
+  encryption on, and plaintext NVS there too)* demoted to a recent-view cache (`beacon_channel.cpp::sd_append_audit_entry`).
   `spec/beacon_channel_v0.md` §11's earlier 30-day/64 KB `prune_audit_log()`
   language contradicted the invariant, was never implemented, and is
   superseded. The `FEATURE_BEACON_CHANNEL=1` compile gate in

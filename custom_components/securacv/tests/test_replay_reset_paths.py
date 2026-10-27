@@ -2,7 +2,9 @@
 
 The replay gate compares the signed counters (event_id, seq, chain length,
 totals) against the last value seen for a device_id. Those counters belong
-to the KEY: a factory-reset or replaced Canary starts them over. So every
+to the KEY: a Canary installed again or fully erased in a flasher (whose
+factory image starts NVS over), or replaced, starts them over (an OTA update
+and the 10 s BOOT reset keep the key and its counters). So every
 path that changes which key a device_id answers to must forget the marks —
 TOFU first sight (the health hook) and the operator's pin / rotate / unpin
 (the options flow) — or the replacement device's first publishes all read

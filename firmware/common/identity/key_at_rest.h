@@ -25,9 +25,11 @@
  * secure-initialized by nvs_flash_init()) that in the IDF this tree uses
  * depends on flash encryption being configured in the build. So the key is
  * encrypted at rest only when BOTH are active, and `Facts::nvs_encryption`
- * is the second fact. The Arduino 2.0.17 core's precompiled sdkconfig leaves
- * CONFIG_SECURE_FLASH_ENC_ENABLED unset, so NVS encryption does not exist in
- * that build, and the PIO canary tree's firmware reports the fact as false
+ * is the second fact. Neither pinned Arduino core's precompiled sdkconfig
+ * has it (2.0.17's leaves CONFIG_SECURE_FLASH_ENC_ENABLED unset; 3.3.8's,
+ * which env:full and the WAP build on, leaves CONFIG_NVS_ENCRYPTION unset),
+ * so NVS encryption does not exist in any framework = arduino build, and
+ * the PIO canary tree's firmware reports the fact as false
  * on every image — on a fused board too, which is the honest answer and the
  * safe direction (under-reporting can only make an opt-in image refuse).
  * The route to encrypted NVS is the arduino-as-IDF-component migration

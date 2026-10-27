@@ -1025,9 +1025,11 @@ def _async_health_for_tofu(hass: HomeAssistant, entry: SecuraCVConfigEntry):
             return
         # async_pin needs the loop; schedule as a task so the @callback
         # context returns synchronously. A pin that actually lands is a new
-        # identity for this device_id (fresh flash, factory reset, a
-        # replacement board), whose counters start over — so its replay
-        # high-water marks start over with it, or every valid publish from
+        # identity for this device_id (an install or a full erase in either
+        # flasher, whose factory image starts NVS over; an all-rounder
+        # Canary's 30 s BOOT wipe; a replacement board; an OTA update and the
+        # 10 s BOOT reset keep the key), whose counters start over — so its
+        # replay high-water marks start over with it, or every valid publish from
         # the new key would read as a replay of the old one.
         async def _pin_and_reset_replay() -> None:
             pinned = await trust_store.async_tofu_pin_if_unknown(device_id, pubkey_hex)
@@ -1077,11 +1079,12 @@ def async_record_verify(
         "detail": verdict.detail,
     }
     if verdict.reason == "tofu_pin":
-        # A newly pinned device starts its counters over (fresh flash, factory
-        # reset); its replay high-water marks must start over with it. The
-        # verifiers do not return this reason today — the health hook and the
-        # options flow clear the marks themselves — but a future verifier
-        # that pins inline gets the same behavior for free.
+        # A newly pinned device starts its counters over (an install or a full
+        # erase in either flasher, an all-rounder Canary's 30 s BOOT wipe);
+        # its replay high-water marks must start over with it. The verifiers
+        # do not return this reason today — the health hook and the options
+        # flow clear the marks themselves — but a future verifier that pins
+        # inline gets the same behavior for free.
         async_clear_replay_marks(hass, entry, device_id)
     if verdict.reason == "mismatch":
         # Dedup by (device_id, received_fingerprint) so a steady stream
@@ -1111,8 +1114,17 @@ def async_record_verify(
                         f"`{verdict.received_fingerprint}` but the pinned "
                         f"fingerprint is `{verdict.pinned_fingerprint}`. "
                         "Entities are still updating, marked as unverified. "
-                        "If you intentionally re-flashed this device, rotate "
-                        "the pin from the integration's options menu."
+                        "A Canary gets a new key when it is installed again "
+                        "or fully erased in either flasher (an install starts "
+                        "its settings over), from the all-rounder Canary's "
+                        "30-second BOOT wipe, or with a replacement board, and "
+                        "a Sense, Vision or Sentinel also makes one when it "
+                        "cannot read its stored key at boot; an over-the-air "
+                        "update and the 10-second BOOT reset keep it. Check "
+                        "the new key on the device itself before you rotate "
+                        "the pin from the integration's options menu: if none "
+                        "of those explains it, something else may be "
+                        "publishing as this device."
                     ),
                     "notification_id": f"securacv_mismatch_{device_id}",
                 },

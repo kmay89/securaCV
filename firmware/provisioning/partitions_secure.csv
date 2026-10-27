@@ -35,15 +35,19 @@
 #   NVS encryption, so the key stays plaintext at rest
 #   (common/identity/key_at_rest.h reports it; docs/design/
 #   hardware_root_of_trust.md).
-# - nvs_keys stores NVS encryption key (derived from eFuse); ESP-IDF says to
-#   flag it 'encrypted'
+# - nvs_keys is where ESP-IDF's NVS encryption would keep its keys; no
+#   Canary build reads it (every released build is framework = arduino,
+#   where NVS encryption is not available, and the ESP-IDF canary-ota
+#   teaching sample has no nvs_keys partition). ESP-IDF says to flag it
+#   'encrypted'
 # - spiffs may contain configuration (encrypt for safety)
 #
 # Phase 1 (development):
 #   Encrypted flags are ignored (flash encryption not enabled)
 #
-# Phase 2 (production):
-#   Encrypted flags are enforced after eFuse burn
+# Phase 2 (provision_canary.sh --phase 2, not usable yet):
+#   Encrypted flags are still not enforced: it burns no SPI_BOOT_CRYPT_CNT,
+#   so flash encryption stays off (docs/secure_provisioning.md, Step 3)
 #
 # ═══════════════════════════════════════════════════════════════
 # Name,    Type, SubType,  Offset,   Size,     Flags
