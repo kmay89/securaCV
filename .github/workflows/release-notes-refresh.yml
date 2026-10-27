@@ -112,7 +112,9 @@ jobs:
           LATEST: ${{ steps.check.outputs.latest }}
         run: |
           set -euo pipefail
-          if cmp -s <(sed -e '$a\' "$RUNNER_TEMP/before.md") <(sed -e '$a\' "$RUNNER_TEMP/body.md"); then
+          # $(…) drops trailing newlines, so a body that differs only there
+          # (the API's copy vs the composed file) counts as already written.
+          if [ "$(cat "$RUNNER_TEMP/before.md")" = "$(cat "$RUNNER_TEMP/body.md")" ]; then
             echo "${TAG} already carries this body — nothing to write"; exit 0
           fi
           # Explicit either way: the tag that IS latest stays latest, and every
