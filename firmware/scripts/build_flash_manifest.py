@@ -103,6 +103,16 @@ def image_has_version(path: pathlib.Path, expected: str) -> bool:
     return any(run == target for run in re.split(rb"[^\x20-\x7e]+", data))
 
 
+def app_path(build: dict) -> pathlib.Path:
+    """The compiled app image a BUILD entry produces: the bytes the OTA
+    manifest signs and the factory image merges (stamp_app_desc.py stamps
+    them first)."""
+    d = resolve_dir(build["dir"])
+    if build["toolchain"] == "pio":
+        return d / "firmware.bin"
+    return d / f"{build.get('sketch', 'canary_wap')}.ino.bin"  # arduino-cli: <sketch>.ino.*
+
+
 def make_factory_cmd(product: dict, build: dict, out: pathlib.Path) -> list[str]:
     cmd = ["python", str(MAKE_FACTORY), "--chip", esptool_chip(product["chip"]), "--out", str(out)]
     d = resolve_dir(build["dir"])
@@ -112,7 +122,7 @@ def make_factory_cmd(product: dict, build: dict, out: pathlib.Path) -> list[str]
         sketch = build.get("sketch", "canary_wap")
         cmd += ["--bootloader", str(d / f"{sketch}.ino.bootloader.bin"),
                 "--partitions", str(d / f"{sketch}.ino.partitions.bin"),
-                "--app", str(d / f"{sketch}.ino.bin")]
+                "--app", str(app_path(build))]
     return cmd
 
 

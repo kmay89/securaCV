@@ -1520,8 +1520,12 @@ async function runIntake(narrate) {
     heldBoot: state.heldBoot,
     hadResidentFirmware: !!(state.current && !state.current.unknown),
   });
+  const projectName = state.current && state.current.projectName;
   const shipped = intake.shippedWith({
-    projectName: state.current && state.current.projectName,
+    projectName,
+    // Releases after 2.4.17 name their product in the descriptor
+    // (stamp_app_desc.py); shippedWith counts the exact asset_stem only.
+    product: core.matchProjectToProduct(state.catalog, projectName),
     // A partition sector we READ and found empty is a blank chip; one we
     // couldn't read at all is unknown. state.ptRead keeps those apart —
     // `!state.pt` alone would call a failed read the cleanest possible result.

@@ -310,6 +310,54 @@
   device needed no change: a stable version on the dev channel is an ordinary
   update to a dev unit running anything older.
 
+### Release images name their product and version, so both flashers can say what a board runs
+
+- **Every SecuraCV image up to fw-v2.4.17 introduced itself as an Arduino
+  sketch.** An app image's `esp_app_desc_t` is the record both flashers read
+  off a connected board, and the Arduino core's precompiled libraries define
+  it: all 21 fw-v2.4.17 images say `arduino-lib-builder`, version `esp-idf:
+  v4.4.7 38eeba213a` (or `14a0af9`, `43a8f6d`). So neither flasher named the
+  product on a board already running SecuraCV, the install verdict read
+  "Version unknown", and installing an older image over a newer one gave no
+  downgrade warning. A sketch cannot set the record at compile time.
+- **The release stamps it after the build.** New
+  `firmware/scripts/stamp_app_desc.py` writes the product's `asset_stem` from
+  `flash.json` (`canary-wap`, `canary-display-nightstand-s3`: every stem fits
+  the 31-character field, where product ids do not) and the firmware's own
+  version string (the `CANARY_FW_VERSION` / `FIRMWARE_VERSION` literal, the
+  WAP's `-wap` suffix included) into the descriptor, then recomputes the
+  image's checksum byte and its appended SHA-256. Nothing else in the
+  descriptor moves: not `app_elf_sha256` (the boot guard's image identity),
+  `secure_version`, the date, the time or `idf_ver`. It refuses an image of
+  the wrong shape or with an already-wrong checksum or hash, and a value that
+  does not fit; it writes a version only when the image already carries that
+  string outside the descriptor, so the release's version guards still test
+  the firmware and not the stamp; stamping twice changes nothing.
+  `firmware-release.yml` and `flasher-release.yml` run it after their last
+  build and before anything copies, hashes, signs or merges an app, so the
+  OTA manifests' sha256 and signatures and the factory images cover the
+  stamped bytes; each stamped image is read back with esptool's `image_info`
+  and the run fails unless esptool calls the checksum and hash valid and
+  reads the name and version written. A flasher rebuild of an older tag
+  stamps that tag's factory images too (the stamper is overlaid with the
+  other packaging tools).
+- **Both flashers.** A stamped board reads as running, say, "Canary WAP" and
+  its version, and the existing install verdicts work on it: update, reinstall, downgrade, and
+  switch from another product. Customs says "Arrived running Canary WAP" for
+  an exact stem (that name is the image's own claim, and the finding says
+  so). An `arduino-lib-builder` image still reads as "an Arduino sketch",
+  whose detail no longer calls it a stock image: SecuraCV releases up to
+  2.4.17 read that way too, and the check cannot tell them apart.
+- **From the next release on.** Images already published, fw-v2.4.17's
+  included, are unchanged, and boards running them keep reading as an Arduino
+  sketch until they update. Host-tested only: `test_stamp_app_desc.py` builds
+  images for the ESP32, S3, C3 and C6 with esptool 4.12.0, stamps them and
+  reads them back (and four downloaded fw-v2.4.17 apps round-trip through it
+  when named in `STAMP_APP_DESC_FACTORY`, done by hand for this change);
+  `scripts/tests/test_release_app_desc_stamp.py` holds both workflows to the
+  order. No stamped image has been flashed to a board or installed over the
+  air yet.
+
 ## [2.4.17] - 2026-10-27
 
 > **Before you update.** Vision Doorbell: move the amplifier's input wire from D3 to D10.

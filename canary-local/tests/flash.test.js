@@ -193,6 +193,46 @@ test("matchProjectToProduct maps firmware names back, longest-match wins", async
   assert.strictEqual(matchProjectToProduct(catalog, ""), null);
 });
 
+// A release stamps each app's descriptor with the product's asset_stem and
+// the firmware's version (firmware/scripts/stamp_app_desc.py). Up to 2.4.17
+// every descriptor was the Arduino core's, so a board running SecuraCV read
+// as "arduino-lib-builder", product unknown, version uncomparable — and an
+// older image over it went on with no downgrade warning.
+test("a stamped descriptor names its product and version, for every product", async () => {
+  const { parseAppDescriptor, matchProjectToProduct, productForProject } = await core();
+  const stems = new Set();
+  for (const p of catalog.products) {
+    // The field is char[32]: 31 bytes and a NUL. Product ids outgrow it.
+    assert.ok(/^[\x20-\x7e]{1,31}$/.test(p.asset_stem), `${p.id}: "${p.asset_stem}" does not fit project_name`);
+    assert.ok(!stems.has(p.asset_stem), `${p.id}: two products stamp "${p.asset_stem}"`);
+    stems.add(p.asset_stem);
+    const d = parseAppDescriptor(new Uint8Array(appDesc({ version: "2.4.18", project: p.asset_stem })));
+    assert.strictEqual(matchProjectToProduct(catalog, d.projectName).id, p.id, p.asset_stem);
+    assert.strictEqual(productForProject(catalog, d.projectName).id, p.id, p.asset_stem);
+  }
+});
+
+test("a stamped board gets the downgrade and same-version verdicts; an Arduino-named one stays unknown", async () => {
+  const { parseAppDescriptor, matchProjectToProduct, installVerdict } = await core();
+  const wap = catalog.products.find((p) => p.id === "securacv-canary-wap");
+  const read = (version, project) => {
+    const d = parseAppDescriptor(new Uint8Array(appDesc({ version, project })));
+    return { current: { version: d.version, projectName: d.projectName },
+             currentProduct: matchProjectToProduct(catalog, d.projectName) };
+  };
+  const stamped = read("2.4.18-wap", "canary-wap");
+  assert.strictEqual(installVerdict({ ...stamped, product: wap, version: "2.4.17-wap" }).kind, "downgrade");
+  assert.strictEqual(installVerdict({ ...stamped, product: wap, version: "2.4.18-wap" }).kind, "same");
+  assert.strictEqual(installVerdict({ ...stamped, product: wap, version: "2.4.19-wap" }).kind, "update");
+  const vision = catalog.products.find((p) => p.id === "securacv-canary-vision");
+  assert.strictEqual(installVerdict({ ...stamped, product: vision, version: "2.4.18" }).kind, "switch");
+  // What every release up to 2.4.17 says about itself: no product, and a
+  // version that is the Arduino core's, so the verdict says it can't compare.
+  const old = read("esp-idf: v4.4.7 38eeba213a", "arduino-lib-builder");
+  assert.strictEqual(old.currentProduct, null);
+  assert.strictEqual(installVerdict({ ...old, product: wap, version: "2.4.17-wap" }).kind, "unknown");
+});
+
 // ── release manifest resolution ─────────────────────────────────────────────
 function goodManifest() {
   return {

@@ -160,9 +160,10 @@ jobs:
         if: inputs.channel != 'dev'
         # `ref: <tag>` above gives us the firmware source AS TAGGED — correct,
         # the flasher must ship the tagged firmware. But the *packaging* tooling
-        # (make_factory.py, build_flash_manifest.py, and the flash.json catalog)
-        # should be today's, so a factory-builder fix reaches older tags and a
-        # tag cut before build_flash_manifest.py existed still builds. The
+        # (make_factory.py, build_flash_manifest.py, stamp_app_desc.py, and the
+        # flash.json catalog) should be today's, so a factory-builder fix
+        # reaches older tags and a tag cut before build_flash_manifest.py
+        # existed still builds. The
         # firmware compiled below is still the tag's; only how it's packaged for
         # the flasher comes from the dispatch ref.
         uses: actions/checkout@v7
@@ -176,6 +177,7 @@ jobs:
         run: |
           cp _tooling/firmware/scripts/make_factory.py firmware/scripts/make_factory.py
           cp _tooling/firmware/scripts/build_flash_manifest.py firmware/scripts/build_flash_manifest.py
+          cp _tooling/firmware/scripts/stamp_app_desc.py firmware/scripts/stamp_app_desc.py
           mkdir -p canary-local/devices
           cp _tooling/canary-local/devices/flash.json canary-local/devices/flash.json
           # The display env list is derived, not typed (flavor_envs.py,
@@ -563,6 +565,19 @@ jobs:
           mkdir -p .pio/build
           cp -R "$STAGE"/. .pio/build/
           cd "$GITHUB_WORKSPACE"
+
+      - name: Stamp each app's descriptor with its product and version
+        # The same step firmware-release.yml runs before it signs anything:
+        # each product's asset_stem and version go into its app's
+        # esp_app_desc_t (the Arduino core's `arduino-lib-builder` until
+        # now), so both flashers can name the board this image goes onto.
+        # Before the factory merge, so manifest-flash.json's sha256 covers
+        # the stamped bytes; esptool reads each one back. On the release
+        # channel the stamper is overlay tooling, so a rebuild of an older
+        # tag stamps that tag's factory images too.
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: python3 firmware/scripts/stamp_app_desc.py release --version "$VERSION"
 
       - name: Build factory images + manifest-flash.json
         id: factory

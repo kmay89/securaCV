@@ -168,28 +168,30 @@ re-attaches every `*-factory.bin` plus `manifest-flash.json` under the same
 names. Then, through `dev_channel.py`, it runs the same rule as **Refresh the
 dev channel** with this tag as the source: when the tag is at or above stable,
 it copies whatever the dev channel is behind on and replaces a same-version
-bring-up catalog there, so the dev channel never keeps a catalog naming the
-old images. The builds are not byte-reproducible (the images embed their
-compile date through `__DATE__`), so every image gets a new SHA-256, the good
-ones
-too, and the tag's `sha256sums.txt` and build-provenance attestation (written
-by `Firmware Release`) go on describing the old bytes; this path attests
-nothing, on purpose. The firmware source is the tag's, and the PlatformIO
-builds keep the tag's platform and library pins; the build steps, the
-arduino-cli cores, libraries and FQBNs, the PlatformIO CLI and esptool pins,
-and the display env list are the dispatch ref's. A product whose rebuild fails
-drops out of `manifest-flash.json` with only a `::warning::`: this path has no
-completeness gate. The OTA manifests and app images are left alone. So for a
-defect in one or two products' factory images on a release people already
-install from (the fw-v2.4.17 classic-ESP32 bootloader offset), ship the fixed
-images in the next version rather than re-cutting every image under the old
-tag. Weigh one thing against that: the desktop Flasher and the Lab carry
-`flash.json` compiled in, and it pins the tag's `manifest-flash.json`, so the
-next version reaches their users only once they update the app, while a
-rebuild in place reaches them at once, at the cost above. Until the next
-version, a `channel: dev` dispatch from `main` publishes the fixed images to
-`fw-dev-latest` (both flashers' **Advanced → dev channel**) and leaves the tag
-alone.
+bring-up catalog there, so the dev channel never keeps a catalog naming the old
+images. The builds are not byte-reproducible (the images embed their compile
+date through `__DATE__`), so every image gets a new SHA-256, the good ones too,
+and the tag's `sha256sums.txt` and build-provenance attestation (written by
+`Firmware Release`) go on describing the old bytes; this path attests nothing,
+on purpose. The firmware source is the tag's, and the PlatformIO builds keep
+the tag's platform and library pins; the build steps, the arduino-cli cores,
+libraries and FQBNs, the PlatformIO CLI and esptool pins, and the display env
+list are the dispatch ref's. A product whose rebuild fails drops out of
+`manifest-flash.json` with only a `::warning::`: this path has no completeness
+gate. The OTA manifests and app images are left alone. The rebuilt apps are
+stamped with their product and version like a new release's
+(`stamp_app_desc.py` is overlay tooling), so on a tag up to fw-v2.4.17 the
+rebuilt factory images name themselves while the tag's OTA images still read
+`arduino-lib-builder`. So for a defect in one or two products' factory images
+on a release people already install from (the fw-v2.4.17 classic-ESP32
+bootloader offset), ship the fixed images in the next version rather than
+re-cutting every image under the old tag. Weigh one thing against that: the
+desktop Flasher and the Lab carry `flash.json` compiled in, and it pins the
+tag's `manifest-flash.json`, so the next version reaches their users only once
+they update the app, while a rebuild in place reaches them at once, at the cost
+above. Until the next version, a `channel: dev` dispatch from `main` publishes
+the fixed images to `fw-dev-latest` (both flashers' **Advanced → dev channel**)
+and leaves the tag alone.
 
 **`channel: dev`** — **no tag, no version.** Builds the branch
 you dispatch from and publishes to the rolling `fw-dev-latest` prerelease, which

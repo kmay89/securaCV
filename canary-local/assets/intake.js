@@ -339,11 +339,19 @@ export function duplicateMacCheck(roster, mac) {
 // strings read off the board, not hashes of images we'd have to claim to have
 // cataloged. Anything unmatched is reported as unrecognized, which is an
 // invitation to look at the backup, not a verdict.
+//
+// The Arduino entry carries its own detail: the Arduino core's libraries name
+// every Arduino build `arduino-lib-builder`, SecuraCV's releases up to 2.4.17
+// included, so that name is no evidence of a stock image. Releases after it
+// carry the product's asset_stem instead (firmware/scripts/stamp_app_desc.py).
 export const KNOWN_STOCK = [
   { match: /^micropython/i, name: "MicroPython" },
   { match: /^circuitpython/i, name: "CircuitPython" },
   { match: /^(esp-at|at)$/i, name: "Espressif AT firmware" },
-  { match: /^arduino/i, name: "an Arduino sketch" },
+  { match: /^arduino/i, name: "an Arduino sketch",
+    detail: "Many boards ship with one. SecuraCV releases up to 2.4.17 read this way too, " +
+            "because their descriptor names the Arduino core and not the product, so this " +
+            "check can't tell the two apart." },
   { match: /^esphome/i, name: "ESPHome" },
   { match: /^tasmota/i, name: "Tasmota" },
   { match: /^(hello[-_ ]?world|blink)/i, name: "a factory test sketch" },
@@ -354,7 +362,12 @@ export const KNOWN_STOCK = [
 // from what we found in those bytes — treating a failed read as an empty chip
 // would turn missing evidence into the single cleanest verdict on the page,
 // which is the exact inversion this whole module exists to avoid.
-export function shippedWith({ projectName, blank, read = "ok" } = {}) {
+//
+// `product` is the catalog product the caller matched the project name to
+// (matchProjectToProduct). It counts only when the name IS that product's
+// asset_stem, the identity a SecuraCV release stamps into the descriptor:
+// a substring match ("my-canary-demo") is somebody else's image.
+export function shippedWith({ projectName, product, blank, read = "ok" } = {}) {
   if (read !== "ok") {
     return { level: "inconclusive", kind: "unread",
       label: "We couldn't read what's on the chip",
@@ -372,11 +385,17 @@ export function shippedWith({ projectName, blank, read = "ok" } = {}) {
       detail: "There's something on the chip but no readable app descriptor. The full erase " +
               "below removes it either way; the backup keeps a copy if you want to look." };
   }
+  if (product && product.asset_stem === projectName) {
+    return { level: "clear", kind: "securacv", name: product.name,
+      label: `Arrived running ${product.name}`,
+      detail: "Its descriptor names a SecuraCV release, so it has been set up before. " +
+              "That name is the image's own claim, not proof of what it runs." };
+  }
   const hit = KNOWN_STOCK.find((k) => k.match.test(projectName));
   if (hit) {
     return { level: "clear", kind: "known", name: hit.name,
       label: `Arrived running ${hit.name}`,
-      detail: "A common stock image for boards sold this way." };
+      detail: hit.detail || "A common stock image for boards sold this way." };
   }
   return { level: "attention", kind: "unknown", name: projectName,
     label: `Arrived running “${projectName}” — we don't recognize it`,

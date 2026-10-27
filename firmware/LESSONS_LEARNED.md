@@ -7,6 +7,38 @@
 
 ---
 
+## What an image says about itself is whatever the build left there
+
+### Every release up to 2.4.17 told the flashers it was `arduino-lib-builder` (2026-10-27)
+- **What happened:** both flashers say what a connected board runs by
+  reading the app descriptor (`esp_app_desc_t`, image offset 0x20) off its
+  booted slot, and map its `project_name` to a product. Every fw-v2.4.17
+  image, all 21, carries `arduino-lib-builder` and a version like `esp-idf:
+  v4.4.7 38eeba213a`: the Arduino core's precompiled libraries define the
+  descriptor, so the sketch's name and `CANARY_FW_VERSION` never reach it. A
+  board running SecuraCV read as "an Arduino sketch", the install verdict as
+  "Version unknown", and an older image over a newer one went on with no
+  downgrade warning. The lookup (`matchProjectToProduct`) had been written
+  for names the firmware never produced.
+- **Why nothing caught it:** every test fed the flashers a descriptor written
+  by hand (`canary_wap`, `canary-vision-xiao-s3`); none read one out of a
+  built image. The device side only logs the descriptor
+  (`securacv_ota.cpp`), and the boot guard reads `app_elf_sha256`, which the
+  build does fill.
+- **The fix:** the release stamps it. `firmware/scripts/stamp_app_desc.py`
+  writes the product's `asset_stem` and the firmware's version into
+  `project_name` and `version`, recomputes the checksum byte and the
+  appended SHA-256, and touches nothing else (`app_elf_sha256`,
+  `secure_version`, date, time and `idf_ver` stay the build's). It runs in
+  both release workflows after the last build and before anything signs or
+  merges an app, reads each image back with esptool, and writes a version
+  only over a literal the image already carries, so the `strings | grep -Fx`
+  version guards still test the firmware. Host-tested; no stamped image has
+  been booted yet.
+- **The rule:** before code trusts a field read off a board, read that field
+  out of a real release image once. A test that writes the field by hand
+  proves the reader, not that anything writes what the reader expects.
+
 ## A factory image is a picture of flash: every part sits where its chip reads it
 
 ### fw-v2.4.17's classic-ESP32 factory images put the bootloader where the ROM never looks (2026-10-27)

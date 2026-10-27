@@ -2655,12 +2655,17 @@ async function identify(portInfo) {
 // neutral fact and never asked whether the resident firmware got to run.
 //
 // Matched on the `esp_app_desc_t` project name — a real string read off the
-// board, not a hash of an image we'd have to claim to have cataloged.
+// board, not a hash of an image we'd have to claim to have cataloged. The
+// Arduino entry's own detail says why that name is no evidence of a stock
+// image: SecuraCV's releases up to 2.4.17 carry it too (the browser's comment).
 const KNOWN_STOCK = [
   { match: /^micropython/i, name: "MicroPython" },
   { match: /^circuitpython/i, name: "CircuitPython" },
   { match: /^(esp-at|at)$/i, name: "Espressif AT firmware" },
-  { match: /^arduino/i, name: "an Arduino sketch" },
+  { match: /^arduino/i, name: "an Arduino sketch",
+    detail: "Many boards ship with one. SecuraCV releases up to 2.4.17 read this way too, " +
+            "because their descriptor names the Arduino core and not the product, so this " +
+            "check can't tell the two apart." },
   { match: /^esphome/i, name: "ESPHome" },
   { match: /^tasmota/i, name: "Tasmota" },
   { match: /^(hello[-_ ]?world|blink)/i, name: "a factory test sketch" },
@@ -2670,7 +2675,9 @@ const KNOWN_STOCK = [
 // "ok" (we got bytes) or "failed" (the read threw). These must stay distinct
 // from what we found in those bytes — treating a failed read as an empty chip
 // would turn missing evidence into the single cleanest verdict on the page.
-function shippedWith({ projectName, blank, read = "ok" } = {}) {
+// `product` counts only when the name IS its asset_stem, the identity a
+// release stamps into the descriptor (firmware/scripts/stamp_app_desc.py).
+function shippedWith({ projectName, product, blank, read = "ok" } = {}) {
   if (read !== "ok") {
     return { level: "inconclusive", kind: "unread",
       label: "We couldn't read what's on the chip",
@@ -2688,11 +2695,17 @@ function shippedWith({ projectName, blank, read = "ok" } = {}) {
       detail: "There's something on the chip but no readable app descriptor. The full erase " +
               "removes it either way; the safety copy keeps a copy if you want to look." };
   }
+  if (product && product.asset_stem === projectName) {
+    return { level: "clear", kind: "securacv", name: product.name,
+      label: `Arrived running ${product.name}`,
+      detail: "Its descriptor names a SecuraCV release, so it has been set up before. " +
+              "That name is the image's own claim, not proof of what it runs." };
+  }
   const hit = KNOWN_STOCK.find((k) => k.match.test(projectName));
   if (hit) {
     return { level: "clear", kind: "known", name: hit.name,
       label: `Arrived running ${hit.name}`,
-      detail: "A common stock image for boards sold this way." };
+      detail: hit.detail || "A common stock image for boards sold this way." };
   }
   return { level: "attention", kind: "unknown", name: projectName,
     label: `Arrived running “${projectName}” — we don't recognize it`,
@@ -2909,6 +2922,7 @@ function renderPassport() {
   const findings = [
     shippedWith({
       projectName: r.unknown ? null : r.projectName,
+      product: r.product,
       blank: !!r.blank,
       read: r.unknown ? "failed" : "ok",
     }),

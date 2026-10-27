@@ -383,6 +383,32 @@ test("stock images are recognized and named", () => {
   for (const k of KNOWN_STOCK) assert.ok(k.name, "every stock entry needs a display name");
 });
 
+test("a board whose descriptor names a SecuraCV product says so, by its exact stem only", () => {
+  // Releases after 2.4.17 stamp the product's asset_stem into the descriptor
+  // (firmware/scripts/stamp_app_desc.py). The caller passes the catalog
+  // product it matched; a substring match is somebody else's image.
+  const wap = { id: "securacv-canary-wap", name: "Canary WAP", asset_stem: "canary-wap" };
+  const r = shippedWith({ projectName: "canary-wap", product: wap });
+  assert.equal(r.kind, "securacv");
+  assert.equal(r.label, "Arrived running Canary WAP");
+  assert.match(r.detail, /own claim, not proof/);
+  // No worse than the Arduino reading the same firmware got up to 2.4.17.
+  assert.equal(r.level, shippedWith({ projectName: "arduino-lib-builder" }).level);
+  const flagship = { id: "securacv-canary", name: "Canary", asset_stem: "canary" };
+  assert.equal(shippedWith({ projectName: "my-canary-demo", product: flagship }).kind, "unknown");
+  assert.equal(shippedWith({ projectName: "canary-wap" }).kind, "unknown");
+});
+
+test("an Arduino descriptor is not called a stock image: SecuraCV up to 2.4.17 reads that way too", () => {
+  const r = shippedWith({ projectName: "arduino-lib-builder" });
+  assert.equal(r.kind, "known");
+  assert.equal(r.level, "clear");
+  assert.match(r.detail, /SecuraCV releases up to 2\.4\.17 read this way too/);
+  assert.doesNotMatch(r.detail, /stock image/);
+  // Every other stock entry keeps the stock sentence.
+  assert.match(shippedWith({ projectName: "micropython" }).detail, /common stock image/);
+});
+
 test("an unrecognized image is flagged for a look, not called malware", () => {
   const r = shippedWith({ projectName: "vendor_demo_v3" });
   assert.equal(r.kind, "unknown");

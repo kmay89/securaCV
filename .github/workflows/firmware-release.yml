@@ -604,6 +604,23 @@ jobs:
           mkdir -p .pio/build
           cp -R "$STAGE"/. .pio/build/
 
+      - name: Stamp each app's descriptor with its product and version
+        # Every app's esp_app_desc_t is the Arduino core's own
+        # (`arduino-lib-builder`), so up to fw-v2.4.17 neither flasher could
+        # tell a board running SecuraCV from any other Arduino sketch. This
+        # writes each product's asset_stem and version into its app, in
+        # place, AFTER every build above and BEFORE anything below copies,
+        # hashes, signs or merges one: the OTA manifests' sha256 and
+        # signatures and the factory images all cover the stamped bytes.
+        # A version the image does not already carry is never written (it
+        # stays unstamped, and the version guards below fail or skip it as
+        # before), and each stamped image is read back with esptool
+        # image_info: an invalid checksum or hash fails the run here.
+        # scripts/tests/test_release_app_desc_stamp.py pins the order.
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: python3 firmware/scripts/stamp_app_desc.py release --version "$VERSION"
+
       - name: Assemble, sign, and verify release artifacts
         env:
           VERSION: ${{ steps.ver.outputs.version }}

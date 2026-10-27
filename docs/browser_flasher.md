@@ -35,8 +35,16 @@ On top of the silicon guarantee, the page adds:
   a `.bin` and download it — a literal undo button, restorable from the same
   page.
 - **Reads what's already there.** The page parses the on-board partition table
-  and `esp_app_desc_t` to show "looks like it's running canary-wap 2.1.0"
-  before you change anything. Best-effort; never blocks flashing.
+  and the booted slot's `esp_app_desc_t` to show "looks like it's running
+  Canary WAP 2.4.18-wap" before you change anything, and the install verdict
+  (update, reinstall, downgrade, switch) compares that with the release.
+  Best-effort; never blocks flashing. The name and version are there because
+  the release stamps them into each app after the build
+  (`firmware/scripts/stamp_app_desc.py`: `project_name` is the product's
+  `asset_stem`, `version` the firmware's own version string). Images up to
+  fw-v2.4.17 carry the Arduino core's descriptor instead
+  (`arduino-lib-builder`, `esp-idf: v4.4.7 …`), so a board running one reads
+  as an Arduino sketch and its verdict as "Version unknown".
 - **Recovery always in reach.** The BOOT/RESET download-mode gesture (the same
   one the WAP first-boot lesson teaches) is one panel away throughout, and a
   non-Chromium browser is met with the guided PlatformIO/Arduino path instead

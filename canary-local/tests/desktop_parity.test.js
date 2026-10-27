@@ -5185,9 +5185,10 @@ test("wave 5: customs says what the board arrived running, and whether it was co
   }
   // Every stock image the browser knows, the desktop knows.
   const names = (src) => new Set(
-    [...src.matchAll(/\{ match: \/[^/]+\/i, name: "([^"]+)" \}/g)].map((m) => m[1]));
+    [...src.matchAll(/\{ match: \/[^/]+\/i, name: "([^"]+)"/g)].map((m) => m[1]));
   const b = names(intakeJs), d = names(appJs);
   assert.ok(b.size >= 5, "couldn't parse KNOWN_STOCK from canary-local/assets/intake.js");
+  assert.ok(b.has("an Arduino sketch"), "couldn't parse the Arduino entry from intake.js");
   for (const n of b) {
     assert.ok(d.has(n), `desktop KNOWN_STOCK lost "${n}" — it would print as unrecognized`);
   }
@@ -5208,6 +5209,39 @@ test("wave 5: customs says what the board arrived running, and whether it was co
   // And the answer describes ONE board, so it must not be inherited.
   assert.match(appJs, /function resetSteps[\s\S]{0,2000}state\.heldBoot = undefined/,
     "the cold-start answer leaks from one board to the next");
+});
+
+test("customs names a board running SecuraCV, and stays honest about the Arduino name, in the same words on both flashers", async () => {
+  // Releases after 2.4.17 stamp the product's asset_stem into the app
+  // descriptor (firmware/scripts/stamp_app_desc.py); the 2.4.17 ones and
+  // every other Arduino build all read `arduino-lib-builder`. Both flashers
+  // must say the same thing about either, and the desktop must hand its
+  // matched product to the finding the way the browser does.
+  const intake = await import(pathToFileURL(join(CANARY, "assets/intake.js")).href);
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const stock = /^const KNOWN_STOCK = \[[\s\S]*?\n\];/m.exec(appJs);
+  assert.ok(stock, "desktop/src/app.js lost KNOWN_STOCK");
+  const desktop = new Function(stock[0] + "\n" + jsFnText(appJs, "shippedWith", "desktop/src/app.js") +
+    "\nreturn shippedWith;")();
+  const wap = { id: "securacv-canary-wap", name: "Canary WAP", asset_stem: "canary-wap" };
+  const flagship = { id: "securacv-canary", name: "Canary", asset_stem: "canary" };
+  for (const args of [{ projectName: "canary-wap", product: wap },
+                      { projectName: "arduino-lib-builder" },
+                      { projectName: "micropython" }]) {
+    assert.deepStrictEqual(desktop(args), intake.shippedWith(args), JSON.stringify(args));
+  }
+  // A substring of a stem is somebody else's image, on both (the unrecognized
+  // finding's detail names each flasher's own copy: backup / safety copy).
+  const demo = { projectName: "my-canary-demo", product: flagship };
+  assert.equal(desktop(demo).kind, "unknown");
+  assert.equal(intake.shippedWith(demo).kind, "unknown");
+  assert.equal(intake.shippedWith({ projectName: "canary-wap", product: wap }).kind, "securacv");
+  assert.match(intake.shippedWith({ projectName: "arduino-lib-builder" }).detail, /up to 2\.4\.17/);
+  assert.match(appJs, /shippedWith\(\{\s*projectName: r\.unknown \? null : r\.projectName,\s*product: r\.product,/,
+    "the desktop's customs finding no longer gets the product it matched");
+  assert.match(flashJs, /product: core\.matchProjectToProduct\(state\.catalog, projectName\)/,
+    "the browser's customs finding no longer gets the product it matched");
 });
 
 test("wave 5: the picker leads with one detection-led recommendation on both flashers", () => {

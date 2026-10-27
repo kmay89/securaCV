@@ -64,6 +64,37 @@ any platform.
   that used to feed it. And copy that orders two channels must read both
   versions, never assume the order.
 
+## 2026-10-27 — Every firmware image called itself `arduino-lib-builder`, so neither flasher could name a board running SecuraCV
+
+- **Symptom:** all 21 fw-v2.4.17 app images carry the Arduino core's
+  `esp_app_desc_t`: project `arduino-lib-builder`, version `esp-idf: v4.4.7
+  38eeba213a` (or `14a0af9`, `43a8f6d`). Both flashers read that record off
+  a connected board, so a board already running SecuraCV showed as an
+  Arduino sketch, the install verdict as "Version unknown", and an older
+  image over a newer one gave no downgrade warning. Customs called it "a
+  common stock image".
+- **Cause:** the Arduino core's precompiled libraries define the descriptor,
+  so the sketch's name and version never reach it, and no release step wrote
+  it afterwards. The flashers' lookup was tested only on descriptors written
+  by hand, never on one read out of a release image.
+- **Fix:** `firmware/scripts/stamp_app_desc.py release` stamps each product's
+  `asset_stem` and version into its app, recomputes the checksum byte and
+  the appended SHA-256, and reads every stamped image back with esptool
+  `image_info`; the run fails on an invalid checksum or hash. It runs in
+  `firmware-release.yml` and `flasher-release.yml` after the last build and
+  before anything copies, hashes, signs or merges an app
+  (`scripts/tests/test_release_app_desc_stamp.py` holds the order), and is in
+  `flasher-release.yml`'s tooling overlay, so a rebuild of an older tag
+  stamps that tag's factory images too. It writes a version only over a
+  literal the image already carries, so the `strings | grep -Fx` version
+  guards keep testing the firmware. Published images are unchanged.
+- **Applies to:** any step that edits an artifact's bytes (a stamp, a pad, a
+  re-sign): it runs before the first step that hashes, signs, merges or
+  attests that artifact, a test reads the workflow to hold that order, and
+  the artifact is read back with the tool the device side trusts. A guard
+  that greps an artifact for a string is void once a later step can write
+  that string; the writer must refuse to be the guard's only witness.
+
 ## 2026-10-27 — Signed and notarized, and the installer still said "open Terminal"; the reinstall link searched for a release GitHub's search does not list
 
 - **Symptom:** after 2.4.17, `flasher-v0.12.2` and `app-v0.3.2` were

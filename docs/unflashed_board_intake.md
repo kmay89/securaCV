@@ -188,6 +188,17 @@ usual factory blink sketches are named as known stock. Anything else is
 reported as *unrecognized*, which is an invitation to look at the backup before
 erasing, not an accusation.
 
+Two names need more care. A SecuraCV release after 2.4.17 stamps the
+product's `asset_stem` into the descriptor
+([`stamp_app_desc.py`](../firmware/scripts/stamp_app_desc.py)), and a project
+name equal to a catalog stem reads as that product ("Arrived running Canary
+WAP"), with the reminder that the name is the image's own claim; a name that
+only contains a stem is unrecognized. And `arduino-lib-builder` is what the
+Arduino core's libraries call every Arduino build, SecuraCV's releases up to
+2.4.17 included, so that finding says the check cannot tell the two apart
+rather than calling it a stock image. Both flashers word these alike
+(`desktop_parity.test.js`).
+
 We do **not** claim a corpus of known-good image hashes. We don't have one, and
 inventing hashes we can't verify would be worse than saying nothing.
 
