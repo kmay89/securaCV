@@ -779,14 +779,16 @@ function maskHardwareAddress(text) {
 // the "[SETUP] QR WIFI:…;P:" line when its setup network comes up, the
 // flagship on every re-raise too; a report someone is ASKED to paste must not
 // carry it) and of identity lines (the boot banner's Hardware ID, the
-// self-manifest, the lines the firmware prints with the device id, a key
-// fingerprint, the TLS certificate or a .local name, the flagship's cards'
-// id, key and randomart rows, the MQTT client id, the WAP's host and
-// Bluetooth names, and the lines that name a household peer by fingerprint
-// or name: the flagship's nearby card and opera lines, the WAP's nearby scan
-// and opera lines, the display's referral and restored mutes). A line no
-// pattern names passes. The patterns are the browser's, held equal by
-// desktop_parity.test.js.
+// self-manifest, the lines the firmware prints with the device id (the MQTT
+// client id and topics, the Bluetooth status line among them), a key
+// fingerprint, the TLS certificate or a .local name, the board's own setup
+// network, the flagship's cards' id, key and randomart rows, the names the
+// person typed (the flagship's, on its banner and in its Bluetooth and rename
+// lines; the WAP's host, Bluetooth and opera names), and the lines that name a
+// household peer by fingerprint or name: the flagship's nearby card and opera
+// lines, the WAP's nearby scan and opera lines, the display's referral and
+// restored mutes). A line no pattern names passes. The patterns are the
+// browser's, held equal by desktop_parity.test.js.
 const TAIL_REDACT = [
   /password/i,
   /passphrase|\bpsk\b/i,
@@ -817,6 +819,12 @@ const TAIL_IDENTITY = [
   /\bfleet referral:.*\(from /i,
   /\bmuted for \d+s more\b/i,
   /\|[ .o+=*BOX@%&#\/^SE]{17}\|/,
+  / => (?:OK|FAIL) \(retain=/,
+  /\bSecuraCV-(?:[a-z]{1,8}-)?[A-Za-z0-9]{4}(?:-[A-Za-z0-9]{2})?\b/,
+  /\b(?:device|opera) name (?:changed|updated|not persisted)\b/i,
+  /\bGATT status service started\b/i,
+  /\[ERROR(?:\/BLUETOOTH)?\] NimBLE init failed [|—]/,
+  /\bname {2,}: *[^\s║]/i,
 ];
 function sanitizeLogTail(text) {
   return String(text || "").split("\n").map((ln) =>

@@ -90,17 +90,33 @@
   display, Sense, Vision and Sentinel advertise
   (`Fleet advert up as <name>.local`, a name built from the device id), the
   MQTT client id the display, Sense, Vision and Sentinel connect as
-  (`Connecting … as securacv-<device id>-<Hardware ID>`), the WAP's host name
-  and Bluetooth names (its `mDNS started`, `mDNS begin failed`,
+  (`Connecting … as securacv-<device id>-<Hardware ID>`) and every publish
+  and Home Assistant discovery line they print (`<topic> => OK (retain=…)`:
+  every topic carries the device id, which the display seeds as `<model>-`
+  and six digits of its Hardware ID), the Bluetooth status line (the WAP's
+  `GATT status service started (device: <device id>)`, the flagship's
+  `BLE GATT status service started` and `NimBLE init failed` with its
+  Bluetooth name, the name the person typed or else its device id), the
+  board's own setup network wherever it is printed (`SecuraCV-<type>-<four>`
+  and the older shapes, the four from the device id or the Hardware ID, a
+  name the board sends in every beacon while that network is up: the
+  flagship's `SETUP MODE` line, ready banner `WiFi AP` row and `AP:` health
+  line, the WAP's `[PROV]` quick-connect line, `w` key line, receipt
+  `ap_ssid` row and `AP:` health line, and the display's `AP up:` line), the
+  flagship's name (its ready banner `Name` row, and its `Device name updated`
+  and `Device name NOT persisted` health lines), the WAP's host name,
+  Bluetooth names and opera name (its `mDNS started`, `mDNS begin failed`,
   `mDNS re-announced on STA`, `mDNS re-announce failed` and
-  `Identify requested` health lines, its `BLE initialized` and saved-name
-  repair lines, and the chirp's `device prefix:` and Opera's `device name:`,
-  its key fingerprint's last two bytes), the flagship's console cards (the
-  boot welcome card's `(that's me: <device id>)`, the last card the flagship
+  `Identify requested` health lines, its `BLE initialized`, saved-name
+  repair, `Device name changed` and `Opera name changed` health lines, and
+  the chirp's `device prefix:` and Opera's `device name:`, its key
+  fingerprint's last two bytes), the flagship's console cards (the boot
+  welcome card's `(that's me: <device id>)`, the last card the flagship
   prints at boot, the trust card's `Device` row and key randomart on `l` and
   `a`, the attestation card's `Device` line on `c`, the identity card's whole
   `Public Key` on `i`, the nearby card's `This Canary` row and every peer row
-  on `n`), and a household peer's fingerprint or name: the flagship's mesh
+  on `n`, and the `e` card's recent events, which print the health lines
+  above again), and a household peer's fingerprint or name: the flagship's mesh
   lines with `fp=…`, its opera lines with a peer's whole fingerprint
   (`Peer … left the opera`, `Paired peer …`, `Opera pairing refused`,
   `Peer …: its stored radio address …`, `Stored radio address of …`) and their
@@ -110,8 +126,8 @@
   restored `… muted for …` lines. The tests render each from the firmware's
   own source. A line no pattern names passes, among them the flagship's
   chain-head rows on `l`, `a` and `c`, the attestation's `Signature` on `c`,
-  the network name a board joins or reconnects to, the peer link's fleet-key
-  id and the WAP's `Opera name changed` line.
+  the network name a board joins or reconnects to and the peer link's
+  fleet-key id.
 - **The Grove Vision module's id and text stay off screen (P13).** Neither
   flasher sends `ID?` any more, and the desktop's module receipt drops the id
   it carried. Neither bench shows the module's own model-card text, or names
@@ -135,12 +151,14 @@
   burn alone can leave the card it found, an earlier pinned burn's among
   them: for a file the person picked the card goes on before the burn, while
   the module still answers, and again after it, and when the module takes
-  neither write the done screen says it may still carry the model card an
-  earlier burn stored, which is what a bench labels by; when the card went
-  on and the burn then failed, the failure screen says that until a burn
-  completes, whatever model the module holds sits under a card that names
-  no model and lists no class. The done screen says a pinned burn's module
-  carries SecuraCV's card only when it acknowledged the write.
+  neither write (no reply, or an error reply) the done screen says it may
+  still carry the model card an earlier burn stored, which is what a bench
+  labels by; when the card went on and the burn then failed, the failure
+  screen says that until a burn completes, whatever model the module holds
+  sits under a card that names no model and lists no class, and a retry of
+  that burn keeps saying so, though a module left in its bootloader cannot
+  take the card again. The done screen says a pinned burn's module carries
+  SecuraCV's card only when it acknowledged the write with an ok reply.
 - Host-tested (`flash.test.js`, `intake.test.mjs`, `desktop_parity.test.js`,
   `we2.test.js`, `cargo test` in `desktop/flash-engine`; the `efuse.rs`,
   `we2.rs` and `we2_bench.rs` tests outside the Tauri build, through a stub

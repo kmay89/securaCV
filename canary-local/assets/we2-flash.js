@@ -416,26 +416,31 @@ function phaseModuleFlash(ctx, s, job) {
         : answered ? "the module didn’t take this file’s model card before the burn — it goes on after it"
           : "no AT answer before the burn — this file’s model card goes on after it");
     }
+    // The card is on if this attempt or an earlier one at this same burn
+    // ("Reset and retry") put it there: a burn that failed inside the
+    // bootloader leaves the module answering no AT, so the retry cannot write
+    // it again, but the first attempt's card is still on.
+    const cardOn = cardFirst || job.cardFirst === true;
     try {
       await f.flashModel(job.bytes);
       // Two-port Vision: the camera module's model is now burned — record it
       // (once, here at the completion transition) so the done screen can insist
       // on both ports and celebrate only when both are in.
       visionSession.markDone("we2");
-      ctx.setPhase(phaseModuleDone(ctx, s, { ...job, cardFirst }));
+      ctx.setPhase(phaseModuleDone(ctx, s, { ...job, cardFirst: cardOn }));
     } catch (e) {
       log.textContent += "✗ " + e.message + "\n";
       // The card went on, the model did not: the module keeps whatever model
       // it held (an earlier pinned burn's, or part of this one) under a card
       // that claims nothing, so a bench labels nothing "person" until a burn
       // completes. Said here, where the person decides whether to retry.
-      if (cardFirst) {
+      if (cardOn) {
         box.append(el("p", "fineprint", "This file’s model card went on before the burn, so until a burn " +
           "completes, whatever model the module holds sits under a card that names no model and lists " +
           "no class, and a bench labels its detections “object”."));
       }
       const retry = el("button", "primary", "Reset and retry");
-      retry.addEventListener("click", () => ctx.setPhase(phaseModuleFlash(ctx, s, job)));
+      retry.addEventListener("click", () => ctx.setPhase(phaseModuleFlash(ctx, s, { ...job, cardFirst: cardOn })));
       const back = el("button", "ghost", "← start over");
       back.addEventListener("click", async () => { await s.t.close(); ctx.back(); });
       const row = el("div", "we2-btnrow");
@@ -811,8 +816,9 @@ function phaseModuleDone(ctx, s, job) {
     await sleep(1200);
     const ver = await wakeModule(at, s.t, (line) => { proof.textContent = line; });
     // A file the person picked whose card reached the module neither before
-    // the burn (phaseModuleFlash) nor after it: the module may still hold a
-    // card an earlier burn stored, and both benches take their labels from it.
+    // the burn (phaseModuleFlash, in this attempt or an earlier one at this
+    // burn) nor after it: the module may still hold a card an earlier burn
+    // stored, and both benches take their labels from it.
     const keptCard = (stored) => (job.pinned !== true && !job.cardFirst && !stored
       ? " The module didn’t take this file’s model card, so it may still carry the model card an " +
         "earlier burn stored, and a bench takes its labels from that card. Burn this file again " +

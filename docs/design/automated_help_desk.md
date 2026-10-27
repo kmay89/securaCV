@@ -128,10 +128,12 @@ Two rules make it safe to run without a human per ticket:
     radio range. Its serial tail is scrubbed with visible markers before
     inclusion: credential lines (`TAIL_REDACT`) and identity lines
     (`TAIL_IDENTITY`: the self-manifest line and the lines the firmware
-    prints with this board's Hardware ID, device id, key fingerprint (the
-    flagship's key randomart too), TLS certificate or host name, a household
-    peer's fingerprint or name, or any MAC-shaped token). It is a list of
-    the lines it names, so a line it does not name passes (ledger A118). Its
+    prints with this board's Hardware ID, device id (its MQTT topics among
+    them), key fingerprint (the flagship's key randomart too), TLS
+    certificate, host name, setup network name or a name the person typed
+    for it, a household peer's fingerprint or name, or any MAC-shaped
+    token). It is a list of the lines it names, so a line it does not name
+    passes (ledger A118). Its
     error line is scrubbed the same way, with any hardware address in it
     masked first: a desktop install's error ends in espflash's own last
     lines, board info included. `desktop_parity.test.js` item 12 pins both

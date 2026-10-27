@@ -2258,19 +2258,25 @@ const TAIL_REDACT = [
 // ID" (boot_kv on the display, Sense, Vision and Sentinel; the WAP's
 // "  Hardware ID    : …" in sys_monitor.h — the flagship prints none), the
 // self-manifest line, which carries the key fingerprint, the device id and the
-// boot count, the lines the firmware prints with the device id, a key
-// fingerprint, the TLS certificate (per device, its CN the key fingerprint) or
-// a .local name (built from the device id; on the WAP from the name the person
-// gave it, or else the key fingerprint), the flagship's welcome, trust,
-// attestation, identity and nearby cards' rows with its device id or key (the
-// trust card's key randomart among them), the MQTT client id (the device id
-// and the Hardware ID), the WAP's host name and Bluetooth names in its health
-// log, a peer's fingerprint or name (the flagship's nearby card and opera
-// lines, the WAP's nearby scan and opera lines, the display's fleet referral
-// and restored mutes), and any line with a MAC-shaped token in it (the ROM
-// tools print the board's own). Shown in the flasher, never pasted. A line no
-// pattern names passes: flash.test.js renders the ones these patterns are for
-// from the firmware's own sources.
+// boot count, the lines the firmware prints with the device id (its boot
+// lines, every MQTT publish and discovery line, whose topic carries it, and
+// the Bluetooth status line), a key fingerprint, the TLS
+// certificate (per device, its CN the key fingerprint) or a .local name (built
+// from the device id; on the WAP from the name the person gave it, or else the
+// key fingerprint), the board's own setup network (SecuraCV-[<type>-]<four>,
+// the four from the device id or the Hardware ID, sent in every beacon while
+// it is up), the flagship's welcome, trust, attestation, identity and nearby
+// cards' rows with its device id or key (the trust card's key randomart among
+// them), the MQTT client id (the device id and the Hardware ID), the names the
+// person typed (the flagship's, which is also its Bluetooth name, on its ready
+// banner and in its Bluetooth and rename lines, its 'e' card's recent events
+// among them; the WAP's host name, Bluetooth names and opera name in its
+// health log), a peer's fingerprint or name (the flagship's nearby card and
+// opera lines, the WAP's nearby scan and opera lines, the display's fleet
+// referral and restored mutes), and any line with a MAC-shaped token in it
+// (the ROM tools print the board's own). Shown in the flasher, never pasted.
+// A line no pattern names passes: flash.test.js renders the ones these
+// patterns are for from the firmware's own sources.
 const TAIL_IDENTITY = [
   /hardware\s*id\b/i,               // "    Hardware ID 3f7a9e21b4c5d6e8", "  Hardware ID    : …"
   /securacv\.canary\.manifest\//,   // {"schema":"securacv.canary.manifest/v1",…}
@@ -2294,6 +2300,12 @@ const TAIL_IDENTITY = [
   /\bfleet referral:.*\(from /i,     // the display's referral, a peer's name
   /\bmuted for \d+s more\b/i,        // the display's restored mute, a peer's device id
   /\|[ .o+=*BOX@%&#\/^SE]{17}\|/,     // a row of the trust card's key randomart
+  / => (?:OK|FAIL) \(retain=/,        // an MQTT publish or discovery line: its topic carries the device id
+  /\bSecuraCV-(?:[a-z]{1,8}-)?[A-Za-z0-9]{4}(?:-[A-Za-z0-9]{2})?\b/, // the board's own setup network (SETUP_SSID_RE's shapes), its four from the device id or Hardware ID
+  /\b(?:device|opera) name (?:changed|updated|not persisted)\b/i, // a rename: the flagship's name, the WAP's Bluetooth and opera names
+  /\bGATT status service started\b/i, // the Bluetooth status line: the WAP's device id, the flagship's Bluetooth name
+  /\[ERROR(?:\/BLUETOOTH)?\] NimBLE init failed [|—]/, // the flagship's Bluetooth failure, with its Bluetooth name
+  /\bname {2,}: *[^\s║]/i,           // the flagship's ready banner, "║  Name       : <the name the person typed>"
 ];
 
 // Scrub a serial tail for inclusion in a shareable report. Exported so the

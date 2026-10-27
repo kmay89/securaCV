@@ -20753,18 +20753,21 @@ so — see D2 below.)
   burn alone can leave the card an earlier one stored (the card is the
   SSCMA firmware's, not part of the model), so for a file the person picked
   the browser stores that card before the burn, while the module still
-  answers, and again after it; when the module takes neither write, the
-  done screen says it may still carry the model card an earlier burn
-  stored, and when the card went on but the burn then failed, the failure
-  screen says that until a burn completes the module's model sits under a
-  card that names no model and lists no class. The done screen says a
-  pinned burn's module carries SecuraCV's card only when it acknowledged
-  the write. `desktop_parity.test.js` runs the browser's post-burn step for
-  a pinned release and for a local file (the card it sends, and a later
-  bench reading it back), the burn and the step after it together on a
-  module that starts with SecuraCV's card and answers before the burn,
-  after it, both times or neither (with and without acknowledging the
-  card), and a burn that throws, both benches for no card, another card and
+  answers, and again after it; when the module takes neither write (no
+  reply, or an error reply), the done screen says it may still carry the
+  model card an earlier burn stored, and when the card went on but the burn
+  then failed, the failure screen says that until a burn completes the
+  module's model sits under a card that names no model and lists no class,
+  and so does a retry of that burn, which a module left in its bootloader
+  cannot give the card again. The done screen says a pinned burn's module
+  carries SecuraCV's card only when it acknowledged the write with an ok
+  reply. `desktop_parity.test.js` runs the browser's post-burn step for a
+  pinned release and for a local file (the card it sends, and a later bench
+  reading it back), the burn and the step after it together on a module
+  that starts with SecuraCV's card and answers before the burn, after it,
+  both times or neither (with an ok reply, no reply and an error reply to
+  the card write), and a burn that throws and its retry, both benches for
+  no card, another card and
   a person card, and each bench's drawing code on a detection, held to the
   labels its id line promised; `we2.test.js` tests the card choice;
   `we2_bench.rs` tests the card reader.
@@ -20787,14 +20790,26 @@ so — see D2 below.)
   certificate lines (the WAP's `CN: securacv-<fingerprint>`, the WAP's and
   the flagship's `Cert fingerprint`, the receipt's `tls_cert_fp`); the
   `.local` name the display, Sense, Vision and Sentinel advertise; the MQTT
-  client id they connect as (`securacv-<device id>-<Hardware ID>`); the
-  WAP's host name and Bluetooth names in its health log and its chirp's
+  client id they connect as (`securacv-<device id>-<Hardware ID>`) and
+  every publish and Home Assistant discovery line they print (the topic
+  carries the device id, which the display seeds as `<model>-` and six
+  digits of its Hardware ID); the Bluetooth status line (the WAP's
+  `GATT status service started (device: <device id>)`, the flagship's
+  `BLE GATT status service started` and `NimBLE init failed` with its
+  Bluetooth name, the name the person typed or else its device id); the
+  board's own setup network wherever it is printed
+  (`SecuraCV-<type>-<four>` and the older shapes, the four from the device
+  id or the Hardware ID); the flagship's name (its ready banner `Name` row,
+  its `Device name updated` and `Device name NOT persisted` health lines);
+  the WAP's host name, Bluetooth names (`Device name changed` among them)
+  and opera name (`Opera name changed`) in its health log and its chirp's
   `device prefix:` and Opera's `device name:` (its key fingerprint's last
   two bytes); the flagship's console cards (the boot welcome card's
   `(that's me: <device id>)`, the last card it prints at boot; the trust
   card's `Device` row and key randomart; the attestation card's `Device`
   line; the identity card's whole `Public Key`; the nearby card's
-  `This Canary` row and every peer row); and a household peer's fingerprint
+  `This Canary` row and every peer row; the `e` card's recent events, which
+  print those health lines again); and a household peer's fingerprint
   or name on the flagship's mesh lines (`fp=…`) and opera lines (a peer's
   whole fingerprint, and their health-log echoes), the WAP's
   `[BLE] Canary discovered:` and `lost:` lines and its `Peer removed`,
@@ -20805,10 +20820,10 @@ so — see D2 below.)
   pattern names passes, among them the flagship's chain-head rows on its
   `l`, `a` and `c` cards and the attestation's `Signature` on `c`, the
   network name a board joins or reconnects to (`Joined "<name>"`,
-  `Connecting SSID="<name>"`), the peer link's `Fleet key <id>` line and the
-  WAP's `Opera name changed` health line; and once the firmware answers `q`
-  (the design's PR 10), `sanitizeLogTail()` replaces each
-  `securacv.canary.details/v1` line with its share projection.
+  `Connecting SSID="<name>"`) and the peer link's `Fleet key <id>` line;
+  and once the firmware answers `q` (the design's PR 10),
+  `sanitizeLogTail()` replaces each `securacv.canary.details/v1` line with
+  its share projection.
 - [x] **A119 [code] Both flashers' saved health reports carry this board's
   life (device-details design §11, P24).** The saved report, which reads as
   shareable, carried the lifetime boot counter, the witness record count, a

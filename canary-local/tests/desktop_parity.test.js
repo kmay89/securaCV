@@ -5664,9 +5664,18 @@ test("About this board: the desktop's rows are the browser's, fact for fact", as
   assert.strictEqual(desk.SHARE_REPORT_NOTE, core.SHARE_REPORT_NOTE);
   assert.strictEqual(desk.FULL_REPORT_NOTE, core.FULL_REPORT_NOTE);
 
-  // The ROM tools' MAC lines are masked the same way where each draws them.
+  // The ROM tools' MAC lines are masked the same way where each draws them,
+  // and what only looks like one (flash.test.js's and flash.rs's keep cases:
+  // another separator, a non-hex digit in either place of an octet) is kept
+  // the same way.
   for (const line of ["MAC: dc:54:75:c1:22:30", "MAC address:       DC-54-75-C1-22-30", "Chip type: esp32s3", "12:34:56"]) {
     assert.strictEqual(desk.maskHardwareAddress(line), core.maskHardwareAddress(line));
+  }
+  for (const keep of ["Chip is ESP32-S3 (QFN56) (revision v0.2)", "Uptime 12:34:56", "fe80::1",
+                      "sha256 a1b2c3d4e5f60718", "Crystal is 40MHz", "dc.54.75.c1.22.30", "dc:54:75 c1:22:30",
+                      "gg:54:75:c1:22:30", "g0:54:75:c1:22:30", "dc:54:75:c1:22:3g"]) {
+    assert.strictEqual(desk.maskHardwareAddress(keep), keep, `the desktop masks what is not a MAC: ${keep}`);
+    assert.strictEqual(core.maskHardwareAddress(keep), keep);
   }
 });
 
@@ -6337,28 +6346,38 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
   // The stand-in module's SSCMA firmware keeps one model card, apart from
   // the model a burn writes, so a burn alone leaves the card it found. This
   // one starts with SecuraCV's person card (an earlier pinned burn). It
-  // answers AT while `up` is true, and acknowledges a card write when `ack` is;
-  // with `burnFails` the burn throws before it writes the module.
+  // answers AT while `up` is true. A card write it takes gets an ok reply;
+  // with `ack` false it gets none, and with `ack` "err" it gets an error
+  // reply (the SSCMA frame's nonzero code), and either way nothing is stored.
+  // With `burnFails` the burn throws before it writes the module; `retry`
+  // then presses "Reset and retry" with the module as `retry.upBefore` says
+  // the failed burn left it, and burns again as `retry` says.
   const we2Flash = read(join(CANARY, "assets/we2-flash.js"));
   const we2 = await import(pathToFileURL(join(CANARY, "assets/we2-core.js")).href);
   const OURS = Buffer.from(JSON.stringify(we2.modelInfoJson({ version: "1", sha256: "cd".repeat(32) }))).toString("base64");
-  const run = async ({ pinned, upBefore, upAfter, ack = true, burnFails = false }) => {
+  const run = async ({ pinned, upBefore, upAfter, ack = true, burnFails = false, retry = null }) => {
     const mod = { card: OURS, up: upBefore };
     const order = [];
+    let burn = { upAfter, burnFails };
     const at = { start() {}, stop() {}, onEvent() {},
       cmd: async (c) => {
         const w = /^INFO="([A-Za-z0-9+/=]+)"$/.exec(c);
         order.push(w ? "INFO=" : c);
         if (!mod.up) return null;
         if (c === "INFO?") return { code: 0, data: mod.card };
-        if (w) { if (!ack) return null; mod.card = w[1]; return { code: 0 }; }
+        if (w) {
+          if (!ack) return null;
+          if (ack === "err") return { code: 3 };
+          mod.card = w[1];
+          return { code: 0 };
+        }
         return { code: 0, data: { software: "2025.01.02" } };
       } };
     class We2Flasher {
-      async flashModel() { order.push("BURN"); if (burnFails) throw new Error("no bootloader menu"); mod.up = upAfter; }
+      async flashModel() { order.push("BURN"); if (burn.burnFails) throw new Error("no bootloader menu"); mod.up = burn.upAfter; }
     }
     const doc = pageDoc();
-    let shown = null;
+    const phases = [];
     const page = runCut([flashJsEl(we2Flash), ...["phaseModuleFlash", "phaseModuleDone", "phaseModuleBench"].map((n) => fnSource(we2Flash, n))],
       ["phaseModuleFlash", "phaseModuleBench"], {
         document: doc, burnCardBase64: we2.burnCardBase64, makeAtClient: () => at, We2Flasher,
@@ -6366,17 +6385,33 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
         visionSession: { parts: () => ({ esp32: false, we2: true }), markDone() {} },
         mountBench: () => ({ node: doc.createElement("div"), stop: async () => {} }),
       });
-    const ctx = { catalog: { products: [], we2_module: { model_addr: "0x00400000" } }, back() {}, setPhase: (p) => { shown = p; } };
+    const ctx = { catalog: { products: [], we2_module: { model_addr: "0x00400000" } }, back() {}, setPhase: (p) => { phases.push(p); } };
     const s = { t: { close: async () => {} } };
     const flashing = page.phaseModuleFlash(ctx, s,
       { bytes: new Uint8Array(4), label: "mine.tflite", sha256: "ab".repeat(32), version: "1", pinned });
     await ticks(20);
     const card = () => JSON.parse(Buffer.from(mod.card, "base64").toString("utf8"));
+    const failed = (box) => {
+      assert.match(box.textContent, /✗ no bootloader menu/, "the failed burn's screen never landed");
+      return nodesOf(box).filter((n) => n.tagName === "p").map((n) => n._text).join("\n");
+    };
+    let shown = phases[0];
+    let said = null;
     if (burnFails) {
       assert.ok(!shown, "a burn that threw reached its done screen");
-      const said = nodesOf(flashing).filter((n) => n.tagName === "p").map((n) => n._text).join("\n");
-      assert.match(flashing.textContent, /✗ no bootloader menu/, "the failed burn's screen never landed");
-      return { order, said, card: card() };
+      said = failed(flashing);
+      if (!retry) return { order, said, card: card() };
+      mod.up = retry.upBefore;
+      burn = retry;
+      const again = nodesOf(flashing).find((n) => n.tagName === "button" && n._text === "Reset and retry");
+      assert.ok(again, "the failed burn's screen offers no retry");
+      again.fire("click");
+      await ticks(20);
+      if (retry.burnFails) {
+        assert.strictEqual(phases.length, 1, "a retry that threw reached its done screen");
+        return { order, said, retrySaid: failed(phases[0]), card: card() };
+      }
+      shown = phases[1];
     }
     assert.ok(shown, "the burn never reached its done screen");
     const proof = nodesOf(shown).map((n) => n._text || "").find((t) => /AT answer|^✓ |test inference/.test(t));
@@ -6385,7 +6420,7 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
     const later = page.phaseModuleBench(ctx, s);
     await ticks();
     const idLine = nodesOf(later).map((n) => n._text || "").find((t) => /^SSCMA firmware /.test(t));
-    return { order, proof, idLine, card: card() };
+    return { order, said, proof, idLine, card: card() };
   };
   const KEPT = /may still carry the model card an earlier burn stored/;
   const UNDER_LOCAL = /until a burn completes, whatever model the module holds sits under a card that names no model/;
@@ -6402,12 +6437,13 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
     assert.ok(!KEPT.test(r.proof), `the card did go on, but the done screen says it may not have: ${r.proof}`);
     assert.match(r.idLine, /lists no person class — labels will read “object”/);
   }
-  // It answers neither before nor after the burn, or answers but never
-  // acknowledges the card (before the burn, or after it): the done screen
-  // says the module may still carry the card an earlier burn stored, which
-  // is what a later bench reads.
+  // It answers neither before nor after the burn, or answers but never takes
+  // the card, with no reply or with an error reply (before the burn, or after
+  // it): the done screen says the module may still carry the card an earlier
+  // burn stored, which is what a later bench reads.
   for (const c of [{ upBefore: false, upAfter: false }, { upBefore: false, upAfter: true, ack: false },
-    { upBefore: true, upAfter: false, ack: false }]) {
+    { upBefore: true, upAfter: false, ack: false }, { upBefore: true, upAfter: false, ack: "err" },
+    { upBefore: false, upAfter: true, ack: "err" }, { upBefore: true, upAfter: true, ack: "err" }]) {
     const r = await run({ pinned: false, ...c });
     assert.match(r.proof, KEPT, `${JSON.stringify(c)}: the module kept the old card and the done screen says nothing: ${r.proof}`);
     assert.match(r.idLine, /labels will read “person”/, "the stand-in module should still hold the earlier card");
@@ -6424,18 +6460,45 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
   }
   // A burn that fails after its card went on leaves the module's model, an
   // earlier pinned one among them, under the card that claims nothing: the
-  // failure screen says so. When no card went on first (no answer, or no ok
-  // reply), the module keeps its earlier card and model together, and a
-  // pinned burn writes no card before its bytes: nothing to say then.
+  // failure screen says so. When no card went on first in any attempt at this
+  // burn (no answer, no reply, or an error reply), the module keeps its
+  // earlier card and model together, and a pinned burn writes no card before
+  // its bytes: nothing to say then.
   {
     const r = await run({ pinned: false, upBefore: true, upAfter: true, burnFails: true });
     assert.deepStrictEqual(r.card, we2.localModelInfoJson({ sha256: "ab".repeat(32) }));
     assert.match(r.said, UNDER_LOCAL, `the card claims nothing over the old model and the failure screen says nothing: ${r.said}`);
   }
-  for (const c of [{ pinned: false, upBefore: false }, { pinned: false, upBefore: true, ack: false }, { pinned: true, upBefore: true }]) {
+  for (const c of [{ pinned: false, upBefore: false }, { pinned: false, upBefore: true, ack: false },
+    { pinned: false, upBefore: true, ack: "err" }, { pinned: true, upBefore: true }]) {
     const r = await run({ ...c, upAfter: true, burnFails: true });
     assert.deepStrictEqual(r.card, JSON.parse(Buffer.from(OURS, "base64").toString("utf8")), `${JSON.stringify(c)}: the card moved`);
     assert.ok(!UNDER_LOCAL.test(r.said), `${JSON.stringify(c)}: no card went on, but the failure screen says one did: ${r.said}`);
+  }
+  // "Reset and retry" after a burn that failed inside the bootloader: the
+  // module answers no AT until it is reset, so the retry cannot write the card
+  // again, but the card the first attempt wrote is still on. A second failure
+  // says so too, and a retry that completes with no answer after it does not
+  // say the module kept an earlier burn's card: it carries this file's.
+  {
+    const r = await run({ pinned: false, upBefore: true, upAfter: true, burnFails: true,
+      retry: { upBefore: false, burnFails: true } });
+    assert.match(r.said, UNDER_LOCAL);
+    assert.deepStrictEqual(r.card, we2.localModelInfoJson({ sha256: "ab".repeat(32) }));
+    assert.match(r.retrySaid, UNDER_LOCAL, `the first attempt's card is still on and the retry's failure says nothing: ${r.retrySaid}`);
+  }
+  {
+    const r = await run({ pinned: false, upBefore: true, upAfter: true, burnFails: true,
+      retry: { upBefore: false, upAfter: false, burnFails: false } });
+    assert.match(r.proof, /No AT answer after reboot/);
+    assert.ok(!KEPT.test(r.proof), `the first attempt's card is on, but the done screen says the module didn't take it: ${r.proof}`);
+    assert.match(r.idLine, /lists no person class — labels will read “object”/);
+  }
+  {
+    const r = await run({ pinned: false, upBefore: false, upAfter: true, burnFails: true,
+      retry: { upBefore: false, burnFails: true } });
+    assert.ok(!UNDER_LOCAL.test(r.retrySaid), `no attempt put a card on, but the retry's failure says one did: ${r.retrySaid}`);
+    assert.deepStrictEqual(r.card, JSON.parse(Buffer.from(OURS, "base64").toString("utf8")));
   }
   // The pinned model's card waits for its bytes: before the burn the person
   // card would describe a model the module does not carry yet.
@@ -6445,14 +6508,15 @@ test("the Grove module: a burn of a file the person picked replaces the card an 
     assert.deepStrictEqual(r.card, we2.modelInfoJson({ version: "1", sha256: "ab".repeat(32) }));
     assert.match(r.proof, /carries our model card/);
   }
-  // …and the done screen says the module carries it only when it acknowledged the write.
-  {
-    const r = await run({ pinned: true, upBefore: true, upAfter: true, ack: false });
+  // …and the done screen says the module carries it only when it acknowledged
+  // the write: no reply, or an error reply, is not an acknowledgment.
+  for (const nack of [false, "err"]) {
+    const r = await run({ pinned: true, upBefore: true, upAfter: true, ack: nack });
     assert.match(r.proof, /^✓ SecuraCV person detection, installed and checked\. The module answered and ran one inference/);
-    assert.ok(!/carries our model card/.test(r.proof), `an unacknowledged card write is reported as stored: ${r.proof}`);
+    assert.ok(!/carries our model card/.test(r.proof), `ack ${nack}: an unacknowledged card write is reported as stored: ${r.proof}`);
     // The local file's warning is not the pinned model's: its "burn this
     // file again … its card goes on first" is false for a pinned burn.
-    assert.ok(!KEPT.test(r.proof), `a pinned burn gets the local file's warning: ${r.proof}`);
+    assert.ok(!KEPT.test(r.proof), `ack ${nack}: a pinned burn gets the local file's warning: ${r.proof}`);
   }
 });
 

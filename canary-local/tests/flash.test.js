@@ -1748,6 +1748,167 @@ test("sanitizeLogTail: a household peer's fingerprint or name, the MQTT client i
   }
 });
 
+test("sanitizeLogTail: the MQTT topic lines, the board's own setup network and the names typed for it never reach a report", async () => {
+  // Three more kinds of line name this one board. The MQTT publish and Home
+  // Assistant discovery lines print a topic, and every topic carries the
+  // device id (which the display seeds as "<model>-" and six digits of its
+  // Hardware ID).
+  // The board's own setup network is SecuraCV-[<type>-]<four>, the four from
+  // its device id or Hardware ID, and an access point sends its name in
+  // every beacon. And the Bluetooth status lines carry the device id or the
+  // name the person typed, as do the renames. Rendered from the firmware's
+  // own sources, with the flagship's 'e' card, which prints its recent
+  // health events again in another shape.
+  const { buildDiagnosticReport, sanitizeLogTail } = await core();
+  const fw = (p) => readFileSync(join(ROOT, "..", p), "utf8");
+  const has = (src, re, what) => assert.match(src, re, `${what} moved — re-point this test`);
+  const fmt = (src, re, what) => { const m = re.exec(src); assert.ok(m, `${what} moved — re-point this test`); return m[1]; };
+  const hwid = "3f7a9e21b4c5d6e8";   // a Hardware ID
+  const id = "canary-kids-room";      // a Sense, Vision or Sentinel device id (often a name the person typed)
+  const sfx = "K7QX";                 // the flagship's and the WAP's device id suffix
+  const name = "Kids room";           // a name the person typed
+  const opera = "Smith house";        // the household's opera name, typed on the WAP
+  const lines = [];
+  const levels = (src) => {
+    const body = fmt(src, /inline const char\* log_level_name\(LogLevel level\) \{([\s\S]*?)\n\}/, "log_level_name");
+    return Object.fromEntries([...body.matchAll(/case (?:LOG_LEVEL|SCV_LOG)_(\w+): +return "(\w+)";/g)].map((m) => [m[1], m[2]]));
+  };
+  const health = (src, lvl, what) => {
+    const m = /Serial\.printf\("(\[%s\/%s\] %s)", log_level_name\(level\), log_category_name\(category\), message\);\s*if \(detail && detail\[0\]\) \{\s*Serial\.printf\("( \| %s)", detail\);/.exec(src);
+    assert.ok(m, `${what}'s health-log line moved — re-point this test`);
+    return (level, cat, msg, detail) => printf(m[1], lvl[level], cat, msg) + (detail ? printf(m[2], detail) : "");
+  };
+  const flagship = fw("firmware/canary/src/main.cpp");
+  const wapDir = "firmware/projects/canary-wap/arduino/canary_wap/";
+  const ino = fw(wapDir + "canary_wap.ino");
+  const flagLvl = levels(fw("firmware/canary/include/log_level.h"));
+  const wapLvl = levels(fw(wapDir + "log_level.h"));
+  const flagshipHealth = health(fw("firmware/canary/lib/securacv_witness/src/securacv_witness.cpp"), flagLvl, "the flagship");
+  const wapHealth = health(ino, wapLvl, "the WAP");
+  // The flagship's 'e' card: its six most recent health events, "[lvl] msg — detail".
+  const card = /Serial\.printf\("(    \[%s\] %s%s%s)\\n", log_level_name\(ev\.level\), ev\.message,\s*ev\.detail\[0\] \? "([^"]+)" : "", ev\.detail\[0\] \? ev\.detail : ""\);/.exec(flagship);
+  assert.ok(card, "the flagship's 'e' card's event row moved — re-point this test");
+  const recent = (level, msg, detail) => printf(card[1], flagLvl[level], msg, card[2], detail);
+
+  // 1. The MQTT publish and discovery lines: the topic carries the device id.
+  const personal = fmt(fw("firmware/projects/canary-display/src/runtime_config.cpp"),
+    /snprintf\(out, cap, "(%s-%\.6s)", DEVICE_ID, devid_hex\)/, "the display's device id");
+  const ids = { "canary-display": printf(personal, "canary-display", hwid), "canary-sense": id, "canary-vision": id, "canary-sentinel": id };
+  for (const [fam, devId] of Object.entries(ids)) {
+    const status = printf(fmt(fw(`firmware/projects/${fam}/include/canary/topics.h`),
+      /snprintf\(t\.status, sizeof\(t\.status\), "([^"]+)", device_id\);/, `${fam}'s status topic`), devId);
+    const pub = fmt(fw(`firmware/projects/${fam}/src/net/mqtt_mgr.cpp`),
+      /printf\("(%s => %s \(retain=%s len=%u\))\\n",\s*topic,/, `${fam}'s publish line`);
+    lines.push(printf(pub, status, "OK", "true", 187), printf(pub, status, "FAIL", "false", 143));
+  }
+  for (const fam of ["canary-sense", "canary-vision", "canary-sentinel"]) {
+    const disc = fw(`firmware/projects/${fam}/src/ha/ha_discovery.cpp`);
+    const topic = fmt(disc, /snprintf\(out, n, "([^"]+)", HA_DISCOVERY_PREFIX, component, DEVICE_ID, objectId\);/, `${fam}'s discovery topic`);
+    const log = fmt(disc, /printf\("(%s => %s \(retain=true len=%u\))\\n",\s*topic,/, `${fam}'s discovery line`);
+    lines.push(printf(log, printf(topic, "homeassistant", "binary_sensor", id, "presence"), "OK", 512));
+  }
+
+  // 2. The board's own setup network, in every shape onboarding_fsm.h's
+  // ap_ssid builds (the flagship's and the WAP's four are their device id's,
+  // the display's its Hardware ID's), through every line that prints it.
+  const fsm = fw("firmware/common/network/onboarding_fsm.h");
+  const prefix = fmt(fsm, /SSID_PREFIX = "([^"]+)";/, "the setup network's prefix");
+  const types = [...fsm.matchAll(/NODE_[A-Z]+ += "([a-z]+)";/g)].map((m) => m[1]);
+  assert.deepStrictEqual(types, ["canary", "wap", "vision", "sense", "sentinel", "display"], "a node type came or went — render it here");
+  const ssids = [];
+  for (const m of fsm.matchAll(/n = snprintf\(out, cap, "([^"]+)", SSID_PREFIX, ([^;]*)\);/g)) {
+    const args = m[2].split(",").map((a) => a.trim());
+    for (const t of args.includes("node_type") ? types : [null]) {
+      ssids.push(printf(m[1], prefix, ...args.map((a) => ({ node_type: t, four: sfx, session_tag: "xy" })[a])));
+    }
+  }
+  assert.strictEqual(ssids.length, 14, "ap_ssid's shapes changed — render each here");
+  ssids.push(prefix + "display-" + hwid.slice(0, 4));
+  const net = fw("firmware/canary/lib/securacv_network/src/securacv_network.cpp");
+  const flagAp = fmt(net, /snprintf\(msg, sizeof\(msg\), "(AP: %s)", ap_ssid\);\s*log_health\(LOG_LEVEL_INFO, LOG_CAT_NETWORK, msg, m_status\.ap_ip\);/, "the flagship's AP health line");
+  const wapAp = fmt(ino, /snprintf\(msg, sizeof\(msg\), "(AP: %s)", shown_ssid\);\s*log_health\(SCV_LOG_INFO, SCV_CAT_NETWORK, msg, g_wifi_status\.ap_ip\);/, "the WAP's AP health line");
+  const prov = fw("firmware/projects/canary-display/src/net/provision.cpp");
+  has(prov, /printf\("AP up: \\"%s\\" on channel %d - portal live\\n",\s*ap_ssid, kApChannel\);/, "the display's AP line");
+  const sites = [
+    (s) => printf(fmt(flagship, /Serial\.printf\("(\[\.\.\] SETUP MODE: AP SSID = %s)\\n", ap_ssid\);/, "the flagship's setup line"), s),
+    (s) => printf(fmt(flagship, /Serial\.printf\("(║  WiFi AP    : %-45s  ║)\\n", device\.ap_ssid\);/, "the flagship's banner AP row"), s),
+    (s) => flagshipHealth("INFO", "NETWORK", printf(flagAp, s), "192.168.4.1"),
+    (s) => recent("INFO", printf(flagAp, s), "192.168.4.1"),
+    (s) => printf(fmt(ino, /Serial\.printf\("(\[PROV\]   WiFi SSID : %s)\\n", g_device\.ap_ssid\);/, "the WAP's quick-connect line"), s),
+    (s) => printf(fmt(ino, /Serial\.printf\("(WiFi AP: %s)\\n", g_device\.ap_ssid\);/, "the WAP's 'w' line"), s),
+    (s) => printf(cLiteral(ino, "║    \\\"ap_ssid\\\": \\\"%s\\\",", "the WAP's receipt row"), s),
+    (s) => wapHealth("INFO", "NETWORK", printf(wapAp, s), "192.168.4.1"),
+    (s) => printf(cLiteral(prov, "AP up: ", "the display's AP line"), s, 6),
+  ];
+  for (const s of ssids) for (const site of sites) lines.push(site(s));
+
+  // 3. The Bluetooth status lines and the renames. The flagship's Bluetooth
+  // name is the name the person typed, or else its device id.
+  const flagId = fmt(fw("firmware/canary/include/canary_config.h"), /#define DEVICE_ID_PREFIX +"([^"]+)"/, "the flagship's device id prefix") + sfx;
+  const wapId = fmt(ino, /static const char\* DEVICE_ID_PREFIX = "([^"]+)";/, "the WAP's device id prefix") + sfx;
+  const bs = fw("firmware/canary/lib/securacv_ble_status/src/securacv_ble_status.cpp");
+  has(bs, /static const char\* resolve_ble_name\(void\) \{[\s\S]*?return setup_name;[\s\S]*?return witness_get_device\(\)\.device_id;\s*\}/, "the flagship's Bluetooth name");
+  const bleFail = fmt(bs, /log_health\(LOG_LEVEL_ERROR, LOG_CAT_BLUETOOTH,\s*"(NimBLE init failed)", ble_name\);/, "the flagship's Bluetooth failure line");
+  const bleUp = fmt(bs, /log_health\(LOG_LEVEL_INFO, LOG_CAT_BLUETOOTH,\s*"(BLE GATT status service started)", ble_name\);/, "the flagship's Bluetooth up line");
+  const setup = fw("firmware/canary/lib/securacv_setup/src/securacv_setup.cpp");
+  const renamed = /persisted \? "(Device name updated)"\s*: "(Device name NOT persisted \(NVS write failed\))",\s*s_device_name\);/.exec(setup);
+  assert.ok(renamed, "the flagship's rename line moved — re-point this test");
+  for (const n of [name, flagId]) {
+    lines.push(flagshipHealth("ERROR", "BLUETOOTH", bleFail, n), recent("ERROR", bleFail, n),
+      flagshipHealth("INFO", "BLUETOOTH", bleUp, n), recent("INFO", bleUp, n));
+  }
+  lines.push(
+    flagshipHealth("INFO", "SYSTEM", renamed[1], name), recent("INFO", renamed[1], name),
+    flagshipHealth("WARNING", "SYSTEM", renamed[2], name), recent("WARNING", renamed[2], name),
+    printf(fmt(flagship, /Serial\.printf\("(║  Name       : %-45s  ║)\\n", banner_name\);/, "the flagship's banner name row"), name),
+  );
+  has(fw(wapDir + "bluetooth_channel.cpp"), /log_health\(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "Device name changed", name\);/, "the WAP's Bluetooth rename line");
+  has(ino, /log_health\(SCV_LOG_INFO, SCV_CAT_MESH, "Opera name changed", name\);/, "the WAP's opera rename line");
+  has(ino, /ble_status::init\(ble_server, g_device\.device_id, FIRMWARE_VERSION,/, "the WAP's Bluetooth status id");
+  lines.push(
+    wapHealth("INFO", "BLUETOOTH", "Device name changed", name),
+    wapHealth("INFO", "MESH", "Opera name changed", opera),
+    printf(cLiteral(fw(wapDir + "ble_status_api.h"), "[BLE-Status] GATT status service started (device: ", "the WAP's Bluetooth status line"), wapId),
+  );
+
+  const scrubbed = sanitizeLogTail(lines.join("\n")).split("\n");
+  lines.forEach((ln, i) => assert.strictEqual(scrubbed[i], "[identity line: shown in the flasher, not in reports]", `kept: ${ln}`));
+  // Through the builder, whose tail is the last 12 lines: in elevens.
+  for (let at = 0; at < lines.length; at += 11) {
+    const part = lines.slice(at, at + 11);
+    const r = buildDiagnosticReport({ logTail: [...part, "Brownout detector was triggered"].join("\n") });
+    for (const leak of [hwid.slice(0, 4), id, sfx, name, opera]) {
+      assert.ok(!r.includes(leak), `"${leak}" survived into the report:\n${r}`);
+    }
+    assert.ok(r.includes("Brownout detector was triggered"), "diagnosis survives");
+  }
+  // Lines that only look like them are not collateral damage: the setup
+  // network's fixed fallback name, the Bluetooth failures that print no name,
+  // the WAP's status line that prints none, and the MQTT lines without a topic.
+  const logLine = fmt(fw("firmware/projects/canary-sense/include/canary/log.h"),
+    /dbg_serial\(\)\.printf\("(\[%s\] %s)\\n", tag \? tag : "", msg \? msg : ""\);/, "the trio's log_line");
+  const fallback = fmt(flagship, /strncpy\(setup_ssid, "([^"]+)", sizeof\(setup_ssid\) - 1\);/, "the flagship's fallback setup network");
+  has(fw(wapDir + "bluetooth_channel.cpp"), /log_health\(SCV_LOG_ERROR, SCV_CAT_BLUETOOTH, "NimBLE init failed", nullptr\);/, "the WAP's Bluetooth failure line");
+  has(ino, /log_health\(SCV_LOG_INFO, SCV_CAT_BLUETOOTH, "BLE status service started", nullptr\);/, "the WAP's Bluetooth status line");
+  for (const keep of [
+    printf(fmt(flagship, /Serial\.printf\("(\[\.\.\] SETUP MODE: AP SSID = %s)\\n", ap_ssid\);/, "the flagship's setup line"), fallback),
+    wapHealth("ERROR", "BLUETOOTH", "NimBLE init failed"),
+    cLiteral(fw(wapDir + "ble_manager.h"), "[BLE] NimBLE init failed", "the WAP's discovery failure line"),
+    printf(logLine, "ROSTER", fmt(fw("firmware/projects/canary-sense/src/net/fleet_roster_scan.cpp"),
+      /log_line\("ROSTER", "(NimBLE init failed[^"]*)"\);/, "the Sense's roster failure line")),
+    printf(logLine, "BEACON", fmt(fw("firmware/projects/canary-vision/src/net/fleet_beacon_adv.cpp"),
+      /log_line\("BEACON", "(NimBLE init failed[^"]*)"\);/, "the Vision's beacon failure line")),
+    cLiteral(flagship, "[--] NimBLE stack init failed", "the flagship's stack failure line"),
+    wapHealth("INFO", "BLUETOOTH", "BLE status service started"),
+    cLiteral(ino, "[OK] BLE GATT status service registered", "the WAP's registered line"),
+    printf(cLiteral(fw("firmware/projects/canary-display/src/net/mqtt_mgr.cpp"), "Connect FAIL rc=%d", "the display's connect failure"), -2),
+    printf(cLiteral(fw(wapDir + "csi_mqtt.cpp"), "[MQTT] discovery: %u/%u entities announced", "the WAP's discovery count"), 12, 12),
+    recent("INFO", "MQTT connected", "192.168.1.5"),
+  ]) {
+    assert.strictEqual(sanitizeLogTail(keep), keep);
+  }
+});
+
 test("the ROM tools' own MAC lines are masked where drawn, and never reach a report", async () => {
   // esptool-js's connect logs "MAC: …" unasked (the vendored bundle's main()),
   // and espflash prints "MAC address: …" in its board info before every
