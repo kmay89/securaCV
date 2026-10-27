@@ -94,7 +94,7 @@ RUN cargo build --release --features rtsp-gstreamer
 # Carry: the SecuraCV integration and the blueprints the app places into
 # /config (option G, D15). The integration tree is pruned here — no tests/,
 # no www/*.test.js, no caches — so the copy a user ends up with is the
-# integration's runtime files only (Docker COPY has no exclude, so an
+# integration without its tests and caches (Docker COPY has no exclude, so an
 # intermediate stage prunes). HACS serves the mirror's carried copy of this
 # same tree, tests included; the two match in every file kept here once a
 # carry has run, and not before it. The carried integration's version must

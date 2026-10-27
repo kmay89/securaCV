@@ -74,7 +74,9 @@ by itself. Identical on Apple Silicon and Intel.
 > **Where the signature comes from.** The release workflow signs and
 > notarizes the macOS build when the `ENABLE_MACOS_SIGNING` repo variable is
 > `true` and the Apple signing secrets are set — see [`README.md`](README.md).
-> Without them the build is unsigned, and the steps above apply.
+> Without the variable the build is unsigned, and the steps above apply; with
+> it set but the signing certificate secret missing, the macOS build fails
+> rather than ship unsigned.
 
 ---
 
@@ -133,13 +135,6 @@ This is the same rule the SecuraCV Flasher ships.
   |---|---|---|
   | `303a` | Espressif native USB | the boards that plug straight into the ESP32's own USB, the XIAO ESP32-S3 and C3 among them |
   | `1a86:55d3` | WCH CH343 | the Grove Vision AI V2 camera module |
-  | `10c4:ea60` | Silicon Labs CP210x | the ESP32-C3-DevKitM-1, and many ESP32-WROOM DevKits |
-  | `1a86:7523` | WCH CH340 | the ESP32-CAM's programmer board, and other WROOM DevKits |
-  | `1a86:55d4` | WCH CH9102 | newer ESP32-WROOM DevKits |
-
-  The three bridge lines grant the logged-in user only (`uaccess`), never
-  `MODE="0666"`: those chips are generic parts other gadgets use too.
-  `lsusb` names the chip on yours if you're not sure.
   | `10c4:ea60` | Silicon Labs CP210x | the ESP32-C3-DevKitM-1, and many ESP32-WROOM DevKits |
   | `1a86:7523` | WCH CH340 | the ESP32-CAM's programmer board, and other WROOM DevKits |
   | `1a86:55d4` | WCH CH9102 | newer ESP32-WROOM DevKits |

@@ -7,8 +7,9 @@ internet — open it?") and the answer is **Open**. No Terminal step. It no
 longer shows the `xattr` quarantine one-liner, which taught people to strip
 Gatekeeper's mark from an app that opens by itself. One PNG ships in signed
 and unsigned builds alike, so the panel does not claim the signature; the
-footer sends an unsigned build (a fork, a local build) to INSTALL.md, which
-keeps the one-liner under its own heading.
+footer sends an unsigned build (a fork, a local build, or a release whose
+page says unsigned) to INSTALL.md, which keeps the one-liner under its own
+heading.
 (Same copy as desktop/src-tauri/dmg/generate_background.py — keep
 the two in step.)
 
@@ -139,7 +140,7 @@ def main():
     center(d, W // 2, pill_y + 15 * S, answer, answer_f, CANARY)
 
     center(d, W // 2, py1 - 16 * S,
-           "Then it opens normally. An unsigned build (a fork, a local build)? See INSTALL.md.",
+           "Then it opens normally. Release page says unsigned, or a fork / local build? See INSTALL.md.",
            font("DejaVuSans.ttf", 10), MUTED)
 
     # Downscale the supersampled canvas to the exact window size — Finder maps

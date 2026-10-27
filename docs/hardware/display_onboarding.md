@@ -35,7 +35,8 @@ it should feel like the device is doing the work.
         (2.6 s welcome beat — the
          radio pre-scans behind it)
   [QR]  "Scan me"                      camera sees WIFI: QR →
-        SecuraCV-A7K2 · p7Rm2Kqf         "Join SecuraCV-A7K2?" → tap
+        SecuraCV-display-A7K2            "Join SecuraCV-display-A7K2?"
+        pass  p7Rm2Kqf                     → tap
   "Nice - check your phone"            captive sheet pops automatically
         (breathing halo)               dark portal, network list already
                                          loaded (pre-scan), signal bars
@@ -48,18 +49,27 @@ it should feel like the device is doing the work.
         → fleet finds the broker (mDNS gossip) → fleet fades in
 ```
 
-On glass too narrow for `SecuraCV-A7K2 • p7Rm2Kqf` on one row (the round
-watch, and the 172/180 px nightstand and nightlight) the name and the key take
-a row each, the way round glass always has. The name and the key stay on the
-glass for as long as the Join scene is up — QR or no QR, hint or no hint: when
-the QR does not scan (or never rendered) that text is the only way in, and the
-stuck-phone hint ("forget it on your phone") comes up exactly when the phone
-needs the key again. On that glass the hint gets a row of its own: under the
-key on the nightstand and nightlight, the title's band on the round watch
-(the title yields while the hint stands: with the QR up, the card speaks for
-itself; without one, the hint replaces "On your phone").
+On glass too narrow for `SecuraCV-display-A7K2 • p7Rm2Kqf` on one row (the
+round watch, the 172/180 px nightstand and nightlight, and the 240x280
+touch169 under Heirloom, or at the default type when the unit's four
+characters are wide ones) the name and the key take a row each, the way round
+glass always has. The name and the key stay on the glass for as long as the
+Join scene is up — QR or no QR, hint or no hint: when the QR does not scan (or
+never rendered) that text is the only way in, and the stuck-phone hint
+("forget it on your phone") comes up exactly when the phone needs the key
+again. On that glass the hint gets a row of its own: under the key on the
+nightstand and nightlight, the title's band on the round watch (the title
+yields while the hint stands: with the QR up, the card speaks for itself;
+without one, the hint replaces "On your phone").
 None of those rows (the name, the key, the hint) is ever cut to an ellipsis
-(F45).
+(F45), with one exception for the name, which the typed setup name brought: a
+unit whose four characters (and, on the store-refused path, its `-tt` tag) are
+the widest the alphabet mints outruns the 156/164 px portrait rows, and with
+the tag the round watch's 174, even in the floor face
+(`SecuraCV-display-WWWW-WW` is 198 px at 12 px). There the name keeps its head
+and its tail around "..." (`name_line()`), so the four characters a phone's
+list shows stay on the glass; a typical name (`SecuraCV-display-A7K2`, 141 px)
+reads whole on every small glass.
 
 Nor is any scene's title or body (F65 on small glass, F84 on wide glass).
 Each line is fitted to the width at its own latitude — the disc's chord on
@@ -111,13 +121,17 @@ A dash or 7" glass whose saved rotation is portrait runs the onboarding on
 480x800, where a row is 464 px (F156). There the Join title takes a
 shorter form in the 36 px title face ("Scan with your phone", or "Join
 this network" when no code rendered), the worded credentials line splits
-over two rows in the label face (`or join "SecuraCV-A7K2"` over
-`password  p7Rm2Kqf`; on one row it can be 655 px, 773 under Heirloom), the
-stuck-phone hint takes a row of its own under them and drops "can't join?"
-where the row needs it ("on your phone, forget this network - then scan
-again"), and the coach lines read whole. The 800 px panel keeps the worded
-line and the whole hint on one row each, as before. A nightlight whose
-saved rotation is landscape runs it on 320x180, too short for the stack
+over two rows in the label face (`or join "SecuraCV-display-A7K2"` over
+`password  p7Rm2Kqf`; on one row it can be 736 px, 867 under Heirloom, and
+the widest name a unit can mint drops the "or join" under Heirloom: 491 px
+worded, 391 bare), the stuck-phone hint takes a row of its own under them
+and drops "can't join?" where the row needs it ("on your phone, forget this
+network - then scan again"), and the coach lines read whole. The 800 px
+panel keeps the worded line and the whole hint on one row each, as before,
+but for the widest name and key a unit can mint under Heirloom (867 px on
+its 784 px row), which take the same two rows with the whole hint under
+them. A nightlight whose saved rotation is landscape runs it on 320x180,
+too short for the stack
 (F157): there the scene turns sideways. The halo stands at the right, the
 smallest ring that holds the QR card at its floor canvas (150 px, an 88 px
 canvas, still 3 px a module), with the bird at its center in every scene;
@@ -247,7 +261,7 @@ look failed on the phone — hard-won WAP lesson.)
 | Join-scene geometry | `include/canary/ui/onboard_layout.h` — title, QR card and caption lines stacked from the panel and the fonts' line heights, never crossing (host-tested on every display env's panel by `tests_host/test_onboard_layout.cpp`; `canary-local/tests/onboard_probe.mjs` checks the card is clean on each emulated flavor) |
 | Scene words and the halo | the same header's `scene_copy()` (every scene's title and body, and their shorter forms), `scene_line_w()` and `name_line()` (F65), `small_join()` (`halo_ring()` and the card inside it) and `scene_bird_top()` (F66). `tests_host/test_onboard_layout.cpp` holds the rules on every small-glass env (the round watch, the 172/180x320 portrait glass, the touch169, the AMOLED) with both ladders: it fits every title and body of every scene and requires each one whole (the network name: whole, or its head and tail around "..."), pins where the two shorter forms show, and holds every row of every scene, the QR card and the bird's seats clear of the halo's stroke. On the 800x480 glass it holds the same inside `wide_ring()`'s 300 px halo (F84), except the QR card's rounded corners, which reach past that ring; on every glass no title's box overlaps its body's. It holds the panels `main.cpp` turns before the onboarding too: the dash line's 480x800 portrait, its Join rows fitted by `wide_join_lines()` (F156), and the nightlight's 320x180 landscape, composed sideways by `land_join()` (F157), with the Success hop on the glass. `tests_host/test_onboard_scenes.cpp` holds `onboard_ui.cpp` to those rules: it compiles the real module against `tests_host/fake_lvgl/` (LVGL 8's position rules), drives every scene the way `provision.cpp` does on the same envs and ladders and on the turned panels (three builds: round, rectangular small and wide glass), and reads what each label says at what width in which font, where the halo, the card and the bird are drawn. On every glass, turned panels included, each credentials, hint and note row it draws sits on the stack's row at the width `fit_row()` gives it, at least as tall as its face's line, in its role's face and color (on wide glass the name and the key in the label face, muted; a hint in the caption face, faint), and the Join scene's title and rows read exactly what `onboard_layout.h` says for that panel, in the face it chose, so the 800 px glass keeps the whole title and the whole stuck-phone hint. The probe fails on an ellipsis in each flavor's PhoneJoined scene and its wrong-key and absent-network Fail scenes |
 | The bird's seat | `src/ui/canary_mark.cpp` records the host's own offset from its anchor (`lv_obj_get_style_x/y`), so the bird is drawn where `lv_obj_align` put it, before or after a layout pass (F64; `tests_host/test_canary_mark_seat.cpp`). Each scene's seat is `onboard_layout.h`'s `bird_seat()`; the emulator reports it (`emu_onboard_seat`, the shell's `onboardSeat()`) and `canary-local/tests/onboard_probe.mjs` holds the drawn bird (`markBox()`) to it in the Hello and PhoneJoined scenes, on the glass and clear of every line, read through a whole swing of its breath: its top must reach the seat less the breath exactly and the seat plus the breath less 1 px, so a bird 1 px off its seat fails wherever the reads fall (`bird_perch.mjs`'s `breathOnSeat`; a run an idle flourish hopped is read again, F89) |
-| Join-scene text | the same header's `join_lines()` — the credentials joined where they fit their row, else split (name, then key, and a standing hint on the note row: nothing displaces the name or the key), shorter forms before a smaller face, never an ellipsis (F45). The host test measures every glass and ladder with LVGL's glyph metrics (`tests_host/montserrat_metrics.h`, from `firmware/scripts/gen_montserrat_metrics.py`) over the widest name and key the unit can mint, and requires both on the glass with and without the stuck-phone hint; the probe fails on an ellipsis in each flavor's Join scene and reads the firmware's own labels (the emulator's `emu_screen_labels`) for the name and key it printed, before and after the hint. After the Join scene, `hint_lines()` gives the coach line both of the empty credentials rows: whole on one where it fits, else split at a clause over two, else the shorter form (F50). The host test runs every failure's fix and the "no page?" hint through it on every env and ladder and requires the whole form; the probe reads the whole "no page?" hint and the wrong-key and absent-network fixes off each flavor's glass |
+| Join-scene text | the same header's `join_lines()` — the credentials joined where they fit their row, else split (name, then key, and a standing hint on the note row: nothing displaces the name or the key), shorter forms before a smaller face, never an ellipsis (F45) but the typed name's one rung above, its widest mintings on the smallest glass. The host test measures every glass and ladder with LVGL's glyph metrics (`tests_host/montserrat_metrics.h`, from `firmware/scripts/gen_montserrat_metrics.py`) over the widest name and key the unit can mint, and requires both on the glass with and without the stuck-phone hint; the probe fails on an ellipsis in each flavor's Join scene and reads the firmware's own labels (the emulator's `emu_screen_labels`) for the name and key it printed, before and after the hint. After the Join scene, `hint_lines()` gives the coach line both of the empty credentials rows: whole on one where it fits, else split at a clause over two, else the shorter form (F50). The host test runs every failure's fix and the "no page?" hint through it on every env and ladder and requires the whole form; the probe reads the whole "no page?" hint and the wrong-key and absent-network fixes off each flavor's glass |
 | NVS persistence | `canary::cfg::set_wifi_credentials()` (success only) |
 | Boot hook | `main.cpp`: placeholder creds → `provision_run()` before the watchdog arms |
 | Captive mechanics provenance | canary-wap wizard, `LESSONS_LEARNED` §captive-portal |

@@ -9,6 +9,17 @@
   lockdown in one step; tripwire paths; blocks that survive a restart; a
   self-check at boot; `MAINTENANCE.md`.
 
+### canary-wap: "Set up the next Canary" names the setup network the way 2.4.17 does
+
+- The setup wizard's guide for the next Canary told the owner to wait for a
+  fresh `SecuraCV-XXXX` network. From 2.4.17 that network carries the
+  device's kind (`SecuraCV-sense-…`, `SecuraCV-wap-…`), so the step now says
+  to wait for a fresh network whose name starts with `SecuraCV-`, as the
+  page's self-test hint already did. `web_assets_gz.h` is regenerated
+  (the device serves the gzipped copy). Ships with the next WAP firmware;
+  checked on the host only (`gen_web_assets_gz.py --check`, the microcopy
+  lint, the WAP page tests).
+
 ### canary-wap: after setup the API token alone moves its network over HTTP (a Bluetooth peer bonded through the pairing confirm or a passkey still moves it; a network joined before the update can stay saved), re-keys its vault, confirms a pairing and reboots it (the firmware install aside), and the sign-in checks a pasted token by itself; a failed provisioning says what the unit does (sweep F333, F334, F335, F336, F345, F346, F348, F349, F361, #1887)
 
 - **canary-wap: one dashboard sign-in, which checks a pasted token by itself

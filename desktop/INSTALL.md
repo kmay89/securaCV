@@ -78,8 +78,9 @@ an app that opens by itself. Identical on Apple Silicon and Intel.
 > **Where the signature comes from.** The release workflow signs and
 > notarizes the macOS build when the `ENABLE_MACOS_SIGNING` repo variable is
 > `true` and the Apple signing secrets are set — see [`README.md`](README.md)
-> and [`SIGNING.md`](SIGNING.md). Without them the build is unsigned, and the
-> steps above apply.
+> and [`SIGNING.md`](SIGNING.md). Without the variable the build is unsigned,
+> and the steps above apply; with it set but the signing certificate secret
+> missing, the macOS build fails rather than ship unsigned.
 
 ---
 
