@@ -14,6 +14,7 @@ import { markSessionPaid, markSessionExpired } from './modules/recovery.mjs';
 import { newOrderNudge } from './modules/notify.mjs';
 import { applyOverrides } from './modules/listing.mjs';
 import { Watch, cidrMatcher, netOf, knownNetwork, sanitizeFields, boundary, boundaryEach, BOUNDARY_HEADERS } from './guard.mjs';
+import { TRIPWIRE, preflight } from './integrity.mjs';
 import { securityPush } from './modules/notify.mjs';
 import { build, recordBoot } from './version.mjs';
 import { listFlags, setFlag, clearFlag } from './flags.mjs';
@@ -70,7 +71,9 @@ export function createApp({ db, cfg }) {
   // In demo mode the catalog is the demo's own, never fetched from the live site.
   setTrustedProxies(cfg.trustedProxies);
   // The watch (guard.mjs): a scanner is blocked for ten minutes; ADMIN_ALLOW_CIDRS hides the admin from every other network.
-  const watch = new Watch(); const allow = cidrMatcher(cfg.adminAllowCidrs); const pushedLock = new Map();
+  const watch = new Watch({ db }); const allow = cidrMatcher(cfg.adminAllowCidrs); const pushedLock = new Map();
+  // What the server proves about itself before it listens (integrity.mjs): written down once per boot, read by the doctor.
+  const pf = preflight(db, cfg); db.setSetting('boot:preflight', JSON.stringify(pf)); if (!pf.ok) db.audit('system', 'boot.preflight', 'build', null, { failing: pf.rows.filter(r => r.ok === false).map(r => r.key) });
   // app.catalog is the file (store.json, or the demo's) with the listing edited in the admin laid over it (listing.mjs).
   const app = { db, cfg, json, watch, allow, router: new Router(), limiter: new RateLimiter({ limit: 30, windowMs: 60_000 }), formLimiter: new RateLimiter({ limit: 5, windowMs: 10 * 60_000 }), lockout: new Lockout({ limit: 8, windowMs: 15 * 60_000 }), once: new Map(), catalog: cfg.demo ? async () => applyOverrides(db, DEMO_CATALOG) : async (o) => applyOverrides(db, await loadCatalog(cfg, o)), shipping: cfg.demo ? async () => DEMO_SHIPPING : (o) => loadShipping(cfg, o) };
   // What wants the admin, memoized for a few seconds: the sidebar badges on every page read it, and
@@ -316,6 +319,8 @@ export function createApp({ db, cfg }) {
       // inside the try: a request line or a path segment that does not parse is a 400, not a request that never gets an answer
       try { url = new URL(req.url, 'http://x'); } catch { throw new HttpError(400, 'bad request URL'); }
       route = router.match(req.method, url.pathname);
+      // A tripwire path (/.env, /wp-login.php, …) is asked for by scanners only: blocked at once, said once, a 404 like any other.
+      if (!route && TRIPWIRE.test(url.pathname)) { const ipT = clientIp(req); if (!watch.blocked(ipT)) { watch.block(ipT, Date.now(), 'tripwire'); db.audit('system', 'guard.tripwire', 'ip', ipT, { path: url.pathname.slice(0, 80) }); securityPush(db, cfg, `trip:${ipT}`, { title: 'Backoffice: a scanner tripped a wire', body: `${ipT} asked for ${url.pathname.slice(0, 80)} — blocked for ten minutes` }, { fetchImpl: app.fetchImpl }).catch(() => {}); } throw new HttpError(404, 'not found'); }
       if (!route) throw new HttpError(404, 'not found');
       if (cfg.secure) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
       // A browser says where a request came from; a state change from another site is refused before the body is read.

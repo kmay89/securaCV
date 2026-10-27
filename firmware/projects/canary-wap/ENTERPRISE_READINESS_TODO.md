@@ -138,10 +138,10 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
         companion PWA, `total_handlers` raised, and both route audits kept
         green. The rule that recommendation serves, that a remote credential
         alone should not be able to reopen the setup door, is not today's
-        posture: `POST /api/wifi/forget` takes only `api_auth_check`, which
-        any session passes, the landing page's included, and Forget Wi-Fi
-        reopens the same first-come door (ledger F345, the open decision on
-        that route; F346 for what a landing session reaches).
+        posture: `POST /api/wifi/forget` takes the bearer alone since F345
+        (`api_auth_check_bearer()`, so no landing session sends it), and a
+        bearer Forget on a unit not running standalone reopens the same
+        first-come door (`keyless_join_open()`).
   - [x] Credential reset path without the serial monitor: one BOOT tap,
         pressed while the owner's page or the wizard's Save is already
         asking, releases the provisioning receipt to that one asker

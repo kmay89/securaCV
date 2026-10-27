@@ -22,9 +22,9 @@
  * ────────
  * - Bond-only read: NimBLE rejects unencrypted/unauthenticated peers.
  *   The bond is established via Numeric Comparison (MITM-safe after PR A),
- *   but a bond is not the bearer's trust: any landing session can bond a
- *   peer of its own (it reads the passkey from GET /api/bluetooth and
- *   confirms it, ledger F346), so the console exposes nothing a landing
+ *   and since F346 its confirm, and a Passkey Entry's digits, take the
+ *   bearer; a bond a session confirmed on 2.4.17 or earlier persists until
+ *   the owner removes it, so the console still exposes nothing a landing
  *   session cannot already read over WiFi.
  * - Read-only in v1. Provisioning / write actions land in PR-3.
  * - No new fields beyond what /api/status + /api/presence already expose.

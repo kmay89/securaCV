@@ -175,6 +175,32 @@ workflow calls both, and calls the pointer as a reusable workflow so a broken
 updater manifest fails the publish run instead of passing quietly. (A human
 clicking Publish in the UI *does* fire the event, so that path still works.)
 
+### Fix a release's notes (rewrite the body from the repo)
+
+Rewrites the **body** of one published `fw-v*`, `flasher-v*` or `app-v*`
+release with the text its own release workflow would publish today:
+`.github/scripts/release_body.py` runs that workflow's body step (the
+firmware's CHANGELOG extraction and its 120,000-byte cap, the Flasher's and
+the Lab's "says what this version changes"), so the words come from `main`'s
+`CHANGELOG.md` and `RELEASE_NOTES.md`, not from this button. Its run summary
+shows the diff. For an app release, `macos_signed` says whether *that*
+release's Mac build was signed (today's signing switch says nothing about an
+old build); `auto` reads it from the sentence the release workflow wrote from
+that switch, and refuses a body from before Flasher 0.3.6, whose static
+template claimed "signed & notarized" either way: say `yes` or `no` there.
+
+**Use it:** after correcting a CHANGELOG or RELEASE_NOTES section that a
+published release already carries. A published body does not follow its
+sources. (Its first job, 2026-10-27: the five 2.4.16-train bodies the audit
+corrected, sweep A115.)
+
+**Don't:** expect it to touch anything else. It never changes an asset or a
+tag, refuses a draft, and passes `--latest` explicitly on every edit (true only
+for the tag that already is `releases/latest`), then fails the run unless
+`releases/latest` is the same `fw-v*` tag as before and the asset list is
+unchanged. The manifests a firmware release signed keep their 400-byte notes:
+those are signed bytes, and rewriting them is a new release.
+
 ### The kernel: not released yet
 
 The Rust kernel (the `witness-kernel` crate; `Cargo.toml` said `0.8.0` on

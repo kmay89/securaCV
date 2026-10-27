@@ -384,6 +384,56 @@ static void test_door_window_record() {
   CHECK(!door_window_record_valid(0xFFFFFFFFu, MAGIC, false));
 }
 
+// The one rule for a keyless join (sweep F333): the Bluetooth setup door
+// and the camera's boot QR scan open only on a unit with no stored network
+// that is not standalone on purpose. Before, the boot scan asked only about
+// the stored network, so a standalone unit scanned forever and any code
+// held to its lens took it off standalone.
+static void test_keyless_join_open() {
+  CHECK(keyless_join_open(false, false));   // fresh, or forgotten: open
+  CHECK(!keyless_join_open(true, false));   // a network on file: shut
+  CHECK(!keyless_join_open(false, true));   // standalone: shut, no network or not
+  CHECK(!keyless_join_open(true, true));
+  // The door's composition (canary_wap.ino ble_improv_door_should_open):
+  // (configured, a door join still being proven, ap_only). A pending join
+  // counts as no credentials, so the door stays open for the phone's retry.
+  const auto door = [](bool configured, bool join_pending, bool ap_only) {
+    return keyless_join_open(configured && !join_pending, ap_only);
+  };
+  CHECK(!door(true, false, false));
+  CHECK(door(false, false, false));
+  CHECK(door(true, true, false));
+  CHECK(!door(false, false, true));
+  CHECK(!door(true, true, true));
+}
+
+// Whether a running QR scan window may still act on a code it reads, asked
+// after every frame (qr_scan_task_fn): (auto_scan, has_credentials, ap_only,
+// setup_active). A boot window holds the keyless-join rule (F333's review);
+// a phone session's window, which POST /api/wifi/qr-scan starts only during
+// first-boot setup (F334), holds only while setup does. Before, nothing
+// ended a phone window when setup ended by another path (the Bluetooth
+// door's join, a second tab's standalone choice), and for up to 60 s a code
+// held to the lens joined the unit to the network it named, no bearer asked.
+static void test_scan_window_open() {
+  // A boot window: the keyless-join rule, whatever setup is doing.
+  for (bool setup : {false, true}) {
+    CHECK(scan_window_open(true, false, false, setup));
+    CHECK(!scan_window_open(true, true, false, setup));
+    CHECK(!scan_window_open(true, false, true, setup));
+    CHECK(!scan_window_open(true, true, true, setup));
+  }
+  // A phone window: setup alone, whatever is stored (during setup a network
+  // the wizard's Connect stored may have failed to join, and the phone may
+  // scan a code instead, as before).
+  for (bool creds : {false, true}) {
+    for (bool ap_only : {false, true}) {
+      CHECK(scan_window_open(false, creds, ap_only, true));
+      CHECK(!scan_window_open(false, creds, ap_only, false));
+    }
+  }
+}
+
 // The pairing channel's security profile for the setup door: the full
 // (door_open, pairing_pending, authenticated_link_up) matrix, then the
 // transitions the channel's set_setup_door() walks.
@@ -464,6 +514,8 @@ int main() {
   test_ble_scanners_held_then_released();
   test_ap_only_for_discovery();
   test_door_window_record();
+  test_keyless_join_open();
+  test_scan_window_open();
   test_security_profile_matrix();
   test_security_profile_transitions();
   if (g_failures) {

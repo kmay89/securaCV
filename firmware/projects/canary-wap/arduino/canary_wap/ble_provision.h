@@ -1,10 +1,10 @@
 /*
  * SecuraCV Canary — BLE WiFi Provisioning
  *
- * A bonded peer can write the WAP's Wi-Fi over BLE (CREDS). The iPhone
- * app never reaches this service on a WAP (ledger A65): a phone sets a WAP
- * up through the Improv setup door (ble_improv.h), and the SoftAP page
- * stays the fallback.
+ * A peer bonded through the pairing confirm or a passkey can write the
+ * WAP's Wi-Fi over BLE (CREDS). The iPhone app never reaches this service
+ * on a WAP (ledger A65): a phone sets a WAP up through the Improv setup
+ * door (ble_improv.h), and the SoftAP page stays the fallback.
  *
  * SHAPE
  * ─────
@@ -19,7 +19,10 @@
  * SECURITY
  * ────────
  * - Every characteristic carries READ_ENC + READ_AUTHEN and / or
- *   WRITE_ENC + WRITE_AUTHEN. NimBLE rejects unbonded peers.
+ *   WRITE_ENC + WRITE_AUTHEN. NimBLE rejects unbonded peers and, under
+ *   the _AUTHEN flags, a Just Works bond too: only a bond the pairing
+ *   confirm or a passkey authenticated reaches these (THREAT_MODEL.md's
+ *   BLE pairing row).
  * - CREDS has no READ property at all. A bonded peer can SET credentials
  *   but can never read them back, even with a valid bond.
  * - Write rate-limited to 1 / 5 s and capped at 10 per hour, one budget
@@ -60,8 +63,8 @@ static constexpr uint32_t WRITE_COOLDOWN_MS = 5000;  // 1 creds-write per 5 s
 // cooldown and the cap are one budget for every bonded peer together, so a
 // bonded peer that keeps writing keeps the owner's write refused for the
 // hour (SECURITY_MODEL.md, ledger F346): they slow a guesser and do not
-// keep a host out, since any landing session can read the passkey and
-// bond a peer of its own.
+// keep out a bonded peer, such as one a landing session bonded before F346
+// moved the bond's confirm and a Passkey Entry's digits to the bearer.
 static constexpr uint32_t HOURLY_WRITE_CAP  = 10;
 
 bool init(NimBLEServer* server);

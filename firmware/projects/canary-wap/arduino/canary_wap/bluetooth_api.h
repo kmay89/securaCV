@@ -51,12 +51,15 @@ namespace bluetooth_api {
 // api_auth_check is a plumbing-only fix (mirrors #435/#436 for the
 // wifi-mgmt + mesh families), and it takes the cookie or the bearer: the
 // landing page mints that cookie for any host on the network, so any
-// landing session can turn Bluetooth off, delete every bond and read the
-// passkey (ledger F346, SECURITY_MODEL.md's lockout paragraph).
+// landing session can turn Bluetooth off and delete every bond (ledger
+// F346, SECURITY_MODEL.md's lockout paragraph). The bond's confirm takes
+// bt_bearer_gated, the bearer alone, and a Passkey Entry's digits ride
+// GET /api/bluetooth only to a bearer (sweep F346).
 //
 // Mechanism: register_routes() stashes the API token pointer in a
-// module-local static, then wraps every real handler in the bt_auth_gated
-// function template. The trampoline runs api_auth_check + delegates;
+// module-local static, then wraps every real handler but the bond's confirm
+// in the bt_auth_gated function template (the confirm takes bt_bearer_gated,
+// below). The trampoline runs api_auth_check + delegates;
 // non-authenticated callers receive the standard 401 response that
 // api_auth_check writes back, and the real handler never runs.
 //
@@ -76,6 +79,20 @@ static esp_err_t bt_auth_gated(httpd_req_t* req) {
   // miswired caller doesn't lock itself out, but every in-tree caller
   // now supplies a real token (see canary_wap.ino).
   if (tok && !api_auth_check(req, tok)) return ESP_OK;
+  return Real(req);
+}
+
+// The bond's gate (sweep F346): POST /api/bluetooth/pair/confirm answers a
+// pending Numeric Comparison yes, and the bond it makes is a lasting key to
+// the authenticated characteristics (the Wi-Fi credentials write among
+// them). The landing page mints a session for any host on the network, so
+// the confirm takes the bearer alone (BOOT Tap Once or the pasted token on
+// the dashboard). No token registered: refused (an empty token takes no
+// bearer, F331), never the open behavior above.
+template<esp_err_t (*Real)(httpd_req_t*)>
+static esp_err_t bt_bearer_gated(httpd_req_t* req) {
+  const char* tok = auth_token_storage();
+  if (!api_auth_check_bearer(req, tok ? tok : "")) return ESP_OK;
   return Real(req);
 }
 
@@ -178,8 +195,25 @@ inline esp_err_t handle_bluetooth_status(httpd_req_t* req) {
   if (status.pairing.state != bluetooth_channel::PAIR_NONE) {
     JsonObject pair = doc["pairing"].to<JsonObject>();
     pair["state"] = bluetooth_channel::pairing_state_name(status.pairing.state);
+    // The digits ride only while they are live (sweep F346). A Numeric
+    // Comparison's are no secret (the phone computes the same six) and stay
+    // in every answer: the owner compares them. A Passkey Entry's are the
+    // bond (the phone types what this device shows, and nothing here
+    // confirms), so they ride only with the bearer, through the accounted
+    // grant every bearer compare takes (a wrong one is a strike against its
+    // address; a held address reads as no bearer, so it gets pin_hidden). A
+    // finished or failed pairing's are spent: neither key.
     if (status.pairing.pin_displayed) {
-      pair["pin"] = status.pairing.pin_code;
+      if (status.pairing.state == bluetooth_channel::PAIR_CONFIRMING) {
+        pair["pin"] = status.pairing.pin_code;
+      } else if (status.pairing.state == bluetooth_channel::PAIR_PIN_DISPLAYED) {
+        const char* tok = auth_token_storage();
+        if (tok != nullptr && api_auth_bearer_grant(req, tok)) {
+          pair["pin"] = status.pairing.pin_code;
+        } else {
+          pair["pin_hidden"] = true;
+        }
+      }
     }
     char addr[18];
     bluetooth_channel::format_address(status.pairing.peer_address, addr);
@@ -911,7 +945,7 @@ inline void register_routes(httpd_handle_t server, const char* api_token = nullp
   register_api_handler(server, "/api/bluetooth/scan/stop", HTTP_POST, bt_auth_gated<handle_bluetooth_scan_stop>);
   register_api_handler(server, "/api/bluetooth/pair/start", HTTP_POST, bt_auth_gated<handle_bluetooth_pair_start>);
   register_api_handler(server, "/api/bluetooth/pair/cancel", HTTP_POST, bt_auth_gated<handle_bluetooth_pair_cancel>);
-  register_api_handler(server, "/api/bluetooth/pair/confirm", HTTP_POST, bt_auth_gated<handle_bluetooth_pair_confirm>);
+  register_api_handler(server, "/api/bluetooth/pair/confirm", HTTP_POST, bt_bearer_gated<handle_bluetooth_pair_confirm>);
   register_api_handler(server, "/api/bluetooth/pair/reject", HTTP_POST, bt_auth_gated<handle_bluetooth_pair_reject>);
   register_api_handler(server, "/api/bluetooth/disconnect", HTTP_POST, bt_auth_gated<handle_bluetooth_disconnect>);
   register_api_handler(server, "/api/bluetooth/settings", HTTP_POST, bt_auth_gated<handle_bluetooth_settings_set>);

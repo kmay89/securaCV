@@ -891,9 +891,9 @@ static void apply_passkey_display(const Event& e) {
   g_pairing.state = PAIR_PIN_DISPLAYED;
   g_pairing.pin_displayed = true;
 
-  char pin_str[16];
-  snprintf(pin_str, sizeof(pin_str), "%06lu", (unsigned long)e.u.passkey.pin);
-  log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH, "Pairing PIN displayed", pin_str);
+  // No digits in the line (sweep F346, F191): the health log is every
+  // session's read (GET /api/logs) and durable on the SD card.
+  log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH, "Pairing PIN displayed", nullptr);
 
   if (g_pair_callback) {
     g_pair_callback(&g_pairing);
@@ -922,10 +922,8 @@ static void apply_confirm_passkey(const Event& e) {
   g_pairing.pin_displayed = true;
   g_pairing.user_confirmed = false;
 
-  char pin_str[16];
-  snprintf(pin_str, sizeof(pin_str), "%06lu", (unsigned long)e.u.passkey.pin);
   log_health(SCV_LOG_NOTICE, SCV_CAT_BLUETOOTH,
-             "BLE pairing PIN — awaiting user confirmation", pin_str);
+             "BLE pairing PIN — awaiting user confirmation", nullptr);
 
   if (g_pair_callback) {
     g_pair_callback(&g_pairing);

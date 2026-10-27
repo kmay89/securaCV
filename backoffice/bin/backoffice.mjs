@@ -7,6 +7,7 @@ import { loadConfig } from '../src/config.mjs';
 import { openDb } from '../src/db.mjs';
 import { setupOperator, createApiToken, revokeApiToken, totpUri, hasOperator, listUsers, inviteUser, userByEmail, setRole, setStatus, removeUser, ROLES, ROLE_TEXT } from '../src/auth.mjs';
 import { createApp } from '../src/server.mjs';
+import { verifyChain, securityText, lockdown, preflight } from '../src/integrity.mjs';
 import { startScheduler, runJob, JOBS } from '../src/jobs.mjs';
 import { loadCatalog } from '../src/modules/catalog.mjs';
 import { recordOrder, transition, listOrders, orderByNumber, fulfillCsv, timeline, addNote, setTags, batches } from '../src/modules/orders.mjs';
@@ -69,6 +70,8 @@ const HELP = `backoffice — the company in one SQLite file (${cfg.dbPath})
   token create <name> | token revoke <name>  API bearer tokens for the CLI/remote/an AI operator
   snapshot                                 the dashboard numbers as JSON
   doctor                                   the health checklist (exit 1 when a check fails) — same list as /health and the digest
+  verify [--anchor <id:mac>]              prove the audit chain (every row the one that was written, in order) and print the last 24 h; exit 1 on a break
+  lockdown [--why '…']                     every session ended, every API token revoked, every sign-in link spent — "I think I have been breached"
   version                                  which build this is (package version, commit, date) and which environment
   backup [--no-offsite]                    a checked copy (opened, integrity, books balanced), then off-site when BACKUP_S3_* is set
   backup check <file> [--live]            prove a copy boots; --live also compares row counts with the running database
@@ -185,6 +188,8 @@ const main = async () => {
       // BACKOFFICE_DEMO=1 on an empty database: seed itself, so a container is the whole demo.
       if (cfg.demo) { const r = await ensureDemo(db, cfg); if (r) console.log('[backoffice] demo mode: seeded', JSON.stringify(r)); }
       if (!hasOperator(db)) console.error('[backoffice] no owner yet — run `backoffice setup` in another shell; serving anyway');
+      // createApp ran the self-check and wrote it down; say it on the console too, where the first look after a deploy lands.
+      { const pf = JSON.parse(db.setting('boot:preflight') || '{"rows":[]}'); for (const r of pf.rows) if (r.ok === false) console.error(`[backoffice] self-check: ${r.key}: ${r.text}${r.fix ? ` → ${r.fix}` : ''}`); if (pf.ok) console.log(`[backoffice] self-check: ${pf.rows.length} checks pass (audit key ${db.auditKey?.source === 'BACKOFFICE_AUDIT_KEY' ? 'from the environment' : 'beside the database'})`); }
       const addr = await app.listen(); const stopScheduler = startScheduler(app);
       // The pid beside the database: `restore` refuses to replace a file a running server has open.
       try { writeFileSync(PID_FILE, String(process.pid)); } catch { /* read-only data dir: restore cannot check, serve still runs */ }
@@ -236,6 +241,15 @@ const main = async () => {
       const r = restore(args[0], dest); return out({ ...r, note: 'start `backoffice serve` again; the replaced file is kept beside the database until you delete it' });
     }
     case 'version': return out(`${describeBuild(cfg)} · ${cfg.env}`);
+    case 'verify': {
+      const v = verifyChain(db, { anchor: flags.anchor || null });
+      out(`audit chain: ${v.ok ? 'OK' : 'BROKEN'} — ${v.chained} rows chained${v.unchained ? `, ${v.unchained} from before the chain` : ''}${v.head ? ` · head ${v.head.id}:${v.head.mac}` : ''}${v.broken_at ? `\n  row ${v.broken_at}: ${v.reason}` : ''}${v.anchor ? `\n  anchor ${v.anchor.id}: ${v.anchor.ok ? 'still on the chain' : v.anchor.reason}` : ''}`);
+      const pf = preflight(db, cfg); out(`self-check: ${pf.ok ? 'OK' : 'FAILING'}\n${pf.rows.map(r => `  ${r.ok === true ? 'ok ' : r.ok === false ? '!! ' : '-- '} ${r.key}: ${r.text}${r.ok === false && r.fix ? `\n       → ${r.fix}` : ''}`).join('\n')}`);
+      out(''); out(securityText(db, cfg, { hours: Number(flags.hours || 24) }));
+      if (!v.ok || !pf.ok) process.exitCode = 1;
+      return;
+    }
+    case 'lockdown': { const r = lockdown(db, { actor: 'cli', why: flags.why || '' }); return out(`locked down: ${r.sessions} sessions ended, ${r.tokens.length} API tokens revoked (${r.tokens.join(', ') || 'none'}), ${r.links} sign-in links spent — sign in again with password + authenticator`); }
     case 'doctor': {
       const h = doctor(db, cfg); const ic = (ok) => ok === true ? 'ok ' : ok === false ? '!! ' : '-- ';
       out(`${cfg.env} · ${describeBuild(cfg)}\n${h.ok ? 'every check passes' : `${h.failing.length} failing`}\n` + h.checks.map(c => `  ${ic(c.ok)} ${c.label.padEnd(44)} ${c.detail}${c.ok === false && c.fix ? `\n        → ${c.fix}` : ''}`).join('\n'));

@@ -67,17 +67,27 @@ export function cidrMatcher(rules) {
 // A scanner: an address that collects misses (401, 403, 404) faster than a person could click. Sessions are
 // never blocked (a logged-in person with a stale bookmark is not a scanner); the public endpoints the website
 // and Stripe call are never blocked either, so a block is never a denial of service against the store.
+// With a database the blocks are written down (guard_blocks) and read back at boot, so a restart forgets no block;
+// the misses themselves stay in memory (a restart forgets a count, never a verdict).
 export class Watch {
-  constructor({ limit = 60, windowMs = 10 * 60_000, blockMs = 10 * 60_000 } = {}) { this.limit = limit; this.windowMs = windowMs; this.blockMs = blockMs; this.misses = new Map(); this.blocks = new Map(); }
+  constructor({ limit = 60, windowMs = 10 * 60_000, blockMs = 10 * 60_000, db = null } = {}) {
+    this.limit = limit; this.windowMs = windowMs; this.blockMs = blockMs; this.misses = new Map(); this.blocks = new Map(); this.db = db;
+    if (db) { try { for (const r of db.all('SELECT ip, until FROM guard_blocks WHERE until > ?', new Date().toISOString())) this.blocks.set(r.ip, Date.parse(r.until)); db.run('DELETE FROM guard_blocks WHERE until <= ?', new Date().toISOString()); } catch { /* before the table exists */ } }
+  }
   miss(ip, now = Date.now()) {
     const arr = (this.misses.get(ip) || []).filter(t => now - t < this.windowMs); arr.push(now); this.misses.set(ip, arr);
     if (this.misses.size > 10_000) this.misses.clear();
-    if (arr.length >= this.limit && !this.blocks.has(ip)) { this.blocks.set(ip, now + this.blockMs); return true; }   // true: a block just began
+    if (arr.length >= this.limit && !this.blocks.has(ip)) { this.block(ip, now, 'scanner'); return true; }   // true: a block just began
     return false;
   }
-  blocked(ip, now = Date.now()) { const until = this.blocks.get(ip); if (until == null) return false; if (until <= now) { this.blocks.delete(ip); this.misses.delete(ip); return false; } return true; }
+  block(ip, now = Date.now(), reason = 'scanner', ms = this.blockMs) {
+    const until = now + ms; this.blocks.set(ip, until);
+    if (this.db) { try { this.db.run('INSERT INTO guard_blocks (ip, until, reason, at) VALUES (?, ?, ?, ?) ON CONFLICT(ip) DO UPDATE SET until = excluded.until, reason = excluded.reason, at = excluded.at', ip, new Date(until).toISOString(), reason, new Date(now).toISOString()); } catch { /* the block still holds in memory */ } }
+    return until;
+  }
+  blocked(ip, now = Date.now()) { const until = this.blocks.get(ip); if (until == null) return false; if (until <= now) { this.blocks.delete(ip); this.misses.delete(ip); if (this.db) { try { this.db.run('DELETE FROM guard_blocks WHERE ip = ?', ip); } catch { /* gone */ } } return false; } return true; }
   list(now = Date.now()) { return [...this.blocks].filter(([, u]) => u > now).map(([ip, until]) => ({ ip, until: new Date(until).toISOString() })); }
-  clear() { this.misses.clear(); this.blocks.clear(); }
+  clear() { this.misses.clear(); this.blocks.clear(); if (this.db) { try { this.db.run('DELETE FROM guard_blocks'); } catch { /* gone */ } } }
 }
 
 // Has this person signed in from this network before? "Before" is the audit log: every login carries its address.

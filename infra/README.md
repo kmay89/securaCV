@@ -59,7 +59,8 @@ Actions, naming the build staging runs.
    ```
    That is `cloud-init.yaml` with your key and the ACME contact filled in. Read
    it; it is short.
-2. **Create the server** at any provider, Ubuntu 24.04, and paste the file as
+2. **Create the server** at any provider ([`DIGITALOCEAN.md`](DIGITALOCEAN.md) names every
+   screen there), Ubuntu 24.04, and paste the file as
    "user data" / "cloud-init". Give it a static IPv4. Point DNS `A` records at
    it for every hostname you will serve (`ops.example.com`, `demo.example.com`).
 3. **Wait for it** (three to five minutes), then `ssh ops@<ip>` and run
