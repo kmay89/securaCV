@@ -10,11 +10,20 @@
 # demand, for the catch-up and for a release whose refresh failed.
 #
 # .github/scripts/dev_channel.py does the deciding and the copying, the same
-# script firmware-release.yml runs: releases/latest's channel manifests are
-# copied, byte for byte, where fw-dev-latest carries something older, none at
-# all, or the same version in other bytes (a bring-up build of that version),
-# and a newer dev build is left alone. Pressing it twice writes nothing the
-# second time.
+# script firmware-release.yml runs: the source release's channel manifests
+# are copied, byte for byte, where fw-dev-latest carries something older,
+# none at all, or the same version in other bytes (a bring-up build of that
+# version, which the tagged catalog replaces), and a newer dev build is left
+# alone. Pressing it twice writes nothing the second time, unless a bring-up
+# at the source's version landed in between.
+#
+# The source is releases/latest unless the `source` input names a fw-v* tag.
+# That input finishes a dev or rc release whose own dev-channel step failed:
+# releases/latest is never that prerelease, and re-running the release job
+# stops at its tag-exists check. The script refuses a tag that is not
+# fw-v<version>, a release that is not published, and a source below stable
+# (it writes nothing then). The input reaches the script through the
+# environment, never spliced into the command.
 #
 # What it never does: move releases/latest, delete an asset (the old dev
 # factory images stay), or make fw-dev-latest anything but a prerelease. Every
@@ -24,7 +33,13 @@
 name: Refresh the dev channel (catch up to stable)
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "fw-v* tag to copy from (a dev or rc release whose dev-channel step failed). Blank = releases/latest, the catch-up"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -36,7 +51,7 @@ concurrency:
 
 jobs:
   refresh:
-    name: Copy stable's channel manifests where the dev channel is older
+    name: Copy a release's channel manifests where the dev channel is older
     runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
     permissions:
@@ -70,10 +85,20 @@ jobs:
           echo "latest=${latest}" >> "$GITHUB_OUTPUT"
           echo "releases/latest is ${latest}"
 
-      - name: Bring fw-dev-latest up to releases/latest where it is older
+      - name: Bring fw-dev-latest up to the source where it is older
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 .github/scripts/dev_channel.py --repo "$GITHUB_REPOSITORY"
+          SOURCE: ${{ inputs.source }}
+        run: |
+          set -euo pipefail
+          args=(--repo "$GITHUB_REPOSITORY")
+          if [ -n "$SOURCE" ]; then
+            args+=(--source "$SOURCE")
+            echo "source: ${SOURCE} (the input)"
+          else
+            echo "source: releases/latest"
+          fi
+          python3 .github/scripts/dev_channel.py "${args[@]}"
 
       # The hosted browser flasher reads fw-dev-latest from the site's own copy
       # (pages.yml mirrors it: a browser cannot fetch a release asset), and an

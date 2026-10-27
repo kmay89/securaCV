@@ -1128,6 +1128,23 @@ test("dev channel: the publishing workflow targets the tag the flashers read", (
   assert.match(wf, /prerelease:\s*true/,
     "the dev-channel publish step must mark the release a prerelease, or " +
     "releases/latest can drift off the firmware and the fleet stops seeing updates");
+  // The other writers spell the tag too: dev_channel.py (every firmware
+  // release, a tag rebuild, the Refresh button) and the button's own record
+  // and guard steps. A rename the readers took and these did not would keep
+  // every release writing the dev channel's manifests to a tag nothing reads,
+  // and the guard checking that same orphan, all green.
+  const script = read(join(ROOT, ".github/scripts/dev_channel.py"));
+  assert.match(script, new RegExp(`^DEV_TAG = "${tag}"$`, "m"),
+    `.github/scripts/dev_channel.py's DEV_TAG is not "${tag}", the tag the flashers read`);
+  const refresh = read(join(ROOT, ".github/workflows/dev-channel-refresh.yml"));
+  const paths = [...refresh.matchAll(/releases\/tags\/([A-Za-z0-9._${}-]+)/g)].map((m) => m[1]);
+  assert.ok(paths.length >= 1, "dev-channel-refresh.yml reads fw-dev-latest by releases/tags/<tag>");
+  for (const p of paths) {
+    assert.strictEqual(p, tag, `dev-channel-refresh.yml reads releases/tags/${p}, not the flashers' ${tag}`);
+  }
+  for (const [t] of refresh.matchAll(/\bfw-dev-[A-Za-z0-9-]+/g)) {
+    assert.strictEqual(t, tag, `dev-channel-refresh.yml names ${t}, not the flashers' ${tag}`);
+  }
 });
 
 test("dev channel: every flasher says where it stands against its pin from the two trains, in the same words", async () => {

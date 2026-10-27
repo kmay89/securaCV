@@ -368,6 +368,33 @@ class Sync(unittest.TestCase):
             run(fake)
         self.assertEqual(fake.writes(), [])
 
+    def test_a_dev_release_refused_by_a_race_is_finished_by_the_button_with_its_tag(self):
+        # The release's own step cannot be re-run (its version step refuses
+        # the tag it just created), and the button's default source,
+        # releases/latest, is never the prerelease. So the refusal names the
+        # button with this run's source, and a run with that source finishes it.
+        fake = world(dev_today(), extra={"fw-v2.4.18-dev.1": firmware_release("2.4.18-dev.1")})
+        landed = []
+
+        def bring_up_once(argv):
+            if not landed and argv[2] == "fw-v2.4.18-dev.1" and "manifest-canary-wap.json" in argv:
+                landed.append(True)
+                fake.releases[dc.DEV_TAG]["assets"]["manifest-flash.json"] = json.dumps(
+                    {"fw_train": "2.4.17"}).encode()
+        fake.on_download = bring_up_once
+        with redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(dc.main(["--repo", SLUG, "--source", "fw-v2.4.18-dev.1"], fake), 1)
+        self.assertIn("Run it again: Actions → Refresh the dev channel, with source fw-v2.4.18-dev.1",
+                      out.getvalue())
+        self.assertIn("tag-exists check", out.getvalue())
+        self.assertEqual(fake.writes(), [])
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(dc.main(["--repo", SLUG, "--source", "fw-v2.4.18-dev.1"], fake), 0)
+        dev = fake.releases[dc.DEV_TAG]["assets"]
+        self.assertEqual(json.loads(dev["manifest-canary.json"])["version"], "2.4.18-dev.1")
+        self.assertEqual(json.loads(dev["manifest-flash.json"])["fw_train"], "2.4.18-dev.1")
+        self.assertEqual(fake.latest, "fw-v2.4.17", "releases/latest never moves")
+
     def test_latest_off_the_firmware_refuses_before_anything(self):
         fake = world(dev_today(), latest="flasher-v0.12.2")
         with self.assertRaisesRegex(dc.Refusal, "not a firmware release"):
@@ -592,10 +619,22 @@ class Wiring(unittest.TestCase):
         overlay = next(s for s in steps if s.get("name") == "Apply the tooling overlay")
         self.assertIn("cp _tooling/.github/scripts/dev_channel.py .github/scripts/dev_channel.py", overlay["run"])
 
-    def test_the_button_refreshes_from_latest_then_guards(self):
+    def test_the_button_refreshes_from_latest_or_the_named_tag_then_guards(self):
+        wf = yaml.safe_load((REPO / ".github/workflows/dev-channel-refresh.yml").read_text(encoding="utf-8"))
+        # PyYAML reads the bare key `on` as True.
+        source = (wf.get("on") or wf[True])["workflow_dispatch"]["inputs"]["source"]
+        self.assertEqual(source["type"], "string")
+        self.assertFalse(source["required"])
+        self.assertEqual(source["default"], "", "blank must mean releases/latest, the catch-up")
         steps = self.steps("dev-channel-refresh.yml", "refresh")
         call = next(s for s in steps if "dev_channel.py" in s.get("run", ""))
-        self.assertNotIn("--source", call["run"])
+        # The input reaches the script through the environment, never spliced
+        # into the command, and only when it is set.
+        self.assertEqual(call["env"]["SOURCE"], "${{ inputs.source }}")
+        for s in steps:
+            self.assertNotIn("${{", s.get("run", ""), f"{s.get('name')}: an expression inside run:")
+        self.assertRegex(call["run"], r'if \[ -n "\$SOURCE" \]; then\s+args\+=\(--source "\$SOURCE"\)')
+        self.assertIn('python3 .github/scripts/dev_channel.py "${args[@]}"', call["run"])
         self.assertTrue(any("gh workflow run pages.yml" in s.get("run", "") for s in steps))
         guard = steps[-1]
         self.assertEqual(guard.get("if"), "success() || failure()")

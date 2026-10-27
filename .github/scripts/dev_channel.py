@@ -10,7 +10,8 @@ so the dev channel held no per-product manifest at all (a Canary on it got a
 (.github/RELEASE_LESSONS.md, 2026-10-27).
 
 So every firmware release, stable or dev, runs this with its own tag,
-**Actions → Refresh the dev channel** runs it with `releases/latest`, and a
+**Actions → Refresh the dev channel** runs it with `releases/latest` (or the
+tag its `source` input names: a dev release whose own run failed here), and a
 Flasher Factory Images rebuild of a tag runs it with that tag. It copies the
 source release's channel manifests to `fw-dev-latest`, byte for byte, when the
 dev channel carries something older:
@@ -45,7 +46,8 @@ fw-dev-latest anything but a prerelease, or move `releases/latest`. Every
 create and edit passes `--prerelease --latest=false`, and it fails unless
 `releases/latest` names the same fw-v* release afterwards as before. It
 writes nothing if `releases/latest` or fw-dev-latest's markers moved while it
-was deciding (another writer got there first; run it again).
+was deciding (another writer got there first; run it again, through the
+button's `source` input when the source was a release's own tag).
 
     python3 .github/scripts/dev_channel.py --repo owner/name [--source fw-vX.Y.Z] [--dry-run]
     python3 .github/scripts/dev_channel.py --repo owner/name --check-train X.Y.Z
@@ -77,6 +79,11 @@ SUMS = "sha256sums.txt"
 FLAGSHIP = "manifest-canary.json"
 PRODUCT_GLOB = "manifest-canary*.json"
 REQUIRED = (FLASH, INDEX, SUMS, FLAGSHIP)
+# A run that wrote nothing because another writer moved first is redone with
+# the button and this run's source. A firmware release's own run cannot be
+# re-run: its version step refuses the tag the run just created.
+AGAIN = ("Run it again: Actions → Refresh the dev channel, with source {source} "
+         "(re-running a release's job stops at its tag-exists check)")
 
 
 class Refusal(Exception):
@@ -415,7 +422,7 @@ def sync(gh: GitHub, source: str | None = None, dry_run: bool = False,
         now = gh.latest_tag()
         if now != latest:
             raise Refusal(f"releases/latest moved from {latest} to {now} while this run was "
-                          f"deciding, so nothing was written. Run it again")
+                          f"deciding, so nothing was written. {AGAIN.format(source=source)}")
         again = gh.release(DEV_TAG)
         moved = (again is None) != (dev is None) or [m for m in markers if m in _names(again)] != on_dev
         if not moved and on_dev:
@@ -424,7 +431,7 @@ def sync(gh: GitHub, source: str | None = None, dry_run: bool = False,
                         for m in on_dev)
         if moved:
             raise Refusal(f"{DEV_TAG} changed while this run was deciding (another writer got "
-                          f"there first), so nothing was written. Run it again")
+                          f"there first), so nothing was written. {AGAIN.format(source=source)}")
         # The body goes first: it says where this run takes the channel, and a
         # run cut short after it is redone whole by the next (the markers are
         # still the old ones), body included. Each group's marker goes up last,
