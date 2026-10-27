@@ -21397,7 +21397,7 @@ so — see D2 below.)
   macOS section still blames "the missing Apple notarization" and wants the
   same rewrite. A13 can be re-read against these two releases. Found by the
   2.4.16 release audit (2026-10-10).
-- [ ] **A115 [human] Paste corrected bodies into five published releases.**
+- [x] **A115 [human] Paste corrected bodies into five published releases.**
   The change that filed this item corrects text the 2.4.16 train had
   already published, and a published release body does not follow its
   source; the session that made the fix cannot edit releases. Once it is on
@@ -21431,6 +21431,13 @@ so — see D2 below.)
   drift. The edit passes `--latest` explicitly and the run fails unless
   `releases/latest` and the asset list are unchanged. Done when the five
   runs are green.
+  *Done (2026-10-27, after #1886):* the button ran once per tag from
+  `main`, one at a time (its concurrency group would cancel a queued
+  second run): `fw-v2.4.16`, `flasher-v0.12.0`, `flasher-v0.12.1`,
+  `app-v0.3.0`, `app-v0.3.1`, all five green. Each body read back through
+  the API equals the one `release_body.py` composes (118,811, 3,657,
+  1,469, 2,963 and 1,538 characters), each tag kept its asset count, and
+  `releases/latest` is still `fw-v2.4.17`.
 
 ---
 
