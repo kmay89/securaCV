@@ -367,6 +367,12 @@ def test_broker_text_is_bounded_and_never_stringified() -> None:
     assert _device(hass, "nul01").sw_version == "2.4.16"
     _publish(hass, "nul02", "status", {"online": True, "device_name": "Front \x00 gate"})
     assert _device(hass, "nul02").name == "Front gate"
+    # Whitespace that does not print (a newline, a tab) is still whitespace:
+    # it becomes one space, never nothing.
+    _publish(hass, "nl01", "status", {"online": True, "device_name": "Front\ngate"})
+    assert _device(hass, "nl01").name == "Front gate"
+    _publish(hass, "tab01", "health", {"firmware_version": "2.4.16\tbeta"})
+    assert _device(hass, "tab01").sw_version == "2.4.16 beta"
 
     # A cut that lands on a space leaves no trailing space.
     _publish(hass, "cut01", "health", {"firmware_version": "1" * 63 + " 2.4.16"})

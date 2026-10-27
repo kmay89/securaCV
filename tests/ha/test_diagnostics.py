@@ -5,29 +5,55 @@ from __future__ import annotations
 import json
 import re
 
+import pytest
+from cryptography.hazmat.primitives.asymmetric import ed25519
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
 from pytest_homeassistant_custom_component.components.diagnostics import get_diagnostics_for_config_entry
+from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator, MqttMockHAClient
 
 from conftest import (
     CLAIM_NONCE,
     KERNEL_DEVICE_ID,
     KERNEL_HOST,
+    KERNEL_URL,
     PAIRED_TOKEN,
     PAIRED_TOKEN_ID,
     KernelMock,
+    SigningKernel,
     bridge_event,
     canary_device,
+    make_kernel_entry,
 )
-from custom_components.securacv.const import CONF_TOKEN_FILE
+from custom_components.securacv import repairs
+from custom_components.securacv.const import CONF_TOKEN_FILE, DOMAIN, ISSUE_TOFU_MISMATCH
 from custom_components.securacv.diagnostics import TO_REDACT
 
 CANARY = "canary-kitchen-01"
-CANARY_KEY = "11" * 32
+# Its fingerprint is 055f1b11f6ef323a: a hex letter in every run of four.
+# The dump's bucket starts are the clock's decimal digits, so with a run of
+# four digits in the fingerprint the scan below failed whenever the current
+# bucket start spelled it (it did with "11" * 32, abd93943326cbd12).
+CANARY_KEY = "77" * 32
 CANARY_IP = "192.168.4.77"
 CANARY_NAME = "Kitchen cam"
+# The kernel's key, fixed for this module: the dump carries the kernel's own
+# eight-character fingerprint, and a key drawn fresh for each test shares
+# four characters with the Canary's fingerprint in about one run in a
+# thousand, which the scan below would read as a leak.
+KERNEL_PRIVATE_KEY = bytes([0x42]) * 32
+
+
+@pytest.fixture
+def kernel(aioclient_mock: AiohttpClientMocker) -> KernelMock:
+    """The lane's kernel, signing with the module's fixed key."""
+    return KernelMock(
+        aioclient_mock, SigningKernel(private=ed25519.Ed25519PrivateKey.from_private_bytes(KERNEL_PRIVATE_KEY))
+    )
 
 
 async def test_no_seeded_secret_survives_the_dump(
@@ -111,8 +137,13 @@ async def test_no_seeded_secret_survives_the_dump(
     assert "fingerprint" not in diagnostics["trust"][shown]
     assert re.fullmatch(r"[g-hj-km-np-tv-z]{4}-[g-hj-km-np-tv-z]{4}", diagnostics["trust"][shown]["key_correlation_id"])
     canary_fingerprint = entry.runtime_data.trust_store.get(CANARY).fingerprint_hex.lower()
-    for start in range(len(canary_fingerprint) - 3):
-        assert canary_fingerprint[start : start + 4] not in dump.lower()
+    windows = [canary_fingerprint[start : start + 4] for start in range(len(canary_fingerprint) - 3)]
+    # What lets a match mean a leak and nothing else: no run of four can be
+    # spelled by a bucket start's digits, or by the kernel's fingerprint.
+    assert all(re.search("[a-f]", window) for window in windows), canary_fingerprint
+    assert not [window for window in windows if window in kernel.kernel.fingerprint], kernel.kernel.fingerprint
+    for window in windows:
+        assert window not in dump.lower(), window
     assert diagnostics["platforms_loaded"] == ["sensor", "binary_sensor", "event", "button"]
     assert diagnostics["chain_verification"]["ok"] is True
     assert "head_hash" not in diagnostics["chain_verification"]
@@ -150,6 +181,32 @@ async def test_the_dump_shows_the_firmware_the_device_page_shows(
     assert row["device_type"] == "canary-sense"
 
 
+async def test_a_canary_heard_only_on_health_has_a_row(
+    hass: HomeAssistant,
+    kernel: KernelMock,
+    mqtt_mock: MqttMockHAClient,
+    setup_kernel_entry,
+    hass_client: ClientSessionGenerator,
+) -> None:
+    """A health that pins the Canary's key and reports its version makes the
+    device page before any status does; the dump gives that Canary a row
+    with the page's version, and a trust row with a correlation id."""
+    entry = await setup_kernel_entry(enable_mqtt=True)
+    async_fire_mqtt_message(
+        hass, f"securacv/{CANARY}/health", json.dumps({"public_key": CANARY_KEY, "firmware_version": "2.4.16"}), qos=1, retain=True
+    )
+    await hass.async_block_till_done()
+
+    diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+    page = canary_device(hass, entry, CANARY)
+    assert page is not None and page.sw_version == "2.4.16"
+    assert diagnostics["canary_device_count"] == 1
+    (shown,) = diagnostics["canary_devices"]
+    assert diagnostics["canary_devices"][shown]["firmware"] == "2.4.16"
+    assert diagnostics["trust"][shown]["pinned"] is True
+    assert re.fullmatch(r"[g-hj-km-np-tv-z]{4}-[g-hj-km-np-tv-z]{4}", diagnostics["trust"][shown]["key_correlation_id"])
+
+
 def test_an_identifier_key_is_replaced_wherever_it_lands() -> None:
     """The second net on the core's own async_redact_data: a value under any
     of the identifier keys a Canary's answers use, at any depth, comes out
@@ -178,3 +235,40 @@ def test_an_identifier_key_is_replaced_wherever_it_lands() -> None:
         "7e:11:22:33:44:55",
     ):
         assert value not in text, value
+
+
+async def test_the_download_carries_every_issue_the_domain_holds(
+    hass: HomeAssistant,
+    kernel: KernelMock,
+    setup_kernel_entry,
+    hass_client: ClientSessionGenerator,
+) -> None:
+    """What the security docs and the setup guide say of the downloaded
+    file's `issues` section, held to the core (ledger F399): Home Assistant
+    adds every issue its registry holds for the domain, outside this
+    integration's sweep. One the owner ignored is still there, so is one
+    another entry raised, and each carries the time it was raised."""
+    entry = await setup_kernel_entry()
+    other = make_kernel_entry(unique_id="kernel_pwk_other")
+    other.add_to_hass(hass)
+    for raised_by in (entry, other):
+        repairs.async_report_tofu_mismatch(
+            hass,
+            raised_by,
+            pinned_fingerprint=kernel.kernel.fingerprint,
+            received_fingerprint="0badc0de",
+            received_key="cc" * 32,
+            url=KERNEL_URL,
+        )
+    ignored = repairs.issue_id(ISSUE_TOFU_MISMATCH, entry)
+    ir.async_ignore_issue(hass, DOMAIN, ignored, True)
+    await hass.async_block_till_done()
+
+    assert await async_setup_component(hass, "diagnostics", {})
+    client = await hass_client()
+    response = await client.get(f"/api/diagnostics/config_entry/{entry.entry_id}")
+    assert response.status == 200
+    issues = {issue["issue_id"]: issue for issue in (await response.json())["issues"]}
+    assert issues[ignored]["dismissed_version"] is not None
+    assert repairs.issue_id(ISSUE_TOFU_MISMATCH, other) in issues
+    assert all(issue["created"] for issue in issues.values())

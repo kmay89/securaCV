@@ -754,8 +754,10 @@ replaced. A Canary's key fingerprint keeps none of its digits: each pinned
 Canary gets a correlation id, a keyed hash of the fingerprint under a salt
 drawn for that one dump, which links rows of the same dump and nothing
 else. The sweep covers what the integration returns, not the whole file:
-Home Assistant adds the integration's open Repairs issues to the download
-itself, unswept: the id of each issue about the entry ends in the entry
+Home Assistant adds to the download itself, unswept, every Repairs issue it
+holds for the integration, the ones the owner ignored and those of the
+integration's other entries included, each with the time it was raised to
+the microsecond. The id of each issue about an entry ends in that entry's
 id, and a kernel key-mismatch issue carries the kernel's URL with its host
 and the whole key it served (sweep F399, open). None of them names a
 Canary.

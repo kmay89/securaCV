@@ -15,10 +15,12 @@ an identifier the owner did not mean to publish (THREAT_MODEL.md principle
      identifiers), so a value that reaches the dump through a path this
      file did not foresee is still replaced.
 
-Both layers cover what this function returns. Home Assistant adds the
-integration's open Repairs issues to the downloaded file itself, outside
-them (ledger F399): an entry-scoped issue id ends in the entry id, and a
-kernel key-mismatch issue carries the kernel's URL and the key it served.
+Both layers cover what this function returns. Home Assistant adds every
+Repairs issue it holds for the integration to the downloaded file itself,
+outside them (ledger F399): the ones the owner ignored and those of the
+integration's other entries too, each with the time it was raised. An
+entry-scoped issue id ends in the entry id, and a kernel key-mismatch issue
+carries the kernel's URL and the key it served.
 
 A Canary's key fingerprint carries none of its digits into the dump. Until
 the canary-wap stops serving it, the whole fingerprint is readable by anyone
@@ -137,8 +139,9 @@ def _shown_ids(device_ids: Iterable[str]) -> dict[str, str]:
     Ids that share those characters (two canary-wap units, `canary-s3-…`;
     a Sense and a Sentinel, `canary_s…`) each get a per-dump ordinal after
     them, numbered in the order the runtime recorded them (the Canary
-    records, then any id only verification has seen), so no row replaces
-    another and no further character of an id is shown.
+    records, then any Canary only its health has given a device page, then
+    any id only verification has seen), so no row replaces another and no
+    further character of an id is shown.
     """
     ids = list(dict.fromkeys(device_ids))
     prefix = {device_id: _truncated(device_id) or device_id for device_id in ids}
@@ -340,10 +343,17 @@ async def async_get_config_entry_diagnostics(
     devices_info: dict[str, Any] = {}
     trust_info: dict[str, Any] = {}
     correlation_id = _correlation_ids()
-    shown_ids = _shown_ids([*runtime.devices, *runtime.verify]) if runtime is not None else {}
+    # A row for every Canary heard this run: the status and availability
+    # records, then any Canary whose device page only its health has written
+    # (a health that reports a version makes the page before any status).
+    canary_ids: list[str] = []
+    shown_ids: dict[str, str] = {}
     if runtime is not None:
-        for device_id, device in runtime.devices.items():
+        canary_ids = list(dict.fromkeys([*runtime.devices, *runtime.canary_registry]))
+        shown_ids = _shown_ids([*canary_ids, *runtime.verify])
+        for device_id in canary_ids:
             shown = shown_ids[device_id]
+            device = runtime.devices.get(device_id)
             devices_info[shown] = _canary_shape(
                 device if isinstance(device, dict) else {},
                 canary_registry_facts(entry, device_id),

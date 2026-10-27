@@ -4322,7 +4322,14 @@ so — see D2 below.)
   kernel key's own eight-character fingerprint is unchanged. The stub suite
   asserts that no run of four of the fingerprint's characters, in either case,
   appears anywhere in the dump, and the real-core dump test does the same for
-  a TOFU-pinned Canary; both fail on the dump as it was. The rule "two
+  a TOFU-pinned Canary; both fail on the dump as it was. The real-core test's
+  Canary key has a hex letter in every four-character run of its
+  fingerprint and its kernel key is fixed, and it asserts both, so neither
+  a bucket start's digits nor the kernel's own fingerprint can spell a run
+  (with the first key, `abd93943326cbd12`, it failed in 246 of the 157,680
+  bucket starts of the three years from 2026-10-27, and a kernel key drawn
+  fresh per test shares a run with the Canary's about once in a thousand
+  runs). The rule "two
   Canaries pinned to one key share an id" could not be seen for many pairs,
   because the dump keyed each Canary's rows by eight characters of its id and
   many ids share them (every canary-wap unit is `canary-s3-…` or
@@ -4338,7 +4345,11 @@ so — see D2 below.)
   was; `test_a_canary_only_verification_has_seen_has_a_row` gives an id
   that only verification has seen (a retained chain or counts publish
   verified before the status) a row of its own, numbered after the device
-  records. The dump's per-Canary `firmware` and `hardware` are the device
+  records. A Canary heard only on health, whose version gives it a device
+  page before any status does, has a row and a trust row too, numbered
+  after the status records (`test_a_canary_heard_only_on_health_has_a_row`,
+  in both suites; both fail on the dump as it was, which had no row for
+  it). The dump's per-Canary `firmware` and `hardware` are the device
   page's own (`entity.canary_registry_facts`), so within a run a later
   status that leaves a fact out no longer makes them disagree with the page;
   after a restart the dump shows only what each Canary has published since,
@@ -4352,26 +4363,40 @@ so — see D2 below.)
   are outside the sweep (F399). Host-tested in both Home Assistant lanes.
 - [ ] **F399 [code] Home Assistant's diagnostics download carries the
   integration's Repairs issues outside the redaction sweep.**
-  Home Assistant's diagnostics view adds every open issue of the
-  integration's domain to the downloaded file itself, beside the data
-  `async_get_config_entry_diagnostics()` returns and outside its
-  `async_redact_data` (`homeassistant/components/diagnostics/__init__.py:288-294`
-  at 2026.10.1), and a persistent issue's `to_json()` includes its `data`
-  and `translation_placeholders` (`homeassistant/helpers/issue_registry.py:74-97`).
+  Home Assistant's diagnostics view adds every issue its registry holds
+  for the integration's domain to the downloaded file itself, beside the
+  data `async_get_config_entry_diagnostics()` returns and outside its
+  `async_redact_data`, filtering on the domain and nothing else
+  (`homeassistant/components/diagnostics/__init__.py:288-294` at 2026.10.1;
+  the same filter at 2026.5.0); a persistent issue's `to_json()` includes
+  its `data` and `translation_placeholders`, and every issue's includes
+  `created`, the time it was raised to the microsecond
+  (`homeassistant/helpers/issue_registry.py:74-97`). So the file carries an
+  issue the owner ignored (ignoring sets `dismissed_version` and keeps the
+  rest, `:227-250`), the issues of the domain's other entries, and the
+  record a non-persistent issue leaves after a restart until it is raised
+  or deleted again (its id and `created` only, `:288-303`).
   `custom_components/securacv/repairs.py` ends every entry-scoped issue id
   in the entry id (`issue_id()`, `:73-75`), and
   `async_report_tofu_mismatch()` (`:126-155`), a persistent issue, puts the
   kernel's URL, host included, in its placeholders and its data, and the
   whole served key in its data, where `TofuMismatchRepairFlow` reads it back
-  (`:259`). So a posted dump of an entry with a key-mismatch issue open
-  carries a host, a key and the entry id, the classes `TO_REDACT` keeps out
+  (`:259`). So a posted dump of an entry with a key-mismatch issue, open or
+  ignored, or of any entry of the domain while another entry has one,
+  carries a host, a key and an entry id, the classes `TO_REDACT` keeps out
   of the integration's own data. It predates device-details PR 2 and is
   about the kernel: no issue names a Canary. Fix: keep the host and the key
   out of issue data and placeholders (the fix flow then needs the served
   key from somewhere else), or redact them there, and hold the whole
   downloaded file, issues included, to the redaction rule in the real-core
-  lane. From a real-core download (2026.10.1) in device-details PR 2's
-  second review; filed by #<PR>, 2026-10-26.
+  lane, with an ignored issue and another entry's issue among its cases: a
+  fix tested only on the open issues of the entry being downloaded would
+  pass with both still in the file.
+  `test_the_download_carries_every_issue_the_domain_holds` (real core)
+  holds that scope today. From a real-core download (2026.10.1) in
+  device-details PR 2's second review; filed by #<PR>, 2026-10-26, its
+  scope (ignored issues, other entries' issues) corrected by the third
+  review, 2026-10-27.
 
 ### Parity & sub-projects
 

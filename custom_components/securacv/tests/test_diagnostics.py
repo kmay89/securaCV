@@ -295,6 +295,40 @@ def test_a_canary_only_verification_has_seen_has_a_row() -> None:
     assert "Kx22" not in repr(diag)
 
 
+def test_a_canary_heard_only_on_health_has_a_row() -> None:
+    """A health that reports a version makes the Canary's device page before
+    any status does, so the dump gives it a row too: the page's version, and
+    its trust row, numbered after the status records when it shares their
+    eight characters. A health with no version makes no page and no row."""
+    hass = HomeAssistant()
+    fingerprints = {"canary-s3-aB72": "aabbccdd11223344", "canary-s3-xQ32": "99887766deadbeef"}
+    entry = _entry_with_kernel(hass, devices={}, fingerprints=fingerprints)
+    _publish(hass, entry, "canary-s3-aB72", "status", STATUS)
+    _publish(hass, entry, "canary-s3-xQ32", "health", {"firmware_version": "2.4.16"})
+    _publish(hass, entry, "health02", "health", {"free_heap": 120000})
+
+    diag = _diag(hass, entry)
+    registry = device_registry(hass)
+    page = registry.async_get_device(identifiers={(DOMAIN, "canary_canary-s3-xQ32")})
+    assert page is not None and page.sw_version == "2.4.16"
+    assert registry.async_get_device(identifiers={(DOMAIN, "canary_health02")}) is None
+    assert diag["canary_device_count"] == 2
+    assert diag["canary_devices"]["canary-s… #2"] == {
+        "online": None,
+        "firmware": "2.4.16",
+        "hardware": None,
+        "device_type": None,
+        "last_event_type": None,
+    }
+    assert diag["trust"]["canary-s… #2"]["pinned"] is True
+    assert CORRELATION_ID.fullmatch(diag["trust"]["canary-s… #2"]["key_correlation_id"])
+    assert set(diag["trust"]) == set(diag["canary_devices"])
+    text = repr(diag)
+    assert "xQ32" not in text and "health02" not in text
+    for window in _windows(fingerprints["canary-s3-xQ32"]):
+        assert window not in text.lower(), window
+
+
 def test_the_dump_shows_what_the_device_page_shows() -> None:
     """The per-Canary firmware is the device page's: the health topic's
     version over the status's, kept through a last will that carries none.

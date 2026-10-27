@@ -67,16 +67,21 @@
   (`canary-s… #1`, `canary-s… #2`), numbered in the order the integration
   recorded them, an id only verification has seen (a retained chain or
   counts publish verified before the status) after the device records; no
-  ninth character is shown. The per-Canary `firmware` and `hardware` are
+  ninth character is shown. A Canary heard only on health, whose version
+  gives it a device page before any status does, now has a row too (and a
+  trust row when its key is pinned); before, the dump had none for it. The
+  per-Canary `firmware` and `hardware` are
   the device page's own (the version health reported, else the status's,
   and the board the status last named), so within a run they no longer
   disagree with the page once a later status leaves a fact out; after a
   restart the dump shows only what each Canary has published since, while
   the page keeps the version, board and address the registry stored. The
-  file Home Assistant downloads also carries the integration's open Repairs
-  issues, which it adds outside the sweep: an entry-scoped issue id ends in
-  the entry id, and a kernel key-mismatch issue carries the kernel's URL
-  and the key it served. None names a Canary. That predates this change
+  file Home Assistant downloads also carries every Repairs issue it holds
+  for the integration, which it adds outside the sweep: the ones the owner
+  ignored and those of the integration's other entries too, each with the
+  time it was raised. An entry-scoped issue id ends in the entry id, and a
+  kernel key-mismatch issue carries the kernel's URL and the key it served.
+  None names a Canary. That predates this change
   and is filed as F399; the security docs and the setup guide now say so.
 - **Tests.** `test_device_registry_versions.py` (new) drives the
   integration's own subscriptions with each family's status and health
@@ -102,15 +107,25 @@
   health-first Canary taking its status's name, and an update keeping the
   board and the address. `test_diagnostics.py` also keeps two canary-wap
   units, a Sense and a Sentinel in rows of their own, the two units'
-  correlation ids equal, and gives an id only verification has seen a row.
+  correlation ids equal, and gives an id only verification has seen a row,
+  and both suites give a Canary heard only on health one. The real-core
+  dump test's Canary key has a hex letter in every four-character run of
+  its fingerprint, and its kernel key is fixed: with the old key the scan
+  failed whenever the clock's bucket start spelled one of the fingerprint's
+  all-digit runs (246 of the 157,680 bucket starts in the three years from
+  2026-10-27), and a kernel key drawn fresh for each test shares four
+  characters with the Canary's fingerprint about once in a thousand runs.
+  The test asserts both preconditions. A real-core test holds what the
+  docs now say of the downloaded file's issues: an ignored issue and
+  another entry's are both in it.
   Every WAP id in the tests is one the WAP's suffix recipe can print, as
   `scripts/tests/test_wap_name_examples.py` requires. `python.yml` now
   also watches the eleven files outside its trees that the stub suite
   already read (the dictionary, the voice sentences, the seven contract
   vectors, and the viewer's verify and zip cores), found by
   `scripts/check_path_filter_reads.py`. The stub suite passes on Python
-  3.11 and 3.13 (942 tests) and the real-core lane on Home Assistant
-  2026.5.0 and 2026.10.1 (112 each). Host-tested; not run against a device
+  3.11 and 3.13 (943 tests) and the real-core lane on Home Assistant
+  2026.5.0 and 2026.10.1 (114 each). Host-tested; not run against a device
   or a live broker.
 ### Dependency advisories of 2026-10-19 to -23: the TLS roots and verifier, two constant-time crates, and body-parser (Dependency Audit #330)
 
