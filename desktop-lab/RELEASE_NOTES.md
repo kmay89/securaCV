@@ -16,7 +16,7 @@ version, newest first. Same contract as the Flasher's
 
 Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
-## 0.3.3 — 2026-10-27
+## 0.3.3 — 2026-10-28
 
 **The 2.4.18 firmware catalog is baked in, and the Flash page refuses an
 image the board could not start before anything is written.**
@@ -40,7 +40,7 @@ image the board could not start before anything is written.**
   the release this app carries (newer, the same version, or older), and its
   checkbox no longer calls it ahead of stable.
 - **The enclosure tab explains more of each case.** 21 on/off options that
-  showed a bare name (such as `opt_btn`) now say what they do, and 133 more
+  showed a bare name (such as `opt_btn`) now say what they do, and 130 more
   knobs in the parameter list carry help, 38 of them listed for the first
   time. No part changed shape.
 - **The display benches run 2.4.18's firmware.** The first meeting's speech

@@ -17,7 +17,7 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
-## 0.12.3 — 2026-10-27
+## 0.12.3 — 2026-10-28
 
 **The 2.4.18 firmware catalog is baked in, a board on 2.4.18 says what it
 runs, and an image laid out for another chip is refused before anything is
@@ -45,9 +45,10 @@ written.**
   chip loads its bootloader from, where the image has one if it does, and
   that nothing was written. SecuraCV's images are laid out right from 2.4.18
   on.
-- **The fake-capacity check reads 8 KB, not 4,** so a correctly installed
-  classic ESP32 no longer reads as blank, and a smaller chip sold as a
-  bigger one is caught there too.
+- **The fake-capacity check reads 8 KB, not 4,** when the Flasher takes its
+  safety copy, so a correctly installed classic ESP32 no longer reads as
+  blank, and a smaller chip sold as a bigger one is caught there too.
+  Host-tested.
 - **After *Read its security fuses* on an S3, C3 or C6, the board waits in
   download mode.** A good read no longer ends by restarting the board into
   its own firmware: install, or unplug it. On a native-USB board it enters

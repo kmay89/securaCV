@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [2.4.18] - 2026-10-27
+## [2.4.18] - 2026-10-28
 
 > **Before you update.** Canary WAP: save its recovery kit first. After setup, a Wi-Fi change, a reboot, a vault key or a pairing takes its API token.
 > Canary WAP Opera: update both units before pairing them.
@@ -16,51 +16,55 @@
     (including its recovery network `SecuraCV-wap-XXXX`): joining a Wi-Fi
     network, standalone mode, disconnect and Remove credentials, registering
     a vault key, the Bluetooth and Opera pairing confirms, Reboot and Retry
-    full boot. The dashboard asks for the token at each one: paste it (it is
-    in the recovery kit) or use BOOT Tap Once. Save the recovery kit
-    (Settings → Device) before updating a unit you cannot easily reach. If
-    the router changes, rejoining from the recovery network now takes the
-    token or a BOOT tap. To change networks, use Connect, not Remove
-    credentials: Connect keeps the broker login. The iPhone app's fleet
-    Wi-Fi update already sends the token and keeps working; Home Assistant
-    0.9.0 calls none of these.
-  - **Canary WAP, after it updates:** what a landing-page session changed
-    before 2.4.18 stays. On the Sealed Alarm Snapshots card, compare the key
-    id with your own key's id; if they differ, Remove, Register yours, then
-    turn its triggers back on (Remove turns them all off). Remove any entry
-    you do not recognize under Settings → Bluetooth → Paired Devices and
-    under Opera Members. If the unit was ever moved to a network you did not
-    choose, use Remove credentials (it asks for the token): it clears every
-    saved network and, new in 2.4.18, the stored MQTT username and password
-    (the broker address and the rest stay). Set the unit up again, then
-    retype the broker login on `/mqtt`; until you do, Home Assistant does
+    full boot. The dashboard asks for the token at each one it offers
+    (after setup it has no standalone button): paste it (it is in the
+    recovery kit) or use BOOT Tap Once. Save the recovery kit (Settings →
+    Device → Save my recovery kit) before updating a unit you cannot easily
+    reach: saving it takes the token or a BOOT tap too, so do it while you
+    can reach the unit. If the router changes, use Connect (Settings →
+    WiFi), not Remove credentials: Connect keeps the broker login, and from
+    the recovery network it now takes the token or a BOOT tap. The iPhone
+    app's fleet Wi-Fi update already sends the token and keeps working; Home
+    Assistant 0.9.0 calls none of these.
+  - **Canary WAP, after it updates:** anything changed before 2.4.18
+    without the token (the dashboard's landing page signed in anyone on your
+    network) stays. On the Camera tab's Sealed Alarm Snapshots card, compare
+    the key id with your own key's id; if they differ, Remove the key,
+    Register yours (it asks for the token), then turn your triggers back on
+    (Remove turns them all off). Remove any entry you do not recognize under
+    Settings → Bluetooth → Paired Devices and under Community → Opera
+    Network → Opera Members. If the unit was ever moved to a network you did
+    not choose, use Remove credentials (it asks for the token): it clears
+    every saved network and, new in 2.4.18, the stored MQTT username and
+    password (the broker address stays). Once it is back on your network,
+    retype the broker login on `/mqtt`: until you do, Home Assistant does
     not hear that unit if your broker needs a login.
   - **Canary WAP Opera:** a 2.4.17 unit and a 2.4.18 unit cannot pair (each
     side's pairing confirm is now bound to its role). Update both before
     pairing them: Settings → Device → Software Update, Check for Updates,
-    then Install Update. A unit updates itself within a day only with
-    Install updates automatically on, which is off by default. Units
-    already paired are not affected.
+    then Install Update (or Install on its Home Assistant update card).
+    Waiting a day updates a unit only if Install updates automatically is
+    on, and it is off by default. Units already paired are not affected.
   - **Canary WAP Bluetooth:** to pair a phone, press Start Pairing first
     (Settings → Bluetooth; it asks for the token). A device that bonded with
     no code check on an older release (no passkey typed, no numbers
     compared) is dropped when it next connects: remove the WAP from that
     device's Bluetooth settings and pair again after Start Pairing. A device
-    that can neither show nor type the six digits can no longer keep a bond.
-  - **Canary WAP set standalone** no longer joins a network from a Wi-Fi
-    code held to its lens. To add it to a display's fleet, hold BOOT 10
-    seconds first, then show the code: the hold is a reset that clears its
-    networks, its standalone choice, its broker settings and its name (it
-    keeps its keys and its API token). Or join it to the display's network
-    from the dashboard (it asks for the token) and set the hub as its broker
-    on `/mqtt`.
-  - **Canary WAP counters and Chirp:** `ambient_dropped` now counts every
-    Wi-Fi channel-activity row it keeps off the broker and the card (up to
-    one every 5 seconds, about 17,000 a day), which is expected and not a
-    loss; Home Assistant stops receiving those rows. Chirp's cooldown tiers
-    now reset only after 24 hours with no chirp (they used to reset a day
-    after the run's first chirp), and turning Chirp off and on no longer
-    resets an escalated cooldown of up to 4 hours (a reboot still does).
+    with no way to type or compare the six digits can no longer keep a bond.
+  - **Canary WAP set standalone** no longer reads a Wi-Fi code held to its
+    lens. To add it to a display's fleet, hold BOOT 10 seconds first, then
+    show the code; the hold also clears its Wi-Fi, its Home Assistant link
+    and its name (it keeps its keys and its API token).
+  - **Canary WAP events:** `ambient_dropped` now counts every Wi-Fi
+    channel-activity row it keeps off the broker and the SD card (at the
+    default 5-second cooldown, up to one every 5 seconds, about 17,000 a
+    day), which is expected and not a loss; Home Assistant stops receiving
+    those rows. Closed presence and tamper bundles now stay in its event
+    list (and on the iPhone's timeline), and the daily summary counts them.
+  - **Canary WAP Chirp:** turning Chirp off and on no longer resets an
+    escalated cooldown of up to 4 hours (a reboot still does), and its
+    cooldown tiers now reset after 24 hours with no chirp, not 24 hours
+    after the first.
   - **ESP32-CAM and ESP32 DevKit:** every factory image for these boards
     from fw-v2.4.7 to fw-v2.4.17 put the bootloader at 0x0, where a classic
     ESP32 does not look, so a board installed from one would not start (read
@@ -72,15 +76,16 @@
     no over-the-air channel.
   - **Still a USB install, as in 2.4.17:** the seven displays and the C3
     Vision that 2.4.17's notes list as needing one USB install, if they
-    have not had it yet (updates arrive over the air after it, except on a
-    Dash · Modes installed from a flasher); a Dash or Dash · Modes installed
-    from either flasher (its image has one app slot, so every update is a
-    USB install); and the boards with no published update channel: the
-    ESP32-CAM, the ESP32 DevKit, the Freenove S3 and the Vision on a C3
-    Super Mini.
+    have not had it yet (later updates arrive over the air, except on the
+    Dash · Modes below); a Dash or Dash · Modes installed from a flasher
+    (its image has one app slot, so every update is a USB install); and the
+    boards with no published update channel: the ESP32-CAM, the ESP32
+    DevKit, the Freenove S3 and the Vision · C3 Super Mini.
   - **Desktop Flasher 0.12.3:** after a successful *Read its security fuses*
     on an S3, C3 or C6, the board now waits in download mode; install, or
-    unplug it. Host-tested; not yet checked on a board.
+    unplug it. Host-tested; not yet checked on a board. Update the Flasher
+    before plugging in a board on 2.4.18: 0.12.2 calls a stamped board
+    firmware it does not recognize.
 - **Firmware 2.4.18**: the seven version strings and `fw_train`. Its
   firmware changes are in the sections below: the WAP's owner authority over
   HTTP (#1887), wave 20's Bluetooth, egress, Opera, Chirp, dash and splash
@@ -110,8 +115,10 @@
   there (A111).
 - **Not moving:** tvOS stays 0.3.1 and the kernel, Home Assistant
   integration and add-on stay 0.9.0 (one new test file, no runtime change).
-  The backoffice 0.8.0 entry below runs on staging; production moves only
-  with *Promote backoffice to production*.
+  The backoffice 0.8.0 entry below is in the published backoffice image;
+  it is not on staging yet (the staging deploy skips while no deploy server
+  is configured), and production moves only with *Promote backoffice to
+  production*.
 
 ### canary-wap keeps Bluetooth bonds and shown passkeys to its owner, keeps ambient rows off the card and the broker, puts closed bundles in the event ring and commits them before a planned restart, binds a pairing CONFIRM to its sender's role, resets Chirp's cooldown only after a quiet day and drops its stub server; an MQTT contract fixture holds the WAP to Home Assistant, the flasher reads the Vision's detection defaults where the firmware does, the dash says which way it is really turned, the splash bird clears its bubble and the tail is drawn on LVGL 8.4, CI holds the native and wasm32 cores to the sources, `build.json` carries each set's hardware, 133 more enclosure knobs get help, and the Witness Wall shows a device's birth day (#1836, wave 20)
 
@@ -242,8 +249,8 @@
   **Host-tested**, and the real `lvgl_port.cpp` built natively against LVGL
   9.5; the ESP32 builds are CI's; not bench-tested, and no refused or turned
   dash glass has been seen. The emulator dist moves (the dash flavor
-  certainly); the dist rebuild follows on this branch, since CI's pinned-emsdk
-  rebuild has not run yet. Filed: F370, A111.
+  certainly); the pinned-emsdk dist rebuild landed with this change, and
+  again in the 2.4.18 bump. Filed: F370, A111.
 - **The first meeting's bird no longer sits behind its speech bubble, and the
   bubble has its tail on every display (sweep F159, F185; settles F183).** The
   boot splash measures the tallest bubble its first meeting will show and
@@ -253,15 +260,15 @@
   through the wordmark's closing beat (F372). The tail is now square-cornered
   and turned about its center, so the LVGL 8.4 code (the watch, S3
   nightstand, touch169, AMOLED and nightlight configs, rendered natively)
-  draws it for the first time, and the browser emulator will once CI's
-  pinned-emsdk dist rebuild lands on this branch; on the LVGL 9.5 builds it
+  draws it for the first time, and so does the browser emulator from the
+  rebuilt dist; on the LVGL 9.5 builds it
   stands on the bubble's center line instead of 5.5 px left of it. On the round watch,
   which has no room to raise its bird, the newly drawn tail reaches into the
   bird under Heirloom (F371). **Host-tested and rendered natively** through
   LVGL 8.4.0 and 9.5.0 on a 64-bit host, not an ESP32 build; not bench-tested.
-  The emulator dist moves for every display flavor; the dist rebuild follows
-  on this branch, since CI's pinned-emsdk rebuild has not run yet, and no
-  browser probe has run on a rebuilt dist (none reads the tail yet, A112).
+  The emulator dist moves for every display flavor; the pinned-emsdk
+  rebuild landed with this change and again in the 2.4.18 bump, and no
+  browser probe reads the tail in it yet (A112).
   Filed: F371-F373, A112.
 - **CI holds the native cores to the committed dist call for call, a late
   wake-up no longer fails a native core call, and the whole Vision and WAP
@@ -349,9 +356,9 @@
   follows as a site PR now that #1832 has merged; if the website's next
   scheduled carry opens its PR first, merge the site PR before it. Filed:
   A113, A114, F374, W40, W41. **Already shipped:** #1832 merged before
-  fw-v2.4.17, so Flasher 0.12.2, Lab 0.3.2 and the tvOS 0.3.1 build carry
-  this line (tvOS 0.3.1 reaches an Apple TV once it passes App Review);
-  2.4.18 brings no Wall update.
+  fw-v2.4.17, so Flasher 0.12.2 and Lab 0.3.2 carry this line; the tvOS
+  0.3.1 build carries it too and reaches an Apple TV once it passes App
+  Review. 2.4.18 brings no Wall update.
 ### The backoffice can say it has not been breached (backoffice 0.8.0)
 
 - The audit log is an HMAC chain under a key outside the database, verified
@@ -367,7 +374,7 @@
   device's kind (`SecuraCV-sense-…`, `SecuraCV-wap-…`), so the step now says
   to wait for a fresh network whose name starts with `SecuraCV-`, as the
   page's self-test hint already did. `web_assets_gz.h` is regenerated
-  (the device serves the gzipped copy). Ships with the next WAP firmware;
+  (the device serves the gzipped copy). Ships in WAP firmware 2.4.18;
   checked on the host only (`gen_web_assets_gz.py --check`, the microcopy
   lint, the WAP page tests).
 
@@ -621,7 +628,7 @@
   `flash.json` (that check moved there from `test_make_factory.py`, so it runs
   when the catalog changes). The hosted browser flasher refuses fw-v2.4.17's
   two classic-ESP32 images from the next site deploy; the desktop Flasher and
-  the Lab do from their next release. A backup restore is not checked: it puts
+  the Lab do from 0.12.3 and 0.3.3. A backup restore is not checked: it puts
   back the board's own bytes.
 - **The counterfeit-capacity check reads 8 KB, not 4.** Both flashers took
   the flash-size probe's fingerprint from the first 4 KB of flash, which a
@@ -670,12 +677,13 @@
   one, which is what this carry adds). Run on website main, whose buttons
   still open the release search: `download.html` is left byte for byte, the
   other carries are written and the run exits 0, so this can merge before or
-  after the website's exact-link page. The website half is not in this change:
-  its weekly carry job commits only the paths in its `CARRY_PATHS`, so
-  `download.html` joins that list, the carry step needs `GH_TOKEN` in its
-  environment, and its `tests/download-facts.test.mjs` header (which says the
-  stamp is not built yet) names this carry; until then the buttons move only
-  by `--only downloads` run by hand.
+  after the website's exact-link page. The website half merged in
+  kmay89/securacv_website#243: its weekly carry job commits only the paths in
+  its `CARRY_PATHS`, so `download.html` joined that list, the carry step got
+  `GH_TOKEN` in its environment, and its `tests/download-facts.test.mjs`
+  header names this carry. After an app release, the website's *Update
+  everything (only what needs it)* moves the buttons, or `--only downloads`
+  with `--site` run by hand.
 
 ### Every release brings the dev channel up to stable, and the flashers say where it stands
 
@@ -768,7 +776,7 @@
   an Arduino build it is the Arduino core's (fw-v2.4.17's read Mar 5 2024),
   and the stamp leaves it alone, so only the health report shows it,
   labeled "descriptor dated".
-- **From the next release on.** Images already published, fw-v2.4.17's
+- **From 2.4.18 on.** Images already published, fw-v2.4.17's
   included, are unchanged, and boards running them keep reading as an Arduino
   sketch until they update. A dev-channel build (`fw-dev-latest`) is stamped
   with the train's version, the number its sources compile in, so a board
