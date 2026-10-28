@@ -5998,11 +5998,11 @@ test("About this board: the desktop's rows are the browser's, fact for fact", as
   assert.deepStrictEqual(desk.reportFullProjection(report), core.reportFullProjection(report));
   assert.ok(!JSON.stringify(desk.reportShareProjection(report, when)).includes("verdict"),
     "the desktop's verdict (a crash, a pending update) is posture and stays out of the shared save");
-  // A build day, never a build time: lib.rs's health_check stamps each slot
-  // "<date> <time>" from the descriptor, the way flash.js does.
+  // A descriptor's day, never its time: lib.rs's health_check stamps each
+  // slot "<date> <time>" from the descriptor, the way flash.js does.
   const deskShare = JSON.stringify(desk.reportShareProjection(report, when));
   for (const t of ["14:33", "09:05", ":12", ":01"]) {
-    assert.ok(!deskShare.includes(t), `the desktop's shared save keeps an image's build time (${t})`);
+    assert.ok(!deskShare.includes(t), `the desktop's shared save keeps a descriptor's time of day (${t})`);
   }
   assert.deepStrictEqual(desk.reportShareProjection(report, when).slots.map((x) => x.built), ["Oct 22 2026", "Oct 2 2026"]);
   assert.match(libRs, /let built = format!\("\{\} \{\}", d\.date, d\.time\)/,

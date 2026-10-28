@@ -730,8 +730,8 @@ const SHARE_REPORT_NOTE =
 const FULL_REPORT_NOTE =
   "Describes this one board: its boot and witness counters, crash record and update state. " +
   "For your own records, not for posting. It carries no hardware address.";
-// A slot's "<date> <time>" (lib.rs health_check) cut to its day: the time of
-// a locally built image is the second someone compiled it.
+// A slot's "<date> <time>" (lib.rs health_check) cut to its day: on an
+// ESP-IDF build the descriptor's time is the second someone built the image.
 function buildDay(built) {
   const day = String(built == null ? "" : built).split(/\s+/)
     .map((t) => (t.includes(":") ? ((/^(\d{4}-\d{2}-\d{2})T/.exec(t) || [])[1] || "") : t))

@@ -62,7 +62,8 @@
   browser's roster, to recognize a board that comes back; the desktop's
   fleet book, keyed by it), and the browser's strip now says it keeps it.
   "Save report" writes the share projection — chip, image and partition
-  facts, each image's build day and the day of the save, never a time of
+  facts, the day each image's descriptor is dated (on an Arduino build, the
+  day the Arduino core was built) and the day of the save, never a time of
   day; no counters, crash or update state, chain head or hardware address —
   and a second button, "Save full report for your own records", keeps the
   rest and says it describes this one board; the desktop's `health_check` no

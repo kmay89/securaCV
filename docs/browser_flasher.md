@@ -201,7 +201,8 @@ The flasher tries to fix the common failures before asking the user to:
   draws the same rows from a copy of the same model (`aboutBoardGroups`;
   `desktop_parity.test.js` holds them equal).
 - **Saved reports** — "Save report" writes chip, image and partition facts,
-  each image's build day and the day of the save, never a time of day: no
+  the day each image's descriptor is dated (on an Arduino build, the day the
+  Arduino core was built) and the day of the save, never a time of day: no
   counters, crash or update state, chain head or hardware address.
   "Save full report for your own records" keeps the rest, says it describes
   this one board, and still carries no hardware address. Reports and backups

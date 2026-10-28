@@ -2526,8 +2526,9 @@ test("a saved report is a share projection unless the full local save is asked f
   assert.strictEqual(share.scope, "share");
   assert.strictEqual(share.day, "2026-10-22");
   assert.strictEqual(share.slots[0].version, "2.4.16");
-  // Each image's build stamp is cut to its day: the time of day is the second
-  // a local image was compiled, which the share save promises to leave out.
+  // Each image's descriptor stamp is cut to its day: on an ESP-IDF build the
+  // time of day is the second someone built the image, which the share save
+  // promises to leave out.
   assert.strictEqual(share.slots[0].built, "Oct 20 2026");
   assert.strictEqual(c.reportFullProjection(r).slots[0].built, "Oct 20 2026 10:00:00", "the full save keeps the time");
   for (const [stamp, day] of [["Oct 22 2026 14:33:12", "Oct 22 2026"], ["Oct  2 2026 09:05:01", "Oct 2 2026"],

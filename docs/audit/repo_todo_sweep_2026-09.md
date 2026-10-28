@@ -22802,8 +22802,9 @@ so — see D2 below.)
   chain-head prefix, crash-record and OTA pending-verify state and a
   millisecond timestamp (the desktop's also its verdict). *Done (#<PR>):*
   "Save report" writes the share projection (`reportShareProjection`: chip,
-  image and partition facts, the About rows, each image's build day — never
-  its build time, `buildDay` — and the day of the save; it lists what it
+  image and partition facts, the About rows, the day each image's descriptor
+  is dated (on an Arduino build, the day the Arduino core was built), never
+  its time (`buildDay`), and the day of the save; it lists what it
   keeps, so a new report field stays out until someone decides it is
   shareable), and "Save full report for your own records" keeps the rest,
   labeled as describing this one board, still with no hardware address. The

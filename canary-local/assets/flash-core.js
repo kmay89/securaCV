@@ -2757,11 +2757,12 @@ export const FULL_REPORT_NOTE =
   "Describes this one board: its boot and witness counters, crash record and update state. " +
   "For your own records, not for posting. It carries no hardware address.";
 
-// An image's build stamp cut to its day. Both flashers build a slot's
-// `built` from the app descriptor's date and time ("Oct 22 2026 14:33:12");
-// the time of day is dropped (any token holding a colon, or the time after an
-// ISO "T"), because for an image compiled locally it is the second someone
-// built it. null when no day is left.
+// An image's descriptor stamp cut to its day. Both flashers build a slot's
+// `built` from the app descriptor's date and time ("Oct 22 2026 14:33:12"),
+// which say when the descriptor was compiled: on an Arduino build, when the
+// Arduino core was built; on an ESP-IDF build, the second someone built the
+// image. The time of day is dropped (any token holding a colon, or the time
+// after an ISO "T"). null when no day is left.
 export function buildDay(built) {
   const day = String(built == null ? "" : built).split(/\s+/)
     .map((t) => (t.includes(":") ? ((/^(\d{4}-\d{2}-\d{2})T/.exec(t) || [])[1] || "") : t))
@@ -2775,7 +2776,7 @@ export function buildDay(built) {
 // updates seen), no posture (a crash record, OTA pending-verify, a tamper
 // flag, whether a key or Wi-Fi is stored, the eFuse security scan), no
 // chain-head prefix, no hardware address, and every date as a day: the save's
-// own, and each image's build day (buildDay), never a time.
+// own, and the day each image's descriptor is dated (buildDay), never a time.
 export function reportShareProjection(r = {}, when = Date.now()) {
   const out = { report: "securacv-board-report", scope: "share", note: SHARE_REPORT_NOTE, day: localDay(when) };
   if (r.chip) out.chip = r.chip;
