@@ -176,9 +176,9 @@ The flasher tries to fix the common failures before asking the user to:
   (a location printed to 3 decimals, about 110 m, and a chain-head prefix,
   one row per record) and its `g` card's latitude and longitude, and the
   lines that name the network a board joins. The error line is scrubbed the
-  same way, with any hardware address in it masked
-  (`buildDiagnosticReport`). esptool's own "MAC: …" connect line is masked in
-  the technical log too (`maskHardwareAddress`).
+  same way, with any hardware address in it masked (`buildDiagnosticReport`).
+  esptool's own "MAC: …" connect line is masked in the technical log too
+  (`maskHardwareAddress`).
 - **About this board** — the hello card shows the chip and its revision, the
   flash it carries and a "Hardware address · Show" row; "More about this
   board" lists the package, the flash and PSRAM in the package and factory

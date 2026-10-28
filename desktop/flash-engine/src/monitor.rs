@@ -216,6 +216,101 @@ fn inspect_line<S: Emit>(
     }
 }
 
+/// The board's bytes, decoded as UTF-8 across reads rather than one read at a
+/// time.
+///
+/// A read ends wherever the port's buffer did (a 64-byte USB packet, a UART
+/// FIFO), so it can end inside a character. The em dash the firmware prints
+/// between a label and its value is three bytes: the WAP's
+/// `[BLE] Chirp initialized — device prefix: …`, the flagship's `e` card rows
+/// `[INFO] Device name updated — <name>`. Decoding each read on its own turned
+/// the two parts of a dash a read split into U+FFFD characters, so the console
+/// showed mojibake, and the diagnostic report's identity patterns, which name
+/// the dash, let the line through. Here a character a read ends inside waits
+/// for the next read. Bytes that are not UTF-8 still read as U+FFFD, exactly as
+/// `String::from_utf8_lossy` over the whole stream makes them.
+#[derive(Default)]
+struct Utf8Stream {
+    /// The first one to three bytes of a character the last read ended inside.
+    pending: Vec<u8>,
+}
+
+impl Utf8Stream {
+    /// The text `bytes` completes, holding back a character it ends inside.
+    fn decode(&mut self, bytes: &[u8]) -> String {
+        let mut input = std::mem::take(&mut self.pending);
+        input.extend_from_slice(bytes);
+        let mut text = String::with_capacity(input.len());
+        let mut rest = input.as_slice();
+        loop {
+            match std::str::from_utf8(rest) {
+                Ok(valid) => {
+                    text.push_str(valid);
+                    return text;
+                }
+                Err(error) => {
+                    let (valid, after) = rest.split_at(error.valid_up_to());
+                    // `valid_up_to` is the length of the valid prefix, so this
+                    // decode cannot fail.
+                    text.push_str(std::str::from_utf8(valid).unwrap_or_default());
+                    match error.error_len() {
+                        Some(bad) => {
+                            text.push(char::REPLACEMENT_CHARACTER);
+                            rest = &after[bad..];
+                        }
+                        // The input ended inside a character: keep its start.
+                        None => {
+                            self.pending = after.to_vec();
+                            return text;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A character the stream ended inside, as `from_utf8_lossy` shows it.
+    fn finish(&mut self) -> String {
+        String::from_utf8_lossy(&std::mem::take(&mut self.pending)).into_owned()
+    }
+}
+
+/// A connection's end: a character the port closed inside reaches the console
+/// as U+FFFD, so bytes the board sent are not dropped without a trace.
+fn end_connection<S: Emit>(sink: &S, decoder: &mut Utf8Stream) {
+    let unfinished = decoder.finish();
+    if !unfinished.is_empty() {
+        sink.emit("serial:log", unfinished);
+    }
+}
+
+/// One read's bytes: decoded across reads ([`Utf8Stream`]), sent to the
+/// console as `serial:log`, and cut into lines for [`inspect_line`].
+fn take_read<S: Emit>(
+    sink: &S,
+    bytes: &[u8],
+    decoder: &mut Utf8Stream,
+    line_buffer: &mut String,
+    manifest: &mut Option<Value>,
+    vision: &mut Option<Value>,
+) {
+    let text = decoder.decode(bytes);
+    if text.is_empty() {
+        return; // the read held only the start of a character
+    }
+    sink.emit("serial:log", text.as_str());
+    for character in text.chars() {
+        if character == '\n' {
+            inspect_line(sink, line_buffer.trim_end_matches('\r'), manifest, vision);
+            line_buffer.clear();
+        } else if line_buffer.len() < 16 * 1024 {
+            line_buffer.push(character);
+        } else {
+            line_buffer.clear();
+        }
+    }
+}
+
 /// How long a freshly-connected board may say nothing before the console
 /// explains itself. Long enough that an ordinary boot (or a board mid-reset)
 /// isn't accused of being silent, short enough that nobody has decided their
@@ -459,6 +554,9 @@ fn monitor_thread<S: Emit>(
         // Re-request the manifest on each (re)connect; a rebooted board reprints it.
         let mut next_manifest_request = Instant::now() + Duration::from_millis(700);
         line_buffer.clear();
+        // Per connection, like the line buffer: a new connection's first byte
+        // continues nothing the last one sent.
+        let mut decoder = Utf8Stream::default();
         // Silence watch, armed per connection: a board that has said nothing at
         // all by the deadline gets one explanatory line (see below). Reset on
         // every reconnect, because a board that came back deserves a fresh
@@ -537,29 +635,21 @@ fn monitor_thread<S: Emit>(
                         );
                     }
                     heard_anything = true;
-                    let text = String::from_utf8_lossy(&read_buffer[..count]);
-                    sink.emit("serial:log", text.to_string());
-                    for character in text.chars() {
-                        if character == '\n' {
-                            inspect_line(
-                                &sink,
-                                line_buffer.trim_end_matches('\r'),
-                                &mut manifest,
-                                &mut vision,
-                            );
-                            line_buffer.clear();
-                        } else if line_buffer.len() < 16 * 1024 {
-                            line_buffer.push(character);
-                        } else {
-                            line_buffer.clear();
-                        }
-                    }
+                    take_read(
+                        &sink,
+                        &read_buffer[..count],
+                        &mut decoder,
+                        &mut line_buffer,
+                        &mut manifest,
+                        &mut vision,
+                    );
                 }
                 Ok(_) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {}
                 Err(_) => break true, // disconnect (Broken pipe, etc.) → reconnect
             }
         };
+        end_connection(&sink, &mut decoder);
 
         if !reconnect {
             break;
@@ -853,5 +943,166 @@ mod tests {
     #[test]
     fn other_canaries_need_their_manifest_only() {
         assert!(receipt_ready(&serde_json::json!({"board":"canary"}), None));
+    }
+
+    // ── decoding the board's bytes across reads ─────────────────────────
+    //
+    // A read ends wherever the port's buffer did, so it can end inside a
+    // character. The em dash in these lines is three bytes, and the desktop's
+    // report scrubber (desktop/src/app.js TAIL_IDENTITY) names it: decoded one
+    // read at a time, a dash split by a read became U+FFFD characters and the
+    // line passed into a pasted report with the key fingerprint's last two
+    // bytes or a name the person typed in it.
+
+    /// The firmware's own lines, values filled in: the WAP's chirp and Opera
+    /// boot lines (ble_chirp.h, ble_opera.h) and the flagship's `e` card rows
+    /// (main.cpp's `"    [%s] %s%s%s"` with `" — "` before the detail, for
+    /// securacv_setup.cpp's rename and securacv_ble_status.cpp's NimBLE
+    /// failure), plus a two-byte and a four-byte character.
+    const DASH_LINES: [&str; 7] = [
+        "[BLE] Chirp initialized — device prefix: 3f7a\n",
+        "[BLE] Opera initialized — device name: SCV-3f7a\n",
+        "    [INFO] Device name updated — Kids room\n",
+        "    [WARN] Device name NOT persisted (NVS write failed) — Kids room\n",
+        "    [ERROR] NimBLE init failed — Kids room\n",
+        "[SENSE] 21.5 °C\n",
+        "[NOTE] 🔒 locked\n",
+    ];
+
+    /// Everything the monitor sends the frontend, in order.
+    #[derive(Default)]
+    struct Sink(std::cell::RefCell<Vec<(String, Value)>>);
+
+    impl Emit for Sink {
+        fn emit<P: Serialize + Clone>(&self, event: &str, payload: P) {
+            let payload = serde_json::to_value(payload).expect("payload serializes");
+            self.0.borrow_mut().push((event.to_string(), payload));
+        }
+    }
+
+    impl Sink {
+        /// The console's text: every `serial:log` payload, joined.
+        fn console(&self) -> String {
+            self.0
+                .borrow()
+                .iter()
+                .filter(|(event, _)| event == "serial:log")
+                .filter_map(|(_, payload)| payload.as_str())
+                .collect()
+        }
+
+        fn receipts(&self) -> Vec<Value> {
+            self.0
+                .borrow()
+                .iter()
+                .filter(|(event, _)| event == "serial:receipt")
+                .map(|(_, payload)| payload.clone())
+                .collect()
+        }
+    }
+
+    /// One connection's read state, read through the monitor's own
+    /// [`take_read`] and closed by its [`end_connection`].
+    #[derive(Default)]
+    struct Reads {
+        sink: Sink,
+        decoder: Utf8Stream,
+        line_buffer: String,
+        manifest: Option<Value>,
+        vision: Option<Value>,
+    }
+
+    impl Reads {
+        fn read(&mut self, bytes: &[u8]) {
+            take_read(
+                &self.sink,
+                bytes,
+                &mut self.decoder,
+                &mut self.line_buffer,
+                &mut self.manifest,
+                &mut self.vision,
+            );
+        }
+
+        fn close(mut self) -> Sink {
+            end_connection(&self.sink, &mut self.decoder);
+            self.sink
+        }
+    }
+
+    /// Feed `bytes` to one connection in reads of `size` bytes, the first read
+    /// `offset` bytes long (so every alignment can be tried), then close it.
+    fn feed(bytes: &[u8], offset: usize, size: usize) -> Sink {
+        let mut reads = Reads::default();
+        let (first, rest) = bytes.split_at(offset.min(bytes.len()));
+        for read in std::iter::once(first).chain(rest.chunks(size)) {
+            if !read.is_empty() {
+                reads.read(read);
+            }
+        }
+        reads.close()
+    }
+
+    #[test]
+    fn a_read_that_ends_inside_a_character_reaches_the_console_whole() {
+        for line in DASH_LINES {
+            for split in 0..=line.len() {
+                let console = feed(line.as_bytes(), split, line.len()).console();
+                assert_eq!(console, line, "a read ending at byte {split}");
+                assert!(!console.contains(char::REPLACEMENT_CHARACTER));
+            }
+        }
+    }
+
+    #[test]
+    fn every_read_size_and_alignment_gives_the_console_the_same_text() {
+        // A boot burst: every line above, a self-manifest the receipt is read
+        // from (a name with a dash in it), and the lines again.
+        let manifest = r#"{"schema":"securacv.canary.manifest/v1","board":"canary","name":"Kids room — upstairs"}"#;
+        let lines = DASH_LINES.concat();
+        let burst = format!("{lines}{manifest}\r\n{lines}");
+        let expected: Value = serde_json::from_str(manifest).expect("manifest parses");
+        // 64 is a full-speed USB packet; the small sizes put a boundary inside
+        // every character at some alignment.
+        for size in [1, 2, 3, 4, 5, 6, 7, 64] {
+            for offset in 0..size {
+                let sink = feed(burst.as_bytes(), offset, size);
+                assert_eq!(sink.console(), burst, "reads of {size}, first of {offset}");
+                let receipts = sink.receipts();
+                assert_eq!(receipts.len(), 1, "reads of {size}, first of {offset}");
+                assert_eq!(receipts[0]["manifest"], expected);
+            }
+        }
+    }
+
+    #[test]
+    fn bytes_that_are_not_utf8_read_as_from_utf8_lossy_reads_the_whole_stream() {
+        // Noise (a wrong baud, a board mid-reset): stray continuation bytes, a
+        // character cut off by the next one, overlong and surrogate encodings,
+        // bytes no UTF-8 uses, and a character the connection closes inside.
+        let mut bytes = b"ok \x80\x94 \xE2\x80A \xC0\xAF \xED\xA0\x80 \xFF\xFE ".to_vec();
+        bytes.extend_from_slice("— done ".as_bytes());
+        bytes.extend_from_slice(b"\xF0\x9F\x90");
+        let whole = String::from_utf8_lossy(&bytes).into_owned();
+        for size in 1..=bytes.len() {
+            for offset in 0..size {
+                assert_eq!(
+                    feed(&bytes, offset, size).console(),
+                    whole,
+                    "reads of {size}, first of {offset}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_read_holding_only_the_start_of_a_character_sends_nothing() {
+        let dash = "—".as_bytes();
+        let mut reads = Reads::default();
+        reads.read(&dash[..1]);
+        reads.read(&dash[1..2]);
+        assert!(reads.sink.0.borrow().is_empty(), "no empty event");
+        reads.read(&dash[2..]);
+        assert_eq!(reads.close().console(), "—");
     }
 }

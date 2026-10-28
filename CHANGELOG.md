@@ -106,12 +106,12 @@
   display's `AP up:` line), the flagship's name (its `[OK] Device name:`
   boot line, its ready banner `Name` row, and its `Device name updated` and
   `Device name NOT persisted` health lines), the WAP's name on its
-  `[OK] Device name:` boot line, and its host name, Bluetooth names and
-  opera name (its `mDNS started`, `mDNS begin failed`,
+  `[OK] Device name:` boot line, and its host name, Bluetooth
+  names and opera name (its `mDNS started`, `mDNS begin failed`,
   `mDNS re-announced on STA`, `mDNS re-announce failed` and
   `Identify requested` health lines, its `BLE initialized`, saved-name
-  repair, `Device name changed` and `Opera name changed` health lines, and
-  the chirp's `device prefix:` and Opera's `device name:`, its key
+  repair, `Device name changed` and `Opera name changed` health lines,
+  and the chirp's `device prefix:` and Opera's `device name:`, its key
   fingerprint's last two bytes), the flagship's console cards (the boot
   welcome card's `(that's me: <device id>)`, the last card the flagship
   prints at boot, the trust card's `Device` row and key randomart on `l` and
@@ -126,13 +126,19 @@
   and its `Peer removed`, `Peer state changed` and `Opera alert received`
   health lines, and the display's `Fleet referral: … (from <name>)` and
   restored `… muted for …` lines. The tests render each from the firmware's
-  own source. A line no pattern names passes, so the report is not
-  public-only by construction; among the lines that pass are the flagship's
-  chain-head rows on `l`, `a` and `c`, the attestation's `Signature` on `c`,
-  the WAP's witness-table rows (a location printed to 3 decimals, about
-  110 m, and a chain-head prefix, one row per record) and its `g` card's
-  latitude and longitude, the network name a board joins or reconnects to
-  and the peer link's fleet-key id.
+  own source. The desktop's serial monitor, whose console is the tail
+  when the flash log is empty, decodes the board's bytes as one stream: it
+  decoded each read on its own, so a character a read ended inside (the em
+  dash between a label and its value in the chirp's and Opera's lines and
+  in the `e` card's rows) showed as U+FFFD characters in both desktop apps'
+  consoles, and the patterns that name the dash let the line through. A
+  character a read ends inside now waits for the next read. A line no pattern
+  names passes, so the report is not public-only by construction; among the
+  lines that pass are the flagship's chain-head rows on `l`, `a` and `c`, the
+  attestation's `Signature` on `c`, the WAP's witness-table rows (a location
+  printed to 3 decimals, about 110 m, and a chain-head prefix, one row per
+  record) and its `g` card's latitude and longitude, the network name a board
+  joins or reconnects to and the peer link's fleet-key id.
 - **The Grove Vision module's id and text stay off screen (P13).** Neither
   flasher sends `ID?` any more, and the desktop's module receipt drops the id
   it carried. Neither bench shows the module's own model-card text, or names

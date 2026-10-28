@@ -20809,17 +20809,25 @@ so — see D2 below.)
   `device name:` (its key fingerprint's last two bytes); the flagship's
   console cards (the boot welcome card's `(that's me: <device id>)`, the
   last card it prints at boot; the trust card's `Device` row and key
-  randomart; the attestation card's `Device` line; the identity card's
-  whole `Public Key`; the nearby card's `This Canary` row and every peer
-  row; the `e` card's recent events, which print those health lines
-  again); and a household peer's fingerprint or name on the flagship's
-  mesh lines (`fp=…`) and opera lines (a peer's
-  whole fingerprint, and their health-log echoes), the WAP's
+  randomart; the attestation card's `Device` line; the identity
+  card's whole `Public Key`; the nearby card's `This Canary` row
+  and every peer row; the `e` card's recent events, which print
+  those health lines again); and a household peer's fingerprint
+  or name on the flagship's mesh lines (`fp=…`) and opera lines (a
+  peer's whole fingerprint, and their health-log echoes), the WAP's
   `[BLE] Canary discovered:` and `lost:` lines and its `Peer removed`,
   `Peer state changed` and `Opera alert received` health lines, and the
   display's `Fleet referral: … (from <name>)` and restored `… muted for …`
-  lines (`flash.test.js` renders the lines from the firmware's own sources;
-  `desktop_parity.test.js` holds the two lists equal). Open: a line no
+  lines (`flash.test.js` renders the lines from the firmware's own
+  sources; `desktop_parity.test.js` holds the two lists equal). The
+  desktop's serial monitor, whose console is the tail when the flash
+  log is empty, decodes the board's bytes as one stream (`monitor.rs`,
+  `Utf8Stream`): it decoded each read on its own, so a read that ended
+  inside the em dash of the chirp's or Opera's line or an `e` card row
+  turned the dash into U+FFFD characters and the line passed. `cargo test`
+  in `desktop/flash-engine` splits each of those lines at every byte,
+  and reads a boot burst one to seven bytes and 64 bytes at a time at
+  every alignment, through the monitor's own read path. Open: a line no
   pattern names passes, so the report is not public-only by construction.
   Among the lines that pass: the flagship's chain-head rows on its `l`, `a`
   and `c` cards and the attestation's `Signature` on `c`, the WAP's
