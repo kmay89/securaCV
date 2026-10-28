@@ -200,13 +200,15 @@ images in the next version rather than re-cutting every image under the old
 tag. Weigh one thing against that: the desktop Flasher and the Lab carry
 `flash.json` compiled in, and it pins the tag's `manifest-flash.json`, so the
 next version reaches their users only once they update the app, while a rebuild
-in place reaches them at once, at the cost above. Until the next version, a
-`channel: dev` dispatch from `main` publishes the fixed images to
+in place reaches them at once, at the cost above. That is how the classic-ESP32
+fix shipped: in fw-v2.4.18, whose two images carry the bootloader at 0x1000,
+with Flasher 0.12.3 and Lab 0.3.3 pinned to it. Between such a fix and its
+version, a `channel: dev` dispatch from `main` publishes the fixed images to
 `fw-dev-latest` (both flashers' **Advanced → dev channel**) and leaves the tag
-alone. Press **Refresh the dev channel** for its one-time catch-up *before*
-this dispatch, never after it: main's train is stable's 2.4.17, so a press
-after it replaces the fixed catalog with fw-v2.4.17's, and the dispatch has to
-be run again.
+alone. Press **Refresh the dev channel** for its catch-up *before* that
+dispatch, never after it: while main's train equals stable's, a press after it
+replaces the fixed catalog with the stable one, and the dispatch has to be run
+again.
 
 **`channel: dev`** — **no tag, no version.** Builds the branch
 you dispatch from and publishes to the rolling `fw-dev-latest` prerelease, which
