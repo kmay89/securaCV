@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### Home Assistant: every Canary's device page shows its firmware and its product, and a shared diagnostics dump keeps no digit of a Canary's key fingerprint (F391 in part, F392; device-details PR 2, #<PR>)
+### Home Assistant: every Canary's device page shows its firmware and its product, and a shared diagnostics dump keeps no digit of a Canary's key fingerprint (F391 in part, F392, HA45; device-details PR 2, #<PR>)
 
 - **The firmware on every Canary's device page.** Every firmware family
   (the `firmware/canary` build, the canary-wap, Sense, Vision, Sentinel and
@@ -15,7 +15,10 @@
   integration did not read; it is read now, so that build's page shows a
   version from its first status. A status version is used only until a
   health has reported one, a new version after an update is written again,
-  and a heartbeat that changes nothing writes nothing.
+  and a heartbeat that changes nothing writes nothing. That closes HA45,
+  filed by #1836's canary-wap contract fixture: its strict expected failure
+  in `test_wap_mqtt_contract.py`, which replays what the real `csi_mqtt.cpp`
+  publishes, is now a plain test.
 - **The model is the product.** A Canary's model was the constant "SecuraCV
   Canary". It is now the product name for the `device_type` its status
   names, from a table (`CANARY_PRODUCT_NAMES` in `const.py`, the names the
@@ -153,9 +156,849 @@
   already read (the dictionary, the voice sentences, the seven contract
   vectors, and the viewer's verify and zip cores), found by
   `scripts/check_path_filter_reads.py`. The stub suite passes on Python
-  3.11 and 3.13 (944 tests) and the real-core lane on Home Assistant
-  2026.5.0 and 2026.10.1 (127 each). Host-tested; not run against a device
-  or a live broker.
+  3.11 and 3.13 (975 tests, 13 of them the contract fixture's strict
+  expected failures for gaps still open) and the real-core lane on Home
+  Assistant 2026.5.0 and 2026.10.1 (127 each). Host-tested; not run against
+  a device or a live broker.
+
+## [2.4.18] - 2026-10-28
+
+> **Before you update.** Canary WAP: save its recovery kit first. After setup, a Wi-Fi change, a reboot, a vault key or a pairing takes its API token.
+> Canary WAP Opera: update both units before pairing them.
+> An ESP32-CAM or ESP32 DevKit that would not start after a USB install: install 2.4.18 with Flasher 0.12.3, Lab 0.3.3 or the browser flasher.
+
+### release: the 2.4.18 train (Flasher 0.12.3, Lab 0.3.3, iOS 0.8.1)
+
+- **What to do after updating.**
+  - **Canary WAP, the API token:** after setup, these take the API token
+    and nothing else over HTTP, on every network the unit serves
+    (including its recovery network `SecuraCV-wap-XXXX`): joining a Wi-Fi
+    network, standalone mode, disconnect and Remove credentials, registering
+    a vault key, the Bluetooth and Opera pairing confirms, Reboot and Retry
+    full boot. The dashboard asks for the token at each one it offers
+    (after setup it has no standalone button): paste it (it is in the
+    recovery kit) or use BOOT Tap Once. Save the recovery kit (Settings →
+    Device → Save my recovery kit) before updating a unit you cannot easily
+    reach: saving it takes the token or a BOOT tap too, so do it while you
+    can reach the unit. If the router changes, use Connect (Settings →
+    WiFi), not Remove credentials: Connect keeps the broker login, and from
+    the recovery network it now takes the token or a BOOT tap. The iPhone
+    app's fleet Wi-Fi update already sends the token and keeps working. The
+    Home Assistant integration 0.9.0 calls none of these; the add-on's setup
+    wizard sends the API token you type for Add another Canary, so it keeps
+    working too, once both units run 2.4.18.
+  - **Canary WAP, after it updates:** anything changed before 2.4.18
+    without the token (the dashboard's landing page signed in anyone on your
+    network) stays. On the Camera tab's Sealed Alarm Snapshots card, compare
+    the key id with your own key's id; if they differ, Remove the key,
+    Register yours (it asks for the token), then turn your triggers back on
+    (Remove turns them all off). Remove any entry you do not recognize under
+    Settings → Bluetooth → Paired Devices and under Community → Opera
+    Network → Opera Members. If the unit was ever moved to a network you did
+    not choose, use Remove credentials (it asks for the token): it clears
+    every saved network and, new in 2.4.18, the stored MQTT username and
+    password (the broker address stays). Once it is back on your network,
+    retype the broker login on `/mqtt`: until you do, Home Assistant does
+    not hear that unit if your broker needs a login.
+  - **Canary WAP Opera:** a 2.4.17 unit and a 2.4.18 unit cannot pair (each
+    side's pairing confirm is now bound to its role). Update both before
+    pairing them: Settings → Device → Software Update, Check for Updates,
+    then Install Update (or Install on its Home Assistant update card).
+    Waiting a day updates a unit only if Install updates automatically is
+    on, and it is off by default. Units already paired are not affected.
+  - **Canary WAP Bluetooth:** to pair a phone, press Start Pairing first
+    (Settings → Bluetooth; it asks for the token). A device that bonded with
+    no code check on an older release (no passkey typed, no numbers
+    compared) is dropped when it next connects: remove the WAP from that
+    device's Bluetooth settings and pair again after Start Pairing. A device
+    with no way to type or compare the six digits can no longer keep a bond.
+    If a new pairing is refused because the WAP's store of bonds is full,
+    press Clear All under Paired Devices, then pair again: it also removes
+    your own bonds, and it is the only way to delete an older firmware's
+    bond the list does not show.
+  - **Canary WAP set standalone** no longer reads a Wi-Fi code held to its
+    lens. To add it to a display's fleet, hold BOOT 10 seconds first, then
+    show the code; the hold also clears its Wi-Fi, its Home Assistant link
+    and its name (it keeps its keys and its API token).
+  - **Canary WAP events:** `ambient_dropped` now counts every Wi-Fi
+    channel-activity row it keeps off the broker and the SD card (at the
+    default 5-second cooldown, up to one every 5 seconds, about 17,000 a
+    day), which is expected and not a loss; Home Assistant stops receiving
+    those rows. Closed presence and tamper bundles now stay in its event
+    list (and on the iPhone's timeline), and the daily summary counts them.
+  - **Canary WAP Chirp:** turning Chirp off and on no longer resets an
+    escalated cooldown of up to 4 hours (a reboot still does), and its
+    cooldown tiers now reset after 24 hours with no chirp, not 24 hours
+    after the first.
+  - **ESP32-CAM and ESP32 DevKit:** every factory image for these boards
+    from fw-v2.4.7 to fw-v2.4.17 put the bootloader at 0x0, where a classic
+    ESP32 does not look, so a board installed from one would not start (read
+    from the published files). 2.4.18's carry it at 0x1000, where the chip
+    loads it; nobody has booted these two boards on any release, 2.4.18
+    included. Install 2.4.18 over USB with Flasher 0.12.3, Lab 0.3.3, or the
+    browser flasher once it shows 2.4.18: Flasher 0.12.2, Lab 0.3.2 and
+    every earlier version still write the old images. These two boards have
+    no over-the-air channel.
+  - **Still a USB install, as in 2.4.17:** the seven displays and the C3
+    Vision that 2.4.17's notes list as needing one USB install, if they
+    have not had it yet (later updates arrive over the air, except on the
+    Dash · Modes below); a Dash or Dash · Modes installed from a flasher
+    (its image has one app slot, so every update is a USB install); and the
+    boards with no published update channel: the ESP32-CAM, the ESP32
+    DevKit, the Freenove S3 and the Vision · C3 Super Mini.
+  - **Desktop Flasher 0.12.3:** after a successful *Read its security fuses*
+    on an S3, C3 or C6, the board now waits in download mode; install, or
+    unplug it. Host-tested; not yet checked on a board. Update the Flasher
+    before plugging in a board on 2.4.18: 0.12.2 calls a stamped board
+    firmware it does not recognize.
+- **Firmware 2.4.18**: the seven version strings and `fw_train`. Its
+  firmware changes are in the sections below: the WAP's owner authority over
+  HTTP (#1887), wave 20's Bluetooth, egress, Opera, Chirp, dash and splash
+  work (#1836) and the setup-network wording. The backoffice, website,
+  dev-channel and desktop entries there are not part of it. The emulator
+  dist, `flash.json`, the device pages' data and the firmware SBOM move with
+  it. It is the first release whose app images name their product and
+  version (`stamp_app_desc.py`; the desktop Flasher and the browser flasher
+  read it), and whose ESP32-CAM and ESP32 DevKit factory images carry the
+  bootloader at 0x1000. The release reads every stamped image back with
+  esptool and stops if one is not valid. Before it, fw-v2.4.17's apps were
+  stamped by hand and read back the same way, and a one-off host check
+  built from fw-v2.4.17's own OTA code accepted stamped images signed with
+  a test key; no board has yet booted a stamped image. Built in CI; not
+  bench-tested.
+- **Flasher 0.12.3** and **Lab 0.3.3**: see `desktop/RELEASE_NOTES.md` and
+  `desktop-lab/RELEASE_NOTES.md`. Both bake in the 2.4.18 catalog and refuse
+  a release image whose bootloader is not where the connected chip loads
+  it. Released after fw-v2.4.18, so the release they pin exists.
+- **iOS 0.8.1** (`MARKETING_VERSION`, `ios/project.yml`; the Apple Watch app
+  inherits it): the set-it-up-again advice says Remove credentials asks for
+  the API token on a 2.4.18 WAP. No synced CloudKit record changed since
+  `ios-v0.8.0`. Ships after the firmware, since the advice is wrong for a
+  2.4.17 WAP. It reaches iPhones once it passes App Review; before
+  submitting it, run `ios/scripts/cloudkit_schema.sh check` (and `promote`
+  if Production is short): `PairedDevice.tlsCertFP` is still unconfirmed
+  there (A111).
+- **Not moving:** tvOS stays 0.3.1 and the kernel, Home Assistant
+  integration and add-on stay 0.9.0 (one new test file, no runtime change).
+  The backoffice 0.8.0 entry below is in the published backoffice image;
+  it is not on staging yet (the staging deploy skips while no deploy server
+  is configured), and production moves only with *Promote backoffice to
+  production*, which needs that server first.
+
+### canary-wap keeps Bluetooth bonds and shown passkeys to its owner, keeps ambient rows off the card and the broker, puts closed bundles in the event ring and commits them before a planned restart, binds a pairing CONFIRM to its sender's role, resets Chirp's cooldown only after a quiet day and drops its stub server; an MQTT contract fixture holds the WAP to Home Assistant, the flasher reads the Vision's detection defaults where the firmware does, the dash says which way it is really turned, the splash bird clears its bubble and the tail is drawn on LVGL 8.4, CI holds the native and wasm32 cores to the sources, `build.json` carries each set's hardware, 133 more enclosure knobs get help, and the Witness Wall shows a device's birth day (#1836, wave 20)
+
+- **canary-wap Bluetooth: no bond and no shown passkey without the owner, and
+  every tap waits for the boot bring-up (sweep F191, F209, F259, F260).** A
+  bond that is not authenticated (a Just Works pairing no owner asked for) is
+  deleted with the radio quiet and its link dropped, also when its report
+  never reached the channel (from the stack's record of the link) and, when
+  the stack keeps it, again each minute; a passkey for the phone to type is
+  shown only inside the owner's pairing mode, and outside it NimBLE is handed
+  one it refuses (read from NimBLE-Arduino 2.3.8 and 2.5.0 source, not run); a
+  Numeric Comparison outside it is answered no; no pairing digits reach the
+  health log; `GET /api/bluetooth` counts NimBLE's bond store beside the list
+  (`bond_store`) and the health log names a store full of unlisted bonds.
+  Enable, a settings POST turning Bluetooth on and Start Advertising or Pair
+  on a device saved off wait for the boot bring-up like the rest (503, which
+  asks for a retry; safe mode says Bluetooth stays off), and a bring-up a tap
+  makes after the boot bring-up left the stack down says which of the worker's
+  services it left out (`late_bring_up`, `services_missing`, one health-log
+  line). A refused passkey's link stays until NimBLE's timeouts, and a few
+  roads still leave a Just Works bond that the next boot's rebuild can list.
+  **Host-tested** (`test_bluetooth_commands_wap.cpp`, 93 tests over the NimBLE
+  stand-in, which does not run the security manager; rules BV9 and BV10); the
+  Arduino and PlatformIO compiles are CI's; not bench-tested. Filed:
+  F350-F354.
+- **CSI events egress, both trees: ambient rows stay off the card and the
+  broker, closed bundles reach the event ring, and a planned restart commits
+  open bundles first (sweep F105, F77, F92).** Ambient rows
+  (`wifi.channel_activity`) no longer reach the SD event log or the `events`
+  topic: both commit hooks drop them, `ambient_dropped` now counts every one
+  (the ring, the stream and the Today sheet still show them), and ambient
+  lines an older firmware left on the card are never replayed. Closed bundles
+  enter the event ring, so a presence or tamper row stays on the canary-wap's
+  Today sheet, is on its card, survives a reboot and an outage longer than the
+  8-row RAM hold, and can be dismissed (its module's threshold nudge once per
+  row); the events body's `timestamp` is still the close, and the daily
+  summary's counts are now of bundles (what it should report is still F219's
+  decision). A card that mounts late, after a crash boot's tamper row, still
+  reloads the Today sheet beneath it. A planned restart (`POST /api/reboot` on
+  both, which the canary-wap now serves on its loop task; the canary's serial
+  `x`; the setup and provisioning restarts) empties the egress queue, commits
+  every open bundle, drains the egress (up to a second in all) and persists
+  the witness chain first; the setup libraries' idle restarts, safe mode's
+  recovery, the low-battery sleep and a credentials reset still do not
+  (F355). **Host-tested** on the real library and egress sources of both
+  trees; `main.cpp` and `canary_wap.ino` compile only in CI, where rules 10
+  and 13 hold their call sites; not bench-tested. Filed: F355.
+- **A pairing CONFIRM is bound to its sender's role, on both mesh trees (sweep
+  F94).** The CONFIRM hash was the same in both directions, and ESP-NOW does
+  not authenticate a source address. So a radio that sent a device's own
+  CONFIRM back to it from the partner's address passed it off as the
+  partner's: an initiator added the joiner, sealed the opera secret to it and
+  reported success, though the joiner's owner never confirmed. Each side now
+  sends a hash under its own role's domain (`securacv:pair:confirm:init:v1`,
+  `securacv:pair:confirm:join:v1`) and checks its partner's, so a reflected
+  CONFIRM ends the receiving side's pairing instead of counting (a joiner's
+  leaves its initiator completing, as any wrong hash sent to the joiner
+  already did), and two initiators relayed into one key no longer pair each
+  other. canary-wap logs the failure and the PlatformIO tree reports
+  `bad_confirm`. The 6-digit code is unchanged. **Wire change:** a device on
+  firmware from before this change cannot pair with an updated one; the
+  pairing fails closed (one side at the confirm, the other at the pairing
+  timeout), so update both devices before pairing. A later pairing v1 (F69,
+  F115) would supersede this exchange; whether F94 ships ahead of it is the
+  maintainer's call (F356), and the crypto review is pending. **Host-tested**
+  (`test_mesh_pairing`, `test_mesh_session`, `test_mesh_pair_crypto`,
+  `test_mesh_liveness_wap`; both trees pin the same four vectors); the
+  firmware compiles are CI's; not bench-tested. Filed: F356-F360.
+- **canary-wap Chirp's cooldown tiers reset only after 24 hours without a
+  chirp, and survive turning Chirp off and on (sweep F193).** They used to
+  reset 24 hours after the first chirp of a run, which could end a running
+  4-hour cooldown 2 hours in, and every enable zeroed them, so turning the
+  channel off and on cost 10 minutes instead of up to 4 hours. Now only 24
+  hours with no send reset them, on or off, across the 49.7-day uptime wrap.
+  They are still kept only in memory, so a reboot clears them: storing them
+  would add a lasting record of when you chirped (the health log's `chirp
+  sent` line already reaches the SD card, F364). **Host-tested**
+  (`test_chirp_commands_wap.cpp`, eight new tests on the real
+  `chirp_channel.cpp`); the compiles are CI's; not bench-tested. Filed:
+  F361-F364.
+- **canary-wap: the stub server API is gone, and the Lab's WAP page reads its
+  AP and port facts from the code the sketch runs (sweep F277).**
+  `wap_server.cpp` defined every function `wap_server.h` declared as a stub
+  nothing called, and its `send_json_error()` wrote two strings unescaped. It
+  is deleted, and `wap_server.h` keeps only the route list.
+  `canary-local/tools/gen_wap.py` took the page's SoftAP channel, client cap,
+  ports and SSID prefix from the header's unused copies. It now reads them
+  from `canary_wap.ino` and `onboarding_fsm.h`. It refuses any port it cannot
+  read as a digit literal written once, and an HTTPS port that
+  `httpd_ssl_start()` would overwrite. `devices/wap.json` is unchanged.
+  **Host-tested** (a scratch-copy generator unittest, a route-match case, the
+  J7 guard and its self-test); the ESP32 compiles are CI's; not run on a
+  device. Filed: F365, F366.
+- **canary-wap MQTT contract fixture (sweep F34, its fixture half).** A host
+  harness runs the real `csi_mqtt.cpp`, records every publish with its QoS and
+  retain flag, and delivers each discovery command word back to check the WAP
+  acts on it. A pytest builds it, replays the record into the Home Assistant
+  integration against an emulated broker, and holds the WAP's discovery
+  configs to the bodies it sends; a second test renders every discovery
+  template on those bodies the way Home Assistant does. QoS 0 is written down
+  as the delivery bound (the last will and the command subscriptions are QoS
+  1). Neither the firmware nor the integration changes: the gaps it found are
+  pinned as strict expected failures and filed. **Host-tested only** (not in a
+  running Home Assistant); the `python.yml` and `lint.yml` wiring has not run
+  in Actions yet; reconnect on a live broker is bench work. F34 stays open for
+  its two decisions. Filed: F367, F368 and HA44-HA48.
+- **The flasher catalog reads the Vision's detection defaults where the
+  firmware does (sweep F313, F182's follow-up).** `gen_flash.py` reads the
+  four first-boot defaults from
+  `firmware/projects/canary-vision/include/canary/config.h`, the constants
+  `detect_config.cpp` loads. The Vision's flavor `config.h` drops its four
+  copies and keeps the `FEATURE_*` flags, the watchdog timeout and the device
+  type the fleet figures read. `gen_flash.py` also refuses a firmware constant
+  it cannot read for certain, instead of reading a wrong number with `--check`
+  green: an expression (it used to read `30u * 1000u` as 30), a leading-zero
+  literal (octal in C, so `070` is 56, not 70), and a name defined twice; and
+  it no longer reads a commented-out definition. `flash.json` does not change,
+  and the emulator dist does not move. **Host-tested**; the ESP32 compiles are
+  CI's; not bench-tested. Filed: F369.
+- **The dash glass says which way it is really turned (sweep F245).** A glass
+  that could not get the memory for a turn stays landscape; Settings >
+  Orientation now checks Landscape there instead of the saved Portrait, says
+  why in its footer, and keeps the choice for a restart to try again. A turn
+  the phone just asked for, which the glass wears within a second, is not
+  mistaken for a refusal. The Orientation row in Settings follows the same
+  turn, and `GET /api/settings` adds `orientation_worn` and
+  `orientation_refused` beside `orientation` (still the saved choice).
+  **Host-tested**, and the real `lvgl_port.cpp` built natively against LVGL
+  9.5; the ESP32 builds are CI's; not bench-tested, and no refused or turned
+  dash glass has been seen. The emulator dist moves (the dash flavor
+  certainly); the pinned-emsdk dist rebuild landed with this change, and
+  again in the 2.4.18 bump. Filed: F370, A111.
+- **The first meeting's bird no longer sits behind its speech bubble, and the
+  bubble has its tail on every display (sweep F159, F185; settles F183).** The
+  boot splash measures the tallest bubble its first meeting will show and
+  seats the bird clear of it, and of the bubble's tail, wherever the glass has
+  room: on the AMOLED the bubble had risen up to 51 px into the bird's box,
+  and on the 172 px glass under Heirloom 15. The raised bird keeps that seat
+  through the wordmark's closing beat (F372). The tail is now square-cornered
+  and turned about its center, so the LVGL 8.4 code (the watch, S3
+  nightstand, touch169, AMOLED and nightlight configs, rendered natively)
+  draws it for the first time, and so does the browser emulator from the
+  rebuilt dist; on the LVGL 9.5 builds it
+  stands on the bubble's center line instead of 5.5 px left of it. On the round watch,
+  which has no room to raise its bird, the newly drawn tail reaches into the
+  bird under Heirloom (F371). **Host-tested and rendered natively** through
+  LVGL 8.4.0 and 9.5.0 on a 64-bit host, not an ESP32 build; not bench-tested.
+  The emulator dist moves for every display flavor; the pinned-emsdk
+  rebuild landed with this change and again in the 2.4.18 bump, and no
+  browser probe reads the tail in it yet (A112).
+  Filed: F371-F373, A112.
+- **CI holds the native cores to the committed dist call for call, a late
+  wake-up no longer fails a native core call, and the whole Vision and WAP
+  audio cores build for wasm32 from the sources (sweep A50, A58).** The page
+  logic job ran `native_cores.test.js` only in its default mode, where the
+  scenarios that compare the native g++ build with the committed dist skip. It
+  now runs the file again under `LAB_CORES=native` in a step of its own,
+  straight after the native page tests and whenever the dist step ran. Its red
+  names the first call where this tree's sources and the dist answer
+  otherwise, with its arguments and its tick or frame, so a core change goes
+  red there as well as in the dist step until CI's rebuild lands. The three
+  scenarios moved to `tests/native/scenarios.js`, their calls unchanged.
+  Chasing the triage's unexplained 1-in-6 failure (its output was not
+  captured) turned up a race in `tests/native/cores.js`, seen once under the
+  path-filter recorder on a loaded machine: the worker notifies after it
+  stores an answer, so the test's thread could be woken on its next call by
+  that late notify and throw the previous reply as an error. The waiting
+  thread now goes by the answer's state. `tests/native/wasi.js` builds each
+  whole core from `build.sh`'s sources for wasm32-wasi with the host's clang
+  against a WASI sysroot and runs it under `node:wasi`. `cores_wasm32.test.js`
+  holds it to the g++ build on those scenarios, and shows it catches a `long`
+  put back in each core (A42's posture products; the audio RMS's sum of
+  squares) that the g++ build misses. The job installs Ubuntu's `wasi-libc`,
+  `libc++-18-dev-wasm32`, `libc++abi-18-dev-wasm32` and
+  `libclang-rt-18-dev-wasm32` (no emsdk) through a new composite action,
+  `.github/actions/setup-wasi-sysroot`, with apt retries and a 5-minute step
+  timeout, and runs the file with `CORES_WASM32=require` under a 5-minute
+  timeout of its own; elsewhere it skips and names each missing package. The
+  two new steps' CI tests read the workflow the way the runner does
+  (`tests/native/ci_steps.js`), so a `|| true`, a `continue-on-error` or an
+  env line turned into a comment fails them. It is the host's clang and
+  wasi-libc, not emscripten or the dist, and the dist does not move.
+  **Host-tested** (both files in both modes, the race test against the old
+  `rpc`, the three core probes natively in Chromium, 35 workflow mutations
+  against the CI tests); the action's apt install and the new CI steps run
+  only in CI, and have not run yet. Filed: D15 (with C3's line).
+- **`build.json` carries each printable set's hardware, and the Assemble tab
+  is held to it (sweep C3, its build-sets half).**
+  `canary-local/tools/gen_enclosures.py` now writes every `hardware.json` set
+  (the counts each case's own `HARDWARE` echo prints, and its lid rib) into
+  `canary-local/devices/build.json` per device, under an additive `hardware`
+  key; no page renders it yet. A new `canary-local/tests/assembly.test.js` leg
+  checks every screw or insert the Lab's Assemble tab draws against the echo
+  of the set it shows, by size, head, length and count (one per placement
+  drawn; one set's lines of a spec add up), and pins that comparison on
+  synthetic builds. The WAP and the Sense agree; two gaps are listed for a
+  maintainer: the Vision tab draws none of the camera's four M2 x 6 screws,
+  and the Dash case prints no hardware line (C25). No rib changed (C11).
+  **Host-tested**; the catalog drift step and `enclosure.yml` have not run on
+  this branch. Filed: C25, C26 (and C12's title is corrected: 8
+  disagreements today, 12 at `gen_hardware.py`'s first run).
+- **Enclosure knob help, second batch (sweep C10, wave 4: C10c-2).** 133 knobs
+  in 19 monorepo-only case files now carry help read off the geometry they
+  shape, including 21 boolean options whose help is their label in the Lab
+  catalog (they showed bare names such as `opt_btn`). Twelve shared knob lines
+  are split one assignment per line, so the Lab lists 38 entries it did not
+  list before (37 knobs it skipped and the 1.69 case's computed `skirt_dep`),
+  10 of them in three groups it never showed (the Hammond plate's Board snap
+  clips, the C3 case's and the vehicle mount's Print tolerances), and
+  `catalog.json`'s `engineering_param_count` moves for seven products. The
+  splits and the boolean labels are maintainer decisions, each in commits of
+  its own (C27). No geometry moved: the CSG of every part is byte-identical.
+  Where the code does not hold what a knob implies, the help says so: the
+  solar relay's 18650 holder height asks for a measurement (at the defaults
+  the cavity is shallower than a fitted cell), seven knobs say no
+  geometry reads them, the cable gland's fill says its overfill assert cannot
+  fire, and the 7-inch frame's brand-word size says its width estimate reads
+  short. **Host-tested**; not printed. Filed: C27-C34.
+- **The Witness Wall shows a device's birth day (sweep A72; its code merged
+  in #1832, and #1836's ledger ticks it).** witness-core's
+  fleet normalizer carries `born_day` and `born_exact`, keeping a day only
+  inside the window a Canary can stamp (2025-01-01 to 2106-02-07) and a flag
+  only when it is a boolean, so a bad value drops to absent instead of failing
+  the snapshot; five new rows in `fleet_contract_vectors.json` hold every
+  reader to it. The Wall's detail screen shows "Born <day>" only when the
+  device says the day is exact, otherwise "First dated <day>" (the iPhone's
+  labels), formatted in UTC. The website's web Wall and its emulator, and the
+  emulator copies vendored into the Lab and the Flasher, show the same line.
+  Only a Canary answering `/api/fleet` for itself sends it; no hub or display
+  relays it (A114). **Host-tested** (witness-core's cargo suite, the Lab's
+  vendored-copy replay, the website's suite on its branch); the Swift is
+  compile-tested by CI only once `tvos.yml` runs, and is not compiled here;
+  nothing ran on a TV. **Merge order:** the website half
+  (`kmay89/securacv_website` wip/w24-a72-site) had to merge after #1832, and
+  follows as a site PR now that #1832 has merged; if the website's next
+  scheduled carry opens its PR first, merge the site PR before it. Filed:
+  A113, A114, F374, W40, W41. **Already shipped:** #1832 merged before
+  fw-v2.4.17, so Flasher 0.12.2 and Lab 0.3.2 carry this line; the tvOS
+  0.3.1 build carries it too and reaches an Apple TV once it passes App
+  Review. 2.4.18 brings no Wall update.
+### The backoffice can say it has not been breached (backoffice 0.8.0)
+
+- The audit log is an HMAC chain under a key outside the database, verified
+  daily and on demand, anchored off the box by the morning digest; a SECURITY
+  block that answers the questions a person asks about the last 24 hours;
+  lockdown in one step; tripwire paths; blocks that survive a restart; a
+  self-check at boot; `MAINTENANCE.md`.
+
+### canary-wap: "Set up the next Canary" names the setup network the way 2.4.17 does
+
+- The setup wizard's guide for the next Canary told the owner to wait for a
+  fresh `SecuraCV-XXXX` network. From 2.4.17 that network carries the
+  device's kind (`SecuraCV-sense-…`, `SecuraCV-wap-…`), so the step now says
+  to wait for a fresh network whose name starts with `SecuraCV-`, as the
+  page's self-test hint already did. `web_assets_gz.h` is regenerated
+  (the device serves the gzipped copy). Ships in WAP firmware 2.4.18;
+  checked on the host only (`gen_web_assets_gz.py --check`, the microcopy
+  lint, the WAP page tests).
+
+### canary-wap: after setup the API token alone moves its network over HTTP (a Bluetooth peer bonded through the pairing confirm or a passkey still moves it; a network joined before the update can stay saved), re-keys its vault, confirms a pairing and reboots it (the firmware install aside), and the sign-in checks a pasted token by itself; a failed provisioning says what the unit does (sweep F333, F334, F335, F336, F345, F346, F348, F349, F361, #1887)
+
+- **canary-wap: one dashboard sign-in, which checks a pasted token by itself
+  (the owner-authority items' shared sign-in).** On a page holding the
+  landing page's session, the sign-in checked a pasted token on `GET
+  /api/status` with the cookie attached, and `api_auth_check()` takes the
+  cookie before it compares anything, so any `cv_` string was taken as the
+  token and refused one step later, at whatever needed the bearer. It now
+  sends the pasted token without the cookie (`credentials: 'omit'`), so a
+  mistype reads "Invalid or expired token. Please re-enter." at the sign-in
+  (and costs that browser's address one strike: a re-paste in the next 2 s
+  is refused for the rest of that backoff, "Too many failed attempts. Retry
+  in … seconds."). A sign-in a running dashboard brings up has a **Not
+  now** button; a refused action alerts
+  nothing on top of it; the Wi-Fi, vault key, reboot and pairing-QR cards
+  say beforehand that their action takes the token ("… takes the API token:
+  paste it (it is in your recovery kit), or use BOOT Tap Once."); and the
+  "another device asked" copy names
+  pasting the token first. Host-tested (`dashboard_gates.test.js`,
+  `recovery_kit.test.js`).
+- **canary-wap: after setup the API token alone moves the network the WAP
+  joins over HTTP (sweep F334, F345, F333).** The landing page hands any caller on the
+  home network a pair token and a 24-hour session, and both moved the
+  network: `POST /api/wifi/connect` and `/api/wifi/ap-only` went ahead on
+  the pair token or the cookie, and `/api/wifi/disconnect` and
+  `/api/wifi/forget` on the cookie. Forget also wiped every saved network and
+  re-opened the Bluetooth setup door, whose claim buys the receipt (the
+  token and the SoftAP password). After first-boot setup all four take the
+  bearer alone, on every interface, the recovery network
+  (`SecuraCV-wap-XXXX`) included, and `POST /api/wifi/qr-scan` answers
+  `404` (a phone's scan still running when setup ends stops at its next
+  frame). During setup Connect and AP-only are unchanged (the wizard's pair
+  token still moves the network), while Disconnect and Forget take the
+  bearer in every mode, so a session the receipt route minted during setup
+  no longer reaches them. A Bluetooth peer already bonded through the
+  pairing confirm or a passkey, one a session made before this release
+  among them, still moves the network with no token, over the Wi-Fi
+  credentials write (the confirm and a Passkey Entry's digits take the
+  token since F346, below; a Just Works bond never reaches that write).
+  On the dashboard, Settings → Wi-Fi says the token is needed and asks for
+  it (paste it from the recovery kit,
+  or use BOOT Tap Once); on the recovery network the tap is reliable, since
+  the SoftAP takes one client. Forget now also clears the stored broker
+  username and password (keeping the host, port, TLS mode, CA, prefix and
+  discovery): retype the login on `/mqtt` afterwards, or use Connect, which
+  keeps it. Its confirm says what it re-opens. A camera unit set standalone
+  no longer scans Wi-Fi codes (the boot scan asks the setup door's rule,
+  `keyless_join_open()`, and a running window asks it again after every
+  frame); to add one to a display's fleet, hold BOOT 10 s, then show the
+  code, or join it to the display's network from the dashboard and type the
+  hub as the broker on `/mqtt` (a unit with a network stored does not scan,
+  and Forget leaves a standalone unit standalone). The 10 s hold needs no
+  token and works whatever the lockout is doing, but it is the last way out
+  when BOOT taps keep closing (`magic_pairing.md` §3.7): it keeps the token
+  and reopens the setup door to whichever Bluetooth client connects first,
+  so paste the kit's token or read it from the USB serial console first, and
+  hold only for a host known to be on the network only, with the iPhone
+  ready. Kept as
+  posture: the plain broker link (`tls_mode` 0), which a host answering
+  for the broker can still read; the CA-verified mode is the defense.
+  After updating: a network a session moved the unit to before this release
+  can stay among its saved networks (a ring of up to four that every join
+  writes), and the unit tries it by itself, with no token, when its own
+  network is not found twice running; the dashboard neither lists the saved
+  networks nor removes one. If the unit was ever moved to a network you did
+  not choose, use Settings → Wi-Fi → Remove credentials with the API token
+  (it wipes every saved network and the broker login), then set the unit up
+  again. Host-tested (`test_wifi_authority`, `test_provisioning_logic`,
+  `test_mqtt_reinit`, `dashboard_gates.test.js`, `test_docs_claims.py`);
+  not bench-tested. Filed: F353, the token cannot be rotated.
+- **canary-wap: a session neither re-keys the vault nor confirms a pairing,
+  and a Passkey Entry's digits reach only the token (sweep F335, F346).**
+  `POST /api/vault/key` (who can open every frame sealed from then on), `POST
+  /api/bluetooth/pair/confirm` (a lasting bond to the authenticated
+  characteristics, the Wi-Fi credentials write among them) and `POST
+  /api/mesh/pair/confirm` (an opera's secret) took the landing page's
+  session; each takes the bearer alone now, and a session is refused `401`.
+  A Passkey Entry's six digits ride `GET /api/bluetooth` only to a bearer
+  that passes the accounted grant while the passkey is shown (`pin_hidden`
+  to a session) and are no longer written to the health log (F191's log
+  half). Numeric Comparison digits and the mesh code stay visible: both ends
+  compute them. The dashboard asks for the token at Start Pairing and at the
+  opera's Create/Join, before the phone's or the opera's clock runs; a
+  comparison on a page without the API token leads with "Don't match"; a
+  finished pairing shows no digits. The other vault routes stay on the session (a
+  session can destroy sealed frames but not redirect them). Host-tested
+  (`test_bluetooth_commands_wap`, `test_receipt_grant`,
+  `dashboard_gates.test.js`); not bench-tested. After updating: compare the
+  key id on the vault card with your own key's id once; a key a session
+  registered before this release stays the recipient (Remove, then Register
+  yours). After updating: check Settings > Bluetooth > Paired devices and the
+  Opera peers for anything you do not recognize, and remove it; a bond or
+  peer a session made before this release persists.
+- **canary-wap: the API token alone reboots the unit, the firmware install
+  aside (sweep F361).** `POST /api/reboot` and `POST /api/safe-mode/retry`
+  took the landing page's session, so any host on the home network could
+  reboot the unit at will, and each reboot emptied the RAM lockout table,
+  resetting a token guesser's budget. Both take the bearer alone now, as the
+  flagship's reboot does. Reboot Device and Retry full boot on the dashboard
+  ask for the token through the same sign-in. A session can still start the
+  dashboard's firmware install (or turn automatic updates on), or point the
+  MQTT bridge at a broker that presses the update entity's Install, and
+  either restarts the unit only into a newer signed image. Host-tested
+  (`test_wifi_authority`, `dashboard_gates.test.js`, `test_docs_claims.py`);
+  not bench-tested.
+- **canary-wap: a failed provisioning says what the unit does (sweep F336,
+  decision).** `setup()` no longer prints "HALTING" for a storage failure (it
+  never halted there) or says it still serves HTTP. A release build prints
+  `[!!] PROVISIONING FAILED - storage refused the identity; no web server
+  this boot. Reflash with a clean install (full erase)`; a debug build says
+  its access point may still start
+  on a debug key it does not print. No behavior change: the loop keeps the
+  serial console, Bluetooth and the BOOT hold, and a release build starts no
+  web server. A stored identity key that cannot be read still halts first,
+  with its own line (F360). What the radio broadcasts in that state is a new
+  U1 row.
+- **canary-wap: where the MQTT broker password lives is written down (sweep
+  F349, decision; F348 kept).** `docs/security/SECURITY_MODEL.md` says the
+  stored broker password is plain bytes in NVS and, while it is stored, stays
+  in RAM, that no handler wipes its copy, by decision, and that the firmware
+  makes no RAM-residue promise for a secret that lives as long as the device
+  runs. The broker gate keeps its split: the route check holds its shape,
+  `test_mqtt_reinit` what it decides (11 chosen mutations of its body pass the
+  first and fail the second). The camera's hub re-point stays outside that
+  gate, as F333 decided; F333's Forget clears the stored login instead.
+  Comment and docs only.
+- **canary-wap: what #1884's sweep says of the landing session, as this
+  release ships it.** #1884 (#1842's follow-up, which 2.4.17 carries) wrote
+  that Forget Wi-Fi is any landing session's, that a session reads the
+  passkey and confirms a bond, and that under a host striking from nine or
+  more addresses the owner's way out is the landing page's session on
+  `POST /api/wifi/connect`. Each was true of its tree and is not of this
+  release: the four routes that move the network over HTTP (Disconnect
+  and Forget in every mode, Connect and AP-only after setup), the bond and
+  opera confirms and a Passkey Entry's digits take the API token, and the
+  shared overflow such a host keeps running holds that token with every
+  untracked address, the
+  owner's among them. So the owner waits until that host stops, then
+  changes the Wi-Fi with the token pasted into the sign-in; last, for a host
+  on the network only, with the iPhone ready, the 10 s hold and a setup onto
+  a network that host is not on. The iPhone's bonded Bluetooth lane is no
+  way out today (A65). The copies were rewritten where they stood (the
+  security and threat models, the pairing design, the glossary, the FAQ,
+  `TRUST_MODEL.md`, `ble_protocol.md`, the settings checklist, the WAP
+  README, the sketch's comments, `improv_core.h`, the BOOT serial line, the
+  dashboard's token box and Forget confirm, and the iPhone's
+  set-it-up-again advice, which now says Remove credentials asks for the
+  token first), and `test_docs_claims.py` retires each where it stood. No
+  route or gate changed in the merge that brought #1884 in.
+
+### The hosted browser flasher reads the pinned release from the site's own copy
+
+- **On the hosted page, every product read unavailable.** No browser can
+  read a GitHub release asset: `github.com` answers
+  `/releases/download/<tag>/<file>` with a redirect that carries no CORS
+  header, and the asset host answers the file with none either. So after
+  fw-v2.4.17 published, the browser flasher on GitHub Pages reported a
+  connection problem and every product as unavailable, and its dev channel
+  and the Vision model's download failed the same way. The desktop Flasher
+  and the Lab fetch natively and were never affected.
+- **The site deploy now copies the pinned releases into the site.**
+  `pages.yml` runs `canary-local/tools/mirror_release.py`, which copies the
+  manifest `flash.json` pins, the Vision model's and the dev channel's
+  (`fw-dev-latest`), byte for byte, and every file each lists, held to its
+  manifest's SHA-256 and size, to `canary-local/firmware/<tag>/<file>`. A
+  channel lands whole or not at all; a release not cut yet, or one still
+  uploading or disagreeing with its manifest, is a warning, and a transport
+  failure fails the deploy so the last good site stays live. A release made with the `GITHUB_TOKEN` fires no
+  event that would redeploy the site, so `firmware-release.yml`,
+  `flasher-release.yml` and `vision-model-release.yml` dispatch `pages.yml`
+  on the default branch once they publish (a refused dispatch is a warning,
+  not a failed release).
+- **The page reads only that copy.** `flash-core.js` `fetchReleaseAsset`
+  maps a release URL to the copy by its tag and file name on every http(s)
+  page, loopback and LAN included, and `flash.js` and `we2-flash.js` read no
+  release asset any other way. The
+  signed manifests are never rewritten, so the SHA-256 and Ed25519 checks
+  bind the same bytes as before. `flash.html`'s Content-Security-Policy
+  (`gen_csp.py`) no longer names `github.com` or `*.githubusercontent.com` in
+  `connect-src`.
+- **A 404 names the server that answered**: "This site's copy of firmware
+  release … isn't available" (or of the dev channel, or of the Vision
+  model), with the advice to reload once the redeploy that follows a release
+  lands; under a `?manifest=` override, that override's server. The page
+  never says a release was not cut: the release host answers no browser, so
+  no answer the page gets can mean that.
+- Host-tested (`flash.test.js`, `csp.test.js`, and
+  `scripts/tests/test_pages_release_mirror.py`, which holds the deploy's
+  writer to the page's reader and the release workflows' dispatches to their
+  order) and in Chromium by `canary-local/tests/flash_mirror_probe.mjs`,
+  which serves the page and a fixture copy from one origin and fails on any
+  request that leaves for github.com. It had not run against the live site
+  when this was written: it takes effect at the first site deploy that
+  carries it.
+
+### Factory images put the bootloader where each chip's ROM loads it: the classic-ESP32 images move it to 0x1000, both flashers refuse an image laid out for the wrong chip, and the capacity check reads past a classic ESP32's empty first 4 KB
+
+- **fw-v2.4.17's ESP32-CAM and ESP32 DevKit factory images cannot boot.**
+  `canary-esp32cam-2.4.17-factory.bin` and `canary-wroom-2.4.17-factory.bin`
+  carry the bootloader at 0x0; both flashers write a factory image at flash
+  0x0, and a classic ESP32 loads its bootloader from 0x1000. Read from the
+  published bytes; both boards are compile-tested reach ports that nobody has
+  booted. A board installed from either file is recovered over USB with a
+  correct image: one from fw-v2.4.18, or from the dev channel (**Advanced →
+  dev channel**) once `fw-dev-latest` carries a build from main with this
+  fix. Until fw-v2.4.18, the release channel has no correct Canary image
+  for these two boards. Nothing else on that release is affected: those two
+  boards' OTA channels are not published, and the other 19 factory images (S3,
+  C3, C6) carry their own chip's bootloader at 0x0, where their ROM loads it.
+- **`make_factory.py` takes the bootloader offset from `--chip`**: 0x1000 for
+  `esp32` and `esp32s2`, 0x0 for the S3/C3/C6/C2/H2, held to esptool's own
+  table. It used to default to 0x0 for every chip and no caller passed the
+  flag. A chip it has no offset for is refused unless `--bootloader-offset`
+  names one, which still overrides, with a warning when it disagrees with the
+  ROM. The bootloader's image header must name the same chip (`--chip auto`
+  reads it from there), and the merged file is read back before it is kept.
+  `build_flash_manifest.py` needed no change for this: both release paths
+  already pass `--chip`, so they inherit the fix. `dev_flash.sh -f` falls back
+  to `--chip auto` instead of `esp32s3` for an env with no `board_build.mcu`
+  (the classic-ESP32 reach envs). `firmware/scripts/test_make_factory.py`
+  merges real images from synthetic parts with esptool 4.12.0 and checks 0xE9
+  at 0x1000 for `esp32`/`esp32s2` and at 0x0 for the S3/C3/C6, and holds that
+  esptool to the release workflows' pin; the Mesh + Scout Host Tests job runs
+  it, and `firmware.yml` now also runs on an edit to `flasher-release.yml`.
+- **Both flashers refuse, before writing, an image whose bootloader is not
+  where the connected chip's ROM loads it.** The partition-table check passed
+  fw-v2.4.17's two classic-ESP32 images. Now the catalog install and the
+  local-file install each look for a bootloader built for the connected chip
+  (the 0xE9 image magic, and that chip's id in the header's byte 12) at
+  0x1000 on an ESP32 or S2 and at 0x0 on the S3/C3/C6/C2/H2: the browser in
+  `flash-core.js` `bootloaderPlacement`, the desktop Flasher and the Lab in
+  the shared flash engine's `check_bootloader_offset` (the Flasher's
+  `flash_local_file` now takes the detected chip). The chip id keeps a stray
+  0xE9 byte at the ROM offset, or a local file built for another chip that
+  loads from the same place (an S3 image on a C3), from passing. The refusal
+  says where the chip looks, where the image has its bootloader or that the
+  one there is another chip's, that nothing was written, and that SecuraCV
+  factory images from fw-v2.4.18 on are laid out right, in the same words on
+  both; all three error classifiers name it (`layout`) instead of coaching
+  download mode, and neither failure card then offers a clean install (nor,
+  on the desktop, "Try again"), which would refuse the same image again. A
+  chip the table does not list is not judged, so the check refuses only an
+  image that chip's ROM would not start; the other 19 images on fw-v2.4.17,
+  and every factory image on `fw-dev-latest` but the same two boards', pass
+  it (their first 8 KB read from the releases). One table, held equal to
+  `make_factory.py`'s `ROM_BOOTLOADER` by
+  `desktop_parity.test.js`, which also requires a row for every chip in
+  `flash.json` (that check moved there from `test_make_factory.py`, so it runs
+  when the catalog changes). The hosted browser flasher refuses fw-v2.4.17's
+  two classic-ESP32 images from the next site deploy; the desktop Flasher and
+  the Lab do from 0.12.3 and 0.3.3. A backup restore is not checked: it puts
+  back the board's own bytes.
+- **The counterfeit-capacity check reads 8 KB, not 4.** Both flashers took
+  the flash-size probe's fingerprint from the first 4 KB of flash, which a
+  correctly installed classic ESP32 leaves erased: every such board read "the
+  chip is blank", and a 2 MB die sold as 4 MB was never caught. The window is
+  now 0x2000, past a classic ESP32's bootloader at 0x1000, in both flashers
+  (`intake.js` `FLASH_ALIAS_WINDOW`, `intake.rs` `ALIAS_WINDOW`, held equal by
+  `desktop_parity.test.js`, which also holds the window past every offset in
+  the ROM table, so a chip that loads from 0x2000 cannot join it unseen), with
+  a classic-layout case on each side.
+- **The desktop Flasher's local-file note looks at 0x1000 too.** It warned
+  that a file not starting with 0xE9 was unusual, which is every correct
+  classic-ESP32 factory image; it now looks for the magic at 0x0 or 0x1000
+  and says such a file will be refused, and the write's "writing anyway"
+  warning gave way to the refusal above. The comment in `flash.rs` that
+  called 0x0 right for every merged image now says why it is: the merge
+  placed each part at its address inside the file. Host-tested (node and
+  cargo unit tests); not bench-tested.
+
+### The website's download buttons are carried from the published releases
+
+- **`scripts/carry_to_site.py` gains a `downloads` carry.** Once the
+  website's exact-link /download page merges, it links exact releases
+  (`app-v<x.y.z>` for the Lab, `flasher-v<x.y.z>` for the Flasher) and names
+  the same tags in its note; the carry moves every such token in
+  `download.html` to the newest release of its app that the GitHub REST API
+  shows as published (not a draft, not a prerelease, a bare `x.y.z` tag, its
+  `_universal.dmg`, `.AppImage` and `.deb` uploaded, highest by number) and
+  leaves every other byte alone. The installers count because the Flasher's
+  release is created published before its builds upload, and a failed run
+  leaves it that way. It reads the list with `GH_TOKEN` when set, follows
+  every page and makes three attempts on a network error, a body cut off or
+  not JSON, a 5xx or a 429. It never reads `tauri.conf.json`: a version bump
+  merges before its release exists, and a stamp from the config would point
+  the buttons at a missing page. A run that cannot read the list, finds no
+  published release of an app, or finds a page that names no token of an app,
+  leaves the page as it is and says why, and a default run still writes every
+  other carry; `--only downloads --check` exits 1 on a stale page, an
+  unreadable list and a page with nothing to move. Pinned by
+  `scripts/tests/test_carry_to_site.py` (no network: the API reader is tested
+  against a stand-in `urlopen`). Run on a scratch copy of the website: a page
+  at `app-v0.3.2` / `flasher-v0.12.2` keeps its bytes, and a page faked back
+  to `app-v0.2.4`, `app-v0.3.1` and `flasher-v0.11.9` is stamped back to the
+  committed page byte for byte (the website's `tests/download-facts.test.mjs`
+  passes both: it holds the page to one version per app, not to the newest
+  one, which is what this carry adds). Run on website main, whose buttons
+  still open the release search: `download.html` is left byte for byte, the
+  other carries are written and the run exits 0, so this can merge before or
+  after the website's exact-link page. The website half merged in
+  kmay89/securacv_website#243: its weekly carry job commits only the paths in
+  its `CARRY_PATHS`, so `download.html` joined that list, the carry step got
+  `GH_TOKEN` in its environment, and its `tests/download-facts.test.mjs`
+  header names this carry. After an app release, the website's *Update
+  everything (only what needs it)* moves the buttons, or `--only downloads`
+  with `--site` run by hand.
+
+### Every release brings the dev channel up to stable, and the flashers say where it stands
+
+- **A stable release now refreshes the dev channel when it is older.** The
+  rolling `fw-dev-latest` prerelease held no per-product OTA manifest (a Canary
+  on the dev channel got a 404 on every check) and a 2.4.15 flash catalog
+  under stable 2.4.17: only a `-dev.N` / `-rc.N` release ever wrote it, and none
+  had been cut. `.github/scripts/dev_channel.py` copies a release's channel
+  manifests there, byte for byte, wherever the dev channel carries an older
+  version, none, or the same version in other bytes (a bring-up build, which
+  it replaces), and leaves a newer dev build alone; every firmware release
+  runs it, and **Actions → Refresh the dev channel (catch up to stable)** runs
+  it with `releases/latest`, or with the `fw-v*` tag its optional `source`
+  input names, then redeploys the site. It never moves `releases/latest`,
+  deletes nothing and keeps `fw-dev-latest` a prerelease.
+  **Flasher Factory Images** (`channel: dev`) now refuses a branch older than
+  stable, and its tag rebuild brings the dev channel's copy of that release's
+  catalog along. A stable release whose dev-channel step fails leaves the
+  channel behind until the button is pressed; a dev release's step fails the
+  run, and the button with that release's tag as `source` finishes the copy
+  without rebuilding anything. Re-running the release's job is not the way: a
+  dispatched release's re-run stops at its tag-exists check, and a pushed
+  tag's rebuilds and re-uploads every asset of the release. The button refuses
+  a `source` that is not a published release, so a mistyped tag goes red
+  rather than passing as "nothing to do".
+  Host-tested (`.github/scripts/test_dev_channel.py`, its version order held to
+  the device's own cases) and dry-run read-only against the public releases;
+  the button had not been pressed when this was written.
+- **Both flashers stop calling the dev channel "ahead of stable" by
+  assumption.** The browser page, the Lab's native bench and the desktop
+  Flasher compare the dev catalog's `fw_train` with the train of the release
+  they are pinned to and say newer, the same version, or older on the dev
+  banner (`devChannelStanding`, the same sentence in both flashers,
+  `desktop_parity.test.js`). They do not call it stable or ahead of stable:
+  the desktop Flasher and the Lab pin the train they were built with. The
+  device needed no change: a stable version on the dev channel is an ordinary
+  update to a dev unit running anything older.
+
+### Release images name their product and version, so both flashers can say what a board runs
+
+- **Every SecuraCV image up to fw-v2.4.17 introduced itself as an Arduino
+  sketch.** An app image's `esp_app_desc_t` is the record both flashers read
+  off a connected board, and the Arduino core's precompiled libraries define
+  it: all 21 fw-v2.4.17 images say `arduino-lib-builder`, version `esp-idf:
+  v4.4.7 38eeba213a` (or `14a0af9`, `43a8f6d`). So neither flasher named the
+  product on a board already running SecuraCV, the install verdict read
+  "Version unknown", and installing an older image over a newer one gave no
+  downgrade warning. A sketch cannot set the record at compile time.
+- **The release stamps it after the build.** New
+  `firmware/scripts/stamp_app_desc.py` writes the product's `asset_stem` from
+  `flash.json` (`canary-wap`, `canary-display-nightstand-s3`: every stem fits
+  the 31-character field, where product ids do not) and the firmware's own
+  version string (the `CANARY_FW_VERSION` / `FIRMWARE_VERSION` literal, the
+  WAP's `-wap` suffix included) into the descriptor, then recomputes the
+  image's checksum byte and its appended SHA-256. Nothing else in the
+  descriptor moves: not `app_elf_sha256` (the boot guard's image identity),
+  `secure_version`, the date, the time or `idf_ver`. It refuses an image of
+  the wrong shape or with an already-wrong checksum or hash, and a value that
+  does not fit; it stamps only an image that already carries the version
+  string and its product's id outside the descriptor, so the release's
+  version guards still test the firmware and not the stamp, and a build that
+  identifies as another product (a `modes` display build without its flavor
+  staged is a gearless dash) is never named for the slot it sits in;
+  stamping twice changes nothing. `firmware-release.yml` and
+  `flasher-release.yml` run it after their last build and before anything
+  copies, hashes, signs or merges an app, so the OTA manifests' sha256 and
+  signatures and the factory images cover the stamped bytes; each stamped
+  image is read back with esptool's `image_info` and the run fails unless
+  esptool calls the checksum and hash valid and reads the name and version
+  written. In `firmware-release.yml` an app it refuses (empty, truncated,
+  malformed) is moved aside, so that product drops out like a failed build
+  instead of sinking the release, and the completeness gate weighs it (a
+  product the signed release cannot ship without still fails it); Flasher
+  Factory Images passes `--fail-on-refused` and fails the run instead,
+  because it uploads its `manifest-flash.json` over the tag's with no
+  completeness gate. A flasher rebuild of an older tag stamps that tag's
+  factory images too (the stamper is overlaid with the other packaging tools).
+- **Both flashers.** A stamped board reads as running, say, "Canary WAP" and
+  its version, and the existing install verdicts work on it: update, reinstall, downgrade, and
+  switch from another product. Customs says "Arrived running Canary WAP" for
+  an exact stem (that name is the image's own claim, and the finding says
+  so). An `arduino-lib-builder` image still reads as "an Arduino sketch",
+  whose detail no longer calls it a stock image: SecuraCV releases up to
+  2.4.17, and any SecuraCV build made outside a release (`pio run -t
+  upload`, `dev_flash.sh`, an OTA push), read that way too, and the check
+  cannot tell them apart. Prerelease versions now order field by field,
+  numerically where both are digits, so a board on `2.4.18-dev.10` offered
+  `-dev.9` reads as a downgrade (as strings, `dev.10` sorted first). The
+  descriptor's date is no longer shown beside the product and version: on
+  an Arduino build it is the Arduino core's (fw-v2.4.17's read Mar 5 2024),
+  and the stamp leaves it alone, so only the health report shows it,
+  labeled "descriptor dated".
+- **From 2.4.18 on.** Images already published, fw-v2.4.17's
+  included, are unchanged, and boards running them keep reading as an Arduino
+  sketch until they update. A dev-channel build (`fw-dev-latest`) is stamped
+  with the train's version, the number its sources compile in, so a board
+  running one reads as that release, "already on 2.4.17", though it runs
+  newer code. Host-tested only: `test_stamp_app_desc.py` builds
+  images for the ESP32, S3, C3 and C6 with esptool 4.12.0, stamps them and
+  reads them back, failing side included (and all 21 downloaded fw-v2.4.17
+  apps round-trip through it when named in `STAMP_APP_DESC_FACTORY`, done by
+  hand for this change);
+  `scripts/tests/test_release_app_desc_stamp.py` holds both workflows to the
+  order. No stamped image has been flashed to a board or installed over the
+  air yet.
+
+### A board brought up with BOOT held: the desktop fuse read no longer ends by resetting it into its firmware, and the browser's hello card no longer boots it
+
+- **The desktop Flasher's *Read its security fuses* no longer ends by
+  restarting the board into its own firmware.** The read reset the chip
+  into the ROM, read eFuse block 0, then hard-reset it, on success and on
+  both failure paths. That ran the very firmware the person had held BOOT
+  to keep from running, which on a native-USB board can present itself as
+  a keyboard. The read now parks DTR and RTS released (a state that resets
+  nothing, and the one closing the port leaves them in on Linux and macOS)
+  and stops there, esptool's `--after no_reset`: after a good read the chip
+  stays in the ROM's download mode until the install or an unplug. An
+  install still connects: espflash resets into the ROM itself before it
+  writes.
+- **On a native-USB board it enters the ROM with that port's own reset.**
+  It ran the classic bridge sequence first on every port. On the
+  USB-Serial/JTAG port a BOOT-held S3, C3 or C6 presents (`0x303A:0x1001`),
+  that sequence's first move holds RTS alone, which is the port's own hard
+  reset, and releases it before asking for IO0, so the firmware most likely
+  ran through the failed SYNCs until the second sequence pulled it back, if
+  its port survived. The read now looks the port up in the OS's list and
+  gives that PID only the USB-Serial/JTAG sequence, as esptool, the pinned
+  espflash and the vendored esptool-js do. Any other port keeps classic
+  first and USB-Serial/JTAG second; on a bridge board a classic reset that
+  misses the ROM is still followed by one that starts the firmware, as
+  before.
+- `efuse.rs`'s tests replay the read against a scripted board: every line
+  move after the last SYNC or READ_REG is the park alone (a good read, a ROM
+  that never answers, one that stops mid-read), and a USB-Serial/JTAG port
+  never sees a reset before IO0 was asked for. `desktop_parity.test.js`
+  holds every RTS assertion in `efuse.rs` to the two enter sequences, so a
+  reset added around the real port fails too.
+- **The browser flasher's hello card no longer boots a board unless you
+  said it was already plugged in.** After its connect reads, its live
+  voice reset any board with readable firmware into that firmware, before
+  anything was written. The cold-start answer is now unset until you give
+  it and asked afresh on each connect card, so it never carries over to
+  the next board, and the live voice starts only on "It's already plugged
+  in". A board you held BOOT on, or didn't answer for, stays in the
+  bootloader until the install; "ask the board itself" and the serial
+  monitor still boot it on a click.
+- Host-tested only, not bench-tested on a board. The website's advice to
+  unplug and hold BOOT again after a desktop fuse read stays until a
+  Flasher release carries this and a bench read on a native-USB S3 held in
+  BOOT shows it still in the ROM afterward.
 
 ## [2.4.17] - 2026-10-27
 
@@ -1171,9 +2014,18 @@ owners updating from 2.4.16.
   `/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` with no
   Host question. F334, still open, asks whether Wi-Fi changes after setup take
   a bearer, so that the pair token serves only the first-boot wizard; its
-  ledger entry names connect and ap-only, not the scan. And a standalone unit
-  with a camera keeps scanning for a Wi-Fi QR code after setup, so a carried
-  token reads that scan's status and stops it.) The WAP now stages the shared
+  ledger entry names connect and ap-only, not the scan *(amended 2026-10-27,
+  the owner-authority PR, #1887, after 2.4.17: F334 is done; after setup
+  connect and ap-only take the bearer alone and the scan's start answers
+  `404`, so after setup a carried pair token no longer works on connect,
+  ap-only or the scan's start, though its status and stop still take one)*. And a
+  standalone unit with a camera keeps scanning for a Wi-Fi QR code after
+  setup, so a carried token reads that scan's status and stops it *(amended
+  the same day, same PR, after 2.4.17: since F333 the boot scan runs only
+  while no network is stored and the unit is not standalone,
+  `keyless_join_open()`, so a standalone unit does not scan, and after setup
+  a carried token reads and stops a boot scan only on a unit with no network
+  stored that is not standalone)*.) The WAP now stages the shared
   `firmware/common/network/host_guard.h` that the flagship and the display
   already use (byte-identical, held by `check_improv_sync.sh`). After setup,
   `/`, `/?cv_pair=`, `/admin`, `/settings` and `/companion` answer a Host that
@@ -1234,8 +2086,11 @@ owners updating from 2.4.16.
   of these (it reads nothing; but `SameSite=Strict` compares sites, so in a
   browser that does not count the scheme in the site, as Chromium does, its
   requests still carry the session cookie and it can write blind with the
-  owner's session: a reboot, or any other write a session may make); a page
-  served over https at that name whose certificate warning
+  owner's session: a reboot, or any other write a session may make
+  *(amended 2026-10-27, the owner-authority PR, #1887, after 2.4.17: since
+  F361 the two reboot routes take the bearer alone, and of a session's
+  writes only the firmware install restarts the unit, and only into a newer
+  signed image)*); a page served over https at that name whose certificate warning
   the owner accepted still does, and so does any page during the first-boot
   setup or on a unit whose HTTPS start failed, which serve plain HTTP.
   Host-tested
@@ -1504,7 +2359,15 @@ hold keeps; and the per-address lockout's ways out.
   leaves it alone: it can mint sessions until the owner's is evicted, and
   a host also in radio range can bond a Bluetooth peer of its own through
   its session and write the WAP back to a network it is on over the bonded
-  lane. And it lasts only while the new network stays up: the WAP keeps
+  lane. (Amended by #1887, the owner-authority entries above, after
+  2.4.17: since F334 that move takes the API token after setup, and
+  `api_auth_check_bearer()` answers an address the overflow holds `429`
+  before it compares anything, so the browser waits with every other
+  untracked address until that host stops, then pastes the token; since
+  F346 the bond's confirm and a Passkey Entry's digits take the API token,
+  so a host's peer bonds through its session no longer, and a bond a
+  session confirmed on 2.4.17 or earlier stays until the owner removes
+  it.) And it lasts only while the new network stays up: the WAP keeps
   the networks it joined before, the host's among them, and goes back to
   one on its own when the new network is not found twice running (a
   hotspot turned off, a network out of range); no route forgets one saved
@@ -1794,7 +2657,12 @@ hold keeps; and the per-address lockout's ways out.
   passes (F345), and a landing session can bond a peer to the WAP's
   Bluetooth lane (F346), so the WAP's door and wipe comments,
   `improv_core.h`, the README and `magic_pairing.md` no longer call a
-  re-armed door, or the lane, the owner's alone. Both flashers' smart pick ("installing
+  re-armed door, or the lane, the owner's alone. (Amended by #1887, the
+  owner-authority entries above, after 2.4.17: Forget Wi-Fi takes the API
+  token alone, F345, and so does the bond's confirm, F346, so after 2.4.17
+  neither is a landing session's; a bond a session confirmed on 2.4.17 or
+  earlier stays until the owner removes it, and the door Forget re-arms on
+  a unit not running standalone is still first-come.) Both flashers' smart pick ("installing
   keeps it, updated in place") and settings verdicts, the desktop change
   map, the SD recovery comments and guides and the token's lifetime say an
   install starts NVS over under a new key; `SECURITY_MODEL.md`,
@@ -2285,7 +3153,11 @@ hold keeps; and the per-address lockout's ways out.
   `POST /api/reboot` also empties the table, kept in RAM, and with it the
   guess budget, so a guesser that reboots the unit every few seconds gets
   more than the 30 a minute the table allows between reboots; ARP
-  spoofing, httpd's connection purge; `magic_pairing.md` §3.7). Found on
+  spoofing, httpd's connection purge; `magic_pairing.md` §3.7). (Amended by
+  #1887, the owner-authority entries above, after 2.4.17: since F361 both
+  reboot routes take the API token alone, so no landing session reboots the
+  unit; a session's firmware install still restarts it, only
+  into a newer signed image.) Found on
   the way and fixed with it: the `static` in the header gave `canary_wap.ino`,
   `csi_integration.cpp` and `csi_mqtt.cpp` a table each (now one C++17
   `inline` table); the `uint8_t` count wrapped to a clean 0 after 256 strikes
@@ -2431,7 +3303,11 @@ hold keeps; and the per-address lockout's ways out.
   table it keeps in RAM, so a guesser that reboots it after every few
   seconds of guessing gets about 37 a minute if the unit is back on the
   LAN 45 s later, about 100 at 10 s, about 155 at 5 s (the WAP's boot time
-  is not measured; the flagship's reboot needs the bearer).
+  is not measured; the flagship's reboot needs the bearer). (Amended by
+  #1887, the owner-authority entries above, after 2.4.17: since F361 the
+  WAP's two reboot routes take the API token alone too, so no landing
+  session reboots it; a session's firmware install still restarts it, only
+  into a newer signed image.)
   `THREAT_MODEL.md` scenario 10, `SECURITY_MODEL.md` and `magic_pairing.md`
   §3.7 now say so, and `test_auth_backoff.cpp` models both figures over
   `auth_backoff.h`, so a change to its numbers fails the suite until the
@@ -2550,7 +3426,7 @@ hold keeps; and the per-address lockout's ways out.
 ### canary-wap: the session cookie is Secure over HTTPS and read by its whole name, a wrong bearer on the receipt counts toward the lockout, the sign-in names no token a cookie page never held, and the route check holds every answer that carries a secret to a bearer-only gate (#1832)
 
 - **The broker move a session could make with the kept password (sweep F325)
-  is #1835's fix, in the section below;** this branch had a parallel gate and
+  is #1835's fix, in the section below;** #1832 had a parallel gate and
   dropped it for #1835's.
 - **canary-wap: the session cookie is `Secure` over HTTPS and read by its
   whole name (sweep F326, F327).** One writer, `session_cookie_header()`,
@@ -2663,7 +3539,14 @@ nothing ran on a device or in a browser.
   still re-points the broker with the stored password — behind the pair
   token, which the session can mint (`GET /api/pair/token` takes the
   cookie), and a code in front of the camera, which it cannot; named in
-  the ledger. The refusal tests hold NVS byte for byte with the stub's
+  the ledger. (Amended by #1887, the owner-authority entries above, after
+  2.4.17: F333 closes that road where it opens. After setup `POST
+  /api/wifi/qr-scan` answers `404` (F334), so a pair token a session mints
+  starts no scan; the camera's boot scan asks the Bluetooth setup door's
+  rule (`keyless_join_open()`), so on a set-up unit it runs only after a
+  Forget Wi-Fi, which takes the API token, or the 10 s hold; and Forget
+  clears the stored broker login, as the hold clears the whole broker
+  row.) The refusal tests hold NVS byte for byte with the stub's
   write count, the bearer leg covers a TLS-mode and a CA move, and
   `scripts/tests/test_docs_claims.py` retires three sentences this
   change's reviews found untrue (the busy-word mutant's failure, the QR
@@ -2892,9 +3775,10 @@ All are closed here; none of the code changes is run on a device.
   read; the project's own headers own those values. The package had removed
   eighteen, but `gen_figures.mjs` reads `CONFIG_DEVICE_TYPE` by pattern, so
   the Vision boards dropped out of `figures.json`; integration put it back
-  (f5d0afac), the flavor file now holds five seeds, and
-  `test_vision_flavor_config_readers.py` holds each to its project constant
-  and counts pattern readers. **Host-tested** (`firmware/tests_host`, both
+  (f5d0afac), and the flavor file held five seeds until F313 (#1836)
+  repointed `gen_flash.py` and left one, the device type, which
+  `test_vision_flavor_config_readers.py` holds to its project constant while
+  counting pattern readers. **Host-tested** (`firmware/tests_host`, both
   MR60 builds, the Lab's node tests against the native core); the ESP32
   compiles are CI's; not bench-tested. Filed: F312, F313, A106 and A107.
 - **Home Assistant: a Canary's Last event names the nightly and Quiet Hours

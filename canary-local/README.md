@@ -111,10 +111,19 @@ python3 -m http.server -d /path/to/securaCV 8000
 ```
 
 Nothing phones anywhere: no CDN, no fonts, no analytics. Every fetch stays
-on the page's own origin except the flasher's: the signed release hosts
-(GitHub's release host and its asset CDN) and a same-machine manifest server
-on loopback, each a row with a reason in the policy table (§9). Invariant IV
-extends to the docs.
+on the page's own origin, the flasher's firmware included: a browser cannot
+read a GitHub release asset (no CORS header on the download or the asset
+host), so the deployed site carries its own copy of the releases the flasher
+pins, at `firmware/<tag>/<file>` (`pages.yml` runs `tools/mirror_release.py`,
+which holds every image to its manifest's SHA-256 first), and
+`flash-core.js` `fetchReleaseAsset` reads it there and nowhere else, on any
+host. The flasher's policy names no GitHub host; beyond `'self'` it adds only
+a same-machine manifest server on loopback, a row with a reason in the policy
+table (§9). Served straight from a checkout, as above, there is no copy: the
+flasher's official images stay unavailable there, and the page says this
+site's copy of the release is missing (`docs/browser_flasher.md` § Where the
+page reads the release from says how to try it locally). Invariant IV extends
+to the docs.
 
 ---
 
@@ -238,7 +247,7 @@ Three doors into the same live device, all driven by one scenario API
 - **Try it** — free play: link switches, time controls, staged events,
   tamper, household ack-sync from a "sibling display". And the first
   boot: "meet the bird again" reboots a factory-fresh unit (no Wi-Fi
-  stored), the real `net/provision.cpp` raises its `SecuraCV-XXXX`
+  stored), the real `net/provision.cpp` raises its `SecuraCV-display-XXXX`
   SoftAP, and a phone (`assets/onboard-phone.js`) walks the display's own
   portal — join with the key from the glass's QR, the captive DNS answer,
   the firmware's page in a sandboxed `srcdoc` frame, `/scan`, `/join`,
@@ -331,7 +340,11 @@ explained and linked (the firmware document generated from the build
 inputs, committed and schema-validated on every PR; the Rust and Node
 documents produced by `sbom.yml`; see `sbom/README.md`) — all emitted into
 `devices/build.json` by the same generator, drift-gated, so "how to
-build it" can never silently rot.
+build it" can never silently rot. The same file carries each printable
+set's hardware as the case's own `HARDWARE` echo counts it (from
+`docs/hardware/enclosure/hardware.json`, under each device's `hardware`).
+No page draws that list yet; `tests/assembly.test.js` holds the Assemble
+tab's screws to it.
 
 Live parameter re-rendering in the browser (openscad-wasm) is a wave-2
 hook: the lab's data model already carries everything it needs (the full
@@ -429,8 +442,13 @@ built procedurally to the BOM's sizes (`assembly.js`). Only the *choreography* �
 seated transforms, explode/insert vectors, camera, which part appears when — is
 authored, in `devices/assembly.json`. `tests/assembly.test.js` gates the honesty:
 every part resolves to a file that exists, every quoted step maps to a real
-build.json README step, and every claimed quantity matches the BOM (a `×4`
-screws badge can't drift from the BOM's four). The ribbon says so to your face:
+build.json README step, every claimed quantity matches the BOM (a `×4`
+screws badge can't drift from the BOM's four), and every screw the tab drives
+is one the case's own `HARDWARE` echo counts for the build it shows, at the
+echoed size, head, length and count, one per placement drawn (`build.json`
+carries each printable set's hardware from
+`docs/hardware/enclosure/hardware.json`; the known gaps are listed in the
+test). The ribbon says so to your face:
 *"every part is the real thing… the choreography is staged."*
 
 | Piece | File |
@@ -555,7 +573,7 @@ one line per connection, and the step player walks.
 The Hub teaches the place the fleet converges; **The WAP teaches the first
 five minutes of a single device.** The Canary WAP is the WiFi-CSI witness on
 the XIAO ESP32-S3 Sense — and it is, literally, a **W**ireless **A**ccess
-**P**oint: unprovisioned, it brings up a `SecuraCV-XXXX` network with a
+**P**oint: unprovisioned, it brings up a `SecuraCV-wap-XXXX` network with a
 device-unique WPA2 password and a captive portal, and you set it up from a
 phone. `wap.html` stages that whole experience from the firmware's own bytes:
 
@@ -580,7 +598,7 @@ Anti-rot, same rule as everything here — nothing written twice:
 
 | Fact on the page | Source of truth |
 |---|---|
-| SSID `SecuraCV-XXXX`, `cv-…` password, `192.168.4.1`, NVS keys, timeouts | `arduino/canary_wap/{wap_server.h,setup_wizard.h,canary_wap.ino}` |
+| SSID `SecuraCV-wap-XXXX`, `cv-…` password, `192.168.4.1`, AP channel + client cap, ports, NVS keys, timeouts | `arduino/canary_wap/{canary_wap.ino,onboarding_fsm.h,setup_wizard.h}` |
 | The captive landing page (rendered verbatim) | `arduino/canary_wap/setup_page_html.h` |
 | Setup routes + the five wizard steps | `canary_wap.ino` + `companion_pwa.h` |
 | Boot banner + `setup()` log lines | `boot_banner.cpp` + `canary_wap.ino` |
@@ -788,7 +806,7 @@ live bench preview with the on-module TSCORE/TIOU sliders.
 | Engine (DOM-free: CRC, XMODEM, preamble, state machine, AT parser) | `assets/we2-core.js` |
 | WebSerial transport + the flow UI | `assets/we2-flash.js` (mounted from `flash.js`) |
 | Catalog block + doc drift-gate | `tools/gen_flash.py` → `devices/flash.json` `we2_module` |
-| Release asset pipeline | `.github/workflows/vision-model-release.yml` |
+| Release asset pipeline | `.github/workflows/vision-model-release.yml` (then `pages.yml` copies the model into the site: the page reads it same-origin) |
 | Honesty gate (scripted fake bootloader, byte-level) | `tests/we2.test.js` |
 ## 4l. The Sense Lab: the radar pipeline, on the bench (`senselab.html`)
 
@@ -843,7 +861,10 @@ Three tiers, no lock-in, one source of truth:
    server, fully offline. Versioned with the firmware it teaches.
 2. **GitHub Pages** — `.github/workflows/pages.yml` publishes
    `canary-local/` (+ the enclosure files it references) on every main
-   push. Enable once: Settings → Pages → Source → "GitHub Actions".
+   push, with a same-origin copy of the firmware releases the flasher pins
+   under `canary-local/firmware/` (a page in a browser cannot fetch a release
+   from GitHub itself); the release workflows dispatch it again once they
+   publish. Enable once: Settings → Pages → Source → "GitHub Actions".
 3. **securacv.com** — the marketing site adopts it whenever ready,
    either by pointing a custom domain/subdomain at Pages
    (e.g. `local.securacv.com`, one CNAME) or by copying the built site
@@ -1019,6 +1040,16 @@ fails on byte drift.
   each call to the native build, and the page is served as committed. CI
   runs all six both ways. See
   [`tests/native/README.md`](tests/native/README.md).
+- `tests/native_cores.test.js` holds the loader to the dist it stands in
+  for, and under `LAB_CORES=native` drives each native core next to its
+  committed dist, call for call; CI runs it both ways, the second in a step
+  of its own whose red means a stale or divergent dist.
+  `tests/vision_wasm32.test.js` (the Vision box pipeline, freestanding) and
+  `tests/cores_wasm32.test.js` (the whole Vision and WAP audio cores, against
+  a WASI sysroot, under `node:wasi`) build the sources for wasm32 with the
+  host's clang, where `long` is 32 bits as in the dist and on the ESP32, and
+  hold them to a g++ build. They are not emscripten or the dist. See
+  [`tests/native/README.md`](tests/native/README.md).
 - `tests/boot_probe.mjs` + CI (`.github/workflows/canary-local.yml`):
   rebuilds both flavors from the tree, boots the watch in headless
   Chromium, and asserts the framebuffer flushed, the boot banner sang,
@@ -1175,13 +1206,14 @@ The rules, which the generator enforces rather than documents:
   `form-action 'none'`); everything a page needs beyond it is a row in
   `PAGES` inside `gen_csp.py` naming the directive, the sources and *why*:
   `'wasm-unsafe-eval'` for the pages that boot the firmware wasm,
-  `frame-src 'self'` for the two pages that frame another, the flasher's
-  signed release hosts and loopback. The tool cross-checks the grants against
-  the page, both ways — a page that loads `emulator/dist/` without the wasm
-  row fails, and so does a row whose page no longer loads it; the same holds
-  for `frame-src` and the page's iframes, and for the release hosts and the
-  modules that fetch a release (`flash.js`, `we2-flash.js`), which would
-  otherwise fail behind a click where the browser probe never looks.
+  `frame-src 'self'` for the two pages that frame another, and the
+  flasher's loopback manifest server. No page names the GitHub release host
+  or its asset CDN: no browser can read a release asset from them, so the
+  flasher reads the site's copy of the release under `'self'`
+  (`tests/csp.test.js` holds every page to that). The tool cross-checks the
+  grants against the page, both ways — a page that loads `emulator/dist/`
+  without the wasm row fails, and so does a row whose page no longer loads
+  it; the same holds for `frame-src` and the page's iframes.
 - **Every hash is computed from bytes, on purpose.** `flash.html`'s
   import map (the SRI pins for the vendored flasher engines) cannot be an
   external file, so it is the single entry in `INLINE_SCRIPT_OK` and its
@@ -1201,8 +1233,9 @@ The rules, which the generator enforces rather than documents:
   the document; discovery rides the native side of the desktop Lab
   (`witness-host.js` → `invoke`), so `connect-src` is `'self'` plus the Tauri
   IPC origins (`ipc:`, `http://ipc.localhost` — dead letters in a browser)
-  and, on the flasher only, the signed release hosts. A scheme source such as
-  `http:` would be a table entry with a reason, and today there is none.
+  and, on the flasher only, loopback for a same-machine manifest server. A
+  scheme source such as `http:` would be a table entry with a reason, and
+  today there is none.
 - **Unused directives are trimmed, not granted.** The floor could carry
   `blob:` in `img-src`, a `worker-src` and a `media-src`; no page needs them
   (the benches synthesize audio, the eyes bench's `<video>` takes a

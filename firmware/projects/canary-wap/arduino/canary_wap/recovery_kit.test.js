@@ -36,13 +36,13 @@
 //     stops the dashboard's sign-in on that answer and says another device
 //     asked, keeping no token and offering no kit, and a second click then
 //     asks first and signs in on the next tap; the Settings save
-//     says the same instead of "HTTP 409"; neither sends the owner to the
-//     token box (on a cookie page it still takes the cookie's word), and
-//     the 10 s hold is said to clear what it clears, the dashboard's
-//     saying to check its Bluetooth switch first, before the hold's own
-//     sentence, and how its sign-in reaches that switch (a saved
-//     Bluetooth-off outlives the hold and everything the hold calls,
-//     #1843); the dashboard's
+//     says the same instead of "HTTP 409"; both name pasting the token
+//     first (the sign-in checks a pasted token by itself since the
+//     owner-authority PR: dashboard_gates.test.js 'The shared sign-in'),
+//     then the USB console, then the Bluetooth check, saying how the
+//     sign-in reaches that switch (a saved Bluetooth-off outlives the hold
+//     and everything the hold calls, #1843), then the 10 s hold, said to
+//     clear what it clears; the dashboard's
 //     timeout line sends the owner to click before the press (its old
 //     "Press BOOT and click above" was the press-first order the arbiter
 //     cannot protect); the
@@ -366,6 +366,7 @@ function dashboard(answers, routes = {}) {
     kitBlock(src, 'web_ui.h'),
     src.match(/\n {4}let apiToken = null;\n/)[0],
     uiFunction(src, 'secureFetch', true),
+    uiFunction(src, 'signInRaised'),
     uiFunction(src, 'showAuthModal'),
     uiFunction(src, 'hideAuthModal'),
     src.match(/\n {4}let recoveryKitText = null;\n/)[0],
@@ -772,7 +773,7 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.doesNotMatch(read(UI), /wait 10 seconds, and try again/);
   });
 
-  it("the contention copy names ways out that do not go through the token box", () => {
+  it("the contention copy names the pasted token first, then the console, then the hold", () => {
     const d = dashboard([GATE_403]);
     const fn = uiFunction(read(UI), 'tapContendedText');
     const text = vm.runInNewContext(fn + '\n;tapContendedText("click Use BOOT Tap Once again, and short-tap BOOT when this line says to.")', {});
@@ -787,15 +788,18 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     // first client in radio range that connects (magic_pairing.md §2.2): a
     // host on the network that is also in range can take it and keep the
     // token. So the kit and the console come first, the hold last, with the
-    // phone ready and the door's first-come rule named.
+    // phone ready and the door's first-come rule named. The kit's way out is
+    // the token pasted into the sign-in: it needs no tap, so no other asker
+    // can close it, and the sign-in compares it without the session cookie
+    // (before the owner-authority PR it took the cookie's word for any
+    // pasted string, so this copy steered clear of the token box).
+    assert.match(text, /paste the token instead: it is in your recovery kit, and the USB console prints it/);
     const kit = text.indexOf('recovery kit');
     const usb = text.indexOf('USB console');
     const hold = text.indexOf('hold BOOT for 10 seconds');
     assert.ok(kit >= 0 && usb > kit && hold > usb, 'the kit, then the console, then the hold: ' + text);
     assert.match(text, /with your iPhone ready: hold BOOT for 10 seconds/);
     assert.match(text, /Bluetooth setup goes to the first phone or computer nearby that connects/);
-    assert.doesNotMatch(text, /paste|token box|type the token/i,
-      'on a cookie page the token box still takes the cookie\'s word for a token');
     assert.ok(d.api);
   });
 
@@ -1036,7 +1040,7 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     const way = advice.indexOf('open its page below and choose Open dashboard there, then Settings. ');
     const check = advice.indexOf('First check that Bluetooth Enabled is on under Settings → Bluetooth ' +
                                  '(forgetting its Wi-Fi does not turn it back on, and with it off this phone cannot reach it)');
-    const forget = advice.indexOf('then forget its Wi-Fi there (Settings → WiFi → Remove credentials)');
+    const forget = advice.indexOf('then forget its Wi-Fi there (Settings → WiFi → Remove credentials, ');
     assert.ok(way > 0 && check > way && forget > check, advice);
     assert.equal(advice.indexOf('forget its Wi-Fi'), forget + 'then '.length, 'no forget is named before the check');
     const ino = read(path.join(__dirname, 'canary_wap.ino'));
@@ -1044,9 +1048,20 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.ok(at > 0);
     assert.match(ino.slice(at, ino.indexOf('\n}\n', at)), /\n {2}wifi_clear_credentials\(\);/);
     assert.match(ino, /\.uri = "\/api\/wifi\/forget", \.method = HTTP_POST, \.handler = handle_wifi_forget_auth \}/);
+    // That route takes the bearer alone in every mode (sweep F345), so a
+    // landing session's Remove credentials opens the sign-in first, and the
+    // advice says so before the phone is brought near.
+    const fw = ino.indexOf('static esp_err_t handle_wifi_forget_auth(httpd_req_t* req) {');
+    assert.ok(fw > 0);
+    assert.match(ino.slice(fw, ino.indexOf('\n}\n', fw)), /if \(!api_auth_check_bearer\(req, g_device\.api_token_str\)\) return ESP_OK;/);
+    // It names the sign-in's button before the press, as the kit footer does
+    // (F342: the page asks first, and the tap goes to the one asker).
+    const signIn = advice.indexOf('Remove credentials, which asks for its API token first: choose Use BOOT Tap Once in the sign-in and short-tap BOOT when the page says to, then press Remove credentials again');
+    assert.ok(signIn > forget && signIn < advice.indexOf('bring it near this phone'), advice);
     // The button it names: Remove credentials, in Settings → WiFi, posting
     // that route.
     const ui = read(UI);
+    assert.match(ui, /onclick="requestFromDevice\(\)">Use BOOT Tap Once<\/button>/);
     assert.match(ui, /onclick="switchSettingsTab\('wifi'\)">[^<]*WiFi<\/button>/);
     assert.match(ui, /<button class="btn btn-danger" onclick="forgetWifi\(\)" id="wifiForgetBtn"[^>]*>Remove credentials<\/button>/);
     assert.match(uiFunction(ui, 'forgetWifi', true), /await api\('\/api\/wifi\/forget', 'POST'\);/);
@@ -1059,7 +1074,12 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
     assert.match(swift, /if let page = canary\.host\.flatMap\(DeviceAPI\.url\(forDiscoveredHost:\)\) \{\n\s+Link\("Open its page", destination: page\)/);
     const api = read(path.join(__dirname, '../../../../../ios/Sources/SecuraCV/Transport/DeviceAPI.swift'));
     assert.match(api, /static func url\(forDiscoveredHost host: String\) -> URL\? \{[\s\S]*?return URL\(string: "http:\/\/\\\(name\)"\)\n {4}\}/);
-    assert.doesNotMatch(advice, /Use BOOT Tap Once/);
+    // The advice names Use BOOT Tap Once once, and only as a button of the
+    // sign-in that Remove credentials opens on the dashboard (the row above
+    // walks it there), never as one on the landing page.
+    assert.doesNotMatch(advice, /Use BOOT Tap Once there/);
+    assert.equal(advice.split('Use BOOT Tap Once').length, 2, advice);
+    assert.ok(advice.indexOf('choose Use BOOT Tap Once in the sign-in') > forget, advice);
     const footer = swift.match(/Text\("(Its own page saves a recovery kit [^"]*)"\)/);
     assert.ok(footer, 'PairView\'s kit footer not found');
     const steps = ['open the page, choose Open dashboard there, then Settings → Device → Save my recovery kit; ',
@@ -1172,9 +1192,11 @@ describe('Settings → Device → Recovery kit saves it again for a signed-in pa
 
 // secureFetch's sign-in line for a refusal, by what the page sent.
 const TOKEN_REFUSAL = 'Invalid or expired token. Please re-enter.';
-// It names no token box: on a page a session signed in, that box takes the
-// cookie's word for any token, so a mistyped one looks accepted.
-const NO_TOKEN_REFUSAL = 'Your session does not cover this, or has ended. Use BOOT Tap Once.';
+// It names the token box first: since the owner-authority PR the sign-in
+// checks a pasted token by itself, without the cookie (dashboard_gates.test.js
+// 'The shared sign-in'), so on a page a session signed in a mistyped token
+// is refused there too.
+const NO_TOKEN_REFUSAL = 'Your session does not cover this, or has ended. Paste the API token (it is in your recovery kit), or use BOOT Tap Once.';
 const QR_401 = { status: 401, body: '{"error":"unauthorized","hint":"Include \'Authorization: Bearer cv_...\' header"}' };
 
 describe("secureFetch's sign-in names what the page sent (sweep F289's follow-up)", () => {

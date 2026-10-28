@@ -82,7 +82,7 @@ stud_gap   = 30.0;   // stud spacing (vertical) for target = "custom" — must m
 kh_face    = 1.0;    // target pocket's face web — canary_mount_lib mount_kh_face()
 
 /* [Print tolerances] */
-tol_slide = 0.20;
+tol_slide = 0.20;    // sliding fit per side round the adapter body: the collar's lip opening is wart_w + 2 x this by wart_h + 2 x this — core_tol_slide()
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;

@@ -5,9 +5,11 @@ Shared by both release paths so they can't drift:
   - .github/workflows/firmware-release.yml — on a fw-v* tag, alongside the
     signed OTA artifacts (one build, no duplication).
   - .github/workflows/flasher-release.yml  — a manual (workflow_dispatch) run
-    that rebuilds the flasher assets for an existing tag, independent of the
-    OTA signing key (the browser channel's integrity is SHA-256 + same-origin,
-    not the Ed25519 release key — see docs/browser_flasher.md § Trust model).
+    that rebuilds the flasher assets for an existing tag (or a branch, onto
+    fw-dev-latest). It signs with --signing-key like the release does now that
+    a release key is pinned; only while the key was the all-zero placeholder
+    did it publish checksum-only images (docs/browser_flasher.md § Trust
+    model).
 
 Product ids, chips, and asset stems come from canary-local/devices/flash.json —
 the same drift-gated catalog the flasher page trusts for its chip guard — so
@@ -98,9 +100,24 @@ def image_has_version(path: pathlib.Path, expected: str) -> bool:
     the manual pre-key path can't publish a manifest whose version disagrees
     with the firmware a board would actually boot as.
     """
-    data = path.read_bytes()
-    target = expected.encode()
+    return carries_run(path.read_bytes(), expected)
+
+
+def carries_run(data: bytes, text: str) -> bool:
+    """Is `text` one whole printable run of `data` (`strings | grep -Fx`)?
+    The one rule image_has_version and stamp_app_desc.carries both apply."""
+    target = text.encode()
     return any(run == target for run in re.split(rb"[^\x20-\x7e]+", data))
+
+
+def app_path(build: dict) -> pathlib.Path:
+    """The compiled app image a BUILD entry produces: the bytes the OTA
+    manifest signs and the factory image merges (stamp_app_desc.py stamps
+    them first)."""
+    d = resolve_dir(build["dir"])
+    if build["toolchain"] == "pio":
+        return d / "firmware.bin"
+    return d / f"{build.get('sketch', 'canary_wap')}.ino.bin"  # arduino-cli: <sketch>.ino.*
 
 
 def make_factory_cmd(product: dict, build: dict, out: pathlib.Path) -> list[str]:
@@ -112,7 +129,7 @@ def make_factory_cmd(product: dict, build: dict, out: pathlib.Path) -> list[str]
         sketch = build.get("sketch", "canary_wap")
         cmd += ["--bootloader", str(d / f"{sketch}.ino.bootloader.bin"),
                 "--partitions", str(d / f"{sketch}.ino.partitions.bin"),
-                "--app", str(d / f"{sketch}.ino.bin")]
+                "--app", str(app_path(build))]
     return cmd
 
 

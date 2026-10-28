@@ -51,15 +51,15 @@ back_rim = 1.5;      // rim on the back, inboard of the edge (rib_lib loop): the
 radar_l  = 44.0;      // brd_l("mr60") — canary_board_lib
 radar_w  = 36.0;      // brd_w("mr60") — canary_board_lib
 radar_front_h = 3.5;  // carrier front-side TALLEST part (connectors etc.) — MEASURE
-pcb_t    = 1.0;
-board_clear = 0.6;
+pcb_t    = 1.0;       // carrier PCB thickness — brd_t("mr60"); the carrier sits on rails rail_h tall and the clips hook over its back face, rail_h + this behind the plate
+board_clear = 0.6;    // not read by the geometry: the carrier is located by its rails and clips, and clip_clear sets that fit
 
 /* [Radome window] */
 radome_t  = 1.5;   // membrane — 1.5 ≈ half-wave in PETG/ASA at 60 GHz (low-reflection optimum); 0.7–1.1 is the quarter-wave band (~20 % reflection) and is refused  // [1.3:0.1:1.7]
-rad_win_x = 24.0;
-rad_win_y = 24.0;
-rad_dx    = 0.0;
-rad_dy    = 6.0;
+rad_win_x = 24.0;  // radome window width (X) — a blind pocket from the back that leaves radome_t of membrane at the face, its center rad_dx/rad_dy off the board center (= the plate center)
+rad_win_y = 24.0;  // radome window height (Y) — the same blind pocket, radome_t of membrane left at the face
+rad_dx    = 0.0;   // radome window center's X offset from the board center (= the plate center)
+rad_dy    = 6.0;   // radome window center's Y offset from the board center (= the plate center)
 
 /* [Face features] — offsets from the board center */
 lp_d   = 3.0;     // WS2812 light pipe Ø

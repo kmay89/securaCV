@@ -46,7 +46,7 @@ machinery.
 
 A **browser** page is sandboxed. It **cannot**: read the OS keychain / saved
 Wi-Fi password, do mDNS/Bonjour discovery, or fetch arbitrary LAN devices
-(mixed-content + our locked CSP `connect-src` = same-origin + loopback + GitHub).
+(mixed-content + our locked CSP `connect-src` = same-origin + loopback).
 So the browser flasher is superb for **USB bring-up**, and that's its lane.
 
 The **native app** (Tauri, `desktop/`) is a real local process: it can do mDNS

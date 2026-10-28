@@ -508,10 +508,11 @@ actor DeviceAPI {
 
     // MARK: - the sealed-snapshot surface (/api/vault/*, canary-wap only)
     //
-    // Gated like the Wi-Fi routes: api_auth_check(), which takes the bearer
-    // the app sends or a landing session's cookie (ledger F346), so a host
-    // that mints one can replace the registered key too (POST /api/vault/key;
-    // download takes ?token= as well). The Canary holds only the
+    // Gated by api_auth_check(), which takes the bearer the app sends or a
+    // landing session's cookie (ledger F346), except POST /api/vault/key,
+    // which takes the bearer alone since F335, so a host that mints a
+    // session can clear the registered key but not replace it (download
+    // takes ?token= as well). The Canary holds only the
     // operator's PUBLIC key and serves back files it cannot open itself; the
     // private key never travels (VaultKeyStore, SnapshotSealer). A 404 on a
     // route is "this firmware has no sealed snapshots" — the display family

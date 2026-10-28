@@ -5,6 +5,53 @@ the build hash on `/healthz`, the Health page and `backoffice version` is the co
 CI stamped into the image. `tests/environment.test.mjs` holds the top entry here to
 the package version, so neither moves without the other.
 
+## 0.8.0
+
+- **The audit log is a chain.** Every row carries the previous row's mark
+  and its own: an HMAC-SHA256 under a key that lives *outside* the database
+  (`audit.key` beside it, made on first open at mode 0600, or
+  `BACKOFFICE_AUDIT_KEY`). A row changed, removed or slipped in afterwards
+  breaks the chain; a copy of the database edited and put back cannot re-mark
+  its own rows. `backoffice verify` walks it and exits 1 on a break; the
+  `verify` job does the same daily, raises an exception and pushes to the
+  phone. Rows from before this build have no mark and are reported as "from
+  before the chain". Migration 015, `src/integrity.mjs`.
+- **The anchor leaves the box.** The morning digest ends with the chain's
+  head (`id:mac`). `backoffice verify --anchor <that line>` proves the record
+  still passes through it — so a rewrite of the whole file and the key
+  beside it is caught, for every row up to that anchor, by the one copy the
+  attacker could not reach: your inbox. Rows written since the last digest
+  are not yet anchored; `SECURITY.md` states that boundary exactly.
+- **The last 24 hours, as questions.** A SECURITY block in the digest and
+  on the Health page: who signed in from where (and by link), what failed and
+  from which addresses, who was blocked and why, sign-ins from new networks,
+  sessions ended for moving, what changed about people, tokens, flags and
+  settings, what is open now. "Quiet" when nothing of it happened. A doctor
+  row says the same in one line.
+- **Lockdown.** `backoffice lockdown` (or the button on Settings): every
+  session ended, every API token revoked, every live sign-in link spent, in
+  one audited step. Nothing about people, orders or settings changes. The
+  playbook for the day you need it is `MAINTENANCE.md`.
+- **Tripwires.** `/.env`, `/wp-login.php`, `/.git/…`, `/phpmyadmin`, and the
+  rest of the scanner's list: one request blocks the address for ten minutes,
+  writes `guard.tripwire`, pushes once. A 404 like any other to the caller.
+- **Blocks survive a restart.** The watch writes its blocks to `guard_blocks`
+  and reads them back at boot; a scanner blocked at 03:00 is still blocked
+  after the 03:01 deploy.
+- **The self-check at boot.** Before the server listens it proves the audit
+  key is private and present, the data directory and the database are not
+  readable by everyone on the box, this Node is still maintained (a fail past
+  its end-of-life date, a warning 90 days before), the chain's tail verifies,
+  and — in production — that one of `ADMIN_ALLOW_CIDRS` or `SESSION_BIND_IP`
+  is set. Said on the console, written down for the doctor (`preflight`),
+  audited when something fails. The demo says what it finds about its host
+  and fails nothing.
+- **The systemd unit hardened further.** `UMask=0077`, no capabilities, no
+  kernel tunables or modules, native syscalls only, inet and unix sockets
+  only.
+- `MAINTENANCE.md`: the daily minute, the weekly ten, the monthly half hour,
+  and what to do the day something looks wrong.
+
 ## 0.7.0
 
 - **Sign-in links.** "Email me a sign-in link" on the login page (with a mail

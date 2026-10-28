@@ -181,6 +181,15 @@
 //     the lockout; an empty device token (provision_device() can stop before
 //     minting it) matches no bearer and no ?token=, on every gate, the
 //     receipt and the QR included;
+//   - the two writes that grant a credential take the bearer alone (sweep
+//     F335, F346; before, both wrappers were api_auth_check(), which the
+//     cookie passes): POST /api/vault/key's (who can open every frame sealed
+//     from then on) and POST /api/mesh/pair/confirm's (an opera's secret),
+//     the wrappers cut from the sketch over counting stand-ins for the
+//     handlers. The landing page's session alone is 401 and no strike;
+//     beside a wrong bearer, 403 and one strike for that address; another
+//     host's right bearer is served at once; the striking host's right
+//     bearer is 429 with Retry-After until its backoff runs out, then served;
 //   - the sketch's text (CANARY_WAP_INO, comments stripped): the two handlers
 //     name only the bearer-only checks and never the cookie bridge; every
 //     line that names g_device.api_token_str or g_device.ap_password is a
@@ -188,7 +197,9 @@
 //     serial console or the boot banner, or sits inside
 //     send_provisioning_receipt() or handle_pairing_qr() — the only two
 //     writers of either secret into an HTTP answer — and the receipt writer
-//     is called from handle_provisioning_receipt() alone.
+//     is called from handle_provisioning_receipt() alone; POST /api/vault/key
+//     and POST /api/mesh/pair/confirm are registered once each, on the two
+//     wrappers the grant test above drives.
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host run-receipt-grant
 
@@ -368,6 +379,19 @@ static esp_err_t send_qr_svg(httpd_req_t* req, const char* payload) {
   body += payload ? payload : "";
   body += "</svg>";
   return httpd_resp_sendstr(req, body.c_str());
+}
+
+// The two credential grants behind a bearer-only wrapper (sweep F335, F346):
+// the wrappers are cut from the sketch, the handlers they guard stand in.
+static int g_vault_key_sets = 0;
+static esp_err_t handle_vault_key_set(httpd_req_t* req) {
+  ++g_vault_key_sets;
+  return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+static int g_mesh_confirms = 0;
+static esp_err_t handle_mesh_pair_confirm(httpd_req_t* req) {
+  ++g_mesh_confirms;
+  return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
 
 // ── the handlers, cut verbatim out of canary_wap.ino ─────────────────────────
@@ -3240,6 +3264,28 @@ void test_sketch_text() {
   CHECK(!has(qr_fn, "cv_session_validate"));
   CHECK(!has(qr_fn, "session_validate_cookie"));
 
+  // POST /api/vault/key and POST /api/mesh/pair/confirm are registered once
+  // each, on the two wrappers test_credential_grants_take_the_bearer drives
+  // (F335, F346). Without this, a session wrapper registered in their place
+  // passed every check here (the owner-authority PR's second review).
+  {
+    struct Reg { const char* uri_method; const char* line; };
+    const Reg regs[] = {
+        {"\"/api/vault/key\", .method = HTTP_POST,",
+         "httpd_uri_t vault_key_set = { .uri = \"/api/vault/key\", .method = HTTP_POST, .handler = handle_vault_key_set_auth };"},
+        {"\"/api/mesh/pair/confirm\", .method = HTTP_POST,",
+         "httpd_uri_t mesh_pair_confirm = { .uri = \"/api/mesh/pair/confirm\", .method = HTTP_POST, .handler = handle_mesh_pair_confirm_auth };"},
+    };
+    for (const Reg& g : regs) {
+      size_t registered = 0, on_wrapper = 0;
+      for (const auto& l : lines) {
+        if (l.find(std::string(".uri = ") + g.uri_method) != std::string::npos) ++registered;
+        if (rtrim(l).find(g.line) != std::string::npos) ++on_wrapper;
+      }
+      CHECK_MSG(registered == 1 && on_wrapper == 1, std::string("not registered once, on its bearer wrapper: ") + g.line);
+    }
+  }
+
   // The receipt writer is called from the receipt handler and nowhere else.
   size_t writer_calls = 0, in_handler = 0;
   for (const auto& l : lines) if (has(l, "send_provisioning_receipt(") && !has(l, "static esp_err_t send_provisioning_receipt(")) ++writer_calls;
@@ -3283,6 +3329,54 @@ void test_sketch_text() {
 }
 
 }  // namespace
+
+// POST /api/vault/key (F335) and POST /api/mesh/pair/confirm (F346): the
+// landing page's session alone is 401, no strike, and the handler never
+// runs; a wrong bearer beside it is 403 and one strike for its address
+// alone; another host's right bearer is served at once; the striking host's
+// right bearer is 429 until its backoff runs out, then served. Before the fix
+// both wrappers were api_auth_check(), which the cookie passes: a host on the
+// network re-keyed the vault, or handed the opera's secret to its own radio.
+void test_credential_grants_take_the_bearer() {
+  struct Route { const char* name; esp_err_t (*wrapper)(httpd_req_t*); int* ran; };
+  const Route routes[] = {
+      {"vault key", handle_vault_key_set_auth, &g_vault_key_sets},
+      {"mesh confirm", handle_mesh_pair_confirm_auth, &g_mesh_confirms},
+  };
+  for (const Route& rt : routes) {
+    reset_device();
+    mint_session();
+    *rt.ran = 0;
+    Req s;
+    s.cookie();
+    CHECK(cv_session_validate(&s.r));               // the bridge takes this cookie...
+    CHECK(rt.wrapper(&s.r) == ESP_OK);
+    CHECK_MSG(s.r.status == "401 Unauthorized" && *rt.ran == 0, rt.name);   // ...the grant does not
+    CHECK_MSG(has_header(s.r, "WWW-Authenticate"), rt.name);
+    CHECK_MSG(strikes(kHostA) == 0, rt.name);       // no credential, no strike
+    Req w;
+    w.cookie().bearer(kWrong);
+    CHECK(rt.wrapper(&w.r) == ESP_OK);
+    CHECK_MSG(w.r.status == "403 Forbidden" && *rt.ran == 0, rt.name);
+    CHECK_MSG(strikes(kHostA) == 1 && held(kHostA), rt.name);
+    Req b;                                          // another host, at once
+    b.from(192, 168, 1, 21).bearer(kToken);
+    CHECK(rt.wrapper(&b.r) == ESP_OK);
+    CHECK_MSG(b.r.status == "200 OK" && *rt.ran == 1, rt.name);
+    CHECK_MSG(strikes(kHostB) == 0 && strikes(kHostA) == 1, rt.name);
+    Req a;                                          // the striking host, at once
+    a.cookie().bearer(kToken);
+    CHECK(rt.wrapper(&a.r) == ESP_OK);
+    CHECK_MSG(a.r.status == "429 Too Many Requests" && has_header(a.r, "Retry-After") && *rt.ran == 1, rt.name);
+    wait_out(kHostA);
+    Req c;
+    c.bearer(kToken);
+    CHECK(rt.wrapper(&c.r) == ESP_OK);
+    CHECK_MSG(c.r.status == "200 OK" && *rt.ran == 2, rt.name);
+    CHECK_MSG(strikes(kHostA) == 0, rt.name);       // the right bearer frees its address
+  }
+  std::printf("PASS credential_grants_take_the_bearer\n");
+}
 
 int main() {
   test_receipt_cookie_alone_is_refused();
@@ -3346,6 +3440,7 @@ int main() {
   test_api_auth_contract();
   test_empty_device_token_takes_no_bearer();
   test_sketch_text();
+  test_credential_grants_take_the_bearer();
 
   if (g_failures) {
     std::printf("%d of %d checks FAILED\n", g_failures, g_checks);

@@ -12,10 +12,45 @@ pub const LOCAL_IMAGE_MAX_BYTES: u64 = 32 * 1024 * 1024;
 /// 0x8000 on every variant, and its 32-byte entries open with the magic bytes
 /// 0xAA 0x50 (u16le 0x50AA) — the same constants
 /// firmware/scripts/make_factory.py merges by. This is what tells a factory
-/// image apart from an app-only build, because BOTH start with 0xE9.
+/// image apart from an app-only build: an app-only build starts with 0xE9,
+/// and so does an S3/C3/C6 factory image (a classic ESP32's starts with 4 KB
+/// of erased flash, its bootloader at 0x1000).
 pub const PARTITION_TABLE_OFFSET: usize = 0x8000;
 /// See [`PARTITION_TABLE_OFFSET`].
 pub const PARTITION_MAGIC_LE: [u8; 2] = [0xAA, 0x50];
+
+/// The first byte of every ESP image, bootloader or app.
+pub const IMAGE_MAGIC: u8 = 0xE9;
+/// Where an ESP image header names the chip it was built for
+/// (esp_image_header_t.chip_id, a u16le).
+pub const IMAGE_CHIP_ID_AT: usize = 12;
+
+/// Where each chip's mask ROM loads the second-stage bootloader from, which is
+/// where a factory image (a picture of flash from address 0) must hold it, and
+/// the chip id a bootloader built for that chip names at [`IMAGE_CHIP_ID_AT`].
+/// esptool's chip names, as the catalog's spelling folds to them ("ESP32-S3"
+/// → "esp32s3"). The same table as firmware/scripts/make_factory.py's
+/// ROM_BOOTLOADER and the browser's flash-core.js ROM_BOOTLOADER;
+/// desktop_parity.test.js holds the three equal.
+pub const ROM_BOOTLOADER: [(&str, usize, u16); 7] = [
+    ("esp32", 0x1000, 0),
+    ("esp32s2", 0x1000, 2),
+    ("esp32s3", 0x0, 9),
+    ("esp32c3", 0x0, 5),
+    ("esp32c2", 0x0, 12),
+    ("esp32c6", 0x0, 13),
+    ("esp32h2", 0x0, 16),
+];
+
+/// A detected chip's (ROM bootloader offset, image chip id), or `None` for a
+/// chip the table does not list (the P4 and the C5 load from 0x2000).
+pub fn rom_bootloader(chip: &str) -> Option<(usize, u16)> {
+    let token = chip.to_lowercase().replace(['-', ' ', '_'], "");
+    ROM_BOOTLOADER
+        .iter()
+        .find(|(name, _, _)| *name == token)
+        .map(|&(_, at, chip_id)| (at, chip_id))
+}
 
 /// Stage a firmware image in an atomically-created, randomly named private
 /// file. `NamedTempFile` creates mode 0600 on Unix and removes the file on
@@ -110,9 +145,53 @@ pub fn check_local_image(bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+/// The chip-aware half of the factory-shape gate, for every write at 0x0 a
+/// flash makes (the catalog image and a local file alike): the image must
+/// carry a bootloader built for the connected chip (0xE9, and the chip's id in
+/// the header) where that chip's ROM loads it from. fw-v2.4.17's ESP32-CAM and
+/// WROOM images carried theirs at 0x0, where a classic ESP32 never looks, and
+/// the partition-table check passed them; the chip id keeps a stray 0xE9 byte
+/// at the ROM offset, or another chip's image with the same offset, from
+/// passing. A chip the table does not list is not judged, so this can only
+/// refuse an image the ROM would not start. The browser's twin is
+/// flash-core.js bootloaderPlacement, in the same words.
+pub fn check_bootloader_offset(bytes: &[u8], chip: &str) -> Result<(), String> {
+    let Some((at, chip_id)) = rom_bootloader(chip) else {
+        return Ok(());
+    };
+    // The chip id named by an image header at `o`, or `None` when none starts there.
+    let id_at = |o: usize| match bytes.get(o..o + IMAGE_CHIP_ID_AT + 2) {
+        Some(header) if header[0] == IMAGE_MAGIC => Some(u16::from_le_bytes([
+            header[IMAGE_CHIP_ID_AT],
+            header[IMAGE_CHIP_ID_AT + 1],
+        ])),
+        _ => None,
+    };
+    if id_at(at) == Some(chip_id) {
+        return Ok(());
+    }
+    let other = [0x0, 0x1000]
+        .into_iter()
+        .find(|&o| o != at && id_at(o) == Some(chip_id));
+    let elsewhere = match other {
+        Some(o) => format!(" (it has one at {o:#x} instead)"),
+        None if id_at(at).is_some() => " (the one there was built for another chip)".into(),
+        None => String::new(),
+    };
+    Err(format!(
+        "This image would not start on the {chip}: that chip loads its bootloader from {at:#x}, \
+         and the image has no bootloader for it there{elsewhere}. Nothing was written. Use an \
+         image laid out for the {chip}: SecuraCV factory images from fw-v2.4.18 on put the \
+         bootloader where each chip loads it."
+    ))
+}
+
 #[cfg(test)]
 mod local_image_tests {
-    use super::{check_local_image, PARTITION_TABLE_OFFSET};
+    use super::{
+        check_bootloader_offset, check_local_image, rom_bootloader, IMAGE_CHIP_ID_AT, IMAGE_MAGIC,
+        PARTITION_MAGIC_LE, PARTITION_TABLE_OFFSET,
+    };
 
     #[test]
     fn app_only_builds_are_refused_and_factory_shapes_pass() {
@@ -129,6 +208,74 @@ mod local_image_tests {
         factory[PARTITION_TABLE_OFFSET] = 0xAA;
         factory[PARTITION_TABLE_OFFSET + 1] = 0x50;
         assert!(check_local_image(&factory).is_ok());
+    }
+
+    /// A factory image with a bootloader for chip id `chip_id` at `at` and the
+    /// partition table at 0x8000, everything else erased flash.
+    fn factory_with_bootloader_at(at: usize, chip_id: u16) -> Vec<u8> {
+        let mut image = vec![0xFF; PARTITION_TABLE_OFFSET + 64];
+        image[at] = IMAGE_MAGIC;
+        image[at + IMAGE_CHIP_ID_AT..at + IMAGE_CHIP_ID_AT + 2]
+            .copy_from_slice(&chip_id.to_le_bytes());
+        image[PARTITION_TABLE_OFFSET..PARTITION_TABLE_OFFSET + 2]
+            .copy_from_slice(&PARTITION_MAGIC_LE);
+        image
+    }
+
+    #[test]
+    fn the_bootloader_must_sit_where_the_chips_rom_loads_it() {
+        // Correct images pass, in the spellings both the catalog and
+        // espflash use.
+        for (chip, at, id) in [
+            ("ESP32", 0x1000, 0),
+            ("esp32", 0x1000, 0),
+            ("ESP32-S2", 0x1000, 2),
+            ("ESP32-S3", 0x0, 9),
+            ("ESP32-C3", 0x0, 5),
+            ("ESP32-C6", 0x0, 13),
+            ("esp32c2", 0x0, 12),
+            ("ESP32-H2", 0x0, 16),
+        ] {
+            let image = factory_with_bootloader_at(at, id);
+            assert!(check_bootloader_offset(&image, chip).is_ok(), "{chip}");
+        }
+        // fw-v2.4.17's classic-ESP32 shape: the bootloader at 0x0, nothing
+        // at 0x1000. Refused, and the words say where it is and what to use.
+        let misplaced = factory_with_bootloader_at(0x0, 0);
+        let err = check_bootloader_offset(&misplaced, "ESP32").unwrap_err();
+        assert!(err.contains("loads its bootloader from 0x1000"), "{err}");
+        assert!(err.contains("(it has one at 0x0 instead)"), "{err}");
+        assert!(err.contains("Nothing was written"), "{err}");
+        assert!(err.contains("fw-v2.4.18"), "{err}");
+        // …and when its bootloader's body happens to hold 0xE9 at 0x1000: a
+        // stray byte there is not a header naming the ESP32.
+        let mut stray = misplaced.clone();
+        stray[0x1000] = IMAGE_MAGIC;
+        stray[0x1000 + IMAGE_CHIP_ID_AT] = 0x3a;
+        let err = check_bootloader_offset(&stray, "ESP32").unwrap_err();
+        assert!(err.contains("(it has one at 0x0 instead)"), "{err}");
+        // A classic image on an S3: its bootloader at 0x1000 is an ESP32's.
+        let classic = factory_with_bootloader_at(0x1000, 0);
+        let err = check_bootloader_offset(&classic, "ESP32-S3").unwrap_err();
+        assert!(err.contains("loads its bootloader from 0x0,"), "{err}");
+        assert!(!err.contains("instead"), "{err}");
+        // An S3 image on a C3: the right place, another chip's bootloader.
+        let s3 = factory_with_bootloader_at(0x0, 9);
+        let err = check_bootloader_offset(&s3, "ESP32-C3").unwrap_err();
+        assert!(
+            err.contains("(the one there was built for another chip)"),
+            "{err}"
+        );
+        // No magic anywhere: refused, with nothing to add.
+        let blank = vec![0xFF; PARTITION_TABLE_OFFSET + 64];
+        let err = check_bootloader_offset(&blank, "ESP32-C6").unwrap_err();
+        assert!(
+            err.contains("has no bootloader for it there. Nothing"),
+            "{err}"
+        );
+        // A chip the table doesn't list is never judged.
+        assert!(check_bootloader_offset(&blank, "ESP32-P4").is_ok());
+        assert_eq!(rom_bootloader("ESP32-C5"), None);
     }
 }
 

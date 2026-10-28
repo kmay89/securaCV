@@ -15,15 +15,18 @@
 // a physical, attended bench operation, the same one the getting-started
 // guide blesses for the one-time sanity check. Frames render on a local
 // canvas and are never stored or sent anywhere (this page fetches nothing
-// but its own JSON and, when you ask, the pinned model from the project's
-// GitHub release). Day-to-day aiming stays boxes-only over MQTT.
+// but its own JSON and, when you ask, the pinned model: the project's GitHub
+// release, read from this site's same-origin copy of it, since a browser
+// cannot fetch the release URL itself — flash-core.js releaseFetchUrl).
+// Day-to-day aiming stays boxes-only over MQTT.
 //
 // Same failure posture as the ESP32 flow: every error names the fix, and
 // nothing here can brick the module — the burn menu lives in mask ROM.
 
 import { WE2, We2Flasher, makeAtParser, atCommand, modelInfoJson,
          stylizeDetections, meterModel, WE2_CLASSES } from "./we2-core.js";
-import { helpTopic, hatchMoment, isVisionBoard, verifyPinnedModelAsset } from "./flash-core.js";
+import { helpTopic, hatchMoment, isVisionBoard, verifyPinnedModelAsset,
+         fetchReleaseAsset } from "./flash-core.js";
 import { chirp } from "./chirp.js";
 import { visionSession } from "./vision-session.js";
 import { visionChecklistCard } from "./vision-checklist.js";
@@ -310,14 +313,19 @@ function phaseModuleConnected(ctx, s) {
     stopProbe();
     note.textContent = "Fetching the release manifest…";
     try {
-      const man = await fetch(m.manifest_url, { cache: "no-store" }).then((r) => {
+      // Both reads go through the site's mirror of the release (a bare fetch
+      // of the github.com URL is refused by every browser: no CORS header).
+      // The SHA-256 and signature checks below bind the bytes to the release.
+      const fromRelease = (url, init) =>
+        fetchReleaseAsset(url, { repo: ctx.catalog && ctx.catalog.repo, init });
+      const man = await fromRelease(m.manifest_url, { cache: "no-store" }).then((r) => {
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.json();
       });
       const asset = man && man.model;
       if (!asset || !asset.url || !asset.sha256) throw new Error("manifest has no model entry");
       note.textContent = "Downloading " + (asset.name || "model") + " (" + Math.round((asset.size || 0) / 1024) + " KB)…";
-      const bytes = new Uint8Array(await fetch(asset.url).then((r) => {
+      const bytes = new Uint8Array(await fromRelease(asset.url).then((r) => {
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.arrayBuffer();
       }));
@@ -348,9 +356,19 @@ function phaseModuleConnected(ctx, s) {
         pinned: true,
       }));
     } catch (e) {
-      note.textContent = "Couldn’t fetch the pinned model (" + e.message + "). The asset ships " +
-        "with the project’s releases — if this is a fresh fork or the release train hasn’t cut " +
-        "one yet, use a local file, or load it once with SenseCraft (the Vision page stages that).";
+      // An HTTP status is this site's copy of the release answering: on an
+      // http(s) page fetchReleaseAsset reads both files from it, and the
+      // release host answers no browser. The copy can be missing while the
+      // release is live (the site redeploys a few minutes after a release or
+      // a model repair publishes, and a deploy skips a release it could not
+      // copy whole), so the fork / uncut-train reading is for the rest.
+      note.textContent = /^HTTP \d{3}$/.test(e.message)
+        ? "This site’s copy of the release’s model isn’t available (" + e.message + "). If the " +
+          "release or its model was just published, it appears once the site redeploys; until then " +
+          "use a local file, or load it once with SenseCraft (the Vision page stages that)."
+        : "Couldn’t fetch the pinned model (" + e.message + "). The asset ships " +
+          "with the project’s releases — if this is a fresh fork or the release train hasn’t cut " +
+          "one yet, use a local file, or load it once with SenseCraft (the Vision page stages that).";
     }
   });
   local.addEventListener("click", () => file.click());

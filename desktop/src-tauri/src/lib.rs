@@ -37,7 +37,7 @@ mod whoami;
 // resolving for we2.rs / we2_bench.rs.
 use flash_engine::catalog::Catalog;
 use flash_engine::flash::{ChipInfo, FlashReceipt, FlashRequest};
-use flash_engine::image::{check_local_image, stage_firmware};
+use flash_engine::image::{check_bootloader_offset, check_local_image, stage_firmware};
 use flash_engine::ports::PortDto;
 use flash_engine::provisioning::Provisioning;
 use flash_engine::{health, port_hint, release, rescue};
@@ -391,10 +391,13 @@ async fn flash(
 }
 
 /// What the Advanced local-file panel shows BEFORE anything is written: size,
-/// SHA-256 fingerprint, and whether the file starts with 0xE9 — the ESP32's
-/// own "program starts here" marker, which a merged factory image also opens
-/// with (it begins with the bootloader image). A missing magic only informs;
-/// the write path never blocks on it.
+/// SHA-256 fingerprint, and whether the file carries 0xE9 — the ESP32's own
+/// "program starts here" marker — where a merged factory image keeps its
+/// bootloader: at 0x0 on the S3/C3/C6, at 0x1000 on a classic ESP32 (whose
+/// ROM loads it from there; the first 4 KB of its factory image are erased
+/// flash). Here a missing magic only informs, since the chip may not be read
+/// yet; the write (flash_local_file) refuses an image with no bootloader
+/// where the connected chip's ROM loads it.
 #[derive(Serialize)]
 pub struct LocalFileInfo {
     size: u64,
@@ -409,7 +412,7 @@ async fn inspect_local_file(path: String) -> Result<LocalFileInfo, String> {
     Ok(LocalFileInfo {
         size: bytes.len() as u64,
         sha256: release::sha256_hex(&bytes),
-        esp_magic: bytes.first() == Some(&0xE9),
+        esp_magic: bytes.first() == Some(&0xE9) || bytes.get(0x1000) == Some(&0xE9),
     })
 }
 
@@ -420,9 +423,11 @@ async fn inspect_local_file(path: String) -> Result<LocalFileInfo, String> {
 /// all the receipt claims. `expected_size`/`expected_sha256` are the values
 /// inspect_local_file showed and the user confirmed — the file is re-read and
 /// re-hashed here, so a file that changed on disk between the two calls is
-/// refused rather than silently written. The write mechanics are identical to
-/// flash(): private staged temp file, `write-bin 0x0` via the bundled
-/// espflash, `flash:log` streaming.
+/// refused rather than silently written. `detected_chip` is the chip the
+/// frontend read: the image must carry that chip's bootloader where its ROM
+/// loads it (check_bootloader_offset, the catalog path's gate too). The write
+/// mechanics are identical to flash(): private staged temp file,
+/// `write-bin 0x0` via the bundled espflash, `flash:log` streaming.
 #[tauri::command]
 async fn flash_local_file(
     app: AppHandle,
@@ -431,6 +436,7 @@ async fn flash_local_file(
     path: String,
     expected_size: u64,
     expected_sha256: String,
+    detected_chip: String,
 ) -> Result<FlashReceipt, String> {
     let emit = |app: &AppHandle, line: String| {
         let _ = app.emit("flash:log", line);
@@ -443,6 +449,7 @@ async fn flash_local_file(
     emit(&app, format!("→ reading {file_name} from this computer…"));
     let bytes = std::fs::read(&path).map_err(|e| format!("couldn't read that file: {e}"))?;
     check_local_image(&bytes)?;
+    check_bootloader_offset(&bytes, &detected_chip)?;
     let sha = release::sha256_hex(&bytes);
     // The confirm was over the inspected fingerprint, not over a path — a
     // path can point at different bytes a moment later.
@@ -456,19 +463,6 @@ async fn flash_local_file(
             &sha[..16]
         ),
     );
-    if bytes[0] != 0xE9 {
-        // Warn, never block: the partition table at 0x8000 already vouched
-        // for the factory shape, and on the catalog's chips (C3/C6/S3) the
-        // bootloader sits at 0x0, so a factory image normally opens with the
-        // 0xE9 image magic — but the board can't be bricked either way.
-        emit(
-            &app,
-            format!(
-                "⚠ first byte is 0x{:02X}, not the ESP32 image magic 0xE9 — unusual for a C3/C6/S3 factory image. Writing anyway; the board can't be bricked.",
-                bytes[0]
-            ),
-        );
-    }
 
     // Same staging discipline as the release path: a private, RAII-removed
     // temp file, alive until espflash exits.
@@ -1299,12 +1293,13 @@ async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value
         )
         .await
         {
+            // No descriptor date: beside the product and version it reads as
+            // the release's build date, and an Arduino build's is the core's.
+            // The health report's slots carry it, labeled (app.js).
             if let Some(d) = health::parse_app_descriptor(&db) {
-                let built = format!("{} {}", d.date, d.time).trim().to_string();
                 resident = json!({
                     "version": d.version,
                     "projectName": d.project_name,
-                    "built": if built.is_empty() { Value::Null } else { json!(built) },
                     "idf": d.idf_ver,
                     "slot": booted.label,
                 });
@@ -1348,14 +1343,14 @@ async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value
     }))
 }
 
-/// Where a user gets a fresh copy of the app. The versioned `flasher-v*`
-/// releases, not the rolling `flasher-latest` pointer — that one exists for
-/// the updater and carries no installer (see `docs/RELEASE_BUTTONS.md`).
+/// Where a user gets a fresh copy of the app: the website's download page.
+/// Not a GitHub release search — `?q=flasher-v` lists the rolling
+/// `flasher-latest` pointer (an updater manifest, no installer; see
+/// `docs/RELEASE_BUTTONS.md`) and a firmware release, not the Flasher's own.
 pub(crate) fn open_releases_page(app: &AppHandle) {
-    let _ = app.opener().open_url(
-        "https://github.com/kmay89/securaCV/releases?q=flasher-v&expanded=true",
-        None::<&str>,
-    );
+    let _ = app
+        .opener()
+        .open_url("https://securacv.com/download", None::<&str>);
 }
 
 /// The frontend finished `boot()` and the window is usable. This is the signal

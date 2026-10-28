@@ -119,29 +119,48 @@ call: the bird high over the centered bubble, as drawn for the round
 watch's disc. A canvas too short to hold that seat with the bird's highest
 hop — the nightlight's 320x180 landscape, which a saved rotation boots into
 — drops the bird just enough to keep the hop on the glass, and the bubble
-then hangs from just under the bird instead of the center (F88). Every other
-canvas draws as it always did. The bubble is as wide as the glass family
-asks (196 px on small glass), and no wider than the canvas less 4 px a
-side: on the 172 and 180 px wide portrait glass it is 164 and 172 px, so its
-border and rounded corners are on the glass (F160). Its tail, the small
-turned square under the bird, is aligned again whenever the typed line
-changes, so it stays on the bubble's top edge as a centered bubble grows
-both ways (F158). Only the builds on LVGL 9 draw that tail (the dash line
-and the C6 nightstand): LVGL 8.4, which the watch, the S3 nightstand, the
-touch169, the AMOLED, the nightlight and the emulator run, refuses the
-turned, rounded square's alpha layer, so there the bubble has no tail, as it
-had none before (filed). `tests_host/test_splash_layout.cpp` holds the
-header's seats, the bird over its highest hop and the tallest bubble at the
-width each canvas gives it, on every canvas the splash runs on;
+then hangs from just under the bird instead of the center (F88). Elsewhere
+the bubble stays centered, and the first meeting's bird rises clear of it
+(F159): `splash.cpp` measures the tallest bubble the meeting will show (every
+line of the script, the unit's pseudonym in place, laid out by LVGL in the
+bubble's own face and width) before it seats the bird, and the bird's box,
+over its breath, ends 2 px above the highest the tail stands on that bubble.
+It rises only where the canvas still holds its hop: on the AMOLED, the
+portrait nightstand line, the nightlight and the touch169, and on the dash
+under Heirloom with a wide-lettered pseudonym. It keeps that seat through
+the wordmark's beat after the bubble bows out, so there it stands further
+above its name than before (filed). The round watch has no room above (its
+hop would leave the disc) and keeps its seat, its bubble's top a few pixels
+into the foot of the bird's box, below the drawn bird; but the tail now
+drawn there reaches into the bird itself, up to 16 px into its box under
+Heirloom, hiding as many as 30 of its drawn pixels (filed). The landscape nightlight keeps
+its hung bubble, the tail in the empty foot of the box. Hello again draws on
+every canvas as it always did. The bubble is as wide as
+the glass family asks (196 px on small glass), and no wider than the canvas
+less 4 px a side: on the 172 and 180 px wide portrait glass it is 164 and
+172 px, so its border and rounded corners are on the glass (F160). Its tail,
+the small square under the bird, turned 45 degrees about its center with
+square corners, is aligned again whenever the typed line changes, so it
+stays on the bubble's top edge as a centered bubble grows both ways (F158).
+Every build draws it now (F185): LVGL 8.4, which the watch, the S3
+nightstand, the touch169, the AMOLED, the nightlight and the emulator run,
+refused the alpha layer a turned square with rounded corners needs, so
+before F185 only the builds on LVGL 9 (the dash line and the C6 nightstand)
+drew a tail, and there it hung 5.5 px left of the bubble's center line.
+`tests_host/test_splash_layout.cpp` holds the header's seats, the bird over
+its highest hop and the tallest bubble at the width each canvas gives it, on
+every canvas the splash runs on, and the bird clear of its tail wherever
+`seat()` says it is: every canvas but the round watch's and the landscape
+nightlight's, which it pins as the two that are not;
 `tests_host/test_splash_scenes.cpp` holds `splash.cpp` to them, compiling it
 against the host tests' fake LVGL and playing both splashes on the same
 canvases to read where the bird, the bubble and the tail object land (the
-object's box: nothing is drawn there). Not held, only printed: on the AMOLED
-the centered bubble's tallest form reaches into the bird's box, and so, by
-more since the bubble narrowed, does the 172 px glass's under Heirloom with
-the widest-lettered pseudonym (a 112 px bubble, 15 px into the box; in a
-native LVGL 8.4 harness it hides 86 of the bird's drawn pixels, where a
-typical pseudonym keeps the bubble at 94 px and hides none).
+object's box: nothing is drawn there). The drawn tail is read off the frame
+natively, through the real LVGL 8.4 (`canary-local/emulator/test/glass_splash_test.cpp`,
+in every 8.4 env's config and the emulator's dash, which `build.sh` compiles
+against 8.4 too) and LVGL 9.5 (`glass_splash_lvgl9_test.cpp`, the dash
+hardware line and the C6 nightstand); neither is an ESP32 build, and none of
+this is bench-tested.
 
 ## The performance engine (`firmware/common/story/` — pure, host-tested)
 

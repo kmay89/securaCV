@@ -7,6 +7,87 @@
 
 ---
 
+## What an image says about itself is whatever the build left there
+
+### Every release up to 2.4.17 told the flashers it was `arduino-lib-builder` (2026-10-27)
+- **What happened:** both flashers say what a connected board runs by
+  reading the app descriptor (`esp_app_desc_t`, image offset 0x20) off its
+  booted slot, and map its `project_name` to a product. Every fw-v2.4.17
+  image, all 21, carries `arduino-lib-builder` and a version like `esp-idf:
+  v4.4.7 38eeba213a`: the Arduino core's precompiled libraries define the
+  descriptor, so the sketch's name and `CANARY_FW_VERSION` never reach it. A
+  board running SecuraCV read as "an Arduino sketch", the install verdict as
+  "Version unknown", and an older image over a newer one went on with no
+  downgrade warning. The lookup (`matchProjectToProduct`) had been written
+  for names the firmware never produced.
+- **Why nothing caught it:** every test fed the flashers a descriptor written
+  by hand (`canary_wap`, `canary-vision-xiao-s3`); none read one out of a
+  built image. The device side only logs the descriptor
+  (`securacv_ota.cpp`), and the boot guard reads `app_elf_sha256`, which the
+  build does fill.
+- **The fix:** the release stamps it. `firmware/scripts/stamp_app_desc.py`
+  writes the product's `asset_stem` and the firmware's version into
+  `project_name` and `version`, recomputes the checksum byte and the
+  appended SHA-256, and touches nothing else (`app_elf_sha256`,
+  `secure_version`, date, time and `idf_ver` stay the build's). It runs in
+  both release workflows after the last build and before anything signs or
+  merges an app, reads each image back with esptool, and stamps only an
+  image that already carries its version literal and its product id, so the
+  `strings | grep -Fx` version guards still test the firmware. Host-tested;
+  no stamped image has been booted yet. The descriptor's date was the same
+  kind of trap: it is the Arduino core's build date (Mar 5 2024 on most
+  2.4.17 images), so beside "Canary 2.4.18" it misdated the release, and
+  both flashers now show it only in the health report, labeled as the
+  descriptor's.
+- **The rule:** before code trusts a field read off a board, read that field
+  out of a real release image once. A test that writes the field by hand
+  proves the reader, not that anything writes what the reader expects.
+
+## A factory image is a picture of flash: every part sits where its chip reads it
+
+### fw-v2.4.17's classic-ESP32 factory images put the bootloader where the ROM never looks (2026-10-27)
+- **What happened:** `canary-esp32cam-2.4.17-factory.bin` and
+  `canary-wroom-2.4.17-factory.bin`, the factory images of the two
+  classic-ESP32 reach ports (compile-tested, never booted), carry their
+  second-stage bootloader at file offset 0x0 and no image header at 0x1000.
+  Both flashers write a factory image at flash 0x0, and a classic ESP32's
+  mask ROM loads the bootloader from 0x1000, so a board installed from either
+  file would not boot. That is read from the published bytes and the ROM's
+  documented offset, not seen on a bench; USB download mode is in ROM, so a
+  board is recovered by installing a correct image. The other 19 factory
+  images are right: their S3/C3/C6 ROMs load from 0x0, and each carries its
+  own chip's bootloader there.
+- **Why nothing caught it:** `make_factory.py`'s `--bootloader-offset`
+  defaulted to 0x0 for every chip, and its help text asked the caller to pass
+  0x1000 for a classic ESP32. No caller did: `build_flash_manifest.py` (both
+  release paths) passed only `--chip`, and `dev_flash.sh` passed `esp32s3`
+  for any env without a `board_build.mcu`, which is exactly the classic
+  reach envs (they take their chip from `board =`). Every release check
+  passed: the version string is in the image, the app fits its slot, the
+  signature is valid, and both flashers' shape gate looks only for the
+  partition table at 0x8000. The default was right for every chip the tool
+  had ever merged, until the first classic ESP32 joined the catalog.
+- **The fix:** `make_factory.py` takes the offset from `--chip`
+  (`ROM_BOOTLOADER`: 0x1000 for `esp32`/`esp32s2`, 0x0 for the S3/C3/C6/C2/H2,
+  held to esptool's own table by `test_make_factory.py`) and refuses a chip
+  it has no offset for unless `--bootloader-offset` names one (the P4 and C5
+  load from 0x2000). The bootloader's image header must name the chip
+  `--chip` names (`--chip auto` reads it from there; `dev_flash.sh` now falls
+  back to `auto`), and the merged file is read back before it is kept: a
+  bootloader at the offset, the partition table at 0x8000, the app at its
+  slot. An explicit `--bootloader-offset` still overrides, with a warning.
+- **The same assumption sat in both flashers, twice:** their shape gate
+  looked only for the partition table at 0x8000, and their
+  counterfeit-capacity probe took its fingerprint from the first 4 KB of
+  flash, which a correctly installed classic ESP32 leaves erased (every such
+  board read as blank, and a mirrored part was never caught). Both flashers
+  now refuse an image with no bootloader for the connected chip where its ROM
+  loads it, from the same table as `make_factory.py`, and read an 8 KB head.
+- **The rule:** a per-chip constant is never a default the caller has to
+  remember to override. Key it on the chip and refuse a chip you have no
+  value for; the first board of a new chip family is when every "0x0 on our
+  chips" in the packaging path stops being true at once.
+
 ## A confirm gate is only as good as the signal every board feeds it
 
 ### The 60 s confirm dwell could not be passed by boards it was written for (2026-10, before 2.4.17)
@@ -1214,7 +1295,10 @@
   reboots after every few seconds of guessing gets about 37 a minute if the
   unit is back 45 s later and about 155 if it is back in 5 s. The docs
   listed the reboot as a denial left open, never as a reset of the guess
-  budget.
+  budget. *(Amended 2026-10-27, the owner-authority PR, #1887: since F361
+  both routes take the bearer alone, so no landing session reboots the
+  unit; a session's firmware install still restarts it, only into a newer
+  signed image.)*
 - **Fix:** the docs state the bound between reboots and the rates with them
   (lockout third review, F343); `test_auth_backoff.cpp` models both over the
   real table, so a change to its numbers fails until the docs follow. The
@@ -2037,14 +2121,19 @@
   a cleared unit still has an owner, and its door goes to whichever client
   connects first (`docs/design/magic_pairing.md` §2.2). The "no owner yet"
   above covers that cleared unit too, as does the factory reset it names as
-  re-arming the window.)*
+  re-arming the window.)* *(Amended 2026-10-27, the owner-authority PR,
+  #1887: a WAP's Forget Wi-Fi takes the API token in every mode, F345, so
+  no landing session sends it; the door it reopens on a unit not running
+  standalone is still first-come.)*
 - **Regression check:** `tests_host/test_improv_core.cpp` — a session begun
   with credentials stays shut while the caller reports the portal up; a
   window that ran out does not reopen without a tap or a power cycle;
   credentials vanishing at runtime (factory reset) *(amended 2026-10-22,
   #1843's sweep: on a WAP also Forget Wi-Fi, which any landing session can
   send, F345, so the re-arm is not the owner's act alone)* re-arm the window,
-  credentials appearing (the join persisted) shut the no-credentials door.
+  credentials appearing (the join persisted) shut the no-credentials door
+  *(amended 2026-10-27, #1887: a WAP's Forget Wi-Fi takes the API token in
+  every mode, F345)*.
   `test_short_tap.cpp` pins what counts as a tap (≥40 ms, <700 ms; a hold
   is somebody else's gesture). Design: `docs/design/magic_pairing.md`.
   Bench: not yet — a saved network failing with the router off must raise
@@ -3322,7 +3411,14 @@
   The camera is what the session does not hold: a code must be in front of
   it (`FEATURE_QR_PROVISION`, off in several profiles). Accepted as
   proximity-bound; the ledger's F289 amendment says what it is owed if that
-  ever widens. A second review found this bullet calling the grant "not
+  ever widens. *(Superseded 2026-10-27, the owner-authority PR, #1887: F333
+  closes this road where it opens. After setup `POST /api/wifi/qr-scan`
+  answers `404` (F334), so the pair token the cookie mints starts no scan;
+  the boot scan asks the Bluetooth setup door's rule
+  (`provisioning_logic::keyless_join_open()`), so on a set-up unit it runs
+  only after a Forget Wi-Fi, which takes the API token, or the 10 s hold;
+  and Forget clears the stored broker login, as the hold clears the whole
+  broker row.)* A second review found this bullet calling the grant "not
   the session's": a chain's gate is its weakest link's, and the token's
   minter is a link — name the minter before calling a token-gated route
   something the session cannot reach.
@@ -3480,7 +3576,11 @@
   all still offering the hold. And a way out has to be judged against everything else the attacker can
   reach: the bonded lane takes away the striking host's network reach, but
   a host also in radio range can bond through the landing session the
-  network gives it, and then use the lane itself. A guard that every row
+  network gives it, and then use the lane itself *(amended 2026-10-27, the
+  owner-authority PR, #1887: since F346 the bond's confirm and a Passkey
+  Entry's digits take the API token, so a host bonds through its session no
+  longer; a bond a session confirmed on 2.4.17 or earlier stays until the
+  owner removes it)*. A guard that every row
   passes without needs a row from the state it guards: every companion row
   tapped Save first, so the stop's `if (!ctl) return;` was never reached
   with no save running, the state most pane changes are made in.
@@ -3492,7 +3592,12 @@
   keeps, or deletes the phone's bond, from anywhere on the network; the
   owner's own landing session reaches the same routes, and
   `POST /api/wifi/connect`, so the owner's browser can turn Bluetooth back
-  on, or move the WAP with no Bluetooth at all. List
+  on, or move the WAP with no Bluetooth at all. *(Amended 2026-10-27, the
+  owner-authority PR, #1887: the Bluetooth routes still take the session,
+  but after setup `POST /api/wifi/connect` takes the API token alone, F334,
+  so the browser's move takes the token, and under a host striking from
+  nine or more addresses it waits until that host stops; the merge's
+  bullet below says so.)* List
   the routes by what they touch (Bluetooth's switch, its bonds, the Wi-Fi
   it would change), and a denial's length by what the attacker pays: a
   refused write the lane does not charge keeps the owner's refused for as
@@ -3535,6 +3640,19 @@
   timers run at once needs a bound of its own: a page loop that stopped
   counting its asks never yielded to node:test's timeout, so the run hung
   rather than failing a row; both harnesses now answer `409` past 64 asks.
+- **Found in the owner-authority PR's merge of #1884 (2026-10-27):** a
+  decision that moves a route behind the bearer moves every way out that
+  route was. #1843's lockout posture rested on the owner's landing session
+  reaching `POST /api/wifi/connect` and `POST /api/wifi/forget` under the
+  lockout (the third and second rounds' bullets above); F334 and F345 put
+  both on the bearer alone (Connect after setup, Forget in every mode), and
+  the overflow holds that bearer with every untracked address, so the
+  browser's move now waits until the striking host stops. The two branches
+  merged without a conflict in most of the
+  sentences that disagreed: the dependency surfaced only because #1843's
+  fifth-review note on F345 named it. Before deciding a route's gate,
+  search the ledger and the docs for the route as a remedy, not only as an
+  attack.
 - **Date learned:** 2026-10
 
 ### A stamp that nothing clears ages into the wrap and reads fresh again (canary-wap and canary, F347)
@@ -3578,6 +3696,58 @@
   slot functions cut from `csi_integration.cpp`: a session and a pair token
   end at their TTLs and are not valid again 2^32 ms + 5 s after issue).
   Host-tested; the wraps cannot be bench-tested.
+- **Date learned:** 2026-10
+
+### A setup-window grant outlived setup, and a pasted token passed on the cookie beside it (canary-wap, F334, F335, F345, F346, F361)
+- **What happened:** after first-boot setup any host on a WAP's home network
+  could move it to another network, Forget it (which re-opened the
+  Bluetooth setup door, whose claim buys the receipt), confirm its own
+  phone's Bluetooth bond or its own radio's opera pairing, re-key the
+  sealed-snapshot vault and reboot the unit at will. Separately, the
+  dashboard's sign-in accepted any mistyped `cv_` token on a page that held
+  a session, and the owner met the refusal one step later, with a strike, at
+  whatever needed the bearer (inside a phone's 30 s pairing window, at a
+  Bluetooth confirm).
+- **Root cause:** three things, each reasonable alone. Two consumers shared
+  one pair-token pool: the wizard's validate-only token (a first-boot grant
+  for a phone on the SoftAP) and the landing page's `?cv_pair` link (minted
+  for any caller on the home network), with no token kind between them, so
+  the wizard's grant on `/api/wifi/connect` became every caller's. A comment
+  said "the AP itself is the gate", true during setup and stated as if it
+  were true forever; `wifi_change_authorize()` took the pair token and then
+  `api_auth_check()`, which takes the session cookie before it compares
+  anything, and the Forget, Disconnect, reboot, vault-key and two pairing
+  confirm wrappers were `api_auth_check()` too. And the sign-in checked a
+  pasted token on `GET /api/status` with the cookie attached, so the cookie
+  answered the check the token was meant to pass.
+- **Fix:** after setup the bearer alone (`api_auth_check_bearer()`) gates
+  every HTTP route that changes the network the unit joins, on every
+  interface (a peer already bonded through the pairing confirm or a
+  passkey, one a session made before F346 among them, still moves it with
+  no token, over the Bluetooth credentials write,
+  `ble_request_wifi_provisioning()`), and every
+  write that grants a credential (the vault key, the two confirms), and the
+  two reboot routes; `POST /api/wifi/qr-scan` answers `404` outside setup.
+  The firmware install stays on the session and restarts the unit only into
+  a newer signed image.
+  The setup window is a branch in code (`setup_wizard::is_active()`), not a
+  comment. The setup door and the camera's boot scan, two doors to one act
+  (a join that asks for no credential), share one predicate,
+  `provisioning_logic::keyless_join_open()`, where the scan had asked only
+  half of the door's question. The sign-in sends a pasted token with
+  `credentials: 'omit'`. Rules: state a setup-window grant in code, at the
+  gate; give two doors to one act one predicate; and a check of a credential
+  must not pass on another credential the request carries beside it.
+- **Regression check:** `tests_host/test_wifi_authority.cpp` (the gate and
+  the wrappers cut from the sketch over the real `api_auth.h` and
+  `provisioning_logic.h`: after setup the landing's pair token and session
+  are `401`, Forget by a session leaves the door shut, a session's reboot
+  restarts nothing; text pins for the scan's `404` and the boot scan's
+  predicate), `test_receipt_grant.cpp`'s
+  `test_credential_grants_take_the_bearer`, `test_bluetooth_commands_wap.cpp`
+  (the bond confirm through the route `register_routes()` registers, the
+  Passkey Entry field) and `dashboard_gates.test.js` ('The shared sign-in':
+  `cv_wrong` stays refused on a page whose cookie answers 200).
 - **Date learned:** 2026-10
 
 ## Build profiles: a configuration nobody compiles is a configuration that rots

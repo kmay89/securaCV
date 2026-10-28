@@ -197,7 +197,7 @@ must use the **same MQTT broker** as Frigate and the sidecar.
    under **Discovered** within a minute of the sidecar's start — *SecuraCV
    sidecar `pwk_…`*, or *SecuraCV sidecar at `<address>`* when the compose
    file sets `SECURACV_ANNOUNCE_HOST`. Press **Configure**: *"A SecuraCV
-   sidecar announced its witness kernel `pwk_…` (kernel 0.8.0). Its key
+   sidecar announced its witness kernel `pwk_…` (kernel 0.9.0). Its key
    fingerprint is `ab12cd34` — the same eight characters `docker exec
    securacv pair` prints. Submit to pair; the next step asks for the 6-digit
    code and confirms the kernel URL."* Compare the fingerprint with the
@@ -1002,7 +1002,10 @@ shows (`mosquitto_sub -t 'securacv/+/health' -t 'securacv/+/egress'`):
   what its committed-event egress did since boot — `dropped` (commits its
   egress queue had no room for),
   `held_dropped` (rows dropped from its 8-row RAM hold, oldest first),
-  `ambient_dropped` (`wifi.channel_activity` rows that had to wait),
+  `ambient_dropped` (`wifi.channel_activity` rows the egress dropped: every
+  one, since ambient rows reach neither the card nor the broker, so it grows
+  by up to one per 5 s and is not a loss; until sweep F105 it counted only
+  those that had to wait),
   `unsent_dropped` (rows no card kept that the MQTT layer refused, lost)
   and `planner`, the SD backfill's counters (`live`, `held`, `queued`,
   `replayed`, `skipped`, `untrusted`, `unsendable`, `truncated_unsent`,
@@ -1691,7 +1694,7 @@ precise timestamp:
   "time_bucket_size": 600,
   "confidence": 0.85,
   "attestation": "adapter",
-  "kernel_version": "0.8.0",
+  "kernel_version": "0.9.0",
   "ruleset_id": "ruleset:frigate_v1",
   "device_id": "pwk_1a2b3c4d",
   "published_bucket_start": 1706141400,

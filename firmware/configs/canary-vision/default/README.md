@@ -2,6 +2,13 @@
 
 Standard configuration for the Vision AI presence detection device.
 
+This directory's `config.h` holds what something reads from it: the
+`FEATURE_*` flags, the watchdog timeout, and a copy of the device type the
+fleet figures read. Every other compiled setting it used to repeat, the
+detection defaults below among them, is set in the project's own
+`include/canary/config.h` (topic patterns in `include/canary/topics.h`),
+under `firmware/projects/canary-vision/`.
+
 ## Target Hardware
 
 - **Board**: ESP32-C3 DevKitM-1
@@ -48,14 +55,13 @@ Created automatically via MQTT Discovery:
 These values live in the project's own `include/canary/config.h`
 (`../../../projects/canary-vision/include/canary/config.h`; the topic
 patterns in `include/canary/topics.h`), which owns every setting the
-firmware reads; `config.h` here owns only the `FEATURE_*` flags and the
-watchdog timeout (sweep F182).
-Its five `CONFIG_*` lines are seeds — copies of the project's constants that
-two tools read from this file: `CONFIG_DEVICE_TYPE` for
-`canary-local/tools/figures/gen_figures.mjs` and the four detection defaults
-for `canary-local/tools/gen_flash.py` — and
-`scripts/tests/test_vision_flavor_config_readers.py` holds each equal to its
-owner.
+firmware reads. The score, lost timeout and dwell start are first-boot
+values: the live ones are kept in NVS and tuned from Home Assistant. The
+voxel grid is compiled in. `config.h` here owns only the `FEATURE_*` flags,
+the watchdog timeout and one seed (sweep F182): `CONFIG_DEVICE_TYPE`, a copy
+of the project's device type that `canary-local/tools/figures/gen_figures.mjs`
+reads from this file, which `scripts/tests/test_vision_flavor_config_readers.py`
+holds equal to its owner.
 
 ## Usage
 

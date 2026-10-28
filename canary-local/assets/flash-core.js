@@ -3,8 +3,9 @@
 // Everything here is pure and testable (tests/flash.test.js runs it under
 // `node --test`, the repo convention): the chip guard, the ESP32 image
 // parsers that let the page read what firmware is *currently* on a board,
-// the release-manifest resolution, the release-signature verification, and the
-// byte<->binary-string glue esptool-js needs. No DOM, no Web Serial, no
+// the release-manifest resolution, where a release asset is fetched from (the
+// site's same-origin mirror, releaseFetchUrl), the release-signature
+// verification, and the byte<->binary-string glue esptool-js needs. No DOM, no Web Serial, no
 // esptool import — flash.js owns all of that and imports this.
 
 import * as ed25519 from "./vendor/ed25519/ed25519.mjs";
@@ -87,12 +88,13 @@ export function parsePartitionTable(bytes) {
 
 // A local file is written at offset 0, where only a MERGED factory image
 // belongs (bootloader + partition table + app — make_factory.py's output).
-// An app-only build also starts with the 0xE9 image magic, so the only
-// honest discriminator is the partition table at 0x8000: no table, no
-// factory image. Refusing app-only files here is what keeps "install a
-// local file" from writing an app over the bootloader and leaving the
-// board unbootable until a USB re-flash (same check, same reason, as the
-// desktop Flasher's flash_local_file).
+// An app-only build starts with the 0xE9 image magic, and so does an
+// S3/C3/C6 factory image, so the only honest discriminator is the partition
+// table at 0x8000: no table, no factory image. Refusing app-only files here
+// is what keeps "install a local file" from writing an app over the
+// bootloader and leaving the board unbootable until a USB re-flash (same
+// check, same reason, as the desktop Flasher's flash_local_file). Where the
+// bootloader itself sits is bootloaderPlacement's question, below.
 export function localImageShape(bytes) {
   if (!bytes || bytes.length <= 0x8000 + 32) {
     return { factory: false, reason: "shorter than the 0x8000 partition-table offset — an app-only build, not a merged factory image" };
@@ -102,6 +104,63 @@ export function localImageShape(bytes) {
     return { factory: false, reason: "no partition table at 0x8000 — an app-only build, not a merged factory image" };
   }
   return { factory: true, reason: "" };
+}
+
+// Where each chip's mask ROM loads the second-stage bootloader from, which is
+// where a factory image (a picture of flash from address 0) must hold it, and
+// the chip id a bootloader built for that chip names in its image header
+// (esp_image_header_t.chip_id, a u16 at byte 12). Keyed by esptool's chip
+// names, which normalizeChip folds the detected name to ("ESP32-S3" →
+// "esp32s3"). The same table as firmware/scripts/make_factory.py's
+// ROM_BOOTLOADER and the desktop's flash-engine image.rs ROM_BOOTLOADER;
+// desktop_parity.test.js holds the three equal.
+export const ROM_BOOTLOADER = {
+  esp32: [0x1000, 0],
+  esp32s2: [0x1000, 2],
+  esp32s3: [0x0, 9],
+  esp32c3: [0x0, 5],
+  esp32c2: [0x0, 12],
+  esp32c6: [0x0, 13],
+  esp32h2: [0x0, 16],
+};
+export const IMAGE_MAGIC = 0xe9;
+const IMAGE_CHIP_ID_AT = 12;
+
+// A detected chip's [ROM bootloader offset, image chip id], or null for a chip
+// the table does not list (the P4 and the C5 load from 0x2000).
+export function romBootloader(chip) {
+  const key = normalizeChip(chip).toLowerCase();
+  return Object.prototype.hasOwnProperty.call(ROM_BOOTLOADER, key)
+    ? ROM_BOOTLOADER[key] : null;
+}
+
+// The chip-aware half of the factory-shape gate, for every write at 0x0 (the
+// catalog image and a local file alike): the image must carry a bootloader
+// built for the connected chip (0xE9, and the chip's id in the header) where
+// that chip's ROM loads it from. fw-v2.4.17's ESP32-CAM and WROOM images
+// carried theirs at 0x0, where a classic ESP32 never looks, and the
+// partition-table check passed them; the chip id keeps a stray 0xE9 byte at
+// the ROM offset, or another chip's image with the same offset, from passing.
+// A chip the table does not list is not judged, so this can only refuse an
+// image the ROM would not start. The desktop's twin is flash-engine image.rs
+// check_bootloader_offset, in the same words.
+export function bootloaderPlacement(bytes, chip) {
+  const rom = romBootloader(chip);
+  if (rom === null) return { ok: true, reason: "" };
+  const [at, chipId] = rom;
+  // The chip id named by an image header at `o`, or null when none starts there.
+  const idAt = (o) => (bytes && bytes.length >= o + IMAGE_CHIP_ID_AT + 2 && bytes[o] === IMAGE_MAGIC)
+    ? bytes[o + IMAGE_CHIP_ID_AT] | (bytes[o + IMAGE_CHIP_ID_AT + 1] << 8) : null;
+  if (idAt(at) === chipId) return { ok: true, reason: "" };
+  const hex = (o) => `0x${o.toString(16)}`;
+  const other = [0x0, 0x1000].find((o) => o !== at && idAt(o) === chipId);
+  const elsewhere = other !== undefined ? ` (it has one at ${hex(other)} instead)`
+    : idAt(at) !== null ? " (the one there was built for another chip)" : "";
+  return { ok: false,
+    reason: `This image would not start on the ${chip}: that chip loads its bootloader ` +
+      `from ${hex(at)}, and the image has no bootloader for it there${elsewhere}. Nothing ` +
+      `was written. Use an image laid out for the ${chip}: SecuraCV factory images from ` +
+      "fw-v2.4.18 on put the bootloader where each chip loads it." };
 }
 
 // Which app partition to read a version out of: prefer ota_0, then factory,
@@ -800,9 +859,11 @@ export function detectBrowser(ua, maxTouchPoints = 0) {
 
 // ── release channels (docs/RELEASE_PROCESS.md) ─────────────────────────────
 // The dev channel's one stable address: the rolling fw-dev-latest prerelease
-// that CI re-points on every fw-v*-dev.*/-rc.* tag. This is a fixed
-// first-party constant, deliberately NOT routed through manifestOverrideUrl
-// (which guards arbitrary URLs) — ?channel=dev can only ever mean this URL.
+// that CI re-points on every fw-v*-dev.*/-rc.* tag, and on every stable tag
+// when no newer dev build is there (.github/scripts/dev_channel.py). This is a
+// fixed first-party constant, deliberately NOT routed through
+// manifestOverrideUrl (which guards arbitrary URLs) — ?channel=dev can only
+// ever mean this URL.
 export const DEV_FLASH_MANIFEST_URL =
   "https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/manifest-flash.json";
 
@@ -829,6 +890,121 @@ export function channelFromSearch(search) {
   } catch {
     return "release";
   }
+}
+
+// Where the dev channel stands, in one sentence: the dev catalog's fw_train
+// against the train of the release this flasher is pinned to. Never "ahead
+// of stable": the pin is not stable's live version (the desktop Flasher and
+// the Lab bundle theirs at build time, so an installed copy pins the stable
+// of its day), and a stable release copies itself to the dev channel when
+// no newer dev build is there, so an older app would call the new stable
+// build "ahead of stable". Both flashers once said that of 2.4.15 under
+// stable 2.4.17. "" when either train is missing or unreadable: no claim
+// beats a guessed one. desktop/src/app.js carries the same function
+// (desktop_parity.test.js holds the two to the same sentences).
+export function devChannelStanding(devTrain, pinnedTrain) {
+  const cmp = compareVersions(devTrain, pinnedTrain);
+  if (cmp === null) return "";
+  if (cmp === 0) return `The dev channel carries ${devTrain}, the same version as the release this flasher is pinned to.`;
+  return `The dev channel carries ${devTrain}, ${cmp > 0 ? "newer" : "older"} than the ${pinnedTrain} release this flasher is pinned to.`;
+}
+
+// ── the same-origin release mirror (pages.yml) ──────────────────────────────
+// A browser cannot fetch a GitHub release asset at all. github.com answers
+// /releases/download/ with a 302 that carries no Access-Control-Allow-Origin,
+// and the asset host it redirects to answers 200 with none either, so the
+// browser refuses every manifest and every image. On the hosted Lab the page
+// reported a connection problem and every product as unavailable
+// (.github/RELEASE_LESSONS.md, 2026-10-27). So pages.yml copies the releases
+// this page pins (flash.json manifest_url, we2_module.manifest_url, and
+// DEV_FLASH_MANIFEST_URL), with every file each manifest lists, into the
+// deployed site at firmware/<tag>/<file>, next to the pages
+// (canary-local/tools/mirror_release.py checks each file's SHA-256 against
+// its manifest before publishing any of them). The page maps a release URL
+// to that path by the URL's own tag and file name. The URLs themselves (in
+// flash.json, and inside the signed manifests) are never rewritten, so the
+// SHA-256 and Ed25519 checks bind exactly the bytes they always did, wherever
+// those bytes were served from.
+//
+// The desktop apps never come here: their native side (flash-native.js →
+// Rust) fetches the release itself, and no browser rule applies to it.
+export const RELEASE_MIRROR_DIR = "firmware";
+// One path segment of a tag or asset name: fw-v2.4.17, fw-dev-latest,
+// canary-2.5.0-dev.1-factory.bin, person-detection-we2-v2.4.17.tflite. The
+// mirror script refuses the same set (its SEGMENT_RE), so neither side can
+// write or read a path the other would not.
+const RELEASE_SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+// Where this module's copy of the mirror lives: canary-local/firmware/, a
+// sibling of assets/. Resolved from the module (assets/ → its parent →
+// firmware/), not the page, so the answer does not depend on which page
+// imported it, and it never leaves canary-local.
+// Guarded: this module also loads inside the desktop apps' webviews, where a
+// throw at module scope would take the whole flasher down with it; there a
+// missing base only means "no mirror" (releaseFetchUrl answers the url).
+const DEFAULT_MIRROR_BASE = (() => {
+  try {
+    return new URL(`${RELEASE_MIRROR_DIR}/`, new URL("..", import.meta.url)).href;
+  } catch { return ""; }
+})();
+
+// { repo, tag, file } for a GitHub release-download URL
+// (https://github.com/<owner>/<repo>/releases/download/<tag>/<file>), or null
+// for anything else. With `repo`, only that repository's assets answer: the
+// mirror carries the project's own releases and nothing else.
+export function releaseAssetParts(url, repo) {
+  let u;
+  try { u = new URL(String(url || "")); } catch { return null; }
+  if (u.protocol !== "https:" || u.hostname !== "github.com" || u.port ||
+      u.username || u.password || u.search || u.hash) return null;
+  const m = /^\/([^/]+)\/([^/]+)\/releases\/download\/([^/]+)\/([^/]+)$/.exec(u.pathname);
+  if (!m) return null;
+  let tag, file;
+  try { tag = decodeURIComponent(m[3]); file = decodeURIComponent(m[4]); } catch { return null; }
+  if (!RELEASE_SEGMENT_RE.test(tag) || !RELEASE_SEGMENT_RE.test(file)) return null;
+  const owner = `${m[1]}/${m[2]}`;
+  if (repo && owner.toLowerCase() !== String(repo).toLowerCase()) return null;
+  return { repo: owner, tag, file };
+}
+
+// The URL a release asset is fetched from:
+//   · one of `repo`'s release assets, on an http(s) page: the site's copy,
+//     <mirrorBase><tag>/<file>, and nothing else. There is no fallback to the
+//     release URL on any host, loopback and LAN included: no browser can read
+//     it from any origin, so a fallback would only turn the copy's honest
+//     "HTTP 404 from this site" into a false "connection problem" (and
+//     flash.html's CSP does not name github.com or its asset host);
+//   · a page that is not on http(s) (file:, a native webview scheme): `url`,
+//     exactly as before (there is no origin to hold a copy);
+//   · a URL that is not one of `repo`'s release assets (a ?manifest= override,
+//     a self-hosted image): `url`, as given;
+//   · a mirror base that is not on the page's own origin, or none: `url` (the
+//     mirror is same-origin by definition; anything else is not this mirror).
+export function releaseFetchUrl(url, { pageHref, mirrorBase = DEFAULT_MIRROR_BASE, repo } = {}) {
+  let page;
+  try { page = new URL(String(pageHref || "")); } catch { return url; }
+  if (page.protocol !== "http:" && page.protocol !== "https:") return url;
+  const parts = releaseAssetParts(url, repo);
+  if (!parts || !mirrorBase) return url;
+  let base;
+  try { base = new URL(String(mirrorBase), page.href); } catch { return url; }
+  if (base.origin !== page.origin) return url;
+  return new URL(
+    `${encodeURIComponent(parts.tag)}/${encodeURIComponent(parts.file)}`,
+    base.href.endsWith("/") ? base.href : base.href + "/").href;
+}
+
+// Fetch a release asset from releaseFetchUrl's answer. The response (or the
+// network error, thrown) is exactly what a bare fetch of that URL gives, so a
+// caller's `r.ok` / HTTP-status handling reads as it did. Nothing here touches
+// the bytes: the caller's SHA-256 and signature checks run on whatever
+// arrives.
+export async function fetchReleaseAsset(url, {
+  repo, init,
+  pageHref = globalThis.location ? globalThis.location.href : undefined,
+  mirrorBase = DEFAULT_MIRROR_BASE,
+  fetchImpl = (...args) => globalThis.fetch(...args),
+} = {}) {
+  return fetchImpl(releaseFetchUrl(url, { pageHref, mirrorBase, repo }), init);
 }
 
 // ── WiFi pre-provisioning (write NVS, not just read it) ────────────────────
@@ -1239,6 +1415,16 @@ export function wifiBannerState(fieldSsid, fieldPass, saved, persisted) {
 export function classifyFlashError(err) {
   const msg = String((err && (err.message || err.name)) || err || "").toLowerCase();
   const has = (...subs) => subs.some((s) => msg.includes(s));
+
+  // An image refused before the write because it has no bootloader for this
+  // chip where its ROM loads one (bootloaderPlacement; the desktop engine's
+  // check_bootloader_offset says the same words). First, because no retry,
+  // cable or download mode changes what an image keeps there.
+  if (has("would not start on the"))
+    return { kind: "layout", title: "That image wouldn't start on this board",
+      hint: "Nothing was written. It has no bootloader for this chip where the chip " +
+        "loads one from, so the board couldn't start from it (the details say where). " +
+        "Use an image laid out for this chip: SecuraCV factory images from fw-v2.4.18 on are." };
 
   // Another program/tab already holds the port (Arduino IDE, PlatformIO
   // monitor, a second flasher tab). The single most common real failure.
@@ -2251,7 +2437,11 @@ export function parseVersion(v) {
 }
 
 // -1 a<b · 0 equal · 1 a>b · null when either side is unparseable.
-// A prerelease sorts before its own release (2.2.0-rc1 < 2.2.0).
+// A prerelease sorts before its own release (2.2.0-rc1 < 2.2.0). Two
+// prereleases compare field by field, split on "." and "-", numerically
+// where both fields are digits (semver §11): 2.4.18-dev.10 is after
+// 2.4.18-dev.9, and so is the WAP's 2.4.18-dev.10-wap after -dev.9-wap.
+// desktop/src/app.js orders them the same (desktop_parity.test.js).
 export function compareVersions(a, b) {
   const pa = parseVersion(a), pb = parseVersion(b);
   if (!pa || !pb) return null;
@@ -2261,7 +2451,20 @@ export function compareVersions(a, b) {
     if (x !== y) return x < y ? -1 : 1;
   }
   if (!!pa.pre !== !!pb.pre) return pa.pre ? -1 : 1;
-  if (pa.pre && pb.pre && pa.pre !== pb.pre) return pa.pre < pb.pre ? -1 : 1;
+  const fa = String(pa.pre || "").split(/[.-]/), fb = String(pb.pre || "").split(/[.-]/);
+  for (let i = 0; i < Math.max(fa.length, fb.length); i++) {
+    const x = fa[i], y = fb[i];
+    if (x === y) continue;
+    if (x === undefined || y === undefined) return x === undefined ? -1 : 1;
+    const nx = /^\d+$/.test(x), ny = /^\d+$/.test(y);
+    if (nx && ny) {
+      if (Number(x) !== Number(y)) return Number(x) < Number(y) ? -1 : 1;
+    } else if (nx !== ny) {
+      return nx ? -1 : 1;
+    } else {
+      return x < y ? -1 : 1;
+    }
+  }
   return 0;
 }
 
@@ -2430,7 +2633,11 @@ export function displaysIn(catalog) {
 
 // Match a board-read project name (or an explicit id) to a catalog display —
 // an exact id wins; otherwise the loose match string ("display") names the
-// family off a bare project name (first entry is fine for naming).
+// family off a bare project name (the first entry: a guess, fit only for a
+// name that carries no flavor). A stamped descriptor names its product by
+// asset_stem, and four stems are no displays[] id, so the role line resolves
+// those through the product's own flash_product instead (flash.js
+// renderRoleLine; flash_epic.test.js runs every stem).
 export function displayFor(catalog, projectNameOrId) {
   const s = String(projectNameOrId || "").toLowerCase();
   if (!s) return null;
