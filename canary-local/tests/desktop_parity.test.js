@@ -1035,9 +1035,9 @@ test("secret drawer: a refusing store is never downgraded to the prefs file, and
     const { secretStore, calls } = loadSecretStore("secret-service", { "wifi:home": "old" });
     const reading = secretStore.get("wifi:home");
     await drain();
-    const offer = storeCalls(calls, "secret_get", "wifi:home")[0];
-    assert.ok(offer, "get() is waiting behind the adoption pass — a locked keyring's prompt would hold the restore");
-    offer[2]();
+    const read1 = storeCalls(calls, "secret_get", "wifi:home")[0];
+    assert.ok(read1, "get() is waiting behind the adoption pass — a locked keyring's prompt would hold the restore");
+    read1[2]();
     assert.strictEqual(await reading, "old", "get() must fall back to the prefs copy while the store has nothing");
     assert.strictEqual(storeCalls(calls, "secret_set", "wifi:home").length, 1,
       "the adoption pass should still be out here, its one write unanswered");
@@ -1080,13 +1080,13 @@ test("secret drawer: a refusing store is never downgraded to the prefs file, and
     await secretStore.init();
     const reading = secretStore.get("wifi:home");
     await drain();
-    const [offer] = storeCalls(calls, "secret_get", "wifi:home");
+    const [read1] = storeCalls(calls, "secret_get", "wifi:home");
     const [move] = storeCalls(calls, "secret_set", "wifi:home");
-    assert.ok(offer && move, "expected the read and the adoption write both in flight");
+    assert.ok(read1 && move, "expected the read and the adoption write both in flight");
     move[2]();                   // the move lands and drops the prefs copy…
     await drain();
     assert.ok(!("wifi:home" in prefs.secrets), "the adoption pass should have dropped the prefs copy");
-    offer[2]({ value: null });   // …then the store's answer from before it arrives
+    read1[2]({ value: null });   // …then the store's answer from before it arrives
     assert.strictEqual(await reading, "v", "get() lost a password the adoption pass moved while it was asking");
   }
 });
@@ -7060,13 +7060,19 @@ test("the desktop's About fuse read says, beside its button, that it leaves the 
   // connected ESP32, not only one brought up with BOOT held. The read resets
   // the board into its ROM and does not reset it back out (efuse.rs), so a
   // board that was running its firmware is left in download mode. The person
-  // reads that, and how to start the firmware again, before the click.
+  // reads that, and how to start the firmware again, before the click: the
+  // reset button, or the cable and the battery, since a board on its own
+  // battery stays powered (and in the ROM) with only its USB cable pulled.
   const appJs = read(join(ROOT, "desktop/src/app.js"));
   const m = appJs.match(/\/\/ BEGIN ABOUT-BOARD\n([\s\S]*?)\/\/ END ABOUT-BOARD/);
   const doc = pageDoc();
   const nodes = { "efuse-read": doc.createElement("button"), "efuse-result": doc.createElement("p"),
     "this-board": doc.createElement("section") };
   nodes["efuse-read"].click = () => nodes["efuse-read"].fire("click");
+  // The card starts as index.html draws it (hidden until a board is read).
+  const cardTag = read(join(ROOT, "desktop/src/index.html")).match(/<section id="this-board" class="([^"]*)"/);
+  assert.ok(cardTag, "couldn't find the This Board card in desktop/src/index.html");
+  nodes["this-board"].className = cardTag[1];
   const state = { port: "/dev/ttyACM0", chip: "ESP32-S3", portKind: "esp32", busy: false, chipFuses: undefined,
     flashBytes: 8 << 20 };
   const asked = [];
@@ -7080,12 +7086,36 @@ test("the desktop's About fuse read says, beside its button, that it leaves the 
   const card = nodes["this-board"];
   const button = () => nodesOf(card).find((n) => n.tagName === "button" && n.textContent === "Read the chip’s fuses");
   const NOTE = "A good read leaves the board in its ROM’s download mode, not running its firmware: " +
-    "unplug it and plug it back in to start its firmware again.";
+    "press its reset button to start its firmware again, or unplug it (and its battery, " +
+    "if it has one) and plug it back in.";
   const offer = button();
-  assert.ok(offer, "the This Board card should offer the fuse read while the fuses are unread");
+  assert.ok(offer, "the This Board card should offer the fuse read until a read has been tried on this board");
   const notes = nodesOf(card).filter((n) => n.tagName !== "#text" && n._text === NOTE);
   assert.equal(notes.length, 1, "the card must say, once, that the fuse read leaves the board in the ROM");
   assert.strictEqual(notes[0].parent, offer.parent, "the line must sit beside the button it is about");
+  // Drawn, and shown once "More about this board" is open (the closed
+  // <details> holds the line and its button alike): nothing from either up
+  // to and including the card is hidden — by the property, the attribute, an
+  // inline style, or a class styles.css draws as display: none or
+  // visibility: hidden (.hidden is display: none !important there).
+  const css = read(join(ROOT, "desktop/src/styles.css")).replace(/\/\*[\s\S]*?\*\//g, "");
+  const hiding = new Set();
+  for (const [, sel, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!/display\s*:\s*none|visibility\s*:\s*hidden/.test(body)) continue;
+    for (const one of sel.split(",")) {
+      const cls = one.trim().match(/^\.([\w-]+)$/);
+      if (cls) hiding.add(cls[1]);
+    }
+  }
+  assert.ok(hiding.has("hidden"), "couldn't read styles.css's .hidden rule — the check below would pass on anything");
+  for (const [what, node] of [["the line", notes[0]], ["its button", offer]]) {
+    for (let n = node; n; n = n.parent) {
+      const why = n.hidden === true ? "the hidden property" : "hidden" in n.attrs ? "the hidden attribute"
+        : n.style.display === "none" ? "display: none" : n.style.visibility === "hidden" ? "visibility: hidden"
+          : n.className.split(/\s+/).find((c) => hiding.has(c));
+      assert.ok(!why, `${what} is drawn but not shown: a <${n.tagName}> on its way up to the card is hidden (${why})`);
+    }
+  }
 
   offer.fire("click");
   await ticks();

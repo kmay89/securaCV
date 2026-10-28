@@ -333,14 +333,20 @@ which handed a BOOT-held board to that firmware before anything was
 written.
 
 The same read also runs from *Read the chip's fuses* in the desktop's
-*This board* details, which offer it for any connected ESP32 whose fuses
-are unread, not only one brought up with BOOT held. It ends the same way,
-so a board that was running its firmware is reset into the ROM and left
-there after a good read. The line beside that button says so before the
-click, and says that unplugging the board and plugging it back in starts
-its firmware again; `canary-local/tests/desktop_parity.test.js` draws the
-card and holds the line to its button. Like the rest of the read, where it
-leaves the board is host-tested only (U1, below).
+*This board* details, which offer it for any connected ESP32, not only one
+brought up with BOOT held, until a read has been tried on that board: a
+read that fails, brings back no chip fields, or meets a chip with no table
+takes the button away too, and it comes back when the chip is read again (a
+re-plug, or *re-read chip*). It ends the same way, so a board that was
+running its firmware is reset into the ROM and left there after a good
+read. The line beside that button says so before the click, and says how to
+start the firmware again: the board's reset button, or unplugging it, and
+its battery if it has one, and plugging it back in. A board on its own
+battery (the WAP's battery build, or a display build whose device manifest
+lists one) stays powered with only its USB cable pulled, so it stays in the
+ROM. `canary-local/tests/desktop_parity.test.js` draws the card and holds
+the line to its button, shown and not just present. Like the rest of the
+read, where it leaves the board is host-tested only (U1, below).
 
 Getting into the ROM is a reset too, which is why the port picks the
 sequence. A BOOT-held S3, C3 or C6 presents its USB-Serial/JTAG port. The
@@ -386,9 +392,10 @@ reset sequences are host-tested against the vendored esptool-js
 implementation, and the choice of sequence by port and the line moves after
 the read (the park, and nothing else) against a scripted board; none of it
 is proven on a physical board. That a native-USB board held in BOOT, or a
-board that was running its firmware, is still in the ROM after a good read
-is the bench check this owes. A protocol mistake fails as "not checked",
-not as a wrong verdict.
+board that was running its firmware, is still in the ROM after a good read,
+and that its reset button or a full power cycle (USB and any battery) then
+starts its firmware, is the bench check this owes. A protocol mistake fails
+as "not checked", not as a wrong verdict.
 
 The desktop app **can** now read what firmware is resident: `board_passport`
 reads the bootloader's image header, the partition table, otadata and the

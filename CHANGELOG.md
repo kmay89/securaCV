@@ -24,7 +24,8 @@
   fuse-derived rows when asked ("Read the chip’s fuses", the cold-start
   card's read), and the line beside that button says that a good read leaves
   the board in its ROM's download mode, not running its firmware, and that
-  unplugging it and plugging it back in starts its firmware again. The
+  its reset button, or unplugging it (and its battery, if it has one) and
+  plugging it back in, starts its firmware again. The
   desktop's `detect_chip` now keeps espflash's chip line, revision, crystal
   and features (`ChipInfo`), and its passport reads the bootloader's image
   header and the descriptor's `secure_version` and ELF hash. Not built from

@@ -5512,7 +5512,11 @@ function renderThisBoard() {
   // back into its firmware), so it runs when asked (the same button as the
   // cold-start card's) rather than on every connect. This card is drawn for
   // any ESP32, not only one held in BOOT, so the line beside the button says
-  // where the read leaves a board that was running its firmware.
+  // where the read leaves a board that was running its firmware, and how to
+  // start it again: the reset button, or every source of power. A board on
+  // its own battery (the WAP's battery build, a display build whose
+  // devices/<slug>/device.json lists one) stays powered with only its USB
+  // cable pulled, so the ROM keeps it.
   if (state.chipFuses === undefined && $("efuse-read")) {
     const read = h("button", "btn btn-ghost btn-small", "Read the chip’s fuses");
     read.type = "button";
@@ -5520,7 +5524,8 @@ function renderThisBoard() {
     read.addEventListener("click", () => $("efuse-read").click());
     det.append(read, h("p", "muted tb-source",
       "A good read leaves the board in its ROM’s download mode, not running its firmware: " +
-      "unplug it and plug it back in to start its firmware again."));
+      "press its reset button to start its firmware again, or unplug it (and its battery, " +
+      "if it has one) and plug it back in."));
   }
   det.append(copy);
   box.append(det);
