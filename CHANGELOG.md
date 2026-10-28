@@ -28,13 +28,15 @@
   quit the Flasher first (while it is open, it can read a board that comes
   back on its port, and that read stops the firmware again), then press its
   reset button, or unplug it (and its battery, if it has one) and plug it
-  back in. The desktop's `detect_chip` now keeps espflash's chip line,
-  revision, crystal and features (`ChipInfo`), and its passport reads the
-  bootloader's image header and the descriptor's `secure_version` and ELF
-  hash. Not built from the design (§6.2, §6.9): the This Board card's groups
-  stack in one column, not a sidebar; one "Copy these details" copies the
-  card, with no copy per row; and the desktop's connect line names the chip,
-  its revision and its flash, with no PSRAM size or bus mode.
+  back in. The after-read line speaks for the latest read, and goes when a
+  write starts, since espflash hard-resets the board once the write is done.
+  The desktop's `detect_chip` now keeps espflash's chip line, revision,
+  crystal and features (`ChipInfo`), and its passport reads the bootloader's
+  image header and the descriptor's `secure_version` and ELF hash. Not built
+  from the design (§6.2, §6.9): the This Board card's groups stack in one
+  column, not a sidebar; one "Copy these details" copies the card, with no
+  copy per row; and the desktop's connect line names the chip, its revision
+  and its flash, with no PSRAM size or bus mode.
 - **eFuse fields, never words.** Both flashers read the package, wafer,
   in-package flash and PSRAM and block-version fields from eFuse blocks 1
   and 2 by a per-chip FIELD allowlist (espefuse 5.6.0's tables, the same in

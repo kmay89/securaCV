@@ -110,6 +110,10 @@ const state = {
   failedPort: null,  // a port whose chip read failed — don't auto-retry it
   busy: false,       // a flash is running — pause the watcher
   efuseScan: null,   // { port, chip, scan } from the security-fuse read — per board, never inherited
+  // { port, chip } of a fuse read whose block 0 answered, until the next read
+  // starts or the bench writes to the board (noteBoardWritten): what the About
+  // card's after-read line stands on, for that port and chip (renderThisBoard).
+  efuseParked: null,
   monitoring: false,
   devChannel: false, // fetch fw-dev-latest instead of the pinned stable release
   localFile: null,   // { path, name, size, sha256, esp_magic } picked under Advanced
@@ -3186,6 +3190,11 @@ function wireEfuseRead() {
     // plugged in by the time it lands.
     const port = state.port;
     const chip = state.chip;
+    // Where the About card says the read left the board is the latest read's
+    // to say. An earlier good read stops speaking for the board once another
+    // read starts: one that throws may never have opened the port, or may
+    // have met a board re-plugged mid-read, which may be running its firmware.
+    state.efuseParked = null;
     btn.disabled = true;
     out.textContent = "Reading eFuse block 0… (read-only — nothing is ever burned)";
     // The probe resets the board into its ROM, with the sequence its port
@@ -3198,6 +3207,9 @@ function wireEfuseRead() {
       const scan = await invoke("read_security_efuses", { port, chip });
       if (state.port !== port || state.chip !== chip) return; // board changed mid-read
       state.efuseScan = { port, chip, scan };
+      // Block 0 answered, so the read reached the ROM and parked there. A
+      // chip with no table answers without opening the port.
+      state.efuseParked = scan && scan.supported ? { port, chip } : null;
       // The About rows' fields came back in the same ROM session, as field
       // values only (efuse.rs never returns a block-1/2 word).
       state.chipFuses = !scan || !scan.supported ? { supported: false, chip }
@@ -5513,19 +5525,21 @@ function renderThisBoard() {
   // cold-start card's) rather than on every connect. This card is drawn for
   // any ESP32, not only one held in BOOT, so the line beside the button says
   // where a good read leaves the board and how to start its firmware again,
-  // and after a good read the same advice takes the button's place. Quitting
-  // the Flasher comes first: while it is open and its monitor is not
-  // running, a board that comes back on its port after a poll missed it (a
-  // re-plug, or a reset that drops a chip's own USB-Serial/JTAG port off the
-  // bus) is read again by pollPorts → identify, and the pinned espflash
-  // 3.3.0's board-info and read-flash leave the chip in espflash's stub, not
-  // its firmware. Then the reset button, or every source of power: a board
-  // whose battery powers it without its firmware's help (the WAP's battery
-  // build, the Watch Station) stays powered with only its USB cable pulled.
+  // and after a good read the same advice takes the button's place until a
+  // write starts (noteBoardWritten; one that finishes ends in espflash's hard
+  // reset). Quitting the Flasher comes first: while it is open and its
+  // monitor is not running, a board that comes back on its port after a poll
+  // missed it (a re-plug, or a reset that drops a chip's own USB-Serial/JTAG
+  // port off the bus) is read again by pollPorts → identify, and the pinned
+  // espflash 3.3.0's board-info and read-flash leave the chip in espflash's
+  // stub, not its firmware. Then the reset button, or every source of power:
+  // a board whose battery powers it without its firmware's help (the WAP's
+  // battery build, the Watch Station) stays powered with only its USB cable
+  // pulled.
   const restart = "To start its firmware again, quit the Flasher first (while it is open, it can read a " +
     "board that comes back on its port, and that read stops the firmware again), then press its reset " +
     "button, or unplug it (and its battery, if it has one) and plug it back in.";
-  const fuseRead = state.efuseScan;
+  const parked = state.efuseParked;
   if (state.chipFuses === undefined && $("efuse-read")) {
     const read = h("button", "btn btn-ghost btn-small", "Read the chip’s fuses");
     read.type = "button";
@@ -5533,10 +5547,11 @@ function renderThisBoard() {
     read.addEventListener("click", () => $("efuse-read").click());
     det.append(read, h("p", "muted tb-source",
       "A good read leaves the board in its ROM’s download mode, not running its firmware. " + restart));
-  } else if (fuseRead && fuseRead.port === state.port && fuseRead.chip === state.chip &&
-      fuseRead.scan && fuseRead.scan.supported) {
-    // Block 0 answered, so the read reached the ROM and parked there. A chip
-    // with no table never opens the port, and a read that threw may not have.
+  } else if (parked && parked.port === state.port && parked.chip === state.chip) {
+    // The latest read on this board answered from block 0, and nothing has
+    // written to the board since (state.efuseParked). Not after a chip with
+    // no table, which never opens the port, nor after a read that threw,
+    // even one that follows a good read.
     det.append(h("p", "muted tb-source",
       "The fuse read left the board in its ROM’s download mode, not running its firmware. " + restart));
   }
@@ -6232,9 +6247,18 @@ function monitorProductOnBench() {
 }
 
 // The bench is about to write to the board: what the passport read at
-// connect no longer names what the board runs (monitorProductOnBench).
+// connect no longer names what the board runs (monitorProductOnBench), and
+// the About card no longer says where the fuse read left it. Each write
+// (espflash's write-bin or erase-flash) connects through a reset of its own,
+// and in the pinned espflash 3.3.0 one that finishes calls reset_after, which
+// under the default --after hard-reset (rescue.rs passes no --after) starts
+// whatever is now on the chip. After an install or a local file the
+// post-flash monitor watches that boot, and advice to quit the Flasher would
+// drop the watch.
 function noteBoardWritten() {
   if (state.resident) state.resident.overwritten = true;
+  state.efuseParked = null;
+  renderThisBoard();
 }
 
 function renderMonitorCmds() {

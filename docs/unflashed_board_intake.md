@@ -371,14 +371,30 @@ lines of `setup()` in `firmware/projects/canary-display/src/main.cpp`), and
 in the ROM no firmware is running to raise it, so pulling its cable powers
 it off; and nothing in `firmware/` drives the Touch 1.69's SYS_EN latch
 (GPIO41), so the repo cannot say which way that one goes.
+
+The line that takes the button's place after a good read speaks for the
+latest read on that board, and only until the bench writes to it. A later
+read that throws takes it away, since that read may never have opened the
+port, or may have met a board re-plugged mid-read. So does each write (an
+install, a local file, a restore or an erase), as it starts: it connects
+through a reset of its own, and in the pinned espflash 3.3.0 a `write-bin`
+or `erase-flash` that finishes calls `reset_after`, a hard reset under the
+default `--after hard-reset` (the engine passes no `--after`), which starts
+whatever is now on the chip. After an install or a local file the
+post-flash serial monitor is watching that boot, and advice to quit the
+Flasher then would drop the watch.
+
 `canary-local/tests/desktop_parity.test.js` draws the card and holds both
 lines to their place, shown and not just present (no hidden property or
-attribute, no inline style, and no `styles.css` rule that matches them in
-the card's tree as `index.html` writes its ancestors), drives the poll
-through a re-plug to hold the reason for quitting first, and fails when the
-pinned espflash moves off 3.3.0, so that reason is read again. All of this
-is read from the code and espflash's source: like the rest of the read,
-where it leaves the board is host-tested only (U1, below).
+attribute, and no inline style or `styles.css` rule that hides them with
+`display: none` or `visibility: hidden`, in the card's tree as `index.html`
+writes its ancestors). It holds the after-read line to the latest read,
+never beside the offer to read again, and gone once each of those writes
+starts. It drives the poll through a re-plug to hold the reason for
+quitting first, and fails when the pinned espflash moves off 3.3.0, so that
+reason is read again. All of this is read from the code and espflash's
+source: like the rest of the read, where it leaves the board is host-tested
+only (U1, below).
 
 Getting into the ROM is a reset too, which is why the port picks the
 sequence. A BOOT-held S3, C3 or C6 presents its USB-Serial/JTAG port. The
