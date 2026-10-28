@@ -1,7 +1,7 @@
 {
   "flavor": "amoled241",
-  "fw_version": "2.4.17",
-  "git": "20ba64ca",
+  "fw_version": "2.4.18",
+  "git": "0b6eacba",
   "lvgl": "v8.4.0",
   "arduinojson": "7.4.1"
 }
