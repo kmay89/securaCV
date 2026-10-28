@@ -109,6 +109,7 @@ GROUPS = (
 # ─────────────────────────────── versions ──────────────────────────────────
 
 _TRIPLE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+_TAG = re.compile(r"fw-v[A-Za-z0-9._-]+")
 _BANDS = ((2, re.compile(r"[-.]rc\.(\d*)")), (1, re.compile(r"[-.]dev\.(\d*)")))
 
 
@@ -145,7 +146,11 @@ def compare(a: str, b: str) -> int:
 
 
 def tag_version(tag: str) -> str:
-    if not tag.startswith("fw-v") or version_key(tag[4:]) is None:
+    # The WHOLE tag is one plain segment (mirror_release.py's SEGMENT_RE): it
+    # goes into `gh api …/releases/tags/<tag>` and `gh release` argv, and
+    # version_key only reads a triple off its front, so `fw-v2.4.18/../x`
+    # would otherwise pass.
+    if not _TAG.fullmatch(tag) or version_key(tag[4:]) is None:
         raise Refusal(f"{tag!r} is not a fw-v<version> firmware tag")
     return tag[4:]
 

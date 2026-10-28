@@ -170,6 +170,16 @@ class VersionOrder(unittest.TestCase):
         with self.assertRaises(ValueError):
             dc.compare("2.4", "2.4.17")
 
+    def test_a_tag_is_one_plain_segment(self):
+        for tag in ("fw-v2.4.18", "fw-v2.4.18-dev.1", "fw-v2.4.17-rc.2"):
+            with self.subTest(tag=tag):
+                self.assertEqual(dc.tag_version(tag), tag[4:])
+        # Each would reach a `gh api …/releases/tags/<tag>` path or argv.
+        for bad in ("fw-v2.4.18/../../x", "fw-v2.4.18?x=1", "fw-v2.4.18#x", "fw-v2.4.18 x",
+                    "fw-v2.4.18%2F..", "fw-v2.4.18\n", "fw-v2.4"):
+            with self.subTest(bad=bad), self.assertRaises(dc.Refusal):
+                dc.tag_version(bad)
+
     def test_same_order_as_the_device(self):
         # securacv_version_compare decides UPDATE vs ROLLBACK on every Canary;
         # a train this script calls newer must be newer there too.
