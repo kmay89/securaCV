@@ -342,7 +342,7 @@ inline std::string fill_slots(const std::string& tmpl, char c) {
 struct Minted {
   std::string alpha;         // the minting alphabet (key, tag, pseudonym)
   int key_len;               // AP_PASS_LEN
-  std::string ssid_plain;    // "SecuraCV-" + 4 slots
+  std::string ssid_plain;    // "SecuraCV-display-" + 4 slots
   std::string ssid_tagged;   // ... + "-" + 2 slots (the unwritable-store path)
   // The stuck-phone hint's forms per glass: round, small rectangular, wide.
   std::vector<std::string> hint_round, hint_small, hint_wide;

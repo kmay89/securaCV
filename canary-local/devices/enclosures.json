@@ -6841,19 +6841,23 @@
      "params": [
       {
        "name": "prong_t",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "fin thickness (GoPro standard) — the head's three fins are each this thick, on prong_pitch centers"
       },
       {
        "name": "prong_pitch",
-       "default": "6.35"
+       "default": "6.35",
+       "comment": "fin center spacing (GoPro standard) — the outer fins sit this far either side of the center one, and the case's two prongs fit the gaps between"
       },
       {
        "name": "fin_r",
-       "default": "7.5"
+       "default": "7.5",
+       "comment": "fin end radius round the bolt axis — each fin is hulled from a 2 x this wide root on the stalk top up to this radius at the axis, and the detent pockets reach out to this - 0.5"
       },
       {
        "name": "hinge_bolt_d",
-       "default": "5.0"
+       "default": "5.0",
+       "comment": "hinge bolt Ø (M5 at the default); its teardrop bore is cut 0.4 over, through all three fins"
       },
       {
        "name": "hinge_clear",
@@ -6867,15 +6871,18 @@
       },
       {
        "name": "hinge_teeth",
-       "default": "true"
+       "default": "true",
+       "comment": "radial detent pockets in the head's outer fins for the case's teeth; false = smooth faces"
       },
       {
        "name": "teeth_n",
-       "default": "24"
+       "default": "24",
+       "comment": "castellation steps round the hinge, a pocket on every other one: the head detents every 720 / teeth_n degrees. Keep it even and equal to the case's teeth_n"
       },
       {
        "name": "teeth_h",
-       "default": "0.6"
+       "default": "0.6",
+       "comment": "the case's detent tooth height — the pockets in the outer fins' inner faces are cut this + 0.15 deep and 0.12 oversize"
       }
      ]
     },
@@ -7011,11 +7018,13 @@
       },
       {
        "name": "pcb_t",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "carrier PCB thickness — brd_t(\"mr60\"); the carrier sits on rails rail_h tall and the clips hook over its back face, rail_h + this behind the plate"
       },
       {
        "name": "board_clear",
-       "default": "0.6"
+       "default": "0.6",
+       "comment": "not read by the geometry: the carrier is located by its rails and clips, and clip_clear sets that fit"
       }
      ]
     },
@@ -7035,19 +7044,23 @@
       },
       {
        "name": "rad_win_x",
-       "default": "24.0"
+       "default": "24.0",
+       "comment": "radome window width (X) — a blind pocket from the back that leaves radome_t of membrane at the face, its center rad_dx/rad_dy off the board center (= the plate center)"
       },
       {
        "name": "rad_win_y",
-       "default": "24.0"
+       "default": "24.0",
+       "comment": "radome window height (Y) — the same blind pocket, radome_t of membrane left at the face"
       },
       {
        "name": "rad_dx",
-       "default": "0.0"
+       "default": "0.0",
+       "comment": "radome window center's X offset from the board center (= the plate center)"
       },
       {
        "name": "rad_dy",
-       "default": "6.0"
+       "default": "6.0",
+       "comment": "radome window center's Y offset from the board center (= the plate center)"
       }
      ]
     },
@@ -7248,7 +7261,8 @@
      "params": [
       {
        "name": "tol_slide",
-       "default": "0.20"
+       "default": "0.20",
+       "comment": "sliding fit per side round the adapter body: the collar's lip opening is wart_w + 2 x this by wart_h + 2 x this — core_tol_slide()"
       }
      ]
     },
@@ -7299,7 +7313,8 @@
      "params": [
       {
        "name": "opt_seal",
-       "default": "true"
+       "default": "true",
+       "comment": "sealed build: a TPU gasket (part \"gasket\") in the ledge groove, an O-ring under every plate screw head and, with seal_mid_posts, mid posts holding each clamp span to 40 mm"
       },
       {
        "name": "opt_weep",
@@ -7339,7 +7354,8 @@
       },
       {
        "name": "pcb_t",
-       "default": "1.2"
+       "default": "1.2",
+       "comment": "LoRa board PCB thickness — the 1.2 spec, brd_t(\"heltec_v3\"); the clips hook over it, and the USB opening's axis and the cavity depth stack on it"
       },
       {
        "name": "lb_stack",
@@ -7348,7 +7364,8 @@
       },
       {
        "name": "board_clear",
-       "default": "0.6"
+       "default": "0.6",
+       "comment": "clearance round the LoRa board — its column is lb_w + 2 x (clip_t + clip_clear + this) + 0.5 wide, and its USB edge sits at least this off the bottom wall (floor_cove + 0.4 when that is more)"
       }
      ]
     },
@@ -7358,15 +7375,18 @@
      "params": [
       {
        "name": "bh_l",
-       "default": "78.0"
+       "default": "78.0",
+       "comment": "holder length (Y, leads down) — the bay's pocket is this + 0.6 inside a ring wall this + 3 long, and the cavity is at least this + 2 x bay_margin + 10 long (the + 10 is wire room at the top)"
       },
       {
        "name": "bh_w",
-       "default": "21.5"
+       "default": "21.5",
+       "comment": "holder width (X) — the bay's pocket is this + 0.6 inside a ring wall this + 3 wide, in a battery column this + 2.0 wide; the gap weep must clear the ring wall (asserted)"
       },
       {
        "name": "bh_h",
-       "default": "15.0"
+       "default": "15.0",
+       "comment": "holder height above the plate, cell fitted — the cavity is at least this + 1.5 deep (the LoRa stack sets it when taller). An 18650 is 18 mm across, more than this default: MEASURE yours"
       }
      ]
     },
@@ -7453,6 +7473,26 @@
      "note": "",
      "params": [
       {
+       "name": "wall_t",
+       "default": "2.0",
+       "comment": "shell wall thickness, a floor: the walls grow to the plate's ledge + core_min_wall() when that is more, 5.8 sealed and 3.0 unsealed at the defaults (the render echoes it) — core_wall()"
+      },
+      {
+       "name": "floor_t",
+       "default": "2.0",
+       "comment": "the plate's front face height: the rails, clips and battery bay stand on it, the ledge it seats on (and the gasket groove cut into that) sits at it, and the plate is at least this + strap_t thick"
+      },
+      {
+       "name": "lid_t",
+       "default": "2.0",
+       "comment": "face thickness of the shell — the vent, the panel gland and the wordmark are cut through or into it, and the roof screws' length counts it"
+      },
+      {
+       "name": "corner_r",
+       "default": "3.0",
+       "comment": "outer corner radius of the shell — core_corner_r(); the cavity's corners are this less the wall, floored at core_min_web() (core_cav_r), which the defaults hit, and the plate's bore follows them"
+      },
+      {
        "name": "tol_slide",
        "default": "0.20",
        "comment": "catalog default — core_tol_slide(), canary_core_lib"
@@ -7507,6 +7547,21 @@
        "comment": "(m2 pan only) head seat depth — the validated seat; other sizes read scr_pan_h()/scr_flat_h()"
       },
       {
+       "name": "gasket_w",
+       "default": "1.6",
+       "comment": "gasket groove width in the ledge (opt_seal): the printed TPU ring is this - 0.5 wide, the ledge this + 2 x core_min_wall() + tol_slide + 0.4, and the ring's fill of its groove is asserted under 95 %"
+      },
+      {
+       "name": "gasket_groove",
+       "default": "1.2",
+       "comment": "gasket groove depth up from the ledge (opt_seal): the ring is this + gasket_proud tall; the SMA land and the USB opening keep a web over it (asserted), and the weeps are placed a web above it"
+      },
+      {
+       "name": "gasket_proud",
+       "default": "0.3",
+       "comment": "how far the TPU ring stands above its groove, the squeeze the plate gives it: the ring is gasket_groove + this tall (the fill is asserted)"
+      },
+      {
        "name": "usb_w",
        "default": "12.0",
        "comment": "service USB opening width, bottom wall (plug when deployed); 12 clears a boot"
@@ -7543,7 +7598,8 @@
       },
       {
        "name": "standoff_h",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "LoRa board height off the plate — its two rails stand this tall, and the clip beams root on the plate, this + pcb_t long (snap_boardclip asserts the insertion strain); the USB opening's axis rises with it, and must keep a web over the gasket groove (asserted)"
       },
       {
        "name": "lid_edge",
@@ -7567,7 +7623,8 @@
       },
       {
        "name": "foot_cham",
-       "default": "0.5"
+       "default": "0.5",
+       "comment": "45° chamfer round the shell's back edge — the library's foot_chamfer_ring (0 = off)"
       },
       {
        "name": "floor_cove",
@@ -8581,11 +8638,13 @@
       },
       {
        "name": "hole_off_y",
-       "default": "3.5"
+       "default": "3.5",
+       "comment": "grid corner from board corner, along Y (hole_off_x is X) — the four standoffs and the cover's screw holes and tubes sit on this grid"
       },
       {
        "name": "pcb_t",
-       "default": "1.4"
+       "default": "1.4",
+       "comment": "Pi 5 PCB thickness — the tray's walls stop 6 above the board's top face, and the case's height stacks hat_h on it"
       },
       {
        "name": "standoff_h",
@@ -8620,7 +8679,8 @@
       },
       {
        "name": "lid_t",
-       "default": "2.0"
+       "default": "2.0",
+       "comment": "cover plate thickness — its pan-head seats leave 1.0 of floor under each head (asserted), and the case's height adds it"
       },
       {
        "name": "corner_r",
@@ -8629,7 +8689,8 @@
       },
       {
        "name": "board_clear",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "clearance round the Pi on every side — the tray's cavity is the board plus 2 x this each way"
       },
       {
        "name": "tol_slide",
@@ -8648,7 +8709,8 @@
       },
       {
        "name": "screw_head_d",
-       "default": "5.0"
+       "default": "5.0",
+       "comment": "M2.5 pan-head Ø — the cover's flat seats are cut this + 0.6 wide and lid_t - 1.0 deep"
       },
       {
        "name": "lid_screw_d",
@@ -8688,7 +8750,8 @@
      "params": [
       {
        "name": "din",
-       "default": "true"
+       "default": "true",
+       "comment": "the DIN-rail clip: its four M3 seats through the tray floor and part \"clip\" (false = no clip; the tray screws flat)"
       },
       {
        "name": "din_w",
@@ -8713,7 +8776,8 @@
      "params": [
       {
        "name": "vent_slot_w",
-       "default": "2.0"
+       "default": "2.0",
+       "comment": "vent slot width — the floor's slots run inner_w - 16 long, and the cover's chimney slots over the SoC out_w - 24, both on vent_slot_p"
       },
       {
        "name": "vent_slot_p",
@@ -8921,7 +8985,8 @@
       },
       {
        "name": "plate_t",
-       "default": "2.4"
+       "default": "2.4",
+       "comment": "plate thickness — the rails, clips and rib bars stand on its top face (the clip beams root there), the slots go through it, and rib_h is held to the rib_lib ceiling for it (asserted)"
       }
      ]
     },
@@ -8992,6 +9057,37 @@
      ]
     },
     {
+     "name": "Board snap clips",
+     "note": "",
+     "params": [
+      {
+       "name": "clip_w",
+       "default": "6.0",
+       "comment": "board-clip tab width along the board edge; the rails are notched clip_w + 2 round each clip"
+      },
+      {
+       "name": "clip_t",
+       "default": "1.0",
+       "comment": "clip beam thickness — 1.0/0.5 is the catalog standard (canary_snap_lib); snap_boardclip asserts the insertion strain on a beam from the plate to the board top"
+      },
+      {
+       "name": "clip_hook",
+       "default": "0.5",
+       "comment": "clip lip overhang onto the board top (the engagement); for the wap stack the strain check adds the measured XIAO's extra width each side"
+      },
+      {
+       "name": "clip_hook_h",
+       "default": "1.2",
+       "comment": "clip lip and lead-in height above the board top"
+      },
+      {
+       "name": "clip_clear",
+       "default": "0.25",
+       "comment": "beam face to board edge gap, a fit: tune it on the coupon"
+      }
+     ]
+    },
+    {
      "name": "Extras",
      "note": "",
      "params": [
@@ -9007,7 +9103,8 @@
       },
       {
        "name": "tol_hole",
-       "default": "0.30"
+       "default": "0.30",
+       "comment": "clearance per side round the boss screws: the four slots are Ø(boss_screw_d + 2 x this), stretched ±1 along X for the boss grid — core_tol_hole()"
       }
      ]
     },
@@ -9120,7 +9217,8 @@
       },
       {
        "name": "mag_t",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "magnet thickness — the pockets are cut this deep from the back, and the magnet plate is this + 3.0 thick so a 3.0 floor stays between each pocket and stud"
       },
       {
        "name": "mag_n",
@@ -9135,11 +9233,13 @@
      "params": [
       {
        "name": "strap_w",
-       "default": "9.0"
+       "default": "9.0",
+       "comment": "strap channel width — one channel straight across the pole plate's back, centered between the studs"
       },
       {
        "name": "strap_t",
-       "default": "2.2"
+       "default": "2.2",
+       "comment": "strap channel depth into the pole plate's back — the plate is at least this + 1.2 + the counterbore thick, so the center screw's head bears on plastic (asserted)"
       }
      ]
     },
@@ -9160,15 +9260,18 @@
      "params": [
       {
        "name": "tol_slide",
-       "default": "0.20"
+       "default": "0.20",
+       "comment": "catalog default — core_tol_slide(), canary_core_lib; no geometry in this file reads it"
       },
       {
        "name": "tol_press",
-       "default": "0.10"
+       "default": "0.10",
+       "comment": "press fit per side on the magnet pockets (Ø mag_d + 2 x this) — catalog default, core_tol_press()"
       },
       {
        "name": "tol_hole",
-       "default": "0.30"
+       "default": "0.30",
+       "comment": "catalog default — core_tol_hole(), canary_core_lib; no geometry in this file reads it (the wall-screw holes are screw_d as drawn)"
       }
      ]
     },
@@ -9238,7 +9341,8 @@
       },
       {
        "name": "horn_wall",
-       "default": "1.4"
+       "default": "1.4",
+       "comment": "horn wall thickness round the flare; the glue flange reaches 2 past it (Ø horn_mouth + 2 x this + 4)"
       }
      ]
     },
@@ -9284,7 +9388,8 @@
       },
       {
        "name": "cg_flange",
-       "default": "14.0"
+       "default": "14.0",
+       "comment": "gland body's outer flange Ø, 2.0 thick: it bears on the panel, with a Ø1-cord O-ring groove round the hole in its panel face"
       },
       {
        "name": "cg_squeeze",
@@ -9386,7 +9491,8 @@
       },
       {
        "name": "cg_fill",
-       "default": "0.90"
+       "default": "0.90",
+       "comment": "the bush's fill of its cavity once squeezed — 0.90 is the O-ring rule's ceiling, but nothing holds it there (the overfill assert compares the bush with itself); it sets the bush's free length (cg_bush_l), and a fill above about 0.96 is refused only because the squeezed bush would rise out of the nose bore (asserted)"
       },
       {
        "name": "cg_bush_l",
@@ -9395,7 +9501,8 @@
       },
       {
        "name": "cg_cap_floor",
-       "default": "1.2"
+       "default": "1.2",
+       "comment": "cap floor thickness — the floor bears on the bush's end, and its hole passes the cable but stops the bush (asserted)"
       },
       {
        "name": "cg_cap_hole",
@@ -9409,7 +9516,8 @@
       },
       {
        "name": "cg_lip_h",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "cap snap lip height — the lip slides on the nose, cams over the barb and parks 0.1 under its shoulder"
       },
       {
        "name": "cg_groove_d",
@@ -9716,19 +9824,23 @@
      "params": [
       {
        "name": "sign_w",
-       "default": "110.0"
+       "default": "110.0",
+       "comment": "plate width (X) — the border groove runs 4 to 5.5 in from each edge, the corner screws sit 7 in, and the text gets this - 13 of room (the default lines are asserted to fit it)"
       },
       {
        "name": "sign_h",
-       "default": "70.0"
+       "default": "70.0",
+       "comment": "plate height (Y) — the border groove runs 4 to 5.5 in from each edge and the corner screws sit 7 in; the three lines stay at +14, 0 and -12 from the center whatever this is"
       },
       {
        "name": "sign_t",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "plate thickness — the text, the 0.5-deep border groove and the countersinks are cut down from its face, and a countersink deeper than this is refused (asserted)"
       },
       {
        "name": "edge_ch",
-       "default": "1.0"
+       "default": "1.0",
+       "comment": "45° chamfer round the face's edge: the face is this smaller on every side than the plate"
       },
       {
        "name": "screw_d",
@@ -9742,7 +9854,8 @@
       },
       {
        "name": "screws",
-       "default": "true"
+       "default": "true",
+       "comment": "four corner holes with 82° countersinks for #8 flat heads (false for a VHB mount)"
       },
       {
        "name": "back_ribs",
@@ -9767,15 +9880,18 @@
      "params": [
       {
        "name": "line1",
-       "default": "PRIVACY WITNESS"
+       "default": "PRIVACY WITNESS",
+       "comment": "line 1, in font_b at size1, 14 above the center — the default string's measured width is asserted inside the groove; a custom one is only estimated, with a NOTE"
       },
       {
        "name": "line2",
-       "default": "presence sensing in use"
+       "default": "presence sensing in use",
+       "comment": "line 2, in font_r at size2, on the center line — checked like line 1"
       },
       {
        "name": "line3",
-       "default": "no video is recorded or stored"
+       "default": "no video is recorded or stored",
+       "comment": "line 3, in font_r at size3, 12 below the center — checked like line 1"
       },
       {
        "name": "size1",
@@ -9794,15 +9910,18 @@
       },
       {
        "name": "text_depth",
-       "default": "0.8"
+       "default": "0.8",
+       "comment": "deboss depth of all three lines into the face"
       },
       {
        "name": "font_b",
-       "default": "Liberation Sans:style=Bold"
+       "default": "Liberation Sans:style=Bold",
+       "comment": "line 1's font (an OpenSCAD font name) — the width check uses the default line's Liberation Sans measurement whatever font is set"
       },
       {
        "name": "font_r",
-       "default": "Liberation Sans"
+       "default": "Liberation Sans",
+       "comment": "lines 2 and 3's font (an OpenSCAD font name) — the width check uses the default lines' Liberation Sans measurements whatever font is set"
       }
      ]
     },
@@ -10958,7 +11077,8 @@
      "params": [
       {
        "name": "collar_on",
-       "default": "true"
+       "default": "true",
+       "comment": "drop collar: an inverted U reaching in from the plug-end wall over the plug's shell, so a drop on the plug bears on the case and not on the solder joints"
       },
       {
        "name": "collar_t",
@@ -10983,7 +11103,8 @@
      "params": [
       {
        "name": "opt_btn",
-       "default": "true"
+       "default": "true",
+       "comment": "BOOT/RST access holes (pen-tip size) in the two side walls near the plug end"
       },
       {
        "name": "btn_d",
@@ -11069,7 +11190,8 @@
       },
       {
        "name": "light_seam",
-       "default": "true"
+       "default": "true",
+       "comment": "light seam: a slot through both long walls at the LCD/PCB gap, filled with the white light pipe when light_band is on"
       },
       {
        "name": "light_band",
@@ -11114,7 +11236,8 @@
      "params": [
       {
        "name": "mark_show",
-       "default": "true"
+       "default": "true",
+       "comment": "the Canary mark debossed into the back and filled in yellow (the bird lockup, or the wordmark where the bird does not fit)"
       },
       {
        "name": "mark_bird_ok",
@@ -11272,7 +11395,8 @@
       },
       {
        "name": "tol_hole",
-       "default": "0.30"
+       "default": "0.30",
+       "comment": "catalog default — core_tol_hole(), canary_core_lib; no geometry in this file reads it (the case has no screw holes)"
       }
      ]
     },
@@ -11704,7 +11828,8 @@
      "params": [
       {
        "name": "opt_btn",
-       "default": "true"
+       "default": "true",
+       "comment": "BOOT/RST access holes in the two side walls, over the channels the back-mounted switches slide down"
       },
       {
        "name": "btn_d",
@@ -11790,7 +11915,8 @@
      "params": [
       {
        "name": "opt_vent",
-       "default": "true"
+       "default": "true",
+       "comment": "heat slots in both side walls and a grille in the back plate"
       },
       {
        "name": "vent_n",
@@ -11865,6 +11991,26 @@
      "name": "Snap fit",
      "note": "back skirt into the bezel walls. The skirt is SHALLOW in both variants — just deep enough to carry the nubs: the board's edge zone behind the PCB is busy (back-mounted USB shell and buttons on the stripped board; descending header pins on the assembled one), so a deep edge-riding skirt has nothing safe to ride on. It also gets relief windows over the USB and button spans, and goes THIN (1.0 wall) in the headers variant to stay outboard of the pin rows. The nub sits at back_t + snap_depth so it lands on the skirt AND lines up with the bezel window; keep snap_depth + snap_h/2 ≤ skirt_dep.",
      "params": [
+      {
+       "name": "snap_n",
+       "default": "4",
+       "comment": "not read by the geometry: the nubs are always two per ±X wall (nub_ys), four in all"
+      },
+      {
+       "name": "snap_h",
+       "default": "1.6",
+       "comment": "snap window height in the bezel's side walls; each nub's ridge is this - 0.4 tall, and the back's skirt runs snap_depth + this/2 + 0.4 deep"
+      },
+      {
+       "name": "snap_depth",
+       "default": "1.4",
+       "comment": "how far in from the bezel's rear rim the windows (and the nubs on the skirt) are centered — the wall vents stop 0.8 short of the windows, and a smaller value lengthens the bezel wall's snap lever (its cycle strain is asserted)"
+      },
+      {
+       "name": "snap_proud",
+       "default": "0.5",
+       "comment": "each nub's tip stands this far out from the skirt face; what it stands past the cavity wall is the bezel wall's deflection (its cycle strain is asserted)"
+      },
       {
        "name": "pry_notch",
        "default": "true",
@@ -12351,7 +12497,8 @@
      "params": [
       {
        "name": "opt_btn",
-       "default": "true"
+       "default": "true",
+       "comment": "BOOT/RST press pads in the two side walls: flexure paddles cut free of the wall, printed in place (false = plain walls)"
       },
       {
        "name": "pad_l",
@@ -12482,7 +12629,8 @@
      "params": [
       {
        "name": "light_seam",
-       "default": "true"
+       "default": "true",
+       "comment": "the white light band through the bezel wall, its own part (\"light\") in the light filament"
       },
       {
        "name": "seam_dz",
@@ -12559,7 +12707,8 @@
      "params": [
       {
        "name": "pry_notch",
-       "default": "true"
+       "default": "true",
+       "comment": "fingernail scallop in the bezel's top (+Y) rim, to start the lid off"
       },
       {
        "name": "pry_w",
@@ -12584,7 +12733,8 @@
      "params": [
       {
        "name": "loc_rib",
-       "default": "true"
+       "default": "true",
+       "comment": "two locating ribs on each side wall that take the board's float out (loc_clear tunes the fit)"
       },
       {
        "name": "loc_clear",
@@ -12609,7 +12759,8 @@
      "params": [
       {
        "name": "egg_ring",
-       "default": "true"
+       "default": "true",
+       "comment": "white ring inlaid round the egg hanger on the lid's back (with a keyhole back: lid_back both or keyhole)"
       },
       {
        "name": "egg_ring_w",
@@ -12655,7 +12806,8 @@
      "params": [
       {
        "name": "opt_vent",
-       "default": "true"
+       "default": "true",
+       "comment": "heat slots up both side walls behind the light band — a chimney when the case hangs"
       },
       {
        "name": "vent_n",
@@ -12669,7 +12821,8 @@
       },
       {
        "name": "vent_w",
-       "default": "1.4"
+       "default": "1.4",
+       "comment": "slot width along the side wall (Y) — vent_n slots up each ±X wall, mirrored, from vent_z0 up to vent_z1, behind the light band, and the top slot's edge is asserted to stay 0.8 short of the cavity's end"
       }
      ]
     },
@@ -12701,6 +12854,27 @@
        "name": "brass_d",
        "default": "3.5",
        "comment": "pillar body Ø (round brass M2 standoff) — MEASURE"
+      }
+     ]
+    },
+    {
+     "name": "Print tolerances",
+     "note": "tune with canary_fit_coupon.scad",
+     "params": [
+      {
+       "name": "tol_slide",
+       "default": "0.20",
+       "comment": "sliding fit per side: the board's cavity is the board plus 2 x this each way, so the board floats this far in X — the button pads, the USB reach and the locating ribs budget for it — core_tol_slide()"
+      },
+      {
+       "name": "tol_press",
+       "default": "0.10",
+       "comment": "press fit per side: the lid's pillar bosses are trimmed to the cavity less 2 x this — core_tol_press()"
+      },
+      {
+       "name": "tol_hole",
+       "default": "0.30",
+       "comment": "printed-hole clearance per side: the egg hanger's base is kh_head_d + 2 x this and its crown kh_shank_d + 2 x this — core_tol_hole()"
       }
      ]
     },
@@ -12739,6 +12913,21 @@
      "name": "Snap fit",
      "note": "lid skirt into the bezel walls. Shallow in both builds (the edge zone behind the PCB is busy), THIN in the headers build to stay outboard of the pin rows. Print 2 asked for a SATISFYING click and a rattle-free seat, so: the nubs are ASYMMETRIC (a gentle ramp on the approach side, a near-square catch face toward the plate — easy on, positive click, firm retention), engagement is deeper (snap_proud 0.7), and the skirt runs at its own snug clearance (skirt_clear) instead of the general press tolerance.",
      "params": [
+      {
+       "name": "snap_h",
+       "default": "1.6",
+       "comment": "snap window height in the bezel's side walls; each nub's ridge is this - 0.4 tall, and the lid's skirt runs snap_depth + this/2 + 0.4 deep"
+      },
+      {
+       "name": "snap_depth",
+       "default": "1.4",
+       "comment": "how far in from the bezel's rear rim the windows (and the nubs on the skirt) are centered — the wall vents stop 0.8 short of the windows, and the windows must clear the light band (asserted)"
+      },
+      {
+       "name": "snap_proud",
+       "default": "0.7",
+       "comment": "each nub's tip stands this far out from the skirt face, low on the nub where the near-square catch faces the plate — the engagement"
+      },
       {
        "name": "nub_w",
        "default": "1.3",
@@ -13523,7 +13712,8 @@
       },
       {
        "name": "vent_top_n",
-       "default": "14"
+       "default": "14",
+       "comment": "exhaust slot count through the top (+Y) wall of the two-piece build's back (part=\"back\"), spread evenly across vent_span_x (the cavity less 40, clear of the corner ears), each vent_slot_w wide at mid-cavity height; at least 1 (asserted). Legacy two-piece build only: part=\"frame\" does not read it"
       },
       {
        "name": "vent_bottom",
@@ -13660,7 +13850,8 @@
       },
       {
        "name": "frame_boss_d",
-       "default": "8.0"
+       "default": "8.0",
+       "comment": "frame boss Ø — four bosses on the board's M3 pattern hang from the back plate's inner face and spread to this + 3 through a 45° root fillet; the sleeve wall, the SD cover and tether, the radio window and the battery curbs are asserted clear of them"
       }
      ]
     },
@@ -14051,7 +14242,8 @@
      "params": [
       {
        "name": "label_depth",
-       "default": "0.5"
+       "default": "0.5",
+       "comment": "deboss depth of the frame's wall labels (beside the USB and side exits), the stand's brand words and the radius gauge's numbers; the back plate's debosses use label_back_depth"
       },
       {
        "name": "label_back_depth",
@@ -14060,7 +14252,8 @@
       },
       {
        "name": "label_font",
-       "default": "Liberation Sans:style=Bold"
+       "default": "Liberation Sans:style=Bold",
+       "comment": "the font every label, brand word and stamp in this file is cut in (an OpenSCAD font name); the brand words' fit check estimates each word's half-width at 0.392 x size per letter whatever font is set"
       }
      ]
     },
@@ -14386,7 +14579,8 @@
       },
       {
        "name": "edge_text_size",
-       "default": "7.0"
+       "default": "7.0",
+       "comment": "brand words' text size (edge_text_l/_r, debossed edge_lbl_depth into the bottom wall either side of the USB port); their half-width is estimated at 0.392 x this per letter (a full width of 0.784 x this per letter), which reads short of the cut words (SECURACV at 7 inks 58.7 mm wide against 43.9 estimated), and the estimate must fit between the port's flange and the wall's flat span (asserted)"
       },
       {
        "name": "edge_lbl_depth",
@@ -14621,7 +14815,8 @@
       },
       {
        "name": "stamp_size",
-       "default": "2.4"
+       "default": "2.4",
+       "comment": "build stamp text size — \"CANARY 7IN\" at this and the REV/SRC line at 0.78 of it, the block centered on stamp_dy and asserted clear of the top egg row and the plate rim"
       }
      ]
     },
@@ -15205,7 +15400,8 @@
      "params": [
       {
        "name": "opt_usb",
-       "default": "true"
+       "default": "true",
+       "comment": "USB-C overmold channel through the bottom (-Y) wall, the Type-C spec's largest overmold, so any compliant cable seats and latches"
       },
       {
        "name": "usb_dx",
@@ -15220,7 +15416,8 @@
      "params": [
       {
        "name": "opt_btn",
-       "default": "true"
+       "default": "true",
+       "comment": "PWR/BOOT/RST access holes in the top (+Y) wall"
       },
       {
        "name": "btn_d",
@@ -15268,7 +15465,8 @@
       },
       {
        "name": "opt_side",
-       "default": "true"
+       "default": "true",
+       "comment": "battery/RTC/pin cluster slot in the right (+X) wall, behind the PCB"
       },
       {
        "name": "side_open_h",
@@ -15324,7 +15522,8 @@
      "params": [
       {
        "name": "opt_vent",
-       "default": "true"
+       "default": "true",
+       "comment": "heat slots low on both side walls and a grille in the back plate"
       },
       {
        "name": "vent_n",
@@ -15438,6 +15637,16 @@
         8.0
        ],
        "comment": "notch width"
+      },
+      {
+       "name": "skirt_wall",
+       "default": "1.6",
+       "comment": "skirt ring wall thickness — the back's skirt rises skirt_dep off the plate this thick inside its outline, carries the snap nubs and is notched over the USB channel"
+      },
+      {
+       "name": "skirt_dep",
+       "default": "back_stack",
+       "comment": "must not exceed back_stack (see assert)"
       }
      ]
     },
@@ -15447,7 +15656,28 @@
      "params": [
       {
        "name": "opt_stand",
-       "default": "true"
+       "default": "true",
+       "comment": "lay the desk stand out with the other parts in the default view and check it for tip-over (part = \"stand\" renders it alone either way)"
+      },
+      {
+       "name": "stand_ang",
+       "default": "22",
+       "comment": "the stand's recline from vertical, in degrees — the slab leans back this far on the seat and the plug leaves its bottom edge this far forward of straight down; the seat height, the boot clearance and the cable channel are derived from it"
+      },
+      {
+       "name": "stand_w",
+       "default": "70.0",
+       "comment": "stand base width (X); the pedestal, the front lip and the fin run stand_w - 16 wide"
+      },
+      {
+       "name": "stand_d",
+       "default": "52.0",
+       "comment": "stand base depth, front to back — the tip-over margin is this/2 either way (asserted against a push at the slab's top edge), and the front lip and the fin's top must stay on it (asserted)"
+      },
+      {
+       "name": "stand_t",
+       "default": "4.0",
+       "comment": "stand base plate thickness; the pedestal under the seat makes up the rest of the seat height"
       },
       {
        "name": "plug_l",
@@ -15755,9 +15985,40 @@
      ]
     },
     {
+     "name": "Print tolerances",
+     "note": "",
+     "params": [
+      {
+       "name": "tol_slide",
+       "default": "0.20",
+       "comment": "catalog default — core_tol_slide(), canary_core_lib; no geometry in this file reads it"
+      },
+      {
+       "name": "tol_press",
+       "default": "0.10",
+       "comment": "catalog default — core_tol_press(), canary_core_lib; no geometry in this file reads it"
+      }
+     ]
+    },
+    {
      "name": "Dash plate",
      "note": "",
      "params": [
+      {
+       "name": "dash_l",
+       "default": "110.0",
+       "comment": "dash plate length (X) — the riser wedge sits on its rear 50, 6 in from the end, and the VHB registers and the tether slot near its front"
+      },
+      {
+       "name": "dash_w",
+       "default": "70.0",
+       "comment": "dash plate width (Y) — three VHB registers across it (on the center line and 16 in from each edge); the riser, which grows with stud_gap, must stay 2 inside it each side (asserted)"
+      },
+      {
+       "name": "dash_t",
+       "default": "4.0",
+       "comment": "dash plate thickness — the riser wedge and the studs stand on it, the VHB registers are recessed vhb_rec into its underside and the tether slot goes through"
+      },
       {
        "name": "dash_tilt",
        "default": "10",
@@ -15777,6 +16038,16 @@
        "name": "vhb_rec",
        "default": "0",
        "comment": "3M VHB strip register recess depth: 0 = the tape on the flat bed face (v0.3: a 0.6 recess roofed a 20 mm flat bridge over the bed)"
+      },
+      {
+       "name": "tether_w",
+       "default": "8.0",
+       "comment": "tether slot width (Y) through the dash plate, 10 in from its front end: lanyard the case through it (header)"
+      },
+      {
+       "name": "tether_l",
+       "default": "4.0",
+       "comment": "tether slot length (X) through the dash plate"
       }
      ]
     },
@@ -15796,7 +16067,8 @@
       },
       {
        "name": "face_t",
-       "default": "4.0"
+       "default": "4.0",
+       "comment": "front face thickness (X) — the T-studs stand on its outer face and both prongs root on its inner face"
       },
       {
        "name": "prong_l",
@@ -15805,7 +16077,8 @@
       },
       {
        "name": "prong_t",
-       "default": "2.4"
+       "default": "2.4",
+       "comment": "prong thickness — the two prongs, above and below the louver_gap slot, are each this thick and flex in the print plane (the clip prints on its side)"
       },
       {
        "name": "louver_gap",
@@ -15869,7 +16142,8 @@
      "params": [
       {
        "name": "stud_gap",
-       "default": "36.0"
+       "default": "36.0",
+       "comment": "center-to-center of the two T-studs: set it to your case's keyhole spacing. Each plate must carry stud_gap + stud_head + 4, and the MOLLE slots must clear the heads (asserted)"
       },
       {
        "name": "stud_d",
@@ -15919,15 +16193,18 @@
       },
       {
        "name": "plate_t",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "clip plate thickness — the T-studs stand on its outer face, and the belt gap and the leaf stack behind its inner face"
       },
       {
        "name": "leaf_l",
-       "default": "48.0"
+       "default": "48.0",
+       "comment": "leaf spring length, from the clip's top to the start of its flared entry — the grip nub sits 2 above that end, and the leaf's strain over this length is asserted under the cycle budget"
       },
       {
        "name": "leaf_t",
-       "default": "2.6"
+       "default": "2.6",
+       "comment": "leaf spring thickness, held to the tip (the flared entry runs parallel) — the strain assert reads it: thinner flexes easier"
       },
       {
        "name": "belt_gap",
@@ -15945,6 +16222,21 @@
      "name": "MOLLE plate",
      "note": "",
      "params": [
+      {
+       "name": "mp_w",
+       "default": "55.0",
+       "comment": "MOLLE plate width (X) — the three slot_w webbing slots run across it"
+      },
+      {
+       "name": "mp_l",
+       "default": "90.0",
+       "comment": "MOLLE plate length (Y) — the slots sit on slot_pitch along it and the stud pair on its center line; it must carry stud_gap + stud_head + 4 (asserted)"
+      },
+      {
+       "name": "mp_t",
+       "default": "3.0",
+       "comment": "MOLLE plate thickness — the webbing slots go through it and the studs stand on its face"
+      },
       {
        "name": "slot_w",
        "default": "27.0",
@@ -16037,7 +16329,8 @@
       },
       {
        "name": "mag_t",
-       "default": "3.0"
+       "default": "3.0",
+       "comment": "magnet pocket depth into the front face, so the disc glues in flush (asserted shallower than plate_t)"
       }
      ]
     },
@@ -16047,15 +16340,18 @@
      "params": [
       {
        "name": "plate_w",
-       "default": "50.0"
+       "default": "50.0",
+       "comment": "plate width (X) — the keyhole pair, 2 x kh_x + kh_head_d across, must fit inside it (asserted)"
       },
       {
        "name": "plate_h",
-       "default": "64.0"
+       "default": "64.0",
+       "comment": "plate height (Y) — the keyhole row must stay clear of the top edge (asserted); the tripod hole and the magnet pocket sit 16 below the center"
       },
       {
        "name": "plate_t",
-       "default": "7.0"
+       "default": "7.0",
+       "comment": "plate thickness — more than the keyhole pocket depth, and than the tripod counterbore + 1.5 (both asserted); the magnet pocket is cut into its front face"
       },
       {
        "name": "plate_r",
@@ -16704,7 +17000,8 @@
       },
       {
        "name": "label_depth",
-       "default": "0.6"
+       "default": "0.6",
+       "comment": "bay number deboss depth into the reclined front face (7 mm numerals at 0.72 of the block's height)"
       },
       {
        "name": "label_size",
@@ -16713,11 +17010,13 @@
       },
       {
        "name": "label_font",
-       "default": "Liberation Sans:style=Bold"
+       "default": "Liberation Sans:style=Bold",
+       "comment": "the bay numbers' font (an OpenSCAD font name)"
       },
       {
        "name": "tol_slide",
-       "default": "0.20"
+       "default": "0.20",
+       "comment": "sliding fit per side across the board's width: each pocket is board_w + 2 x this wide — core_tol_slide()"
       }
      ]
     },
@@ -16819,7 +17118,8 @@
       },
       {
        "name": "ring_t",
-       "default": "0.8"
+       "default": "0.8",
+       "comment": "accent ring thickness — it sits in the bezel seat under the button's flange"
       }
      ]
     },

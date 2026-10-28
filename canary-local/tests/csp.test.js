@@ -8,8 +8,8 @@
 //   · an onclick= or style= sneaks back into the markup   → "no inline handlers / styles"
 //   · an inline <script> stays but its hash went stale    → "inline bodies are hashed"
 //   · a page starts booting wasm without the source       → "wasm pages, and only those"
-//   · a page reaches the release-fetching modules without → "signed-release hosts"
-//     the hosts (fails behind a click, off the probe's path)
+//   · a page grants the GitHub release hosts again (no      → "no page grants the GitHub release hosts"
+//     browser can read a release asset from them)
 //   · a directive nobody needs quietly appears             → "trimmed, not granted"
 //   · a firmware captive page (a srcdoc frame, which        → "each srcdoc page's style-src pins"
 //     inherits the policy) changes and its hash goes stale
@@ -233,17 +233,20 @@ test("frame-src 'self' is granted to exactly the pages that frame another", () =
   for (const p of granted) assert.deepStrictEqual(parse(policyOf(p)).get("frame-src"), ["'self'"]);
 });
 
-test("the signed-release hosts are granted to exactly the pages whose modules fetch a release", () => {
-  // flash.js and we2-flash.js fetch manifest-flash.json / the factory images /
-  // the camera module's model from the GitHub release host. A page whose
-  // <script src> graph reaches either without the hosts would fail behind a
-  // click — a path the browser probe never takes.
-  const FETCHERS = /(?:^|[\\/])(?:flash|we2-flash)\.js$/;
-  const HOSTS = ["https://github.com", "https://*.githubusercontent.com"];
-  const fetches = (page) => moduleGraph(page).some((f) => FETCHERS.test(f));
-  const granted = PAGES.filter((p) => HOSTS.every((h) => parse(policyOf(p)).get("connect-src").includes(h)));
-  assert.deepStrictEqual(granted, PAGES.filter(fetches), "the grant and the pages that reach flash.js / we2-flash.js disagree");
-  assert.deepStrictEqual(granted, ["flash.html"]);
+test("no page grants the GitHub release hosts: the flasher reads the site's copy under 'self'", () => {
+  // github.com answers /releases/download/ with a 302 that carries no
+  // Access-Control-Allow-Origin, and the asset host answers with none either,
+  // so no page can read a release asset from them, from any origin. flash.js
+  // and we2-flash.js read the copy pages.yml writes beside the pages
+  // (flash-core.js releaseFetchUrl), which 'self' covers; granting the hosts
+  // would only invite a fetch that cannot work (.github/RELEASE_LESSONS.md,
+  // 2026-10-27).
+  for (const page of PAGES) {
+    for (const s of parse(policyOf(page)).get("connect-src")) {
+      assert.doesNotMatch(s, /(?:^|[/.])(?:github\.com|githubusercontent\.com)(?:[:/]|$)/,
+        `${page}: connect-src ${s} — no browser can read a release asset there`);
+    }
+  }
 });
 
 test("directives no page needs are trimmed, not granted: no blob:, no worker-src, no media-src", () => {
@@ -311,6 +314,10 @@ test("flash.html's policy is no weaker than the hand-written one it replaced", (
   // The only sources the generator adds on top, each with its reason in
   // gen_csp.py (SHARED): the desktop Lab's Tauri IPC origins.
   const DOCUMENTED = { "connect-src": ["ipc:", "http://ipc.localhost"] };
+  // Sources taken out since, each narrowing the policy: the GitHub release
+  // host and its asset CDN, which no browser can read a release asset from
+  // (no CORS header); the page reads the site's copy under 'self'.
+  const RETIRED = { "connect-src": ["https://github.com", "https://*.githubusercontent.com"] };
   const norm = (s) => s.replace(/^'sha256-.+'$/, "'sha256-*'"); // the map's hash may legitimately move
   const oldP = parse(OLD);
   const newP = parse(policyOf("flash.html"));
@@ -321,6 +328,10 @@ test("flash.html's policy is no weaker than the hand-written one it replaced", (
       assert.ok(allowed.has(norm(s)), `flash.html ${d}: ${s} is neither in the original policy nor documented in gen_csp.py`);
     }
     for (const s of oldSrcs) {
+      if ((RETIRED[d] || []).includes(s)) {
+        assert.ok(!newP.get(d).includes(s), `flash.html ${d} still carries the retired ${s}`);
+        continue;
+      }
       assert.ok(newP.get(d).map(norm).includes(norm(s)), `flash.html ${d} lost ${s}`);
     }
   }

@@ -328,9 +328,12 @@ static int test_quiet_hours_over_2355_hold_the_summary() {
 
 // What the row carries (docs/csi_modules.md's row): a P0 event row whose
 // note is "a<active> q<empty> x<anomaly>" over the committed ring rows it
-// walked, bundled = how many, the 23:50 bucket. A day of presence changes
-// reads "a0 q0 x0" (closed bundles never reach the ring, sweep F77). The
-// MQTT events body carries type and bundled, no note, and the empty state's
+// walked, bundled = how many, the 23:50 bucket. Since sweep F77 closed
+// bundles reach the ring, so the quiet two hours' eight closed `empty`
+// bundles count: "a0 q8 x0" (the active hour's rows name `subtle`, which the
+// note does not count); before F77 it read "a0 q0 x0". It counts bundles,
+// not periods: what it should report is sweep F219's decision. The MQTT
+// events body carries type and bundled, no note, and the empty state's
 // event_type "unknown".
 static int test_what_the_summary_row_carries() {
   host_prefs().clear();
@@ -344,7 +347,7 @@ static int test_what_the_summary_row_carries() {
   CHECK(s.category == CSI_CATEGORY_EVENT);
   CHECK(s.privacy == CSI_PRIVACY_P0);
   CHECK(s.values.state_name[0] == '\0');
-  CHECK(std::strcmp(s.values.note, "a0 q0 x0") == 0);
+  CHECK(std::strcmp(s.values.note, "a0 q8 x0") == 0);
   CHECK(s.values.time_bucket == 143);
 
   csi_event_record_t ring[64];
@@ -360,7 +363,7 @@ static int test_what_the_summary_row_carries() {
   CHECK(len > 0);
   CHECK(std::strstr(body, "\"type\":\"daily_summary\"") != nullptr);
   CHECK(std::strstr(body, "\"event_type\":\"unknown\"") != nullptr);
-  CHECK(std::strstr(body, "a0 q0 x0") == nullptr);
+  CHECK(std::strstr(body, "a0 q8 x0") == nullptr);
   return 0;
 }
 

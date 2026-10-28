@@ -120,6 +120,7 @@ that the plate slides into.
 | Board dimensions come from the registry, measured where measured | `brd_*()` | `canary_board_lib`, `board_selfcheck()` |
 | Envelopes published to the website and the figures are measured off the committed meshes, never typed | — | `gen_assembled_dims.py`, `gen_figures.mjs --check`, the website's `ar-dims` test |
 | Hardware counts are derived and gated: every committed preset's `HARDWARE —` echo is parsed into `hardware.json`, and its fasteners are joined against the BOM CSVs | CSV qty ≥ echoed qty, per preset | `gen_hardware.py --check` (a new disagreement fails; a known one is listed in `hardware.json` `bom_drift` for the CSV's owner) |
+| The Lab's Assemble tab draws the screws the CAD counts: `build.json` carries each set's echoed hardware, and every screw or insert the tab drives is one the set it shows echoes (the case file and selectors `gen_assembly_poses.py` poses it from), at the echoed size, head, length and count (one set's lines of a spec add; two sets of one build agree), with no echoed screw left undrawn | equal, per spec, counted by placement | `canary-local/tests/assembly.test.js` (a new disagreement fails; a known one is listed in its shrink-only `FASTENER_GAPS`) |
 
 ## 10. Knobs and their help
 

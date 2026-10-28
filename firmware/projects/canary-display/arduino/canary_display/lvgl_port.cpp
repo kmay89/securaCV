@@ -116,6 +116,9 @@ lv_display_t* s_disp = nullptr;    // captured for runtime rotation (v9)
 // stays landscape (lvgl_port_set_rotation refuses a turn it cannot draw).
 uint8_t* s_turn_buf = nullptr;
 size_t s_turn_bytes = 0;
+// The last lvgl_port_set_rotation() asked for a turn with no s_turn_buf and
+// was refused (lvgl_port_turn_refused(), F245).
+bool s_turn_refused = false;
 // flush_cb blits rows packed (stride == width * 2), turned or not; LVGL's
 // partial-mode buffers are packed only while layers keep stride alignment 1.
 static_assert(LV_DRAW_BUF_STRIDE_ALIGN <= 1,
@@ -319,7 +322,11 @@ void lvgl_port_set_rotation(uint8_t rot) {
   // unturned glass and un-rotate every tap: the port stays landscape (canvas,
   // LVGL and touch) and says so. main.cpp picks the face from
   // lvgl_port_rotation() (dash_face.h), so the face stays landscape too.
-  if (rot != 0 && !s_turn_buf) {
+  // The refusal is recorded for what the glass says about its turn
+  // (lvgl_port_turn_refused(), orientation_page.h): a turn not yet asked
+  // for is not a refused one.
+  s_turn_refused = (rot != 0 && !s_turn_buf);
+  if (s_turn_refused) {
     canary::log_line("LVGL", "No rotation buffer — staying landscape.");
     rot = 0;
   }
@@ -388,6 +395,13 @@ void lvgl_port_set_rotation(uint8_t rot) {
 }
 
 uint8_t lvgl_port_rotation() { return s_rot; }
+bool lvgl_port_turn_refused() {
+#if defined(CD_FLAVOR_DASH) && LVGL_VERSION_MAJOR >= 9
+  return s_turn_refused;
+#else
+  return false;  // only the LVGL 9 dash glass refuses a turn
+#endif
+}
 int16_t lvgl_port_width() { return s_logical_w; }
 int16_t lvgl_port_height() { return s_logical_h; }
 

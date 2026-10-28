@@ -660,16 +660,15 @@ size_t load_into_ring() {
   if (!sd_path_ready()) return 0;   /* no card yet (or not ours): try again later */
   s_load_latched = true;            /* one pass per boot, whatever it finds */
 
-  /* A live event already in the ring: csi_event_inject refuses every row
-   * from now on (recency order), so reading up to 2 x LOAD_TAIL_BYTES of a
-   * late card would restore nothing. The ring holds nothing but live rows
-   * before this, the only injector, has run. */
-  {
-    csi_event_record_t probe;
-    if (csi_event_recent(&probe, 1) > 0) {
-      Serial.println("[EVT-LOG] a live event has committed this boot - the earlier boots' log is not reloaded");
-      return 0;
-    }
+  /* A late card: live events may be in the ring already. csi_event_inject
+   * puts the earlier boots' rows beneath them while there are few (on a
+   * crash boot, system.integrity's boot row seals its bundle on the first
+   * loop pass: sweep F77's review), and refuses every row past
+   * CSI_EVENT_INJECT_BENEATH_MAX of them, when reading up to
+   * 2 x LOAD_TAIL_BYTES of the card would restore nothing. */
+  if (!csi_event_inject_open()) {
+    Serial.println("[EVT-LOG] too many live events have committed this boot - the earlier boots' log is not reloaded");
+    return 0;
   }
 
   /* Two passes over the tail: first the ids it dismisses (a dismissal is

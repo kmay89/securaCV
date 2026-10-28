@@ -193,6 +193,67 @@ test("matchProjectToProduct maps firmware names back, longest-match wins", async
   assert.strictEqual(matchProjectToProduct(catalog, ""), null);
 });
 
+// A release stamps each app's descriptor with the product's asset_stem and
+// the firmware's version (firmware/scripts/stamp_app_desc.py). Up to 2.4.17
+// every descriptor was the Arduino core's, so a board running SecuraCV read
+// as "arduino-lib-builder", product unknown, version uncomparable — and an
+// older image over it went on with no downgrade warning.
+test("a stamped descriptor names its product and version, for every product", async () => {
+  const { parseAppDescriptor, matchProjectToProduct, productForProject } = await core();
+  const stems = new Set();
+  for (const p of catalog.products) {
+    // The field is char[32]: 31 bytes and a NUL. Product ids outgrow it.
+    assert.ok(/^[\x20-\x7e]{1,31}$/.test(p.asset_stem), `${p.id}: "${p.asset_stem}" does not fit project_name`);
+    assert.ok(!stems.has(p.asset_stem), `${p.id}: two products stamp "${p.asset_stem}"`);
+    stems.add(p.asset_stem);
+    const d = parseAppDescriptor(new Uint8Array(appDesc({ version: "2.4.18", project: p.asset_stem })));
+    assert.strictEqual(matchProjectToProduct(catalog, d.projectName).id, p.id, p.asset_stem);
+    assert.strictEqual(productForProject(catalog, d.projectName).id, p.id, p.asset_stem);
+  }
+});
+
+test("a stamped board gets the downgrade and same-version verdicts; an Arduino-named one stays unknown", async () => {
+  const { parseAppDescriptor, matchProjectToProduct, installVerdict } = await core();
+  const wap = catalog.products.find((p) => p.id === "securacv-canary-wap");
+  const read = (version, project) => {
+    const d = parseAppDescriptor(new Uint8Array(appDesc({ version, project })));
+    return { current: { version: d.version, projectName: d.projectName },
+             currentProduct: matchProjectToProduct(catalog, d.projectName) };
+  };
+  const stamped = read("2.4.18-wap", "canary-wap");
+  assert.strictEqual(installVerdict({ ...stamped, product: wap, version: "2.4.17-wap" }).kind, "downgrade");
+  assert.strictEqual(installVerdict({ ...stamped, product: wap, version: "2.4.18-wap" }).kind, "same");
+  assert.strictEqual(installVerdict({ ...stamped, product: wap, version: "2.4.19-wap" }).kind, "update");
+  const vision = catalog.products.find((p) => p.id === "securacv-canary-vision");
+  assert.strictEqual(installVerdict({ ...stamped, product: vision, version: "2.4.18" }).kind, "switch");
+  // What every release up to 2.4.17 says about itself: no product, and a
+  // version that is the Arduino core's, so the verdict says it can't compare.
+  const old = read("esp-idf: v4.4.7 38eeba213a", "arduino-lib-builder");
+  assert.strictEqual(old.currentProduct, null);
+  assert.strictEqual(installVerdict({ ...old, product: wap, version: "2.4.17-wap" }).kind, "unknown");
+});
+
+// Stamped versions parse, so the verdict now compares real dev-train
+// versions. Prerelease fields compare numerically where both are digits:
+// as plain strings "dev.10" sorted before "dev.9", and a board on -dev.10
+// offered -dev.9 read as an Update instead of a Downgrade.
+test("a dev train past .9 still orders numerically, with or without the WAP suffix", async () => {
+  const { compareVersions, installVerdict } = await core();
+  for (const [a, b] of [["2.4.18-dev.9", "2.4.18-dev.10"], ["2.4.18-dev.9-wap", "2.4.18-dev.10-wap"],
+                        ["2.4.18-dev.10", "2.4.18-rc.1"], ["2.4.18-rc.2", "2.4.18-rc.10"],
+                        ["2.4.18-dev.10", "2.4.18"], ["2.4.18-dev.2-wap", "2.4.18-wap"],
+                        ["2.2.0-rc1", "2.2.0-rc2"], ["2.4.18-rc.1", "2.4.18-rc.1.1"]]) {
+    assert.strictEqual(compareVersions(a, b), -1, `${a} < ${b}`);
+    assert.strictEqual(compareVersions(b, a), 1, `${b} > ${a}`);
+  }
+  assert.strictEqual(compareVersions("2.4.18-dev.10-wap", "2.4.18-dev.10-wap"), 0);
+  const wap = catalog.products.find((p) => p.id === "securacv-canary-wap");
+  const v = installVerdict({ current: { version: "2.4.18-dev.10-wap" }, currentProduct: wap,
+                             product: wap, version: "2.4.18-dev.9-wap" });
+  assert.strictEqual(v.kind, "downgrade");
+  assert.strictEqual(v.label, "Downgrade · 2.4.18-dev.10-wap → 2.4.18-dev.9-wap");
+});
+
 // ── release manifest resolution ─────────────────────────────────────────────
 function goodManifest() {
   return {
@@ -309,7 +370,8 @@ test("planReadChunks covers the span exactly, in order, capped per chunk", async
 
 // ── local-file factory-shape gate (Advanced → local .bin) ───────────────────
 // Everything installed from a local file is written at offset 0, so an
-// app-only build (which also starts 0xE9) would land on the bootloader.
+// app-only build (which starts 0xE9, like an S3/C3/C6 factory image) would
+// land on the bootloader.
 // The discriminator is the partition table at 0x8000 — same check, same
 // reason, as the desktop Flasher's flash_local_file.
 test("localImageShape refuses app-only builds and passes merged factory images", async () => {
@@ -327,6 +389,58 @@ test("localImageShape refuses app-only builds and passes merged factory images",
   ptEntry({ type: 1, subtype: 2, offset: 0x9000, size: 0x5000, label: "nvs" })
     .copy(Buffer.from(factory.buffer), 0x8000);
   assert.strictEqual(localImageShape(factory).factory, true, "merged factory image");
+});
+
+// ── the bootloader where the chip's ROM loads it (catalog + local file) ─────
+// fw-v2.4.17's classic-ESP32 factory images carried the bootloader at 0x0, and
+// a classic ESP32's ROM loads it from 0x1000: the partition table was there,
+// so the shape gate above passed them, and neither board could boot.
+test("bootloaderPlacement refuses an image whose bootloader isn't where the chip's ROM loads it", async () => {
+  const { bootloaderPlacement, romBootloader } = await core();
+  // A factory image with a bootloader for chip id `id` at `at` (the header's
+  // u16le chip id at +12), the partition table at 0x8000, the rest erased.
+  const imageWithBootloaderAt = (at, id) => {
+    const b = new Uint8Array(0x10000).fill(0xff);
+    b[at] = 0xe9;
+    b[at + 12] = id & 0xff; b[at + 13] = id >> 8;
+    b[0x8000] = 0xaa; b[0x8001] = 0x50;
+    return b;
+  };
+  // Correct images pass, in every spelling the detector and the catalog use.
+  for (const [chip, at, id] of [["ESP32", 0x1000, 0], ["esp32", 0x1000, 0], ["ESP32-S2", 0x1000, 2],
+    ["ESP32-S3", 0x0, 9], ["esp32 s3", 0x0, 9], ["ESP32-C3", 0x0, 5], ["ESP32-C6", 0x0, 13],
+    ["ESP32-C2", 0x0, 12], ["ESP32-H2", 0x0, 16]]) {
+    assert.ok(bootloaderPlacement(imageWithBootloaderAt(at, id), chip).ok, chip);
+  }
+  // The fw-v2.4.17 shape on a classic ESP32: refused, saying where the ROM
+  // looks, where the image has it, that nothing was written and what to use.
+  const misplaced = imageWithBootloaderAt(0x0, 0);
+  const v = bootloaderPlacement(misplaced, "ESP32");
+  assert.strictEqual(v.ok, false);
+  assert.match(v.reason, /loads its bootloader from 0x1000, and the image has no bootloader for it there \(it has one at 0x0 instead\)/);
+  assert.match(v.reason, /Nothing was written/);
+  assert.match(v.reason, /fw-v2\.4\.18/);
+  // …and when that bootloader's body happens to hold 0xE9 at 0x1000: a stray
+  // byte there is not a header naming the ESP32, so it is still refused.
+  const stray = misplaced.slice();
+  stray[0x1000] = 0xe9; stray[0x100c] = 0x3a;
+  assert.match(bootloaderPlacement(stray, "ESP32").reason, /\(it has one at 0x0 instead\)/);
+  // A classic image on an S3 (its bootloader at 0x1000 is an ESP32's), an S3
+  // image on a C3 (the right place, another chip's bootloader), and an image
+  // with no bootloader at all.
+  const onS3 = bootloaderPlacement(imageWithBootloaderAt(0x1000, 0), "ESP32-S3");
+  assert.strictEqual(onS3.ok, false);
+  assert.match(onS3.reason, /from 0x0, and the image has no bootloader for it there\. Nothing/);
+  assert.match(bootloaderPlacement(imageWithBootloaderAt(0x0, 9), "ESP32-C3").reason,
+    /from 0x0, and the image has no bootloader for it there \(the one there was built for another chip\)/);
+  const none = bootloaderPlacement(new Uint8Array(0x10000).fill(0xff), "ESP32-C6");
+  assert.strictEqual(none.ok, false);
+  assert.doesNotMatch(none.reason, /instead|another chip/);
+  // A chip the table doesn't list is never judged, so the gate can't block
+  // a correct image for it.
+  assert.strictEqual(romBootloader("ESP32-P4"), null);
+  assert.ok(bootloaderPlacement(new Uint8Array(0x10000).fill(0xff), "ESP32-P4").ok);
+  assert.ok(bootloaderPlacement(misplaced, null).ok, "no chip read, nothing judged");
 });
 
 // ── partition kinds (board report vocabulary) ───────────────────────────────
@@ -714,6 +828,28 @@ test("channelFromSearch: only an explicit channel=dev switches; URL is a fixed c
   assert.ok(DEV_FLASH_MANIFEST_URL.startsWith("https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/"));
 });
 
+test("devChannelStanding: the dev train against the pinned one, never a claim about stable", async () => {
+  const { devChannelStanding } = await core();
+  assert.strictEqual(devChannelStanding("2.4.18-dev.1", "2.4.17"),
+    "The dev channel carries 2.4.18-dev.1, newer than the 2.4.17 release this flasher is pinned to.");
+  // What a stable release leaves there when no newer dev build is.
+  assert.strictEqual(devChannelStanding("2.4.17", "2.4.17"),
+    "The dev channel carries 2.4.17, the same version as the release this flasher is pinned to.");
+  // fw-dev-latest's catalog on 2026-10-27, under stable 2.4.17.
+  assert.strictEqual(devChannelStanding("2.4.15", "2.4.17"),
+    "The dev channel carries 2.4.15, older than the 2.4.17 release this flasher is pinned to.");
+  assert.match(devChannelStanding("2.4.17-rc.1", "2.4.17"), /older than the 2\.4\.17 release/);
+  // A Flasher built for 2.4.17, after fw-v2.4.18 shipped and copied itself to
+  // the dev channel: 2.4.18 IS stable, so "ahead of stable" would be false.
+  // The sentence says only what the two trains show.
+  assert.strictEqual(devChannelStanding("2.4.18", "2.4.17"),
+    "The dev channel carries 2.4.18, newer than the 2.4.17 release this flasher is pinned to.");
+  assert.doesNotMatch(devChannelStanding("2.4.18", "2.4.17"), /stable/);
+  // No train, no claim.
+  assert.strictEqual(devChannelStanding(undefined, catalog.fw_train), "");
+  assert.strictEqual(devChannelStanding("2.4.17", null), "");
+});
+
 test("releaseTagFromManifestUrl: names the pinned firmware tag, and only that", async () => {
   const { releaseTagFromManifestUrl, DEV_FLASH_MANIFEST_URL } = await core();
   // The catalog's own pin — the case that matters. A tag bumped but never
@@ -747,6 +883,256 @@ test("releaseTagFromManifestUrl: names the pinned firmware tag, and only that", 
   assert.strictEqual(
     releaseTagFromManifestUrl("http://127.0.0.1:8000/releases/download/%E0/manifest-flash.json"),
     null);
+});
+
+// ── the same-origin release mirror (pages.yml → firmware/<tag>/<file>) ──────
+// A browser can never fetch a github.com release asset (no CORS header on the
+// redirect or on the asset host), so the page reads the copy pages.yml writes
+// beside it, and only that copy. These pin where the page looks; scripts/tests/
+// test_pages_release_mirror.py holds the writer (tools/mirror_release.py) to
+// the same layout through node, and tests/flash_mirror_probe.mjs proves it in
+// Chromium from one origin.
+const PAGES = "https://kmay89.github.io/securaCV/canary-local/flash.html";
+const PAGES_MIRROR = "https://kmay89.github.io/securaCV/canary-local/firmware/";
+const REL = (tag, file) => `https://github.com/kmay89/securaCV/releases/download/${tag}/${file}`;
+
+test("releaseAssetParts: the project's release-download URLs, and nothing else", async () => {
+  const { releaseAssetParts, DEV_FLASH_MANIFEST_URL } = await core();
+  const tag = `fw-v${registry.fw_train}`;
+  // Every pin the page reads maps — the catalog's own, the Vision model's and
+  // the dev channel's.
+  assert.deepStrictEqual(releaseAssetParts(catalog.manifest_url, catalog.repo),
+    { repo: catalog.repo, tag, file: "manifest-flash.json" });
+  assert.deepStrictEqual(releaseAssetParts(catalog.we2_module.manifest_url, catalog.repo),
+    { repo: catalog.repo, tag, file: "manifest-vision-model.json" });
+  assert.deepStrictEqual(releaseAssetParts(DEV_FLASH_MANIFEST_URL, catalog.repo),
+    { repo: catalog.repo, tag: "fw-dev-latest", file: "manifest-flash.json" });
+  // A dev manifest names its images under the real fw-v*-dev.* tag.
+  assert.deepStrictEqual(
+    releaseAssetParts(REL("fw-v2.5.0-dev.1", "canary-2.5.0-dev.1-factory.bin"), "KMAY89/securacv"),
+    { repo: "kmay89/securaCV", tag: "fw-v2.5.0-dev.1", file: "canary-2.5.0-dev.1-factory.bin" });
+  // Without a repo any owner answers; with one, only that repository.
+  assert.ok(releaseAssetParts("https://github.com/other/fork/releases/download/fw-v1/x.bin"));
+  assert.strictEqual(
+    releaseAssetParts("https://github.com/other/fork/releases/download/fw-v1/x.bin", catalog.repo), null);
+  for (const bad of [
+    "http://github.com/kmay89/securaCV/releases/download/fw-v1/x.bin",        // not https
+    "https://github.com:8443/kmay89/securaCV/releases/download/fw-v1/x.bin",  // a port
+    "https://evil.example/kmay89/securaCV/releases/download/fw-v1/x.bin",     // another host
+    "https://github.com.evil.example/kmay89/securaCV/releases/download/fw-v1/x.bin",
+    "https://u:p@github.com/kmay89/securaCV/releases/download/fw-v1/x.bin",   // credentials
+    REL("fw-v1", "x.bin") + "?raw=1",                                           // a query
+    REL("fw-v1", "x.bin") + "#frag",                                            // a fragment
+    REL("fw-v1", "a/b.bin"),                                                    // a nested path
+    REL("fw-v1", "%2E%2E"),                                                     // ".." spelled out
+    REL("fw-v1", "a%2Fb.bin"),                                                  // an encoded slash
+    REL("fw-v1", ".hidden"),                                                    // not a plain name
+    REL("%E0", "x.bin"),                                                        // a malformed escape
+    "https://github.com/kmay89/securaCV/releases/latest/download/x.bin",        // not a pinned tag
+    "https://api.github.com/repos/kmay89/securaCV/releases/assets/1",
+    "", null, undefined, "not a url",
+  ]) {
+    assert.strictEqual(releaseAssetParts(bad, catalog.repo), null, String(bad));
+  }
+});
+
+test("releaseFetchUrl: an http(s) page reads ONLY its copy, on every host; nothing else is mapped", async () => {
+  const { releaseFetchUrl, DEV_FLASH_MANIFEST_URL } = await core();
+  const tag = `fw-v${registry.fw_train}`;
+  const opts = { pageHref: PAGES, mirrorBase: PAGES_MIRROR, repo: catalog.repo };
+  // The hosted Lab: the copy, and nothing else.
+  assert.strictEqual(releaseFetchUrl(catalog.manifest_url, opts), `${PAGES_MIRROR}${tag}/manifest-flash.json`);
+  assert.strictEqual(releaseFetchUrl(catalog.we2_module.manifest_url, opts),
+    `${PAGES_MIRROR}${tag}/manifest-vision-model.json`);
+  assert.strictEqual(releaseFetchUrl(DEV_FLASH_MANIFEST_URL, opts), `${PAGES_MIRROR}fw-dev-latest/manifest-flash.json`);
+  // A relative mirror base resolves against the page.
+  assert.strictEqual(releaseFetchUrl(REL(tag, "canary-x-factory.bin"), { ...opts, mirrorBase: "firmware/" }),
+    `${PAGES_MIRROR}${tag}/canary-x-factory.bin`);
+  // A dev server, a hub on the LAN, the desktop Lab's Windows webview: the
+  // copy too, with no fallback to the release URL. No browser can read that
+  // URL from any origin, loopback included, so a fallback could only turn
+  // this site's honest 404 into a false "connection problem".
+  for (const page of ["http://localhost:8000/canary-local/flash.html", "http://127.0.0.1:8000/canary-local/flash.html",
+    "http://192.168.1.20/canary-local/flash.html", "http://hub.local/canary-local/flash.html",
+    "http://tauri.localhost/flash.html"]) {
+    const base = new URL("firmware/", page).href;
+    assert.strictEqual(
+      releaseFetchUrl(catalog.manifest_url, { pageHref: page, mirrorBase: base, repo: catalog.repo }),
+      `${base}${tag}/manifest-flash.json`, page);
+  }
+  // Unchanged: a page off http(s) (file:, a native webview scheme), a URL
+  // that is not the project's release (a ?manifest= override, a self-hosted
+  // image, a fork), a mirror base on another origin, or no base at all.
+  for (const [url, o] of [
+    [catalog.manifest_url, { ...opts, pageHref: "file:///home/u/securaCV/canary-local/flash.html" }],
+    [catalog.manifest_url, { ...opts, pageHref: "tauri://localhost/flash.html" }],
+    [catalog.manifest_url, { ...opts, pageHref: undefined }],
+    ["https://kmay89.github.io/securaCV/canary-local/my/manifest-flash.json", opts],
+    ["http://127.0.0.1:9000/manifest-flash.json", opts],
+    ["https://github.com/someone/fork/releases/download/fw-v1/manifest-flash.json", opts],
+    [catalog.manifest_url, { ...opts, mirrorBase: "https://cdn.example/firmware/" }],
+    [catalog.manifest_url, { ...opts, mirrorBase: "" }],
+  ]) {
+    assert.strictEqual(releaseFetchUrl(url, o), url, `${url} from ${o.pageHref} / ${o.mirrorBase}`);
+  }
+});
+
+test("fetchReleaseAsset: one request, to releaseFetchUrl's answer, handed back as a bare fetch gave it", async () => {
+  const { fetchReleaseAsset } = await core();
+  const tag = `fw-v${registry.fw_train}`;
+  const mirrorUrl = `${PAGES_MIRROR}${tag}/manifest-flash.json`;
+  const LOCAL = "http://localhost:8000/canary-local/flash.html";
+  const LOCAL_MIRROR = "http://localhost:8000/canary-local/firmware/";
+  const res = (status) => ({ ok: status >= 200 && status < 300, status });
+  const recorder = (answers) => {
+    const calls = [];
+    const fetchImpl = async (url, init) => {
+      calls.push({ url, init });
+      const a = answers[url];
+      if (a instanceof Error) throw a;
+      return a || res(404);
+    };
+    return { calls, fetchImpl };
+  };
+  const base = { repo: catalog.repo, init: { cache: "no-store" } };
+
+  // Hosted page, copy present: one same-origin request, init passed through.
+  let r = recorder({ [mirrorUrl]: res(200) });
+  let got = await fetchReleaseAsset(catalog.manifest_url,
+    { ...base, pageHref: PAGES, mirrorBase: PAGES_MIRROR, fetchImpl: r.fetchImpl });
+  assert.strictEqual(got.status, 200);
+  assert.deepStrictEqual(r.calls, [{ url: mirrorUrl, init: { cache: "no-store" } }]);
+
+  // No copy (the site has not redeployed since the release, or its deploy
+  // skipped it), on a hosted or a local page: the copy's 404 comes back as a
+  // Response, so the page can say the copy is missing, and github.com is
+  // never asked.
+  const localMirror = `${LOCAL_MIRROR}${tag}/manifest-flash.json`;
+  for (const [pageHref, mirrorBase, want] of [[PAGES, PAGES_MIRROR, mirrorUrl], [LOCAL, LOCAL_MIRROR, localMirror]]) {
+    r = recorder({});
+    got = await fetchReleaseAsset(catalog.manifest_url, { ...base, pageHref, mirrorBase, fetchImpl: r.fetchImpl });
+    assert.strictEqual(got.status, 404, pageHref);
+    assert.deepStrictEqual(r.calls.map((c) => c.url), [want], pageHref);
+  }
+
+  // A network error is thrown, as a bare fetch would throw it.
+  const down = new TypeError("Failed to fetch");
+  r = recorder({ [localMirror]: down });
+  await assert.rejects(fetchReleaseAsset(catalog.manifest_url,
+    { ...base, pageHref: LOCAL, mirrorBase: LOCAL_MIRROR, fetchImpl: r.fetchImpl }), (e) => e === down);
+
+  // Not a release URL (a ?manifest= override): fetched exactly as given.
+  const override = "http://127.0.0.1:9000/manifest-flash.json";
+  r = recorder({ [override]: res(200) });
+  await fetchReleaseAsset(override, { ...base, pageHref: PAGES, mirrorBase: PAGES_MIRROR, fetchImpl: r.fetchImpl });
+  assert.deepStrictEqual(r.calls.map((c) => c.url), [override]);
+});
+
+test("flash.js / we2-flash.js read every release asset through the mirror, never by a bare fetch", () => {
+  // The four reads that used to be fetch(<github.com URL>) — refused by every
+  // browser — now go through core.fetchReleaseAsset. Every bare fetch() left in
+  // these two modules takes a same-origin string literal (devices/*.json).
+  const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+  const flashJs = strip(readFileSync(join(ROOT, "assets/flash.js"), "utf8"));
+  const we2Js = strip(readFileSync(join(ROOT, "assets/we2-flash.js"), "utf8"));
+  const bare = (src) => [...src.matchAll(/(?<![.\w])fetch\(\s*([^,)]*)/g)].map((m) => m[1]);
+  // The scan sees flash.js's own catalog reads, so a scan that matched
+  // nothing would say so rather than pass.
+  assert.ok(bare(flashJs).includes('"devices/flash.json"'), "the bare-fetch scan found nothing in flash.js");
+  for (const [name, src] of [["flash.js", flashJs], ["we2-flash.js", we2Js]]) {
+    for (const arg of bare(src)) {
+      assert.match(arg, /^"devices\/[^"]+"$/,
+        `${name}: fetch(${arg}) — a release asset must go through fetchReleaseAsset (the mirror)`);
+    }
+  }
+  assert.match(flashJs, /function fetchRelease\(url, init\) \{\s*return core\.fetchReleaseAsset\(url, \{ repo: state\.catalog && state\.catalog\.repo, init \}\);/);
+  assert.match(flashJs, /fetchRelease\(activeManifestUrl\(\), \{ cache: "no-store" \}\)/);
+  assert.match(flashJs, /await fetchRelease\(opts\.entry\.factory, \{ cache: "no-store" \}\)/);
+  assert.match(we2Js, /fetchReleaseAsset\(url, \{ repo: ctx\.catalog && ctx\.catalog\.repo, init \}\)/);
+  assert.match(we2Js, /fromRelease\(m\.manifest_url, \{ cache: "no-store" \}\)/);
+  assert.match(we2Js, /fromRelease\(asset\.url\)/);
+});
+
+test("an HTTP error on the manifest is told as the server that answered: this site's copy, or a ?manifest= override", async () => {
+  // The release host never answers a browser (releaseFetchUrl reads the
+  // site's copy instead), so "no release has been cut" is not a reading the
+  // page can make. The release can be live on GitHub while the site's copy of
+  // it is not: the site redeploys a few minutes after a release publishes,
+  // and a deploy skips a release it cannot copy whole. A ?manifest= override
+  // is read as given, from its own server, which is what a 404 there names.
+  // Run the banner's own sentence chain and fine print, as written in
+  // flash.js, on each case.
+  const flashJs = readFileSync(join(ROOT, "assets/flash.js"), "utf8");
+  const m = /note\.textContent = (m\.__invalid\s*\?[\s\S]*?);\n\s*banner\.append\(note\);/.exec(flashJs);
+  assert.ok(m, "flash.js: the manifest banner's sentence chain moved; point this test at it");
+  const say = new Function("m", "state", "pinned", "answered", `return ${m[1]};`);
+  const f = /`This page is pinned to firmware release \$\{pinned\}` \+\s*\(m\.why \? ` — \$\{m\.why\}\.` : "\."\) \+\s*(\(!answered[\s\S]*?\))\)\);/.exec(flashJs);
+  assert.ok(f, "flash.js: the manifest banner's fine print moved; point this test at it");
+  const fine = new Function("m", "state", "answered", `return ${f[1]};`);
+  const tag = `fw-v${registry.fw_train}`;
+  const missing = { __missing: true, httpStatus: "404" };
+
+  // From the copy: the copy is what is missing, named by its tag.
+  const copy = { devChannel: false, manifestOverride: false };
+  const stable = say(missing, copy, tag, true);
+  assert.strictEqual(stable, `This site’s copy of firmware release ${tag} isn’t available (HTTP 404). ` +
+    "If that release was just published, the site picks it up when it redeploys, shortly after; reload then. " +
+    "Until then, try Advanced → dev channel, or install a local file.");
+  const dev = say(missing, { devChannel: true, manifestOverride: false }, "fw-dev-latest", true);
+  assert.strictEqual(dev, "This site’s copy of the dev channel (fw-dev-latest) isn’t available (HTTP 404). " +
+    "If a dev build was just published, the site picks it up when it redeploys, shortly after; reload then. " +
+    "Until then, turn the dev channel off under Advanced for the stable release, or install a local file.");
+  assert.strictEqual(fine(missing, copy, true),
+    " The images appear on reload once this site carries its copy of that release.");
+
+  // From a ?manifest= override's own server: that server is what to check.
+  // Not the official release, and not the dev channel (both are off while
+  // the override is in force).
+  const override = { devChannel: false, manifestOverride: true };
+  const own = say(missing, override, null, true);
+  assert.strictEqual(own, "The self-hosted manifest at this page’s ?manifest= address answered HTTP 404. " +
+    "Check that server, remove ?manifest= from the address to use the official release, or install a " +
+    "local file under Advanced.");
+  assert.strictEqual(fine(missing, override, true), "");
+  for (const s of [stable, dev, own]) assert.doesNotMatch(s, /published yet|been cut/, s);
+
+  // No answer at all is a connection problem, wherever it was read from.
+  const silent = { __missing: true, httpStatus: null };
+  assert.match(say(silent, copy, tag, false), /connection problem here, not a missing release/);
+  assert.strictEqual(fine(silent, copy, false),
+    " If that release exists, the images will appear once you’re back online.");
+
+  // The two readings are the core's own mapping: the hosted page reads both
+  // channels' manifests from its copy, and a ?manifest= override as given.
+  const { releaseFetchUrl, DEV_FLASH_MANIFEST_URL } = await core();
+  const opts = { pageHref: PAGES, mirrorBase: PAGES_MIRROR, repo: catalog.repo };
+  assert.notStrictEqual(releaseFetchUrl(catalog.manifest_url, opts), catalog.manifest_url);
+  assert.notStrictEqual(releaseFetchUrl(DEV_FLASH_MANIFEST_URL, opts), DEV_FLASH_MANIFEST_URL);
+  assert.strictEqual(releaseFetchUrl("http://127.0.0.1:9000/m.json", opts), "http://127.0.0.1:9000/m.json");
+  assert.match(flashJs, /if \(override\) \{ state\.devChannel = false; return override; \}/);
+});
+
+test("we2-flash.js: an HTTP error on the pinned model names this site's copy, not an uncut release", () => {
+  // The Vision model reads the same copy as the firmware (fetchReleaseAsset),
+  // so its 404 has the same reading: the copy is missing, perhaps only until
+  // the site redeploys. A failure with no HTTP answer keeps the fork /
+  // uncut-train hint. Run the catch's own sentence, as written, on each case.
+  const we2Js = readFileSync(join(ROOT, "assets/we2-flash.js"), "utf8");
+  const m = /note\.textContent = (\/\^HTTP [\s\S]*?");\n/.exec(we2Js);
+  assert.ok(m, "we2-flash.js: the pinned model's error sentence moved; point this test at it");
+  const say = new Function("e", `return ${m[1]};`);
+  assert.strictEqual(say(new Error("HTTP 404")),
+    "This site’s copy of the release’s model isn’t available (HTTP 404). If the release or its model " +
+    "was just published, it appears once the site redeploys; until then use a local file, or load it " +
+    "once with SenseCraft (the Vision page stages that).");
+  for (const why of ["Failed to fetch", "manifest has no model entry"]) {
+    assert.strictEqual(say(new Error(why)),
+      `Couldn’t fetch the pinned model (${why}). The asset ships with the project’s releases — if this ` +
+      "is a fresh fork or the release train hasn’t cut one yet, use a local file, or load it once with " +
+      "SenseCraft (the Vision page stages that).");
+  }
+  // The status reaches the catch as "HTTP <n>", from both reads.
+  assert.strictEqual([...we2Js.matchAll(/if \(!r\.ok\) throw new Error\("HTTP " \+ r\.status\);/g)].length, 2);
 });
 
 // ── WiFi pre-provisioning (NVS image builder + QR payload) ──────────────────
@@ -1194,6 +1580,9 @@ test("classifyFlashError maps the real Web Serial / esptool failures to advice",
   assert.strictEqual(kindOf("Invalid head of packet (0x00)"), "not-in-download");
   // Our chunked reader gave up.
   assert.strictEqual(kindOf("short read at 0x1a0000"), "read-stall");
+  // An image refused for where it keeps its bootloader: no retry fixes that.
+  assert.strictEqual(kindOf("This image would not start on the ESP32: that chip loads its " +
+    "bootloader from 0x1000, and the image has no bootloader for it there."), "layout");
   // Unknown → generic, but still actionable + no hijacked title.
   const u = classifyFlashError(new Error("kernel panic in the toaster"));
   assert.strictEqual(u.kind, "unknown");
@@ -1900,11 +2289,12 @@ test("flash.html: ships a strict, eval-free Content-Security-Policy", () => {
   assert.match(csp, /base-uri 'none'/);
   assert.match(csp, /object-src 'none'/);
   assert.match(csp, /form-action 'none'/);
-  // Firmware fetches: our release host + its asset CDN, plus 'self' for the
-  // catalog / a same-origin manifest. No open wildcard host.
+  // Firmware fetches: 'self' for the catalog, the site's copy of the release
+  // and a same-origin manifest. No GitHub host: no browser can read a release
+  // asset from it (no CORS header), so naming it would only invite a fetch
+  // that cannot work. No open wildcard host.
   assert.match(csp, /connect-src[^;]*'self'/);
-  assert.match(csp, /connect-src[^;]*https:\/\/github\.com/);
-  assert.match(csp, /connect-src[^;]*https:\/\/\*\.githubusercontent\.com/);
+  assert.doesNotMatch(csp, /github\.com|githubusercontent\.com/);
   // Loopback (a same-machine manifest server) is pinned to exact hosts, and
   // there is NO open http:/https: scheme-source — the override guard in
   // flash-core.js accepts exactly this set, so code and CSP can't disagree.

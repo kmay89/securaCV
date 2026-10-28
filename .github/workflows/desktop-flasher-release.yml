@@ -1038,12 +1038,16 @@ jobs:
               fi
             fi
           fi
+          # The body links the exact versioned release it points at: a reader
+          # lands here from GitHub's release search, and an unlinked "the
+          # versioned releases" left them one more search from an installer.
           notes="Rolling pointer for the desktop Flasher's self-updater — the
           app polls this prerelease's latest.json (tauri.conf.json
-          \`plugins.updater.endpoints\`). Not an install: download the Flasher
-          from the versioned flasher-v* releases. Currently: **${VER}**
-          (${TAG}). \`releases/latest\` stays on the firmware on purpose —
-          see docs/RELEASE_BUTTONS.md."
+          \`plugins.updater.endpoints\`). Not an install: the installers are
+          on the versioned release it points at, **${VER}** —
+          [${TAG}](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}).
+          \`releases/latest\` stays on the firmware on purpose — see
+          docs/RELEASE_BUTTONS.md."
           if gh release view flasher-latest >/dev/null 2>&1; then
             gh release edit flasher-latest --prerelease --notes "$notes" \
               --title "SecuraCV Flasher — updater pointer (rolling)"

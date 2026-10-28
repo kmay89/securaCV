@@ -22,6 +22,7 @@ const {
   securityFieldsFor, readSecurityEfuses, looksUniform, flashAliasVerdict,
   macChecks, parseMac, duplicateMacCheck, shippedWith, intakeVerdict, efuseFindings,
   coldBootVerdict, isFirstContact, KNOWN_STOCK, oddParity, flashAliasCandidates,
+  FLASH_ALIAS_WINDOW,
 } = mod;
 
 // A virgin block 0: six zero words. Everything below starts here and burns in
@@ -307,6 +308,33 @@ test("a blank chip is inconclusive, never an accusation", () => {
   assert.match(v.detail, /after firmware is written/);
 });
 
+test("a classic ESP32's head reaches its bootloader at 0x1000", () => {
+  // A correctly installed classic ESP32 (or S2): erased flash below 0x1000,
+  // the bootloader from 0x1000 on. The probe used to read 4 KB, which is all
+  // 0xFF there, so every such board read as blank and a mirrored one was
+  // never caught. The window the flasher reads now reaches the bootloader.
+  assert.ok(FLASH_ALIAS_WINDOW > 0x1000);
+  const chip = (realBytes) => {
+    const flash = new Uint8Array(realBytes);
+    for (let i = 0x1000; i < realBytes; i++) flash[i] = (i ^ (i >> 8) ^ (i >> 16)) & 0xff;
+    flash.fill(0xff, 0, 0x1000);
+    return flash;
+  };
+  // What runIntake reads: the window at 0 and at each candidate, wrapping
+  // modulo the part's real size.
+  const read = (flash, declared) => {
+    const at = (a) => Uint8Array.from({ length: FLASH_ALIAS_WINDOW }, (_, i) => flash[(a + i) % flash.length]);
+    const probes = flashAliasCandidates(declared).map((c) => ({ atBytes: c, bytes: at(c) }));
+    return { declaredBytes: declared, head: at(0), probes };
+  };
+  const honest = chip(4 * MB);
+  assert.ok(looksUniform(honest.subarray(0, 0x1000)), "the first 4 KB alone read as blank");
+  assert.equal(flashAliasVerdict(read(honest, 4 * MB)).level, "clear");
+  const v = flashAliasVerdict(read(chip(2 * MB), 4 * MB)); // a 2 MB die sold as 4 MB
+  assert.equal(v.level, "stop");
+  assert.match(v.label, /Flash is 2 MB, not the 4 MB/);
+});
+
 test("missing evidence is 'not checked', which never fails the verdict", () => {
   assert.equal(flashAliasVerdict({}).level, "unknown");
   assert.equal(flashAliasVerdict({ declaredBytes: 4 * MB, head: HEAD, probes: [] }).level, "unknown");
@@ -353,6 +381,37 @@ test("stock images are recognized and named", () => {
   assert.equal(shippedWith({ projectName: "esp-at" }).kind, "known");
   assert.equal(shippedWith({ projectName: "blink" }).kind, "known");
   for (const k of KNOWN_STOCK) assert.ok(k.name, "every stock entry needs a display name");
+});
+
+test("a board whose descriptor names a SecuraCV product says so, by its exact stem only", () => {
+  // Releases after 2.4.17 stamp the product's asset_stem into the descriptor
+  // (firmware/scripts/stamp_app_desc.py). The caller passes the catalog
+  // product it matched; a substring match is somebody else's image.
+  const wap = { id: "securacv-canary-wap", name: "Canary WAP", asset_stem: "canary-wap" };
+  const r = shippedWith({ projectName: "canary-wap", product: wap });
+  assert.equal(r.kind, "securacv");
+  assert.equal(r.label, "Arrived running Canary WAP");
+  assert.match(r.detail, /own claim, not proof/);
+  // The name is evidence SecuraCV was flashed, not that anyone configured it.
+  assert.doesNotMatch(r.detail, /set up before/);
+  // No worse than the Arduino reading the same firmware got up to 2.4.17.
+  assert.equal(r.level, shippedWith({ projectName: "arduino-lib-builder" }).level);
+  const flagship = { id: "securacv-canary", name: "Canary", asset_stem: "canary" };
+  assert.equal(shippedWith({ projectName: "my-canary-demo", product: flagship }).kind, "unknown");
+  assert.equal(shippedWith({ projectName: "canary-wap" }).kind, "unknown");
+});
+
+test("an Arduino descriptor is not called a stock image: SecuraCV up to 2.4.17, or built outside a release, reads that way too", () => {
+  const r = shippedWith({ projectName: "arduino-lib-builder" });
+  assert.equal(r.kind, "known");
+  assert.equal(r.level, "clear");
+  // Only the release workflows stamp: a 2.4.18 built from source and
+  // uploaded with PlatformIO is still `arduino-lib-builder`, so the line
+  // must not imply only an old SecuraCV reads this way.
+  assert.match(r.detail, /SecuraCV releases up to 2\.4\.17, and any SecuraCV build made outside a release, read this way too/);
+  assert.doesNotMatch(r.detail, /stock image/);
+  // Every other stock entry keeps the stock sentence.
+  assert.match(shippedWith({ projectName: "micropython" }).detail, /common stock image/);
 });
 
 test("an unrecognized image is flagged for a look, not called malware", () => {

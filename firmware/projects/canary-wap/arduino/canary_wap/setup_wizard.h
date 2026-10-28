@@ -9,8 +9,8 @@
  * the whole lifetime of the always-on AP — not just first boot — so a phone
  * that joins the management AP after provisioning (e.g. home WiFi dropped)
  * still resolves the device instead of being flagged "no internet" and
- * disconnected. The AP SSID ("SecuraCV-XXXX") is the same in setup and in
- * steady state.
+ * disconnected. The AP SSID ("SecuraCV-wap-XXXX") is the same in setup and
+ * in steady state.
  *
  * The first-boot *wizard* (NVS "setup_ok" absent → is_active()) is a separate
  * concern layered on top: it gates the setup-vs-dashboard landing and the

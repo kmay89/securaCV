@@ -49,6 +49,27 @@
  * held row writes no ceiling over the card rows after it; ambient rows are
  * never held; a broker change before the card opens drops what it holds.
  *
+ * F105, failing on the egress before its fix (the same proof): an ambient
+ * row is neither appended to the card nor published, with the link up or
+ * through an outage's backfill, and every one is counted; the ring keeps it.
+ * And an ambient line an older firmware left on the card is never replayed
+ * (sweep F105's review: fails on the egress before it).
+ *
+ * F92: a planned restart (csi_event_egress_flush_for_restart(), which
+ * main.cpp's deliberate_restart_now() calls through its
+ * flush_events_before_restart(), held there by check_event_egress_order.py
+ * rule 10) commits the open bundle and drains it, behind the row queued
+ * before it, to the broker and the card; in an outage it leaves the bundle
+ * on the card for the next boot's backfill; and a row that cannot go costs
+ * it the budget and no more. Each fails with the helper's body a bare
+ * `return true;` (the restart as it was), and with only one of its halves
+ * (the flush, the drain). F92's review added a restart with three rows
+ * queued and all eight bundle slots open: the queue is eight deep, so the
+ * helper drains it before it flushes, and eleven rows are more than a pump
+ * pass takes. It fails on the helper before the review (three bundles
+ * refused by the full queue), without that first drain, and with the
+ * drained test reduced to the hold (rows left queued).
+ *
  * F103's review added a line that lands without its newline: its append
  * fails, so the row waits in the hold, and the next append seals the line,
  * which the walk then sends. It reaches HA once, not from the card and again
@@ -308,6 +329,8 @@ static void noop_tick(const csi_features_t*) {}
 static const csi_event_decl_t EVENTS[] = {
   /* stateless: commits at once */
   { "ping", CSI_FIELD_NOTE | CSI_FIELD_TIME_BUCKET, CSI_PRIVACY_P0, 0 },
+  /* state-bearing: an open bundle until it closes (sweep F92's restart) */
+  { "state", CSI_FIELD_STATE_NAME | CSI_FIELD_TIME_BUCKET, CSI_PRIVACY_P0, 0 },
 };
 static const csi_module_t MODULE = {
   "test.egress", CSI_PRIVACY_P0, EVENTS, sizeof(EVENTS) / sizeof(EVENTS[0]),
@@ -330,6 +353,17 @@ static uint32_t emit_ping() {
   v.present_fields = CSI_FIELD_NOTE | CSI_FIELD_TIME_BUCKET;
   std::strcpy(v.note, "p");
   return csi_event_emit("test.egress", "ping", &v);
+}
+
+/* A state-bearing emit: it opens a bundle (the return is its handle, not an
+ * event id) and commits nothing until the bundle closes. */
+static uint32_t open_bundle(const char* state = "active") {
+  csi_event_values_t v;
+  csi_event_values_init(&v);
+  v.category = CSI_CATEGORY_EVENT;
+  v.present_fields = CSI_FIELD_STATE_NAME | CSI_FIELD_TIME_BUCKET;
+  std::strncpy(v.state_name, state, sizeof(v.state_name) - 1);
+  return csi_event_emit("test.egress", "state", &v);
 }
 
 [[maybe_unused]] static uint32_t emit_ambient() {
@@ -790,11 +824,94 @@ static void test_ambient_rows_are_not_held() {
   drain();
   CHECK(exactly(W.ha.accepted, {real}), "the real row arrives; no ambient row was held");
   CHECK(csi_event_egress_stats().ambient_dropped == 9,
-        "each ambient row that had to wait is counted (F109): health's ambient_dropped");
-  const uint32_t live = emit_ambient();
-  loop_pass();
-  CHECK(live != 0 && !W.ha.accepted.empty() && W.ha.accepted.back() == live, "after the wait an ambient row goes live");
-  CHECK(csi_event_egress_stats().ambient_dropped == 9, "one that went live is not counted");
+        "each ambient row is counted (F109): health's ambient_dropped");
+  CHECK(csi_event_egress_stats().held_dropped == 0, "and the hold dropped nothing");
+}
+
+/* The card's lines that carry `id` (csi_event_log_line.h's `"id":N,`). */
+static size_t card_lines_for(uint32_t id) {
+  const std::string& log = SD.files["/EVENTS/today.ndjson"];
+  const std::string key = "{\"id\":" + std::to_string(id) + ",";
+  size_t n = 0;
+  for (size_t at = log.find(key); at != std::string::npos; at = log.find(key, at + 1)) n++;
+  return n;
+}
+
+/* Sweep F105: csi_event.h says CSI_CATEGORY_AMBIENT is "never persisted,
+ * drives live UI only", and the egress appended every ambient row it drained
+ * to the card and published it whenever it could go at once (with the link
+ * up, and through an outage's backfill from the card). Now the commit hook
+ * drops each one after its privacy gate, before the queue, counted; the ring
+ * keeps it. Each check below but the ring's fails on the egress before F105. */
+static void test_ambient_rows_stay_off_the_card_and_the_broker() {
+  std::printf("-- F105: an ambient row reaches neither the card nor the broker; the ring keeps it\n");
+  fresh_device();
+  connect();
+  drain(4);                             // the card is open, the link up, nothing waits
+  const uint32_t a = emit_ambient();
+  drain(4);
+  CHECK(a != 0, "an ambient row commits");
+  CHECK(!has(W.wire, a), "with the link up it is not published");
+  CHECK(card_lines_for(a) == 0, "and no line of it is on the card");
+  csi_event_record_t r;
+  CHECK(csi_event_find(a, &r) && r.category == CSI_CATEGORY_AMBIENT, "the ring keeps it");
+  CHECK(csi_event_egress_stats().ambient_dropped == 1, "the hook's drop is counted");
+  const uint32_t p = emit_ping();
+  drain(4);
+  CHECK(exactly(W.ha.accepted, {p}) && W.ha.refused.empty(), "the next real row goes live, alone");
+
+  /* An outage with the card in: nothing ambient is logged, so nothing
+   * ambient is replayed when the broker comes back. */
+  W.connected = false;
+  std::vector<uint32_t> ids;
+  std::vector<uint32_t> ambient;
+  for (int i = 0; i < 3; ++i) {
+    ids.push_back(emit_ping()); loop_pass();
+    ambient.push_back(emit_ambient()); loop_pass();
+  }
+  CHECK(std::count(ambient.begin(), ambient.end(), 0u) == 0, "three ambient rows commit in the outage");
+  size_t on_card = 0;
+  for (uint32_t id : ambient) on_card += card_lines_for(id);
+  CHECK(on_card == 0, "none of them is on the card");
+  connect();
+  drain(40);
+  CHECK(exactly(W.ha.accepted, std::vector<uint32_t>{p, ids[0], ids[1], ids[2]}) && W.ha.refused.empty(),
+        "the backfill sends the three real rows, in order, and no ambient row");
+  CHECK(csi_event_egress_stats().ambient_dropped == 4, "each of the four is counted");
+}
+
+/* The other way an ambient row reached the broker: the card. The egress
+ * before F105 appended every ambient row it drained, so the first boot of
+ * this firmware can find them in a backlog an older one left unsent (sweep
+ * F105's review). The walk passes each one over, counted with the other
+ * lines it never sends (planner.unsendable). Fails on the egress before
+ * that review: the ambient line is replayed. */
+static void test_ambient_lines_an_older_firmware_logged_are_not_replayed() {
+  std::printf("-- F105: an ambient line an older firmware left on the card is never replayed\n");
+  fresh_device();
+  drain(4);                             // the card is open; the link is down
+  const uint32_t a = emit_ping(); loop_pass();
+  const uint32_t b = emit_ambient(); loop_pass();
+  const uint32_t c = emit_ping(); loop_pass();
+  csi_event_record_t amb;
+  CHECK(b != 0 && csi_event_find(b, &amb) && card_lines_for(b) == 0,
+        "an ambient row between two card rows, in the ring and not on the card");
+  /* The card as the egress before F105 wrote it: a, the ambient row, c. */
+  char line[csi_event_log_line::kLineMax];
+  const size_t n = csi_event_log_line::marshal(&amb, line, sizeof(line));
+  std::string& log = SD.files["/EVENTS/today.ndjson"];
+  const size_t after_a = log.find('\n') + 1;
+  CHECK(n > 0 && card_lines_for(a) == 1 && card_lines_for(c) == 1 && after_a > 0,
+        "the card holds a and c");
+  log.insert(after_a, std::string(line, n));
+  CHECK(card_lines_for(b) == 1, "and, as an older firmware left it, the ambient line between them");
+  boot();                               // the upgrade's reboot, before the broker returns
+  connect();
+  drain(40);
+  CHECK(exactly(W.ha.accepted, {a, c}) && W.ha.refused.empty() && !has(W.wire, b),
+        "the backfill sends a and c, in order, and not the ambient line");
+  CHECK(csi_event_egress_stats().planner.unsendable == 1,
+        "the ambient line is counted with the lines the walk never sends");
 }
 
 static void test_broker_change_before_the_card_opens() {
@@ -1334,6 +1451,113 @@ static void test_failed_append_as_the_card_opens_waits_behind_the_hold() {
 
 /* ── main ──────────────────────────────────────────────────────────────── */
 
+/* ── F92: a planned restart flushes open bundles, then drains ─────────── */
+
+/* main.cpp's deliberate_restart_now() (POST /api/reboot, serial 'x'), as far
+ * as the egress sees it: csi_event_egress_flush_for_restart() with the
+ * restart budget, then the reboot. check_event_egress_order.py rule 10 holds
+ * main.cpp to that call, before the chain persist and the MQTT disconnect. */
+static bool planned_restart() {
+  const bool drained = csi_event_egress_flush_for_restart(kCsiEventEgressRestartBudgetMs);
+  boot();
+  return drained;
+}
+
+/* Sweep F92: a bundle lives in RAM until it closes, up to ten minutes, and
+ * no planned restart closed one first, so a POST /api/reboot lost every open
+ * row (a presence state, an anomaly's two minutes), and the rows waiting in
+ * the egress's queue and hold with it. Each scenario fails with the restart
+ * as it was (the helper's body a bare `return true;`: nothing flushed,
+ * nothing pumped), and the first two with either half of it alone. */
+static void test_a_planned_restart_delivers_the_open_bundle() {
+  std::printf("-- F92: a planned restart commits the open bundle and drains it to the card and the broker\n");
+  fresh_device();
+  connect();
+  drain(4);                              // the card is open, the link up, nothing waits
+  const uint32_t before = emit_ping();   // committed, still in the egress queue
+  const uint32_t handle = open_bundle();
+  CHECK(handle != 0 && handle < csi_event_id_floor::kIdSpaceBase, "a bundle is open (a handle, no event id)");
+  const uint32_t next = csi_event_get_next_event_id();
+  CHECK(planned_restart(), "the flush drains: nothing is left in the queue or the hold");
+  CHECK(exactly(W.ha.accepted, {before, next}) && W.ha.refused.empty(),
+        "the queued row, then the bundle, reach HA before the restart, in id order");
+  CHECK(card_lines_for(next) == 1, "and the bundle is on the card");
+  drain(20);
+  CHECK(W.wire.size() == 2, "after the restart nothing is sent twice");
+}
+
+static void test_a_planned_restart_in_an_outage_keeps_the_bundle_owed() {
+  std::printf("-- F92: in an outage the flushed bundle goes onto the card, and after the restart it is replayed\n");
+  fresh_device();
+  drain(4);                              // the card is open; the link is down
+  (void)open_bundle("empty");
+  const uint32_t next = csi_event_get_next_event_id();
+  CHECK(planned_restart(), "the flush drains onto the card");
+  CHECK(card_lines_for(next) == 1, "the bundle is on the card");
+  connect();
+  drain(40);
+  CHECK(exactly(W.ha.accepted, {next}) && W.ha.replay.back() == true,
+        "after the restart the backfill sends it, as a replay");
+}
+
+/* Sweep F92's review: the egress queue holds eight rows, as many as the
+ * bundler has slots, and the flush commits every open slot at once. With
+ * rows still queued it found the queue full and its last commits were
+ * refused (`dropped`, then lost to the restart), so the helper drains the
+ * queue before it flushes. Eleven rows wait at the restart, more than one
+ * pump pass takes, so the drained test must also see the queue empty, not
+ * just the hold. Fails on the helper before the review (three bundles
+ * dropped), and with its drained test reduced to the hold. */
+static void test_a_planned_restart_with_every_slot_open_drops_nothing() {
+  std::printf("-- F92: a planned restart with rows queued and every bundle slot open loses none\n");
+  fresh_device();
+  connect();
+  drain(4);                              // the card is open, the link up, nothing waits
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 3; ++i) ids.push_back(emit_ping());   // committed, no pump between
+  int opened = 0;
+  for (int i = 0; i < 8; ++i) {
+    const std::string state = "s" + std::to_string(i);
+    if (open_bundle(state.c_str()) != 0) opened++;
+  }
+  CHECK(opened == 8, "eight bundles open, one per slot");
+  const uint32_t next = csi_event_get_next_event_id();
+  for (uint32_t k = 0; k < 8; ++k) ids.push_back(next + k);
+  CHECK(csi_event_egress_flush_for_restart(kCsiEventEgressRestartBudgetMs),
+        "the flush drains: nothing is left in the queue or the hold");
+  CHECK(csi_event_get_next_event_id() == next + 8, "the eight bundles committed");
+  CHECK(csi_event_egress_stats().dropped == 0, "the egress queue refused none of them");
+  CHECK(exactly(W.ha.accepted, ids) && W.ha.refused.empty(),
+        "all eleven reach HA before the restart, in id order");
+  boot();
+  connect();
+  drain(40);
+  CHECK(W.wire.size() == ids.size(), "after the restart nothing is sent twice");
+}
+
+/* The drain is bounded: a row that cannot go (here, one held for a card
+ * that may still mount, the first 45 s after boot) costs the budget, about
+ * a second, and the restart goes on. */
+static void test_a_planned_restart_is_bounded() {
+  std::printf("-- F92: a row that cannot go costs the restart its budget and no more\n");
+  fresh_device();
+  W.mounted = false;                     // a card in, its boot mount still running
+  boot();
+  connect();
+  loop_pass();
+  (void)open_bundle();
+  const uint32_t t0 = stub_millis();
+  const unsigned delays0 = stub_delays();
+  CHECK(!csi_event_egress_flush_for_restart(kCsiEventEgressRestartBudgetMs),
+        "the held bundle is still waiting for the card: not drained");
+  const uint32_t took = stub_millis() - t0;
+  CHECK(took >= kCsiEventEgressRestartBudgetMs && took < kCsiEventEgressRestartBudgetMs + 50,
+        "it gave up after the budget");
+  CHECK(stub_delays() - delays0 <= kCsiEventEgressRestartBudgetMs / 10 + 1,
+        "pumping at most once per 10 ms between passes");
+  CHECK(W.ha.accepted.empty(), "and nothing overtook the card it waits for");
+}
+
 int main() {
   Serial.quiet = true;
   csi_event_test_reset();
@@ -1363,6 +1587,12 @@ int main() {
   test_held_row_goes_before_a_newer_card_row();
   test_held_rows_cover_no_card_rows_after_them();
   test_ambient_rows_are_not_held();
+  test_ambient_rows_stay_off_the_card_and_the_broker();
+  test_ambient_lines_an_older_firmware_logged_are_not_replayed();
+  test_a_planned_restart_delivers_the_open_bundle();
+  test_a_planned_restart_in_an_outage_keeps_the_bundle_owed();
+  test_a_planned_restart_with_every_slot_open_drops_nothing();
+  test_a_planned_restart_is_bounded();
   test_broker_change_before_the_card_opens();
   test_card_closes_long_after_boot();
   test_card_out_for_a_remount();

@@ -150,13 +150,21 @@ the *top of the real part* and holds something other than the head. Two unequal
 blocks, counterfeit declared genuine. The first version of this shipped that
 bug; the addresses that actually alias offset 0 are the **candidate capacities
 themselves**, because on a real 4 MB die address `0x400000` *is* address 0. So
-we read 4 KB at each power-of-two capacity below the declared size and look for
+we read 8 KB at each power-of-two capacity below the declared size and look for
 the one that mirrors the head. The smallest hit is the true size, and we name
 it.
 
 The probe is only conclusive when offset 0 holds something distinguishable. On
 a blank chip every read is `0xFF` and a mirror is indistinguishable from an
-honest chip, so the verdict is **inconclusive**, never an accusation.
+honest chip, so the verdict is **inconclusive**, never an accusation. The
+window is 8 KB, not 4, because a classic ESP32 (the ESP32-CAM, the WROOM
+DevKit) keeps its bootloader at `0x1000`: on a correctly installed one the
+first 4 KB are erased flash, and a 4 KB window read every such board as blank
+and could never catch a mirrored one. Both flashers read the same window
+(`intake.js` `FLASH_ALIAS_WINDOW`, `intake.rs` `ALIAS_WINDOW`; held equal by
+`desktop_parity.test.js`, which also holds the window past every offset in the
+flashers' ROM bootloader table, so a chip that loads from `0x2000` cannot join
+the table before the window grows).
 
 ### 3. The MAC
 
@@ -175,10 +183,24 @@ board. (Read for *description*, never for a trust decision: see the
 first-contact rule below for why that distinction matters.) A partition sector
 we read and found empty is a blank chip; one we could not read at all is
 reported **unchecked**, because letting a failed read render as "arrived
-erased" would turn missing evidence into the cleanest verdict on the page. MicroPython, CircuitPython, ESP-AT, Arduino, ESPHome, Tasmota and the
-usual factory blink sketches are named as known stock. Anything else is
+erased" would turn missing evidence into the cleanest verdict on the page. MicroPython, CircuitPython, ESP-AT, ESPHome, Tasmota and the
+usual factory blink sketches are named as known stock; an Arduino build is
+named too, but not called stock (below). Anything else is
 reported as *unrecognized*, which is an invitation to look at the backup before
 erasing, not an accusation.
+
+Two names need more care. A SecuraCV release after 2.4.17 stamps the
+product's `asset_stem` into the descriptor
+([`stamp_app_desc.py`](../firmware/scripts/stamp_app_desc.py)), and a project
+name equal to a catalog stem reads as that product ("Arrived running Canary
+WAP"), with the reminder that the name is the image's own claim; a name that
+only contains a stem is unrecognized. And `arduino-lib-builder` is what the
+Arduino core's libraries call every Arduino build, SecuraCV's releases up to
+2.4.17 included, and so is any SecuraCV build made outside a release (only the
+release workflows stamp: `pio run -t upload`, `dev_flash.sh` and an OTA push
+do not), so that finding says the check cannot tell the two apart rather than
+calling it a stock image. Both flashers word these alike
+(`desktop_parity.test.js`).
 
 We do **not** claim a corpus of known-good image hashes. We don't have one, and
 inventing hashes we can't verify would be worse than saying nothing.
@@ -247,13 +269,45 @@ assumed:
 So the app speaks the read-only sliver of the ROM serial protocol itself
 ([`desktop/src-tauri/src/efuse.rs`](../desktop/src-tauri/src/efuse.rs)),
 over the same `serialport` link the WE2 flasher and the monitor use: reset
-into the bootloader with the sequences the vendored esptool-js uses (the
-classic bridge sequence first, the USB-Serial/JTAG sequence if that finds
-nothing), `SYNC`, six `READ_REG`s at eFuse block 0, then a hard reset back
-into the firmware. Those are the only two commands the module can send —
-nothing in it writes, burns or uploads a stub — and a probe that cannot
-reach the ROM reports "not checked", never "clean". The flash engine stays
+into the bootloader with the sequences the vendored esptool-js uses, chosen
+by the port as it and the pinned espflash choose (a chip's own
+USB-Serial/JTAG port, `0x303A:0x1001`, gets only its own sequence; any
+other port gets the classic bridge sequence first and the USB-Serial/JTAG
+sequence if that finds nothing), `SYNC`, six `READ_REG`s at eFuse block 0.
+Those are the only two commands the module can send — nothing in it
+writes, burns or uploads a stub — and a probe that cannot reach the ROM
+reports "not checked", never "clean". The flash engine stays
 espflash-the-CLI; this is six register reads, not a second flasher.
+
+The read does **not** end by resetting the board into its firmware, on
+success or on failure. The button sits under the hold-BOOT instructions,
+and a board brought up that way must not be handed to the firmware the
+gesture kept from running. So the read parks DTR and RTS released (a state
+that resets nothing, and the one a closing port leaves them in on Linux and
+macOS) and stops there, esptool's `--after no_reset`. After a good read the
+chip stays in the ROM's download mode until the install, which resets into
+the ROM itself, or until it is unplugged. It used to end in a hard reset,
+which handed a BOOT-held board to that firmware before anything was
+written.
+
+Getting into the ROM is a reset too, which is why the port picks the
+sequence. A BOOT-held S3, C3 or C6 presents its USB-Serial/JTAG port. The
+classic sequence's first move there holds RTS alone, which is that port's
+hard reset (espflash's `reset_after_flash` for that PID makes the same
+move), and it releases the reset with both lines asserted before it has
+asked for IO0; a bridge board's RC delay on EN covers that gap, and the USB
+peripheral has none. The read used to run it first on every port, so on a
+native-USB board the firmware most likely ran through the failed `SYNC`s
+until the second sequence pulled it back, if its port survived. Any other
+port keeps the old order, and there a classic sequence that misses the ROM
+is still followed by the USB-Serial/JTAG one, which on a bridge board
+starts the firmware; behind a bridge it can only ever be a serial port.
+
+The browser's matching path was its live voice, which boots a board with
+readable firmware on the hello card. It now starts only for a board you
+said was already plugged in, not one you held BOOT on or didn't answer for
+(the serial monitor still boots it, on a click), and the answer is asked
+afresh on each connect card instead of carrying over to the next board.
 
 The decode is a port of the browser's `intake.js`: the same fields, bit
 offsets and widths, the same parity rule for `SPI_BOOT_CRYPT_CNT`, the same
@@ -276,8 +330,11 @@ sidecar with its own interpreter and pins.
 
 **Not bench-verified on hardware yet** (U1): the frames, the decode and the
 reset sequences are host-tested against the vendored esptool-js
-implementation, not proven on a physical board. A protocol mistake fails as
-"not checked", not as a wrong verdict.
+implementation, and the choice of sequence by port and the line moves after
+the read (the park, and nothing else) against a scripted board; none of it
+is proven on a physical board. That a native-USB board held in BOOT is
+still in the ROM after the read is the bench check this owes. A protocol
+mistake fails as "not checked", not as a wrong verdict.
 
 The desktop app **can** now read what firmware is resident: `board_passport`
 reads the partition table, otadata and the booted slot's `esp_app_desc_t` over

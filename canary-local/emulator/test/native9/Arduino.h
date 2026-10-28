@@ -4,7 +4,10 @@
 // splash's storyboard (each test defines it), delay() for the splash's pump
 // (glass_splash_lvgl9_test.cpp defines it), and a Serial whose printf the
 // test reads (the port logs a refused turn). Nothing else of the core is
-// reached from those sources.
+// reached from those sources. glass_turn.sh's LVGL 8.4 splash suites
+// (glass_splash_test.cpp, F185) compile the same sources against these
+// stand-ins too; LVGL 8.4 reads millis() through lv_conf.h's
+// LV_TICK_CUSTOM, from its own C objects built against the emulator's shim.
 #pragma once
 #include <stdarg.h>
 #include <stdint.h>

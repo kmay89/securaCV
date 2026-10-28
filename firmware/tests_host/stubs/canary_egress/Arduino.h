@@ -1,8 +1,9 @@
 /* Arduino.h for test_canary_event_egress.cpp: the canary's REAL
  * src/csi_event_egress.cpp and src/csi_event_log.cpp on the host. Serial
  * prints to stdout (quiet by default: the suite prints its own lines), and
- * millis() is a clock the test moves, so the backfill's pacing and the
- * egress's card wait are the test's to drive. psramFound()/ps_malloc() as
+ * millis() is a clock the test moves (and delay() moves it), so the
+ * backfill's pacing, the egress's card wait and its restart budget are the
+ * test's to drive. psramFound()/ps_malloc() as
  * on a board without PSRAM. */
 #ifndef STUB_CANARY_EGRESS_ARDUINO_H
 #define STUB_CANARY_EGRESS_ARDUINO_H
@@ -34,6 +35,16 @@ inline uint32_t& stub_millis() {
   return ms;
 }
 inline uint32_t millis() { return stub_millis(); }
+/* delay() moves the clock (csi_event_egress_flush_for_restart() waits
+ * between its pumps, sweep F92), counted. */
+inline unsigned& stub_delays() {
+  static unsigned n = 0;
+  return n;
+}
+inline void delay(uint32_t ms) {
+  stub_delays()++;
+  stub_millis() += ms;
+}
 
 inline bool psramFound() { return false; }
 inline void* ps_malloc(size_t n) { return malloc(n); }

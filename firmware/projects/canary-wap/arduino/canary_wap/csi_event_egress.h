@@ -21,15 +21,26 @@
  * the card on whichever task committed, while the backfill ran on the loop
  * task, and both wrote the watermark with no lock between them.
  *
+ * Ambient rows (wifi.channel_activity's channel_active) never reach the
+ * queue (sweep F105): csi_event.h's contract for CSI_CATEGORY_AMBIENT is
+ * "never persisted, drives live UI only", so on_committed() drops each one,
+ * counted (Stats::ambient_dropped). They go to neither the card nor the
+ * `events` topic; the in-memory ring, the stream snapshot and the Today
+ * sheet keep them, as before. The egress before F105 logged them on the
+ * card, so a backlog an older firmware left can hold ambient lines: the
+ * backfill passes each one over (WapPort::send_backfill), counted in
+ * planner.unsendable.
+ *
  * Order. Home Assistant's replay gate refuses an event_id below the last
  * one it verified, so a row that overtakes an older one gets the older one
  * refused. A row goes out live only when nothing older waits:
- *   - a row the SD log keeps (a ring row: stateless and ambient commits) is
- *     appended to the card; if anything older is still waiting, on the card
- *     or in RAM, it waits on the card and the backfill sends it in turn;
- *   - a row the card does not keep (a closed bundle, which never enters the
- *     ring, backlog F77; any row while the card is not open; a row whose
- *     append failed) waits in RAM, at most kHeldMax of them, oldest dropped
+ *   - a row the SD log keeps (a ring row: a stateless commit or, since
+ *     sweep F77, a closed bundle) is appended to the card; if anything older
+ *     is still waiting, on the card or in RAM, it waits on the card and the
+ *     backfill sends it in turn;
+ *   - a row the card does not keep (any row while the card is not open, a
+ *     row whose append failed; until sweep F77 put them in the ring, every
+ *     closed bundle) waits in RAM, at most kHeldMax of them, oldest dropped
  *     first, while anything older waits or the link is down, and goes out in
  *     id order with the card's rows. "Anything older" includes a card that is
  *     not open but may hold older rows: from boot until its log first opens
@@ -37,10 +48,6 @@
  *     it until it opens again (an SD error's remount). That wait is bounded
  *     by kCardWaitMs; past it the RAM rows go, and rows still on a card that
  *     comes back later are skipped (HA would refuse them).
- *   - an ambient row (csi_event.h: "never persisted, drives live UI only")
- *     is never held in RAM: one that cannot go out now is dropped, counted.
- *     With a card in, ambient rows are still logged and replayed like any
- *     ring row (open question, filed with the sweep).
  * On reconnect the backfill walks the card from the watermark, a bounded
  * amount per loop pass, and, while the card stays open or comes back within
  * kCardWaitMs, nothing committed meanwhile overtakes it. With no broker
@@ -107,6 +114,34 @@ void on_committed(uint32_t                  event_id,
  * card. */
 void pump();
 
+/* csi_event_egress::flush_for_restart()'s budget at every planned restart
+ * (sweep F92): one second, well inside the loop task's 8 s watchdog
+ * (WATCHDOG_TIMEOUT_SEC in canary_wap.ino), so a stalled broker delays a
+ * restart by about a second. The canary's kCsiEventEgressRestartBudgetMs. */
+constexpr uint32_t kRestartBudgetMs = 1000;
+
+/* Loop task, right before a planned restart (sweep F92): canary_wap.ino's
+ * flush_events_before_restart(), which POST /api/reboot (deferred to the
+ * loop) and the provisioning grace reboot run, each ahead of its chain
+ * persist (the flushed bundles' witness records advanced the head).
+ * Pumps the queue empty first (more than eight rows can already wait in
+ * it, and a full slot table closing onto them would overflow its sixteen),
+ * then commits every open CSI bundle (csi_event_flush_bundles(): each takes
+ * its event id and queues here, its witness record written on this task),
+ * then runs pump() until the queue is empty and the RAM hold has gone, or
+ * budget_ms has passed since the call (one budget for all three steps),
+ * whichever is first, with a short delay between passes. Bounded: a broker
+ * that does not answer, a hold waiting for a card or behind a backlog the
+ * backfill is still walking costs the budget and no more (each pass is the
+ * loop's own pump, as bounded as on any pass; the caller resets the
+ * watchdog first). What is still in the queue or the hold
+ * then is lost to the restart, as before. Rows on the card stay owed, but
+ * for up to kStride ids a walk in progress had already covered with its
+ * NVS ceiling (F47's trade: the next boot reads them as delivered).
+ * Returns true when the queue and the hold were empty. Before begin(), it
+ * only commits the bundles. */
+bool flush_for_restart(uint32_t budget_ms);
+
 /* The delivery watermark: the highest event id handed to the MQTT layer
  * or given up (csi_event_backfill.h), restored at boot to just under the
  * NVS ceiling (see above), so after a reboot it can stand up to kStride
@@ -122,7 +157,7 @@ uint32_t watermark();
 struct Stats {
   uint32_t dropped;          /* commits the full queue refused */
   uint32_t held_dropped;     /* rows the RAM hold dropped, oldest first */
-  uint32_t ambient_dropped;  /* ambient rows that could not go out at once (never held) */
+  uint32_t ambient_dropped;  /* ambient rows on_committed() dropped: every one (sweep F105) */
   uint32_t unsent_dropped;   /* rows not on the card lost unsent: a body that would not
                                 build (a row the MQTT layer refuses waits in the RAM hold;
                                 on the canary its offline queue can refuse one outright) */

@@ -211,7 +211,7 @@ If NimBLE initialization fails (no antenna, hardware fault):
 - Firmware continues operating with WiFi AP, GPS, camera, and witness chain
 - Dashboard shows "BLE Unavailable" status
 - No watchdog resets from BLE failures
-- The setup door (section 13) stays a no-op too; the `SecuraCV-XXXX` setup network is the way in
+- The setup door (section 13) stays a no-op too; the `SecuraCV-<kind>-XXXX` setup network is the way in
 
 ## 13. The setup door (Improv Wi-Fi over BLE)
 
@@ -236,7 +236,7 @@ The fleet presence beacon (section 5's manufacturer-data format, type `0x10`) st
 
 | | Door shut | Door open |
 |---|---|---|
-| Primary | the fleet beacon | the fleet beacon with **`FLEET_BEACON_FLAG_SETUP_OPEN`** (bit 5, `0x20`), the flags AD and a short name `WAP-AB12` (Sense: `Sense-AB12`, Vision: `Vision-AB12`) — on a Sense or Vision the same four hex characters as the device's `SecuraCV-XXXX` setup network; on a WAP the last four hex of its key fingerprint, as its `SCV-XXXX` name |
+| Primary | the fleet beacon | the fleet beacon with **`FLEET_BEACON_FLAG_SETUP_OPEN`** (bit 5, `0x20`), the flags AD and a short name `WAP-AB12` (Sense: `Sense-AB12`, Vision: `Vision-AB12`) — on a Sense or Vision the same four hex characters as the device's `SecuraCV-<kind>-XXXX` setup network; on a WAP the last four hex of its key fingerprint, as its `SCV-XXXX` name |
 | Connectable | WAP: yes, the pairing channel as before. Sense / Vision: **no** | yes |
 | Scan response | WAP: Opera's own (the `SCV-XXXX` name + the SecuraCV service UUID). Sense / Vision: none | the Improv service UUID + the 6-byte `0x4677` service data |
 

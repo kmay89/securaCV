@@ -186,6 +186,24 @@ class Groups(unittest.TestCase):
         self.assertEqual(lab_groups["Tight"]["note"], "")
 
 
+class SplitLines(unittest.TestCase):
+    """The Lab's parser reads one assignment per line and skips a line that
+    holds two. C10c-2 split such lines one knob per line, so the Lab lists
+    knobs it never showed."""
+
+    def test_the_169_skirt_reaches_the_lab_with_its_own_help(self):
+        # Before the split, `skirt_wall = 1.6; skirt_dep = back_stack;
+        # // must not exceed back_stack` was one line, and the Lab listed
+        # neither knob.
+        lab = {p["name"]: p for g in LAB_PARSE(ENC / "canary_s3_touch169.scad")["groups"]
+               for p in g["params"]}
+        missing = {"skirt_wall", "skirt_dep"} - lab.keys()
+        self.assertEqual(missing, set(), "the Lab should list both skirt knobs")
+        help_text = lab["skirt_wall"].get("comment", "")
+        self.assertIn("skirt", help_text)
+        self.assertNotIn("back_stack", help_text)
+
+
 class Binding(unittest.TestCase):
     """GROUP_RE reaches the generator's parse_scad by one road: the import
     from gen_builder_manifest. Any other binding of the name anywhere in

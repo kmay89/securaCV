@@ -137,6 +137,7 @@
           <div id="dev-banner" class="dev-banner hidden" role="status">
             <strong>DEV CHANNEL</strong>
             <span>— <span class="mono">fw-dev-latest</span>, not the pinned stable release.
+              <span id="dev-standing"></span>
               Turn it off under Advanced to go back.</span>
           </div>
 
@@ -662,9 +663,10 @@
             <details class="hint" id="adv-dev">
               <summary>Dev channel — flash the rolling prerelease</summary>
               <p>Dev images come from the rolling <span class="mono">fw-dev-latest</span>
-                prerelease — cut ahead of stable, checked exactly the same way (chip
-                guard, SHA-256, and the release signature once the signing ceremony
-                lands). The toggle can only ever mean <span class="mono">fw-dev-latest</span>;
+                prerelease: usually the newest dev build, or the stable one when none is
+                newer (the banner says which version), checked exactly the same way (chip
+                guard, SHA-256, and the release signature). The toggle can only ever mean
+                <span class="mono">fw-dev-latest</span>;
                 it is not a way to point at an arbitrary manifest.</p>
               <label class="check"><input type="checkbox" id="dev-channel">
                 Use the dev channel</label>

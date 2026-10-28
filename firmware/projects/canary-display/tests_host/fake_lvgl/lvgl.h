@@ -183,6 +183,10 @@ struct _lv_obj_t {
   int long_mode;              // a label's lv_label_set_long_mode
   int text_align;             // LV_STYLE_TEXT_ALIGN
   lv_coord_t radius;          // LV_STYLE_RADIUS
+  // LV_STYLE_TRANSFORM_ANGLE and _PIVOT_X/_Y as set (px; LVGL's default
+  // pivot is 0, the box's top-left corner). Nothing is turned here: the
+  // box stays the laid-out one, as lv_obj_get_coords reports it in LVGL.
+  lv_coord_t angle, pivot_x, pivot_y;
   uint32_t bg_color;          // LV_STYLE_BG_COLOR
   uint32_t text_color;        // LV_STYLE_TEXT_COLOR as set on the object
   bool text_color_set;        // (not inherited: the test reads what it set)
@@ -215,6 +219,7 @@ inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {
   o->long_mode = LV_LABEL_LONG_WRAP;
   o->text_align = LV_TEXT_ALIGN_AUTO;
   o->radius = 0;
+  o->angle = o->pivot_x = o->pivot_y = 0;
   o->bg_color = 0;
   o->text_color = 0;
   o->same_text_sets = 0;
@@ -351,7 +356,15 @@ inline void lv_obj_set_style_border_width(lv_obj_t* o, lv_coord_t w, lv_style_se
   o->border = w;
 }
 inline void lv_obj_set_style_border_color(lv_obj_t*, lv_color_t, lv_style_selector_t) {}
-inline void lv_obj_set_style_transform_angle(lv_obj_t*, lv_coord_t, lv_style_selector_t) {}
+inline void lv_obj_set_style_transform_angle(lv_obj_t* o, lv_coord_t a, lv_style_selector_t) {
+  o->angle = a;
+}
+inline void lv_obj_set_style_transform_pivot_x(lv_obj_t* o, lv_coord_t x, lv_style_selector_t) {
+  o->pivot_x = x;
+}
+inline void lv_obj_set_style_transform_pivot_y(lv_obj_t* o, lv_coord_t y, lv_style_selector_t) {
+  o->pivot_y = y;
+}
 inline void lv_obj_set_style_pad_all(lv_obj_t* o, lv_coord_t p, lv_style_selector_t) {
   o->pad = p;
 }

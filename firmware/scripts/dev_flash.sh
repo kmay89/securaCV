@@ -101,10 +101,17 @@ pio run -e "$ENV_NAME" "${TARGETS[@]}"
 
 if [ "$FACTORY" = 1 ]; then
   BUILD_DIR=".pio/build/$ENV_NAME"
-  # board_build.mcu is authoritative for the merge tool's --chip.
+  # The merge tool's --chip: the env's board_build.mcu when it sets one, else
+  # `auto`. The chip also decides where the bootloader sits in the image
+  # (0x1000 on a classic ESP32, 0x0 on the S3/C3/C6), so a guess here is a
+  # board that never boots: the classic-ESP32 reach envs (esp32cam,
+  # esp32-wroom) take their chip from `board =` and set no mcu, and the old
+  # `esp32s3` fallback named the wrong one. `auto` reads the chip out of
+  # bootloader.bin's image header, and make_factory.py refuses a --chip that
+  # disagrees with that header either way.
   CHIP="$(pio project config --json-output 2>/dev/null \
-    | python3 -c "import json,sys; d=json.load(sys.stdin); print(dict(dict(d)['env:$ENV_NAME']).get('board_build.mcu','esp32s3'))" \
-    || echo esp32s3)"
+    | python3 -c "import json,sys; d=json.load(sys.stdin); print(dict(dict(d)['env:$ENV_NAME']).get('board_build.mcu','auto'))" \
+    || echo auto)"
   OUT="$BUILD_DIR/${ENV_NAME}-factory.bin"
   python3 "$REPO/firmware/scripts/make_factory.py" \
     --chip "$CHIP" --build-dir "$BUILD_DIR" --out "$OUT"

@@ -207,6 +207,16 @@ export function efuseFindings(scan) {
 // distinguishable. On a blank (all-0xFF) chip both ends match legitimately, so
 // we say "inconclusive" rather than crying fraud — and the caller can re-run
 // it after the write, when the bootloader gives the head a fingerprint.
+//
+// The head is 8 KB, not 4: a classic ESP32 (and an S2) keeps its bootloader at
+// 0x1000, so on a correctly installed one the first 4 KB are erased flash and
+// a 4 KB head would read as a blank chip forever. 8 KB reaches the bootloader
+// on every chip the flashers' ROM bootloader table lists (flash-core.js
+// ROM_BOOTLOADER); a chip that loads it from 0x2000 (the C5, the P4) needs a
+// wider window. The desktop twin (intake.rs ALIAS_WINDOW) reads the same
+// window; desktop_parity.test.js holds the two equal, and past the table.
+export const FLASH_ALIAS_WINDOW = 0x2000;
+
 export function looksUniform(bytes) {
   if (!bytes || bytes.length === 0) return true;
   const first = bytes[0];
@@ -329,11 +339,21 @@ export function duplicateMacCheck(roster, mac) {
 // strings read off the board, not hashes of images we'd have to claim to have
 // cataloged. Anything unmatched is reported as unrecognized, which is an
 // invitation to look at the backup, not a verdict.
+//
+// The Arduino entry carries its own detail: the Arduino core's libraries name
+// every Arduino build `arduino-lib-builder`, SecuraCV's releases up to 2.4.17
+// included, so that name is no evidence of a stock image. Releases after it
+// carry the product's asset_stem instead (firmware/scripts/stamp_app_desc.py);
+// only the release workflows stamp, so a SecuraCV build made anywhere else
+// (`pio run -t upload`, dev_flash.sh, an OTA push) still reads as Arduino.
 export const KNOWN_STOCK = [
   { match: /^micropython/i, name: "MicroPython" },
   { match: /^circuitpython/i, name: "CircuitPython" },
   { match: /^(esp-at|at)$/i, name: "Espressif AT firmware" },
-  { match: /^arduino/i, name: "an Arduino sketch" },
+  { match: /^arduino/i, name: "an Arduino sketch",
+    detail: "Many boards ship with one. SecuraCV releases up to 2.4.17, and any SecuraCV build " +
+            "made outside a release, read this way too, because their descriptor names the " +
+            "Arduino core and not the product, so this check can't tell the two apart." },
   { match: /^esphome/i, name: "ESPHome" },
   { match: /^tasmota/i, name: "Tasmota" },
   { match: /^(hello[-_ ]?world|blink)/i, name: "a factory test sketch" },
@@ -344,7 +364,12 @@ export const KNOWN_STOCK = [
 // from what we found in those bytes — treating a failed read as an empty chip
 // would turn missing evidence into the single cleanest verdict on the page,
 // which is the exact inversion this whole module exists to avoid.
-export function shippedWith({ projectName, blank, read = "ok" } = {}) {
+//
+// `product` is the catalog product the caller matched the project name to
+// (matchProjectToProduct). It counts only when the name IS that product's
+// asset_stem, the identity a SecuraCV release stamps into the descriptor:
+// a substring match ("my-canary-demo") is somebody else's image.
+export function shippedWith({ projectName, product, blank, read = "ok" } = {}) {
   if (read !== "ok") {
     return { level: "inconclusive", kind: "unread",
       label: "We couldn't read what's on the chip",
@@ -362,11 +387,17 @@ export function shippedWith({ projectName, blank, read = "ok" } = {}) {
       detail: "There's something on the chip but no readable app descriptor. The full erase " +
               "below removes it either way; the backup keeps a copy if you want to look." };
   }
+  if (product && product.asset_stem === projectName) {
+    return { level: "clear", kind: "securacv", name: product.name,
+      label: `Arrived running ${product.name}`,
+      detail: "Its descriptor names a SecuraCV release, so SecuraCV was likely installed on it " +
+              "before. That name is the image's own claim, not proof of what it runs." };
+  }
   const hit = KNOWN_STOCK.find((k) => k.match.test(projectName));
   if (hit) {
     return { level: "clear", kind: "known", name: hit.name,
       label: `Arrived running ${hit.name}`,
-      detail: "A common stock image for boards sold this way." };
+      detail: hit.detail || "A common stock image for boards sold this way." };
   }
   return { level: "attention", kind: "unknown", name: projectName,
     label: `Arrived running “${projectName}” — we don't recognize it`,

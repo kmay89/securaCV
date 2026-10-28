@@ -7,7 +7,15 @@
 #   securacv.com    = adoption path: point a custom domain at Pages
 #                     (Settings → Pages → Custom domain), or copy the
 #                     built site folder onto any static host — the pages
-#                     are self-contained and fetch nothing external.
+#                     are self-contained and fetch nothing external. That
+#                     includes the flasher's firmware: the releases it pins
+#                     are mirrored into the site below, because a browser
+#                     cannot read a github.com release asset at all.
+#
+# Besides main pushes, the release workflows dispatch this one after they
+# publish (firmware-release.yml, flasher-release.yml, vision-model-release.yml):
+# a release CI publishes with the GITHUB_TOKEN fires no event, and the push
+# deploy that merged a version bump ran before its release existed.
 #
 # One-time setup: a repo admin must enable Pages once — Settings → Pages
 # → Source → "GitHub Actions" (github.com/kmay89/securaCV/settings/pages).
@@ -38,7 +46,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
-    timeout-minutes: 15
+    # ~80 MB of release assets now ride every deploy (the mirror step below);
+    # a healthy run is a few minutes.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -73,6 +83,32 @@ jobs:
           <title>canary.local</title>
           <a href="canary-local/">canary.local — meet your Canary</a>
           EOF
+      # The browser flasher (canary-local/flash.html) cannot fetch a GitHub
+      # release: github.com answers /releases/download/ with a redirect that
+      # carries no Access-Control-Allow-Origin, and the asset host behind it
+      # sends none either, so the browser refuses every manifest and image
+      # (.github/RELEASE_LESSONS.md, 2026-10-27). So the releases the page pins
+      # are copied into the site and served from its own origin, at
+      # canary-local/firmware/<tag>/<file>, the only place flash-core.js reads
+      # them: flash.json's manifest_url (an exact fw-v* tag), the Vision model's
+      # manifest (we2_module.manifest_url), the dev channel's rolling
+      # fw-dev-latest manifest (flash-core.js DEV_FLASH_MANIFEST_URL), and
+      # every file each manifest lists. Manifests are copied byte for byte (the
+      # page checks the Ed25519 image signatures they carry, as published); each
+      # image is held to its manifest's SHA-256 and size here, and a channel is
+      # published whole or not at all. A release that does not exist yet (this
+      # push deploy runs BEFORE firmware-release.yml cuts the tag a version
+      # bump names), or one mid-upload, is skipped with a ::warning:: and the
+      # deploy goes on; the page then says this site's copy of that release is
+      # not available, which is true until the publishing workflow dispatches
+      # this one again. A transport failure
+      # that outlasts the retries fails the run, which keeps the last good
+      # site and its mirror live. The desktop apps fetch natively and never
+      # read this copy.
+      - name: Mirror the pinned firmware releases into the site (same origin)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 canary-local/tools/mirror_release.py --site _site/canary-local
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site

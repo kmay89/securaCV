@@ -4,8 +4,10 @@
 // This test pins that: every part resolves to a file that exists (enclosure STL,
 // committed board GLB, or a known procedural builder), every step that quotes
 // the catalog maps to a real README assembly step (carried in build.json), and
-// every part that claims a quantity matches the drift-gated BOM. So the guided
-// build can never quietly point at a missing part or misstate how many screws.
+// every part that claims a quantity matches the drift-gated BOM, and every
+// fastener is one the case's own HARDWARE echo counts for the set the tab
+// shows (carried in build.json). So the guided build can never quietly point
+// at a missing part or misstate how many screws.
 
 const { test } = require("node:test");
 const assert = require("node:assert");
@@ -93,6 +95,232 @@ for (const [dev, d] of Object.entries(asm.devices)) {
     }
   });
 }
+
+// ── the CAD's hardware → build.json → Assemble join ──────────────────────
+// build.json carries each printable set's hardware as the case's own
+// HARDWARE echo counts it (gen_hardware.py reads the echo into hardware.json;
+// gen_enclosures.py carries it per device). The set a device's Assemble tab
+// choreographs is the CAD its parts are posed from: gen_assembly_poses.py's
+// DEVICES entry names the case file and the -D selectors, and every set cut
+// from that file with those selectors, whatever its `part` (the WAP shield's
+// render adds the shield's own screws), is the tab's — never a
+// `screw_insert` set, which is the service option the BOMs bill as INS1, not
+// the build the tab shows. A fastener here is what the tab drives: a screw
+// or an insert part. The echo's wall screws and hinge bolt mount the case,
+// they are not part of the build the tab walks through; its inserts belong to
+// the screw_insert sets no tab shows, so a drawn insert is a gap until one
+// does.
+const HW = JSON.parse(readFileSync(join(REPO, "docs/hardware/enclosure/hardware.json"), "utf8"));
+const POSES = readFileSync(join(REPO, "docs/hardware/enclosure/gen_assembly_poses.py"), "utf8");
+
+// The case file and selectors gen_assembly_poses.py poses `dev` from, read
+// out of its DEVICES table (a value there is an OpenSCAD literal, '"xiao"').
+function posedFrom(dev) {
+  const table = POSES.slice(POSES.indexOf("\nDEVICES = {"));
+  const at = table.indexOf(`\n    "${dev}": {`);
+  assert.ok(at >= 0, `gen_assembly_poses.py DEVICES has no "${dev}" entry`);
+  const head = table.slice(at, table.indexOf('"parts"', at));
+  const scad = head.match(/"scad":\s*"([^"]+)"/);
+  const ov = head.match(/"overrides":\s*\{([^}]*)\}/);
+  assert.ok(scad && ov, `${dev}: gen_assembly_poses.py names no scad/overrides before its parts`);
+  const pairs = [...ov[1].matchAll(/"(\w+)":\s*'([^']*)'/g)];
+  assert.ok(pairs.length > 0, `${dev}: no -D selector read from ${ov[0]}`);
+  return { scad: scad[1], overrides: Object.fromEntries(pairs.map(([, k, v]) => [k, v.replace(/^"(.*)"$/, "$1")])) };
+}
+
+// The -D selectors that pick a build, without `part` (which only picks the
+// piece rendered), in a form two selector sets compare by.
+const selectors = (ov) => JSON.stringify(Object.entries(ov).filter(([k]) => k !== "part").sort());
+
+// What the tab draws of a fastener part, in the form an echo is compared by.
+// The builders (assets/assembly.js) draw a screw as an M2, `len` long (8
+// unless said), a flat head iff csk, and an insert as an M2 heat-set insert
+// `len` deep (4 unless said). These are assembly-rules.js's fastener procs.
+const FASTENER_PARTS = new Set(["screw", "insert"]);
+const drawnKey = (p) => (p.part === "insert" ? `M2 heat-set insert x ${p.params?.len ?? 4}`
+  : `M2 ${p.params?.csk === true ? "flat" : "pan"} x ${p.params?.len ?? 8}`);
+// An echoed item's spec as gen_hardware.py writes it ("M2 pan x 8 self-tap",
+// "M2 heat-set insert 3.5 OD x 4"), down to that same form.
+const ECHO_KEY = {
+  screw: (spec) => spec.match(/^(M[\d.]+ (?:pan|flat) x \d+) /)?.[1],
+  insert: (spec) => spec.match(/^(M[\d.]+ heat-set insert) [\d.]+ OD (x \d+)$/)?.slice(1).join(" "),
+};
+
+// The disagreements between the fastener parts a tab draws and the hardware
+// the sets it shows echo, as "dev|…" strings. Pure, so the comparison itself
+// is pinned on synthetic builds below and not only on today's data, which
+// agrees.
+function fastenerGaps(dev, scad, parts, sets) {
+  const gaps = [];
+  const drawn = new Map();
+  for (const p of parts.filter((q) => FASTENER_PARTS.has(q.part))) {
+    assert.ok(Number.isInteger(p.qty) && p.qty > 0, `${p.id}: a fastener part states no count`);
+    // what is drawn is one per placement (assembly-lab.js adds an engine part
+    // per instance, or one when there are none); the ×N badge is `qty`, which
+    // the BOM leg holds to the placements
+    const n = p.instances ? p.instances.length : 1;
+    const key = drawnKey(p);
+    const was = drawn.get(key) ?? { qty: 0, ids: [] };
+    drawn.set(key, { qty: was.qty + n, ids: [...was.ids, p.id] });
+  }
+  if (!sets.length) {
+    if (drawn.size) gaps.push(`${dev}|no hardware set for ${scad}`);
+    return gaps;
+  }
+  const echoed = new Map();
+  for (const [id, s] of sets) {
+    // within one set, lines of one spec ADD (gen_hardware.py drops a screw's
+    // parenthetical, so a case can echo one spec twice, both cut), as
+    // gen_hardware.py's own BOM join adds them
+    const mine = new Map();
+    for (const it of s.items.filter((i) => ECHO_KEY[i.kind])) {
+      const key = ECHO_KEY[it.kind](it.spec);
+      assert.ok(key, `${id}: echoed ${it.kind} "${it.spec}" is not in gen_hardware.py's form`);
+      const was = mine.get(key) ?? { qty: 0, texts: [] };
+      mine.set(key, { qty: was.qty + it.qty, texts: [...was.texts, it.text] });
+    }
+    // across sets of one build they must AGREE: the shield's render repeats
+    // the base's echo — one build, one count
+    for (const [key, e] of mine) {
+      const was = echoed.get(key);
+      if (!was) echoed.set(key, { qty: e.qty, text: e.texts.join(" + "), set: id });
+      else if (was.qty !== e.qty) gaps.push(`${dev}|${was.set} and ${id} echo ${key} as ${was.qty} and ${e.qty}`);
+    }
+  }
+  for (const [key, e] of echoed) {
+    const p = drawn.get(key);
+    if (!p) gaps.push(`${dev}|unchoreographed ${e.qty}x ${e.text}`);
+    else if (p.qty !== e.qty) gaps.push(`${dev}|${p.ids.join("+")} draws ${p.qty}x ${key}, ${e.set} echoes ${e.qty}`);
+  }
+  for (const [key, p] of drawn) {
+    if (!echoed.has(key)) gaps.push(`${dev}|${p.ids.join("+")} draws ${p.qty}x ${key}, which no set of ${scad} echoes`);
+  }
+  return gaps;
+}
+
+// The disagreements known today, filed for the build's owner beside C12 —
+// listed, not edited, on either side. A new one fails; so does a listed one
+// that stops happening (it was fixed: shrink the list).
+const FASTENER_GAPS = new Set([
+  // the tab seats the OV5647 on the front's posts but draws none of the four
+  // screws the case echoes for it (x 4 since the cross-family review, #1856:
+  // cam_scr_len is the longest standard length the pillar takes)
+  "canary-vision|unchoreographed 4x M2 pan x 4 self-tap (OV5647 to the front posts)",
+  // canary_dash_display.scad prints no HARDWARE line, so nothing counts the
+  // four back-to-frame screws (D-SCR1) the tab drives
+  "canary-display-dash|no hardware set for canary_dash_display.scad",
+]);
+
+function holdToList(dev, gaps, listed) {
+  assert.deepStrictEqual(gaps.filter((g) => !listed.has(g)), [],
+    "a new disagreement between the Assemble tab's fasteners and the CAD's HARDWARE echo");
+  assert.deepStrictEqual([...listed].filter((g) => g.startsWith(`${dev}|`) && !gaps.includes(g)), [],
+    "a listed disagreement no longer happens — it was fixed: shrink FASTENER_GAPS");
+}
+
+test("build.json carries every hardware.json set whole, on its own device", () => {
+  const want = {};
+  for (const [id, s] of Object.entries(HW.sets)) {
+    want[s.device] ??= {};
+    want[s.device][id] = { case: s.case, scad: s.scad, overrides: s.overrides, items: s.items,
+      ...(s.lid_rib ? { lid_rib: s.lid_rib } : {}) };
+  }
+  for (const [dev, b] of Object.entries(build.devices)) {
+    assert.deepStrictEqual(b.hardware?.sets ?? {}, want[dev] ?? {},
+      `${dev}: build.json's hardware is not hardware.json's — run canary-local/tools/gen_enclosures.py`);
+    if (b.hardware) assert.strictEqual(b.hardware.source, "docs/hardware/enclosure/hardware.json");
+  }
+  assert.deepStrictEqual(Object.keys(want).filter((d) => !build.devices[d]), [], "a set's device has no build.json card");
+});
+
+for (const [dev, d] of Object.entries(asm.devices)) {
+  test(`${dev}: every fastener is one its set's CAD echo counts, and every echoed screw has a part`, () => {
+    const cad = posedFrom(dev);
+    const sets = Object.entries(build.devices[dev]?.hardware?.sets ?? {}).filter(([, s]) =>
+      s.scad === cad.scad && !("screw_insert" in s.overrides) && selectors(s.overrides) === selectors(cad.overrides));
+    holdToList(dev, fastenerGaps(dev, cad.scad, d.parts, sets), FASTENER_GAPS);
+  });
+}
+
+// The comparison above, pinned on synthetic builds: today's data agrees
+// everywhere it is not listed, so without these a branch of it could be
+// deleted (or a count collapsed) with every leg still green.
+const placed = (n) => Array.from({ length: n }, (_, i) => [i, 0]);
+const screwPart = (id, qty, params = {}, n = qty) => ({ id, source: "proc", part: "screw", qty, params, instances: placed(n) });
+const echo = (...lines) => ({ items: lines.map(([qty, spec, why, kind = "screw"]) =>
+  ({ qty, kind, spec, text: why ? `${spec} (${why})` : spec })) });
+const gapsOf = (parts, sets) => fastenerGaps("x", "c.scad", parts, Object.entries(sets));
+
+test("fastener comparison: an agreeing build (the WAP's shape) has no gap", () => {
+  assert.deepStrictEqual(gapsOf(
+    [screwPart("screws", 8, { len: 8 }), screwPart("shield_screws", 4, { len: 12, csk: true })],
+    { base: echo([8, "M2 pan x 8 self-tap"]),
+      shield: echo([8, "M2 pan x 8 self-tap"], [4, "M2 flat x 12 self-tap"]) }), []);
+});
+
+test("fastener comparison: a drawn count the echo does not give is a gap", () => {
+  assert.deepStrictEqual(gapsOf([screwPart("screws", 6)], { base: echo([8, "M2 pan x 8 self-tap"]) }),
+    ["x|screws draws 6x M2 pan x 8, base echoes 8"]);
+});
+
+test("fastener comparison: a drawn screw no set echoes is a gap", () => {
+  assert.deepStrictEqual(gapsOf([screwPart("screws", 8), screwPart("extra", 4, { len: 10, csk: true })],
+    { base: echo([8, "M2 pan x 8 self-tap"]) }),
+  ["x|extra draws 4x M2 flat x 10, which no set of c.scad echoes"]);
+});
+
+test("fastener comparison: an echoed screw with no part is a gap, by its echo text", () => {
+  assert.deepStrictEqual(gapsOf([screwPart("screws", 4)],
+    { back: echo([4, "M2 pan x 8 self-tap"], [4, "M2 pan x 6 self-tap", "cam"]) }),
+  ["x|unchoreographed 4x M2 pan x 6 self-tap (cam)"]);
+});
+
+test("fastener comparison: two sets of one build that disagree on a spec are a gap", () => {
+  assert.deepStrictEqual(gapsOf([screwPart("screws", 8)],
+    { base: echo([8, "M2 pan x 8 self-tap"]), shield: echo([6, "M2 pan x 8 self-tap"]) }),
+  ["x|base and shield echo M2 pan x 8 as 8 and 6"]);
+});
+
+test("fastener comparison: one set's lines of one spec add, as gen_hardware.py's join adds them", () => {
+  const sets = { back: echo([4, "M2 pan x 8 self-tap", "plate"], [4, "M2 pan x 8 self-tap", "radar"]) };
+  assert.deepStrictEqual(gapsOf([screwPart("screws", 4)], sets), ["x|screws draws 4x M2 pan x 8, back echoes 8"]);
+  assert.deepStrictEqual(gapsOf([screwPart("screws", 8)], sets), []);
+  assert.deepStrictEqual(gapsOf([], sets),
+    ["x|unchoreographed 8x M2 pan x 8 self-tap (plate) + M2 pan x 8 self-tap (radar)"]);
+  // and two sets agree by those sums
+  assert.deepStrictEqual(gapsOf([screwPart("screws", 8)],
+    { ...sets, shield: echo([8, "M2 pan x 8 self-tap"]) }), []);
+});
+
+test("fastener comparison: what is drawn is one screw per placement", () => {
+  const sets = { back: echo([4, "M2 pan x 8 self-tap"]) };
+  const unplaced = { ...screwPart("screws", 4) };
+  delete unplaced.instances;
+  assert.deepStrictEqual(gapsOf([unplaced], sets), ["x|screws draws 1x M2 pan x 8, back echoes 4"]);
+  assert.deepStrictEqual(gapsOf([screwPart("screws", 4, {}, 3)], sets), ["x|screws draws 3x M2 pan x 8, back echoes 4"]);
+});
+
+test("fastener comparison: a drawn insert is held to an echoed insert", () => {
+  const inserts = { id: "inserts", source: "proc", part: "insert", qty: 4, params: {}, instances: placed(4) };
+  assert.deepStrictEqual(gapsOf([inserts], { back: echo() }),
+    ["x|inserts draws 4x M2 heat-set insert x 4, which no set of c.scad echoes"]);
+  assert.deepStrictEqual(gapsOf([inserts], { back: echo([4, "M2 heat-set insert 3.5 OD x 4", "", "insert"]) }), []);
+});
+
+test("fastener comparison: a build with no set, a part with no count, a spec out of form", () => {
+  assert.deepStrictEqual(gapsOf([screwPart("screws", 4)], {}), ["x|no hardware set for c.scad"]);
+  assert.deepStrictEqual(gapsOf([], {}), []);
+  assert.throws(() => gapsOf([screwPart("screws", undefined, {}, 4)], {}), /screws: a fastener part states no count/);
+  assert.throws(() => gapsOf([], { back: echo([4, "M2 x 8 screw"]) }), /back: echoed screw "M2 x 8 screw" is not in/);
+});
+
+test("fastener comparison: the gap list only shrinks", () => {
+  const listed = new Set(["x|old gap", "y|elsewhere"]);
+  holdToList("x", ["x|old gap"], listed);
+  assert.throws(() => holdToList("x", ["x|old gap", "x|new gap"], listed), /a new disagreement/);
+  assert.throws(() => holdToList("x", [], listed), /no longer happens — it was fixed: shrink FASTENER_GAPS/);
+  for (const g of FASTENER_GAPS) assert.ok(asm.devices[g.split("|")[0]], `${g}: names no device the Assemble tab choreographs`);
+});
 
 // ── the README → build.json → Assemble join ──────────────────────────────
 // gen_enclosures.py lifts every '## Assembly' block of the catalog README into

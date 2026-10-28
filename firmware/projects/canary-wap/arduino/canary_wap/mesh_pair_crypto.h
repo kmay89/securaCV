@@ -29,6 +29,12 @@
  * sent a low-order point) is refused, as the PlatformIO tree and this
  * sketch's Beacon cosign path already refuse it.
  *
+ * And the CONFIRM hash, since F94 bound to its sender's role (confirm_hash,
+ * below): until then mesh_network.cpp hashed it in place, the same bytes in
+ * both directions, which let a reflected CONFIRM pass for the partner's. A
+ * wire change, coordinated with the PlatformIO tree (the same two domains,
+ * pinned to the same vectors in both trees' tests).
+ *
  * NOT fixed here, and not claimed: the two trees still do not pair with
  * EACH OTHER. Besides their different frame numbering (mesh_pair_frame.h),
  * this tree runs the X25519 output through HKDF while the PlatformIO tree
@@ -63,9 +69,18 @@ namespace mesh_pair_crypto {
 constexpr size_t   KEY_LEN      = 32;
 constexpr uint32_t CODE_MODULUS = 1000000;
 
-/* Wire strings, byte-identical to what the sketch always used. */
+/* Wire strings, byte-identical to what the sketch always used.
+ * DOMAIN_PAIR_CONFIRM now derives the 6-digit code only; until F94 the
+ * CONFIRM hash used it too. */
 constexpr const char DOMAIN_SESSION[]      = "securacv:mesh:session:v0";
 constexpr const char DOMAIN_PAIR_CONFIRM[] = "securacv:pair:confirm:v0";
+
+/* The CONFIRM hash's two domains, one per sender role (F94), the same
+ * strings as the PlatformIO tree's mesh_pairing.h. None of the three
+ * pairing domains is a prefix of another (sha256_domain has no length
+ * prefix); test_mesh_pair_crypto holds that. */
+constexpr const char DOMAIN_PAIR_CONFIRM_INIT[] = "securacv:pair:confirm:init:v1";
+constexpr const char DOMAIN_PAIR_CONFIRM_JOIN[] = "securacv:pair:confirm:join:v1";
 
 /* esp_fill_random() on the device. */
 using FillRandomFn = void (*)(void* buf, size_t len);
@@ -139,6 +154,41 @@ inline uint32_t confirmation_code(const uint8_t session_key[KEY_LEN]) {
   mesh_crypto::sha256_domain(DOMAIN_PAIR_CONFIRM, session_key, KEY_LEN, h);
   const uint32_t top24 = ((uint32_t)h[0] << 16) | ((uint32_t)h[1] << 8) | (uint32_t)h[2];
   return top24 % CODE_MODULUS;
+}
+
+/* Whose CONFIRM a hash is (F94). */
+enum class ConfirmSender : uint8_t { INITIATOR, JOINER };
+
+/* The other side of a pairing: the sender whose CONFIRM a side checks. */
+inline ConfirmSender partner_of(ConfirmSender s) {
+  return s == ConfirmSender::INITIATOR ? ConfirmSender::JOINER : ConfirmSender::INITIATOR;
+}
+
+/* The CONFIRM hash: SHA-256(domain(sender) || session_key || code_u32_le),
+ * the code as 4 little-endian bytes (what the sketch's memcpy of a uint32_t
+ * always put on the wire; built bytewise here). Each side sends it for its
+ * own role and checks its partner's. Until F94 it was SHA-256(
+ * DOMAIN_PAIR_CONFIRM || session_key || code) in both directions, and
+ * ESP-NOW does not authenticate a source address, so the initiator's own
+ * CONFIRM, sent back to it from the joiner's address, passed for the
+ * joiner's: the initiator added the joiner, sealed the opera_secret to it
+ * and reported success, though the joiner's owner never confirmed
+ * (host-probed in F75's review). A device on firmware before F94 sends the
+ * role-free hash, so between it and an updated device whichever reads the
+ * other's CONFIRM first refuses it, the other waits out the pairing
+ * timeout, and neither completes. */
+inline void confirm_hash(ConfirmSender sender, const uint8_t session_key[KEY_LEN], uint32_t code,
+                         uint8_t out[mesh_crypto::SHA256_OUT_LEN]) {
+  uint8_t in[KEY_LEN + 4];
+  memcpy(in, session_key, KEY_LEN);
+  in[KEY_LEN + 0] = (uint8_t)(code & 0xFF);
+  in[KEY_LEN + 1] = (uint8_t)((code >> 8) & 0xFF);
+  in[KEY_LEN + 2] = (uint8_t)((code >> 16) & 0xFF);
+  in[KEY_LEN + 3] = (uint8_t)((code >> 24) & 0xFF);
+  mesh_crypto::sha256_domain(sender == ConfirmSender::INITIATOR ? DOMAIN_PAIR_CONFIRM_INIT
+                                                               : DOMAIN_PAIR_CONFIRM_JOIN,
+                             in, sizeof(in), out);
+  secure_wipe(in, sizeof(in));
 }
 
 }  /* namespace mesh_pair_crypto */

@@ -8,6 +8,8 @@
 //   c die         →  exits with status 3, no reply
 //   c noise       →  two replies to one request
 //   c spin        →  never replies and never reads stdin again
+//   c slow <i32>  →  =n <the i32>, 400 ms later (a call long enough for a
+//                    stray wake-up to land while the test's thread waits)
 //
 // and holds two buffers a pointer export hands out, as a core's frame
 // buffer is (the browser probes' bridge mirrors them in the page's heap):
@@ -56,6 +58,7 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", (l
   if (name === "die") process.exit(3);
   if (name === "noise") return process.stdout.write("=n 1\n=n 2\n");
   if (name === "spin") for (;;) { /* stuck, as a core in an endless loop is */ }
+  if (name === "slow") return setTimeout(() => out("=n " + args[0]), 400);
   if (name === "buf") return out("=p a0");
   if (name === "big") return out("=p b0000");
   if (name === "sum") return out("=n " + buffers.get(0xa0).reduce((a, b) => a + b, 0));

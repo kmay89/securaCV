@@ -35,8 +35,20 @@ On top of the silicon guarantee, the page adds:
   a `.bin` and download it — a literal undo button, restorable from the same
   page.
 - **Reads what's already there.** The page parses the on-board partition table
-  and `esp_app_desc_t` to show "looks like it's running canary-wap 2.1.0"
-  before you change anything. Best-effort; never blocks flashing.
+  and the booted slot's `esp_app_desc_t` to show "looks like it's running
+  Canary WAP 2.4.18-wap" before you change anything, and the install verdict
+  (update, reinstall, downgrade, switch) compares that with the release.
+  Best-effort; never blocks flashing. The name and version are there because
+  the release stamps them into each app after the build
+  (`firmware/scripts/stamp_app_desc.py`: `project_name` is the product's
+  `asset_stem`, `version` the firmware's own version string). Images up to
+  fw-v2.4.17, and any build made outside the release workflows (`pio run -t
+  upload`, `dev_flash.sh`, an OTA push), carry the Arduino core's descriptor
+  instead (`arduino-lib-builder`, `esp-idf: v4.4.7 …`), so a board running
+  one reads as an Arduino sketch and its verdict as "Version unknown". The
+  descriptor's date is not shown beside the version: on an Arduino build it
+  is when the Arduino core was built, so only the health report shows it,
+  labeled "descriptor dated".
 - **Recovery always in reach.** The BOOT/RESET download-mode gesture (the same
   one the WAP first-boot lesson teaches) is one panel away throughout, and a
   non-Chromium browser is met with the guided PlatformIO/Arduino path instead
@@ -275,9 +287,12 @@ firmware-release.yml (fw-v* tag)
   ├─ (existing) app-only <variant>.bin + signed manifest-<variant>.json   → OTA
   └─ (flasher)  <variant>-<ver>-factory.bin  +  manifest-flash.json       → USB
                          │                              │
-        make_factory.py merges bootloader +            │ fetched by flash.html at
-        partition table + app into one image           │ releases/latest/download/
-        flashed at offset 0                             ▼
+        make_factory.py merges bootloader +            │ pinned by flash.json at
+        partition table + app into one image           │ releases/download/fw-v<x>/;
+        flashed at offset 0                             │ pages.yml copies it into the
+                                                        │ site (canary-local/firmware/
+                                                        │ fw-v<x>/), where flash.html
+                                                        ▼ reads it, same-origin
                                           { schema, products: { <id>: {
                                             version, chipFamily, factory, sha256, size } } }
 ```
@@ -290,12 +305,97 @@ firmware-release.yml (fw-v* tag)
 - **`firmware/scripts/make_factory.py`** merges a build's `bootloader.bin` +
   `partitions.bin` + `firmware.bin` into a single factory image, reading the
   app offset straight from the compiled partition table so no offsets are
-  hard-coded. `firmware-release.yml` runs it per variant and publishes the
-  factory images plus `manifest-flash.json`.
+  hard-coded. The bootloader goes where the chip's ROM loads it, taken from
+  `--chip`: 0x1000 on a classic ESP32 (the image's first 4 KB are erased
+  flash), 0x0 on the S3/C3/C6. The bootloader's own header must name the same
+  chip, or nothing is merged. `firmware-release.yml` runs it per variant and
+  publishes the factory images plus `manifest-flash.json`.
 - The flasher catalog (`flash.json`) supplies chips + human copy and is honest
   even before any release exists; the release manifest (`manifest-flash.json`)
   supplies the actual binaries. If no release is published yet, the page says
-  so and points to **Advanced → flash a local file**.
+  this site's copy of it is not available (it cannot tell an uncut release
+  from a copy not deployed yet) and points to **Advanced → flash a local
+  file**.
+
+### Where the page reads the release from (the same-origin mirror)
+
+A browser **cannot** fetch a GitHub release asset. `github.com` answers
+`/releases/download/<tag>/<file>` with a redirect that carries no
+`Access-Control-Allow-Origin`, and the asset host it redirects to sends none
+either, so the browser refuses the answer whatever the page's CSP allows
+(`api.github.com` sends the header, but its asset downloads redirect to the
+same host). Until 2026-10-27 the hosted page fetched the release straight from
+there, and every product read "unavailable" behind a "connection problem"
+([`RELEASE_LESSONS.md`](../.github/RELEASE_LESSONS.md), 2026-10-27).
+
+So the site carries its own copy of the releases it pins:
+
+- **What.** `pages.yml` runs
+  [`canary-local/tools/mirror_release.py`](../canary-local/tools/mirror_release.py)
+  after it assembles the site. It reads three pins — `flash.json`
+  `manifest_url` (the stable channel, an exact `fw-v*` tag), `we2_module.manifest_url`
+  (the Vision module's model) and `flash-core.js` `DEV_FLASH_MANIFEST_URL` (the
+  dev channel's rolling `fw-dev-latest`) — and copies each manifest **byte for
+  byte**, plus every file it lists, to `canary-local/firmware/<tag>/<file>`.
+  The tag and file come from each URL itself, so a dev manifest that names its
+  images under the real `fw-v*-dev.*` tag is mirrored under that tag.
+- **Checked before it is published.** Every image is held to its manifest's
+  SHA-256 and size, and a channel lands whole or not at all. A release that
+  does not exist yet (the push deploy that merges a version bump runs before
+  `firmware-release.yml` cuts the tag), or one mid-upload, is skipped with a
+  `::warning::` and the deploy goes on: the page then says *this site's copy*
+  of the pinned release is not available, which is true, and never that the
+  release was not cut (it cannot see the release itself). A transport failure
+  that outlasts the retries, a body cut off mid-read included, fails the
+  deploy, which leaves the last good site, and its copy, live.
+- **Kept current.** Every deploy mirrors afresh, and because a release made
+  with the GITHUB_TOKEN fires no event, `firmware-release.yml`,
+  `flasher-release.yml` and `vision-model-release.yml` dispatch `pages.yml` on
+  the default branch once they publish (a refused dispatch is a warning and a
+  run-summary line, never a failed release). What a deploy carries is what
+  the default branch's `flash.json` pins, plus `fw-dev-latest`: an older tag
+  rebuilt with **Flasher Factory Images**, or a Vision model repaired for one,
+  is not copied at all.
+- **How the page reads it.** `flash-core.js` `fetchReleaseAsset` maps a
+  release URL to `firmware/<tag>/<file>` beside the page, by the URL's own tag
+  and file name; the URLs in `flash.json` and inside the signed manifests are
+  never rewritten. On any http(s) page, public, loopback or LAN, it reads
+  **only** that copy. There is no fallback to the release URL: no browser can
+  read it from any origin, so a fallback would only turn the copy's honest
+  "HTTP 404" into a false "connection problem", and the page's CSP names no
+  GitHub host. A page that is not on http(s) and a URL that is not the
+  project's release (a `?manifest=` override) are fetched exactly as given.
+  `flash.js` (manifest and factory image) and `we2-flash.js` (model manifest
+  and model) read every release asset through it. When the copy answers an
+  HTTP error, the page says *this site's copy* of that release (or of its
+  Vision model) is not available and that a release published moments ago
+  appears once the site redeploys; when a `?manifest=` override's server
+  answers one, the page names that server. It never says a release was not
+  cut: the release host answers no browser, so no answer the page gets can
+  mean that.
+- **Trust is unchanged.** The SHA-256 check, and the Ed25519 check once the
+  key is in force, run on the bytes that arrive, from wherever they were
+  served, against the manifest as published.
+- **From a checkout.** `python3 -m http.server` over the repo serves no copy,
+  so the page reports this site's copy of the release as not available. To
+  try the hosted path locally, mirror into a scratch copy of the site rather
+  than the checkout (the page-logic tests walk `canary-local/`), starting
+  from an empty directory (with `/tmp/site` missing, `cp` would copy
+  `canary-local`'s contents into it rather than the directory itself), and
+  with a token (one run is about fifty API requests; unauthenticated, a
+  second run within the hour hits GitHub's limit of sixty):
+
+  ```sh
+  rm -rf /tmp/site && mkdir -p /tmp/site && cp -rL canary-local /tmp/site/ &&
+    GH_TOKEN=$(gh auth token) python3 canary-local/tools/mirror_release.py --site /tmp/site/canary-local &&
+    python3 -m http.server -d /tmp/site 8000
+  ```
+
+  then open <http://localhost:8000/canary-local/flash.html>. Or use
+  **Advanced → flash a local file**.
+- **The desktop apps are untouched.** The Lab's native bench and the Flasher
+  fetch the release natively (`flash-native.js` → Rust), where no CORS rule
+  applies, and never read the copy.
 
 ### A factory flash re-initializes NVS
 
@@ -326,13 +426,19 @@ host) is refused on the USB channel too, not just over the air. Three anchors:
    written.
 2. **SHA-256 integrity** — every image is checked against the manifest digest,
    always, before writing.
-3. **HTTPS + same-origin GitHub Releases** — the manifest and images come from
-   the project's own release assets over TLS.
+3. **HTTPS + the project's own release assets** — the manifest and images are
+   the project's GitHub release assets, over TLS; on the hosted Lab they are
+   served from the site's own copy of the release (see *Where the page reads
+   the release from* above), which the deploy checks against each manifest's
+   SHA-256 before publishing. Anchors 1 and 2 are what bind the bytes, wherever
+   they were served from.
 
-**Honest fallbacks.** Until the signing-key ceremony happens the pinned key is
-all-zero, and images built by the out-of-band `flasher-release.yml` (the pre-key
-path) carry no signature — in both cases the flasher verifies **SHA-256 only**
-and says so plainly (the receipts show "checksum only, unsigned build"). A
+**Honest fallbacks.** Before the signing-key ceremony the pinned key was
+all-zero (`flash.json` pins a real key now), and the out-of-band
+`flasher-release.yml` (the pre-key path) published unsigned images; in both
+cases the flasher checks **SHA-256 only** and says so plainly (the receipts
+show "checksum only, unsigned build"). With a real key pinned, an official
+manifest with no signature is refused, not downgraded. A
 **local file** (Advanced) is checksum-fingerprinted but, by definition, not
 signature-checked. What it never does is *silently* accept an unverified image
 when it claimed it would verify one.
@@ -353,16 +459,17 @@ world-class installer guards its own supply chain.
 - **A strict Content-Security-Policy** (a `<meta http-equiv>` in `flash.html`,
   since GitHub Pages can't set response headers). The line is **generated** by
   [`canary-local/tools/gen_csp.py`](../canary-local/tools/gen_csp.py) from the
-  one policy table every Lab page shares — the flasher's additions (release
-  hosts, loopback, the import-map hash) are rows there with a reason each, and
+  one policy table every Lab page shares — the flasher's additions (loopback,
+  the import-map hash) are rows there with a reason each, and
   CI regenerates and diffs it (`canary-local/README.md` § 9). `default-src 'none'` denies
   everything by default; `script-src 'self'` / `style-src 'self'` allow only
   this site's own code with **no inline and no `eval`** — the vendored engines
   use neither (verified in CI), so the policy needs no `'unsafe-*'` escape.
   `base-uri`, `object-src`, and `form-action` are `'none'`: no `<base>` rewrite
   of the relative asset paths, no plugins, no form posts. `connect-src` is
-  narrowed to `'self'` + our signed release host and its asset CDN + **loopback**
-  (`localhost` / `127.0.0.1`) for a same-machine manifest server, so not even a
+  narrowed to `'self'` (the catalog, and the site's copy of the release) +
+  **loopback** (`localhost` / `127.0.0.1`) for a same-machine manifest server,
+  and names no GitHub host (no browser can read a release asset there), so not even a
   first-party bug could beam your backup or MAC to a third party. That loopback
   set is exactly what the `?manifest=` override accepts (see below), so the code
   guard and the CSP agree — no accepted host is silently blocked at the browser
@@ -481,7 +588,9 @@ Everything is built; the official images light up when a release is cut:
    `manifest-flash.json` and attaches them to the release. Factory-image
    failures are **warnings, not release blockers**: a variant that doesn't
    merge just shows as "unavailable" in the flasher until the next release.
-3. Visit `canary-local/flash.html` (or the published Lab), plug in a board, and
+3. The release run ends by dispatching **pages**, which copies the new release
+   into the site (*Where the page reads the release from*, above). Then visit
+   `canary-local/flash.html` (or the published Lab), plug in a board, and
    confirm it detects, reads, backs up, flashes, verifies, and boots.
 
 Both release paths build the factory images through the *same*
@@ -503,14 +612,19 @@ different questions.
   tooling (it overlays `make_factory.py`, `build_flash_manifest.py`, and the
   `flash.json` catalog from the dispatch ref), so the fix reaches already-cut
   tags, and re-attaches the images in place. (A firmware *source* change still
-  needs a new tag — the overlay is packaging only.)
-- **Publish before the OTA key ceremony.** The browser channel's integrity is
-  SHA-256 + same-origin, **not** the Ed25519 OTA key (see Trust model above), so
-  it doesn't need `OTA_SIGNING_KEY_PEM`. If you want the one-click flow live
-  before setting up OTA signing — where `firmware-release.yml` hard-stops for
-  the missing key — tag the release, then run `flasher-release.yml` by hand for
-  that tag. It builds the images and **creates the release if one doesn't exist
-  yet**, so the flasher lights up while OTA waits on the key.
+  needs a new tag — the overlay is packaging only.) It replaces every image on
+  the tag, the good ones too: for a tag people already install from, read
+  `docs/RELEASE_BUTTONS.md` § Flasher Factory Images, "Know what it replaces on
+  a published tag", first.
+- **Publish before the OTA key ceremony (no longer).** Before the ceremony
+  (it has happened: `flash.json` pins a real key), the browser channel's
+  integrity rested on SHA-256 + same-origin, so this path could publish
+  without `OTA_SIGNING_KEY_PEM` while `firmware-release.yml` hard-stopped for
+  the missing key: tag the release, run `flasher-release.yml` by hand for that
+  tag, and it built the images and **created the release if one didn't exist
+  yet**. Now it signs like `firmware-release.yml` and refuses to run without
+  the secret, since both flashers refuse an unsigned image once a key is
+  pinned (see Trust model above).
 
 This channel checks the tag *out*, so the tag has to exist; the workflow now
 says so by name (and points at `channel: dev`) instead of dying in
@@ -518,8 +632,9 @@ says so by name (and points at `channel: dev`) instead of dying in
 
 **`channel: dev`** — no tag at all. It builds the dispatch ref's HEAD and
 publishes to the rolling **`fw-dev-latest`** prerelease, which is the one fixed
-address the flasher's dev channel reads. No version bump, no tag ceremony, no
-signing key:
+address the flasher's dev channel reads. No version bump and no tag. It is
+signed with the release key, the same as a release, now that one is pinned,
+so it needs `OTA_SIGNING_KEY_PEM` and refuses to run without it:
 
 ```
 Actions → Flasher Factory Images → Run workflow
@@ -529,27 +644,41 @@ Actions → Flasher Factory Images → Run workflow
 ```
 
 Then in either flasher: **Advanced → dev channel**. Every product the build
-produced — displays included — becomes installable, verified by SHA-256 against
-the manifest. Use it when hardware is on the bench and you need a real image
-today; use a signed release for anything a stranger will install.
+produced — displays included — becomes installable, checked like a release's
+(its SHA-256, and its Ed25519 signature against the pinned key). Use it when
+hardware is on the bench and you need a real image today; use a release for
+anything a stranger will install.
 
 Two consequences worth knowing:
 
-- The images are **unsigned only while `release_pubkey` is the all-zero
-  placeholder**, so `imageVerificationPolicy()` resolves to `checksum-only` and
-  both the banner and the receipt say so. That is the honest state, not a
-  downgrade. Once the key ceremony lands, this workflow signs too: it reads
-  `ota_key_state.py`, and with a real key pinned it passes `--signing-key` to
+- The images were **unsigned only while `release_pubkey` was the all-zero
+  placeholder**, when `imageVerificationPolicy()` resolved to `checksum-only`
+  and both the banner and the receipt said so. That was the honest state, not
+  a downgrade. Since the key ceremony this workflow signs too: it reads
+  `ota_key_state.py`, and with the real key pinned it passes `--signing-key` to
   `build_flash_manifest.py` — or **stops** if `OTA_SIGNING_KEY_PEM` is missing.
   Publishing unsigned after the ceremony wouldn't degrade gracefully; the
   policy becomes `require-signature`, both flashers refuse every image in the
   manifest, and a bring-up run would have replaced a working rolling release
   with an uninstallable one.
+- **Its images carry the train's version.** The stamp writes the version the
+  sources compile in, `registry.json`'s `fw_train` (the last release's number
+  until the next bump), which is also what the board reports over the air. So
+  a board running a `fw-dev-latest` image reads in either flasher as that
+  release: on the stable channel, "already on 2.4.17" and up to date, though
+  it runs newer code. Nothing is blocked; the verdict just cannot tell the two
+  builds apart until a dev build carries a version of its own.
 - `firmware-release.yml` mirrors only *manifests* to `fw-dev-latest` (its
-  binaries live at the real `fw-v*-dev.*` tag); this path has no such tag, so it
-  uploads binaries there too and points the manifest at them. Each is
-  self-consistent — whichever ran last owns that release's
-  `manifest-flash.json`.
+  binaries live at the real `fw-v*` tag: a dev release's, or a stable one's
+  when the dev channel carries nothing newer, `.github/scripts/dev_channel.py`);
+  this path has no such tag, so it uploads binaries there too and points the
+  manifest at them. Each is self-consistent. This path refuses a branch whose
+  `fw_train` is older than `releases/latest`, and a firmware release (or
+  **Refresh the dev channel**) replaces its `manifest-flash.json` unless it
+  carries a newer `fw_train`: press the button before a bring-up at stable's
+  version, never after one. Both flashers' dev banners say how the dev
+  catalog's `fw_train` compares with the release the flasher is pinned to:
+  newer, the same version, or older.
 
 On a normal signed release you don't touch this — `firmware-release.yml` already
 produces the flasher assets in the same run. It's dispatch-only precisely so it
@@ -564,7 +693,8 @@ the page's CSP (`connect-src`) can pin, so the guard and the browser policy
 never disagree. For a manifest on another box on the LAN (a private IP or
 `.local` name), CSP has no way to allowlist arbitrary private ranges, so either
 serve the manifest same-origin alongside the page, or use **Advanced → flash a
-local file**, which flashes any factory `.bin` with no manifest at all — the
+local file**, which flashes any factory `.bin` laid out for the connected chip
+(its bootloader where that chip's ROM loads it), with no manifest at all — the
 fully offline posture the OTA engine also offers.
 
 ## Files
@@ -582,8 +712,10 @@ fully offline posture the OTA engine also offers.
 | `canary-local/devices/flash.json` | the generated catalog |
 | `firmware/scripts/make_factory.py` | merges a build into one factory image |
 | `firmware/scripts/build_flash_manifest.py` | builds every factory image + `manifest-flash.json` (shared by both release paths) |
-| `.github/workflows/firmware-release.yml` | signed OTA release; also builds flasher assets in the same run |
-| `.github/workflows/flasher-release.yml` | manual rebuild / pre-key publish of the flasher assets |
+| `.github/workflows/firmware-release.yml` | signed OTA release; also builds flasher assets in the same run, then dispatches `pages.yml` |
+| `.github/workflows/flasher-release.yml` | manual rebuild of a tag's flasher assets, or a branch onto `fw-dev-latest` (signed), then dispatches `pages.yml` |
+| `.github/workflows/pages.yml` | deploys the Lab, with the same-origin copy of the pinned releases the page reads |
+| `canary-local/tools/mirror_release.py` | writes that copy (`firmware/<tag>/<file>`), each image held to its manifest's SHA-256 |
 
 ## Testing
 
@@ -594,6 +726,17 @@ fully offline posture the OTA engine also offers.
   if a vendored import isn't pinned).
 - **Drift:** CI runs `gen_flash.py` and diffs `flash.json`; a board change in
   firmware that isn't regenerated is a red X.
+- **Where the release is read from:** `flash.test.js` pins the mapping
+  (`releaseAssetParts`, `releaseFetchUrl`, `fetchReleaseAsset`), that
+  `flash.js` / `we2-flash.js` read no release asset by a bare `fetch`, and the
+  banner's two readings of a 404 (this site's copy missing, or a `?manifest=`
+  override's server answering an error), neither of which says a release was
+  not cut; `canary-local/tests/flash_mirror_probe.mjs` serves the page and a
+  fixture copy from one origin in Chromium and fails on any request that
+  leaves for github.com, from a public host or from loopback;
+  `scripts/tests/test_pages_release_mirror.py`
+  holds the deploy's writer to the page's reader (through node) and the
+  workflows' dispatches to their order.
 - **Policy:** `node --test canary-local/tests/csp.test.js` pins the page's CSP
   to the generated table (and proves it is no weaker than the hand-written
   policy it replaced); `canary-local/tests/csp_probe.mjs` loads it in Chromium

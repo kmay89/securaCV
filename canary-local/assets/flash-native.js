@@ -102,6 +102,17 @@ function classifyFlashError(err) {
         "Apple Silicon and Intel; the Linux one is for x86-64 PCs). If the newest one " +
         "fails the same way, please report it, with the reason the system gave." };
 
+  // An image refused before the write because it has no bootloader for this
+  // chip where its ROM loads one (flash-engine image.rs
+  // check_bootloader_offset; the browser's bootloaderPlacement says the same
+  // words). No retry, cable or download mode changes what an image keeps
+  // there.
+  if (has("would not start on the"))
+    return { kind: "layout", title: "That image wouldn't start on this board",
+      hint: "Nothing was written. It has no bootloader for this chip where the chip " +
+        "loads one from, so the board couldn't start from it (the details say where). " +
+        "Use an image laid out for this chip: SecuraCV factory images from fw-v2.4.18 on are." };
+
   if (has("failed to open serial port", "port is already open", "already open",
           "resource temporarily unavailable", "resource busy", "device or resource busy") ||
       (has("open") && has("access", "busy", "in use")))
@@ -426,8 +437,9 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     devChk.type = "checkbox";
     devChk.checked = st.devChannel;
     dev.append(devChk, document.createTextNode(
-      " Dev channel — the rolling fw-dev-latest prerelease, cut ahead of stable and checked " +
-      "exactly the same way (chip guard, SHA-256, the release signature)"));
+      " Dev channel — the rolling fw-dev-latest prerelease: usually the newest dev build, or " +
+      "the stable one when none is newer (the note above says which version), checked exactly " +
+      "the same way (chip guard, SHA-256, the release signature)"));
     devChk.addEventListener("change", async () => {
       if (st.busy) { devChk.checked = st.devChannel; return; }
       st.devChannel = devChk.checked;
@@ -439,8 +451,12 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     // Loud on purpose, like the Flasher's banner: nobody should flash a
     // prerelease without a line saying so.
     if (st.devChannel) {
+      // Where it stands is the two catalogs' fw_train, said by
+      // core.devChannelStanding ("" until the dev manifest has loaded).
+      const standing = core.devChannelStanding(st.manifest && st.manifest.fw_train, catalog.fw_train);
       pick.append(el("p", "flash-note",
-        "DEV CHANNEL — fw-dev-latest, not the pinned stable release. Untick it below to go back."));
+        ["DEV CHANNEL — fw-dev-latest, not the pinned stable release.", standing,
+          "Untick it below to go back."].filter(Boolean).join(" ")));
     }
     if (st.manifestError) pick.append(el("p", "flash-note", st.manifestError));
     const products = core.productsForChip(catalog, st.chip);
@@ -623,9 +639,12 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       const details = el("details", "flash-log");
       details.append(el("summary", null, "Details"), el("pre", null, String(e)));
       result.append(details);
-      result.append(el("p", "fineprint",
-        "Nothing is bricked — the ESP32’s first-stage bootloader is in ROM. Put the board " +
-        "back in download mode (hold BOOT, tap RESET, release BOOT) and try again."));
+      // A layout refusal wrote nothing, and no retry or download mode changes
+      // where an image keeps its bootloader: say that instead.
+      result.append(el("p", "fineprint", c.kind === "layout"
+        ? "Nothing was written — pick an image laid out for this chip."
+        : "Nothing is bricked — the ESP32’s first-stage bootloader is in ROM. Put the board " +
+          "back in download mode (hold BOOT, tap RESET, release BOOT) and try again."));
     } finally {
       unlisten();
       unlistenProgress();

@@ -93,9 +93,14 @@ struct CommittedEvent {
  * and then dropping (counted) beats blocking the emitter. */
 constexpr UBaseType_t kQueueDepth = 8;
 constexpr int         kPumpBudget = 4;   // rows per loop pass
+/* Between two pumps of csi_event_egress_flush_for_restart() (sweep F92). */
+constexpr uint32_t    kRestartPassMs = 10;
 QueueHandle_t         s_queue = nullptr;
 uint32_t              s_dropped = 0;     // queue full; atomic add
 uint32_t              s_dropped_said = 0;  // what the log last reported
+/* Ambient rows the commit hook dropped (sweep F105): every one, since none
+ * goes to the card or the broker. Bumped on the committing task; atomic add. */
+uint32_t              s_ambient_dropped = 0;
 /* Rows no card kept that were lost unsent at the hand-over to the MQTT
  * layer, refused with nothing to keep them (route(); csi_event_egress_stats(),
  * backlog F109). Loop task only. */
@@ -174,10 +179,10 @@ uint32_t                    s_replay_run = 0;  // rows replayed in the current b
  * written then, by the planner, never while it waits. The wait for the card
  * is bounded (csi_event_backfill::kCardWaitMs, the canary-wap's): past it the
  * held rows go, and rows still on a card that comes back later are below the
- * watermark (HA would refuse them). An ambient row is never held (csi_event.h:
- * "never persisted, drives live UI only"): one that cannot go at once is
- * dropped (counted, backlog F109), so a burst of them never evicts a real
- * event. Held rows do not survive a reboot or a broker change, as the
+ * watermark (HA would refuse them). No ambient row reaches the hold: the
+ * commit hook drops every one (csi_event.h: "never persisted, drives live UI
+ * only"; sweep F105), so a burst of them never evicts a real event either.
+ * Held rows do not survive a reboot or a broker change, as the
  * offline queue's do not: with a card slot and no usable card, the rows of
  * the first kCardWaitMs after boot are lost to a reboot that comes sooner.
  * The canary-wap's egress keeps the same hold (its csi_event_egress.cpp);
@@ -197,7 +202,6 @@ struct Hold {
   size_t   count = 0;
   uint32_t dropped = 0;          // the oldest, dropped to make room (or no hold)
   uint32_t dropped_said = 0;     // what the log last reported
-  uint32_t ambient_dropped = 0;  // ambient rows that had to wait (never held)
 
   const Held& front() const { return slots[head]; }
   void pop() {
@@ -207,10 +211,6 @@ struct Hold {
   /* Rows arrive in id order (the commit lock orders the egress queue), so
    * the hold stays in id order. */
   void push(const csi_event_record_t& rec, bool fresh) {
-    if (rec.category == CSI_CATEGORY_AMBIENT) {  // dropped, counted (backlog F109)
-      ++ambient_dropped;
-      return;
-    }
     if (!slots) {  // no memory for a hold: the row is lost, counted
       ++dropped;
       return;
@@ -330,8 +330,12 @@ class EgressPort : public csi_event_backfill::Port {
   }
   /* A row from the card: the canary-wap's backfill body (the logged bundle
    * count, the committed time), a replay unless it was committed while the
-   * link was up. Rows waiting in the hold below it go first. */
+   * link was up. Rows waiting in the hold below it go first. An ambient line
+   * is never sent (sweep F105): the commit hook queues none now, but the
+   * egress before F105 logged every ambient row, so a card an older firmware
+   * wrote can hold them. Passed over, counted in planner.unsendable. */
   csi_event_backfill::Sent send_backfill(const csi_event_record_t& rec, bool fresh) override {
+    if (rec.category == CSI_CATEGORY_AMBIENT) return csi_event_backfill::Sent::kNever;
     if (!send_held_below(rec.event_id)) return csi_event_backfill::Sent::kNotNow;
     const size_t n = build_body(m_body, sizeof(m_body), rec, rec.bundled_count, !fresh);
     if (n == 0) return csi_event_backfill::Sent::kNever;
@@ -499,6 +503,14 @@ extern "C" void csi_event_on_committed(uint32_t                  event_id,
   /* The chokepoint already refuses rows above the ceiling; this keeps the
    * wire surface's rule visible here too, as the canary-wap does. */
   if (privacy > csi_event_get_privacy_ceiling()) return;
+  /* An ambient row (wifi.channel_activity's channel_active) goes to neither
+   * the card nor the broker (sweep F105): csi_event.h's contract for
+   * CSI_CATEGORY_AMBIENT is "never persisted, drives live UI only". Dropped
+   * here, before the queue, and counted; the ring keeps it, as before. */
+  if (category == CSI_CATEGORY_AMBIENT) {
+    __atomic_add_fetch(&s_ambient_dropped, 1u, __ATOMIC_RELAXED);
+    return;
+  }
   CommittedEvent rec;
   rec.event_id     = event_id;
   rec.committed_ms = millis();
@@ -678,12 +690,55 @@ extern "C" void csi_event_egress_pump(void) {
 #endif
 }
 
+extern "C" bool csi_event_egress_flush_for_restart(uint32_t budget_ms) {
+#if FEATURE_HA_MQTT
+  const uint32_t start = millis();
+  /* First the queue the flush commits into. It holds kQueueDepth rows, as
+   * many as the bundler has slots (csi_bundler.cpp's CSI_BUNDLER_SLOTS), so
+   * a full slot table closing onto rows still queued would find it full:
+   * the last commits would be refused, counted in `dropped`, and lost with
+   * the counter at the restart, though witnessed and in the ring (sweep
+   * F92's review). The pump takes up to kPumpBudget rows a pass, whatever
+   * the link (onto the card, into the hold, or out), so this is a pass or
+   * two. The canary-wap's flush drains its queue first too (F92's second
+   * review): that queue is sixteen deep, twice its slot table, but more
+   * than eight rows can already wait in it when a restart begins (a burst
+   * committed between two loop pumps, a restart before the loop's first
+   * pump). */
+  while (s_queue && uxQueueMessagesWaiting(s_queue) > 0 &&
+         (uint32_t)(millis() - start) < budget_ms) {
+    csi_event_egress_pump();
+  }
+#endif
+  /* Every open bundle closes and commits now, on this task: each takes its
+   * event id, and the commit hook above queues it for the pump. */
+  csi_event_flush_bundles();
+#if FEATURE_HA_MQTT
+  if (!s_queue) return true;
+  /* Then the pump, pass after pass, until nothing waits in the queue or the
+   * hold, or the budget is spent: a row the pump drains goes onto the card
+   * (owed across the restart) and out when the link is up; a held row goes
+   * when nothing older waits. The delay lets the network stack move the
+   * bytes and keeps the pass count bounded by the budget. */
+  for (;;) {
+    csi_event_egress_pump();
+    const bool drained = uxQueueMessagesWaiting(s_queue) == 0 && s_hold.count == 0;
+    if (drained) return true;
+    if ((uint32_t)(millis() - start) >= budget_ms) return false;
+    delay(kRestartPassMs);
+  }
+#else
+  (void)budget_ms;
+  return true;
+#endif
+}
+
 CsiEventEgressStats csi_event_egress_stats() {
   CsiEventEgressStats s = {};
 #if FEATURE_HA_MQTT
   s.dropped = __atomic_load_n(&s_dropped, __ATOMIC_RELAXED);
   s.held_dropped = s_hold.dropped;
-  s.ambient_dropped = s_hold.ambient_dropped;
+  s.ambient_dropped = __atomic_load_n(&s_ambient_dropped, __ATOMIC_RELAXED);
   s.unsent_dropped = s_unsent_dropped;
   s.planner = s_backfill.stats();
 #endif
@@ -728,6 +783,7 @@ extern "C" void csi_event_egress_test_reset(void) {
   }
   s_dropped = 0;
   s_dropped_said = 0;
+  s_ambient_dropped = 0;
   s_unsent_dropped = 0;
   s_backfill.reset();
   s_dest_epoch = 0;
@@ -736,7 +792,6 @@ extern "C" void csi_event_egress_test_reset(void) {
   s_hold.clear();
   s_hold.dropped = 0;
   s_hold.dropped_said = 0;
-  s_hold.ambient_dropped = 0;
   s_card_wait = false;
   s_card_wait_since = 0;
   s_not_owed_at_open = false;
@@ -751,6 +806,7 @@ extern "C" void csi_event_egress_test_reset(void) {
 
 extern "C" void csi_event_egress_begin(void) {}
 extern "C" void csi_event_egress_pump(void) {}
+extern "C" bool csi_event_egress_flush_for_restart(uint32_t) { return true; }
 CsiEventEgressStats csi_event_egress_stats() { return CsiEventEgressStats{}; }
 bool csi_event_egress_read_stats(CsiEventEgressStats*) { return false; }
 extern "C" size_t csi_event_egress_diagnostics_json(char* out, size_t cap) {

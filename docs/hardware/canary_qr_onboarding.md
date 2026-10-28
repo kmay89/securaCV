@@ -139,7 +139,7 @@ it the shared grammar and made it scan on its own:
   credentials, and the same enrollment path finishes the job. The SoftAP
   fallback it layers over is no longer hypothetical: an unprovisioned (or
   recovery-stuck) Sense or Vision already raises the shared setup
-  portal's `SecuraCV-XXXX` network on its own
+  portal's `SecuraCV-<kind>-XXXX` network on its own
   (`firmware/common/network/setup_portal`) — no long-press needed — so
   BLE commissioning arrives as convenience on top of a shipped
   break-glass path.

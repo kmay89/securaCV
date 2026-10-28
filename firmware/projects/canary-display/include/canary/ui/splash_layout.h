@@ -12,15 +12,29 @@
 // the splash runs on.
 //
 // The rule:
-//  * The bird keeps its seat wherever the canvas holds it, with its hop:
-//    every canvas the splash ran on before F88 but the landscape nightlight
-//    draws exactly as it did.
+//  * The bird keeps its family's seat wherever the canvas holds it, with
+//    its hop: hello again draws on every canvas exactly as it did before
+//    F88, and so did every first meeting but the landscape nightlight's
+//    until F159 (the last rule but one).
 //  * Where it does not, the seat drops just enough that the hop's apex
 //    (kHopReach above the seat) stays on the canvas — clamped to the
 //    canvas, not scaled.
 //  * Then the bird sits lower than the speech bubble's centered seat
 //    expects, so the bubble hangs from just under the bird instead (its top
 //    fixed, growing down), clear of the bird's breath.
+//  * Elsewhere the bubble stays centered, and the first meeting's bird
+//    rises clear of the tallest form it takes (F159): its box, over its
+//    breath, ends kGap above the highest the tail stands (kTailRise over
+//    the tallest bubble's top edge). It rises only where the canvas holds
+//    the raised seat's hop as well; where it does not (the round watch),
+//    the seat stays as it was, and so does a hung bubble's (the landscape
+//    nightlight's: its tail rises into the foot of the bird's box). The
+//    tallest bubble is splash.cpp's to measure (each line of the first
+//    meeting, laid out by LVGL in the bubble's own face and width), so the
+//    rule is one rule on every canvas and Character, with no table: on the
+//    AMOLED the tallest bubble's top had risen 14 px into the bird's box
+//    (51 under Heirloom with a wide-lettered pseudonym), and on the 172 px
+//    glass under Heirloom 15 (F183).
 //  * The bubble is as wide as its family asks, and no wider than the canvas
 //    less kBubbleMargin a side (bubble_w, F160): the small glass's 196 px
 //    bubble was drawn for the round watch's 240 px disc, and on the 172 and
@@ -74,17 +88,29 @@ inline int bubble_w(int canvas_w, const Family& f) {
   return f.bubble_w < room ? f.bubble_w : room;
 }
 
-// The tail (splash.cpp): a 12 px square turned 45 degrees, aligned
-// LV_ALIGN_OUT_TOP_MID on the bubble, kTailInset px into its top edge. It
-// is aligned again whenever the typed line changes (F158): a centered
-// bubble grows both ways as its line wraps, and a tail aligned once, to the
-// empty bubble, stayed inside the grown one (the round watch's tail object
-// at y 99 in a bubble at y 90..159, native LVGL 8.4). Only the LVGL 9
-// builds draw it (the dash line and the C6 nightstand): LVGL 8.4 refuses
-// the turned, rounded square's alpha layer, so the 8.4 glass and the
-// emulator show no tail, before F158 or after (see splash.cpp).
+// The tail (splash.cpp): a 12 px square turned 45 degrees about its center,
+// aligned LV_ALIGN_OUT_TOP_MID on the bubble, kTailInset px into its top
+// edge. It is aligned again whenever the typed line changes (F158): a
+// centered bubble grows both ways as its line wraps, and a tail aligned
+// once, to the empty bubble, stayed inside the grown one (the round
+// watch's tail object at y 99 in a bubble at y 90..159, native LVGL 8.4).
+// Its corners are square (F185): LVGL 8.4 draws a turned object through a
+// layer, and a rounded one needs that layer's alpha, which 8.4 refuses
+// while LV_COLOR_SCREEN_TRANSP is 0, so before F185 only the LVGL 9 builds
+// (the dash line and the C6 nightstand) drew a tail at all. It turns about
+// its center (kTailPivot), so it stands on the bubble's center line; about
+// the default pivot, its box's top-left corner, the diamond stood 5.5 px
+// left of it.
 constexpr int kTailSide = 12;
 constexpr int kTailInset = 5;
+constexpr int kTailPivot = kTailSide / 2;
+// How far above the bubble's top edge the drawn tail reaches: its box's
+// center stands kTailSide - kTailInset - kTailPivot (1 px) above the edge,
+// and the turned square's tip half its diagonal (8.5 px) above that, so its
+// ink starts on the 10th row above the edge. The host test derives it from
+// the three numbers above; the native LVGL 8.4 and 9.5 renders hold the
+// drawn tail to it.
+constexpr int kTailRise = 10;
 
 // How far a hop lifts the bird above its seat at most: canary_mark's 12 px
 // apex times the temperament's ceiling (1.25, so 15 px), plus the 9.4 %
@@ -97,7 +123,11 @@ constexpr int kGap = 2;     // the least air between the bird and the bubble
 struct Seat {
   int bird_off;    // the bird's center offset from the canvas's center
   bool hang;       // the bubble hangs from under the bird (bubble_top)
-  int bubble_top;  // y of the bubble's top edge when it hangs
+  int bubble_top;  // y of the bubble's top edge when it hangs; when it is
+                   // centered, of its tallest form's
+  bool raised;     // the bird rose clear of the tallest bubble (F159)
+  bool clear;      // the bird's box, over its breath, ends kGap above the
+                   // tail on the tallest bubble (always, after hello again)
 };
 
 // The bird's top edge for a center offset on a canvas h px tall (LVGL's
@@ -106,15 +136,42 @@ inline int bird_top(int canvas_h, int bird, int off) {
   return canvas_h / 2 - bird / 2 + off;
 }
 
+// The top edge of a bubble `bubble_h` px tall, centered at the family's
+// offset (LV_ALIGN_CENTER of the content-sized bubble).
+inline int centered_top(int canvas_h, const Family& f, int bubble_h) {
+  return canvas_h / 2 - bubble_h / 2 + f.bubble_off;
+}
+
 // The splash's seats on a canvas h px tall (see the rule above).
-inline Seat seat(int canvas_h, const Family& f, bool first_meeting) {
+// `tallest` is the first meeting's tallest bubble, as splash.cpp measures
+// it (hello again shows none; it is not read there).
+inline Seat seat(int canvas_h, const Family& f, bool first_meeting,
+                 int tallest) {
   const int off = first_meeting ? f.intro_off : f.hello_off;
   const int top = bird_top(canvas_h, f.bird, off);
   Seat s;
   s.bird_off = top < kHopReach ? off + (kHopReach - top) : off;
   s.hang = s.bird_off != off;
-  s.bubble_top =
-      bird_top(canvas_h, f.bird, s.bird_off) + f.bird + kBreath + kGap;
+  s.raised = false;
+  if (s.hang) {
+    s.bubble_top =
+        bird_top(canvas_h, f.bird, s.bird_off) + f.bird + kBreath + kGap;
+  } else {
+    s.bubble_top = centered_top(canvas_h, f, tallest);
+    // The deepest seat (the greatest top) that keeps the bird's box, over
+    // its breath, kGap above the tail on the tallest bubble; taken only
+    // where its hop stays on the canvas.
+    const int clear_top =
+        s.bubble_top - kTailRise - kGap - kBreath - f.bird;
+    if (first_meeting && top > clear_top && clear_top >= kHopReach) {
+      s.bird_off = off - (top - clear_top);
+      s.raised = true;
+    }
+  }
+  s.clear = !first_meeting ||
+            bird_top(canvas_h, f.bird, s.bird_off) + f.bird + kBreath + kGap +
+                    kTailRise <=
+                s.bubble_top;
   return s;
 }
 

@@ -1,5 +1,6 @@
 // canary-local/emulator/test/native9/esp_random.h — ESP-IDF's hardware RNG
-// for glass_splash_lvgl9_test.cpp (F246): canary_mark.cpp draws its idle
+// for glass_splash_lvgl9_test.cpp (F246) and its LVGL 8.4 sibling,
+// glass_splash_test.cpp (F185): canary_mark.cpp draws its idle
 // flourishes' timing and sides from esp_random(). Here it is a fixed
 // xorshift, so every run of the splash plays the same frames.
 #pragma once

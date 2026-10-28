@@ -286,6 +286,8 @@ GLASS_SOURCES=(
   "$GLASS_ROOT/src/care/wake_glue.cpp"
   "$GLASS_ROOT/src/ui/splash.cpp"
   "$GLASS_ROOT/src/ui/settings_ui.cpp"
+  # The Orientation page's row labels and footers live here (F245).
+  "$GLASS_ROOT/include/canary/ui/orientation_page.h"
   "$GLASS_ROOT/src/ui/commission_ui.cpp"
   "$GLASS_ROOT/include/canary/net/mirror_html.h"
 )

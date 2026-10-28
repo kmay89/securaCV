@@ -93,11 +93,14 @@ RUN cargo build --release --features rtsp-gstreamer
 
 # Carry: the SecuraCV integration and the blueprints the app places into
 # /config (option G, D15). The integration tree is pruned here — no tests/,
-# no www/*.test.js, no caches — so the copy a user ends up with is the same
-# clean tree HACS serves (Docker COPY has no exclude, so an intermediate
-# stage prunes). The carried integration's version must equal the app's
-# (config.yaml): this layer refuses a mismatch, as scripts/lint_version_sync.sh
-# and the pwk-wizard-tests job do before any image is built.
+# no www/*.test.js, no caches — so the copy a user ends up with is the
+# integration without its tests and caches (Docker COPY has no exclude, so an
+# intermediate stage prunes). HACS serves the mirror's carried copy of this
+# same tree, tests included; the two match in every file kept here once a
+# carry has run, and not before it. The carried integration's version must
+# equal the app's (config.yaml): this layer refuses a mismatch, as
+# scripts/lint_version_sync.sh and the pwk-wizard-tests job do before any
+# image is built.
 FROM docker.io/library/alpine:${ALPINE_VERSION} AS carry
 COPY custom_components/securacv /carry/integration/securacv
 COPY docs/blueprints/ /carry/blueprints/

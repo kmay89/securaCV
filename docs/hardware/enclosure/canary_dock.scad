@@ -54,10 +54,10 @@ thumb_d = 12.0;      // thumb cutout for extraction
 /* [Block] */
 bay_pitch = 24.0;    // bay-to-bay spacing
 base_d = 34.0;       // block depth (front-back)
-label_depth = 0.6;
+label_depth = 0.6;   // bay number deboss depth into the reclined front face (7 mm numerals at 0.72 of the block's height)
 label_size  = 6.0;   // bay number text height — centered between the thumb cutout and the face's top edge, asserted to fit there (v0.2: a 7, set lower, lost 40-47 % of each digit to the cutout)
-label_font = "Liberation Sans:style=Bold";
-tol_slide = 0.20;
+label_font = "Liberation Sans:style=Bold";  // the bay numbers' font (an OpenSCAD font name)
+tol_slide = 0.20;    // sliding fit per side across the board's width: each pocket is board_w + 2 x this wide — core_tol_slide()
 
 /* [Quality] */
 $fa = 3; $fs = 0.4;

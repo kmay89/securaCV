@@ -80,8 +80,9 @@ const state = {
   // Customs, for a board we've never met (see intake.js). `heldBoot` is what
   // the user told us on the connect card, not something we measured — on a
   // native-USB board the ROM and a stock firmware present the same descriptor,
-  // so the port genuinely can't tell us.
-  heldBoot: false,
+  // so the port genuinely can't tell us. null until answered: an unanswered
+  // question is neither answer.
+  heldBoot: null,
   intake: null,            // the read-only intake scan, once connected
   ptRead: null,            // "ok" | "failed" — did the partition sector read at all
   // The user's explicit "this board is already mine, skip the full erase". The
@@ -850,6 +851,9 @@ function accessCards() {
 // (docs/browser_flasher.md § What the Canary is called over USB), so there is
 // nothing to measure. Claiming otherwise would be a comforting lie.
 function coldStartCard() {
+  // The answer describes ONE board, so every connect card asks afresh, the
+  // way the desktop clears it for each board that attaches (resetSteps).
+  state.heldBoot = null;
   const card = el("section", "flash-coldstart");
   card.append(el("h3", null, "🛡 New board from a shop or marketplace? Do this first"));
   card.append(el("p", null,
@@ -1454,8 +1458,6 @@ async function readCurrentFirmware() {
       version: d.version,
       projectName: d.projectName,
       productName: product ? product.name : null,
-      date: d.date,
-      built: d.date ? `${d.date} ${d.time || ""}`.trim() : null,
       idf: d.idfVer || null,
     };
   } catch {
@@ -1496,29 +1498,39 @@ async function runIntake(narrate) {
   //    address lines, so reading AT a candidate capacity returns offset zero
   //    again. Probing "declared − 4 KB" would not do it: on a 4 MB die
   //    pretending to be 16 MB that address wraps to 0x3FF000, the top of the
-  //    real part, which holds something other than the head.
+  //    real part, which holds something other than the head. The window is
+  //    8 KB (intake.FLASH_ALIAS_WINDOW) so it reaches a classic ESP32's
+  //    bootloader at 0x1000.
   let alias = { level: "unknown", label: "Flash size not checked" };
   try {
     const declared = state.flashBytes;
-    if (declared && declared > 0x2000) {
+    const win = intake.FLASH_ALIAS_WINDOW;
+    if (declared && declared > 2 * win) {
       const candidates = intake.flashAliasCandidates(declared);
       say(`Customs — probing the flash is really ${core.formatBytes(declared)} (1 of ${candidates.length + 1})…`);
-      const head = await readFlashChunked(esploader, 0, 0x1000);
+      const head = await readFlashChunked(esploader, 0, win);
       const probes = [];
       for (let i = 0; i < candidates.length; i++) {
         say(`Customs — probing the flash is really ${core.formatBytes(declared)} (${i + 2} of ${candidates.length + 1})…`);
-        probes.push({ atBytes: candidates[i], bytes: await readFlashChunked(esploader, candidates[i], 0x1000) });
+        probes.push({ atBytes: candidates[i], bytes: await readFlashChunked(esploader, candidates[i], win) });
       }
       alias = intake.flashAliasVerdict({ declaredBytes: declared, head, probes });
     }
   } catch { /* leave it "not checked" — never invent a clean result */ }
 
-  const cold = intake.coldBootVerdict({
+  // Skipped until the cold-start question is answered, as on the desktop:
+  // "we didn't ask" must not render as "they said no", which is the
+  // attention-level verdict. intakeVerdict passes over the null.
+  const cold = state.heldBoot === null ? null : intake.coldBootVerdict({
     heldBoot: state.heldBoot,
     hadResidentFirmware: !!(state.current && !state.current.unknown),
   });
+  const projectName = state.current && state.current.projectName;
   const shipped = intake.shippedWith({
-    projectName: state.current && state.current.projectName,
+    projectName,
+    // Releases after 2.4.17 name their product in the descriptor
+    // (stamp_app_desc.py); shippedWith counts the exact asset_stem only.
+    product: core.matchProjectToProduct(state.catalog, projectName),
     // A partition sector we READ and found empty is a blank chip; one we
     // couldn't read at all is unknown. state.ptRead keeps those apart —
     // `!state.pt` alone would call a failed read the cleanest possible result.
@@ -1601,8 +1613,11 @@ function phaseConnected() {
     cur.append(el("span", "flash-current-dot flash-dot-ok", "●"));
     const name = state.current.productName || state.current.projectName || "firmware";
     const ver = state.current.version ? ` ${state.current.version}` : "";
-    const built = state.current.built ? ` (built ${state.current.built})` : "";
-    cur.append(document.createTextNode(`Looks like it’s running ${name}${ver}${built} right now.`));
+    // No date here: next to a product and version it reads as that
+    // release's build date, and on an Arduino build (every SecuraCV
+    // release) the descriptor's date is the Arduino core's. The diagnostics
+    // report shows it, labeled for what it is (DESCRIPTOR_DATE_NOTE).
+    cur.append(document.createTextNode(`Looks like it’s running ${name}${ver} right now.`));
   }
   ht.append(cur);
   // Batch guard: if THIS exact board already hatched this session, say so
@@ -1686,7 +1701,13 @@ function phaseConnected() {
   // The live voice: a board that carries real firmware BOOTS and talks,
   // right here, before anything is written. (A brand-new board has nothing
   // to say — the bootloader keeps the port and this card doesn't appear.)
-  if (state.current && !state.current.unknown) {
+  // And only for a board the user said was already plugged in: one they held
+  // BOOT on, or didn't say, may be a board whose firmware the gesture kept
+  // from running, and booting it here would run it before anything is
+  // written. That session stays in the bootloader until the install, as the
+  // desktop's fuse read leaves it (efuse.rs `park`); the serial monitor
+  // still boots it on a click.
+  if (state.current && !state.current.unknown && state.heldBoot === false) {
     const voice = el("section", "flash-card flash-voice");
     voice.append(el("h3", null, "🎙 Its live voice — before anything is written"));
     voice.append(el("p", "fineprint",
@@ -1959,10 +1980,23 @@ function renderRoleLine() {
   if (!cur || cur.unknown) return null;
   // A display build read off the wire: name it and offer the live glass.
   if (core.looksLikeDisplayProject(cur.projectName)) {
-    const d = core.displayFor(state.catalog, cur.projectName) || core.displaysIn(state.catalog)[0];
+    // A release stamps each product's asset_stem into the descriptor, so a
+    // stamped board names its own product: the glass is that product's own
+    // displays[] entry (its flash_product), or none. displayFor's loose
+    // "display" match would answer the first entry, the Watch Station, for
+    // every stem that is not a displays[] id (Dash · Modes, Nightstand 7,
+    // Nightstand C6, and the Nightlight, whose display id is
+    // canary-nightlight). That family guess is kept for a name that carries
+    // no flavor ("canary_display"), which is all a pre-stamp image says.
+    const exact = core.matchProjectToProduct(state.catalog, cur.projectName);
+    const named = exact && (exact.role || core.productRole(exact.id)) === "display" ? exact : null;
+    const d = named
+      ? core.displaysIn(state.catalog).find((x) => x.flash_product === named.id) || null
+      : core.displayFor(state.catalog, cur.projectName) || core.displaysIn(state.catalog)[0];
+    const who = d ? d.name : named && named.name;
     const p = el("p", "flash-role flash-role-display");
     p.append(el("span", null,
-      `🖼 This board is a display — it SHOWS${d ? `. It looks like the ${d.name}.` : "."} `));
+      `🖼 This board is a display — it SHOWS${who ? `. It looks like the ${who}.` : "."} `));
     if (d) {
       const b = el("button", "ghost small", "see its screen, live →");
       b.addEventListener("click", () => setPhase(phaseDisplayBench(d, phaseConnected)));
@@ -2156,11 +2190,12 @@ function renderPicker() {
   devWrap.append(devBox);
   devWrap.append(el("span", null,
     " Use the dev channel — install from the rolling " +
-    "fw-dev-latest prerelease instead of the pinned stable release. Dev " +
-    "images are cut ahead of stable and checked exactly the same way (chip " +
-    "guard, SHA-256 against the manifest, and the release signature once the " +
-    "signing ceremony lands). It's also where a board shows up first: a " +
-    "product with no stable release yet is often already on dev."));
+    "fw-dev-latest prerelease instead of the pinned stable release. It " +
+    "usually carries the newest dev build, or the stable one when none is " +
+    "newer (the banner says which version), checked exactly the same way " +
+    "(chip guard, SHA-256 against the manifest, and the release signature). " +
+    "It's also where a board shows up first: a product with no stable " +
+    "release yet is often already on dev."));
   adv.append(devWrap);
   // A disabled checkbox with no reason beside it reads as a broken control.
   if (devBox.disabled) {
@@ -2178,12 +2213,15 @@ function renderPicker() {
   if (localHelp) localP.append(localHelp);
   local.append(localP);
   // Name the chip that is actually connected, and say plainly which check a
-  // local file skips. The factory-shape gate (localImageShape) still runs, but
-  // the catalog's chip GUARD cannot — there's no product to compare against —
-  // so a .bin built for a different ESP32 variant would be written with no
-  // warning at all. The desktop Flasher has said this since it grew the local
-  // path (app.js:updateLocalFlashUi); same words here, so the risk is visible
-  // on both flashers rather than hidden on one.
+  // local file skips. The factory-shape gates (localImageShape, and
+  // bootloaderPlacement, which turns away an image whose bootloader is
+  // misplaced or another chip's) still run, but the catalog's chip GUARD
+  // cannot — there's no product to compare against — so a .bin for another
+  // board on the same chip (or with another chip's app behind this chip's
+  // bootloader) would be written with no warning at all. The desktop Flasher
+  // has said this since it grew the local path (app.js:updateLocalFlashUi);
+  // same words here, so the risk is visible on both flashers rather than
+  // hidden on one.
   local.append(el("p", "fineprint",
     `Connected: ${state.chipDesc || state.chip || "not read yet"}. A local file skips the ` +
     "catalog’s chip guard — there’s no product to compare against — so make " +
@@ -3100,6 +3138,15 @@ function productRow(p) {
 }
 
 // ── release manifest (lazy) ─────────────────────────────────────────────────
+// Every release asset this page reads (the manifest, the factory image) goes
+// through here: on an http(s) page, from the site's same-origin copy of the
+// release (pages.yml writes it; core.releaseFetchUrl), never from the
+// github.com URL, which no browser can read (tests/flash.test.js holds this
+// file to that).
+function fetchRelease(url, init) {
+  return core.fetchReleaseAsset(url, { repo: state.catalog && state.catalog.repo, init });
+}
+
 function activeManifestUrl() {
   // `?manifest=<url>` lets a self-hosted / air-gapped user point at their own
   // manifest — but only if it's same-origin or a private/LAN host (see
@@ -3125,7 +3172,9 @@ function ensureManifest() {
   if (state.manifest) { refreshManifestState(); return; }
   const gen = ++manifestGeneration;
   const stale = () => gen !== manifestGeneration;
-  fetch(activeManifestUrl(), { cache: "no-store" })
+  // Through the site's same-origin mirror (core.releaseFetchUrl): a browser
+  // cannot fetch the GitHub release URL itself (no CORS header on it).
+  fetchRelease(activeManifestUrl(), { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : Promise.reject(new Error("no release manifest (HTTP " + r.status + ")"))))
     .then((m) => {
       if (stale()) return;
@@ -3186,16 +3235,6 @@ function refreshManifestState() {
     // the wrong thing to wait for. Only claim the release is uncut when the
     // server actually answered (parity: the desktop's renderProducts).
     const answered = !!m.httpStatus;
-    note.textContent = m.__invalid
-      ? "The published release manifest didn’t validate, so official images are hidden. You can still install a local file under Advanced."
-      : !answered
-        ? "The firmware manifest didn’t load — this looks like a connection problem here, " +
-          "not a missing release. The official images appear once you’re back online. " +
-          "Until then you can install a local file under Advanced."
-        : state.devChannel
-          ? `The dev channel has nothing published yet — no rolling prerelease has been cut (HTTP ${m.httpStatus}). Turn the dev channel off under Advanced for the stable release, or install a local file.`
-          : `No signed firmware release is published yet (HTTP ${m.httpStatus}). When the maintainer cuts one, the official images appear here automatically. Until then, try Advanced → dev channel (products often land there first), or install a local file.`;
-    banner.append(note);
     // Name the release we were pinned to. Every product reading "unavailable"
     // because a tag was bumped but never released is indistinguishable from
     // "no releases exist" without this line. releaseTagFromManifestUrl only
@@ -3205,13 +3244,37 @@ function refreshManifestState() {
     const pinned = m.__missing &&
       (core.releaseTagFromManifestUrl(activeManifestUrl()) ||
         (state.devChannel ? "fw-dev-latest" : null));
+    // An HTTP error never comes from the release host: no browser gets an
+    // answer from it (core.releaseFetchUrl reads the site's copy instead), so
+    // "no release has been cut" is not a reading this page can make. The
+    // answer is from one of two servers: a ?manifest= override's own
+    // (state.manifestOverride; the official release is not what it read, and
+    // the dev channel is off), or this site's copy of the release, which can
+    // be missing while the release is live on GitHub: the site redeploys a few
+    // minutes after a release publishes, and a deploy skips a release it
+    // could not copy whole (tools/mirror_release.py). Browser only: the
+    // desktop apps read the release itself, natively, and have no copy.
+    note.textContent = m.__invalid
+      ? "The published release manifest didn’t validate, so official images are hidden. You can still install a local file under Advanced."
+      : !answered
+        ? "The firmware manifest didn’t load — this looks like a connection problem here, " +
+          "not a missing release. The official images appear once you’re back online. " +
+          "Until then you can install a local file under Advanced."
+        : state.manifestOverride
+          ? `The self-hosted manifest at this page’s ?manifest= address answered HTTP ${m.httpStatus}. Check that server, remove ?manifest= from the address to use the official release, or install a local file under Advanced.`
+          : state.devChannel
+            ? `This site’s copy of the dev channel (${pinned}) isn’t available (HTTP ${m.httpStatus}). If a dev build was just published, the site picks it up when it redeploys, shortly after; reload then. Until then, turn the dev channel off under Advanced for the stable release, or install a local file.`
+            : `This site’s copy of firmware release ${pinned} isn’t available (HTTP ${m.httpStatus}). If that release was just published, the site picks it up when it redeploys, shortly after; reload then. Until then, try Advanced → dev channel, or install a local file.`;
+    banner.append(note);
     if (pinned) {
       banner.append(el("p", "fineprint",
         `This page is pinned to firmware release ${pinned}` +
         (m.why ? ` — ${m.why}.` : ".") +
-        (answered
-          ? " If that release exists, the images will appear on reload."
-          : " If that release exists, the images will appear once you’re back online.")));
+        (!answered
+          ? " If that release exists, the images will appear once you’re back online."
+          : state.manifestOverride
+            ? ""
+            : " The images appear on reload once this site carries its copy of that release.")));
     }
     return;
   }
@@ -3226,9 +3289,14 @@ function refreshManifestState() {
     // Say what's actually true of THESE images. Claiming "signed" while the
     // signing ceremony hasn't happened would be the one lie this banner exists
     // to prevent — the per-image line below reports the real verification.
-    note.textContent = core.isRealPubkey(state.catalog.release_pubkey)
-      ? "DEV CHANNEL — these images come from the rolling dev prerelease, signed with the same key but not yet promoted to stable. Turn it off under Advanced to go back to release firmware."
-      : "DEV CHANNEL — these images come from the rolling dev prerelease, ahead of stable. No release signing key is in force yet, so they're checked by SHA-256 against the manifest, not by signature. Turn it off under Advanced to go back to release firmware.";
+    // Same for where the dev channel stands: the dev catalog's train against
+    // the pinned one says it (core.devChannelStanding), never this copy.
+    const how = core.isRealPubkey(state.catalog.release_pubkey)
+      ? "DEV CHANNEL — these images come from the rolling dev prerelease, signed with the same release key as stable."
+      : "DEV CHANNEL — these images come from the rolling dev prerelease. No release signing key is in force yet, so they're checked by SHA-256 against the manifest, not by signature.";
+    const standing = core.devChannelStanding(m.fw_train, state.catalog.fw_train);
+    note.textContent = [how, standing, "Turn it off under Advanced to go back to release firmware."]
+      .filter(Boolean).join(" ");
     banner.append(note);
   }
   // The headline answer, before any list: should THIS board be updated?
@@ -3330,6 +3398,16 @@ async function onLocalFile(ev) {
     ev.target.value = ""; // let the corrected file re-fire the picker
     setPhase(errorRetry("That file isn’t a factory image",
       new Error(`${shape.reason}. The flasher writes whole factory images at offset 0, so an app-only .bin would overwrite the bootloader and the board wouldn't boot. Merge one with firmware/scripts/make_factory.py or use dev_flash.sh <env> -f.`),
+      phaseConnected));
+    return;
+  }
+  // …and it must carry THIS chip's bootloader where the chip's ROM loads it
+  // (core.bootloaderPlacement — the catalog path runs it too, after the
+  // download). Same refusal, same words, as the desktop Flasher.
+  const placed = core.bootloaderPlacement(bytes, state.chip);
+  if (!placed.ok) {
+    ev.target.value = "";
+    setPhase(errorRetry("That image wouldn’t start on this board", new Error(placed.reason),
       phaseConnected));
     return;
   }
@@ -4221,7 +4299,11 @@ async function startFlash(opts) {
       // network is minutes, and a bar parked at 0 with no counter was the
       // step that most read as "hung". The release's own size is the honest
       // total (Content-Length can be the compressed transfer size).
-      const resp = await fetch(opts.entry.factory, { cache: "no-store" });
+      // fetchRelease → core.releaseFetchUrl: a project release URL comes from
+      // this site's copy (an override manifest's included), any other URL (a
+      // self-hosted override image) as given. The SHA-256 and signature
+      // checks below bind these bytes to the manifest.
+      const resp = await fetchRelease(opts.entry.factory, { cache: "no-store" });
       if (!resp.ok) throw new Error("download failed (HTTP " + resp.status + ")");
       const dlTotal = Number(opts.entry.size) ||
         Number(resp.headers.get("content-length")) || 0;
@@ -4285,6 +4367,13 @@ async function startFlash(opts) {
             "trust anyway, use Advanced → flash a local file.)");
         }
       }
+      // 2c) The image is written at 0x0, so its bootloader must already sit
+      // where this chip's ROM loads it. The signature vouches for who built
+      // the bytes, not for their layout: fw-v2.4.17's signed ESP32-CAM and
+      // WROOM images carried the bootloader at 0x0, where a classic ESP32
+      // never looks.
+      const placed = core.bootloaderPlacement(bytes, state.chip);
+      if (!placed.ok) throw new Error(placed.reason);
     }
     imageBytesRef.bytes = bytes;
     state.lastImage = bytes; // lets the done card replay the tour with real hex
@@ -4511,8 +4600,12 @@ function flashError(e, opts) {
   row.append(retry);
   // Escalate: if a plain install failed, offer a full-erase clean install as
   // the next self-heal step (reconnect → the rescue flow, which also restores
-  // a backup if one exists). Skip when we're already erasing/rescuing.
-  if (!opts.rescue && !opts.eraseAll) {
+  // a backup if one exists). Skip when we're already erasing/rescuing, and
+  // when the image itself was refused ("layout"): erasing the chip doesn't
+  // move an image's bootloader, so the rescue would refuse it again. "Try
+  // again" stays — it reconnects and returns to the picker, where another
+  // image is the fix (the desktop, whose picker stays on screen, drops it).
+  if (!opts.rescue && !opts.eraseAll && v.kind !== "layout") {
     const clean = el("button", "ghost", "Clean install (full erase) →");
     clean.addEventListener("click", async () => {
       await onDisconnect(true);
@@ -5424,6 +5517,16 @@ function reportRow(label, value, tone) {
   return row;
 }
 
+// The date an app descriptor carries is whatever compiled that record. An
+// Arduino build's comes from the core's precompiled libraries (fw-v2.4.17's
+// read Mar 5 2024, Mar 31 2026 or Jun 2 2026), and the release stamp leaves it alone
+// (firmware/scripts/stamp_app_desc.py), so it is never "when this firmware
+// was built". desktop/src/app.js says the same (desktop_parity.test.js).
+const DESCRIPTOR_DATE_NOTE =
+  "The date is the one in the image’s app descriptor. On an Arduino build, every SecuraCV " +
+  "release included, that is when the Arduino core was built, not this firmware, so it says " +
+  "nothing about when the board was flashed.";
+
 function renderReport(r) {
   const box = el("section", "flash-card flash-report");
   box.dataset.step = "2";
@@ -5450,12 +5553,10 @@ function renderReport(r) {
       const text = s.empty
         ? "empty"
         : `${s.project || "unknown"} ${s.version || ""}`.trim() +
-          (s.built ? ` · built ${s.built}` : "");
+          (s.built ? ` · descriptor dated ${s.built}` : "");
       sec.append(reportRow(s.label + badge, text, s.active ? "ok" : null));
     });
-    const note = el("p", "fineprint",
-      "“Built” is the firmware’s own compile stamp — the closest thing a board keeps to “when it was last flashed”.");
-    sec.append(note);
+    sec.append(el("p", "fineprint", DESCRIPTOR_DATE_NOTE));
     box.append(sec);
   }
 
