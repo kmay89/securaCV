@@ -111,21 +111,30 @@
   a `desktop_parity.test.js` case holds the firmware's boot lines and the
   proof record's `module_ok` value to the engine, and two Home Assistant
   tests hold the radar-link gate (both fail on the old one). Built with
-  PlatformIO here, on this change over the 2.4.17 train, the way
-  `firmware.yml`'s build leg builds them: with the `secrets/secrets.h` its
-  "Generate CI secrets header" step writes into the project, and with
-  `-DVALIDATION_BUILD=1` (with no `secrets/secrets.h` a build compiles the
-  project's committed `include/secrets.ci.h` stub instead, a different
-  image). The four Vision build envs (`flavors.json`) and all five
-  Sentinel envs compile. Against the same envs built the same way from the
-  2.4.17 release commit (#1885), the Vision images grow by 32 to 96 bytes
-  and the Sentinel door and Lite images by 256 and 128 bytes, and the five
-  images `flavors.json` guards for the two projects all stay inside their
-  slots: `canary-vision-default` 1,439,568 of 1,966,080 bytes,
+  PlatformIO here, on this change over the 2.4.17 train, with the
+  `secrets/secrets.h` that `firmware.yml`'s "Generate CI secrets header"
+  step writes into the project and with `-DVALIDATION_BUILD=1` (with no
+  `secrets/secrets.h` a build compiles the project's committed
+  `include/secrets.ci.h` stub instead, a different image), but not with
+  CI's packages: this machine cannot reach the PlatformIO registry, so the
+  Vision and Lite builds link Arduino-ESP32 2.0.17 from a local install
+  instead of CI's `3.20017.241212` package of it, every build links local
+  copies of its libraries, and the Vision image carries their local paths
+  in its assert strings. The four Vision build envs (`flavors.json`) and
+  all five Sentinel envs compile. Against the same envs built the same way
+  from the 2.4.17 release commit (#1885), the Vision images grow by 32 to
+  96 bytes and the Sentinel door and Lite images by 256 and 128 bytes.
+  Built here, the five images `flavors.json` guards for the two projects
+  are `canary-vision-default` 1,439,568 of 1,966,080 bytes,
   `canary-vision-xiao-c3` 1,449,600 of 1,966,080, `canary-vision-xiao-s3`
   1,333,488 of 3,342,336, `canary-sentinel-door` 1,451,376 of 1,966,080
-  and `canary-sentinel-lite` 1,160,816 of 1,310,720. Neither change is
-  compiled into the emulator, so its dist does not move.
+  and `canary-sentinel-lite` 1,160,816 of 1,310,720; the Lite image is the
+  tightest fit, with 149,904 bytes to spare. These are not the sizes CI's
+  size guard prints. Built here, #1885's five come out 208, 208, 208, 32
+  and 80 bytes under the sizes its own CI run's guard printed for them
+  (1,439,680, 1,449,728, 1,333,664, 1,451,152 and 1,160,768); this
+  change's guard sizes are the ones its own CI run prints. Neither change
+  is compiled into the emulator, so its dist does not move.
   Host-tested; not run on a device.
 
 ## [2.4.17] - 2026-10-27
