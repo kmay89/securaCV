@@ -252,8 +252,15 @@ pio run -e canary-vision-default -t upload       # ESP32-C3 DevKitM-1
 pio device monitor                               # 115200 baud
 ```
 
-On boot the monitor prints a `Grove Vision AI ID=...` line — a non-zero ID
-confirms the I2C link to the module is alive.
+On boot the monitor prints a `Grove Vision AI ID=...` line: `ID=1` means the
+module answered over I2C (the library's handshake and then a fresh name
+query), `ID=0` that it did not, with an `ERROR: Grove Vision AI V2 not
+responding` line just above it. The value is that verdict, never the
+module's own id: the firmware's code never asks for it (the SSCMA library's
+own handshake does, once, and keeps the answer in a buffer nothing reads).
+Any other number means an older image, which printed a memory address
+there, non-zero with or without a module: on one of those, only the ERROR
+line answers.
 
 ---
 

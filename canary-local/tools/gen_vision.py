@@ -468,6 +468,9 @@ must(MAIN_CPP, '(o.o)  ))     Connecting to MQTT...', "mqtt scene")
 must(MAIN_CPP, 'boot_kv("Sensor",  "Grove Vision AI V2 (SSCMA)")', "sensor kv")
 must(MAIN_CPP, 'boot_kvf("Profile", "%s  (watching for a %s)"', "profile kv")
 must(VISION_MGR_CPP, 'Grove Vision AI ID=%d', "i2c id line")
+# The value is the module verdict, 1 (answered) or 0 (did not), never the
+# module's own id (sweep F384): the staged line below shows the 1.
+must(VISION_MGR_CPP, 'printf("Grove Vision AI ID=%d\\n", g_module_ok ? 1 : 0)', "i2c id line's 1-or-0 value")
 must(VISION_MGR_CPP, "ERROR: Grove Vision AI V2 not responding", "i2c error line")
 must(WIFI_SUP_CPP, 'Connecting SSID=\\"%s\\" ...', "wifi connecting line")
 must(WIFI_SUP_CPP, "Connected IP=%s RSSI=%ddBm", "wifi connected line")
@@ -516,7 +519,7 @@ SERIAL = {
         {"tag": "[--]", "text": f"Rate   every {INVOKE_PERIOD_MS} ms"},
         {"tag": "[WIFI]", "text": 'Connecting SSID="Loft 2.4G" ...'},
         {"tag": "[WIFI]", "text": f"Connected IP={EX_IP} RSSI=-52dBm"},
-        {"tag": "[I2C]", "text": "Grove Vision AI ID=2"},
+        {"tag": "[I2C]", "text": "Grove Vision AI ID=1"},
         {"tag": "", "text": "              ,_,  ))"},
         {"tag": "", "text": "             (o.o)  ))     Connecting to MQTT..."},
         {"tag": "[--]", "text": f"Device ID  {DEVICE_ID}"},
@@ -529,7 +532,7 @@ SERIAL = {
     "ready": [
         "",
         f"  watching · invoke every {INVOKE_PERIOD_MS} ms · heartbeat every {HEARTBEAT_MS // 1000} s",
-        "  a non-zero Grove Vision AI ID is the handshake — ID=0 means check the I2C link",
+        "  Grove Vision AI ID=1 is the handshake — ID=0 means check the I2C link",
     ],
     "id_zero_hint": "Grove Vision AI ID=0 → I2C wiring/pins wrong, Grove cable on the wrong "
                     "socket, or module in bootloader mode (tap Reset).",
@@ -925,8 +928,8 @@ FLASH = {
     "port_rule": "Always through the XIAO's / DevKit's USB-C, never the module's. The module "
                  "port cannot see the ESP32, and the XIAO port cannot reach the Himax flash.",
     "quickstart": QUICKSTART,
-    "monitor": "pio device monitor — 115200 baud; a non-zero `Grove Vision AI ID=...` line "
-               "confirms the I2C link",
+    "monitor": "pio device monitor — 115200 baud; `Grove Vision AI ID=1` confirms the module "
+               "answered over I2C (ID=0: it did not)",
     "secrets": "cp secrets/secrets.example.h secrets/secrets.h — WiFi + MQTT fields. Your "
                "first USB flash with real secrets seeds the device's NVS; every signed OTA "
                "update it installs later inherits that setup automatically.",

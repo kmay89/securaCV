@@ -171,26 +171,78 @@ fn receipt_ready(manifest: &Value, vision: Option<&Value>) -> bool {
     let Some(vision) = vision else {
         return false;
     };
-    vision.get("i2c_ready").and_then(Value::as_bool) == Some(true)
-        && vision.get("module_id").and_then(Value::as_i64).unwrap_or(0) > 0
+    vision_module_ok(vision)
 }
 
-fn inspect_line<S: Emit>(
-    sink: &S,
-    line: &str,
-    manifest: &mut Option<Value>,
-    vision: &mut Option<Value>,
-) {
+/// Whether a Vision proof says its Grove module answered.
+///
+/// Every proof needs `i2c_ready` and a positive `module_id`. A Vision image
+/// from sweep F384's fix on also sends `module_ok`, its own verdict (begin()
+/// and a fresh NAME? round trip), and when it is present it must be `true`:
+/// read it, never infer it. Older images send no `module_ok`, and their
+/// `module_id` is a RAM address, non-zero whatever the module did; their
+/// `i2c_ready` already carried begin()'s answer, so the rule for them is the
+/// one it always was.
+fn vision_module_ok(vision: &Value) -> bool {
+    let i2c_ready = vision.get("i2c_ready").and_then(Value::as_bool) == Some(true);
+    let id_positive = vision.get("module_id").and_then(Value::as_i64).unwrap_or(0) > 0;
+    let module_ok = match vision.get("module_ok") {
+        None => true,
+        Some(value) => value.as_bool() == Some(true),
+    };
+    i2c_ready && id_positive && module_ok
+}
+
+/// The Vision host's I2C boot line (`canary-vision/src/vision/vision_mgr.cpp`
+/// prints `Grove Vision AI ID=%d`; `canary-local/tools/gen_vision.py`
+/// `must()`s that format, so it holds).
+const VISION_ID_LINE: &str = "Grove Vision AI ID=";
+
+/// What the same function prints just above that line when the module did
+/// not answer (`gen_vision.py` `must()`s it too).
+const VISION_DEAD_LINE: &str = "ERROR: Grove Vision AI V2 not responding";
+
+/// Whether a `Grove Vision AI ID=` value says the module answered, given
+/// whether its ERROR line was the line just before it (both are printed
+/// back to back by one function, so anything between them, a reset
+/// included, means the ERROR line belonged to something else).
+///
+/// An image from F384's fix on prints 1 (answered) or 0 (did not), and the
+/// ERROR line exactly with 0. An older image printed the address of the SSCMA
+/// library's id buffer, non-zero whether or not the module answered, so a
+/// positive value proved nothing; the ERROR line it printed when begin()
+/// failed was its only verdict. Reading both refuses a dead module from
+/// either image.
+fn boot_line_module_ok(module_id: i64, dead_line_seen: bool) -> bool {
+    module_id > 0 && !dead_line_seen
+}
+
+/// What the monitor carries from one boot line to the next.
+#[derive(Default)]
+struct LineState {
+    manifest: Option<Value>,
+    vision: Option<Value>,
+    /// The last non-empty line was `VISION_DEAD_LINE`.
+    vision_dead_line: bool,
+}
+
+fn inspect_line<S: Emit>(sink: &S, line: &str, state: &mut LineState) {
     let trimmed = line.trim();
-    if let Some(raw_id) = trimmed.strip_prefix("Grove Vision AI ID=") {
+    let dead_line_before = state.vision_dead_line;
+    if !trimmed.is_empty() {
+        state.vision_dead_line = trimmed.starts_with(VISION_DEAD_LINE);
+    }
+    if let Some(raw_id) = trimmed.strip_prefix(VISION_ID_LINE) {
         if let Ok(module_id) = raw_id.trim().parse::<i64>() {
+            let module_ok = boot_line_module_ok(module_id, dead_line_before);
             let proof = serde_json::json!({
                 "schema": "securacv.vision.proof/v1",
                 "module_id": module_id,
-                "i2c_ready": module_id > 0,
+                "module_ok": module_ok,
+                "i2c_ready": module_ok,
                 "source": "live-boot-line"
             });
-            *vision = Some(proof.clone());
+            state.vision = Some(proof.clone());
             sink.emit("serial:vision", proof);
         }
     }
@@ -201,16 +253,16 @@ fn inspect_line<S: Emit>(
         return;
     };
     match value.get("schema").and_then(Value::as_str) {
-        Some("securacv.canary.manifest/v1") => *manifest = Some(value),
-        Some("securacv.vision.proof/v1") => *vision = Some(value),
+        Some("securacv.canary.manifest/v1") => state.manifest = Some(value),
+        Some("securacv.vision.proof/v1") => state.vision = Some(value),
         _ => return,
     }
-    if let Some(device) = manifest.clone() {
+    if let Some(device) = state.manifest.clone() {
         let receipt = HostReceipt {
             target: "esp32-host",
-            ready: receipt_ready(&device, vision.as_ref()),
+            ready: receipt_ready(&device, state.vision.as_ref()),
             manifest: device,
-            vision: vision.clone(),
+            vision: state.vision.clone(),
         };
         sink.emit("serial:receipt", receipt);
     }
@@ -408,8 +460,7 @@ fn monitor_thread<S: Emit>(
 ) {
     let mut read_buffer = [0u8; 2048];
     let mut line_buffer = String::new();
-    let mut manifest = None;
-    let mut vision = None;
+    let mut lines = LineState::default();
     let mut first = true;
     // The post-flash reset happens at most ONCE per monitor. Without the
     // latch, the cycle would be: reset → device re-enumerates → reconnect →
@@ -484,7 +535,7 @@ fn monitor_thread<S: Emit>(
             if !io_ok {
                 break true; // write failed → the port dropped; reconnect
             }
-            if manifest.is_none() && Instant::now() >= next_manifest_request {
+            if lines.manifest.is_none() && Instant::now() >= next_manifest_request {
                 let _ = port.write_all(b"j\n");
                 let _ = port.flush();
                 next_manifest_request = Instant::now() + Duration::from_secs(3);
@@ -541,12 +592,7 @@ fn monitor_thread<S: Emit>(
                     sink.emit("serial:log", text.to_string());
                     for character in text.chars() {
                         if character == '\n' {
-                            inspect_line(
-                                &sink,
-                                line_buffer.trim_end_matches('\r'),
-                                &mut manifest,
-                                &mut vision,
-                            );
+                            inspect_line(&sink, line_buffer.trim_end_matches('\r'), &mut lines);
                             line_buffer.clear();
                         } else if line_buffer.len() < 16 * 1024 {
                             line_buffer.push(character);
@@ -668,6 +714,214 @@ mod tests {
             &manifest,
             Some(&serde_json::json!({"i2c_ready":true,"module_id":7}))
         ));
+    }
+
+    // ── the Vision module proof (sweep F384) ────────────────────────────
+    //
+    // An image before F384's fix printed `module_id` as the address of the
+    // SSCMA library's id buffer: non-zero whether or not the module answered.
+    // An image from the fix on prints 1 or 0 and adds `module_ok`. The
+    // records below are each image's real shape (canary-vision/src/main.cpp's
+    // `j` proof; vision_mgr.cpp's boot lines).
+
+    /// An `Emit` that keeps every event, for reading back.
+    #[derive(Default)]
+    struct Events(Mutex<Vec<(String, Value)>>);
+
+    impl Emit for Events {
+        fn emit<P: Serialize + Clone>(&self, event: &str, payload: P) {
+            let value = serde_json::to_value(payload).unwrap();
+            self.0.lock().unwrap().push((event.to_string(), value));
+        }
+    }
+
+    impl Events {
+        fn last(&self, event: &str) -> Option<Value> {
+            let events = self.0.lock().unwrap();
+            events
+                .iter()
+                .rev()
+                .find(|(e, _)| e == event)
+                .map(|(_, v)| v.clone())
+        }
+    }
+
+    /// Feed `lines` through the monitor's own line reader.
+    fn read_lines(lines: &[&str]) -> (Events, LineState) {
+        let sink = Events::default();
+        let mut state = LineState::default();
+        for line in lines {
+            inspect_line(&sink, line, &mut state);
+        }
+        (sink, state)
+    }
+
+    const MANIFEST_LINE: &str =
+        r#"{"schema":"securacv.canary.manifest/v1","board":"canary-vision","firmware":"2.4.16"}"#;
+    // The address an older image printed for a module that answered and for
+    // one that did not alike (an ESP32-C3 DRAM address, as `%d`).
+    const RAM_ADDRESS: &str = "1070379020";
+
+    #[test]
+    fn an_older_proof_record_keeps_its_rule() {
+        let manifest = serde_json::json!({"board":"canary-vision"});
+        // An older image's `j` record for a module that answered: a RAM
+        // address, i2c_ready from begin(), no module_ok. Still ready.
+        let alive = serde_json::json!({
+            "schema":"securacv.vision.proof/v1","module_id":1070379020,
+            "i2c_ready":true,"witness_ready":true,
+            "wifi_configured":true,"wifi_connected":true,"mqtt_connected":true});
+        assert!(receipt_ready(&manifest, Some(&alive)));
+        // ...and for a dead module: the same address, i2c_ready false.
+        let dead = serde_json::json!({
+            "schema":"securacv.vision.proof/v1","module_id":1070379020,
+            "i2c_ready":false,"witness_ready":true,
+            "wifi_configured":true,"wifi_connected":true,"mqtt_connected":true});
+        assert!(!receipt_ready(&manifest, Some(&dead)));
+    }
+
+    #[test]
+    fn a_new_proof_record_is_read_by_its_module_ok() {
+        let manifest = serde_json::json!({"board":"canary-vision"});
+        let alive = serde_json::json!({
+            "schema":"securacv.vision.proof/v1","module_id":1,"module_ok":true,
+            "i2c_ready":true,"witness_ready":true,
+            "wifi_configured":false,"wifi_connected":false,"mqtt_connected":false});
+        assert!(receipt_ready(&manifest, Some(&alive)));
+        let dead = serde_json::json!({
+            "schema":"securacv.vision.proof/v1","module_id":0,"module_ok":false,
+            "i2c_ready":false,"witness_ready":true,
+            "wifi_configured":false,"wifi_connected":false,"mqtt_connected":false});
+        assert!(!receipt_ready(&manifest, Some(&dead)));
+        // module_ok present decides, whatever the other two say, and only a
+        // real `true` is a yes.
+        for module_ok in [
+            serde_json::json!(false),
+            serde_json::json!("true"),
+            serde_json::json!(1),
+            Value::Null,
+        ] {
+            let record = serde_json::json!({
+                "module_id":1,"module_ok":module_ok,"i2c_ready":true});
+            assert!(
+                !receipt_ready(&manifest, Some(&record)),
+                "module_ok {module_ok} must refuse"
+            );
+        }
+    }
+
+    #[test]
+    fn the_receipt_refuses_a_dead_module_from_its_proof_line() {
+        // The whole `j` answer as the monitor reads it, from a new image whose
+        // module did not answer: a receipt, and not a ready one.
+        let proof = r#"{"schema":"securacv.vision.proof/v1","module_id":0,"module_ok":false,"i2c_ready":false,"witness_ready":true,"wifi_configured":true,"wifi_connected":true,"mqtt_connected":false}"#;
+        let (sink, _) = read_lines(&[MANIFEST_LINE, proof]);
+        let receipt = sink.last("serial:receipt").expect("a receipt");
+        assert_eq!(receipt["ready"], Value::Bool(false));
+        let proof = r#"{"schema":"securacv.vision.proof/v1","module_id":1,"module_ok":true,"i2c_ready":true,"witness_ready":true,"wifi_configured":true,"wifi_connected":true,"mqtt_connected":false}"#;
+        let (sink, _) = read_lines(&[MANIFEST_LINE, proof]);
+        assert_eq!(
+            sink.last("serial:receipt").unwrap()["ready"],
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn the_boot_line_from_a_new_image() {
+        let (sink, _) = read_lines(&["", "[I2C]", "Grove Vision AI ID=1"]);
+        let proof = sink.last("serial:vision").expect("a boot-line proof");
+        assert_eq!(proof["module_ok"], Value::Bool(true));
+        assert_eq!(proof["i2c_ready"], Value::Bool(true));
+        assert_eq!(proof["module_id"], serde_json::json!(1));
+        assert_eq!(proof["source"], "live-boot-line");
+
+        let (sink, _) = read_lines(&[
+            "", "[I2C]",
+            "ERROR: Grove Vision AI V2 not responding — check wiring/model (see docs/hardware/grove_vision_ai_v2_guide.md)",
+            "Grove Vision AI ID=0",
+        ]);
+        let proof = sink.last("serial:vision").expect("a boot-line proof");
+        assert_eq!(proof["module_ok"], Value::Bool(false));
+        assert_eq!(proof["i2c_ready"], Value::Bool(false));
+    }
+
+    #[test]
+    fn the_boot_line_from_an_older_image_refuses_a_dead_module() {
+        // The older image's dead module: its ERROR line, then the address.
+        // Before F384's fix this proof said i2c_ready: true.
+        let id_line = format!("Grove Vision AI ID={RAM_ADDRESS}");
+        let (sink, state) = read_lines(&[
+            "", "[I2C]",
+            "ERROR: Grove Vision AI V2 not responding — check wiring/model (see docs/hardware/grove_vision_ai_v2_guide.md)",
+            &id_line,
+        ]);
+        let proof = sink.last("serial:vision").expect("a boot-line proof");
+        assert_eq!(proof["module_ok"], Value::Bool(false));
+        assert_eq!(proof["i2c_ready"], Value::Bool(false));
+        assert!(
+            !state.vision_dead_line,
+            "the ERROR line is spent on its own ID line"
+        );
+
+        // A blank line between them (a CRLF split, a stray newline) does not
+        // spend the ERROR line: only a line with something on it does.
+        let (sink, _) = read_lines(&[
+            "ERROR: Grove Vision AI V2 not responding — check wiring/model (see docs/hardware/grove_vision_ai_v2_guide.md)",
+            "",
+            "   ",
+            &id_line,
+        ]);
+        assert_eq!(
+            sink.last("serial:vision").unwrap()["module_ok"],
+            Value::Bool(false),
+            "blank lines between the ERROR line and the ID line keep the refusal"
+        );
+
+        // An ERROR line, then anything else (here a reset's banner) before the
+        // ID line: it was not this ID line's ERROR line.
+        let (sink, _) = read_lines(&[
+            "ERROR: Grove Vision AI V2 not responding — check wiring/model (see docs/hardware/grove_vision_ai_v2_guide.md)",
+            "              ,_,          Waking up...",
+            "",
+            "[I2C]",
+            &id_line,
+        ]);
+        assert_eq!(
+            sink.last("serial:vision").unwrap()["module_ok"],
+            Value::Bool(true)
+        );
+
+        // The same image with a module that answered: no ERROR line.
+        let (sink, _) = read_lines(&["", "[I2C]", &id_line]);
+        assert_eq!(
+            sink.last("serial:vision").unwrap()["module_ok"],
+            Value::Bool(true)
+        );
+
+        // A dead boot, then a reboot whose module answered: the earlier ERROR
+        // line does not carry over to the next ID line.
+        let (sink, _) = read_lines(&[
+            "ERROR: Grove Vision AI V2 not responding — check wiring/model (see docs/hardware/grove_vision_ai_v2_guide.md)",
+            &id_line,
+            "              ,_,          Waking up...",
+            "[I2C]",
+            &id_line,
+        ]);
+        assert_eq!(
+            sink.last("serial:vision").unwrap()["module_ok"],
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn a_boot_line_module_ok_needs_a_positive_id_and_no_error_line() {
+        assert!(boot_line_module_ok(1, false));
+        assert!(!boot_line_module_ok(1, true));
+        assert!(!boot_line_module_ok(0, false));
+        assert!(!boot_line_module_ok(0, true));
+        assert!(!boot_line_module_ok(-5, false));
+        assert!(boot_line_module_ok(1_070_379_020, false));
+        assert!(!boot_line_module_ok(1_070_379_020, true));
     }
 
     // ── finding the board again after a flash ───────────────────────────

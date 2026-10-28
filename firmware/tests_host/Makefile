@@ -898,6 +898,14 @@ VISCORE_SRC = $(VISION_SRC)/detect_config.cpp $(VISFSM_SRC) \
               $(EMU_DIR)/vision/vision_core_bindings.cpp $(EMU_DIR)/vision/vision_core_shim.cpp
 VISCORE_BIN = $(BUILD_DIR)/test_vision_core_bindings
 
+# Canary Vision's module link (src/vision/vision_mgr.cpp, compiled verbatim
+# against a scripted Grove Vision AI module in stubs/vision_mgr/): the boot
+# line's 1 or 0 and the `j` proof record's module_ok, from begin() and a
+# fresh NAME? round trip, never the module's own id (no id accessor call); and
+# invoke()'s int read as the status code it is (sweep F384).
+VISMGR_SRC = $(VISION_SRC)/vision/vision_mgr.cpp
+VISMGR_BIN = $(BUILD_DIR)/test_vision_module_link
+
 # Sentinel multi-sensor fusion brain (common/fusion/sentinel_fusion.*): the
 # board-agnostic evidence-fusion engine compiled by projects/canary-sentinel on
 # device and here on the host. Pins the anti-evasion scoring (independence
@@ -920,6 +928,16 @@ SENT_PRESET_HDR = $(SENT_PROJ_INC)/canary/sentinel_config.h \
                   $(FUSION_DIR)/sentinel_fusion.h $(FUSION_DIR)/sentinel_channels.h
 PRESET_DOOR_BIN = $(BUILD_DIR)/test_sentinel_preset_door
 PRESET_LITE_BIN = $(BUILD_DIR)/test_sentinel_preset_mailbox_lite
+
+# The Sentinel's sensor links (projects/canary-sentinel's sentinel_links.h):
+# the radar object its health payload carries, judged by the rule its fusion
+# vote uses, and the BH1750's begin() result telling a unit with no light
+# sensor (the channel never votes, and channel_denied reports it) from a
+# blinded one (Denied), through the real engine under the door preset. The
+# project's src/main.cpp is passed in and held to calling those rules (no
+# host suite compiles it), so the read fails closed.
+SENT_LINKS_READS = ../projects/canary-sentinel/src/main.cpp
+SENT_LINKS_BIN = $(BUILD_DIR)/test_sentinel_links
 
 # Fleet-figure art tier (common/core/fleet_figures_art.h over
 # fleet_figures.h): every figure the firmware lookups can resolve has
@@ -1454,6 +1472,10 @@ $(VISCORE_BIN): test_vision_core_bindings.cpp $(VISCORE_SRC) Makefile | $(BUILD_
 	$(call with_deps,$(CXX) $(CXXFLAGS) -DARDUINO=10812 -I stubs/emscripten -I $(EMU_DIR)/shim -I $(EMU_DIR)/vision \
 	    -I $(VISION_INC) -I $(VISION_CFG) test_vision_core_bindings.cpp $(VISCORE_SRC) -o $@)
 
+$(VISMGR_BIN): test_vision_module_link.cpp $(VISMGR_SRC) Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -I stubs/vision_mgr -I $(VISION_INC) -I $(VISION_CFG) \
+	    -I ../boards/esp32-c3/pins test_vision_module_link.cpp $(VISMGR_SRC) -o $@)
+
 $(FUSION_BIN): test_sentinel_fusion.cpp $(FUSION_SRC) $(FUSION_HDR) Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) -DSENTINEL_FUSION_TEST_HOST -I $(FUSION_DIR) test_sentinel_fusion.cpp $(FUSION_SRC) -o $@)
 
@@ -1462,6 +1484,9 @@ $(PRESET_DOOR_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $
 
 $(PRESET_LITE_BIN): test_sentinel_presets.cpp $(FUSION_SRC) $(SENT_PRESET_HDR) $(SENT_CFG_DIR)/mailbox-lite/config.h Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) '-DSENTINEL_PRESET_NAME="mailbox-lite"' -I $(SENT_PROJ_INC) -I ../common -I $(SENT_CFG_DIR)/mailbox-lite test_sentinel_presets.cpp $(FUSION_SRC) -o $@)
+
+$(SENT_LINKS_BIN): test_sentinel_links.cpp $(FUSION_SRC) $(SENT_LINKS_READS) Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -I $(SENT_PROJ_INC) -I ../common -I $(SENT_CFG_DIR)/door test_sentinel_links.cpp $(FUSION_SRC) -o $@)
 
 $(LOOK_BIN): test_look_engine.cpp $(LOOK_SRC) $(LOOK_HDRS) Makefile | $(BUILD_DIR)
 	$(call with_deps,$(CXX) $(CXXFLAGS) -I ../common test_look_engine.cpp $(LOOK_SRC) -o $@)
@@ -1489,7 +1514,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@)
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(AUTHBACKOFF_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(APPW_BIN) $(APPW_FAIL_BIN) $(APPW_FAIL_MBED_BIN) $(FKFAIL_BIN) $(FKFAIL_MBED_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(SECAUTH_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(NVSKEY_BIN) $(NVSKEY_FE_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(AUTHBACKOFF_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(APPW_BIN) $(APPW_FAIL_BIN) $(APPW_FAIL_MBED_BIN) $(FKFAIL_BIN) $(FKFAIL_MBED_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(SECAUTH_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(NVSKEY_BIN) $(NVSKEY_FE_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(VISMGR_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(SENT_LINKS_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -1567,9 +1592,11 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	./$(VISFSM_BIN)
 	./$(VISFSM_GRACE_BIN)
 	./$(VISCORE_BIN)
+	./$(VISMGR_BIN)
 	./$(FUSION_BIN)
 	./$(PRESET_DOOR_BIN)
 	./$(PRESET_LITE_BIN)
+	./$(SENT_LINKS_BIN) $(SENT_LINKS_READS)
 	./$(LOOK_BIN)
 	./$(PLUMAGE_BIN)
 	./$(STORY_BIN)
