@@ -36,15 +36,14 @@ written.**
   flashed to a board yet.
 - **ESP32-CAM and ESP32 DevKit images are laid out to start.** Every image
   for these boards up to 2.4.17 put the bootloader where a classic ESP32
-  does not look, so a board installed from one would not start, and 0.12.2
-  wrote them anyway. 2.4.18's carry it at 0x1000, where the chip loads it:
+  does not look, so a board installed from one would not start, and earlier
+  Flashers wrote them anyway. 2.4.18's carry it at 0x1000, where the chip loads it:
   if one of these boards did not start, install 2.4.18 from here. Built by
   CI; nobody has booted one of these boards yet.
 - **An image laid out for another chip is refused before anything is
   written,** from the catalog or a local file. The message says where the
-  chip loads its bootloader from, where the image has one if it does, and
-  that nothing was written. SecuraCV's images are laid out right from 2.4.18
-  on.
+  chip loads its bootloader from and that nothing was written. SecuraCV's
+  images are laid out right from 2.4.18 on.
 - **The fake-capacity check reads 8 KB, not 4,** when the Flasher takes its
   safety copy, so a correctly installed classic ESP32 no longer reads as
   blank, and a smaller chip sold as a bigger one is caught there too.
@@ -56,7 +55,7 @@ written.**
   board.
 - **The dev-channel banner says which version the dev channel carries** and
   whether it is newer than, the same as, or older than the release this app
-  is pinned to. The Advanced panel no longer calls the dev channel ahead of
+  is pinned to, once a board is connected. The Advanced panel no longer calls the dev channel ahead of
   stable.
 - **The board card no longer shows a "Built" date.** On an Arduino build,
   every SecuraCV release included, that date is when the Arduino core was
