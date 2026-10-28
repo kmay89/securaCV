@@ -5,9 +5,10 @@
 //
 //   · buildSerial   — the USB-CDC console: the real boot banner + the
 //                     ordered setup() log stream, then the 1 Hz witness table.
-//   · buildPhone    — a phone joining the SecuraCV-XXXX SoftAP, the captive
-//                     sheet rendering the firmware's ACTUAL captive HTML, and
-//                     the five-step setup wizard that brings the device up.
+//   · buildPhone    — a phone joining the SecuraCV-wap-XXXX SoftAP, the
+//                     captive sheet rendering the firmware's ACTUAL captive
+//                     HTML, and the five-step setup wizard that brings the
+//                     device up.
 //   · buildDashboard— a faithful *sketch* of the on-device dashboard (labeled
 //                     as a sketch — the real one is 5,400 lines of device-API
 //                     JS we can't run offline; the pills/cards are the doc's).

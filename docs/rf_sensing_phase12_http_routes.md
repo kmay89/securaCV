@@ -15,6 +15,11 @@ called this out explicitly:
 > HTTP route registration in `wap_server.cpp` is deliberately deferred —
 > the wizard is transport-agnostic; the route layer is its own phase.
 
+(`wap_server.cpp` was a stub file nothing called, and sweep F277 removed
+it: the sketch registers its routes from `canary_wap.ino`'s
+`register_api_routes()` and `start_http_server()`, and `wap_server.h`
+holds only the route list.)
+
 Phase 12 closes that gap. It exposes the rf-sensing module surface over
 the existing HTTP server registered in `canary_wap.ino` so the SPA can
 drive setup, surface DP-noised counters, and let the user act on alerts.
@@ -60,15 +65,25 @@ All `/api/rf/*` endpoints follow the existing convention in
   `Authorization: Bearer <token>` header. The token is the SPA-injected
   bearer from PR #309.
 - Mutating endpoints (`POST`) use the same auth and additionally pass
-  through `wap_server::check_rate_limit(client_ip, /*is_action=*/true)`.
+  through an action rate limit, which is new work for this phase: the
+  sketch has no per-request limiter (`wap_server::check_rate_limit()` was
+  a stub that allowed every request, removed by sweep F277). What it has
+  is the failed-token backoff, under which `api_auth_check()` answers 429
+  on its own.
 - No physical-gate endpoints in Phase 12. Nothing here mints credentials
   or unseals secrets; the existing Bearer-only gate is sufficient.
 
-Failures return JSON via `wap_server::send_json_error`:
+Failures return JSON through `canary_wap.ino`'s `http_send_error()`, the
+envelope the sketch's other routes answer with:
 
 ```json
-{ "error": "<code>", "message": "<human-readable>" }
+{ "ok": false, "error": "<code>" }
 ```
+
+A handler that also answers a human-readable message spells it with
+`wap_json_writer.h` (`wap_json::str()` escapes it), never a printf `%s`:
+the stub `send_json_error()` this section used to name wrote its message
+unescaped (sweep F277 removed it).
 
 Error codes used in this spec: `unauthorized`, `rate_limited`,
 `bad_request`, `not_initialized`, `conflict`, `internal`.
@@ -335,11 +350,11 @@ checklist this section satisfies.
 | 400 | `bad_request`     | Malformed JSON, unknown enum, missing `confirm` |
 | 401 | `unauthorized`    | Missing/invalid Bearer token |
 | 409 | `conflict`        | State-machine refused (e.g. pair before zone set) |
-| 429 | `rate_limited`    | `wap_server::check_rate_limit` returned false |
+| 429 | `rate_limited`    | Phase 12's action rate limit refused (see §3) |
 | 500 | `internal`        | C++ helper returned `false` for unrecoverable reason |
 | 503 | `not_initialized` | rf-sensing not compiled in / `wizard::init` failed |
 
-Bodies use the standard envelope from `wap_server::send_json_error`.
+Bodies use the sketch's envelope from `http_send_error()` (§3).
 
 ## 7. SPA integration sketch
 
@@ -366,11 +381,13 @@ Implementation of this spec is "done" when:
 
 - [ ] All nine endpoints in §4 are registered in `register_api_routes`
       and respond with the documented schemas.
-- [ ] `wap_server.cpp` either (a) provides thin helpers used by the
-      handlers, or (b) the stub-only file is replaced with the real
-      implementation. Either is acceptable as long as the rf-sensing
-      handlers themselves live next to the other API handlers in
-      `canary_wap.ino`.
+- [ ] The rf-sensing handlers live next to the other API handlers in
+      `canary_wap.ino` and answer through its `http_send_json()` and
+      `http_send_error()` (the stub `wap_server.cpp` this item once
+      offered as their home was removed by sweep F277), and each new
+      route has its entry in `wap_server.h`'s route list, which
+      `firmware/tests_host/test_dashboard_route_match.test.js` holds to
+      the route table.
 - [ ] `register_api_routes`'s handler-count constant
       (`base_handlers + …`) is bumped to cover the nine new routes plus
       a small headroom; a regression test verifies start succeeds.

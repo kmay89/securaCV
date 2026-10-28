@@ -54,18 +54,27 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
+/// How much of the head the alias probe compares: 8 KB, not 4. A classic
+/// ESP32 (and an S2) keeps its bootloader at 0x1000, so on a correctly
+/// installed one the first 4 KB are erased flash, and a 4 KB head would read
+/// as a blank chip forever (and miss a mirrored part). 8 KB reaches the
+/// bootloader on every chip in [`crate::image::ROM_BOOTLOADER`]; a chip that
+/// loads it from 0x2000 (the C5, the P4) needs a wider window. The browser
+/// twin reads the same window (intake.js FLASH_ALIAS_WINDOW);
+/// desktop_parity.test.js holds the two equal, and past the table.
+pub const ALIAS_WINDOW: usize = 0x2000;
+
 /// Compare the head of the chip against each aliasing candidate inside the
 /// bytes we already read. `dump` is the whole-chip safety copy.
 pub fn flash_alias_verdict(dump: &[u8], declared: u64) -> Finding {
-    const WINDOW: usize = 0x1000;
-    if declared == 0 || dump.len() < WINDOW {
+    if declared == 0 || dump.len() < ALIAS_WINDOW {
         return Finding {
             level: "unknown",
             label: "Flash size not checked".into(),
             detail: None,
         };
     }
-    let head = &dump[..WINDOW];
+    let head = &dump[..ALIAS_WINDOW];
     if looks_uniform(head) {
         return Finding {
             level: "inconclusive",
@@ -82,7 +91,7 @@ pub fn flash_alias_verdict(dump: &[u8], declared: u64) -> Finding {
     // at 4, 8 and 12 MB, so the first hit is the true size.
     for at in alias_candidates(declared) {
         let start = at as usize;
-        let end = start + WINDOW;
+        let end = start + ALIAS_WINDOW;
         if end > dump.len() {
             // The copy doesn't reach this candidate, so every capacity from
             // here up to the declared size was never probed. A "clear —
@@ -279,6 +288,34 @@ mod tests {
             "stop",
             "an alias hit inside the readable range must still refuse the board"
         );
+    }
+
+    #[test]
+    fn a_classic_esp32_head_reaches_its_bootloader_at_0x1000() {
+        // A correctly installed classic ESP32 (or S2): erased flash below
+        // 0x1000, the bootloader from 0x1000 on. A 4 KB head is all 0xFF
+        // there, so the check read every such board as blank and could never
+        // conclude — on an honest part or a mirrored one.
+        let classic = |len: usize| {
+            let mut flash = patterned(len);
+            flash[..0x1000].fill(0xff);
+            flash
+        };
+        let declared = 4 * 1024 * 1024u64;
+        let honest = classic(declared as usize);
+        assert!(
+            looks_uniform(&honest[..0x1000]),
+            "the first 4 KB alone read as blank"
+        );
+        assert_eq!(flash_alias_verdict(&honest, declared).level, "clear");
+        // A 2 MB die sold as 4 MB, carrying the same layout.
+        let real = classic(2 * 1024 * 1024);
+        let mirrored: Vec<u8> = (0..declared as usize)
+            .map(|i| real[i % real.len()])
+            .collect();
+        let v = flash_alias_verdict(&mirrored, declared);
+        assert_eq!(v.level, "stop");
+        assert!(v.label.contains("2 MB"), "got: {}", v.label);
     }
 
     #[test]

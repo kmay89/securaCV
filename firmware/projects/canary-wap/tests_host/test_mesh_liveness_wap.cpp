@@ -36,6 +36,10 @@
 //   F116 a re-added member's last-seen counter started at 0, so a frame it
 //        signed before its removal, replayed at the re-pair, counted as the
 //        joiner heard and ended F100's COMPLETE resend.
+// And F94: a pairing CONFIRM was the same hash in both directions, so a
+// device's own CONFIRM, sent back to it from its partner's address, passed
+// for the partner's, and an initiator completed with a joiner whose owner
+// never confirmed.
 // And F164: a boot with no "mesh" namespace (the first after an NVS erase,
 // and any later one before the sketch's five-minute replay save or a reboot
 // through the API first opens the namespace read-write, which creates it
@@ -1038,9 +1042,12 @@ void test_a_confirm_before_the_code_is_shown_does_not_count() {
   deliver(A, J.mac, sent_to(J, BROADCAST).back());   // A offers to J
   become(A);
   CHECK(mn::g_mesh_state == mn::MESH_PAIRING_INIT);
+  // The joiner's role's hash over the all-zero key and code 0 (F94): the
+  // one that would count at the initiator.
   mn::PairConfirmPayload forged = {};
-  uint8_t zero[mn::SESSION_KEY_SIZE + 4] = {};
-  mn::sha256_domain(mn::DOMAIN_PAIR_CONFIRM, zero, sizeof zero, forged.confirmation_hash);
+  const uint8_t zero[mn::SESSION_KEY_SIZE] = {};
+  mesh_pair_crypto::confirm_hash(mesh_pair_crypto::ConfirmSender::JOINER, zero, 0,
+                                 forged.confirmation_hash);
   Frame f(1 + sizeof forged);
   f[0] = mn::MSG_PAIR_CONFIRM;
   memcpy(f.data() + 1, &forged, sizeof forged);
@@ -1095,6 +1102,281 @@ void test_a_bad_confirm_from_another_address_does_not_end_the_pairing() {
   become(A);
   CHECK(!mn::is_pairing());
   std::printf("PASS a_bad_confirm_from_another_address_does_not_end_the_pairing\n");
+}
+
+// ── F94: the CONFIRM names its sender's role ─────────────────────────────
+//
+// The CONFIRM hash was SHA-256("securacv:pair:confirm:v0" || session key ||
+// code) in both directions, and ESP-NOW does not authenticate a source
+// address. So the initiator's own CONFIRM, sent back to it from the
+// joiner's address, counted as the joiner's (F75's address check does not
+// stop it): the initiator added the joiner, sealed the opera_secret to it
+// and reported success, with the joiner's owner never asked. Each side now
+// sends the hash for its own role (mesh_pair_crypto::confirm_hash) and
+// checks its partner's.
+
+// The CONFIRM payload of a pairing frame.
+Frame confirm_payload(const Frame& f) {
+  CHECK(is_pair_frame(f, mn::MSG_PAIR_CONFIRM) && f.size() == 1 + sizeof(mn::PairConfirmPayload));
+  return Frame(f.begin() + 1, f.end());
+}
+
+// The hash `d`'s running pairing expects from `sender`.
+Frame role_hash(Device& d, mesh_pair_crypto::ConfirmSender sender) {
+  become(d);
+  Frame h(32);
+  mesh_pair_crypto::confirm_hash(sender, mn::g_pairing.session_key, mn::g_pairing.confirmation_code,
+                                 h.data());
+  return h;
+}
+
+// A CONFIRM frame carrying `hash`.
+Frame confirm_frame(const Frame& hash) {
+  Frame f(1 + sizeof(mn::PairConfirmPayload));
+  f[0] = mn::MSG_PAIR_CONFIRM;
+  CHECK(hash.size() == sizeof(mn::PairConfirmPayload));
+  memcpy(f.data() + 1, hash.data(), hash.size());
+  return f;
+}
+
+// `d` ended its pairing on a CONFIRM: not pairing, no partner added, the
+// callback told the owner it failed, and the log says why.
+void ended_on_a_bad_confirm(Device& d, const Device& partner) {
+  become(d);
+  CHECK(!mn::is_pairing());
+  CHECK(entry(d, partner) == nullptr);
+  const PairEvent* ev = last_event_of(d);
+  CHECK(ev != nullptr && !ev->success);
+  CHECK(logged("the partner's CONFIRM did not match"));
+  for (const Frame& f : sent_to(d, partner.mac)) CHECK(!is_pair_frame(f, mn::MSG_PAIR_COMPLETE));
+}
+
+void test_each_side_sends_its_own_roles_confirm() {
+  // Both orders: each CONFIRM carries its sender's role's hash, so the two
+  // are different bytes, and the pairing completes. Fails on the code
+  // before F94 (one role-free hash both ways) and with either side sending
+  // its partner's role's hash.
+  for (int joiner_first = 0; joiner_first < 2; ++joiner_first) {
+    fresh_device(A);
+    fresh_device(J);
+    pair_to_codes(A, J);
+    const Frame h_init = role_hash(A, mesh_pair_crypto::ConfirmSender::INITIATOR);
+    const Frame h_join = role_hash(J, mesh_pair_crypto::ConfirmSender::JOINER);
+    CHECK(h_init != h_join);
+    CHECK(h_init == role_hash(J, mesh_pair_crypto::ConfirmSender::INITIATOR));   // one key
+    A.espnow.sent.clear();
+    J.espnow.sent.clear();
+    if (joiner_first) {
+      become(J);
+      CHECK(mn::confirm_pairing());
+      CHECK(confirm_payload(last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM)) == h_join);
+      deliver(A, J.mac, last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM));
+      become(A);
+      CHECK(mn::g_pairing.peer_confirmed);
+      CHECK(mn::confirm_pairing());
+      mn::update();
+      CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_CONFIRM) == 0);   // F75: the COMPLETE alone
+    } else {
+      become(A);
+      CHECK(mn::confirm_pairing());
+      CHECK(confirm_payload(last_pair(A, J.mac, mn::MSG_PAIR_CONFIRM)) == h_init);
+      deliver(J, A.mac, last_pair(A, J.mac, mn::MSG_PAIR_CONFIRM));
+      become(J);
+      CHECK(mn::is_pairing());                                    // checked, kept going
+      CHECK(mn::confirm_pairing());
+      CHECK(confirm_payload(last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM)) == h_join);
+      deliver(A, J.mac, last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM));
+    }
+    CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 1);
+    deliver(J, A.mac, last_pair(A, J.mac, mn::MSG_PAIR_COMPLETE));
+    CHECK(completed(A, J) && completed(J, A));
+  }
+  std::printf("PASS each_side_sends_its_own_roles_confirm\n");
+}
+
+void test_a_reflected_confirm_does_not_count() {
+  // The initiator's owner confirms and its CONFIRM goes out; the same bytes
+  // come back from the joiner's address. It used to complete there: A added
+  // J, sent the COMPLETE and reported success, J's owner never asked. It is
+  // now a wrong hash from the partner's address and ends the pairing, as
+  // any wrong hash from there does: nothing added, sealed or sent.
+  fresh_device(A);
+  fresh_device(J);
+  pair_to_codes(A, J);
+  g_health.clear();
+  A.espnow.sent.clear();
+  become(A);
+  CHECK(mn::confirm_pairing());
+  const Frame mine = last_pair(A, J.mac, mn::MSG_PAIR_CONFIRM);
+  deliver(A, E_MAC, mine);                           // from a third radio: nothing (F75)
+  become(A);
+  CHECK(mn::is_pairing() && mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
+  deliver(A, J.mac, mine);                           // from the joiner's address
+  become(A);
+  mn::update();
+  ended_on_a_bad_confirm(A, J);
+  // J's owner confirms after it: J's CONFIRM finds no pairing on A.
+  become(J);
+  CHECK(mn::confirm_pairing());
+  deliver(A, J.mac, last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM));
+  CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 0);
+  CHECK(entry(A, J) == nullptr);
+
+  // The joiner's own CONFIRM, sent back to it from the initiator's address,
+  // ends the joiner's pairing the same way: it used to pass the joiner's
+  // check (and change nothing). Its initiator, holding the genuine CONFIRM,
+  // still completes (a_joiners_reflected_confirm_ends_only_the_joiners_pairing).
+  fresh_device(A);
+  fresh_device(J);
+  pair_to_codes(A, J);
+  g_health.clear();
+  become(J);
+  CHECK(mn::confirm_pairing());
+  deliver(J, A.mac, last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM));
+  ended_on_a_bad_confirm(J, A);
+  std::printf("PASS a_reflected_confirm_does_not_count\n");
+}
+
+void test_a_role_free_confirm_fails_closed() {
+  // A partner on firmware before F94 sends the role-free hash. Read on
+  // either side, before or after this side's owner confirmed, it is a wrong
+  // hash from the partner's address: the pairing ends, the initiator adds
+  // and seals nothing, and the log says so. Fails on the code before F94,
+  // where the role-free hash is the right one.
+  for (int run = 0; run < 4; ++run) {
+    const bool on_joiner = (run & 1) != 0;
+    const bool owner_first = (run & 2) != 0;
+    fresh_device(A);
+    fresh_device(J);
+    pair_to_codes(A, J);
+    g_health.clear();
+    Device& me = on_joiner ? J : A;
+    Device& partner = on_joiner ? A : J;
+    become(me);
+    if (owner_first) CHECK(mn::confirm_pairing());
+    uint8_t in[mn::SESSION_KEY_SIZE + 4];
+    memcpy(in, mn::g_pairing.session_key, mn::SESSION_KEY_SIZE);
+    memcpy(in + mn::SESSION_KEY_SIZE, &mn::g_pairing.confirmation_code, 4);
+    Frame old_hash(32);
+    mn::sha256_domain(mesh_pair_crypto::DOMAIN_PAIR_CONFIRM, in, sizeof in, old_hash.data());
+    deliver(me, partner.mac, confirm_frame(old_hash));
+    become(me);
+    if (!owner_first) {
+      // Nothing to send yet either way; the owner's confirm now does nothing.
+      CHECK(!mn::confirm_pairing());
+    }
+    mn::update();
+    ended_on_a_bad_confirm(me, partner);
+  }
+  std::printf("PASS a_role_free_confirm_fails_closed\n");
+}
+
+void test_a_joiners_reflected_confirm_ends_only_the_joiners_pairing() {
+  // The joiner's own CONFIRM, sent back to it from the initiator's address
+  // before the COMPLETE, ends the joiner's pairing, and only the joiner's:
+  // the initiator holds the genuine CONFIRM, so it still adds the joiner,
+  // sends the COMPLETE and reports success; the joiner, its pairing gone,
+  // drops the COMPLETE and every resend, and after 2 minutes the initiator
+  // logs that its COMPLETE was never answered. A wrong hash sent to the
+  // joiner in the same slot already did that before F94, so the reflection
+  // gives a radio nothing it did not have. Until F94 the joiner took its
+  // own CONFIRM as the initiator's and both sides completed. Both orders.
+  // Fails on the code before F94, and with a joiner that drops a CONFIRM
+  // equal to its own role's hash instead of ending on it.
+  for (int joiner_first = 0; joiner_first < 2; ++joiner_first) {
+    fresh_device(A);
+    fresh_device(J);
+    pair_to_codes(A, J);
+    g_health.clear();
+    A.espnow.sent.clear();
+    J.espnow.sent.clear();
+    if (!joiner_first) {
+      become(A);
+      CHECK(mn::confirm_pairing());
+      deliver(J, A.mac, last_pair(A, J.mac, mn::MSG_PAIR_CONFIRM));
+      become(J);
+      CHECK(mn::is_pairing());
+    }
+    become(J);
+    CHECK(mn::confirm_pairing());
+    const Frame cj = last_pair(J, A.mac, mn::MSG_PAIR_CONFIRM);
+    deliver(J, A.mac, cj);                           // reflected to J first
+    ended_on_a_bad_confirm(J, A);
+    deliver(A, J.mac, cj);                           // the genuine one reaches A
+    if (joiner_first) {
+      become(A);
+      CHECK(mn::g_pairing.peer_confirmed);
+      CHECK(mn::confirm_pairing());
+    }
+    become(A);
+    mn::update();
+    CHECK(completed(A, J));                          // A added J and reported success
+    CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) == 1);
+    deliver(J, A.mac, last_pair(A, J.mac, mn::MSG_PAIR_COMPLETE));
+    become(J);
+    CHECK(!mn::is_pairing() && entry(J, A) == nullptr);
+    CHECK(!logged("COMPLETE never answered"));
+    run({&A, &J}, mn::PAIRING_TIMEOUT_MS + 5000, 1000);
+    CHECK(pair_frames(A, J.mac, mn::MSG_PAIR_COMPLETE) > 1);   // the F100 resends, dropped
+    become(J);
+    CHECK(entry(J, A) == nullptr && last_event_of(J) != nullptr && !last_event_of(J)->success);
+    CHECK(entry(A, J) != nullptr);
+    CHECK(logged("COMPLETE never answered"));
+  }
+  std::printf("PASS a_joiners_reflected_confirm_ends_only_the_joiners_pairing\n");
+}
+
+void test_two_relayed_initiators_refuse_each_others_confirm() {
+  // Two initiators relayed into one session key: a radio hands each one a
+  // DISCOVER with the joiner's role, forged from the other's address, and
+  // relabels each one's OFFER an ACCEPT to the other. Both then show the
+  // same code. Each expects the joiner's role's hash and gets the
+  // initiator's, so each ends its pairing, logs why, and adds and seals
+  // nothing. Until F94 each took the other's CONFIRM, added the other and
+  // sent it the COMPLETE. Fails on the code before F94.
+  fresh_device(A);
+  fresh_device(B);
+  g_pair_events.clear();
+  g_health.clear();
+  become(A);
+  CHECK(mn::start_pairing_initiator(nullptr));
+  become(B);
+  CHECK(mn::start_pairing_initiator(nullptr));
+  A.espnow.sent.clear();
+  B.espnow.sent.clear();
+  auto forged_discover = [](const Device& as) {
+    mn::PairDiscoverPayload d = {};
+    memcpy(d.pubkey, as.pub, 32);
+    d.role = mn::PAIR_ROLE_JOINER;
+    Frame f(1 + sizeof d);
+    f[0] = mn::MSG_PAIR_DISCOVER;
+    memcpy(f.data() + 1, &d, sizeof d);
+    return f;
+  };
+  deliver(A, B.mac, forged_discover(B));
+  deliver(B, A.mac, forged_discover(A));
+  Frame oa = last_pair(A, B.mac, mn::MSG_PAIR_OFFER);
+  Frame ob = last_pair(B, A.mac, mn::MSG_PAIR_OFFER);
+  oa[0] = mn::MSG_PAIR_ACCEPT;
+  ob[0] = mn::MSG_PAIR_ACCEPT;
+  deliver(B, A.mac, oa);
+  deliver(A, B.mac, ob);
+  become(A);
+  CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
+  const uint32_t code_a = mn::g_pairing.confirmation_code;
+  become(B);
+  CHECK(mn::g_mesh_state == mn::MESH_PAIRING_CONFIRM);
+  CHECK(mn::g_pairing.confirmation_code == code_a);   // one key, one code on both screens
+  become(A);
+  CHECK(mn::confirm_pairing());
+  become(B);
+  CHECK(mn::confirm_pairing());
+  deliver(B, A.mac, last_pair(A, B.mac, mn::MSG_PAIR_CONFIRM));
+  deliver(A, B.mac, last_pair(B, A.mac, mn::MSG_PAIR_CONFIRM));
+  run({&A, &B}, 5000);
+  ended_on_a_bad_confirm(A, B);
+  ended_on_a_bad_confirm(B, A);
+  std::printf("PASS two_relayed_initiators_refuse_each_others_confirm\n");
 }
 
 // ── F76: an opera with members it has not heard announces itself ───────
@@ -2863,6 +3145,13 @@ const Test kTests[] = {
      test_a_bad_confirm_from_another_address_does_not_end_the_pairing},
     {"a_confirm_before_the_code_is_shown_does_not_count",
      test_a_confirm_before_the_code_is_shown_does_not_count},
+    {"each_side_sends_its_own_roles_confirm", test_each_side_sends_its_own_roles_confirm},
+    {"a_reflected_confirm_does_not_count", test_a_reflected_confirm_does_not_count},
+    {"a_role_free_confirm_fails_closed", test_a_role_free_confirm_fails_closed},
+    {"a_joiners_reflected_confirm_ends_only_the_joiners_pairing",
+     test_a_joiners_reflected_confirm_ends_only_the_joiners_pairing},
+    {"two_relayed_initiators_refuse_each_others_confirm",
+     test_two_relayed_initiators_refuse_each_others_confirm},
     {"a_fresh_pairing_is_heard_both_ways", test_a_fresh_pairing_is_heard_both_ways},
     {"an_opera_whose_members_all_rebooted_comes_back", test_an_opera_whose_members_all_rebooted_comes_back},
     {"two_active_members_that_never_heard_each_other_do", test_two_active_members_that_never_heard_each_other_do},

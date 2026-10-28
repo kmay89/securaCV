@@ -17,6 +17,15 @@
  * the committed row into a bounded FreeRTOS queue (never blocks, counts
  * what it drops); csi_event_egress_pump() drains it on the loop task.
  *
+ * Ambient rows (wifi.channel_activity's channel_active) never reach that
+ * queue (sweep F105): csi_event.h's contract for CSI_CATEGORY_AMBIENT is
+ * "never persisted, drives live UI only", so the override drops each one
+ * after its privacy gate, counted (ambient_dropped below). They go to
+ * neither the card nor the `events` topic; the in-memory ring keeps them.
+ * The egress before F105 appended them to the card, so a backlog an older
+ * firmware left can hold ambient lines: the backfill passes each one over,
+ * counted in planner.unsendable.
+ *
  * Persistence (backlog F37): with a card in, every row the pump drains is
  * appended to the SD event log (/EVENTS/today.ndjson, the canary-wap's line
  * format — src/csi_event_log.cpp, loop task only under this tree's
@@ -46,14 +55,15 @@
  * whose card append fails waits in the same hold while older rows wait on
  * the card or in the hold, or while the link is down (backlog F103): it
  * used to go live or into the offline queue at once, past the card's rows.
- * An ambient row that would wait is dropped, counted (csi_event_egress_stats
- * below). A row in the hold writes no NVS delivery ceiling until it goes
+ * A row in the hold writes no NVS delivery ceiling until it goes
  * (the planner writes it then), so a reboot
  * never reads the card's rows as delivered on its account, and with a card
  * open it waits for the link (the ceiling it would write could cover the
  * card rows after it). So the offline queue, which drains later without
  * asking the planner, is never given a row older rows wait ahead of. Rows
- * in the hold do not survive a reboot, and a broker change drops them, so on
+ * in the hold do not survive a reboot (a planned one drains them first, for
+ * up to a second: csi_event_egress_flush_for_restart() below, sweep F92),
+ * and a broker change drops them, so on
  * a build with a card slot but no usable card a row from the first 45 s
  * after boot is lost if the canary reboots (or its broker changes) first. A
  * held row the backfill already sent from the card (a failed append that
@@ -69,6 +79,9 @@
 
 #ifndef SECURACV_CSI_EVENT_EGRESS_H
 #define SECURACV_CSI_EVENT_EGRESS_H
+
+#include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -87,6 +100,28 @@ void csi_event_egress_begin(void);
  * FEATURE_HA_MQTT. */
 void csi_event_egress_pump(void);
 
+/* Loop task, right before a planned restart (sweep F92), through main.cpp's
+ * flush_events_before_restart(): deliberate_restart_now() (POST /api/reboot,
+ * deferred to the loop, and the serial 'x'), ahead of the chain persist and
+ * the MQTT disconnect, and setup's restart once Wi-Fi joins. Pumps the
+ * egress queue empty first (it is as deep as the bundler has slots, so a
+ * full slot table closing onto queued rows would overflow it), then commits
+ * every open CSI bundle (csi_event_flush_bundles(): each takes its event id
+ * and queues here), then runs csi_event_egress_pump() until the egress
+ * queue is empty and the RAM hold has gone (onto the card, or to the MQTT
+ * layer), or budget_ms has passed, whichever is first, with a short delay
+ * between passes. Bounded: a broker that does not answer, a hold waiting
+ * for a card, or a backlog the backfill is still walking costs the budget
+ * and no more (each pass is the loop's own pump, as bounded as on any pass;
+ * the caller resets the watchdog first). What is still in the queue or the
+ * hold then is lost to the restart, as before, and the MQTT layer's offline
+ * queue is RAM too. Rows on the card stay owed, but for up to kStride ids a
+ * walk in progress had already covered with its NVS ceiling (F47's trade:
+ * the next boot reads them as delivered). Returns true when the queue and
+ * the hold were empty. Without FEATURE_HA_MQTT it only commits the bundles
+ * (nothing leaves the device). */
+bool csi_event_egress_flush_for_restart(uint32_t budget_ms);
+
 #ifdef CSI_TEST_HOST_BUILD
 /* Host tests only (firmware/tests_host/test_canary_event_egress.cpp): forget
  * this "boot"'s RAM state, to model a power cycle. NVS and the card stay. */
@@ -104,6 +139,12 @@ void csi_event_egress_test_reset(void);
 
 #include "csi_event_backfill.h"   /* the planner's Stats */
 
+/* csi_event_egress_flush_for_restart()'s budget at every planned restart
+ * (sweep F92): one second, well inside the loop task's 8 s watchdog
+ * (WATCHDOG_TIMEOUT_SEC), so a stalled broker delays a restart by about a
+ * second. The canary-wap's csi_event_egress::kRestartBudgetMs. */
+constexpr uint32_t kCsiEventEgressRestartBudgetMs = 1000;
+
 /* What the egress did this boot (backlog F109), in the canary-wap's
  * csi_event_egress::Stats shape, field for field, so a bench run or a field
  * report reads both devices' counters by the same names. main.cpp's MQTT
@@ -114,7 +155,10 @@ void csi_event_egress_test_reset(void);
  *   held_dropped     rows the RAM hold dropped, the oldest first (kHeldMax),
  *                    or every row that had to wait when the hold has no
  *                    memory;
- *   ambient_dropped  ambient rows that had to wait (they are never held);
+ *   ambient_dropped  ambient rows the commit hook dropped: every one, since
+ *                    none goes to the card or the broker (sweep F105; until
+ *                    then, only those that would have had to wait in the
+ *                    hold, which never kept one);
  *   unsent_dropped   rows no card kept that were lost unsent where they
  *                    left for the MQTT layer: it refused them (its offline
  *                    queue has no memory, or is full of tamper alerts while

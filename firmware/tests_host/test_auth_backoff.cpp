@@ -341,10 +341,12 @@ static long strike_whenever_free(Table& t, uint32_t start, uint32_t end, int per
 // strikes each backoff k times, each the moment the one before ends, then
 // waits out the 60 s window, and k = 5 (strikes at 0, 2, 6, 14 and 30 s, then
 // clean at 90 s) gives 30 a minute over nine backoffs; no k gives more. A
-// reboot empties the table (the WAP keeps it in RAM, and any landing session
-// can reboot that unit), so a guesser that strikes for a few seconds and then
-// reboots it gets more, depending on how soon the unit is back: about 155 a
-// minute at 5 s, about 100 at 10 s, about 37 at 45 s.
+// reboot empties the table (the WAP keeps it in RAM). Until F361 any landing
+// session could reboot that unit; both reboot routes take the bearer alone
+// now, and a session's firmware install restarts it only into a newer signed
+// image. A guesser able to reboot it after every few seconds of strikes gets
+// more, depending on how soon the unit is back: about 155 a minute at 5 s,
+// about 100 at 10 s, about 37 at 45 s.
 static void the_documented_guess_rates_hold() {
   double best = 0;
   int best_k = 0;

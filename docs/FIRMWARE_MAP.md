@@ -129,18 +129,25 @@ captive portal, the AP-password mint, the `wl_status_t → JoinFailure` switch
 > `common/network/wifi_supervisor.cpp`; the SSID is `SecuraCV-<type>-XXXX`
 > everywhere; the AP hold is 120 s / 1.6 s; the saved-network ring holds four;
 > a 10 s hold resets credentials and keeps identity. Cells: `PARITY.md` C1–C12.
+> Since then, on the WAP: the 10 s hold is `factory_reset_by_hold()` (the
+> table's "none" below is the snapshot); `POST /api/wifi/forget` and
+> `/api/wifi/disconnect` take the API token in every mode (F345, F334), and
+> Forget also clears the stored broker login (F333); after setup `POST
+> /api/wifi/connect` and `/api/wifi/ap-only` take it too (F334), while
+> Reconnect, which only rejoins the stored network, still takes the
+> dashboard session.
 
 Four portal implementations exist. All four raise a device-unique
-`SecuraCV-XXXX` WPA2 network, hijack DNS for A queries only, answer the
-Apple/Android/Windows connectivity probes, list nearby networks strongest
-first, and persist credentials only after a join actually worked — because
-each was ported from the WAP's lessons (`firmware/LESSONS_LEARNED.md`
-§Networking) by hand.
+`SecuraCV-<type>-XXXX` WPA2 network (plain `SecuraCV-XXXX` before 2.4.17),
+hijack DNS for A queries only, answer the Apple/Android/Windows
+connectivity probes, list nearby networks strongest first, and persist
+credentials only after a join actually worked — because each was ported
+from the WAP's lessons (`firmware/LESSONS_LEARNED.md` §Networking) by hand.
 
 | | canary (PIO) | canary-wap | canary-vision / -sense / -sentinel | canary-display |
 |---|---|---|---|---|
 | Portal code | `lib/securacv_setup` + `lib/securacv_network` (`/setup`, `/api/wifi/{scan,connect,status,disconnect}`) | `setup_wizard.h` + `companion_pwa.h` wizard over `esp_http_server` `/api/wifi/*`, one-shot pair token | `common/network/setup_portal.cpp` (`/`, `/scan`, `/join`, `/status`) | `src/net/provision.cpp` (`/`, `/scan`, `/join`+tz, `/status`), blocking, the glass shows a join QR |
-| AP SSID / key | `SecuraCV-<4 chars of pubkey fp>`, key `cv-`+12 from HMAC(privkey) (`common/network/ap_password.h`, since F350), printed on serial, never persisted | `SecuraCV-<4>`, key `cv-`+12 from HMAC(privkey), printed on serial, never persisted | `SecuraCV-<4 of salted pseudonym>`, 8-char key minted once, persisted in NVS `ap_pass` | same algorithm as the shared portal, separately implemented (`provision.cpp:651-703`), shown on the glass |
+| AP SSID / key | `SecuraCV-canary-<4 chars of pubkey fp>`, key `cv-`+12 from HMAC(privkey) (`common/network/ap_password.h`, since F350), printed on serial, never persisted | `SecuraCV-wap-<4>`, key `cv-`+12 from HMAC(privkey), printed on serial, never persisted | `SecuraCV-<type>-<4 of salted pseudonym>`, 8-char key minted once, persisted in NVS `ap_pass` | same algorithm as the shared portal, separately implemented (`provision.cpp:651-703`), shown on the glass |
 | AP lifetime | always-on AP+STA; dropped 8 s after STA holds, re-raised on STA loss (`raiseAp`) | always-on management AP; dropped 120 s after STA holds (`AP_DROP_GRACE_MS`), re-raised on loss | raised only while unprovisioned or recovering; lingers ≤ 25 s after success (1.6 s after the phone's ack) | same 25 s / 1.6 s linger, then the glass takes over |
 | BLE door (Improv) | none | FULL profile: 30-min first-boot window, 60 s BOOT tap, claim ticket → `GET /api/provisioning-receipt?claim=` | sense, vision: same door, same join path as the portal, plus the hub hand-off; sentinel: none | none by design ("a screen beats a radio") |
 | Password field | `/setup`: label "Wi-Fi password", placeholder "Your existing Wi-Fi password", hint "Nothing new to invent" (`securacv_setup_page.cpp:106-111`); dashboard SPA: "WiFi password" | companion wizard "Network password"; legacy dashboard "WiFi password"; fleet QR form "Password" | placeholder **"Password"** under the picked SSID (`setup_portal.cpp:150`) | placeholder **"Password"** (`provision.cpp:231`) |

@@ -12,13 +12,15 @@
 use serde_json::Value;
 
 /// The dev channel's one stable address: the rolling fw-dev-latest prerelease
-/// that CI re-points on every fw-v*-dev.*/-rc.* tag. This is a fixed
-/// first-party constant, deliberately NOT a general manifest-URL override —
-/// the dev toggle can only ever mean this URL. It is the ONE alternative the
-/// flash pipeline accepts to the catalog's pinned manifest_url; everything
-/// downstream (chip guard, release origin, size/SHA, signature policy) is
-/// identical. Mirrors canary-local/assets/flash-core.js DEV_FLASH_MANIFEST_URL
-/// and desktop/src/app.js — the desktop-parity test fails if they drift.
+/// that CI re-points on every fw-v*-dev.*/-rc.* tag, and on every stable tag
+/// when no newer dev build is there (.github/scripts/dev_channel.py). This is
+/// a fixed first-party constant, deliberately NOT a general manifest-URL
+/// override — the dev toggle can only ever mean this URL. It is the ONE
+/// alternative the flash pipeline accepts to the catalog's pinned
+/// manifest_url; everything downstream (chip guard, release origin,
+/// size/SHA, signature policy) is identical. Mirrors
+/// canary-local/assets/flash-core.js DEV_FLASH_MANIFEST_URL and
+/// desktop/src/app.js — the desktop-parity test fails if they drift.
 pub const DEV_FLASH_MANIFEST_URL: &str =
     "https://github.com/kmay89/securaCV/releases/download/fw-dev-latest/manifest-flash.json";
 

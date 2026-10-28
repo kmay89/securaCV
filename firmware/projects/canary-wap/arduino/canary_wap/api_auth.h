@@ -38,17 +38,19 @@
 // who already opened the paired dashboard do not have to reveal or retype
 // the long-lived API token when they click Settings.
 //
-// It is NOT a credential for the routes that hand out a credential (sweep
-// F289). The dashboard's landing page mints that session for whoever loads
-// it on the home network (deliberate LAN posture, the 2026-07 audit's
-// "Trust-on-LAN"), so a session is proof of being on the LAN, not of holding
-// the token or of a hand on the BOOT button. GET /api/provisioning-receipt
-// (the bearer token, the SoftAP password, the TLS pin) and GET
-// /api/pairing-qr (the token and the pin) therefore take the bearer-only
-// checks below — api_auth_bearer_grant() and api_auth_check_bearer(), both
-// under every admin route's per-address lockout — and never this bridge;
-// their other grants (the BOOT tap, the setup-door claim) are the handlers'
-// own.
+// It is NOT a credential for an answer that carries a credential, or for a
+// write that grants one (sweep F289, F335, F346). The dashboard's landing
+// page mints that session for whoever loads it on the home network
+// (deliberate LAN posture, the 2026-07 audit's "Trust-on-LAN"), so a session
+// is proof of being on the LAN, not of holding the token or of a hand on the
+// BOOT button. Such routes take the bearer-only checks below —
+// api_auth_bearer_grant() and api_auth_check_bearer(), both under every
+// admin route's per-address lockout — and never this bridge. For example:
+// GET /api/provisioning-receipt and GET /api/pairing-qr (the token, the
+// SoftAP password, the TLS pin), POST /api/vault/key (who can open every
+// frame sealed from then on), and a pairing's confirm (a lasting Bluetooth
+// bond, an opera's secret). SECURITY_MODEL.md keeps the list. Their other
+// grants (the BOOT tap, the setup-door claim) are the handlers' own.
 extern bool cv_session_validate(httpd_req_t* req) __attribute__((weak));
 
 // The source a request's wrong bearers are counted against (sweep F343): the
@@ -196,11 +198,16 @@ static void api_auth_send_lockout(httpd_req_t* req) {
 // The caller should return ESP_OK immediately if this returns false.
 //
 // Two entry points over one body. api_auth_check() takes a valid cv_session
-// cookie OR a Bearer token: every admin route. api_auth_check_bearer() takes
-// ONLY the Bearer token, with the same lockout, the same failure accounting
-// and the same 401/403/429 answers: the routes whose answer carries a
-// credential (sweep F289 — the pairing QR), where a session the landing page
-// mints for any LAN host must not stand in for the token.
+// cookie OR a Bearer token, for a route a landing session may use.
+// api_auth_check_bearer() takes ONLY the Bearer token, with the same lockout,
+// the same failure accounting and the same 401/403/429 answers, for a route
+// where a session the landing page mints for any LAN host must not stand in
+// for the token: an answer that carries a credential (sweep F289, the
+// pairing QR), a write that grants one (the vault key, F335; the Bluetooth
+// and mesh pairing confirms, F346), the four routes that move the network
+// (Disconnect and Forget in every mode, Connect and AP-only after setup
+// through wifi_change_authorize(); F334, F345) and the two reboot routes
+// (F361). SECURITY_MODEL.md keeps the list.
 
 static bool api_auth_check_bearer(httpd_req_t* req, const char* expected_token) {
   // ── Check this source's lockout ──

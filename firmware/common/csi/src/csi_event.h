@@ -119,11 +119,14 @@ uint32_t csi_event_emit(const char*               module_id,
 
 /**
  * Force-close every open bundle now; each commits through the chokepoint
- * and takes its event id then. No firmware calls it today: both trees close
- * bundles with csi_bundler_tick() once per main loop, which closes only the
- * ones past their 10-minute window or quiet gap. (The canary called this
- * after every CSI window until sweep F81, so no bundle there ever merged a
- * refresh.) Tests use it to commit whatever is open.
+ * and takes its event id then. Both trees call it before a planned restart
+ * only (sweep F92: the events egress's flush_for_restart, the canary's
+ * csi_event_egress_flush_for_restart()), so an open row is committed rather
+ * than lost; otherwise they close bundles with csi_bundler_tick() once per
+ * main loop, which closes only the ones past their 10-minute window or quiet
+ * gap. (The canary called this after every CSI window until sweep F81, so no
+ * bundle there ever merged a refresh.) Tests use it to commit whatever is
+ * open.
  */
 void csi_event_flush_bundles(void);
 
@@ -270,9 +273,14 @@ size_t csi_event_recent(csi_event_record_t* out, size_t max);
 bool csi_event_find(uint32_t event_id, csi_event_record_t* out);
 
 /**
- * Mark an event dismissed by the user. Increments the values->dismissed flag,
- * routes a notification to the originating module, and updates the in-memory
- * record so the dashboard can gray it out. Local-only.
+ * Mark an event dismissed by the user. Sets the values->dismissed flag and
+ * updates the in-memory record so the dashboard can gray it out; the first
+ * dismiss of a row also routes a notification to the originating module
+ * (its on_event_dismissed, when this boot emitted it), a repeated one does
+ * not. Returns whether the row is in the ring. Local-only. Since sweep F77
+ * closed bundles are ring rows, so a dismissed core.presence or
+ * core.breathing row raises that module's thresholds a point, in RAM until
+ * its next init.
  */
 bool csi_event_dismiss(uint32_t event_id);
 
@@ -296,8 +304,10 @@ bool csi_event_dismiss(uint32_t event_id);
  *     an open bundle's handle range, which no firmware's ring row ever
  *     used (backlog F46), so an open row and a restored row never share
  *     an id;
- *   - an event committed live this boot is already in the ring. Injecting
- *     after that would put older rows ahead of newer ones;
+ *   - an event committed live this boot is already in the ring, and the
+ *     record is not older than every such event (its event_id is at or
+ *     above the first one's), or more than CSI_EVENT_INJECT_BENEATH_MAX of
+ *     them have committed;
  *   - a row with the same event_id is already in the ring;
  *   - its module or event type is not registered on this build;
  *   - the privacy class the MANIFEST declares for that type (not the class
@@ -308,10 +318,28 @@ bool csi_event_dismiss(uint32_t event_id);
  * are cleared, since they mean nothing on this boot's clock. The dismissed
  * flag is kept: it is the owner's own mark, set whatever the manifest says.
  *
- * Call it only while the ring has no live rows (at boot); injecting
- * oldest-first leaves the newest record at the head, as a live commit would.
+ * Call it at boot, oldest-first: that leaves the newest record at the head,
+ * as a live commit would. If this boot has committed live rows already (a
+ * card the host adopts after the first loop pass, which on a crash boot has
+ * committed system.integrity's boot row: sweep F77's review), each record
+ * goes beneath them instead, so they stay the newest and the reload keeps
+ * its order below them; each such inject moves the live rows one slot,
+ * which is why there may be no more than CSI_EVENT_INJECT_BENEATH_MAX.
  */
 bool csi_event_inject(const csi_event_record_t* rec);
+
+/** How many live rows csi_event_inject may lift to put an earlier boot's
+ *  rows beneath them (sweep F77's review). A card adopted in a boot's
+ *  first minute finds a few (a crash boot's tamper row, an ambient spike
+ *  per 5 s, a closed bundle); past this many the reload restores nothing. */
+#ifndef CSI_EVENT_INJECT_BENEATH_MAX
+#define CSI_EVENT_INJECT_BENEATH_MAX 32
+#endif
+
+/** Whether csi_event_inject can still take a row: no live row has
+ *  committed this boot, or at most CSI_EVENT_INJECT_BENEATH_MAX have. The
+ *  reload asks first, so it reads no card it would restore nothing from. */
+bool csi_event_inject_open(void);
 
 /**
  * Reset all in-memory state. Used by tests. Does NOT touch the witness chain.

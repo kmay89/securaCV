@@ -92,22 +92,26 @@ stud_riser = 2.4;    // pad under each stud (canary_wear_clip's): the field boot
 stud_riser_d = 10.0; // riser pad diameter, teardrop-pointed 45° so it prints sideways on the vent clip. It passes the boot's 24 x 16 floor window over the whole 8 mm slide
 
 /* [Print tolerances] */
-tol_slide = 0.20;  tol_press = 0.10;
+tol_slide = 0.20;    // catalog default — core_tol_slide(), canary_core_lib; no geometry in this file reads it
+tol_press = 0.10;    // catalog default — core_tol_press(), canary_core_lib; no geometry in this file reads it
 
 /* [Dash plate] */
-dash_l = 110.0;  dash_w = 70.0;  dash_t = 4.0;
+dash_l = 110.0;      // dash plate length (X) — the riser wedge sits on its rear 50, 6 in from the end, and the VHB registers and the tether slot near its front
+dash_w = 70.0;       // dash plate width (Y) — three VHB registers across it (on the center line and 16 in from each edge); the riser, which grows with stud_gap, must stay 2 inside it each side (asserted)
+dash_t = 4.0;        // dash plate thickness — the riser wedge and the studs stand on it, the VHB registers are recessed vhb_rec into its underside and the tether slot goes through
 dash_tilt = 10;      // riser angle (case leans back toward the cabin)
 vhb_w = 20.0;        // 3M VHB strip register width
 vhb_l = 60.0;        // 3M VHB strip register length
 vhb_rec = 0;         // 3M VHB strip register recess depth: 0 = the tape on the flat bed face (v0.3: a 0.6 recess roofed a 20 mm flat bridge over the bed)
-tether_w = 8.0;  tether_l = 4.0;
+tether_w = 8.0;      // tether slot width (Y) through the dash plate, 10 in from its front end: lanyard the case through it (header)
+tether_l = 4.0;      // tether slot length (X) through the dash plate
 
 /* [Vent clip] */
 vent_w   = 32.0;     // clip width (extrusion length)
 face_h   = 50.0;     // front face height — a minimum: grown to stud_gap + stud_head + 4 so both heads land on the face
-face_t   = 4.0;
+face_t   = 4.0;      // front face thickness (X) — the T-studs stand on its outer face and both prongs root on its inner face
 prong_l  = 22.0;     // reach onto the louver blade
-prong_t  = 2.4;
+prong_t  = 2.4;      // prong thickness — the two prongs, above and below the louver_gap slot, are each this thick and flex in the print plane (the clip prints on its side)
 louver_gap = 2.2;    // louver BLADE thickness + play — MEASURE your vents (blades run 1.5-2.0; at
                      // 2.8 a thin blade passed with no deflection and the clip hung on its hook alone)
 

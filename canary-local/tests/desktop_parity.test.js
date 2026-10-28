@@ -305,7 +305,7 @@ test("parity wave 1: safety copy, error kinds, QR, token card, nursery, diagnost
   assert.match(appJs, /function classifyFlashError/,
     "desktop lost classifyFlashError — raw String(e) is not a diagnosis");
   for (const kind of ["port-busy", "device-lost", "permission", "integrity",
-                      "download", "not-in-download", "read-stall"]) {
+                      "download", "not-in-download", "read-stall", "layout"]) {
     assert.ok(appJs.includes(`"${kind}"`), `desktop lost the ${kind} error kind`);
     assert.ok(flashCore.includes(`"${kind}"`), `browser lost the ${kind} error kind`);
   }
@@ -749,6 +749,25 @@ test("parity wave 4a: the counterfeit-capacity check the desktop got for free", 
       `${name} must not call a blank chip's capacity confirmed`);
   }
 
+  // Both read the same head window, wide enough to reach a classic ESP32's
+  // bootloader at 0x1000: with 4 KB, every correctly installed classic board
+  // read as blank, and a mirrored one was never caught. (The bootloader-
+  // placement test below holds the window past every offset in the ROM table.)
+  const jsWindow = /export const FLASH_ALIAS_WINDOW = (0x[0-9a-fA-F]+);/.exec(intakeJs);
+  const rsWindow = /pub const ALIAS_WINDOW: usize = (0x[0-9a-fA-F]+);/.exec(intakeRs);
+  assert.ok(jsWindow && rsWindow, "couldn't read the alias window out of intake.js / intake.rs");
+  assert.strictEqual(Number(jsWindow[1]), Number(rsWindow[1]),
+    "intake.js FLASH_ALIAS_WINDOW and intake.rs ALIAS_WINDOW drifted apart");
+  const runIntake = jsFnText(read(join(CANARY, "assets/flash.js")), "runIntake", "flash.js");
+  assert.match(runIntake, /const win = intake\.FLASH_ALIAS_WINDOW;/,
+    "the browser's capacity probe no longer reads intake.FLASH_ALIAS_WINDOW");
+  assert.match(runIntake, /readFlashChunked\(esploader, 0, win\)/,
+    "the browser's head read no longer uses the alias window");
+  assert.match(runIntake, /readFlashChunked\(esploader, candidates\[i\], win\)/,
+    "the browser's probe reads no longer use the alias window");
+  assert.match(nativeRs, /declared >= 2 \* intake::ALIAS_WINDOW as u64/,
+    "the desktop's capacity check no longer gates on its own window");
+
   // And it runs where it can still stop the write.
   assert.match(libRsSrc, /intake::flash_alias_verdict/,
     "the capacity check must run before the image is written");
@@ -1109,6 +1128,69 @@ test("dev channel: the publishing workflow targets the tag the flashers read", (
   assert.match(wf, /prerelease:\s*true/,
     "the dev-channel publish step must mark the release a prerelease, or " +
     "releases/latest can drift off the firmware and the fleet stops seeing updates");
+  // The other writers spell the tag too: dev_channel.py (every firmware
+  // release, a tag rebuild, the Refresh button) and the button's own record
+  // and guard steps. A rename the readers took and these did not would keep
+  // every release writing the dev channel's manifests to a tag nothing reads,
+  // and the guard checking that same orphan, all green.
+  const script = read(join(ROOT, ".github/scripts/dev_channel.py"));
+  assert.match(script, new RegExp(`^DEV_TAG = "${tag}"$`, "m"),
+    `.github/scripts/dev_channel.py's DEV_TAG is not "${tag}", the tag the flashers read`);
+  const refresh = read(join(ROOT, ".github/workflows/dev-channel-refresh.yml"));
+  const paths = [...refresh.matchAll(/releases\/tags\/([A-Za-z0-9._${}-]+)/g)].map((m) => m[1]);
+  assert.ok(paths.length >= 1, "dev-channel-refresh.yml reads fw-dev-latest by releases/tags/<tag>");
+  for (const p of paths) {
+    assert.strictEqual(p, tag, `dev-channel-refresh.yml reads releases/tags/${p}, not the flashers' ${tag}`);
+  }
+  for (const [t] of refresh.matchAll(/\bfw-dev-[A-Za-z0-9-]+/g)) {
+    assert.strictEqual(t, tag, `dev-channel-refresh.yml names ${t}, not the flashers' ${tag}`);
+  }
+});
+
+test("dev channel: every flasher says where it stands against its pin from the two trains, in the same words", async () => {
+  // fw-dev-latest held a 2.4.15 catalog and no OTA manifest under stable 2.4.17
+  // while all three frontends called it "cut ahead of stable" (RELEASE_LESSONS
+  // 2026-10-27). A stable release now copies itself there whenever no newer
+  // dev build is, and the train a flasher compares with is its own pin (built
+  // in, for the desktop Flasher and the Lab), not stable's live version: so
+  // the sentence is the dev train against the pin, said by
+  // devChannelStanding: flash-core.js for the browser page and the Lab bench,
+  // its copy in desktop/src/app.js for the Flasher.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const desktop = new Function(
+    jsFnText(appJs, "compareVersions", "desktop/src/app.js") + "\n" +
+    jsFnText(appJs, "devChannelStanding", "desktop/src/app.js") + "\nreturn devChannelStanding;")();
+  const cases = [
+    ["2.4.18-dev.1", "2.4.17", /2\.4\.18-dev\.1, newer than the 2\.4\.17 release this flasher is pinned to/],
+    // the next stable, copied to the dev channel, seen by an app pinned to the last one
+    ["2.4.18", "2.4.17", /^The dev channel carries 2\.4\.18, newer than the 2\.4\.17 release this flasher is pinned to\.$/],
+    ["2.4.17", "2.4.17", /2\.4\.17, the same version as the release this flasher is pinned to/],
+    ["2.4.15", "2.4.17", /2\.4\.15, older than the 2\.4\.17 release/],
+    ["2.4.17-rc.1", "2.4.17", /older than the 2\.4\.17 release/],
+    [undefined, "2.4.17", /^$/],
+    ["not-a-version", "2.4.17", /^$/],
+  ];
+  for (const [dev, stable, said] of cases) {
+    const browser = core.devChannelStanding(dev, stable);
+    assert.match(browser, said, `browser: ${dev} against ${stable}`);
+    assert.equal(desktop(dev, stable), browser, `the two flashers disagree on ${dev} against ${stable}`);
+  }
+  // Said where the user reads it: each dev banner, from the loaded dev
+  // manifest's train and the stable catalog's...
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const nativeJs = read(join(CANARY, "assets/flash-native.js"));
+  const html = read(join(ROOT, "desktop/src/index.html"));
+  assert.match(flashJs, /core\.devChannelStanding\(m\.fw_train, state\.catalog\.fw_train\)/);
+  assert.match(nativeJs, /core\.devChannelStanding\(st\.manifest && st\.manifest\.fw_train, catalog\.fw_train\)/);
+  assert.match(appJs, /\$\("dev-standing"\)\.textContent = state\.devChannel\s*\?\s*devChannelStanding\(m && m\.fw_train, state\.catalog\.fw_train\)/);
+  assert.match(html, /id="dev-banner"[\s\S]{0,300}<span id="dev-standing"><\/span>/);
+  // ...and no copy promises it unconditionally, or calls the pin "stable".
+  for (const [label, src] of [["canary-local/assets/flash.js", flashJs], ["canary-local/assets/flash-native.js", nativeJs],
+    ["desktop/src/index.html", html], ["desktop/src/app.js", appJs], ["canary-local/assets/flash-core.js", read(join(CANARY, "assets/flash-core.js"))]]) {
+    assert.doesNotMatch(src, /cut ahead of stable|images are cut ahead|dev prerelease, ahead of stable|not yet promoted to stable|channel is ahead of stable|when one is ahead of stable/,
+      `${label} calls the dev channel ahead of stable without knowing stable's version`);
+  }
 });
 
 test("flasher publishing signs once a key is in force, and refuses to ship a refusable manifest", () => {
@@ -1158,9 +1240,10 @@ test("Hatchery spec: browser and native draw the whimsy from the SAME hatch.json
 });
 
 test("offset-0 write guard: both flashers refuse an app-only image before writing 0x0", () => {
-  // A merged factory image and an app-only PlatformIO build BOTH open with the
-  // 0xE9 image magic, so byte 0 can't tell them apart — the only honest
-  // discriminator is the partition table at 0x8000. Anything written from offset
+  // An app-only PlatformIO build opens with the 0xE9 image magic, and so does
+  // an S3/C3/C6 factory image (a classic ESP32's keeps 4 KB of erased flash
+  // before its bootloader), so byte 0 can't tell an app from a factory image —
+  // the only honest discriminator is the partition table at 0x8000. Anything written from offset
   // 0 without that table lands on the bootloader and the board won't boot. This
   // is a shared SAFETY contract: both surfaces must gate their offset-0 local
   // writes on it, and EVERY native command that does such a write must route
@@ -1199,6 +1282,146 @@ test("offset-0 write guard: both flashers refuse an app-only image before writin
       `validated bytes — a file changed after the check would bypass the shape/size ` +
       `guards. Stage with stage_firmware(&bytes, …) and write the staged temp.`);
   }
+});
+
+test("bootloader placement: both flashers refuse an image whose bootloader isn't where the chip's ROM loads it", async () => {
+  // fw-v2.4.17's classic-ESP32 factory images (ESP32-CAM, WROOM DevKit) carried
+  // their bootloader at 0x0; a classic ESP32's ROM loads it from 0x1000, so
+  // neither could boot, and the partition-table gate above passed both. Each
+  // flasher now checks the image against the chip in hand before any write, on
+  // the catalog path and the local-file path, from ONE table that
+  // firmware/scripts/make_factory.py also merges by.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const nativeJs = read(join(CANARY, "assets/flash-native.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const imageRs = engineRs("image");
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+
+  // 1. One table, three copies, held equal: where each chip's ROM loads the
+  //    bootloader, and the chip id that bootloader's header names.
+  const makeFactory = read(join(ROOT, "firmware/scripts/make_factory.py"));
+  const pyBlock = /\nROM_BOOTLOADER = \{([\s\S]*?)\n\}/.exec(makeFactory);
+  assert.ok(pyBlock, "couldn't find ROM_BOOTLOADER in firmware/scripts/make_factory.py");
+  const py = Object.fromEntries([...pyBlock[1].matchAll(/"(esp32\w*)":\s*\((0x[0-9a-fA-F]+),\s*(\d+)\)/g)]
+    .map((m) => [m[1], [Number(m[2]), Number(m[3])]]));
+  const rsBlock = /pub const ROM_BOOTLOADER: \[\(&str, usize, u16\); \d+\] = \[([\s\S]*?)\];/.exec(imageRs);
+  assert.ok(rsBlock, "couldn't find ROM_BOOTLOADER in flash-engine image.rs");
+  const rs = Object.fromEntries([...rsBlock[1].matchAll(/\("(esp32\w*)",\s*(0x[0-9a-fA-F]+),\s*(\d+)\)/g)]
+    .map((m) => [m[1], [Number(m[2]), Number(m[3])]]));
+  assert.ok(py.esp32?.[0] === 0x1000 && py.esp32s3?.[1] === 9,
+    `make_factory.py's table didn't parse: ${JSON.stringify(py)}`);
+  assert.deepStrictEqual({ ...core.ROM_BOOTLOADER }, py,
+    "flash-core.js ROM_BOOTLOADER drifted from make_factory.py's ROM_BOOTLOADER");
+  assert.deepStrictEqual(rs, py,
+    "flash-engine image.rs ROM_BOOTLOADER drifted from make_factory.py's ROM_BOOTLOADER");
+  // …and the header byte the chip id sits at.
+  const pyIdAt = /\nIMAGE_CHIP_ID_AT = (\d+)/.exec(makeFactory);
+  const rsIdAt = /pub const IMAGE_CHIP_ID_AT: usize = (\d+);/.exec(imageRs);
+  assert.ok(pyIdAt && rsIdAt, "couldn't read IMAGE_CHIP_ID_AT out of make_factory.py / image.rs");
+  const idAt = Number(pyIdAt[1]);
+  assert.strictEqual(Number(rsIdAt[1]), idAt, "image.rs IMAGE_CHIP_ID_AT drifted from make_factory.py's");
+  // Every chip the catalog ships has a row: a chip with none is never judged
+  // by the flashers, and make_factory.py refuses to merge it, which drops that
+  // product from every release. (This runs whenever flash.json changes.)
+  for (const p of catalog.products) {
+    assert.notStrictEqual(core.romBootloader(p.chip), null,
+      `${p.id} is a ${p.chip}, which ROM_BOOTLOADER has no row for — add the chip's ROM ` +
+      "bootloader offset and image chip id to make_factory.py, flash-core.js and image.rs together");
+  }
+  // The capacity probe's head window must reach past every offset the table
+  // lists, or every correctly installed board of that chip reads as blank and
+  // a mirrored part is never caught: a chip that loads from 0x2000 (the C5,
+  // the P4) needs a wider window first. (Wave 4a holds intake.rs's to it.)
+  const hex = (n) => `0x${n.toString(16)}`;
+  const intake = await import(pathToFileURL(join(CANARY, "assets/intake.js")).href);
+  const furthest = Math.max(...Object.values(py).map(([at]) => at));
+  assert.ok(intake.FLASH_ALIAS_WINDOW > furthest,
+    `intake.js FLASH_ALIAS_WINDOW (${hex(intake.FLASH_ALIAS_WINDOW)}) doesn't reach a bootloader ` +
+    `at ${hex(furthest)} — widen it and intake.rs ALIAS_WINDOW together`);
+
+  // 2. The same words. The desktop's refusal, rendered from its own format
+  //    strings, equals the browser's for the same image and chip.
+  const body = nativeFnBody(imageRs, "check_bootloader_offset");
+  const fmt = /Err\(format!\(\s*"([\s\S]*?)"\s*\)\)/.exec(body);
+  const elseFmt = /format!\("( \(it has one at )\{o:#x\}( instead\))"\)/.exec(body);
+  const anotherFmt = /None if id_at\(at\)\.is_some\(\) => "([^"]*)"\.into\(\)/.exec(body);
+  assert.ok(fmt && elseFmt && anotherFmt, "couldn't read check_bootloader_offset's refusal out of image.rs");
+  const template = fmt[1].replace(/\\\n\s*/g, "");
+  const nativeWords = (chip, at, other) => template.replaceAll("{chip}", chip)
+    .replace("{at:#x}", hex(at))
+    .replace("{elsewhere}", other === null ? "" : other === "another" ? anotherFmt[1]
+      : elseFmt[1] + hex(other) + elseFmt[2]);
+  // A factory image with a bootloader for chip id `id` at `at` (null: none).
+  const image = (at, id) => {
+    const b = new Uint8Array(0x8100).fill(0xff);
+    if (at !== null) { b[at] = 0xe9; b[at + idAt] = id & 0xff; b[at + idAt + 1] = id >> 8; }
+    b[0x8000] = 0xaa; b[0x8001] = 0x50;
+    return b;
+  };
+  for (const [chip, at, id, rom, other] of [
+    ["ESP32", 0x0, 0, 0x1000, 0x0],               // fw-v2.4.17's classic-ESP32 shape
+    ["ESP32-S3", 0x1000, 0, 0x0, null],           // a classic image on an S3
+    ["ESP32-C3", 0x0, py.esp32s3[1], 0x0, "another"], // an S3 image on a C3
+    ["ESP32-C6", null, 0, 0x0, null],             // no bootloader anywhere
+  ]) {
+    const v = core.bootloaderPlacement(image(at, id), chip);
+    assert.strictEqual(v.ok, false, `the browser passed a ${chip} image with its bootloader at ${at}`);
+    assert.strictEqual(v.reason, nativeWords(chip, rom, other),
+      `the two flashers word the ${chip} refusal differently — keep flash-core.js bootloaderPlacement ` +
+      "and image.rs check_bootloader_offset in the same words");
+  }
+  // …and an image laid out by each row of the table passes on its chip.
+  for (const [chip, [at, id]] of Object.entries(py)) {
+    assert.ok(core.bootloaderPlacement(image(at, id), chip).ok, `a correct ${chip} image was refused`);
+  }
+
+  // 3. Both flashers run it before writing, on every path that writes an image
+  //    at 0x0 for a chip it has read.
+  const startFlash = jsFnText(flashJs, "startFlash", "flash.js");
+  const gateAt = startFlash.indexOf("core.bootloaderPlacement(bytes, state.chip)");
+  assert.ok(gateAt >= 0, "the browser's catalog install (flash.js:startFlash) no longer runs core.bootloaderPlacement");
+  for (const later of ["esploader.eraseFlash(", "esploader.writeFlash("]) {
+    assert.ok(gateAt < startFlash.indexOf(later), `startFlash calls ${later} before the bootloader check`);
+  }
+  assert.match(jsFnText(flashJs, "onLocalFile", "flash.js"), /core\.bootloaderPlacement\(bytes, state\.chip\)/,
+    "the browser's local-file install (flash.js:onLocalFile) no longer runs core.bootloaderPlacement");
+  const engineFlash = nativeFnBody(engineRs("flash"), "flash");
+  const nativeGateAt = engineFlash.indexOf("check_bootloader_offset(&downloaded, &detected_chip)?");
+  assert.ok(nativeGateAt >= 0, "the shared engine's catalog flash no longer runs check_bootloader_offset");
+  assert.ok(nativeGateAt < engineFlash.indexOf("stage_firmware("),
+    "the engine stages (and writes) the image before the bootloader check");
+  assert.match(nativeFnBody(libRs, "flash_local_file"), /check_bootloader_offset\(&bytes, &detected_chip\)\?/,
+    "the desktop's local-file install (lib.rs flash_local_file) no longer runs check_bootloader_offset");
+  assert.match(jsFnText(appJs, "onFlashLocalFile", "desktop/src/app.js"), /detectedChip: state\.chip/,
+    "the desktop frontend no longer tells flash_local_file which chip is connected");
+
+  // 4. The refusal reads as itself in every classifier — not "unknown", which
+  //    coaches download mode at an image no retry can fix.
+  const refusal = new Error(nativeWords("ESP32", 0x1000, 0x0));
+  for (const [where, classify] of [
+    ["flash-core.js", core.classifyFlashError],
+    ["desktop/src/app.js", new Function(jsFnText(appJs, "classifyFlashError", "desktop/src/app.js") + "\nreturn classifyFlashError;")()],
+    ["flash-native.js", new Function(jsFnText(nativeJs, "classifyFlashError", "flash-native.js") + "\nreturn classifyFlashError;")()],
+  ]) {
+    assert.strictEqual(classify(refusal).kind, "layout", `${where} doesn't name a bootloader-placement refusal`);
+  }
+
+  // 5. …and neither failure card offers a next attempt that refuses the same
+  //    image again: no clean install (erasing the chip doesn't move an image's
+  //    bootloader), and on the desktop no "Try again" either (it re-runs the
+  //    same install; the browser's reconnects to its picker, its only exit).
+  assert.match(jsFnText(flashJs, "flashError", "flash.js"),
+    /if \(!opts\.rescue && !opts\.eraseAll && v\.kind !== "layout"\)/,
+    "the browser's failure card offers a clean install after a layout refusal");
+  assert.match(appJs, /renderFlashFailureActions\(\{ retry: onFlash, kind: c\.kind \}\)/,
+    "the desktop's failure card no longer hears which kind of failure it follows");
+  const actions = jsFnText(appJs, "renderFlashFailureActions", "desktop/src/app.js");
+  assert.match(actions, /const refused = opts\.kind === "layout";\s*if \(!refused\) \{\s*button\("Try again"/,
+    "the desktop's failure card offers \"Try again\" after a layout refusal");
+  assert.match(actions, /if \(!refused && first && !first\.checked\)/,
+    "the desktop's failure card offers a clean install after a layout refusal");
+  assert.match(nativeJs, /c\.kind === "layout"\s*\?\s*"Nothing was written — pick an image laid out for this chip\."/,
+    "the Lab bench's failure card coaches download mode and a retry after a layout refusal");
 });
 
 test("rescue bench: both flashers can back up, restore, and erase — native wired end-to-end", () => {
@@ -1460,6 +1683,41 @@ test("security fuses: both flashers read them, off ONE field table", () => {
       `efuse.rs pins EFUSE_BASE ${base.toString(16)} for ${chip}, but the vendored ` +
       "esptool-js bundle has no chip at that base — the address is wrong or esptool moved it");
   }
+});
+
+test("neither flasher hands a BOOT-held board to its firmware: not at the end of the fuse read, not on the hello card", () => {
+  // Holding BOOT is what keeps a marketplace board's firmware from running
+  // (on native USB it can type at the desktop). The desktop's fuse read used
+  // to end in a hard reset, and to enter the ROM with the classic sequence on
+  // a USB-Serial/JTAG port, which holds RTS alone first: that port's own hard
+  // reset. The browser's live voice booted any readable firmware right after
+  // intake. efuse.rs's own tests replay the read's line moves against a
+  // scripted board; these hold the places that used to boot it.
+  const efuseRs = read(join(ROOT, "desktop/src-tauri/src/efuse.rs"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  assert.doesNotMatch(efuseRs, /fn hard_reset/,
+    "the desktop fuse read can reset the board into its firmware again");
+  assert.match(efuseRs,
+    /let words = read_block0_in_rom\(link, efuse_base, usb_serial_jtag\);\s*park\(link\);/,
+    "the desktop fuse read no longer parks its lines on every way out");
+  assert.match(efuseRs, /if attempt == 0 && !usb_serial_jtag \{\s*classic_reset\(link\)\?;/,
+    "the desktop fuse read runs the classic sequence on a USB-Serial/JTAG port again");
+  // Every reset the module can issue lives in the two enter sequences: outside
+  // them (and the tests' scripted boards) nothing asserts RTS, and the port's
+  // own RTS write is reached only through PortLines::rts.
+  const shipped = efuseRs.slice(0, efuseRs.indexOf("#[cfg(test)]"));
+  const outsideEnter = shipped.replace(/\nfn (classic_reset|usb_jtag_serial_reset)\([\s\S]*?\n\}\n/g, "\n");
+  assert.equal((shipped.match(/\nfn (classic_reset|usb_jtag_serial_reset)\(/g) || []).length, 2,
+    "efuse.rs's two enter sequences moved; re-point this pin");
+  assert.doesNotMatch(outsideEnter, /rts\(true\)/,
+    "the desktop fuse read asserts RTS outside its enter sequences: a reset into the firmware");
+  assert.equal((shipped.match(/write_request_to_send\(/g) || []).length, 1,
+    "the desktop fuse read drives RTS around PortLines::rts");
+  assert.match(flashJs,
+    /if \(state\.current && !state\.current\.unknown && state\.heldBoot === false\) \{\s*const voice = el\("section", "flash-card flash-voice"\)/,
+    "the browser's live voice boots a board the user held BOOT on, or didn't say");
+  assert.match(flashJs, /function coldStartCard\(\) \{[\s\S]{0,400}state\.heldBoot = null;/,
+    "the browser's cold-start answer leaks from one board to the next");
 });
 
 test("health check: native parsers pin the browser's byte-magics, and the UI reaches the command", () => {
@@ -5007,7 +5265,7 @@ test("wave 5: a failed install offers the same next steps on both flashers", () 
     "desktop/src/index.html has nowhere to put the failure's next steps");
   assert.match(appJs, /function renderFlashFailureActions/,
     "desktop lost the failure-actions renderer");
-  assert.match(appJs, /renderFlashFailureActions\(\{ retry: onFlash \}\)/,
+  assert.match(appJs, /renderFlashFailureActions\(\{ retry: onFlash, kind: c\.kind \}\)/,
     "the desktop flash catch no longer offers any next step");
 
   // The escalation must actually ARM the erase, not merely say it will —
@@ -5016,7 +5274,7 @@ test("wave 5: a failed install offers the same next steps on both flashers", () 
     "the desktop clean-install button doesn't tick the first-contact erase");
   // …and it must not be offered when the erase was already on, where it
   // would promise a different attempt and deliver the same one.
-  assert.match(appJs, /if \(first && !first\.checked\)/,
+  assert.match(appJs, /if \(!refused && first && !first\.checked\)/,
     "the desktop must not offer a clean install to someone already doing one");
   // A previous failure's buttons must not outlive the run that produced them.
   assert.match(appJs, /function resetOutcome[\s\S]{0,300}renderFlashFailureActions\(null\)/,
@@ -5054,9 +5312,10 @@ test("wave 5: customs says what the board arrived running, and whether it was co
   }
   // Every stock image the browser knows, the desktop knows.
   const names = (src) => new Set(
-    [...src.matchAll(/\{ match: \/[^/]+\/i, name: "([^"]+)" \}/g)].map((m) => m[1]));
+    [...src.matchAll(/\{ match: \/[^/]+\/i, name: "([^"]+)"/g)].map((m) => m[1]));
   const b = names(intakeJs), d = names(appJs);
   assert.ok(b.size >= 5, "couldn't parse KNOWN_STOCK from canary-local/assets/intake.js");
+  assert.ok(b.has("an Arduino sketch"), "couldn't parse the Arduino entry from intake.js");
   for (const n of b) {
     assert.ok(d.has(n), `desktop KNOWN_STOCK lost "${n}" — it would print as unrecognized`);
   }
@@ -5074,9 +5333,95 @@ test("wave 5: customs says what the board arrived running, and whether it was co
   // is not "they said no", and the no-answer verdict is attention-level.
   assert.match(appJs, /state\.heldBoot === undefined \? null : coldBootVerdict/,
     "the desktop renders a cold-start verdict for a question nobody answered");
+  assert.match(browser, /const cold = state\.heldBoot === null \? null : intake\.coldBootVerdict\(/,
+    "the browser renders a cold-start verdict for a question nobody answered");
   // And the answer describes ONE board, so it must not be inherited.
   assert.match(appJs, /function resetSteps[\s\S]{0,2000}state\.heldBoot = undefined/,
     "the cold-start answer leaks from one board to the next");
+});
+
+test("customs names a board running SecuraCV, and stays honest about the Arduino name, in the same words on both flashers", async () => {
+  // Releases after 2.4.17 stamp the product's asset_stem into the app
+  // descriptor (firmware/scripts/stamp_app_desc.py); the 2.4.17 ones and
+  // every other Arduino build all read `arduino-lib-builder`. Both flashers
+  // must say the same thing about either, and the desktop must hand its
+  // matched product to the finding the way the browser does.
+  const intake = await import(pathToFileURL(join(CANARY, "assets/intake.js")).href);
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const stock = /^const KNOWN_STOCK = \[[\s\S]*?\n\];/m.exec(appJs);
+  assert.ok(stock, "desktop/src/app.js lost KNOWN_STOCK");
+  const desktop = new Function(stock[0] + "\n" + jsFnText(appJs, "shippedWith", "desktop/src/app.js") +
+    "\nreturn shippedWith;")();
+  const wap = { id: "securacv-canary-wap", name: "Canary WAP", asset_stem: "canary-wap" };
+  const flagship = { id: "securacv-canary", name: "Canary", asset_stem: "canary" };
+  for (const args of [{ projectName: "canary-wap", product: wap },
+                      { projectName: "arduino-lib-builder" },
+                      { projectName: "micropython" }]) {
+    assert.deepStrictEqual(desktop(args), intake.shippedWith(args), JSON.stringify(args));
+  }
+  // A substring of a stem is somebody else's image, on both (the unrecognized
+  // finding's detail names each flasher's own copy: backup / safety copy).
+  const demo = { projectName: "my-canary-demo", product: flagship };
+  assert.equal(desktop(demo).kind, "unknown");
+  assert.equal(intake.shippedWith(demo).kind, "unknown");
+  assert.equal(intake.shippedWith({ projectName: "canary-wap", product: wap }).kind, "securacv");
+  assert.match(intake.shippedWith({ projectName: "arduino-lib-builder" }).detail, /up to 2\.4\.17/);
+  assert.match(appJs, /shippedWith\(\{\s*projectName: r\.unknown \? null : r\.projectName,\s*product: r\.product,/,
+    "the desktop's customs finding no longer gets the product it matched");
+  assert.match(flashJs, /product: core\.matchProjectToProduct\(state\.catalog, projectName\)/,
+    "the browser's customs finding no longer gets the product it matched");
+  // Every stem a release stamps maps back to its own product on the desktop
+  // too (flash.test.js holds the browser's copies to the same loop).
+  const lookup = new Function([fnSource(appJs, "matchProjectToProduct"), fnSource(appJs, "productForProject")]
+    .join("\n") + "\nreturn { matchProjectToProduct, productForProject };")();
+  for (const p of catalog.products) {
+    assert.equal(lookup.matchProjectToProduct(catalog, p.asset_stem).id, p.id, `desktop match ${p.asset_stem}`);
+    assert.equal(lookup.productForProject(catalog, p.asset_stem).id, p.id, `desktop productForProject ${p.asset_stem}`);
+  }
+});
+
+test("both flashers order a stamped board's version the same way, a dev train past .9 included", async () => {
+  // Stamped versions parse, so the install verdict compares real versions:
+  // as plain strings "dev.10" sorted before "dev.9", and an older dev image
+  // over a newer one read as an Update. Same cases, same answers, both sides.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const desktop = new Function(jsFnText(appJs, "compareVersions", "desktop/src/app.js") +
+    "\nreturn compareVersions;")();
+  const pairs = [["2.4.18-dev.9", "2.4.18-dev.10"], ["2.4.18-dev.9-wap", "2.4.18-dev.10-wap"],
+                 ["2.4.18-dev.10", "2.4.18-rc.1"], ["2.4.18-rc.1", "2.4.18"], ["2.4.17-wap", "2.4.18-wap"],
+                 ["2.4.18-wap", "2.4.18-wap"], ["2.2.0-rc1", "2.2.0-rc2"], ["esp-idf: v4.4.7 38eeba213a", "2.4.18"]];
+  for (const [a, b] of pairs) {
+    for (const [x, y] of [[a, b], [b, a]]) {
+      assert.strictEqual(desktop(x, y), core.compareVersions(x, y), `${x} vs ${y}`);
+    }
+  }
+  assert.strictEqual(desktop("2.4.18-dev.10", "2.4.18-dev.9"), 1);
+});
+
+test("neither flasher shows the descriptor's date as the firmware's build date", () => {
+  // An Arduino build's descriptor date is the Arduino core's (fw-v2.4.17's
+  // read Mar 5 2024 and Mar 31 2026) and the release stamp leaves it alone,
+  // so beside "Canary 2.4.18" it told people a 2026 release was built in
+  // 2024. The readback line and the passport drop it; the health report
+  // keeps it, labeled, with the same note on both sides.
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const note = (src, where) => {
+    const m = /^const DESCRIPTOR_DATE_NOTE =\n((?:  "[^"\n]*"(?: \+|;)\n)+)/m.exec(src);
+    assert.ok(m, `${where} lost DESCRIPTOR_DATE_NOTE`);
+    return new Function(`return ${m[1].trim().replace(/;$/, "")};`)();
+  };
+  assert.equal(note(appJs, "desktop/src/app.js"), note(flashJs, "flash.js"), "the two flashers say it in the same words");
+  assert.match(note(flashJs, "flash.js"), /when the Arduino core was built, not this firmware/);
+  for (const [src, where] of [[flashJs, "flash.js"], [appJs, "desktop/src/app.js"]]) {
+    assert.match(src, /\(s\.built \? ` · descriptor dated \$\{s\.built\}` : ""\)/, `${where}: the report's date is labeled`);
+    assert.match(src, /DESCRIPTOR_DATE_NOTE\)\);/, `${where}: the report shows the note`);
+    assert.doesNotMatch(src, /\(built \$\{|"Built " \+|· built \$\{/, `${where}: a date is shown as the build date again`);
+  }
+  assert.doesNotMatch(read(join(ROOT, "desktop/src-tauri/src/lib.rs")), /"built": if built/,
+    "the passport's resident record carries the descriptor date again");
 });
 
 test("wave 5: the picker leads with one detection-led recommendation on both flashers", () => {

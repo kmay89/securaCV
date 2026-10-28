@@ -211,7 +211,7 @@ If NimBLE initialization fails (no antenna, hardware fault):
 - Firmware continues operating with WiFi AP, GPS, camera, and witness chain
 - Dashboard shows "BLE Unavailable" status
 - No watchdog resets from BLE failures
-- The setup door (section 13) stays a no-op too; the `SecuraCV-XXXX` setup network is the way in
+- The setup door (section 13) stays a no-op too; the `SecuraCV-<kind>-XXXX` setup network is the way in
 
 ## 13. The setup door (Improv Wi-Fi over BLE)
 
@@ -225,8 +225,8 @@ The open [Improv Wi-Fi](https://www.improv-wifi.com/) standard — the one Home 
 
 From `improv_core.h`: the door is open for a device with NO NETWORK SAVED (a new one nobody owns yet, or one whose network was cleared), and for an owner's own tap — never for a device that has an owner and a bad day.
 
-- **No credentials stored** (first boot, or after they were cleared with the 10 s factory-reset hold or, on a WAP, Forget Wi-Fi, which any landing session can send, ledger F345): open for a first-boot window of **30 minutes** after power-on (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle re-arms it, and so does clearing the credentials; compile-time 0 = tap-only). A cleared unit still has an owner: the hold keeps the witness identity on a Sense, a Vision and a WAP, and a WAP's hold and Forget Wi-Fi keep its token too. The door still goes to whichever client connects first, so for that half hour a stranger in radio range can give it their network ([`design/magic_pairing.md`](design/magic_pairing.md) §2.2; on a WAP, ledger F345).
-- **Credentials stored:** shut, whatever the network is doing. A saved network that stopped working raises the SoftAP recovery portal (a door with a key printed on the unit) — it does **not** open this one.
+- **No credentials stored** (first boot, or after they were cleared with the 10 s factory-reset hold or, on a WAP that does not run standalone, Forget Wi-Fi, which takes the API token in every mode, ledger F345; a Forget leaves a standalone WAP standalone, and its door stays shut): open for a first-boot window of **30 minutes** after power-on (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle re-arms it, and so does clearing the credentials; compile-time 0 = tap-only). A cleared unit still has an owner: the hold keeps the witness identity on a Sense, a Vision and a WAP, and a WAP's hold and Forget Wi-Fi keep its token too. The door still goes to whichever client connects first, so for that half hour a stranger in radio range can give it their network ([`design/magic_pairing.md`](design/magic_pairing.md) §2.2; on a WAP, ledger F345).
+- **Credentials stored:** shut, whatever the network is doing. A saved network that stopped working raises the SoftAP recovery portal (a door with a key printed on the unit) — it does **not** open this one. On a WAP after setup that key opens the dashboard only: changing the Wi-Fi there takes the API token or one BOOT tap (F334).
 - **A short BOOT tap** (Sense and Vision; the WAP has no tap door in this version) opens it for **60 s**.
 - Bounds while open: accepted `WIFI_SETTINGS` writes at least **3 s** apart; **10 attempts** per open door, then it shuts until a tap or a power cycle; a connected client silent for **3 minutes** is dropped; ~**20 s** linger after a successful join, then back to the beacon.
 
@@ -236,7 +236,7 @@ The fleet presence beacon (section 5's manufacturer-data format, type `0x10`) st
 
 | | Door shut | Door open |
 |---|---|---|
-| Primary | the fleet beacon | the fleet beacon with **`FLEET_BEACON_FLAG_SETUP_OPEN`** (bit 5, `0x20`), the flags AD and a short name `WAP-AB12` (Sense: `Sense-AB12`, Vision: `Vision-AB12`) — on a Sense or Vision the same four hex characters as the device's `SecuraCV-XXXX` setup network; on a WAP the last four hex of its key fingerprint, as its `SCV-XXXX` name |
+| Primary | the fleet beacon | the fleet beacon with **`FLEET_BEACON_FLAG_SETUP_OPEN`** (bit 5, `0x20`), the flags AD and a short name `WAP-AB12` (Sense: `Sense-AB12`, Vision: `Vision-AB12`) — on a Sense or Vision the same four hex characters as the device's `SecuraCV-<kind>-XXXX` setup network; on a WAP the last four hex of its key fingerprint, as its `SCV-XXXX` name |
 | Connectable | WAP: yes, the pairing channel as before. Sense / Vision: **no** | yes |
 | Scan response | WAP: Opera's own (the `SCV-XXXX` name + the SecuraCV service UUID). Sense / Vision: none | the Improv service UUID + the 6-byte `0x4677` service data |
 

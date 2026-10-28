@@ -163,10 +163,14 @@ jobs:
               fi
             fi
           fi
+          # The body links the exact versioned release it points at (same
+          # reason as flasher-latest's: a reader who lands on the pointer
+          # should be one click from the installers, not one search).
           notes="Rolling pointer for the SecuraCV Lab's self-updater — the app
           polls this prerelease's latest.json (desktop-lab tauri.conf.json
-          \`plugins.updater.endpoints\`). Not an install: download the Lab from
-          the versioned app-v* releases. Currently: **${VER}** (${TAG}).
+          \`plugins.updater.endpoints\`). Not an install: the installers are
+          on the versioned release it points at, **${VER}** —
+          [${TAG}](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}).
           \`releases/latest\` stays on the firmware on purpose — see
           docs/RELEASE_BUTTONS.md."
           if gh release view lab-latest >/dev/null 2>&1; then

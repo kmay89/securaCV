@@ -628,7 +628,7 @@ vent_beat_shift = 1;  // stations the pattern rotates per row.
 badge_column = true;  // false = let the grille back into the badge's half
 
 vent_top = true;         // EXHAUST — slots through the top (+Y) wall
-vent_top_n = 14;
+vent_top_n = 14;          // exhaust slot count through the top (+Y) wall of the two-piece build's back (part="back"), spread evenly across vent_span_x (the cavity less 40, clear of the corner ears), each vent_slot_w wide at mid-cavity height; at least 1 (asserted). Legacy two-piece build only: part="frame" does not read it
 vent_bottom = true;      // INTAKE — slots through the bottom (−Y) wall, placed
                          // outboard of the connector channel so they stay open
 vent_bottom_n = 5;       // per side
@@ -709,7 +709,7 @@ glass_guard  = -0.2; // WIPE RELIEF, from the first fitting print: the rim
                      // this knob. 0 restores a flush face.
 standoff_len = pnl_stud_len(PANEL);  // the panel's own white M3 standoffs, PCB back → tip — MEASURE
 frame_boss_h = 3.0;  // boss standing proud of the back plate's inner face
-frame_boss_d = 8.0;
+frame_boss_d = 8.0;  // frame boss Ø — four bosses on the board's M3 pattern hang from the back plate's inner face and spread to this + 3 through a 45° root fillet; the sleeve wall, the SD cover and tether, the radio window and the battery curbs are asserted clear of them
 
 /* [Frame — BOOT/RESET button window] */
 btn_w  = 25.0;       // BOOT/RESET access window through the TOP wall (measured)
@@ -1062,7 +1062,7 @@ dock_key_dx = 40.4;   // tracks stand_rib_x (asserted within half a rib) — bot
 dock_key_bx = 84.0;   // landscape slots' ±dx on the bottom wall (on the pads)
 
 /* [Frame — label rendering] */
-label_depth = 0.5;
+label_depth = 0.5;       // deboss depth of the frame's wall labels (beside the USB and side exits), the stand's brand words and the radius gauge's numbers; the back plate's debosses use label_back_depth
 label_back_depth = 1.2;  // BACK-plate deboss depth (BOOT/RESET/SD/brand and
                      // the rail moats) — deliberately DEEPER than the
                      // frame_rim chamfer band. That is the two-color hook:
@@ -1072,7 +1072,7 @@ label_back_depth = 1.2;  // BACK-plate deboss depth (BOOT/RESET/SD/brand and
                      // floor, sitting above the swap, prints in the body
                      // color — the words show through. Exact swap heights
                      // are echoed at render time.
-label_font  = "Liberation Sans:style=Bold";
+label_font  = "Liberation Sans:style=Bold";  // the font every label, brand word and stamp in this file is cut in (an OpenSCAD font name); the brand words' fit check estimates each word's half-width at 0.392 x size per letter whatever font is set
 
 /* [Print colors — the AMS palette] */
 // ════════════════════════════════════════════════════════════════════════════
@@ -1508,7 +1508,7 @@ port_scoop_d  = 7.0;   // dish depth (0.8 mm), sqrt(r^2 - d^2) its footprint
 // an accent filament in one click — see bambu_p2s_bringup.md §7b′.
 edge_text_l = "SECURACV";  // front-view left of the port
 edge_text_r = "CANARY";    // front-view right
-edge_text_size = 7.0;
+edge_text_size = 7.0;   // brand words' text size (edge_text_l/_r, debossed edge_lbl_depth into the bottom wall either side of the USB port); their half-width is estimated at 0.392 x this per letter (a full width of 0.784 x this per letter), which reads short of the cut words (SECURACV at 7 inks 58.7 mm wide against 43.9 estimated), and the estimate must fit between the port's flange and the wall's flat span (asserted)
 edge_lbl_depth = 1.0;   // deboss depth into the frame_wall skin (web asserted)
 edge_vent_n = 16;       // shadow gills: count
 edge_vent_pitch = 8.0; // shadow gills: pitch
@@ -1735,7 +1735,7 @@ stamp_dy    = 49.0;  // the clear band above the grille. Its floor is not a
                      // (vent_rows-1)/2*vent_pitch_y and the egg reaches
                      // half its length past that, so the assert below derives
                      // the bound instead of quoting a number that would rot
-stamp_size  = 2.4;
+stamp_size  = 2.4;   // build stamp text size — "CANARY 7IN" at this and the REV/SRC line at 0.78 of it, the block centered on stamp_dy and asserted clear of the top egg row and the plate rim
 
 /* [Battery bay — click-in, no hardware] */
 // A molded bay on the back plate's inner face for the MakerFocus 1S packs

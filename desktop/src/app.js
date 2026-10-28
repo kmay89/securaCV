@@ -369,6 +369,17 @@ function classifyFlashError(err) {
         "Apple Silicon and Intel; the Linux one is for x86-64 PCs). If the newest one " +
         "fails the same way, please report it, with the reason the system gave." };
 
+  // An image refused before the write because it has no bootloader for this
+  // chip where its ROM loads one (flash-engine image.rs
+  // check_bootloader_offset; the browser's bootloaderPlacement says the same
+  // words). No retry, cable or download mode changes what an image keeps
+  // there.
+  if (has("would not start on the"))
+    return { kind: "layout", title: "That image wouldn't start on this board",
+      hint: "Nothing was written. It has no bootloader for this chip where the chip " +
+        "loads one from, so the board couldn't start from it (the details say where). " +
+        "Use an image laid out for this chip: SecuraCV factory images from fw-v2.4.18 on are." };
+
   if (has("failed to open serial port", "port is already open", "already open",
           "resource temporarily unavailable", "resource busy", "device or resource busy") ||
       (has("open") && has("access", "busy", "in use")))
@@ -1847,7 +1858,11 @@ function productForProject(catalog, projectName) {
 }
 
 // Semver-ish compare returning -1/0/1, or null when either side can't be
-// parsed. A prerelease sorts BELOW its release (2.4.7-rc1 < 2.4.7).
+// parsed. A prerelease sorts BELOW its release (2.4.7-rc1 < 2.4.7), and two
+// prereleases compare field by field, split on "." and "-", numerically where
+// both fields are digits (semver §11): 2.4.18-dev.10 is after -dev.9, the
+// WAP's -dev.10-wap after -dev.9-wap. The browser's compareVersions
+// (flash-core.js) orders them the same (desktop_parity.test.js).
 function compareVersions(a, b) {
   const parse = (v) => {
     const m = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-+](.+))?$/.exec(String(v || "").trim());
@@ -1860,8 +1875,34 @@ function compareVersions(a, b) {
     if (pa.parts[i] !== pb.parts[i]) return pa.parts[i] < pb.parts[i] ? -1 : 1;
   }
   if (!!pa.pre !== !!pb.pre) return pa.pre ? -1 : 1;
-  if (pa.pre && pb.pre && pa.pre !== pb.pre) return pa.pre < pb.pre ? -1 : 1;
+  const fa = String(pa.pre || "").split(/[.-]/), fb = String(pb.pre || "").split(/[.-]/);
+  for (let i = 0; i < Math.max(fa.length, fb.length); i++) {
+    const x = fa[i], y = fb[i];
+    if (x === y) continue;
+    if (x === undefined || y === undefined) return x === undefined ? -1 : 1;
+    const nx = /^\d+$/.test(x), ny = /^\d+$/.test(y);
+    if (nx && ny) {
+      if (Number(x) !== Number(y)) return Number(x) < Number(y) ? -1 : 1;
+    } else if (nx !== ny) {
+      return nx ? -1 : 1;
+    } else {
+      return x < y ? -1 : 1;
+    }
+  }
   return 0;
+}
+
+// Where the dev channel stands, in one sentence: the dev catalog's fw_train
+// against the train this app's bundled catalog pins. Never "ahead of
+// stable": the pin is this build's, not stable's live version, and a stable
+// release copies itself to the dev channel when no newer dev build is
+// there. "" when either train is missing or unreadable. Same function as
+// flash-core.js devChannelStanding (desktop_parity.test.js).
+function devChannelStanding(devTrain, pinnedTrain) {
+  const cmp = compareVersions(devTrain, pinnedTrain);
+  if (cmp === null) return "";
+  if (cmp === 0) return `The dev channel carries ${devTrain}, the same version as the release this flasher is pinned to.`;
+  return `The dev channel carries ${devTrain}, ${cmp > 0 ? "newer" : "older"} than the ${pinnedTrain} release this flasher is pinned to.`;
 }
 
 // What every USB install does to a board already set up, whichever way the
@@ -2639,12 +2680,18 @@ async function identify(portInfo) {
 // neutral fact and never asked whether the resident firmware got to run.
 //
 // Matched on the `esp_app_desc_t` project name — a real string read off the
-// board, not a hash of an image we'd have to claim to have cataloged.
+// board, not a hash of an image we'd have to claim to have cataloged. The
+// Arduino entry's own detail says why that name is no evidence of a stock
+// image: SecuraCV's releases up to 2.4.17, and any SecuraCV build made outside
+// a release, carry it too (the browser's comment).
 const KNOWN_STOCK = [
   { match: /^micropython/i, name: "MicroPython" },
   { match: /^circuitpython/i, name: "CircuitPython" },
   { match: /^(esp-at|at)$/i, name: "Espressif AT firmware" },
-  { match: /^arduino/i, name: "an Arduino sketch" },
+  { match: /^arduino/i, name: "an Arduino sketch",
+    detail: "Many boards ship with one. SecuraCV releases up to 2.4.17, and any SecuraCV build " +
+            "made outside a release, read this way too, because their descriptor names the " +
+            "Arduino core and not the product, so this check can't tell the two apart." },
   { match: /^esphome/i, name: "ESPHome" },
   { match: /^tasmota/i, name: "Tasmota" },
   { match: /^(hello[-_ ]?world|blink)/i, name: "a factory test sketch" },
@@ -2654,7 +2701,9 @@ const KNOWN_STOCK = [
 // "ok" (we got bytes) or "failed" (the read threw). These must stay distinct
 // from what we found in those bytes — treating a failed read as an empty chip
 // would turn missing evidence into the single cleanest verdict on the page.
-function shippedWith({ projectName, blank, read = "ok" } = {}) {
+// `product` counts only when the name IS its asset_stem, the identity a
+// release stamps into the descriptor (firmware/scripts/stamp_app_desc.py).
+function shippedWith({ projectName, product, blank, read = "ok" } = {}) {
   if (read !== "ok") {
     return { level: "inconclusive", kind: "unread",
       label: "We couldn't read what's on the chip",
@@ -2672,11 +2721,17 @@ function shippedWith({ projectName, blank, read = "ok" } = {}) {
       detail: "There's something on the chip but no readable app descriptor. The full erase " +
               "removes it either way; the safety copy keeps a copy if you want to look." };
   }
+  if (product && product.asset_stem === projectName) {
+    return { level: "clear", kind: "securacv", name: product.name,
+      label: `Arrived running ${product.name}`,
+      detail: "Its descriptor names a SecuraCV release, so SecuraCV was likely installed on it " +
+              "before. That name is the image's own claim, not proof of what it runs." };
+  }
   const hit = KNOWN_STOCK.find((k) => k.match.test(projectName));
   if (hit) {
     return { level: "clear", kind: "known", name: hit.name,
       label: `Arrived running ${hit.name}`,
-      detail: "A common stock image for boards sold this way." };
+      detail: hit.detail || "A common stock image for boards sold this way." };
   }
   return { level: "attention", kind: "unknown", name: projectName,
     label: `Arrived running “${projectName}” — we don't recognize it`,
@@ -2752,7 +2807,8 @@ function wireEfuseRead() {
     const chip = state.chip;
     btn.disabled = true;
     out.textContent = "Reading eFuse block 0… (read-only — nothing is ever burned)";
-    // The probe resets the board into its ROM and back, which on a
+    // The probe resets the board into its ROM, with the sequence its port
+    // calls for, and does not reset it back out (efuse.rs), which on a
     // native-USB board re-enumerates the port — own the port like the flash
     // path does, so the watcher can't misread that blink as an unplug and no
     // competing serial operation can start mid-probe.
@@ -2839,7 +2895,6 @@ async function readPassport(port) {
       state.resident = {
         version: p.resident.version,
         projectName: p.resident.projectName,
-        built: p.resident.built,
         slot: p.resident.slot,
         product: matchProjectToProduct(state.catalog, p.resident.projectName),
       };
@@ -2893,6 +2948,7 @@ function renderPassport() {
   const findings = [
     shippedWith({
       projectName: r.unknown ? null : r.projectName,
+      product: r.product,
       blank: !!r.blank,
       read: r.unknown ? "failed" : "ok",
     }),
@@ -2939,12 +2995,6 @@ function renderPassport() {
     box.appendChild(seen);
   }
 
-  if (r.built) {
-    const b = document.createElement("div");
-    b.className = "pp-built muted";
-    b.textContent = "Built " + r.built;
-    box.appendChild(b);
-  }
   // The MAC intake finding, but only when it is worth saying: a normal
   // factory address is the expected case and needs no line of its own.
   const mc = state.macCheck;
@@ -3077,11 +3127,17 @@ function refreshManifest() {
   const generation = ++manifestGeneration;
   state.manifest = null;
   state.manifestError = null;
+  $("dev-standing").textContent = "";
   invoke("fetch_manifest", { manifestUrl: activeManifestUrl() })
     .then((m) => {
       if (generation !== manifestGeneration) return; // superseded by a newer refresh
       state.manifest = m;
       state.manifestError = null;
+      // The banner says where the dev channel stands from the two trains,
+      // never by assumption (it held 2.4.15 under stable 2.4.17 once).
+      $("dev-standing").textContent = state.devChannel
+        ? devChannelStanding(m && m.fw_train, state.catalog.fw_train)
+        : "";
       renderProducts();
     })
     // Keep WHY. Swallowing this is how every product came to read "no
@@ -3816,7 +3872,7 @@ async function onFlash() {
     );
     // …and hand over the next steps, rather than a diagnosis with nowhere to
     // go (parity: the browser's error card carries them).
-    renderFlashFailureActions({ retry: onFlash });
+    renderFlashFailureActions({ retry: onFlash, kind: c.kind });
     logEvent("err", "Flash failed [" + c.kind + "]: " + e);
     hideHatchCard();
   } finally {
@@ -3858,16 +3914,24 @@ function renderFlashFailureActions(opts) {
     return b;
   };
 
-  button("Try again", "btn-primary", () => {
-    renderFlashFailureActions(null);
-    opts.retry();
-  });
+  // An image refused by the bootloader check ("layout") gets neither retry:
+  // the same install, with or without a full erase, refuses the same image
+  // again. The fix is another image, from the picker above; the report
+  // stays. (The browser's card keeps its "Try again", which reconnects and
+  // returns to its picker — the only way off that card.)
+  const refused = opts.kind === "layout";
+  if (!refused) {
+    button("Try again", "btn-primary", () => {
+      renderFlashFailureActions(null);
+      opts.retry();
+    });
+  }
 
   // Only offer the escalation when there is one left to make: if the chip was
   // already being fully erased, a "clean install" is the same install again,
   // and offering it as the next step would be a false promise.
   const first = $("first-contact");
-  if (first && !first.checked) {
+  if (!refused && first && !first.checked) {
     button("Clean install (full erase) →", "btn-ghost", () => {
       // Tick the real control rather than passing a hidden flag: the checkbox
       // stays the one place the erase is decided, and the user can see what
@@ -4721,6 +4785,16 @@ async function onHealthCheck() {
   }
 }
 
+// The date an app descriptor carries is whatever compiled that record: on an
+// Arduino build, the core's precompiled libraries, and the release stamp
+// leaves it alone. So the passport never shows it beside the product and
+// version, and the report labels it. The browser's DESCRIPTOR_DATE_NOTE
+// (flash.js) is the same sentence (desktop_parity.test.js).
+const DESCRIPTOR_DATE_NOTE =
+  "The date is the one in the image’s app descriptor. On an Arduino build, every SecuraCV " +
+  "release included, that is when the Arduino core was built, not this firmware, so it says " +
+  "nothing about when the board was flashed.";
+
 // Build the report DOM from the object the backend returns. Everything read off
 // flash (project names, versions, labels) goes in via textContent, never HTML.
 function renderHealthReport(r) {
@@ -4769,9 +4843,10 @@ function renderHealthReport(r) {
     for (const s of r.slots) {
       const val = s.empty
         ? "empty"
-        : `${s.project || "?"} ${s.version || ""}`.trim() + (s.built ? ` · built ${s.built}` : "");
+        : `${s.project || "?"} ${s.version || ""}`.trim() + (s.built ? ` · descriptor dated ${s.built}` : "");
       row(s.label + (s.active ? " — running now" : ""), val, s.active ? "ok" : null);
     }
+    box.append(h("p", "muted", DESCRIPTOR_DATE_NOTE));
   }
 
   if (r.ota) {
@@ -4882,14 +4957,18 @@ async function onPickLocalFile() {
     const magic = $("local-magic");
     magic.classList.toggle("hidden", state.localFile.esp_magic);
     if (!state.localFile.esp_magic) {
-      // Advisory only: the backend already required the factory shape (the
-      // partition table at 0x8000), and on the catalog's chips the
-      // bootloader sits at 0x0 — so a missing 0xE9 is worth a sentence,
-      // never a refusal.
+      // A sentence here, the refusal at the write: the backend already
+      // required the factory shape (the partition table at 0x8000), and
+      // esp_magic looks where a factory image keeps its bootloader (0x0 on
+      // the S3/C3/C6, 0x1000 on a classic ESP32). Which of the two the board
+      // needs depends on the chip, which may not be read yet —
+      // flash_local_file checks it against the connected one.
       magic.textContent =
-        "⚠ This file doesn't start with 0xE9 — the ESP32's own “program " +
-        "starts here” marker, which a factory image for these chips opens " +
-        "with. It can still be written; the board can't be bricked.";
+        "⚠ This file has no 0xE9 — the ESP32's own “program starts here” " +
+        "marker — where a factory image keeps its bootloader (the first " +
+        "byte, or 4 KB in for a classic ESP32). An ESP32, S3, C3 or C6 " +
+        "wouldn't start from it, so the write will be refused before " +
+        "anything is written.";
     }
     $("local-info").classList.remove("hidden");
   } catch (e) {
@@ -4951,13 +5030,15 @@ async function onFlashLocalFile() {
   try {
     // The inspected size + fingerprint ride along so the backend can prove
     // the confirmed bytes are the ones still on disk — a changed file is
-    // refused, never silently written.
+    // refused, never silently written — and so does the connected chip,
+    // whose ROM decides where the image's bootloader has to sit.
     const receipt = await invoke("flash_local_file", {
       port: state.port,
       baud: state.catalog.flash_baud || 921600,
       path: file.path,
       expectedSize: file.size,
       expectedSha256: file.sha256,
+      detectedChip: state.chip,
     });
     state.vision.hostFlash = receipt;
     state.vision.hostBoot = null;

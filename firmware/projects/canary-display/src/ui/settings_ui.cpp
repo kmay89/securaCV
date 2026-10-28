@@ -80,6 +80,7 @@
 #include "canary/ui/commission_ui.h"
 #include "canary/ui/help_verdict.h"   // the "get help" QR's pure verdict → URL
 #include "canary/ui/lvgl_port.h"     // canvas size, rotation, dim, touch feed
+#include "canary/ui/orientation_page.h"  // saved vs worn turn (F245)
 #include "canary/ui/theme.h"
 #include "canary/ui/character.h"
 #include "canary/ui/clock_styles.h"
@@ -843,10 +844,14 @@ void build_root() {
   // The drawn-clock glass: the face ring + 12/24, and how the glass is turned.
   row_nav("Clock", clock_style_name(gs.clock_style), ID_ROW_CLOCK);
   {
-    char rn[24];
-    snprintf(rn, sizeof(rn), "%s", rotation_name(gs.rotation));
-    rn[0] = (char)toupper((unsigned char)rn[0]);
-    row_nav("Orientation", rn, ID_ROW_DISPLAY);
+    // The turn the glass wears, not a saved one it could not (F245).
+    char rn[kOrientationValueCap];
+    row_nav("Orientation",
+            orientation_row_value(
+                orientation_state(gs.rotation, lvgl_port_rotation(),
+                                  lvgl_port_turn_refused()),
+                rn, sizeof(rn)),
+            ID_ROW_DISPLAY);
   }
 #endif
   group_end(nullptr);
@@ -1132,18 +1137,20 @@ void build_clock() {
 // Orientation (7"/dash glass): four quarter turns, landing IS choosing —
 // the glass rotates under your thumb the instant you tap (The Screen Is the
 // Preview, taken literally). The bench turns the panel; the software follows.
+// The check sits on the turn the glass WEARS (lvgl_port_rotation()): a glass
+// with no turn buffer refuses a turn and stays landscape, the saved choice
+// is kept for a later start, and the footer says so when the port reports
+// the refusal (lvgl_port_turn_refused(); orientation_page.h, F245).
 void build_display() {
   page_begin("Orientation", "Settings");
-  const uint8_t rot = settings().rotation;
+  const OrientationState os = orientation_state(
+      settings().rotation, lvgl_port_rotation(), lvgl_port_turn_refused());
   group_begin(nullptr);
-  row_check("Landscape", nullptr, rot == ROT_LANDSCAPE, ID_OPT_BASE + ROT_LANDSCAPE);
-  row_check("Portrait", nullptr, rot == ROT_PORTRAIT, ID_OPT_BASE + ROT_PORTRAIT);
-  row_check("Landscape, Flipped", nullptr, rot == ROT_LANDSCAPE_INV,
-            ID_OPT_BASE + ROT_LANDSCAPE_INV);
-  row_check("Portrait, Flipped", nullptr, rot == ROT_PORTRAIT_INV,
-            ID_OPT_BASE + ROT_PORTRAIT_INV);
-  group_end("Portrait suits a wall column or a tall bedside face. "
-            "The layout follows the turn.");
+  for (uint8_t rot : kOrientationRows)
+    row_check(orientation_label(rot), nullptr, orientation_row_checked(os, rot),
+              ID_OPT_BASE + rot);
+  char foot[kOrientationFooterCap];
+  group_end(orientation_footer(os, foot, sizeof(foot)));
 }
 
 #ifdef CD_SET_WX
@@ -1979,7 +1986,9 @@ void dispatch(int raw) {
       if (id == ID_NAV) { build(Page::Root); return; }
       if (id >= ID_OPT_BASE && id < ID_OPT_BASE + 4) {
         // Landing IS choosing: persist + rotate the live glass (panel and
-        // all), re-measure the canvas, then rebuild so the check moves.
+        // all), re-measure the canvas, then rebuild so the check moves. A
+        // turn the port refuses keeps the choice saved and the glass
+        // landscape; the rebuilt page checks the turn worn and says why.
         gs.rotation = (uint8_t)(id - ID_OPT_BASE);
         settings_mark_dirty();
         lvgl_port_set_rotation(gs.rotation);

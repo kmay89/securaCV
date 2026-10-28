@@ -1,0 +1,180 @@
+# Rewrite one published release's notes from the repo — the body only.
+#
+# A published release body does not follow its sources. The 2.4.16 train
+# shipped five bodies that the repo has since corrected: fw-v2.4.16 ended
+# mid-sentence (GitHub keeps 125,000 characters and drops the rest without a
+# word) and lacked the C3 Vision reflash notice, flasher-v0.12.0 and 0.12.1
+# called the Flasher "the SecuraCV Lab" and said a notarized Mac build opens
+# with no prompt, and app-v0.3.0 and 0.3.1 promised "no quarantine warning".
+# Fixing them used to mean a human pasting text into the GitHub UI; this is
+# that paste, as a button.
+#
+# The text is not typed here. .github/scripts/release_body.py runs the release
+# workflow's OWN body step for the tag (firmware-release.yml's CHANGELOG
+# extraction, the Flasher's and the Lab's "says what this version changes"
+# steps) with `gh` stood in, so the body is exactly what that workflow would
+# publish today, from main's CHANGELOG.md / RELEASE_NOTES.md.
+#
+# What it never does: touch an asset, re-cut a tag, or move releases/latest.
+# Every edit passes --latest explicitly — true only for the tag that already
+# IS releases/latest, false for everything else (an app release must never
+# take that URL: every Canary polls releases/latest/download/manifest-*.json)
+# — and the last step fails unless releases/latest is the same fw-v* tag it
+# was before the edit.
+name: Fix a release's notes (rewrite the body from the repo)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published release to rewrite: fw-v*, flasher-v* or app-v* (its body only; assets untouched)"
+        type: string
+        required: true
+      macos_signed:
+        description: "App releases: was that release's macOS build signed? auto = read it from the body it carries now"
+        type: choice
+        options: [auto, "yes", "no"]
+        default: auto
+
+permissions:
+  contents: read
+
+# A publisher (CI.md R3): edits queue in order and are never killed mid-write.
+concurrency:
+  group: release-notes-refresh-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Rewrite the release body, keep releases/latest on the firmware
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
+
+      - name: Install PyYAML (release_body.py reads the workflow files)
+        run: python3 -m pip install --quiet pyyaml
+
+      - name: Check the tag and record releases/latest
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            fw-v*|flasher-v*|app-v*) ;;
+            *) echo "::error::'${TAG}' is not a fw-v*, flasher-v* or app-v* tag"; exit 1 ;;
+          esac
+          rel="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}")" \
+            || { echo "::error::no published release has the tag ${TAG}"; exit 1; }
+          if [ "$(jq -r '.draft' <<<"$rel")" = "true" ]; then
+            echo "::error::${TAG} is a draft; its own workflow writes a draft's body"; exit 1
+          fi
+          latest="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
+          case "$latest" in
+            fw-v*) ;;
+            *) echo "::error::releases/latest is ${latest}, not a firmware release — fix that first (keep-firmware-latest)"; exit 1 ;;
+          esac
+          jq -r '.body // ""' <<<"$rel" > "$RUNNER_TEMP/before.md"
+          jq -r '[.assets[].name] | sort | join("\n")' <<<"$rel" > "$RUNNER_TEMP/assets-before.txt"
+          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+          echo "releases/latest is ${latest}; rewriting the body of ${TAG}"
+
+      - name: Compose the body with the release workflow's own step
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          # Whether THAT release's macOS build was signed picks the install
+          # paragraph, and today's ENABLE_MACOS_SIGNING says nothing about an
+          # old build (Flasher 0.3.5 was the first signed one). auto reads it
+          # from the body the release carries, but only the two sentences the
+          # release workflows write from that same signing switch ("This build
+          # is unsigned" / "signed and notarized by Apple"). Bodies up to
+          # Flasher 0.3.4 came from a static template that said "signed &
+          # notarized" either way, so they match neither and need an explicit
+          # yes or no. The firmware step ignores it.
+          MACOS_SIGNED: ${{ inputs.macos_signed }}
+        run: |
+          set -euo pipefail
+          signed=()
+          case "$TAG" in
+            fw-v*) ;;
+            *)
+              case "$MACOS_SIGNED" in
+                yes) signed=(--signed) ;;
+                no) ;;
+                *)
+                  if grep -qiE 'this build is unsigned|builds are \*\*unsigned\*\*' "$RUNNER_TEMP/before.md"; then
+                    echo "${TAG}'s body, written from the signing switch, says its macOS build is unsigned"
+                  elif grep -qi 'signed and notarized by apple' "$RUNNER_TEMP/before.md"; then
+                    echo "${TAG}'s body, written from the signing switch, says its macOS build is signed and notarized"
+                    signed=(--signed)
+                  else
+                    echo "::error::${TAG}'s body carries neither sentence the signing switch writes, so it cannot say whether that build was signed. Run again with macos_signed yes or no."
+                    exit 1
+                  fi
+                  ;;
+              esac
+              ;;
+          esac
+          python3 .github/scripts/release_body.py "$TAG" "${signed[@]}" --repo "$GITHUB_REPOSITORY" \
+            > "$RUNNER_TEMP/body.md"
+          {
+            echo "### ${TAG}: what the body changes"
+            echo
+            echo '```diff'
+            diff -u "$RUNNER_TEMP/before.md" "$RUNNER_TEMP/body.md" | head -200 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Rewrite the body
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          LATEST: ${{ steps.check.outputs.latest }}
+        run: |
+          set -euo pipefail
+          # $(…) drops trailing newlines, so a body that differs only there
+          # (the API's copy vs the composed file) counts as already written.
+          if [ "$(cat "$RUNNER_TEMP/before.md")" = "$(cat "$RUNNER_TEMP/body.md")" ]; then
+            echo "${TAG} already carries this body — nothing to write"; exit 0
+          fi
+          # Explicit either way: the tag that IS latest stays latest, and every
+          # other tag is told it is not, so this edit can never move the URL
+          # the fleet polls.
+          if [ "$TAG" = "$LATEST" ]; then latest_flag=--latest; else latest_flag=--latest=false; fi
+          gh release edit "$TAG" "$latest_flag" --notes-file "$RUNNER_TEMP/body.md"
+          echo "rewrote the body of ${TAG} ($(wc -c < "$RUNNER_TEMP/body.md") bytes)"
+
+      - name: Guard — assets untouched, releases/latest unmoved
+        if: success() || failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          LATEST: ${{ steps.check.outputs.latest }}
+        run: |
+          set -euo pipefail
+          [ -n "$LATEST" ] || { echo "the check step did not run; nothing was edited"; exit 0; }
+          now="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
+          if [ "$now" != "$LATEST" ]; then
+            echo "::error::releases/latest moved from ${LATEST} to ${now}: every Canary's OTA manifest URL now points at ${now}. Re-point it (keep-firmware-latest) and find what moved it."
+            exit 1
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '[.assets[].name] | sort | join("\n")' \
+            > "$RUNNER_TEMP/assets-after.txt"
+          if ! cmp -s "$RUNNER_TEMP/assets-before.txt" "$RUNNER_TEMP/assets-after.txt"; then
+            echo "::error::the asset list of ${TAG} changed while only its body was being written"
+            diff "$RUNNER_TEMP/assets-before.txt" "$RUNNER_TEMP/assets-after.txt" || true
+            exit 1
+          fi
+          echo "releases/latest is still ${now}; ${TAG}'s assets are as they were"

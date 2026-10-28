@@ -1,7 +1,8 @@
 // canary-local/emulator/test/native9/Preferences.h — the Arduino-ESP32 NVS
 // wrapper as splash.cpp uses it (F246): one-byte flags ("scv-hello"/"met",
 // the first meeting has happened) in a process-wide map the test clears
-// before each splash (native9::prefs()). begin() always opens.
+// before each splash (native9::prefs()). begin() always opens. Used by the
+// LVGL 9.5 splash test and by its LVGL 8.4 sibling, glass_splash_test.cpp.
 #pragma once
 #include <stddef.h>
 #include <stdint.h>

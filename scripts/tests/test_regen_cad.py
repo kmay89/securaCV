@@ -201,6 +201,9 @@ class TheOrderIsTheDerivedOrder(unittest.TestCase):
         self.assertIn(("gen_figures", "docs/hardware/enclosure/assembled_dims.json"), reads_seen)
         self.assertIn(("gen_device_glbs", "canary-local/devices/figures.json"), reads_seen)
         self.assertIn(("gen_flash", "canary-local/devices/figures.json"), reads_seen)
+        # gen_enclosures.py carries hardware.json's sets into build.json, so it
+        # runs after gen_hardware (a carry made first would ship the old counts)
+        self.assertIn(("gen_enclosures", "docs/hardware/enclosure/hardware.json"), reads_seen)
 
     def test_every_step_maps_to_its_check_form(self):
         self.assertEqual({s.name: s.check for s in rc.STEPS}, CHECKS)

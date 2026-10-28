@@ -454,7 +454,7 @@ parts a phone can. Adding a Canary comes first everywhere; the hub second:
   camera at the tap — VisionKit reports itself unavailable until it is
   allowed — and a good scan starts the join by itself), or the
   Flasher-printed key for a camera or radar Canary; the phone joins
-  `SecuraCV-XXXX` itself — `NEHotspotConfiguration`, the Hotspot
+  `SecuraCV-<kind>-XXXX` itself — `NEHotspotConfiguration`, the Hotspot
   Configuration entitlement — asks the portal's `GET /scan` which networks
   the Canary can see, posts the pick to `/join`, and shows the device's
   `/status` verdict with the tip its own page would give and a retry that
