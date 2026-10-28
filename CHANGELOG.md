@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### Vision and Sentinel tell the truth about their modules: the Grove module's 1 or 0, never its id, a sample from every good invoke and none from a failed one; the Sentinel's radar link reaches Home Assistant, and a missing light sensor is absent, not blinded, and still reported (F384; device-details PR 7, #<PR>)
+### Vision and Sentinel tell the truth about their modules: the Grove module's 1 or 0, never its id, a sample from every good invoke and none from a failed one; the Sentinel's radar link reaches Home Assistant, and a missing light sensor is absent, not blinded, and still reported (F384; device-details PR 7, #1892)
 
 - **Vision's `module_id` is 1 or 0 (sweep F384).** It was the SSCMA
   library's cached id accessor cast to `int`: the address of the library's

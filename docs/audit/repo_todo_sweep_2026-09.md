@@ -7684,8 +7684,8 @@ so — see D2 below.)
   fixed (device-details PR 7); the identifier lint denies `AI.ID(`
   (device-details PR 4). From code and the library source; not run on a
   device. Found by the device-details design's privacy review (its finding
-  P11); filed by #<PR>, 2026-10-22.
-  *Partly done (#<PR>), device-details PR 7; the item stays open for the
+  P11); filed by #1892, 2026-10-22.
+  *Partly done (#1892), device-details PR 7; the item stays open for the
   identifier lint (device-details PR 4):* `vision_mgr.cpp`'s `init()` keeps
   one verdict, `g_module_ok = began && AI.name(false) != nullptr`: a fresh
   NAME? round trip after the library's `begin()`, skipped when `begin()`
@@ -7840,7 +7840,7 @@ so — see D2 below.)
   WiFi-RF / CSI / BLE channels and the fleet-link beacon on the C6 radio) is
   bench-bound and not built, and the README's bench checklist — 10 boxes
   now, with Phase 1a's three — is U1.
-  *Note (2026-10-22, device-details PR 7, #<PR>):* two Phase 1a defects in
+  *Note (2026-10-22, device-details PR 7, #1892):* two Phase 1a defects in
   what the Sentinel says about its own sensors, fixed. Its retained health
   never carried the `radar` object: `publish_health_retained()` takes one
   (carried from canary-sense), and `main.cpp` passed none, so a Standard
