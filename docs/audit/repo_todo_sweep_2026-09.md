@@ -7674,7 +7674,7 @@ so — see D2 below.)
   code. Found by the device-details design's privacy review
   (`docs/design/device_details.md` §11, P18); filed by #<design PR>,
   2026-10-22.
-  *Partly done (#<PR>), the literal keys (device-details PR 2); the item
+  *Partly done (#1891), the literal keys (device-details PR 2); the item
   stays open for PRs 3 and 16:* `TO_REDACT` names the eight keys literally,
   under a comment that says what each one is, and
   `test_the_redaction_set_names_every_identifier_class` names them too; a new
@@ -7707,7 +7707,7 @@ so — see D2 below.)
   Found by the device-details design's privacy review
   (`docs/design/device_details.md` §11, P19); filed by #<design PR>,
   2026-10-22.
-  *Done (#<PR>):* each pinned Canary's trust row carries `key_correlation_id`
+  *Done (#1891):* each pinned Canary's trust row carries `key_correlation_id`
   in place of `fingerprint`: HMAC-SHA-256 of the case-folded fingerprint
   under 16 bytes from `secrets.token_bytes()` drawn once per dump and never
   written to it, its first four bytes spelled as eight letters from
@@ -7843,7 +7843,7 @@ so — see D2 below.)
   and holds the name, both ids as `setup_times` keys, the time zone, and
   no id of either entry elsewhere in the file once those two sections are
   removed. From a real-core download (2026.10.1) in device-details PR 2's
-  second review; filed by #<PR>, 2026-10-26, its scope (ignored issues,
+  second review; filed by #1891, 2026-10-26, its scope (ignored issues,
   other entries' issues) corrected by the third review, 2026-10-27, the
   file's name added by a later review the same day, and the `setup_times`
   and `home_assistant` sections by the next, 2026-10-28.
@@ -23718,7 +23718,7 @@ so — see D2 below.)
   connect burst), or the integration reads it from health. Pinned by
   `test_wap_mqtt_contract.py::test_the_device_shows_the_firmware_the_wap_reports`
   (strict xfail). Found by F34's contract fixture (#1836).
-  *Done (#<PR>, device-details PR 2; the integration reads it from health,
+  *Done (#1891, device-details PR 2; the integration reads it from health,
   and the WAP is unchanged):* the health subscription runs the TOFU pin
   first, then records the health's `firmware_version` per Canary
   (`_async_record_health_firmware()`, `__init__.py`) and writes it as the

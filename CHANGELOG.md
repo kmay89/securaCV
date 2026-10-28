@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### Home Assistant: every Canary's device page shows its firmware and its product, and a shared diagnostics dump keeps no digit of a Canary's key fingerprint (F391 in part, F392, HA45; device-details PR 2, #<PR>)
+### Home Assistant: every Canary's device page shows its firmware and its product, and a shared diagnostics dump keeps no digit of a Canary's key fingerprint (F391 in part, F392, HA45; device-details PR 2, #1891)
 
 - **The firmware on every Canary's device page.** Every firmware family
   (the `firmware/canary` build, the canary-wap, Sense, Vision, Sentinel and
