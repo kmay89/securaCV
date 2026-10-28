@@ -203,14 +203,14 @@ usb_clear = 0.35;  // per-side clearance around the shell in its opening
 usb_relief = 0.5;  // relief step depth on the outer face around the opening — bounded by the wall above and below the plug
 
 /* [Drop collar] — the reason this case exists in one piece */
-collar_on = true;
+collar_on = true;  // drop collar: an inverted U reaching in from the plug-end wall over the plug's shell, so a drop on the plug bears on the case and not on the solder joints
 collar_t = 2.6;    // ring thickness around the shell at its root
 collar_l = 3.4;    // how far the ring reaches ALONG the plug from the wall
 collar_gap = 0.25; // ring-to-shell gap: small enough to bottom out early,
                    // big enough that the ring is not a press fit on the shell
 
 /* [Buttons] — BOOT and RST, side-mounted near the plug end */
-opt_btn = true;
+opt_btn = true;      // BOOT/RST access holes (pen-tip size) in the two side walls near the plug end
 btn_d = 2.6;         // access hole Ø — a fingertip cannot, a pen tip can
 btn_from_usb = 7.0;  // button center down from the PCB's plug-end EDGE (not the cavity end)
                      // 7.0 is the C3 case's FIT-CONFIRMED btn_up on this same
@@ -261,7 +261,7 @@ led_from_far = 6.5;  // back-window center up from the PCB's FAR edge — MEASUR
 led_d = 7.0;         // back-window Ø
 led_skin = 0.5;      // thickness of the diffuser plug that fills it
 
-light_seam = true;
+light_seam = true;   // light seam: a slot through both long walls at the LCD/PCB gap, filled with the white light pipe when light_band is on
 // THE BAND. The seam is not left as an open slot — it is filled with a strip
 // of WHITE / natural PETG, which is a light pipe: the RGB enters its cut end
 // and the strip glows evenly along its length instead of throwing a hard bar
@@ -312,7 +312,7 @@ seam_web_d = 1.2;    // how far into the 2.1 mm wall a rib reaches, leaving the
                      // rest as white you can still see at that spot
 
 /* [Branding] — one yellow mark, on the back */
-mark_show = true;
+mark_show = true;    // the Canary mark debossed into the back and filled in yellow (the bird lockup, or the wordmark where the bird does not fit)
 // The BIRD's height; the wordmark scales off it. Sized so the WHOLE lockup
 // fits the plate with real margin — see the width assert below. At 10.5 the
 // accent measured 22.08 mm wide against a 20.52 mm plate, i.e. it hung off
@@ -439,7 +439,7 @@ rib_l = 5.0;         // rib length along the board
 /* [Tolerances] */
 tol_slide = 0.20;    // board into its cavity
 tol_press = 0.10;    // skirt into the bezel
-tol_hole = 0.30;
+tol_hole = 0.30;     // catalog default — core_tol_hole(), canary_core_lib; no geometry in this file reads it (the case has no screw holes)
 
 /* [Colorway] — preview spools only; per-part exports carry no color */
 colorway = "midnight"; // ["graphite","canary","snow","forest","midnight"] this stick's print-validated set is midnight: near-black body, canary ink, white band (canary_color_lib)

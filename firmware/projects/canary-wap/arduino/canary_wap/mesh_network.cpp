@@ -68,7 +68,8 @@ static void secure_wipe(void* ptr, size_t len) {
 static const char* DOMAIN_FLEET_ID = "securacv:opera:id:v0";
 static const char* DOMAIN_AUTH = "securacv:mesh:auth:v0";
 static const char* DOMAIN_MESSAGE = "securacv:mesh:message:v0";
-static const char* DOMAIN_PAIR_CONFIRM = "securacv:pair:confirm:v0";
+// The pairing domains (the 6-digit code's, and since F94 the CONFIRM
+// hash's two, one per sender role) are mesh_pair_crypto.h's.
 
 // ════════════════════════════════════════════════════════════════════════════
 // NVS KEYS
@@ -1652,6 +1653,18 @@ static void initiator_complete() {
   }
 }
 
+// This side's role, as the CONFIRM hash names its sender (F94). Only a
+// running pairing asks (MESH_PAIRING_CONFIRM, whose role is set): that
+// state is entered only from PAIRING_INIT or PAIRING_JOIN, which
+// start_pairing_initiator/joiner set with the role, and every other wipe
+// of g_pairing (cancel_pairing, either side's completion) leaves the
+// pairing states. So PAIR_ROLE_NONE never reaches here, and its JOINER
+// mapping is never used.
+static mesh_pair_crypto::ConfirmSender confirm_sender(PairingRole role) {
+  return role == PAIR_ROLE_INITIATOR ? mesh_pair_crypto::ConfirmSender::INITIATOR
+                                     : mesh_pair_crypto::ConfirmSender::JOINER;
+}
+
 // A CONFIRM counts only from the pairing partner: the address the
 // initiator's OFFER went to, or the joiner's came from. This took one from
 // any address, and a wrong hash from any radio ended the pairing once the
@@ -1666,6 +1679,14 @@ static void initiator_complete() {
 // next step is COMPLETE, which it takes only after its own owner confirmed
 // (handle_pair_complete); it checks the initiator's CONFIRM hash and needs
 // nothing else from it.
+//
+// The hash checked is the partner's role's (F94; mesh_pair_crypto::
+// confirm_hash). The address is not authenticated, and until F94 the hash
+// was the same both ways, so this side's own CONFIRM, sent back to it from
+// the partner's address, counted as the partner's: an initiator whose
+// owner had confirmed added the joiner, sealed the opera_secret and
+// reported success with the joiner's owner never asked. It is now a wrong
+// hash, and a CONFIRM from firmware before F94 is too.
 static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload) {
   // Only once the code is shown. Before the ACCEPT the session key is all
   // zero and the code 0, so anyone can compute that CONFIRM's hash; kept,
@@ -1677,15 +1698,19 @@ static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload) {
 
   const PairConfirmPayload* confirm = (const PairConfirmPayload*)payload;
 
-  // Verify confirmation hash
+  // Verify the confirmation hash, for the partner's role.
   uint8_t expected_hash[32];
-  uint8_t confirm_input[SESSION_KEY_SIZE + 4];
-  memcpy(confirm_input, g_pairing.session_key, SESSION_KEY_SIZE);
-  memcpy(confirm_input + SESSION_KEY_SIZE, &g_pairing.confirmation_code, 4);
-  sha256_domain(DOMAIN_PAIR_CONFIRM, confirm_input, sizeof(confirm_input), expected_hash);
+  mesh_pair_crypto::confirm_hash(mesh_pair_crypto::partner_of(confirm_sender(g_pairing.role)),
+                                 g_pairing.session_key, g_pairing.confirmation_code,
+                                 expected_hash);
 
   if (memcmp(confirm->confirmation_hash, expected_hash, 32) != 0) {
-    // Confirmation failed - possible MITM
+    // Confirmation failed: a tampered exchange (possible MITM), this side's
+    // own CONFIRM reflected, or a partner on firmware before F94. Logged,
+    // since the owner otherwise sees only a pairing that ended.
+    health_log(SCV_LOG_WARNING, SCV_CAT_MESH,
+               "opera: pairing failed: the partner's CONFIRM did not match (a different "
+               "code, or the partner runs older pairing firmware)");
     cancel_pairing();
     return;
   }
@@ -2896,12 +2921,10 @@ static bool confirm_pairing() {
     return true;
   }
 
-  // Send confirmation message
+  // Send confirmation message: the hash for this side's own role (F94).
   PairConfirmPayload confirm;
-  uint8_t confirm_input[SESSION_KEY_SIZE + 4];
-  memcpy(confirm_input, g_pairing.session_key, SESSION_KEY_SIZE);
-  memcpy(confirm_input + SESSION_KEY_SIZE, &g_pairing.confirmation_code, 4);
-  sha256_domain(DOMAIN_PAIR_CONFIRM, confirm_input, sizeof(confirm_input), confirm.confirmation_hash);
+  mesh_pair_crypto::confirm_hash(confirm_sender(g_pairing.role), g_pairing.session_key,
+                                 g_pairing.confirmation_code, confirm.confirmation_hash);
 
   send_pair_frame(g_pairing.peer_mac, MSG_PAIR_CONFIRM, &confirm, sizeof(confirm));
 

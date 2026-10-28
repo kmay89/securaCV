@@ -35,17 +35,27 @@ uint32_t compute_confirmation_code(const uint8_t session_key[SESSION_KEY_LEN]) {
   return top24 % CONFIRMATION_CODE_MODULUS;
 }
 
-void compute_confirmation_hash(const uint8_t session_key[SESSION_KEY_LEN],
+bool compute_confirmation_hash(Role          sender,
+                               const uint8_t session_key[SESSION_KEY_LEN],
                                uint32_t      code,
                                uint8_t       out[mesh_crypto::SHA256_OUT_LEN]) {
-  if (session_key == nullptr || out == nullptr) return;
+  if (out == nullptr) return false;
+  /* F94: the sender's role picks the domain, so the initiator's CONFIRM
+   * and the joiner's are different bytes and neither passes for the
+   * other. */
+  const char* domain = sender == ROLE_INITIATOR ? DOMAIN_PAIR_CONFIRM_INIT
+                     : sender == ROLE_JOINER    ? DOMAIN_PAIR_CONFIRM_JOIN
+                                                : nullptr;
+  if (session_key == nullptr || domain == nullptr) {
+    memset(out, 0, mesh_crypto::SHA256_OUT_LEN);
+    return false;
+  }
 
-  /* Wire-compat with canary-wap mesh_network.cpp:856-860 / 1448-1450:
-   * the hash input is session_key (32 bytes) followed by the
-   * confirmation_code stored as a 4-byte little-endian uint32. We
-   * construct the LE bytes explicitly so this is correct regardless
-   * of host endianness (the test build is x86 LE; the device is
-   * Xtensa LE; the wire is fixed LE). */
+  /* Wire-compat with canary-wap's mesh_pair_crypto::confirm_hash: the hash
+   * input is session_key (32 bytes) followed by the confirmation_code
+   * stored as a 4-byte little-endian uint32. We construct the LE bytes
+   * explicitly so this is correct regardless of host endianness (the test
+   * build is x86 LE; the device is Xtensa LE; the wire is fixed LE). */
   uint8_t buf[SESSION_KEY_LEN + 4];
   for (size_t i = 0; i < SESSION_KEY_LEN; ++i) buf[i] = session_key[i];
   buf[SESSION_KEY_LEN + 0] = (uint8_t)(code         & 0xFF);
@@ -53,7 +63,12 @@ void compute_confirmation_hash(const uint8_t session_key[SESSION_KEY_LEN],
   buf[SESSION_KEY_LEN + 2] = (uint8_t)((code >> 16) & 0xFF);
   buf[SESSION_KEY_LEN + 3] = (uint8_t)((code >> 24) & 0xFF);
 
-  mesh_crypto::sha256_domain(DOMAIN_PAIR_CONFIRM, buf, sizeof(buf), out);
+  mesh_crypto::sha256_domain(domain, buf, sizeof(buf), out);
+  /* The copy of the session key, wiped (secure_zero, below, is file-local
+   * to the state machine; the same volatile store). */
+  volatile uint8_t* wipe = buf;
+  for (size_t i = 0; i < sizeof(buf); ++i) wipe[i] = 0;
+  return true;
 }
 
 const char* mesh_state_name(bool   enabled,
@@ -141,6 +156,15 @@ inline Action make_action(ActionType t) {
   Action a{};
   a.type = t;
   return a;
+}
+
+/* F94: the role whose CONFIRM this side checks, its partner's. Each side
+ * sends the hash for its own role (ctx.role) and checks the other's, so its
+ * own CONFIRM sent back to it is a wrong hash. */
+inline Role partner_role(Role r) {
+  return r == ROLE_INITIATOR ? ROLE_JOINER
+       : r == ROLE_JOINER    ? ROLE_INITIATOR
+                             : ROLE_NONE;
 }
 
 inline Action make_send_action(ActionType t,
@@ -401,8 +425,10 @@ Action initiator_handle_accept(PairingContext& ctx,
  * it never read the one confirm_code sent before its owner confirmed, and
  * in the joiner-first order none was sent. Without this CONFIRM such a
  * joiner dropped the COMPLETE while this side reported PAIRED (host-probed
- * against the pre-F97 code, both orders). Built here, before the session
- * key is wiped.
+ * against the pre-F97 code, both orders). Since F94 no such joiner gets
+ * this far: its role-free CONFIRM fails this side's check, and this
+ * CONFIRM would fail its own (mesh_pairing.h, "Firmware before F94").
+ * Built here, before the session key is wiped.
  *
  * Both frames are kept, as sent, for the copies tick() sends (F134):
  * nothing acknowledges a COMPLETE, so one lost on the air would otherwise
@@ -415,7 +441,10 @@ Action initiator_complete(PairingContext& ctx, uint32_t now_ms) {
    * while after that confirm. */
   if (!partner_admitted(ctx)) return fail(ctx, FailReason::PARTNER_REFUSED);
   PairConfirmPayload lead{};
-  compute_confirmation_hash(ctx.session_key, ctx.confirmation_code, lead.confirmation_hash);
+  if (!compute_confirmation_hash(ctx.role, ctx.session_key, ctx.confirmation_code,
+                                 lead.confirmation_hash)) {
+    return fail(ctx, FailReason::CRYPTO);
+  }
   PairCompletePayload complete{};
   uint8_t nonce[mesh_crypto::AEAD_NONCE_LEN];
   mesh_crypto::aead_generate_nonce(nonce);
@@ -508,10 +537,12 @@ Action complete_copy_if_due(PairingContext& ctx, uint32_t now_ms) {
  *     the COMPLETE is checked like any other; one arriving after the
  *     joiner already moved to AWAITING_COMPLETE is dropped.
  * A wrong hash from the partner's address ends the pairing in either order,
- * as it did after the owner's confirm. Not closed (F94): the hash is the
- * same in both directions and the address is not authenticated, so the
- * initiator's own CONFIRM reflected to it from the joiner's address counts
- * as the joiner's; the same before F97. */
+ * as it did after the owner's confirm. The hash is checked for the
+ * partner's role (F94): until F94 it was the same in both directions, and
+ * the address is not authenticated, so the initiator's own CONFIRM
+ * reflected to it from the joiner's address counted as the joiner's (the
+ * same before F97); it is now a wrong hash, as is the joiner's own sent
+ * back to it, and as is a CONFIRM from firmware before F94. */
 Action either_handle_confirm(PairingContext& ctx,
                              const uint8_t from_mac[6],
                              const uint8_t* payload, size_t payload_len,
@@ -524,9 +555,13 @@ Action either_handle_confirm(PairingContext& ctx,
   if (memcmp(from_mac, ctx.peer_mac, 6) != 0) return make_action(ActionType::NONE);
   const PairConfirmPayload* cf = (const PairConfirmPayload*)payload;
 
+  /* The partner's role's hash (F94): this side's own CONFIRM, reflected
+   * from the partner's address, does not match, and ends the pairing like
+   * any wrong hash from there. */
   uint8_t expected[mesh_crypto::SHA256_OUT_LEN];
-  compute_confirmation_hash(ctx.session_key, ctx.confirmation_code, expected);
-  if (!mesh_crypto::ct_equal(cf->confirmation_hash, expected, mesh_crypto::SHA256_OUT_LEN)) {
+  if (!compute_confirmation_hash(partner_role(ctx.role), ctx.session_key,
+                                 ctx.confirmation_code, expected) ||
+      !mesh_crypto::ct_equal(cf->confirmation_hash, expected, mesh_crypto::SHA256_OUT_LEN)) {
     return fail(ctx, FailReason::BAD_CONFIRM);
   }
 
@@ -651,8 +686,10 @@ Action tick(PairingContext& ctx, uint32_t now_ms) {
       ++ctx.confirm_resends;
       ctx.confirm_resend_ms = now_ms;
       PairConfirmPayload confirm{};
-      compute_confirmation_hash(ctx.session_key, ctx.confirmation_code,
-                                confirm.confirmation_hash);
+      if (!compute_confirmation_hash(ctx.role, ctx.session_key, ctx.confirmation_code,
+                                     confirm.confirmation_hash)) {
+        return fail(ctx, FailReason::CRYPTO);
+      }
       return make_send_action(ActionType::SEND_CONFIRM, ctx.peer_mac,
                               &confirm, sizeof(confirm));
     }
@@ -684,7 +721,10 @@ Action confirm_code(PairingContext& ctx, uint32_t now_ms) {
   if (ctx.role == ROLE_INITIATOR && ctx.peer_confirmed) return initiator_complete(ctx, now_ms);
 
   PairConfirmPayload confirm{};
-  compute_confirmation_hash(ctx.session_key, ctx.confirmation_code, confirm.confirmation_hash);
+  if (!compute_confirmation_hash(ctx.role, ctx.session_key, ctx.confirmation_code,
+                                 confirm.confirmation_hash)) {
+    return fail(ctx, FailReason::CRYPTO);
+  }
 
   ctx.state = State::AWAITING_CONFIRM_PEER;
   return make_send_action(ActionType::SEND_CONFIRM, ctx.peer_mac, &confirm, sizeof(confirm));

@@ -15,8 +15,9 @@ as `gen_homeassistant.py` / `gen_boards.py`.
 
 Sources of truth (all in-repo, deterministic, offline):
   firmware/projects/canary-wap/arduino/canary_wap/
-      canary_wap.ino        version/identity, AP ssid+password, boot log, routes
-      wap_server.h          AP channel/clients, HTTP/HTTPS ports
+      canary_wap.ino        version/identity, AP ssid+password, AP channel/clients,
+                            each server's port, boot log, routes
+      onboarding_fsm.h      the SSID prefix and node type word, the AP grace
       setup_wizard.h        NVS keys, setup timeout, DNS port, device-name cap
       setup_page_html.h     CAPTIVE_PORTAL_HTML  (rendered verbatim)
       boot_banner.cpp       boot scene text
@@ -43,7 +44,6 @@ from _tooling import die, repo_root
 REPO = repo_root()
 FW = REPO / "firmware/projects/canary-wap/arduino/canary_wap"
 INO = FW / "canary_wap.ino"
-WAP_SERVER_H = FW / "wap_server.h"
 SETUP_WIZARD_H = FW / "setup_wizard.h"
 SETUP_PAGE_H = FW / "setup_page_html.h"
 BOOT_BANNER_CPP = FW / "boot_banner.cpp"
@@ -172,11 +172,69 @@ BOARD_NAME_FULL = boards.get("boards", {}).get(BOARD_ID, {}).get("name", "")
 # 2. the SoftAP + captive portal (constants parsed; behavior validated)
 # --------------------------------------------------------------------------- #
 
-AP_SSID_PREFIX = grab(WAP_SERVER_H, r'AP_SSID_PREFIX\s*=\s*"([^"]+)"', "AP_SSID_PREFIX")
-AP_CHANNEL = int(grab(WAP_SERVER_H, r"AP_CHANNEL\s*=\s*(\d+)", "AP_CHANNEL"))
-AP_MAX_CLIENTS = int(grab(WAP_SERVER_H, r"AP_MAX_CLIENTS\s*=\s*(\d+)", "AP_MAX_CLIENTS"))
-HTTPS_PORT = int(grab(WAP_SERVER_H, r"HTTPS_PORT\s*=\s*(\d+)", "HTTPS_PORT"))
-HTTP_PORT = int(grab(WAP_SERVER_H, r"HTTP_PORT\s*=\s*(\d+)", "HTTP_PORT"))
+# The SoftAP's channel and client cap, and each server's port, are read where
+# the sketch uses them (sweep F277: they were read from wap_server.h, whose
+# copies of them no code used). Every WiFi.softAP() call must pass the two
+# constants, so the page's numbers are the ones the SoftAP is raised with (the
+# channel follows the router's once the station joins: the sketch runs
+# WIFI_AP_STA).
+AP_CHANNEL = int(grab(INO, r"static const int\s+AP_CHANNEL\s*=\s*(\d+);", "AP_CHANNEL"))
+AP_MAX_CLIENTS = int(grab(INO, r"static const int\s+AP_MAX_CLIENTS\s*=\s*(\d+);", "AP_MAX_CLIENTS"))
+_SOFTAP = [ln.strip() for ln in read(INO).splitlines()
+           if "WiFi.softAP(" in ln and not ln.lstrip().startswith(("//", "*", "/*"))]
+if not _SOFTAP or not all(re.search(r"WiFi\.softAP\([^()]*,\s*AP_CHANNEL,\s*false,\s*AP_MAX_CLIENTS\);", ln)
+                          for ln in _SOFTAP):
+    die(f"a WiFi.softAP() call does not pass AP_CHANNEL, false, AP_MAX_CLIENTS on its line: {_SOFTAP}")
+# The ports. A reader that cannot spell a value must refuse it, never fall
+# through to "equal" (CLAUDE.md), so every code line that names a server's
+# port or the TLS transport is read, and each one must be a form read here:
+# a digit-literal write to one of the three configs the sketch starts its
+# servers from, made once. Anything else (a named constant, a cast, a suffix,
+# a second config, a second write, transport_mode) is refused, not skipped.
+# Full-line comments are not code. Any other line that names one of these
+# fields (a trailing comment on a line that is not such a write, say) is
+# refused with its text, which is the safe way to be wrong.
+_INO_CODE = [ln for ln in read(INO).splitlines() if not ln.lstrip().startswith(("//", "*", "/*"))]
+_PORT_WRITE = re.compile(r"\s*(ssl_config\.httpd\.server_port|ssl_config\.port_secure|redirect_config\.server_port"
+                         r"|config\.server_port)\s*=\s*(\d+)\s*;\s*(?://.*)?")
+_SECURE_MODE = re.compile(r"\s*ssl_config\.transport_mode\s*=\s*HTTPD_SSL_TRANSPORT_SECURE\s*;\s*(?://.*)?")
+_PORTS: dict = {}
+for _ln in _INO_CODE:
+    if not re.search(r"\b(server_port|port_secure|port_insecure|transport_mode)\b", _ln):
+        continue
+    if _SECURE_MODE.fullmatch(_ln):
+        continue  # the default, spelled out: port_secure is still what binds
+    _m = _PORT_WRITE.fullmatch(_ln)
+    if not _m:
+        die(f"the sketch sets a server port or the TLS transport in a form this generator cannot read "
+            f"({_ln.strip()!r}): write it as <config>.server_port = <digits>; or "
+            f"ssl_config.port_secure = <digits>; (or teach gen_wap.py the new form)")
+    if _m.group(1) in _PORTS:
+        die(f"the sketch writes {_m.group(1)} twice ({_PORTS[_m.group(1)]} and {_m.group(2)}): "
+            f"write each server's port once")
+    _PORTS[_m.group(1)] = int(_m.group(2))
+# HTTPS: ESP-IDF's httpd_ssl_start() overwrites httpd.server_port with the
+# config's port_secure (HTTPD_SSL_CONFIG_DEFAULT: 443), so the port the sketch
+# writes into httpd.server_port is the page's number only while it is the one
+# bound: port_secure as the sketch sets it, or the default when it does not.
+IDF_PORT_SECURE_DEFAULT = 443  # HTTPD_SSL_CONFIG_DEFAULT()'s port_secure
+must(INO, "httpd_ssl_config_t ssl_config = HTTPD_SSL_CONFIG_DEFAULT();", "the HTTPS config starts from IDF's default")
+_SSL_STARTS = [ln.strip() for ln in _INO_CODE if "httpd_ssl_start(" in ln]
+if len(_SSL_STARTS) != 1 or not re.search(r"httpd_ssl_start\(&g_https_server,\s*&ssl_config\)", _SSL_STARTS[0]):
+    die(f"expected one httpd_ssl_start() call, starting the HTTPS server from ssl_config: {_SSL_STARTS}")
+if "ssl_config.httpd.server_port" not in _PORTS:
+    die("the HTTPS server's port: no ssl_config.httpd.server_port = <digits>; in the sketch")
+HTTPS_PORT = _PORTS["ssl_config.httpd.server_port"]
+_PORT_SECURE = _PORTS.get("ssl_config.port_secure", IDF_PORT_SECURE_DEFAULT)
+if _PORT_SECURE != HTTPS_PORT:
+    die(f"the HTTPS server's httpd.server_port says {HTTPS_PORT}, but httpd_ssl_start() binds "
+        f"port_secure, {_PORT_SECURE}: set port_secure to the port the page should name")
+# HTTP: the port-80 server beside HTTPS (redirect_config) and the HTTP-only
+# fallback (config) bind one port, the page's http_port.
+_HTTP_PORTS = {k: v for k, v in _PORTS.items() if k in ("redirect_config.server_port", "config.server_port")}
+if len(_HTTP_PORTS) != 2 or len(set(_HTTP_PORTS.values())) != 1:
+    die(f"expected one port for the port-80 redirect server and the HTTP-only fallback, got {_HTTP_PORTS}")
+HTTP_PORT = _HTTP_PORTS["config.server_port"]
 DEVICE_NAME_MAX = int(grab(SETUP_WIZARD_H, r"DEVICE_NAME_MAX\s*=\s*(\d+)", "DEVICE_NAME_MAX"))
 DNS_PORT = int(grab(SETUP_WIZARD_H, r"DNS_PORT\s*=\s*(\d+)", "DNS_PORT"))
 NVS_NS = grab(SETUP_WIZARD_H, r'prefs\.begin\("([a-z]+)"', "NVS namespace")
@@ -249,8 +307,6 @@ must(INO, 'snprintf(out, cap, "canary-%02x%02x",\n           g_device.pubkey_fp[
 # The prefix and the node type word are the shared header's, read, never typed.
 SSID_PREFIX = grab(ONBOARDING_FSM_H, r'SSID_PREFIX = "([^"]+)";', "onboarding SSID_PREFIX")
 NODE_WAP = grab(ONBOARDING_FSM_H, r'NODE_WAP\s*=\s*"([a-z]+)";', "onboarding NODE_WAP")
-if AP_SSID_PREFIX != SSID_PREFIX:
-    die(f"AP_SSID_PREFIX {AP_SSID_PREFIX!r} is not onboarding_fsm.h's SSID_PREFIX {SSID_PREFIX!r}")
 
 
 def unambiguous_suffix16(v: int) -> str:
@@ -265,7 +321,7 @@ def unambiguous_suffix16(v: int) -> str:
 _FP0, _FP1 = bytes.fromhex(EX_FP)[:2]
 EX_SUFFIX = unambiguous_suffix16((_FP0 << 8) | _FP1)
 EX_ID = f"{DEVICE_ID_PREFIX}{EX_SUFFIX}"
-EX_SSID = f"{AP_SSID_PREFIX}{NODE_WAP}-{EX_SUFFIX}"
+EX_SSID = f"{SSID_PREFIX}{NODE_WAP}-{EX_SUFFIX}"
 EX_PASS = "cv-7Q2M9XKP4RTN"
 EX_MDNS = "canary-%02x%02x.local" % (_FP0, _FP1)
 must(MQTT_IDENTITY_H, 'kLowerHex[] = "0123456789abcdef"', "envelope fp spelled in lowercase")
@@ -279,7 +335,7 @@ must(INO, 'Serial.printf("[PROV] Public key fingerprint: %s\\n", g_device.finger
 
 AP = {
     "ssid_example": EX_SSID,
-    "ssid_prefix": AP_SSID_PREFIX,
+    "ssid_prefix": SSID_PREFIX,
     "ssid_note": "the fleet's shape, SecuraCV-<node type>-<4>: the middle word says which kind of "
                  "Canary raised it (wap), and the last 4 chars are the first two bytes of your "
                  "device's pubkey fingerprint in the unambiguous alphabet (no 0/O/o, 1/I/i/l/L), "
@@ -679,7 +735,7 @@ def check_event(payload: str, label: str) -> None:
 TOPICS = [
     {"suffix": "status", "retained": True, "cadence": "on connect + ~30 s",
      "payload": '{"online":true,"device_type":"canary-wap","csi_running":true,"wifi_connected":true,"rssi":-58}'},
-    {"suffix": "events", "retained": False, "cadence": "per committed CSI event",
+    {"suffix": "events", "retained": False, "cadence": "per committed CSI event (not ambient ones, sweep F105)",
      "payload": event_body(state="active", motion=78, breathing=8)},
     {"suffix": "chain", "retained": True, "cadence": "on each new record",
      "payload": '{"v":1,"length":312,"latest_hash":"a1b2…","algorithm":"ed25519","alg":"ed25519","fp":"' + EX_FP + '","sig":"…"}'},

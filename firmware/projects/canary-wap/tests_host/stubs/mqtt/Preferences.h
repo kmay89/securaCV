@@ -39,6 +39,11 @@ inline int& stub_nvs_error_logs() {
  * config_load()'s reads, through these. */
 inline std::function<void(const char*)> stub_nvs_on_put;
 inline std::function<void(const char*)> stub_nvs_on_get;
+/* A remove NVS refuses (a worn or full flash page, say): true for a key makes
+ * remove() of it answer false and leave the value, and the store takes no
+ * write. Null refuses nothing. config_clear() and login_clear() read each key
+ * back after its remove; this is what that readback is for. */
+inline std::function<bool(const char*)> stub_nvs_refuse_remove;
 /* Every write the store took since the process began: each put and each
  * remove, whatever it changed (F289's second review: a refusal that rewrote
  * the row with the bytes it already held would read back equal). */
@@ -69,6 +74,7 @@ class Preferences {
   bool isKey(const char* key) { return stub_nvs().count(k(key)) != 0; }
   bool remove(const char* key) {
     if (ro_) return false;
+    if (stub_nvs_refuse_remove && stub_nvs_refuse_remove(key)) return false;
     ++stub_nvs_writes();
     return stub_nvs().erase(k(key)) != 0;
   }

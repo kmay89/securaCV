@@ -36,9 +36,9 @@
  * is up: the channel attaches the Dispatcher when it creates the server and
  * names its callbacks the pairing owner once the loop task holds its
  * state, sweep F167, with set_owner()) a
- * Numeric Comparison is answered no and the passkey shown is a random one
- * nobody sees: that pairing fails closed instead of taking the library's
- * yes. (A pairing NimBLE runs by Just Works, which its tables
+ * Numeric Comparison is answered no and the passkey handed to NimBLE is
+ * one it refuses (past 999999) that nobody sees: that pairing fails closed
+ * instead of taking the library's yes. (A pairing NimBLE runs by Just Works, which its tables
  * pick for an initiator with no display or no yes/no, reaches no callback
  * here: it asks nobody, on any profile.)
  *
@@ -101,8 +101,11 @@ class Dispatcher final : public NimBLEServerCallbacks {
   uint32_t onPassKeyDisplay() override {
     NimBLEServerCallbacks* p = owner(kPairing);
     if (p != nullptr) return p->onPassKeyDisplay();
-    // Not the library's 123456: six digits nobody is shown.
-    return esp_random() % 1000000;
+    // Not the library's 123456, nor any six digits (the review of F191: a
+    // one-in-a-million guess could complete one nobody is shown): past what
+    // ble_sm_inject_io() takes, as the channel refuses a passkey outside the
+    // owner's pairing mode (its PASSKEY_REFUSED), so NimBLE sets no key.
+    return 1000000u + esp_random() % 1000000;
   }
 
   void onConfirmPassKey(NimBLEConnInfo& connInfo, uint32_t pin) override {

@@ -553,6 +553,310 @@
      "(weather mode) Glue the clear disc into the camera seat. Turn the shell face-down and press the TPU gasket into the groove in its ledge on a thin film of silicone grease — the printed ring is 0.5 mm narrower than its groove (1.1 in 1.6), so dry it drops out when step 5 turns the shell face-up over the plate.",
      "Lower the shell over the plate (its walls swallow the plate's edge — the key slot on the plate meets the rib in the +Y wall, so it only goes one way), turn the case over and drive the M2 screws through the plate's recessed seats into the post ends — the Outdoor build seats an O-ring under each pan head first — snug diagonally, then final quarter-turns. Don't crank them: M2 self-taps strip printed posts beyond ~0.3 N·m (two fingers on the short end of the driver is plenty). The face and the sides stay unbroken; the only seam is the hairline around the plate on the back."
     ]
+   },
+   "hardware": {
+    "source": "docs/hardware/enclosure/hardware.json",
+    "sets": {
+     "wap.battery_full": {
+      "case": "WAP",
+      "scad": "canary_wap_enclosure.scad",
+      "overrides": {
+       "preset": "battery_full",
+       "part": "base"
+      },
+      "items": [
+       {
+        "qty": 4,
+        "kind": "screw",
+        "spec": "M2 flat x 10 self-tap",
+        "text": "M2 flat x 10 self-tap (plate to the post ends)"
+       },
+       {
+        "qty": 1,
+        "kind": "light-pipe",
+        "spec": "Ø3 light pipe",
+        "text": "Ø3 light pipe"
+       },
+       {
+        "qty": 1,
+        "kind": "window",
+        "spec": "Ø12 x 1 clear disc (bond)",
+        "text": "Ø12 x 1 clear disc (bond)"
+       },
+       {
+        "qty": 1,
+        "kind": "magnet",
+        "spec": "Ø6 x 2.2 disc magnet (press + glue)",
+        "text": "Ø6 x 2.2 disc magnet (press + glue)"
+       }
+      ],
+      "lid_rib": {
+       "ribs": true,
+       "h": 1.0,
+       "w": 2.5,
+       "headroom": 1.0,
+       "bound": "lid_headroom",
+       "slack": 0.0,
+       "batt_hold": true
+      }
+     },
+     "wap.battery_weather": {
+      "case": "WAP",
+      "scad": "canary_wap_enclosure.scad",
+      "overrides": {
+       "preset": "battery_weather",
+       "part": "base"
+      },
+      "items": [
+       {
+        "qty": 8,
+        "kind": "screw",
+        "spec": "M2 pan x 8 self-tap",
+        "text": "M2 pan x 8 self-tap (plate to the post ends)"
+       },
+       {
+        "qty": 8,
+        "kind": "o-ring",
+        "spec": "O-ring 2 ID x 1 CS (under the head)",
+        "text": "O-ring 2 ID x 1 CS (under the head)"
+       },
+       {
+        "qty": 1,
+        "kind": "gasket",
+        "spec": "TPU gasket (print part=\"gasket\")",
+        "text": "TPU gasket (print part=\"gasket\")"
+       },
+       {
+        "qty": 1,
+        "kind": "vent",
+        "spec": "Ø12 adhesive ePTFE/GORE vent patch",
+        "text": "Ø12 adhesive ePTFE/GORE vent patch"
+       },
+       {
+        "qty": 1,
+        "kind": "light-pipe",
+        "spec": "Ø3 light pipe",
+        "text": "Ø3 light pipe"
+       },
+       {
+        "qty": 1,
+        "kind": "window",
+        "spec": "Ø12 x 1 clear disc (bond)",
+        "text": "Ø12 x 1 clear disc (bond)"
+       },
+       {
+        "qty": 1,
+        "kind": "magnet",
+        "spec": "Ø6 x 2.2 disc magnet (press + glue)",
+        "text": "Ø6 x 2.2 disc magnet (press + glue)"
+       },
+       {
+        "qty": 2,
+        "kind": "wall-screw",
+        "spec": "#6 pan wall screw (keyholes)",
+        "text": "#6 pan wall screw (keyholes)"
+       }
+      ],
+      "lid_rib": {
+       "ribs": true,
+       "h": 1.0,
+       "w": 2.5,
+       "headroom": 1.0,
+       "bound": "lid_headroom",
+       "slack": 0.0,
+       "batt_hold": true
+      }
+     },
+     "wap.battery_weather+inserts": {
+      "case": "WAP",
+      "scad": "canary_wap_enclosure.scad",
+      "overrides": {
+       "preset": "battery_weather",
+       "part": "base",
+       "screw_insert": "true"
+      },
+      "items": [
+       {
+        "qty": 8,
+        "kind": "screw",
+        "spec": "M2 pan x 8 machine (into the inserts)",
+        "text": "M2 pan x 8 machine (into the inserts) (plate to the post ends)"
+       },
+       {
+        "qty": 8,
+        "kind": "insert",
+        "spec": "M2 heat-set insert 3.5 OD x 4",
+        "text": "M2 heat-set insert 3.5 OD x 4"
+       },
+       {
+        "qty": 8,
+        "kind": "o-ring",
+        "spec": "O-ring 2 ID x 1 CS (under the head)",
+        "text": "O-ring 2 ID x 1 CS (under the head)"
+       },
+       {
+        "qty": 1,
+        "kind": "gasket",
+        "spec": "TPU gasket (print part=\"gasket\")",
+        "text": "TPU gasket (print part=\"gasket\")"
+       },
+       {
+        "qty": 1,
+        "kind": "vent",
+        "spec": "Ø12 adhesive ePTFE/GORE vent patch",
+        "text": "Ø12 adhesive ePTFE/GORE vent patch"
+       },
+       {
+        "qty": 1,
+        "kind": "light-pipe",
+        "spec": "Ø3 light pipe",
+        "text": "Ø3 light pipe"
+       },
+       {
+        "qty": 1,
+        "kind": "window",
+        "spec": "Ø12 x 1 clear disc (bond)",
+        "text": "Ø12 x 1 clear disc (bond)"
+       },
+       {
+        "qty": 1,
+        "kind": "magnet",
+        "spec": "Ø6 x 2.2 disc magnet (press + glue)",
+        "text": "Ø6 x 2.2 disc magnet (press + glue)"
+       },
+       {
+        "qty": 2,
+        "kind": "wall-screw",
+        "spec": "#6 pan wall screw (keyholes)",
+        "text": "#6 pan wall screw (keyholes)"
+       }
+      ]
+     },
+     "wap.battery_weather.shield": {
+      "case": "WAP",
+      "scad": "canary_wap_enclosure.scad",
+      "overrides": {
+       "preset": "battery_weather",
+       "part": "shield"
+      },
+      "items": [
+       {
+        "qty": 8,
+        "kind": "screw",
+        "spec": "M2 pan x 8 self-tap",
+        "text": "M2 pan x 8 self-tap (plate to the post ends)"
+       },
+       {
+        "qty": 8,
+        "kind": "o-ring",
+        "spec": "O-ring 2 ID x 1 CS (under the head)",
+        "text": "O-ring 2 ID x 1 CS (under the head)"
+       },
+       {
+        "qty": 1,
+        "kind": "gasket",
+        "spec": "TPU gasket (print part=\"gasket\")",
+        "text": "TPU gasket (print part=\"gasket\")"
+       },
+       {
+        "qty": 1,
+        "kind": "vent",
+        "spec": "Ø12 adhesive ePTFE/GORE vent patch",
+        "text": "Ø12 adhesive ePTFE/GORE vent patch"
+       },
+       {
+        "qty": 1,
+        "kind": "light-pipe",
+        "spec": "Ø3 light pipe",
+        "text": "Ø3 light pipe"
+       },
+       {
+        "qty": 1,
+        "kind": "window",
+        "spec": "Ø12 x 1 clear disc (bond)",
+        "text": "Ø12 x 1 clear disc (bond)"
+       },
+       {
+        "qty": 1,
+        "kind": "magnet",
+        "spec": "Ø6 x 2.2 disc magnet (press + glue)",
+        "text": "Ø6 x 2.2 disc magnet (press + glue)"
+       },
+       {
+        "qty": 2,
+        "kind": "wall-screw",
+        "spec": "#6 pan wall screw (keyholes)",
+        "text": "#6 pan wall screw (keyholes)"
+       },
+       {
+        "qty": 4,
+        "kind": "screw",
+        "spec": "M2 flat x 12 self-tap",
+        "text": "M2 flat x 12 self-tap (shield to the face's pilots)"
+       }
+      ]
+     },
+     "wap.compact_plain": {
+      "case": "WAP",
+      "scad": "canary_wap_enclosure.scad",
+      "overrides": {
+       "preset": "compact_plain",
+       "part": "base"
+      },
+      "items": [
+       {
+        "qty": 4,
+        "kind": "screw",
+        "spec": "M2 flat x 10 self-tap",
+        "text": "M2 flat x 10 self-tap (plate to the post ends)"
+       },
+       {
+        "qty": 1,
+        "kind": "light-pipe",
+        "spec": "Ø3 light pipe",
+        "text": "Ø3 light pipe"
+       }
+      ],
+      "lid_rib": {
+       "ribs": true,
+       "h": 1.0,
+       "w": 2.5,
+       "headroom": 1.85,
+       "bound": "lid_headroom",
+       "slack": 0.85,
+       "batt_hold": false
+      }
+     },
+     "wap.compact_plain+inserts": {
+      "case": "WAP",
+      "scad": "canary_wap_enclosure.scad",
+      "overrides": {
+       "preset": "compact_plain",
+       "part": "base",
+       "screw_insert": "true"
+      },
+      "items": [
+       {
+        "qty": 4,
+        "kind": "screw",
+        "spec": "M2 flat x 10 machine (into the inserts)",
+        "text": "M2 flat x 10 machine (into the inserts) (plate to the post ends)"
+       },
+       {
+        "qty": 4,
+        "kind": "insert",
+        "spec": "M2 heat-set insert 3.5 OD x 4",
+        "text": "M2 heat-set insert 3.5 OD x 4"
+       },
+       {
+        "qty": 1,
+        "kind": "light-pipe",
+        "spec": "Ø3 light pipe",
+        "text": "Ø3 light pipe"
+       }
+      ]
+     }
+    }
    }
   },
   "canary-vision": {
@@ -1192,6 +1496,525 @@
      "Lower the shell over the plate (the walls swallow the plate's edge; the plate's key slot meets the rib in the +Y wall, so it only goes one way), turn it over and drive the short M2 screws through the plate's recessed seats into the post ends (4, or 6 with the weather preset's mid posts — an O-ring under each pan head on a sealed build) — the face and every side stay unbroken — snug diagonally, then final quarter-turns.",
      "Screw the bracket to the wall (or a tripod plate via the 1/4-20 nut), slot the case prongs into it, set the angle, tighten the M5 thumbscrew."
     ]
+   },
+   "hardware": {
+    "source": "docs/hardware/enclosure/hardware.json",
+    "sets": {
+     "doorbell": {
+      "case": "Vision doorbell",
+      "scad": "canary_vision_doorbell.scad",
+      "overrides": {
+       "part": "body"
+      },
+      "items": [
+       {
+        "qty": 12,
+        "kind": "screw",
+        "spec": "M2 pan x 10 self-tap",
+        "text": "M2 pan x 10 self-tap (plate to the post ends)"
+       },
+       {
+        "qty": 4,
+        "kind": "screw",
+        "spec": "M2 pan x 5 self-tap",
+        "text": "M2 pan x 5 self-tap (OV5647 to the face posts)"
+       },
+       {
+        "qty": 2,
+        "kind": "screw",
+        "spec": "M2 pan x 4 self-tap",
+        "text": "M2 pan x 4 self-tap (module to its board posts)"
+       },
+       {
+        "qty": 1,
+        "kind": "security-screw",
+        "spec": "M2 x 10 security screw",
+        "text": "M2 x 10 security screw, Torx pin/tri-wing, self-tap (wall plate collar into the shell's boss)"
+       },
+       {
+        "qty": 12,
+        "kind": "o-ring",
+        "spec": "O-ring 2 ID x 1 CS (under the head)",
+        "text": "O-ring 2 ID x 1 CS (under the head)"
+       },
+       {
+        "qty": 1,
+        "kind": "button",
+        "spec": "Ø12 illuminated momentary button + panel nut (16.2 AC)",
+        "text": "Ø12 illuminated momentary button + panel nut (16.2 AC)"
+       },
+       {
+        "qty": 1,
+        "kind": "gasket",
+        "spec": "TPU gasket (print part=\"gasket\")",
+        "text": "TPU gasket (print part=\"gasket\")"
+       },
+       {
+        "qty": 1,
+        "kind": "window",
+        "spec": "Ø14 x 1 clear disc, seated from inside behind the lip (a bead of neutral-cure silicone on the ledge seals it)",
+        "text": "Ø14 x 1 clear disc, seated from inside behind the lip (a bead of neutral-cure silicone on the ledge seals it)"
+       },
+       {
+        "qty": 1,
+        "kind": "printed-part",
+        "spec": "lens retainer ring (print part=\"retainer\"; presses into the boss behind the disc)",
+        "text": "lens retainer ring (print part=\"retainer\"; presses into the boss behind the disc)"
+       },
+       {
+        "qty": 1,
+        "kind": "other",
+        "spec": "LiPo 802030-class, 8 x 20 x 30 (+1 PCM), protected, JST-PH 2.0 to the XIAO's BAT pads — NOT below 0 °C",
+        "text": "LiPo 802030-class, 8 x 20 x 30 (+1 PCM), protected, JST-PH 2.0 to the XIAO's BAT pads — NOT below 0 °C"
+       },
+       {
+        "qty": 1,
+        "kind": "other",
+        "spec": "foam tape strip 0.5 x 6 x 30 (under the cell, on the plate)",
+        "text": "foam tape strip 0.5 x 6 x 30 (under the cell, on the plate)"
+       },
+       {
+        "qty": 1,
+        "kind": "other",
+        "spec": "Ø36 x 6 sealed full-range driver, 4 Ω, 3 W class (behind the face's grille)",
+        "text": "Ø36 x 6 sealed full-range driver, 4 Ω, 3 W class (behind the face's grille)"
+       },
+       {
+        "qty": 1,
+        "kind": "button",
+        "spec": "class-D amplifier 2.5 W (PAM8302A class) + its RC input filter (parks on edge beside the button)",
+        "text": "class-D amplifier 2.5 W (PAM8302A class) + its RC input filter (parks on edge beside the button)"
+       },
+       {
+        "qty": 1,
+        "kind": "other",
+        "spec": "foam gasket ring Ø36 / Ø30 x 1.5 (driver rim to the face)",
+        "text": "foam gasket ring Ø36 / Ø30 x 1.5 (driver rim to the face)"
+       },
+       {
+        "qty": 1,
+        "kind": "other",
+        "spec": "foam pad Ø20 x 1.5 (magnet to the cradle)",
+        "text": "foam pad Ø20 x 1.5 (magnet to the cradle)"
+       },
+       {
+        "qty": 1,
+        "kind": "other",
+        "spec": "acoustic mesh patch Ø34 (hydrophobic, on the face's inner side over the grille — it guards the driver's chamber, not the cavity)",
+        "text": "acoustic mesh patch Ø34 (hydrophobic, on the face's inner side over the grille — it guards the driver's chamber, not the cavity)"
+       },
+       {
+        "qty": 2,
+        "kind": "other",
+        "spec": "TPU service plunger (ONE print of part=\"plunger\": the R + B pair on a snap-off sprue; one dimple = R, two = B — from the back face over the XIAO's switches)",
+        "text": "TPU service plunger (ONE print of part=\"plunger\": the R + B pair on a snap-off sprue; one dimple = R, two = B — from the back face over the XIAO's switches)"
+       },
+       {
+        "qty": 1,
+        "kind": "other",
+        "spec": "FPC Wi-Fi antenna 40 x 20, u.FL pigtail (the XIAO's own kit antenna), on the +X wall between its ribs",
+        "text": "FPC Wi-Fi antenna 40 x 20, u.FL pigtail (the XIAO's own kit antenna), on the +X wall between its ribs"
+       },
+       {
+        "qty": 4,
+        "kind": "wall-screw",
+        "spec": "#8 pan wall screw (plate)",
+        "text": "#8 pan wall screw (plate)"
+       }
+      ],
+      "lid_rib": {
+       "ribs": true,
+       "h": 1.0,
+       "w": 2.5,
+       "headroom": 2.5,
+       "bound": "lid_headroom",
+       "slack": 1.5,
+       "batt_hold": false
+      }
+     },
+     "doorbell+inserts": {
+      "case": "Vision doorbell",
+      "scad": "canary_vision_doorbell.scad",
+      "overrides": {
+       "part": "body",
+       "screw_insert": "true"
+      },
+      "items": [
+       {
+        "qty": 12,
+        "kind": "screw",
+        "spec": "M2 pan x 10 machine (into the inserts)",
+        "text": "M2 pan x 10 machine (into the inserts) (plate to the post ends)"
+       },
+       {
+        "qty": 4,
+        "kind": "screw",
+        "spec": "M2 pan x 5 self-tap",
+        "text": "M2 pan x 5 self-tap (OV5647 to the face posts)"
+       },
+       {
+        "qty": 2,
+        "kind": "screw",
+        "spec": "M2 pan x 4 self-tap",
+        "text": "M2 pan x 4 self-tap (module to its board posts)"
+       },
+       {
+        "qty": 1,
+        "kind": "security-screw",
+        "spec": "M2 x 10 security screw",
+        "text": "M2 x 10 security screw, Torx pin/tri-wing, machine thread (into the boss insert) (wall plate collar into the shell's boss)"
+       },
+       {
+        "qty": 13,
+        "kind": "insert",
+        "spec": "M2 heat-set insert 3.5 OD x 4",
+        "text": "M2 heat-set insert 3.5 OD x 4 — the +1 seats in the security boss"
+       },
+       {
+        "qty": 12,
+        "kind": "o-ring",
+        "spec": "O-ring 2 ID x 1 CS (under the head)",
+        "text": "O-ring 2 ID x 1 CS (under the head)"
+       },
+       {
+        "qty": 1,
+        "kind": "button",
+        "spec": "Ø12 illuminated momentary button + panel nut (16.2 AC)",
+        "text": "Ø12 illuminated momentary button + panel nut (16.2 AC)"
+       },
+       {
+        "qty": 1,
+        "kind": "gasket",
+        "spec": "TPU gasket (print part=\"gasket\")",
+        "text": "TPU gasket (print part=\"gasket\")"
+       },
+       {
+        "qty": 1,
+        "kind": "window",
+        "spec": "Ø14 x 1 clear disc, seated from inside behind the lip (a bead of neutral-cure silicone on the ledge seals it)",
+        "text": "Ø14 x 1 clear disc, seated from inside behind the lip (a bead of neutral-cure silicone on the ledge seals it)"
+       },
+       {
+        "qty": 1,
+        "kind": "printed-part",
+        "spec": "lens retainer ring (print part=\"retainer\"; presses into the boss behind the disc)",
+        "text": "lens retainer ring (print part=\"retainer\"; presses into the boss behind the disc)"
+       },
+       {
+        "qty": 1,
+        "kind": "other",
+        "spec": "LiPo 802030-class, 8 x 20 x 30 (+1 PCM), protected, JST-PH 2.0 to the XIAO's BAT pads — NOT below 0 °C",
+        "text": "LiPo 802030-class, 8 x 20 x 30 (+1 PCM), protected, JST-PH 2.0 to the XIAO's BAT pads — NOT below 0 °C"
+       },
+       {
+        "qty": 1,
+        "kind": "other",
+        "spec": "foam tape strip 0.5 x 6 x 30 (under the cell, on the plate)",
+        "text": "foam tape strip 0.5 x 6 x 30 (under the cell, on the plate)"
+       },
+       {
+        "qty": 1,
+        "kind": "other",
+        "spec": "Ø36 x 6 sealed full-range driver, 4 Ω, 3 W class (behind the face's grille)",
+        "text": "Ø36 x 6 sealed full-range driver, 4 Ω, 3 W class (behind the face's grille)"
+       },
+       {
+        "qty": 1,
+        "kind": "button",
+        "spec": "class-D amplifier 2.5 W (PAM8302A class) + its RC input filter (parks on edge beside the button)",
+        "text": "class-D amplifier 2.5 W (PAM8302A class) + its RC input filter (parks on edge beside the button)"
+       },
+       {
+        "qty": 1,
+        "kind": "other",
+        "spec": "foam gasket ring Ø36 / Ø30 x 1.5 (driver rim to the face)",
+        "text": "foam gasket ring Ø36 / Ø30 x 1.5 (driver rim to the face)"
+       },
+       {
+        "qty": 1,
+        "kind": "other",
+        "spec": "foam pad Ø20 x 1.5 (magnet to the cradle)",
+        "text": "foam pad Ø20 x 1.5 (magnet to the cradle)"
+       },
+       {
+        "qty": 1,
+        "kind": "other",
+        "spec": "acoustic mesh patch Ø34 (hydrophobic, on the face's inner side over the grille — it guards the driver's chamber, not the cavity)",
+        "text": "acoustic mesh patch Ø34 (hydrophobic, on the face's inner side over the grille — it guards the driver's chamber, not the cavity)"
+       },
+       {
+        "qty": 2,
+        "kind": "other",
+        "spec": "TPU service plunger (ONE print of part=\"plunger\": the R + B pair on a snap-off sprue; one dimple = R, two = B — from the back face over the XIAO's switches)",
+        "text": "TPU service plunger (ONE print of part=\"plunger\": the R + B pair on a snap-off sprue; one dimple = R, two = B — from the back face over the XIAO's switches)"
+       },
+       {
+        "qty": 1,
+        "kind": "other",
+        "spec": "FPC Wi-Fi antenna 40 x 20, u.FL pigtail (the XIAO's own kit antenna), on the +X wall between its ribs",
+        "text": "FPC Wi-Fi antenna 40 x 20, u.FL pigtail (the XIAO's own kit antenna), on the +X wall between its ribs"
+       },
+       {
+        "qty": 4,
+        "kind": "wall-screw",
+        "spec": "#8 pan wall screw (plate)",
+        "text": "#8 pan wall screw (plate)"
+       }
+      ]
+     },
+     "vision.devkit_indoor": {
+      "case": "Vision devkit",
+      "scad": "canary_vision_enclosure.scad",
+      "overrides": {
+       "host": "devkit",
+       "preset": "vision_indoor",
+       "part": "back"
+      },
+      "items": [
+       {
+        "qty": 4,
+        "kind": "screw",
+        "spec": "M2 pan x 8 self-tap",
+        "text": "M2 pan x 8 self-tap (plate to the post ends)"
+       },
+       {
+        "qty": 4,
+        "kind": "screw",
+        "spec": "M2 pan x 4 self-tap",
+        "text": "M2 pan x 4 self-tap (OV5647 to the front posts)"
+       },
+       {
+        "qty": 1,
+        "kind": "light-pipe",
+        "spec": "Ø3 light pipe",
+        "text": "Ø3 light pipe"
+       },
+       {
+        "qty": 1,
+        "kind": "window",
+        "spec": "Ø14 x 1 clear disc (neutral-cure silicone)",
+        "text": "Ø14 x 1 clear disc (neutral-cure silicone)"
+       },
+       {
+        "qty": 1,
+        "kind": "bolt",
+        "spec": "M5 x 25 bolt + nut",
+        "text": "M5 x 25 bolt + nut (hinge; knob part=\"knob\")"
+       },
+       {
+        "qty": 4,
+        "kind": "wall-screw",
+        "spec": "#8 / M4 countersunk wall screw (bracket)",
+        "text": "#8 / M4 countersunk wall screw (bracket)"
+       }
+      ],
+      "lid_rib": {
+       "ribs": true,
+       "h": 1.0,
+       "w": 2.5,
+       "headroom": 1.0,
+       "bound": "lid_headroom",
+       "slack": 0.0,
+       "batt_hold": false
+      }
+     },
+     "vision.xiao_indoor": {
+      "case": "Vision xiao",
+      "scad": "canary_vision_enclosure.scad",
+      "overrides": {
+       "host": "xiao",
+       "preset": "vision_indoor",
+       "part": "back"
+      },
+      "items": [
+       {
+        "qty": 4,
+        "kind": "screw",
+        "spec": "M2 pan x 8 self-tap",
+        "text": "M2 pan x 8 self-tap (plate to the post ends)"
+       },
+       {
+        "qty": 4,
+        "kind": "screw",
+        "spec": "M2 pan x 4 self-tap",
+        "text": "M2 pan x 4 self-tap (OV5647 to the front posts)"
+       },
+       {
+        "qty": 1,
+        "kind": "light-pipe",
+        "spec": "Ø3 light pipe",
+        "text": "Ø3 light pipe"
+       },
+       {
+        "qty": 1,
+        "kind": "window",
+        "spec": "Ø14 x 1 clear disc (neutral-cure silicone)",
+        "text": "Ø14 x 1 clear disc (neutral-cure silicone)"
+       },
+       {
+        "qty": 1,
+        "kind": "bolt",
+        "spec": "M5 x 25 bolt + nut",
+        "text": "M5 x 25 bolt + nut (hinge; knob part=\"knob\")"
+       },
+       {
+        "qty": 4,
+        "kind": "wall-screw",
+        "spec": "#8 / M4 countersunk wall screw (bracket)",
+        "text": "#8 / M4 countersunk wall screw (bracket)"
+       }
+      ],
+      "lid_rib": {
+       "ribs": true,
+       "h": 1.0,
+       "w": 2.5,
+       "headroom": 1.38,
+       "bound": "lid_headroom",
+       "slack": 0.38,
+       "batt_hold": false
+      }
+     },
+     "vision.xiao_indoor+inserts": {
+      "case": "Vision xiao",
+      "scad": "canary_vision_enclosure.scad",
+      "overrides": {
+       "host": "xiao",
+       "preset": "vision_indoor",
+       "part": "back",
+       "screw_insert": "true"
+      },
+      "items": [
+       {
+        "qty": 4,
+        "kind": "screw",
+        "spec": "M2 pan x 8 machine (into the inserts)",
+        "text": "M2 pan x 8 machine (into the inserts) (plate to the post ends)"
+       },
+       {
+        "qty": 4,
+        "kind": "screw",
+        "spec": "M2 pan x 4 self-tap",
+        "text": "M2 pan x 4 self-tap (OV5647 to the front posts)"
+       },
+       {
+        "qty": 4,
+        "kind": "insert",
+        "spec": "M2 heat-set insert 3.5 OD x 4",
+        "text": "M2 heat-set insert 3.5 OD x 4"
+       },
+       {
+        "qty": 1,
+        "kind": "light-pipe",
+        "spec": "Ø3 light pipe",
+        "text": "Ø3 light pipe"
+       },
+       {
+        "qty": 1,
+        "kind": "window",
+        "spec": "Ø14 x 1 clear disc (neutral-cure silicone)",
+        "text": "Ø14 x 1 clear disc (neutral-cure silicone)"
+       },
+       {
+        "qty": 1,
+        "kind": "bolt",
+        "spec": "M5 x 25 bolt + nut",
+        "text": "M5 x 25 bolt + nut (hinge; knob part=\"knob\")"
+       },
+       {
+        "qty": 4,
+        "kind": "wall-screw",
+        "spec": "#8 / M4 countersunk wall screw (bracket)",
+        "text": "#8 / M4 countersunk wall screw (bracket)"
+       }
+      ]
+     },
+     "vision.xiao_weather": {
+      "case": "Vision xiao",
+      "scad": "canary_vision_enclosure.scad",
+      "overrides": {
+       "host": "xiao",
+       "preset": "vision_weather",
+       "part": "back"
+      },
+      "items": [
+       {
+        "qty": 6,
+        "kind": "screw",
+        "spec": "M2 pan x 8 self-tap",
+        "text": "M2 pan x 8 self-tap (plate to the post ends)"
+       },
+       {
+        "qty": 4,
+        "kind": "screw",
+        "spec": "M2 pan x 4 self-tap",
+        "text": "M2 pan x 4 self-tap (OV5647 to the front posts)"
+       },
+       {
+        "qty": 6,
+        "kind": "o-ring",
+        "spec": "O-ring 2 ID x 1 CS (under the head)",
+        "text": "O-ring 2 ID x 1 CS (under the head)"
+       },
+       {
+        "qty": 1,
+        "kind": "gasket",
+        "spec": "TPU gasket (print part=\"gasket\")",
+        "text": "TPU gasket (print part=\"gasket\")"
+       },
+       {
+        "qty": 1,
+        "kind": "vent",
+        "spec": "Ø12 adhesive ePTFE/GORE vent patch",
+        "text": "Ø12 adhesive ePTFE/GORE vent patch"
+       },
+       {
+        "qty": 1,
+        "kind": "light-pipe",
+        "spec": "Ø3 light pipe",
+        "text": "Ø3 light pipe"
+       },
+       {
+        "qty": 1,
+        "kind": "window",
+        "spec": "Ø14 x 1 clear disc (neutral-cure silicone)",
+        "text": "Ø14 x 1 clear disc (neutral-cure silicone)"
+       },
+       {
+        "qty": 1,
+        "kind": "printed-part",
+        "spec": "hood (print part=\"hood\"; bond into the front's groove)",
+        "text": "hood (print part=\"hood\"; bond into the front's groove)"
+       },
+       {
+        "qty": 1,
+        "kind": "bolt",
+        "spec": "M5 x 25 bolt + nut",
+        "text": "M5 x 25 bolt + nut (hinge; knob part=\"knob\")"
+       },
+       {
+        "qty": 4,
+        "kind": "wall-screw",
+        "spec": "#8 / M4 countersunk wall screw (bracket)",
+        "text": "#8 / M4 countersunk wall screw (bracket)"
+       },
+       {
+        "qty": 2,
+        "kind": "wall-screw",
+        "spec": "#6 pan wall screw (keyholes)",
+        "text": "#6 pan wall screw (keyholes)"
+       }
+      ],
+      "lid_rib": {
+       "ribs": true,
+       "h": 1.0,
+       "w": 2.5,
+       "headroom": 3.38,
+       "bound": "lid_headroom",
+       "slack": 2.38,
+       "batt_hold": false
+      }
+     }
+    }
    }
   },
   "canary-sense": {
@@ -1410,6 +2233,93 @@
      "Lower the radome shell over the plate (the walls swallow the plate's edge — the key slot meets the rib in the +Y wall, so the window can only land over the antenna array), turn it over and drive the 4 × M2 × 8 screws through the plate's recessed seats into the corner post ends — snug diagonally first, then final quarter-turns, never past ~0.3 N·m.",
      "Mount it: slot the hinge prongs into the shared Vision bracket and set the angle (bedside ≤ 1.5 m for the wellbeing channel), or hang the blind keyholes — ceiling-mount the MR60FDA2 fall build facing straight down."
     ]
+   },
+   "hardware": {
+    "source": "docs/hardware/enclosure/hardware.json",
+    "sets": {
+     "sense": {
+      "case": "Sense",
+      "scad": "canary_sense_enclosure.scad",
+      "overrides": {
+       "part": "back"
+      },
+      "items": [
+       {
+        "qty": 4,
+        "kind": "screw",
+        "spec": "M2 pan x 8 self-tap",
+        "text": "M2 pan x 8 self-tap (plate to the post ends)"
+       },
+       {
+        "qty": 1,
+        "kind": "light-pipe",
+        "spec": "Ø3 light pipe",
+        "text": "Ø3 light pipe"
+       },
+       {
+        "qty": 1,
+        "kind": "bolt",
+        "spec": "M5 x 25 bolt + nut",
+        "text": "M5 x 25 bolt + nut (hinge; Vision knob/bracket parts)"
+       },
+       {
+        "qty": 4,
+        "kind": "wall-screw",
+        "spec": "#8 / M4 countersunk wall screw (bracket)",
+        "text": "#8 / M4 countersunk wall screw (bracket)"
+       }
+      ],
+      "lid_rib": {
+       "ribs": true,
+       "h": 1.0,
+       "w": 2.5,
+       "headroom": 1.0,
+       "bound": "cav_extra",
+       "slack": 0.0,
+       "batt_hold": false
+      }
+     },
+     "sense+inserts": {
+      "case": "Sense",
+      "scad": "canary_sense_enclosure.scad",
+      "overrides": {
+       "part": "back",
+       "screw_insert": "true"
+      },
+      "items": [
+       {
+        "qty": 4,
+        "kind": "screw",
+        "spec": "M2 pan x 8 machine (into the inserts)",
+        "text": "M2 pan x 8 machine (into the inserts) (plate to the post ends)"
+       },
+       {
+        "qty": 4,
+        "kind": "insert",
+        "spec": "M2 heat-set insert 3.5 OD x 4",
+        "text": "M2 heat-set insert 3.5 OD x 4"
+       },
+       {
+        "qty": 1,
+        "kind": "light-pipe",
+        "spec": "Ø3 light pipe",
+        "text": "Ø3 light pipe"
+       },
+       {
+        "qty": 1,
+        "kind": "bolt",
+        "spec": "M5 x 25 bolt + nut",
+        "text": "M5 x 25 bolt + nut (hinge; Vision knob/bracket parts)"
+       },
+       {
+        "qty": 4,
+        "kind": "wall-screw",
+        "spec": "#8 / M4 countersunk wall screw (bracket)",
+        "text": "#8 / M4 countersunk wall screw (bracket)"
+       }
+      ]
+     }
+    }
    }
   },
   "canary-display-watch": {

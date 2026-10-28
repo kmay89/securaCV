@@ -32,7 +32,7 @@ The device tracks a small provisioning state machine
 `IDLE → SCANNING → CONNECTING → CONNECTED / FAILED / AP_ONLY`):
 
 1. **First boot — the device *is* an access point.** It broadcasts its own
-   network **`SecuraCV-XXXX`** (`generate_ap_ssid()`) protected by a
+   network **`SecuraCV-wap-XXXX`** (`generate_ap_ssid()`) protected by a
    **device-unique WPA2 password** — `cv-` + 12 characters **derived from the
    device's private key** (not a shared default; it's printed on the serial
    console at first boot). Join it and the device serves a **captive portal**

@@ -151,7 +151,7 @@ usb_proud = 1.9; // shell overhang past the PCB edge (photo ≈1.8) — MEASURE
    actuators. They overhang the PCB edge, so each side wall carries a
    full-depth clearance channel (an "ear") the overhang slides down during
    insertion. */
-opt_btn = true;
+opt_btn = true;      // BOOT/RST access holes in the two side walls, over the channels the back-mounted switches slide down
 btn_d   = 3.0;                 // access hole Ø — big enough for a tool tip, small enough to shield
 btn_up  = 7.0;                 // button center up from the USB (−Y) end (fit-tested: 6.0 sat 1 low) — MEASURE
 btn_dz  = 1.0;                 // actuator center behind the PCB BACK face — MEASURE
@@ -174,7 +174,7 @@ kh_face = 1.0;                 // face web the screw head grips behind — catal
 
 /* [Ventilation] — let the backlight/regulator heat convect out (side slots +
    a back grille). Even this small board runs warm on full brightness. */
-opt_vent = true;
+opt_vent = true;     // heat slots in both side walls and a grille in the back plate
 vent_n = 5;          // slots per side wall
 vent_pitch = 5.0;    // slot spacing
 vent_w = 1.4;        // slot width
@@ -212,7 +212,10 @@ ear_skin = 1.2;  // wall skin left outside a button/USB clearance channel
    headers variant to stay outboard of the pin rows. The nub sits at
    back_t + snap_depth so it lands on the skirt AND lines up with the bezel
    window; keep snap_depth + snap_h/2 ≤ skirt_dep. */
-snap_n = 4; snap_h = 1.6; snap_depth = 1.4; snap_proud = 0.5;
+snap_n = 4;          // not read by the geometry: the nubs are always two per ±X wall (nub_ys), four in all
+snap_h = 1.6;        // snap window height in the bezel's side walls; each nub's ridge is this - 0.4 tall, and the back's skirt runs snap_depth + this/2 + 0.4 deep
+snap_depth = 1.4;    // how far in from the bezel's rear rim the windows (and the nubs on the skirt) are centered — the wall vents stop 0.8 short of the windows, and a smaller value lengthens the bezel wall's snap lever (its cycle strain is asserted)
+snap_proud = 0.5;    // each nub's tip stands this far out from the skirt face; what it stands past the cavity wall is the bezel wall's deflection (its cycle strain is asserted)
 pry_notch = true;    // a fingernail notch in the bezel's TOP (+Y) wall rear rim, centered — the only wall
                      // with no opening (USB below, buttons and vents on the sides): the back snaps closed
                      // on a flush parting line with nothing to lift it by. 0.6 into the wall, 0.8 below

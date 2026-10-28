@@ -10,6 +10,7 @@
 // outbox marks mail "sent (demo)" instead of sending it; every page shows
 // the banner. `backoffice demo --reset` wipes and reseeds.
 import { nowIso } from '../db.mjs';
+import { rechain } from '../integrity.mjs';
 import { normalize } from './catalog.mjs';
 import { normalizeShipping } from './packing.mjs';
 import { upsertContact, requestConsent, confirmConsent, joinWaitlist } from './contacts.mjs';
@@ -366,6 +367,8 @@ export async function seedDemo(db, cfg) {
   db.run(`UPDATE audit_log SET at = COALESCE((SELECT CASE audit_log.action WHEN 'ticket.open' THEN t.created_at WHEN 'ticket.reply' THEN t.first_response_at ELSE t.closed_at END FROM tickets t WHERE t.number = audit_log.entity_id OR CAST(t.id AS TEXT) = audit_log.entity_id), at) WHERE entity = 'ticket'`);
   db.run(`UPDATE audit_log SET at = COALESCE((SELECT CASE audit_log.action WHEN 'warranty.resolve' THEN w.resolved_at ELSE w.created_at END FROM warranty_claims w WHERE w.number = audit_log.entity_id), at) WHERE entity = 'warranty'`);
   db.run('DELETE FROM audit_log WHERE action IN (\'auth.setup\')');
+  // Backdated and pruned above: the chain is re-marked over the synthetic history, and says so in its last row.
+  rechain(db, { synthetic: true, why: 'demo seed: history backdated to the week it tells' });
   const n = { orders: db.get('SELECT COUNT(*) AS n FROM orders').n, tickets: db.get('SELECT COUNT(*) AS n FROM tickets').n, contacts: db.get('SELECT COUNT(*) AS n FROM contacts').n, items: db.get('SELECT COUNT(*) AS n FROM inventory_items').n, discounts: db.get('SELECT COUNT(*) AS n FROM discounts').n };
   // The checkout funnel: every seeded Stripe order was a hosted session that paid; a few more timed out — two with an
   // email typed (one written to and back to buy, one written to and quiet), the rest with nobody to write to.

@@ -12,6 +12,223 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-10-27 — The dev channel sat two releases behind stable, with nothing a device could poll
+
+- **Symptom:** with stable at fw-v2.4.17, the rolling `fw-dev-latest`
+  prerelease held 181 assets: factory images for 2.3.0 to 2.4.15, a
+  `manifest-flash.json` with `fw_train` 2.4.15 and `flasher-sha256sums.txt`,
+  and no `manifest-canary*.json` or `manifest-index.json` at all (read from the
+  public API). A Canary on the dev channel polls
+  `fw-dev-latest/manifest-<product>.json`, so it got a 404 on every check and
+  never updated, and both flashers' dev toggle offered 2.4.15 while calling it
+  "cut ahead of stable" (a silent downgrade for a board on 2.4.17: its
+  unstamped descriptor named no product, so the per-board verdict read
+  "Version unknown" and did not warn either; see the next entry).
+- **Cause:** `firmware-release.yml` copied a release's manifests to
+  `fw-dev-latest` only when the release was a prerelease, and no `-dev.N` /
+  `-rc.N` release had ever been cut. The only writer left was **Flasher
+  Factory Images** with `channel: dev`, which writes the flashers' catalog
+  alone. Nothing made the dev channel follow stable, and the flashers' copy
+  asserted an order nothing checked.
+- **Fix:** `.github/scripts/dev_channel.py` holds the rule: a release's
+  channel manifests are copied, byte for byte, wherever `fw-dev-latest` carries
+  an older version, none, or the same version in other bytes, over-the-air
+  manifests and flash catalog decided separately, in the device's version
+  order (`securacv_version_compare`, held to its host cases by the test); a
+  newer dev build is left alone and a release below `releases/latest` writes
+  nothing. Every firmware release runs it with its own tag, stable included,
+  **Actions → Refresh the dev channel (catch up to stable)** runs it with
+  `releases/latest` (or the `fw-v*` tag its `source` input names: a dev
+  release whose own copy failed, finished without rebuilding anything; a
+  dispatched release's re-run stops at its tag-exists check, and a pushed
+  tag's re-run rebuilds and re-uploads every asset), then redeploys pages,
+  and **Flasher Factory Images** refuses a `channel: dev` branch older than
+  stable and brings the dev channel's copy along after a tag rebuild. The
+  copies stay valid because every file a manifest names is an absolute URL on its own
+  `fw-v*` tag, which the script checks before writing, and the Ed25519
+  signatures cover those URLs rather than where the manifest is served from.
+  It passes `--prerelease --latest=false` on every create and edit, deletes
+  nothing, and fails if `releases/latest` moved; the button's last step checks
+  that too, and that no asset was lost. Both flashers (and the Lab's native
+  bench) now say whether the dev catalog's `fw_train` is newer, the same
+  version, or older than the release the flasher is pinned to
+  (`devChannelStanding`, pinned by `desktop_parity.test.js`), and never
+  "ahead of stable": the desktop Flasher and the Lab pin the train they were
+  built with, so after the next stable release copies itself to the dev
+  channel an installed app would call that stable build ahead of stable.
+  A stable release whose dev-channel step fails still leaves the channel
+  behind until the button is pressed; the banner then says so. The device side
+  needed nothing: its comparator already ranks stable above rc and dev at an
+  equal triple, so a stable build on the dev channel is an ordinary update.
+  Host-tested and dry-run against the public releases (read-only); the button
+  had not been pressed when this was written.
+- **Applies to:** every rolling pointer (`fw-dev-latest`, `flasher-latest`,
+  `lab-latest`): something that runs on every release must keep it at least
+  as new as what it shadows, or it rots on the day nobody cuts the release
+  that used to feed it. And copy that orders two channels must read both
+  versions, never assume the order.
+
+## 2026-10-27 — Every firmware image called itself `arduino-lib-builder`, so neither flasher could name a board running SecuraCV
+
+- **Symptom:** all 21 fw-v2.4.17 app images carry the Arduino core's
+  `esp_app_desc_t`: project `arduino-lib-builder`, version `esp-idf: v4.4.7
+  38eeba213a` (or `14a0af9`, `43a8f6d`). Both flashers read that record off
+  a connected board, so a board already running SecuraCV showed as an
+  Arduino sketch, the install verdict as "Version unknown", and an older
+  image over a newer one gave no downgrade warning. Customs called it "a
+  common stock image".
+- **Cause:** the Arduino core's precompiled libraries define the descriptor,
+  so the sketch's name and version never reach it, and no release step wrote
+  it afterwards. The flashers' lookup was tested only on descriptors written
+  by hand, never on one read out of a release image.
+- **Fix:** `firmware/scripts/stamp_app_desc.py release` stamps each product's
+  `asset_stem` and version into its app, recomputes the checksum byte and
+  the appended SHA-256, and reads every stamped image back with esptool
+  `image_info`; the run fails on an invalid checksum or hash. It runs in
+  `firmware-release.yml` and `flasher-release.yml` after the last build and
+  before anything copies, hashes, signs or merges an app
+  (`scripts/tests/test_release_app_desc_stamp.py` holds the order), and is in
+  `flasher-release.yml`'s tooling overlay, so a rebuild of an older tag
+  stamps that tag's factory images too. It stamps only an image that
+  already carries its version literal and its product id, so the `strings |
+  grep -Fx` version guards keep testing the firmware and a build that
+  identifies as another product is never named for its slot. In
+  `firmware-release.yml` an app it refuses is moved aside, so that product
+  drops out like a failed build rather than sinking the release, and the
+  completeness gate weighs it; `flasher-release.yml` passes
+  `--fail-on-refused`, which fails the run and leaves the app in place,
+  because nothing gates its catalog's completeness. Published images are
+  unchanged.
+- **Applies to:** any step that edits an artifact's bytes (a stamp, a pad, a
+  re-sign): it runs before the first step that hashes, signs, merges or
+  attests that artifact (a `cp` included), a test reads the workflow to hold
+  that order, and the artifact is read back with the tool the device side
+  trusts. Test that readback failing, not only passing: esptool `image_info`
+  exits 0 on an invalid checksum, so a gate that trusted the exit status, or
+  stopped reading the words, would pass anything. A guard that greps an
+  artifact for a string is void once a later step can write that string; the
+  writer must refuse to be the guard's only witness. And a gate added to
+  every product inherits the strictest product's stakes: keep the
+  per-product failures per-product.
+
+## 2026-10-27 — Signed and notarized, and the installer still said "open Terminal"; the reinstall link searched for a release GitHub's search does not list
+
+- **Symptom:** after 2.4.17, `flasher-v0.12.2` and `app-v0.3.2` were
+  signed and notarized and their release bodies said no Terminal step, yet
+  both `.dmg` windows told people to paste `xattr -dr
+  com.apple.quarantine …`, the Flasher's `desktop/INSTALL.md` still called
+  the build unsigned, and the Flasher's "Get the latest version" button
+  (and the FAQ) opened `releases?q=flasher-v&expanded=true`, which listed
+  `flasher-latest` (an updater manifest, no installer) and a firmware
+  release, not one Flasher release. A reader who landed on the pointer
+  found "the versioned releases" with no link.
+- **Cause:** signing was switched on in the workflow (`ENABLE_MACOS_SIGNING`)
+  and the release body follows that switch, but the committed DMG artwork,
+  one app's install guide and a compiled-in URL do not; nothing holds them
+  to it (the 2026-09-03 lesson, again). And GitHub's release search is
+  not an index of a tag prefix: it ranks by text, so a URL built on it can
+  stop naming the right release without any change on our side.
+- **Fix:** both generators (`desktop*/src-tauri/dmg/generate_background.py`)
+  draw "First launch: macOS asks once" / "Click Open — no Terminal step"
+  and send an unsigned build to `INSTALL.md`; both PNGs regenerated (no CI
+  byte-gate draws them). `desktop/INSTALL.md` has the Lab's shape: signed
+  first, the `xattr` / Open Anyway steps only under "An unsigned build".
+  The in-app link and the FAQ open `https://securacv.com/download`, whose
+  Flasher button opens the exact `flasher-v<x.y.z>` tag only once the
+  website's exact-link /download page (and this repo's `downloads` carry
+  into it) merges; until then that button still opens the same search. The
+  `flasher-latest` and `lab-latest` bodies link the exact
+  `releases/tag/<tag>` they point at.
+- **Applies to:** every app target with committed installer artwork or a
+  compiled-in "get a fresh copy" link. Point a link at a page we own or at
+  `releases/tag/<exact tag>`, never at a search; and when a signing switch
+  flips, grep the artwork generators and every `INSTALL.md` in the same
+  change. The DMG windows of `flasher-v0.12.2` / `app-v0.3.2` and earlier
+  keep the old panel until their next release; both guides say so.
+
+## 2026-10-27 — fw-v2.4.17 published two classic-ESP32 factory images with the bootloader where their ROM never looks
+
+- **Symptom:** `canary-esp32cam-2.4.17-factory.bin` and
+  `canary-wroom-2.4.17-factory.bin` open with an ESP32 bootloader at 0x0 and
+  hold no image header at 0x1000. Both flashers write factory images at flash
+  0x0 and a classic ESP32's ROM loads the bootloader from 0x1000, so neither
+  board would boot from them (read from the bytes; never bench-tested). The
+  other 19 factory images on the release are right.
+- **Cause:** `make_factory.py --bootloader-offset` defaulted to 0x0 for every
+  chip and asked callers to pass 0x1000 for a classic ESP32; neither release
+  path's `build_flash_manifest.py` nor `dev_flash.sh` did. Every gate passed:
+  version string, slot fit, Ed25519 signature, and the flashers' 0x8000
+  partition-table shape check.
+- **Fix:** the offset comes from `--chip` (`ROM_BOOTLOADER`, held to
+  esptool's table), the bootloader's header must name that chip, an unknown
+  chip is refused without an explicit offset, and the merged file is read
+  back before it is kept (`firmware/scripts/test_make_factory.py`, run in
+  firmware.yml). Both flashers now also refuse, before writing, an image
+  with no bootloader built for the connected chip where that chip's ROM loads
+  it (the same table, chip ids included, held equal by
+  `desktop_parity.test.js`). This change leaves the
+  published 2.4.17 assets alone; `docs/RELEASE_BUTTONS.md` § Flasher Factory
+  Images says what a rebuild of a published tag would replace, and why the
+  desktop apps' compiled-in catalog weighs on that choice.
+- **Applies to:** every packaging step with a per-chip constant (bootloader
+  offset, flash mode, chip guard): key it on the chip and refuse a chip with
+  no value, rather than a default that was right for every chip so far.
+  firmware/LESSONS_LEARNED.md has the firmware side.
+
+## 2026-10-27 — The browser flasher could never fetch a release: CORS
+
+- **Symptom:** on the hosted Lab (`canary-local/flash.html` on GitHub Pages),
+  after fw-v2.4.17 published, the page reported a connection problem and every
+  product as unavailable. The release was there: `curl` fetched every asset.
+  The desktop Lab and Flasher installed the same release without trouble.
+- **Cause:** a browser cannot read a GitHub release asset. `github.com`
+  answers `/releases/download/<tag>/<file>` with a 302 that carries no
+  `Access-Control-Allow-Origin`, and `release-assets.githubusercontent.com`
+  answers the 200 with none either, so the browser refuses the response
+  whatever the page's own CSP allows. `api.github.com` does send the header,
+  but its asset downloads redirect to the same host, so it is no way out.
+  `flash.js` fetched `flash.json`'s `manifest_url` (and the dev channel's
+  `DEV_FLASH_MANIFEST_URL`) and each manifest's `factory` URL straight from
+  there, and `we2-flash.js` did the same for the Vision model, so on the
+  hosted page none of those reads could succeed. Every test passed: the unit tests stub
+  `fetch`, the browser probes stop at the Connect card (a manifest is fetched
+  only after a chip answers), the CSP probe checks the policy rather than a
+  cross-origin response, and the desktop apps fetch natively (Rust, no CORS),
+  so the one path a browser takes was never run against the real host.
+- **Fix:** `pages.yml` mirrors the pinned releases into the site:
+  `canary-local/tools/mirror_release.py` copies `manifest_url`'s manifest, the
+  Vision model's manifest and the dev channel's, byte for byte, and every file
+  each lists, held to its manifest's SHA-256 and size, to
+  `canary-local/firmware/<tag>/<file>`. A channel lands whole or not at all; a
+  release not cut yet (the push deploy that merges a version bump runs before
+  the tag exists) or one mid-upload is a `::warning::`, and a transport failure
+  fails the deploy so the last good site stays live (a body cut off
+  mid-read is retried like any transport error). `flash-core.js`
+  `fetchReleaseAsset` reads that copy by the URL's own tag and file name, and
+  nothing else, on every http(s) host: a fallback to the release URL, even on
+  loopback, could never succeed, and would only turn the copy's honest 404
+  into a false "connection problem". `flash.html`'s CSP dropped `github.com`
+  and `*.githubusercontent.com` for the same reason. A 404 from the copy says
+  *this site's copy* of the release (or of its Vision model) is not available
+  yet, never that the release was not cut: the release is live for some
+  minutes before the redeploy that copies it lands. A `?manifest=` override's
+  404 names the override's server. The signed manifests are never rewritten,
+  so the SHA-256 and Ed25519 checks bind the same bytes as before. Because a
+  release made with the GITHUB_TOKEN fires no event, `firmware-release.yml`,
+  `flasher-release.yml` and `vision-model-release.yml` dispatch `pages.yml`
+  (default branch) once they publish, with a warning, never a failure, if
+  that dispatch is refused; the copy holds what that branch's `flash.json`
+  pins, plus `fw-dev-latest`, and the run summary says so rather than naming
+  a tag it may not carry. `canary-local/tests/flash_mirror_probe.mjs` serves
+  the page and a fixture mirror from one origin in Chromium, from a public
+  host and from loopback, and fails on any request that leaves for
+  github.com.
+- **Applies to:** any page that fetches a release asset from a browser (a
+  release download URL is for people and native clients, never for a page's
+  `fetch`), and any test of a network path: a stubbed `fetch` proves the code
+  called it, not that the host will answer a browser. Both desktop apps are
+  unaffected and unchanged.
+
 ## 2026-10-10 — The 2.4.16 train: a Flasher release held `releases/latest` for three minutes, and four more things it turned up
 
 - **Symptom:** run 38034898214's Linux leg logged "Couldn't find release

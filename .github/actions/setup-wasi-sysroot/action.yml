@@ -1,0 +1,37 @@
+name: Install a WASI sysroot for the image's clang
+description: >
+  The Lab's whole-core wasm32-wasi builds (canary-local/tests/native/wasi.js,
+  run by canary-local/tests/cores_wasm32.test.js, sweep A58) need what the
+  image's clang has no copy of for that target: a C library and its headers,
+  libc++ and libc++abi, and compiler-rt's wasm32 builtins. These are
+  Ubuntu's own packages for clang <clang-major>, about 3 MB from the Ubuntu
+  archive; no emsdk, nothing fetched from anywhere else. The caller names
+  the clang it builds with (WASM32_CLANGXX=clang++-<clang-major>), so the
+  two move together when the image's clang does; cores_wasm32.test.js holds
+  this list to wasi.js's packages() and the caller's input to its clang.
+  apt retries a dropped fetch and gives up on a stalled one, as in
+  setup-libseccomp (a hung `apt-get` on 2026-10-07 used a job's whole 30
+  minutes); the caller also sets `timeout-minutes: 5` on the step.
+
+inputs:
+  clang-major:
+    description: The clang major version the sysroot is built for (the 18 in clang++-18).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: apt-get install the WASI sysroot for clang ${{ inputs.clang-major }}
+      shell: bash
+      env:
+        CLANG_MAJOR: ${{ inputs.clang-major }}
+      run: |
+        set -euo pipefail
+        # Digits only: the input becomes part of four package names.
+        [[ "$CLANG_MAJOR" =~ ^[0-9]+$ ]] || { echo "::error::clang-major must be a number, got '$CLANG_MAJOR'"; exit 1; }
+        # DEBIAN_FRONTEND goes on the command line through `env`: sudo resets
+        # the environment, so a step-level `env:` would never reach apt.
+        apt=(sudo env DEBIAN_FRONTEND=noninteractive apt-get
+             -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+        "${apt[@]}" update
+        "${apt[@]}" install -y --no-install-recommends wasi-libc "libc++-${CLANG_MAJOR}-dev-wasm32" "libc++abi-${CLANG_MAJOR}-dev-wasm32" "libclang-rt-${CLANG_MAJOR}-dev-wasm32"

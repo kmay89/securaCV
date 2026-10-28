@@ -29,7 +29,7 @@ generator READS (its docstring, its imports), not from memory:
                             -> hardware.json, joined against the BOM CSVs  (needs OpenSCAD)
    7  gen_assembly_poses    each case's seated datums (its own derived names, echoed by
                             OpenSCAD) -> the Lab benches' poses in assembly.json  (needs OpenSCAD)
-   8  gen_enclosures        README tables + .scad knobs + cad.enclosure_sets
+   8  gen_enclosures        README tables + .scad knobs + cad.enclosure_sets + hardware.json
                             -> enclosures / catalog / build / workshop .json
    9  gen_figures           STL bboxes + assembled_dims + catalog.json -> figures.json, SVGs,
                             fleet_figures.h / fleet_figures_art.h, FleetFigures.swift / FleetSolids.swift
@@ -50,12 +50,15 @@ canary-local/devices/catalog.json — each figure's catalog evidence (the
 variants a device's cases are cut as, which the confidence ladder cites) —
 and gen_enclosures.py writes it. A cad.enclosure_sets edit or a README
 variant-table row moves the catalog, and a figure regenerated from the
-stale one cites the wrong evidence. gen_enclosures.py reads nothing steps
-3-5 write (the .scad knobs step 1 writes, the README tables, the manifests,
-the BOM CSVs), so it could run as early as step 2; it sits immediately
-before the one generator that reads it. scripts/tests/test_regen_cad.py
-holds the rule for every step: no step's own script names, as a quoted
-path, a file a LATER step writes.
+stale one cites the wrong evidence. GEN_ENCLOSURES COMES AFTER GEN_HARDWARE
+because it carries hardware.json — each committed preset's counted hardware
+and lid rib, which step 5 reads off the CAD — into build.json per device, and
+the Lab's Assemble tab is held to that copy; run before step 5, it would
+carry the old counts. Beyond that it reads the .scad knobs step 1 writes, the
+README tables, the manifests and the BOM CSVs, and nothing steps 3, 4 or 6
+write; it sits immediately before the one generator that reads it.
+scripts/tests/test_regen_cad.py holds the rule for every step: no step's own
+script names, as a quoted path, a file a LATER step writes.
 
 THE STOP AT STEP 11 IS THE POINT. The emulator compiles fleet_figure.cpp
 against fleet_figures.h, and gen_flash.py stamps each artifact's
@@ -221,13 +224,14 @@ STEPS: tuple[Step, ...] = (
          ("python3", f"{ENC_REL}/gen_assembly_poses.py", "--check"), "argv", True,
          "each case's seated datums (OpenSCAD echoes of its own derived names) -> "
          "canary-local/devices/assembly.json (the Lab benches' poses)"),
-    # Before gen_figures, which reads the catalog this writes (a figure's
+    # After gen_hardware, whose hardware.json this carries into build.json,
+    # and before gen_figures, which reads the catalog this writes (a figure's
     # catalog evidence): the order follows what each generator READS.
     Step("gen_enclosures",
          ("python3", "canary-local/tools/gen_enclosures.py"), ".",
          ("python3", "canary-local/tools/gen_enclosures.py"), "diff", False,
-         "README variant tables + every .scad's knobs + manifests' cad.enclosure_sets -> "
-         "enclosures / catalog / build / workshop .json",
+         "README variant tables + every .scad's knobs + manifests' cad.enclosure_sets + "
+         "hardware.json's sets -> enclosures / catalog / build / workshop .json",
          outputs=ENCLOSURE_OUTPUTS),
     Step("gen_figures",
          ("node", "canary-local/tools/figures/gen_figures.mjs"), ".",

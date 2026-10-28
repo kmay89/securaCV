@@ -61,7 +61,7 @@ permissions:
   contents: write
   id-token: write      # OIDC identity used to sign the build-provenance attestation
   attestations: write  # upload the signed provenance to this repo's attestation store
-  actions: write       # chain-dispatch vision-model-release.yml after publishing
+  actions: write       # chain-dispatch vision-model-release.yml, then pages.yml, after publishing
 
 # One release build per tag; NEVER cancel a run mid-publish (half-uploaded
 # release assets) — concurrent runs queue instead.
@@ -604,6 +604,30 @@ jobs:
           mkdir -p .pio/build
           cp -R "$STAGE"/. .pio/build/
 
+      - name: Stamp each app's descriptor with its product and version
+        # Every app's esp_app_desc_t is the Arduino core's own
+        # (`arduino-lib-builder`), so up to fw-v2.4.17 neither flasher could
+        # tell a board running SecuraCV from any other Arduino sketch. This
+        # writes each product's asset_stem and version into its app, in
+        # place, AFTER every build above and BEFORE anything below copies,
+        # hashes, signs or merges one: the OTA manifests' sha256 and
+        # signatures and the factory images all cover the stamped bytes.
+        # An image that does not already carry its version string and its
+        # product id is never stamped (it stays as built, and the version and
+        # product guards below treat it as they always have). An image the
+        # stamper refuses outright (empty, truncated, malformed) is moved
+        # aside to <app>.refused, so that product drops out the way a failed
+        # build does: non-blocking ones go to the completeness gate, and the
+        # assemble step's `cp` fails on one this release cannot ship without.
+        # Each stamped image is read back with esptool image_info, and an
+        # invalid checksum or hash, or a name or version it does not read
+        # back, fails the run HERE, whichever product shows it (as does a
+        # name or version too long for the descriptor's 31 characters).
+        # scripts/tests/test_release_app_desc_stamp.py pins the order.
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: python3 firmware/scripts/stamp_app_desc.py release --version "$VERSION"
+
       - name: Assemble, sign, and verify release artifacts
         env:
           VERSION: ${{ steps.ver.outputs.version }}
@@ -1057,6 +1081,7 @@ jobs:
         run: cp "${{ steps.attest.outputs.bundle-path }}" "/tmp/release/provenance-firmware-${{ steps.ver.outputs.version }}.sigstore.jsonl"
 
       - name: Publish GitHub Release
+        id: publish
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           # On a tag push this is the pushed tag; on the dispatch path it
@@ -1148,37 +1173,85 @@ jobs:
           echo "::error::vision model asset never landed on $TAG — the chained vision-model-release.yml run failed or stalled. The firmware is published but the Vision module flasher will 404 until it is attached; re-run via Actions → Vision Model Asset with tag=$TAG."
           exit 1
 
-      # The dev channel's stable address. Only the MANIFESTS are mirrored —
-      # each manifest's binary URL points at the real fw-v*-dev.* tag's
-      # assets, so nothing is duplicated and old dev binaries stay where
-      # they were published. Devices opt in by pointing manifest_url at
-      # releases/download/fw-dev-latest/manifest-<product>.json.
-      - name: Mirror channel manifests to the rolling dev release
-        if: steps.ver.outputs.prerelease == 'true'
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+      # The dev channel's stable address, brought up to this release. Devices
+      # opt in by polling releases/download/fw-dev-latest/manifest-<product>.json,
+      # and both flashers' dev toggle reads its manifest-flash.json. Only the
+      # MANIFESTS are copied, byte for byte: each names its files by absolute
+      # URL on THIS release's tag, so nothing is duplicated and old dev
+      # binaries stay where they were published.
+      #
+      # Every release runs it, stable included: a dev/rc release lands there
+      # when it is newer than what the channel carries, and a stable one
+      # whenever no newer dev build is there. This step used to run for
+      # prereleases only, none was ever cut, and the dev channel sat with no
+      # per-product manifest at all (every dev unit 404'd) and a 2.4.15 flash
+      # catalog under stable 2.4.17 (RELEASE_LESSONS 2026-10-27). The rule is
+      # .github/scripts/dev_channel.py, shared with Actions → Refresh the dev
+      # channel; it never moves releases/latest and fails if anything did.
+      # It runs even when the Vision chain went red (the firmware is
+      # published either way), and a stable release is not failed over it —
+      # the button catches the dev channel up — so only a dev release, whose
+      # whole point is this channel, goes red here. The button's `source`
+      # input, set to this tag, finishes that copy without rebuilding
+      # anything. Re-running this job is not the way: a dispatched run's
+      # re-run stops at the version step (the tag exists now), and a pushed
+      # tag's re-run has no such check, so it rebuilds, re-signs and
+      # re-uploads every asset of the published release. A red job also
+      # skips the sbom job; sbom.yml's dispatch with the tag backfills it.
+      - name: Bring the rolling dev channel up to this release
+        id: dev_channel
+        if: ${{ (success() || failure()) && steps.publish.outcome == 'success' }}
+        continue-on-error: ${{ steps.ver.outputs.prerelease != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: python3 .github/scripts/dev_channel.py --repo "$GITHUB_REPOSITORY" --source "$TAG"
+
+      # One of the step's refusals is an alarm, not a copy that can wait:
+      # "releases/latest is not a firmware release" (every Canary polls it).
+      # The step cannot cause it (every write passes --latest=false), but on
+      # a stable release continue-on-error would leave it a red step in a
+      # green run. So whenever the step failed, assert releases/latest again
+      # outside continue-on-error: the action re-points it at the newest
+      # firmware release, and fails the run only if it cannot.
+      - name: Keep releases/latest healthy after the dev-channel step
+        if: ${{ (success() || failure()) && steps.dev_channel.outcome == 'failure' }}
+        uses: ./.github/actions/keep-firmware-latest
         with:
-          tag_name: fw-dev-latest
-          name: Canary Firmware — dev channel (rolling)
-          prerelease: true
-          body: |
-            Rolling pointer for the **dev update channel** — always the most
-            recent `fw-v*-dev.*` / `fw-v*-rc.*` prerelease's manifests.
-            Devices on the release channel never see this: their manifest
-            URL rides `releases/latest`, which GitHub never points at
-            prereleases. Currently: **${{ steps.ver.outputs.version }}**.
-            See docs/RELEASE_PROCESS.md.
-          files: |
-            /tmp/release/manifest-flash.json
-            /tmp/release/manifest-canary.json
-            /tmp/release/manifest-canary-wap.json
-            /tmp/release/manifest-canary-vision.json
-            /tmp/release/manifest-canary-vision-xiao-c3.json
-            /tmp/release/manifest-canary-vision-xiao-s3.json
-            /tmp/release/manifest-canary-sense.json
-            /tmp/release/manifest-canary-sense-wellbeing.json
-            /tmp/release/manifest-canary-display-*.json
-            /tmp/release/manifest-index.json
-            /tmp/release/sha256sums.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          context: ${{ steps.ver.outputs.tag }} dev channel
+
+      # The browser flasher on GitHub Pages reads this release from the site's
+      # own origin: pages.yml copies it in, because a browser cannot fetch a
+      # github.com release asset (no CORS header; RELEASE_LESSONS 2026-10-27).
+      # Nothing would redeploy the site for it otherwise: this release, made
+      # with the GITHUB_TOKEN, fires no event, and the push deploy that merged
+      # the version bump ran before the tag existed, so until the next
+      # unrelated push the hosted flasher would call every product
+      # unavailable. Last, so the dev channel's rolling manifests (the
+      # dev-channel step above) are in place too; it runs even when the
+      # Vision chain went red, since the firmware is published either way.
+      # The ref is the default branch, the only one the github-pages
+      # environment deploys.
+      - name: Redeploy the site so the browser flasher's copy of the pinned releases is current
+        if: ${{ (success() || failure()) && steps.publish.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.event.repository.default_branch || 'main' }}
+        run: |
+          # Never a failed release over this: the release is published either
+          # way, and the next deploy (any main push touching canary-local, or
+          # Actions → pages → Run workflow) refreshes the copy too. The copy
+          # holds the releases flash.json on REF pins, plus fw-dev-latest: a
+          # tag REF does not pin (an older fw-v* rebuilt) is not in it, so
+          # these lines name no tag.
+          if gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref "$REF"; then
+            echo "Dispatched pages.yml on ${REF}: the browser flasher's same-origin mirror carries the releases flash.json pins there, plus fw-dev-latest."
+            echo "- Site redeploy dispatched (\`pages.yml\` on \`${REF}\`); the mirror carries the releases \`flash.json\` pins there, plus \`fw-dev-latest\`." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::could not dispatch pages.yml — the browser flasher on GitHub Pages keeps its current copy of the releases flash.json pins on ${REF} until the next site deploy. Run Actions → pages → Run workflow (on ${REF}) to refresh it now."
+            echo "- ⚠️ Site redeploy NOT dispatched: the browser flasher on GitHub Pages keeps its current copy of the pinned releases until the next deploy (Actions → pages → Run workflow on \`${REF}\`)." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   # The bills of materials (Rust, Node, firmware), built from the tagged tree
   # and attached to the release just published. sbom.yml's `release:

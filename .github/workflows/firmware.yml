@@ -30,6 +30,9 @@ on:
       # one that nothing signs. Without this path, a PR that only edits the
       # publishing side skips the very guard that covers it.
       - '.github/workflows/firmware-release.yml'
+      # test_make_factory.py ties the esptool its merges run on to the pin in
+      # both release workflows, so an edit to either must run it.
+      - '.github/workflows/flasher-release.yml'
   pull_request:
     branches: [main]
     paths:
@@ -59,6 +62,9 @@ on:
       # one that nothing signs. Without this path, a PR that only edits the
       # publishing side skips the very guard that covers it.
       - '.github/workflows/firmware-release.yml'
+      # test_make_factory.py ties the esptool its merges run on to the pin in
+      # both release workflows, so an edit to either must run it.
+      - '.github/workflows/flasher-release.yml'
 
 # A new push to a PR branch supersedes its in-flight run; main is never
 # canceled.
@@ -1456,6 +1462,25 @@ jobs:
         run: |
           python3 -m pip install --quiet pytest cryptography
           python3 -m pytest firmware/scripts/test_ota_release.py -q
+
+      - name: Run the factory-image merge + app-descriptor stamp tests
+        # make_factory.py builds every factory image both flashers write at
+        # flash 0x0. fw-v2.4.17 published its two classic-ESP32 images with
+        # the bootloader at 0x0, where that chip's ROM never looks (it loads
+        # from 0x1000); the offset now comes from --chip. These tests merge
+        # real images from synthetic parts with the esptool the release
+        # workflows pin and read the bytes back (a test holds this install to
+        # their pins). stamp_app_desc.py writes each product's name and
+        # version into its app's esp_app_desc_t before the release signs or
+        # merges it; its tests build real images with that esptool, stamp
+        # them and read them back through image_info (checksum, hash, name,
+        # version). MAKE_FACTORY_ESPTOOL=require turns a missing esptool, or
+        # one off that pin, into a failure, not a skip.
+        env:
+          MAKE_FACTORY_ESPTOOL: require
+        run: |
+          python3 -m pip install --quiet pytest esptool==4.12.0
+          python3 -m pytest firmware/scripts/test_make_factory.py firmware/scripts/test_stamp_app_desc.py -q
 
       - name: Run the canary OTA deploy script tests (bearer + TLS pin)
         # firmware/canary/scripts/ota_deploy.py and ota_deploy.sh push a dev

@@ -202,17 +202,20 @@ do). Which button, when, and when not:
 
 ## Signing & notarization
 
-The pipeline ships unsigned artifacts by default — signing is **opt-in** so a
-stray or invalid cert can never break the build. To codesign + notarize macOS
-(so it opens without the Gatekeeper warning):
+Releases are Developer ID signed and notarized; macOS still asks once on
+first launch ([`INSTALL.md`](INSTALL.md)). The release workflow signs when
+both of these are in place (setup in
+[`desktop/SIGNING.md`](../desktop/SIGNING.md)):
 
-1. Add the Apple signing secrets the desktop apps read
+1. The Apple signing secrets the desktop apps read
    (`APPLE_DESKTOP_CERTIFICATE`, `APPLE_DESKTOP_CERTIFICATE_PASSWORD` — a
    **Developer ID Application** .p12, deliberately a different name from the
    iPhone pipeline's `APPLE_CERTIFICATE`; plus `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
    `APPLE_PASSWORD`, `APPLE_TEAM_ID`).
-2. Set the repository **variable** `ENABLE_MACOS_SIGNING` to `true`
+2. The repository **variable** `ENABLE_MACOS_SIGNING` set to `true`
    (Settings → Secrets and variables → Actions → **Variables**).
 
-Until that variable is `true`, the macOS build is intentionally unsigned and
-the secrets are ignored.
+A fork without the variable builds unsigned and ignores the secrets; its users
+follow `INSTALL.md`'s "An unsigned build" section. With the variable set but
+the certificate secret missing, the macOS build fails rather than ship
+unsigned.

@@ -80,7 +80,7 @@ horn_mouth  = 12.0;  // at the lid face: the WAP's Ø12 vent-pad recess, so the 
                      // lid-scale horn cannot LOAD a ~4 kHz chirp (flare cutoff ~8.5 kHz,
                      // mouth << lambda) - expect a few dB of on-axis directivity, not "louder"
 horn_h      = 8.0;   // the shortest support-free length of this profile (steepest bore flare (mouth - throat)/horn_h = 45° at 8) — it fits no WAP preset; the header gives the room each leaves (v0.2.1)
-horn_wall   = 1.4;
+horn_wall   = 1.4;   // horn wall thickness round the flare; the glue flange reaches 2 past it (Ø horn_mouth + 2 x this + 4)
 
 /* [Glare ring] — matches the camera disc seats */
 gr_od = 14.0;        // the disc's own Ø: the seat is cut disc + 2*tol_slide (Ø14.4), so the ring centers like the disc (12 mm seats: set 12.0)
@@ -91,7 +91,7 @@ gr_t  = 0.2;         // one layer: the seats are cut disc_t + 0.2 deep, so the d
 cg_hole   = 8.4;     // panel hole it fits: the relay lid's (its M8 thread + 2 x tol_slide since the 2026-10-22 audit; at 8.2 the barb no longer caught there)
 cg_cable  = 4.5;     // cable diameter the bush grips
 cg_panel  = 2.0;     // panel thickness
-cg_flange = 14.0;
+cg_flange = 14.0;    // gland body's outer flange Ø, 2.0 thick: it bears on the panel, with a Ø1-cord O-ring groove round the hole in its panel face
 cg_squeeze = 0.25;   // bush wall squeeze on the cable (the O-ring rule's band)  // [0.2:0.05:0.3]
 
 /* [Print tolerances] */
@@ -128,15 +128,15 @@ cg_gap    = 0.2;                            // cap floor clear of the barb tip
 cg_cav_l  = cg_top + cg_gap - cg_seat_z;    // 5.2: seat to the cap floor
 cg_a_free = PI/4*(cg_bush_od*cg_bush_od - cg_bush_id*cg_bush_id);
 cg_a_room = PI/4*(cg_bore*cg_bore - cg_cable*cg_cable);
-cg_fill   = 0.90;
+cg_fill   = 0.90;                           // the bush's fill of its cavity once squeezed — 0.90 is the O-ring rule's ceiling, but nothing holds it there (the overfill assert compares the bush with itself); it sets the bush's free length (cg_bush_l), and a fill above about 0.96 is refused only because the squeezed bush would rise out of the nose bore (asserted)
 cg_bush_l = cg_fill * cg_cav_l * cg_a_room / cg_a_free; // 3.71 free -> 4.68 squeezed in 5.2
 // cap: a floor that bears on the bush's end (its hole passes the cable, not
 // the bush), a groove that houses the barb, and a lip below it that snaps
 // past the barb and sits under its flat shoulder
-cg_cap_floor = 1.2;
+cg_cap_floor = 1.2;                         // cap floor thickness — the floor bears on the bush's end, and its hole passes the cable but stops the bush (asserted)
 cg_cap_hole  = cg_cable + 0.3;              // 4.8 < the bush's 5.4: the floor drives the bush
 cg_lip_d     = cg_nose + 0.2;               // 8.0: slides on the nose, catches the Ø8.3 barb
-cg_lip_h     = 1.0;
+cg_lip_h     = 1.0;                         // cap snap lip height — the lip slides on the nose, cams over the barb and parks 0.1 under its shoulder
 cg_groove_d  = cg_barb_d + 0.3;             // 8.6: the barb parks free inside
 // the panel clamp: a skirt below the lip carries the cap down to the panel's
 // inside face, so the snap pulls the flange's O-ring onto the panel (v0.2: with

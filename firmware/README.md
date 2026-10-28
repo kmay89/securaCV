@@ -15,9 +15,10 @@ Privacy-preserving witness device firmware for ESP32 boards.
 (or the desktop Flasher; [`docs/browser_flasher.md`](../docs/browser_flasher.md)).
 Every released image below is one click there — no toolchain. A Sense,
 Vision or WAP then takes your Wi-Fi from the SecuraCV iPhone app in one tap
-at first power-on; every board also raises its own `SecuraCV-XXXX` setup
-network, with the key the Flasher's done card shows (read off the board's
-first boot).
+at first power-on; every board also raises its own `SecuraCV-<kind>-XXXX`
+setup network (`SecuraCV-sense-XXXX` on a Sense; plain `SecuraCV-XXXX`
+before 2.4.17), with the key the Flasher's done card shows (read off the
+board's first boot).
 
 ### Build from source (makers)
 
@@ -47,7 +48,7 @@ make monitor
 ```
 
 Hand it your Wi-Fi from the SecuraCV iPhone app (the *new Canary is nearby*
-card), or connect to WiFi **SecuraCV-XXXX** → http://canary.local (or the
+card), or connect to WiFi **SecuraCV-wap-XXXX** → http://canary.local (or the
 numeric fallback http://192.168.4.1).
 
 > **Security Note:** The AP password is device-unique (derived from the

@@ -560,7 +560,7 @@ RGRANT_CUT = ../../../tests_host/cut_functions.awk
 CUT_INCS  += $(RGRANT_INC) $(RGRANT_CSI_INC)
 
 $(RGRANT_INC): $(SRC_DIR)/canary_wap.ino $(RGRANT_CUT) Makefile
-	awk -v 'sigs=static inline bool provisioning_gate_take() {|static bool provisioning_gate_take_for(|static bool request_host_names_device(httpd_req_t* req) {|static bool session_cookie_header(|uint32_t auth_request_source(httpd_req_t* req) {|static bool qr_scan_request_allowed(httpd_req_t* req) {|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {' \
+	awk -v 'sigs=static inline bool provisioning_gate_take() {|static bool provisioning_gate_take_for(|static bool request_host_names_device(httpd_req_t* req) {|static bool session_cookie_header(|uint32_t auth_request_source(httpd_req_t* req) {|static bool qr_scan_request_allowed(httpd_req_t* req) {|static esp_err_t handle_pairing_qr(httpd_req_t* req) {|static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {|static esp_err_t handle_vault_key_set_auth(httpd_req_t* req) {|static esp_err_t handle_mesh_pair_confirm_auth(httpd_req_t* req) {' \
 	  -f $(RGRANT_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
 
 $(RGRANT_CSI_INC): $(SRC_DIR)/csi_integration.cpp Makefile
@@ -585,6 +585,52 @@ clean-receipt-grant:
 
 run: run-receipt-grant
 clean: clean-receipt-grant
+
+# Who may move the network the unit joins (sweep F334, F345, F333), and who
+# may reach its two reboot routes (F361): after first-boot setup the bearer
+# alone.
+# wifi_change_authorize() (POST /api/wifi/connect and /ap-only), the Forget,
+# Disconnect and Reconnect wrappers, the reboot and safe-mode-retry wrappers,
+# ble_improv_door_should_open() and auth_request_source() cut
+# verbatim out of canary_wap.ino (firmware/tests_host/cut_functions.awk), over
+# stubs/receipt_grant, the REAL api_auth.h (the per-address lockout) and the
+# REAL provisioning_logic.h (keyless_join_open(), the setup door's and the
+# boot scan's one rule), with stand-ins for the wizard flag, the pair-token
+# store, the session bridge and the handlers the wrappers guard. After setup
+# the landing page's pair token and session get 401 and no strike, a wrong
+# bearer 403 and one strike for its own address, a session's Forget leaves
+# the network on file and the setup door shut, and a session's reboot
+# restarts nothing; during setup the
+# wizard's gate is unchanged. It also reads the sketch's text (its path is
+# passed in): POST /api/wifi/qr-scan answers 404 outside setup before
+# anything else, Connect and AP-only ask the gate before any write, the boot
+# scan asks the keyless-join rule first, and Forget clears the broker login.
+WAUTH_BIN = test_wifi_authority
+WAUTH_SRC = test_wifi_authority.cpp
+WAUTH_INC = test_wifi_authority.inc
+WAUTH_CUT = ../../../tests_host/cut_functions.awk
+CUT_INCS += $(WAUTH_INC)
+
+$(WAUTH_INC): $(SRC_DIR)/canary_wap.ino $(WAUTH_CUT) Makefile
+	awk -v 'sigs=uint32_t auth_request_source(httpd_req_t* req) {|static WifiChangeAuth wifi_change_authorize(httpd_req_t* req,|static esp_err_t handle_wifi_disconnect_auth(httpd_req_t* req) {|static esp_err_t handle_wifi_forget_auth(httpd_req_t* req) {|static esp_err_t handle_wifi_reconnect_auth(httpd_req_t* req) {|static esp_err_t handle_reboot_auth(httpd_req_t* req) {|static esp_err_t handle_safe_mode_retry_auth(httpd_req_t* req) {|bool ble_improv_door_should_open() {' \
+	  -f $(WAUTH_CUT) $(SRC_DIR)/canary_wap.ino > $@.tmp && mv $@.tmp $@
+
+# api_auth.h's helpers these functions never call are unused here, and its
+# constant-time compare casts through volatile: both are the header's.
+$(WAUTH_BIN): $(WAUTH_SRC) $(WAUTH_INC) arduino_globals.h $(wildcard stubs/receipt_grant/*.h)
+	$(CXX) $(CXXFLAGS) -Werror -Wno-unused-function -Wno-ignored-qualifiers \
+	  -I stubs/receipt_grant -I $(SRC_DIR) -I . \
+	  -DWIFI_AUTHORITY_INC='"$(WAUTH_INC)"' \
+	  -DCANARY_WAP_INO='"$(abspath $(SRC_DIR))/canary_wap.ino"' -o $@ $(WAUTH_SRC)
+
+.PHONY: run-wifi-authority clean-wifi-authority
+run-wifi-authority: $(WAUTH_BIN)
+	$(call run_marked,$(WAUTH_BIN))
+clean-wifi-authority:
+	rm -f $(WAUTH_BIN) $(WAUTH_INC)
+
+run: run-wifi-authority
+clean: clean-wifi-authority
 
 # The dashboard's session cookie (sweep F289's residual): handle_ui() and
 # session_cookie_header() cut verbatim out of canary_wap.ino, with the Host
@@ -1536,6 +1582,43 @@ clean-ha-discovery-ids:
 
 run: run-ha-discovery-ids
 clean: clean-ha-discovery-ids
+
+# What a canary-wap publishes over MQTT, and how (sweep F34, the MQTT
+# contract fixture): the REAL csi_mqtt.cpp over stubs/mqtt and a fake
+# esp_mqtt client that records every publish with its QoS and retain flag,
+# driven through a unit's life (the connect burst, a healthy loop, a tamper
+# commit, a backfill replay, a unit in trouble, unsigned early-boot bodies,
+# discovery removed), its signed bodies signed for real (device_signature.cpp,
+# compiled in, over OpenSSL's Ed25519 on the repo's test key). Run bare, it
+# checks the record: every publish QoS 0, the last will QoS 1 and retained,
+# the command topics subscribed at QoS 1, every state topic and discovery
+# config retained and the events and tamper topics not, every phase's topics
+# there, every body one strict JSON object, replay true on the backfilled row
+# only; and it delivers each command word a discovery config names back as
+# MQTT_EVENT_DATA and checks it latches. With --json it prints the record for
+# custom_components/securacv/tests/test_wap_mqtt_contract.py (the Home
+# Assistant integration's parsers) and scripts/tests/
+# test_ha_discovery_wap_render.py (the discovery templates, rendered), which
+# build this target and run it. Hooked into `run` and `clean` by prerequisite.
+MQTT_BODIES_BIN = test_wap_mqtt_bodies
+MQTT_BODIES_SRC = test_wap_mqtt_bodies.cpp
+
+$(MQTT_BODIES_BIN): $(MQTT_BODIES_SRC) json_strict.h $(SRC_DIR)/csi_mqtt.cpp $(SRC_DIR)/csi_mqtt.h \
+                    $(SRC_DIR)/device_signature.cpp $(SRC_DIR)/device_signature.h $(SRC_DIR)/mqtt_identity.h \
+                    $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_event_egress.h $(SRC_DIR)/wap_json_writer.h \
+                    $(SRC_DIR)/http_body_reader.h $(wildcard stubs/mqtt/*.h stubs/mqtt/freertos/*.h)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror -Wno-comment -Wno-ignored-qualifiers -Wno-unused-function -Wno-stringop-truncation \
+	  -I stubs/mqtt -I $(SRC_DIR) -DDEVICE_SIGNATURE_CPP='"$(abspath $(SRC_DIR))/device_signature.cpp"' \
+	  -o $@ $(MQTT_BODIES_SRC) $(SRC_DIR)/csi_mqtt.cpp -lcrypto)
+
+.PHONY: run-wap-mqtt-bodies clean-wap-mqtt-bodies
+run-wap-mqtt-bodies: $(MQTT_BODIES_BIN)
+	$(call run_marked,$(MQTT_BODIES_BIN))
+clean-wap-mqtt-bodies:
+	rm -f $(MQTT_BODIES_BIN)
+
+run: run-wap-mqtt-bodies
+clean: clean-wap-mqtt-bodies
 
 # The hand-over from a requesting task to the loop task (sweep F96):
 # the REAL loop_command_ring.h. Commands run in post order across the ticket

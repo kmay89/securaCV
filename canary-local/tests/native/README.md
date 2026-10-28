@@ -66,7 +66,11 @@ is a window the harness sends to the core before each call and reads back
 after it. A pointer export needs that window declared in `CORES` in
 `cores.js`, or the build refuses it. If the core crashes, the call throws
 with the exit status. A call with no answer throws after 30 s, and the
-stuck core is killed so it cannot outlive the test.
+stuck core is killed so it cannot outlive the test. The waiting thread
+takes the answer's state as the answer, never a wake-up alone: the worker
+stores the state before it notifies, so on a loaded machine its notify can
+land after the test's thread has read that answer and is waiting on the
+next call (sweep A50 found that race failing a run).
 
 ## What a pass does and does not say
 
@@ -79,10 +83,10 @@ dist.
 To compare the committed dist with this tree, run
 `LAB_CORES=native node --test canary-local/tests/native_cores.test.js`. It
 drives each native core next to its committed bundle, call for call, on
-fixed scenarios: 3000 Vision ticks of random boxes in and around the
-frame, with out-of-range tuning; about 5000 Vision frames of boxes whose
-position and size sit at the ends of the int range; and the audio cadences
-plus noise. A difference means the dist is
+fixed scenarios ([`scenarios.js`](scenarios.js)): 3000 Vision ticks of
+random boxes in and around the frame, with out-of-range tuning; about 5000
+Vision frames of boxes whose position and size sit at the ends of the int
+range; and the audio cadences plus noise. A difference means the dist is
 stale, or that the native build and the wasm one disagree on that input.
 They can: `long` is 64 bits on a 64-bit host and 32 in wasm, and a signed overflow
 (undefined in C++) can come out one way from g++ and another from
@@ -98,10 +102,9 @@ build shows it. `vision.test.js`'s A42 test holds such boxes to exact
 arithmetic on the committed dist, which CI runs, so from the dist rebuild
 that carries A42 on it is the CI gate for that half in the bytes the Lab
 serves; `vision_wasm32.test.js` shows the same half from the sources, before
-any rebuild (below). No CI job runs
-`native_cores.test.js` under the variable: its parity scenarios are run by
-hand, after a rebuilt dist is pulled. So agreement covers the calls those
-scenarios make, not every input. `CXX=clang++` is the closer compiler, but
+any rebuild (below). CI runs `native_cores.test.js` under the variable as
+well, in a step of its own (sweep A50, below). Agreement covers the calls
+those scenarios make, not every input. `CXX=clang++` is the closer compiler, but
 the ABI is still 64-bit. Without the variable, the same file checks the loader
 itself without compiling anything. It checks what the default returns, how
 `build.sh` is read, that it finds every export and runtime method the dist
@@ -116,6 +119,21 @@ and needs no emsdk. The native step runs whenever the dist step ran, even
 when the dist step failed (its `if:`), so after a core change you see both
 answers: native green and dist red means the sources are right and the dist
 is stale.
+
+The job also runs `native_cores.test.js` twice: in the dist step, where it
+compiles nothing and its parity scenarios skip, and under `LAB_CORES=native`
+in a step of its own, straight after the native step and with the same
+`if:` (sweep A50). That step's red names the first call where the native
+build and the committed dist answer otherwise. After a core change it means
+the dist is stale, so a core change goes red there as well as in the dist
+step until CI's rebuild lands; with no core change it means the two
+toolchains disagree on that input. It is a separate step so that the native
+step keeps its own answer (the sources pass the page tests). The file's CI
+test reads that step the way the runner does ([`ci_steps.js`](ci_steps.js):
+comments dropped, each key once) and holds its place, its `if:`, its exact
+env (`LAB_CORES` and the path-filter recorder's three lines) and its exact
+command, so a `|| true`, a `continue-on-error` or an env line turned into a
+comment fails it.
 
 ## The Vision pipeline as wasm32, from the sources (`vision_wasm32.test.js`)
 
@@ -163,11 +181,85 @@ what the sources compute with a 32-bit `long`; an undefined signed overflow
 can still come out one way from this clang and another from emscripten's,
 and the dist is still what ships.
 
+## Whole cores as wasm32-wasi, from the sources (`cores_wasm32.test.js`)
+
+The freestanding build above covers the box pipeline alone. The rest of the
+Vision core (`detect_config.cpp`, `presence_fsm.cpp`, `voxel_tracker.cpp`,
+the bindings' JSON) and the WAP audio core need a C library (`snprintf`),
+and the Vision shim's in-memory `Preferences` map needs the C++ library.
+So [`wasi.js`](wasi.js) builds each whole core a third way: `build.sh`'s
+sources, flags and include paths for the core (read through `cores.js`'s
+`buildPlan`, not copied), compiled one source at a time by the host's clang
+with `--target=wasm32-wasi` against a WASI sysroot (wasi-libc, libc++ and
+libc++abi, compiler-rt's wasm32 builtins), beside a one-macro
+`<emscripten.h>` and [`wasm32/wasi_support.cpp`](wasm32/wasi_support.cpp).
+`wasm-ld` links it as a WASI reactor that exports each
+`EMSCRIPTEN_KEEPALIVE` function by name (a name it cannot find fails the
+link) and refuses any undefined symbol. `node:wasi` runs it, and the module
+it hands the test has the dist's shape: `cwrap`, and `ccall`,
+`UTF8ToString` and the `HEAP` views where `build.sh` exports them, with
+emscripten's conversions.
+
+```sh
+node --test canary-local/tests/cores_wasm32.test.js
+```
+
+The test checks that each wasm32 core's `long` is 32 bits (read from the
+module) and the g++ build's 64 (read from the compiler), that the module
+imports only WASI calls (libc's stdio) and exports what the plan declares
+and nothing else, and that its runtime methods are the dist's. Then it
+drives each wasm32 core next to the g++ build from `cores.js`, call for
+call, on the scenarios `native_cores.test.js` holds the native build to the
+dist with ([`scenarios.js`](scenarios.js)), and every answer must agree.
+Its last test puts a `long` back in each core, in a scratch copy: A42's
+posture products in the Vision pipeline, and the audio RMS's sum of
+squares, which reaches about 1e10 on a loud frame. It requires the g++
+build of each mutant to answer as the sources do and the wasm32 build to
+answer some call otherwise, so the comparison is shown to see what it is
+there for. On the tree here the audio mutant reads the first loud frame's
+level as 2270 where the sources say 5656, and the Vision one reads a box
+240 pixels wide and two billion tall as `ambiguous` where the sources say
+`upright`. The two builds take about 4 s and
+1 s; the whole file took 35 to 45 s here, on a shared 4-CPU machine.
+
+It needs what `vision_wasm32.test.js` needs (a `clang++` with a wasm32
+target, `wasm-ld`, `$CXX`, found the same way) and a WASI sysroot that clang
+finds for that target. On Ubuntu that is four packages built for clang's own
+version `<n>`: `wasi-libc`, `libc++-<n>-dev-wasm32`,
+`libc++abi-<n>-dev-wasm32` and `libclang-rt-<n>-dev-wasm32`. Elsewhere,
+point `WASI_SYSROOT` at one (a wasi-sdk's `share/wasi-sysroot`). Where a
+part is missing the tests skip and say which, with the package that ships
+it; `CORES_WASM32=require` makes that a failure instead. CI installs the
+four packages for clang 18 through
+[`.github/actions/setup-wasi-sysroot`](../../../.github/actions/setup-wasi-sysroot/action.yml)
+(its `clang-major` input; apt retries a dropped fetch and gives up on a
+stalled one) and runs the file in its own step with `CORES_WASM32=require`
+and `WASM32_CLANGXX=clang++-18`, whenever the dist step ran. Each of the two
+steps has a 5-minute timeout: a stalled mirror, or a wasm32 call that never
+returns (`node:wasi` sets no deadline of its own), fails in minutes and
+named instead of using the job's whole budget. The file's CI test reads
+both steps the way the runner does ([`ci_steps.js`](ci_steps.js)) and holds
+their `if:`, env, command and timeouts, the action's package list to
+`wasi.js`'s `packages()`, and the job's image (clang 18 is ubuntu-24.04's
+default: when the job moves, the input and `WASM32_CLANGXX` move with it).
+Ubuntu's libc++abi for wasm32-wasi is built without exceptions yet its
+`operator new` still names `__cxa_throw`; the cores build with
+`-fno-exceptions`, as `build.sh`'s em++ calls do, so `wasi_support.cpp`
+defines that pair to abort, as emscripten does where a throw would be.
+`node:wasi` prints an experimental-feature warning on Node 22.
+
+It is the host's clang and wasi-libc, not emscripten (whose C library is
+its own musl), and it is not the dist. It settles what the sources compute
+in wasm32 with a 32-bit `long`, on the calls those scenarios make; an
+undefined signed overflow, or a libm that rounds otherwise, can still come
+out one way here and another in the dist, and the dist is still what ships.
+
 ## Which tests drive a dist core
 
 Only `vision.test.js`, `eyes.test.js` and `audio.test.js` `require()` a core
 in Node, and all three take it through `cores.js` (`native_cores.test.js`
-holds that); `vision_wasm32.test.js` builds its own and loads no dist.
+holds that); `vision_wasm32.test.js` and `cores_wasm32.test.js` build their
+own and load no dist.
 
 ## The browser probes on the tree's sources
 
@@ -240,7 +332,10 @@ Chromium, by the probes (`boot_probe.mjs`, `bench_probe.mjs`,
 natively. (Three native proofs of display sources are narrower.
 `emulator/test/glass_turn.sh` builds the real `lvgl_port.cpp` and the
 emulator's display HAL with g++, in the dash and the nightlight configs, and
-holds the turned glass pixel for pixel; `emulator/test/glass_turn_lvgl9.sh`
+holds the turned glass pixel for pixel, then plays the real `splash.cpp`'s
+first meeting through that port's LVGL 8.4 branch in the config of every
+display env that builds LVGL 8.4 and in the emulator's dash flavor's, reading
+the speech bubble's tail and the bird's seat over it off the frame; `emulator/test/glass_turn_lvgl9.sh`
 builds the same port's LVGL 9 branch against the LVGL 9.5 the dash builds
 ship, in the dash and nightstand-c6 configs, and holds its flushes the same
 way, and plays the real `splash.cpp`'s first meeting through it to read the

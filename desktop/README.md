@@ -130,14 +130,18 @@ self-update work for good:
 3. Add repo secrets **`TAURI_SIGNING_PRIVATE_KEY`** (the private key file's
    contents) and **`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`**.
 
-### Optional: notarized macOS (zero-step install)
+### macOS signing and notarization (on for releases)
 
-To drop the one-time `xattr` step in `INSTALL.md`, add an Apple Developer
-signing identity + notarization credentials to the `tauri-action` step
-(`APPLE_DESKTOP_CERTIFICATE`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` —
-desktop-only cert name so the iPhone pipeline's `APPLE_CERTIFICATE` can't
-clobber it; see `SIGNING.md`). Costs
-$99/yr; everything else stays the same.
+Releases are Developer ID signed and notarized: the workflow signs when the
+`ENABLE_MACOS_SIGNING` repo variable is `true` and the signing and
+notarization secrets are set (`APPLE_DESKTOP_CERTIFICATE`,
+`APPLE_DESKTOP_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
+`APPLE_PASSWORD`, `APPLE_TEAM_ID` — a desktop-only certificate name so the
+iPhone pipeline's `APPLE_CERTIFICATE` can't clobber it; setup in
+[`SIGNING.md`](SIGNING.md)). macOS still asks once on first launch. A fork
+without the variable builds unsigned, and its users follow `INSTALL.md`'s
+"An unsigned build" section; with the variable set but the certificate
+secret missing, the macOS build fails rather than ship unsigned.
 
 ## Local development
 

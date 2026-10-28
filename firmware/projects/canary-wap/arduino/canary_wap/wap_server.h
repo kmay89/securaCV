@@ -1,101 +1,39 @@
 /*
- * SecuraCV Canary — WiFi Access Point & HTTP Server
+ * SecuraCV Canary WAP — the HTTP route list
  *
- * Provides local-only access for:
- * - Device health monitoring
- * - Witness record review
- * - Log management and acknowledgment
- * - Configuration
- * - Export functionality
- * - Mesh network (opera) management
+ * This header holds the list below and declares nothing. The SoftAP and the
+ * HTTP servers are canary_wap.ino's own: wifi_init_provisioning() and
+ * wifi_raise_ap() raise the AP with the sketch's AP_CHANNEL and
+ * AP_MAX_CLIENTS, and start_http_server() starts each server on its port and
+ * registers the routes. Sweep F277 removed the server API this header used to
+ * declare, which wap_server.cpp defined as stubs nothing called (init(),
+ * check_rate_limit(), send_json_error() and the rest), and its configuration
+ * constants, which duplicated the sketch's; canary-local/tools/gen_wap.py
+ * reads the sketch's values.
  *
- * Security considerations:
- * - AP mode only (no internet connection required)
+ * Transport, as the sketch runs it:
+ * - The SoftAP SSID is SecuraCV-wap-<4 chars of the key fingerprint>
+ *   (generate_ap_ssid), never the MAC, so a flasher install changes it
  * - WPA2/WPA3 transition (PMF capable) with a device-unique password; WPA2-PSK
  *   where the core lacks SoftAP SAE (ap_security_policy.h, F16)
  * - HTTPS on port 443 once first-boot setup is done (where the build has the
  *   HTTPS server); plain HTTP during setup, and if the certificate fails
  * - While HTTPS is up, port 80 serves the probes and /api/fleet and redirects
  *   the rest to HTTPS (301)
+ *
+ * Credentials, as the sketch checks them:
  * - api_auth_check() on protected endpoints: the session cookie the landing
- *   page mints for any host on the network (F346), or the bearer token
- * - Constant-time token comparison (timing attack mitigation)
- * - Exponential backoff on auth failures (brute-force mitigation)
+ *   page mints for any host on the network (F346), or the bearer token; the
+ *   bearer alone for the pairing QR (F289), the Wi-Fi moves (Connect and
+ *   AP-only after setup, Disconnect and Forget in every mode; F334, F345),
+ *   the reboot routes (F361), the vault key (F335) and the two pair
+ *   confirms (F346)
  * - Provisioning receipt only for the bearer token, the setup door's claim, or
  *   a short BOOT tap, which goes to the one address asking (canary_wap.ino)
- * - No sensitive data in URLs (POST for actions, Authorization header for tokens)
- * - CORS restricted to same-origin
- * - Rate limiting on sensitive endpoints
- * - Max 1 AP client for security isolation
- * - Mesh pairing requires physical confirmation
  */
 
 #ifndef SECURACV_WAP_SERVER_H
 #define SECURACV_WAP_SERVER_H
-
-#include <Arduino.h>
-#include <WiFi.h>
-#include <ESPmDNS.h>
-#include "esp_http_server.h"
-#include "esp_https_server.h"
-
-// ════════════════════════════════════════════════════════════════════════════
-// CONFIGURATION
-// ════════════════════════════════════════════════════════════════════════════
-
-namespace wap_server {
-
-// Access Point configuration
-static const char* AP_SSID_PREFIX    = "SecuraCV-";      // unused: the SSID is SecuraCV-wap-<4 chars of the key fingerprint> (generate_ap_ssid), never the MAC, so a flasher install changes it
-static const char* AP_HOSTNAME       = "canary";
-static const int   AP_CHANNEL        = 1;
-static const int   AP_MAX_CLIENTS    = 1;                // Hardened: max 1 client
-static const bool  AP_HIDDEN         = false;
-
-// Server configuration
-static const int   HTTPS_PORT       = 443;              // Primary (TLS)
-static const int   HTTP_PORT        = 80;               // Redirect to HTTPS
-static const int   HTTP_MAX_URI_LEN = 512;
-static const int   HTTP_MAX_RESP_HDR = 512;
-
-// Rate limiting
-static const uint32_t RATE_LIMIT_WINDOW_MS = 60000;  // 1 minute window
-static const int      RATE_LIMIT_REQUESTS  = 120;    // Max requests per window
-static const int      RATE_LIMIT_ACTIONS   = 30;     // Max POST actions per window
-
-// ════════════════════════════════════════════════════════════════════════════
-// TYPES
-// ════════════════════════════════════════════════════════════════════════════
-
-enum ServerState : uint8_t {
-  SERVER_STATE_STOPPED   = 0,
-  SERVER_STATE_STARTING  = 1,
-  SERVER_STATE_RUNNING   = 2,
-  SERVER_STATE_ERROR     = 3
-};
-
-struct ServerStatus {
-  ServerState state;
-  bool ap_active;
-  bool mdns_active;
-  uint8_t connected_clients;
-  char ap_ssid[32];
-  char ap_ip[16];
-  uint32_t requests_served;
-  uint32_t requests_rejected;
-  uint32_t uptime_sec;
-  uint32_t last_request_ms;
-};
-
-struct RateLimitEntry {
-  uint32_t window_start_ms;
-  uint16_t request_count;
-  uint16_t action_count;
-};
-
-// ════════════════════════════════════════════════════════════════════════════
-// API ENDPOINTS
-// ════════════════════════════════════════════════════════════════════════════
 
 /*
  * HTTP routes, as canary_wap.ino registers them on its one primary server
@@ -157,8 +95,8 @@ struct RateLimitEntry {
  * GET    /api/config                      - Get current configuration
  * POST   /api/config                      - Update configuration
  * POST   /api/export                      - Create export bundle
- * POST   /api/reboot                      - Reboot device
- * POST   /api/safe-mode/retry             - Leave safe mode and retry
+ * POST   /api/reboot                      - Reboot device (bearer alone, F361)
+ * POST   /api/safe-mode/retry             - Leave safe mode and retry (bearer alone, F361)
  * POST   /api/identify                    - Blink to identify
  * POST   /api/device-name                 - Set the device name
  * GET    /api/selftest                    - Run the self-test
@@ -182,7 +120,9 @@ struct RateLimitEntry {
  * ── Wi-Fi and updates ──
  * GET    /api/wifi                        - Wi-Fi status
  * *      /api/wifi/*                      - Scan, pair token, AP-only, connect, disconnect, forget, reconnect
- * *      /api/wifi/qr-scan                - Camera QR provisioning (FEATURE_QR_PROVISION)
+ *                                           (bearer alone: disconnect and forget in every mode, connect and
+ *                                           AP-only after setup; F334, F345)
+ * *      /api/wifi/qr-scan                - Camera QR provisioning (FEATURE_QR_PROVISION; the POST start during setup only, F334)
  * *      /api/ota/*                       - Signed pull-OTA: status, check, install, config
  *
  * ── Camera (FEATURE_CAMERA_PEEK) and sealed snapshots (FEATURE_VAULT_SNAPSHOT) ──
@@ -197,7 +137,7 @@ struct RateLimitEntry {
  * POST   /api/mesh/enable                 - Enable/disable mesh networking
  * POST   /api/mesh/pair/start             - Start pairing (initiator mode)
  * POST   /api/mesh/pair/join              - Start pairing (joiner mode)
- * POST   /api/mesh/pair/confirm           - Confirm pairing code
+ * POST   /api/mesh/pair/confirm           - Confirm pairing code (bearer alone, F346)
  * POST   /api/mesh/pair/cancel            - Cancel ongoing pairing
  * POST   /api/mesh/leave                  - Leave current opera
  * POST   /api/mesh/remove                 - Remove peer from opera
@@ -231,46 +171,5 @@ struct RateLimitEntry {
  * *      /api/audible-chirp*              - Audible chirp (audible_chirp_api.h)
  * *      /api/beacon*                     - Beacon channel (beacon_api.h, FEATURE_BEACON_CHANNEL)
  */
-
-// ════════════════════════════════════════════════════════════════════════════
-// FUNCTION DECLARATIONS
-// ════════════════════════════════════════════════════════════════════════════
-
-// Initialization
-bool init();
-void deinit();
-bool is_running();
-ServerStatus get_status();
-
-// Access Point management
-bool start_access_point(const char* ssid = nullptr, const char* password = nullptr);
-bool stop_access_point();
-bool set_ap_credentials(const char* ssid, const char* password);
-uint8_t get_connected_clients();
-
-// HTTP server
-bool start_http_server();
-bool stop_http_server();
-
-// mDNS
-bool start_mdns(const char* hostname = nullptr);
-bool stop_mdns();
-
-// Rate limiting
-bool check_rate_limit(const char* client_ip, bool is_action = false);
-void reset_rate_limits();
-
-// Response helpers
-esp_err_t send_json_response(httpd_req_t* req, const char* json);
-esp_err_t send_json_error(httpd_req_t* req, int status_code, 
-                          const char* error_code, const char* message);
-esp_err_t send_file_response(httpd_req_t* req, const char* path, 
-                             const char* content_type);
-
-// Security helpers
-bool validate_request(httpd_req_t* req);
-void set_security_headers(httpd_req_t* req);
-
-} // namespace wap_server
 
 #endif // SECURACV_WAP_SERVER_H

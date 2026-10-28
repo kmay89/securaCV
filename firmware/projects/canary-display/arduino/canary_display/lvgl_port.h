@@ -21,6 +21,14 @@ bool lvgl_port_init();
 // a face chosen from it matches the canvas (canary/ui/dash_face.h).
 void lvgl_port_set_rotation(uint8_t rot);
 uint8_t lvgl_port_rotation();
+// Whether the last lvgl_port_set_rotation() was refused for want of the turn
+// buffer (the glass stayed landscape). Cleared by the next call the glass
+// can wear; always false where nothing refuses (LVGL 8, the fixed glass).
+// A saved turn not yet handed to the port (a phone write the render loop
+// has not applied) differs from lvgl_port_rotation() without being refused,
+// so what the glass says about a refusal reads this, never the difference
+// alone (canary/ui/orientation_page.h, F245).
+bool lvgl_port_turn_refused();
 
 // Logical canvas size after rotation — what a face should lay itself out in
 // (800x480 landscape, 480x800 portrait). Faces read these, never LCD_WIDTH.

@@ -115,7 +115,11 @@ SKETCH = Path("firmware/projects/canary-wap/arduino/canary_wap")
 AUTH_MARKERS = (
     "api_auth_check(",            # Bearer + session cookie (401/403/429)
     "api_auth_check_bearer(",     # Bearer ONLY, never the cookie (F289: the
-                                  # pairing QR, whose answer carries the token)
+                                  # pairing QR, whose answer carries the token;
+                                  # F334/F345: connect and ap-only after
+                                  # setup, disconnect and forget always;
+                                  # F361: the reboots; F335: the vault key;
+                                  # F346: the two pair confirms)
     "api_auth_check_or_query(",   # + ?token= for <img>/stream tags
     "api_auth_check_optional(",   # the cookie or the accounted grant, nothing
                                   # sent (caller enforces)
@@ -126,7 +130,8 @@ AUTH_MARKERS = (
                                   # and the claim are the handler's own)
     "CSI_AUTH_OR_RETURN",         # csi_integration session/Bearer macro
     "pair_token_valid(",          # 10-min wizard pair token
-    "wifi_change_authorize(",     # pair token OR lockout-throttled admin cred
+    "wifi_change_authorize(",     # the bearer alone after setup (F334); during
+                                  # it, pair token OR lockout-throttled admin cred
     "qr_scan_request_allowed(",   # pair token OR admin credential
     "session_validate_cookie(",   # cv_session cookie (self-gating pages)
     "authorized(req",             # csi_mqtt session/Bearer helper
@@ -208,7 +213,11 @@ SELF_GATING_HANDLERS = {
 BEARER_GATES = {
     "api_auth_bearer_valid": "api_auth.h",  # the raw compare; only api_auth.h calls it (RAW_COMPARES)
     "api_auth_bearer_grant": "api_auth.h",  # the lockout, nothing sent: the receipt's first grant
-    "api_auth_check_bearer": "api_auth.h",  # lockout + 401/403/429: the pairing QR
+    # lockout + 401/403/429, for the routes api_auth.h names: the pairing
+    # QR, the vault key, the two pair confirms, the four network moves
+    # (Connect and AP-only after setup) and the two reboots (the receipt on
+    # SECURITY_MODEL.md's list takes api_auth_bearer_grant instead)
+    "api_auth_check_bearer": "api_auth.h",
 }
 # The raw compares (sweep F339): each compares a presented token against the
 # device's with no lockout, so outside api_auth.h a call of one is a token
@@ -398,9 +407,10 @@ BROKER_REPOINT = {"handler": "handle_config_post",
 # `gate(req, tok)` ("read"). A module route that answered its copy names it
 # somewhere else, and fails; a module the sketch hands the token to with no
 # entry here fails too.
-def _gated_module(gate: str) -> dict:
-    return {"copy": r"\bauth_token_storage\s*\(", "keep": ("auth_token_storage", gate, "register_routes"),
-            "decl": (), "read": ()}
+def _gated_module(gate: str, *more: str, read: tuple = ()) -> dict:
+    return {"copy": r"\bauth_token_storage\s*\(",
+            "keep": ("auth_token_storage", gate, *more, "register_routes"),
+            "decl": (), "read": read}
 
 
 MODULE_TOKEN_COPIES = {
@@ -411,7 +421,11 @@ MODULE_TOKEN_COPIES = {
                      "read": ("handle_config_get", "handle_config_post", "handle_test")},
     "audible_chirp_api.h": _gated_module("auth_gated"),
     "beacon_api.h": _gated_module("bcn_auth_gated"),
-    "bluetooth_api.h": _gated_module("bt_auth_gated"),
+    # bt_bearer_gated: the bond's confirm, the bearer alone (F346); the
+    # status route reads the copy only to ask the bearer gate whether a
+    # Passkey Entry's digits may ride.
+    "bluetooth_api.h": _gated_module("bt_auth_gated", "bt_bearer_gated",
+                                     read=("handle_bluetooth_status",)),
     "chirp_api.h": _gated_module("chirp_auth_gated"),
     "household_api.h": _gated_module("auth_gated"),
     "rf_presence_api.h": _gated_module("auth_gated"),

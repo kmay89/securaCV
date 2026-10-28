@@ -16,7 +16,11 @@
  *     window cuts is dropped, not parsed; a window that starts exactly on a
  *     line boundary keeps that whole first line;
  *   - the walk feeds the task watchdog and lets the idle task run;
- *   - a live row already in the ring (a late card): nothing is read;
+ *   - a live row already in the ring (a late card, which on a crash boot
+ *     follows system.integrity's boot row since sweep F77): the earlier
+ *     boots' rows go beneath it, newest first below it; past
+ *     CSI_EVENT_INJECT_BENEATH_MAX live rows nothing is read, and it
+ *     latches (F77's review: before it, one live row stopped the reload);
  *   - every line csi_event_inject refuses (an id at or above the floor, an
  *     unregistered type, a type above the ceiling, a duplicate, a torn or
  *     glued line, an over-long line) is refused, and every line parse()
@@ -82,6 +86,22 @@ static const csi_module_t MODULE = {
   noop_init, noop_tick, nullptr, nullptr,
 };
 
+/* A stateless type with no hourly cap: each emit commits one live row. */
+static const csi_event_decl_t LIVE_EVENTS[] = {
+  { "ping", CSI_FIELD_NOTE | CSI_FIELD_TIME_BUCKET, CSI_PRIVACY_P0, 0 },
+};
+static const csi_module_t LIVE_MODULE = {
+  "test.live", CSI_PRIVACY_P0, LIVE_EVENTS, 1, noop_init, noop_tick, nullptr, nullptr,
+};
+static uint32_t commit_live() {
+  csi_event_values_t v;
+  csi_event_values_init(&v);
+  v.category = CSI_CATEGORY_EVENT;
+  v.present_fields = CSI_FIELD_NOTE | CSI_FIELD_TIME_BUCKET;
+  strcpy(v.note, "live");
+  return csi_event_emit("test.live", "ping", &v);
+}
+
 static std::string line_for(uint32_t id, const char* type) {
   csi_event_record_t r;
   memset(&r, 0, sizeof(r));
@@ -115,6 +135,7 @@ static const uint32_t B = csi_event_id_floor::kIdSpaceBase;
 int main() {
   csi_event_test_reset();
   csi_module_register(&MODULE);
+  csi_module_register(&LIVE_MODULE);
   csi_event_set_event_id_floor(B + 200000);   // what NVS restores before the load
 
   // ── Build the card's log. ────────────────────────────────────────────────
@@ -274,23 +295,80 @@ int main() {
     CHECK(!csi_event_find(900004, &head_row), "the line before the window is not read");
   }
 
-  // ── A late card after a live commit: nothing read, and latched. ─────────
+  // ── A late card after live commits: the tail goes beneath them. ─────────
+  // Sweep F77's review: on a crash boot system.integrity's boot row commits
+  // on the first loop pass, so a card adopted after it found a live row and
+  // restored nothing (the scenario below fails on the library and loader
+  // before that review, which stopped at the first live row).
   {
     csi_event_test_reset();                  // reboot
     csi_event_set_event_id_floor(B + 200000);
     csi_event_log::test_rearm_load();
     csi_event_log::arm_load();
     SD.files["/EVENTS/today.ndjson"] = log;
-    std::string row = line_for(B + 150000, "presence_changed");
-    row.pop_back();   // parse() takes the line without its '\n'
-    csi_event_record_t live;
-    CHECK(csi_event_log_line::parse(row.c_str(), &live) && csi_event_inject(&live),
-          "a row in the ring before the card's load (a live commit's stand-in)");
+    const uint32_t live1 = commit_live();
+    const uint32_t live2 = commit_live();
+    CHECK(live1 >= B + 200000 && live2 == live1 + 1,
+          "two live rows commit before the card's load (a crash boot's boot row, say)");
+    const size_t got = csi_event_log::load_into_ring();
+    printf("     beneath two live rows: restored=%zu (expected %zu)\n", got, expected);
+    CHECK(got == expected, "the tail is restored, as on a boot whose card was ready");
+    std::vector<csi_event_record_t> recent(4);
+    CHECK(csi_event_recent(recent.data(), 4) == 4 && recent[0].event_id == live2 &&
+              recent[1].event_id == live1 && recent[2].event_id == B + 101601 &&
+              recent[3].event_id == B + 101600,
+          "the live rows stay the newest, and the restored rows sit below them, newest first");
+    csi_event_record_t r;
+    CHECK(csi_event_find(live2, &r) && strcmp(r.values.note, "live") == 0,
+          "the live rows are whole after the lift");
+    const uint32_t live3 = commit_live();
+    CHECK(csi_event_recent(recent.data(), 1) == 1 && recent[0].event_id == live3,
+          "and the next live row goes on top");
+  }
+
+  // ── A late card after more live commits than inject lifts: nothing read,
+  //    and latched. ──────────────────────────────────────────────────────
+  {
+    csi_event_test_reset();                  // reboot
+    csi_event_set_event_id_floor(B + 200000);
+    csi_event_log::test_rearm_load();
+    csi_event_log::arm_load();
+    SD.files["/EVENTS/today.ndjson"] = log;
+    for (int i = 0; i < CSI_EVENT_INJECT_BENEATH_MAX; ++i) (void)commit_live();
+    CHECK(csi_event_inject_open(), "CSI_EVENT_INJECT_BENEATH_MAX live rows: the reload may still lift them");
+    (void)commit_live();
+    CHECK(!csi_event_inject_open(), "one more, and it may not");
     const size_t read0 = fake_sd_bytes_read();
-    CHECK(csi_event_log::load_into_ring() == 0, "a ring with a row in it: nothing restored");
+    CHECK(csi_event_log::load_into_ring() == 0, "past the bound: nothing restored");
     CHECK(fake_sd_bytes_read() == read0, "and the card's 128 KB tail is not read at all");
     CHECK(csi_event_log::load_into_ring() == 0 && fake_sd_bytes_read() == read0,
           "and it latched: the next mount does not read it either");
+    std::string row = line_for(B + 101601, "presence_changed");
+    row.pop_back();   // parse() takes the line without its '\n'
+    csi_event_record_t old_row;
+    CHECK(csi_event_log_line::parse(row.c_str(), &old_row) && !csi_event_inject(&old_row),
+          "inject itself refuses an earlier boot's row past the bound");
+  }
+
+  // ── A row not older than every live row is refused beneath them. ───────
+  {
+    csi_event_test_reset();                  // reboot
+    csi_event_set_event_id_floor(B + 200000);
+    const uint32_t live = commit_live();
+    (void)commit_live();
+    csi_event_record_t r;
+    memset(&r, 0, sizeof(r));
+    r.category = CSI_CATEGORY_EVENT;
+    r.bundled_count = 1;
+    strcpy(r.module_id, "test.live");
+    strcpy(r.type_name, "ping");
+    r.event_id = live;                         // this boot's first live id
+    CHECK(!csi_event_inject(&r), "an id this boot already committed is refused");
+    r.event_id = live - 1;                     // below every live id: an earlier boot's
+    CHECK(csi_event_inject(&r), "an id below every live row goes beneath them");
+    std::vector<csi_event_record_t> recent(3);
+    CHECK(csi_event_recent(recent.data(), 3) == 3 && recent[2].event_id == live - 1,
+          "under both live rows");
   }
 
   if (g_fail == 0) {

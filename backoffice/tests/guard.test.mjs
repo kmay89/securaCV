@@ -23,7 +23,7 @@ test('the network of an address, the scrub of outsider text, the boundary marks,
 });
 
 test('a sign-in link: asked for by anyone (no enumeration), mailed once, opens only in the browser that asked, needs the authenticator, works once, and expires', () => {
-  const db = testDb(); const now = Date.parse('2026-10-26T12:00:00Z');
+  const db = testDb(); const now = Date.now();   // a real clock: the session this opens expires 12 h from "now", and a fixed day the clock has passed is already expired
   const secret = setupOperator(db, 'owner password 1234', { email: 'o@errer.test', name: 'Owner One' });
   const nobody = requestSignInLink(db, 'stranger@example.test', { ip: '203.0.113.5', now }); assert.equal(nobody.token, null); assert.ok(nobody.nonce, 'a nonce either way — the answer looks the same');
   const r = requestSignInLink(db, 'O@errer.test', { ip: '203.0.113.5', now, minutes: 15 }); assert.ok(r.token && r.nonce); assert.equal(r.user.email, 'o@errer.test');

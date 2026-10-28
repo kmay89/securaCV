@@ -247,7 +247,7 @@ day):
 - **A short BOOT tap** (`BOOT_BUTTON_PIN` from `pins.h`, GPIO9 on the XIAO
   ESP32-C6; `common/io/short_tap.h`: ≥40 ms, <700 ms): **60 s**, with or
   without credentials — the owner's own act. On a witness that already has
-  a network the tap also raises the `SecuraCV-XXXX` setup portal underneath
+  a network the tap also raises the `SecuraCV-sense-XXXX` setup portal underneath
   the door for that minute (the door's join path is the portal's; no quiet
   retry of the saved network runs under it) and lowers it again when the
   door shuts without a join.

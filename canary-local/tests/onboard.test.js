@@ -36,6 +36,9 @@
 //     app's mailbox, or falls out of CI                        → "runtime turn (F222)"
 //   · the dash face is picked from the saved rotation again,
 //     not from the turn the port wore                         → "dash face (F223)"
+//   · an LVGL 8.4 build the ini has, or the emulator's dash,
+//     loses its native splash suite, or the suite stops reading
+//     the tail and the bird's seat off the frame               → "the splash's tail on LVGL 8.4 (F185, F159)"
 //   · the gates fall out of CI                                 → "CI runs"
 //
 // The browser half (the real wasm answering) is tests/onboard_probe.mjs, in
@@ -1004,7 +1007,7 @@ test("nightlight flavor (F204): build.sh builds it, the HAL turns its panel, the
   const gtSh = read(join(ROOT, "emulator/test/glass_turn.sh"));
   assert.ok(gtSh.includes('NL_CFG="$FW/configs/canary-display/nightlight"') &&
     gtSh.includes('NL_PINS="$FW/boards/waveshare-esp32c3-lcd147/pins"') &&
-    /\n"\$OUT\/nl_glass_turn_test"\n?$/.test(gtSh), "glass_turn.sh builds and runs the nightlight's hardware turn");
+    /\n"\$OUT\/nl_glass_turn_test"\n/.test(gtSh), "glass_turn.sh builds and runs the nightlight's hardware turn");
   const gtTest = read(join(ROOT, "emulator/test/glass_turn_test.cpp"));
   assert.ok(gtTest.includes("canary::hal::display_set_rotation(rot);\n    canary::ui::lvgl_port_set_panel_rotation(rot);") &&
     gtTest.includes("for (uint8_t rot : {1, 3, 2, 0, 1}) check_panel_glass(rot, true);"),
@@ -1117,6 +1120,105 @@ test("splash and turned boots (F206): birdOnStage fails a read with no bird on s
     assert.match(birdOnStage(st, "the portrait dash face 6.5 s on"), why);
     assert.match(birdOnStage(st, "the portrait dash face 6.5 s on"), /^the portrait dash face 6\.5 s on: no bird on stage/);
   }
+});
+
+// A PlatformIO ini's sections (comment lines dropped, a key's indented
+// continuation lines kept), and a key's value resolved the way PlatformIO
+// does: the section's own, else the first section it extends that has one,
+// with ${section.key} references expanded.
+function iniResolver(text) {
+  const sections = new Map();
+  let cur = null, key = null;
+  for (const line of text.split("\n")) {
+    if (/^\s*;/.test(line) || !line.trim()) continue;
+    const head = /^\[([^\]]+)\]/.exec(line);
+    if (head) { cur = new Map(); sections.set(head[1], cur); key = null; continue; }
+    const kv = /^([A-Za-z_][\w.]*)\s*=\s*(.*)$/.exec(line);
+    if (kv && cur) { key = kv[1]; cur.set(key, kv[2]); continue; }
+    if (cur && key && /^\s/.test(line)) cur.set(key, `${cur.get(key)}\n${line.trim()}`);
+  }
+  const resolve = (name, k, depth = 0) => {
+    const sec = sections.get(name);
+    if (!sec || depth > 16) return "";
+    if (sec.has(k)) {
+      return sec.get(k).replace(/\$\{([^.}]+(?::[^.}]+)?)\.([^}]+)\}/g, (_, n, kk) => resolve(n, kk, depth + 1));
+    }
+    for (const base of (sec.get("extends") || "").split(",").map((b) => b.trim()).filter(Boolean)) {
+      const v = resolve(base, k, depth + 1);
+      if (v) return v;
+    }
+    return "";
+  };
+  return { sections, resolve };
+}
+
+test("the splash's tail on LVGL 8.4 (F185, F159): glass_turn.sh plays the REAL splash.cpp in every LVGL 8.4 env's config and the emulator's dash, and fails at its end on any red", () => {
+  const sh = read(join(ROOT, "emulator/test/glass_turn.sh"));
+  assert.ok(sh.includes("SPLASH_SRC=(lvgl_port splash canary_mark theme character)") &&
+    sh.includes('"${cxx[@]}" -c "$PROJ/src/ui/$f.cpp" -o "$OUT/splash_${name}_$f.o"') &&
+    sh.includes('"${cxx[@]}" -c "$HERE/glass_splash_test.cpp" -o "$OUT/splash_${name}_test.o"'),
+  "the real splash.cpp, canary_mark.cpp and lvgl_port.cpp, with the theme and Character they read, linked into the test");
+  assert.ok(sh.includes('-I "$HERE/native9" -I "$PROJ/include"') && sh.includes('"$OUT"/lvgl/*.o -lm'),
+    "the board's stand-ins (native9), over the same LVGL 8.4 objects as the turn tests");
+  // Every display env that builds LVGL 8.4, in its own config and pin map,
+  // with its lean budget: derived from the ini (an env's lib_deps and
+  // build_flags resolved through what it extends), each distinct build once
+  // (the watch's -modes and -debug envs build the watch's).
+  const { sections, resolve } = iniResolver(read(join(REPO, "firmware/envs/platformio/common.ini")) + "\n" +
+    read(join(REPO, "firmware/envs/platformio/canary-display.ini")));
+  const builds = (lvgl) => new Set([...sections.keys()]
+    .filter((n) => n.startsWith("env:canary-display-") && resolve(n, "lib_deps").split("\n").includes(lvgl))
+    .map((n) => {
+      const flags = resolve(n, "build_flags");
+      const cfg = /\/configs\/canary-display\/([\w-]+)/.exec(flags)?.[1];
+      const board = /\/boards\/([\w-]+)\/pins/.exec(flags)?.[1];
+      assert.ok(cfg && board, `${n} names its config and pin map`);
+      return [cfg, board, flags.split("\n").includes("-DCD_LEAN_BUILD=1") ? "-DCD_LEAN_BUILD=1" : ""].join(" ").trim();
+    }));
+  const lv8 = builds("lvgl/lvgl@^8.4.0");
+  assert.ok(lv8.size >= 5 && lv8.has("watch xiao-esp32s3-round") && lv8.has("nightlight waveshare-esp32c3-lcd147 -DCD_LEAN_BUILD=1"),
+    `the ini's LVGL 8.4 builds read: ${[...lv8].join("; ")}`);
+  const suites = [...sh.matchAll(/^splash_suite (\S+) (\S+) (\S+)(.*)$/gm)].map((m) => [m[2], m[3], m[4].trim()].join(" ").trim());
+  const small = suites.filter((x) => !x.startsWith("dash "));
+  assert.deepStrictEqual([...new Set(small)].sort(), [...lv8].sort(),
+    "a splash suite for each LVGL 8.4 build the ini has, and for nothing else");
+  assert.strictEqual(small.length, new Set(small).size, "each build once");
+  // ...and the emulator's dash: its env builds LVGL 9.5 (glass_turn_lvgl9.sh
+  // renders that), but build.sh compiles the dash flavor's glass, in the
+  // dash config on the 4.3" pin map, against its 8.4 pin.
+  const build = read(join(ROOT, "emulator/build.sh"));
+  assert.ok(/^LVGL_TAG="v8\.4\.\d+"$/m.test(build), "build.sh pins LVGL 8.4");
+  const dashFlavor = /\nelse\n\s+PINS_DIR="\$FW\/boards\/([\w-]+)\/pins"\n\s+CFG_DIR="\$FW\/configs\/canary-display\/([\w-]+)"\nfi\n/.exec(build);
+  assert.ok(dashFlavor, "build.sh's dash flavor (its last branch) names its pin map and config");
+  assert.deepStrictEqual(suites.filter((x) => x.startsWith("dash ")), [`${dashFlavor[2]} ${dashFlavor[1]}`],
+    "one splash suite for the emulator's dash, in the config and pin map build.sh compiles it with");
+  assert.ok(!builds("lvgl/lvgl@^8.4.0").has(`${dashFlavor[2]} ${dashFlavor[1]}`) &&
+    builds("lvgl/lvgl@9.5.0").has(`${dashFlavor[2]} ${dashFlavor[1]}`),
+  "the dash's env builds LVGL 9.5 (so its 8.4 render is the emulator's alone)");
+  assert.ok(sh.includes('"$OUT/splash_${name}_test" || splash_failed+=("$name")') &&
+    /if \(\(\$\{#splash_failed\[@\]\}\)\); then\n[^\n]*\n\s+exit 1\nfi\n?$/.test(sh),
+  "every splash suite runs, and a red one fails the script at its end");
+  assert.ok(sh.includes('PSEUDO="$FW/common/identity/device_pseudonym.h"'), "the pseudonym stand-in is held to the real header");
+  // The test reads the tail off the frame: drawn, whole, on the bubble's
+  // center line, no higher than kTailRise; the bird on seat()'s seat and,
+  // at its deepest breath, clear of the tail's highest ink where seat() says
+  // so; both Characters, two pseudonyms; the dash in its family and both
+  // turns.
+  const t = read(join(ROOT, "emulator/test/glass_splash_test.cpp"));
+  assert.ok(t.includes("#if LVGL_VERSION_MAJOR != 8") && t.includes("canary::ui::splash_play(1700);") &&
+    t.includes("const Ink own = ink_of(tail, bub);") && t.includes("own.n >= kWholeInk"), "drawn and whole");
+  assert.ok(t.includes("HOLD(fabs(off) <= 1.0, W.center_fails,") && t.includes("HOLD(rise <= sl::kTailRise, W.rise_fails,"),
+    "centered, and no higher than kTailRise");
+  assert.ok(t.includes("const sl::Seat s = sl::seat(g_lh, kFam, true, W.tallest);") &&
+    t.includes("const int worst = W.ink_top_lo - (W.bird_hi + W.bird_h);") && t.includes("CHECK(worst >= sl::kGap,"),
+  "the bird on seat()'s seat, clear of the tail at its deepest breath where seat() says so");
+  assert.ok(/#if GLASS_TURNS\nconst sl::Family& kFam = sl::kWideGlass;\n#else\nconst sl::Family& kFam = sl::kSmallGlass;\n#endif/.test(t) &&
+    /#if defined\(CD_FLAVOR_DASH\)\n(?:\/\/[^\n]*\n)*#define GLASS_TURNS 1\n/.test(t),
+  "the dash read in the wide glass's family");
+  assert.ok(t.includes("{canary::ui::Character::QuietGlass, canary::ui::Character::Heirloom}") &&
+    t.includes("for (char letter : {'2', 'W'})") && t.includes("canary::ui::lvgl_port_set_panel_rotation(1);") &&
+    t.includes("canary::ui::lvgl_port_set_rotation(canary::glass::ROT_PORTRAIT);"),
+  "both Characters, a plain and a wide-lettered pseudonym, the nightlight turned and the dash turned");
 });
 
 test("dist drift (F204): the drift check fails on a bundle this tree builds that the committed dist lacks", () => {

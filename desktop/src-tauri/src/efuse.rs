@@ -17,6 +17,15 @@
 //!   - It does not guess on a chip without a verified bit table. The tables
 //!     below cover ESP32-S3/C3/C6, the same set the browser supports; any
 //!     other chip answers `supported: false`.
+//!   - It does not end by resetting the board into the firmware it arrived
+//!     with. A board brought up with BOOT held was held so that firmware
+//!     would not run (on native USB it could type at the desktop). After a
+//!     good read the chip stays in the ROM's download mode until the install
+//!     resets it or the cable comes out, and a failed read does nothing more
+//!     to it either (esptool's `--after no_reset`; see `park`). Getting INTO
+//!     the ROM is a reset too, so the USB-Serial/JTAG port a BOOT-held
+//!     native-USB board presents gets only its own sequence, never the
+//!     classic one (see `read_block0_in_rom`).
 //!
 //! The field tables, bit offsets, and the three-state clean/touched/active
 //! semantics are a line-for-line port of intake.js, and the desktop-parity
@@ -505,12 +514,21 @@ trait ResetLines {
     fn rts(&mut self, level: bool) -> Result<(), String>;
 }
 
-struct PortLines<'a> {
-    port: &'a mut Box<dyn serialport::SerialPort>,
+/// What the read needs from the board besides its two control lines: drop
+/// stale input, SYNC (`true` once the ROM answers), one READ_REG. The real
+/// port speaks it below; the tests script it.
+trait RomLink: ResetLines {
+    fn drain(&mut self);
+    fn sync(&mut self) -> bool;
+    fn read_reg(&mut self, addr: u32) -> Option<u32>;
+}
+
+struct PortLines {
+    port: Box<dyn serialport::SerialPort>,
     dtr_state: bool,
 }
 
-impl ResetLines for PortLines<'_> {
+impl ResetLines for PortLines {
     fn dtr(&mut self, level: bool) -> Result<(), String> {
         self.dtr_state = level;
         self.port
@@ -525,6 +543,23 @@ impl ResetLines for PortLines<'_> {
             .map_err(|e| format!("couldn't drive RTS: {e}"))?;
         let dtr = self.dtr_state;
         self.dtr(dtr)
+    }
+}
+
+impl RomLink for PortLines {
+    fn drain(&mut self) {
+        drain_input(&mut self.port);
+    }
+    fn sync(&mut self) -> bool {
+        sync(&mut self.port)
+    }
+    fn read_reg(&mut self, addr: u32) -> Option<u32> {
+        transact(
+            &mut self.port,
+            &read_reg_frame(addr),
+            CMD_READ_REG,
+            Duration::from_millis(500),
+        )
     }
 }
 
@@ -559,11 +594,24 @@ fn usb_jtag_serial_reset(lines: &mut dyn ResetLines) -> Result<(), String> {
     lines.dtr(false)
 }
 
-// Leave the board running its firmware again, not parked in the ROM.
-fn hard_reset(lines: &mut dyn ResetLines) -> Result<(), String> {
-    lines.rts(true)?;
-    pause(100);
-    lines.rts(false)
+// Leave the chip where the read put it: both lines released (DTR and RTS
+// deasserted), and nothing after that. The classic two-transistor circuit,
+// and the USB-Serial/JTAG peripheral that emulates it, pulls EN low only
+// while RTS is asserted and DTR is not, and IO0 low only for the opposite
+// pair, so with both released (a state that resets nothing, and the one a
+// closing port leaves them in on Linux and macOS) the chip stays in the
+// ROM's download mode, which has no timeout. Both enter sequences above
+// already end here; parking again is for a sequence that a failed line
+// write cut short. If that cut left the chip held in reset (RTS alone),
+// releasing it here starts the firmware, as closing the port would have.
+// RTS goes first because releasing DTR first, from both asserted, would
+// pass through RTS alone, which is a reset. Closing the port next can only
+// lower the lines (HUPCL, on by default on Linux and macOS and left alone
+// by serialport, and a Windows driver's close both do) or leave them
+// alone, so the drop moves neither line from here.
+fn park(lines: &mut dyn ResetLines) {
+    let _ = lines.rts(false);
+    let _ = lines.dtr(false);
 }
 
 fn drain_input(port: &mut Box<dyn serialport::SerialPort>) {
@@ -615,48 +663,50 @@ fn sync(port: &mut Box<dyn serialport::SerialPort>) -> bool {
     false
 }
 
-/// Read the six block-0 words off a real board, and the chip's allowlisted
-/// block-1/2 fields: reset into the ROM (classic bridge sequence first, the
-/// USB-Serial/JTAG sequence if that finds nothing), SYNC, READ_REGs, then
-/// hard-reset back into the firmware. Read-only at every step — the two
-/// commands used cannot write anything.
-fn read_fuses(
-    port_name: &str,
+/// Read the six block-0 words, and the chip's allowlisted block-1/2 fields:
+/// reset into the ROM with the sequence the port calls for (see
+/// `read_block0_in_rom`), SYNC, READ_REGs. Read-only at every step — the two
+/// commands used cannot write anything. However it ends, the lines are parked
+/// and no reset follows.
+fn read_fuses<L: RomLink>(
+    link: &mut L,
     efuse_base: u32,
     chip: &str,
+    usb_serial_jtag: bool,
 ) -> Result<(Vec<u32>, Option<ChipFields>), String> {
-    let mut port = serialport::new(port_name, 115_200)
-        .timeout(Duration::from_millis(100))
-        .open()
-        .map_err(|e| format!("couldn't open {port_name}: {e}"))?;
+    let read = read_block0_in_rom(link, efuse_base, usb_serial_jtag)
+        .map(|words| (words, read_chip_fields(link, efuse_base, chip)));
+    park(link);
+    read
+}
 
+// Two attempts. A chip's own USB-Serial/JTAG port gets its own sequence
+// both times and never the classic one, as the vendored esptool-js
+// (constructResetSequence) and the pinned espflash
+// (construct_reset_strategy_sequence) choose by that PID: classic holds RTS
+// alone, which is that port's hard reset, and releases it with both lines
+// asserted before it has asked for IO0, with no RC delay on EN to cover
+// the gap, so the chip would leave reset into its firmware. Any other port
+// gets classic first and the USB-Serial/JTAG sequence second.
+fn read_block0_in_rom<L: RomLink>(
+    link: &mut L,
+    efuse_base: u32,
+    usb_serial_jtag: bool,
+) -> Result<Vec<u32>, String> {
     let mut synced = false;
     for attempt in 0..2 {
-        {
-            let mut lines = PortLines {
-                port: &mut port,
-                dtr_state: false,
-            };
-            let reset = if attempt == 0 {
-                classic_reset(&mut lines)
-            } else {
-                usb_jtag_serial_reset(&mut lines)
-            };
-            reset?;
+        if attempt == 0 && !usb_serial_jtag {
+            classic_reset(link)?;
+        } else {
+            usb_jtag_serial_reset(link)?;
         }
-        drain_input(&mut port);
-        if sync(&mut port) {
+        link.drain();
+        if link.sync() {
             synced = true;
             break;
         }
     }
     if !synced {
-        // Leave the board as we found it as best we can before reporting.
-        let mut lines = PortLines {
-            port: &mut port,
-            dtr_state: false,
-        };
-        let _ = hard_reset(&mut lines);
         return Err(
             "couldn't reach the chip's ROM to read its fuses — the check did NOT run. \
                     Unplug, hold BOOT while plugging back in, and try again."
@@ -666,51 +716,64 @@ fn read_fuses(
 
     let mut words = Vec::with_capacity(EFUSE_BLOCK0_WORDS);
     for addr in block0_addrs(efuse_base) {
-        let frame = read_reg_frame(addr);
-        match transact(&mut port, &frame, CMD_READ_REG, Duration::from_millis(500)) {
-            Some(value) => words.push(value),
-            None => {
-                let mut lines = PortLines {
-                    port: &mut port,
-                    dtr_state: false,
-                };
-                let _ = hard_reset(&mut lines);
-                return Err(format!(
-                    "the ROM stopped answering at register {addr:#x} — fuses not checked"
-                ));
-            }
-        }
+        let value = link.read_reg(addr).ok_or_else(|| {
+            format!("the ROM stopped answering at register {addr:#x} — fuses not checked")
+        })?;
+        words.push(value);
     }
+    Ok(words)
+}
 
-    // The About rows' fields. Each word becomes its allowlisted fields on the
-    // line it is read and goes no further; a word that does not answer leaves
-    // the fields out (the rows say "Not checked") without touching the
-    // security verdict above, which already has its six words.
-    let mut chip_fields: Option<ChipFields> = None;
-    if allowed_fields(chip).is_some() {
-        let mut got = ChipFields::new();
-        let mut complete = true;
-        for (block, word) in chip_fuse_words(chip) {
-            let frame = read_reg_frame(chip_fuse_addr(efuse_base, block, word));
-            match transact(&mut port, &frame, CMD_READ_REG, Duration::from_millis(500)) {
-                Some(value) => got.extend(fields_of_word(chip, block, word, value)),
-                None => {
-                    complete = false;
-                    break;
-                }
-            }
-        }
-        if complete {
-            chip_fields = Some(got);
-        }
+// The About rows' fields, read in the same ROM session once block 0 is in.
+// Each word becomes its allowlisted fields on the line it is read and goes no
+// further; a word that does not answer leaves the fields out (the rows say
+// "Not checked") without touching the security verdict, which already has its
+// six words. A chip with no allowlist reads nothing more.
+fn read_chip_fields<L: RomLink>(link: &mut L, efuse_base: u32, chip: &str) -> Option<ChipFields> {
+    allowed_fields(chip)?;
+    let mut got = ChipFields::new();
+    for (block, word) in chip_fuse_words(chip) {
+        let value = link.read_reg(chip_fuse_addr(efuse_base, block, word))?;
+        got.extend(fields_of_word(chip, block, word, value));
     }
+    Some(got)
+}
 
-    let mut lines = PortLines {
-        port: &mut port,
+// The chip's own USB-Serial/JTAG peripheral, which the ROM's download mode
+// and an hwcdc firmware both present: Espressif's VID, PID 0x1001.
+const ESPRESSIF_USB_VID: u16 = 0x303A;
+const USB_SERIAL_JTAG_PID: u16 = 0x1001;
+
+/// Whether the OS lists `port_name` as a USB-Serial/JTAG port. A port it
+/// doesn't list with a USB identity counts as any other port.
+fn is_usb_serial_jtag(port_name: &str) -> bool {
+    serialport::available_ports().is_ok_and(|ports| {
+        ports.iter().any(|p| {
+            p.port_name == port_name
+                && matches!(&p.port_type, serialport::SerialPortType::UsbPort(u)
+                    if u.vid == ESPRESSIF_USB_VID && u.pid == USB_SERIAL_JTAG_PID)
+        })
+    })
+}
+
+/// Read the six block-0 words and the chip's allowlisted block-1/2 fields off
+/// a real board. The port is dropped (and closed) only after `read_fuses` has
+/// parked its lines.
+fn read_fuses_from_port(
+    port_name: &str,
+    efuse_base: u32,
+    chip: &str,
+) -> Result<(Vec<u32>, Option<ChipFields>), String> {
+    let usb_serial_jtag = is_usb_serial_jtag(port_name);
+    let port = serialport::new(port_name, 115_200)
+        .timeout(Duration::from_millis(100))
+        .open()
+        .map_err(|e| format!("couldn't open {port_name}: {e}"))?;
+    let mut link = PortLines {
+        port,
         dtr_state: false,
     };
-    let _ = hard_reset(&mut lines);
-    Ok((words, chip_fields))
+    read_fuses(&mut link, efuse_base, chip, usb_serial_jtag)
 }
 
 /// The Tauri command: read and decode the chip's security fuses. `chip` is
@@ -723,7 +786,7 @@ pub async fn read_security_efuses(port: String, chip: String) -> Result<EfuseSca
         return Ok(decode_security_efuses(&chip, &[]));
     };
     tauri::async_runtime::spawn_blocking(move || {
-        let (words, chip_fields) = read_fuses(&port, base, &chip)?;
+        let (words, chip_fields) = read_fuses_from_port(&port, base, &chip)?;
         let mut scan = decode_security_efuses(&chip, &words);
         scan.chip_fields = chip_fields;
         Ok(scan)
@@ -926,7 +989,7 @@ mod tests {
     #[test]
     fn reset_sequences_mirror_the_vendored_esptool_js() {
         // Record the line transitions and compare against the bundle's
-        // ClassicReset / UsbJtagSerialReset / HardReset sequences verbatim
+        // ClassicReset / UsbJtagSerialReset sequences verbatim
         // (sleeps elided — order is what the ROM strapping cares about here,
         // and the real delays live in the functions under test).
         #[derive(Default)]
@@ -970,9 +1033,210 @@ mod tests {
                 ('D', false),
             ]
         );
+    }
 
-        let mut log = Log::default();
-        hard_reset(&mut log).unwrap();
-        assert_eq!(log.0, vec![('R', true), ('R', false)]);
+    // A scripted board: every line move, SYNC and READ_REG in order, as
+    // ('D'|'R', level), ('S', answered) and ('G', answered).
+    #[derive(Default)]
+    struct Bench {
+        log: Vec<(char, bool)>,
+        syncs: Vec<bool>, // what each SYNC answers, in order; past the end, nothing
+        reads: usize,     // READ_REGs that answer before the ROM goes quiet
+    }
+    impl ResetLines for Bench {
+        fn dtr(&mut self, level: bool) -> Result<(), String> {
+            self.log.push(('D', level));
+            Ok(())
+        }
+        fn rts(&mut self, level: bool) -> Result<(), String> {
+            self.log.push(('R', level));
+            Ok(())
+        }
+    }
+    impl RomLink for Bench {
+        fn drain(&mut self) {}
+        fn sync(&mut self) -> bool {
+            let n = self.log.iter().filter(|e| e.0 == 'S').count();
+            let answered = self.syncs.get(n).copied().unwrap_or(false);
+            self.log.push(('S', answered));
+            answered
+        }
+        fn read_reg(&mut self, addr: u32) -> Option<u32> {
+            let n = self.log.iter().filter(|e| e.0 == 'G').count();
+            let answered = n < self.reads;
+            self.log.push(('G', answered));
+            answered.then_some(addr)
+        }
+    }
+
+    fn lines_of(enter: fn(&mut dyn ResetLines) -> Result<(), String>) -> Vec<(char, bool)> {
+        let mut b = Bench::default();
+        enter(&mut b).unwrap();
+        b.log
+    }
+
+    // Everything after the last SYNC or READ_REG is the park and nothing
+    // else — no RTS pulse, so no reset into the firmware — and it leaves
+    // both lines released, the state a closing port cannot turn into a reset.
+    fn assert_left_in_rom(log: &[(char, bool)]) {
+        let last_talk = log.iter().rposition(|e| e.0 == 'S' || e.0 == 'G').unwrap();
+        assert_eq!(&log[last_talk + 1..], &[('R', false), ('D', false)]);
+        let last = |line: char| log.iter().rev().find(|e| e.0 == line).unwrap().1;
+        assert_eq!((last('D'), last('R')), (false, false));
+    }
+
+    // The S3's About fields as the scripted board answers them: each READ_REG
+    // answers its own address, so each word is that address.
+    fn s3_fields_from_addresses() -> ChipFields {
+        let mut want = ChipFields::new();
+        for (block, word) in chip_fuse_words("ESP32-S3") {
+            let addr = chip_fuse_addr(0x6000_7000, block, word);
+            want.extend(fields_of_word("ESP32-S3", block, word, addr));
+        }
+        want
+    }
+
+    #[test]
+    fn a_successful_read_leaves_the_chip_in_the_rom() {
+        let about = chip_fuse_words("ESP32-S3").len();
+        let mut b = Bench {
+            syncs: vec![true],
+            reads: EFUSE_BLOCK0_WORDS + about,
+            ..Bench::default()
+        };
+        let (words, fields) = read_fuses(&mut b, 0x6000_7000, "ESP32-S3", false).unwrap();
+        assert_eq!(words, block0_addrs(0x6000_7000));
+        assert_eq!(fields, Some(s3_fields_from_addresses()));
+        let mut want = lines_of(classic_reset);
+        want.push(('S', true));
+        want.extend([('G', true); EFUSE_BLOCK0_WORDS]);
+        want.extend(vec![('G', true); about]);
+        want.extend([('R', false), ('D', false)]);
+        assert_eq!(b.log, want);
+        assert_left_in_rom(&b.log);
+    }
+
+    #[test]
+    fn a_rom_that_goes_quiet_in_the_about_reads_keeps_the_verdict_and_stays_in_the_rom() {
+        // Block 0 answers, then the first About word: the second goes quiet.
+        // The six words still reach the verdict, the About fields are left out
+        // whole (no half set), nothing more is asked, and the park follows.
+        let mut b = Bench {
+            syncs: vec![true],
+            reads: EFUSE_BLOCK0_WORDS + 1,
+            ..Bench::default()
+        };
+        let (words, fields) = read_fuses(&mut b, 0x6000_7000, "ESP32-S3", false).unwrap();
+        assert_eq!(words, block0_addrs(0x6000_7000));
+        assert_eq!(fields, None);
+        let mut want = lines_of(classic_reset);
+        want.push(('S', true));
+        want.extend([('G', true); EFUSE_BLOCK0_WORDS]);
+        want.extend([('G', true), ('G', false)]);
+        want.extend([('R', false), ('D', false)]);
+        assert_eq!(b.log, want);
+        assert_left_in_rom(&b.log);
+
+        // A chip with no About allowlist asks for nothing past block 0.
+        let mut b = Bench {
+            syncs: vec![true],
+            reads: EFUSE_BLOCK0_WORDS + 4,
+            ..Bench::default()
+        };
+        let (_, fields) = read_fuses(&mut b, 0x6000_7000, "ESP32", false).unwrap();
+        assert_eq!(fields, None);
+        assert_eq!(
+            b.log.iter().filter(|e| e.0 == 'G').count(),
+            EFUSE_BLOCK0_WORDS
+        );
+        assert_left_in_rom(&b.log);
+    }
+
+    #[test]
+    fn a_rom_that_never_syncs_is_not_reset_into_its_firmware() {
+        let mut b = Bench::default();
+        let err = read_fuses(&mut b, 0x6000_7000, "ESP32-S3", false).unwrap_err();
+        assert!(err.contains("did NOT run"), "{err}");
+        let mut want = lines_of(classic_reset);
+        want.push(('S', false));
+        want.extend(lines_of(usb_jtag_serial_reset));
+        want.push(('S', false));
+        want.extend([('R', false), ('D', false)]);
+        assert_eq!(b.log, want);
+        assert_left_in_rom(&b.log);
+    }
+
+    #[test]
+    fn a_rom_that_goes_quiet_mid_read_is_not_reset_into_its_firmware() {
+        let mut b = Bench {
+            syncs: vec![false, true], // found on the second, USB-Serial/JTAG, sequence
+            reads: 2,
+            ..Bench::default()
+        };
+        let err = read_fuses(&mut b, 0x6000_7000, "ESP32-S3", false).unwrap_err();
+        assert!(err.contains("0x60007034"), "{err}");
+        let mut want = lines_of(classic_reset);
+        want.push(('S', false));
+        want.extend(lines_of(usb_jtag_serial_reset));
+        want.extend([('S', true), ('G', true), ('G', true), ('G', false)]);
+        want.extend([('R', false), ('D', false)]);
+        assert_eq!(b.log, want);
+        assert_left_in_rom(&b.log);
+    }
+
+    // Does the log reset the chip (RTS asserted, DTR released) before DTR
+    // has ever been asserted to ask for IO0? On a USB-Serial/JTAG port, with
+    // no RC delay on EN, that reset comes out into the firmware.
+    fn resets_before_io0(log: &[(char, bool)]) -> bool {
+        let (mut dtr, mut rts) = (false, false);
+        for &(line, level) in log {
+            match line {
+                'D' => dtr = level,
+                'R' => rts = level,
+                _ => continue,
+            }
+            if dtr {
+                return false;
+            }
+            if rts {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn a_usb_serial_jtag_port_never_gets_the_classic_sequence() {
+        // The hazard: classic's first moves are exactly that early reset.
+        assert!(resets_before_io0(&lines_of(classic_reset)));
+
+        let about = chip_fuse_words("ESP32-S3").len();
+        let mut b = Bench {
+            syncs: vec![true],
+            reads: EFUSE_BLOCK0_WORDS + about,
+            ..Bench::default()
+        };
+        let (_, fields) = read_fuses(&mut b, 0x6000_7000, "ESP32-S3", true).unwrap();
+        assert_eq!(fields, Some(s3_fields_from_addresses()));
+        let mut want = lines_of(usb_jtag_serial_reset);
+        want.push(('S', true));
+        want.extend([('G', true); EFUSE_BLOCK0_WORDS]);
+        want.extend(vec![('G', true); about]);
+        want.extend([('R', false), ('D', false)]);
+        assert_eq!(b.log, want);
+        assert!(!resets_before_io0(&b.log));
+        assert_left_in_rom(&b.log);
+
+        // A ROM that never answers gets the same sequence again, then the park.
+        let mut b = Bench::default();
+        read_fuses(&mut b, 0x6000_7000, "ESP32-S3", true).unwrap_err();
+        let mut want = lines_of(usb_jtag_serial_reset);
+        want.push(('S', false));
+        want.extend(lines_of(usb_jtag_serial_reset));
+        want.push(('S', false));
+        want.extend([('R', false), ('D', false)]);
+        assert_eq!(b.log, want);
+        assert!(!resets_before_io0(&b.log));
+        assert_left_in_rom(&b.log);
     }
 }

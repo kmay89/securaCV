@@ -146,7 +146,7 @@ pio device monitor -b 115200
 
 Credentials: copy `secrets/secrets.example.h` to `secrets/secrets.h` for a
 USB-provisioned bench unit; a build without it boots into the shared setup
-portal (a `SecuraCV-XXXX` network) instead of joining a placeholder, exactly
+portal (a `SecuraCV-sentinel-XXXX` network) instead of joining a placeholder, exactly
 as canary-sense does.
 
 ## Layout

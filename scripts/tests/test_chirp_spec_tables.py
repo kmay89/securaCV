@@ -22,6 +22,11 @@ were prose with nothing holding them to the code, so this test does:
     chirp_channel.cpp's EMOJI_SET in UTF-8 bytes, max is
     EMOJI_DISPLAY_SIZE - 1, and the spec names that field's size.
 
+  * Cooldown tiers (§2.5.4, §11.2; sweep F193). §11.2 says they are not
+    stored, and §2.5.4 says they reset after 24 hours with no send, keep
+    across a disable and clear at a reboot (test_chirp_commands_wap.cpp
+    holds the code to that).
+
 The self-tests at the bottom hold the reader to synthetic sources it must
 refuse, so a reader that stops seeing a call fails here, not silently.
 
@@ -188,6 +193,40 @@ class ChirpSpecNvsTable(unittest.TestCase):
             self.assertEqual(rows[key], next(iter(types)), f"§11.2 gives {key} as {rows[key]}")
         # The keys F236 named, as the item found them.
         self.assertEqual(sorted(code), ["chirp_filter", "chirp_relay", "st_chirp_at"])
+
+
+class ChirpSpecCooldownTiers(unittest.TestCase):
+    """The cooldown tiers are RAM only (sweep F193), and the spec says so.
+
+    An enable keeps them and a reboot clears them: storing them would put a
+    record of when the owner chirped in flash. §11.2's table says they are
+    not stored (the exact key list above already holds that no chirp key
+    stores them), and §2.5.4 says what resets them.
+    """
+
+    def test_the_table_says_the_tiers_are_not_stored(self):
+        section = spec_section(SPEC.read_text(encoding="utf-8"), "11.2 NVS Storage")
+        block = re.search(r"```\n(.*?)```", section, re.S)
+        self.assertIsNotNone(block, "§11.2 has no table block")
+        not_stored = re.findall(r"^// (.+?) NOT stored\b", block.group(1), re.M)
+        self.assertEqual(not_stored, ["Session identity", "Cooldown tiers"])
+
+    def test_the_reset_counts_from_the_last_send(self):
+        section = spec_section(SPEC.read_text(encoding="utf-8"), "2.5.4 Defense: Escalating Cooldowns")
+        prose = " ".join(section.split())
+        self.assertIn("Reset: 24 hours of no chirps", prose)
+        self.assertIn("reset after 24 hours with no send, counted from the last send", prose)
+        self.assertIn("A disable and an enable keep them", prose)
+        self.assertIn("a reboot still clears them", prose)
+
+    def test_the_count_per_day_is_the_one_the_harness_holds(self):
+        # test_chirp_commands_wap.cpp's the_tiers_let_9_out_on_the_first_day_then_6
+        # counts these from the COOLDOWN_TIER_* constants on the real channel.
+        section = spec_section(SPEC.read_text(encoding="utf-8"), "2.5.4 Defense: Escalating Cooldowns")
+        prose = " ".join(section.split())
+        self.assertIn("sends 9 chirps in its first 24 hours and then one every 4 hours, 6 a day", prose)
+        harness = (REPO / "firmware/projects/canary-wap/tests_host/test_chirp_commands_wap.cpp").read_text(encoding="utf-8")
+        self.assertIn("CHECK(sends == (day == 0 ? 9u : 6u));", harness)
 
 
 class ChirpSpecEmojiField(unittest.TestCase):

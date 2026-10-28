@@ -1908,9 +1908,10 @@ static void test_f156_pins() {
         text_px(*f20, narrow));
   const Measure heir_c = {f24, f20};
   const Measure heir_h = {f20, f16};
-  const JoinLines j = wide_join_lines(true, row, "SecuraCV-A7K2", "p7Rm2Kqf",
-                                      hint, narrow, heir_c, heir_h);
-  CHECK(j.split && std::strcmp(j.creds.text, "or join \"SecuraCV-A7K2\"") == 0 &&
+  const JoinLines j = wide_join_lines(true, row, "SecuraCV-display-A7K2",
+                                      "p7Rm2Kqf", hint, narrow, heir_c, heir_h);
+  CHECK(j.split &&
+            std::strcmp(j.creds.text, "or join \"SecuraCV-display-A7K2\"") == 0 &&
             !j.creds.floor &&
             std::strcmp(j.low.text, "password  p7Rm2Kqf") == 0 &&
             !j.low.floor && std::strcmp(j.note.text, narrow) == 0 &&
@@ -1920,8 +1921,8 @@ static void test_f156_pins() {
   // The 800 px glass is untouched: one row, the whole hint, the note row
   // empty.
   const JoinLines w = wide_join_lines(true, 800 - 2 * roundframe::kRectSidePad,
-                                      "SecuraCV-A7K2", "p7Rm2Kqf", hint,
-                                      narrow, heir_c, heir_h);
+                                      "SecuraCV-display-A7K2", "p7Rm2Kqf",
+                                      hint, narrow, heir_c, heir_h);
   CHECK(!w.split && std::strcmp(w.low.text, hint) == 0 && !w.low.floor &&
             w.note.text[0] == '\0',
         "the 800 px rows \"%s\" | \"%s\" | \"%s\"", w.creds.text, w.low.text,

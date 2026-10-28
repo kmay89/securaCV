@@ -186,7 +186,21 @@ and raw GT911 touch is un-rotated back into the logical frame in the HAL
 drawn). By that arithmetic Portrait puts the face's top along the panel's
 native left edge (the panel turned a quarter clockwise) and Portrait,
 Flipped along its right edge. A glass whose turn buffer could not be
-allocated refuses the turn, logs it and stays landscape. Landing on an
+allocated refuses the turn, logs it and stays landscape. The choice stays
+saved, so a later start whose turn buffer is granted wears it (the buffer is
+asked for once, at bring-up, so tapping the row again cannot). What the glass
+shows follows the turn it wears (`ui/orientation_page.h`, F245): the page
+checks that row, the root row names it, and, for a saved Portrait, the footer
+reads "Not enough memory to turn this glass, so it stays Landscape. A restart
+tries the saved turn again: Portrait." in place of the usual one. The refusal
+is the port's own word (`lvgl_port_turn_refused()`), not the saved and worn
+turns differing: they also differ, with nothing refused, for up to a second
+after a phone write, which only stores the choice until the render loop hands
+it to the port. `GET /api/settings` keeps `orientation` as the saved choice
+(the value `/api/set` writes) and adds `orientation_worn`, the turn the glass
+wears, and `orientation_refused` (0 or 1), whether the port refused the saved
+choice; a client says the glass could not turn from `orientation_refused`,
+never from the two turns differing. Landing on an
 option *is* choosing: the glass — panel and all — turns under your thumb, and
 the panel re-measures its canvas and rebuilds in the new shape. Portrait
 swaps the landscape poster (`dash_ui` / `nightstand7_ui`) for one shared
@@ -201,7 +215,16 @@ portrait column, `portrait7_ui`.
 > quarter turn (`canary-local/emulator/test/glass_turn_lvgl9.sh`, natively on
 > a 64-bit host) and holds the panel pixel for pixel against the scene drawn
 > on a plain display of the logical size, for whole frames and for partial
-> updates whose areas start right of logical x 0. No turned panel has been
+> updates whose areas start right of logical x 0. The page's saved/worn rule
+> is host-tested too: `test_display_settings` over every saved and worn
+> pair with and without the port's refusal, and `test_lvgl_port_turn` read
+> from the real port on glasses whose turn buffer was refused (Landscape
+> checked, the refusal footer) and granted, and across a phone write the
+> render has not applied yet (no refusal footer on a glass that turns);
+> `canary-local/tests/dash_orientation.test.js` holds
+> `settings_ui.cpp` and `glass_web.cpp` to it by their source, since neither
+> compiles on a host. The browser emulator's LVGL 8.4 port never refuses a
+> turn, so no browser shows that footer. No turned panel has been
 > confirmed on real glass, nor the GT911's axes against the panel's.
 > Landscape (rotation 0) is the default and a no-op, so boot is never
 > sideways.

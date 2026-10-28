@@ -421,13 +421,14 @@ a rebinding page that holds the bearer token itself is F57's open question,
 and a pair token's value carried off the LAN is read with no Host on
 `/api/wifi/connect`, `/api/wifi/ap-only` and `/api/wifi/qr-scan` (start,
 status and stop; a started scan acts only on a code held to the camera) for
-its ten minutes. F334, still open, asks whether Wi-Fi changes after setup
-take a bearer, so that the pair token serves only the first-boot wizard; its
-ledger entry names connect and ap-only, not the scan. And a standalone unit
-with a camera keeps scanning for a Wi-Fi QR code after setup
-(`qr_auto_scan_tick()` runs whenever no Wi-Fi is saved), so a carried token
-reads that scan's status (the network name the code held, the error text)
-and stops it. Refused after
+its ten minutes during first-boot setup. Since F334, after setup a carried
+pair token no longer works on the first two or on the scan's start: the
+first two take the bearer alone and the start answers `404`. The scan's
+status and stop still take a pair token, and since F333 a camera unit's boot scan runs only while no
+network is stored and the unit is not standalone (after setup, only after
+the owner's bearer Forget or the 10 s hold), so a carried token reads that
+scan's status (the network name the code held, the error text) and stops
+it. Refused after
 setup: a router name under another suffix (`.fritz.box`, `.localdomain`,
 `.home`), a name with a trailing dot, a public split-horizon name, and a
 reverse proxy that forwards a public Host; use the `.local` name, the IP or
@@ -464,7 +465,9 @@ so a page planted over plain HTTP is cross-origin to the device and takes
 none of these (it reads nothing; but `SameSite=Strict` compares sites, so in
 a browser that does not count the scheme in the site, as Chromium does, its
 requests still carry the session cookie and it can write blind with the
-owner's session: a reboot, or any other write a session may make); a page
+owner's session: any write a session may make, of which since F361 only
+the firmware install restarts the unit, and only into a newer signed
+image); a page
 served over https at that name whose certificate
 warning the owner accepted still does, and so does any page during the
 first-boot setup or on a unit whose HTTPS start failed, which serve plain
@@ -482,12 +485,13 @@ which the exact match passes) and could spend it on `/api/wifi/connect` or
 `check_route_security.py` refuses a mint site that answers through
 `http_send_json()`. Its requests spend no claim, from another address close
 an open tap rather than take it (F342), from the owner's own browser can
-still use up an open tap, can churn pair tokens, and can stop the boot
-Wi-Fi QR scan of a unit with no Wi-Fi saved each time it asks: `POST
+still use up an open tap, can churn pair tokens, and during first-boot
+setup can stop the boot Wi-Fi QR scan each time it asks: `POST
 /api/wifi/qr-scan` yields that scan before it reads the body or checks the
 pair token, and the scan starts again about five seconds after its task
-unwinds (older than F344; noted under it in the ledger). A denial of
-service, not a way to the token. Three public routes do answer it readably:
+unwinds (older than F344; noted under it in the ledger). After setup that
+route answers `404` before anything else (F334). A denial of service, not a
+way to the token. Three public routes do answer it readably:
 `/api/wifi` (the home network's name, the station address, the SoftAP's name
 and client count), `/api/wifi/scan` (nearby networks) and `/api/fleet`
 (coarse presence) send `Access-Control-Allow-Origin: *` (`http_send_json()`;
@@ -561,12 +565,81 @@ port, TLS mode or CA over `POST /api/mqtt/config` while keeping the stored
 broker password — that save takes the bearer or the password typed again
 (`403 password_needed`), so the password `GET /api/mqtt/config` keeps
 write-only cannot be read through a broker the session names that way
-(host-tested). The QR hub-provision path is the road that rule leaves open:
-a scanned hub code re-points the broker with the stored password, in a scan
-window the session can open (it mints the wizard's pair token over
-`GET /api/pair/token`), but only for a code in front of the camera
-(`FEATURE_QR_PROVISION`) — accepted as proximity-bound, named in the
-ledger. Since F289's follow-up (#1832) a wrong bearer on the receipt counts
+(host-tested). The camera's QR hub re-point stays outside that rule on
+purpose (sweep F333): every code also chooses the network the unit joins,
+so a host compare there would protect nothing, and the road is closed
+where it opens instead. The boot scan follows the Bluetooth setup door's
+rule (`keyless_join_open()`: no network stored, not standalone), the
+phone-session scan starts only during setup and stops at its next frame
+once setup ends (F334), and Forget Wi-Fi clears
+the stored broker user and password (`csi_mqtt::login_clear()`), so a
+keyless join reaches a set-up unit only after the owner's bearer Forget or
+the 10 s hold, and neither leaves a login on file. What stays: a login the
+owner types on `/mqtt` after a Forget and before the unit is set up again
+can reach whoever answers the stored broker on a plain link (the
+CA-verified mode is the defense), and the boot scan has no time window.
+
+The session also cannot make a write that grants a credential or moves the
+unit off its owner's network (a network one moved it to before F334 can
+stay saved, below), and of its writes only the firmware install
+restarts the unit (`POST /api/ota/install`, automatic updates turned on
+with `POST /api/ota/config`, or the MQTT update entity's Install or
+auto-update switch, sent from whatever broker the bridge points at, which a
+session may re-point with a password typed), which installs only a newer
+signed image.
+These routes take the bearer, never the session (`api_auth_check_bearer()`,
+except the receipt, which takes the accounted `api_auth_bearer_grant()`
+beside its own BOOT tap and setup-door claim; `api_auth.h` points here for
+the list):
+- `GET /api/provisioning-receipt` and `GET /api/pairing-qr` (F289);
+- `POST /api/vault/key`, the vault's recipient key, which decides who can
+  open every frame sealed from then on (F335);
+- `POST /api/bluetooth/pair/confirm`, a lasting bond to the authenticated
+  characteristics, the Wi-Fi credentials write among them, and
+  `POST /api/mesh/pair/confirm`, an opera's secret (F346);
+- `POST /api/wifi/disconnect` and `/api/wifi/forget` in every mode, first-boot
+  setup included, and after first-boot setup `POST /api/wifi/connect` and
+  `/api/wifi/ap-only`, each on every interface, the recovery portal's SoftAP
+  included (F334, F345); `POST /api/wifi/qr-scan` answers `404` outside
+  setup;
+- `POST /api/reboot` and `POST /api/safe-mode/retry` (F361).
+A network a session moved it to before F334 can stay among its saved
+networks: `wifi_store_note_joined()` writes every network the unit joins
+into a ring of up to four, and when the current network is not found twice
+running the unit tries the next saved one by itself
+(`wifi_store_rotate_if_due()`), with no request and no bearer. No route
+lists the saved networks or removes one (`GET /api/status` carries only
+`saved_networks`, a count); the remedy is a bearer Forget, which wipes the
+ring, then setting the unit up again.
+A Passkey Entry's digits (the one code that is the bond: the peer types
+what the WAP shows, and nothing on the WAP confirms) ride `GET
+/api/bluetooth` only with a bearer that passes the accounted grant while
+the passkey is displayed, and are no longer written to the health log; a
+session reads `pin_hidden`. A Numeric Comparison's digits and the mesh
+code stay visible to the session, because both ends compute them. The other
+seven vault routes (`GET /api/vault/status`, `DELETE /api/vault/key`, `POST
+/api/vault/config`, `DELETE /api/vault/item`, `POST /api/vault/test`, `GET
+/api/vault/list`, `GET /api/vault/download`) stay on the session by design:
+a key clear and an item delete are health-logged, a frame's `frame_sealed`
+record survives its delete, and clearing the key turns every trigger off.
+A LAN session can destroy sealed frames but not redirect them. The
+landing's pair token opens the dashboard and, during setup, the wizard. The
+dashboard asks for the token at those actions; pasting it from the recovery
+kit is preferred, since the sign-in checks a pasted token by itself
+(without the cookie), and the BOOT tap goes to the one address asking for
+it and closes on a second (F342). Since F345, Forget Wi-Fi takes the
+bearer, so a session cannot re-open the Bluetooth setup door and buy the
+receipt with its claim. Only the owner's own bearer Forget, or the 10 s
+BOOT hold, re-arms the door; until the unit is set up again it is in
+first-boot trust (after a Forget, unless it runs standalone: Forget leaves
+that choice set and the door shut), and the door's claim goes to the first
+phone in range (magic_pairing.md §8). For the vault key and the two
+confirms the lockout below is availability only: a session can already
+remove the key, reject a pairing or turn Bluetooth off; the owner waits it
+out (a power cycle also clears the RAM table). Host-tested, not
+bench-tested.
+
+Since F289's follow-up (#1832) a wrong bearer on the receipt counts
 toward the same per-address lockout as the admin routes (F343), and the
 session cookie itself is `HttpOnly`, `SameSite=Strict`, and `Secure` and
 named `__Host-cv_session` whenever it is set over HTTPS (the first-boot
@@ -579,31 +652,34 @@ bearers hold only that host's address (F343). A browser that mistyped the
 token waits at most about 60 s, or signs in with Use BOOT Tap Once, which
 clears its address when the tap is served to that browser's ask (F341). A
 host that strikes from 9 or more addresses within 60 s holds every
-untracked address while the shared overflow slot runs, and a tap does not
-clear that; then change the WAP's Wi-Fi from a browser on the network to a
-network that host is not on, or wait until it stops. The browser needs no
-token: the landing page mints a session for any host on the network
-(F346), `api_auth_check()` takes its cookie before the bearer and its
-lockout, and through `wifi_change_authorize()` that session reaches
-`POST /api/wifi/connect` (Settings, WiFi), so the owner's browser moves the
-WAP under the lockout; the overflow's backoff then ends at most 60 s after
-that host's last strike. That gets the owner out only while that host
-leaves it alone. The landing page mints that host sessions too, and the
-eight session slots evict the oldest (`csi_integration.cpp`), so a host
-that keeps minting can end the owner's session before its save. A host
-also in radio range can bond a Bluetooth peer of its own (the peer starts
-the pairing, and its session reads the passkey from `GET /api/bluetooth`
-and confirms it) and write the WAP's Wi-Fi over the bonded lane
-(`ble_provision.cpp`'s CREDS), joining it back to a network that host is
-on. And the move lasts only while the new network stays up. The WAP keeps
+untracked address, the owner's among them, while the shared overflow slot
+runs, and neither a tap nor the token clears that; then wait until it
+stops, and change the WAP's Wi-Fi from a browser on the network, with the
+API token pasted into the sign-in, to a network that host is not on. After
+first-boot setup that move takes the bearer alone
+(`wifi_change_authorize()`, F334): the landing page's session, which the
+page mints for any host on the network (F346), no longer reaches
+`POST /api/wifi/connect`, and `api_auth_check_bearer()` answers an address
+the overflow holds `429` before it compares anything, so the browser waits
+with every other untracked address. The overflow's backoff ends at most
+60 s after that host's last strike, and the move gets the owner out only
+while that host leaves it alone. (Before F334 the owner's landing session
+made that move under the lockout, since `api_auth_check()` takes the
+cookie before the bearer and its lockout, and a host that kept minting
+sessions could end it before its save. Before F346 a host also in radio
+range could bond a Bluetooth peer of its own through its session and write
+the WAP's Wi-Fi over the bonded lane, `ble_provision.cpp`'s CREDS; the
+bond's confirm and a Passkey Entry's digits take the bearer now, and a
+bond a session confirmed on 2.4.17 or earlier persists until the owner
+removes it.) And the move lasts only while the new network stays up. The WAP keeps
 every network it has joined (up to four, `wifi_store.h`), the striking
 host's among them, and when the one it is on is not found twice running (a
 phone's hotspot turned off, a network out of range, one that is down when
 the WAP starts) it tries the next saved one, in turn, with no act of the
 owner's, and stays on the host's network once it joins it. No route
 forgets one saved network (`wifi_store::remove()` has no caller): Forget
-Wi-Fi (`POST /api/wifi/forget`, which the owner's landing session reaches
-under the lockout) and the 10 s hold drop them all, and each reopens the
+Wi-Fi (`POST /api/wifi/forget`, which takes the bearer alone, F345, so it
+waits for the overflow too) and the 10 s hold drop them all, and each reopens the
 first-come setup door, so the move sticks only after Forget Wi-Fi and a
 setup onto the new network. The iPhone's bonded Bluetooth lane is no way
 out today: the iPhone app dials only a Canary that advertises the console
@@ -616,8 +692,9 @@ session can turn the WAP's Bluetooth off (`POST /api/bluetooth/disable`),
 a saved setting that restarts and the 10 s hold keep, under which every
 Bluetooth link is dropped; or delete every bond, the owner's phone's
 included (`DELETE /api/bluetooth/paired/all`), so the phone must pair again
-before the lane takes its write; and a host's own bonded peer can keep the
-owner's write refused for as long as it keeps writing (the lane takes one
+before the lane takes its write; and a bonded peer of that host's (one a
+session confirmed before F346) can keep the owner's write refused for as
+long as it keeps writing (the lane takes one
 write in 5 s and ten an hour from every peer together, and a refused write
 costs the writer nothing). A host that keeps striking can do any of these
 again at will. The owner's session reaches the same Bluetooth routes, so
@@ -629,8 +706,10 @@ is set up on the same network again, the host's next strikes from nine
 addresses hold every untracked address again, the owner's among them, and
 the claim that pairs the phone does not clear the overflow (it frees only
 the served address's own slot, F341), so the phone ends paired and held.
-The hold helps only with a setup onto a network that host is not on. The
-owner's browser makes that move without it, and without reopening the
+The hold helps only with a setup onto a network that host is not on, so it
+comes last, for a host known to be on the network only, with the iPhone
+ready. The owner's browser makes that move without it once that host
+stops, with the token, and without reopening the
 first-boot setup door, which goes to whichever Bluetooth client connects
 first (the tap paragraph above), but that move keeps the host's network
 saved; the hold, or Forget Wi-Fi, followed by that setup drops it, and
@@ -641,27 +720,30 @@ that serves ends that address's own backoff, as a right bearer would, never
 the shared overflow's: an address held only through the overflow stays held
 (sweep F341). The key is the request's socket peer address, never a
 header, and clients behind one address share a backoff. It does not close a
-deliberate denial from the LAN: a landing session can still reboot the unit
-(`POST /api/reboot`, `POST /api/safe-mode/retry`), and ARP spoofing, httpd's
-connection purge and a cross-site `?token=` image that holds the visiting
-browser's own address stay open
-([`magic_pairing.md`](../design/magic_pairing.md) §3.7). The reboot also
+deliberate denial from the LAN: ARP spoofing, httpd's connection purge and
+a cross-site `?token=` image that holds the visiting browser's own address
+stay open ([`magic_pairing.md`](../design/magic_pairing.md) §3.7). A reboot
 empties the table, kept in RAM, and so resets the guess budget: about 30
-guesses a minute between reboots from any number of addresses, and more for
-a guesser that reboots the unit every few seconds (about 100 a minute if it
-is back on the LAN 10 s later; `THREAT_MODEL.md` scenario 10). The token's
-entropy stays the bound. Host-tested; not run on a device. Every bearer
+guesses a minute between reboots from any number of addresses. Until F361 a
+landing session could reboot the unit at will (`POST /api/reboot`, `POST
+/api/safe-mode/retry`), so a guesser that rebooted it every few seconds got
+more (about 100 a minute if it was back on the LAN 10 s later;
+`THREAT_MODEL.md` scenario 10); both routes take the bearer now, and a
+session's firmware install restarts the unit only into a newer signed
+image. The token's entropy stays the bound. Host-tested; not run on a
+device. Every bearer
 compare on the WAP counts toward that per-address lockout, and none is
 compared while its address is held (sweep
 F339): the receipt and the pairing QR; the admin routes; the CSI routes, the
 MQTT bridge's routes and its broker move; the QR scan's admin fallback; and
 the camera's and the vault's `?token=` links, which until F339 never read
 the lockout at all (a right `?token=` was served inside a backoff and
-cleared it). A held address gets `429` with `Retry-After` on the CSI and MQTT
+cleared it); and `GET /api/bluetooth`'s Passkey Entry field (F346). A held address gets `429` with `Retry-After` on the CSI and MQTT
 routes and those links; the QR scan's status and stop keep their `403`. The
 route check (`check_route_security.py`) fails any file of the sketch but
-`api_auth.h` that calls a raw compare, so the passkey field F346 plans for
-`GET /api/bluetooth` can only compare through the same grant. The pair token's
+`api_auth.h` that calls a raw compare, so `GET /api/bluetooth`'s Passkey
+Entry field (F346) compares through the same grant, and only while a
+passkey is displayed. The pair token's
 compares stay outside it on purpose: the landing page hands that token to
 any caller, and the CSI dashboard and `/companion` ride it or the cookie and
 send no bearer. Host-tested; not run on a device. The
@@ -1015,6 +1097,19 @@ Arduino-framework build. No other firmware tree (canary-wap,
 canary-sense, canary-vision, canary-display, ...) reports `key_at_rest`
 yet.
 
+The canary-wap's stored MQTT broker password sits in NVS the same way, as
+plain bytes (no canary-wap build enables NVS encryption, and its partition
+table has no key partition for it), so the same physical access reads it.
+While it is stored it is also in RAM: in the bridge's active settings from
+their first load at boot, whether the bridge is on or not, in the MQTT
+client while one is open, and on the HTTP task's stack whenever a handler
+reads the settings row, the public `GET /api/fleet` among them. No handler
+wipes its copy, by decision (sweep F349): a wipe in one handler would remove
+none of the copies a reader of the device's memory or flash would take. The
+firmware makes no RAM-residue promise for a secret that lives as long as the
+device runs; the stack wipes it does keep (the SoftAP passphrase's) are
+hygiene where a wipe costs one line, not a guarantee.
+
 **What key recovery gets an attacker.** They can sign new records as that
 device. From that point on, a chain they produce is cryptographically
 indistinguishable from one the real device produced.
@@ -1030,7 +1125,9 @@ It also does not decrypt sealed material, and that holds on both sides
 for the same structural reason — the decryption key is somewhere the
 device isn't. Sealed snapshots on the device are encrypted to an
 **operator-held X25519 public key whose private half never touches the
-device at all** (see [`../sealed_snapshot_vault.md`](../sealed_snapshot_vault.md)),
+device at all** (see [`../sealed_snapshot_vault.md`](../sealed_snapshot_vault.md);
+on the canary-wap registered only by a bearer holder since F335, where
+before any landing session could name its own),
 so there is nothing on the flash to recover that would open them. Vault
 material on the hub is protected by a separate hub-held key under the
 break-glass policy. Neither is the device identity key, so stealing the

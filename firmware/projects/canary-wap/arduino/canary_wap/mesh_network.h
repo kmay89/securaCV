@@ -630,8 +630,9 @@ void get_message_stats(uint32_t* sent, uint32_t* received, uint32_t* errors);
 // one Preferences handle, so it runs on the loop task only (the periodic
 // save). Before a reboot, call save_replay_counters_before_reboot() from any
 // task: on the loop task (init()'s, which is setup()'s and loop()'s) it saves
-// in place; from another (POST /api/reboot and the safe-mode retry run on
-// esp_http_server's task) it hands MESH_CMD_SAVE_REPLAY to submit() and
+// in place, as for POST /api/reboot, which restarts on the loop task since
+// sweep F92; from another (the safe-mode retry runs on esp_http_server's
+// task) it hands MESH_CMD_SAVE_REPLAY to submit() and
 // waits up to COMMAND_WAIT_MS. True when the blob was written; false when
 // the save failed or did not run (the 5-minute save is the one before it).
 // ════════════════════════════════════════════════════════════════════════════
@@ -972,7 +973,7 @@ struct ChirpStatus {
   char session_emoji[EMOJI_DISPLAY_SIZE];
   uint8_t nearby_count;                         // Anonymous count only
   uint8_t recent_chirp_count;
-  uint32_t last_chirp_sent_ms;                  // 0 if never
+  uint32_t last_chirp_sent_ms;                  // 0 if never, or after 24 hours with no send
   uint32_t cooldown_remaining_ms;
   bool relay_enabled;
   bool muted;
@@ -1038,10 +1039,12 @@ struct OutgoingChirp {
 };
 
 // Cooldown tracking (escalating)
+// The tiers are the device's, not a session's: an enable keeps them, and
+// they reset only after COOLDOWN_RESET_MS with no send, counted from
+// last_chirp_ms (sweep F193). RAM only, so a reboot clears them.
 struct CooldownState {
-  uint8_t chirps_sent_today;                    // Resets after 24h
-  uint32_t last_chirp_ms;                       // For tier calculation
-  uint32_t first_chirp_today_ms;                // For 24h reset
+  uint8_t chirps_sent_today;                    // sends since the last 24 quiet hours; stops at 255
+  uint32_t last_chirp_ms;                       // the cooldown's timer and the 24h reset count from it
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1475,7 +1478,7 @@ struct StatusView {
   uint8_t cooldown_tier;                  // get_cooldown_tier()
   bool relay_enabled;
   bool muted;                             // the flag; mute_remaining_ms says if it still runs
-  uint32_t last_chirp_sent_ms;            // 0 if never
+  uint32_t last_chirp_sent_ms;            // 0 if never, or after 24 hours with no send
   uint32_t cooldown_ms;                   // the tier's cooldown, counted from last_chirp_sent_ms
   uint32_t mute_until_ms;
   uint32_t session_start_ms;              // 0: never enabled since boot

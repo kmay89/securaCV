@@ -590,6 +590,55 @@ is CI's. Owner: U1. The serial lines below are the egress's own.
     still does.
   - Artifact: `docs/audit/repro/F104/no-card/`.
 
+## Ambient rows, closed bundles and planned restarts (F105, F77, F92) — on-device verification
+
+Code: both events egresses' commit hooks (`firmware/canary/src/csi_event_egress.cpp`
+`csi_event_on_committed()`, the canary-wap's `csi_event_egress::on_committed()`),
+which drop ambient rows before the queue (F105); `csi_event.cpp`'s
+`csi_event_commit_bundle_()`, which puts a closed bundle in the ring (F77);
+`csi_event_egress_flush_for_restart()` / `csi_event_egress::flush_for_restart()`,
+which `main.cpp`'s `flush_events_before_restart()` and `canary_wap.ino`'s run
+before a planned restart, the canary-wap's `POST /api/reboot` now served on
+the loop task (F92). Host-tested (`test_canary_event_egress.cpp`,
+`test_wap_event_egress.cpp`, `test_csi_modules_integration.cpp`, both
+daily-summary suites); the restart call sites are held by
+`check_event_egress_order.py` rule 10 and `check_wap_event_egress.py` rule
+13. The ESP32 compiles are CI's; none of this is bench-tested yet. Owner: U1.
+
+- [ ] **No ambient row reaches the card or the broker**
+  - Setup: either device with a card in, paired to Home Assistant;
+    `mosquitto_sub -v -t 'securacv/+/events'`.
+  - Repro: make the room's Wi-Fi busy (a large download near the device)
+    for a few minutes, so `wifi.channel_activity` commits `channel_active`
+    rows; on the canary-wap watch `/api/events/today`. Then read
+    `/EVENTS/today.ndjson` off the card.
+  - Expected: no `events` publish and no card line names
+    `wifi.channel_activity` or `channel_active`; the canary-wap's Today sheet
+    and its live stream still show them; the egress counters'
+    `ambient_dropped` grows with them.
+  - Artifact: `docs/audit/repro/F105/ambient/`.
+- [ ] **A closed presence bundle is on the card and in Today after a reboot**
+  - Setup: a canary-wap with a card in.
+  - Repro: walk in, wait for the `active` row to close (two minutes after
+    the motion stops, or ten after it began), check `/api/events/today`,
+    then power-cycle and check it again.
+  - Expected: the closed row is listed (not `open`) with a dismiss button
+    that works, it is a line of `/EVENTS/today.ndjson`, and after the
+    power cycle the Today sheet lists it again. Its `events` publish (if a
+    broker is set) carries the close as its `timestamp`.
+  - Artifact: `docs/audit/repro/F77/closed-bundle/`.
+- [ ] **A planned restart delivers the open bundle**
+  - Setup: either device paired to Home Assistant, broker up;
+    `mosquitto_sub -v -t 'securacv/+/events'`.
+  - Repro: walk in so a presence bundle opens (the canary-wap's Today sheet
+    shows it `open`), then within a minute send `POST /api/reboot` (or the
+    canary's serial `x`).
+  - Expected: the `events` row for that state arrives before the device
+    goes offline, and the device restarts within about 3 s of the request.
+    With the broker stopped, the row is on the card after the restart and
+    the backfill sends it when the broker returns.
+  - Artifact: `docs/audit/repro/F92/planned-restart/`.
+
 ## The egress's counters and the event-id warning (F109, F82) — on-device verification
 
 Code: `firmware/canary/src/csi_event_egress.cpp` (`csi_event_egress_stats()`,
@@ -614,9 +663,11 @@ does, is in `docs/csi_developer_api.md`.
     then wait for the next health publish (once a minute).
   - Expected: the health body holds a `csi_event_egress` object whose
     `planner.live` counts the first rows, `planner.held` and
-    `planner.replayed` the outage's, and whose `dropped`, `held_dropped`,
-    `ambient_dropped` and `unsent_dropped` match any drop lines the serial
-    log printed (0 when none), and an `offline_queue` object of zeros. The
+    `planner.replayed` the outage's, and whose `dropped`, `held_dropped`
+    and `unsent_dropped` match any drop lines the serial log printed (0
+    when none), whose `ambient_dropped` counts the `wifi.channel_activity`
+    rows since boot (no line; since sweep F105 every one is dropped, up to
+    one per 5 s), and an `offline_queue` object of zeros. The
     publish arrives whole (no missing health while it is the largest yet).
   - Then take the card out, reboot, wait past the 45 s card wait, stop the
     broker, commit fourteen events, start the broker again and wait for the
@@ -858,7 +909,8 @@ are not something a host test can run. Compile is CI's. Owner: U1.
 
 - [ ] **Pairing, removal and the other mesh routes still answer as before**
   - Setup: two canary-wap boards on this firmware, each with the web UI
-    open.
+    open and signed in with its API token (Create/Join ask for it first,
+    and the confirm takes it alone since F346).
   - Repro: pair them from the web UI (Create Opera on one, Join on the
     other), confirming the code on the joiner first; rename the opera;
     clear the alerts; turn the mesh off and on again; remove the other
@@ -908,8 +960,9 @@ are not something a host test can run. Compile is CI's. Owner: U1.
 - [ ] **A reboot from the dashboard still saves the mesh's replay counters**
   - Setup: two paired canary-wap boards exchanging heartbeats for a few
     minutes.
-  - Repro: press Reboot on one (POST /api/reboot); repeat with the safe-mode
-    Retry button if a board is in safe mode.
+  - Repro: press Reboot on one (POST /api/reboot; the dashboard signed in
+    with the API token, which both reboot routes take alone since F361);
+    repeat with the safe-mode Retry button if a board is in safe mode.
   - Expected: the board answers `Rebooting...` and restarts within about
     3 s; after it boots, the pair keeps exchanging frames (the peer stays
     `connected`), with no fault on either board.
@@ -1431,7 +1484,8 @@ without Opera's re-advertising after a connect.
   - Setup: one canary-wap (FULL or DEV profile); two phones with nRF
     Connect.
   - Repro: Bluetooth > Pair; pair the first phone (confirm the six digits in
-    the web UI); while it is paired, start a scan in a room with many BLE
+    the web UI signed in with the API token first: paste it, or BOOT Tap
+    Once; F346); while it is paired, start a scan in a room with many BLE
     devices; pair the second phone and let the pairing time out without
     confirming; reject a third attempt; disconnect from the phone side.
     Then Pair again, let the first phone reach its six digits, walk it out
@@ -1498,7 +1552,8 @@ are not something a host test can run. Compile is CI's. Owner: U1.
   - Setup: one canary-wap flashed with the default FULL profile; a phone
     with nRF Connect (or the system Bluetooth pane: a phone offers a
     display and a yes/no, so it gets a Numeric Comparison); the web UI's
-    Bluetooth tab open.
+    Bluetooth tab open, signed in with the API token first (paste it, or
+    BOOT Tap Once; F346).
   - Repro: Bluetooth > Pair; connect from the phone and start bonding.
     When both screens show six digits, wait 20 s without pressing
     anything; then press "Numbers match". Repeat with a second attempt and
@@ -1575,7 +1630,7 @@ are not something a host test can run. Compile is CI's. Owner: U1.
     `"idle"`).
   - Artifact: `docs/audit/repro/F169-F170/dropped-and-state/`.
 
-## canary-wap Bluetooth: pairing mode's state, the bring-up's hand-over, the bond store, the REST answers, a tap's bring-up (F190, F167, F189, F196 Bluetooth half, F235) — on-device verification
+## canary-wap Bluetooth: pairing mode's state, the bring-up's hand-over, the bond store, the REST answers, a tap's bring-up, no pairing without the owner, a late bring-up (F190, F167, F189, F196 Bluetooth half, F235, F191, F209, F259, F260) — on-device verification
 
 Code: `firmware/projects/canary-wap/arduino/canary_wap/bluetooth_channel.cpp`
 (`start_advertising()` sets the state from `rest_state()`, so pairing mode
@@ -1593,21 +1648,41 @@ sketch's bring-up worker still registers services
 published; `StoreCallbacks::onStoreStatus()` refuses a new phone's pairing
 that finds NimBLE's bond store full, and a bond or CCCD record with no
 room, and never deletes a bond to make room;
-`apply_auth_complete()` lists a phone only when the store kept its bond;
-the first loop pass drops listed entries without a bond),
+`apply_auth_complete()` lists a phone only when the store kept its bond,
+and deletes a bond that is not authenticated (a Just Works pairing no owner
+asked for) with the radio quiet and drops its link, F191, leaving the
+owner's pairing state as it is; `refuse_unauthenticated_links()` does the
+same from the stack's record of a live link whose report never came (a
+dropped event, the pre-owner window), and `retry_kept_bonds()` asks again
+each minute for a bond the stack kept, F191's review; a passkey for the
+phone to type is shown only inside the owner's pairing mode, and outside it
+NimBLE is handed one above 999999, which it refuses, F191, and a Numeric
+Comparison outside it is answered no at once, F191's review; no pairing
+digits reach the health log; GET /api/bluetooth counts the bond store
+beside the list, `bond_store`, read again at a refused pairing and a
+dropped event, and the health log names a store full of unlisted bonds,
+F209; the first loop pass drops listed entries without a bond),
 `ble_server_dispatch.h` (`attach()` in `init()`, the channel named the
 pairing owner at the hand-over with `set_owner()`) and `bluetooth_api.h`
 (`send_doc()`: every answer serialized at its own measured length;
-Start Advertising and Pair bring the stack up on the HTTP task whenever it
-is down, `bring_up()`, but on a device saved on only once the sketch's boot
-bring-up is over, `waits_for_boot_bring_up()`, which `canary_wap.ino`'s
-finalize stage ends with `bluetooth_channel::boot_bring_up_finished()`
-after the Scout's own NimBLE init; before it, and while another bring-up
-runs, they answer 503, `send_boot_bring_up_pending()` /
-`send_bring_up_refused()`: "still starting" once the sketch has started its
-boot bring-up, `bluetooth_channel::boot_bring_up_started()`, set by
-`bringup_worker_started()` as the gate opens, and "has not started yet"
-only before that).
+Enable, Start Advertising, Pair and a settings POST turning Bluetooth on
+bring the stack up on the HTTP task whenever it is down, `bring_up()`, but
+only once the sketch's boot bring-up is over, saved on or off (F235's
+review; F259 for Enable, the settings POST and a device saved off),
+`waits_for_boot_bring_up()`, which `canary_wap.ino`'s finalize stage ends
+with `bluetooth_channel::boot_bring_up_finished()` after the Scout's own
+NimBLE init; before it, and while another bring-up runs, they answer 503,
+`send_boot_bring_up_pending()` / `send_bring_up_refused()`: "still
+starting" once the sketch has started its boot bring-up,
+`bluetooth_channel::boot_bring_up_started()`, set by
+`bringup_worker_started()` as the gate opens, "not ready yet; try again"
+only before that (it promised a start until F259's review), and in safe
+mode, which the sketch marks with
+`bluetooth_channel::skip_boot_bring_up_for_safe_mode()`, that Bluetooth
+stays off; a stack a tap brings up after the boot bring-up left it down
+carries none of the worker's services, which the worker reports with
+`boot_service_registered()`, and GET /api/bluetooth's `late_bring_up` and
+`services_missing` and one health-log line say so, F260).
 Host-tested (`tests_host/test_bluetooth_commands_wap.cpp`, over a NimBLE
 stand-in that models NimBLE-Arduino's 3-bond store and 8-record CCCD
 store, its full-store event at a Pairing Request, its default evictions
@@ -1615,7 +1690,9 @@ store, its full-store event at a Pairing Request, its default evictions
 advertising start that walks the server's services; the bring-up worker,
 the loop and a reader on threads under TSAN, `make tsan-bt-commands`) and
 held by `firmware/scripts/check_wap_loop_commands.py` rules BV4, BV5, BV6,
-BV7 and C3; a phone's real pairing, NimBLE's real stores, the real
+BV7, BV9, BV10 and C3; a phone's real pairing, NimBLE's real stores and security
+manager (that it refuses a passkey above 999999 and times that pairing out
+is read from NimBLE-Arduino 2.3.8 and 2.5.0's `ble_sm.c`, not run), the real
 bring-up worker and the real join window are not something a host test can
 run (the stand-in's NimBLE init failure is the retryable kind; one past the
 controller's init stays failed on a device until a reboot). Compile is CI's.
@@ -1694,6 +1771,55 @@ Owner: U1.
     stay listed and reconnect encrypted (before the F189 review NimBLE's
     default unpaired the oldest other phone to make room).
   - Artifact: `docs/audit/repro/F189/cccd-store/`.
+- [ ] **A pairing no owner asked for keeps no bond, and a passkey shows only in pairing mode (F191, F209)**
+  - Setup: the FULL build after `DELETE /api/bluetooth/paired/all`;
+    Bluetooth on, pairing mode not started; nRF Connect on a phone, its
+    pairing IO capability settable (Settings: "No Input No Output",
+    "Display Only", "Keyboard Only"), or a second ESP32 running a NimBLE
+    client with that IO capability and bonding on; the web UI's Bluetooth
+    tab and the health log open; for the last part, a device updated from a
+    build before F191 that holds Just Works bonds, if one can be arranged.
+  - Repro: (a) as "No Input No Output" (then "Display Only"), connect and
+    bond; read `GET /api/bluetooth` and `GET /api/bluetooth/paired`; repeat
+    three times, then pair a phone the normal way (Pair, confirm the six
+    digits); once more as "No Input No Output" with pairing mode started
+    first. (b) As "Keyboard Only", connect and bond with pairing mode off;
+    then start pairing mode and bond again; read `GET /api/bluetooth` while
+    the phone asks for the digits, and `GET /api/logs`. (b2) With the
+    phone's default IO capability (a display with a yes/no), connect and
+    bond with pairing mode off, then again a minute after a completed
+    pairing, and once in pairing mode with `allow_pairing` turned off. (c)
+    On the updated device, read `GET /api/bluetooth` after boot, then Clear
+    all.
+  - Expected: (a) each Just Works link drops within a second of its bond (the
+    phone's pairing fails or the link ends), the health log has `BLE pairing
+    refused: an unauthenticated bond was deleted and its link dropped`,
+    nothing is listed, `bond_store` reads `held` 0 and `unlisted` 0, and the
+    normal pairing after the three succeeds and is listed (before F191 the
+    three bonds stayed, unlisted, and the fourth pairing was refused with `BLE
+    pairing refused: the bond store is full`); the one in pairing mode leaves
+    the web UI in pairing mode (until F191's review it read failed and ended
+    it); if a line reads `...kept by the stack (retried each minute; Clear all
+    deletes it)...`, a minute later the log has `BLE unauthenticated bond the
+    stack kept: deleted on a retry` and `bond_store` reads 0 again. (b) with
+    pairing mode off the phone asks for digits the WAP shows nowhere (no PIN
+    box, no `pin` in `GET /api/bluetooth`), the pairing fails on the phone
+    within about 30 s whatever is typed, and the health log has `BLE pairing
+    passkey not shown: no pairing mode (Pair in the web UI first)`; in pairing
+    mode the PIN box shows six digits, typing them bonds and lists the phone,
+    and the health log's `Pairing PIN displayed` line carries no digits
+    (before F191 the digits showed and were logged in or out of pairing mode).
+    (b2) each of the three comparisons is refused on the phone at once, the
+    web UI shows no digits and no confirm, `GET /api/bluetooth` has no `pin`,
+    and the health log counts it in the `not shown` line (until F191's review
+    the digits waited for a confirm, and one within a minute of a completed
+    pairing, once confirmed, bonded and listed the phone even with
+    `allow_pairing` off). (c)
+    `bond_store` counts the old bonds as `unlisted` and, when they fill the
+    store, the health log has `BLE bond store full with bonds the paired list
+    does not show: new pairings are refused until Clear all`; nothing is
+    deleted until Clear all, which empties the store.
+  - Artifact: `docs/audit/repro/F191/no-owner-no-bond/`.
 - [ ] **The REST answers are whole**
   - Setup: the FULL build; a device name of 32 characters with quotes and
     backslashes (`POST /api/bluetooth/settings`); a scan in a room with
@@ -1704,7 +1830,7 @@ Owner: U1.
   - Expected: every answer parses as one JSON document with nothing after
     it; the name reads back as set.
   - Artifact: `docs/audit/repro/F196/bt-answers/`.
-- [ ] **Start Advertising and Pair wait for the boot bring-up, then bring a refused stack up (F235)**
+- [ ] **Every tap waits for the boot bring-up, then brings a refused stack up (F235, F259)**
   - Setup: one canary-wap flashed with the default FULL profile, Bluetooth
     saved on (the default), Wi-Fi credentials stored; a serial console at
     boot; the web UI's Bluetooth tab open; a phone with a BLE scanner (nRF
@@ -1727,10 +1853,17 @@ Owner: U1.
     `init_fail_reason`), tap Start Advertising once before `BLE bring-up
     finalized` if quick enough, then twice after it; free the heap if the
     setup allows and tap Start Advertising, timing how long a second
-    browser tab's `GET /api/status` waits meanwhile; then tap Pair.
+    browser tab's `GET /api/status` waits meanwhile; then tap Pair. (c)
+    Repeat (a) with the Bluetooth card's Enable toggle and with `POST
+    /api/bluetooth/settings {"enabled": true}` in place of the two taps,
+    first with Bluetooth saved on, then saved off (`POST
+    /api/bluetooth/disable` and a reboot); and once with `{"auto_advertise":
+    true}` alone in the join window.
   - Expected: (a) before `Initializing Bluetooth Low Energy` (the gate
-    shut) each tap answers 503 `Bluetooth has not started yet; it starts
-    once Wi-Fi setup is done or within five minutes (never in safe mode)`;
+    shut) each tap answers 503 `Bluetooth is not ready yet; try again once
+    Wi-Fi setup is done or within five minutes (never in safe mode)` (until
+    F259's review it said Bluetooth "starts", which a device saved off,
+    where the boot bring-up leaves Bluetooth off, never did);
     from the gate's opening, a moment before that line, until `[OK]
     Bluetooth initialized` (the worker's init running) 503 `Bluetooth is
     still starting; try again in a moment`; the web UI alerts each text.
@@ -1743,8 +1876,9 @@ Owner: U1.
     review a tap in the join window brought NimBLE up on the HTTP task and
     advertised at once); the console shows `[OK] Bluetooth initialized`,
     never `Bluetooth init failed` with no reason after such a tap; in safe
-    mode every tap answers the "has not started yet" text and none ever
-    brings Bluetooth up. (b) a tap after `[--] Bluetooth init failed` and
+    mode every tap answers 503 `Bluetooth stays off in safe mode; it starts
+    after a normal boot` and none ever brings Bluetooth up (until F259 it
+    said Bluetooth would start within five minutes). (b) a tap after `[--] Bluetooth init failed` and
     before `BLE bring-up finalized` answers 503 `Bluetooth is still
     starting; try again in a moment` (until wave 16's verify it was told
     Bluetooth had not started yet); each tap after `finalized` while
@@ -1755,8 +1889,36 @@ Owner: U1.
     Bluetooth card's subtitle goes back to `BLE connectivity` without a
     reload, and the other tab's request waits for that bring-up (seconds),
     as it does behind an Enable tap; the Pair tap after it starts pairing
-    mode.
+    mode. (c) Enable and the `{"enabled": true}` POST answer exactly as the
+    two taps do in each window, saved on or off (before F259 each brought
+    NimBLE up on the HTTP task at once and answered 200, as did Start
+    Advertising and Pair on a device saved off); after `BLE bring-up
+    finalized` a saved-off device's Enable answers `Bluetooth enabled` and
+    brings nothing up (the worker's init already did), and the
+    `auto_advertise`-only POST answers `Settings updated` in every window.
   - Artifact: `docs/audit/repro/F235/tap-brings-up/`.
+- [ ] **A late bring-up says what it left out (F260)**
+  - Setup: the FULL build; a serial console at boot; nRF Connect; a boot
+    state that leaves the internal heap under the bring-up guard's floor,
+    if one can be arranged (the same as the row above's part (b)).
+  - Repro: boot normally and read `GET /api/bluetooth`; list the WAP's GATT
+    services in nRF Connect. Then boot into the refused bring-up
+    (`[--] Bluetooth init failed (reason recorded for self-test)`), wait for
+    `BLE bring-up finalized`, free the heap if the setup allows and tap
+    Start Advertising; read `GET /api/bluetooth` and `GET /api/logs`, and
+    list the services again; tap Pair and read the log once more; reboot
+    normally and read `GET /api/bluetooth`.
+  - Expected: after the normal boot `"late_bring_up": false` and
+    `"services_missing": []`, and the GATT browser lists the status service
+    (and on FULL Opera's). After the late tap `"late_bring_up": true` and
+    `"services_missing"` names `ble_status` (and `ble_discovery` unless the
+    console showed `[OK] BLE Discovery initialized` on that boot), the
+    health log has `BLE brought up after the boot bring-up: these services
+    are off until a reboot` once, with the same names, the GATT browser
+    lists no status service (nothing is registered on the running server),
+    and no crash follows; the Pair tap adds no second line; after the
+    normal reboot both read false and [] again.
+  - Artifact: `docs/audit/repro/F260/late-bring-up/`.
 
 ## canary-wap Chirp status reads and the unset-clock refusal (F138 Chirp half, F146) — on-device verification
 
@@ -2037,6 +2199,50 @@ window). Compile is CI's. Owner: U1.
     confirmation, and sent an ACK for the local confirm; before F270 a frame
     replayed just after A's 5-minute filter reset came back unsuppressed.
   - Artifact: `docs/audit/repro/F269/suppressed-stops/`.
+
+## canary-wap Chirp: the cooldown tiers reset after 24 quiet hours and outlive a disable (F193) — on-device verification
+
+Code: `firmware/projects/canary-wap/arduino/canary_wap/chirp_channel.cpp`
+(`expire_stale_tiers()` resets the tiers when `now - last_chirp_ms` passes
+`COOLDOWN_RESET_MS`, 24 h, on every `update()` pass, on or off, and before a
+send; `enable()` keeps them; the count stops at 255) and `mesh_network.h`
+(`CooldownState`). The tiers live in RAM: a reboot clears them. Host-tested
+(`tests_host/test_chirp_commands_wap.cpp`:
+`the_tiers_reset_24_quiet_hours_after_the_last_send`,
+`a_send_that_ends_a_quiet_day_counts_from_tier_1`,
+`a_disable_keeps_the_tiers`, `the_tier_count_stops_at_255`,
+`the_tiers_count_across_the_uptime_wrap`, `a_mute_beside_the_kept_tiers`,
+`the_votes_beside_the_kept_tiers`,
+`the_tiers_let_9_out_on_the_first_day_then_6`). Compile is CI's. Owner: U1.
+
+- [ ] **Turning Chirp off and on keeps the cooldown; a reboot clears it**
+  - Setup: one canary-wap with a GPS fix (the clock set), Chirp on for ten
+    minutes, the web UI open on Community > Chirp.
+  - Repro: send a chirp; send a second when the 5-minute countdown ends;
+    turn Chirp off and on at once; press Send; wait ten minutes and press
+    Send; press Send again when the countdown ends. Then power-cycle the
+    board, turn Chirp on, wait ten minutes and send.
+  - Expected: after the off and on, `GET /api/chirp` reads `"state":"cooldown"`
+    with `"cooldown_tier":2` and a new session emoji; the first press is
+    refused `presence_required`; the press ten minutes on is refused
+    `cooldown` with about 5 minutes left, tier 2 (before F193 it went out,
+    tier 1); the send when the countdown ends goes out at tier 3, and before
+    the power cycle the health log's `chirp sent` lines end `tier 1)`,
+    `tier 2)`, `tier 3)`. After the power cycle the health log starts over
+    (with an SD card in, those lines stay in the previous boot's
+    `/HEALTH/boot_<count>.jsonl`): `GET /api/chirp` reads
+    `"cooldown_tier":0`, the send goes out at tier 1, and its `chirp sent`
+    line ends `tier 1)`.
+  - Artifact: `docs/audit/repro/F193/off-on-keeps-tier/`.
+- [ ] **24 hours with no send reset the tiers, on or off**
+  - Setup: as above.
+  - Repro: send three chirps, each when the last countdown ends (tier 3);
+    turn Chirp off; read `GET /api/chirp` 23 hours later and again 25 hours
+    after the third send; turn Chirp on, wait ten minutes and send.
+  - Expected: at 23 hours `"cooldown_tier":3`; at 25 hours
+    `"cooldown_tier":0` and `"last_chirp_sent_ms":0` with the channel still
+    `disabled`; the send goes out at tier 1, with a 5-minute countdown.
+  - Artifact: `docs/audit/repro/F193/quiet-day-resets/`.
 
 ## canary-wap: the fleet scan keeps the shortest adverts that fit, the identity answers escape what a person typed, the device name holds no control byte (F211, F212, F226) — on-device verification
 
@@ -3259,6 +3465,218 @@ the compile is CI's; nothing here ran on a device or in a browser. Owner: U1.
     `docs/audit/repro/F341/flagship-receipt/`; step 7:
     `docs/audit/repro/F340/refused-token/`).
 
+## canary-wap: after setup the API token alone moves the network over HTTP, re-keys the vault, confirms a pairing and, the firmware install aside, reboots the unit (F334, F345, F333, F335, F346, F361) — on-device verification
+
+Host-tested (`test_wifi_authority`, `test_receipt_grant`,
+`test_bluetooth_commands_wap`, `test_mqtt_reinit`, `test_provisioning_logic`,
+`dashboard_gates.test.js`); nothing here has run on a device. Every row runs
+over plain HTTP, the stock WAP's posture after setup: `canary_wap.ino`'s
+certgen guard tests for `mbedtls/x509write_crt.h`, which no installed core
+ships, so no stock WAP serves HTTPS (F15). An HTTPS variant of any row is
+blocked until a WAP serves HTTPS. Code: `wifi_change_authorize()`, the
+Forget, Disconnect, reboot and safe-mode-retry wrappers,
+`handle_qr_scan_start()`, `handle_wifi_forget()`,
+`ble_improv_door_should_open()`, `qr_auto_scan_tick()`, `qr_scan_task_fn()`
+(its per-frame `provisioning_logic::scan_window_open()`),
+`wifi_store_rotate_if_due()`,
+`handle_vault_key_set_auth()` and `handle_mesh_pair_confirm_auth()` in
+`canary_wap.ino`; `bt_bearer_gated` and `handle_bluetooth_status()` in
+`bluetooth_api.h`; `csi_mqtt::login_clear()`; the sign-in, the Wi-Fi,
+vault, Bluetooth, opera and device cards in `web_ui.h`. Owner: U1.
+
+- [ ] **A session moves no network**
+  - Setup: a FULL WAP on the home Wi-Fi, setup complete; a laptop on the LAN; the API token from the recovery kit.
+  - Repro:
+    1. `curl -s http://<wap>/` and read `cv_pair` from the Open dashboard link.
+    2. `curl -X POST http://<wap>/api/wifi/connect -H 'Content-Type: application/json' -d '{"token":"<cv_pair>","ssid":"TEST","password":"testtest"}'`.
+    3. Repeat with the `cv_session` cookie and with `-H 'Authorization: Bearer <token>'`.
+    4. Repeat for `/api/wifi/ap-only`, `/disconnect` and `/forget`.
+    5. `POST /api/wifi/qr-scan` with a pair token.
+  - Expected: the pair token and the cookie get 401 with `WWW-Authenticate`, and `GET /api/wifi` still shows the home network; the bearer gets 200; qr-scan answers 404 `{"ok":false}` (on a camera build; without `FEATURE_QR_PROVISION` the route is not registered and IDF answers its own 404).
+  - Artifact: `docs/audit/repro/wap-network-authority/http/`.
+- [ ] **The dashboard asks for the token once, and catches a mistyped one**
+  - Setup: a browser signed in only by the landing.
+  - Repro: Settings → Wi-Fi shows the token note. Type a network and press Connect. In the sign-in, paste a wrong `cv_` token, then the kit's token 3 s later (the wrong one is a strike: a 2 s backoff for this address), then press Connect again.
+  - Expected: the sign-in overlay with no 'Failed:' alert and the SSID kept; the wrong token reads 'Invalid or expired token. Please re-enter.'; the right one signs in; Connect joins.
+  - Artifact: a screen recording.
+- [ ] **On the recovery portal, Connect asks for the token or one BOOT tap**
+  - Setup: a FULL WAP set up on a test router; a phone; the recovery kit.
+  - Repro:
+    1. Power the test router off until the WAP raises `SecuraCV-wap-XXXX`.
+    2. Join it with its key, open `http://192.168.4.1/`, then Open dashboard, then Settings → Wi-Fi.
+    3. Pick a reachable network and press Connect.
+    4. Choose Use BOOT Tap Once, short-tap BOOT, and press Connect again.
+    5. Repeat with the kit's token pasted.
+    6. From the phone, `curl` `/api/wifi/connect` with the landing cookie.
+  - Expected: the first Connect brings the sign-in; the tap signs in within about 2 s; the second Connect joins; the cookie-only curl gets 401.
+  - Artifact: `docs/audit/repro/wap-network-authority/recovery-portal/`.
+
+- [ ] **A session cannot re-open the setup door (F345)**
+  - Setup: a FULL WAP on the home Wi-Fi with a broker login saved; nRF Connect on a phone; the landing cookie and the API token on a laptop.
+  - Repro:
+    1. `curl -X POST http://<wap>/api/wifi/forget` with the cookie, then `GET /api/logs`.
+    2. The same POST with `-H 'Authorization: Bearer <token>'`, then `GET /api/logs` and `GET /api/mqtt/config`.
+    3. On a second unit, hold BOOT 10 s with no token.
+  - Expected, cookie: 401; the device stays joined; no 'Setup door open' line; no Improv service in nRF Connect.
+  - Expected, bearer: 200 with `broker_login_cleared:true`; the 'Setup door open' line appears and the Improv service shows; user '' and `password_set:false`, with the host kept.
+  - Expected, the hold: it restarts into first-boot setup with the door open.
+  - Artifact: `docs/audit/repro/wap-network-authority/forget/`.
+
+- [ ] **A standalone camera unit takes no code (F333)**
+  - Setup: an unprovisioned camera WAP, its boot scan running (serial attached); a second phone showing a `WIFI:` code.
+  - Repro: choose standalone in the wizard, then at once hold the code to the lens for 3 minutes; read serial and `GET /api/wifi`.
+  - Expected: no chirp and still ap_only, though the window running at the choice had up to 60 s left (it ends at its next frame); no new window starts. Hold BOOT 10 s and show the code again: it joins.
+  - Artifact: `docs/audit/repro/wap-network-authority/standalone-scan/`.
+- [ ] **After Forget a code carries no login (F333)**
+  - Setup: a camera WAP with a broker login saved; a display minting an add-a-canary code for another broker; that broker's log open.
+  - Repro: `POST /api/wifi/forget` with the bearer, then show the display's code.
+  - Expected: the WAP joins; `GET /api/mqtt/config` shows the display's host, user '' and `password_set:false`; the broker logs a CONNECT with no username. Type the login on /mqtt with the session: `password_set:true`, and the next CONNECT carries it.
+  - Artifact: `docs/audit/repro/wap-network-authority/forget-login/`.
+- [ ] **A phone's scan ends when setup does (F334, the second review)**
+  - Setup: an unprovisioned camera WAP (`FEATURE_QR_PROVISION`) in first-boot setup, serial attached; a phone on its SoftAP with the wizard open at `http://192.168.4.1/`; a second phone showing a `WIFI:` code for a test network.
+  - Repro:
+    1. In the wizard, choose to scan a code with the camera; the scan starts.
+    2. Within 60 s, open the wizard in a second tab and choose standalone.
+    3. At once hold the `WIFI:` code to the lens for 60 s; then read serial, `GET /api/wifi` and `GET /api/logs`.
+  - Expected: the first tab's scan card says it stopped; no success chirp and no "WiFi credentials applied via QR scan" line; `GET /api/wifi` still reads AP-only with no network stored. Repeat with the window ended by a join through the Bluetooth setup door instead of step 2: the same, and the unit stays on the door's network.
+  - Artifact: `docs/audit/repro/wap-network-authority/phone-scan-after-setup/`.
+- [ ] **A network a session saved before the update (F334's known limit)**
+  - Setup: a FULL WAP on the previous release, set up on the home router (plain HTTP); a second test router `EvilNet`; a laptop; the recovery kit.
+  - Repro:
+    1. `curl -s http://<wap>/` and read `cv_pair` from the Open dashboard link.
+    2. `curl -X POST http://<wap>/api/wifi/connect -H 'Content-Type: application/json' -d '{"token":"<cv_pair>","ssid":"EvilNet","password":"<its key>"}'`, and wait for the join.
+    3. Move it back to the home router with the dashboard's Connect, then update it to this release.
+    4. Power the home router off and wait 3 minutes (two 30 s retries that find no network, then the next); from a laptop on `EvilNet`, read `GET /api/status` and `GET /api/logs` with the bearer.
+    5. Power the home router on, join the WAP again, press Remove credentials with the API token, set the unit up again on the home router, and repeat step 4.
+  - Expected: step 4: the log reads "Network not found twice - trying the next saved network" naming `EvilNet`, and the unit is on `EvilNet` with `saved_networks` 2, no request made. Step 5: `saved_networks` reads 1 after setup, and with the home router off the unit joins nothing else.
+  - Artifact: `docs/audit/repro/wap-network-authority/saved-ring/`.
+
+- [ ] **canary-wap: a session registers no vault key (F335)**
+  - Setup: one canary-wap FULL build with camera and SD (FEATURE_VAULT_SNAPSHOT), set up on the home Wi-Fi (plain HTTP, the stock posture); its API token from the recovery kit; a computer browser that loaded `http://canary-<suffix>.local/` (holds `cv_session`); a second host B on the LAN with curl; an X25519 key from `unseal_snapshot.py gen-key`.
+  - Repro:
+    1. `curl -s -w '%{http_code}\n' -H "Cookie: cv_session=<hex>" -H 'Content-Type: application/json' -d '{"pubkey":"<64 hex>"}' http://<sta-ip>/api/vault/key`.
+    2. Read `GET /api/vault/status` with the cookie.
+    3. Repeat the POST with `-H "Authorization: Bearer <token>"`.
+    4. On the session-only dashboard: Camera, vault card, paste the key, Register. Press Not now. Then sign in by pasting a wrong `cv_` token, then the right one 3 s later, and Register again.
+    5. From the laptop, send one wrong bearer to the POST, then at once the right bearer from the laptop and from host B.
+  - Expected:
+    - Step 1 answers 401, and has_key/key_id are unchanged.
+    - The bearer answers 200 with a new key_id.
+    - The dashboard opens the sign-in with no 'Key registration failed' alert and the key still in the box; Not now returns to the dashboard.
+    - The wrong token is refused at the sign-in ('Invalid or expired token'); the right one signs in, and Register answers ok.
+    - Step 5: the laptop's right bearer answers 429 with Retry-After for about 2 s; host B answers 200 at once (F343).
+  - An HTTPS variant is blocked until a WAP serves HTTPS (no stock core ships mbedtls/x509write_crt.h).
+  - Artifact: `docs/audit/repro/F335/`.
+
+- [ ] **canary-wap: a session confirms no pairing and reads no passkey (F346)**
+  - Setup:
+    - two canary-wap FULL units on one LAN, set up, plain HTTP (the stock posture);
+    - a phone with the system Bluetooth pane (Numeric Comparison);
+    - a second phone or computer with nRF Connect set to IO capability KeyboardOnly (Passkey Entry);
+    - a computer browser that loaded `http://canary-<suffix>.local/`;
+    - the API token from the recovery kit; curl on the laptop and on a second host B.
+  - Repro:
+    1. On the session-only dashboard, Bluetooth: press Start Pairing (the sign-in comes up first), press Not now, press Start Pairing again, paste a mistyped `cv_` token (refused), wait 3 s, paste the right token, then press Start Pairing. Pair the phone and press Numbers match while the phone still waits.
+    2. Reload the page (session only) and pair again from the phone. While the digits show, send `curl -s -w '%{http_code}\n' -H "Cookie: cv_session=<hex>" -H 'Content-Type: application/json' -d '{"pin":<digits>}' http://<sta-ip>/api/bluetooth/pair/confirm`. On a fresh attempt, repeat with `-H "Authorization: Bearer <token>"`.
+    3. With the KeyboardOnly peer: read `GET /api/bluetooth` with the cookie and with the bearer, then `GET /api/logs`, and the SD /HEALTH file after a reboot.
+    4. Opera: Create on WAP 1 and Join on WAP 2 (each asks for its token first). Send a cookie-only `POST /api/mesh/pair/confirm` to each, then confirm from both signed-in dashboards.
+    5. After a completed pairing, read the session-only page's PIN box.
+    6. From the laptop, send one wrong bearer to a confirm, then at once the right one from the laptop and from host B.
+  - Expected:
+    - Step 1: the mistyped token is refused at the sign-in ('Invalid or expired token'); the pairing bonds and the phone is listed.
+    - Step 2: the page shows the digits with the "Don't match" copy. The cookie-only confirm answers 401, the phone's pairing does not complete, and the paired list is unchanged. The bearer's confirm bonds.
+    - Step 3: the cookie answer has `"pin_hidden":true` and no digits; the bearer's answer has `pin`. 'Pairing PIN displayed' has an empty detail in both logs.
+    - Step 4: the cookie-only confirm answers 401, with no peer added and no 'Completing…'. The signed-in confirms list both peers.
+    - Step 5: '------' and 'Paired.', with no PIN prompt.
+    - Step 6: the laptop gets 429 with Retry-After for about 2 s, and host B gets 200 (F343).
+  - An HTTPS variant is blocked until a WAP serves HTTPS.
+  - Artifact: `docs/audit/repro/F346/`.
+
+- [ ] **A session's reboot restarts nothing (F361)**
+  - Setup: a FULL WAP set up on the home Wi-Fi (plain HTTP); a laptop with
+    the landing cookie and the API token; a browser that loaded
+    `http://canary-<suffix>.local/` (a session only). For step 5, a unit
+    flashed with a release older than the published signed one.
+  - Repro:
+    1. `curl -s -w '%{http_code}\n' -X POST -H "Cookie: cv_session=<hex>" http://<sta-ip>/api/reboot`,
+       then `GET /api/status` with the cookie (its uptime).
+    2. The same POST with `-H "Authorization: Bearer <token>"`.
+    3. Repeat both against `http://<sta-ip>/api/safe-mode/retry`.
+    4. On the session-only dashboard: Settings → Device, Reboot Device,
+       confirm. Paste the token in the sign-in, then Reboot Device again.
+    5. On the older unit, `curl -s -w '%{http_code}\n' -X POST -H "Cookie:
+       cv_session=<hex>" http://<sta-ip>/api/ota/install` (that unit's
+       landing cookie), then poll `GET /api/ota/status` and `GET
+       /api/status` with the cookie.
+    6. On a second older unit, with a test broker (Mosquitto, any login
+       accepted) on the laptop: `curl -s -w '%{http_code}\n' -X POST -H
+       "Cookie: cv_session=<hex>" -H 'Content-Type: application/json' -d
+       '{"enabled":true,"host":"<laptop-ip>","port":1883,"user":"x","password":"x"}'
+       http://<sta-ip>/api/mqtt/config`; once the bridge connects,
+       `mosquitto_pub -h <laptop-ip> -t '<prefix>/<device id>/update/cmd'
+       -m install` (the topic is the update entity's `cmd_t` in its
+       discovery message), then poll `GET /api/status` with the cookie.
+  - Expected: the cookie-only POSTs answer 401 and the uptime keeps
+    counting; the bearer's answer 200 and the unit restarts; the device
+    card shows "Rebooting this Canary takes the API token…"; the first
+    dashboard press brings the sign-in with no "Rebooting…" alert, and the
+    second says "Rebooting…" and the unit restarts. Step 5 answers 200 and
+    the unit restarts into the published release: the one restart a session
+    still makes, by design here, and only into a newer signed image. Run it
+    again on the updated unit: `GET /api/ota/status` reads
+    `"update_available":false` and the uptime keeps counting. Step 6: the
+    save answers 200, the health log reads "Firmware install requested from
+    Home Assistant", and the unit restarts into the published release, the
+    same install reached through a broker the session chose.
+  - Artifact: `docs/audit/repro/F361/`.
+
+## canary-wap after a failed provisioning (F336) — on-device verification
+
+Code: `provision_device()`, the `if (!provision_device())` block in
+`setup()`, `resolve_ap_password()`, `wifi_init_provisioning()`,
+`ble_improv_door_should_open()` and `factory_reset_by_hold()` in
+`canary_wap.ino`. Nothing here is host-tested: no host harness compiles
+`setup()` or the radio. The release and debug lines compile in CI (the FULL
+legs and the DEV profile gate). Expected values are from the code as read;
+this row is what decides them. Owner: U1.
+
+- [ ] **A release WAP whose settings storage refuses its identity serves no web page, says so, and recovers with a clean install**
+  - Setup: a canary-wap board and the `canary-wap-default` image; ESP-IDF's
+    `nvs_partition_gen.py` and `esptool.py`; a serial monitor (either
+    flasher's console); a phone with the SecuraCV app (or any Improv
+    client) and a Wi-Fi scanner app; a laptop with `curl` and `dns-sd` (or
+    `avahi-browse`). Two images for the `nvs` partition (`0x9000`, size
+    `0x5000`, `default_8MB.csv`): (a) a `filler` namespace of blobs that
+    leaves no room for another namespace (the key store's session cannot
+    open), and (b) a `securacv` namespace holding a 32-byte `privkey` and no
+    `api_tkn`, plus filler so the token's put is refused.
+  - Repro: for each image, flash the release image, `esptool.py write_flash
+    0x9000 <image>`, and reset with the console open. Read the console.
+    Scan the air for two minutes and record every network the board's MAC
+    broadcasts, its security, and whether a client that joins gets an
+    address. `curl -m 5` ports 80 and 443 on every address the board holds.
+    On image (b), open the app's Bluetooth setup door and give it the home
+    Wi-Fi; record what the phone shows, whether the board appears in the
+    router's client list, what `dns-sd -B _securacv._tcp` lists, and whether
+    port 80 answers on the board's home address. Then hold BOOT 10 s,
+    release, and record whether the next boot provisions. Last, run a clean
+    install from a flasher and record whether that boot provisions.
+  - Expected: the console prints `[!!] PROVISIONING FAILED - storage refused
+    the identity; no web server this boot. Reflash with a clean install
+    (full erase)` and does not halt; nothing answers on 80 or 443 on any
+    address. No network named for the Canary under its own key is
+    broadcast. Because `WiFi.mode(WIFI_AP_STA)` runs before the fail-closed
+    return, the radio may broadcast an access point the firmware never
+    configured (IDF's default open `ESP_XXXXXX`, since these images leave the
+    driver no stored config). Record its name, security and what answers on
+    it: DHCP alone is the expected worst case, and anything more is a
+    finding. On image (b) the setup door's join may complete and mDNS may
+    advertise `_securacv._tcp` on port 80 with nothing behind it; record what
+    the phone says when its claim fails. The BOOT hold keeps the key and token
+    rows, so its next boot may or may not provision: record which. The clean
+    install provisions, under a new device id.
+  - Artifact: `docs/audit/repro/F336/failed-provisioning/`.
+
 ## Canary Nightlight: side turns, the tumble's Startle, the hop (F250, F242, F244, F279, F285) — on-device verification
 
 Code: `firmware/projects/canary-display/src/hal/display_1in47.cpp`
@@ -3514,7 +3932,9 @@ WAP it would most likely mean a session somewhere never ended.
   - Setup: the same image (the vault is compiled in with the camera and the
     PDM mic), on USB power as in the first row; a vault recipient public
     key.
-  - Repro: `POST /api/vault/key` with the key, `POST /api/vault/config`
+  - Repro: `POST /api/vault/key` with the key and `-H "Authorization: Bearer
+    <token>"` over `http://` (a session alone is refused since F335),
+    `POST /api/vault/config`
     turning `t3_smoke` on, then `DELETE /api/vault/key`. Wait a minute after
     each (the loop keeps persisting the chain meanwhile), then reboot as in
     the first row.

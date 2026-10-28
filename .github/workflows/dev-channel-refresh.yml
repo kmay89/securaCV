@@ -1,0 +1,164 @@
+# Catch the rolling dev channel (fw-dev-latest) up to stable, now.
+#
+# A Canary on the dev update channel polls
+# releases/download/fw-dev-latest/manifest-<product>.json, and both flashers'
+# dev toggle reads fw-dev-latest/manifest-flash.json. Until 2026-10-27 only a
+# -dev.N / -rc.N firmware release wrote those, none had ever been cut, and the
+# dev channel held no per-product manifest (every dev unit 404'd, so none ever
+# updated) and a 2.4.15 flash catalog under stable 2.4.17. Every firmware
+# release now brings it up to stable itself; this button is the same rule on
+# demand, for the catch-up and for a release whose refresh failed.
+#
+# .github/scripts/dev_channel.py does the deciding and the copying, the same
+# script firmware-release.yml runs: the source release's channel manifests
+# are copied, byte for byte, where fw-dev-latest carries something older,
+# none at all, or the same version in other bytes (a bring-up build of that
+# version, which the tagged catalog replaces), and a newer dev build is left
+# alone. Pressing it twice writes nothing the second time, unless a bring-up
+# at the source's version landed in between.
+#
+# The source is releases/latest unless the `source` input names a fw-v* tag.
+# That input finishes a dev or rc release whose own dev-channel step failed,
+# without rebuilding anything: releases/latest is never that prerelease, and
+# re-running the release's job is not the way (a dispatched release's re-run
+# stops at its tag-exists check; a pushed tag's rebuilds, re-signs and
+# re-uploads every asset of the release). The script refuses, writing
+# nothing, a tag that is not fw-v<version> and one that is not a published
+# release, whatever its version, so a mistyped tag goes red; a published
+# source below stable is not refused but writes nothing and exits 0. When a
+# race refuses a run, the refusal says how to press it again: with the same
+# `source`, or blank (when it was blank, or a new stable overtook it). The
+# input reaches the script through the environment, never spliced into the
+# command.
+#
+# What it never does: move releases/latest, delete an asset (the old dev
+# factory images stay), or make fw-dev-latest anything but a prerelease. Every
+# create and edit passes --prerelease --latest=false, and the last step fails
+# unless releases/latest is the same fw-v* tag it was before, fw-dev-latest is
+# still a prerelease, and every asset it had is still there.
+name: Refresh the dev channel (catch up to stable)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "fw-v* tag to copy from (a dev or rc release whose dev-channel step failed). Blank = releases/latest, the catch-up"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# A publisher (CI.md R3): refreshes queue in order and are never killed mid-upload.
+concurrency:
+  group: dev-channel-refresh-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Copy a release's channel manifests where the dev channel is older
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
+    timeout-minutes: 10
+    permissions:
+      contents: write  # upload to and edit fw-dev-latest
+      actions: write   # dispatch pages.yml, so the hosted flasher's mirror picks it up
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
+
+      - name: Record releases/latest and the dev channel's assets
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          latest="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
+          case "$latest" in
+            fw-v*) ;;
+            *) echo "::error::releases/latest is ${latest}, not a firmware release — fix that first (keep-firmware-latest)"; exit 1 ;;
+          esac
+          if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/fw-dev-latest" \
+              --jq '[.assets[].name] | sort | join("\n")' > "$RUNNER_TEMP/assets-before.txt"; then
+            echo "fw-dev-latest has $(wc -l < "$RUNNER_TEMP/assets-before.txt") assets"
+          else
+            : > "$RUNNER_TEMP/assets-before.txt"
+            echo "fw-dev-latest does not exist yet; it is created as a prerelease"
+          fi
+          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+          echo "releases/latest is ${latest}"
+
+      - name: Bring fw-dev-latest up to the source where it is older
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE: ${{ inputs.source }}
+        run: |
+          set -euo pipefail
+          args=(--repo "$GITHUB_REPOSITORY")
+          if [ -n "$SOURCE" ]; then
+            args+=(--source "$SOURCE")
+            echo "source: ${SOURCE} (the input)"
+          else
+            echo "source: releases/latest"
+          fi
+          python3 .github/scripts/dev_channel.py "${args[@]}"
+
+      # The hosted browser flasher reads fw-dev-latest from the site's own copy
+      # (pages.yml mirrors it: a browser cannot fetch a release asset), and an
+      # upload made with the GITHUB_TOKEN fires no event that would redeploy
+      # it. Dispatched on every press, changed or not, so a press also repairs
+      # an earlier refresh whose redeploy never ran. The ref is the default
+      # branch, the only one the github-pages environment deploys.
+      - name: Redeploy the site so the browser flasher mirrors it
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.event.repository.default_branch || 'main' }}
+        run: |
+          if gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref "$REF"; then
+            echo "- Site redeploy dispatched (\`pages.yml\` on \`${REF}\`), so the browser flasher mirrors \`fw-dev-latest\`." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::could not dispatch pages.yml — the hosted browser flasher's dev channel updates only after the next site deploy. Run Actions → pages → Run workflow (on ${REF})."
+            echo "- ⚠️ Site redeploy NOT dispatched: Actions → pages → Run workflow." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Guard — releases/latest unmoved, fw-dev-latest a prerelease, no asset lost
+        if: success() || failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST: ${{ steps.check.outputs.latest }}
+        run: |
+          set -euo pipefail
+          [ -n "$LATEST" ] || { echo "the check step did not run; nothing was written"; exit 0; }
+          now="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
+          case "$now" in
+            fw-v*) ;;
+            *) echo "::error::releases/latest is ${now}, not a firmware release: every Canary's OTA manifest URL now points at it. Re-point it (keep-firmware-latest)."; exit 1 ;;
+          esac
+          if [ "$now" != "$LATEST" ]; then
+            # Still firmware, so most likely a firmware release published
+            # meanwhile (this run passes --latest=false on every write), and
+            # this run's copy (of ${LATEST}, or of the `source` input) may have
+            # landed over its own.
+            echo "::error::releases/latest moved from ${LATEST} to ${now} during this run, most likely a firmware release publishing meanwhile. Press this button again so the dev channel carries ${now}."
+            exit 1
+          fi
+          if ! rel="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/fw-dev-latest")"; then
+            [ -s "$RUNNER_TEMP/assets-before.txt" ] && { echo "::error::fw-dev-latest is gone"; exit 1; }
+            echo "releases/latest is still ${now}; fw-dev-latest was not created"; exit 0
+          fi
+          if [ "$(jq -r '.prerelease' <<<"$rel")" != "true" ]; then
+            echo "::error::fw-dev-latest is no longer a prerelease: releases/latest could be pointed at it. Mark it a prerelease again."
+            exit 1
+          fi
+          jq -r '[.assets[].name] | sort | join("\n")' <<<"$rel" > "$RUNNER_TEMP/assets-after.txt"
+          # jq sorts by codepoint, so compare in the C locale's byte order.
+          lost="$(LC_ALL=C comm -23 <(grep -v '^$' "$RUNNER_TEMP/assets-before.txt" || true) "$RUNNER_TEMP/assets-after.txt")"
+          if [ -n "$lost" ]; then
+            echo "::error::fw-dev-latest lost assets it had before this run:"
+            echo "$lost"
+            exit 1
+          fi
+          echo "releases/latest is still ${now}; fw-dev-latest is a prerelease and kept every asset it had"

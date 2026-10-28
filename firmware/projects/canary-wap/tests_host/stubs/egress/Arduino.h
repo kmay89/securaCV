@@ -2,8 +2,8 @@
  * the real csi_event_egress.cpp and csi_event_log.cpp over the fake card in
  * ../sd_fake. A superset of ../sd_fake/Arduino.h (Serial to stdout,
  * vTaskDelay counted) with a clock the test moves: millis() returns
- * stub_millis(), so the backfill's pacing (kSendIntervalMs) is the test's
- * to drive. Listed before ../sd_fake on the include path. */
+ * stub_millis(), and delay() moves it, so the backfill's pacing
+ * (kSendIntervalMs) and the restart budget are the test's to drive. Listed before ../sd_fake on the include path. */
 #ifndef STUB_EGRESS_ARDUINO_H
 #define STUB_EGRESS_ARDUINO_H
 
@@ -40,5 +40,15 @@ inline uint32_t& stub_millis() {
   return ms;
 }
 inline uint32_t millis() { return stub_millis(); }
+/* delay() moves the clock (csi_event_egress::flush_for_restart() waits
+ * between its pumps, sweep F92), counted. */
+inline unsigned& stub_delays() {
+  static unsigned n = 0;
+  return n;
+}
+inline void delay(uint32_t ms) {
+  stub_delays()++;
+  stub_millis() += ms;
+}
 
 #endif

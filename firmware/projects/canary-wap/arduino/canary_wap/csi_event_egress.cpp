@@ -6,9 +6,12 @@
  * The decisions are csi_event_backfill.h's Planner (staged copy), the same
  * the canary PIO tree's src/csi_event_egress.cpp runs; this file is the
  * glue: the commit queue, the card through csi_event_log's adapter, the
- * wire through csi_mqtt, the NVS ceiling, and the one thing the canary does
- * not need, a RAM hold for rows the card does not keep (closed bundles,
- * backlog F77), so they wait behind the backlog instead of overtaking it.
+ * wire through csi_mqtt, the NVS ceiling, and a RAM hold for rows the card
+ * does not keep (every row while the card is not open, a row whose append
+ * failed), so they wait behind the backlog instead of overtaking it. The
+ * canary keeps the same hold beside an MQTT offline queue this device does
+ * not have. Closed bundles were the hold's main tenant until sweep F77 put
+ * them in the ring, and so on the card.
  */
 
 #include "csi_event_egress.h"
@@ -42,13 +45,15 @@ using csi_mqtt::EventSend;
 constexpr const char* SETTINGS_NS = "csi";
 
 /* Sixteen rows: one bundler tick can close all eight bundle slots at once,
- * and an ambient module commits up to once per cooldown (wifi.channel_activity:
- * 5 s by default, 1 s at its minimum), so the queue holds a full close plus a
- * stalled pass or two. A full queue means the loop task is stuck, and then
+ * so the queue holds a full close plus a stalled pass or two (ambient rows,
+ * up to one per wifi.channel_activity cooldown, no longer reach it: sweep
+ * F105). A full queue means the loop task is stuck, and then
  * dropping (counted) beats blocking the committing task, which may be the
  * NimBLE host task. */
 constexpr UBaseType_t kQueueDepth = 16;
 constexpr int         kPumpBudget = 8;   /* rows per loop pass */
+/* Between two pumps of flush_for_restart() (sweep F92). */
+constexpr uint32_t    kRestartPassMs = 10;
 /* Rows the card does not keep, waiting their turn in RAM. */
 constexpr size_t      kHeldMax    = 8;
 
@@ -128,7 +133,6 @@ struct State {
   size_t   held_count = 0;
   uint32_t held_dropped = 0;
   uint32_t held_dropped_said = 0;
-  uint32_t ambient_dropped = 0;
   uint32_t unsent_dropped = 0;   /* not on the card, body never built: gone (stats()) */
   uint32_t dropped_said = 0;
   uint32_t replay_run = 0;   /* rows replayed in the current backlog */
@@ -164,15 +168,10 @@ struct State {
    * delivery record in NVS is taken as delivered up to its tail. */
   bool front_delivered() const { return front().rec.event_id <= planner.watermark(); }
   /* Rows arrive in id order (the commit lock orders the queue), so the
-   * hold stays in id order; past kHeldMax the oldest goes. An ambient row is
-   * never held: csi_event.h's contract for CSI_CATEGORY_AMBIENT is "never
-   * persisted, drives live UI only", so one that cannot go out now is
-   * dropped (counted), and a run of them can never evict a real event. */
+   * hold stays in id order; past kHeldMax the oldest goes. No ambient row
+   * reaches it: on_committed() drops every one (sweep F105), so a run of
+   * them can never evict a real event. */
   void push(const csi_event_record_t& rec, bool fresh) {
-    if (rec.category == CSI_CATEGORY_AMBIENT) {
-      ++ambient_dropped;
-      return;
-    }
     if (held_count == kHeldMax) {
       pop();
       ++held_dropped;
@@ -193,13 +192,17 @@ State*        g_state = nullptr;
  * task: published with release/acquire. */
 QueueHandle_t s_queue = nullptr;
 uint32_t      s_dropped = 0;   /* atomic add from the committing task */
+/* Ambient rows on_committed() dropped (sweep F105): every one, since none
+ * goes to the card or the broker. Atomic add from the committing task. */
+uint32_t      s_ambient_dropped = 0;
 /* The counters as the last pump left them, for other tasks (read_stats(),
  * sweep F149): pump() publishes, the loop task being the one writer. */
 loop_snapshot::Value<Stats, loop_command_ring::PortMuxLock> s_stats_view;
 
 AppendResult WapPort::card_append(const char* line, size_t len) {
-  /* A row the card does not keep (a closed bundle, or a row from the RAM
-   * hold): refused here, so the planner takes its not-on-card route. */
+  /* A row the card does not keep (one the ring could not take, or a row
+   * from the RAM hold): refused here, so the planner takes its not-on-card
+   * route. */
   if (!row_on_card) return AppendResult{false, m_st->planner.log_size(), 0};
   const AppendResult r = csi_event_log::append_line(line, len);
   /* The append failed, so the planner takes its not-on-card route, which
@@ -243,9 +246,13 @@ Sent WapPort::send_live(const csi_event_record_t& rec) {
 
 /* A row from the card, in id order. Rows waiting in RAM below it go first.
  * A dismissal line is the owner's local record (csi_event_log.h), never
- * replayed. */
+ * replayed. Nor is an ambient line (sweep F105): on_committed() queues none
+ * now, but the egress before F105 logged every ambient ring row, so a card
+ * an older firmware wrote can hold them. Both are counted in
+ * planner.unsendable. */
 Sent WapPort::send_backfill(const csi_event_record_t& rec, bool fresh) {
   if (rec.values.dismissed != 0) return Sent::kNever;
+  if (rec.category == CSI_CATEGORY_AMBIENT) return Sent::kNever;
   if (!send_held_below(rec.event_id)) return Sent::kNotNow;
   last = csi_mqtt::publish_event_row(rec, rec.bundled_count, /*replay=*/!fresh);
   return to_sent(last);
@@ -387,18 +394,34 @@ void on_committed(uint32_t                  event_id,
                   const csi_event_values_t* values) {
   QueueHandle_t q = __atomic_load_n(&s_queue, __ATOMIC_ACQUIRE);
   if (!values || !q) return;
+  /* An ambient row (wifi.channel_activity's channel_active) goes to neither
+   * the card nor the broker (sweep F105): csi_event.h's contract for
+   * CSI_CATEGORY_AMBIENT is "never persisted, drives live UI only". Dropped
+   * here, before the queue, and counted. The privacy gate ran first, in
+   * csi_integration.cpp's hook, which still hands it to the stream snapshot;
+   * the ring keeps it for the Today sheet. */
+  if (category == CSI_CATEGORY_AMBIENT) {
+    __atomic_add_fetch(&s_ambient_dropped, 1u, __ATOMIC_RELAXED);
+    return;
+  }
   Committed c;
   memset(&c, 0, sizeof(c));
-  /* A ring row (stateless and ambient commits) is the record the SD log
-   * keeps: the ring's copy, so the line matches what csi_event_recent
-   * returns (first/last seen, bundled count). csi_event_find takes the ring
-   * lock, which the chokepoint's lock order allows under the commit lock.
-   * Logged as the original: a dismissal that reached the ring row first is
-   * its own later line (csi_event_log.h, queue_dismissal). A closed bundle
-   * never enters the ring (backlog F77): its copy is built from the commit. */
+  /* Every committed row is in the ring by now (sweep F77: closed bundles
+   * too), and the ring's copy is the record the SD log keeps, so the line's
+   * values and bundled count are what csi_event_recent returns and what the
+   * boot reload restores. csi_event_find takes the ring lock, which the
+   * chokepoint's lock order allows under the commit lock. Logged as the
+   * original: a dismissal that reached the ring row first is its own later
+   * line (csi_event_log.h, queue_dismissal). Its first/last seen are the
+   * commit, the ring row's last_seen: the events body's `timestamp` is the
+   * close for a bundle (csi_event_wire.h, docs/csi_developer_api.md), as on
+   * the canary, while the ring row spans the bundle's observations. A row
+   * the ring could not take (no memory for it) is built from the commit,
+   * and the card does not keep it. */
   if (csi_event_find(event_id, &c.rec)) {
     c.ring = true;
     c.rec.values.dismissed = 0;
+    c.rec.first_seen_ms = c.rec.last_seen_ms;
   } else {
     c.ring = false;
     c.rec.event_id      = event_id;
@@ -511,14 +534,49 @@ void pump() {
   s_stats_view.publish(stats());
 }
 
+bool flush_for_restart(uint32_t budget_ms) {
+  const uint32_t start = (uint32_t)millis();
+  QueueHandle_t q = __atomic_load_n(&s_queue, __ATOMIC_ACQUIRE);
+  /* First the queue the flush commits into, on the same clock as the rest
+   * of the budget. It is sixteen rows deep and the bundler has eight slots
+   * (csi_bundler.cpp's CSI_BUNDLER_SLOTS), but rows can already wait in it
+   * when a restart begins: a burst committed on other tasks between two
+   * loop pumps, or a restart that runs before the loop's first pump. With
+   * more than eight there, a full slot table closing onto them would find
+   * it full: the last commits would be refused, counted in `dropped`, and
+   * lost with the counter at the restart, though witnessed and in the ring
+   * (sweep F92's second review). The pump takes up to kPumpBudget rows a
+   * pass, whatever the link (onto the card, into the RAM hold, or out), so
+   * this is a pass or two. The canary does the same. */
+  while (g_state && q && uxQueueMessagesWaiting(q) > 0 &&
+         (uint32_t)((uint32_t)millis() - start) < budget_ms) {
+    pump();
+  }
+  /* Every open bundle closes and commits now, on this task: each takes its
+   * event id, and on_committed() queues it for the pump. */
+  csi_event_flush_bundles();
+  if (!g_state || !q) return true;
+  /* Then the pump, pass after pass, until nothing waits in the queue or the
+   * RAM hold, or the budget is spent: a row the card keeps goes onto it
+   * (owed across the restart) and out when the link is up; a held row goes
+   * when nothing older waits. The delay lets esp_mqtt and the network stack
+   * move the bytes and bounds the pass count by the budget. */
+  for (;;) {
+    pump();
+    if (uxQueueMessagesWaiting(q) == 0 && g_state->held_count == 0) return true;
+    if ((uint32_t)((uint32_t)millis() - start) >= budget_ms) return false;
+    delay(kRestartPassMs);
+  }
+}
+
 uint32_t watermark() { return g_state ? g_state->planner.watermark() : 0; }
 
 Stats stats() {
   Stats s = {};
   s.dropped = __atomic_load_n(&s_dropped, __ATOMIC_RELAXED);
+  s.ambient_dropped = __atomic_load_n(&s_ambient_dropped, __ATOMIC_RELAXED);
   if (g_state) {
     s.held_dropped = g_state->held_dropped;
-    s.ambient_dropped = g_state->ambient_dropped;
     s.unsent_dropped = g_state->unsent_dropped;
     s.planner = g_state->planner.stats();
   }
@@ -542,6 +600,7 @@ void test_reset() {
     s_queue = nullptr;
   }
   s_dropped = 0;
+  s_ambient_dropped = 0;
   /* A reboot clears RAM: nothing to read until the first pump. */
   s_stats_view = loop_snapshot::Value<Stats, loop_command_ring::PortMuxLock>();
 }

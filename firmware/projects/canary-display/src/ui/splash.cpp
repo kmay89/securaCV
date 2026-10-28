@@ -87,6 +87,34 @@ void remember_meeting() {
   p.end();
 }
 
+// The tallest the speech bubble grows through the first meeting (F159):
+// every line story::kHello types, the pseudonym in place of its %s the way
+// the StoryTeller expands it, laid out in the bubble by LVGL itself (its
+// width, padding and border, the label's face and wrap). A line typed is
+// never taller than the whole of it. splash_layout.h's seat() keeps the
+// bird clear of the tallest; `line` is left empty.
+int tallest_bubble(lv_obj_t* scr, lv_obj_t* bub, lv_obj_t* line,
+                   const char* subject) {
+  canary::story::StoryTeller teller;
+  if (subject != nullptr) teller.set_subject(subject);
+  int tallest = 0;
+  char buf[192];
+  char held[sizeof(buf)] = {0};  // what the label holds (set it "" below)
+  for (uint8_t k = 0; k < canary::story::kHello.n; ++k) {
+    const canary::story::Beat* b = &canary::story::kHello.beats[k];
+    if (b->line == nullptr) continue;
+    teller.expand(b, buf, sizeof(buf));
+    if (strcmp(held, buf) == 0) continue;  // the same height again
+    memcpy(held, buf, strlen(buf) + 1);
+    lv_label_set_text(line, buf);
+    lv_obj_update_layout(scr);
+    const int h = (int)lv_obj_get_height(bub);
+    if (h > tallest) tallest = h;
+  }
+  if (held[0] != '\0') lv_label_set_text(line, "");
+  return tallest;
+}
+
 }  // namespace
 
 // The exit curtain: an opaque layer-top overlay dropped by splash_play and
@@ -133,14 +161,19 @@ void splash_play(uint32_t hold_ms) {
   // 180 px portrait glass's sides).
   const int BUB_W =
       splashlayout::bubble_w((int)lv_disp_get_hor_res(NULL), GLASS);
-  // The seat holds the bird's hop on the canvas: on a canvas too short for
-  // the usual one (the nightlight's 320x180 landscape) the bird drops just
-  // enough, and the bubble hangs from under it instead of the center.
-  const splashlayout::Seat seat = splashlayout::seat(
-      (int)lv_disp_get_ver_res(NULL), GLASS, first_meeting);
 
+  // The pseudonym the first meeting names: story::kHello's one runtime
+  // substitution. It is derived from a per-device random salt and reads NO
+  // hardware MAC (device_pseudonym.h), which is precisely why the bird is
+  // allowed to make a joke about not having yours. Read before the bubble
+  // is measured (below), since it is part of what the bubble holds.
+  char pseudo[device_pseudonym::HEX_LEN + 1] = {0};
+  const bool named =
+      first_meeting && device_pseudonym::device_id_hex(pseudo, sizeof(pseudo));
+
+  // Seated once the bubble is measured (below); created first, so the
+  // bubble draws over it.
   lv_obj_t* bird = canary_mark_create(scr, BIRD);
-  lv_obj_align(bird, LV_ALIGN_CENTER, 0, seat.bird_off);
 
   lv_obj_t* word = lv_label_create(scr);
   lv_obj_set_style_text_font(word, font_title(), 0);
@@ -167,11 +200,6 @@ void splash_play(uint32_t hold_ms) {
   lv_obj_set_style_radius(bub, 12, 0);
   lv_obj_set_style_pad_all(bub, splashlayout::kBubblePad, 0);
   lv_obj_clear_flag(bub, LV_OBJ_FLAG_SCROLLABLE);
-  if (seat.hang) {
-    lv_obj_align(bub, LV_ALIGN_TOP_MID, 0, seat.bubble_top);
-  } else {
-    lv_obj_align(bub, LV_ALIGN_CENTER, 0, BUB_Y);
-  }
 
   lv_obj_t* tail = lv_obj_create(scr);
   lv_obj_set_size(tail, splashlayout::kTailSide, splashlayout::kTailSide);
@@ -179,19 +207,24 @@ void splash_play(uint32_t hold_ms) {
   lv_obj_set_style_bg_opa(tail, LV_OPA_COVER, 0);
   lv_obj_set_style_border_color(tail, col_edge(), 0);
   lv_obj_set_style_border_width(tail, 1, 0);
-  lv_obj_set_style_radius(tail, 2, 0);
+  // Square corners, turned about the square's center (F185). LVGL 8.4
+  // renders a turned object through a transform layer, a rounded one needs
+  // that layer's alpha, and 8.4 refuses an alpha layer while
+  // LV_COLOR_SCREEN_TRANSP is 0 (lv_draw_sw_layer_create): with rounded
+  // corners the 8.4 glass and the emulator drew no tail at all. A square
+  // covers its layer, which then needs no alpha, so both majors draw it.
+  // The default pivot, the box's top-left corner, stood the diamond 5.5 px
+  // left of the bubble's center line; about its center it stands on it,
+  // kTailRise px above the bubble's top edge at most.
+  lv_obj_set_style_radius(tail, 0, 0);
+  lv_obj_set_style_transform_pivot_x(tail, splashlayout::kTailPivot, 0);
+  lv_obj_set_style_transform_pivot_y(tail, splashlayout::kTailPivot, 0);
 #if LVGL_VERSION_MAJOR >= 9
   lv_obj_set_style_transform_rotation(tail, 450, 0);
 #else
   lv_obj_set_style_transform_angle(tail, 450, 0);
 #endif
   lv_obj_clear_flag(tail, LV_OBJ_FLAG_SCROLLABLE);
-  // Only the LVGL 9 builds draw it (the dash line and the C6 nightstand).
-  // LVGL 8.4 renders a turned object through a transform layer, a rounded
-  // one needs that layer's alpha, and 8.4 refuses an alpha layer while
-  // LV_COLOR_SCREEN_TRANSP is 0 (lv_draw_sw_layer_create): the 8.4 glass
-  // and the emulator draw no tail (filed). Where it sits is the same on
-  // both (below).
 
   // Fixed label width, centered text. A percent-sized child inside a
   // content-sized parent is circular in LVGL and inflated the bubble into
@@ -204,6 +237,24 @@ void splash_play(uint32_t hold_ms) {
   lv_obj_set_style_text_font(line, font_label(), 0);
   lv_obj_set_style_text_color(line, col_text(), 0);
   lv_label_set_text(line, "");
+
+  // The seats (splash_layout.h). The bird keeps its hop on the canvas: on
+  // a canvas too short for the usual seat (the nightlight's 320x180
+  // landscape) it drops just enough, and the bubble hangs from under it
+  // instead of the center. Elsewhere the bubble stays centered and the
+  // first meeting's bird rises clear of its tallest form and the tail on
+  // it, where the canvas holds that seat's hop too (F159).
+  const int tallest =
+      first_meeting ? tallest_bubble(scr, bub, line, named ? pseudo : nullptr)
+                    : 0;
+  const splashlayout::Seat seat = splashlayout::seat(
+      (int)lv_disp_get_ver_res(NULL), GLASS, first_meeting, tallest);
+  lv_obj_align(bird, LV_ALIGN_CENTER, 0, seat.bird_off);
+  if (seat.hang) {
+    lv_obj_align(bub, LV_ALIGN_TOP_MID, 0, seat.bubble_top);
+  } else {
+    lv_obj_align(bub, LV_ALIGN_CENTER, 0, BUB_Y);
+  }
 
   lv_scr_load(scr);
   canary::hal::backlight_set(CD_BRIGHT_DAY);
@@ -242,15 +293,11 @@ void splash_play(uint32_t hold_ms) {
     // the WS2812 or the type weight. They are the next slice; until then the
     // beats carry the direction and no surface acts on it.
     //
-    // The pseudonym is the one runtime substitution the script may carry. It
-    // is derived from a per-device random salt and reads NO hardware MAC — see
-    // device_pseudonym.h — which is precisely why the bird is allowed to make
-    // a joke about not having yours.
+    // The pseudonym is the one runtime substitution the script may carry
+    // (read above, before the bubble was measured).
     {
       canary::story::StoryTeller teller;
-      char pseudo[device_pseudonym::HEX_LEN + 1] = {0};
-      if (device_pseudonym::device_id_hex(pseudo, sizeof(pseudo)))
-        teller.set_subject(pseudo);
+      if (named) teller.set_subject(pseudo);
 
       teller.play(&canary::story::kHello, millis(), /*night=*/false);
 
@@ -392,7 +439,7 @@ void splash_reveal() {
   lv_anim_init(&a);
   lv_anim_set_var(&a, s_curtain);
   lv_anim_set_exec_cb(&a, [](void* var, int32_t v) {
-    lv_obj_set_y((lv_obj_t*)var, v);
+    lv_obj_set_y(static_cast<lv_obj_t*>(var), v);
   });
   lv_anim_set_values(&a, 0, -(H + 8));
   lv_anim_set_time(&a, 460);

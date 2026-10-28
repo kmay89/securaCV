@@ -22,6 +22,17 @@ ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/srv/backoffice/data
 PrivateTmp=true
+# Nothing the process writes is readable by another account (the database, audit.key and every backup come out 0600);
+# no capabilities, no kernel knobs, native syscalls only, inet and unix sockets only. Node needs no more.
+UMask=0077
+CapabilityBoundingSet=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 [Install]
 WantedBy=multi-user.target

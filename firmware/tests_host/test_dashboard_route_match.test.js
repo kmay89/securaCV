@@ -70,7 +70,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { createHash } = require("node:crypto");
-const { mkdtempSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
+const { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const R = require("./dashboard_route_tables.js");
@@ -240,6 +240,18 @@ test("canary-wap: the wap_server.h list reader refuses an entry it would once ha
     const got = checkWapList(table, withLine(line));
     assert.ok(got.wrong.length + got.unread.length > 0, `${why}: refused (wrong ${got.wrong}, unread ${got.unread})`);
   }
+});
+
+// wap_server.h is the route list's home and nothing else (sweep F277, which
+// removed the stub server API it declared and wap_server.cpp defined, none of
+// it called, and its copies of the sketch's AP and port constants): with its
+// comments gone, the include guard is all that is left.
+test("canary-wap: wap_server.h holds the route list and declares nothing (F277)", () => {
+  const text = readFileSync(join(R.WAP_DIR, "wap_server.h"), "utf8");
+  const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "")
+    .split("\n").map((l) => l.trim()).filter(Boolean);
+  assert.deepStrictEqual(code, ["#ifndef SECURACV_WAP_SERVER_H", "#define SECURACV_WAP_SERVER_H", "#endif"]);
+  assert.ok(!existsSync(join(R.WAP_DIR, "wap_server.cpp")), "no wap_server.cpp beside it");
 });
 
 // firmware/FEATURES.md's REST API table (sweep F240): one canary-wap column

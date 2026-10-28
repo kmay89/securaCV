@@ -619,7 +619,7 @@ bool securacv_ota_channel_manifest_url(const char *base_url,
     // GitHub guarantees releases/latest never points at a prerelease, and
     // the repo's release guard keeps it on the firmware — so this rewrite
     // is the exact inverse of how the dev channel is published (the
-    // fw-dev-latest prerelease mirrors every manifest a dev release cuts).
+    // fw-dev-latest prerelease carries a release's manifests unchanged).
     static const char k_release_seg[] = "/releases/latest/download/";
     static const char k_dev_seg[]     = "/releases/download/fw-dev-latest/";
 

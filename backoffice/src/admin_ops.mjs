@@ -11,6 +11,7 @@ import { deviceBySerial, canAssign, listDevices } from './modules/devices.mjs';
 import { qrSvg } from './qr.mjs';
 import { can } from './auth.mjs';
 import { packOrder } from './modules/packing.mjs';
+import { securityText } from './integrity.mjs';
 import { doctor } from './modules/health.mjs';
 import { backup, checkBackup, liveCounts, listBackups } from './modules/backup.mjs';
 import { runJob, jobRuns } from './jobs.mjs';
@@ -149,6 +150,7 @@ ${labelsConfigured(cfg) ? (() => { const from = cfg.demo ? [] : shipFromIssues(c
     const ic = (ok) => ok === true ? '<span class="ic ok">✓</span>' : ok === false ? '<span class="ic bad">✗</span>' : '<span class="ic muted">–</span>';
     const body = `<p><span class="hp ${h.ok ? '' : 'bad'}">${h.ok ? 'Every check passes' : `${h.failing.length} check${h.failing.length === 1 ? '' : 's'} failing`}</span> <span class="muted">${e(cfg.env)} · ${e(describeBuild(cfg))} · checked ${dt(h.at)} · the same list is <code>backoffice doctor</code> and the top of the morning digest</span></p>
 <ul class="checks">${h.checks.map(x => `<li>${ic(x.ok)}<b>${e(x.label)}</b><span>${e(x.detail)}${x.ok === false && x.fix ? `<br><span class="fix">→ ${e(x.fix)}</span>` : ''}</span></li>`).join('')}</ul>
+<h2>Security</h2><p class="muted">The last 24 hours as the questions you would ask: who signed in from where, what failed, who was blocked, what changed. The same block is in every morning digest, whose last line — the anchor — is the copy of the record's head that lives off this box. ${link('/settings', 'Lockdown is on Settings')}.</p><pre style="white-space:pre-wrap;font-size:12.5px">${e(securityText(db, cfg, { hours: 24 }))}</pre>
 <h2>Prove it now</h2><p>${button('/health/backup', c.csrf, 'Back up now (and check it)')} ${button('/health/job/restore_drill', c.csrf, 'Run the restore drill', { quiet: true })} ${button('/health/job/reconcile', c.csrf, 'Reconcile with Stripe', { quiet: true })} ${button('/health/job/digest', c.csrf, 'Queue the digest now', { quiet: true })} ${button('/health/job/probes', c.csrf, 'Run the probes', { quiet: true })}</p>
 <div class="two"><div><h2>Backups on disk</h2>${table(listBackups(join(cfg.dataDir, 'backups')).slice(0, 10), [{ label: 'File', key: 'name' }, { label: 'Bytes', key: 'bytes', num: true }, { label: '', html: r => `<form method="post" action="/health/check" class="inline"><input type="hidden" name="_csrf" value="${e(c.csrf)}"><input type="hidden" name="name" value="${e(r.name)}"><button class="quiet">check</button></form>` }], { empty: 'No backup yet — press the button above.' })}
 <p class="muted">Restore is one command on the server: <code>backoffice restore &lt;file&gt;</code> (it checks the copy first and keeps the old file beside it).</p></div>

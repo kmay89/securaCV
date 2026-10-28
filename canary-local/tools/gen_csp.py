@@ -14,8 +14,11 @@ from a Tauri webview. This tool is the ONE place that policy is written:
   * PAGES is the per-page table: a page gets a source only if it needs it,
     and the entry says why — 'wasm-unsafe-eval' for the pages that boot the
     firmware compiled to WebAssembly, frame-src for the two pages that frame
-    another, the flasher's signed release hosts. A page that is not in the
-    table gets BASE + SHARED and nothing else.
+    another, the flasher's same-machine manifest server. A page that is not
+    in the table gets BASE + SHARED and nothing else. No page names the
+    GitHub release host or its asset CDN: no browser can read a release
+    asset from them (no CORS header), so the flasher reads the site's own
+    copy of the release under 'self' (tools/mirror_release.py writes it).
   * Directives the floor could carry but no page needs are TRIMMED, not
     granted: no blob: in img-src, no worker-src, no media-src, no scheme
     source (http: https: ws: wss:) in connect-src. Nothing in the Lab shows a
@@ -55,9 +58,6 @@ Consistency checks the tool also enforces, so the table cannot rot:
     entry, and a page carrying it MUST reference them (a stale reason is a
     lie in the audit trail);
   * likewise frame-src and a page's iframes;
-  * likewise the signed release hosts and the modules that fetch a release
-    (flash.js / we2-flash.js) — a page whose module graph reaches them without
-    the hosts would fail behind a click, where the browser probe never looks;
   * a page whose modules spawn a Worker must say so in a worker-src row;
   * every table key names a page that exists.
 
@@ -121,20 +121,8 @@ FRAMES_SELF = (
     "frames another Lab page (same origin only).",
 )
 
-RELEASE = (
-    "connect-src",
-    ["https://github.com", "https://*.githubusercontent.com"],
-    "signed firmware releases: manifest-flash.json, the factory images and the camera "
-    "module's model come from the project's GitHub release host and its asset CDN "
-    "(flash.json manifest_url) — fetched by flash.js and we2-flash.js.",
-)
-# The modules that fetch from the release hosts. A page whose <script src>
-# graph reaches one of these needs RELEASE, or the fetch fails behind a click.
-RELEASE_FETCHERS = {"flash.js", "we2-flash.js"}
-
 PAGES = {
     "flash.html": [
-        RELEASE,
         (
             "connect-src",
             ["http://localhost:*", "http://127.0.0.1:*", "https://localhost:*", "https://127.0.0.1:*"],
@@ -286,10 +274,6 @@ def references_wasm(page):
     )
 
 
-def fetches_releases(page):
-    return any(f.name in RELEASE_FETCHERS for f in module_graph(page))
-
-
 WORKER_RE = re.compile(r"\bnew\s+(?:Shared)?Worker\s*\(")
 
 
@@ -412,14 +396,6 @@ def policy_for(page, html):
         fail(f"{page}: frames another page but PAGES has no frame-src entry for it")
     if has_frames and not frames_pages(page):
         fail(f"{page}: PAGES grants frame-src but the page frames nothing")
-    has_release = all(s in directives["connect-src"] for s in RELEASE[1])
-    if fetches_releases(page) and not has_release:
-        fail(
-            f"{page}: its modules reach {sorted(RELEASE_FETCHERS)} (they fetch the signed "
-            "release) but PAGES has no RELEASE row for it — the fetch would fail behind a click"
-        )
-    if has_release and not fetches_releases(page):
-        fail(f"{page}: PAGES grants the release hosts but nothing on the page fetches a release")
     if spawns_worker(page) and "worker-src" not in directives:
         fail(f"{page}: its modules spawn a Worker but PAGES has no worker-src row for it")
 

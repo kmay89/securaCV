@@ -33,6 +33,33 @@
 //     download_url, which named a route nothing registers), and
 //     exportWitness() saves that answer as a JSON download. The answer fed to
 //     the page carries exactly the keys canary_wap.ino's handle_export writes.
+//   * The shared sign-in (the owner-authority PR: F334, F335, F346): a pasted
+//     token is checked by itself (GET /api/status with credentials 'omit'),
+//     because a page holding the landing page's session passed that route on
+//     the cookie alone, so a mistyped token was taken and refused one step
+//     later; signInRaised() is the one test for "secureFetch already showed
+//     the sign-in"; Not now puts away a sign-in a running dashboard raised;
+//     and every "takes the API token" card note is one sentence shape.
+//   * Credential grants ask for sign-in (F335, F346): registering the vault
+//     key and the two pairings' confirms take the bearer alone, so the page
+//     asks for the token at Start Pairing and at the opera's Create/Join
+//     (before the phone's or the opera's clock runs), says nothing more under
+//     a refused key registration (the key stays in the box) or a refused
+//     opera confirm (the code stays up), shows 'hidden' for a Passkey
+//     Entry's digits a session is not sent, leads with "Don't match" for a
+//     comparison on a page without the token, and asks nobody for a PIN once
+//     a pairing is over.
+//   * The network moves on the bearer alone (F334, F345): the Wi-Fi card's
+//     Forget (in every mode) and Connect (after setup) take the API token,
+//     so a session-only page's refusal brings the sign-in up and alerts
+//     nothing (the typed network stays in the form), the card says so
+//     first, Forget's confirm
+//     names what it re-opens (the setup door, a camera's code scan) and the
+//     broker login it drops (F333), and a Forget whose login clear the
+//     device could not make says where to clear it.
+//   * The reboot takes the API token (F361): Reboot Device and Retry full
+//     boot go through the same sign-in, so a session-only page's refusal
+//     says "Rebooting…" to nobody, and the card says the token is needed.
 //
 // The page's own code is cut out of web_ui.h by markers that stand in the page
 // before and after these changes (so the old page runs here and fails on what
@@ -77,7 +104,10 @@ const logicBlock = (() => {
 // What the page's own api() (and the secureFetch() under it) returns for a
 // response, or for no answer at all: lifted from the page and run against a
 // stub fetch, so a refusal a test feeds a view is the one the page makes.
-const apiSrc = uiFunction('secureFetch', true) + uiFunction('api', true);
+// api() asks signInRaised() (the shared sign-in) where the page has it; an
+// older page (WAP_WEB_UI) has none, and its api() does not call it.
+const apiSrc = (src.includes('\n    function signInRaised(') ? uiFunction('signInRaised', false) : '') +
+  uiFunction('secureFetch', true) + uiFunction('api', true);
 async function answerTo(res) {
   const ctx = {
     API_BASE: '', apiToken: null, console: { error() {} }, showAuthModal() {},
@@ -572,5 +602,322 @@ describe('Export saves what it exported (F278)', () => {
     assert.deepEqual(p.record.alerts, ['Export failed: auth_required']);
     assert.deepEqual(p.record.blobs, []);
     assert.equal(p.record.navigated, null);
+  });
+});
+
+// ── The shared sign-in (F334, F335, F346) ────────────────────────────────
+
+// What a session page's device does with GET /api/status: api_auth_check
+// takes the cookie before it compares anything (api_auth.h), so a request
+// that carries the cookie (credentials not 'omit') is answered 200 whatever
+// its bearer says; without the cookie the bearer is compared.
+function cookieDevice(sent) {
+  return async (url, opts = {}) => {
+    const auth = (opts.headers || {}).Authorization;
+    sent.push({ url, credentials: opts.credentials, cache: opts.cache, auth });
+    const ok = opts.credentials !== 'omit' || auth === 'Bearer cv_right';
+    return { status: ok ? 200 : 403, ok, json: async () => ({}), text: async () => '{}' };
+  };
+}
+
+describe('The shared sign-in (F334, F335, F346)', () => {
+  it('signInRaised() is true exactly for the refusals secureFetch showed the sign-in for', () => {
+    const p = pageContext({});
+    vm.runInContext(uiFunction('signInRaised', false) + '\nglobalThis.__r = signInRaised;\n', p.ctx);
+    for (const r of [{ ok: false, error: 'auth_required' }, { ok: false, error: 'rate_limited' },
+                     new Error('auth_required'), new Error('rate_limited')]) {
+      assert.equal(p.ctx.__r(r), true, JSON.stringify(r) + String(r));
+    }
+    for (const r of [{ ok: false, error: 'Network error' }, { ok: false, error: 'unauthorized' },
+                     new Error('HTTP 500'), { ok: true }, null, undefined]) {
+      assert.equal(p.ctx.__r(r), false, JSON.stringify(r) + String(r));
+    }
+  });
+
+  it('a pasted token is checked by itself, not by the session cookie', async () => {
+    for (const [typed, signedIn] of [['cv_wrong', false], ['cv_right', true]]) {
+      const sent = [];
+      const p = pageContext({}, {
+        API_BASE: '', apiToken: null, fetch: cookieDevice(sent),
+        startDashboard() { p.started = (p.started || 0) + 1; },
+      });
+      vm.runInContext(uiFunction('secureFetch', true) + uiFunction('showAuthModal', false) +
+        uiFunction('hideAuthModal', false) + uiFunction('connectWithToken', true) +
+        '\nglobalThis.__c = connectWithToken; globalThis.__show = showAuthModal;\n', p.ctx);
+      p.ctx.__show();
+      p.el('tokenInput').value = typed;
+      await p.ctx.__c();
+      assert.equal(p.el('authOverlay').classList.contains('hidden'), signedIn, typed);
+      assert.equal(p.ctx.apiToken, signedIn ? 'cv_right' : null, typed);
+      assert.equal(p.started || 0, signedIn ? 1 : 0, typed);
+      if (!signedIn) assert.equal(p.el('authStatus').textContent, 'Invalid or expired token. Please re-enter.');
+      assert.deepEqual(sent, [{ url: '/api/status', credentials: 'omit', cache: 'no-store', auth: 'Bearer ' + typed }]);
+    }
+  });
+
+  it('the sign-in a running dashboard brings up can be put away (Not now)', () => {
+    assert.match(src, /<button[^>]*\bid="authNotNow"[^>]*\bonclick="hideAuthModal\(\)"[^>]*>Not now<\/button>/);
+    for (const running of [true, false]) {
+      const p = pageContext({});
+      p.ctx.window._refreshInterval = running ? 7 : undefined;
+      vm.runInContext(uiFunction('showAuthModal', false) + uiFunction('hideAuthModal', false) +
+        '\nglobalThis.__s = showAuthModal; globalThis.__h = hideAuthModal;\n', p.ctx);
+      p.el('authNotNow').style.display = running ? 'none' : '';
+      p.ctx.__s('Pasting the token');
+      assert.equal(p.el('authNotNow').style.display, running ? '' : 'none', running ? 'running' : 'first load');
+      assert.equal(p.el('authOverlay').classList.contains('hidden'), false);
+      p.ctx.__h();
+      assert.equal(p.el('authOverlay').classList.contains('hidden'), true);
+    }
+  });
+
+  it('every "takes the API token" card note is the one template', () => {
+    const notes = [...src.matchAll(/<p class="tnote">([^<]*)<\/p>/g)].map((m) => m[1]);
+    for (const n of notes) {
+      assert.match(n, /^[A-Z][a-z]+ [^:]+ takes the API token: paste it \(it is in your recovery kit\), or use BOOT Tap Once\.$/, n);
+    }
+    assert.ok(notes.includes('Showing the QR takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once.'),
+      'the pairing QR card (GET /api/pairing-qr takes the bearer alone, sweep F289) carries the note');
+    assert.match(src, /\.tnote \{[^}]*color: var\(--muted\)/);
+  });
+});
+
+// ── Credential grants ask for sign-in (F335, F346) ───────────────────────
+
+describe('Credential grants ask for sign-in (F335, F346)', () => {
+  // The page with `apiToken` (null: a page signed in by the landing page's
+  // session alone). Its sign-in records each message; its secureFetch is a
+  // device that refuses every request the way the page's own does (the
+  // sign-in raised, then auth_required thrown).
+  function grantPage(answers, apiToken) {
+    const p = pageContext(answers, { apiToken, refreshVault() {}, auth: [] });
+    p.ctx.showAuthModal = (m) => p.ctx.auth.push(m);
+    p.ctx.secureFetch = async () => { p.ctx.showAuthModal('refused'); throw new Error('auth_required'); };
+    p.ctx.startPairingPolling = () => p.calls.push('poll');
+    p.ctx.window.__btPollTimer = 1;
+    vm.runInContext(uiFunction('signInRaised', false) + uiFunction('refreshBtStatus', true) +
+      uiFunction('btStartPairing', true) + uiFunction('registerVaultKey', true) +
+      uiFunction('startPairing', true) + uiFunction('confirmPairing', true) +
+      '\nglobalThis.__g = { refreshBtStatus, btStartPairing, registerVaultKey, startPairing, confirmPairing };\n', p.ctx);
+    return p;
+  }
+  const bt = (pairing) => ({ '/api/bluetooth': { state: 'idle', enabled: true, advertising: false, connected: false, pairing } });
+  // The card-note template, ending in what to press again ("on each one":
+  // an opera's two Canaries each take their own token).
+  const ASK = /^[A-Z][a-z]+ [^:]+ takes the API token(?: on each one)?: paste it \(it is in your recovery kit\), or use BOOT Tap Once, then /;
+
+  it('a Passkey Entry the session is not sent shows "hidden" and keeps no digits', async () => {
+    const p = grantPage(bt({ state: 'pin_displayed', pin_hidden: true }), null);
+    await p.ctx.__g.refreshBtStatus();
+    assert.equal(p.el('btPairingPin').textContent, 'hidden');
+    assert.equal(p.ctx.window.__btPairingPin, null);
+    assert.match(p.el('btPairingHint').textContent, /signed in with the API token\. If you did not start this, press Cancel Pairing\./);
+    assert.equal(p.el('btPairingConfirmRow').style.display, 'none');
+  });
+
+  it('a finished or failed pairing asks nobody for a PIN', async () => {
+    for (const [state, says] of [['complete', /^Paired\. The phone is listed under Paired devices\.$/],
+                                 ['failed', /^This pairing did not finish\. Press Start Pairing to try again\.$/]]) {
+      const p = grantPage(bt({ state }), null);
+      p.ctx.window.__btPairingPin = 482913;
+      await p.ctx.__g.refreshBtStatus();
+      assert.equal(p.el('btPairingPin').textContent, '------', state);
+      assert.equal(p.ctx.window.__btPairingPin, null, state);
+      assert.match(p.el('btPairingHint').textContent, says);
+      assert.equal(p.el('btPairingConfirmRow').style.display, 'none', state);
+    }
+  });
+
+  it('a comparison on a page without the token leads with "Don\'t match"', async () => {
+    const p = grantPage(bt({ state: 'confirming', pin: 2913 }), null);
+    await p.ctx.__g.refreshBtStatus();
+    assert.equal(p.el('btPairingPin').textContent, '002913');
+    assert.equal(p.ctx.window.__btPairingPin, 2913);
+    assert.match(p.el('btPairingHint').textContent, /^If you did not start this pairing, tap "Don't match"\. To accept it, "Numbers match" asks for the API token first/);
+    assert.equal(p.el('btPairingConfirmRow').style.display, 'flex');
+    const q = grantPage(bt({ state: 'confirming', pin: 482913 }), 'cv_x');
+    await q.ctx.__g.refreshBtStatus();
+    assert.equal(q.el('btPairingHint').textContent,
+      'Compare this 6-digit code to the code on your phone. If they match, tap "Numbers match".');
+  });
+
+  it('Start Pairing and Create/Join ask for the token before the radio pairs', async () => {
+    const p = grantPage({}, null);
+    await p.ctx.__g.btStartPairing();
+    assert.ok(!p.calls.includes('POST /api/bluetooth/pair/start'), 'no pairing started');
+    assert.equal(p.ctx.auth.length, 1);
+    assert.match(p.ctx.auth[0], ASK);
+    assert.match(p.ctx.auth[0], /then press Start Pairing again\.$/);
+    for (const mode of ['init', 'join']) {
+      const m = grantPage({}, null);
+      await m.ctx.__g.startPairing(mode);
+      assert.deepEqual(m.calls, [], mode);
+      assert.equal(m.ctx.auth.length, 1, mode);
+      assert.match(m.ctx.auth[0], ASK);
+    }
+    // With the token in the page, both go to the device as before.
+    const t = grantPage({ '/api/mesh/pair/start': { ok: true } }, 'cv_x');
+    await t.ctx.__g.btStartPairing();
+    await t.ctx.__g.startPairing('init');
+    assert.ok(t.calls.includes('POST /api/bluetooth/pair/start') && t.calls.includes('POST /api/mesh/pair/start'));
+    assert.ok(t.calls.includes('poll'));
+    assert.deepEqual(t.ctx.auth, []);
+  });
+
+  it('a refused opera confirm never says "Completing…"; a served one does', async () => {
+    const p = grantPage({ '/api/mesh/pair/confirm': { ok: false, error: 'auth_required' } }, null);
+    p.el('pairingStatus').textContent = 'Verify code:';
+    await p.ctx.__g.confirmPairing();
+    assert.equal(p.el('pairingStatus').textContent, 'Verify code:');
+    const q = grantPage({ '/api/mesh/pair/confirm': { ok: true } }, 'cv_x');
+    await q.ctx.__g.confirmPairing();
+    assert.equal(q.el('pairingStatus').textContent, 'Completing…');
+  });
+
+  it('a refused key registration alerts nothing and keeps the key; the card says so first', async () => {
+    const p = grantPage({}, null);
+    p.el('vaultPubkey').value = 'a'.repeat(64);
+    await p.ctx.__g.registerVaultKey();
+    assert.deepEqual(p.record.alerts, []);
+    assert.equal(p.el('vaultPubkey').value, 'a'.repeat(64));
+    assert.equal(p.ctx.auth.length, 1);
+    assert.ok(src.includes('<p class="tnote">Registering a key takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once.</p>'),
+      'the vault card carries the note');
+    const card = slice('<div class="form-label">Unlock key</div>', '<div id="vaultKeyEntry"');
+    assert.ok(card.includes('class="tnote"'), 'above the key box');
+  });
+});
+
+// ── The network moves on the bearer alone (F334, F345) ───────────────────
+
+describe('The network moves on the bearer alone (F334, F345)', () => {
+  // The Wi-Fi card over the page's own api(), secureFetch() and sign-in,
+  // against a device that answers every request `answer` (a session-only
+  // page: no token held).
+  function wifiPage(answer) {
+    const sent = [];
+    const p = pageContext({}, {
+      API_BASE: '', apiToken: null,
+      fetch: async (url, opts = {}) => {
+        sent.push(`${opts.method || 'GET'} ${url}`);
+        const a = answer(url);
+        return { status: a.status, ok: a.status >= 200 && a.status < 300,
+                 text: async () => JSON.stringify(a.body), json: async () => a.body };
+      },
+      stopWifiPolling() {}, startWifiPolling() { p.polling = true; },
+      loadWifiStatus: async () => {}, clearWifiInputs() { p.cleared = true; },
+    });
+    p.ctx.window._refreshInterval = 7;   // a running dashboard
+    vm.runInContext(apiSrc + uiFunction('showAuthModal', false) + uiFunction('hideAuthModal', false) +
+      uiFunction('connectWifi', true) + uiFunction('forgetWifi', true) +
+      '\nglobalThis.__w = { connectWifi, forgetWifi };\n', p.ctx);
+    p.sent = sent;
+    return p;
+  }
+  const REFUSED = { status: 401, body: { error: 'unauthorized' } };
+
+  it('a session-only Connect brings the sign-in up and alerts nothing; the network stays typed', async () => {
+    const p = wifiPage(() => REFUSED);
+    p.el('wifiSsidInput').value = 'Home';
+    p.el('wifiPassword').value = 'hunter22';
+    await p.ctx.__w.connectWifi();
+    assert.deepEqual(p.sent, ['POST /api/wifi/connect']);
+    assert.deepEqual(p.record.alerts, []);
+    assert.equal(p.el('authOverlay').classList.contains('hidden'), false);
+    assert.match(p.el('authStatus').textContent, /Paste the API token \(it is in your recovery kit\), or use BOOT Tap Once\./);
+    assert.equal(p.el('authNotNow').style.display, '');
+    assert.equal(p.el('wifiProgress').style.display, 'none');
+    assert.equal(p.el('wifiPassword').value, 'hunter22');
+    assert.ok(!p.polling);
+  });
+
+  it('a session-only Forget brings the sign-in up and alerts nothing', async () => {
+    const p = wifiPage(() => REFUSED);
+    await p.ctx.__w.forgetWifi();
+    assert.deepEqual(p.sent, ['POST /api/wifi/forget']);
+    assert.deepEqual(p.record.alerts, []);
+    assert.equal(p.el('authOverlay').classList.contains('hidden'), false);
+    assert.ok(!p.cleared);
+  });
+
+  it("Forget's confirm names what it re-opens and the broker login it drops", async () => {
+    const asked = [];
+    const p = wifiPage(() => ({ status: 200, body: { ok: true, broker_login_cleared: true } }));
+    p.ctx.confirm = (m) => { asked.push(m); return false; };
+    await p.ctx.__w.forgetWifi();
+    assert.deepEqual(p.sent, [], 'a declined confirm sends nothing');
+    assert.equal(asked.length, 1);
+    assert.match(asked[0], /saved broker login/);
+    assert.match(asked[0], /if its build has the Bluetooth setup door and Bluetooth is on, that door is open for 30 minutes to the first phone or computer nearby that connects/);
+    assert.match(asked[0], /a camera unit takes a Wi-Fi code shown to its lens/);
+    // Neither keyless join opens on a standalone unit (keyless_join_open()),
+    // and Forget leaves a standalone unit standalone, so the confirm says so.
+    assert.match(asked[0], /Until this Canary is set up again \(unless it runs standalone\), a camera unit/);
+    assert.match(asked[0], /use Connect instead: it keeps the broker login/);
+  });
+
+  it('a Forget whose broker login stayed on file says where to clear it', async () => {
+    for (const [cleared, alerts] of [[false, 1], [true, 0], [undefined, 0]]) {
+      const p = wifiPage(() => ({ status: 200, body: { ok: true, broker_login_cleared: cleared } }));
+      await p.ctx.__w.forgetWifi();
+      assert.equal(p.record.alerts.length, alerts, String(cleared));
+      if (alerts) assert.match(p.record.alerts[0], /broker login could not be cleared\. Clear it on the MQTT page\./);
+      assert.ok(p.cleared, 'the form is cleared once the networks are forgotten');
+    }
+  });
+
+  it('the Wi-Fi card says the token is needed, above its buttons', () => {
+    const card = slice('<div id="wifiSetupSection">', 'id="wifiConnectBtn"');
+    assert.ok(card.includes('<p class="tnote">Changing Wi-Fi takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once.</p>'));
+  });
+});
+
+// ── The reboot takes the API token (F361) ────────────────────────────────
+
+describe('The reboot takes the API token (F361)', () => {
+  function rebootPage(status) {
+    const sent = [];
+    const p = pageContext({}, {
+      API_BASE: '', apiToken: null,
+      fetch: async (url, opts = {}) => {
+        sent.push(`${opts.method || 'GET'} ${url}`);
+        if (status === 'drop') throw new TypeError('Failed to fetch');   // the restart cut the link
+        return { status, ok: status === 200, text: async () => '{"ok":true}', json: async () => ({}) };
+      },
+    });
+    p.ctx.window._refreshInterval = 7;
+    vm.runInContext(apiSrc + uiFunction('showAuthModal', false) + uiFunction('hideAuthModal', false) +
+      uiFunction('confirmReboot', true) + uiFunction('retryFullBoot', true) +
+      '\nglobalThis.__r = { confirmReboot, retryFullBoot };\n', p.ctx);
+    p.sent = sent;
+    return p;
+  }
+
+  it('a session-only reboot brings the sign-in up and says "Rebooting…" to nobody', async () => {
+    for (const [fn, url] of [['confirmReboot', '/api/reboot'], ['retryFullBoot', '/api/safe-mode/retry']]) {
+      const p = rebootPage(401);
+      await p.ctx.__r[fn]();
+      assert.deepEqual(p.sent, [`POST ${url}`], fn);
+      assert.deepEqual(p.record.alerts, [], fn);
+      assert.equal(p.el('authOverlay').classList.contains('hidden'), false, fn);
+      assert.match(p.el('authStatus').textContent, /Paste the API token \(it is in your recovery kit\), or use BOOT Tap Once\./);
+    }
+  });
+
+  it('a served reboot, or one whose restart cut the link, says it is rebooting', async () => {
+    for (const status of [200, 'drop']) {
+      const p = rebootPage(status);
+      await p.ctx.__r.confirmReboot();
+      assert.deepEqual(p.record.alerts, ['Rebooting…'], String(status));
+      const q = rebootPage(status);
+      await q.ctx.__r.retryFullBoot();
+      assert.deepEqual(q.record.alerts, ['Rebooting into full operation…'], String(status));
+    }
+  });
+
+  it('the device card says the token is needed, above Reboot Device', () => {
+    const card = slice('<p class="tnote">Rebooting this Canary takes the API token', 'onclick="confirmReboot()"');
+    assert.ok(card.includes('<p class="tnote">Rebooting this Canary takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once.</p>'));
+    assert.ok(card.length < 600, 'the note sits with the Save and Reboot buttons');
   });
 });
