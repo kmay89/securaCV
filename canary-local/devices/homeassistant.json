@@ -614,7 +614,7 @@
     },
     {
       "name": "Radar Link",
-      "desc": "`ok` / `stale` / `down` for the UART link to the radar module, canary-sense devices only (`radar_link`; `health` topic, unsigned; diagnostic)"
+      "desc": "`ok` / `stale` / `down` for the UART link to the radar module, on a canary-sense, and on a canary-sentinel whose health reports a `radar` object, which a Sentinel Lite (no radar) never sends (`radar_link`; `health` topic, unsigned; diagnostic)"
     },
     {
       "name": "Online",

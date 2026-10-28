@@ -620,7 +620,7 @@ says online; the **Online** sensor stays available to report offline.
    - **Health** — `healthy` / `warning` / `critical` from battery and free memory, with `public_key`, uptime and firmware version, and the committed-event egress's counters (`csi_event_egress`, `offline_queue`) as attributes when the firmware sends them (`health_status`; `health` and `egress` topics, unsigned)
    - **GPS Fix** — GPS fix status, with satellites and HDOP (`gps_fix`; `health` topic, unsigned)
    - **SD Wear Estimate** — estimated SD-card wear percent, only when the firmware reports its `sd` object (`sd_wear`; `health` topic, unsigned; diagnostic)
-   - **Radar Link** — `ok` / `stale` / `down` for the UART link to the radar module, canary-sense devices only (`radar_link`; `health` topic, unsigned; diagnostic)
+   - **Radar Link** — `ok` / `stale` / `down` for the UART link to the radar module, on a canary-sense, and on a canary-sentinel whose health reports a `radar` object, which a Sentinel Lite (no radar) never sends (`radar_link`; `health` topic, unsigned; diagnostic)
 
    Binary sensors:
    - **Online** — device connectivity, from the `status` topic (`online`; unsigned)
@@ -675,7 +675,8 @@ Canary Sentinel (the multi-sensor fusion guardian) is **not released yet** —
 its Phase 1a firmware is compiled by CI but has not run on a bench
 ([project README](../firmware/projects/canary-sentinel/README.md)). When a
 unit is built by hand, its own discovery announces **Presence** and
-**Anomaly** binary sensors, a **Channel blinded** problem sensor, **Level**,
+**Anomaly** binary sensors, a **Channel blinded** problem sensor (on while a
+channel votes denied, or when the light sensor did not answer at boot), **Level**,
 **Confidence**, **Anomaly score**, **Occupancy**, **Range band** and
 **Corroborating modalities** sensors, the uptime / RSSI / free-heap
 diagnostics and the firmware update entity — all from the coarse fused

@@ -1,6 +1,141 @@
 # Changelog
 
 ## [Unreleased]
+### Vision and Sentinel tell the truth about their modules: the Grove module's 1 or 0, never its id, a sample from every good invoke and none from a failed one; the Sentinel's radar link reaches Home Assistant, and a missing light sensor is absent, not blinded, and still reported (F384; device-details PR 7, #1892)
+
+- **Vision's `module_id` is 1 or 0 (sweep F384).** It was the SSCMA
+  library's cached id accessor cast to `int`: the address of the library's
+  id buffer, non-zero whether or not the Grove Vision AI module had answered.
+  The boot line printed it and the desktop Flasher's boot-line proof read any
+  positive value as "the module answered", so a Vision whose module never
+  answered passed. `init()` now keeps one verdict, the library's `begin()`
+  and then a fresh NAME? round trip (`name(false)`, never the cache; skipped
+  when `begin()` failed, so a dead module costs no 3 s timeout), and the boot
+  line keeps its exact format, `Grove Vision AI ID=%d`, with 1 or 0 in it and
+  the ERROR line above it exactly with 0. A number, not `true`, so an older
+  Flasher's `> 0` gate still reads it right. The `j` proof record gains
+  `module_ok`, the same verdict as a bool.
+- **No code of the firmware's own asks the module for its id.** The
+  device-details design treats it as a per-unit identifier, and nothing in
+  the firmware calls the library's id accessor. One thing this library does not let the firmware
+  avoid: Seeed_Arduino_SSCMA 1.0.3's I2C `begin()` is `ID(false) &&
+  name(false)`, so the library itself asks once at boot and keeps the answer
+  in its private buffer, which nothing reads, prints or stores.
+- **`invoke()` is read as the status code it is.** Its `int` result
+  (`CMD_OK` is 0) was stored in a `bool`, so it read backwards: a successful
+  invoke that found no box gave no sample, so with a working module and an
+  empty room the presence FSM was never ticked and could not time a person
+  out, and the Aim card's empty-frame cadence did not run; a failed invoke
+  gave a sample built from the boxes the library still held from the last
+  good frame. A successful invoke now always gives a sample, empty or not,
+  and a failed one gives none. One consequence reaches past the FSM: the
+  Vision mirrors that presence onto the fleet beacon's alert flag and class
+  (`vision_tick()`), on by default and turned off by no Vision env, and the
+  beacon is readable by anything in radio range or on the LAN, unsigned by
+  design (`docs/TRUST_MODEL.md`). Before, with a working module the flag
+  stayed as it was after the room emptied, since only a box or a failed
+  invoke ticked the FSM; now it clears when the FSM times the person out,
+  which is what the device-details design lists for that surface (§7.3, the
+  `nearby` tier), not a new one. (Read from the code and the library source;
+  not run on a device.)
+- **The desktop Flasher reads `module_ok`.** The flash engine's receipt
+  (`monitor.rs`, shared with the Lab app's native bench) requires `module_ok`
+  to be `true` when a proof carries it, beside `i2c_ready` and a positive
+  `module_id`, which an older image's proof still passes or fails on as
+  before. The live boot line's proof now carries `module_ok` too: false on
+  `ID=0`, and false after the ERROR line an older image printed just above its
+  address, so a dead module is refused from either image. The Flasher's
+  `serial:vision` handler reads `module_ok` when present. No browser change:
+  the browser flasher proves a Vision through the camera bench, never the boot
+  log, and `desktop_parity.test.js` now holds it to having no such path.
+- **canary-sentinel's health carries its radar link.** The health publish it
+  carries from canary-sense takes a `radar` object (`link_ok`,
+  `last_frame_age_ms`, `frame_errors`, the contract Home Assistant's
+  radar-link diagnostic reads), and the Sentinel passed none, though it judged
+  the link for its fusion vote. It now passes it, judged by the same stall
+  rule (`include/canary/sentinel_links.h`): no object before a frame or a
+  whole stall window, and none on a build with no radar (Lite). Once the
+  radar has spoken, the object reads down exactly when the radar votes
+  `Denied`; a radar silent since boot reads down there while its channel
+  never votes, as an unwired one does, so this object is the only place it
+  shows. The integration gives a Canary the Radar link sensor when its
+  health reports the object, so a Sentinel with the radar gets one and a
+  Lite never grows a sensor that could only say "unknown"; a canary-sense
+  still gets it from its status. The object's frame age and error count are
+  what the device-details design classes as activity, which its policy keeps
+  off the broker tier: they ride the owner's broker here as a legacy
+  exception, the health object canary-sense already publishes, which the
+  design's PR 7 asks the Sentinel to publish too. Home Assistant's
+  diagnostics redaction does not list `last_frame_age_ms` yet; device-details
+  PR 16 adds it.
+- **A missing light sensor is absent, not blinded, and still reported.** The
+  Sentinel ignored the BH1750's `begin()`, so on a unit with no working light
+  sensor every read failed and voted `Denied`: a blinded channel for good,
+  and on a preset with the radar an `Anomaly` whenever the radar saw a body.
+  A sensor that did not answer at boot is now absent: the light channel never
+  votes, so it adds no suspicion, but the retained state's `channel_denied`
+  is true for it, so Home Assistant's Channel-blinded problem sensor stays on
+  (requirement R6: never a silent gap), and the boot console's `BH1750` row
+  reads `not found: absent, never votes, reported as channel_denied`. One
+  that answered and then fails a read is blinded, `Denied`, as before. So a
+  sensor unplugged while the unit is off still reaches the owner, as a
+  denied channel rather than as suspicion; R2's text in
+  `sentinel_requirements.h` now says that. On the wire only the anomaly
+  score (a blinded sensor raises it, an absent one does not), and the level
+  that score can lift to `Anomaly` (on every preset with the radar, it does
+  while the radar sees a body), tell the two apart, until the device-details
+  record carries the part's status (device-details PR 15). The vote and the
+  report are one rule each in `sentinel_links.h` (`light_sample()`,
+  `channel_denied_reported()`), which `main.cpp` calls.
+- **Docs.** The Vision README and both Grove guides say what `ID=1` and
+  `ID=0` mean, and that any other number is an older image whose ERROR line is
+  the only answer; `gen_vision.py` stages `ID=1`, `must()`s the 1-or-0
+  `printf`, and `vision.json` is regenerated. The Sentinel README, the Home
+  Assistant setup guide and `FAULT_MODEL.md` (which still said no firmware
+  published the radar object) describe the radar link and the light sensor as
+  they are now.
+- **Tests.** `test_vision_module_link.cpp` (new) compiles `vision_mgr.cpp`
+  against a scripted module and pins all of the Vision side in 55 checks; the
+  old file does not compile there (a pointer cast to `int`), and the old logic
+  shimmed in, or the inversion alone restored, fails it.
+  `test_sentinel_links.cpp` (new, 55 checks) runs the radar and light rules
+  alone and through the real fusion engine under the `door` preset, and
+  holds the Sentinel's `main.cpp`, which no host suite compiles, to calling
+  them: its `radar_link_health()`, `read_light()` and
+  `light_absent_at_boot()` bodies, the snapshot's `channel_denied` and both
+  health publishes are compared with their source text, comments and spacing
+  aside. The old light rule fails it in the header or in `main.cpp`, and so
+  does a radar object that never reaches a publish. Six new flash-engine
+  tests cover old and new proof records, both images' boot lines and a blank
+  line between the ERROR line and the ID line (three fail on the old rules);
+  a `desktop_parity.test.js` case holds the firmware's boot lines and the
+  proof record's `module_ok` value to the engine, and two Home Assistant
+  tests hold the radar-link gate (both fail on the old one). Built with
+  PlatformIO here, on this change over the 2.4.18 train, with the
+  `secrets/secrets.h` that `firmware.yml`'s "Generate CI secrets header"
+  step writes into the project and with `-DVALIDATION_BUILD=1` (with no
+  `secrets/secrets.h` a build compiles the project's committed
+  `include/secrets.ci.h` stub instead, a different image), but not with
+  CI's packages: this machine cannot reach the PlatformIO registry, so the
+  Vision and Lite builds link Arduino-ESP32 2.0.17 from a local install
+  instead of CI's `3.20017.241212` package of it, every build links local
+  copies of its libraries, and the Vision image carries their local paths
+  in its assert strings. The four Vision build envs (`flavors.json`) and
+  all five Sentinel envs compile. Against the same envs built the same way
+  from the 2.4.18 release commit (#1889), the Vision images grow by 32 to
+  96 bytes and the Sentinel door and Lite images by 256 and 128 bytes.
+  Built here, the five images `flavors.json` guards for the two projects
+  are `canary-vision-default` 1,439,568 of 1,966,080 bytes,
+  `canary-vision-xiao-c3` 1,449,600 of 1,966,080, `canary-vision-xiao-s3`
+  1,333,488 of 3,342,336, `canary-sentinel-door` 1,451,376 of 1,966,080
+  and `canary-sentinel-lite` 1,160,816 of 1,310,720; the Lite image is the
+  tightest fit, with 149,904 bytes to spare. These are not the sizes CI's
+  size guard prints. Built here, #1889's five come out 208, 208, 208, 32
+  and 80 bytes under the sizes its own CI run's guard printed for them
+  (1,439,680, 1,449,728, 1,333,664, 1,451,152 and 1,160,768); this
+  change's guard sizes are the ones its own CI run prints. Neither change
+  is compiled into the emulator, so its dist does not move.
+  Host-tested; not run on a device.
 
 ### Home Assistant: every Canary's device page shows its firmware and its product, and a shared diagnostics dump keeps no digit of a Canary's key fingerprint (F391 in part, F392, HA45; device-details PR 2, #1891)
 

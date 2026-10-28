@@ -103,8 +103,11 @@ signed OTA updates it installs later inherit that setup automatically.
 
 **What you should see** on the monitor: the boot banner, then
 
-- `Grove Vision AI ID=...` — **non-zero** means the I2C link to the
-  module is alive (zero → §8),
+- `Grove Vision AI ID=1` — the module answered over I2C (`ID=0`, with an
+  `ERROR: Grove Vision AI V2 not responding` line just above it, means it
+  did not → §8). Any other number means an older image, which printed a
+  memory address here, non-zero with or without a module: on one of those,
+  read the ERROR line instead,
 - `Connected IP=... RSSI=...` — WiFi up,
 - `MQTT ... Connected.` and a burst of `[DISC]` lines — the device just
   self-registered in Home Assistant.
