@@ -302,10 +302,14 @@ by that field.
 - **The options flow uses the core's `config_entry` property** (the
   `__init__(config_entry)` pattern was replaced in 2024.11).
 - **Diagnostics project rather than copy:** the kernel URL as scheme and
-  port, the kernel id as a four-hex prefix, fingerprints truncated to eight
-  characters, `/status` storage as its endurance numbers (never the
-  block-device path), and then `async_redact_data` over tokens, hosts, ids,
-  keys, hashes, MACs, SSIDs, names and coordinates.
+  port, the kernel id as a four-hex prefix, the kernel key's fingerprint
+  as its eight characters, each Canary's id as its first eight characters
+  (all of a shorter one) keying its rows, each Canary's key fingerprint as
+  a per-dump correlation id with none of its digits, `/status` storage as its
+  endurance numbers (never the block-device path), and then
+  `async_redact_data` over tokens, hosts, ids, keys, hashes, MACs, SSIDs,
+  names, coordinates and a Canary's hardware, chip, module and Bluetooth
+  identifiers.
 - **The announcement names no host unless the operator sets one**
   (`SECURACV_ANNOUNCE_HOST`), because a host is a network identifier; Home
   Assistant then prefills its broker's host instead.

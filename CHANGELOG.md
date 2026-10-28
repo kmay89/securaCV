@@ -137,6 +137,165 @@
   is compiled into the emulator, so its dist does not move.
   Host-tested; not run on a device.
 
+### Home Assistant: every Canary's device page shows its firmware and its product, and a shared diagnostics dump keeps no digit of a Canary's key fingerprint (F391 in part, F392, HA45; device-details PR 2, #1891)
+
+- **The firmware on every Canary's device page.** Every firmware family
+  (the `firmware/canary` build, the canary-wap, Sense, Vision, Sentinel and
+  the displays) publishes `firmware_version` on its `health` topic and none
+  on `status`, and the integration read the version from `status` only, so
+  no Canary's device page showed one. The health subscription now runs the
+  trust-on-first-use pin first, unchanged, then records the version and
+  writes it as the device's software version. The `firmware/canary`
+  build's status carries its version too, under `firmware`, a key the
+  integration did not read; it is read now, so that build's page shows a
+  version from its first status. A status version is used only until a
+  health has reported one, a new version after an update is written again,
+  and a heartbeat that changes nothing writes nothing. That closes HA45,
+  filed by #1836's canary-wap contract fixture: its strict expected failure
+  in `test_wap_mqtt_contract.py`, which replays what the real `csi_mqtt.cpp`
+  publishes, is now a plain test.
+- **The model is the product.** A Canary's model was the constant "SecuraCV
+  Canary". It is now the product name for the `device_type` its status
+  names, from a table (`CANARY_PRODUCT_NAMES` in `const.py`, the names the
+  Apple apps use): Canary WAP, Canary Vision, Canary Sense, Canary
+  Sentinel, Canary Dash, Canary Nightstand, Canary Nightstand 7, Canary
+  Nightlight, Canary Watch Station, and "Canary display" for display
+  images older than the flavors' own types. A status that names no type (the
+  `firmware/canary` build's names none) or a type this release does not know
+  keeps "SecuraCV Canary"; the wire string is never shown. The type is
+  remembered while Home Assistant runs, so the canary-wap's last will
+  (`{"online": false}`, no `device_type`) keeps the model, and every
+  entity's device info applies the same rule, so an entity no longer writes
+  "SecuraCV Canary" back over it. The memory does not outlive a restart: a
+  Canary whose retained status is its last will reads "SecuraCV Canary"
+  again until it next names its type.
+- **Every value is bounded text from the broker.** Version, board and name
+  are cut to 64 printable characters: characters that neither print nor are
+  whitespace are dropped, so a dropped one leaves no space behind, then each
+  run of whitespace (a newline or a tab included) becomes one space
+  (`mqtt_payload.broker_text`); a version that is not a string (a number, an
+  object) is dropped instead of `str()`-ed onto the page. No serial number
+  is set on a Canary's device. A fact a publish leaves out is no longer
+  written as empty, so an update no longer clears the board or the address,
+  nor does the first status after a restart clear the version, board or
+  address the registry stored,
+  and a device that the availability topic announced first is registered by
+  the status that follows (before, that status wrote nothing to the
+  registry unless it carried a new version).
+- **The redaction set is ready for device details (F391, the part this PR
+  owns).** `TO_REDACT` gains `hw_token`, `mdns_host`, `serial_number`,
+  `chip_id`, `module_id`, `local_address`, `address` and `peer_address`,
+  named literally; the device-details vocabulary derives the set later.
+- **No digit of a Canary's key fingerprint in the diagnostics dump (F392).**
+  The config-entry dump kept 8 of each pinned Canary's 16 fingerprint
+  digits. A canary-wap serves its whole fingerprint to anyone in radio
+  range as its Bluetooth Device Information serial, and its Bluetooth name
+  and the fleet beacon carry the last four digits, so a posted dump let a
+  stranger nearby match the device. The trust row's `fingerprint` is
+  replaced by `key_correlation_id`: a keyed hash of the fingerprint under a
+  salt drawn for that one dump and never written, spelled in letters that
+  are not hex digits. Two Canaries pinned to one key share an id within a
+  dump; nothing links an id to a key or one dump to another. The kernel
+  key's own eight-character fingerprint is unchanged.
+- **Every Canary keeps its own row in the dump, and it says what the
+  device page says.** The dump keyed each Canary's rows by the first eight
+  characters of its id, and many ids share them: every canary-wap unit is
+  `canary-s3-…` or `canary-c3-…`, and a Sense (`canary_sense_001`) and a
+  Sentinel start alike, so one Canary's rows replaced another's and two
+  units pinned to one key could not be seen to share a correlation id. Ids
+  that share their eight characters now each get a per-dump ordinal
+  (`canary-s… #1`, `canary-s… #2`), numbered in the order the dump lists
+  them: the Canaries the integration has a record of, then every other
+  Canary with a device page, then an id only verification has seen (a
+  verdict held this run for a Canary whose page the owner has since
+  deleted; a chain or counts publish verified before the status makes the
+  page first, through the sensor that verifies it); no ninth character is
+  shown. Every Canary with a device page under the entry now
+  has a row (and a trust row when its key is pinned), whichever topic made
+  the page: a status, a health with or without a version, or a first
+  counts, chain, events, tamper, transport, mesh or chirp publish, each of
+  which adds entities and so the page; before, only a Canary the
+  integration had a record of (from its status, its availability or an
+  event it published) had one. The pages are read from the device
+  registry, so a Canary whose page predates a restart has a row before it
+  publishes again, every fact in it empty until it does (and its trust row
+  when its key is pinned). The per-Canary `firmware` and `hardware` are
+  the device page's own (the version health reported, else the status's,
+  and the board the status last named), so within a run they no longer
+  disagree with the page once a later status leaves a fact out; after a
+  restart the dump shows only what each Canary has published since, while
+  the page keeps the version, board and address the registry stored. The
+  file Home Assistant downloads also carries every Repairs issue it holds
+  for the integration, which it adds outside the sweep: the ones the owner
+  ignored and those of the integration's other entries too, each with the
+  time it was raised. An entry-scoped issue id ends in the entry id, and a
+  kernel key-mismatch issue carries the kernel's URL and the key it served.
+  None names a Canary. The file's `setup_times` section, Home Assistant's
+  too, is keyed by the id of every entry of the integration set up as Home
+  Assistant last started, and the file's name ends in the downloaded
+  entry's id. All of that predates this change; the issues are filed as
+  F399, whose scope names the rest, and the security docs and the setup
+  guide now say so, with the two sections to remove and the file to rename
+  before posting it.
+- **Tests.** `test_device_registry_versions.py` (new) drives the
+  integration's own subscriptions with each family's status and health
+  shape from `tests/fixtures/canary_mqtt_payloads.json`; in the monorepo it
+  also holds every fixture key to the producer named beside it, the
+  product table's keys to the device types `firmware/configs/*/*/config.h`
+  and the canary-wap publish, and its names to the Apple apps' table
+  (`ios/Shared/DeviceNaming.swift`), and holds every status producer to
+  spelling no version key but the flagship's `firmware`; those checks skip
+  in the HACS mirror, which carries neither (`python.yml` watches the files
+  they read). It also checks that a health without a version keeps the one
+  health reported, that a health-first Canary is named by a status that
+  changes nothing else, and that a restart keeps the registry's facts. The
+  stub suite's device registry now clears a field passed as None, as the
+  core's does, so a writer that sends None for a fact it lacks fails there
+  too. `test_diagnostics.py` and the real-core lane
+  (`tests/ha`) assert no run of four fingerprint characters anywhere in the
+  dump, that the dump's firmware is the device page's (health's over the
+  status's) and the board bounded, and that a value under each of the eight
+  new identifier keys is replaced at any depth by `async_redact_data` (the
+  core's own, in the real-core lane); the real-core lane also checks the
+  firmware and model on a device page, the flagship's status version, a
+  health-first Canary taking its status's name, and an update keeping the
+  board and the address. `test_diagnostics.py` also keeps two canary-wap
+  units, a Sense and a Sentinel in rows of their own, the two units'
+  correlation ids equal, and gives an id only verification has seen a row;
+  the real-core lane numbers a Canary whose chain was verified before its
+  status with the other pages, and its verdict after them once the owner
+  has deleted its page, and keys a row by eight characters of the
+  Canary's id (all of one with eight or fewer);
+  both suites give every Canary with a device page a row, the real-core
+  lane for a first publish on each of the eight topics that make a page
+  without a record (health with no version, counts, chain, events, tamper,
+  transport, mesh, chirp) and for a page kept through a reload, and both
+  number a Canary heard only on health after a status record its page
+  predates. The real-core
+  dump test's Canary key has a hex letter in every four-character run of
+  its fingerprint, and its kernel key is fixed: with the old key the scan
+  failed whenever the clock's bucket start spelled one of the fingerprint's
+  all-digit runs (246 of the 157,824 bucket starts in the three years from
+  2026-10-27), and a kernel key drawn fresh for each test shares four
+  characters with the Canary's fingerprint about once in a thousand runs.
+  The test asserts both preconditions. A real-core test holds what the
+  docs now say of the downloaded file's issues: an ignored issue and
+  another entry's are both in it; another sets up two entries before the
+  core is running, as a start does, and holds what the setup guide says of
+  the rest: the file's name ends in the entry id, its `setup_times` is
+  keyed by both entries' ids, and with that section and the issues removed
+  no id of either entry is left.
+  Every WAP id in the tests is one the WAP's suffix recipe can print, as
+  `scripts/tests/test_wap_name_examples.py` requires. `python.yml` now
+  also watches the eleven files outside its trees that the stub suite
+  already read (the dictionary, the voice sentences, the seven contract
+  vectors, and the viewer's verify and zip cores), found by
+  `scripts/check_path_filter_reads.py`. The stub suite passes on Python
+  3.11 and 3.13 (975 tests, 13 of them the contract fixture's strict
+  expected failures for gaps still open) and the real-core lane on Home
+  Assistant 2026.5.0 and 2026.10.1 (127 each). Host-tested; not run against
+  a device or a live broker.
+
 ## [2.4.18] - 2026-10-28
 
 > **Before you update.** Canary WAP: save its recovery kit first. After setup, a Wi-Fi change, a reboot, a vault key or a pairing takes its API token.

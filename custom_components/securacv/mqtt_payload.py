@@ -2,9 +2,11 @@
 
 Everything on the broker is untrusted input: a hostile or misconfigured
 publisher must never be able to balloon memory, AttributeError a @callback
-out of existence, or mint a device out of a topic segment. The three
+out of existence, or mint a device out of a topic segment. The payload
 helpers here are what every handler in the package calls first; they used
 to live in ``__init__.py`` and are re-exported from there unchanged.
+``broker_text`` bounds a single value the device registry takes from a
+payload.
 """
 from __future__ import annotations
 
@@ -24,6 +26,11 @@ MAX_MQTT_PAYLOAD_BYTES = 64 * 1024
 # unbounded (device_id was taken verbatim from the topic).
 DEVICE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
+# The longest broker-supplied text the device registry takes (a name, a
+# firmware version, a board): a device page is not a place for a hostile
+# publisher's essay.
+BROKER_TEXT_MAX_LENGTH = 64
+
 
 def mqtt_payload_within_cap(payload: Any) -> bool:
     """True when a raw MQTT payload is within the untrusted-broker cap."""
@@ -37,6 +44,23 @@ def valid_device_id(device_id: Any) -> bool:
     """True iff `device_id` is a topic segment a real Canary could publish."""
     # fullmatch, not match: `$` would accept a trailing newline.
     return isinstance(device_id, str) and DEVICE_ID_RE.fullmatch(device_id) is not None
+
+
+def broker_text(value: Any, limit: int = BROKER_TEXT_MAX_LENGTH) -> str | None:
+    """A broker-supplied value as bounded, printable text, or None.
+
+    Only a str is text: a number, bool, list or object is None, never its
+    ``str()``. Characters that neither print nor are whitespace (control
+    characters among them) are dropped first, then runs of whitespace
+    become one space and the ends are trimmed, so a dropped character
+    leaves no space behind; the result is cut to ``limit`` characters, and
+    empty is None.
+    """
+    if not isinstance(value, str):
+        return None
+    kept = "".join(ch for ch in value if ch.isprintable() or ch.isspace())
+    text = " ".join(kept.split())
+    return text[:limit].rstrip() or None
 
 
 def parse_mqtt_json(payload: Any) -> dict[str, Any] | None:

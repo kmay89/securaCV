@@ -88,9 +88,23 @@ class SecuraCVRuntimeData:
     api: SecuraCVApi | None = None
     coordinator: SecuraCVKernelCoordinator | None = None
     adapter_stats_coordinator: SecuraCVAdapterStatsCoordinator | None = None
-    # Canary devices seen on the status topic: {device_id: {"status": raw
-    # payload, "online": bool | None, "_last_fw": str, "last_event": {...}}}.
+    # Canary devices seen on the status or availability topic: {device_id:
+    # {"status": raw payload, "online": bool | None, "last_event": {...},
+    # and what the status topic last said for the device page:
+    # "device_type" (canonical), "status_firmware", "hardware",
+    # "configuration_url", "registered" (the status handler has named it)}}.
     devices: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # The firmware version each Canary's health topic last reported (bounded
+    # text). Every family publishes firmware_version there and none puts that
+    # key on status (the flagship's status carries its version as
+    # "firmware"), so this is what the device page's firmware reads first.
+    # Kept apart from `devices` because a health publish must not count as a
+    # status one.
+    canary_firmware: dict[str, str] = field(default_factory=dict)
+    # The device-page facts last written to the device registry per Canary
+    # ({"model", "sw_version", "hw_version", "configuration_url"}, each only
+    # when known), so a heartbeat that changes nothing writes nothing.
+    canary_registry: dict[str, dict[str, str]] = field(default_factory=dict)
     # Unsubscribe callables released by async_unload_entry: the discovery
     # wildcards, the status/health hooks, the watch tick, the claim timer.
     unsub_mqtt: list[Callable[[], None]] = field(default_factory=list)

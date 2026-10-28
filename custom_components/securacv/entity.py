@@ -1,16 +1,25 @@
 """Device info and the entity bases every platform shares.
 
 Two devices per entry: the kernel (one, "SecuraCV", model "Privacy Witness
-Kernel") and the Canaries (one per device id seen on the status topic).
-The kernel device carries two identifiers — the durable ``kernel_<device
-id>`` and the URL older registries already hold — so an upgrade merges
-into the existing device instead of creating a second. Canary devices link
-to the kernel as their via-device; the shim below speaks whichever
-device-registry API the running core has (``via_device_id`` from 2026.8,
-``via_device`` before).
+Kernel") and the Canaries (one per device id, made by its first status,
+health, counts, chain, events, tamper, transport, mesh or chirp publish:
+the status handler writes it, the health handler does when the health
+reports a version, and every entity's device info does too). The kernel
+device carries two identifiers — the durable ``kernel_<device id>`` and the
+URL older registries already hold — so an upgrade merges into the existing
+device instead of creating a second. Canary devices link to the kernel as
+their via-device; the shim below speaks whichever device-registry API the
+running core has (``via_device_id`` from 2026.8, ``via_device`` before).
 
 Every DeviceInfo value is a string: a non-string ``sw_version`` is a
-deprecation warning today and a refusal from 2026.12.
+deprecation warning today and a refusal from 2026.12. A Canary's device page
+says what the Canary itself published, through one writer
+(``async_sync_canary_device``): the model from the device_type its status
+names (``const.canary_model``), the firmware its health topic reports (its
+status's only when no health has) and its status's board, each bounded
+broker text (``mqtt_payload.broker_text``), and its status's address in the
+LAN-only form ``__init__._safe_config_url`` accepts (a private or link-local
+IP, or a ``.local`` name). No serial number is set on a Canary's device.
 """
 from __future__ import annotations
 
@@ -23,8 +32,10 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_KERNEL_DEVICE_ID, DOMAIN, MANUFACTURER, MODEL_CANARY, MODEL_KERNEL
+from .const import CONF_KERNEL_DEVICE_ID, DOMAIN, MANUFACTURER, MODEL_KERNEL, canary_model
 from .coordinator import DATA_IDENTITY, SecuraCVKernelCoordinator
+from .data import runtime_for
+from .mqtt_payload import BROKER_TEXT_MAX_LENGTH, broker_text, parse_mqtt_json
 
 KERNEL_DEVICE_NAME = "SecuraCV"
 
@@ -91,20 +102,16 @@ def kernel_via_device_kwargs(hass: HomeAssistant, entry: ConfigEntry) -> dict[st
 
 
 # The longest device name a status payload may set; the broker is untrusted.
-DEVICE_NAME_MAX_LENGTH = 64
+DEVICE_NAME_MAX_LENGTH = BROKER_TEXT_MAX_LENGTH
 
 
 def canary_display_name(friendly_name: Any, device_id: str) -> str:
     """The Canary's device name: what the owner named it, else the id.
 
     Always a str (a non-string DeviceInfo value is refused from 2026.12), and
-    bounded — the broker is untrusted input.
+    bounded printable text (``broker_text``) — the broker is untrusted input.
     """
-    if isinstance(friendly_name, str):
-        name = " ".join(friendly_name.split())[:DEVICE_NAME_MAX_LENGTH]
-        if name:
-            return name
-    return f"SecuraCV Canary {device_id}"
+    return broker_text(friendly_name, DEVICE_NAME_MAX_LENGTH) or f"SecuraCV Canary {device_id}"
 
 
 def canary_name_for(entry: ConfigEntry, device_id: str) -> str:
@@ -117,9 +124,6 @@ def canary_name_for(entry: ConfigEntry, device_id: str) -> str:
     "SecuraCV Canary <id>" wiped the owner's "Kitchen cam" the moment its
     first entity registered. One rule, one name.
     """
-    from .data import runtime_for
-    from .mqtt_payload import parse_mqtt_json
-
     runtime = runtime_for(entry)
     device = runtime.devices.get(device_id) if runtime is not None else None
     status = device.get("status") if isinstance(device, dict) else None
@@ -127,12 +131,77 @@ def canary_name_for(entry: ConfigEntry, device_id: str) -> str:
     return canary_display_name(data.get("device_name") or data.get("name"), device_id)
 
 
+def canary_model_for(entry: ConfigEntry, device_id: str) -> str:
+    """The model the device registry should carry for `device_id`.
+
+    From the device_type the Canary's status last named, which the status
+    handler remembers: the last will (``{"online": false}``) names none, and
+    an entity registered while a Canary is offline must not put the plain
+    MODEL_CANARY back over its product name.
+    """
+    runtime = runtime_for(entry)
+    device = runtime.devices.get(device_id) if runtime is not None else None
+    return canary_model(device.get("device_type") if isinstance(device, dict) else None)
+
+
+def canary_registry_facts(entry: ConfigEntry, device_id: str) -> dict[str, str]:
+    """What a Canary's device page says, from what the Canary last published.
+
+    ``model`` always (the product name, or MODEL_CANARY); ``sw_version`` from
+    the health topic's ``firmware_version``, else the status topic's;
+    ``hw_version`` and ``configuration_url`` from its status. A fact nothing
+    has reported is left out rather than written as None, which on a real
+    registry would clear what another writer set.
+    """
+    runtime = runtime_for(entry)
+    if runtime is None:
+        return {}
+    device = runtime.devices.get(device_id)
+    device = device if isinstance(device, dict) else {}
+    facts = {
+        "model": canary_model(device.get("device_type")),
+        "sw_version": runtime.canary_firmware.get(device_id) or device.get("status_firmware"),
+        "hw_version": device.get("hardware"),
+        "configuration_url": device.get("configuration_url"),
+    }
+    return {key: value for key, value in facts.items() if isinstance(value, str) and value}
+
+
+def async_sync_canary_device(
+    hass: HomeAssistant, entry: ConfigEntry, device_id: str, *, name: str | None = None
+) -> None:
+    """Write a Canary's device-page facts to the registry when they changed.
+
+    The one writer of model, firmware, board and address for a Canary: the
+    status and health handlers record what the Canary published, then call
+    this. ``name`` is passed only when the status handler first names the
+    device (the owner's name, else the id), and always writes. Never a
+    serial number: the integration sets none on a Canary's device.
+    """
+    runtime = runtime_for(entry)
+    if runtime is None:
+        return
+    facts = canary_registry_facts(entry, device_id)
+    if name is None and runtime.canary_registry.get(device_id) == facts:
+        return
+    runtime.canary_registry[device_id] = facts
+    info: dict[str, Any] = {
+        "identifiers": {(DOMAIN, f"canary_{device_id}")},
+        "manufacturer": MANUFACTURER,
+        **facts,
+    }
+    if name is not None:
+        info["name"] = name
+    info.update(kernel_via_device_kwargs(hass, entry))
+    dr.async_get(hass).async_get_or_create(config_entry_id=entry.entry_id, **info)
+
+
 def canary_device_info(hass: HomeAssistant, entry: ConfigEntry, device_id: str) -> DeviceInfo:
     """A Canary device, linked to the kernel when the entry has one."""
     info = DeviceInfo(
         identifiers={(DOMAIN, f"canary_{device_id}")},
         manufacturer=MANUFACTURER,
-        model=MODEL_CANARY,
+        model=canary_model_for(entry, device_id),
         name=canary_name_for(entry, device_id),
     )
     link = kernel_via_device_kwargs(hass, entry)

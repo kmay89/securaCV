@@ -911,13 +911,34 @@ one). A custom AppArmor profile confines each process to the paths it needs.
 
 **Diagnostics are projections, not copies.** A Home Assistant diagnostics
 dump of the integration carries shapes — the kernel URL's scheme and port,
-a four-hex prefix of the kernel id, fingerprints cut to eight characters,
-availability flags, the latest event's type, window and attestation, digest
-counts, per-Canary firmware and online state — and is then swept by
-Home Assistant's redaction over tokens, the pairing token id, hosts, URLs,
-device ids, keys, hashes, entry ids, nonces, IP and MAC addresses, SSIDs,
-names, coordinates and the seed, so a value that reaches the dump through
-a path the projection did not foresee is still replaced.
+a four-hex prefix of the kernel id, the kernel key's eight-character
+fingerprint, availability flags, the latest event's type, window and
+attestation, digest counts, per-Canary firmware and online state under
+each Canary's id cut to eight characters (the whole id when it has eight
+or fewer, and a per-dump ordinal where two ids share their eight) — and is
+then swept by Home Assistant's redaction over tokens, the pairing token id,
+hosts, URLs, device ids, keys, hashes, entry ids, nonces, IP and MAC
+addresses, SSIDs, names, coordinates, the seed, and the keys a Canary's
+answers use for its hardware token, mDNS host name, serial number, chip and
+module ids and Bluetooth addresses, so a value that reaches the
+integration's dump through a path the projection did not foresee is still
+replaced. A Canary's key fingerprint keeps none of its digits: each pinned
+Canary gets a correlation id, a keyed hash of the fingerprint under a salt
+drawn for that one dump, which links rows of the same dump and nothing
+else. The sweep covers what the integration returns, not the whole file:
+Home Assistant adds to the download itself, unswept, every Repairs issue it
+holds for the integration, the ones the owner ignored and those of the
+integration's other entries included, each with the time it was raised to
+the microsecond. The id of each issue about an entry ends in that entry's
+id, and a kernel key-mismatch issue carries the kernel's URL with its host
+and the whole key it served (sweep F399, open). None of them names a
+Canary. Home Assistant adds a `setup_times` section too, keyed by the id
+of every entry of the integration it set up as it last started, so after a
+restart the section names this entry and the integration's other entries,
+and its own `home_assistant` section, which carries the instance's time
+zone. And it names the file after the entry
+(`config_entry-securacv-<entry id>.json`), so its name ends in the entry
+id.
 
 **Evidence exports sit behind Home Assistant's authentication.** An export
 is one zip under `<config>/securacv/evidence` (directory `0700`, files

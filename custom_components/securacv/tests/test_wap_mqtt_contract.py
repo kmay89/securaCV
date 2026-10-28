@@ -475,6 +475,17 @@ def test_a_wap_is_registered_from_its_status_and_goes_offline_on_its_last_will(
     )
 
 
+def test_the_device_shows_the_firmware_the_wap_reports(record, monkeypatch):
+    """The WAP's status carries no firmware_version and its health does; the
+    device page reads it from the health (ledger HA45, device-details PR 2)."""
+    statuses = [json.loads(body) for body in _bodies(record, _topic(record, "status"))]
+    assert statuses and not [s for s in statuses if "firmware_version" in s]
+    assert _one(record, "running", "health")["firmware_version"] == record["firmware_version"]
+    wap = _Wap(record, monkeypatch).replay("connect", "running")
+    (device,) = device_registry(wap.hass).devices
+    assert device.sw_version == record["firmware_version"]
+
+
 def test_health_pins_the_key_and_the_signed_topics_verify(record, monkeypatch):
     wap = _Wap(record, monkeypatch).replay("connect", "running")
     pin = wap.store.get(record["device_id"])
@@ -897,18 +908,6 @@ def test_tamper_stays_on_while_the_wap_says_the_lid_is_open(record, monkeypatch)
     _require(_one(record, "trouble", "health")["enclosure_open"] is True, "the lid is open")
     _require(_value(wap.entity("tamper_enclosure"), "is_on") is True, "Tamper Enclosure is on")
     assert _value(wap.entity("tamper"), "is_on") is True
-
-
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="handed up (#1836): the device's sw_version comes from the status topic, "
-    "and a canary-wap's status carries no firmware_version (its health does)",
-)
-def test_the_device_shows_the_firmware_the_wap_reports(record, monkeypatch):
-    wap = _Wap(record, monkeypatch).replay("connect", "running")
-    (device,) = device_registry(wap.hass).devices
-    assert device.sw_version == record["firmware_version"]
 
 
 @pytest.mark.xfail(

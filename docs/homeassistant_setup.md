@@ -585,8 +585,22 @@ not data loss.
 
 #### Canary devices: "SecuraCV Canary <id>"
 
-One device per Canary, created the first time its `securacv/<id>/status`
-publish is seen, attached under the kernel device when one exists. Every
+One device per Canary, created by the first publish the integration sees
+from it on its `status`, `health`, `counts`, `chain`, `events`, `tamper`,
+`transport`, `mesh` or `chirp` topic (the `availability` topic alone creates
+none, and a device another topic created first takes the name its first
+status gives), attached under the kernel device when one exists. Its model
+is the product name for the `device_type` its status names (*Canary WAP*,
+*Canary Sense*, *Canary Dash*, and so on; *SecuraCV Canary* when the status
+names none, as the `firmware/canary` build's does, or names a type this
+release does not know), and its firmware is the `firmware_version` its
+`health` topic reports, which is where every Canary publishes it. A version
+on its `status` (only the `firmware/canary` build's carries one, as
+`firmware`) shows only until a health has reported one. The firmware, the
+board and the name its status gives are unsigned text from the broker,
+bounded to 64 characters; the model is picked from the product table by a
+`device_type` that is unsigned too, and is never the wire string itself. No
+serial number is set. Every
 unique id is `securacv_canary_<device_id>_<suffix>` with the suffix shown in
 parentheses. **Signed** means the publish carries the device's Ed25519
 signature and the integration checks it against the pinned key
@@ -1323,7 +1337,7 @@ silent — are sensors and events, not issues.
 | The Export button is unavailable | The kernel is unreachable; both buttons follow the kernel's availability. |
 | The export notification's link says expired | Links live 24 hours. **Media → SecuraCV evidence** resolves each pack to a fresh link; or export again. |
 | `pwk_*` entities and `securacv_*` entities both show | The claim has not reached the bridge yet: it needs the broker, and a bridge from this release or later. `witness/claim_state` reads `claimed` once it has. |
-| Diagnostics show redacted values | By design: tokens, hosts, ids, keys, hashes, MACs, SSIDs, names and coordinates are redacted; fingerprints are truncated to eight characters. |
+| Diagnostics show redacted values | By design: tokens, hosts, ids, keys, hashes, MACs, SSIDs, names, coordinates and a Canary's hardware, chip, module and Bluetooth identifiers are redacted; the kernel key's fingerprint is shown as its eight characters, and each Canary's key fingerprint as a correlation id (`key_correlation_id`) that links rows of the same dump and carries none of its digits. Each Canary's rows are keyed by its id cut to eight characters (`canary-k…`), or the whole id when it has eight or fewer (`garage`), with `#1`, `#2` after ids that share their eight characters; every Canary with a device page has a row, including one that has not published since Home Assistant started. Home Assistant writes three parts of the file itself, outside the redaction, and each can carry entry ids. The `issues` section lists every Repairs issue Home Assistant holds for SecuraCV, including ones you ignored and those of your other SecuraCV entries, each with the time it was raised; the id of an issue about an entry ends in that entry's id, and a kernel key-mismatch issue carries the kernel's URL, host included, and the whole key it served. The `setup_times` section is keyed by the id of every SecuraCV entry Home Assistant set up as it last started, so after a restart it names this entry and your other SecuraCV entries. And the file's name, `config_entry-securacv-<entry id>.json`, ends in the entry id. Before posting the file, remove the `issues` and `setup_times` sections (or replace the `setup_times` keys) and rename it. Its `home_assistant` section is Home Assistant's own too, and carries your instance's time zone. |
 
 ## Alternative Setup Modes
 
