@@ -20,7 +20,10 @@ Repairs issue it holds for the integration to the downloaded file itself,
 outside them (ledger F399): the ones the owner ignored and those of the
 integration's other entries too, each with the time it was raised. An
 entry-scoped issue id ends in the entry id, and a kernel key-mismatch issue
-carries the kernel's URL and the key it served.
+carries the kernel's URL and the key it served. Home Assistant also keys
+the file's ``setup_times`` section by the id of every entry of the
+integration it set up as it last started, and names the file after the
+entry.
 
 A Canary's key fingerprint carries none of its digits into the dump. Until
 the canary-wap stops serving it, the whole fingerprint is readable by anyone

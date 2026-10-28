@@ -850,7 +850,11 @@ integration's other entries included, each with the time it was raised to
 the microsecond. The id of each issue about an entry ends in that entry's
 id, and a kernel key-mismatch issue carries the kernel's URL with its host
 and the whole key it served (sweep F399, open). None of them names a
-Canary. Home Assistant also names the file after the entry
+Canary. Home Assistant adds a `setup_times` section too, keyed by the id
+of every entry of the integration it set up as it last started, so after a
+restart the section names this entry and the integration's other entries,
+and its own `home_assistant` section, which carries the instance's time
+zone. And it names the file after the entry
 (`config_entry-securacv-<entry id>.json`), so its name ends in the entry
 id.
 

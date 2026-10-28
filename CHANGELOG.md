@@ -92,8 +92,13 @@
   ignored and those of the integration's other entries too, each with the
   time it was raised. An entry-scoped issue id ends in the entry id, and a
   kernel key-mismatch issue carries the kernel's URL and the key it served.
-  None names a Canary. That predates this change
-  and is filed as F399; the security docs and the setup guide now say so.
+  None names a Canary. The file's `setup_times` section, Home Assistant's
+  too, is keyed by the id of every entry of the integration set up as Home
+  Assistant last started, and the file's name ends in the downloaded
+  entry's id. All of that predates this change; the issues are filed as
+  F399, whose scope names the rest, and the security docs and the setup
+  guide now say so, with the two sections to remove and the file to rename
+  before posting it.
 - **Tests.** `test_device_registry_versions.py` (new) drives the
   integration's own subscriptions with each family's status and health
   shape from `tests/fixtures/canary_mqtt_payloads.json`; in the monorepo it
@@ -122,7 +127,7 @@
   the real-core lane numbers a Canary whose chain was verified before its
   status with the other pages, and its verdict after them once the owner
   has deleted its page, and keys a row by eight characters of the
-  Canary's id (all of a shorter one);
+  Canary's id (all of one with eight or fewer);
   both suites give every Canary with a device page a row, the real-core
   lane for a first publish on each of the eight topics that make a page
   without a record (health with no version, counts, chain, events, tamper,
@@ -137,8 +142,11 @@
   characters with the Canary's fingerprint about once in a thousand runs.
   The test asserts both preconditions. A real-core test holds what the
   docs now say of the downloaded file's issues: an ignored issue and
-  another entry's are both in it; another holds what the setup guide says
-  of its name, which ends in the entry id.
+  another entry's are both in it; another sets up two entries before the
+  core is running, as a start does, and holds what the setup guide says of
+  the rest: the file's name ends in the entry id, its `setup_times` is
+  keyed by both entries' ids, and with that section and the issues removed
+  no id of either entry is left.
   Every WAP id in the tests is one the WAP's suffix recipe can print, as
   `scripts/tests/test_wap_name_examples.py` requires. `python.yml` now
   also watches the eleven files outside its trees that the stub suite

@@ -8,7 +8,8 @@ import re
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from homeassistant.components.diagnostics import async_redact_data
-from homeassistant.core import HomeAssistant
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
@@ -28,6 +29,7 @@ from conftest import (
     bridge_event,
     canary_device,
     make_kernel_entry,
+    settle,
 )
 from custom_components.securacv import repairs
 from custom_components.securacv.const import CONF_TOKEN_FILE, DOMAIN, ISSUE_TOFU_MISMATCH
@@ -250,7 +252,9 @@ async def test_only_a_verdict_whose_page_is_gone_is_numbered_after_the_pages(
     other pages. An id only verification has seen is a verdict still held
     for a Canary whose page the owner has since deleted (the integration
     allows that for a Canary it has no record of and has not pinned): it is
-    numbered after the pages and has no device row."""
+    numbered after the pages and has no device row. A third canary-wap unit
+    whose page a mesh publish made after the deletion, with no record, is
+    the page the verdict is numbered after: `#2` to the verdict's `#3`."""
     entry = await setup_kernel_entry(enable_mqtt=True)
     # The device registry's commands, the diagnostics view and the websocket
     # client, all before the first client freezes the router.
@@ -298,6 +302,20 @@ async def test_only_a_verdict_whose_page_is_gone_is_numbered_after_the_pages(
     assert diagnostics["verification"] == {"canary-s… #2": {"trusted": False, "reason": "unsigned"}}
     assert "xQ32" not in json.dumps(diagnostics)
 
+    # A Canary that has only a page, sharing the eight characters: its row
+    # comes after the record and before the verdict.
+    async_fire_mqtt_message(hass, "securacv/canary-s3-Kx22/mesh", json.dumps({"connected": True}), qos=1, retain=True)
+    await hass.async_block_till_done()
+    assert canary_device(hass, entry, "canary-s3-Kx22") is not None
+    assert list(entry.runtime_data.devices) == ["canary-s3-aB72"]
+    assert list(entry.runtime_data.verify) == ["canary-s3-xQ32"]
+
+    diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+    assert list(diagnostics["canary_devices"]) == ["canary-s… #1", "canary-s… #2"]
+    assert diagnostics["canary_devices"]["canary-s… #1"]["device_type"] == "canary-wap"
+    assert diagnostics["canary_devices"]["canary-s… #2"]["device_type"] is None
+    assert diagnostics["verification"] == {"canary-s… #3": {"trusted": False, "reason": "unsigned"}}
+
 
 async def test_a_canary_row_is_keyed_by_eight_characters_of_its_id(
     hass: HomeAssistant,
@@ -308,14 +326,14 @@ async def test_a_canary_row_is_keyed_by_eight_characters_of_its_id(
 ) -> None:
     """What the setup guide and the threat model say of a Canary's row key:
     the first eight characters of its id and an ellipsis, or the whole id
-    when it has eight or fewer."""
+    when it has eight or fewer (`garage01` has eight, `garage` six)."""
     entry = await setup_kernel_entry(enable_mqtt=True)
-    for canary_id in (CANARY, "garage"):
+    for canary_id in (CANARY, "garage01", "garage"):
         async_fire_mqtt_message(hass, f"securacv/{canary_id}/mesh", json.dumps({"connected": True}), qos=1, retain=True)
     await hass.async_block_till_done()
 
     diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
-    assert set(diagnostics["canary_devices"]) == {"canary-k…", "garage"}
+    assert set(diagnostics["canary_devices"]) == {"canary-k…", "garage01", "garage"}
 
 
 # A first publish on each of these topics gives a Canary its device page
@@ -474,21 +492,41 @@ async def test_the_download_carries_every_issue_the_domain_holds(
     assert all(issue["created"] for issue in issues.values())
 
 
-async def test_the_download_is_named_after_the_entry(
+async def test_the_download_carries_entry_ids_in_its_name_and_setup_times(
     hass: HomeAssistant,
     kernel: KernelMock,
-    setup_kernel_entry,
     hass_client: ClientSessionGenerator,
 ) -> None:
-    """What the setup guide says of the downloaded file's name, held to the
-    core: Home Assistant names the file after the entry, so with no issue
-    raised the entry id is in the name and nowhere in the body."""
-    entry = await setup_kernel_entry()
+    """What the setup guide says of the downloaded file outside the sweep,
+    besides its issues, held to the core (ledger F399). Home Assistant names
+    the file after the entry. It times the setup of every entry it sets up
+    before the core is running, as it does at a start, under the entry's id,
+    and adds those times to the download as `setup_times`: the download of
+    one of two entries set up at a start names both there. With no issue
+    raised, the `issues` and `setup_times` sections removed leave neither
+    id in the body. The core's own `home_assistant` section carries the
+    instance's time zone."""
+    hass.set_state(CoreState.not_running)
+    entry = make_kernel_entry(verifying_key=kernel.verifying_key)
+    other = make_kernel_entry(verifying_key=kernel.verifying_key, unique_id="kernel_pwk_other")
+    entry.add_to_hass(hass)
+    other.add_to_hass(hass)
+    # The component's own setup sets up every entry of the domain.
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await settle(hass)
+    assert other.state is ConfigEntryState.LOADED
+    hass.set_state(CoreState.running)
+
     assert await async_setup_component(hass, "diagnostics", {})
     client = await hass_client()
     response = await client.get(f"/api/diagnostics/config_entry/{entry.entry_id}")
     assert response.status == 200
     assert response.headers["Content-Disposition"] == f'attachment; filename="config_entry-{DOMAIN}-{entry.entry_id}.json"'
-    body = await response.text()
-    assert (await response.json())["issues"] == []
-    assert entry.entry_id not in body
+    body = await response.json()
+    assert body["issues"] == []
+    # "null" is the domain's own setup, timed under no entry.
+    assert set(body["setup_times"]) == {"null", entry.entry_id, other.entry_id}
+    assert body["home_assistant"]["timezone"] == str(hass.config.time_zone)
+    rest = json.dumps({section: value for section, value in body.items() if section not in ("issues", "setup_times")})
+    assert entry.entry_id not in rest
+    assert other.entry_id not in rest

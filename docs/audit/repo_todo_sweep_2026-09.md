@@ -7030,9 +7030,13 @@ so — see D2 below.)
   (real core) holds both: a chain-first Canary's row is `canary-s… #2`
   beside its verdict, and once the page is deleted through the device
   registry's websocket command the verdict keeps `canary-s… #2` and no
-  device row has it. `test_a_canary_row_is_keyed_by_eight_characters_of_its_id`
+  device row has it; then a third canary-wap unit's mesh publish gives it
+  a page and no record, and its row is `canary-s… #2` to the verdict's
+  `#3`, so the verdict comes after the other pages, not only after the
+  records. `test_a_canary_row_is_keyed_by_eight_characters_of_its_id`
   (real core) holds a row key to eight characters of the id and an
-  ellipsis, or the whole id when it has eight or fewer. Every Canary with
+  ellipsis, or the whole id when it has eight or fewer (`garage01`,
+  `garage`). Every Canary with
   a device page under the entry has a row, and
   a trust row when its key is pinned, whichever topic made the page:
   `_canary_page_ids()` reads the pages from the device registry, because a
@@ -7086,23 +7090,40 @@ so — see D2 below.)
   of the integration's own data. It predates device-details PR 2 and is
   about the kernel: no issue names a Canary. Fix: keep the host and the key
   out of issue data and placeholders (the fix flow then needs the served
-  key from somewhere else), or redact them there, and hold the whole
-  downloaded file, issues included, to the redaction rule in the real-core
-  lane, with an ignored issue and another entry's issue among its cases: a
-  fix tested only on the open issues of the entry being downloaded would
-  pass with both still in the file.
+  key from somewhere else), or redact them there, and hold the downloaded
+  file, issues included, to the redaction rule in the real-core lane, all
+  but the two parts below that the integration cannot reach, with an
+  ignored issue and another entry's issue among its cases: a fix tested
+  only on the open issues of the entry being downloaded would pass with
+  both still in the file.
   `test_the_download_carries_every_issue_the_domain_holds` (real core)
-  holds that scope today. Beyond this fix and the integration's reach, the
-  file's name carries the entry id whatever the issues hold: Home
-  Assistant names it `config_entry-securacv-<entry id>.json` (`:286` and
-  `:301`, sent as the `Content-Disposition` at `:242`, at 2026.10.1; `:281`,
-  `:296` and `:237` at 2026.5.0). The setup guide says to rename it before
-  posting, and `test_the_download_is_named_after_the_entry` (real core)
-  holds the name. From a real-core download (2026.10.1) in
-  device-details PR 2's second review; filed by #<PR>, 2026-10-26, its
-  scope (ignored issues, other entries' issues) corrected by the third
-  review, 2026-10-27, and the file's name added by a later review the
-  same day.
+  holds that scope today. Beyond this fix and the integration's reach, two
+  more parts of the file carry entry ids whatever the issues hold. Its
+  name: Home Assistant names it `config_entry-securacv-<entry id>.json`
+  (`homeassistant/components/diagnostics/__init__.py:286` and `:301`, sent
+  as the `Content-Disposition` at `:242`, at 2026.10.1; `:281`, `:296` and
+  `:237` at 2026.5.0). And its `setup_times` section, which every download
+  carries (`:220` at 2026.10.1, `:215` at 2026.5.0): the core times each
+  config entry's setup under the entry's id
+  (`homeassistant/config_entries.py:983` at 2026.10.1, `:785` at
+  2026.5.0), and only while it is not yet running
+  (`homeassistant/setup.py:759` at both), so after a restart the section
+  is keyed by the id of every entry of the domain set up at that start,
+  the downloaded entry's and the others', beside `null` for the domain's
+  own setup. The file's `home_assistant`
+  section, the core's own too, carries the instance's time zone
+  (`homeassistant/helpers/system_info.py:63` at 2026.10.1, `:65` at
+  2026.5.0). The setup guide says to remove the `issues` and `setup_times`
+  sections and to rename the file before posting it, and
+  `test_the_download_carries_entry_ids_in_its_name_and_setup_times` (real
+  core) sets up two entries before the core is running, as a start does,
+  and holds the name, both ids as `setup_times` keys, the time zone, and
+  no id of either entry elsewhere in the file once those two sections are
+  removed. From a real-core download (2026.10.1) in device-details PR 2's
+  second review; filed by #<PR>, 2026-10-26, its scope (ignored issues,
+  other entries' issues) corrected by the third review, 2026-10-27, the
+  file's name added by a later review the same day, and the `setup_times`
+  and `home_assistant` sections by the next, 2026-10-28.
 
 ### Parity & sub-projects
 
