@@ -7055,72 +7055,267 @@ test("each frontend's About facts: a read that failed is never an empty board", 
   }
 });
 
+// The advice the desktop's About fuse read gives, before the click and after
+// a good read. Quitting the Flasher comes first: "the About line's reason for
+// quitting the Flasher first", two tests down, holds why.
+const ABOUT_RESTART = "To start its firmware again, quit the Flasher first (while it is open, it can read a " +
+  "board that comes back on its port, and that read stops the firmware again), then press its reset " +
+  "button, or unplug it (and its battery, if it has one) and plug it back in.";
+const ABOUT_NOTE = "A good read leaves the board in its ROM’s download mode, not running its firmware. " +
+  ABOUT_RESTART;
+const ABOUT_LEFT = "The fuse read left the board in its ROM’s download mode, not running its firmware. " +
+  ABOUT_RESTART;
+
 test("the desktop's About fuse read says, beside its button, that it leaves the board in the ROM", async () => {
   // The This Board card offers the cold-start card's fuse read for any
   // connected ESP32, not only one brought up with BOOT held. The read resets
   // the board into its ROM and does not reset it back out (efuse.rs), so a
-  // board that was running its firmware is left in download mode. The person
-  // reads that, and how to start the firmware again, before the click: the
-  // reset button, or the cable and the battery, since a board on its own
-  // battery stays powered (and in the ROM) with only its USB cable pulled.
+  // good read leaves it in download mode. The person reads that, and how to
+  // start the firmware again, before the click, and again where the button
+  // was once a good read has run: quit the Flasher, then the reset button,
+  // or the cable and the battery (a board whose battery powers it without
+  // its firmware's help stays powered with only its USB cable pulled).
   const appJs = read(join(ROOT, "desktop/src/app.js"));
   const m = appJs.match(/\/\/ BEGIN ABOUT-BOARD\n([\s\S]*?)\/\/ END ABOUT-BOARD/);
-  const doc = pageDoc();
-  const nodes = { "efuse-read": doc.createElement("button"), "efuse-result": doc.createElement("p"),
-    "this-board": doc.createElement("section") };
-  nodes["efuse-read"].click = () => nodes["efuse-read"].fire("click");
+  const indexHtml = read(join(ROOT, "desktop/src/index.html"));
   // The card starts as index.html draws it (hidden until a board is read).
-  const cardTag = read(join(ROOT, "desktop/src/index.html")).match(/<section id="this-board" class="([^"]*)"/);
+  const cardTag = indexHtml.match(/<section id="this-board" class="([^"]*)"/);
   assert.ok(cardTag, "couldn't find the This Board card in desktop/src/index.html");
-  nodes["this-board"].className = cardTag[1];
-  const state = { port: "/dev/ttyACM0", chip: "ESP32-S3", portKind: "esp32", busy: false, chipFuses: undefined,
-    flashBytes: 8 << 20 };
-  const asked = [];
-  const page = runCut([m[1], ...["aboutFacts", "macRevealRow", "renderThisBoard", "wireEfuseRead"]
-    .map((n) => fnSource(appJs, n))], ["renderThisBoard", "wireEfuseRead"], {
-    document: doc, state, $: (id) => nodes[id] || null, prefs: {}, savePrefs() {},
-    invoke: async (cmd) => { asked.push(cmd); return { supported: true, chip_fields: { PKG_VERSION: 0 } }; },
-  });
-  page.wireEfuseRead();
-  page.renderThisBoard();
-  const card = nodes["this-board"];
-  const button = () => nodesOf(card).find((n) => n.tagName === "button" && n.textContent === "Read the chip’s fuses");
-  const NOTE = "A good read leaves the board in its ROM’s download mode, not running its firmware: " +
-    "press its reset button to start its firmware again, or unplug it (and its battery, " +
-    "if it has one) and plug it back in.";
-  const offer = button();
-  assert.ok(offer, "the This Board card should offer the fuse read until a read has been tried on this board");
-  const notes = nodesOf(card).filter((n) => n.tagName !== "#text" && n._text === NOTE);
-  assert.equal(notes.length, 1, "the card must say, once, that the fuse read leaves the board in the ROM");
-  assert.strictEqual(notes[0].parent, offer.parent, "the line must sit beside the button it is about");
-  // Drawn, and shown once "More about this board" is open (the closed
-  // <details> holds the line and its button alike): nothing from either up
-  // to and including the card is hidden — by the property, the attribute, an
-  // inline style, or a class styles.css draws as display: none or
-  // visibility: hidden (.hidden is display: none !important there).
+
+  // Every styles.css rule that hides, read as selectors and matched against
+  // the card's own tree, and above the card against index.html's ancestors
+  // of <section id="this-board"> as the markup writes them (tag, id, class,
+  // attributes). A selector this cannot read fails the test rather than
+  // being skipped: an unread rule is one the check would pass.
   const css = read(join(ROOT, "desktop/src/styles.css")).replace(/\/\*[\s\S]*?\*\//g, "");
-  const hiding = new Set();
+  const hidingSelectors = [];
   for (const [, sel, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     if (!/display\s*:\s*none|visibility\s*:\s*hidden/.test(body)) continue;
-    for (const one of sel.split(",")) {
-      const cls = one.trim().match(/^\.([\w-]+)$/);
-      if (cls) hiding.add(cls[1]);
+    for (const one of sel.split(",").map((s) => s.trim())) {
+      if (/^(from|to|\d+(\.\d+)?%)$/.test(one)) continue; // a @keyframes step, not an element
+      if (/::|:(before|after|first-line|first-letter)\b/.test(one)) continue; // a pseudo-element: not the element itself
+      hidingSelectors.push(one);
     }
   }
-  assert.ok(hiding.has("hidden"), "couldn't read styles.css's .hidden rule — the check below would pass on anything");
-  for (const [what, node] of [["the line", notes[0]], ["its button", offer]]) {
-    for (let n = node; n; n = n.parent) {
+  assert.ok(hidingSelectors.includes(".hidden"), "couldn't read styles.css's .hidden rule — the check below would pass on anything");
+  const PIECE = /#([\w-]+)|\.([\w-]+)|\[([\w-]+)(?:\s*=\s*["']?([^"'\]]*)["']?)?\]|:not\(([^()]*)\)|:([\w-]+)(?:\([^()]*\))?/g;
+  const compound = (src, sel) => {
+    const head = src.match(/^(\*|[a-zA-Z][\w-]*)?/);
+    const rest = src.slice(head[0].length);
+    const pieces = [...rest.matchAll(PIECE)];
+    assert.strictEqual(pieces.map((p) => p[0]).join(""), rest, `couldn't read the selector "${sel}" in styles.css`);
+    const tag = head[1] && head[1] !== "*" ? head[1].toLowerCase() : null;
+    const tests = pieces.map(([, id, cls, attr, val, not]) =>
+      id ? (e) => (e.id || e.attrs.id) === id
+        : cls ? (e) => e.className.split(/\s+/).includes(cls)
+          : attr ? (e) => {
+            const v = attr in e.attrs ? e.attrs[attr] : e[attr] === true ? "" : e[attr] || null;
+            return v !== null && v !== undefined && (val === undefined || String(v) === val);
+          }
+            : not !== undefined ? ((inner) => (e) => !inner(e))(compound(not.trim(), sel))
+              : () => true); // any other pseudo-class (:hover, :checked …) is taken to hold
+    return (e) => (!tag || e.tagName.toLowerCase() === tag) && tests.every((t) => t(e));
+  };
+  const parse = (sel) => {
+    // Right to left: [subject, combinator, its context, …]. Past a sibling
+    // combinator (+ or ~) the context is taken to hold.
+    const parts = sel.split(/\s*([>+~])\s*|\s+/).filter((p) => p !== undefined && p !== "");
+    const out = [];
+    for (let i = parts.length - 1; i >= 0; i--) {
+      if (parts[i] === "+" || parts[i] === "~") break;
+      if (parts[i] === ">") { out.push(">"); continue; }
+      if (out.length && out[out.length - 1] !== ">") out.push(" ");
+      out.push(compound(parts[i], sel));
+    }
+    return out;
+  };
+  const rules = hidingSelectors.map((sel) => ({ sel, parts: parse(sel) }));
+  const VOID = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
+  const open = [];
+  let above = null;
+  const markup = indexHtml.replace(/<!--[\s\S]*?-->/g, "").replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, "");
+  for (const [, close, tag, rest] of markup.matchAll(/<(\/?)([a-zA-Z][\w-]*)\b([^>]*)>/g)) {
+    const t = tag.toLowerCase();
+    if (close) { const i = open.map((e) => e.tagName).lastIndexOf(t); if (i >= 0) open.length = i; continue; }
+    const attrs = {};
+    for (const [, k, , v] of rest.matchAll(/([\w:-]+)(\s*=\s*"([^"]*)")?/g)) attrs[k.toLowerCase()] = v ?? "";
+    if (attrs.id === "this-board") { above = open.slice().reverse(); break; }
+    if (!VOID.has(t) && !/\/\s*$/.test(rest)) open.push({ tagName: t, attrs, className: attrs.class || "" });
+  }
+  assert.ok(above && above[above.length - 1].tagName === "html" && above.some((e) => e.tagName === "body"),
+    "couldn't read the This Board card's ancestors from desktop/src/index.html");
+  const matches = (parts, chain, at, pi = 0) => {
+    if (!parts[pi](chain[at])) return false;
+    if (pi === parts.length - 1) return true;
+    if (parts[pi + 1] === ">") return at + 1 < chain.length && matches(parts, chain, at + 1, pi + 2);
+    for (let k = at + 1; k < chain.length; k++) if (matches(parts, chain, k, pi + 2)) return true;
+    return false;
+  };
+  // Shown, not just drawn: nothing from the node up to and including the
+  // card is hidden — by the property, the attribute, an inline style (the
+  // style object, its cssText, or a style attribute), or a styles.css rule
+  // that matches it there.
+  const INLINE = /(^|;)\s*(display\s*:\s*none|visibility\s*:\s*hidden)\b/i;
+  const assertShown = (what, node, card) => {
+    const chain = [];
+    for (let n = node; n; n = n.parent) chain.push(n);
+    assert.strictEqual(chain[chain.length - 1], card, `${what} is not in the card`);
+    chain.push(...above);
+    for (let i = 0; chain[i] !== above[0]; i++) {
+      const n = chain[i];
+      const rule = rules.find((r) => matches(r.parts, chain, i));
       const why = n.hidden === true ? "the hidden property" : "hidden" in n.attrs ? "the hidden attribute"
         : n.style.display === "none" ? "display: none" : n.style.visibility === "hidden" ? "visibility: hidden"
-          : n.className.split(/\s+/).find((c) => hiding.has(c));
+          : INLINE.test(n.style.cssText || "") ? `style.cssText "${n.style.cssText}"`
+            : INLINE.test(n.attrs.style || "") ? `style="${n.attrs.style}"`
+              : rule ? `styles.css "${rule.sel}"` : null;
       assert.ok(!why, `${what} is drawn but not shown: a <${n.tagName}> on its way up to the card is hidden (${why})`);
+    }
+  };
+
+  // Before the click, after a good read, after a chip with no table (the
+  // port is never opened) and after a read that threw (where it left the
+  // board is not known).
+  for (const answer of [{ supported: true, chip_fields: { PKG_VERSION: 0 } }, { supported: false }, "the port went away"]) {
+    const doc = pageDoc();
+    const nodes = { "efuse-read": doc.createElement("button"), "efuse-result": doc.createElement("p"),
+      "this-board": doc.createElement("section") };
+    nodes["efuse-read"].click = () => nodes["efuse-read"].fire("click");
+    nodes["this-board"].className = cardTag[1];
+    nodes["this-board"].id = "this-board";
+    const state = { port: "/dev/ttyACM0", chip: "ESP32-S3", portKind: "esp32", busy: false, chipFuses: undefined,
+      efuseScan: null, flashBytes: 8 << 20 };
+    const asked = [];
+    const page = runCut([m[1], ...["aboutFacts", "macRevealRow", "renderThisBoard", "wireEfuseRead"]
+      .map((n) => fnSource(appJs, n))], ["renderThisBoard", "wireEfuseRead"], {
+      document: doc, state, $: (id) => nodes[id] || null, prefs: {}, savePrefs() {},
+      invoke: async (cmd) => {
+        asked.push(cmd);
+        if (typeof answer === "string") throw answer;
+        return answer;
+      },
+    });
+    page.wireEfuseRead();
+    page.renderThisBoard();
+    const card = nodes["this-board"];
+    const button = () => nodesOf(card).find((n) => n.tagName === "button" && n.textContent === "Read the chip’s fuses");
+    const lines = (text) => nodesOf(card).filter((n) => n.tagName !== "#text" && n._text === text);
+    const offer = button();
+    assert.ok(offer, "the This Board card should offer the fuse read until a read has been tried on this board");
+    assert.equal(lines(ABOUT_NOTE).length, 1, "the card must say, once, that the fuse read leaves the board in the ROM");
+    assert.strictEqual(lines(ABOUT_NOTE)[0].parent, offer.parent, "the line must sit beside the button it is about");
+    assert.equal(lines(ABOUT_LEFT).length, 0, "nothing has been read yet");
+    // Shown once "More about this board" is open: the closed <details>
+    // holds the line and its button alike.
+    assertShown("the line", lines(ABOUT_NOTE)[0], card);
+    assertShown("its button", offer, card);
+    const where = offer.parent;
+
+    offer.fire("click");
+    await ticks();
+    const how = JSON.stringify(answer);
+    assert.deepStrictEqual(asked, ["read_security_efuses"], "the card's button runs the one fuse read");
+    assert.ok(!button(), `the button goes once a read has been tried (${how})`);
+    assert.equal(lines(ABOUT_NOTE).length, 0, `the line about a read to come goes with its button (${how})`);
+    if (typeof answer !== "string" && answer.supported) {
+      assert.match(card.textContent, /PackageESP32-S3 \(QFN56\)/, "the read's fields reach the card");
+      // The board is in the ROM now, and the card still says how to get it out.
+      assert.equal(lines(ABOUT_LEFT).length, 1, "after a good read the card must say, once, where it left the board");
+      const left = lines(ABOUT_LEFT)[0];
+      assert.strictEqual(left.parent.tagName, where.tagName, "the line takes the button's place");
+      assert.strictEqual(left.parent.className, where.className, "the line takes the button's place");
+      assertShown("the line after a good read", left, card);
+    } else {
+      assert.equal(lines(ABOUT_LEFT).length, 0, `no read reached the ROM, so nothing says it left the board there (${how})`);
     }
   }
 
-  offer.fire("click");
-  await ticks();
-  assert.deepStrictEqual(asked, ["read_security_efuses"], "the card's button runs the one fuse read");
-  assert.match(card.textContent, /PackageESP32-S3 \(QFN56\)/, "the read's fields reach the card");
-  assert.ok(!button(), "the button goes once the fuses are read");
-  assert.ok(!card.textContent.includes(NOTE), "the line goes with its button");
+  // The good read is bound to the board it ran on, as efuseStopFindings
+  // binds the verdict: a scan from another port or another chip says nothing
+  // about where this board is.
+  for (const other of [{ port: "/dev/ttyACM1", chip: "ESP32-S3" }, { port: "/dev/ttyACM0", chip: "ESP32-C3" }]) {
+    const doc = pageDoc();
+    const nodes = { "efuse-read": doc.createElement("button"), "this-board": doc.createElement("section") };
+    const state = { port: "/dev/ttyACM0", chip: "ESP32-S3", portKind: "esp32", chipFuses: null, flashBytes: 8 << 20,
+      efuseScan: { ...other, scan: { supported: true, chip_fields: { PKG_VERSION: 0 } } } };
+    runCut([m[1], ...["aboutFacts", "macRevealRow", "renderThisBoard"].map((n) => fnSource(appJs, n))],
+      ["renderThisBoard"], { document: doc, state, $: (id) => nodes[id] || null, prefs: {}, savePrefs() {} })
+      .renderThisBoard();
+    assert.ok(!nodes["this-board"].textContent.includes(ABOUT_LEFT),
+      `a good read of ${other.chip} on ${other.port} must not say where it left the board on ${state.port}`);
+  }
+});
+
+test("the About line's reason for quitting the Flasher first: while it is open, a board that comes back on its port is read again", async () => {
+  // ABOUT_RESTART says to quit the Flasher before pressing the board's reset
+  // button or re-plugging it. Outside the serial monitor the poll has no
+  // unplug grace: a poll that misses the port drops the board (a re-plug, or
+  // a reset that takes a chip's own USB-Serial/JTAG port off the bus for a
+  // poll), and the next poll that finds it runs detect_chip (`espflash
+  // board-info`) and then the passport (`espflash read-flash`, per region).
+  // In the pinned espflash 3.3.0 each of those connects through a reset into
+  // the ROM, loads espflash's stub and exits without resetting the chip back
+  // (src/cli/mod.rs: board_info and read_flash never call reset_after), so
+  // the board comes back stopped, not running its firmware. Read from that
+  // crate's source; nothing here ran on a device.
+  const pins = read(join(ROOT, ".github/espflash-pins.env"));
+  assert.match(pins, /^ESPFLASH_VERSION=3\.3\.0$/m,
+    "ABOUT_RESTART's reason was read from espflash 3.3.0's source (board-info and read-flash leave the chip in the stub) — " +
+    "re-read the pinned version's board_info and read_flash, and reword the line in desktop/src/app.js if they changed");
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const m = appJs.match(/\/\/ BEGIN ABOUT-BOARD\n([\s\S]*?)\/\/ END ABOUT-BOARD/);
+  const grace = appJs.match(/^const UNPLUG_GRACE_POLLS = (\d+);$/m);
+  assert.ok(grace, "couldn't cut UNPLUG_GRACE_POLLS from desktop/src/app.js");
+  const doc = pageDoc();
+  const nodes = { "this-board": doc.createElement("section"), "efuse-read": doc.createElement("button") };
+  const S3 = { name: "/dev/ttyACM0", kind: "usb", vid: 0x303a, pid: 0x1001, product: "USB JTAG/serial debug unit" };
+  let ports = [S3];
+  const calls = [];
+  // A good About fuse read has just run on this board.
+  const state = { port: S3.name, portInfo: S3, portKind: "esp32", chip: "ESP32-S3", chipDesc: null, chipTool: null,
+    busy: false, monitoring: false, detecting: false, failedPort: null, catalog: { flash_baud: 921600 },
+    flashBytes: 8 << 20, passport: null, resident: null, passportPending: false,
+    efuseScan: { port: S3.name, chip: "ESP32-S3", scan: { supported: true, chip_fields: { PKG_VERSION: 0 } } },
+    chipFuses: null };
+  const page = runCut([grace[0], "let missingPolls = 0;", m[1],
+    ...["aboutFacts", "macRevealRow", "renderThisBoard", "renderPassport", "pickCandidate",
+      "trackPresenceWhileMonitoring", "onDisconnect", "resetSteps"].map((n) => fnSource(appJs, n)),
+    ...["readPassport", "identify", "pollPorts"].map((n) => "async " + fnSource(appJs, n))], ["pollPorts", "renderThisBoard"], {
+    document: doc, state, $: (id) => nodes[id] || (nodes[id] = doc.createElement("div")), prefs: {}, savePrefs() {},
+    WE2_VID: 0x2886, WE2_PID: 0x8060, matchProjectToProduct: () => null,
+    setTimeout: () => 0, clearTimeout() {},
+    invoke: async (cmd, args) => {
+      calls.push(cmd === "list_ports" ? cmd : `${cmd} ${args.port}`);
+      if (cmd === "list_ports") return ports;
+      if (cmd === "detect_chip") return { chip: "ESP32-S3", flash_bytes: 8 << 20 };
+      if (cmd === "board_passport") return new Promise(() => {}); // 8–25 s on hardware; not needed here
+      throw new Error(`unexpected ${cmd}`);
+    },
+  });
+  const poll = async (list) => { ports = list; calls.length = 0; await page.pollPorts(); await ticks(); return [...calls]; };
+  page.renderThisBoard();
+  assert.ok(nodes["this-board"].textContent.includes(ABOUT_LEFT), "the card should say where the good read left the board");
+
+  // A port that stays (a USB-bridge board's, through its reset button) is
+  // left alone: the board is already identified.
+  assert.deepStrictEqual(await poll([S3]), ["list_ports"], "a port that stays must not be read again");
+  // The cable comes out (or the port drops off the bus on a reset)…
+  assert.deepStrictEqual(await poll([]), ["list_ports"]);
+  assert.strictEqual(state.chip, null, "outside the monitor, one poll without the port is a disconnect");
+  // …and the board that comes back is read again, with the Flasher's own
+  // espflash calls, before anything else can run on it.
+  assert.deepStrictEqual(await poll([S3]), ["list_ports", `detect_chip ${S3.name}`, `board_passport ${S3.name}`],
+    "a board that comes back on the port is read again (board-info, then the passport's read-flash)");
+  assert.strictEqual(state.chip, "ESP32-S3");
+  // The card offers the read again, and says again to quit the Flasher first.
+  assert.ok(nodes["this-board"].textContent.includes(ABOUT_NOTE), "the card should offer the read, and its advice, again");
+
+  // While the serial monitor runs, a short gap is ridden out and nothing is
+  // read: that is the one exception, and the line does not lean on it.
+  state.monitoring = true;
+  for (let i = 1; i < Number(grace[1]); i++) {
+    assert.deepStrictEqual(await poll([]), ["list_ports"]);
+    assert.strictEqual(state.chip, "ESP32-S3", `the monitor rides out ${i} missed poll(s)`);
+  }
+  assert.deepStrictEqual(await poll([S3]), ["list_ports"], "the monitor's board is not read again when it comes back");
 });

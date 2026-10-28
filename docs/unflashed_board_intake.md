@@ -337,16 +337,48 @@ The same read also runs from *Read the chip's fuses* in the desktop's
 brought up with BOOT held, until a read has been tried on that board: a
 read that fails, brings back no chip fields, or meets a chip with no table
 takes the button away too, and it comes back when the chip is read again (a
-re-plug, or *re-read chip*). It ends the same way, so a board that was
-running its firmware is reset into the ROM and left there after a good
-read. The line beside that button says so before the click, and says how to
-start the firmware again: the board's reset button, or unplugging it, and
-its battery if it has one, and plugging it back in. A board on its own
-battery (the WAP's battery build, or a display build whose device manifest
-lists one) stays powered with only its USB cable pulled, so it stays in the
-ROM. `canary-local/tests/desktop_parity.test.js` draws the card and holds
-the line to its button, shown and not just present. Like the rest of the
-read, where it leaves the board is host-tested only (U1, below).
+re-plug, or *re-read chip*). It ends the same way, so after a good read the
+board is in the ROM's download mode, not running its firmware. The line
+beside that button says so before the click, and after a good read the same
+advice takes the button's place: to start the firmware again, quit the
+Flasher first, then press the board's reset button, or unplug it, and its
+battery if it has one, and plug it back in.
+
+Quitting comes first because the Flasher reads a board that comes back on
+its port. Outside its serial monitor the poll (`pollPorts`, once a second)
+has no unplug grace: a poll that misses the port drops the board, and the
+next one that finds it runs `detect_chip` (`espflash board-info`) and then
+the passport's `read-flash`es. In the pinned espflash 3.3.0 each of those
+connects through a reset into the ROM (`--before default-reset`), loads
+espflash's stub and exits without resetting the chip back: its `board_info`
+and `read_flash` never call `reset_after`, so the `--after hard-reset`
+default goes unused, and the board comes back stopped in the stub. A
+re-plug that leaves the port gone for a poll is a disconnect, and so is a
+reset that drops a chip's own USB-Serial/JTAG port off the bus that long
+(app.js's watcher says a re-enumeration is usually 1–3 s). A USB-bridge
+board's port stays through its reset button, and a running serial monitor
+rides a short gap out without reading the board, but the line leans on
+neither. The same reads run on every connect, so the Flasher's connect
+stops a board's firmware too, before any fuse read.
+
+The battery is named because a board whose battery powers it without its
+firmware's help (the WAP's battery build, the Watch Station) stays powered
+with only its USB cable pulled, and so stays in the ROM. Not every board
+with a battery is one of those: the AMOLED 2.41's battery rail rides GPIO16,
+a latch its firmware must raise early in boot or lose power
+(`firmware/boards/waveshare-esp32s3-amoled241/pins/pins.h`, and the first
+lines of `setup()` in `firmware/projects/canary-display/src/main.cpp`), and
+in the ROM no firmware is running to raise it, so pulling its cable powers
+it off; and nothing in `firmware/` drives the Touch 1.69's SYS_EN latch
+(GPIO41), so the repo cannot say which way that one goes.
+`canary-local/tests/desktop_parity.test.js` draws the card and holds both
+lines to their place, shown and not just present (no hidden property or
+attribute, no inline style, and no `styles.css` rule that matches them in
+the card's tree as `index.html` writes its ancestors), drives the poll
+through a re-plug to hold the reason for quitting first, and fails when the
+pinned espflash moves off 3.3.0, so that reason is read again. All of this
+is read from the code and espflash's source: like the rest of the read,
+where it leaves the board is host-tested only (U1, below).
 
 Getting into the ROM is a reset too, which is why the port picks the
 sequence. A BOOT-held S3, C3 or C6 presents its USB-Serial/JTAG port. The
@@ -391,11 +423,14 @@ sidecar with its own interpreter and pins.
 reset sequences are host-tested against the vendored esptool-js
 implementation, and the choice of sequence by port and the line moves after
 the read (the park, and nothing else) against a scripted board; none of it
-is proven on a physical board. That a native-USB board held in BOOT, or a
-board that was running its firmware, is still in the ROM after a good read,
-and that its reset button or a full power cycle (USB and any battery) then
-starts its firmware, is the bench check this owes. A protocol mistake fails
-as "not checked", not as a wrong verdict.
+is proven on a physical board. The bench check this owes: that a
+native-USB board held in BOOT, or a board that was running its firmware, is
+still in the ROM after a good read; that, with the Flasher closed, its reset
+button or a full power cycle (USB and any battery) then starts its
+firmware; that with the Flasher open a re-plug leaves it stopped in
+espflash's stub instead; and that an AMOLED 2.41 on its battery powers off
+when its USB cable is pulled. A protocol mistake fails as "not checked",
+not as a wrong verdict.
 
 The desktop app **can** now read what firmware is resident: `board_passport`
 reads the bootloader's image header, the partition table, otadata and the

@@ -5512,20 +5512,33 @@ function renderThisBoard() {
   // back into its firmware), so it runs when asked (the same button as the
   // cold-start card's) rather than on every connect. This card is drawn for
   // any ESP32, not only one held in BOOT, so the line beside the button says
-  // where the read leaves a board that was running its firmware, and how to
-  // start it again: the reset button, or every source of power. A board on
-  // its own battery (the WAP's battery build, a display build whose
-  // devices/<slug>/device.json lists one) stays powered with only its USB
-  // cable pulled, so the ROM keeps it.
+  // where a good read leaves the board and how to start its firmware again,
+  // and after a good read the same advice takes the button's place. Quitting
+  // the Flasher comes first: while it is open and its monitor is not
+  // running, a board that comes back on its port after a poll missed it (a
+  // re-plug, or a reset that drops a chip's own USB-Serial/JTAG port off the
+  // bus) is read again by pollPorts → identify, and the pinned espflash
+  // 3.3.0's board-info and read-flash leave the chip in espflash's stub, not
+  // its firmware. Then the reset button, or every source of power: a board
+  // whose battery powers it without its firmware's help (the WAP's battery
+  // build, the Watch Station) stays powered with only its USB cable pulled.
+  const restart = "To start its firmware again, quit the Flasher first (while it is open, it can read a " +
+    "board that comes back on its port, and that read stops the firmware again), then press its reset " +
+    "button, or unplug it (and its battery, if it has one) and plug it back in.";
+  const fuseRead = state.efuseScan;
   if (state.chipFuses === undefined && $("efuse-read")) {
     const read = h("button", "btn btn-ghost btn-small", "Read the chip’s fuses");
     read.type = "button";
     read.title = "Read-only: the package, the parts in it, calibration — and the security fuses.";
     read.addEventListener("click", () => $("efuse-read").click());
     det.append(read, h("p", "muted tb-source",
-      "A good read leaves the board in its ROM’s download mode, not running its firmware: " +
-      "press its reset button to start its firmware again, or unplug it (and its battery, " +
-      "if it has one) and plug it back in."));
+      "A good read leaves the board in its ROM’s download mode, not running its firmware. " + restart));
+  } else if (fuseRead && fuseRead.port === state.port && fuseRead.chip === state.chip &&
+      fuseRead.scan && fuseRead.scan.supported) {
+    // Block 0 answered, so the read reached the ROM and parked there. A chip
+    // with no table never opens the port, and a read that threw may not have.
+    det.append(h("p", "muted tb-source",
+      "The fuse read left the board in its ROM’s download mode, not running its firmware. " + restart));
   }
   det.append(copy);
   box.append(det);

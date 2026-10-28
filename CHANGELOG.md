@@ -22,17 +22,19 @@
   copy of the browser's row model; `desktop_parity.test.js` runs both over
   4,140 fact sets and fails on any difference. The desktop reads the
   fuse-derived rows when asked ("Read the chip’s fuses", the cold-start
-  card's read), and the line beside that button says that a good read leaves
-  the board in its ROM's download mode, not running its firmware, and that
-  its reset button, or unplugging it (and its battery, if it has one) and
-  plugging it back in, starts its firmware again. The
-  desktop's `detect_chip` now keeps espflash's chip line, revision, crystal
-  and features (`ChipInfo`), and its passport reads the bootloader's image
-  header and the descriptor's `secure_version` and ELF hash. Not built from
-  the design (§6.2, §6.9): the This Board card's groups stack in one
-  column, not a sidebar; one "Copy these details" copies the card, with no
-  copy per row; and the desktop's connect line names the chip, its revision
-  and its flash, with no PSRAM size or bus mode.
+  card's read), and the line beside that button, and in its place after a
+  good read, says that a good read leaves the board in its ROM's download
+  mode, not running its firmware, and that to start its firmware again you
+  quit the Flasher first (while it is open, it can read a board that comes
+  back on its port, and that read stops the firmware again), then press its
+  reset button, or unplug it (and its battery, if it has one) and plug it
+  back in. The desktop's `detect_chip` now keeps espflash's chip line,
+  revision, crystal and features (`ChipInfo`), and its passport reads the
+  bootloader's image header and the descriptor's `secure_version` and ELF
+  hash. Not built from the design (§6.2, §6.9): the This Board card's groups
+  stack in one column, not a sidebar; one "Copy these details" copies the
+  card, with no copy per row; and the desktop's connect line names the chip,
+  its revision and its flash, with no PSRAM size or bus mode.
 - **eFuse fields, never words.** Both flashers read the package, wafer,
   in-package flash and PSRAM and block-version fields from eFuse blocks 1
   and 2 by a per-chip FIELD allowlist (espefuse 5.6.0's tables, the same in
