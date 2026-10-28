@@ -24,8 +24,10 @@
     can reach the unit. If the router changes, use Connect (Settings →
     WiFi), not Remove credentials: Connect keeps the broker login, and from
     the recovery network it now takes the token or a BOOT tap. The iPhone
-    app's fleet Wi-Fi update already sends the token and keeps working; Home
-    Assistant 0.9.0 calls none of these.
+    app's fleet Wi-Fi update already sends the token and keeps working. The
+    Home Assistant integration 0.9.0 calls none of these; the add-on's setup
+    wizard sends the API token you type for Add another Canary, so it keeps
+    working too, once both units run 2.4.18.
   - **Canary WAP, after it updates:** anything changed before 2.4.18
     without the token (the dashboard's landing page signed in anyone on your
     network) stays. On the Camera tab's Sealed Alarm Snapshots card, compare
@@ -51,6 +53,10 @@
     compared) is dropped when it next connects: remove the WAP from that
     device's Bluetooth settings and pair again after Start Pairing. A device
     with no way to type or compare the six digits can no longer keep a bond.
+    If a new pairing is refused because the WAP's store of bonds is full,
+    press Clear All under Paired Devices, then pair again: it also removes
+    your own bonds, and it is the only way to delete an older firmware's
+    bond the list does not show.
   - **Canary WAP set standalone** no longer reads a Wi-Fi code held to its
     lens. To add it to a display's fleet, hold BOOT 10 seconds first, then
     show the code; the hold also clears its Wi-Fi, its Home Assistant link
@@ -118,7 +124,7 @@
   The backoffice 0.8.0 entry below is in the published backoffice image;
   it is not on staging yet (the staging deploy skips while no deploy server
   is configured), and production moves only with *Promote backoffice to
-  production*.
+  production*, which needs that server first.
 
 ### canary-wap keeps Bluetooth bonds and shown passkeys to its owner, keeps ambient rows off the card and the broker, puts closed bundles in the event ring and commits them before a planned restart, binds a pairing CONFIRM to its sender's role, resets Chirp's cooldown only after a quiet day and drops its stub server; an MQTT contract fixture holds the WAP to Home Assistant, the flasher reads the Vision's detection defaults where the firmware does, the dash says which way it is really turned, the splash bird clears its bubble and the tail is drawn on LVGL 8.4, CI holds the native and wasm32 cores to the sources, `build.json` carries each set's hardware, 133 more enclosure knobs get help, and the Witness Wall shows a device's birth day (#1836, wave 20)
 
