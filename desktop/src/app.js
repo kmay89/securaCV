@@ -5508,14 +5508,19 @@ function renderThisBoard() {
   });
   det.append(techLabel, body);
   // The fuse-derived rows wait for the fuse read, which resets the board into
-  // its ROM and back, so it runs when asked (the same button as the cold-start
-  // card's) rather than on every connect.
+  // its ROM and leaves it there (efuse.rs parks the lines; nothing resets it
+  // back into its firmware), so it runs when asked (the same button as the
+  // cold-start card's) rather than on every connect. This card is drawn for
+  // any ESP32, not only one held in BOOT, so the line beside the button says
+  // where the read leaves a board that was running its firmware.
   if (state.chipFuses === undefined && $("efuse-read")) {
     const read = h("button", "btn btn-ghost btn-small", "Read the chip’s fuses");
     read.type = "button";
     read.title = "Read-only: the package, the parts in it, calibration — and the security fuses.";
     read.addEventListener("click", () => $("efuse-read").click());
-    det.append(read);
+    det.append(read, h("p", "muted tb-source",
+      "A good read leaves the board in its ROM’s download mode, not running its firmware: " +
+      "unplug it and plug it back in to start its firmware again."));
   }
   det.append(copy);
   box.append(det);

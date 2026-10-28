@@ -1035,9 +1035,9 @@ test("secret drawer: a refusing store is never downgraded to the prefs file, and
     const { secretStore, calls } = loadSecretStore("secret-service", { "wifi:home": "old" });
     const reading = secretStore.get("wifi:home");
     await drain();
-    const read1 = storeCalls(calls, "secret_get", "wifi:home")[0];
-    assert.ok(read1, "get() is waiting behind the adoption pass — a locked keyring's prompt would hold the restore");
-    read1[2]();
+    const offer = storeCalls(calls, "secret_get", "wifi:home")[0];
+    assert.ok(offer, "get() is waiting behind the adoption pass — a locked keyring's prompt would hold the restore");
+    offer[2]();
     assert.strictEqual(await reading, "old", "get() must fall back to the prefs copy while the store has nothing");
     assert.strictEqual(storeCalls(calls, "secret_set", "wifi:home").length, 1,
       "the adoption pass should still be out here, its one write unanswered");
@@ -1080,13 +1080,13 @@ test("secret drawer: a refusing store is never downgraded to the prefs file, and
     await secretStore.init();
     const reading = secretStore.get("wifi:home");
     await drain();
-    const [read1] = storeCalls(calls, "secret_get", "wifi:home");
+    const [offer] = storeCalls(calls, "secret_get", "wifi:home");
     const [move] = storeCalls(calls, "secret_set", "wifi:home");
-    assert.ok(read1 && move, "expected the read and the adoption write both in flight");
+    assert.ok(offer && move, "expected the read and the adoption write both in flight");
     move[2]();                   // the move lands and drops the prefs copy…
     await drain();
     assert.ok(!("wifi:home" in prefs.secrets), "the adoption pass should have dropped the prefs copy");
-    read1[2]({ value: null });   // …then the store's answer from before it arrives
+    offer[2]({ value: null });   // …then the store's answer from before it arrives
     assert.strictEqual(await reading, "v", "get() lost a password the adoption pass moved while it was asking");
   }
 });
@@ -1716,6 +1716,15 @@ test("neither flasher hands a BOOT-held board to its firmware: not at the end of
     "the About rows' fuse read can return an error past the park");
   assert.match(efuseRs, /if attempt == 0 && !usb_serial_jtag \{\s*classic_reset\(link\)\?;/,
     "the desktop fuse read runs the classic sequence on a USB-Serial/JTAG port again");
+  // That choice is the port's own: the port the read opens is asked what it
+  // is, and that answer, untouched, is what reaches the enter sequence.
+  const fromPort = nativeFnBody(efuseRs, "read_fuses_from_port");
+  assert.match(fromPort, /\{\s*let usb_serial_jtag = is_usb_serial_jtag\(port_name\);/,
+    "the desktop fuse read no longer asks the port whether it is a USB-Serial/JTAG port");
+  assert.match(fromPort, /\n    read_fuses\(&mut link, efuse_base, chip, usb_serial_jtag\)\s*\}\s*$/,
+    "the desktop fuse read no longer hands the port's kind to the enter sequence");
+  assert.equal((fromPort.match(/\busb_serial_jtag\b/g) || []).length, 2,
+    "the port's kind is changed between the port and the enter sequence");
   // Every reset the module can issue lives in the two enter sequences: outside
   // them (and the tests' scripted boards) nothing asserts RTS, and the port's
   // own RTS write is reached only through PortLines::rts.
@@ -6057,11 +6066,20 @@ test("About this board: the eFuse field allowlist is one table, read the same wa
   assert.ok(js && r1 && r2, "couldn't read the block 1/2 offsets from both sides");
   assert.strictEqual(parseInt(r1[1], 16), parseInt(js[1], 16));
   assert.strictEqual(parseInt(r2[1], 16), parseInt(js[2], 16));
-  // Masked in the reader: each word goes straight into its allowed fields,
-  // and the serialized scan keeps block 0's words only.
-  assert.match(efuseRs, /let value = link\.read_reg\(chip_fuse_addr\(efuse_base, block, word\)\)\?;\s*got\.extend\(fields_of_word\(chip, block, word, value\)\);/,
-    "efuse.rs must reduce each block-1/2 word to its fields on the line after it is read");
+  // Masked in the reader: each word is read inside the expression that
+  // reduces it to its allowed fields, so the reader never holds it under a
+  // name, and the reader does nothing else; the serialized scan keeps
+  // block 0's words only.
+  assert.match(efuseRs, new RegExp(String.raw`\nfn read_chip_fields<L: RomLink>\(link: &mut L, efuse_base: u32, chip: &str\) -> Option<ChipFields> \{` +
+    String.raw`\s*allowed_fields\(chip\)\?;\s*let mut got = ChipFields::new\(\);\s*for \(block, word\) in chip_fuse_words\(chip\) \{` +
+    String.raw`\s*got\.extend\(fields_of_word\(\s*chip,\s*block,\s*word,\s*link\.read_reg\(chip_fuse_addr\(efuse_base, block, word\)\)\?,?\s*\)\);` +
+    String.raw`\s*\}\s*Some\(got\)\s*\}\n`),
+    "efuse.rs must reduce each block-1/2 word to its fields inside the expression that reads it, and do nothing else with it");
   assert.match(efuseRs, /words: words\[\.\.EFUSE_BLOCK0_WORDS\.min\(words\.len\(\)\)\]\.to_vec\(\)/);
+  // The command reads the board as the chip it was asked about, so the
+  // allowlist is that chip's.
+  assert.match(nativeFnBody(efuseRs, "read_security_efuses"), /read_fuses_from_port\(&port, base, &chip\)\?;/,
+    "the desktop fuse read reads the board as a chip other than the one it was given");
   assert.match(intakeJs, /Object\.assign\(fields, fieldsOfWord\(chip, block, word, await readReg\(chipFuseAddr\(efuseBase, block, word\)\)\)\)/,
     "intake.js must reduce each block-1/2 word to its fields as it is read");
   // The frontends decode field values, never words.
@@ -7035,4 +7053,44 @@ test("each frontend's About facts: a read that failed is never an empty board", 
     assert.match(nodes["this-board"].textContent, new RegExp(`Package${want.replace(/[()]/g, "\\$&")}(?! yet)`),
       `a fuse read answering ${JSON.stringify(answer)} should read ${want}`);
   }
+});
+
+test("the desktop's About fuse read says, beside its button, that it leaves the board in the ROM", async () => {
+  // The This Board card offers the cold-start card's fuse read for any
+  // connected ESP32, not only one brought up with BOOT held. The read resets
+  // the board into its ROM and does not reset it back out (efuse.rs), so a
+  // board that was running its firmware is left in download mode. The person
+  // reads that, and how to start the firmware again, before the click.
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const m = appJs.match(/\/\/ BEGIN ABOUT-BOARD\n([\s\S]*?)\/\/ END ABOUT-BOARD/);
+  const doc = pageDoc();
+  const nodes = { "efuse-read": doc.createElement("button"), "efuse-result": doc.createElement("p"),
+    "this-board": doc.createElement("section") };
+  nodes["efuse-read"].click = () => nodes["efuse-read"].fire("click");
+  const state = { port: "/dev/ttyACM0", chip: "ESP32-S3", portKind: "esp32", busy: false, chipFuses: undefined,
+    flashBytes: 8 << 20 };
+  const asked = [];
+  const page = runCut([m[1], ...["aboutFacts", "macRevealRow", "renderThisBoard", "wireEfuseRead"]
+    .map((n) => fnSource(appJs, n))], ["renderThisBoard", "wireEfuseRead"], {
+    document: doc, state, $: (id) => nodes[id] || null, prefs: {}, savePrefs() {},
+    invoke: async (cmd) => { asked.push(cmd); return { supported: true, chip_fields: { PKG_VERSION: 0 } }; },
+  });
+  page.wireEfuseRead();
+  page.renderThisBoard();
+  const card = nodes["this-board"];
+  const button = () => nodesOf(card).find((n) => n.tagName === "button" && n.textContent === "Read the chip’s fuses");
+  const NOTE = "A good read leaves the board in its ROM’s download mode, not running its firmware: " +
+    "unplug it and plug it back in to start its firmware again.";
+  const offer = button();
+  assert.ok(offer, "the This Board card should offer the fuse read while the fuses are unread");
+  const notes = nodesOf(card).filter((n) => n.tagName !== "#text" && n._text === NOTE);
+  assert.equal(notes.length, 1, "the card must say, once, that the fuse read leaves the board in the ROM");
+  assert.strictEqual(notes[0].parent, offer.parent, "the line must sit beside the button it is about");
+
+  offer.fire("click");
+  await ticks();
+  assert.deepStrictEqual(asked, ["read_security_efuses"], "the card's button runs the one fuse read");
+  assert.match(card.textContent, /PackageESP32-S3 \(QFN56\)/, "the read's fields reach the card");
+  assert.ok(!button(), "the button goes once the fuses are read");
+  assert.ok(!card.textContent.includes(NOTE), "the line goes with its button");
 });

@@ -725,16 +725,21 @@ fn read_block0_in_rom<L: RomLink>(
 }
 
 // The About rows' fields, read in the same ROM session once block 0 is in.
-// Each word becomes its allowlisted fields on the line it is read and goes no
-// further; a word that does not answer leaves the fields out (the rows say
-// "Not checked") without touching the security verdict, which already has its
-// six words. A chip with no allowlist reads nothing more.
+// Each word is read inside the expression that reduces it to its allowlisted
+// fields, so this function never holds it under a name; a word that does not
+// answer leaves the fields out (the rows say "Not checked") without touching
+// the security verdict, which already has its six words. A chip with no
+// allowlist reads nothing more.
 fn read_chip_fields<L: RomLink>(link: &mut L, efuse_base: u32, chip: &str) -> Option<ChipFields> {
     allowed_fields(chip)?;
     let mut got = ChipFields::new();
     for (block, word) in chip_fuse_words(chip) {
-        let value = link.read_reg(chip_fuse_addr(efuse_base, block, word))?;
-        got.extend(fields_of_word(chip, block, word, value));
+        got.extend(fields_of_word(
+            chip,
+            block,
+            word,
+            link.read_reg(chip_fuse_addr(efuse_base, block, word))?,
+        ));
     }
     Some(got)
 }
