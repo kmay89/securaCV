@@ -743,6 +743,19 @@ actor DeviceAPI {
     }
 
     private func send(_ req: URLRequest) async throws -> Data {
+        let (code, data) = try await exchange(req)
+        guard (200..<300).contains(code) else {
+            let msg = (try? Self.decoder.decode([String: String].self, from: data))?["message"] ?? ""
+            throw DeviceError.http(code, msg)
+        }
+        return data
+    }
+
+    /// One request, its status code and body — with the pin's verdict named
+    /// when the pin cut the handshake. `send` throws on a non-2xx; a caller
+    /// that must read the refusal itself (the update kicks, where the WAP's
+    /// "busy" is a 400 with a word in its body) uses this directly.
+    private func exchange(_ req: URLRequest) async throws -> (Int, Data) {
         let result: (Data, URLResponse)
         do {
             result = try await session.data(for: req)
@@ -760,12 +773,31 @@ actor DeviceAPI {
             throw error
         }
         let (data, resp) = result
-        guard let http = resp as? HTTPURLResponse else { return data }
-        guard (200..<300).contains(http.statusCode) else {
-            let msg = (try? Self.decoder.decode([String: String].self, from: data))?["message"] ?? ""
-            throw DeviceError.http(http.statusCode, msg)
-        }
-        return data
+        guard let http = resp as? HTTPURLResponse else { return (200, data) }
+        return (http.statusCode, data)
+    }
+
+    // MARK: - the software update engine (/api/ota/*, FirmwareUpdate.swift)
+
+    /// GET /api/ota/status. Nil when the firmware predates the route (404).
+    func otaStatus() async throws -> FirmwareStatus? {
+        var req = URLRequest(url: url(for: "/api/ota/status", query: nil))
+        authorize(&req)
+        let (code, data) = try await exchange(req)
+        if code == 404 { return nil }
+        guard (200..<300).contains(code) else { throw DeviceError.http(code, "update status") }
+        return try Self.decoder.decode(FirmwareStatus.self, from: data)
+    }
+
+    /// POST /api/ota/check or /api/ota/install. The device runs the engine
+    /// on its own task, so this answers long before any restart.
+    func otaKick(install: Bool) async throws -> FirmwareKick {
+        var req = URLRequest(url: base.appendingPathComponent(install ? "/api/ota/install" : "/api/ota/check"))
+        req.httpMethod = "POST"
+        req.httpBody = Data()
+        authorize(&req)
+        let (code, data) = try await exchange(req)
+        return FirmwareUpdate.kick(status: code, body: data)
     }
 
     static let decoder: JSONDecoder = {

@@ -513,6 +513,29 @@ screen? Scan its code", Set up lists "Add a display", and
 Bluetooth listen a display never answers (`scripts/tests/test_ios_setup_targets.py`
 holds the link, the targets and their destinations to each other).
 
+## Keeping Canaries up to date
+
+Each display and each paired WAP has a **Software update** section on its
+screen (`Views/Components/FirmwareUpdateSection.swift`). It shows what the
+Canary runs, checks for something newer, and installs it after one
+confirmation. The phone never downloads or holds firmware: it asks the
+Canary's own update engine (`firmware/common/ota`, the one Home Assistant's
+update entity drives) to check or install, then reads back what the device
+says: each step, the download and install percentage, the restart, and the
+version it comes back on. The Canary installs an update only if its
+signature checks out against the release key it was built with, and rolls
+itself back if the new image fails its health check. A restart that comes
+back on the old version is said out loud, never shown as success.
+
+A display serves `/api/ota/{status,check,install}` on the home network, like
+its other settings; a WAP serves the same routes behind its bearer token over
+its pinned https, so only a paired WAP gets the section. The contract lives
+in `Model/FirmwareUpdate.swift`. `FirmwareUpdateTests` runs it against both
+firmware's status bodies, and `scripts/tests/test_ios_firmware_update.py`
+holds its field names, state words and "busy" answers to the firmware
+sources on Linux. Firmware older than these routes answers 404, and the
+section says to update it once from a computer.
+
 ## On your iPad
 
 Same binary, same release, same truth — `TARGETED_DEVICE_FAMILY "1,2"` means
