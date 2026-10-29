@@ -450,7 +450,13 @@ parts a phone can. Adding a Canary comes first everywhere; the hub second:
   reopens it for a minute on a BOOT tap, and a Canary whose saved Wi-Fi is
   merely failing never reopens it (that is the setup network's job). Then
   the older paths, one per family, each the one its firmware serves
-  (`SetupGuide.canary`): a display's glass QR (the button asks for the
+  (`SetupGuide.canary`). A display's walkthrough opens with the flash,
+  because a blank board has no QR yet and iOS has no USB serial: the
+  phone never flashes, it hands a computer the in-browser flasher's link
+  through the share sheet (AirDrop to a Mac is one tap), focused on the
+  Canary Glance AMOLED with `?product=` where that is the board
+  (`FlasherLinks`; `scripts/tests/test_ios_flasher_links.py` holds the id
+  to `flash.json`). Then a display's glass QR (the button asks for the
   camera at the tap — VisionKit reports itself unavailable until it is
   allowed — and a good scan starts the join by itself), or the
   Flasher-printed key for a camera or radar Canary; the phone joins

@@ -5,7 +5,8 @@
 // the first thing on this screen is "near this phone" — the nearby card the
 // moment one is heard — and the family list comes second, for a Canary with
 // no door (a display) or a door that has closed. Then the steps for that
-// family (SetupGuide.canary), with the live part under each: read the setup
+// family (SetupGuide.canary), with the live part under each: send a blank
+// display's flasher link to a computer (the phone cannot flash), read the setup
 // key (scan the glass QR — the scan starts the join by itself — or type
 // it), join the Canary's setup network, pick your Wi-Fi from the networks
 // the Canary itself can see (prefilled when this phone remembered it), and
@@ -41,7 +42,7 @@ struct CanarySetupView: View {
             } header: {
                 Text("No card? Pick yours")
             } footer: {
-                Text("A display shows a QR on its glass; the others have a setup network as a fallback.")
+                Text("A display shows a QR on its glass (a blank one gets SecuraCV from a computer first); the others have a setup network as a fallback.")
             }
         }
         .navigationTitle("Add a Canary")
@@ -116,6 +117,7 @@ struct CanaryFamilySetupView: View {
             ForEach(Array(SetupGuide.canary(family).enumerated()), id: \.element.id) { i, step in
                 SetupStepSection(index: i + 1, step: step) {
                     switch step.action {
+                    case .flashFromComputer: flashControl
                     case .nearbyCanary: NearbyListenControl(what: "the \(family.deviceType.role.lowercased())")
                     case .readSetupKey: keyControl
                     case .joinSetupNetwork: joinControl
@@ -198,6 +200,29 @@ struct CanaryFamilySetupView: View {
         } else if homePassword == remembered.password {
             homePassword = ""
         }
+    }
+
+    // MARK: - the flash
+
+    /// A computer's job, never the phone's (iOS has no USB serial): the
+    /// phone hands the computer the flasher link through the share sheet —
+    /// AirDrop to a Mac is one tap — with the product already picked where
+    /// we know it. Nothing here pretends to flash.
+    @ViewBuilder private var flashControl: some View {
+        ShareLink(item: FlasherLinks.webFlasher(product: FlasherLinks.glanceAMOLEDProduct),
+                  subject: Text("Flash a Canary Glance AMOLED"),
+                  message: Text("Open this on a computer in Chrome or Edge, then plug the Waveshare 2.41 AMOLED in with a data USB-C cable.")) {
+            Label("Send to my computer — Glance AMOLED", systemImage: "laptopcomputer.and.arrow.down")
+        }
+        ShareLink(item: URL(string: FlasherLinks.webFlasher)!,
+                  subject: Text("Flash a Canary display"),
+                  message: Text("Open this on a computer in Chrome or Edge, then plug the display in with a data USB-C cable.")) {
+            Label("Send to my computer — another display", systemImage: "square.and.arrow.up")
+        }
+        Link(destination: EcosystemMap.downloadURL) {
+            Label("Or get the SecuraCV Flasher app", systemImage: "arrow.down.app")
+        }
+        .font(.footnote)
     }
 
     // MARK: - the key
