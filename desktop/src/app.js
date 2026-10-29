@@ -6046,20 +6046,35 @@ function requiresLiveReceipt(product) {
 }
 
 // ── self-update ─────────────────────────────────────────────────────────────
-// The update's own release notes, rendered safely: escape everything first,
-// then re-allow exactly two bits of markdown the notes use — `- ` bullets and
-// `**bold**` — so the banner can say WHAT is changing, not just a number.
+// The update's own release notes arrive hard-wrapped (a `- ` bullet runs on
+// over indented lines), so the lines are joined back into their paragraph or
+// bullet first. Read line by line, every continuation line landed in one
+// paragraph above a list of cut-off first lines. The Lab's noteBlocks
+// (lab-settings.js) is the same function; lab_settings.test.js holds them equal.
+function noteBlocks(notes) {
+  const blocks = [];
+  let cur = null;
+  for (const raw of String(notes || "").split("\n")) {
+    const line = raw.trim();
+    if (!line) cur = null;
+    else if (line.startsWith("- ")) blocks.push(cur = { item: true, text: line.slice(2) });
+    else if (cur) cur.text += " " + line;
+    else blocks.push(cur = { item: false, text: line });
+  }
+  return blocks;
+}
+
+// Rendered safely: escape everything first, then re-allow `**bold**`. Each
+// bullet is one line that opens on a click (styles.css .update-notes summary),
+// so the banner says WHAT is changing as a list of headlines, not a wall.
 function notesHtml(notes) {
-  const lines = String(notes || "").split("\n").map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return "";
-  const li = [];
-  const p = [];
   const bold = (s) => esc(s).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-  lines.forEach((l) => {
-    if (l.startsWith("- ")) li.push(`<li>${bold(l.slice(2))}</li>`);
-    else p.push(bold(l));
-  });
-  return (p.length ? `<p>${p.join(" ")}</p>` : "") + (li.length ? `<ul>${li.join("")}</ul>` : "");
+  let out = "", inList = false;
+  for (const b of noteBlocks(notes)) {
+    if (b.item !== inList) { out += inList ? "</ul>" : "<ul>"; inList = b.item; }
+    out += b.item ? `<li><details><summary>${bold(b.text)}</summary></details></li>` : `<p>${bold(b.text)}</p>`;
+  }
+  return out + (inList ? "</ul>" : "");
 }
 
 async function checkForUpdate(manual = false) {
