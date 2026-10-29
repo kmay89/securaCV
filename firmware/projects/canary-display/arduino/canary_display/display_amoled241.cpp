@@ -197,7 +197,7 @@ bool display_init() {
   // lets a serial log say WHICH of those it is.
   log_line("DISP", digitalRead(PWR_LATCH_PIN) == HIGH
                        ? "first light 1/4: panel rail latched (GPIO16 high)."
-                       : "first light 1/4: GPIO16 reads LOW after driving it high — "
+                       : "first light 1/4: GPIO16 reads LOW after driving it high - "
                          "the panel has no supply.");
 
   // Shared I2C bus up-front (FT6336 + QMI8658 + PCF85063 + TCA9554): the
@@ -350,7 +350,7 @@ void power_off(bool pressed_high) {
   if (released) {
     esp_sleep_enable_ext0_wakeup((gpio_num_t)PWR_KEY_PIN, pressed_level);
   } else {
-    log_line("PWR", "PWR key never released — waking on a 60 s timer instead.");
+    log_line("PWR", "PWR key never released - waking on a 60 s timer instead.");
     esp_sleep_enable_timer_wakeup(60ULL * 1000000ULL);
   }
 #endif
