@@ -660,6 +660,13 @@ durable ledgers the store folds at launch — one behavior, cold or warm.
 
 ## Build it (on a Mac)
 
+Shipping it is a button, not a laptop: **Actions → "Update everything (only
+what needs it)"** with `only: ios` uploads to TestFlight
+([`docs/RELEASE_BUTTONS.md`](../docs/RELEASE_BUTTONS.md)), and
+[`APP_STORE.md`](APP_STORE.md) is the App Store submission checklist: the
+record's fields and copy, the privacy label answer, the App Review notes and
+the screenshots.
+
 ```sh
 cd ios
 brew install xcodegen
