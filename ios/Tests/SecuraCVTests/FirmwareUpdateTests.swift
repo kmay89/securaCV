@@ -164,6 +164,17 @@ final class FirmwareUpdateTests: XCTestCase {
         }
     }
 
+    func testTheUsualRollbackReadKeepsTheDevicesReason() throws {
+        // A fresh boot after a failed health check: no manifest yet, Idle,
+        // the error kept. phase() calls it a failure; the outcome still
+        // carries the device's own sentence (the 5a6ed04 regression).
+        let s = try status(#"{"installed_version":"2.4.18","state":"Idle","error":"Self-test failed","error_text":"The update did not pass its health check, so the previous software was restored."}"#)
+        if case .failed = FirmwareUpdate.phase(s) {} else { XCTFail("Idle, no version, a real error is a failure") }
+        XCTAssertEqual(FirmwareUpdate.outcome(before: "2.4.18", after: s),
+                       .rolledBack(still: "2.4.18",
+                                   reason: "The update did not pass its health check, so the previous software was restored."))
+    }
+
     func testEveryStepHasATitle() {
         for step in FirmwareStep.allCases {
             XCTAssertFalse(step.title.isEmpty, step.rawValue)

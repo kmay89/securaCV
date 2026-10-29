@@ -145,10 +145,15 @@ struct FirmwareUpdateSection: View {
         case .restarting:
             restartingRow
         case .failed(let sentence):
-            Label(sentence, systemImage: "exclamationmark.triangle")
-                .foregroundStyle(Theme.color(.warn))
-                .fixedSize(horizontal: false, vertical: true)
-            checkButton("Try again")
+            if case .rolledBack? = outcome {
+                // The outcome row above already says it, in the same words.
+                checkButton("Check again")
+            } else {
+                Label(sentence, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(Theme.color(.warn))
+                    .fixedSize(horizontal: false, vertical: true)
+                checkButton("Try again")
+            }
         }
         if restartTimedOut {
             Text("It hasn't answered since it restarted. Give it a minute, check it has power, then open this screen again.")
@@ -312,7 +317,10 @@ struct FirmwareUpdateSection: View {
             // A previous run's Error can still be on the wire right after
             // the kick; only a failure after the run showed itself counts.
             if kickedAt != nil { break }
-            // The engine stopped before a restart; its sentence is on screen.
+            // After a restart this is the usual rollback read (no manifest
+            // yet, the health-check error kept): say what it came back on.
+            // Before one, the engine stopped and its sentence is on screen.
+            if sawRestart { outcome = FirmwareUpdate.outcome(before: before, after: s) }
             replacing = nil
         default:
             // Still the pre-run Idle: the engine hasn't started yet.

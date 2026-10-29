@@ -242,8 +242,14 @@ enum FirmwareUpdate {
         if !s.installed.isEmpty, s.installed != before {
             return .updated(to: s.installed)
         }
-        let reason = lingeringNote(s)
-            ?? "The new version didn't pass its health check, so the Canary went back to the one it had."
+        // The device's own words whenever it kept an error — including the
+        // usual rollback read: a fresh boot has no manifest, so the status
+        // is Idle with the health-check error beside it, which phase() calls
+        // a failure (and lingeringNote() therefore leaves to that line).
+        let text = s.errorText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let reason = hasError(s) && !text.isEmpty
+            ? text
+            : "The new version didn't pass its health check, so the Canary went back to the one it had."
         return .rolledBack(still: before, reason: reason)
     }
 }
