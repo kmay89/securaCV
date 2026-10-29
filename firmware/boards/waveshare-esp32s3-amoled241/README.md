@@ -47,7 +47,7 @@ the CircuitPython port is the best code-level authority available.
 This is *source* verification, not our bench validation. The tier is
 `compile-tested` until a hardware test report promotes it.
 
-## Five things that will bite you
+## Six things that will bite you
 
 ### 1. GPIO16 is the power latch AND the panel power
 
@@ -89,6 +89,19 @@ looks perfect — and the glass emits nothing. The HAL
 CircuitPython sequence for this exact panel instead (no SWIRE writes, and
 the page-0x13 `0xEB=0x0E` register set before sleep-out). Don't "simplify"
 it back to the stock `begin()`.
+
+### 6. Nobody has told us which level the PWR key rests at
+
+GPIO15 ("KEY_BAT") reaches the S3 through the soft power latch, and no
+source we can read says whether it rests HIGH (a key isolated from the
+latch, under the pull-up) or LOW (a sense line taken off the latched node).
+The old glue assumed active-low; on a board that rests LOW it read "PWR
+held" from the first loop pass and powered a working glass off three
+seconds later, then hung on USB waiting for a release. The firmware now
+learns the resting level after boot (`canary/io/pwr_key.h`, host-tested)
+and prints it: look for `PWR key rests HIGH` or `rests LOW` in the serial
+log, and put that line in the hardware test report that promotes this
+board.
 
 ## Antenna note
 

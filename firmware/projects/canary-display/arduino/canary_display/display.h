@@ -83,8 +83,11 @@ TouchSample touch_read();
 // ── Honest power-off (the AMOLED 2.41's case PWR button) ────────────────
 // Panel to sleep, emission zero, power latch dropped, then deep sleep with
 // wake on the PWR key — so battery and USB desks tell the same story: hold
-// to go dark, press to come back. Does not return.
-void power_off();
+// to go dark, press to come back. `pressed_high` is the level a press
+// drives the PWR key to, as the PWR-key model learned it (pwr_key.h): the
+// release wait and the wake-on-press both use it, so neither assumes a
+// polarity the board was never verified to have. Does not return.
+void power_off(bool pressed_high);
 #endif
 
 #ifdef CD_FLAVOR_DASH

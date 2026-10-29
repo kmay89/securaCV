@@ -25,6 +25,10 @@ import Foundation
 /// What a step asks the phone to do, if anything. The view maps each case
 /// to the control it shows; a step with none is explanation.
 enum SetupAction: String, Equatable, Sendable {
+    /// Put SecuraCV on a blank board. iOS has no USB serial, so the phone
+    /// cannot flash; it hands a computer the flasher link (AirDrop,
+    /// Messages, Mail) with the right product already picked.
+    case flashFromComputer
     /// Find Home Assistant on the LAN and watch it through first boot.
     case watchHub
     /// Collect the owner account and finish Home Assistant's wizard.
@@ -61,7 +65,7 @@ enum CanaryFamily: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .display: return "A display — Watch, Dash, Nightstand, Nightlight"
+        case .display: return "A display — Glance AMOLED, Watch, Dash, Nightstand, Nightlight"
         case .vision: return "Canary Vision (camera witness)"
         case .sense: return "Canary Sense (radar witness)"
         case .wap: return "Canary WAP (witness beacon)"
@@ -148,6 +152,31 @@ enum SetupKeySource: Equatable, Sendable {
     case flasher
 }
 
+/// Where a blank board becomes a Canary. The phone never flashes (iOS has
+/// no USB serial); it names the two flashers and hands a computer the link.
+/// `scripts/tests/test_ios_flasher_links.py` holds every product id here to
+/// the flasher's own catalog (canary-local/devices/flash.json), so a renamed
+/// product cannot leave this link pointing at nothing.
+enum FlasherLinks {
+    /// The in-browser flasher (Chrome or Edge on a computer — WebSerial).
+    /// It honors `?product=<id>` as a focus hint: it still shows only what
+    /// the plugged-in chip can take, and leads with the asked-for product.
+    static let webFlasher = "https://kmay89.github.io/securaCV/canary-local/flash.html"
+
+    /// The Canary Glance AMOLED — the Waveshare ESP32-S3-Touch-AMOLED-2.41.
+    static let glanceAMOLEDProduct = "securacv-canary-display-amoled241"
+
+    /// The web flasher, focused on one product.
+    static func webFlasher(product: String) -> URL {
+        var c = URLComponents(string: webFlasher)!
+        c.queryItems = [URLQueryItem(name: "product", value: product)]
+        return c.url!
+    }
+
+    /// Every product id this file names — what the catalog test sweeps.
+    static let products = [glanceAMOLEDProduct]
+}
+
 enum CanarySetupPath: Equatable, Sendable {
     /// Join `SecuraCV-XXXX`, post the home Wi-Fi to its portal.
     case setupNetwork(keySource: SetupKeySource)
@@ -211,6 +240,14 @@ enum SetupGuide {
                 body: family.tagline + " " + firstBootLine(family),
                 action: nil),
         ]
+        if family == .display {
+            steps.append(SetupStep(
+                id: "flash",
+                title: "Put SecuraCV on it — from a computer",
+                short: "A blank board needs SecuraCV once: send the flasher link to your computer and plug it in there.",
+                body: "An iPhone cannot flash a board — iOS has no USB serial port — so this happens once, on a computer, in Chrome or Edge. Tap Send to my computer and AirDrop or message yourself the link. For the Canary Glance AMOLED (the Waveshare ESP32-S3-Touch-AMOLED-2.41) it arrives with that build already picked; for any other display, the flasher offers what fits the board you plug in. Plug it in with a data USB-C cable, click Connect your Canary, then Install this. Type your Wi-Fi there and it skips the QR entirely, or leave it blank and this phone hands it over next. The SecuraCV Flasher app for Mac and Linux does the same. Its screen should light within seconds. The Glance AMOLED build has not been booted on our bench yet: if its glass stays dark, open the flasher's serial monitor and read the four numbered \"first light\" lines — they say whether the panel got power, the bus came up and the init went out. Bought a display that already runs SecuraCV? Skip this step.",
+                action: .flashFromComputer))
+        }
         if family.hasBluetoothDoor {
             steps.append(SetupStep(
                 id: "nearby",
@@ -229,7 +266,7 @@ enum SetupGuide {
                     ? "Scan the QR on its screen — or type its setup network and key."
                     : "No card? Unplug and replug it, or tap BOOT once; then type its setup network and key.",
                 body: keySource == .glassQR
-                    ? "Power it on. Its screen shows a QR code for its own setup network, named SecuraCV-display-XXXX (SecuraCV-XXXX on firmware before 2.4.17). Scan it with this phone, or type that name and the key printed under it. A good scan starts the next step by itself."
+                    ? "Power it on. Its screen shows a QR code for its own setup network, named SecuraCV-display-XXXX (SecuraCV-XXXX on firmware before 2.4.17). Scan it here, with the button below, or type that name and the key printed under it — a good scan starts the next step by itself. Scanned it with the Camera app instead? That works too: its own setup page opens, you pick your Wi-Fi there, and you can skip to the last step to watch it appear."
                     : "Unplug it and plug it back in — its door opens for another half hour — or tap its BOOT button once for a minute; the card appears within seconds. Still nothing? A camera or radar Canary has no screen, so its setup-network key is in the Flasher's serial console (the [SETUP] line at boot) — and if you typed Wi-Fi into the Flasher, the Canary is already on your network, so skip to the last step. Type the network name and key here; its setup network is the same door with a key, for a phone with Bluetooth off.",
                 action: .readSetupKey))
             steps.append(SetupStep(
@@ -283,7 +320,7 @@ enum SetupGuide {
     /// with nothing heard: the two reasons a door is shut, and both ways
     /// back in — the same rules `doorWindowLine` keeps, said to someone
     /// holding the device (ListeningRow shows it; SetupGuideTests pins it).
-    static let nothingYetLine = "Nothing yet? If it has been plugged in for more than half an hour, or was on a Wi-Fi before, unplug it and plug it back in — a Sense or Vision also opens up for a minute after one tap on its BOOT button."
+    static let nothingYetLine = "Nothing yet? If it has been plugged in for more than half an hour, or was on a Wi-Fi before, unplug it and plug it back in — a Sense or Vision also opens up for a minute after one tap on its BOOT button. A display never appears here: it shows a QR on its own screen — add it as a display and scan that."
 
     private static func firstBootLine(_ family: CanaryFamily) -> String {
         if family.hasBluetoothDoor {

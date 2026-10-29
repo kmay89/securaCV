@@ -22,9 +22,12 @@ final class SetupGuideTests: XCTestCase {
             let steps = SetupGuide.canary(family)
             let actions = steps.compactMap(\.action)
             let door: [SetupAction] = family.hasBluetoothDoor ? [.nearbyCanary] : []
+            // A display is the one family this walkthrough starts at the
+            // flash: it has no door, and a blank board has no QR to scan.
+            let flash: [SetupAction] = family == .display ? [.flashFromComputer] : []
             switch family.path {
             case .setupNetwork:
-                XCTAssertEqual(actions, door + [.readSetupKey, .joinSetupNetwork, .watchForCanary], family.rawValue)
+                XCTAssertEqual(actions, flash + door + [.readSetupKey, .joinSetupNetwork, .watchForCanary], family.rawValue)
             case .ownPage:
                 // Its own page speaks its own wizard: explained, driven by
                 // the person — no control that pretends to drive it.
@@ -106,6 +109,8 @@ final class SetupGuideTests: XCTestCase {
         XCTAssertTrue(line.contains("unplug it and plug it back in"))
         XCTAssertTrue(line.contains("BOOT button"), "the Sense's and Vision's shorter way")
         XCTAssertTrue(line.hasSuffix("."))
+        XCTAssertTrue(line.contains("A display never appears here"),
+                      "a display owner waiting on a card is told where theirs is instead")
         XCTAssertEqual(SetupGuide.nothingYetAfter, 20, "long enough for a door to be heard")
     }
 
@@ -175,6 +180,36 @@ final class SetupGuideTests: XCTestCase {
             XCTAssertLessThanOrEqual(words, 20, "\(step.id): \(step.short)")
             XCTAssertLessThan(step.short.count, step.body.count, "\(step.id): the short line is shorter")
         }
+    }
+
+    func testADisplayIsFlashedFromAComputerNeverThePhone() {
+        let steps = SetupGuide.canary(.display)
+        let flash = steps.first { $0.id == "flash" }
+        XCTAssertNotNil(flash, "a blank display's first step is getting SecuraCV onto it")
+        XCTAssertEqual(steps[1].id, "flash", "right after naming the family, before the QR")
+        XCTAssertEqual(flash?.action, .flashFromComputer)
+        let body = flash?.body ?? ""
+        XCTAssertTrue(body.contains("iOS has no USB serial"), "says why the phone does not flash")
+        XCTAssertTrue(body.contains("Glance AMOLED"), "names the flagship glass by its product name")
+        XCTAssertTrue(body.contains("ESP32-S3-Touch-AMOLED-2.41"), "and by the board on the box")
+        XCTAssertTrue(body.contains("has not been booted on our bench yet"),
+                      "the compile-tested build says so (non-negotiable #4)")
+        XCTAssertTrue(body.contains("first light"), "and points at the serial lines that diagnose a dark glass")
+        XCTAssertTrue(body.contains("Connect your Canary") && body.contains("Install this"),
+                      "the web flasher's own button words")
+        XCTAssertTrue(CanaryFamily.display.title.contains("Glance AMOLED"))
+        for family in CanaryFamily.allCases where family != .display {
+            XCTAssertFalse(SetupGuide.canary(family).contains { $0.action == .flashFromComputer },
+                           "\(family.rawValue): its walkthrough starts at the door it opens")
+        }
+    }
+
+    func testTheFlasherLinkFocusesTheProductAndNeverPretendsToFlash() {
+        let url = FlasherLinks.webFlasher(product: FlasherLinks.glanceAMOLEDProduct)
+        XCTAssertEqual(url.absoluteString,
+                       "https://kmay89.github.io/securaCV/canary-local/flash.html?product=securacv-canary-display-amoled241")
+        XCTAssertEqual(url.scheme, "https", "a link a computer opens, not an app scheme")
+        XCTAssertTrue(FlasherLinks.products.contains(FlasherLinks.glanceAMOLEDProduct))
     }
 
     func testFamiliesMapToTheCoarseTypesTheFleetUses() {

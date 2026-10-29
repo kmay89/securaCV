@@ -1,6 +1,44 @@
 # Changelog
 
 ## [Unreleased]
+### The Glance AMOLED can no longer switch itself off at boot, says on serial where a dark glass stops, and the iPhone walks a blank display from the flasher to the fleet
+
+- **The PWR key's resting level is learned, not assumed.** The Waveshare
+  ESP32-S3-Touch-AMOLED-2.41's case PWR key reaches GPIO15 through the soft
+  power latch, and no source we can read says which level it rests at. The
+  old glue assumed active-low. On a board whose line rests LOW it read "PWR
+  held" from the first loop pass, powered the glass off three seconds later,
+  and on USB then waited forever for a release that never came. A new pure
+  model (`canary/io/pwr_key.h`, host-tested in `test_pwr_key.cpp`) learns the
+  resting level after boot and only acts on a press that began after
+  learning. A hold of 3 s powers off after its release, once the key has
+  rested for 1.5 s, so a tap can never power off even if the resting level
+  was mislearned. A "press" longer than 15 s is re-learned as the resting
+  level. The serial log prints `PWR key rests HIGH` or `rests LOW`,
+  which is the line a hardware test report needs. `power_off()` waits for
+  the release at most 10 s and arms the wake on the learned level.
+- **Four numbered "first light" lines on serial.** `display_init` now says
+  whether GPIO16 really reads high, when the QSPI bus and the Waveshare init
+  went out, and that the RAM was cleared before the splash lights it. QSPI
+  writes have no acknowledgement, so the lines say what was sent, not what
+  the panel took. They narrow a dark glass to power, bus, or init and pixels.
+- **The init writes the address window before display-on, where the bench
+  does.** The bytes up to first light now match the CircuitPython board
+  definition for this panel, the only bench-tested reference. The window is
+  derived from `pins.h` and checked against the controller's RAM at compile
+  time. The panel's pins, reset, init table, QSPI framing and brightness
+  path were checked against that reference and match it.
+- **The iPhone's display walkthrough starts at the flash.** A blank board
+  has no QR yet, and iOS has no USB serial, so the phone never flashes. Its
+  first step sends a computer the in-browser flasher's link through the share
+  sheet, with the Canary Glance AMOLED already picked (`?product=`). The step
+  names the Waveshare board, says the build has not been booted on our bench
+  yet, and points at the first-light lines if the glass stays dark.
+  `scripts/tests/test_ios_flasher_links.py` holds the product id to
+  `flash.json`. The family row now names the Glance AMOLED, the key step says
+  a Camera-app scan works too, and a display owner left waiting on a
+  Bluetooth card is told a display never appears there.
+
 ### Vision and Sentinel tell the truth about their modules: the Grove module's 1 or 0, never its id, a sample from every good invoke and none from a failed one; the Sentinel's radar link reaches Home Assistant, and a missing light sensor is absent, not blinded, and still reported (F384; device-details PR 7, #1892)
 
 - **Vision's `module_id` is 1 or 0 (sweep F384).** It was the SSCMA

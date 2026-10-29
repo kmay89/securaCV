@@ -158,7 +158,8 @@
 #define CD_LONGPRESS_MS         900     // acknowledge gesture (touch long-press)
 
 // The case PWR button (a readable GPIO on this board): short press = wake /
-// peek, held this long = honest power-off (panel to sleep, latch dropped,
+// peek, held this long then released = honest power-off once the key has
+// rested 1.5 s (canary/io/pwr_key.h) (panel to sleep, latch dropped,
 // deep sleep with wake on the same button for USB-powered desks).
 #define CD_PWR_OFF_HOLD_MS      3000
 

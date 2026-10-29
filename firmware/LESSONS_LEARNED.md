@@ -240,6 +240,33 @@
   before trusting `begin()`; on emissive panels, assume "serial fine, zero
   photons" means panel power until proven otherwise.
 
+
+### A button polarity nobody verified can switch a working glass off (2026-10)
+- **What happened:** the AMOLED 2.41 was still reported dark after the
+  init fix. A fresh audit found the panel path matching the bench-tested
+  CircuitPython reference: pins, reset, init bytes, QSPI framing and
+  brightness. It found a second way to a dark glass that had nothing to
+  do with the panel. The case PWR key (GPIO15, "KEY_BAT") reaches the S3
+  through the soft power latch, and the glue assumed active-low. No source
+  we could read says which level that line rests at. If it rests LOW, the
+  glue saw "PWR held" from the first loop pass and called `power_off()`
+  three seconds later. On USB it then spun forever in
+  `while (digitalRead(key) == LOW)`, panel off, never sleeping.
+- **The fix:** `canary/io/pwr_key.h` learns the resting level after boot,
+  acts only on a press that began after learning, and re-learns a "press"
+  that outlasts 15 s. A hold powers off only after its release, once the
+  resting level has held for 1.5 s. The first version fired on a deadline
+  once one round trip had "confirmed" the polarity; review reproduced a
+  power-off 30 ms into a tap after a mislearn, because a round trip cannot
+  prove polarity: after a mislearn, a tap looks exactly like the release of
+  a long hold. The settled rest is what a tap can never fake. The release wait in `power_off()` is bounded. The serial
+  log prints the learned level, and `display_init` prints four numbered
+  "first light" lines so the next dark glass says where it stopped.
+- **Guidance:** on a board marked compile-tested, every input with a
+  destructive action (power-off, factory reset) must not depend on an
+  assumed polarity. Learn the idle level, or require an observed edge. A
+  wait on a GPIO level always needs a deadline.
+
 ---
 
 ## A diagnostic named after a thing must test that thing
