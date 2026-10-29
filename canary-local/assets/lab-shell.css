@@ -246,11 +246,19 @@ button{font:inherit;color:inherit;cursor:pointer;}
 .set-card .set-lede{margin:8px 0 0;}
 .set-card .actions{margin-top:14px;}
 
-.set-notes{margin-top:12px;border-left:2px solid var(--sep-strong);padding-left:12px;}
-.set-notes b{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);}
+.set-notes{margin-top:12px;border-left:2px solid var(--sep-strong);padding-left:12px;
+  max-height:240px;overflow-y:auto;overscroll-behavior:contain;}
+.set-notes>b{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);}
 .set-notes p{font-size:13.5px;color:var(--text-2);margin:6px 0 0;}
-.set-notes ul{margin:6px 0 0;padding-left:18px;}
-.set-notes li{font-size:13.5px;color:var(--text-2);line-height:1.55;margin-top:3px;}
+.set-notes code{font-family:var(--mono);font-size:12.5px;}
+.set-notes ul{margin:6px 0 0;padding:0;list-style:none;}
+.set-notes li{font-size:13.5px;color:var(--text-2);line-height:1.55;margin-top:2px;}
+/* One line per bullet until it is clicked open (lab-settings.js notesNode). */
+.set-notes summary{display:block;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.set-notes summary::-webkit-details-marker{display:none;}
+.set-notes summary::before{content:"▸ ";color:var(--muted);}
+.set-notes details[open]>summary{white-space:normal;}
+.set-notes details[open]>summary::before{content:"▾ ";}
 
 .set-log{border:1px solid var(--sep);border-radius:12px;background:var(--surface);
   max-height:340px;overflow-y:auto;}

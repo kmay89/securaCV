@@ -199,6 +199,10 @@ on:
       - "desktop-lab/INSTALL.md"
       - "desktop-lab/README.md"
       - "desktop-lab/ipad-guide.html"
+      # lab_settings holds each app's newest release-notes section (what the
+      # updater shows as `notes`) to the one-line-per-bullet fold both render
+      - "desktop/RELEASE_NOTES.md"
+      - "desktop-lab/RELEASE_NOTES.md"
       - ".github/workflows/flasher-release.yml"
       # desktop_parity holds the dev channel's other writers (the script every
       # firmware release and the Refresh button run, and that button's own
@@ -442,6 +446,10 @@ on:
       - "desktop-lab/INSTALL.md"
       - "desktop-lab/README.md"
       - "desktop-lab/ipad-guide.html"
+      # lab_settings holds each app's newest release-notes section (what the
+      # updater shows as `notes`) to the one-line-per-bullet fold both render
+      - "desktop/RELEASE_NOTES.md"
+      - "desktop-lab/RELEASE_NOTES.md"
       - ".github/workflows/flasher-release.yml"
       # desktop_parity holds the dev channel's other writers (the script every
       # firmware release and the Refresh button run, and that button's own

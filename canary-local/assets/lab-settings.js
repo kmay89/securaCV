@@ -84,19 +84,40 @@ function splitLine(line) {
   return m ? { when: `${m[1]} ${m[2]}Z`, msg: m[3] } : { when: "", msg: line };
 }
 
-/* Release notes are markdown-ish (`- ` bullets, `**bold**`). Render them as
-   real elements — never innerHTML, so release copy can't inject markup. */
+/* Release notes arrive hard-wrapped (a `- ` bullet runs on over indented
+   lines), so the lines are joined back into their paragraph or bullet first.
+   Read line by line, every continuation line became its own paragraph above a
+   list of cut-off first lines. The Flasher's noteBlocks (desktop/src/app.js)
+   is the same function; lab_settings.test.js holds them equal. */
+function noteBlocks(notes) {
+  const blocks = [];
+  let cur = null;
+  for (const raw of String(notes || "").split("\n")) {
+    const line = raw.trim();
+    if (!line) cur = null;
+    else if (line.startsWith("- ")) blocks.push(cur = { item: true, text: line.slice(2) });
+    else if (cur) cur.text += " " + line;
+    else blocks.push(cur = { item: false, text: line });
+  }
+  return blocks;
+}
+
+/* Rendered as real elements — never innerHTML, so release copy can't inject
+   markup — with the three marks the notes use, **bold**, `code` and *italic*
+   (the Flasher's notesHtml reads the same pattern). Each bullet is one line
+   that opens on a click (lab-shell.css .set-notes summary), in a box that
+   scrolls. */
 function notesNode(notes) {
   const box = h("div", { class: "set-notes" }, h("b", {}, "What's changing"));
-  const list = h("ul", {});
-  let any = false;
-  for (const raw of String(notes).split("\n")) {
-    const line = raw.trim().replace(/\*\*/g, "");
-    if (!line) continue;
-    if (line.startsWith("- ")) { list.append(h("li", {}, line.slice(2))); any = true; }
-    else box.append(h("p", {}, line));
+  const tags = [null, "b", "code", "i"];   // split's text, then one slot per capture group
+  const marks = (s) => s.split(/\*\*([^*]+)\*\*|`([^`]+)`|\*([^*\s][^*]*)\*/)
+    .map((part, i) => (part === undefined ? null : tags[i % 4] ? h(tags[i % 4], {}, part) : part));
+  let list = null;
+  for (const b of noteBlocks(notes)) {
+    if (!b.item) { list = null; box.append(h("p", {}, marks(b.text))); continue; }
+    if (!list) box.append(list = h("ul", {}));
+    list.append(h("li", {}, h("details", {}, h("summary", {}, marks(b.text)))));
   }
-  if (any) box.append(list);
   return box;
 }
 

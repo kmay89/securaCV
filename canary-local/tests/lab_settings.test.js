@@ -163,6 +163,61 @@ test("release notes render as elements, never as markup", () => {
   );
 });
 
+test("both apps fold a release's wrapped notes into one line per bullet, the same way", () => {
+  // The notes are each app's newest RELEASE_NOTES.md section (what the
+  // release publishes as the updater's `notes`), hard-wrapped. Read line by
+  // line they rendered as a paragraph of continuation lines above a list of
+  // cut-off first lines; joined, each bullet is one block and one line.
+  const fnText = (src, name) => {
+    const i = src.indexOf(`function ${name}(`);
+    assert.ok(i >= 0, `lost function ${name}`);
+    for (let k = src.indexOf("{", src.indexOf(")", i)), d = 0; k < src.length; k++) {
+      if (src[k] === "{") d++;
+      else if (src[k] === "}" && --d === 0) return src.slice(i, k + 1);
+    }
+  };
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const lab = new Function(`${fnText(settingsJs, "noteBlocks")}\nreturn noteBlocks;`)();
+  const flasher = new Function(
+    ["noteBlocks", "notesHtml", "esc"].map((n) => fnText(appJs, n)).join("\n") +
+    "\nreturn { noteBlocks, notesHtml };")();
+  const newest = (file) => read(join(ROOT, file)).split(/^## /m)[1].split("\n").slice(1).join("\n");
+  for (const file of ["desktop/RELEASE_NOTES.md", "desktop-lab/RELEASE_NOTES.md"]) {
+    const notes = newest(file);
+    const blocks = lab(notes);
+    assert.deepStrictEqual(flasher.noteBlocks(notes), blocks, `${file}: the two apps fold the notes differently`);
+    assert.equal(blocks.filter((b) => b.item).length, (notes.match(/^- /gm) || []).length,
+      `${file}: every bullet must be one item`);
+    for (const b of blocks.filter((x) => !x.item)) {
+      assert.match(b.text, /^[A-Z*]/, `${file}: "${b.text.slice(0, 40)}…" is a continuation line read as a paragraph`);
+    }
+    const html = flasher.notesHtml(notes);
+    assert.equal((html.match(/<summary>/g) || []).length, blocks.filter((b) => b.item).length,
+      `${file}: the Flasher must fold each bullet into a <summary>`);
+  }
+  // The marks the notes use (**bold**, `code`, *italic*) render, the same three
+  // in both apps; anything else stays text.
+  const marked = "- **a** `fw-v*` *b* <b>x</b>";
+  assert.equal(flasher.notesHtml(marked),
+    "<ul><li><details><summary><b>a</b> <code>fw-v*</code> <i>b</i> &lt;b&gt;x&lt;/b&gt;</summary></details></li></ul>",
+    "the Flasher escapes the notes and re-allows only its three marks");
+  // The Lab's notesNode under a stub h(): text nodes serialize escaped, so
+  // markup left as text cannot pass for an element.
+  const tree = (n) => (typeof n === "string" ? n.replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    : `<${n.tag}>${n.kids.map(tree).join("")}</${n.tag}>`);
+  const labNode = new Function("h", `${fnText(settingsJs, "noteBlocks")}\n${fnText(settingsJs, "notesNode")}\nreturn notesNode;`)(
+    (tag, _attrs, ...kids) => ({ tag, kids: kids.flat().filter((k) => k != null && k !== false), append(...k) { this.kids.push(...k); } }));
+  assert.equal(tree(labNode(marked)), `<div><b>What's changing</b>${flasher.notesHtml(marked)}</div>`,
+    "the Lab renders the same marks as elements as the Flasher does, and leaves markup as text");
+  // Each bullet stays one line until opened, in a box that scrolls.
+  const labCss = read(join(CANARY, "assets/lab-shell.css"));
+  const flasherCss = read(join(ROOT, "desktop/src/styles.css"));
+  assert.match(labCss, /\.set-notes\{[^}]*max-height:[^}]*overflow-y:auto/, "the Lab's notes must scroll");
+  assert.match(labCss, /\.set-notes summary\{[^}]*white-space:nowrap/, "the Lab's bullets must start as one line");
+  assert.match(flasherCss, /\.update-notes \{[^}]*max-height:[^}]*overflow-y: auto/, "the Flasher's notes must scroll");
+  assert.match(flasherCss, /\.update-notes summary \{[^}]*white-space: nowrap/, "the Flasher's bullets must start as one line");
+});
+
 test("the journal read is bounded", () => {
   // A Lab installed for years accumulates a journal; the panel must not ask
   // for an unbounded string.

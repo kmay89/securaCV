@@ -2933,8 +2933,12 @@ function renderPassport() {
     head.textContent = "Couldn't read what's installed (the install itself is unaffected).";
   } else {
     const who = r.product ? r.product.name : r.projectName || "unknown firmware";
-    head.textContent = `Running ${who}${r.version ? " " + r.version : ""}` +
-      (r.slot ? ` from ${r.slot}` : "");
+    const from = r.slot ? ` from ${r.slot}` : "";
+    // Never the Arduino core's own name and ESP-IDF version as the
+    // firmware's (ARDUINO_READBACK_NOTE).
+    head.textContent = !r.product && /^arduino/i.test(r.projectName || "")
+      ? `Running an Arduino sketch${from}. ${ARDUINO_READBACK_NOTE}`
+      : `Running ${who}${r.version ? " " + r.version : ""}${from}`;
   }
   box.appendChild(head);
 
@@ -4795,6 +4799,15 @@ const DESCRIPTOR_DATE_NOTE =
   "release included, that is when the Arduino core was built, not this firmware, so it says " +
   "nothing about when the board was flashed.";
 
+// A descriptor that names the Arduino core (`arduino-lib-builder`, with the
+// core's ESP-IDF version where a firmware version goes) is every SecuraCV
+// release up to 2.4.17, a SecuraCV build made outside a release, or any other
+// Arduino sketch, so the passport shows neither string as the firmware's. The
+// browser's ARDUINO_READBACK_NOTE (flash.js) is the same sentence
+// (desktop_parity.test.js).
+const ARDUINO_READBACK_NOTE =
+  "SecuraCV releases up to 2.4.17 read this way too, so its version can’t be read off the board.";
+
 // Build the report DOM from the object the backend returns. Everything read off
 // flash (project names, versions, labels) goes in via textContent, never HTML.
 function renderHealthReport(r) {
@@ -6046,20 +6059,38 @@ function requiresLiveReceipt(product) {
 }
 
 // ── self-update ─────────────────────────────────────────────────────────────
-// The update's own release notes, rendered safely: escape everything first,
-// then re-allow exactly two bits of markdown the notes use — `- ` bullets and
-// `**bold**` — so the banner can say WHAT is changing, not just a number.
+// The update's own release notes arrive hard-wrapped (a `- ` bullet runs on
+// over indented lines), so the lines are joined back into their paragraph or
+// bullet first. Read line by line, every continuation line landed in one
+// paragraph above a list of cut-off first lines. The Lab's noteBlocks
+// (lab-settings.js) is the same function; lab_settings.test.js holds them equal.
+function noteBlocks(notes) {
+  const blocks = [];
+  let cur = null;
+  for (const raw of String(notes || "").split("\n")) {
+    const line = raw.trim();
+    if (!line) cur = null;
+    else if (line.startsWith("- ")) blocks.push(cur = { item: true, text: line.slice(2) });
+    else if (cur) cur.text += " " + line;
+    else blocks.push(cur = { item: false, text: line });
+  }
+  return blocks;
+}
+
+// Rendered safely: escape everything first, then re-allow the three marks the
+// notes use, **bold**, `code` and *italic* (the Lab's notesNode reads the
+// same pattern). Each bullet is one line that opens on a click (styles.css
+// .update-notes summary), so the banner says WHAT is changing as a list of
+// headlines, not a wall.
 function notesHtml(notes) {
-  const lines = String(notes || "").split("\n").map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return "";
-  const li = [];
-  const p = [];
-  const bold = (s) => esc(s).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-  lines.forEach((l) => {
-    if (l.startsWith("- ")) li.push(`<li>${bold(l.slice(2))}</li>`);
-    else p.push(bold(l));
-  });
-  return (p.length ? `<p>${p.join(" ")}</p>` : "") + (li.length ? `<ul>${li.join("")}</ul>` : "");
+  const marks = (s) => esc(s).replace(/\*\*([^*]+)\*\*|`([^`]+)`|\*([^*\s][^*]*)\*/g,
+    (_, b, c, i) => (b ? `<b>${b}</b>` : c ? `<code>${c}</code>` : `<i>${i}</i>`));
+  let out = "", inList = false;
+  for (const b of noteBlocks(notes)) {
+    if (b.item !== inList) { out += inList ? "</ul>" : "<ul>"; inList = b.item; }
+    out += b.item ? `<li><details><summary>${marks(b.text)}</summary></details></li>` : `<p>${marks(b.text)}</p>`;
+  }
+  return out + (inList ? "</ul>" : "");
 }
 
 async function checkForUpdate(manual = false) {

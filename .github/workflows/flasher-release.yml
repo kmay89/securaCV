@@ -627,7 +627,9 @@ jobs:
           else
             echo "No release signing key pinned yet — publishing checksum-only images (the flasher verifies SHA-256 and reports them as unsigned)."
           fi
-          NOTES="$(awk "/^## \[${VERSION}\]/{f=1;next} /^## \[/{if(f)exit} f{print}" CHANGELOG.md | head -c 400 || true)"
+          # awk -v passes VERSION as DATA, never spliced into the program text
+          # (the repo anti-injection rule firmware-release.yml's notes follow).
+          NOTES="$(awk -v ver="$VERSION" '$0 ~ ("^## \\[" ver "\\]") {f=1; next} /^## \[/ {if (f) exit} f {print}' CHANGELOG.md | head -c 400 || true)"
           python3 firmware/scripts/build_flash_manifest.py \
             --version "$VERSION" \
             --repo "${{ github.repository }}" \

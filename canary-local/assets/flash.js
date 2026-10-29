@@ -1617,7 +1617,12 @@ function phaseConnected() {
     // release's build date, and on an Arduino build (every SecuraCV
     // release) the descriptor's date is the Arduino core's. The diagnostics
     // report shows it, labeled for what it is (DESCRIPTOR_DATE_NOTE).
-    cur.append(document.createTextNode(`Looks like it’s running ${name}${ver} right now.`));
+    // Nor the Arduino core's own name and ESP-IDF version as the firmware's
+    // (ARDUINO_READBACK_NOTE).
+    const arduino = !state.current.productName && /^arduino/i.test(state.current.projectName || "");
+    cur.append(document.createTextNode(arduino
+      ? `Looks like it’s running an Arduino sketch right now. ${ARDUINO_READBACK_NOTE}`
+      : `Looks like it’s running ${name}${ver} right now.`));
   }
   ht.append(cur);
   // Batch guard: if THIS exact board already hatched this session, say so
@@ -5526,6 +5531,14 @@ const DESCRIPTOR_DATE_NOTE =
   "The date is the one in the image’s app descriptor. On an Arduino build, every SecuraCV " +
   "release included, that is when the Arduino core was built, not this firmware, so it says " +
   "nothing about when the board was flashed.";
+
+// A descriptor that names the Arduino core (`arduino-lib-builder`, with the
+// core's ESP-IDF version where a firmware version goes) is every SecuraCV
+// release up to 2.4.17, a SecuraCV build made outside a release, or any other
+// Arduino sketch, so the readback shows neither string as the firmware's.
+// desktop/src/app.js says the same (desktop_parity.test.js).
+const ARDUINO_READBACK_NOTE =
+  "SecuraCV releases up to 2.4.17 read this way too, so its version can’t be read off the board.";
 
 function renderReport(r) {
   const box = el("section", "flash-card flash-report");

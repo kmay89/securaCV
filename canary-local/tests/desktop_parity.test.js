@@ -5424,6 +5424,25 @@ test("neither flasher shows the descriptor's date as the firmware's build date",
     "the passport's resident record carries the descriptor date again");
 });
 
+test("neither flasher shows the Arduino core's name and ESP-IDF version as the board's firmware", () => {
+  // Up to 2.4.17 every SecuraCV image's descriptor said `arduino-lib-builder`,
+  // version `esp-idf: v4.4.7 38eeba213a`, and the readback printed exactly
+  // that ("running arduino-lib-builder esp-idf: v4.4.7 … right now").
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const note = (src, where) => {
+    const m = /^const ARDUINO_READBACK_NOTE =\n  ("[^"\n]*");/m.exec(src);
+    assert.ok(m, `${where} lost ARDUINO_READBACK_NOTE`);
+    return JSON.parse(m[1]);
+  };
+  assert.equal(note(appJs, "desktop/src/app.js"), note(flashJs, "flash.js"), "the two flashers say it in the same words");
+  assert.match(note(flashJs, "flash.js"), /up to 2\.4\.17/);
+  assert.match(flashJs, /running an Arduino sketch right now\. \$\{ARDUINO_READBACK_NOTE\}/,
+    "flash.js: the readback line names the Arduino core's descriptor for what it is");
+  assert.match(appJs, /Running an Arduino sketch\$\{from\}\. \$\{ARDUINO_READBACK_NOTE\}/,
+    "desktop/src/app.js: the passport names the Arduino core's descriptor for what it is");
+});
+
 test("wave 5: the picker leads with one detection-led recommendation on both flashers", () => {
   // The desktop listed every chip-matching product with equal weight; the
   // browser narrows to one card and states the evidence for it. Both read the

@@ -406,11 +406,21 @@ kbd {
   color: var(--text);
   border-top: 1px solid color-mix(in srgb, var(--canary) 40%, transparent);
   padding-top: 8px; margin-top: 2px;
-  max-height: 180px; overflow-y: auto;
+  max-height: 180px; overflow-y: auto; overscroll-behavior: contain;
 }
 .update-notes p { margin: 0 0 6px; }
-.update-notes ul { margin: 0; padding-left: 18px; }
-.update-notes li { margin: 3px 0; }
+.update-notes code { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; }
+.update-notes ul { margin: 0; padding: 0; list-style: none; }
+.update-notes li { margin: 2px 0; }
+/* One line per bullet until it is clicked open (app.js notesHtml). */
+.update-notes summary {
+  display: block; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.update-notes summary::-webkit-details-marker { display: none; }
+.update-notes summary::before { content: "▸ "; color: var(--text-muted); }
+.update-notes details[open] > summary { white-space: normal; }
+.update-notes details[open] > summary::before { content: "▾ "; }
 .card .update-notes { border-top: none; padding-top: 0; margin: 6px 0 10px; }
 
 /* ── dev-channel banner ───────────────────────────────────────────────── */
@@ -872,7 +882,7 @@ kbd {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
 }
-.sense-knob-name { color: var(--muted); }
+.sense-knob-name { color: var(--text-muted); }
 .sense-knob-val { text-align: right; white-space: nowrap; }
 .sense-knob input[type="range"] { width: 100%; accent-color: var(--accent, #ffd44f); }
 .sense-knob input[type="range"]:disabled { opacity: 0.4; }
