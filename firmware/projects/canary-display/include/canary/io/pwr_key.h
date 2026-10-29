@@ -14,26 +14,26 @@
 // So this model never assumes. It LEARNS the resting level: the first level
 // that holds, untouched, for LEARN_MS after loop() starts. Until it has
 // learned, the key does nothing at all. Once learned, "pressed" is simply
-// "not the resting level", and power-off needs a press that BEGAN after
-// learning and was held HOLD_MS — a level that was already there when we
-// started watching can never power the device off.
+// "not the resting level", and only a press that BEGAN after learning
+// counts — a level that was already there when we started watching never
+// powers the device off.
 //
-// Why LEARN_MS is long: on battery the user holds PWR to boot, but loop()
-// runs only after the splash, provisioning and the Wi-Fi join, so the
-// finger is long gone. A user would have to keep holding PWR for LEARN_MS
-// more after the face appeared to mislearn. Two rules make even that safe:
+// Power-off is decided AFTER the release, never on a deadline while held:
+// a press of at least HOLD_MS, released, and then the resting level held
+// for SETTLE_MS. That last clause is what makes a mislearn safe. If the
+// user keeps PWR held through LEARN_MS, the model takes the pressed level
+// for resting; when they let go, the true resting level looks like an
+// endless press. A deadline would power off 3 s later. A round trip cannot
+// tell either: the user's next TAP looks exactly like the release of a long
+// hold (the review of the first version reproduced a power-off 30 ms into
+// a 200 ms tap). But a tap lets go within a moment, so its "rest" never
+// settles, and the candidate is dropped. In a mislearned state only a
+// deliberate hold of SETTLE_MS on the real key can power off — never a
+// tap — and a "press" that outlasts STUCK_MS is re-learned as the resting
+// level, which ends the mislearn for good.
 //
-//   - CONFIRMED before the deadline fires. Until one full press-and-release
-//     has been seen, a hold powers off only on its RELEASE (a release proves
-//     the level really was a press). After that first round trip the
-//     deadline fires while the key is still down, the "learn the hold by
-//     feel" gesture the case button is meant to have.
-//   - A press that outlasts STUCK_MS is not a press: it is the resting
-//     level we mislearned. The model re-learns it as resting and forgets
-//     the press — no event, no power-off.
-//
-// So a mislearn costs a key that does nothing for STUCK_MS, never a
-// surprise power-off.
+// The cost on a correctly learned board: the glass goes dark SETTLE_MS
+// after the finger lifts, not at the 3 s mark while it is still down.
 //
 // Pure logic: the glue in main.cpp reads the GPIO and feeds level + now.
 // Host-tested in tests_host/test_pwr_key.cpp.
@@ -49,6 +49,7 @@ class PwrKeyModel {
   static constexpr uint32_t LEARN_MS = 4000;     // untouched level = resting
   static constexpr uint32_t DEBOUNCE_MS = 30;
   static constexpr uint32_t STUCK_MS = 15000;    // no human holds this long
+  static constexpr uint32_t SETTLE_MS = 1500;    // rest after a long hold
 
   explicit PwrKeyModel(uint32_t hold_ms = 3000) : hold_ms_(hold_ms) {}
 
@@ -78,23 +79,17 @@ class PwrKeyModel {
       }
       return PwrKeyEvent::None;
     }
-    if (down_) {
-      const uint32_t held = (uint32_t)(now - down_since_);
-      if (held >= STUCK_MS) {
-        // Never a press: the level we took for "pressed" is where the pin
-        // rests. Re-learn it, drop the press, start confirmation over.
-        idle_high_ = stable_;
-        down_ = false;
-        confirmed_ = false;
-        return PwrKeyEvent::None;
-      }
-      // Hold deadline: fires once, while still held, on a press that began
-      // after learning (down_ is only ever set by on_edge) — and only once
-      // a full round trip has confirmed which level is "pressed".
-      if (confirmed_ && !fired_ && held >= hold_ms_) {
-        fired_ = true;
-        return PwrKeyEvent::PowerOff;
-      }
+    if (down_ && (uint32_t)(now - down_since_) >= STUCK_MS) {
+      // Never a press: the level we took for "pressed" is where the pin
+      // rests. Re-learn it and drop the press.
+      idle_high_ = stable_;
+      down_ = false;
+      return PwrKeyEvent::None;
+    }
+    // A long hold was released: power off once the rest has SETTLED.
+    if (off_pending_ && !down_ && (uint32_t)(now - off_since_) >= SETTLE_MS) {
+      off_pending_ = false;
+      return PwrKeyEvent::PowerOff;
     }
     return PwrKeyEvent::None;
   }
@@ -105,24 +100,28 @@ class PwrKeyModel {
   // The level a press drives the pin to — what a wake-on-press arms for.
   bool pressed_high() const { return !idle_high_; }
   bool pressed() const { return learned_ && down_; }
-  bool confirmed() const { return confirmed_; }
+  // A long hold was released and the rest is settling toward a power-off.
+  bool off_pending() const { return off_pending_; }
 
  private:
   PwrKeyEvent on_edge(uint32_t now) {
     const bool is_pressed = (stable_ != idle_high_);
     if (is_pressed) {
+      // A press during the settle means the "rest" was not one: whatever
+      // was pending is dropped (a tap after a mislearn ends up here).
+      off_pending_ = false;
       down_ = true;
-      fired_ = false;
       down_since_ = now;
       return PwrKeyEvent::None;
     }
-    // Released: the round trip that proves the polarity.
     if (!down_) return PwrKeyEvent::None;
     down_ = false;
-    if (fired_) return PwrKeyEvent::None;  // the deadline already acted
-    const uint32_t held = (uint32_t)(now - down_since_);
-    confirmed_ = true;
-    return held >= hold_ms_ ? PwrKeyEvent::PowerOff : PwrKeyEvent::Tap;
+    if ((uint32_t)(now - down_since_) >= hold_ms_) {
+      off_pending_ = true;
+      off_since_ = now;
+      return PwrKeyEvent::None;
+    }
+    return PwrKeyEvent::Tap;
   }
 
   uint32_t hold_ms_;
@@ -134,9 +133,9 @@ class PwrKeyModel {
   bool learned_ = false;
   bool idle_high_ = true;
   bool down_ = false;
-  bool fired_ = false;
-  bool confirmed_ = false;
   uint32_t down_since_ = 0;
+  bool off_pending_ = false;
+  uint32_t off_since_ = 0;
 };
 
 }  // namespace canary::io

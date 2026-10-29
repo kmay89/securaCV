@@ -2204,8 +2204,9 @@ void loop() {
     defined(PWR_LATCH_PIN) && (PWR_LATCH_PIN >= 0) && !defined(__EMSCRIPTEN__)
   // The case PWR button (AMOLED 2.41 — a readable GPIO, unlike the 1.69's
   // latch-only key). Short press = wake/peek, exactly a BOOT tap; held
-  // CD_PWR_OFF_HOLD_MS = honest power-off through the HAL (panel to sleep,
-  // latch dropped, deep sleep waking on this same button). Its own model
+  // CD_PWR_OFF_HOLD_MS and released = honest power-off through the HAL once
+  // the key has rested (panel to sleep, latch dropped, deep sleep waking on
+  // this same button). Its own model
   // rather than the ButtonClassifier on purpose: a power gesture must not
   // inherit the double/triple grammar. And the model LEARNS which level the
   // key rests at (canary/io/pwr_key.h): the old glue assumed active-low, so

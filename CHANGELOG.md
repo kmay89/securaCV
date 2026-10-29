@@ -11,9 +11,10 @@
   and on USB then waited forever for a release that never came. A new pure
   model (`canary/io/pwr_key.h`, host-tested in `test_pwr_key.cpp`) learns the
   resting level after boot and only acts on a press that began after
-  learning. Until one press-and-release has confirmed the polarity, a hold
-  powers off on release; a "press" longer than 15 s is re-learned as the
-  resting level. The serial log prints `PWR key rests HIGH` or `rests LOW`,
+  learning. A hold of 3 s powers off after its release, once the key has
+  rested for 1.5 s, so a tap can never power off even if the resting level
+  was mislearned. A "press" longer than 15 s is re-learned as the resting
+  level. The serial log prints `PWR key rests HIGH` or `rests LOW`,
   which is the line a hardware test report needs. `power_off()` waits for
   the release at most 10 s and arms the wake on the learned level.
 - **Four numbered "first light" lines on serial.** `display_init` now says

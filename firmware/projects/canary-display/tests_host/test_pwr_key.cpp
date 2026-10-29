@@ -8,12 +8,13 @@
 //   - nothing fires before the resting level is learned
 //   - a key that RESTS LOW (the case the old active-low glue powered off)
 //     never fires on its own, however long it sits
-//   - both polarities: a short press is a Tap, a held press is PowerOff
-//   - before the first round trip, a hold powers off only on release;
-//     after it, the deadline fires while the key is still held
+//   - both polarities: a short press is a Tap; a held press powers off
+//     only after its release, once the rest has settled for SETTLE_MS
+//   - a press during the settle drops the pending power-off
 //   - a level present when watching began can never power the device off
-//   - a mislearn (key held through learning) costs a dead key for
-//     STUCK_MS, never a power-off, and then re-learns the true resting level
+//   - a mislearn (key held through learning) never powers off on a tap —
+//     the review's reproduction (LOW 4.5 s, HIGH 5 s, a 200 ms tap) is
+//     pinned — and re-learns the true resting level after STUCK_MS
 //   - bounces shorter than the debounce never count
 //
 // Build/run via the tests_host Makefile.
@@ -81,55 +82,83 @@ static void polarity_round_trip(bool idle_high) {
   r.hold(rest, PwrKeyModel::LEARN_MS + 100);
   CHECK(r.m.learned() && r.m.idle_high() == idle_high, "learned the resting level");
 
-  // First a short press: a Tap, and the round trip confirms the polarity.
   r.hold(press, 200);
   r.hold(rest, 200);
   CHECK(r.taps == 1, "a short press is a Tap");
   CHECK(r.offs == 0, "a short press never powers off");
-  CHECK(r.m.confirmed(), "the round trip confirmed the polarity");
 
-  // Then a long hold: confirmed, so the deadline fires while still held.
-  const uint32_t pressed_at = r.t;
   r.hold(press, HOLD + 500);
-  CHECK(r.offs == 1, "a confirmed hold fires PowerOff once");
-  CHECK(r.first_off_at >= pressed_at + HOLD &&
-            r.first_off_at < pressed_at + HOLD + 100,
-        "it fires at the hold deadline, while the key is still down");
-  r.hold(rest, 200);
-  CHECK(r.offs == 1, "the release after the deadline adds nothing");
-  CHECK(r.taps == 1, "and is not a Tap");
+  CHECK(r.offs == 0, "nothing fires while the key is still held");
+  const uint32_t released_at = r.t;
+  r.hold(rest, PwrKeyModel::SETTLE_MS + 500);
+  CHECK(r.offs == 1, "a long hold, released, powers off once");
+  CHECK(r.first_off_at >= released_at + PwrKeyModel::SETTLE_MS &&
+            r.first_off_at < released_at + PwrKeyModel::SETTLE_MS + 100,
+        "it fires when the rest has settled for SETTLE_MS");
+  CHECK(r.taps == 1, "and the long hold is not a Tap");
 }
 
-static void test_unconfirmed_hold_fires_on_release() {
-  printf("before the first round trip, a hold powers off on release\n");
+static void test_press_during_settle_cancels() {
+  printf("a press during the settle drops the pending power-off\n");
   Run r;
   r.hold(true, PwrKeyModel::LEARN_MS + 100);
-  r.hold(false, HOLD + 1000);
-  CHECK(r.offs == 0, "no deadline fire before the polarity is confirmed");
-  r.hold(true, 100);
-  CHECK(r.offs == 1, "the release of a long hold is the PowerOff");
-  CHECK(r.taps == 0, "and not a Tap");
+  r.hold(false, HOLD + 200);
+  r.hold(true, 500);   // released, but not settled yet
+  CHECK(r.m.off_pending(), "the power-off is pending");
+  r.hold(false, 200);  // pressed again inside the settle
+  r.hold(true, PwrKeyModel::SETTLE_MS + 500);
+  CHECK(r.offs == 0, "the interrupted rest never powers off");
+  CHECK(r.taps == 1, "the second short press is its own Tap");
+}
+
+static void test_mislearn_tap_never_powers_off() {
+  printf("mislearn: the review's reproduction no longer powers off\n");
+  // Board rests HIGH; PWR (LOW) held through learning; released; then a
+  // 200 ms tap 5 s later. The first version fired 30 ms into that tap.
+  Run r;
+  r.hold(false, 4500);
+  r.hold(true, 5000);
+  r.hold(false, 200);
+  r.hold(true, 2000);
+  CHECK(r.offs == 0, "a tap after a mislearn is never a power-off");
+  // Any number of taps, at any spacing inside STUCK_MS.
+  for (int i = 0; i < 6; i++) {
+    r.hold(false, 150);
+    r.hold(true, 900 + 400 * i);
+  }
+  CHECK(r.offs == 0, "nor are repeated taps");
 }
 
 static void test_mislearn_is_harmless() {
-  printf("mislearn: key held through learning never powers off\n");
-  // A board that rests HIGH, but the user is still holding PWR (LOW) when
-  // loop() starts, and keeps holding past LEARN_MS.
+  printf("mislearn: untouched, it re-learns and then behaves\n");
   Run r;
   r.hold(false, PwrKeyModel::LEARN_MS + 500);
   CHECK(r.m.learned() && !r.m.idle_high(), "mislearned LOW as resting");
-  // They let go: the true resting level now looks like an endless press.
   r.hold(true, PwrKeyModel::STUCK_MS + 1000);
-  CHECK(r.offs == 0, "the endless 'press' never powers off");
-  CHECK(r.taps == 0, "and never taps");
+  CHECK(r.offs == 0 && r.taps == 0, "the endless 'press' does nothing");
   CHECK(r.m.idle_high(), "after STUCK_MS it re-learned HIGH as resting");
   CHECK(!r.m.pressed(), "and dropped the phantom press");
-  // From here the key behaves exactly like a correctly learned one.
   r.hold(false, 200);
   r.hold(true, 200);
   CHECK(r.taps == 1, "a real short press now taps");
   r.hold(false, HOLD + 200);
-  CHECK(r.offs == 1, "a real confirmed hold now powers off");
+  r.hold(true, PwrKeyModel::SETTLE_MS + 200);
+  CHECK(r.offs == 1, "a real long hold now powers off");
+}
+
+static void test_mislearn_needs_a_deliberate_hold() {
+  printf("mislearn: only a deliberate SETTLE_MS hold on the real key powers off\n");
+  // The one residual, pinned so it cannot quietly grow: after a mislearn,
+  // the real key held for SETTLE_MS reads as the settled rest after a long
+  // phantom hold. A deliberate hold, never a tap.
+  Run r;
+  r.hold(false, 4500);
+  r.hold(true, 5000);
+  r.hold(false, PwrKeyModel::SETTLE_MS - 200);
+  CHECK(r.offs == 0, "a hold shorter than SETTLE_MS does not");
+  r.hold(true, 5000);
+  r.hold(false, PwrKeyModel::SETTLE_MS + 200);
+  CHECK(r.offs == 1, "a SETTLE_MS hold does: the documented residual");
 }
 
 static void test_level_at_boot_cannot_fire() {
@@ -152,7 +181,6 @@ static void test_bounce_ignored() {
     r.hold(true, 50);
   }
   CHECK(r.taps == 0 && r.offs == 0, "contact chatter is not a press");
-  CHECK(!r.m.confirmed(), "and confirms nothing");
 }
 
 int main() {
@@ -160,8 +188,10 @@ int main() {
   test_nothing_before_learned();
   polarity_round_trip(true);
   polarity_round_trip(false);
-  test_unconfirmed_hold_fires_on_release();
+  test_press_during_settle_cancels();
+  test_mislearn_tap_never_powers_off();
   test_mislearn_is_harmless();
+  test_mislearn_needs_a_deliberate_hold();
   test_level_at_boot_cannot_fire();
   test_bounce_ignored();
   if (g_fail) {

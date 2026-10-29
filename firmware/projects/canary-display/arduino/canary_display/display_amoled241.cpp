@@ -327,11 +327,11 @@ void power_off(bool pressed_high) {
   digitalWrite(PWR_LATCH_PIN, LOW);
   delay(50);  // on battery we are gone before this returns
 #if defined(PWR_KEY_PIN) && (PWR_KEY_PIN >= 0)
-  // Still here = USB power (the latch drop couldn't cut the rail). This
-  // can fire on the HOLD DEADLINE, with the key still down — and a level
-  // wake armed under a held key is already true: the "off" would bounce
-  // straight back on. Wait out the release (plus a debounce breath) before
-  // arming, so waking takes a fresh press. The wait is BOUNDED: the old one
+  // Still here = USB power (the latch drop couldn't cut the rail). The
+  // PWR model only decides after a settled release, but a level wake armed
+  // under a held key is already true — the "off" would bounce straight back
+  // on — so wait for the key to read released (plus a debounce breath)
+  // before arming, so waking takes a fresh press. The wait is BOUNDED: the old one
   // looped forever on a key whose polarity it had guessed wrong, a dark
   // glass that never slept and never woke. If the key is somehow still
   // "down" after 10 s, sleep anyway with the timer as the way back.

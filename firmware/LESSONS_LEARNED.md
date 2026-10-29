@@ -253,9 +253,13 @@
   three seconds later. On USB it then spun forever in
   `while (digitalRead(key) == LOW)`, panel off, never sleeping.
 - **The fix:** `canary/io/pwr_key.h` learns the resting level after boot,
-  acts only on a press that began after learning, powers off on release
-  until one round trip confirms the polarity, and re-learns a "press" that
-  outlasts 15 s. The release wait in `power_off()` is bounded. The serial
+  acts only on a press that began after learning, and re-learns a "press"
+  that outlasts 15 s. A hold powers off only after its release, once the
+  resting level has held for 1.5 s. The first version fired on a deadline
+  once one round trip had "confirmed" the polarity; review reproduced a
+  power-off 30 ms into a tap after a mislearn, because a round trip cannot
+  prove polarity: after a mislearn, a tap looks exactly like the release of
+  a long hold. The settled rest is what a tap can never fake. The release wait in `power_off()` is bounded. The serial
   log prints the learned level, and `display_init` prints four numbered
   "first light" lines so the next dark glass says where it stopped.
 - **Guidance:** on a board marked compile-tested, every input with a
