@@ -12,6 +12,38 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-10-29 — iOS 0.9.0 failed at Archive in 16 seconds: Apple wanted the Account Holder to accept a new agreement
+
+- **Symptom:** **Update everything** (`only: ios`, `publish`) dispatched
+  `ios-release.yml` on a green main; the run failed at **Archive** about 16 s
+  into `xcodebuild`, before compiling anything, with an error per target:
+  `PLA Update available: You currently don't have access to this membership
+  resource. To resolve this issue, your team's Account Holder, <name>, must
+  agree to the latest Program License Agreement.` Each was followed by `No
+  profiles for 'com.securacv.witness…' were found`. Nothing was uploaded and
+  no `ios-v*` tag was cut, so the master button still sees the version as
+  unreleased.
+- **Cause:** Apple republishes the Apple Developer Program License Agreement
+  from time to time, and until the team's Account Holder accepts it, Apple's
+  provisioning service refuses every request from that team, the CI's API
+  key included. `-allowProvisioningUpdates` asks for profiles on every
+  archive, so the refusal surfaces as "no profiles". Nothing in the repo,
+  the secrets or the workflow is wrong. The "No profiles" lines are the
+  consequence, not a second problem: do not rotate certificates, regenerate
+  profiles or edit signing settings over them.
+- **Fix:** the Account Holder signs in at developer.apple.com/account and
+  accepts the agreement on the banner (App Store Connect → Business shows any
+  other agreement waiting too). Then retry the same version: **Re-run failed
+  jobs** on that iOS release run (the build number moves from `N.1` to `N.2`
+  by design, see the build-number note in `ios-release.yml`), or press
+  **Update everything** again with `only: ios`; the version is still untagged,
+  so either one ships it. No version bump is owed.
+- **Applies to:** every Apple target that signs in CI: the iPhone app
+  (`ios-release.yml`) and the Witness Wall (`tvos-release.yml`), and any
+  future Mac target. One acceptance unblocks them all, because the agreement
+  is per team. Listed under "Things no button can do for you" in
+  `docs/RELEASE_BUTTONS.md`.
+
 ## 2026-10-27 — The dev channel sat two releases behind stable, with nothing a device could poll
 
 - **Symptom:** with stable at fw-v2.4.17, the rolling `fw-dev-latest`

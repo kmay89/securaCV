@@ -613,6 +613,15 @@ You don't have to remember these; CI does. Listed so a red run makes sense.
 
 ## Things no button can do for you
 
+- **Accepting Apple's updated developer agreement.** When Apple republishes
+  the Program License Agreement, every Apple signing request from the team is
+  refused until the Account Holder accepts it at developer.apple.com/account.
+  An iPhone or Apple TV release then fails at **Archive** with `PLA Update
+  available … must agree to the latest Program License Agreement`, followed
+  by "No profiles … were found" for each target. Accept it, then **Re-run
+  failed jobs** on that release run, or press the master button again. The
+  version is still untagged, so no bump is owed (`.github/RELEASE_LESSONS.md`,
+  2026-10-29).
 - **The OTA key ceremony.** It makes your master signing key; it has to happen on
   your machine.
 - **Promoting the CloudKit schema.** A new field on a synced record
