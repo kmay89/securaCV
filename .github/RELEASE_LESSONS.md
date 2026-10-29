@@ -12,6 +12,28 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-10-29 (b) — The upload was accepted and CI was green, then an email said the build was invalid: an App Intent string named "iPhone"
+
+- **Symptom:** after `ios-release.yml` uploaded 0.8.0 (build 39.1) and went
+  green, App Store Connect emailed "Action needed: The uploaded build for
+  SecuraCV has one or more issues" with `ITMS-90626: Invalid Siri Support -
+  App Intent description '…from your iPhone.' cannot contain 'iphone'`. The
+  build never became available in TestFlight. 0.8.1 and the 0.9.0 release
+  carried the same string.
+- **Cause:** App Store Connect validates the App Intents metadata compiled
+  into the bundle (titles, descriptions, Siri phrases, short titles) and
+  refuses Apple product names in it. Nothing in the build or the upload
+  checks this, and the verdict comes later by email, the same shape as the
+  SDK-age rejection of 2026-07-28 (h).
+- **Fix:** the watch intent's description no longer names a product, and
+  `scripts/tests/test_ios_intent_strings.py` (lint.yml) reads every intent
+  string in the iPhone, watch and widget sources and fails on an Apple product
+  or service name before anything is built. `ios/APP_STORE.md` lists it
+  among the checks before a submission.
+- **Applies to:** every Apple target that declares App Intents: the iPhone
+  app and its watch app today. The Witness Wall declares none; a future one
+  belongs in the same test's source list.
+
 ## 2026-10-29 — iOS 0.9.0 failed at Archive in 16 seconds: Apple wanted the Account Holder to accept a new agreement
 
 - **Symptom:** **Update everything** (`only: ios`, `publish`) dispatched
