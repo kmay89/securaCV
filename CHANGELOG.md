@@ -1,6 +1,24 @@
 # Changelog
 
 ## [Unreleased]
+### The iPhone picks out the Canary you just set up, however you set it up, and a display owner never waits on a Bluetooth card
+
+- **"Watch it appear" names the new one on every path.** It used to tick a
+  Canary only when this phone had joined its setup network; set up from the
+  Bluetooth card, the Camera app or the Flasher, it listed every same-kind
+  Canary in the house or watched forever. It now remembers what was on the
+  network when the walkthrough opened and shows a later arrival as "new on
+  your network since you opened this" (`ArrivalWatch`, covered by
+  `ArrivalWatchTests`). The baseline settles from the moment the browse
+  actually runs, so a slow Local Network prompt or a browse restarted after
+  the Camera app never makes an old Canary look new. The watch now always
+  ends in words, and only the newest watch clock can end it.
+- **A display has its own door into setup.** Today's first-run card offers
+  "It has a screen? Scan its code", Set up lists "Add a display", and
+  `securacv://setup?what=display` opens the display walkthrough directly.
+  `scripts/tests/test_ios_setup_targets.py` holds the link's words, the
+  `SetupTarget` cases and their destinations to each other.
+
 ### The Glance AMOLED can no longer switch itself off at boot, says on serial where a dark glass stops, and the iPhone walks a blank display from the flasher to the fleet
 
 - **The PWR key's resting level is learned, not assumed.** The Waveshare

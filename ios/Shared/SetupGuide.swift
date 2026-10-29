@@ -287,7 +287,7 @@ enum SetupGuide {
             id: "appear",
             title: "Watch it appear",
             short: "Once it's on your Wi-Fi, it shows up on the Fleet tab by itself.",
-            body: "Once it is on your Wi-Fi, it announces itself and shows up on the Fleet tab by itself — nothing to pair for a display, a camera or a radar Canary. " + family.hubNote,
+            body: "Once it is on your Wi-Fi, it announces itself and shows up on the Fleet tab by itself — nothing to pair for a display, a camera or a radar Canary. Set it up some other way, from the card, the Camera app or the Flasher? This step still picks out the one that's new on your network since you opened it. " + family.hubNote,
             action: .watchForCanary))
         return steps
     }

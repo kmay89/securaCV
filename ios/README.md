@@ -490,6 +490,27 @@ once-only claim read on a WAP, the card's fifteen-second freshness and the
 pop-up's −70 dBm "close" band against a real beacon are the open items
 ([the design's checklist](../docs/design/magic_pairing.md#9-bench-checklist-what-to-verify-before-calling-it-shipped)).
 
+## Which one is yours
+
+The last step of every Canary walkthrough, **Watch it appear**, ticks the new
+Canary in two ways. When this phone joined its setup network, the network's
+four identity characters match the device's mDNS name, which is an identity
+match. When it was set up some other way, from the card, the iPhone Camera app
+or the Flasher, the screen remembers what was already on the network when the
+walkthrough opened. A same-kind Canary heard after that is shown as "new on
+your network since you opened this": a strong hint, never called verified
+(`Model/ArrivalWatch.swift`, `ArrivalWatchTests`). The baseline settles for
+ten seconds from the moment the browse is actually running, so a slow Local
+Network prompt or a browse restarted after the Camera app never makes an old
+Canary look new. The watch always ends in words: 90 seconds after a join
+here, three minutes when the person may not have started yet.
+
+A display also has its own way in. Today's first-run card offers "It has a
+screen? Scan its code", Set up lists "Add a display", and
+`securacv://setup?what=display` opens the same walkthrough, skipping the
+Bluetooth listen a display never answers (`scripts/tests/test_ios_setup_targets.py`
+holds the link, the targets and their destinations to each other).
+
 ## On your iPad
 
 Same binary, same release, same truth — `TARGETED_DEVICE_FAMILY "1,2"` means
