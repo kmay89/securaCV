@@ -2933,8 +2933,12 @@ function renderPassport() {
     head.textContent = "Couldn't read what's installed (the install itself is unaffected).";
   } else {
     const who = r.product ? r.product.name : r.projectName || "unknown firmware";
-    head.textContent = `Running ${who}${r.version ? " " + r.version : ""}` +
-      (r.slot ? ` from ${r.slot}` : "");
+    const from = r.slot ? ` from ${r.slot}` : "";
+    // Never the Arduino core's own name and ESP-IDF version as the
+    // firmware's (ARDUINO_READBACK_NOTE).
+    head.textContent = !r.product && /^arduino/i.test(r.projectName || "")
+      ? `Running an Arduino sketch${from}. ${ARDUINO_READBACK_NOTE}`
+      : `Running ${who}${r.version ? " " + r.version : ""}${from}`;
   }
   box.appendChild(head);
 
@@ -4795,6 +4799,15 @@ const DESCRIPTOR_DATE_NOTE =
   "release included, that is when the Arduino core was built, not this firmware, so it says " +
   "nothing about when the board was flashed.";
 
+// A descriptor that names the Arduino core (`arduino-lib-builder`, with the
+// core's ESP-IDF version where a firmware version goes) is every SecuraCV
+// release up to 2.4.17, a SecuraCV build made outside a release, or any other
+// Arduino sketch, so the passport shows neither string as the firmware's. The
+// browser's ARDUINO_READBACK_NOTE (flash.js) is the same sentence
+// (desktop_parity.test.js).
+const ARDUINO_READBACK_NOTE =
+  "SecuraCV releases up to 2.4.17 read this way too, so its version can’t be read off the board.";
+
 // Build the report DOM from the object the backend returns. Everything read off
 // flash (project names, versions, labels) goes in via textContent, never HTML.
 function renderHealthReport(r) {
@@ -6064,15 +6077,18 @@ function noteBlocks(notes) {
   return blocks;
 }
 
-// Rendered safely: escape everything first, then re-allow `**bold**`. Each
-// bullet is one line that opens on a click (styles.css .update-notes summary),
-// so the banner says WHAT is changing as a list of headlines, not a wall.
+// Rendered safely: escape everything first, then re-allow the three marks the
+// notes use, **bold**, `code` and *italic* (the Lab's notesNode reads the
+// same pattern). Each bullet is one line that opens on a click (styles.css
+// .update-notes summary), so the banner says WHAT is changing as a list of
+// headlines, not a wall.
 function notesHtml(notes) {
-  const bold = (s) => esc(s).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  const marks = (s) => esc(s).replace(/\*\*([^*]+)\*\*|`([^`]+)`|\*([^*\s][^*]*)\*/g,
+    (_, b, c, i) => (b ? `<b>${b}</b>` : c ? `<code>${c}</code>` : `<i>${i}</i>`));
   let out = "", inList = false;
   for (const b of noteBlocks(notes)) {
     if (b.item !== inList) { out += inList ? "</ul>" : "<ul>"; inList = b.item; }
-    out += b.item ? `<li><details><summary>${bold(b.text)}</summary></details></li>` : `<p>${bold(b.text)}</p>`;
+    out += b.item ? `<li><details><summary>${marks(b.text)}</summary></details></li>` : `<p>${marks(b.text)}</p>`;
   }
   return out + (inList ? "</ul>" : "");
 }

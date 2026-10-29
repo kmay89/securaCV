@@ -103,16 +103,20 @@ function noteBlocks(notes) {
 }
 
 /* Rendered as real elements — never innerHTML, so release copy can't inject
-   markup — with `**bold**` as <b>. Each bullet is one line that opens on a
-   click (lab-shell.css .set-notes summary), in a box that scrolls. */
+   markup — with the three marks the notes use, **bold**, `code` and *italic*
+   (the Flasher's notesHtml reads the same pattern). Each bullet is one line
+   that opens on a click (lab-shell.css .set-notes summary), in a box that
+   scrolls. */
 function notesNode(notes) {
   const box = h("div", { class: "set-notes" }, h("b", {}, "What's changing"));
-  const bold = (s) => s.split(/\*\*([^*]+)\*\*/).map((part, i) => (i % 2 ? h("b", {}, part) : part));
+  const tags = [null, "b", "code", "i"];   // split's text, then one slot per capture group
+  const marks = (s) => s.split(/\*\*([^*]+)\*\*|`([^`]+)`|\*([^*\s][^*]*)\*/)
+    .map((part, i) => (part === undefined ? null : tags[i % 4] ? h(tags[i % 4], {}, part) : part));
   let list = null;
   for (const b of noteBlocks(notes)) {
-    if (!b.item) { list = null; box.append(h("p", {}, bold(b.text))); continue; }
+    if (!b.item) { list = null; box.append(h("p", {}, marks(b.text))); continue; }
     if (!list) box.append(list = h("ul", {}));
-    list.append(h("li", {}, h("details", {}, h("summary", {}, bold(b.text)))));
+    list.append(h("li", {}, h("details", {}, h("summary", {}, marks(b.text)))));
   }
   return box;
 }

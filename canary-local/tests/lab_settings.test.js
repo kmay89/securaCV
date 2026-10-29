@@ -195,9 +195,20 @@ test("both apps fold a release's wrapped notes into one line per bullet, the sam
     assert.equal((html.match(/<summary>/g) || []).length, blocks.filter((b) => b.item).length,
       `${file}: the Flasher must fold each bullet into a <summary>`);
   }
-  assert.equal(flasher.notesHtml("- **a** <b>x</b>"),
-    "<ul><li><details><summary><b>a</b> &lt;b&gt;x&lt;/b&gt;</summary></details></li></ul>",
-    "the Flasher escapes the notes and re-allows only **bold**");
+  // The marks the notes use (**bold**, `code`, *italic*) render, the same three
+  // in both apps; anything else stays text.
+  const marked = "- **a** `fw-v*` *b* <b>x</b>";
+  assert.equal(flasher.notesHtml(marked),
+    "<ul><li><details><summary><b>a</b> <code>fw-v*</code> <i>b</i> &lt;b&gt;x&lt;/b&gt;</summary></details></li></ul>",
+    "the Flasher escapes the notes and re-allows only its three marks");
+  // The Lab's notesNode under a stub h(): text nodes serialize escaped, so
+  // markup left as text cannot pass for an element.
+  const tree = (n) => (typeof n === "string" ? n.replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    : `<${n.tag}>${n.kids.map(tree).join("")}</${n.tag}>`);
+  const labNode = new Function("h", `${fnText(settingsJs, "noteBlocks")}\n${fnText(settingsJs, "notesNode")}\nreturn notesNode;`)(
+    (tag, _attrs, ...kids) => ({ tag, kids: kids.flat().filter((k) => k != null && k !== false), append(...k) { this.kids.push(...k); } }));
+  assert.equal(tree(labNode(marked)), `<div><b>What's changing</b>${flasher.notesHtml(marked)}</div>`,
+    "the Lab renders the same marks as elements as the Flasher does, and leaves markup as text");
   // Each bullet stays one line until opened, in a box that scrolls.
   const labCss = read(join(CANARY, "assets/lab-shell.css"));
   const flasherCss = read(join(ROOT, "desktop/src/styles.css"));

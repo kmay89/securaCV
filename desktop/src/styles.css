@@ -409,6 +409,7 @@ kbd {
   max-height: 180px; overflow-y: auto; overscroll-behavior: contain;
 }
 .update-notes p { margin: 0 0 6px; }
+.update-notes code { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; }
 .update-notes ul { margin: 0; padding: 0; list-style: none; }
 .update-notes li { margin: 2px 0; }
 /* One line per bullet until it is clicked open (app.js notesHtml). */
@@ -881,7 +882,7 @@ kbd {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
 }
-.sense-knob-name { color: var(--muted); }
+.sense-knob-name { color: var(--text-muted); }
 .sense-knob-val { text-align: right; white-space: nowrap; }
 .sense-knob input[type="range"] { width: 100%; accent-color: var(--accent, #ffd44f); }
 .sense-knob input[type="range"]:disabled { opacity: 0.4; }
