@@ -28,7 +28,10 @@ struct FirmwareUpdateSection: View {
     /// set, the poll is watching a run through to the restart and back.
     @State private var replacing: String?
     @State private var sawRestart = false
-    @State private var watchStarted: ContinuousClock.Instant?
+    /// When the Canary went quiet or said Rebooting — the restart's clock.
+    /// Started there, not at the install request: a slow download that is
+    /// still answering with progress is never timed out as a lost restart.
+    @State private var restartSince: ContinuousClock.Instant?
     @State private var outcome: FirmwareOutcome?
     @State private var restartTimedOut = false
     /// Bumped to restart the poll after a kick.
@@ -241,7 +244,7 @@ struct FirmwareUpdateSection: View {
         if answer == .started || answer == .busy {
             replacing = s.installed
             sawRestart = false
-            watchStarted = ContinuousClock.now
+            restartSince = nil
         }
         await handle(kick: answer)
     }
@@ -280,7 +283,7 @@ struct FirmwareUpdateSection: View {
                 absorb(s)
             case nil:
                 misses += 1
-                if watching { sawRestart = true }
+                if watching { markRestart() }
             }
 
             if let wait = nextWait() {
@@ -302,7 +305,7 @@ struct FirmwareUpdateSection: View {
         guard let before = replacing else { return }
         switch FirmwareUpdate.phase(s) {
         case .restarting:
-            sawRestart = true
+            markRestart()
         case .working:
             break
         case .failed:
@@ -323,13 +326,18 @@ struct FirmwareUpdateSection: View {
         }
     }
 
+    private func markRestart() {
+        sawRestart = true
+        if restartSince == nil { restartSince = ContinuousClock.now }
+    }
+
     /// The next poll's delay, or nil to stop until the person acts.
     private func nextWait() -> Duration? {
         if let k = kickedAt, ContinuousClock.now - k >= Self.kickGrace {
             kickedAt = nil  // no run showed up; take what the device says
         }
         if watching {
-            if let started = watchStarted,
+            if let started = restartSince,
                ContinuousClock.now - started > FirmwareUpdate.restartPatience {
                 restartTimedOut = true
                 replacing = nil

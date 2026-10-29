@@ -60,6 +60,22 @@ final class FirmwareUpdateTests: XCTestCase {
         XCTAssertEqual(FirmwareUpdate.phase(s), .upToDate)
     }
 
+    func testAFailedFirstCheckIsAFailureNotNeverChecked() throws {
+        // ota_set_error() records the reason and drops the engine straight
+        // back to Idle, and there is no manifest — review on the first cut:
+        // that read as "Check for update", with the reason dropped.
+        let s = try status(#"{"installed_version":"2.4.18","state":"Idle","error":"Manifest fetch failed","error_text":"Could not reach the update server. Check the network and try again.","update_available":false}"#)
+        XCTAssertEqual(FirmwareUpdate.phase(s),
+                       .failed("Could not reach the update server. Check the network and try again."))
+        XCTAssertNil(FirmwareUpdate.lingeringNote(s), "said once, by the failure line")
+    }
+
+    func testTheNoUpdateWordIsUpToDateEvenWithoutAManifest() throws {
+        let s = try status(#"{"installed_version":"2.4.19","state":"Idle","error":"No update available","error_text":"Your Canary is up to date."}"#)
+        XCTAssertEqual(FirmwareUpdate.phase(s), .upToDate)
+        XCTAssertNil(FirmwareUpdate.lingeringNote(s), "up to date is not a note")
+    }
+
     func testWorkingStepsCarryProgressOnlyWhereTheEngineReportsIt() throws {
         let dl = try status(#"{"state":"Downloading","progress":42}"#)
         XCTAssertEqual(FirmwareUpdate.phase(dl), .working(.downloading, progress: 42))

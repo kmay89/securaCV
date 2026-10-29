@@ -143,6 +143,8 @@ enum FirmwareOutcome: Equatable, Sendable {
 enum FirmwareUpdate {
     /// The engine's "nothing went wrong" word (`securacv_ota_error_str`).
     static let noErrorWord = "No error"
+    /// The engine's word for "checked, nothing newer".
+    static let noUpdateWord = "No update available"
 
     static func phase(_ s: FirmwareStatus) -> FirmwarePhase {
         if let step = FirmwareStep(rawValue: s.state) {
@@ -156,8 +158,20 @@ enum FirmwareUpdate {
             return .failed(failureSentence(s))
         default:
             if s.updateAvailable, let v = s.latest { return .available(v) }
-            return s.latest == nil ? .notChecked : .upToDate
+            if s.latest != nil || s.error == noUpdateWord { return .upToDate }
+            // The engine drops back to Idle the moment it records an error
+            // (securacv_ota.cpp ota_set_error), so a check that could not
+            // fetch or trust its manifest reads as Idle with no version and
+            // the reason kept beside it. That is a failed check, not
+            // "never checked" — say the device's reason.
+            if hasError(s) { return .failed(failureSentence(s)) }
+            return .notChecked
         }
+    }
+
+    /// The device kept a real error (not "No error", not "up to date").
+    static func hasError(_ s: FirmwareStatus) -> Bool {
+        !(s.error.isEmpty || s.error == noErrorWord || s.error == noUpdateWord)
     }
 
     /// The device's own sentence for a failed run, or a plain fallback when
@@ -171,8 +185,8 @@ enum FirmwareUpdate {
     /// A note the device left beside an idle state — for example why the
     /// last run was refused. Nil when it reported no error.
     static func lingeringNote(_ s: FirmwareStatus) -> String? {
-        if s.state == "Error" { return nil }  // the failure line already says it
-        if s.error.isEmpty || s.error == noErrorWord { return nil }
+        if case .failed = phase(s) { return nil }  // the failure line already says it
+        if !hasError(s) { return nil }
         let text = s.errorText.trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? nil : text
     }

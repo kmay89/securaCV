@@ -118,6 +118,9 @@ class FirmwareUpdateContractTest(unittest.TestCase):
         m = re.search(r'SECURACV_OTA_ERR_NONE:\s*return "([^"]+)";', err_fn)
         self.assertIsNotNone(m)
         self.assertIn(f'static let noErrorWord = "{m.group(1)}"', self.swift)
+        m = re.search(r'SECURACV_OTA_ERR_NO_UPDATE:\s*return "([^"]+)";', err_fn)
+        self.assertIsNotNone(m)
+        self.assertIn(f'static let noUpdateWord = "{m.group(1)}"', self.swift)
 
     def test_both_busy_dialects_are_read_as_busy(self) -> None:
         glass_src = GLASS.read_text(encoding="utf-8")
