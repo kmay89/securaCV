@@ -118,6 +118,12 @@ NIGHTLIGHT_SRC = test_nightlight.cpp
 ORIENT_BIN = test_orientation
 ORIENT_SRC = test_orientation.cpp
 
+# AMOLED 2.41 PWR key (canary/io/pwr_key.h): the resting level is learned,
+# never assumed, so a key whose line rests LOW cannot power a working glass
+# off; a mislearn costs a dead key for STUCK_MS, never a power-off.
+PWRKEY_BIN = test_pwr_key
+PWRKEY_SRC = test_pwr_key.cpp
+
 # Display settings geometry (canary/glass_settings.h): the 7"/dash orientation
 # helpers (logical dims, the touch un-rotation round-tripped against the turn
 # the glass draws — LVGL 9's lv_display_rotate_area and LVGL 8's
@@ -175,6 +181,9 @@ $(NIGHTLIGHT_BIN): $(NIGHTLIGHT_SRC)
 
 $(ORIENT_BIN): $(ORIENT_SRC)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(ORIENT_SRC)
+
+$(PWRKEY_BIN): $(PWRKEY_SRC) ../include/canary/io/pwr_key.h
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(PWRKEY_SRC)
 
 $(DISPSET_BIN): $(DISPSET_SRC) $(DISPSET_HDR)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $(DISPSET_SRC)
@@ -270,7 +279,7 @@ POLICY_SRC = test_settings_policy.cpp
 $(POLICY_BIN): $(POLICY_SRC)
 	$(CXX) $(CXXFLAGS) -Werror $(INC) -o $@ $(POLICY_SRC)
 
-run:$(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(ONBOARD_BIN) $(POLICY_BIN)
+run:$(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(PWRKEY_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(ONBOARD_BIN) $(POLICY_BIN)
 	./$(BEACON_PARSE_BIN)
 	./$(MODEL_BIN)
 	./$(CARDS_BIN)
@@ -285,6 +294,7 @@ run:$(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCA
 	./$(BEDSIDE_BIN)
 	./$(NIGHTLIGHT_BIN)
 	./$(ORIENT_BIN)
+	$(call run_marked,$(PWRKEY_BIN))
 	./$(DISPSET_BIN)
 	./$(CLOCKSTYLE_BIN)
 	./$(GREET_BIN)
@@ -296,7 +306,7 @@ run:$(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCA
 	$(call run_marked,$(POLICY_BIN))
 
 clean:
-	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(ONBOARD_BIN) $(POLICY_BIN)
+	rm -f $(BEACON_PARSE_BIN) $(MODEL_BIN) $(CARDS_BIN) $(MODE_BIN) $(DEMO_BIN) $(ARCADE_BIN) $(MIC_BIN) $(VOICE_BIN) $(CLEAR_BIN) $(RTC_BIN) $(RTC85063_BIN) $(BEDSIDE_BIN) $(NIGHTLIGHT_BIN) $(ORIENT_BIN) $(PWRKEY_BIN) $(DISPSET_BIN) $(CLOCKSTYLE_BIN) $(GREET_BIN) $(HELPV_BIN) $(MOTION_BIN) $(ROUNDFRAME_BIN) $(ROUNDFRAME11_BIN) $(ONBOARD_BIN) $(POLICY_BIN)
 
 # The brand canary's seat (src/ui/canary_mark.cpp, F64): the bird is drawn
 # where its host aligned it — the host's anchor plus its offset — whether its

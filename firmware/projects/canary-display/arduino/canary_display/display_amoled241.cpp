@@ -64,10 +64,22 @@ namespace {
 //     unlit panel that still ACKs every command.
 //   - The page-0x13 0xEB=0x0E register lands BEFORE sleep-out, where the
 //     bench sets it — not replayed after the panel is already on.
-// The window (CASET/PASET), MADCTL and final brightness are omitted on
-// purpose: Arduino_TFT::begin() writes the first two right after this
-// table (same 16..465/0..599 values via the constructor offsets), and
-// brightness stays 0 until the first frame is flushed (display_init).
+// The address window (CASET 16..465 / PASET 0..599) is written BEFORE
+// display-on, exactly where the bench writes it, so the bytes this panel
+// sees up to first light are the bench's bytes. Arduino_TFT::begin()
+// writes the same window again afterwards (from the constructor offsets),
+// which is harmless. MADCTL stays the library's (portrait, rotation 0 =
+// 0x00; the bench's 0x30 is its landscape choice, not a power fact), and
+// brightness stays 0 until the splash lights the glass.
+// The window bytes are DERIVED from pins.h, never typed: a wrong window is
+// a panel that accepts every pixel and shows none of them.
+constexpr uint16_t kColFirst = LCD_COL_OFFSET;                    // 16
+constexpr uint16_t kColLast = LCD_COL_OFFSET + LCD_WIDTH - 1;     // 465
+constexpr uint16_t kRowFirst = LCD_ROW_OFFSET;                    // 0
+constexpr uint16_t kRowLast = LCD_ROW_OFFSET + LCD_HEIGHT - 1;    // 599
+static_assert(kColLast < RM690B0_TFTWIDTH, "column window past controller RAM");
+static_assert(kRowLast < RM690B0_TFTHEIGHT, "row window past controller RAM");
+
 static const uint8_t waveshare241_init_operations[] = {
     BEGIN_WRITE,
     WRITE_C8_D8, 0xFE, 0x20,  // MCS page 0x20
@@ -90,6 +102,14 @@ static const uint8_t waveshare241_init_operations[] = {
     WRITE_COMMAND_8, 0x11,    // sleep out
     END_WRITE,
     DELAY, 80,
+    BEGIN_WRITE,
+    WRITE_C8_BYTES, 0x2A, 4,  // CASET 16..465 (bench: before display-on)
+        (uint8_t)(kColFirst >> 8), (uint8_t)(kColFirst & 0xFF),
+        (uint8_t)(kColLast >> 8), (uint8_t)(kColLast & 0xFF),
+    WRITE_C8_BYTES, 0x2B, 4,  // PASET 0..599
+        (uint8_t)(kRowFirst >> 8), (uint8_t)(kRowFirst & 0xFF),
+        (uint8_t)(kRowLast >> 8), (uint8_t)(kRowLast & 0xFF),
+    END_WRITE,
     BEGIN_WRITE,
     WRITE_COMMAND_8, 0x29,    // display on
     END_WRITE,
@@ -171,6 +191,14 @@ bool display_init() {
   pinMode(PWR_LATCH_PIN, OUTPUT);
   digitalWrite(PWR_LATCH_PIN, HIGH);
   delay(200);
+  // First-light trace: the panel is dark until the splash, and on an
+  // emissive glass "dark" is also what a dead rail, a refused bus and a
+  // panel that drops every pixel look like. One numbered line per stage
+  // lets a serial log say WHICH of those it is.
+  log_line("DISP", digitalRead(PWR_LATCH_PIN) == HIGH
+                       ? "first light 1/4: panel rail latched (GPIO16 high)."
+                       : "first light 1/4: GPIO16 reads LOW after driving it high — "
+                         "the panel has no supply.");
 
   // Shared I2C bus up-front (FT6336 + QMI8658 + PCF85063 + TCA9554): the
   // touch reset pulse below needs the bus only for the controllers behind
@@ -206,10 +234,14 @@ bool display_init() {
       LCD_WIDTH, LCD_HEIGHT,
       LCD_COL_OFFSET, LCD_ROW_OFFSET, LCD_COL_OFFSET, LCD_ROW_OFFSET);
 
+  log_line("DISP", "first light 2/4: QSPI bus + Waveshare 2.41 init sequence…");
   if (!s_panel->begin(LCD_QSPI_HZ)) {
-    log_line("DISP", "RM690B0 init FAILED — running headless.");
+    log_line("DISP", "RM690B0 init FAILED (QSPI bus refused) — running headless.");
     return false;
   }
+  // QSPI writes carry no acknowledgement: this line means the bytes went
+  // out, not that the panel took them.
+  log_line("DISP", "first light 3/4: init sent (sleep-out, window, display-on).");
 
   // Dark until the first frame is flushed. The init table already parks
   // brightness at 0 (unlike the stock table's 0xD0 — on an emissive panel
@@ -228,7 +260,9 @@ bool display_init() {
     log_line("DISP", "FT6336 quiet at boot — touch armed, will keep polling.");
   }
 
-  log_line("DISP", "RM690B0 AMOLED portrait up (QSPI, LVGL render).");
+  log_line("DISP", "first light 4/4: RAM cleared to black, brightness 0 until "
+                   "the splash. All four lines and a dark glass after the splash: "
+                   "the rail and bus came up, so suspect the panel init or pixel path.");
   return true;
 }
 
@@ -285,7 +319,7 @@ TouchSample touch_read() {
 // IS power-off; on a USB-powered desk the rail survives, so deep sleep with
 // wake on the same button gives the identical user story: hold to darken,
 // press to come back.
-void power_off() {
+void power_off(bool pressed_high) {
   log_line("PWR", "PWR held — going dark (latch drop + deep sleep).");
   panel_brightness(0);
   if (s_panel) s_panel->displayOff();
@@ -294,14 +328,31 @@ void power_off() {
   delay(50);  // on battery we are gone before this returns
 #if defined(PWR_KEY_PIN) && (PWR_KEY_PIN >= 0)
   // Still here = USB power (the latch drop couldn't cut the rail). This
-  // fires on the HOLD DEADLINE, so the active-low key is still down — and a
-  // level-low wake armed under a held key is already true: the "off" would
-  // bounce straight back on. Wait out the release (plus a debounce breath)
-  // before arming, so waking takes a fresh press.
+  // can fire on the HOLD DEADLINE, with the key still down — and a level
+  // wake armed under a held key is already true: the "off" would bounce
+  // straight back on. Wait out the release (plus a debounce breath) before
+  // arming, so waking takes a fresh press. The wait is BOUNDED: the old one
+  // looped forever on a key whose polarity it had guessed wrong, a dark
+  // glass that never slept and never woke. If the key is somehow still
+  // "down" after 10 s, sleep anyway with the timer as the way back.
+  const int pressed_level = pressed_high ? HIGH : LOW;
   pinMode(PWR_KEY_PIN, INPUT_PULLUP);
-  while (digitalRead(PWR_KEY_PIN) == LOW) delay(10);
+  const uint32_t t0 = millis();
+  bool released = false;
+  while ((uint32_t)(millis() - t0) < 10000) {
+    if (digitalRead(PWR_KEY_PIN) != pressed_level) {
+      released = true;
+      break;
+    }
+    delay(10);
+  }
   delay(50);
-  esp_sleep_enable_ext0_wakeup((gpio_num_t)PWR_KEY_PIN, 0 /* wake on press */);
+  if (released) {
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)PWR_KEY_PIN, pressed_level);
+  } else {
+    log_line("PWR", "PWR key never released — waking on a 60 s timer instead.");
+    esp_sleep_enable_timer_wakeup(60ULL * 1000000ULL);
+  }
 #endif
   esp_deep_sleep_start();
 }
