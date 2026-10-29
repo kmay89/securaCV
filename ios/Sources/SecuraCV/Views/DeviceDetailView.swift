@@ -286,6 +286,21 @@ struct DeviceDetailView: View {
                 }
             }
 
+            // Software update — the device fetches, verifies and installs;
+            // the phone asks and watches (FirmwareUpdate.swift). Every
+            // display serves the routes on the home network; a WAP serves
+            // them behind its bearer token, so only a paired WAP whose token
+            // still resolves gets the section (the same guard as Sensing now).
+            if witness.deviceType.servesGlassSettings, let base = nightlightBaseURL {
+                FirmwareUpdateSection(transport: GlassFirmwareTransport(base: base),
+                                      deviceName: liveWitness.displayName)
+            } else if witness.deviceType == .wap,
+                      let ref = store.devices.devices.first(where: { $0.id == witness.id }),
+                      let api = try? store.devices.api(for: ref) {
+                FirmwareUpdateSection(transport: WapFirmwareTransport(api: api),
+                                      deviceName: liveWitness.displayName)
+            }
+
             Section {
                 // What this one Canary may interrupt for. Narrowing only —
                 // there is deliberately no "never" (WitnessPushFloor): a

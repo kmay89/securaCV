@@ -1,6 +1,33 @@
 # Changelog
 
 ## [Unreleased]
+### The iPhone updates a Canary's software: check, install and watch it restart, from the device's own screen
+
+- **Software update on every display and every paired WAP.** Each device
+  screen gains a section that shows the installed version, checks for a
+  newer one, and installs it after one confirmation. The phone never
+  touches firmware: it asks the Canary's own signed update engine to check
+  or install (`/api/ota/check`, `/api/ota/install`) and reads its status
+  back, step by step, with the download and install percentage. It then
+  watches the restart and says what the Canary came back on: "Updated to"
+  the new version, or "Still on" the old one with the device's own reason.
+  A display is asked on the home network, like its other settings. A WAP is
+  asked through its paired, pinned client with its bearer token, and its
+  release notes appear under "What's new". Firmware that predates the routes
+  answers 404, and the section says to update it once from a computer.
+- **One contract, held to both firmware families.** The model
+  (`ios/Sources/SecuraCV/Model/FirmwareUpdate.swift`) reads the display's 409
+  and the WAP's 400 "ota_busy" as the same "already running". It shows the
+  engine's own plain-language error sentences. `FirmwareUpdateTests` decodes
+  both firmware's status bodies, and the new
+  `scripts/tests/test_ios_firmware_update.py` holds the decoder's keys, the
+  engine's state words, its "No error" word and both busy answers to
+  `glass_web.cpp`, `canary_wap.ino` and `securacv_ota.cpp`.
+- **Moving the fleet to new Wi-Fi links the display walkthrough.** A display
+  under "Needs hands-on" now has a link into the app's own display setup
+  (scan the code on its screen, hand it the new Wi-Fi) instead of a footer
+  that pointed at iOS Settings.
+
 ### The Glance AMOLED can no longer switch itself off at boot, says on serial where a dark glass stops, and the iPhone walks a blank display from the flasher to the fleet
 
 - **The PWR key's resting level is learned, not assumed.** The Waveshare
