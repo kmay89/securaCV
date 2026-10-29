@@ -9,9 +9,12 @@
   Canary in the house or watched forever. It now remembers what was on the
   network when the walkthrough opened and shows a later arrival as "new on
   your network since you opened this" (`ArrivalWatch`, covered by
-  `ArrivalWatchTests`). The baseline settles from the moment the browse
-  actually runs, so a slow Local Network prompt or a browse restarted after
-  the Camera app never makes an old Canary look new. The watch now always
+  `ArrivalWatchTests`), and only when no setup-network identity is known,
+  so a different newcomer is never ticked in place of the Canary this phone
+  joined. The baseline needs ten seconds of uninterrupted running browse; a
+  stretch cut short by the browse stopping or the app leaving the
+  foreground starts over, so a slow Local Network prompt or a trip to the
+  Camera app never makes an old Canary look new. The watch now always
   ends in words, and only the newest watch clock can end it.
 - **A display has its own door into setup.** Today's first-run card offers
   "It has a screen? Scan its code", Set up lists "Add a display", and

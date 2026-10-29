@@ -88,6 +88,7 @@ struct NearbyListenControl: View {
 struct CanaryFamilySetupView: View {
     let family: CanaryFamily
     @EnvironmentObject var store: FleetStore
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var portal = SetupPortalClient()
 
     @State private var setupSSID = ""
@@ -144,6 +145,9 @@ struct CanaryFamilySetupView: View {
         }
         .onChange(of: store.discovery.found) { _, _ in foldArrivals() }
         .onChange(of: store.discovery.isBrowsing) { _, _ in foldArrivals() }
+        // Leaving the foreground stops the browse; a stop and restart that
+        // land between two renders would never reach the onChange above.
+        .onChange(of: scenePhase) { _, phase in if phase != .active { arrivals.interrupt() } }
         .onChange(of: portal.networks) { _, networks in
             // The Canary's own list arrived: preselect the remembered
             // network when it can see it — and nothing otherwise (the
@@ -487,10 +491,12 @@ struct CanaryFamilySetupView: View {
         } else if !seen.isEmpty {
             ForEach(seen) { d in discoveredRow(d, mine: true) }
             Text("It's on the Fleet tab now.").font(.caption).foregroundStyle(.secondary)
-        } else if !newcomers.isEmpty {
-            // Set up from the card, the Camera app or the Flasher: no setup
-            // network this phone joined, so no identity match — but it was
-            // not here when this walkthrough opened.
+        } else if joinedSuffix == nil, !newcomers.isEmpty {
+            // Only when no identity is known: a setup network this phone
+            // joined names exactly one Canary, and a different newcomer must
+            // never be ticked in its place.
+            // Set up from the card, the Camera app or the Flasher: it was not
+            // here when this walkthrough opened.
             ForEach(newcomers) { d in discoveredRow(d, mine: true) }
             Text("New on your network since you opened this, so it's almost certainly the one you just set up. It's on the Fleet tab now.")
                 .font(.caption).foregroundStyle(.secondary)
