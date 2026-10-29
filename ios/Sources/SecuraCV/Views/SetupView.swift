@@ -48,6 +48,11 @@ struct SetupView: View {
                                   title: "Add a Canary",
                                   body: "Power it on near this phone and tap the card that appears — this phone gives it your Wi-Fi.")
                     }
+                    NavigationLink(value: SetupTarget.display) {
+                        choiceRow(icon: "qrcode.viewfinder",
+                                  title: "Add a display",
+                                  body: "It has its own screen: scan the code it shows and this phone hands it your Wi-Fi.")
+                    }
                     NavigationLink(value: SetupTarget.hub) {
                         choiceRow(icon: "externaldrive.connected.to.line.below",
                                   title: hubRecord == nil ? "Set up a hub" : "Your hub",
@@ -83,6 +88,7 @@ struct SetupView: View {
                 switch target {
                 case .hub: HubSetupView()
                 case .canary: CanarySetupView()
+                case .display: CanaryFamilySetupView(family: .display)
                 }
             }
             .toolbar {
@@ -124,7 +130,9 @@ struct SetupView: View {
 /// The two walkthroughs, as a value — what a deep link names and what the
 /// navigation path holds.
 enum SetupTarget: String, Hashable, Identifiable, Sendable {
-    case hub, canary
+    /// `display` opens the display walkthrough directly: a display has no
+    /// Bluetooth door, so the listening screen in front of it is a detour.
+    case hub, canary, display
     var id: String { rawValue }
 }
 

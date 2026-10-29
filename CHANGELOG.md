@@ -1,6 +1,37 @@
 # Changelog
 
 ## [Unreleased]
+### iOS 0.9.0 to TestFlight
+
+- **The iPhone app moves to 0.9.0** (`ios/project.yml` `MARKETING_VERSION`;
+  `ios-v0.8.1` is tagged, so the release workflow refuses to publish 0.8.1
+  again). It carries the three iPhone changes below in this
+  section: updating a Canary's software from its own screen, picking out the
+  Canary you just set up on every path, and the display flash step from the
+  Glance AMOLED change. No synced CloudKit record changed since 0.8.1, so no
+  schema promotion is owed.
+
+### The iPhone picks out the Canary you just set up, however you set it up, and a display owner never waits on a Bluetooth card
+
+- **"Watch it appear" names the new one on every path.** It used to tick a
+  Canary only when this phone had joined its setup network; set up from the
+  Bluetooth card, the Camera app or the Flasher, it listed every same-kind
+  Canary in the house or watched forever. It now remembers what was on the
+  network when the walkthrough opened and shows a later arrival as "new on
+  your network since you opened this" (`ArrivalWatch`, covered by
+  `ArrivalWatchTests`), and only when no setup-network identity is known,
+  so a different newcomer is never ticked in place of the Canary this phone
+  joined. The baseline needs ten seconds of uninterrupted running browse; a
+  stretch cut short by the browse stopping or the app leaving the
+  foreground starts over, so a slow Local Network prompt or a trip to the
+  Camera app never makes an old Canary look new. The watch now always
+  ends in words, and only the newest watch clock can end it.
+- **A display has its own door into setup.** Today's first-run card offers
+  "It has a screen? Scan its code", Set up lists "Add a display", and
+  `securacv://setup?what=display` opens the display walkthrough directly.
+  `scripts/tests/test_ios_setup_targets.py` holds the link's words, the
+  `SetupTarget` cases and their destinations to each other.
+
 ### The iPhone updates a Canary's software: check, install and watch it restart, from the device's own screen
 
 - **Software update on every display and every paired WAP.** Each device

@@ -88,6 +88,7 @@ struct NearbyListenControl: View {
 struct CanaryFamilySetupView: View {
     let family: CanaryFamily
     @EnvironmentObject var store: FleetStore
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var portal = SetupPortalClient()
 
     @State private var setupSSID = ""
@@ -111,6 +112,15 @@ struct CanaryFamilySetupView: View {
     @State private var cameraDenied = false
     /// The watch for it on the network gave up waiting (it never spins on).
     @State private var watchTimedOut = false
+    @State private var watchClockStarted = false
+    /// Only the newest watch clock may end the watch: the join restarts it,
+    /// and an older, longer clock must not fire in the middle.
+    @State private var watchClockToken = 0
+    /// What was already on the network when this walkthrough opened, so a
+    /// same-kind Canary heard after it can be named as the new one even
+    /// when this phone never joined its setup network (ArrivalWatch).
+    @State private var arrivals = ArrivalWatch()
+    @State private var newcomerIDs: [String] = []
 
     var body: some View {
         List {
@@ -129,7 +139,15 @@ struct CanaryFamilySetupView: View {
         }
         .navigationTitle(family.deviceType.role)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear(perform: prefill)
+        .onAppear {
+            prefill()
+            foldArrivals()
+        }
+        .onChange(of: store.discovery.found) { _, _ in foldArrivals() }
+        .onChange(of: store.discovery.isBrowsing) { _, _ in foldArrivals() }
+        // Leaving the foreground stops the browse; a stop and restart that
+        // land between two renders would never reach the onChange above.
+        .onChange(of: scenePhase) { _, phase in if phase != .active { arrivals.interrupt() } }
         .onChange(of: portal.networks) { _, networks in
             // The Canary's own list arrived: preselect the remembered
             // network when it can see it — and nothing otherwise (the
@@ -442,6 +460,17 @@ struct CanaryFamilySetupView: View {
         return store.discovery.found.filter { isFamily($0) && NearbyCanaries.isSameDevice(suffix: suffix, host: $0.host) }
     }
 
+    /// Same-kind Canaries first heard after this walkthrough's baseline
+    /// settled — the new one, when no identity match exists (ArrivalWatch).
+    private var newcomers: [DiscoveredCanary] {
+        sameKind.filter { newcomerIDs.contains($0.id) }
+    }
+
+    private func foldArrivals() {
+        newcomerIDs = arrivals.observe(browsing: store.discovery.isBrowsing,
+                                       ids: sameKind.map(\.id), at: Date())
+    }
+
     /// The same kind of Canary on the network, when this walkthrough never
     /// learned which unit is the new one (it was set up from the card, or
     /// by the Flasher) — listed, never ticked.
@@ -462,6 +491,16 @@ struct CanaryFamilySetupView: View {
         } else if !seen.isEmpty {
             ForEach(seen) { d in discoveredRow(d, mine: true) }
             Text("It's on the Fleet tab now.").font(.caption).foregroundStyle(.secondary)
+        } else if joinedSuffix == nil, !newcomers.isEmpty {
+            // Only when no identity is known: a setup network this phone
+            // joined names exactly one Canary, and a different newcomer must
+            // never be ticked in its place.
+            // Set up from the card, the Camera app or the Flasher: it was not
+            // here when this walkthrough opened.
+            ForEach(newcomers) { d in discoveredRow(d, mine: true) }
+            Text("New on your network since you opened this, so it's almost certainly the one you just set up. It's on the Fleet tab now.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         } else if let advice = store.localNetworkAdvice {
             RadioAdviceRow(advice: advice)
         } else if joinedSuffix == nil && !sameKind.isEmpty {
@@ -474,7 +513,13 @@ struct CanaryFamilySetupView: View {
                 .fixedSize(horizontal: false, vertical: true)
         } else {
             ListeningRow(text: "Watching this network for the \(family.deviceType.role.lowercased())…", advice: nil)
-                .onAppear { store.startLocalNetworkDiscoveryIfConsented() }
+                .onAppear {
+                    store.startLocalNetworkDiscoveryIfConsented()
+                    // Set up some other way (the Camera app, the card): no
+                    // join here starts the clock, so this row does — with a
+                    // longer wait, since the person may not have started.
+                    if !watchClockStarted { startWatchClock(after: .seconds(180)) }
+                }
             Text("iOS asks for Local Network so this phone can see it on your Wi-Fi.")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -504,11 +549,14 @@ struct CanaryFamilySetupView: View {
     }
 
     /// The network watch ends in words, not an endless spinner.
-    private func startWatchClock() {
+    private func startWatchClock(after wait: Duration = .seconds(90)) {
         watchTimedOut = false
+        watchClockStarted = true
+        watchClockToken += 1
+        let token = watchClockToken
         Task {
-            try? await Task.sleep(for: .seconds(90))
-            watchTimedOut = true
+            try? await Task.sleep(for: wait)
+            if token == watchClockToken { watchTimedOut = true }
         }
     }
 }
