@@ -24,7 +24,8 @@ What makes it the flagship:
 
 Board truth lives in
 [`firmware/boards/waveshare-esp32s3-amoled241/`](../../../boards/waveshare-esp32s3-amoled241/README.md)
-— including the six things that will bite you (the GPIO16 power latch, the
-expander-routed touch INT, the 16-px panel window, the busless charger, the
+— including the seven things that will bite you (the V2 panel reset on a
+pulled-down expander line, the GPIO16 power latch, polled touch with its
+reset on the expander, the 16-px panel window, the busless charger, the
 stock RM690B0 init table being the wrong panel personality, and the PWR
 key's unverified resting level).

@@ -19,23 +19,25 @@
 //    supply (see pins.h). display_init raises it and waits for the rail to
 //    settle before touching the bus; main.cpp raises it even earlier so a
 //    battery boot can't lose the rail when the PWR button is released.
-// ⚠️ TOUCH INT RIDES THE TCA9554 (EXIO2) — there is no GPIO to attach, so
-//    touch_read polls the FT6336, which answers over I2C regardless.
+// ⚠️ THE PANEL RESET RIDES THE TCA9554 (V2: EXIO0, 10 kΩ pull-DOWN). The
+//    expander boots with every line an input, so the pull-down holds the
+//    RM690B0 in reset until display_init makes EXIO0 an output and drives
+//    it high. Miss that and the glass is black forever while serial shows
+//    every stage "up": QSPI writes carry no acknowledgement. The release is
+//    read back from the expander's input register and logged.
+// ⚠️ GPIO21 IS THE PANEL'S TE OUTPUT and GPIO3 the touch INT on V2 (they
+//    were the resets on the earlier revision CircuitPython describes).
+//    Nothing here drives either. touch_read polls the FT6336 over I2C.
 // ⚠️ PANEL WINDOW: the 450-px axis starts 16 columns into controller RAM
 //    (LCD_COL_OFFSET) — the offset is baked into the panel constructor.
 // ⚠️ VENDOR INIT: the stock Arduino_RM690B0 table is the LilyGO T4-S3
-//    personality, and it is NOT safe on this glass: its 0x5A/0x5B writes
-//    ("SWIRE FOR BV6804") program the T4-S3 panel module's AMOLED power
-//    chip over SWIRE — values the bench-tested init for THIS panel (the
-//    CircuitPython waveshare_esp32_s3_amoled_241 board.c) never touches.
-//    A wrong SWIRE program is exactly the failure that looks fine on
-//    serial: the controller ACKs every command and emits zero light.
-//    So begin() plays the Waveshare sequence INSTEAD of the stock table
-//    (tftInit override below), matching the bench order — including the
-//    page-0x13 0xEB=0x0E register BEFORE sleep-out, where the bench sets
-//    it, not patched in afterwards. Bench-verify colors and geometry on
-//    first boot — a wrong MADCTL shows mirrored geometry, a wrong color
-//    order swaps red/blue.
+//    personality: its 0x5A/0x5B writes ("SWIRE FOR BV6804") program the
+//    T4-S3 panel module's AMOLED power chip, values Waveshare's init for
+//    THIS board never sends. So begin() plays Waveshare's V2 sequence
+//    INSTEAD of the stock table (tftInit override below), byte for byte as
+//    the vendor's three V2 display examples send it. Bench-verify colors
+//    and geometry on first boot — a wrong MADCTL shows mirrored geometry,
+//    a wrong color order swaps red/blue.
 #include "flavor_config.h"
 #if defined(CD_FLAVOR_NIGHTSTAND) && defined(CD_AMOLED_GLASS)
 
@@ -55,22 +57,22 @@ namespace canary::hal {
 
 namespace {
 
-// The bench-tested init for THIS panel, transcribed from the CircuitPython
-// waveshare_esp32_s3_amoled_241 board.c (the pin map's provenance), in the
-// bench order. Two deliberate deltas from the stock Arduino_RM690B0 table:
-//   - NO 0x5A/0x5B ("SWIRE FOR BV6804") — that pair programs the LilyGO
-//     T4-S3 module's AMOLED power chip; the bench init for this panel
-//     leaves its power defaults alone, and a wrong SWIRE program is an
-//     unlit panel that still ACKs every command.
-//   - The page-0x13 0xEB=0x0E register lands BEFORE sleep-out, where the
-//     bench sets it — not replayed after the panel is already on.
+// Waveshare's init for the V2 board, in the vendor's order: the same
+// lcd_init_cmds[] in 02_Example/Arduino/09_LVGL_Test,
+// ESP-IDF/09_LVGL_V9_Test (lcd_bsp/display_bsp.c) and
+// ESP-IDF/10_FactoryProgram of github.com/waveshareteam/
+// ESP32-S3-Touch-AMOLED-2.41-V2. Deltas from the stock Arduino_RM690B0
+// table: no 0x5A/0x5B SWIRE writes (the T4-S3's power chip), and the
+// window before display-on. The page-0x13 0xEB=0x0E write the
+// CircuitPython (earlier-revision) init adds is not in any V2 example, so
+// it is not here either.
 // The address window (CASET 16..465 / PASET 0..599) is written BEFORE
-// display-on, exactly where the bench writes it, so the bytes this panel
-// sees up to first light are the bench's bytes. Arduino_TFT::begin()
+// display-on, exactly where the vendor writes it. Arduino_TFT::begin()
 // writes the same window again afterwards (from the constructor offsets),
 // which is harmless. MADCTL stays the library's (portrait, rotation 0 =
-// 0x00; the bench's 0x30 is its landscape choice, not a power fact), and
-// brightness stays 0 until the splash lights the glass.
+// 0x00, as in the vendor's portrait build; its 0x30 is the landscape
+// option), and brightness stays 0 until the splash lights the glass (the
+// vendor ends on 0x51=0xFF; the splash's backlight_set is that write).
 // The window bytes are DERIVED from pins.h, never typed: a wrong window is
 // a panel that accepts every pixel and shows none of them.
 constexpr uint16_t kColFirst = LCD_COL_OFFSET;                    // 16
@@ -85,15 +87,13 @@ static const uint8_t waveshare241_init_operations[] = {
     WRITE_C8_D8, 0xFE, 0x20,  // MCS page 0x20
     WRITE_C8_D8, 0x26, 0x0A,  // bias
     WRITE_C8_D8, 0x24, 0x80,  // source output control
-    WRITE_C8_D8, 0xFE, 0x13,  // page 0x13
-    WRITE_C8_D8, 0xEB, 0x0E,  // vendor register (bench: before sleep-out)
     WRITE_C8_D8, 0xFE, 0x00,  // back to the user page
     WRITE_C8_D8, 0x3A, 0x55,  // COLMOD: 16-bit RGB565
     WRITE_C8_D8, 0xC2, 0x00,  // vendor register
     END_WRITE,
     DELAY, 10,
     BEGIN_WRITE,
-    WRITE_COMMAND_8, 0x35,    // TE on (bench sends no parameter; each QSPI
+    WRITE_COMMAND_8, 0x35,    // TE on (vendor sends no parameter; each QSPI
                               // command is its own framed transaction)
     WRITE_C8_D8, 0x51, 0x00,  // brightness 0 — dark until the first frame
     END_WRITE,
@@ -103,7 +103,7 @@ static const uint8_t waveshare241_init_operations[] = {
     END_WRITE,
     DELAY, 80,
     BEGIN_WRITE,
-    WRITE_C8_BYTES, 0x2A, 4,  // CASET 16..465 (bench: before display-on)
+    WRITE_C8_BYTES, 0x2A, 4,  // CASET 16..465 (vendor: before display-on)
         (uint8_t)(kColFirst >> 8), (uint8_t)(kColFirst & 0xFF),
         (uint8_t)(kColLast >> 8), (uint8_t)(kColLast & 0xFF),
     WRITE_C8_BYTES, 0x2B, 4,  // PASET 0..599
@@ -118,7 +118,10 @@ static const uint8_t waveshare241_init_operations[] = {
 
 // Same class, different personality: begin() runs tftInit(), so overriding
 // it swaps the stock T4-S3 table for the Waveshare sequence above while
-// keeping the library's reset pulse, rotation and window handling.
+// keeping the library's rotation and window handling. On V2 there is no
+// reset GPIO (LCD_PIN_RST is -1): the hardware reset is the expander pulse
+// in display_init, and this sends the software reset after it, as the
+// vendor's esp_lcd driver does when it has no reset pin.
 class Arduino_RM690B0_Waveshare241 : public Arduino_RM690B0 {
  public:
   using Arduino_RM690B0::Arduino_RM690B0;
@@ -159,17 +162,52 @@ bool ft_read(uint8_t reg, uint8_t* buf, size_t len) {
   return true;
 }
 
-// ── TCA9554 IO expander (EXIO2 = the touch INT we deliberately poll) ──
-// Probed for diagnosability only: every line stays an input (the power-on
-// default; config register all-ones), so a future bench assignment of the
-// unverified EXIO lines starts from a known-quiet state.
-constexpr uint8_t TCA_REG_CONFIG = 0x03;
+// ── TCA9554 IO expander: the panel and touch resets (EXIO0 / EXIO1) ──
+// Only the two reset lines become outputs; the RTC/IMU interrupt lines and
+// the header's EXIO5..7 stay inputs (the chip's power-on state).
+constexpr uint8_t TCA_REG_INPUT  = 0x00;
+constexpr uint8_t TCA_REG_OUTPUT = 0x01;
+constexpr uint8_t TCA_REG_CONFIG = 0x03;  // 1 = input, 0 = output
+constexpr uint8_t kResetLines =
+    (uint8_t)((1u << EXIO_LCD_RESET) | (1u << EXIO_TOUCH_RESET));
 
-bool tca_probe() {
+bool tca_write(uint8_t reg, uint8_t v) {
   Wire.beginTransmission(EXIO_I2C_ADDR);
-  Wire.write(TCA_REG_CONFIG);
-  Wire.write(0xFF);  // all inputs — the chip's own reset state, re-asserted
+  Wire.write(reg);
+  Wire.write(v);
   return Wire.endTransmission() == 0;
+}
+
+bool tca_read(uint8_t reg, uint8_t* v) {
+  Wire.beginTransmission(EXIO_I2C_ADDR);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom((int)EXIO_I2C_ADDR, 1) != 1) return false;
+  *v = (uint8_t)Wire.read();
+  return true;
+}
+
+// The vendor's reset (example_exio_reset): assert, hold, release, then the
+// wake-up time before the first command. Both resets go together; the
+// FT6336 wants the same low pulse and more than the same wake time.
+// Returns what the input register says EXIO0 is afterwards, so the log can
+// tell a released panel from one still held by the pull-down.
+enum class PanelReset { Released, StillLow, NoExpander };
+
+PanelReset panel_reset_via_expander() {
+  // Output latches first (resets asserted LOW), then direction: the lines
+  // leave high-Z straight into a known level, never a glitch HIGH.
+  if (!tca_write(TCA_REG_OUTPUT, 0x00) ||
+      !tca_write(TCA_REG_CONFIG, (uint8_t)~kResetLines)) {
+    return PanelReset::NoExpander;
+  }
+  delay(20);
+  if (!tca_write(TCA_REG_OUTPUT, kResetLines)) return PanelReset::NoExpander;
+  delay(120);
+  uint8_t in = 0;
+  if (!tca_read(TCA_REG_INPUT, &in)) return PanelReset::NoExpander;
+  return (in & (1u << EXIO_LCD_RESET)) ? PanelReset::Released
+                                       : PanelReset::StillLow;
 }
 
 // The one true brightness sink on this glass: the RM690B0's 0x51 command.
@@ -196,28 +234,31 @@ bool display_init() {
   // panel that drops every pixel look like. One numbered line per stage
   // lets a serial log say WHICH of those it is.
   log_line("DISP", digitalRead(PWR_LATCH_PIN) == HIGH
-                       ? "first light 1/4: panel rail latched (GPIO16 high)."
-                       : "first light 1/4: GPIO16 reads LOW after driving it high - "
+                       ? "first light 1/5: panel rail latched (GPIO16 high)."
+                       : "first light 1/5: GPIO16 reads LOW after driving it high - "
                          "the panel has no supply.");
 
-  // Shared I2C bus up-front (FT6336 + QMI8658 + PCF85063 + TCA9554): the
-  // touch reset pulse below needs the bus only for the controllers behind
-  // it, but the RTC seed (main.cpp) rides this same begin.
+  // Shared I2C bus up-front (FT6336 + QMI8658 + PCF85063 + TCA9554): both
+  // reset pulses below ride the expander on it, and the RTC seed (main.cpp)
+  // rides this same begin.
   Wire.begin(I2C_PIN_SDA, I2C_PIN_SCL, I2C_FREQ_FAST);
 
-  if (!tca_probe()) {
-    // Not fatal: the expander only carries the touch INT we poll anyway.
-    log_line("DISP", "TCA9554 quiet at 0x20 — continuing (touch is polled).");
+  // Panel + touch hardware reset through the expander. This is the line
+  // whose absence kept the V2 glass black: without it the 10 kΩ pull-down
+  // holds the RM690B0 in reset and every QSPI byte below goes nowhere.
+  switch (panel_reset_via_expander()) {
+    case PanelReset::Released:
+      log_line("DISP", "first light 2/5: panel reset released (TCA9554 EXIO0 reads high).");
+      break;
+    case PanelReset::StillLow:
+      log_line("DISP", "first light 2/5: TCA9554 EXIO0 still reads LOW after driving it "
+                       "high - the panel is held in reset and will stay dark.");
+      break;
+    case PanelReset::NoExpander:
+      log_line("DISP", "first light 2/5: the TCA9554 did not answer at 0x20 - the panel's "
+                       "reset rides it, so the glass will stay dark.");
+      break;
   }
-
-  // FT6336 hardware reset, then give it the wake-up time FocalTech asks for.
-#if TOUCH_PIN_RST >= 0
-  pinMode(TOUCH_PIN_RST, OUTPUT);
-  digitalWrite(TOUCH_PIN_RST, LOW);
-  delay(10);
-  digitalWrite(TOUCH_PIN_RST, HIGH);
-  delay(120);
-#endif
 
   // 4-lane QSPI to the RM690B0. Lane order per pins.h (D0..D3 = SDIO0..3).
   s_bus = new Arduino_ESP32QSPI(LCD_PIN_CS, LCD_PIN_SCLK, LCD_PIN_SDIO0,
@@ -226,22 +267,21 @@ bool display_init() {
   // Portrait at rotation 0 with the 16-px column window into the
   // controller's 482-wide RAM. The window is symmetric (482-450-16 = 16),
   // so col_offset1/col_offset2 both carry it and rotation 2 stays exact.
-  // The subclass plays the Waveshare init personality (see the table
-  // above) — begin() with the stock class would program the T4-S3's SWIRE
-  // power values into this panel's power chip and the glass stays dark.
+  // The subclass plays Waveshare's V2 init (see the table above) instead
+  // of the stock T4-S3 table and its SWIRE power writes.
   s_panel = new Arduino_RM690B0_Waveshare241(
       s_bus, LCD_PIN_RST, 0 /* rotation */,
       LCD_WIDTH, LCD_HEIGHT,
       LCD_COL_OFFSET, LCD_ROW_OFFSET, LCD_COL_OFFSET, LCD_ROW_OFFSET);
 
-  log_line("DISP", "first light 2/4: QSPI bus + Waveshare 2.41 init sequence…");
+  log_line("DISP", "first light 3/5: QSPI bus + Waveshare 2.41 V2 init sequence…");
   if (!s_panel->begin(LCD_QSPI_HZ)) {
     log_line("DISP", "RM690B0 init FAILED (QSPI bus refused) — running headless.");
     return false;
   }
   // QSPI writes carry no acknowledgement: this line means the bytes went
   // out, not that the panel took them.
-  log_line("DISP", "first light 3/4: init sent (sleep-out, window, display-on).");
+  log_line("DISP", "first light 4/5: init sent (sleep-out, window, display-on).");
 
   // Dark until the first frame is flushed. The init table already parks
   // brightness at 0 (unlike the stock table's 0xD0 — on an emissive panel
@@ -260,9 +300,9 @@ bool display_init() {
     log_line("DISP", "FT6336 quiet at boot — touch armed, will keep polling.");
   }
 
-  log_line("DISP", "first light 4/4: RAM cleared to black, brightness 0 until "
-                   "the splash. All four lines and a dark glass after the splash: "
-                   "the rail and bus came up, so suspect the panel init or pixel path.");
+  log_line("DISP", "first light 5/5: RAM cleared to black, brightness 0 until "
+                   "the splash. All five lines and a dark glass after the splash: "
+                   "the rail, reset and bus came up, so suspect the panel init or pixel path.");
   return true;
 }
 

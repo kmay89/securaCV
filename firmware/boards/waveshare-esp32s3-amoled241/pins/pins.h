@@ -9,14 +9,20 @@
  * I2C bus, ETA6098 charger + Li-po with a soft power latch, SDMMC microSD,
  * three case buttons (RST / BOOT / PWR) and a 34-pin GPIO header.
  *
- * PIN MAP SOURCE: the CircuitPython board definition
- *    (adafruit/circuitpython, ports/espressif/boards/
- *    waveshare_esp32_s3_amoled_241 — bench-tested by its author against this
- *    panel), cross-checked against the V2 case label (UART TX43/RX44, I2C
- *    SDA47/SCL48, FT6336 touch, RM690B0 panel, ETA6098, TCA9554, 16 MB
- *    flash / 8 MB PSRAM). Waveshare distributes the 2.41 demo tree as a wiki
- *    zip, not a vendor GitHub repo, so CircuitPython is the best code-level
- *    authority available.
+ * PIN MAP SOURCE: Waveshare's own V2 tree (github.com/waveshareteam/
+ *    ESP32-S3-Touch-AMOLED-2.41-V2): the V2.0 schematic
+ *    (04_schematic/ESP32-S3-Touch-AMOLED-2.41 V2.0.pdf) and the three
+ *    display examples built on it (Arduino 09_LVGL_Test, ESP-IDF
+ *    09_LVGL_V9_Test and 10_FactoryProgram), cross-checked against the V2
+ *    case label (UART TX43/RX44, I2C SDA47/SCL48, FT6336 touch, RM690B0
+ *    panel, ETA6098, TCA9554, 16 MB flash / 8 MB PSRAM).
+ *
+ *    The CircuitPython board definition (adafruit/circuitpython,
+ *    waveshare_esp32_s3_amoled_241) this map was first transcribed from
+ *    describes an EARLIER revision: panel reset on GPIO21, touch reset on
+ *    GPIO3, touch INT on EXIO2. On V2 all three moved (below), and a V2
+ *    driven by the old map holds its panel in reset forever — a completely
+ *    black glass behind a serial log that says every stage came up.
  *
  * ⚠️ DEV STATUS: transcribed from those sources — NOT yet validated on OUR
  *    bench. Verify against your board revision before trusting a pin.
@@ -25,10 +31,16 @@
  *    RAM — every address window needs a +16 column offset at rotation 0
  *    (LCD_COL_OFFSET below; the CircuitPython init writes CASET 16..465).
  *
- * ⚠️ TOUCH INT IS BEHIND THE EXPANDER. The FT6336's interrupt line routes to
- *    TCA9554 EXIO2, not to an ESP32-S3 GPIO — so there is no touch interrupt
- *    to attach. Poll the controller (it answers over I2C whether or not INT
- *    is watched); TOUCH_PIN_INT is -1 on purpose.
+ * ⚠️ THE PANEL RESET IS BEHIND THE EXPANDER, AND IT IS PULLED DOWN. On V2
+ *    OLED_RESET runs from TCA9554 EXIO0 with a 10 kΩ pull-down to GND (R10).
+ *    The expander powers up with every line an input, so until firmware
+ *    makes EXIO0 an output and drives it HIGH the RM690B0 sits in reset:
+ *    QSPI writes carry no acknowledgement, so nothing on serial says so.
+ *    Touch reset is EXIO1 (pulled up, so touch answers either way). There
+ *    is NO panel-reset GPIO (LCD_PIN_RST is -1) and no touch-reset GPIO.
+ *
+ * ⚠️ GPIO21 IS THE PANEL'S TE OUTPUT and GPIO3 is the touch INT — both are
+ *    inputs to the S3. Never drive them (the earlier revision's reset pins).
  *
  * ⚠️ GPIO16 IS THE POWER LATCH *AND* THE PANEL POWER. On battery, firmware
  *    must drive GPIO16 HIGH early in boot to keep the board powered and the
@@ -88,7 +100,9 @@
 #define LCD_PIN_SDIO1           12
 #define LCD_PIN_SDIO2           13
 #define LCD_PIN_SDIO3           14
-#define LCD_PIN_RST             21
+#define LCD_PIN_RST             -1    // V2: reset is TCA9554 EXIO0 (EXIO_LCD_RESET)
+#define LCD_PIN_TE              21    // OLED_TE — the panel's tearing-effect
+                                      // OUTPUT (4.7 kΩ pull-up). Input only.
 
 // The 450-px axis is a window 16 columns into the controller RAM (CASET
 // 16..465 per the bench-tested CircuitPython init). Rows start at 0.
@@ -114,13 +128,22 @@
 #define I2C_FREQ_FAST           400000
 
 #define TOUCH_I2C_ADDR          0x38  // FT6336 (FocalTech FT6x36 protocol)
-#define TOUCH_PIN_RST           3     // pulse low at init
-#define TOUCH_PIN_INT           -1    // routed to TCA9554 EXIO2 — poll, don't wait
+#define TOUCH_PIN_RST           -1    // V2: reset is TCA9554 EXIO1 (EXIO_TOUCH_RESET)
+#define TOUCH_PIN_INT           3     // TP_INT — an input; the HAL polls anyway
 
 #define IMU_I2C_ADDR            0x6B  // QMI8658 (probe 0x6A too; strap varies)
 #define RTC_I2C_ADDR            0x51  // PCF85063
-#define EXIO_I2C_ADDR           0x20  // TCA9554 IO expander (EXIO2 = touch INT;
-                                      // remaining lines unverified — bench work)
+#define EXIO_I2C_ADDR           0x20  // TCA9554 IO expander
+#define EXIO_PIN_INT            18    // TCA9554 INT -> GPIO18 (also on the header)
+
+// TCA9554 lines (bit numbers), per the V2.0 schematic. EXIO0/1 are the
+// resets the HAL drives; 2..4 are interrupt INPUTS from the RTC and IMU;
+// 5..7 go to the header, untouched.
+#define EXIO_LCD_RESET          0     // OLED_RESET — 10 kΩ pull-DOWN: drive HIGH
+#define EXIO_TOUCH_RESET        1     // TP_RESET — 10 kΩ pull-up
+#define EXIO_RTC_INT            2     // PCF85063 INT (input)
+#define EXIO_IMU_INT2           3     // QMI8658 INT2 (input)
+#define EXIO_IMU_INT1           4     // QMI8658 INT1 (input)
 
 // ============================================================================
 // POWER — ETA6098 Li-po charger (autonomous, no I2C) + soft power latch.
@@ -176,7 +199,8 @@
 #define UART_PIN_RX             44
 
 // 34-pin header pads free for user I/O, left undeclared so the pin budget
-// keeps them in their true buckets: GPIO1, 7, 8, 18, 40, 41, 42, 45, 46.
+// keeps them in their true buckets: GPIO1, 7, 8, 40, 41, 42, 45, 46.
+// (GPIO18 reaches the header too, but it carries the TCA9554 INT.)
 
 // ============================================================================
 // BOARD CAPABILITIES
