@@ -1,6 +1,24 @@
 # Changelog
 
 ## [Unreleased]
+### The iPhone app passes App Store Connect's Siri check, and its App Store submission is written down
+
+- **ITMS-90626 fixed.** App Store Connect rejected build 39.1 (0.8.0) after
+  upload: the Apple Watch app's "Check the Fleet" intent description said
+  "iPhone", and intent strings may not name Apple products. It now reads
+  "The fleet's one honest answer, from the latest snapshot on your wrist."
+  The rejection arrives by email after a green upload, so the new
+  `scripts/tests/test_ios_intent_strings.py` catches it on Linux first: it
+  reads every intent title, description, Siri phrase, short title, parameter
+  title and display title in the app, the watch app and the widgets, and
+  fails on an Apple product or service name. It was checked against the
+  rejected string.
+- **`ios/APP_STORE.md`**: the App Store submission checklist. It covers the
+  pre-submission checks, the App Store Connect record (category, URLs,
+  keywords, description), the privacy label answer and why it is "Data Not
+  Collected", the App Review notes with the demo fleet and every permission
+  explained, and the screenshots to take.
+
 ### iOS 0.9.0 to TestFlight
 
 - **The iPhone app moves to 0.9.0** (`ios/project.yml` `MARKETING_VERSION`;
