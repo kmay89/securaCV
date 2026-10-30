@@ -6011,8 +6011,12 @@ function journeyFor(wrap, steps, note) {
       const r = active && rows.get(active);
       if (r && r.t0) r.time.textContent = clockFace((Date.now() - r.t0) / 1000);
     },
+    // "left overall" only when nothing is left after the active step: espflash
+    // gives a rate for the step it is running, and a backup's or download's
+    // own estimate says nothing about the erase and write still to come.
     clockLine(quiet) {
-      return journeyClockLine((Date.now() - t0) / 1000, quiet ? null : eta);
+      const last = steps.length && active === steps[steps.length - 1].key;
+      return journeyClockLine((Date.now() - t0) / 1000, quiet || !last ? null : eta);
     },
     finish() {
       if (active) api.done(active);

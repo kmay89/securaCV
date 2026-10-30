@@ -2507,6 +2507,11 @@ test("flasher glue: the safety copy maps first, and the first-contact erase fall
   assert.doesNotMatch(erase[0].replace(/\/\/.*$/gm, ""), /checkCommand\(/,
     "checkCommand ignores the erase status");
   assert.match(erase[0], /if \(!ok\) return wholeChip\(\)/, "a refused erase must fall back to the whole chip");
+  // A map is trusted only within the install run that drew it: between runs
+  // the board can boot its own firmware and write into "blank" blocks.
+  assert.doesNotMatch(src, /state\.blankMap/, "a blank map must never be cached across runs");
+  assert.match(src, /eraseForFirstContact\(box, esploader, bytes\.length, journey, mapFromThisRun\)/,
+    "the erase may only reuse the map this install's own safety copy drew");
   // An erase the user asked for stays the whole-chip erase.
   assert.match(src, /eraseKind: forcedErase && !askedFullErase \? "first-contact" : null/);
 });

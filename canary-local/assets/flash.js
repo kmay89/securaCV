@@ -2062,20 +2062,17 @@ async function probeBlankBlocks(esploader, flashBytes, onProgress) {
   return blocks;
 }
 
-// The board's blank map, if this session already drew one for THIS board.
-// A board that didn't report a MAC never reuses a map: two such boards would
-// match each other.
-function blankMapForThisBoard() {
-  return state.mac && state.blankMap && state.blankMap.mac === state.mac
-    ? state.blankMap.blocks : null;
-}
-
 // Standalone backup (from the health report). The auto-backup inside
 // startFlash reuses takeBackup with the flash progress card, and passes
 // `journey` hooks so its two halves (map, read) tick off as their own steps.
 // The copy is the whole chip, byte for byte: blocks the map proved blank are
 // filled with 0xFF here instead of being read, which is what reading them
 // would have returned.
+// Returns { name, blocks }: the map is handed back to the ONE install run
+// that drew it and never cached on `state`. Between runs the board can boot
+// its own firmware (the live voice does exactly that), and firmware that
+// formats a file system writes into blocks a cached map would still call
+// blank — a first-contact erase trusting it would leave that data behind.
 async function takeBackup(box, journey) {
   const { esploader } = state.session;
   const total = state.flashBytes;
@@ -2090,7 +2087,6 @@ async function takeBackup(box, journey) {
   } catch {
     blocks = null;
   }
-  if (blocks) state.blankMap = { mac: state.mac, blocks };
   const reads = blocks ? core.blankSkipReads(blocks) : [{ offset: 0, size: total }];
   const toRead = reads.reduce((n, s) => n + s.size, 0);
   const skipped = total - toRead;
@@ -2128,7 +2124,7 @@ async function takeBackup(box, journey) {
   if (journey) journey.done("backup", skipped > 0
     ? `${core.formatBytes(toRead)} read · ${core.formatBytes(skipped)} blank`
     : `${core.formatBytes(toRead)} read`);
-  return name;
+  return { name, blocks };
 }
 
 // The first-contact erase, proportional (core.firstContactEraseSpans): erase
@@ -2137,11 +2133,14 @@ async function takeBackup(box, journey) {
 // Needs the stub's ERASE_REGION and a blank map; without either it falls back
 // to the whole-chip erase, which reaches the same end state. Returns what it
 // did, for the journey row.
-async function eraseForFirstContact(box, esploader, imageLen, journey) {
+// `mapFromThisRun` is the safety copy's map from earlier in THIS install, when
+// it ran; nothing else may be trusted (see takeBackup), so without it the chip
+// is mapped again here, which costs a couple of seconds.
+async function eraseForFirstContact(box, esploader, imageLen, journey, mapFromThisRun) {
   const can = esploader && esploader.IS_STUB && esploader.ESP_ERASE_REGION != null &&
     ["command", "_appendArray", "_intToByteArray", "timeoutPerMb"]
       .every((f) => typeof esploader[f] === "function");
-  let blocks = can ? blankMapForThisBoard() : null;
+  let blocks = can ? mapFromThisRun || null : null;
   if (can && !blocks) {
     box.stage("Clearing the old firmware — mapping where it sits first");
     try {
@@ -2152,7 +2151,6 @@ async function eraseForFirstContact(box, esploader, imageLen, journey) {
     } catch {
       blocks = null;
     }
-    if (blocks) state.blankMap = { mac: state.mac, blocks };
   }
   const wholeChip = async () => {
     box.stage(`Erasing the whole chip — ${core.eraseEstimateText(state.flashBytes)}; ` +
@@ -4447,9 +4445,10 @@ async function startFlash(opts) {
     //    backup (common on a corrupted board) must not block the recovery.
     let backupName = null;
     let backupFailed = false;
+    let mapFromThisRun = null; // the safety copy's blank map, valid for this run only
     if (willBackup) {
       try {
-        backupName = await takeBackup(box, journey);
+        ({ name: backupName, blocks: mapFromThisRun } = await takeBackup(box, journey));
       } catch (e) {
         if (!opts.rescue) throw e;
         backupFailed = true;
@@ -4633,7 +4632,7 @@ async function startFlash(opts) {
     // the map lights up region by region as the write cursor passes.
     if (eraseKind === "first-contact") {
       journey.start("clear");
-      const r = await eraseForFirstContact(box, esploader, bytes.length, journey);
+      const r = await eraseForFirstContact(box, esploader, bytes.length, journey, mapFromThisRun);
       journey.done("clear", r.whole ? "whole chip erased"
         : r.bytes ? `${core.formatBytes(r.bytes)} cleared` : "nothing old left");
     } else if (eraseKind === "full") {
@@ -4652,10 +4651,10 @@ async function startFlash(opts) {
       journey.done("erase");
     }
     nextStep("write", wifiFile ? "Writing the firmware + your settings" : "Writing the firmware");
-    // The map describes the chip BEFORE this write. A write that fails midway
-    // leaves blocks the map calls blank holding our own partial bytes, so it
-    // stops describing this board the moment a write begins.
-    state.blankMap = null;
+    // The map describes the chip BEFORE this write: it is never kept past
+    // this run (takeBackup), so a write that fails midway can't leave a map
+    // calling our own partial bytes blank.
+    mapFromThisRun = null;
     const liveMap = diff ? box.attachMap(diff.rows, bytes.length, state.flashBytes || bytes.length) : null;
     const data = core.bytesToBinaryString(bytes);
     // One tracker PER FILE, built from the callback's own total. The engine

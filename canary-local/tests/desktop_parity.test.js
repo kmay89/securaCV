@@ -5966,6 +5966,11 @@ test("the install journey ships on both flashers: every step up front, a heartbe
   assert.match(browser, /canary\.flash\.installTimes\.v1/, "browser forgot the last install time");
   assert.match(appJs, /canary\.flash\.installTimes\.v1/, "desktop forgot the last install time");
 
+  // "left overall" must mean overall: the desktop only has the active step's
+  // rate, so it may only say it on the last step.
+  assert.match(appJs, /quiet \|\| !last \? null : eta/,
+    "the desktop labels one step's estimate as time left overall");
+
   // 4. The same words beside the clock: the desktop's inlined copy must say
   //    exactly what flash-core.js says, for the same elapsed/left pair.
   const core = await import("../assets/flash-core.js");
