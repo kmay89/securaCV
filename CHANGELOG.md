@@ -1,6 +1,37 @@
 # Changelog
 
 ## [Unreleased]
+### The Glance AMOLED lights on a V2 board: its panel reset rides the IO expander, and nothing held it high
+
+- **The black glass, found.** On the Waveshare ESP32-S3-Touch-AMOLED-2.41
+  V2, the panel's reset is not a GPIO. It is TCA9554 EXIO0, with a 10 kΩ
+  pull-down to ground. The expander powers up with every line an input, so
+  the panel stayed in reset for as long as the firmware ran. The firmware
+  left the expander alone, because its pin map came from the CircuitPython
+  definition of an earlier board revision (panel reset on GPIO21, touch
+  reset on GPIO3). QSPI writes carry no acknowledgement, so the serial log
+  said the panel, the touch and the setup network were all up while the
+  glass showed nothing. The V2 wiring comes from Waveshare's own V2 tree
+  (`waveshareteam/ESP32-S3-Touch-AMOLED-2.41-V2`): the V2.0 schematic and
+  its three display examples.
+- **`display_init` releases the resets the way the vendor does.** EXIO0
+  (panel) and EXIO1 (touch) become outputs, are held low, then driven high.
+  EXIO0 is read back from the expander, and serial says
+  `first light 2/5: panel reset released (TCA9554 EXIO0 reads high)`, or
+  that the line is still low, or that the expander did not answer. The
+  first-light trace is now five lines.
+- **Nothing drives the board's inputs.** GPIO21 is the panel's TE output and
+  GPIO3 the touch INT on V2. The firmware used to pulse both as resets.
+  `pins.h` names them as inputs (`LCD_PIN_TE`, `TOUCH_PIN_INT`), with no
+  reset GPIO. It names the expander lines (EXIO2 RTC INT, EXIO3/4 IMU INT,
+  the expander's own INT on GPIO18). The pin budget now counts GPIO18 as
+  taken.
+- **The init is Waveshare's V2 sequence, byte for byte.** The page-0x13
+  `0xEB` write that only the CircuitPython init sends is gone.
+  `scripts/tests/test_amoled241_v2_wiring.py` holds the pin map, the
+  reset-before-`begin()` order and the init table to the vendor's tree, and
+  fails on the old map.
+
 ### The iPhone app passes App Store Connect's Siri check, and its App Store submission is written down
 
 - **ITMS-90626 fixed.** App Store Connect rejected build 39.1 (0.8.0) after

@@ -1340,9 +1340,11 @@ void setup() {
   // no backlight pin to name — brightness is the RM690B0's 0x51 command.
   boot_kvf("Glass",  "RM690B0 2.41\" %dx%d portrait AMOLED (FT6336 touch)",
            LCD_WIDTH, LCD_HEIGHT);
-  boot_kvf("QSPI",   "CLK=%d D0..D3=%d/%d/%d/%d CS=%d RST=%d off=%d",
+  // The panel reset is an expander line on V2, not a GPIO (pins.h).
+  boot_kvf("QSPI",   "CLK=%d D0..D3=%d/%d/%d/%d CS=%d RST=EXIO%d@0x%02X TE=%d off=%d",
            LCD_PIN_SCLK, LCD_PIN_SDIO0, LCD_PIN_SDIO1, LCD_PIN_SDIO2,
-           LCD_PIN_SDIO3, LCD_PIN_CS, LCD_PIN_RST, LCD_COL_OFFSET);
+           LCD_PIN_SDIO3, LCD_PIN_CS, EXIO_LCD_RESET, EXIO_I2C_ADDR,
+           LCD_PIN_TE, LCD_COL_OFFSET);
   boot_kv("Bright",  "panel command 0x51 (AMOLED — no backlight pin)");
 #else
   boot_kv("Glass",   "ST7789 1.47\" 172x320 portrait SPI (no touch)");

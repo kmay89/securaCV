@@ -260,12 +260,43 @@
   power-off 30 ms into a tap after a mislearn, because a round trip cannot
   prove polarity: after a mislearn, a tap looks exactly like the release of
   a long hold. The settled rest is what a tap can never fake. The release wait in `power_off()` is bounded. The serial
-  log prints the learned level, and `display_init` prints four numbered
+  log prints the learned level, and `display_init` prints numbered
   "first light" lines so the next dark glass says where it stopped.
 - **Guidance:** on a board marked compile-tested, every input with a
   destructive action (power-off, factory reset) must not depend on an
   assumed polarity. Learn the idle level, or require an observed edge. A
   wait on a GPIO level always needs a deadline.
+
+### A pin map from someone else's board is THEIR revision: V2 moved the 2.41's panel reset onto a pulled-down expander line (2026-10)
+- **What happened:** the AMOLED 2.41 (a V2 board, its owner confirmed) was
+  still black after both fixes above, with a serial log that said the
+  panel, the touch and the setup network were all up. The pin map and the
+  init had been checked twice against the CircuitPython board definition,
+  and they matched it. The board did not match CircuitPython. Waveshare's
+  own V2 tree (`waveshareteam/ESP32-S3-Touch-AMOLED-2.41-V2`: the V2.0
+  schematic and three display examples) puts OLED_RESET on TCA9554 EXIO0
+  with a 10 kΩ pull-down, TP_RESET on EXIO1, the panel's TE output on
+  GPIO21 and the touch INT on GPIO3. CircuitPython's map (reset on GPIO21,
+  touch reset on GPIO3) is an earlier revision's. We left the expander all
+  inputs, so the pull-down held the panel in reset for good, and we drove
+  the panel's TE output from the S3. QSPI writes carry no acknowledgement,
+  so every line on serial was true and the glass emitted nothing. Touch
+  answered only because its reset is pulled up.
+- **The fix:** `display_init` makes EXIO0/EXIO1 outputs and pulses them the
+  way the vendor does, then reads EXIO0 back from the expander's input
+  register and logs it as "first light 2/5". Nothing drives GPIO21 or
+  GPIO3. The init table is now Waveshare's V2 sequence byte for byte (no
+  page-0x13 `0xEB` write, which only the CircuitPython init sends).
+  `scripts/tests/test_amoled241_v2_wiring.py` holds the pin map, the reset
+  order and the init table to the vendor's tree.
+- **Guidance:** a third-party board definition is evidence about the
+  revision its author owns. Before transcribing it, find the vendor's
+  schematic for the revision on your bench, and check each reset and
+  enable line from the panel connector back to its driver, pull resistors
+  included. A reset held by a pull-down looks exactly like a dead panel
+  with a healthy bus, so read a reset line back when the hardware lets you.
+  "The audit matched the reference" is only as good as the reference's
+  revision.
 
 ---
 

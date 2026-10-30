@@ -45,7 +45,7 @@ README stays the narrative source for those stories.
 | `waveshare-esp32c6-lcd147` | ESP32-C6 | 24 | 10 (42%) | 2 | 4 | 8 |
 | `waveshare-esp32c6-lcd169` | ESP32-C6 | 24 | 7 (29%) | 0 | 7 | 10 |
 | `waveshare-esp32s3-amoled206` | ESP32-S3 | 33 | 21 (64%) | 0 | 5 | 7 |
-| `waveshare-esp32s3-amoled241` | ESP32-S3 | 33 | 20 (61%) | 0 | 4 | 9 |
+| `waveshare-esp32s3-amoled241` | ESP32-S3 | 33 | 21 (64%) | 0 | 4 | 8 |
 | `waveshare-esp32s3-lcd147` | ESP32-S3 | 38 | 11 (29%) | 1 | 6 | 20 |
 | `waveshare-esp32s3-lcd43` | ESP32-S3 | 33 | 27 (82%) | 0 | 4 | 2 |
 | `waveshare-esp32s3-lcd43b` | ESP32-S3 | 33 | 30 (91%) | 0 | 2 | 1 |
@@ -431,14 +431,14 @@ Capabilities off (room to grow): `HAS_CAMERA`, `HAS_HAPTIC`, `HAS_MICROPHONE`.
 
 ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32s3-amoled241/pins/pins.h)
 
-**20/33 committed** · 0 assigned · 4 conditional · **9 free** (4 ADC-capable)
+**21/33 committed** · 0 assigned · 4 conditional · **8 free** (3 ADC-capable)
 
 | GPIO | bucket | held by / trade | notes |
 |---|---|---|---|
 | 0 | committed | BOOT_BUTTON_PIN | sleep-wake, strap⚠ |
 | 1 | **free** | — | ADC, sleep-wake |
 | 2 | committed | SD_PIN_D3 | ADC, sleep-wake |
-| 3 | committed | TOUCH_PIN_RST | ADC, sleep-wake, strap⚠ |
+| 3 | committed | TOUCH_PIN_INT | ADC, sleep-wake, strap⚠ |
 | 4 | committed | SD_PIN_CLK | ADC, sleep-wake |
 | 5 | committed | SD_PIN_CMD | ADC, sleep-wake |
 | 6 | committed | SD_PIN_D0 | ADC, sleep-wake |
@@ -453,10 +453,10 @@ ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32
 | 15 | committed | PWR_KEY_PIN | ADC, sleep-wake |
 | 16 | committed | PWR_LATCH_PIN | ADC, sleep-wake |
 | 17 | committed | BAT_ADC_PIN | ADC, sleep-wake |
-| 18 | **free** | — | ADC, sleep-wake |
+| 18 | committed | EXIO_PIN_INT | ADC, sleep-wake |
 | 19 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DM) | ADC, sleep-wake |
 | 20 | conditional | USB-Serial/JTAG — free only if you give up USB; (declared as USB_PIN_DP) | ADC, sleep-wake |
-| 21 | committed | LCD_PIN_RST | sleep-wake |
+| 21 | committed | LCD_PIN_TE | sleep-wake |
 | 38 | **free** | — |  |
 | 39 | **free** | — |  |
 | 40 | **free** | — |  |
@@ -469,7 +469,7 @@ ESP32-S3 · flash 16 MB · PSRAM 8 MB · pin map [`pins/pins.h`](waveshare-esp32
 | 47 | committed | I2C_PIN_SDA |  |
 | 48 | committed | I2C_PIN_SCL |  |
 
-⚠ 3 pin define(s) are `-1` — not wired OR not yet verified (see the comments in pins.h): `BUZZER_PIN`, `LCD_PIN_BL`, `TOUCH_PIN_INT`. Free counts above may shrink as these resolve.
+⚠ 4 pin define(s) are `-1` — not wired OR not yet verified (see the comments in pins.h): `BUZZER_PIN`, `LCD_PIN_BL`, `LCD_PIN_RST`, `TOUCH_PIN_RST`. Free counts above may shrink as these resolve.
 
 Peripheral demand (declared pin map vs MCU): SPI 1/2 · I2C 1/2 · UART 0/3 · RMT TX 0/4 · LEDC 0/8.
 
