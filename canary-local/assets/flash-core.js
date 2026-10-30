@@ -655,6 +655,169 @@ export function eraseEstimateText(flashBytes) {
   return "can run a minute or more on a chip this size (the flasher gives it up to two)";
 }
 
+// ── the blank map: skip the flash that holds nothing ───────────────────────
+// A 16 MB chip carrying a 2 MB firmware is mostly 0xFF, and the safety copy
+// used to read every byte of it over the cable: minutes of the longest step
+// in the install, moving bytes whose value was known in advance. The flasher
+// stub can checksum a span of flash on the chip itself (SPI_FLASH_MD5), in a
+// small fraction of the time a read of the same span takes. So the chip is
+// mapped first, one block at a time: a block whose MD5 equals the MD5 of
+// that many 0xFF bytes is blank, and is filled locally instead of read. The
+// copy is byte-identical either way. A block whose probe failed is UNKNOWN
+// (blank: null) and is always treated as data: read, and erased.
+export const BLANK_PROBE_BLOCK = 0x40000; // 256 KB: 64 probes on a 16 MB chip
+
+export function planBlankProbe(flashBytes, block = BLANK_PROBE_BLOCK) {
+  const out = [];
+  if (!(flashBytes > 0) || !(block > 0)) return out;
+  for (let off = 0; off < flashBytes; off += block) {
+    out.push({ offset: off, size: Math.min(block, flashBytes - off) });
+  }
+  return out;
+}
+
+// Merge adjacent spans (sorted by offset) into the fewest contiguous runs.
+function mergeSpans(spans) {
+  const out = [];
+  for (const s of spans) {
+    if (!(s.size > 0)) continue;
+    const last = out[out.length - 1];
+    if (last && last.offset + last.size === s.offset) last.size += s.size;
+    else out.push({ offset: s.offset, size: s.size });
+  }
+  return out;
+}
+
+// What the safety copy must actually read: every block not proven blank.
+export function blankSkipReads(blocks) {
+  return mergeSpans((blocks || []).filter((b) => b.blank !== true));
+}
+
+// Bytes the blank map proved empty (shown as "skipped, already blank").
+export function blankBytes(blocks) {
+  return (blocks || []).reduce((n, b) => n + (b.blank === true ? b.size : 0), 0);
+}
+
+// The first-contact erase, made proportional. Its job is that nothing the
+// board arrived with survives outside what the new image writes. The image's
+// own write erases [0, image end) as it goes, so what is left to erase is
+// every block that is not proven blank, minus that range (rounded up to the
+// 4 KB sector the chip erases in). The end state is the same as a whole-chip
+// erase followed by the write; what changes is that a mostly empty 16 MB
+// chip erases a few MB, with progress, instead of sixteen in silence.
+export const FLASH_SECTOR = 0x1000;
+
+export function firstContactEraseSpans(blocks, imageLen, sector = FLASH_SECTOR) {
+  const written = Math.ceil(Math.max(0, imageLen || 0) / sector) * sector;
+  const spans = [];
+  for (const b of blocks || []) {
+    if (b.blank === true) continue;
+    const start = Math.max(b.offset, written);
+    const end = b.offset + b.size;
+    if (end > start) spans.push({ offset: start, size: end - start });
+  }
+  return mergeSpans(spans);
+}
+
+// Split spans into pieces of at most `max` bytes, so a long erase can report
+// progress per piece instead of one silent command.
+export function chunkSpans(spans, max = BLANK_PROBE_BLOCK) {
+  const out = [];
+  for (const s of spans || []) {
+    for (let off = 0; off < s.size; off += max) {
+      out.push({ offset: s.offset + off, size: Math.min(max, s.size - off) });
+    }
+  }
+  return out;
+}
+
+// ── the install journey: every step, named up front ────────────────────────
+// "Step 2 of 4" told the user where they were and nothing about how long the
+// rest would take, so a slow step read as the whole install hanging. The
+// journey lists every step before the first one starts, with what it moves,
+// and the card ticks them off with their real durations. The rows are plain
+// data so the card, the coach and the tests read the same list.
+//   key    stable id the card addresses
+//   label  plain-language name
+//   bytes  how much the step moves over the cable/network, when known
+//   via    "link" (the board's serial link), "net" (the image download),
+//          "chip" (on-chip work, nothing streams), or null
+export function installJourney(o = {}) {
+  const steps = [];
+  if (o.backup) {
+    steps.push({ key: "map", label: "Map the chip", bytes: null, via: "chip" });
+    steps.push({ key: "backup", label: "Save a safety copy", bytes: o.backupBytes || null, via: "link" });
+  }
+  if (o.download) {
+    steps.push({ key: "download", label: "Download the signed image", bytes: o.imageBytes || null, via: "net" });
+    steps.push({ key: "check", label: "Check it's authentic", bytes: null, via: "chip" });
+  }
+  if (o.erase === "first-contact") {
+    // On-chip work sized by the blank map; counted as short until it starts,
+    // then by its own tracker (journeyEtaSeconds' currentEta).
+    steps.push({ key: "clear", label: "Clear the old firmware", bytes: null, via: "chip" });
+  } else if (o.erase === "full") {
+    steps.push({ key: "erase", label: "Erase the whole chip", bytes: o.flashBytes || null, via: "chip" });
+  }
+  steps.push({ key: "write", label: "Write the firmware", bytes: o.imageBytes || null, via: "link" });
+  steps.push({ key: "confirm", label: "Chip double-checks every byte", bytes: null, via: "chip" });
+  return steps;
+}
+
+// How long the rest of the journey should take, from rates MEASURED in this
+// install (never a benchmark constant): rates.link and rates.net in bytes per
+// second. A step whose bytes or rate is unknown makes the total unknown
+// (null), and so does a whole-chip erase, which reports nothing — except the
+// short on-chip steps (map, check, confirm), which are counted as zero:
+// they take seconds, and a total that waited on them would never show.
+// `current` is the active step's key and `frac` how far it has got;
+// `currentEta`, when the active step streams its own estimate (its tracker
+// counts the units it really moves — the write counts compressed bytes),
+// replaces the bytes/rate guess for that one step.
+export function journeyEtaSeconds(steps, current, frac, rates, currentEta) {
+  const r = rates || {};
+  let at = steps.findIndex((s) => s.key === current);
+  if (at < 0) at = 0;
+  let total = 0;
+  for (let i = at; i < steps.length; i++) {
+    const s = steps[i];
+    if (i === at && Number.isFinite(currentEta) && currentEta >= 0) {
+      total += currentEta;
+      continue;
+    }
+    const left = i === at ? Math.max(0, 1 - (frac || 0)) : 1;
+    if (s.via === "chip") {
+      if (s.key === "erase") return null; // a whole-chip erase: no honest number
+      continue;
+    }
+    const rate = s.via === "net" ? r.net : r.link;
+    if (!(s.bytes > 0) || !(rate > 0)) {
+      if (left === 0) continue;
+      return null;
+    }
+    total += (s.bytes * left) / rate;
+  }
+  return total;
+}
+
+// "1:05" / "12:30" — the card's clock face, one format everywhere.
+export function clockFace(seconds) {
+  const s = Math.max(0, Math.floor(seconds || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// The line beside the clock: elapsed, then what is left of the WHOLE install
+// when we can honestly say ("overall", because the bar's own line below says
+// what is left of the current step). Short ETAs round to five seconds so the
+// number doesn't flicker.
+export function journeyClockLine(elapsedSeconds, etaSeconds) {
+  const head = clockFace(elapsedSeconds);
+  if (etaSeconds == null || !Number.isFinite(etaSeconds)) return head;
+  if (etaSeconds < 5) return `${head} · almost done`;
+  if (etaSeconds < 60) return `${head} · about ${Math.max(5, Math.round(etaSeconds / 5) * 5)} s left overall`;
+  return `${head} · about ${clockFace(Math.round(etaSeconds))} left overall`;
+}
+
 // ── serial console heuristics ───────────────────────────────────────────────
 // Baud candidates for the monitor, most likely first. The firmware console is
 // console_baud (115200); 74880 is the classic ESP32 boot-ROM rate; the rest

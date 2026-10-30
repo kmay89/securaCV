@@ -1,6 +1,43 @@
 # Changelog
 
 ## [Unreleased]
+### Flashing says how long it will take, shows it's alive, and spends far less time on blank flash
+
+- **The safety copy skips blank flash (browser flasher).** It used to read
+  every byte of the chip before writing: 16 MB on a Canary Glance AMOLED,
+  the longest step of the install, mostly bytes known to be `0xFF`. The
+  flasher stub now checksums each 256 KB block on the chip (MD5), and only
+  blocks holding data are read. Blank blocks are filled locally, so the saved
+  file is the same byte for byte. A block whose check fails is read anyway.
+- **The first-contact erase clears only what holds data (browser
+  flasher).** Instead of a silent whole-chip erase, a board the flasher has
+  never written erases the blocks that hold data outside the new image's own
+  range, a piece at a time, with progress. The end state is the same as a
+  whole-chip erase: a test checks over random block maps that every byte ends
+  written, erased or proven blank. The stub's status is checked on every
+  piece, and no stub, no map or a refused erase falls back to the whole-chip
+  erase. Clean install, the Advanced box and a rescue still erase the whole
+  chip. `docs/unflashed_board_intake.md` explains why the map is safe on an
+  untrusted board: the stub computes it, not the board's own firmware.
+- **Every step up front, ticked off with its time (both flashers).** The
+  progress card lists the whole install before it starts (map the chip,
+  safety copy, download, authenticity check, clearing old firmware, write,
+  the chip's own check). The active step times itself live, and finished
+  steps keep their real duration. The clock line adds "about 0:40 left
+  overall" once this install has measured its own speeds, never from a
+  benchmark, and stays a plain clock when it can't honestly say. A whole-chip
+  erase, which reports nothing, keeps its size-shaped wording.
+- **A heartbeat (both flashers).** A dot beside the progress line blinks each
+  time the board or the download answers, so a working install looks
+  different from a hung one.
+- **The last install time.** The card says how long the whole install took
+  last time on this computer, and the done card says how long this one took,
+  step by step. The time is stored only in this browser or app.
+- **Desktop Flasher:** the step list, heartbeat and install times reach users
+  with the next Flasher release. Its `espflash` sidecar still reads and
+  erases the whole chip, because it reconnects for every command and the
+  per-block checks would cost more than they save.
+
 
 ## [2.4.19] - 2026-10-30
 

@@ -5943,3 +5943,42 @@ test("setup door: catalog-derived, both flashers say it, neither prefills past i
   assert.match(appJs, /if \(\$\("wifi-ssid"\)\.value && !wifiPass && !\(\$\("wifi-open"\) && \$\("wifi-open"\)\.checked\)\) \{\s*\n\s*setStatus\("flash-result", WIFI_PASS_REQUIRED, "err"\)/,
     "desktop readProvisioning no longer refuses a name with no password");
 });
+
+test("the install journey ships on both flashers: every step up front, a heartbeat, the same clock words", async () => {
+  const browser = read(join(CANARY, "assets/flash.js"));
+  const browserCss = read(join(CANARY, "assets/flash.css"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const css = read(join(ROOT, "desktop/src/styles.css"));
+
+  // 1. Every step listed before the first starts, ticked off with its time.
+  assert.match(browser, /core\.installJourney\(/, "the browser install no longer lists its steps up front");
+  assert.match(browser, /box\.journey\(steps/, "the browser progress card lost its journey");
+  assert.match(appJs, /op\.setJourney\(installJourneySteps\(/, "the desktop install no longer lists its steps up front");
+  assert.match(browserCss, /\.flash-journey-step\.is-active/, "browser journey rows lost their active state");
+  assert.match(css, /\.op-journey li\.is-active/, "desktop journey rows lost their active state");
+
+  // 2. The heartbeat: a dot that blinks each time the board answers.
+  assert.match(browser, /flash-beat/, "browser lost the heartbeat");
+  assert.match(browser, /box\.beat\(\)/, "browser never blinks the heartbeat");
+  assert.match(appJs, /op-beat/, "desktop lost the heartbeat");
+
+  // 3. The last install time on this computer, under the same key.
+  assert.match(browser, /canary\.flash\.installTimes\.v1/, "browser forgot the last install time");
+  assert.match(appJs, /canary\.flash\.installTimes\.v1/, "desktop forgot the last install time");
+
+  // 4. The same words beside the clock: the desktop's inlined copy must say
+  //    exactly what flash-core.js says, for the same elapsed/left pair.
+  const core = await import("../assets/flash-core.js");
+  const grab = (name) => {
+    const m = new RegExp(`\\nfunction ${name}\\([\\s\\S]*?\\n}\\n`).exec(appJs);
+    assert.ok(m, `desktop app.js lost ${name}`);
+    return m[0];
+  };
+  const ctx = {};
+  vm.runInNewContext(grab("clockFace") + grab("journeyClockLine") +
+    "this.line = journeyClockLine;", ctx);
+  for (const [e, l] of [[0, null], [65, 3], [65, 42], [65, 95.4], [600, 7], [12, Infinity]]) {
+    assert.strictEqual(ctx.line(e, l), core.journeyClockLine(e, l),
+      `the flashers word the clock differently for ${e}s elapsed, ${l}s left`);
+  }
+});
