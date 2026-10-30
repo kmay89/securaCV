@@ -2027,20 +2027,173 @@ function haveBackupForThisBoard() {
   return !!(state.backup && state.backup.mac === state.mac);
 }
 
+// The blank map (core.planBlankProbe): ask the chip for the MD5 of each block
+// and compare it with the MD5 of that many 0xFF bytes. Only the flasher stub
+// answers SPI_FLASH_MD5 in raw bytes (the ROM answers in ASCII hex, which
+// esptool-js would mangle), so without the stub there is no map and every
+// caller falls back to reading or erasing everything. A block whose probe
+// throws is unknown (blank: null), which every caller treats as data.
+const _blankMd5 = new Map(); // block size → MD5 hex of that many 0xFF bytes
+async function probeBlankBlocks(esploader, flashBytes, onProgress) {
+  if (!esploader || !esploader.IS_STUB || typeof esploader.flashMd5sum !== "function") return null;
+  const plan = core.planBlankProbe(flashBytes);
+  if (!plan.length) return null;
+  const blocks = [];
+  let done = 0, ok = 0, failed = 0;
+  for (const b of plan) {
+    let blank = null;
+    try {
+      const got = String(await esploader.flashMd5sum(b.offset, b.size)).toLowerCase();
+      let want = _blankMd5.get(b.size);
+      if (!want) { want = md5Raw("\xff".repeat(b.size)); _blankMd5.set(b.size, want); }
+      blank = got === want;
+      ok++;
+    } catch {
+      blank = null;
+      // Each failed probe can wait out a 3 s timeout: a chip that won't
+      // answer would turn a two-second map into minutes. Give up early and
+      // let the caller read or erase everything instead.
+      if (++failed >= 3 || ok === 0) return null;
+    }
+    blocks.push({ ...b, blank });
+    done += b.size;
+    if (onProgress) onProgress(done, flashBytes, blank);
+  }
+  return blocks;
+}
+
 // Standalone backup (from the health report). The auto-backup inside
-// startFlash reuses takeBackup with the flash progress card.
-async function takeBackup(box) {
+// startFlash reuses takeBackup with the flash progress card, and passes
+// `journey` hooks so its two halves (map, read) tick off as their own steps.
+// The copy is the whole chip, byte for byte: blocks the map proved blank are
+// filled with 0xFF here instead of being read, which is what reading them
+// would have returned.
+// Returns { name, blocks }: the map is handed back to the ONE install run
+// that drew it and never cached on `state`. Between runs the board can boot
+// its own firmware (the live voice does exactly that), and firmware that
+// formats a file system writes into blocks a cached map would still call
+// blank — a first-contact erase trusting it would leave that data behind.
+async function takeBackup(box, journey) {
   const { esploader } = state.session;
   const total = state.flashBytes;
-  const eta = core.makeEtaTracker(total);
-  const bytes = await readFlashChunked(esploader, 0, total, (prog, tot) => {
-    const p = eta.feed(prog, performance.now());
-    box.set(p.frac, progressMeta(prog, tot, p));
-  });
+  if (journey) journey.start("map");
+  box.stage("Mapping the chip — finding the parts that hold data (nothing is changed)");
+  let blocks = null;
+  try {
+    blocks = await probeBlankBlocks(esploader, total, (done, tot) => {
+      box.beat();
+      box.set(done / tot, `${core.formatBytes(done)} of ${core.formatBytes(tot)} mapped`);
+    });
+  } catch {
+    blocks = null;
+  }
+  const reads = blocks ? core.blankSkipReads(blocks) : [{ offset: 0, size: total }];
+  const toRead = reads.reduce((n, s) => n + s.size, 0);
+  const skipped = total - toRead;
+  if (journey) journey.bytes("backup", toRead);
+  if (journey) {
+    journey.done("map", blocks
+      ? `${core.formatBytes(toRead)} holds data`
+      : "skipped — reading every byte");
+    journey.start("backup");
+  }
+  box.stage(skipped > 0
+    ? `Saving a safety copy — reading the ${core.formatBytes(toRead)} that holds data; ` +
+      `${core.formatBytes(skipped)} is already blank, so it isn't read (nothing is changed)`
+    : "Saving a safety copy — reading every byte off the board (nothing is changed)");
+  const bytes = new Uint8Array(total).fill(0xff);
+  const eta = core.makeEtaTracker(toRead);
+  const t0 = performance.now();
+  let base = 0;
+  for (const span of reads) {
+    const part = await readFlashChunked(esploader, span.offset, span.size, (prog) => {
+      box.beat();
+      const got = base + prog;
+      const p = eta.feed(got, performance.now());
+      if (journey) journey.rate("link", p.kbps * 1024, p.etaSeconds);
+      box.set(p.frac, progressMeta(got, toRead, p));
+    });
+    bytes.set(part, span.offset);
+    base += span.size;
+  }
+  const secs = (performance.now() - t0) / 1000;
+  if (journey && toRead > 0 && secs > 0.5) journey.rate("link", toRead / secs, 0);
   const name = `canary-${macStamp()}-backup.bin`;
   downloadBytes(bytes, name);
   state.backup = { bytes, name, mac: state.mac };
-  return name;
+  if (journey) journey.done("backup", skipped > 0
+    ? `${core.formatBytes(toRead)} read · ${core.formatBytes(skipped)} blank`
+    : `${core.formatBytes(toRead)} read`);
+  return { name, blocks };
+}
+
+// The first-contact erase, proportional (core.firstContactEraseSpans): erase
+// the blocks that hold anything the image's own write won't overwrite, one
+// piece at a time so the bar moves, instead of one silent whole-chip erase.
+// Needs the stub's ERASE_REGION and a blank map; without either it falls back
+// to the whole-chip erase, which reaches the same end state. Returns what it
+// did, for the journey row.
+// `mapFromThisRun` is the safety copy's map from earlier in THIS install, when
+// it ran; nothing else may be trusted (see takeBackup), so without it the chip
+// is mapped again here, which costs a couple of seconds.
+async function eraseForFirstContact(box, esploader, imageLen, journey, mapFromThisRun) {
+  const can = esploader && esploader.IS_STUB && esploader.ESP_ERASE_REGION != null &&
+    ["command", "_appendArray", "_intToByteArray", "timeoutPerMb"]
+      .every((f) => typeof esploader[f] === "function");
+  let blocks = can ? mapFromThisRun || null : null;
+  if (can && !blocks) {
+    box.stage("Clearing the old firmware — mapping where it sits first");
+    try {
+      blocks = await probeBlankBlocks(esploader, state.flashBytes, (done, tot) => {
+        box.beat();
+        box.set(done / tot, `${core.formatBytes(done)} of ${core.formatBytes(tot)} mapped`);
+      });
+    } catch {
+      blocks = null;
+    }
+  }
+  const wholeChip = async () => {
+    box.stage(`Erasing the whole chip — ${core.eraseEstimateText(state.flashBytes)}; ` +
+      "the chip stays silent until it finishes");
+    const stop = box.pulse();
+    try { await esploader.eraseFlash(); } finally { stop(); }
+    return { whole: true, bytes: state.flashBytes };
+  };
+  if (!blocks) return wholeChip();
+  const pieces = core.chunkSpans(core.firstContactEraseSpans(blocks, imageLen));
+  const total = pieces.reduce((n, s) => n + s.size, 0);
+  if (!total) {
+    box.stage("Nothing old to clear — everything outside the new firmware is already blank ✓");
+    return { whole: false, bytes: 0 };
+  }
+  box.stage(`Clearing the old firmware — the erase covers the ${core.formatBytes(total)} ` +
+    "it left outside where the new firmware goes");
+  const eta = core.makeEtaTracker(total);
+  let done = 0;
+  for (const s of pieces) {
+    const payload = esploader._appendArray(
+      esploader._intToByteArray(s.offset), esploader._intToByteArray(s.size));
+    const timeout = esploader.timeoutPerMb(esploader.ERASE_REGION_TIMEOUT_PER_MB, s.size);
+    // command(), not checkCommand(): checkCommand never reads the stub's
+    // status bytes, so a refused erase would come back looking like a
+    // success and leave the old firmware in place. A refusal (or no answer)
+    // falls back to the whole-chip erase, which keeps the promise.
+    let ok = false;
+    try {
+      const [, resp] = await esploader.command(esploader.ESP_ERASE_REGION, payload, 0, true, timeout);
+      ok = !!resp && resp.length >= 2 && resp[0] === 0;
+    } catch {
+      ok = false;
+    }
+    if (!ok) return wholeChip();
+    done += s.size;
+    box.beat();
+    const p = eta.feed(done, performance.now());
+    if (journey) journey.rate(null, null, p.etaSeconds);
+    box.set(p.frac, `${core.formatBytes(done)} of ${core.formatBytes(total)} cleared` +
+      (core.formatDuration(p.etaSeconds) ? ` · ${core.formatDuration(p.etaSeconds)} left` : ""));
+  }
+  return { whole: false, bytes: total };
 }
 
 async function onBackup() {
@@ -3421,7 +3574,8 @@ async function onLocalFile(ev) {
   // exactly the same board and exactly the same leftover partitions; picking
   // your own .bin isn't a statement about the board's history.
   startFlash({ localBytes: bytes, label: file.name, isLocal: true, skipBackup: skip,
-    eraseAll: !!(state.intake && state.intake.firstContact) });
+    eraseAll: !!(state.intake && state.intake.firstContact),
+    eraseKind: state.intake && state.intake.firstContact ? "first-contact" : null });
 }
 
 function phaseConfirm(product, entry) {
@@ -3433,7 +3587,8 @@ function phaseConfirm(product, entry) {
   // a board the user now believes is theirs. This is the one case where the
   // Advanced checkbox isn't the user's to decide.
   const forcedErase = !!(state.intake && state.intake.firstContact);
-  const eraseOn = forcedErase || !!($("#flash-erase-all") && $("#flash-erase-all").checked);
+  const askedFullErase = !!($("#flash-erase-all") && $("#flash-erase-all").checked);
+  const eraseOn = forcedErase || askedFullErase;
 
   const box = el("section", "flash-card flash-confirm");
   box.dataset.step = "3";
@@ -3584,7 +3739,10 @@ function phaseConfirm(product, entry) {
     }
     const dialSel = dialsUI ? dialsUI.selection() : null;
     const reflexSel = reflexUI ? reflexUI.selection() : null;
+    // The forced first-contact erase clears what the board arrived with,
+    // proportionally; the Advanced box is a request for the whole-chip erase.
     startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup, wifi, mqtt, autoUpdate,
+      eraseKind: forcedErase && !askedFullErase ? "first-contact" : null,
       detect: dialSel ? dialSel.values : null,
       detectPreset: dialSel ? dialSel.presetTitle : null,
       reflex: reflexSel ? reflexSel.values : null,
@@ -4260,16 +4418,25 @@ async function startFlash(opts) {
     box.card.insertBefore(installStory(() => imageBytesRef.bytes || (state.backup && state.backup.bytes)), logEl);
   }
 
-  // Announce the whole journey up front — "step 2 of 4" is what makes the
-  // bar predictable instead of a mystery that keeps restarting.
+  // Announce the whole journey up front (core.installJourney): every step,
+  // what it moves, ticked off with its real duration, and a time-left line
+  // from rates measured in this install. "Step 2 of 4" alone said where you
+  // were and nothing about how long the rest would take.
   const willBackup = state.flashBytes && !opts.isBackup && !opts.skipBackup && !haveBackupForThisBoard();
-  const stepLabels = [];
-  if (willBackup) stepLabels.push("safety copy");
-  if (!opts.localBytes) stepLabels.push("download", "authenticity check");
-  if (eraseAll) stepLabels.push("full erase");
-  stepLabels.push("write + verify");
-  let stepNo = 0;
-  const nextStep = (text) => box.stage(`Step ${++stepNo} of ${stepLabels.length} — ${text}`);
+  // A first-contact erase clears what the board arrived with, proportionally
+  // (eraseForFirstContact); an erase the user asked for — Clean install, the
+  // Advanced box, a rescue — stays the whole-chip erase they asked for.
+  const eraseKind = !eraseAll ? null : (opts.eraseKind === "first-contact" ? "first-contact" : "full");
+  const steps = core.installJourney({
+    backup: !!willBackup,
+    backupBytes: state.flashBytes,
+    download: !opts.localBytes,
+    imageBytes: opts.localBytes ? opts.localBytes.length : Number(opts.entry && opts.entry.size) || null,
+    erase: eraseKind,
+    flashBytes: state.flashBytes,
+  });
+  const journey = box.journey(steps, lastInstallText(opts));
+  const nextStep = (key, text) => { journey.start(key); box.stage(text); };
 
   try {
     // 0) The automatic safety copy — best practice, no clicks. Skipped only
@@ -4278,13 +4445,15 @@ async function startFlash(opts) {
     //    backup (common on a corrupted board) must not block the recovery.
     let backupName = null;
     let backupFailed = false;
+    let mapFromThisRun = null; // the safety copy's blank map, valid for this run only
     if (willBackup) {
-      nextStep("saving a safety copy of the board first (nothing is changed)");
       try {
-        backupName = await takeBackup(box);
+        ({ name: backupName, blocks: mapFromThisRun } = await takeBackup(box, journey));
       } catch (e) {
         if (!opts.rescue) throw e;
         backupFailed = true;
+        journey.skip("map", "couldn’t read the board");
+        journey.skip("backup", "skipped — the rescue goes on");
       }
       box.set(0, "");
     }
@@ -4299,7 +4468,7 @@ async function startFlash(opts) {
         shaHex = core.hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes.slice().buffer)));
       } catch {}
     } else {
-      nextStep("downloading the signed image");
+      nextStep("download", "Downloading the signed image");
       // Streamed, not arrayBuffer(): a display factory image on a slow
       // network is minutes, and a bar parked at 0 with no counter was the
       // step that most read as "hung". The release's own size is the honest
@@ -4324,6 +4493,7 @@ async function startFlash(opts) {
           got += value.length;
           if (dlTotal > 0) {
             const p = dlEta.feed(Math.min(got, dlTotal), performance.now());
+            journey.rate("net", p.kbps * 1024, p.etaSeconds);
             box.set(p.frac, progressMeta(Math.min(got, dlTotal), dlTotal, p));
           } else {
             box.set(0, `${core.formatBytes(got)} downloaded…`);
@@ -4335,8 +4505,9 @@ async function startFlash(opts) {
       } else {
         bytes = new Uint8Array(await resp.arrayBuffer());
       }
+      journey.done("download", core.formatBytes(bytes.length));
       // 2) Verify SHA-256 against the manifest BEFORE writing a byte.
-      nextStep("checking the image is authentic (SHA-256)");
+      nextStep("check", "Checking the image is authentic (SHA-256)");
       box.set(0, "");
       const digest = await crypto.subtle.digest("SHA-256", bytes);
       const got = core.hex(new Uint8Array(digest));
@@ -4379,6 +4550,7 @@ async function startFlash(opts) {
       // never looks.
       const placed = core.bootloaderPlacement(bytes, state.chip);
       if (!placed.ok) throw new Error(placed.reason);
+      journey.done("check", sigVerified ? "signature ✓" : "SHA-256 ✓");
     }
     imageBytesRef.bytes = bytes;
     state.lastImage = bytes; // lets the done card replay the tour with real hex
@@ -4458,12 +4630,17 @@ async function startFlash(opts) {
 
     // 3) Write, with live progress + automatic chip MD5 verification —
     // the map lights up region by region as the write cursor passes.
-    if (eraseAll) {
+    if (eraseKind === "first-contact") {
+      journey.start("clear");
+      const r = await eraseForFirstContact(box, esploader, bytes.length, journey, mapFromThisRun);
+      journey.done("clear", r.whole ? "whole chip erased"
+        : r.bytes ? `${core.formatBytes(r.bytes)} cleared` : "nothing old left");
+    } else if (eraseKind === "full") {
       // The chip reports NOTHING while it erases — one command, then silence
       // until it finishes (up to two minutes on a 16 MB part). Say how long
       // the silence usually runs and keep the bar sweeping + the clock
       // ticking, so the longest fully-quiet wait in the flow reads as work.
-      nextStep(`erasing the whole chip — ${core.eraseEstimateText(state.flashBytes)}; ` +
+      nextStep("erase", `Erasing the whole chip — ${core.eraseEstimateText(state.flashBytes)}; ` +
         "the chip stays silent until it finishes");
       const stopErase = box.pulse();
       try {
@@ -4471,8 +4648,13 @@ async function startFlash(opts) {
       } finally {
         stopErase();
       }
+      journey.done("erase");
     }
-    nextStep(wifiFile ? "writing firmware + your settings" : "writing firmware");
+    nextStep("write", wifiFile ? "Writing the firmware + your settings" : "Writing the firmware");
+    // The map describes the chip BEFORE this write: it is never kept past
+    // this run (takeBackup), so a write that fails midway can't leave a map
+    // calling our own partial bytes blank.
+    mapFromThisRun = null;
     const liveMap = diff ? box.attachMap(diff.rows, bytes.length, state.flashBytes || bytes.length) : null;
     const data = core.bytesToBinaryString(bytes);
     // One tracker PER FILE, built from the callback's own total. The engine
@@ -4482,6 +4664,7 @@ async function startFlash(opts) {
     // second file the numbers were nonsense. written/total from the same
     // callback are the same units, so this frac is honest by construction.
     const fileEtas = [];
+    const fileCount = wifiFile ? 2 : 1;
     let verifyPulseStop = null;
     await esploader.writeFlash({
       fileArray: wifiFile ? [{ data, address: 0 }, wifiFile] : [{ data, address: 0 }],
@@ -4494,6 +4677,15 @@ async function startFlash(opts) {
         if (!fileEtas[i]) fileEtas[i] = core.makeEtaTracker(total);
         const p = fileEtas[i].feed(written, performance.now());
         const frac = total > 0 ? written / total : 0;
+        box.beat();
+        // The write's own estimate (compressed units, its own tracker) is the
+        // journey's estimate for this step; the last file's final block hands
+        // over to the chip's checksum, which streams nothing.
+        if (written >= total && total > 0 && i === fileCount - 1) {
+          if (journey.active() === "write") { journey.done("write"); journey.start("confirm"); }
+        } else {
+          journey.rate("link", p.kbps * 1024, p.etaSeconds);
+        }
         // The engine's last act per file is the chip recomputing an MD5 over
         // everything written — seconds to half a minute on big images, with
         // no callback of its own. Flip the story the moment a file's bytes
@@ -4530,6 +4722,10 @@ async function startFlash(opts) {
     box.stage("Confirmed — the chip holds exactly what we sent ✓");
     box.set(1, "");
     if (liveMap) liveMap.update(1);
+    if (journey.active() === "write") journey.done("write");
+    journey.done("confirm", "match ✓");
+    const installSeconds = journey.finish();
+    if (!opts.isBackup) rememberInstallTime(opts, installSeconds);
 
     // 4) Reset into the freshly-flashed app.
     try { await esploader.after("hard_reset"); } catch {}
@@ -4556,6 +4752,7 @@ async function startFlash(opts) {
       saveRoster(state.roster);
     }
     setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
+      installSeconds, installSteps: journey.summary(),
       shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length,
       wifiSsid, seededDials, seededReflex, provDeviceId: bakedDeviceId,
       apiToken: bakedApiToken, provBroker: bakedBroker,
@@ -4752,6 +4949,12 @@ function phaseDone(opts) {
   box.append(el("h2", null, opts.isBackup ? "Restored — your Canary is back to that copy"
     : hatchNo ? `Hatchling #${hatchNo} — your Canary is awake`
     : "Installed — your Canary is awake"));
+  // How long it took, step by step — the journey the progress card ticked off.
+  if (opts.installSeconds > 0) {
+    box.append(el("p", "fineprint flash-done-time",
+      `Done in ${core.clockFace(opts.installSeconds)}` +
+      (opts.installSteps ? ` — ${opts.installSteps}` : "")));
+  }
 
   // A whimsical name + birth certificate for a real, fresh hatch — the same one
   // the native app mints. Async: the done card renders now; the certificate
@@ -6578,15 +6781,56 @@ function attachCoach(card, afterEl) {
 function attachElapsed(elapsedEl) {
   const t0 = performance.now();
   let last = t0;
+  let etaFn = null;      // () => seconds left | null (the journey sets it)
+  const listeners = [];  // per-tick hooks (the journey's live step timer)
+  const render = () => {
+    const now = performance.now();
+    const s = (now - t0) / 1000;
+    const quiet = now - last > 8000;
+    elapsedEl.textContent = core.journeyClockLine(s, quiet ? null : (etaFn ? etaFn() : null)) +
+      (quiet ? " — still working" : "");
+    for (const f of listeners) f(now);
+  };
   const tick = setInterval(() => {
     if (!elapsedEl.isConnected) { clearInterval(tick); return; }
-    const now = performance.now();
-    const s = Math.floor((now - t0) / 1000);
-    elapsedEl.textContent =
-      `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` +
-      (now - last > 8000 ? " — still working" : "");
+    render();
   }, 1000);
-  return { touch() { last = performance.now(); } };
+  return {
+    touch() { last = performance.now(); },
+    setEta(fn) { etaFn = fn; },
+    onTick(fn) { listeners.push(fn); },
+    seconds() { return (performance.now() - t0) / 1000; },
+  };
+}
+
+// The last install of this product on this computer, so the card can say
+// up front how long the whole thing took last time. Per-viewer convenience
+// only (localStorage, wrapped: private windows throw), never a promise.
+const INSTALL_TIMES_KEY = "canary.flash.installTimes.v1";
+function installTimeKey(opts) {
+  const id = opts && opts.product ? opts.product.id : opts && opts.isLocal ? "local" : null;
+  return id ? `${id}|${state.chip || ""}|${state.flashBytes || 0}` : null;
+}
+function lastInstallText(opts) {
+  const k = installTimeKey(opts);
+  if (!k) return "";
+  try {
+    const all = JSON.parse(localStorage.getItem(INSTALL_TIMES_KEY) || "{}");
+    const secs = all[k];
+    if (!(secs > 0)) return "";
+    return `Last time on this computer the whole install took ${core.clockFace(secs)}.`;
+  } catch {
+    return "";
+  }
+}
+function rememberInstallTime(opts, seconds) {
+  const k = installTimeKey(opts);
+  if (!k || !(seconds > 0)) return;
+  try {
+    const all = JSON.parse(localStorage.getItem(INSTALL_TIMES_KEY) || "{}");
+    all[k] = Math.round(seconds);
+    localStorage.setItem(INSTALL_TIMES_KEY, JSON.stringify(all));
+  } catch {}
 }
 
 function progressCard(title, subtitle) {
@@ -6605,8 +6849,15 @@ function progressCard(title, subtitle) {
   const fill = el("div", "flash-bar-fill");
   bar.append(fill);
   card.append(bar);
+  const metaRow = el("div", "flash-progress-meta-row");
+  // The heartbeat: blinks every time the board (or the download) answers, so
+  // "it's alive" is something you can see, not something the clock implies.
+  const beatEl = el("span", "flash-beat");
+  beatEl.setAttribute("aria-hidden", "true");
+  beatEl.title = "blinks each time the board answers";
   const meta = el("p", "flash-progress-meta fineprint", "");
-  card.append(meta);
+  metaRow.append(beatEl, meta);
+  card.append(metaRow);
   const reassure = el("p", "flash-reassure-lite fineprint",
     "Safe to interrupt — you can’t brick it. If anything stops, just start again.");
   card.append(reassure);
@@ -6632,9 +6883,110 @@ function progressCard(title, subtitle) {
   // the bar sweeps instead of sitting frozen at its last value. Any set()
   // call takes the bar back.
   const setIndet = (on) => bar.classList.toggle("flash-bar-indet", !!on);
+  let lastBeat = 0;
 
   return {
     card,
+    // One blink per answer, at most ~6 a second so a fast stream reads as a
+    // steady pulse, not a strobe.
+    beat() {
+      clock.touch();
+      const now = performance.now();
+      if (now - lastBeat < 160) return;
+      lastBeat = now;
+      beatEl.classList.remove("is-on");
+      void beatEl.offsetWidth; // restart the animation
+      beatEl.classList.add("is-on");
+    },
+    // The install journey (core.installJourney): every step listed up front,
+    // ticked off with its real duration, the active one timing itself live,
+    // and the clock line saying what's left once a rate has been measured.
+    journey(steps, footnote) {
+      const list = el("ol", "flash-journey");
+      list.setAttribute("aria-label", "Install steps");
+      const rows = new Map();
+      for (const st of steps) {
+        const li = el("li", "flash-journey-step is-pending");
+        const mark = el("span", "flash-journey-mark");
+        mark.setAttribute("aria-hidden", "true");
+        const time = el("span", "flash-journey-time fineprint",
+          st.bytes > 0 && st.via !== "chip" ? core.formatBytes(st.bytes) : "");
+        li.append(mark, el("span", "flash-journey-label", st.label), time);
+        rows.set(st.key, { st, li, time, t0: 0, secs: 0, state: "pending" });
+        list.append(li);
+      }
+      stageRow.before(list);
+      if (footnote) list.after(el("p", "fineprint flash-journey-note", footnote));
+      const rates = { link: 0, net: 0 };
+      let active = null, curEta = null;
+      const set = (r, cls) => {
+        r.li.classList.remove("is-pending", "is-active", "is-done", "is-skipped");
+        r.li.classList.add(cls);
+        r.state = cls.slice(3);
+        if (cls === "is-active") r.li.setAttribute("aria-current", "step");
+        else r.li.removeAttribute("aria-current");
+      };
+      const api = {
+        start(key) {
+          const r = rows.get(key);
+          if (!r || r.state === "done") return;
+          if (active && active !== key) api.done(active);
+          active = key;
+          curEta = null;
+          r.t0 = performance.now();
+          set(r, "is-active");
+          r.time.textContent = "0:00";
+        },
+        done(key, note) {
+          const r = rows.get(key);
+          if (!r || r.state === "done") return;
+          if (r.t0) r.secs = (performance.now() - r.t0) / 1000;
+          set(r, "is-done");
+          r.time.textContent = (r.t0 ? core.clockFace(r.secs) : "") + (note ? ` · ${note}` : "");
+          if (active === key) { active = null; curEta = null; }
+        },
+        skip(key, note) {
+          const r = rows.get(key);
+          if (!r || r.state === "done") return;
+          set(r, "is-skipped");
+          r.time.textContent = note || "skipped";
+          if (active === key) { active = null; curEta = null; }
+        },
+        bytes(key, n) {
+          const r = rows.get(key);
+          if (r) r.st.bytes = n;
+        },
+        // A measured rate for a lane ("link" | "net") and the active step's own
+        // estimate. Rates only ever come from this install's own transfers.
+        rate(lane, bytesPerSec, etaSeconds) {
+          if (lane && bytesPerSec > 0) rates[lane] = bytesPerSec;
+          curEta = Number.isFinite(etaSeconds) ? etaSeconds : null;
+        },
+        active() { return active; },
+        eta() {
+          if (!active) return null;
+          return core.journeyEtaSeconds(steps, active, 0, rates, curEta);
+        },
+        finish() {
+          if (active) api.done(active);
+          return clock.seconds();
+        },
+        // "safety copy 0:21 · download 0:03 · write 0:34" for the done card.
+        summary() {
+          const parts = [];
+          for (const r of rows.values()) {
+            if (r.state === "done" && r.secs >= 1) parts.push(`${r.st.label.toLowerCase()} ${core.clockFace(r.secs)}`);
+          }
+          return parts.join(" · ");
+        },
+      };
+      clock.setEta(() => api.eta());
+      clock.onTick((now) => {
+        const r = active && rows.get(active);
+        if (r && r.t0) r.time.textContent = core.clockFace((now - r.t0) / 1000);
+      });
+      return api;
+    },
     stage(s) {
       clock.touch();
       stageEl.textContent = s;

@@ -9045,12 +9045,20 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
         # and saves it as a download, the desktop engine runs read-flash 0x0
         # <size> into its backups folder, and both restores write the file
         # back at offset 0. A safety copy that starts to skip NVS fails here
-        # until the docs follow.
+        # until the docs follow. #1902: the browser maps the chip first and
+        # reads every block not proven blank (the stub's MD5 equals that of
+        # all-0xFF), filling the proven-blank ones with 0xFF — still the whole
+        # flash in the file, and a block holding the key is never blank. With
+        # no map it reads everything from offset 0.
         js = (REPO / "canary-local/assets/flash.js").read_text(encoding="utf-8")
-        take = body_after(js, "async function takeBackup(box) {", r"\n}\n")
+        take = body_after(js, "async function takeBackup(box, journey) {", r"\n}\n")
         self.assertIn("const total = state.flashBytes;", take)
-        self.assertIn("await readFlashChunked(esploader, 0, total,", take)
+        self.assertIn("const bytes = new Uint8Array(total).fill(0xff);", take)
+        self.assertIn("const reads = blocks ? core.blankSkipReads(blocks) : [{ offset: 0, size: total }];", take)
+        self.assertIn("await readFlashChunked(esploader, span.offset, span.size,", take)
         self.assertIn("downloadBytes(bytes, name);", take)
+        core_js = (REPO / "canary-local/assets/flash-core.js").read_text(encoding="utf-8")
+        self.assertIn("filter((b) => b.blank !== true)", core_js)
         self.assertIn("a backup holds the board's \" +\n    \"identity key and saved WiFi", js)
         rescue = (REPO / "desktop/flash-engine/src/rescue.rs").read_text(encoding="utf-8")
         self.assertIn('pub fn read_flash_args(port: &str, size: u64, out: &str, baud: u32) -> Vec<String> {\n'

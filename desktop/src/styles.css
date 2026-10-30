@@ -1186,3 +1186,43 @@ html[data-density="minimal"] #density-toggle { color: var(--accent, #ffd44f); }
 @media (prefers-reduced-motion: reduce) {
   .op-progress .bar-fill.indet { animation-duration: 2.4s; }
 }
+/* The install journey (app.js journeyFor): every step up front, ticked off
+   with its real duration, the active one timing itself live — the browser
+   flasher's progressCard.journey, same rows, same words. */
+.op-journey { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 3px; }
+.op-journey li {
+  display: grid; grid-template-columns: 16px 1fr auto; gap: 8px; align-items: center;
+  color: var(--text-muted);
+}
+.op-journey .op-journey-mark {
+  width: 11px; height: 11px; border-radius: 50%; box-sizing: border-box;
+  border: 2px solid var(--border-strong); justify-self: center;
+}
+.op-journey .op-journey-time { white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 0.9em; }
+.op-journey li.is-active { color: var(--text); font-weight: 600; }
+.op-journey li.is-active .op-journey-mark {
+  border-color: var(--brand); border-top-color: transparent;
+  animation: op-journey-spin .9s linear infinite;
+}
+.op-journey li.is-done { color: var(--text); }
+.op-journey li.is-done .op-journey-mark { border-color: var(--success); background: var(--success); }
+.op-journey li.is-skipped { opacity: .6; }
+.op-journey li.is-skipped .op-journey-label { text-decoration: line-through; }
+.op-journey-note { margin: -4px 0 8px; color: var(--text-muted); font-size: 0.9em; }
+@keyframes op-journey-spin { to { transform: rotate(360deg); } }
+/* The heartbeat: blinks every time espflash or the board says anything. It
+   sits first in the stage row; the stage text takes the free space. */
+.op-beat {
+  flex: none; align-self: center; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--border-strong);
+}
+.op-progress .op-progress-row p:not(:last-child) { flex: 1; min-width: 0; }
+.op-beat.is-on { animation: op-beat .6s ease-out; }
+@keyframes op-beat {
+  0% { background: var(--success); transform: scale(1.5); }
+  100% { background: var(--border-strong); transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .op-journey li.is-active .op-journey-mark { animation-duration: 2.4s; }
+  .op-beat.is-on { animation: none; background: var(--success); }
+}

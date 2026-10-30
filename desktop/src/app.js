@@ -3755,6 +3755,11 @@ async function onFlash() {
       "kept as your undo, and it describes the board as it was before that first install, " +
       "not as it is now.";
   }
+  // Every step of this install, listed before the first one starts.
+  op.setJourney(installJourneySteps({
+    backup: !skipBackup && !!state.flashBytes && !(backupKey && state.backupsTaken[backupKey]),
+    erase: !!($("first-contact") && $("first-contact").checked),
+  }), lastInstallText(product.id));
   if (!skipBackup && state.flashBytes && !(backupKey && state.backupsTaken[backupKey])) {
     try {
       backupPath = await invoke("auto_backup_path", { mac: state.mac || "" });
@@ -3794,6 +3799,7 @@ async function onFlash() {
       // Absent when the copy was skipped or failed: no map, honestly.
       backupPath: backupPath || "",
     }), con);
+    if (op.journey) rememberInstallTime(product.id, op.journey.finish());
     state.vision.hostFlash = receipt;
     state.vision.hostBoot = null;
     resetSetupNetwork(); // this write's first boot prints the key fresh
@@ -5851,6 +5857,175 @@ const OP_STAGES = [
 ];
 const opRegistry = {}; // console element id → controller
 
+// ── the install journey: every step named up front, ticked off with its time ──
+// Parity with the browser flasher's progressCard.journey (flash-core.js
+// installJourney): the rows are listed before the first step starts, the
+// active one times itself live, finished ones keep their real duration, and
+// the clock line adds "about N left" once the active step's own bar gives a
+// rate. The desktop learns where it is from the same narration lines the op
+// strip already reads (JOURNEY_MARKS), so no backend change is needed.
+//   [line prefix, action, step key]
+const JOURNEY_MARKS = [
+  ["→ safety copy first", "start", "backup"],
+  ["✓ backup saved", "done", "backup"],
+  ["⚠ Couldn't take the safety copy", "skip", "backup"],
+  ["→ resolving", "start", "download"],
+  ["→ downloading", "start", "download"],
+  ["✓ release verified", "done", "download"],
+  ["✓ release checked", "done", "download"],
+  ["→ first contact", "start", "erase"],
+  ["✓ chip erased", "done", "erase"],
+  ["bytes staged", "write-unless-erase", "write"],
+  ["✓ chip write confirmed", "done", "write"],
+];
+
+function installJourneySteps({ backup, erase }) {
+  const steps = [];
+  if (backup) steps.push({ key: "backup", label: "Save a safety copy" });
+  steps.push({ key: "download", label: "Download and check the signed image" });
+  if (erase) steps.push({ key: "erase", label: "Erase the whole chip" });
+  steps.push({ key: "write", label: "Write the firmware and confirm it" });
+  return steps;
+}
+
+// "1:05" — one clock face for the strip and the rows.
+function clockFace(seconds) {
+  const s = Math.max(0, Math.floor(seconds || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// The same words as flash-core.js journeyClockLine.
+function journeyClockLine(elapsedSeconds, etaSeconds) {
+  const head = clockFace(elapsedSeconds);
+  if (etaSeconds == null || !Number.isFinite(etaSeconds)) return head;
+  if (etaSeconds < 5) return `${head} · almost done`;
+  if (etaSeconds < 60) return `${head} · about ${Math.max(5, Math.round(etaSeconds / 5) * 5)} s left overall`;
+  return `${head} · about ${clockFace(Math.round(etaSeconds))} left overall`;
+}
+
+// The last install of this product on this computer (per-viewer, never a
+// promise; the browser keeps its own under the same key name).
+const INSTALL_TIMES_KEY = "canary.flash.installTimes.v1";
+function installTimeKey(productId) {
+  return productId ? `${productId}|${state.chip || ""}|${state.flashBytes || 0}` : null;
+}
+function lastInstallText(productId) {
+  const k = installTimeKey(productId);
+  if (!k) return "";
+  try {
+    const secs = JSON.parse(localStorage.getItem(INSTALL_TIMES_KEY) || "{}")[k];
+    return secs > 0 ? `Last time on this computer the whole install took ${clockFace(secs)}.` : "";
+  } catch (_) { return ""; }
+}
+function rememberInstallTime(productId, seconds) {
+  const k = installTimeKey(productId);
+  if (!k || !(seconds > 0)) return;
+  try {
+    const all = JSON.parse(localStorage.getItem(INSTALL_TIMES_KEY) || "{}");
+    all[k] = Math.round(seconds);
+    localStorage.setItem(INSTALL_TIMES_KEY, JSON.stringify(all));
+  } catch (_) {}
+}
+
+function journeyFor(wrap, steps, note) {
+  wrap.querySelectorAll(".op-journey, .op-journey-note").forEach((n) => n.remove());
+  const list = document.createElement("ol");
+  list.className = "op-journey";
+  list.setAttribute("aria-label", "Install steps");
+  const rows = new Map();
+  for (const st of steps) {
+    const li = document.createElement("li");
+    li.className = "is-pending";
+    const mark = document.createElement("span"); mark.className = "op-journey-mark";
+    mark.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span"); label.className = "op-journey-label";
+    label.textContent = st.label;
+    const time = document.createElement("span"); time.className = "op-journey-time";
+    li.append(mark, label, time);
+    list.append(li);
+    rows.set(st.key, { st, li, time, t0: 0, secs: 0, state: "pending" });
+  }
+  wrap.prepend(list);
+  if (note) {
+    const p = document.createElement("p"); p.className = "op-journey-note"; p.textContent = note;
+    list.after(p);
+  }
+  const t0 = Date.now();
+  let active = null, fracAt = null; // fracAt: {t, f} where the active bar started counting
+  let eta = null;
+  const set = (r, cls) => {
+    r.li.className = cls;
+    r.state = cls.slice(3);
+    if (cls === "is-active") r.li.setAttribute("aria-current", "step");
+    else r.li.removeAttribute("aria-current");
+  };
+  const api = {
+    start(key) {
+      const r = rows.get(key);
+      if (!r || r.state === "done") return;
+      if (active && active !== key) api.done(active);
+      active = key; fracAt = null; eta = null;
+      r.t0 = Date.now();
+      set(r, "is-active");
+      r.time.textContent = "0:00";
+    },
+    done(key) {
+      const r = rows.get(key);
+      if (!r || r.state === "done") return;
+      if (r.t0) r.secs = (Date.now() - r.t0) / 1000;
+      set(r, "is-done");
+      r.time.textContent = r.t0 ? clockFace(r.secs) : "";
+      if (active === key) { active = null; eta = null; }
+    },
+    skip(key, why) {
+      const r = rows.get(key);
+      if (!r || r.state === "done") return;
+      set(r, "is-skipped");
+      r.time.textContent = why || "skipped";
+      if (active === key) { active = null; eta = null; }
+    },
+    // The active step's bar: a rate from its own progress, never a constant.
+    frac(f) {
+      if (!active || !(f > 0)) return;
+      const now = Date.now();
+      if (!fracAt || f < fracAt.f) { fracAt = { t: now, f }; return; }
+      const df = f - fracAt.f, dt = (now - fracAt.t) / 1000;
+      if (df > 0.02 && dt > 1) eta = (1 - f) * dt / df;
+    },
+    feed(line) {
+      const t = String(line).trim();
+      for (const [marker, action, key] of JOURNEY_MARKS) {
+        if (!t.startsWith(marker) && !(marker === "bytes staged" && t.includes(marker))) continue;
+        if (action === "start") api.start(key);
+        else if (action === "done") api.done(key);
+        else if (action === "skip") api.skip(key, "couldn't read — continuing");
+        else if (action === "write-unless-erase") {
+          if (active === "download") api.done("download");
+          if (!rows.has("erase")) api.start(key);
+        }
+        if (marker === "✓ chip erased") api.start("write");
+        return;
+      }
+    },
+    tick() {
+      const r = active && rows.get(active);
+      if (r && r.t0) r.time.textContent = clockFace((Date.now() - r.t0) / 1000);
+    },
+    // "left overall" only when nothing is left after the active step: espflash
+    // gives a rate for the step it is running, and a backup's or download's
+    // own estimate says nothing about the erase and write still to come.
+    clockLine(quiet) {
+      const last = steps.length && active === steps[steps.length - 1].key;
+      return journeyClockLine((Date.now() - t0) / 1000, quiet || !last ? null : eta);
+    },
+    finish() {
+      if (active) api.done(active);
+      return (Date.now() - t0) / 1000;
+    },
+  };
+  return api;
+}
+
 function opFor(con) {
   if (opRegistry[con.id]) return opRegistry[con.id];
   // The Canary flow's strip is static markup; every other console grows one
@@ -5878,6 +6053,22 @@ function opFor(con) {
     wrap.append(row, bar);
     con.before(wrap);
   }
+  // The heartbeat: blinks each time espflash or the board says anything, so
+  // "it's alive" is visible, not implied by the clock.
+  const beatEl = document.createElement("span");
+  beatEl.className = "op-beat";
+  beatEl.setAttribute("aria-hidden", "true");
+  beatEl.title = "blinks each time the board answers";
+  stageEl.before(beatEl);
+  let lastBeat = 0;
+  const beat = () => {
+    const now = Date.now();
+    if (now - lastBeat < 160) return;
+    lastBeat = now;
+    beatEl.classList.remove("is-on");
+    void beatEl.offsetWidth;
+    beatEl.classList.add("is-on");
+  };
   let t0 = 0, lastSignal = 0, ticker = null;
   const mmss = (ms) => {
     const s = Math.floor(ms / 1000);
@@ -5885,7 +6076,15 @@ function opFor(con) {
   };
   const ctl = {
     active: false,
+    journey: null,
+    // List the install's steps up front (journeyFor); null clears it.
+    setJourney(steps, note) {
+      wrap.querySelectorAll(".op-journey, .op-journey-note").forEach((n) => n.remove());
+      this.journey = steps ? journeyFor(wrap, steps, note) : null;
+      return this.journey;
+    },
     begin(stageText) {
+      this.setJourney(null); // a journey belongs to one run; the flow that wants one sets it after begin()
       this.active = true;
       t0 = lastSignal = Date.now();
       wrap.classList.remove("hidden");
@@ -5897,13 +6096,17 @@ function opFor(con) {
       ticker = setInterval(() => {
         if (!this.active) { clearInterval(ticker); return; }
         const now = Date.now();
-        elapsedEl.textContent = mmss(now - t0) +
-          (now - lastSignal > 8000 ? " — still working" : "");
+        const quiet = now - lastSignal > 8000;
+        if (this.journey) this.journey.tick();
+        elapsedEl.textContent = (this.journey ? this.journey.clockLine(quiet) : mmss(now - t0)) +
+          (quiet ? " — still working" : "");
       }, 1000);
     },
-    stage(text) { lastSignal = Date.now(); stageEl.textContent = text; },
+    stage(text) { lastSignal = Date.now(); beat(); stageEl.textContent = text; },
     frac(f) {
       lastSignal = Date.now();
+      beat();
+      if (this.journey) this.journey.frac(f);
       fillEl.classList.remove("indet");
       fillEl.style.width = (Math.max(0, Math.min(1, f)) * 100).toFixed(1) + "%";
     },
@@ -5912,6 +6115,7 @@ function opFor(con) {
     // flash's own narration becomes the stage.
     feedLine(line) {
       if (!this.active) return;
+      if (this.journey) this.journey.feed(line);
       const f = progressFromFrame(line);
       if (f != null) { this.frac(f); return; }
       const t = String(line).trim();
@@ -5924,6 +6128,7 @@ function opFor(con) {
         return;
       }
       lastSignal = Date.now(); // any output at all is a sign of life
+      beat();
     },
     end() {
       this.active = false;
