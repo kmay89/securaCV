@@ -1,6 +1,28 @@
 # Changelog
 
 ## [Unreleased]
+
+## [2.4.19] - 2026-10-30
+
+> **Before you update.** Nothing to do first.
+> A Canary Glance AMOLED on a V2 board whose glass stayed black: install 2.4.19 with Flasher 0.12.4, Lab 0.3.4 or the browser flasher.
+
+### release: the 2.4.19 train (Flasher 0.12.4, Lab 0.3.4)
+
+- **What to do after updating.** Nothing on any Canary. A Canary Glance
+  AMOLED (Waveshare ESP32-S3-Touch-AMOLED-2.41, V2 board) that never lit:
+  install 2.4.19 over USB, then open the flasher's serial monitor. It should
+  print `first light 2/5: panel reset released (TCA9554 EXIO0 reads high)`
+  and the splash should light. If the colors look swapped or the picture is
+  mirrored, that is a one-line fix: say so. Built by CI; not yet booted on
+  our bench.
+- **What is in it.** The Glance AMOLED's V2 panel reset and Waveshare's V2
+  init (below), its learned PWR key and first-light trace, and Vision's and
+  the Sentinel's module truth (F384).
+- **Flasher 0.12.4 and Lab 0.3.4** carry the 2.4.19 catalog, so their
+  Canary Glance AMOLED install is the one that lights a V2 glass. The
+  browser flasher picks it up when the release redeploys the site.
+
 ### The Glance AMOLED lights on a V2 board: its panel reset rides the IO expander, and nothing held it high
 
 - **The black glass, found.** On the Waveshare ESP32-S3-Touch-AMOLED-2.41

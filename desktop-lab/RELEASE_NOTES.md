@@ -16,6 +16,25 @@ version, newest first. Same contract as the Flasher's
 
 Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
+## 0.3.4 — 2026-10-30
+
+**The 2.4.19 firmware catalog is baked in, so a Canary Glance AMOLED on a
+V2 board lights, and update notes read as one line per change.**
+
+- **Firmware 2.4.19 on the Flash page.** On the Canary Glance AMOLED
+  (Waveshare ESP32-S3-Touch-AMOLED-2.41), a V2 board's glass stayed black
+  on every earlier release: its panel reset sits on the board's IO
+  expander, and nothing drove it. Install 2.4.19 from here and the serial
+  monitor should say `first light 2/5: panel reset released`. Nothing to do
+  first on any other Canary. Built by CI; not yet booted on our bench.
+- **A Canary Vision whose camera module never answered is refused** on the
+  bench, not passed: its boot check reads the module's own yes or no from
+  2.4.19 on.
+- **An Arduino sketch reads as one.** A board running an Arduino sketch, or
+  a SecuraCV release up to 2.4.17, no longer shows the Arduino core's own
+  name and version as its firmware.
+- **The update dialog lists one line per change,** each opening on a click.
+
 ## 0.3.3 — 2026-10-28
 
 **The 2.4.18 firmware catalog is baked in, and the Flash page refuses an

@@ -17,6 +17,26 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.12.4 — 2026-10-30
+
+**The 2.4.19 firmware catalog is baked in, so a Canary Glance AMOLED on a
+V2 board lights, and update notes read as one line per change.**
+
+- **Firmware 2.4.19 in the picker.** On the Canary Glance AMOLED
+  (Waveshare ESP32-S3-Touch-AMOLED-2.41), a V2 board's glass stayed black
+  on every earlier release: its panel reset sits on the board's IO
+  expander, and nothing drove it. Install 2.4.19 from here and the serial
+  monitor should say `first light 2/5: panel reset released`. Nothing to do
+  first on any other Canary. Built by CI; not yet booted on our bench.
+- **A Canary Vision whose camera module never answered is refused,** not
+  passed: the boot check reads the module's own yes or no from 2.4.19 on,
+  and an older image's ERROR line still fails it.
+- **An Arduino sketch reads as one.** A board running an Arduino sketch, or
+  a SecuraCV release up to 2.4.17, no longer shows the Arduino core's own
+  name and version as its firmware.
+- **The "an update is ready" banner lists one line per change.** Each line
+  opens on a click, instead of a wall of cut-off lines.
+
 ## 0.12.3 — 2026-10-28
 
 **The 2.4.18 firmware catalog is baked in, a board on 2.4.18 says what it
