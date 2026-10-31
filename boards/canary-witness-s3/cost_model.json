@@ -2,13 +2,13 @@
   "generated_by": "scripts/gen_board_design.py",
   "board": "canary-witness-s3",
   "confidence": "idea",
-  "pricing_as_of": "2026-09-02T13:37:16Z",
+  "pricing_as_of": "2026-10-31T15:18:22Z",
   "qty_basis": 1000,
   "carrier": {
-    "parts_usd": 9.6806,
+    "parts_usd": 9.6795,
     "pcb_usd": 0.8,
     "assembly_usd": 1.2,
-    "unit_usd": 11.6806,
+    "unit_usd": 11.6795,
     "lines": [
       {
         "ref": "U1",
@@ -134,8 +134,8 @@
         "ref": "R-DIV",
         "mpn": "RC0805FR-07100KL",
         "qty": 2,
-        "unit_usd": 0.0103,
-        "ext_usd": 0.0206,
+        "unit_usd": 0.0097,
+        "ext_usd": 0.0195,
         "provenance": "digikey",
         "verified": true,
         "price_at_qty": 1000,
@@ -182,7 +182,7 @@
   },
   "module_build_replaced": {
     "csv": "bom_canary_wap.csv",
-    "unit_usd": 16.2587,
+    "unit_usd": 16.2576,
     "lines": [
       {
         "ref": "U1",
@@ -202,8 +202,8 @@
         "qty": 1,
         "unit_usd": 0.0446,
         "ext_usd": 0.0446,
-        "provenance": "carried",
-        "verified": false,
+        "provenance": "digikey",
+        "verified": true,
         "price_at_qty": 500,
         "volume_matched": false,
         "why": "buzzer drive MOSFET — placed on the carrier"
@@ -272,8 +272,8 @@
         "ref": "R4,R5",
         "mpn": "RC0805FR-07100KL",
         "qty": 2,
-        "unit_usd": 0.0103,
-        "ext_usd": 0.0206,
+        "unit_usd": 0.0097,
+        "ext_usd": 0.0195,
         "provenance": "digikey",
         "verified": true,
         "price_at_qty": 1000,
@@ -340,12 +340,11 @@
   },
   "confidence_accounting": {
     "note": "Share of the compared dollars that a distributor actually resolved this snapshot, versus a human's stated estimate. Read the saving with this number next to it.",
-    "priced_usd": 25.9393,
-    "distributor_verified_usd": 16.2347,
-    "estimated_usd": 9.7046,
-    "verified_share": 0.6259,
+    "priced_usd": 25.9371,
+    "distributor_verified_usd": 16.2771,
+    "estimated_usd": 9.66,
+    "verified_share": 0.6276,
     "unverified_mpns": [
-      "2N7002",
       "AP2112K-3.3TRG1",
       "DM3AT-SF-PEJM5",
       "ESP32-S3-WROOM-1-N8R8",
