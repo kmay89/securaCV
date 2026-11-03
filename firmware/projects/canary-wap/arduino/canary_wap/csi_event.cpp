@@ -371,14 +371,25 @@ void coarsen_time_fields(csi_event_values_t* v) {
 
 /* Strings entering the ring must be ASCII printable + nul. Anything else
  * gets replaced with '?' so a buggy module can't smuggle binary side-data
- * through. Length is bounded by the field type. */
+ * through. Length is bounded by the field type.
+ *
+ * And no '"', '\\' or '{' either (sweep F301): every writer of a ring row
+ * spells its strings with %s, unescaped (the SD log line, csi_event_log_line.h
+ * marshal(); the MQTT events body, csi_event_wire.h; the REST rows,
+ * csi_integration.cpp), so a quote ended the string early and a backslash
+ * began an escape, and the line or body was no longer JSON. The card's reader
+ * refuses each of the three on the next load (a backslash by name_byte(), a
+ * '{' as a second record's start, a quote by the byte after it), so a row the
+ * chokepoint let through was written live and refused at the next boot.
+ * Every byte this leaves is one the reader takes back. Host-tested in
+ * csi_event_invariants_test.cpp. */
 void sanitize_string_field(char* s, size_t cap) {
   bool seen_nul = false;
   for (size_t i = 0; i < cap; ++i) {
     if (seen_nul) { s[i] = '\0'; continue; }
     char c = s[i];
     if (c == '\0') { seen_nul = true; continue; }
-    if (c < 0x20 || c > 0x7e) s[i] = '?';
+    if (c < 0x20 || c > 0x7e || c == '"' || c == '\\' || c == '{') s[i] = '?';
   }
   s[cap - 1] = '\0';
 }

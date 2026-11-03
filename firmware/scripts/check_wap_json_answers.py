@@ -2165,31 +2165,39 @@ RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
          'rec->values.confidence[0] ? rec->values.confidence : ""',
          'rec->values.dominant_signal[0] ? rec->values.dominant_signal : ""',
          'rec->values.state_name[0] ? rec->values.state_name : ""'),
-        "an events-log line on the card, not an answer: a live record's names are the CSI modules' own "
-        "labels; a record read back from the card (a restored ring row a dismissal rewrites) passed "
+        "an events-log line on the card, not an answer: a live record's module and type ids are the "
+        "registered manifests' literals and its labels came through the chokepoint, whose "
+        "sanitize_string_field() leaves printable ASCII with no '\"', '\\' or '{' (sweep F301); a record "
+        "read back from the card (a restored ring row a dismissal rewrites) passed "
         "csi_event_log_line::parse(), which refuses a line whose string field holds a backslash or a byte "
-        "outside printable ASCII (sweep F264; json_str() stops at a quote), so every name it spells needs "
-        "no escape; marshal() returns 0 on a cut line"),
+        "outside printable ASCII (sweep F264) or ends before marshal() ends one (F301), so every name it "
+        "spells needs no escape; marshal() returns 0 on a cut line"),
+    ("csi_event_log_line.h", "key_once"): (
+        ("key",),
+        "not a text: the strstr() needle a card line is searched for (sweep F301), one of kKeys' literal "
+        "keys between a quote and `\":`; a needle that does not fit refuses the line"),
     ("csi_event_wire.h", "build_event_body"): (
         ('module_id ? module_id : ""', "sig_b64", "sig_kv", 'signer.alg ? signer.alg : ""',
          "signer.fingerprint_hex", "state_s", 'type_name ? type_name : ""',
          'values->confidence[0] ? values->confidence : "tentative"'),
-        "the MQTT events body (host-tested in firmware/tests_host): a live record's module and state names "
-        "are the modules' labels, the signature base64url, the fingerprint hex, the algorithm a constant; "
-        "sig_kv is the piece this function spells itself; a cut body returns 0. A record the backfill "
-        "reads back from the card (csi_event_backfill.h, through csi_mqtt::publish_event_row()) passed "
-        "csi_event_log_line::parse(), which refuses a line whose string field holds a backslash or a byte "
-        "outside printable ASCII (sweep F264): the walk skips and counts such a line and sends the rows "
-        "behind it"),
+        "the MQTT events body (host-tested in firmware/tests_host): a live record's module and type ids "
+        "are the registered manifests' literals and its state and confidence came through the chokepoint "
+        "(no '\"', '\\' or '{', sweep F301), the signature base64url, the fingerprint hex, the algorithm "
+        "a constant; sig_kv is the piece this function spells itself; a cut body returns 0. A record the "
+        "backfill reads back from the card (csi_event_backfill.h, through csi_mqtt::publish_event_row()) "
+        "passed csi_event_log_line::parse(), which refuses a line whose string field holds a backslash or "
+        "a byte outside printable ASCII (sweep F264) or ends before marshal() ends one (F301): the walk "
+        "skips and counts such a line and sends the rows behind it"),
     ("csi_event_wire.h", "build_tamper_bridge_body"): (
         ("values->state_name",),
         "the tamper bridge body: only for system.integrity's tamper events, whose state names are "
         "tamper_events_module's literal kinds"),
     ("csi_integration.cpp", "handle_events_today"): (
         ("active", "r->module_id", "r->type_name", "r->values.confidence", "r->values.state_name"),
-        "GET /api/events/today, chunked: rows from the event ring (the modules' labels; a row the "
-        "boot load restored from the card passed csi_event_log_line::parse(), which refuses a backslash or "
-        "a byte outside printable ASCII in its strings, sweep F264) and active, "
+        "GET /api/events/today, chunked: rows from the event ring (the modules' labels, through the "
+        "chokepoint's sanitize_string_field(): no '\"' or '\\', sweep F301; a row the boot load restored "
+        "from the card passed csi_event_log_line::parse(), which refuses a backslash or a byte outside "
+        "printable ASCII in its strings, sweep F264, and a string a quote cut short, F301) and active, "
         "tamper_events_active_kind()'s literal kinds; each row is length-tested and a cut one skipped"),
     ("csi_integration.cpp", "handle_pair_token"): (
         ("hex",),
@@ -2200,8 +2208,9 @@ RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
         "<>+-:,./), tz_iana only when it names a zone in tz_rule's table"),
     ("csi_integration.cpp", "handle_stream"): (
         ("s->module_id", "s->type_name", "s->values.confidence", "s->values.state_name", "supply"),
-        "the stream answer: the modules' labels, and supply, the JSON piece this function spells itself "
-        "from numbers and true/false"),
+        "the stream answer: the modules' labels, through the chokepoint's sanitize_string_field() (no "
+        "'\"' or '\\', sweep F301), and supply, the JSON piece this function spells itself from numbers "
+        "and true/false"),
     ("csi_integration.cpp", "handle_tune_get_preset"): (
         ("c.full_key",),
         "GET /api/tune/preset, chunked: each row's key is the coefficient table's literal full key "
