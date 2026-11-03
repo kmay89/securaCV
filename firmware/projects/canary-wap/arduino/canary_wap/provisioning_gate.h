@@ -442,6 +442,9 @@ inline size_t peer_key_text(const uint8_t key[PEER_KEY_LEN], char* out, size_t c
 // tap, a page or curl started after it, a bare re-tap after a 409) still
 // goes to the first asker, a poller included, which is why the WAP's 409
 // says to start the request first and keep it asking, then press BOOT;
+// a page that stopped asking is off the record, and a browser can freeze
+// a phone's page when its screen locks, which is why the flagship's banner
+// keeps asking from a hidden tab and says to keep a phone's screen on;
 // hosts behind one address are one asker; a host that keeps the one web
 // server busy for longer than the lookback before the tap can hide the
 // owner's earlier ask; and a host that asks at least once every

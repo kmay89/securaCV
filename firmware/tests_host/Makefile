@@ -647,9 +647,9 @@ DASHGATES_JS = test_canary_dashboard_gates.test.js
 
 # That dashboard's unlock banner and the BOOT tap (repo sweep F354): the
 # banner asks first, polling GET /api/provisioning-receipt from before the
-# press, takes the receipt's token without a reload, says so on a 409, and
-# stops on its window, on pagehide and while the tab is hidden, one timer and
-# one request at a time. Its two-asker cases meet the firmware's own tap
+# press, takes the receipt's token without a reload, says so on a 409,
+# keeps asking from a hidden tab and stops on its window and on pagehide,
+# one timer and one request at a time. Its two-asker cases meet the firmware's own tap
 # step: tap_step_oracle.cpp compiles provisioning_gate_take(), cut from
 # securacv_network.cpp (TAPSTEP_INC, the cut SECAUTH_NET_SIGS also takes),
 # over the real provisioning_gate.h, and the test drives it by

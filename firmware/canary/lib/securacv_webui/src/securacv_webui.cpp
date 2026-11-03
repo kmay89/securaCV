@@ -1006,15 +1006,16 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
          this page WITHOUT the bearer credential — a home-network request that
          carried no grant. The pasted token lives in a JS variable only. It
          asks first (sweep F354): while it is shown after the page loads, it
-         asks the Canary for the token every 2 s for one minute, and the line
-         below says when to press, because a tap goes to the one address
-         asking. -->
+         asks the Canary for the token every 2 s for one minute, hidden tab
+         or not, and the line below says when to press, because a tap goes
+         to the one address asking. -->
     <div class="card" id="lanLockBanner" style="display:none;border-color:var(--warning);">
       <div class="card-title">This dashboard is locked on your home network</div>
       <div class="card-subtitle" style="margin-top:0.35rem;">
         Keep this page open, then tap BOOT on the Canary when the line below says to:
         this page asks the Canary for its token first, and a tap goes to the one device
-        asking. Or open this page over the Canary's own Wi-Fi (that unlock only exists
+        asking. On a phone, keep the screen on until this page unlocks: a locked phone
+        may stop asking. Or open this page over the Canary's own Wi-Fi (that unlock only exists
         while the Canary's network is broadcasting), or paste the token from your recovery kit.
       </div>
       <div class="card-subtitle" id="lanTapStatus" aria-live="polite" style="margin-top:0.35rem;"></div>
@@ -2901,8 +2902,12 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // GET /api/provisioning-receipt with the bearer (or, on the LAN without
     // one, after a BOOT tap) and hand it to the browser as a download.
     async function saveRecoveryKit() {
+      // What THIS request sends decides what its 403 means, not what the
+      // page holds when the answer comes back: the banner's poll can take
+      // the tap while a credential-less ask of the kit's is still out.
+      const sent = sentToken();
       const hdrs = {};
-      if (!tokenIsMissing()) hdrs['Authorization'] = 'Bearer ' + CV_TOKEN;
+      if (sent) hdrs['Authorization'] = 'Bearer ' + sent;
       try {
         const res = await fetch(API_BASE + '/api/provisioning-receipt', { headers: hdrs, cache: 'no-store' });
         if (res.status === 409) {
@@ -2917,7 +2922,13 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           let err = '';
           try { err = JSON.parse(await res.text()).error; } catch (e) { err = ''; }
           if (err === 'host') { alert(TAP_HOST_TEXT); return; }
-          if (tokenIsMissing()) {
+          if (!sent && !tokenIsMissing()) {
+            // This ask carried no token, and the page unlocked while it was
+            // out (the banner's poll took the tap): ask again with the token.
+            // The retry sends it, so it never comes back here.
+            return saveRecoveryKit();
+          }
+          if (!sent) {
             startTapPoll();
             alert('This page has no token yet. Keep it open, then short-tap BOOT on the Canary ' +
                   'when the line in the banner at the top says to: the tap goes to the one device ' +
@@ -2959,18 +2970,29 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     // Canary handed out nothing: the poll stops and says so. The window is
     // bounded and its button opens a new one, because a page that asked
     // forever would contend every tap the owner's other clients ask for.
-    // One timer and one request at a time (a window's number retires the
-    // answer to an older window; a receipt is taken whichever window asked
-    // for it, since the tap is spent on it), no ask while the tab is hidden
-    // (the window resumes when it shows again), and none once the page goes
-    // away (pagehide).
+    // The poll runs one timer and one request at a time (a window's number
+    // retires the answer to an older window; a receipt is taken whichever
+    // window asked for it, since the tap is spent on it). Save recovery kit
+    // may ask beside it, from the same address, which never contends. An ask
+    // with no answer in TAP_ASK_TIMEOUT_MS is given up (it counts as no
+    // answer), so a request that never settles cannot freeze the window,
+    // and an ask with no answer puts the line back to "don't press yet"
+    // until the Canary answers again. It keeps asking while the tab is
+    // hidden: the window is already bounded, and a page that stopped while
+    // its line said "press" would leave a host that polls the receipt the
+    // one asker for a press made from another tab (a phone that locks its
+    // screen can freeze the page anyway, which the banner's copy says). It
+    // stops once the page goes away (pagehide), and a page the browser
+    // brings back from its back/forward cache opens a new window.
     const TAP_POLL_MS = 2000;
     const TAP_POLL_TICKS = 30;
+    const TAP_ASK_TIMEOUT_MS = 10000;
     const TAP_HOST_TEXT = 'The Canary does not hand out its token under the name this page was ' +
                           'opened with. Open it by the Canary\'s IP address or its .local name.';
-    let tapPollState = 'idle';   // 'idle' | 'running' | 'paused' (the tab is hidden)
+    let tapPollState = 'idle';   // 'idle' | 'running'
     let tapPollGen = 0;
-    let tapPollTimer = 0;
+    let tapPollTimer = 0;        // the next ask, set only while no ask is out
+    let tapAskTimer = 0;         // the ask out's deadline, set only while it is out
     let tapPollAsking = false;
     let tapPollLeft = 0;
     let tapPollAnswered = false;
@@ -2994,12 +3016,18 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (tapPollTimer) clearTimeout(tapPollTimer);
       tapPollTimer = 0;
     }
-    // The page holds a token: the banner is hidden, and the poll is done.
-    // Its line is cleared and its button left on offer, for the day the
-    // banner shows again (a token the Canary later refuses is dropped).
+    // The page holds a token (the banner is hidden), or the page is going
+    // away: the poll is done. Its line is cleared and its button left on
+    // offer, for the day the banner shows again (a token the Canary later
+    // refuses is dropped; a page brought back from the back/forward cache).
     function tapPollDone() {
       stopTapPoll();
       tapLine('', true);
+    }
+    // A page the browser brings back from its back/forward cache asks
+    // again, as a fresh page load does.
+    function tapPollShown(ev) {
+      if (ev && ev.persisted && tokenIsMissing()) startTapPoll();
     }
     function startTapPoll() {
       if (tapPollState !== 'idle' || !tokenIsMissing()) return;
@@ -3027,18 +3055,22 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       tapPollTimer = 0;
       if (tapPollState !== 'running' || tapPollAsking) return;
       if (!tokenIsMissing()) { tapPollDone(); return; }
-      if (document.hidden) { tapPollState = 'paused'; return; }
       const gen = tapPollGen;
       let status = 0;
       let text = '';
       tapPollAsking = true;
+      const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+      if (ctl) tapAskTimer = setTimeout(() => { tapAskTimer = 0; ctl.abort(); }, TAP_ASK_TIMEOUT_MS);
       try {
-        const res = await fetch(API_BASE + '/api/provisioning-receipt', { cache: 'no-store' });
+        const res = await fetch(API_BASE + '/api/provisioning-receipt',
+                                { cache: 'no-store', signal: ctl ? ctl.signal : undefined });
         status = res.status;
         text = await res.text();
       } catch (e) {
-        status = 0;   // no answer: this tick counts, and the window goes on
+        status = 0;   // no answer (or none in time): this tick counts, and the window goes on
       }
+      if (tapAskTimer) clearTimeout(tapAskTimer);
+      tapAskTimer = 0;
       tapPollAsking = false;
       if (status === 200 && tokenIsMissing() && adoptReceiptToken(text)) {
         tapPollDone();   // unlocked where it stands: the token stays in this tab only
@@ -3063,6 +3095,8 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           tapPollAnswered = true;
           if (Number.isFinite(body.gate_ttl_seconds)) tapPollHeld = body.gate_ttl_seconds;
         }
+      } else if (status === 0) {
+        tapPollAnswered = false;   // this ask may not have reached the Canary: not on record
       }
       tapPollLeft--;
       if (tapPollLeft <= 0) {
@@ -3079,18 +3113,6 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           '(the Canary holds a press for ' + tapPollHeld + 's).'
         : "Asking the Canary first. Don't press BOOT yet: " + left + 's left.', false);
       tapPollNext();
-    }
-    function tapPollVisibility() {
-      if (document.hidden) {
-        if (tapPollState === 'running') {
-          tapPollState = 'paused';
-          if (tapPollTimer) clearTimeout(tapPollTimer);
-          tapPollTimer = 0;
-        }
-      } else if (tapPollState === 'paused') {
-        tapPollState = 'running';
-        if (!tapPollAsking) tapPollTick();   // an answer still out schedules the next ask
-      }
     }
 
     // API calls
@@ -6892,10 +6914,11 @@ const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     updateResolutionUI();
     setInterval(refreshStatus, 2000);
     // The unlock banner asks first (sweep F354): a page served without the
-    // token starts its one-minute tap window now, pauses it while the tab is
-    // hidden, and drops it when the page goes away.
-    document.addEventListener('visibilitychange', tapPollVisibility);
-    window.addEventListener('pagehide', stopTapPoll);
+    // token starts its one-minute tap window now and asks through it, hidden
+    // tab or not; the window ends when the page goes away, and a page the
+    // browser brings back from its back/forward cache opens a new one.
+    window.addEventListener('pagehide', tapPollDone);
+    window.addEventListener('pageshow', tapPollShown);
     if (tokenIsMissing()) startTapPoll();
     /* Live sensing updates only matter when the user is actually on
      * the Status tab — every 2 s is plenty (matches the existing

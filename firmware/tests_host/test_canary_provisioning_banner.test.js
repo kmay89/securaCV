@@ -16,12 +16,21 @@
 //   - a 200 sets CV_TOKEN from the receipt's token, with no reload, hides
 //     the banner and stops the poll;
 //   - a 409 says another device asked, and stops the poll;
-//   - the poll stops when its one-minute window closes, on pagehide, and
-//     asks nothing while the tab is hidden; it never runs two timers or two
-//     requests at once, however often its button is pressed or the tab is
-//     hidden and shown again;
+//   - the poll stops when its one-minute window closes and on pagehide
+//     (clearing its line and offering its button), and a page brought back
+//     from the back/forward cache asks again; it keeps asking while the tab
+//     is hidden, within that window, since a page that stopped while its
+//     line said "press" would leave a host polling the receipt the one
+//     asker (a draft that paused while hidden handed a press made 12 s
+//     into the hidden period to the host); an ask that never answers is given up after
+//     10 s, and the line goes back to "don't press yet"; it never runs two
+//     timers or two requests at once, however often its button is pressed
+//     or the tab is hidden and shown again;
 //   - Save recovery kit, on a page with no token, starts the same poll and
-//     says to press when the banner says to, never "tap, then try again".
+//     says to press when the banner says to, never "tap, then try again";
+//     its credential-less ask that the poll's tap overtakes asks again with
+//     the token, instead of saying the Canary refused a token it never
+//     sent.
 // The two-asker cases run the dashboard's own poll against the firmware's
 // own tap step: tap_step_oracle.cpp, which compiles provisioning_gate_take()
 // cut verbatim from securacv_network.cpp over the real provisioning_gate.h
@@ -155,8 +164,9 @@ const flush = async () => { for (let i = 0; i < 8; i++) await new Promise((r) =>
 // One dashboard tab served WITHOUT the token (the home-LAN page), its page
 // load an ask at 0 ms (page_token_inject asks the same step), then its
 // initialize block run. `answer(url, opts, now)` (default: the device for
-// A's peer) answers each fetch; `latency` delays every answer.
-function page({ dev = device(), peer = () => A_PEER, latency = 0, answer = null } = {}) {
+// A's peer) answers each fetch; `latency` delays every answer; `hang(n)`
+// true leaves the n-th fetch (1-based) unanswered until its signal aborts.
+function page({ dev = device(), peer = () => A_PEER, latency = 0, answer = null, hang = null } = {}) {
   const els = {};
   const el = (id) => els[id] || (els[id] = {
     id, style: { display: id === "lanLockBanner" ? "none" : "" }, textContent: "", value: "",
@@ -186,6 +196,7 @@ function page({ dev = device(), peer = () => A_PEER, latency = 0, answer = null 
     console, document: doc, alert: (m) => alerts.push(String(m)),
     location: { reload: () => { reloads++; } },
     window: { addEventListener: (type, fn) => { (listeners.window[type] = listeners.window[type] || []).push(fn); } },
+    AbortController,
     URL: { createObjectURL: () => "blob:0", revokeObjectURL() {} },
     Blob: function Blob() {},
     setInterval: () => 0, clearInterval() {},
@@ -201,6 +212,13 @@ function page({ dev = device(), peer = () => A_PEER, latency = 0, answer = null 
       fetches.push({ url, at: now, auth });
       inFlight++;
       maxInFlight = Math.max(maxInFlight, inFlight);
+      const signal = opts.signal || null;
+      if (hang && hang(fetches.length)) {
+        // The request never reaches the device's handler.
+        return new Promise((resolve, reject) => {
+          if (signal) signal.addEventListener("abort", () => { inFlight--; reject(new Error("aborted")); });
+        });
+      }
       const res = answer ? answer(url, opts, now)
         : url === "/api/provisioning-receipt" && !auth ? dev.answer(dev.ask(peer(), now, "A"))
           : { status: 200, body: RECEIPT };
@@ -209,8 +227,18 @@ function page({ dev = device(), peer = () => A_PEER, latency = 0, answer = null 
         text: async () => res.body, json: async () => JSON.parse(res.body),
       };
       if (!latency) { inFlight--; return Promise.resolve(reply); }
-      return new Promise((resolve) => {
-        harness.push({ at: now + latency, fn: () => { inFlight--; resolve(reply); } });
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const due = { at: now + latency, fn: () => { if (!settled) { settled = true; inFlight--; resolve(reply); } } };
+        harness.push(due);
+        if (signal) {
+          signal.addEventListener("abort", () => {
+            if (settled) return;
+            settled = true;
+            inFlight--;
+            reject(new Error("aborted"));
+          });
+        }
       });
     },
   };
@@ -262,7 +290,7 @@ function page({ dev = device(), peer = () => A_PEER, latency = 0, answer = null 
       now = until;
     },
     at(t, fn) { harness.push({ at: t, fn }); },
-    fire(target, type) { for (const fn of (listeners[target][type] || [])) fn(); },
+    fire(target, type, ev = {}) { for (const fn of (listeners[target][type] || [])) fn(ev); },
     async setHidden(hidden) { doc.hidden = hidden; p.fire("document", "visibilitychange"); await flush(); },
   };
   return p;
@@ -429,30 +457,95 @@ test("the window closes after one minute of asks, and the button opens a new one
   assert.ok(!p.again(), "and hides itself while it asks");
 });
 
-test("pagehide stops the poll", async () => {
+test("pagehide stops the poll, clears its line and offers its button", async () => {
   const p = page();
   await p.start();
   await p.advance(4000);
+  assert.match(p.line(), /Now short-tap BOOT/, "the line said to press while the page was asking");
   const asks = p.receiptAsks().length;
-  p.fire("window", "pagehide");
+  p.fire("window", "pagehide", { persisted: true });
   assert.strictEqual(p.timers.size, 0, "no timer left after pagehide");
+  assert.strictEqual(p.line(), "", "the line no longer says to press");
+  assert.ok(p.again(), "and the button to ask again is on offer");
   await p.advance(120000);
   assert.strictEqual(p.receiptAsks().length, asks, "nothing asked after pagehide");
+  // Brought back from the back/forward cache, the page opens a new window,
+  // as a page load does; a first show (not from the cache) asks nothing more.
+  p.fire("window", "pageshow", { persisted: false });
+  await flush();
+  assert.strictEqual(p.receiptAsks().length, asks, "a first show starts nothing");
+  p.fire("window", "pageshow", { persisted: true });
+  await flush();
+  assert.strictEqual(p.receiptAsks().length, asks + 1, "a page restored from the cache asks at once");
+  assert.match(p.line(), /Now short-tap BOOT/, "and says to press once the Canary has answered");
+  await p.advance(120000);
+  assert.strictEqual(p.receiptAsks().length, asks + 30, "one more window of 30 asks, then it stops");
+  assert.strictEqual(p.timers.size, 0);
 });
 
-test("a hidden tab asks nothing, and the window resumes when it shows", async () => {
+test("a hidden tab keeps asking for the rest of its window, then stops", async () => {
   const p = page();
   await p.start();
   await p.advance(5000);   // asks at 0, 2000, 4000
   await p.setHidden(true);
-  assert.strictEqual(p.timers.size, 0, "hiding the tab clears the timer");
+  assert.strictEqual(p.timers.size, 1, "hiding the tab keeps the next ask");
   await p.advance(600000);
-  assert.strictEqual(p.receiptAsks().length, 3, "ten hidden minutes: no ask");
+  const at = p.receiptAsks().map((f) => f.at);
+  assert.strictEqual(at.length, 30, "ten hidden minutes: the window's 30 asks and no more");
+  assert.deepStrictEqual(at, Array.from({ length: 30 }, (_, i) => 2000 * i), "every 2 s while hidden");
+  assert.strictEqual(p.timers.size, 0, "no timer left once the window closed");
+  assert.match(p.line(), /Didn't see a tap/);
   await p.setHidden(false);
-  assert.strictEqual(p.receiptAsks().length, 4, "shown again: it asks at once");
-  await p.advance(120000);
-  assert.strictEqual(p.receiptAsks().length, 30, "and the window's 30 asks are all it makes");
+  await flush();
+  assert.strictEqual(p.receiptAsks().length, 30, "shown again: nothing until the button is clicked");
+});
+
+// The owner's dashboard sits in a background tab while the owner presses
+// BOOT, and a host curls the receipt every 700 ms. A banner that stopped
+// asking while hidden (a draft of this one did) left the host the sole
+// asker, and the host took the receipt while the hidden line still said
+// "Now short-tap BOOT". The hidden page stays on record: nothing is handed
+// out, the host hears 409, and the banner says another device asked.
+test("a hidden tab stays on record: a host curling across the press never gets the receipt", async () => {
+  for (const { hideAt, b0, T } of [
+    { hideAt: 5000, b0: 300, T: 20000 },     // B from the start, the press 15 s into the hidden tab
+    { hideAt: 7000, b0: 8000, T: 18100 },    // B from 8 s, the press 11 s after the tab hid
+    { hideAt: 3000, b0: 25000, T: 26100 },   // B starts 1.1 s before the press, 23 s into the hidden tab
+  ]) {
+    const p = page();
+    curlLoop(p, b0);
+    p.at(hideAt, () => p.setHidden(true));
+    p.at(T, () => p.dev.press(T));
+    await p.start();
+    await p.advance(90000);
+    const what = `hidden at ${hideAt}, B from ${b0}, press at ${T}`;
+    const takes = p.dev.log.filter((e) => e.v === "TAKE");
+    assert.deepStrictEqual(takes, [], `${what}: nothing is handed out (TAKEs ${JSON.stringify(takes)})`);
+    assert.ok(p.dev.log.some((e) => e.who === "B" && e.v === "CONTENDED"), `${what}: B heard 409`);
+    const aAsks = p.receiptAsks().filter((f) => f.at >= hideAt && f.at <= T).length;
+    assert.ok(aAsks >= Math.floor((T - hideAt) / 2000), `${what}: the hidden page asked every 2 s (${aAsks})`);
+    assert.match(p.line(), /Another device on your network asked/, `${what}: A's banner says so`);
+  }
+});
+
+test("an ask that never answers is given up after 10 s, and the line says not to press", async () => {
+  // The second ask never settles (a request lost on a slow link); the rest answer.
+  const p = page({ hang: (n) => n === 2 });
+  await p.start();
+  await p.advance(2000);   // the second ask goes out and hangs
+  assert.match(p.line(), /Now short-tap BOOT/, "the first ask's 403 is still the last answer");
+  assert.strictEqual(p.timers.size, 1, "the hung ask's deadline is the one timer");
+  await p.advance(10000);  // its deadline passes: given up, counted as no answer
+  assert.strictEqual(p.inFlight, 0, "the hung request was aborted");
+  assert.match(p.line(), /Don't press BOOT yet/, `the page may not be on record: ${p.line()}`);
+  assert.deepStrictEqual(p.receiptAsks().map((f) => f.at), [0, 2000], "nothing asked while it hung");
+  await p.advance(2000);
+  assert.strictEqual(p.receiptAsks().length, 3, "the window goes on 2 s after the deadline");
+  assert.match(p.line(), /Now short-tap BOOT/, "and says to press again once the Canary answers");
+  await p.advance(600000);
+  assert.strictEqual(p.receiptAsks().length, 30, "the window still ends after 30 asks");
   assert.strictEqual(p.timers.size, 0);
+  assert.ok(p.maxTimers <= 1, "one timer at a time, the deadline included");
 });
 
 test("it never runs two timers or two requests, however it is pushed", async () => {
@@ -515,4 +608,28 @@ test("Save recovery kit on a page with no token asks first, then says to press",
   await q.ctx.__t.saveRecoveryKit();
   assert.match(q.alerts[0], /Another device on your network asked/);
   assert.match(q.alerts[0], /when the line in the banner at the top says to/);
+});
+
+// A credential-less ask of the kit's goes out while the banner's poll is
+// asking; the poll's ask takes the tap and unlocks the page; the kit's ask
+// comes back 403 (the tap is spent). It sent no token, so it asks again
+// with the page's, and the kit downloads. A 403 branch that read the page's
+// token at answer time (a draft of this one did) alerted that "the Canary
+// did not take this page's token", which no request had sent.
+test("Save recovery kit overtaken by the banner's tap asks again with the token", async () => {
+  const p = page({ latency: 1500 });
+  let downloads = 0;
+  p.el("download").click = () => { downloads++; };
+  p.at(3000, () => p.dev.press(3000));
+  p.at(3600, () => { p.ctx.__t.saveRecoveryKit(); });
+  await p.start();
+  await p.advance(10000);
+  assert.ok(unlocked(p), "the poll's ask took the tap and unlocked the page");
+  assert.deepStrictEqual(p.dev.log.filter((e) => e.who === "A").map((e) => e.v).slice(-2), ["TAKE", "NO_TAP"],
+                         "the poll's ask took the tap; the kit's credential-less ask then heard the 403");
+  const kit = p.fetches.filter((f) => f.at >= 3600 && f.url === "/api/provisioning-receipt");
+  assert.strictEqual(kit[0].auth, null, "the kit's first ask carried no token");
+  assert.ok(kit.some((f) => f.auth === "Bearer " + TOKEN), "its retry carried the page's token");
+  assert.deepStrictEqual(p.alerts, [], `no alert (${JSON.stringify(p.alerts)})`);
+  assert.strictEqual(downloads, 1, "the kit downloaded");
 });
