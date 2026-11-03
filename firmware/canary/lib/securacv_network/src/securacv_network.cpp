@@ -2664,7 +2664,8 @@ static esp_err_t handle_provisioning_receipt(httpd_req_t* req) {
     // are the WAP's byte for byte (canary_wap.ino's handler; the apps read
     // both trees with one parser), and so is the hint but for the WAP's last
     // clause, "or read the token from the USB serial console": this tree's
-    // console prints the token redacted, never whole.
+    // console never prints the token (no serial line carries it;
+    // check_route_security.py pins every statement that reads it).
     // test_securacv_auth.cpp holds the two bodies to that.
     if (tap == canary::net::provisioning_gate::TapVerdict::CONTENDED) {
       witness_get_health().http_errors++;

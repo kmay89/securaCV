@@ -1343,8 +1343,8 @@ static std::string wap_contended_body() {
 /* The 409 the flagship sends is the WAP's to its parser (sweep F354): the
  * same keys in the same order, the same error, and the WAP's hint but its
  * last clause, which sends the reader to the USB serial console for the
- * token. The WAP prints it there; the flagship's console prints it
- * redacted, so on this tree that clause would be false. */
+ * token. The WAP prints it there; the flagship's console never prints it,
+ * so on this tree that clause would be false. */
 static void the_409_body_is_the_waps() {
   std::printf("-- the 409 tap_contended body beside the WAP's\n");
   const std::string wap = wap_contended_body();
@@ -1375,7 +1375,7 @@ static void the_409_body_is_the_waps() {
     if (c != std::string::npos) expect = expect.substr(0, c) + ".";
     CHECK(mine[1].second == expect, "the flagship's hint is the WAP's without that clause, byte for byte");
     CHECK(b.body.find("serial console") == std::string::npos,
-          "and never sends the reader to the console, which prints the token redacted");
+          "and never sends the reader to the console, which never prints the token here");
   }
 }
 
