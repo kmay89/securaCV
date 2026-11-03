@@ -46,12 +46,15 @@
  * before it a module's label could carry the three through, so the
  * chokepoint wrote rows this reader refuses at the next load). So such a
  * line was edited on the card, written by something else, or written before
- * F301. A quote is refused too (F301). It ended its string early, and read
- * back the field was cut at it; parse() now refuses a string that does not
- * end as marshal() ends one (a quote, then `,` or `}`), and a line that
- * holds a key twice (a label of `","motion":99,"x":"` made its forged key
- * the one the scanners read first). Read back, such a line used to keep
- * what it held, and
+ * F301. A quote in a label ended its string early. parse() refuses a
+ * string whose closing quote is not followed by `,` or `}`, as marshal()
+ * follows every one (F301: `ac"tive`), and a line that holds a key twice (a
+ * label of `","motion":99,"x":"` made its forged key the one the scanners
+ * read first). A label whose quote is followed by `,` or `}` (`ac",x`,
+ * `ok","zz":1,"q":"`) still loads, its field cut at the quote: what it
+ * keeps holds no quote, no backslash and no key it did not have, so the
+ * row's rewrite and its body are JSON. Read back, a refused line used to
+ * keep what it held, and
  * the two writers that spell a parsed record with %s, marshal() (a
  * dismissal rewrites a restored row) and csi_event_wire::build_event_body()
  * (the backfill's MQTT body), wrote a line and a body that are not JSON; the
@@ -194,9 +197,10 @@ inline bool name_byte(unsigned char c) {
  * refuses anywhere up to its closing quote, past `cap` too: the byte would
  * reach a line or a body written from the record as it is. False too when
  * the field does not end as marshal() ends every string, a closing quote
- * and then `,` or `}` (sweep F301): a line a chokepoint before F301 wrote
- * with a quote inside a label, whose field the quote cut short, or a string
- * that never closes. */
+ * and then `,` or `}` (sweep F301): most lines a chokepoint before F301
+ * wrote with a quote inside a label, whose field the quote cut short, or a
+ * string that never closes. A label quote followed by `,` or `}` passes
+ * here, cut at the quote: what `out` keeps holds no quote. */
 inline bool json_str(const char* line, const char* key, char* out, size_t cap) {
   if (!out || cap == 0) return false;
   out[0] = '\0';
@@ -281,9 +285,10 @@ inline uint32_t record_id(const char* line) {
  * one reads 0, as before), all of which record_id() refuses, whose string
  * field holds a byte json_str() refuses or does not end as marshal() ends
  * one (sweep F264, F301), or which holds a key it reads twice (F301). The
- * last two are lines a chokepoint before F301 wrote from a label holding a
- * quote; record_id() still reads their id, as it does every refused line's
- * (the tail scans, above). */
+ * last two refuse most lines a chokepoint before F301 wrote from a label
+ * holding a quote; one whose quote is followed by `,` or `}` loads, its
+ * field cut at the quote (the header comment, above). record_id() still
+ * reads a refused line's id (the tail scans, above). */
 inline bool parse(const char* line, csi_event_record_t* out) {
   if (!line || !out) return false;
   memset(out, 0, sizeof(*out));

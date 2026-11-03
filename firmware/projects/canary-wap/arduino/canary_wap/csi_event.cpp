@@ -378,11 +378,13 @@ void coarsen_time_fields(csi_event_values_t* v) {
  * marshal(); the MQTT events body, csi_event_wire.h; the REST rows,
  * csi_integration.cpp), so a quote ended the string early and a backslash
  * began an escape, and the line or body was no longer JSON. The card's reader
- * refuses each of the three on the next load (a backslash by name_byte(), a
- * '{' as a second record's start, a quote by the byte after it), so a row the
- * chokepoint let through was written live and refused at the next boot.
- * Every byte this leaves is one the reader takes back. Host-tested in
- * csi_event_invariants_test.cpp. */
+ * holds a line read back to the same, at the next load: a backslash is
+ * refused by name_byte(), a '{' as a second record's start, a quote that is
+ * not followed by ',' or '}' and a key spelled twice by json_str() and
+ * key_once(), and a quote followed by one cuts its field there. So a row the
+ * chokepoint let through was written live and refused, or loaded cut, at the
+ * next boot. Every byte this leaves is one the reader takes back whole.
+ * Host-tested in csi_event_invariants_test.cpp. */
 void sanitize_string_field(char* s, size_t cap) {
   bool seen_nul = false;
   for (size_t i = 0; i < cap; ++i) {

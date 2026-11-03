@@ -37,7 +37,9 @@
  *      '{' (each becomes '?', as every byte outside printable ASCII does),
  *      so the SD log line and the MQTT events body written from the row
  *      parse as JSON and the line loads back; a line a chokepoint before
- *      F301 wrote from a label holding a quote is refused by parse().
+ *      F301 wrote from a label holding a quote is refused by parse(), or,
+ *      when the quote is followed by ',' or '}', loads cut at the quote
+ *      with no forged key, and its rewrite and body are JSON.
  *
  * Build:
  *   - Standalone (host x86) for CI: g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -1348,7 +1350,7 @@ void test_labels_reach_every_writer_as_json() {
  * counts it, test_csi_event_log_load.cpp and test_csi_event_backfill.cpp),
  * and record_id() still reads its id, so the tail scans see the card's end
  * where it is (csi_event_log_line.h). */
-void test_lines_written_before_f301_are_refused() {
+void test_lines_written_before_f301_are_refused_or_cut() {
   struct Case { const char* state; bool id_read; const char* why; };
   const Case cases[] = {
     {"ac\"tive",                 true,  "a quote cuts the field short: the byte after it is no ',' or '}'"},
@@ -1378,6 +1380,38 @@ void test_lines_written_before_f301_are_refused() {
   const char unclosed[] = "{\"id\":3221225542,\"cat\":\"event\",\"state\":\"abc}";
   csi_event_record_t back;
   EXPECT(!csi_event_log_line::parse(unclosed, &back), "a string that never closes is refused");
+  /* A label whose quote is followed by ',' or '}' (the review of F301):
+   * parse() takes the line, its state cut at the quote, with no key the row
+   * did not have, and the row it loaded writes JSON again (a dismissal's
+   * rewrite, the backfill's body). Pinned, so the comments cannot claim
+   * these are refused. */
+  struct Cut { const char* state; const char* loads_as; };
+  const Cut cuts[] = {
+    {"ac\",x",                 "ac"},
+    {"a\",\"x\":\"b",           "a"},
+    {"ac\"}",                  "ac"},
+    {"ok\",\"zz\":1,\"q\":\"",   "ok"},
+  };
+  for (const Cut& c : cuts) {
+    csi_event_record_t r = make_persisted(kB + 71, "test_labels");
+    strncpy(r.values.state_name, c.state, sizeof(r.values.state_name) - 1);
+    r.values.motion_score = 7;
+    char line[csi_event_log_line::kLineMax];
+    const size_t n = csi_event_log_line::marshal(&r, line, sizeof(line));
+    EXPECT(n > 0, "marshalled");
+    line[n - 1] = '\0';
+    csi_event_record_t cut;
+    if (!csi_event_log_line::parse(line, &cut)) {
+      fprintf(stderr, "[FAIL] a label quote followed by ',' or '}' loads cut: parse() refused %s\n", line);
+      g_failures++;
+      continue;
+    }
+    EXPECT(strcmp(cut.values.state_name, c.loads_as) == 0, "the state is cut at the quote");
+    EXPECT(cut.event_id == kB + 71 && cut.values.dismissed == r.values.dismissed
+           && cut.values.motion_score == 7 && strcmp(cut.values.confidence, r.values.confidence) == 0,
+           "no key the row did not have");
+    row_writes_json(cut, "a row loaded cut at a pre-F301 quote");
+  }
   /* The row the chokepoint now commits from each of those labels loads. */
   for (const Case& c : cases) {
     csi_event_test_reset();
@@ -1426,7 +1460,7 @@ extern "C" int csi_event_invariants_run() {
   test_inject_roundtrips_the_log_line();
   /* Sweep F301: a label reaches every writer as JSON, and loads back. */
   test_labels_reach_every_writer_as_json();
-  test_lines_written_before_f301_are_refused();
+  test_lines_written_before_f301_are_refused_or_cut();
 
   if (g_failures == 0) {
     fprintf(stderr, "[OK] csi_event invariants — all tests passed\n");
