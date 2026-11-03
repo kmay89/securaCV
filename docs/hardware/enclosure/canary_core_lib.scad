@@ -283,8 +283,10 @@ module cs_cone90_cut(x, y, t, d_screw, h_head) {
 //  screw seats all live on it, so service is four screws and the boards
 //  come out with the plate. The screws are short — through the plate and
 //  hw_engage() into the post ends — and in seal mode every seat glands an
-//  O-ring under a pan head, because a seat is a hole through the seal line
-//  from outside.
+//  O-ring under a pan head and its washer, because a seat is a hole through
+//  the seal line from outside. The washer (the registry's DIN 9021) is what
+//  stops the head: it bears on a printed land round the gland's mouth, so
+//  the gland's depth, not the screwdriver, sets the ring's squeeze.
 //
 //  Frames. The SHELL is drawn with its face at z = 0..lid_t and everything
 //  else hanging below: the cavity to -cav_d (the ledge plane), the bore for
@@ -300,8 +302,11 @@ module cs_cone90_cut(x, y, t, d_screw, h_head) {
 //
 //  The plate is never thinner than a head and its floor (pl_thick), the
 //  head recesses as far as the floor allows (pl_recess: a 1.0 floor, or the
-//  O-ring gland plus a 0.4 web in seal mode), and the length is the shortest
-//  standard one that engages hw_engage(size) past the relief (pl_len).
+//  washer, the O-ring gland and a 0.4 web in seal mode), and the length is
+//  the shortest standard one that engages hw_engage(size) past the relief
+//  (pl_len). A sealed seat's washer lies between the head and the plate, so
+//  it lengthens the screw by its thickness and never raises the head: the
+//  head still bears recess + pl_hh() in from the back face.
 // ---------------------------------------------------------------------------
 function pl_relief() = 0.2;   // post end above the ledge plane: the ledge seats first
 function pl_web()    = 0.4;   // plate kept above an O-ring gland's floor
@@ -310,6 +315,14 @@ function pl_hd(size, head)  = (head == "pan") ? scr_pan_d(size) : scr_flat_d(siz
 // a pan screw's length is measured under the head, a flat's includes it
 function pl_hp(size, head)  = (head == "pan") ? scr_pan_h(size) : 0;
 function pl_gland_raw(size, gland) = gland ? oring_gland_h(scr_oring_cs(size)) : 0;
+// the washer under a sealed seat's head (2026-11-03: the land, below)
+function pl_wh(size, gland) = gland ? scr_washer_t(size) : 0;
+// the widest the seat cuts on the back face: the head's bore, or on a sealed
+// seat the washer's (it passes the whole pocket to reach its land). A case
+// that keeps something clear of a seat (the doorbell's service plungers)
+// reads this, never a copy of the arithmetic
+function pl_seat_d(size, head, tol_hole, gland = false) =
+    (gland ? scr_washer_d(size) : pl_hd(size, head)) + 2*tol_hole;
 function pl_floor_min(gland) = gland ? pl_web() : 1.0;
 // the ledge band the plate seats on: the gasket with a cheek each side, or one
 // contact band — PLUS the plate's sliding clearance and its front lead-in, so
@@ -318,8 +331,9 @@ function pl_floor_min(gland) = gland ? pl_web() : 1.0;
 function pl_ledge(seal, gasket_w, tol = core_tol_slide(), cham = core_lip_cham()) =
     (seal ? gasket_w + 2*core_min_wall() : core_min_wall()) + tol + cham;
 function pl_thick(floor_t, ext, size, head, gland) =
-    max(floor_t + ext, pl_hh(size, head) + pl_gland_raw(size, gland) + pl_floor_min(gland));
-function pl_recess(t, size, head, gland) = max(0, t - pl_hh(size, head) - pl_gland_raw(size, gland) - pl_floor_min(gland));
+    max(floor_t + ext, pl_hh(size, head) + pl_wh(size, gland) + pl_gland_raw(size, gland) + pl_floor_min(gland));
+function pl_recess(t, size, head, gland) =
+    max(0, t - pl_hh(size, head) - pl_wh(size, gland) - pl_gland_raw(size, gland) - pl_floor_min(gland));
 function pl_len(t, recess, size, head) =
     let (need = hw_engage(size) + pl_relief() + t - recess - pl_hp(size, head),
          ok = [for (l = hw_std_lens()) if (l >= need - 1e-9) l])
@@ -356,21 +370,51 @@ module pl_bore_cut(l, w, r, z_ledge, depth) {
 }
 // the seat through the plate: the head from the back face (z_front - t),
 // pan heads flat-floored, flat heads on a 90° cone, `gland` cuts the
-// O-ring gland into the bearing floor
-module pl_seat_cut(x, y, z_front, t, size, head, recess, d_clear, tol_hole, gland = false) {
+// O-ring gland into the bearing floor — under a washer's pocket, so the
+// floor the pocket leaves round the gland's mouth is the LAND the washer
+// stops on.
+// 2026-11-03: THE LAND. The gland (Ø4.3 x 0.75 for M2) was cut straight
+// into the floor of the head's Ø4.6 bore, and an M2 pan head is Ø4.0
+// (ISO 7045 dk, 3.7 min): it had nothing to stop on. A Ø4.0 x 1.6 head
+// pushed 0.05, 0.3, 0.6 and 0.74 past the gland's mouth met nothing in the
+// committed WAP weather base, Vision weather back and doorbell body (0.44
+// mm³ only at 0.8, past the floor), so torque, not the gland, set the
+// squeeze, and a snug screw crushed the ring and extruded it into the 0.15
+// between the head and the gland wall. The pocket is the WASHER's now
+// (scr_washer_d + 2 x tol_hole, as deep as the head's seat plus the washer),
+// the gland is cut from its floor, and the assert below refuses a gland the
+// washer cannot land round: oring_land_w(), at the washer's smallest
+// outside diameter and its worst offset on the shank, is at least one
+// extrusion. The plate prints back-face down, so that land is the ceiling of
+// a pocket on the bed side — a ring over air, which a slicer bridges as
+// spaghetti (the bridge-steps note below): it takes core_bridge_steps, a
+// slot the gland's width and then a square, so the washer stands on two
+// straight bridges (5.99 at their longest, inside the 7.0 flat span) and the
+// round gland starts above them. An unsealed seat cuts exactly what it
+// always cut. `layer` is the slicer's layer height the steps are cut in — a
+// case with a bridge_layer knob passes it, so one knob sets every step it prints.
+module pl_seat_cut(x, y, z_front, t, size, head, recess, d_clear, tol_hole, gland = false, layer = 0.2) {
     hh = pl_hh(size, head);
-    hd = pl_hd(size, head) + 2*tol_hole;
+    wh = pl_wh(size, gland);
+    hd = pl_seat_d(size, head, tol_hole, gland);
+    gd = gland ? oring_gland_d(scr_oring_id(size), scr_oring_cs(size), d_clear) : 0;
     assert(!gland || head == "pan", "pl_seat_cut: an O-ring gland needs a pan head's flat bearing face");
+    assert(!gland || oring_land_w(gd, scr_washer_d_min(size), pl_washer_ecc(size, d_clear)) >= core_extrusion() - 1e-9,
+           str("pl_seat_cut: the ", hw_size_name(size), " washer (Ø", scr_washer_d_min(size), " at its smallest, ",
+               pl_washer_ecc(size, d_clear), " off center at worst) leaves ",
+               oring_land_w(gd, scr_washer_d_min(size), pl_washer_ecc(size, d_clear)),
+               " of land round the Ø", gd, " gland — under one extrusion, so the head rides the ring down"));
     translate([x, y, z_front - t - 0.1]) {
         cylinder(d = d_clear, h = t + 0.2);
         if (recess > 0) cylinder(d = hd, h = recess + 0.1);
         translate([0, 0, recess + 0.1])
-            if (head == "pan") cylinder(d = hd, h = hh);
+            if (head == "pan") cylinder(d = hd, h = hh + wh);
             else cylinder(d1 = d_clear + 2*hh, d2 = d_clear, h = hh);
-        if (gland)
-            translate([0, 0, recess + hh + 0.1 - 0.01])
-                cylinder(d = oring_gland_d(scr_oring_id(size), scr_oring_cs(size)),
-                         h = oring_gland_h(scr_oring_cs(size)) + 0.01);
+        if (gland) {
+            translate([0, 0, recess + hh + wh + 0.1 - 0.01])
+                cylinder(d = gd, h = oring_gland_h(scr_oring_cs(size)) + 0.01);
+            core_bridge_steps(0, 0, recess + hh + wh + 0.1, gd, hd, up = 1, layer = layer);
+        }
     }
 }
 // the blind pilot (or insert bore) up from a post's end face at z_end
@@ -626,6 +670,12 @@ function hw_insert(size) =
     str(hw_size_name(size), " heat-set insert ", scr_insert_d(size), " OD x ", scr_insert_h(size));
 function hw_oring(size) =
     str("O-ring ", scr_oring_id(size), " ID x ", scr_oring_cs(size), " CS (under the head)");
+// the sealed seat's washer: one per O-ring, always (it is the head's stop —
+// a seat glanded without it has no land). The text never says "O-ring":
+// gen_hardware.py's classifier reads that word as the ring
+function hw_washer(size) =
+    str(hw_size_name(size), " washer ", scr_washer_id(size), " x ", scr_washer_d(size), " x ",
+        scr_washer_t(size), ", DIN 9021 (under the head, on the gland's land)");
 function _hw_join(items, i = 0, acc = "") =
     i >= len(items) ? acc
     : _hw_join(items, i + 1,
@@ -683,7 +733,8 @@ module seam_reveal_cut(l, w, r, z_seam,
 //
 //  Columns: [id, nominal, self-tap PILOT (PETG), CLEARANCE hole,
 //            pan head Ø, pan seat depth, flat head Ø, flat (90°) seat depth,
-//            heat-set insert BORE, insert length, O-ring [ID, section]]
+//            heat-set insert BORE, insert length, O-ring [ID, section],
+//            head-seal WASHER [bore, outside Ø, thickness]]
 //    pilot     — 0.8 x nominal, the bite that neither strips nor splits
 //                (the catalog's 1.6 for M2 is exactly this rule)
 //    clearance — ISO 273 fine series
@@ -693,12 +744,19 @@ module seam_reveal_cut(l, w, r, z_seam,
 //    insert    — the BORE (not the knurl OD): CNC Kitchen / Ruthex short
 //                series, ~0.3 mm under the knurl so the brass bites
 //    o-ring    — a standard ring whose ID rides the shank: the head-seal
-//                gland (cb_oring_cut) sizes itself from this
+//                gland (pl_seat_cut, cb_oring_cut) sizes itself from this
+//    washer    — DIN 9021 (the large series), the head-seal's stop: it lies
+//                over the ring and bears on the land round the gland, so a
+//                pan head narrower than the gland still stops at the gland's
+//                depth (2026-11-03 — the one standard washer for the size
+//                whose land clears the gland by an extrusion at its worst;
+//                the O-ring block below has the arithmetic). M2 2.2 x 7.0 x
+//                0.8 is Würth 0412922, Kraftberg K2.2/D9021-A2, CNC Kitchen's
 // ---------------------------------------------------------------------------
 SCR_REGISTRY = [
-    ["m2",   2.0, 1.6, 2.2, 4.0, 2.0, 4.0, 1.2, 3.2, 4.0, [2.0, 1.0]],
-    ["m2.5", 2.5, 2.0, 2.8, 5.0, 2.4, 4.7, 1.5, 3.6, 5.7, [2.5, 1.0]],
-    ["m3",   3.0, 2.5, 3.4, 5.6, 2.4, 6.0, 1.65, 4.0, 5.7, [3.0, 1.0]],
+    ["m2",   2.0, 1.6, 2.2, 4.0, 2.0, 4.0, 1.2, 3.2, 4.0, [2.0, 1.0], [2.2, 7.0, 0.8]],
+    ["m2.5", 2.5, 2.0, 2.8, 5.0, 2.4, 4.7, 1.5, 3.6, 5.7, [2.5, 1.0], [2.7, 8.0, 0.8]],
+    ["m3",   3.0, 2.5, 3.4, 5.6, 2.4, 6.0, 1.65, 4.0, 5.7, [3.0, 1.0], [3.2, 9.0, 0.8]],
 ];
 function _scr_find(id, i = 0) =
     i >= len(SCR_REGISTRY)
@@ -716,6 +774,18 @@ function scr_insert_d(id) = _scr_find(id)[8];
 function scr_insert_h(id) = _scr_find(id)[9];
 function scr_oring_id(id) = _scr_find(id)[10][0];
 function scr_oring_cs(id) = _scr_find(id)[10][1];
+function scr_washer_id(id) = _scr_find(id)[11][0];
+function scr_washer_d(id)  = _scr_find(id)[11][1];
+function scr_washer_t(id)  = _scr_find(id)[11][2];
+// the washer at its worst, from DIN 9021's own fits: the outside Ø is h14
+// (0.30 under to 6 mm, 0.36 to 10 — the M2's 7.0 is 6.64 at its smallest),
+// the bore H13 (0.14 over to 3 mm, 0.18 to 6), the thickness ±0.1 at 0.8
+function scr_washer_d_min(id)  = let (d = scr_washer_d(id))  d - (d <= 6 ? 0.30 : 0.36);
+function scr_washer_id_max(id) = let (d = scr_washer_id(id)) d + (d <= 3 ? 0.14 : 0.18);
+function scr_washer_t_tol(id)  = 0.1;
+// the screw's major Ø at its smallest: a 6g thread's floor, rounded down
+// (M2: 1.886 — the washer and the screw both float on it)
+function scr_shank_min(id) = scr_nominal(id) - 0.12;
 // the thinnest post that carries a self-tapped pilot: 1.5 mm of wall each
 // side of the pilot (the catalog's Ø5 post around the Ø1.6 M2 pilot has 1.7)
 function scr_post_min(id) = scr_pilot(id) + 3.0;
@@ -727,24 +797,75 @@ function scr_post_min(id) = scr_pilot(id) + 3.0;
 //  the screw thread onto the post top and into the cavity. A gasket
 //  cannot fix that; a ring under the head can. This cuts a flat-floored
 //  gland around the through-hole: a standard O-ring (ID = shank, section
-//  cs) sits in it, 0.75 x cs deep — 25 %, the standard face-seal squeeze.
-//  The gland is sized so the ring's OD is captured (radial constraint) and
-//  the head still clears the gland wall. But a pan head narrower than the
-//  gland (M2: Ø4.0 against Ø4.3) has no land to stop on, so until a washer
-//  wider than the gland bears on its mouth, torque and not the depth sets
-//  the squeeze (open: AUDIT_2026_09.md, the 2026-10-23 cross-family review).
+//  cs) sits in it, and a WASHER over it bears on the land round the gland's
+//  mouth, so the gland's depth below that land is the ring's squeeze.
 //  Use PAN heads with it (a flat head's cone would push the ring out).
+//
+//  2026-11-03: THE LAND, AND A GLAND THE RING FITS AT ITS WORST. Until now
+//  the gland was 0.75 x cs deep and ring OD + 0.3 wide (M2: Ø4.3 x 0.75)
+//  and the pan head was meant to squeeze the ring 25 % — but the head
+//  (Ø4.0, 3.7 at its smallest) is narrower than the gland, so nothing
+//  stopped it there (pl_seat_cut has the measurement). Three numbers moved:
+//    * the WASHER (the registry's DIN 9021) is the head's stop. Washers
+//      that look the part do not land: ISO 7089 / DIN 125-A (5.0, 4.7 at
+//      its smallest) leaves 0.16 nominal and −0.37 at its worst offset
+//      round the gland below, ISO 7092 / DIN 433 (4.5) less than nothing,
+//      a nylon 5.0 the same as ISO 7089 and creeps besides; DIN 9021
+//      (7.0, 6.64 at its smallest) leaves 1.16 nominal and 0.59 at its
+//      smallest and worst offset (0.39: its H13 bore and the screw's 1.88
+//      floor in the 2.2 bore, both one way) — the one standard M2 washer
+//      over the extrusion floor;
+//    * the DEPTH is centered in the 15-30 % squeeze band across the ring's
+//      section tolerance (ISO 3601-1 class A, ±0.08 at 1.0): 0.75 x cs
+//      took a 1.08 ring to 30.6 %. The band admits 0.756-0.782; the middle
+//      is 0.769 — 16.4 / 23.1 / 28.8 % at 0.92 / 1.00 / 1.08. A 0.2 mm
+//      layer grid prints it 0.80 (13 / 20 / 26 %: the thinnest ring falls
+//      under the band in the print, as it did under the old 0.75) — the
+//      README's first-print depth check is the control, 0.12 mm layers or
+//      a 0.1 shim under the washer the remedy;
+//    * the WIDTH holds the largest ring (d1 2.13, d2 1.08: 9.24 mm³) to 90 %
+//      of the gland, bore to wall: Ø4.3 held 115 % of it (92 % of a nominal
+//      ring), so a fat ring could not let any washer reach its land. Ø4.673
+//      holds 90 / 72 / 57 % of the largest / nominal / smallest ring.
 //  z0 = show face; cuts DOWN into a plate of thickness t.
 //    cs    — ring section;  id_r — ring inner diameter
-//    head  — the screw head's Ø (asserted to cover ≥ 85 % of the section)
+//    head  — the screw head's Ø (it bears on the washer, so it must cover
+//            the washer's bore)
+//    size  — the screw registry row whose washer lands round the gland
+//            (on the face here: the face itself is the land)
 // ---------------------------------------------------------------------------
-function oring_gland_d(id_r, cs)  = id_r + 2*cs + 0.3;     // ring OD + radial room
-function oring_gland_h(cs)        = 0.75*cs;               // 25 % squeeze
-module cb_oring_cut(x, y, t, d_screw, id_r, cs, head) {
-    gd = oring_gland_d(id_r, cs); gh = oring_gland_h(cs);
-    assert(head >= id_r + 2*cs*0.85,
-           str("cb_oring_cut: a ", head, " mm head covers under 85 % of a ",
-               id_r, "x", cs, " O-ring's section — use a larger head or a smaller ring"));
+function oring_cs_tol()      = 0.08;   // ISO 3601-1 class A section tolerance, d2 0.80-2.25
+function oring_id_tol()      = 0.13;   // ISO 3601-1 class A bore tolerance at d1 2.0
+function oring_squeeze_min() = 0.15;   // the static face-seal band: below it the ring leaks cold,
+function oring_squeeze_max() = 0.30;   // above it it takes a set (and the gland overfills)
+function oring_fill_max()    = 0.90;   // the largest ring's share of its gland, at most
+function oring_vol(id_r, cs) = PI*PI*(id_r + cs)*cs*cs/4;   // a torus: 2π R · π r²
+function oring_squeeze(cs, h) = 1 - h/cs;
+// the depth whose squeeze sits mid-band for the thinnest and the fattest ring
+function oring_gland_h(cs) =
+    ((1 - oring_squeeze_max())*(cs + oring_cs_tol()) + (1 - oring_squeeze_min())*(cs - oring_cs_tol()))/2;
+// the width: the ring's OD captured with radial room, and never less than
+// what holds the largest ring to oring_fill_max() between the bore (d_in, the
+// clearance hole the gland is cut round) and the wall
+function oring_gland_d(id_r, cs, d_in = undef) =
+    let (din = is_undef(d_in) ? id_r + 0.2 : d_in,
+         v   = oring_vol(id_r + oring_id_tol(), cs + oring_cs_tol()))
+    max(id_r + 2*cs + 0.3, sqrt(4*v/(PI*oring_gland_h(cs)*oring_fill_max()) + din*din));
+function oring_fill(id_r, cs, gd, h, d_in) = oring_vol(id_r, cs)/(PI/4*(gd*gd - d_in*d_in)*h);
+// the land: what a bearing ring of outside Ø bear_min, sitting e off the
+// gland's axis, overlaps the gland's mouth by on its short side. The
+// head-seal gate: pl_seat_cut and cb_oring_cut refuse under core_extrusion()
+function oring_land_w(gd, bear_min, e) = bear_min/2 - e - gd/2;
+// how far the washer can sit off the gland's axis: its bore's play on the
+// shank plus the shank's play in the clearance hole, both one way
+function pl_washer_ecc(size, d_clear) =
+    (scr_washer_id_max(size) - scr_shank_min(size))/2 + (d_clear - scr_shank_min(size))/2;
+module cb_oring_cut(x, y, t, d_screw, id_r, cs, head, size = "m2") {
+    gd = oring_gland_d(id_r, cs, d_screw); gh = oring_gland_h(cs);
+    assert(head > scr_washer_id_max(size),
+           str("cb_oring_cut: a ", head, " mm head falls through the ", hw_size_name(size), " washer's bore"));
+    assert(oring_land_w(gd, scr_washer_d_min(size), pl_washer_ecc(size, d_screw)) >= core_extrusion() - 1e-9,
+           str("cb_oring_cut: the ", hw_size_name(size), " washer leaves under one extrusion of land round the Ø", gd, " gland"));
     assert(gh + 0.8 <= t, "cb_oring_cut: the plate is too thin to keep a floor under the gland");
     translate([x, y, -0.1])      cylinder(d = d_screw, h = t + 0.2);
     translate([x, y, t - gh])    cylinder(d = gd,      h = gh + 0.1);
@@ -840,13 +961,42 @@ module core_selfcheck() {
     assert(scr_pan_d("m2") == 4.0 && scr_pan_h("m2") == 2.0,
            "core: the M2 pan seat must stay the Vision's validated 4.0 / 2.0");
     for (r = SCR_REGISTRY) {
-        assert(len(r) == 11, str("core: screw record \"", r[0], "\" malformed"));
+        assert(len(r) == 12, str("core: screw record \"", r[0], "\" malformed"));
         assert(r[2] < r[1] && r[1] < r[3], str("core: \"", r[0], "\": pilot < nominal < clearance, or the screw either strips or jams"));
         assert(r[8] > r[1] && r[4] > r[3] && r[6] > r[3],
                str("core: \"", r[0], "\": the insert bore and both heads must pass the screw"));
         assert(abs(r[2] - 0.8*r[1]) < 0.11, str("core: \"", r[0], "\": self-tap pilot is 0.8 x nominal"));
+        // the head seal, per size: the squeeze in band for the thinnest and the
+        // fattest ring, the largest ring inside its gland, the washer passing
+        // the screw and stopped by the pan head, and its land over the floor
+        let (id = r[0], cs = r[10][1], gh = oring_gland_h(cs),
+             gd = oring_gland_d(r[10][0], cs, r[3])) {
+            assert(oring_squeeze(cs - oring_cs_tol(), gh) >= oring_squeeze_min() - 1e-9
+                   && oring_squeeze(cs + oring_cs_tol(), gh) <= oring_squeeze_max() + 1e-9,
+                   str("core: \"", id, "\": the head-seal gland's squeeze leaves the 15-30 % band"));
+            assert(oring_fill(r[10][0] + oring_id_tol(), cs + oring_cs_tol(), gd, gh, r[3]) <= oring_fill_max() + 1e-9,
+                   str("core: \"", id, "\": the largest O-ring overfills its gland"));
+            assert(r[11][0] > r[1] && r[11][0] < r[4] && r[11][1] > r[4],
+                   str("core: \"", id, "\": the washer must pass the screw, stop the pan head and stand wider than it"));
+            assert(oring_land_w(gd, scr_washer_d_min(id), pl_washer_ecc(id, r[3])) >= core_extrusion() - 1e-9,
+                   str("core: \"", id, "\": the washer leaves under one extrusion of land round the gland"));
+            // the pocket is cut for the nominal washer; the pan seat's 0.4 sink
+            // takes its thickness tolerance, so a thick one never lifts the head proud
+            assert(scr_washer_t_tol(id) < 0.4,
+                   str("core: \"", id, "\": the washer's thickness tolerance outgrows the pan seat's 0.4 sink"));
+        }
     }
-    assert(oring_gland_h(1.0) == 0.75, "core: the O-ring gland squeezes 25 %");
+    // the M2 head seal the released weather plates are cut to (2026-11-03):
+    // a 0.769 x Ø4.673 gland under a DIN 9021 2.2 x 7.0 x 0.8 — 23 % at a
+    // nominal ring, 0.59 of land at the washer's worst
+    assert(abs(oring_gland_h(1.0) - 0.769) < 1e-9 && abs(oring_gland_d(2.0, 1.0, 2.2) - 4.673) < 1e-3,
+           "core: the M2 head-seal gland is 0.769 deep and Ø4.673 (the squeeze band's middle, 90 % fill at the largest ring)");
+    assert(scr_washer_d("m2") == 7.0 && scr_washer_t("m2") == 0.8 && abs(scr_washer_d_min("m2") - 6.64) < 1e-9,
+           "core: the M2 head-seal washer is DIN 9021 2.2 x 7.0 x 0.8 (6.64 at its smallest)");
+    // the gate can fail: the pan head alone, or ISO 7089's 5.0 washer, has no land
+    assert(oring_land_w(oring_gland_d(2.0, 1.0, 2.2), scr_pan_d("m2") - 0.3, (2.2 - scr_shank_min("m2"))/2) < 0
+           && oring_land_w(oring_gland_d(2.0, 1.0, 2.2), 4.7, pl_washer_ecc("m2", 2.2)) < 0,
+           "core: the land gate must refuse a bare M2 pan head and an ISO 7089 washer");
     assert(core_key_d() < core_wall() - core_min_wall() + 1e-9 && core_key_w() >= 2*core_extrusion(),
            "core: the lid key rib must fit the lip annulus and print as at least two lines");
     assert(core_lip_cham() < core_min_wall() / 2, "core: the lip lead-in must leave most of the lip's tip");

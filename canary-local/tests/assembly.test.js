@@ -401,9 +401,15 @@ test("canary-wap: the assembly is physically true to the scad", () => {
     "the printable lid is face-down; assembly flips it");
   assert.ok(by.lid.seated.pos[2] > by.gasket.seated.pos[2], "the lid closes over the gasket");
 
-  // lid features live over the BOARD end, not the GPS bay
-  assert.ok(by.magnet.seated.pos[0] < -30, "magnet pocket is over the board end");
-  assert.ok(by.lp.seated.pos[0] < -30, "light pipe is over the board end");
+  // lid features live over the BOARD end, not the GPS bay: nearer the board's
+  // center than the battery's. The poses ride board_cx (gen_assembly_poses.py
+  // writes magnet = board_cx + mag_dx), so a board shift moves them with it —
+  // a typed "< -30" here rotted on v0.9.2's 1.91 mm microSD shift
+  const nearerBoard = (p) =>
+    Math.abs(p.seated.pos[0] - by.board.seated.pos[0]) <
+    Math.abs(p.seated.pos[0] - by.batt.seated.pos[0]);
+  assert.ok(nearerBoard(by.magnet), "magnet pocket is over the board end");
+  assert.ok(nearerBoard(by.lp), "light pipe is over the board end");
 
   // screws: their own beat AFTER the lid, heads flush at the lid top
   assert.ok(by.screws.step > by.lid.step, "screws drive after the lid closes");

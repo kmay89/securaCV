@@ -70,8 +70,10 @@ lives in the library **once**; the knobs stay per-case:
   the head's recess, the screw's length and the pilot are derived together
   by `pl_thick()` / `pl_recess()` / `pl_len()` / `pl_pilot()` in
   `canary_core_lib`, and the ledge is the datum: the posts stop
-  `pl_relief()` short of it. A sealed build seats an O-ring under every
-  plate screw head (a seat is a hole through the seal line from outside),
+  `pl_relief()` short of it. A sealed build seats an O-ring in a gland
+  under every plate screw head, with a DIN 9021 washer over it that lands
+  on the gland's rim so the depth, not the torque, sets the squeeze (a
+  seat is a hole through the seal line from outside),
   and the sun shield on the WAP has screws of its own into blind pilots
   from the face over the posts. Gated by the fit gates (seated EMPTY, −0.1
   contact, turned 180° COLLIDES) and the lateral probe (0.15 mm EMPTY,

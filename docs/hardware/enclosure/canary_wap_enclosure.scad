@@ -135,6 +135,72 @@
 //              tol_hole (+ 0.3 a side: EMPTY). No released preset draws the
 //              tabs (only battery_weather mounts, on keyholes), so no
 //              committed mesh moves; the builder's tabs option does.
+//  2026-11-03: THE O-RINGED PLATE SCREWS GET A LAND (canary_core_lib
+//              pl_seat_cut). The Outdoor build's eight seats cut a Ø4.3 x
+//              0.75 gland straight into the Ø4.6 head bore's floor, and the
+//              M2 pan head is Ø4.0: pushed 0.05, 0.3, 0.6 and 0.74 past the
+//              gland's mouth it met nothing in the committed base (0.44 mm³
+//              only at 0.8, past the floor), so torque, not the gland, set
+//              the ring's squeeze, and a snug screw crushed it. Each seat now
+//              takes a DIN 9021 washer (2.2 x 7.0 x 0.8, billed) in a Ø7.6
+//              pocket whose floor is the land it stops on (0.59 of it at the
+//              washer's smallest and worst offset), over a Ø4.673 x 0.769
+//              gland: 16.4 / 23.1 / 28.8 % squeeze for a 0.92 / 1.00 / 1.08
+//              ring, the largest ring 90 % of the gland (Ø4.3 x 0.75 held
+//              115 % of it). The head recess is 1.031 (was 1.85), the 0.4 web
+//              stays, and the plate screws grow M2 pan x 8 -> x 10, because
+//              the washer lies under the head: engagement 6.65 -> 7.83, the
+//              weather lid's pilots 7.65 -> 8.83 (6.47 still between them
+//              and the shield's). The pocket leaves 2.70 to the plate's edge
+//              (was 4.20). The weather base and lid move, envelopes do not;
+//              the indoor builds' seats are cut exactly as before.
+//  2026-11-03: THE SENSE'S microSD CARD (v0.9.2). The BOM makes the card
+//              required (SD1 — the firmware keeps its witness records on
+//              it), and in Seeed's Sense model it stands 3.11 past the PCB's
+//              USB end, 1.6 further than the USB-C shell v0.9.1 cleared, at
+//              5.6-7.25 over the PCB top (canary_board_lib
+//              brd_xiao_sense_sd_*, new facts). Both camera shells met the
+//              SEATED card 0.61 into the -X wall (11.25 mm^3 in the CSG,
+//              10.79 on the committed meshes at the auditor's 3.08 reading;
+//              16.79 with the board on its USB-end stop), and the board is
+//              clipped to the plate before the shell is lowered, so the card
+//              also swept the ledge cove and the wall from the bore's open
+//              end to its seat: 44.7 mm^3 on that path (65.0 at the USB-end
+//              stop; 78.2 for the whole sweep box the gate below draws) —
+//              the case could not be closed with a card fitted. A relief at
+//              the seat alone left 32.1 of it; a channel down through the
+//              ledge left 0.09 of the plate's 1.2 bearing band (unsealed)
+//              and 0.39 of the gasket's 1.5 inner cheek (sealed); a slot
+//              through the -X wall above the USB opening still met the cove
+//              (28.3) and breaks the sealed build's wall. The board now sits
+//              so the card's tip clears the ledge cove's root by tol_slide
+//              with the board on its USB-end stop (+1.91 on a Sense build:
+//              the tip is 1.3 inboard of the inner face seated, 1.0 on the
+//              stop), and the bays behind it follow. The walls, the ledge
+//              (1.8 / 4.6 bands, the 1.5 gasket cheeks, the 1.6 groove —
+//              sliced before and after, identical), the groove, the USB
+//              opening and every outer envelope are unchanged: the GPS
+//              cradle is narrower than the corner posts' y, so the +X dead
+//              zone behind it takes the shift back (a camera build without
+//              the GPS — the builder's default custom — grows by the shift,
+//              82.2 -> 84.11 inside). The face apertures ride on board_cx,
+//              as they did in v0.9.1, so the window, pipe, vent, magnet and
+//              the sun shield's apertures move 1.91 with the board; the
+//              compact (plain XIAO) build has no card and does not move.
+//              THE COST: the receptacle's mouth is 2.91 behind the inner
+//              face (was 1.0) — a plug's overmold enters 5.91 past the outer
+//              face on the battery build, 8.71 on the weather build (7.71
+//              past its plug recess), through the same 12 x 6.5 opening: the
+//              opening's own profile reaches the mouth EMPTY at every end
+//              stop, and the Type-C spec-max 12.35 x 6.5 overmold meets the
+//              opening's sides and roof chamfers exactly as it did before
+//              (25.6 / 40.9 mm^3, unchanged — the opening is the print-
+//              validated bridge profile, not a spec-max port).
+//              wap_card_fitcheck() is the gate (canary_case_fitcheck.scad
+//              check="wap_card"): the card's sweep, both end stops, either
+//              handedness, must not meet the shell. On the v0.9.1 shells it
+//              reads 78.2 mm^3 on every camera preset; card_extra = 0.5 is
+//              its control (0.55 mm^3 in the cove: 0.19 is EMPTY, 0.21 touches).
 // ============================================================================
 
 use <canary_core_lib.scad>    // rrect/rrect2d, soft-edge face, foot chamfer, the piston plate (pl_*)
@@ -227,7 +293,10 @@ function _pre(c, f, p, w) = _pre_p(preset, c, f, p, w);
 // outlet cradle); this file's own flags are the same functions at its preset
 function wap_e_battery(pr = preset) = _pre_p(pr, opt_battery, true,  false, true);
 function wap_e_gps(pr = preset)     = _pre_p(pr, opt_gps,     true,  false, true);
-e_camera  = _pre(opt_camera,  true,  false, true);
+// v0.9.2: the camera flag places the board too (the Sense's microSD card,
+// below), so it is a function of the preset for the same reason
+function wap_e_camera(pr = preset)  = _pre_p(pr, opt_camera,  true,  false, true);
+e_camera  = wap_e_camera(preset);
 e_buzzer  = _pre(opt_buzzer,  true,  true,  true);
 e_led     = _pre(opt_led,     true,  true,  true);
 e_battery = wap_e_battery(preset);
@@ -287,7 +356,7 @@ lid_key    = true; // poka-yoke: a rib on the +Y bore wall and a slot in the pla
 tol_slide      = 0.20;  // sliding fits: plate <-> bore, camera-disc seat — core_tol_slide()
 tol_press      = 0.10;  // press fits: tamper magnet, LED light pipe — core_tol_press()
 tol_hole       = 0.30;  // clearance holes: plate screws — core_tol_hole()
-bridge_layer   = 0.2;   // your slicer's layer height: the face's disc-seat counterbore gets bridge steps this thick (core_bridge_steps)  // [0.08:0.04:0.32]
+bridge_layer   = 0.2;   // your slicer's layer height: the face's disc-seat counterbore and the sealed plate's washer pockets get bridge steps this thick (core_bridge_steps)  // [0.08:0.04:0.32]
 
 /* [Engineering — durability/rigidity options (see README "Engineering & materials")] */
 screw_insert = false;   // M2 brass heat-set inserts in the post ends (service-grade threads;
@@ -409,8 +478,11 @@ clip_over      = 0.15;  // extra lip travel per side for the MEASURED board (brd
 // exploding tiny holes into thousands of facets like a large $fn would
 $fa = 3; $fs = 0.4;
 
+/* [Hidden] */
 // ----------------------------------------------------------------------------
-//  Derived geometry
+//  Derived geometry — nothing below is a Customizer knob (the [Hidden] group
+//  keeps the builder's parser and the GUI off the two literals the card rule
+//  names, board_stop_gap and gps_rim; v0.9.2)
 // ----------------------------------------------------------------------------
 // the piston plate (canary_core_lib pl_*): the plate seats on a ledge inside
 // the walls and the parting line is the back face itself. The ledge band is
@@ -434,6 +506,22 @@ pd      = max(screw_insert ? max(post_d, ins_od + 2.4) : post_d,     // >=1.2 mm
               scr_post_min(screw_size));                              // >=1.5 mm wall around the pilot
 
 board_zone_l = board_l + 2*board_clear;
+// THE BOARD'S OFFSET from the USB (-X) wall's inner face to the PCB's USB end.
+// The receptacle's rule (v0.9.1): the USB-C shell, brd_xiao_usb_overhang()
+// past the PCB, clears the ledge cove's root by tol_slide, because the shell
+// is lowered over a board already clipped to the plate. v0.9.2: on a Sense
+// the furthest part is not the shell but the seated microSD card (BOM SD1,
+// required), brd_xiao_sense_sd_over() 3.11 past the PCB's end in Seeed's
+// model, riding over the receptacle — so its tip clears the cove's root by
+// tol_slide with the board on its USB-END stop, and the card's whole sweep
+// from the bore's open end to its seat meets no shell (at 2.5 the seated tip
+// stood 0.61 into the wall and the sweep met 44.7 mm^3 of cove and wall)
+board_stop_gap = 0.3;   // the board's end stops stand this far off the drawn ends (a real board mics 21.14 against the drawn 21.0: 0.23 a side)
+function wap_board_x0_usb() = max(board_clear + 0.5, floor_cove + tol_slide + brd_xiao_usb_overhang());
+function wap_board_x0(pr = preset) = max(wap_board_x0_usb(),
+    wap_e_camera(pr) ? floor_cove + tol_slide + board_stop_gap + brd_xiao_sense_sd_over() : 0);
+// what the card adds to the receptacle's rule: the bays behind the board follow it
+function wap_card_shift(pr = preset) = wap_board_x0(pr) - wap_board_x0_usb();
 function wap_batt_zone_l(pr = preset) = wap_e_battery(pr) ? (batt_gap + batt_l) : 0;
 function wap_gps_zone_l(pr = preset)  = wap_e_gps(pr)     ? (gps_gap  + gps_l)  : 0;
 batt_zone_l  = wap_batt_zone_l(preset);
@@ -446,7 +534,17 @@ rail_t       = core_min_wall();          // the battery bay's side rails on the 
 // The board is ALWAYS biased to the -X (USB) wall so the connector reaches the opening
 // (v0.7 fix — centering it left the USB ~6.5 mm behind the wall on the compact case).
 clip_stack = board_clips ? (clip_clear + clip_t) : 0;
-function wap_inner_l(pr = preset) = board_zone_l + wap_batt_zone_l(pr) + wap_gps_zone_l(pr) + post_corner + 1.0;
+// The +X dead zone (wap_tail_zone()) keeps the corner posts off a bay that
+// spans the cavity's width — the cell's end ribs. The GPS cradle is narrower
+// than the posts' y, so behind a GPS bay that zone can give the card's shift
+// back, down to the cradle rim standing floor_cove + tol_slide off the wall
+// (v0.9.2: that is why the battery presets keep their envelopes; a camera
+// build without the GPS grows by the shift)
+gps_rim = 1.2;   // the GPS cradle's rim past the module: base() draws the cradle from it (rrect(gps_l + 2*gps_rim, ...)), so the +X cove assert below reads the drawing
+function wap_tail_zone() = post_corner + 1.0;   // the +X dead zone, typed once: wap_inner_l adds it, wap_tail_slack lends it to the card shift
+function wap_tail_slack(pr = preset) = wap_e_gps(pr) ? wap_tail_zone() - gps_rim - floor_cove - tol_slide : 0;
+function wap_inner_l(pr = preset) = board_zone_l + wap_batt_zone_l(pr) + wap_gps_zone_l(pr) + wap_tail_zone()
+                                  + max(0, wap_card_shift(pr) - wap_tail_slack(pr));
 inner_l = wap_inner_l(preset);
 // the corner posts sit 0.2 INTO each wall (fused above the gussets); a sealed
 // build's gasket is squeezed only between screws, so the span between them
@@ -492,6 +590,32 @@ base_d = base_h;                         // the catalog's name for the same datu
 module wap_fitcheck(lift = 0.1, turned = false) {
     intersection() { translate([0, 0, base_h + lift]) rotate([0, 0, turned ? 180 : 0]) lid(); base(); }
 }
+// THE SENSE'S microSD CARD ON ITS WAY IN (v0.9.2), for canary_case_fitcheck.scad
+// check="wap_card". MUST RENDER EMPTY on every camera build. The card
+// (canary_board_lib brd_xiao_sense_sd_*, Seeed's GLB) rides on the board, the
+// board is clipped to the plate, and the shell is lowered over both — so,
+// relative to the shell, the card sweeps every height from below the shell's
+// open end up to its seat. One box covers that sweep, the board's whole travel
+// between its end stops (board_stop_gap either way) and the card either way
+// round across the width (the model's handedness is unconfirmed): the hull of
+// all those cards is that box, so EMPTY for it is EMPTY for every pose inside.
+// v0.9.1's shells met the box 78.2 mm^3 deep in the ledge cove and the -X wall
+// (44.7 for the nominal path alone, 65.0 at the USB-end stop) — every part a
+// clean single-body mesh. `extra` lengthens the card's overhang: the gate's
+// CONTROL (extra = 0.5 must collide, 0.55 mm^3 in the cove: the tip clears the
+// cove's root by tol_slide, so 0.19 is EMPTY and 0.21 touches).
+module wap_card_fitcheck(extra = 0) {
+    assert(e_camera, "check=\"wap_card\" needs a camera build — the plain XIAO carries no microSD socket (a vacuous gate proves nothing)");
+    intersection() { shell_asm(); wap_card_sweep(extra); }
+}
+module wap_card_sweep(extra = 0) {
+    end = board_cx - board_l/2;                                       // the drawn PCB's USB end
+    x0  = end - board_stop_gap - brd_xiao_sense_sd_over() - extra;     // tip, board on its USB-end stop
+    x1  = end + board_stop_gap - brd_xiao_sense_sd_over() + brd_xiao_sense_sd_l();   // inner end, board on its far stop
+    hw  = brd_xiao_sense_sd_w()/2 + abs(brd_xiao_sense_sd_dy());     // either handedness
+    z1  = pcb_z + board_h + brd_xiao_sense_sd_z1();                   // the seated card's top
+    translate([x0, board_cy - hw, -mount_extra - 1]) cube([x1 - x0, 2*hw, z1 + mount_extra + 1]);
+}
 
 pcb_z    = floor_t + standoff_h;                // absolute z of PCB underside
 // USB-biased, but no closer than the USB-C shell allows: it stands
@@ -501,13 +625,24 @@ pcb_z    = floor_t + standoff_h;                // absolute z of PCB underside
 // and the ledge's flat face landed on the receptacle's top 8 mm above the seat).
 // A board shoved to its USB-end stops (0.3), or a shell offered a little off,
 // meets the cove's 45° and is led in, never the flat. The mouth sits 1.0 behind
-// the inner face; a plug's overmold already had to enter the 12 x 6.5 opening
-board_cx = -inner_l/2 + max(board_clear + 0.5, floor_cove + tol_slide + brd_xiao_usb_overhang()) + board_l/2;
+// the inner face; a plug's overmold already had to enter the 12 x 6.5 opening.
+// v0.9.2: on a Sense build the seated microSD card sets it (wap_board_x0) — the
+// board 1.91 further in, the mouth 2.91 behind the inner face
+board_cx = -inner_l/2 + wap_board_x0(preset) + board_l/2;
 board_cy = 0;
-zone0    = -inner_l/2 + board_zone_l + 0.5;     // x where the appended bays begin
+zone0    = -inner_l/2 + board_zone_l + 0.5 + wap_card_shift(preset);   // x where the appended bays begin (v0.9.2: they follow the board)
 batt_cx  = zone0 + batt_gap + batt_l/2;         // battery bay center
 batt_cy  = 0;
 gps_cx   = zone0 + batt_zone_l + gps_gap + gps_l/2;   // GPS bay center (after battery, if any)
+// v0.9.2: the card's shift runs into the +X dead zone behind a GPS bay — the
+// cradle's rim stays clear of the +X ledge cove, as the cell's end ribs do
+assert(!e_gps || gps_cx + gps_l/2 + gps_rim <= inner_l/2 - floor_cove - tol_slide + 1e-6,
+       "the GPS cradle's rim runs into the +X wall's ledge cove — the board's card shift ate the dead zone (wap_tail_slack)");
+// v0.9.2: the Sense's seated microSD card (brd_xiao_sense_sd_*), board on its
+// USB-end stop, clears the ledge cove's root by tol_slide — the rule that
+// places the board; wap_card_fitcheck() proves the whole sweep against the shell
+assert(!e_camera || board_cx - board_l/2 - board_stop_gap - brd_xiao_sense_sd_over() >= -inner_l/2 + floor_cove + tol_slide - 1e-6,
+       "the Sense's microSD card meets the USB wall's ledge cove on its way in — the board sits too close to the wall");
 
 // mounting back-thickening (keyhole pockets live in the plate, never in the cavity)
 mount_extra0 = (e_mount && (mount_style == "keyhole" || mount_style == "both")) ? kh_extra : 0;
@@ -697,7 +832,7 @@ for (x = mid_xs()) {
            "a mid post lands on the board's clips — widen the cavity (inner_w)");
     assert(!e_battery || _mid_clear(x, batt_w/2 + 0.5, batt_cx - batt_l/2 - 1.6, batt_cx + batt_l/2 + 1.6),
            "a mid post lands on the cell — widen the cavity (inner_w)");
-    assert(!e_gps || _mid_clear(x, (gps_w + 2.4)/2 + 0.4, gps_cx - (gps_l + 2.4)/2, gps_cx + (gps_l + 2.4)/2),
+    assert(!e_gps || _mid_clear(x, (gps_w + 2*gps_rim)/2 + 0.4, gps_cx - (gps_l + 2*gps_rim)/2, gps_cx + (gps_l + 2*gps_rim)/2),
            "a mid post lands on the GPS cradle — widen the cavity (inner_w)");
     assert(abs(key_x - x) >= pd/2 + core_key_w()/2 + 0.5, "a mid post lands on the plate key — move key_x");
 }
@@ -707,6 +842,7 @@ hw_echo("WAP", [
     hw_item(len(post_xy()), str(hw_screw(screw_size, e_head, pl_L, hw_thread), " (plate to the post ends)")),
     screw_insert ? hw_item(len(post_xy()), str(hw_size_name(screw_size), " heat-set insert ", ins_od, " OD x ", ins_h)) : "",
     e_gland      ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    e_gland      ? hw_item(len(post_xy()), hw_washer(screw_size)) : "",
     e_seal       ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
     e_buzzer && e_seal ? hw_item(1, str("Ø", vent_pad_d, " adhesive ePTFE/GORE vent patch")) : "",
     e_led        ? hw_item(1, str("Ø", lp_d, " light pipe")) : "",
@@ -723,7 +859,7 @@ echo(str("Canary WAP enclosure v0.9 — outer ", out_l, " x ", out_w, " x ",
          base_h + lid_t + mount_extra, " mm  (preset=", preset, ", seal=", e_seal, ", mount=", e_mount, ")"));
 echo(str("plate screws: ", screw_size, " ", e_head, " x ", pl_L, ", head ", pl_r, " mm into a ", plate_t,
          " mm plate, ", pl_eng, " mm into ", post_h, " mm posts (pilot ", pl_pil, ")",
-         e_gland ? " — O-ring glands under the heads" : "",
+         e_gland ? " — O-ring glands under the heads' washers" : "",
          e_shield ? str(" — the shield's pilots ", sh_pilot - lid_t, " mm into the post tops") : ""));
 if (wall_eff > wall_t)
     echo(str(e_seal ? "seal mode: " : "", "walls auto-thickened ", wall_t, " -> ", wall_eff,
@@ -819,14 +955,14 @@ module boardclip(cx, sy) {
 stop_y0 = port_usbc_overmold_w()/2 + 0.2;   // a stop's inboard edge across the board
 module board_stops() {
     for (sx = [1, -1], sy = [1, -1]) {
-        x0 = board_cx + sx*(board_l/2 + 0.3) - (sx > 0 ? 0 : core_min_wall());
+        x0 = board_cx + sx*(board_l/2 + board_stop_gap) - (sx > 0 ? 0 : core_min_wall());
         t  = (sx > 0 && e_battery) ? min(core_min_wall(), batt_cx - batt_l/2 - 0.4 - x0) : core_min_wall();
         translate([x0, board_cy + (sy > 0 ? stop_y0 : -board_w/2), floor_t])
             cube([t, board_w/2 - stop_y0, standoff_h + board_h]);
     }
 }
 assert(board_w/2 - stop_y0 >= core_min_wall(), "the board's end stops would be thinner than a wall across the board — the board is too narrow for them beside the overmold");
-assert(!e_battery || batt_cx - batt_l/2 - 0.4 - (board_cx + board_l/2 + 0.3) >= core_min_web(),
+assert(!e_battery || batt_cx - batt_l/2 - 0.4 - (board_cx + board_l/2 + board_stop_gap) >= core_min_web(),
        "the board's far end stop is under core_min_web() before the bay's end rib — raise batt_gap");
 
 // blind keyhole pocket cut into the thickened plate (xc = feature center along X);
@@ -911,16 +1047,16 @@ module base() {
             if (e_gps)
                 translate([gps_cx, 0, floor_t])
                     difference() {
-                        rrect(gps_l + 2.4, min(gps_w + 2.4, inner_w - 0.5), 1.0, 1.4);
+                        rrect(gps_l + 2*gps_rim, min(gps_w + 2*gps_rim, inner_w - 0.5), 1.0, 1.4);
                         rrect(gps_l + 0.8, gps_w + 0.8, 0.5, 3);
                         if (batt_wire_w > 0)
-                            translate([-(gps_l + 2.4)/2, 0, 0.7])
+                            translate([-(gps_l + 2*gps_rim)/2, 0, 0.7])
                                 cube([4, batt_wire_w, 1.7], center = true);   // lead notch, -X (board) side
                     }
         }
-        // the screws: seats through the plate, pan heads over their glands in seal mode
+        // the screws: seats through the plate, pan heads on their washers over the glands in seal mode
         for (p = post_xy())
-            pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, e_head, pl_r, scr_c, tol_hole, e_gland);
+            pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, e_head, pl_r, scr_c, tol_hole, e_gland, bridge_layer);
         // the key notch in the plate's edge (the rib is on the shell's bore wall):
         // core_key_d() + 0.3 into the plate from the bore wall — never through the
         // ledge band (v0.9.1: the old ledge_w + 0.4 cut ran ledge_w + 1.4 in from the

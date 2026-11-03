@@ -253,6 +253,17 @@ jobs:
           # the pan head is one Customizer click away and puts the pad back in
           # the wall on a case whose default head is flat — so it is gated too
           chk wap_pan        -D 'check="wap_pan"'      -D 'preset="battery_full"' -D 'screw_head="pan"'
+          # the Sense's seated microSD card (BOM SD1, required) against the
+          # WAP shell, swept from below the shell's open end to its seat over
+          # both end stops and either handedness — the shell is lowered over
+          # the clipped board, so the card passes the ledge cove and the -X
+          # wall on its way in. The v0.9.1 camera shells met it 78.2 mm³ deep
+          # (the seated card alone 11.25) with every mesh clean; the builder's
+          # default (custom) too. Not the compact: a plain XIAO has no socket,
+          # and the check refuses a build with nothing to check
+          chk wap_card_battery -D 'check="wap_card"' -D 'preset="battery_full"'
+          chk wap_card_weather -D 'check="wap_card"' -D 'preset="battery_weather"'
+          chk wap_card_custom  -D 'check="wap_card"' -D 'preset="custom"'
           # the combo's two layouts: unsealed, and sealed (mid posts on every
           # wall for the ≤ 40 mm clamp spans, the stacks lifted over the groove)
           chk combo          -D 'check="combo"'
@@ -283,6 +294,23 @@ jobs:
           hit wap       -D 'check="wap_compact"'   -D 'preset="compact_plain"'
           hit combo     -D 'check="combo"'
           hit relay     -D 'check="relay"'
+          # the card gate's CONTROL: a card 0.5 longer must land in the ledge
+          # cove (the tip clears the cove's root by tol_slide, 0.2: 0.19 is
+          # EMPTY, 0.21 touches, 0.5 is 0.55 mm³ of cove)
+          ctl() {
+            label=$1; shift
+            rm -f /tmp/fc.stl
+            out=$(openscad --export-format binstl -o /tmp/fc.stl "$@" \
+                  canary_case_fitcheck.scad 2>&1) || true
+            if printf '%s' "$out" | grep -qE 'ERROR|WARNING'; then
+              echo "::error::$label (control) — dirty render, nothing was verified"; status=1
+            elif [ -f /tmp/fc.stl ]; then
+              echo "ok: $label control collides — the card gate can fail"
+            else
+              echo "::error::$label control came out empty — the card gate cannot see a card in the wall"; status=1
+            fi
+          }
+          ctl wap_card  -D 'check="wap_card"' -D 'preset="battery_full"' -D 'card_extra=0.5'
           exit $status
 
       - name: Verify STLs are watertight, with the expected number of parts

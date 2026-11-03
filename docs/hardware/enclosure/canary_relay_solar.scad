@@ -130,6 +130,18 @@
 //              §7), and the panel-gland hole a threaded body's clearance: 8.2
 //              left the M8 thread 0.1 a side, under FDM hole shrink (the
 //              SMA's lesson).
+//  2026-11-03: the O-ringed plate screws get a land (canary_core_lib
+//              pl_seat_cut): the M2 pan head (Ø4.0) was narrower than its
+//              Ø4.3 gland, so nothing but the ring stopped it. Each sealed
+//              seat takes a DIN 9021 washer (2.2 x 7.0 x 0.8, billed) in a
+//              Ø7.6 pocket whose floor is its land, over a Ø4.673 x 0.769
+//              gland; the recess is 0.031 (was 0.85) and the screws grow
+//              M2 x 8 -> x 10 (the lid's pilots 7.65 -> 8.83). The wider
+//              pocket left the ±X mid seats 0.25 off the strap channels
+//              (their assert wanted 0.5; the old pocket left 1.75), so the
+//              channels step out to ±23.95 (was inner_y/4 = 23.35): 0.85 of
+//              plate beside each pocket. The body and lid move (sealed is the
+//              default); the unsealed pod is cut as before.
 // ============================================================================
 
 use <canary_core_lib.scad>   // rrect/rrect2d, soft-edge face, the piston plate (pl_*), screw registry
@@ -381,6 +393,19 @@ function mid_xy() = concat([for (x = mid_xs(), s = [1, -1]) [x, s*post_cy]],
                            [for (y = mid_ys(), s = [1, -1]) [s*post_cx, y]]);
 function post_xy() = concat(corner_xy(), mid_xy());
 function _is_corner(p) = abs(abs(p[0]) - post_cx) < 1e-6 && abs(abs(p[1]) - post_cy) < 1e-6;
+// the strap channels' axis: a quarter of the cavity in from each end, stepped
+// out (away from the middle) off any screw seat that would leave under a web
+// (core_min_web) of plate between its pocket and the channel, with 0.05 to
+// spare. 2026-11-03: the sealed seats grew to the washer's Ø7.6 pocket
+// (canary_core_lib pl_seat_d — the head seal got its land), and the ±X mid
+// seats at y ±14.8 stood 0.25 off a channel at inner_y/4 = 23.35 (the assert
+// below wants 0.5; the old Ø4.6 pocket left 1.75). The channels step to
+// ±23.95, 0.85 of plate from the pockets (measured off the render). The
+// unsealed pod's seats are the old Ø4.6 and its channels stay at inner_y/4
+strap_y = let (base = inner_y/4,
+               need = strap_w/2 + pl_seat_d(screw_size, screw_head, tol_hole, e_gland)/2 + core_min_web(),
+               out  = [for (p = post_xy()) if (abs(p[1]) < base && abs(p[1]) > base - need) abs(p[1]) + need + 0.05])
+          len(out) == 0 ? base : max(out);
 // the ±X mid posts hang beside the columns: their inner face (pd - 0.2 into
 // the cavity) stays 0.5 off the LoRa clips and the battery bay's ring wall
 assert(n_mid_y == 0 || (inner_x/2 - pd + 0.2 - 0.5 >= bh_cx + (bh_w + 3)/2
@@ -395,7 +420,9 @@ for (x = mid_xs()) {
 key_x = inner_x/2 - post_corner - 2.5;   // plate key: +Y bore wall, inboard of the +X corner post (battery side)
 for (x = mid_xs()) assert(abs(key_x - x) >= pd/2 + core_key_w()/2 + 0.5, "a mid post lands on the plate key — move key_x");
 // the strap channels run across the plate's back between the mid posts' seats
-for (p = post_xy()) assert(abs(abs(p[1]) - inner_y/4) >= strap_w/2 + head_d/2 + tol_hole + 0.5 + 1e-9,
+// (the seat's real width — on the sealed build the washer's Ø7.6 pocket since
+// 2026-11-03, not the head's bore this used to read)
+for (p = post_xy()) assert(abs(abs(p[1]) - strap_y) >= strap_w/2 + pl_seat_d(screw_size, screw_head, tol_hole, e_gland)/2 + 0.5 + 1e-9,
        "a plate screw seat lands in a strap channel — move the channels or the posts");
 assert(roof_drain_w == 0 || 3*roof_drain_w + 12 <= pan_w, "roof_drain_w: three notches do not fit across the stop");
 assert(!sma_boss || sma_d + 6 <= cav_d, "the SMA washer land is taller than the sky wall — shrink it");
@@ -430,6 +457,7 @@ hw_echo("Solar relay pod", [
     hw_item(len(post_xy()), str(hw_screw(screw_size, screw_head, pl_L, "self-tap"), " (plate to the post ends)")),
     hw_item(2, str(hw_screw(screw_size, "pan", roof_L, "self-tap"), " (through the roof feet into the top posts, from the face)")),
     e_gland ? hw_item(len(post_xy()), hw_oring(screw_size)) : "",
+    e_gland ? hw_item(len(post_xy()), hw_washer(screw_size)) : "",
     e_seal ? hw_item(1, "TPU gasket (print part=\"gasket\")") : "",
     hw_item(1, str("SMA bulkhead jack, Ø", sma_d, " D-flat, + EPDM sealing washer under the nut")),
     hw_item(1, "M8 cable gland (panel lead, face)"),
@@ -441,7 +469,7 @@ echo(str("Canary solar relay pod v0.2-dev — ", out_x, " x ", out_y, " x ", bas
          " mm, panel ", pan_w, "x", pan_l, " @ ", roof_ang, " deg  (IN DEVELOPMENT)"));
 echo(str("plate screws: ", screw_size, " ", screw_head, " x ", pl_L, ", head ", pl_r, " mm into a ", plate_t,
          " mm plate, ", pl_eng, " mm into ", post_h, " mm posts (pilot ", pl_pil, ")",
-         e_gland ? " — O-ring glands under the heads" : "",
+         e_gland ? " — O-ring glands under the heads' washers" : "",
          " — the roof's pilots ", roof_pil - lid_t, " mm into the top posts from the face"));
 if (wall_eff > wall_t)
     echo(str(e_seal ? "seal mode: " : "", "walls auto-thickened ", wall_t, " -> ", wall_eff,
@@ -487,7 +515,7 @@ module edgeclip(px, py, ang, soff) {
 // bridged all 9. Only within the plate's slab behind the floor (seal-safe:
 // the seal line is the ledge, floor_t above the channel's roof).
 module strap_cut() {
-    for (sy = [1, -1]) translate([-out_x/2 - 1, sy*inner_y/4, -mount_extra - 0.1])
+    for (sy = [1, -1]) translate([-out_x/2 - 1, sy*strap_y, -mount_extra - 0.1])
         rotate([90, 0, 90]) linear_extrude(out_x + 2)
             port_bridge_profile2d(strap_w, 2*(strap_t + 0.1),
                                   max(0, (strap_w - port_flat_span_max())/2));
@@ -529,7 +557,7 @@ module back() {
                 translate([-2, -(bh_l + 3)/2 - 1, -0.5]) cube([4, 4, 2.0]);
             }
         }
-        // the screws: seats through the plate, pan heads over their glands in seal mode
+        // the screws: seats through the plate, pan heads on their washers over the glands in seal mode
         for (p = post_xy())
             pl_seat_cut(p[0], p[1], floor_t, plate_t, screw_size, screw_head, pl_r, scr_c, tol_hole, e_gland);
         // the key notch: core_key_d() + 0.3 into the plate from the bore wall — never
