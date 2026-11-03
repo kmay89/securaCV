@@ -1453,7 +1453,10 @@ async function readCurrentFirmware() {
     const desc = await readFlashChunked(esploader, app.offset + core.APP_DESC_OFFSET, 256);
     const d = core.parseAppDescriptor(desc);
     if (!d) { state.current = { unknown: true }; return; }
-    const product = core.matchProjectToProduct(state.catalog, d.projectName);
+    // Display-aware (core.productForProject): a display build whose name
+    // carries no flavor is a display, never the flagship its "canary" stem
+    // would match, so the readout names a display.
+    const product = core.productForProject(state.catalog, d.projectName);
     state.current = {
       version: d.version,
       projectName: d.projectName,
@@ -1529,8 +1532,10 @@ async function runIntake(narrate) {
   const shipped = intake.shippedWith({
     projectName,
     // Releases after 2.4.17 name their product in the descriptor
-    // (stamp_app_desc.py); shippedWith counts the exact asset_stem only.
-    product: core.matchProjectToProduct(state.catalog, projectName),
+    // (stamp_app_desc.py); shippedWith counts the exact asset_stem only, so
+    // the display-aware resolution every other surface uses changes no
+    // finding here (desktop_parity.test.js runs every name both ways).
+    product: core.productForProject(state.catalog, projectName),
     // A partition sector we READ and found empty is a blank chip; one we
     // couldn't read at all is unknown. state.ptRead keeps those apart —
     // `!state.pt` alone would call a failed read the cleanest possible result.
@@ -1668,16 +1673,8 @@ function phaseConnected() {
     });
     hello.append(strip);
   }
-  if (state.current && !state.current.unknown) {
-    const feel = el("p", "fineprint flash-feel");
-    feel.append(document.createTextNode(
-      "Those counters were read cold, without booting it. For the live story — " +
-      "its self-check score and how it’s feeling right now — "));
-    const ask = el("button", "ghost small", "🩺 ask the board itself");
-    ask.addEventListener("click", () => openMonitor({ proveIdentity: true }));
-    feel.append(ask);
-    hello.append(feel);
-  }
+  const feel = renderLiveStoryAsk();
+  if (feel) hello.append(feel);
 
   const tools = el("div", "flash-row flash-tools");
   const health = el("button", "ghost", "🩺 Health check");
@@ -1725,7 +1722,7 @@ function phaseConnected() {
     voice.append(vcon);
     // A Sense on the wire gets its bench one click away — the console is its
     // voice, but the radar bench is its senses.
-    const curProd = core.matchProjectToProduct(state.catalog, state.current.projectName);
+    const curProd = boardProduct();
     const curRole = curProd && core.productRole(curProd.id);
     if (curRole === "sense") {
       const rb = el("button", "ghost small", "👋 open the radar bench — feel it sense");
@@ -1979,12 +1976,49 @@ function renderRosterStrip() {
   return sec;
 }
 
+// ── the live story: ask the board itself, where its firmware tells one ──────
+// The passport strip above was read cold; the board's self-check score and
+// how it feels right now come from its own `j` answer, so the ask is offered
+// only where the firmware prints a self-check (sweep A97). The catalog's
+// serial_receipt says which firmware wires its self-manifest to `j`
+// (gen_flash.py reads that off the firmware sources): the WAP, the Sense and
+// every display print none, so the board is pointed at its boot log instead
+// of being promised a score it never prints. A firmware the catalog does not
+// name is not asked either, as on the desktop (renderPassport): nothing says
+// it answers `j`. The product is boardProduct()'s, display-aware, so a
+// display build whose name carries no flavor is a display here too.
+function renderLiveStoryAsk() {
+  const told = boardProduct();
+  if (!told) return null;
+  const feel = el("p", "fineprint flash-feel");
+  if (core.requiresLiveReceipt(told)) {
+    feel.append(document.createTextNode(
+      "Those counters were read cold, without booting it. For the live story — " +
+      "its self-check score and how it’s feeling right now — "));
+    const ask = el("button", "ghost small", "🩺 ask the board itself");
+    ask.addEventListener("click", () => openMonitor({ proveIdentity: true }));
+    feel.append(ask);
+  } else {
+    feel.append(document.createTextNode(
+      "Those counters were read cold, without booting it. " +
+      "This firmware prints no self-check; open the serial monitor to read its boot log."));
+  }
+  return feel;
+}
+
 // ── role: what this board IS, read from what it RUNS ────────────────────────
 function renderRoleLine() {
   const cur = state.current;
   if (!cur || cur.unknown) return null;
+  // The product the descriptor names, display-aware: the same answer the
+  // monitor, the install verdicts and the self-check ask resolve. A firmware
+  // the catalog does not name ("esp32_display_demo", a vendor's own image)
+  // gets no role line, as the desktop's passport names no product for it.
+  const prod = core.productForProject(state.catalog, cur.projectName);
+  if (!prod) return null;
+  const role = prod.role || core.productRole(prod.id);
   // A display build read off the wire: name it and offer the live glass.
-  if (core.looksLikeDisplayProject(cur.projectName)) {
+  if (role === "display") {
     // A release stamps each product's asset_stem into the descriptor, so a
     // stamped board names its own product: the glass is that product's own
     // displays[] entry (its flash_product), or none. displayFor's loose
@@ -2009,9 +2043,6 @@ function renderRoleLine() {
     }
     return p;
   }
-  const prod = core.productForProject(state.catalog, cur.projectName);
-  if (!prod) return null;
-  const role = prod.role || core.productRole(prod.id);
   const verb = {
     vision: "senses people through its camera — on-device, never raw video",
     sense: "senses presence by 60 GHz radar — no camera, no mic",
@@ -3460,7 +3491,7 @@ function refreshManifestState() {
   // The headline answer, before any list: should THIS board be updated?
   // Compares what the board runs against the release for that same product.
   if (state.current && !state.current.unknown) {
-    const curProd = core.matchProjectToProduct(state.catalog, state.current.projectName);
+    const curProd = boardProduct();
     const entry = curProd && core.manifestEntry(m, curProd, state.chip);
     if (entry && !entry.error) {
       const v = installVerdictFor(curProd, entry.version);
@@ -3515,11 +3546,10 @@ function refreshManifestState() {
 }
 
 // ── pick → confirm → flash ──────────────────────────────────────────────────
-// The verdict for installing `product` at `version` on the board in hand.
+// The verdict for installing `product` at `version` on the board in hand,
+// against the product its descriptor names (boardProduct: display-aware).
 function installVerdictFor(product, version) {
-  const currentProduct = state.current && !state.current.unknown
-    ? core.matchProjectToProduct(state.catalog, state.current.projectName)
-    : null;
+  const currentProduct = boardProduct();
   return core.installVerdict({ current: state.current, currentProduct, product, version });
 }
 

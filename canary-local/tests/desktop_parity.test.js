@@ -4495,6 +4495,12 @@ const A86_DESCRIPTORS = [
   ["canary", "securacv-canary"],
   ["canary-wroom", "securacv-canary-wroom"],
   ["something_else", null],
+  // A name that carries no catalog stem is no SecuraCV build, "display" in it
+  // or not: a vendor's own demo stays unrecognized, as the plain matcher
+  // leaves it, so no surface calls it a SecuraCV display.
+  ["esp32_display_demo", null],
+  ["lilygo-t-display-s3", null],
+  ["display", null],
   ["", null],
 ];
 
@@ -4508,7 +4514,7 @@ test("A86: both flashers resolve a board's descriptor to its product, a flavorle
     assert.strictEqual(got ? got.id : null, want, `flash-core productForProject(${JSON.stringify(name)})`);
     const d = desk(catalog, name);
     assert.strictEqual(d ? d.id : null, want, `the Flasher's productForProject(${JSON.stringify(name)})`);
-    if (core.looksLikeDisplayProject(name)) {
+    if (core.looksLikeDisplayProject(name) && core.matchProjectToProduct(catalog, name)) {
       assert.strictEqual(got.role, "display", `${name} is a display build, so it resolves to a display`);
     }
   }
@@ -4562,6 +4568,372 @@ test("A86: the browser flasher's monitor offers the flashed or the identified bo
   // The identity ask (j) goes only to a firmware that answers it.
   assert.match(phase, /if \(opts\.proveIdentity && !mon\.askedManifest && core\.requiresLiveReceipt\(monProduct\)\) \{/,
     "the browser must not ask a WAP, a Sense or a display for a j it does not have");
+});
+
+// ── A96 / A97: one resolution behind every surface, in both flashers ─────────
+// A86 gave both flashers a display-aware resolver (productForProject), and
+// the role line and the monitor used it, but the readout, the customs read,
+// the voice bench, the update headline, the install verdicts, the rescue
+// pick and the smart pick still asked the plain substring matcher, which
+// answers the flagship's "canary" for a display build whose name carries no
+// flavor ("canary_display"). Each now resolves through productForProject,
+// and the self-check ask is offered only where that product's firmware
+// prints a self-check (its catalog serial_receipt). The harnesses run each
+// flasher's own functions over stand-ins for the DOM, the board and the
+// backend.
+
+// flash.js's el() and document, as stand-ins: a node keeps its tag, class,
+// text, children and click handler.
+const stubEl = (tag, cls, text) => {
+  const n = { tag, cls: cls || "", text: text || "", kids: [], click: null };
+  n.append = (...k) => { n.kids.push(...k); };
+  n.addEventListener = (ev, fn) => { if (ev === "click") n.click = fn; };
+  return n;
+};
+const stubDoc = { createTextNode: (t) => ({ tag: "#text", text: t, kids: [] }) };
+const stubText = (n) => (n == null ? "" : typeof n === "string" ? n :
+  [n.text || "", ...(n.kids || []).map(stubText)].join(""));
+const stubNodes = (n) => (n && typeof n === "object" ? [n, ...(n.kids || []).flatMap(stubNodes)] : []);
+
+// desktop/src/app.js's document, as a stand-in.
+const deskNode = (tag) => ({
+  tagName: tag, className: "", textContent: "", type: "", title: "", children: [], listeners: {},
+  classList: { on: new Set(), add(c) { this.on.add(c); }, remove(c) { this.on.delete(c); },
+               toggle(c, v) { v ? this.on.add(c) : this.on.delete(c); } },
+  appendChild(n) { this.children.push(n); return n; }, append(...k) { this.children.push(...k); },
+  addEventListener(t, f) { this.listeners[t] = f; }, set innerHTML(_) { this.children = []; },
+});
+
+const SELF_CHECK_NONE = "This firmware prints no self-check; open the serial monitor to read its boot log.";
+const MB = 1024 * 1024;
+const productNamed = (name) => (catalog.products.find((p) => p.name === name) || {}).id || null;
+
+// The browser's connected card for one board, from flash.js's own functions.
+// `current` is what readCurrentFirmware leaves in state.current.
+function browserCard(flashJs, core, current, { chip = "ESP32-S3", flashBytes = 8 * MB } = {}) {
+  const state = { catalog, current, chip, flashBytes };
+  const src = (...names) => names.map((n) => fnSource(flashJs, n)).join("\n");
+  const role = new Function("state", "core", "el", "setPhase", "phaseDisplayBench", "phaseConnected",
+    `${src("renderRoleLine")}\nreturn renderRoleLine();`)(state, core, stubEl, () => {}, () => null, () => null);
+  const roleText = role ? stubText(role) : "";
+  const shown = /It looks like the (.+?)\./.exec(roleText) || /^🧭 A (.+?) — it /.exec(roleText);
+  const opened = [];
+  const feel = new Function("state", "core", "el", "document", "openMonitor",
+    `${src("boardProduct", "renderLiveStoryAsk")}\nreturn renderLiveStoryAsk();`)(
+    state, core, stubEl, stubDoc, (opts) => opened.push(opts));
+  const ask = stubNodes(feel).find((n) => n.tag === "button") || null;
+  if (ask) ask.click();
+  const verdictFor = new Function("state", "core", `${src("boardProduct", "installVerdictFor")}\nreturn installVerdictFor;`)(
+    state, core);
+  const named = current && !current.unknown ? current.projectName : null;
+  return {
+    role: role ? productNamed(shown && shown[1]) : null,
+    roleText,
+    ask: !!ask,
+    askOpens: opened,
+    askNone: stubText(feel).includes(SELF_CHECK_NONE),
+    verdict: (product, version) => {
+      const v = verdictFor(product, version);
+      return { kind: v.kind, label: v.label };
+    },
+    rescue: core.pickRescueProduct(catalog, chip, current && current.projectName),
+    pick: core.smartPick(catalog, { chip, flashBytes, currentProject: named }),
+  };
+}
+
+// The desktop's passport for one board, from app.js's own functions: what
+// board_passport answered (or threw), then the card, the verdicts and the pick.
+async function desktopCard(appJs, answer, { chip = "ESP32-S3", flashBytes = 8 * MB } = {}) {
+  const src = (...names) => names.map((n) => fnSource(appJs, n)).join("\n");
+  const state = { catalog, port: "/dev/ttyACM0", chip, flashBytes, mac: null, heldBoot: undefined };
+  await new Function("state", "invoke", "renderPassport", "renderProducts", "setTimeout", "clearTimeout",
+    `${src("matchProjectToProduct", "productForProject")}\nasync ${src("readPassport")}\nreturn readPassport;`)(
+    state, async () => { if (answer instanceof Error) throw answer; return answer; },
+    () => {}, () => {}, () => 0, () => {})(state.port);
+  const box = deskNode("div");
+  const askSelfCheck = () => {};
+  new Function("$", "document", "state", "ARDUINO_READBACK_NOTE", "shippedWith", "coldBootVerdict",
+    "requiresLiveReceipt", "askSelfCheck", "bookAll", "passportRows",
+    `${src("renderPassport")}\nreturn renderPassport;`)(
+    (id) => (id === "passport" ? box : null), { createElement: deskNode }, state, "(the Arduino note)",
+    () => null, () => null, (p) => !p || p.serial_receipt !== false, askSelfCheck, () => ({}), () => [])();
+  const head = box.children.find((n) => n.className === "pp-head");
+  const r = state.resident;
+  const who = r && !r.blank && !r.unknown && head
+    ? head.textContent.replace(/^Running /, "").replace(/ \d[\w.-]*( from \S+)?$/, "") : null;
+  const ask = box.children.find((n) => String(n.className).split(" ").includes("pp-ask")) || null;
+  const none = box.children.find((n) => n.className === "pp-noask") || null;
+  const usb = /^const USB_INSTALL_STARTS_OVER =\n((?:  "[^"\n]*"(?: \+|;)\n)+)/m.exec(appJs)[0];
+  const markup = new Function("state", `${usb}\n${src("compareVersions", "installVerdict", "esc", "verdictMarkup")}\nreturn verdictMarkup;`)(state);
+  const normChipLine = /^const normChip = .*$/m.exec(appJs)[0];
+  const smartPick = new Function(`${normChipLine}\n${src("orList", "boardShortlist", "matchProjectToProduct", "productForProject", "smartPick")}\nreturn smartPick;`)();
+  return {
+    resident: r,
+    head: head ? head.textContent : "",
+    role: who ? productNamed(who) : null,
+    ask: !!ask && ask.listeners.click === askSelfCheck,
+    askNone: !!none && none.textContent === SELF_CHECK_NONE,
+    verdict: (product, version) => {
+      const html = markup(product, version);
+      const m = /p-verdict is-([a-z]+)"><span class="p-verdict-label">(.*?)<\/span>/.exec(html);
+      if (!m) return null;
+      const label = m[2].replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"');
+      return { kind: m[1], label: label.replace(/^\S+ /, "") };
+    },
+    pick: smartPick(catalog, { chip, flashBytes, currentProject: r && !r.unknown && !r.blank ? r.projectName : null }),
+  };
+}
+
+const FLAVORLESS_DISPLAYS = ["canary_display", "canary-display"];
+
+test("A96: every surface resolves a flavorless display build to a display, never the flagship, in both flashers", async () => {
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const intake = await import(pathToFileURL(join(CANARY, "assets/intake.js")).href);
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const flagship = catalog.products.find((p) => p.id === "securacv-canary");
+  const watch = catalog.products.find((p) => p.id === "securacv-canary-display-watch");
+  const isDisplay = (p, where) => {
+    assert.ok(p, `${where}: resolved no product`);
+    assert.notStrictEqual(p.id, flagship.id, `${where}: resolved the flagship's "canary" stem`);
+    assert.strictEqual(p.role, "display", `${where}: resolved ${p.id}, not a display`);
+  };
+  const manifest = { schema: core.MANIFEST_SCHEMA, fw_train: "2.4.19", products: Object.fromEntries(
+    catalog.products.map((p) => [p.id, { version: "2.4.19", chipFamily: p.chip, factory: "x.bin", sha256: "0".repeat(64), size: 1 }])) };
+  for (const name of FLAVORLESS_DISPLAYS) {
+    // The browser. readCurrentFirmware: the readout's product name.
+    const state = { catalog, session: { esploader: {} } };
+    const readStub = { ...core,
+      parsePartitionTable: () => ({ entries: [{ type: 0, subtype: 0x10, offset: 0x10000, size: 0x100000 }],
+                                    apps: [{ type: 0, subtype: 0x10, offset: 0x10000, size: 0x100000 }] }),
+      isOtaDataPart: () => false, pickBootedAppPartition: (apps) => apps[0],
+      parseAppDescriptor: () => ({ version: "2.4.10", projectName: name, idfVer: "v4.4.7" }) };
+    await new Function("state", "core", "readFlashChunked", `${fnSource(flashJs, "readCurrentFirmware").replace(/^/, "async ")}\nreturn readCurrentFirmware;`)(
+      state, readStub, async (_l, _o, n) => new Uint8Array(n))();
+    assert.strictEqual(state.current.projectName, name);
+    isDisplay(catalog.products.find((p) => p.name === state.current.productName), `the browser readout for ${name}`);
+
+    // runIntake: the product the customs read is handed.
+    let shippedArgs = null;
+    const intakeSpy = { ...intake, shippedWith: (a) => { shippedArgs = a; return intake.shippedWith(a); } };
+    await new Function("state", "core", "intake", "readFlashChunked", `${"async " + fnSource(flashJs, "runIntake")}\nreturn runIntake;`)(
+      { catalog, session: { esploader: { chip: {} } }, current: { version: "2.4.10", projectName: name },
+        mac: null, roster: [], heldBoot: null, ptRead: "ok", pt: { entries: [], apps: [] }, flashBytes: null },
+      core, intakeSpy, async () => new Uint8Array(0))();
+    isDisplay(shippedArgs && shippedArgs.product, `the browser's customs read for ${name}`);
+
+    // The connected card: the update headline names the display's release.
+    const banner = stubEl("div");
+    Object.defineProperty(banner, "innerHTML", { set() { banner.kids = []; } });
+    new Function("$", "el", "state", "core", "document", "activeManifestUrl",
+      `${["boardProduct", "installVerdictFor", "refreshManifestState"].map((n) => fnSource(flashJs, n)).join("\n")}\nreturn refreshManifestState;`)(
+      () => banner, stubEl, { catalog, manifest, chip: "ESP32-S3", current: { version: "2.4.10", projectName: name } },
+      core, { querySelectorAll: () => [] }, () => "")();
+    const headline = stubText(banner);
+    assert.ok(headline.includes(`${watch.name} 2.4.10 → 2.4.19`), `the browser's update headline for ${name}: ${headline}`);
+    assert.ok(!headline.includes(`— ${flagship.name} 2.4.10`), `the browser's update headline for ${name} names the flagship`);
+
+    // The install verdicts, the rescue pick and the smart pick.
+    const card = browserCard(flashJs, core, { version: "2.4.10", projectName: name });
+    assert.deepStrictEqual(card.verdict(watch, "2.4.19"), { kind: "update", label: "Update · 2.4.10 → 2.4.19" },
+      `the browser verdict on the ${watch.name} card for ${name}`);
+    assert.deepStrictEqual(card.verdict(flagship, "2.4.19"), { kind: "switch", label: `Switch from ${watch.name}` },
+      `the browser verdict on the flagship card for ${name}`);
+    isDisplay(card.rescue, `the browser's rescue pick for ${name}`);
+    assert.strictEqual(card.pick.kind, "current", `the browser's smart pick for ${name}`);
+    isDisplay(card.pick.product, `the browser's smart pick for ${name}`);
+    isDisplay(core.pickRescueProduct(catalog, "ESP32-S3", name), `flash-core pickRescueProduct(${name})`);
+    isDisplay(core.smartPick(catalog, { chip: "ESP32-S3", currentProject: name }).product, `flash-core smartPick(${name})`);
+
+    // The desktop: the passport's resident product, its head, its verdicts
+    // and the smart pick.
+    const desk = await desktopCard(appJs, { resident: { version: "2.4.10", projectName: name, slot: "ota_0" } });
+    isDisplay(desk.resident.product, `the desktop passport's resident product for ${name}`);
+    assert.strictEqual(desk.head, `Running ${watch.name} 2.4.10 from ota_0`, `the desktop passport head for ${name}`);
+    assert.deepStrictEqual(desk.verdict(watch, "2.4.19"), { kind: "update", label: "Update · 2.4.10 → 2.4.19" },
+      `the desktop verdict on the ${watch.name} card for ${name}`);
+    assert.deepStrictEqual(desk.verdict(flagship, "2.4.19"), { kind: "switch", label: `Switch from ${watch.name}` },
+      `the desktop verdict on the flagship card for ${name}`);
+    assert.strictEqual(desk.pick.kind, "current", `the desktop's smart pick for ${name}`);
+    isDisplay(desk.pick.product, `the desktop's smart pick for ${name}`);
+  }
+  // The voice card's bench buttons resolve the same way (a Sense gets the
+  // radar bench, a WAP the field bench), and no caller in either flasher
+  // asks the plain matcher for the board's product any more: the browser's
+  // last one is the role line's `exact`, which tells a stamped flavor from
+  // the family guess and is never the answer on its own.
+  assert.match(fnSource(flashJs, "phaseConnected"), /const curProd = boardProduct\(\);\s*const curRole = curProd && core\.productRole\(curProd\.id\);/);
+  assert.deepStrictEqual([...flashJs.matchAll(/core\.matchProjectToProduct\(/g)].length, 1,
+    "flash.js asks the plain matcher outside the role line's flavor test");
+  assert.match(fnSource(flashJs, "renderRoleLine"), /const exact = core\.matchProjectToProduct\(state\.catalog, cur\.projectName\);/);
+  const flashCore = read(join(CANARY, "assets/flash-core.js"));
+  const calls = (src) => [...src.matchAll(/(?<!function )\bmatchProjectToProduct\(/g)].length;
+  assert.strictEqual(calls(flashCore), 1, "flash-core.js asks the plain matcher outside productForProject");
+  assert.match(fnSource(flashCore, "productForProject"), /const match = matchProjectToProduct\(catalog, projectName\);/);
+  assert.strictEqual(calls(appJs), 1, "desktop/src/app.js asks the plain matcher outside productForProject");
+  assert.match(fnSource(appJs, "productForProject"), /const match = matchProjectToProduct\(catalog, projectName\);/);
+});
+
+test("A96: productForProject answers what the plain matcher did for every name but a flavorless display build, in both flashers", async () => {
+  // The no-op half, as a generated table rather than a sample: every
+  // descriptor name the catalog implies (each product's stem as a release
+  // stamps it, its underscore and upper-case spellings, a dev suffix, its id,
+  // each displays[] id), the flavorless display names and some foreign
+  // images. For each, both flashers' resolvers agree with each other, and
+  // they move a name off the plain matcher's answer only when that answer is
+  // a non-display product and the name says "display" — which is exactly
+  // the flavorless display build, and it moves to a display. The customs
+  // read counts the exact stem only, so its finding is the same either way.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const intake = await import(pathToFileURL(join(CANARY, "assets/intake.js")).href);
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const desk = new Function([fnSource(appJs, "matchProjectToProduct"), fnSource(appJs, "productForProject")].join("\n") +
+    "\nreturn { matchProjectToProduct, productForProject };")();
+  const names = new Set(["canary_display", "canary-display", "CANARY_DISPLAY", "canary-display-dev",
+    "canary-display-future9", "esp32_display_demo", "lilygo-t-display-s3", "display", "arduino-lib-builder",
+    "my-canary-demo", "micropython", "esp32-hello", "", "canary"]);
+  for (const p of catalog.products) {
+    for (const n of [p.asset_stem, p.asset_stem.replace(/-/g, "_"), p.asset_stem.toUpperCase(), `${p.asset_stem}-dev`, p.id]) names.add(n);
+  }
+  for (const d of core.displaysIn(catalog)) names.add(d.id);
+  const id = (p) => (p ? p.id : null);
+  const moved = [];
+  let kept = 0;
+  for (const name of names) {
+    const match = core.matchProjectToProduct(catalog, name);
+    const resolved = core.productForProject(catalog, name);
+    assert.strictEqual(id(desk.matchProjectToProduct(catalog, name)), id(match), `the plain matchers disagree on ${JSON.stringify(name)}`);
+    assert.strictEqual(id(desk.productForProject(catalog, name)), id(resolved), `the resolvers disagree on ${JSON.stringify(name)}`);
+    const flavorless = !!match && match.role !== "display" && core.looksLikeDisplayProject(name);
+    if (!flavorless) {
+      assert.strictEqual(id(resolved), id(match), `productForProject moved ${JSON.stringify(name)} off ${id(match)}`);
+      kept++;
+    } else {
+      assert.strictEqual(resolved && resolved.role, "display", `${JSON.stringify(name)} says display and must resolve to one`);
+      moved.push(name);
+    }
+    assert.deepStrictEqual(intake.shippedWith({ projectName: name, product: resolved }),
+      intake.shippedWith({ projectName: name, product: match }), `the customs finding moved for ${JSON.stringify(name)}`);
+  }
+  // Every catalog stem kept its own product: no existing pick moved.
+  for (const p of catalog.products) assert.strictEqual(id(core.productForProject(catalog, p.asset_stem)), p.id, p.asset_stem);
+  assert.deepStrictEqual(moved.sort(), ["CANARY_DISPLAY", "canary-display", "canary-display-dev", "canary-display-future9", "canary_display"],
+    "only a display build whose name names no catalog display moves");
+  assert.ok(kept >= catalog.products.length * 5, `${kept} names kept their answer`);
+});
+
+test("A97: the self-check ask is offered only where the firmware prints one, in both flashers", async () => {
+  // serial_receipt is gen_flash.py's reading of each product's firmware:
+  // false where the sources wire no self-manifest to `j`. The WAP, the Sense
+  // and every display print none, so neither flasher promises their score;
+  // the flagship and the Vision answer `j`, so both offer the ask.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const offers = { yes: [], no: [] };
+  for (const p of catalog.products) {
+    const current = { version: "2.4.10", projectName: p.asset_stem };
+    const browser = browserCard(flashJs, core, current, { chip: p.chip, flashBytes: p.flash_mb * MB });
+    const desk = await desktopCard(appJs, { resident: { ...current, slot: "ota_0" } }, { chip: p.chip, flashBytes: p.flash_mb * MB });
+    const prints = p.serial_receipt !== false;
+    assert.strictEqual(browser.ask, prints, `the browser's "ask the board itself" for ${p.id} (serial_receipt ${p.serial_receipt})`);
+    assert.strictEqual(desk.ask, prints, `the desktop's "Ask it for its self-check" for ${p.id} (serial_receipt ${p.serial_receipt})`);
+    assert.strictEqual(browser.askNone, !prints, `the browser's boot-log pointer for ${p.id}`);
+    assert.strictEqual(desk.askNone, !prints, `the desktop's boot-log pointer for ${p.id}`);
+    if (prints) assert.deepStrictEqual(browser.askOpens, [{ proveIdentity: true }], `${p.id}: the browser's ask opens the monitor to ask j`);
+    (prints ? offers.yes : offers.no).push(p.role);
+  }
+  // The roles the item names, on each side of the line.
+  for (const role of ["wap", "sense", "display"]) {
+    assert.ok(offers.no.includes(role) && !offers.yes.includes(role), `a ${role} must offer no self-check ask`);
+  }
+  for (const role of ["canary", "vision"]) {
+    assert.ok(offers.yes.includes(role) && !offers.no.includes(role), `a ${role} must offer the self-check ask`);
+  }
+  // A flavorless display build is a display here too (A96's resolution).
+  for (const name of FLAVORLESS_DISPLAYS) {
+    const browser = browserCard(flashJs, core, { version: "2.4.10", projectName: name });
+    const desk = await desktopCard(appJs, { resident: { version: "2.4.10", projectName: name, slot: "ota_0" } });
+    assert.ok(!browser.ask && browser.askNone, `the browser asked a ${name} board for a self-check it never prints`);
+    assert.ok(!desk.ask && desk.askNone, `the desktop asked a ${name} board for a self-check it never prints`);
+  }
+  // A firmware the catalog does not name is not asked, nor pointed anywhere,
+  // on either side; neither is a blank or an unread board.
+  for (const [what, current, answer] of [
+    ["foreign firmware", { version: "1.0", projectName: "esp32-hello" }, { resident: { version: "1.0", projectName: "esp32-hello", slot: "factory" } }],
+    ["an Arduino-core descriptor", { version: "esp-idf: v4.4.7", projectName: "arduino-lib-builder" },
+      { resident: { version: "esp-idf: v4.4.7", projectName: "arduino-lib-builder", slot: "ota_0" } }],
+    ["a blank board", { unknown: true }, { blank: true }],
+    ["an unread board", { unknown: true }, new Error("read failed")],
+  ]) {
+    const browser = browserCard(flashJs, core, current);
+    const desk = await desktopCard(appJs, answer);
+    assert.ok(!browser.ask && !browser.askNone, `the browser offered ${what} a self-check line`);
+    assert.ok(!desk.ask && !desk.askNone, `the desktop offered ${what} a self-check line`);
+  }
+  // The browser's card draws it where the cold counters are, from this one function.
+  assert.match(fnSource(flashJs, "phaseConnected"), /const feel = renderLiveStoryAsk\(\);\s*if \(feel\) hello\.append\(feel\);/);
+});
+
+test("A96/A97: both flashers show the same board the same way, for every product and every descriptor name", async () => {
+  // The parity table: for each product a release stamps (its stem), and for
+  // a board whose read failed, a blank one, the flavorless display names,
+  // a flavored display, the legacy underscore spellings and foreign images,
+  // what each flasher shows — the product its role line or passport head
+  // names, the self-check ask, the smart pick, and the install verdict on
+  // every card for that chip. One documented difference is held as such:
+  // a board whose read FAILED. The browser cannot tell it from a blank chip
+  // (both arrive as {unknown:true}), so its verdict is "First install"; the
+  // desktop's backend can, and says "Can't tell yet" (verdictMarkup), not a
+  // first install it never saw. The rescue pick is the browser's alone (the
+  // desktop's Rescue restores a backup or erases, and picks no product), so
+  // it is held to the same resolution as everything else instead.
+  const core = await import(pathToFileURL(join(CANARY, "assets/flash-core.js")).href);
+  const flashJs = read(join(CANARY, "assets/flash.js"));
+  const appJs = read(join(ROOT, "desktop/src/app.js"));
+  const rows = [
+    ["an unread board", { unknown: true }, new Error("read failed"), "ESP32-S3", 8],
+    ["a blank board", { unknown: true }, { blank: true }, "ESP32-S3", 8],
+  ];
+  const named = (name, chip, mb) => [name, { version: "2.4.10", projectName: name },
+    { resident: { version: "2.4.10", projectName: name, slot: "ota_0" } }, chip, mb];
+  for (const p of catalog.products) rows.push(named(p.asset_stem, p.chip, p.flash_mb));
+  for (const [name, chip, mb] of [["canary_display", "ESP32-S3", 8], ["canary_display", "ESP32-S3", 16],
+    ["canary-display", "ESP32-S3", 16], ["canary-display", "ESP32-C6", 4], ["canary-display-dash", "ESP32-S3", 16],
+    ["canary_display_dash", "ESP32-S3", 16], ["canary_wap", "ESP32-S3", 8], ["canary_vision", "ESP32-C3", 4],
+    ["canary_sense", "ESP32-C6", 4], ["esp32_display_demo", "ESP32-S3", 16], ["arduino-lib-builder", "ESP32-S3", 8]]) {
+    rows.push(named(name, chip, mb));
+  }
+  const pickOf = (p) => p && { product: p.product.id, kind: p.kind, why: p.why, shortlist: (p.shortlist || []).map((x) => x.id) };
+  let compared = 0;
+  for (const [what, current, answer, chip, mb] of rows) {
+    const opts = { chip, flashBytes: mb * MB };
+    const browser = browserCard(flashJs, core, current, opts);
+    const desk = await desktopCard(appJs, answer, opts);
+    const label = `${what} (${chip}, ${mb} MB)`;
+    assert.strictEqual(browser.role, desk.role, `${label}: the browser's role line names ${browser.role}, the desktop's passport ${desk.role}`);
+    assert.strictEqual(browser.ask, desk.ask, `${label}: the self-check ask`);
+    assert.strictEqual(browser.askNone, desk.askNone, `${label}: the boot-log pointer`);
+    assert.deepStrictEqual(pickOf(browser.pick), pickOf(desk.pick), `${label}: the smart pick`);
+    const resolved = current.unknown ? null : core.productForProject(catalog, current.projectName);
+    const onChip = core.productsForChip(catalog, chip);
+    assert.strictEqual(browser.role, resolved ? resolved.id : null, `${label}: the role line names the resolved product`);
+    if (resolved && onChip.some((p) => p.id === resolved.id)) {
+      assert.strictEqual(browser.rescue && browser.rescue.id, resolved.id, `${label}: the rescue pick is the resolved product`);
+    }
+    for (const product of onChip) {
+      const b = browser.verdict(product, "2.4.19");
+      const d = desk.verdict(product, "2.4.19");
+      if (answer instanceof Error) {
+        assert.deepStrictEqual(b, { kind: "fresh", label: "First install" }, `${label}: the browser's verdict on ${product.id}`);
+        assert.deepStrictEqual(d, { kind: "unknown", label: "Can't tell yet" }, `${label}: the desktop's verdict on ${product.id}`);
+      } else {
+        assert.deepStrictEqual(b, d, `${label}: the install verdict on the ${product.id} card`);
+      }
+      compared++;
+    }
+  }
+  assert.ok(compared > 100, `${compared} verdicts compared`);
 });
 
 test("A86: the browser monitor's status lines name the firmware's own menu command, or none", async () => {
@@ -5369,8 +5741,8 @@ test("customs names a board running SecuraCV, and stays honest about the Arduino
   assert.match(intake.shippedWith({ projectName: "arduino-lib-builder" }).detail, /up to 2\.4\.17/);
   assert.match(appJs, /shippedWith\(\{\s*projectName: r\.unknown \? null : r\.projectName,\s*product: r\.product,/,
     "the desktop's customs finding no longer gets the product it matched");
-  assert.match(flashJs, /product: core\.matchProjectToProduct\(state\.catalog, projectName\)/,
-    "the browser's customs finding no longer gets the product it matched");
+  assert.match(flashJs, /product: core\.productForProject\(state\.catalog, projectName\)/,
+    "the browser's customs finding no longer gets the product it resolved");
   // Every stem a release stamps maps back to its own product on the desktop
   // too (flash.test.js holds the browser's copies to the same loop).
   const lookup = new Function([fnSource(appJs, "matchProjectToProduct"), fnSource(appJs, "productForProject")]

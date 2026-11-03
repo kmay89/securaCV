@@ -1844,11 +1844,15 @@ function matchProjectToProduct(catalog, projectName) {
 // display product it names, else the catalog display entry it matches, else
 // the first display product — never the flagship. Every display firmware
 // reads the same serial console (none), so the monitor's commands are right
-// either way.
+// either way. A name that carries no catalog stem at all is no SecuraCV
+// build ("esp32_display_demo", a vendor's own image) and stays unrecognized,
+// as the plain matcher leaves it. Every surface here that names the board's
+// firmware resolves it through this: the passport (its head, customs, the
+// install verdicts, the self-check ask), the smart pick and the monitor.
 function productForProject(catalog, projectName) {
   const match = matchProjectToProduct(catalog, projectName);
   const name = String(projectName || "").toLowerCase();
-  if (!/display/.test(name)) return match;
+  if (!match || !/display/.test(name)) return match;
   const isDisplay = (p) => (p.role || (/display|watch|dash/.test(String(p.id || "")) ? "display" : "")) === "display";
   if (match && isDisplay(match)) return match;
   const products = (catalog && catalog.products) || [];
@@ -2896,7 +2900,9 @@ async function readPassport(port) {
         version: p.resident.version,
         projectName: p.resident.projectName,
         slot: p.resident.slot,
-        product: matchProjectToProduct(state.catalog, p.resident.projectName),
+        // Display-aware (productForProject): a display build whose name
+        // carries no flavor is a display, never the flagship's "canary".
+        product: productForProject(state.catalog, p.resident.projectName),
       };
     } else {
       state.resident = { unknown: true };
@@ -2973,17 +2979,28 @@ function renderPassport() {
 
   // The board's own voice before anything is written (parity: the browser's
   // connect-page startVoice and its self-check chips). Only for firmware we
-  // recognize — a foreign image has no `j` to answer. The chips land in the
-  // serial monitor (renderSelfCheck), where the board's words already go.
+  // recognize — a foreign image has no `j` to answer — and only where that
+  // firmware prints a self-check (sweep A97): the catalog's serial_receipt
+  // is false for the WAP, the Sense and every display, which are pointed at
+  // the serial monitor and their boot log instead, in the browser's words.
+  // The chips land in the serial monitor (renderSelfCheck), where the
+  // board's words already go.
   if (r.product && !r.blank && !r.unknown) {
-    const ask = document.createElement("button");
-    ask.type = "button";
-    ask.className = "btn btn-small btn-ghost pp-ask";
-    ask.textContent = "Ask it for its self-check →";
-    ask.title = "Starts the serial monitor without resetting the board and asks for its " +
-      "self-manifest: the self-check score, its temperature and any tamper flag. Nothing is written.";
-    ask.addEventListener("click", askSelfCheck);
-    box.appendChild(ask);
+    if (requiresLiveReceipt(r.product)) {
+      const ask = document.createElement("button");
+      ask.type = "button";
+      ask.className = "btn btn-small btn-ghost pp-ask";
+      ask.textContent = "Ask it for its self-check →";
+      ask.title = "Starts the serial monitor without resetting the board and asks for its " +
+        "self-manifest: the self-check score, its temperature and any tamper flag. Nothing is written.";
+      ask.addEventListener("click", askSelfCheck);
+      box.appendChild(ask);
+    } else {
+      const none = document.createElement("div");
+      none.className = "pp-noask";
+      none.textContent = "This firmware prints no self-check; open the serial monitor to read its boot log.";
+      box.appendChild(none);
+    }
   }
 
   // The same board, met twice: the fleet book already knows this MAC. Says so
@@ -3241,7 +3258,9 @@ function smartPick(catalog, opts = {}) {
   const label = opts.chipLabel || chip || "this chip";
 
   if (currentProject) {
-    const cur = matchProjectToProduct(catalog, currentProject);
+    // Display-aware, as the browser's (productForProject): a flavorless
+    // display build is a display.
+    const cur = productForProject(catalog, currentProject);
     if (cur && byChip.some((x) => x.id === cur.id)) {
       return { product: cur, kind: "current", shortlist: [cur],
         why: `This board already runs ${cur.name}, so it is preselected. An install starts its settings over (a new witness key, where it keeps one); an over-the-air update keeps them.` };
