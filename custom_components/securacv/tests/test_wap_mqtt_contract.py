@@ -689,10 +689,9 @@ def test_discovery_configs_read_topics_the_wap_publishes(record):
 # ways: a new gap needs its reason here, and a closed one must leave.
 DEFAULTED_GAPS = {
     ("status", "rssi"): (
-        "the connect burst's status and the last will carry no rssi: after the "
-        "will the entity is unavailable, so the default is not shown; after a "
-        "connect Signal Strength reads 0 dBm until the loop's next status "
-        "(handed up (#1836))"
+        "the connect burst's status and the last will carry no rssi: the "
+        "template renders nothing; HA keeps the last reading (sweep F368); "
+        "after the will the entity is unavailable anyway"
     ),
 }
 
