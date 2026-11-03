@@ -324,7 +324,7 @@ It prints one JSON line, the pairing receipt (the token, the kernel's
 current verifying key, a short id), and that line is the token's only copy:
 the kernel keeps its sha256 in `/data/viewer_tokens.json` (`0600`, beside
 the capability token) and re-reads the file on every request. The Wall
-takes the receipt under Settings → Pair ([`tvos/README.md`](../tvos/README.md));
+takes the receipt under Settings → Verification ([`tvos/README.md`](../tvos/README.md));
 `docker exec securacv entrypoint.sh revoke-viewer-token <id>` takes it
 back. Like the paired token it crosses the LAN in plaintext.
 

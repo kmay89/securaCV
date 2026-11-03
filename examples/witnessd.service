@@ -8,6 +8,8 @@
 #   1. sudo cp examples/witnessd.service /etc/systemd/system/witnessd.service
 #   2. sudo systemctl edit witnessd.service   # override WITNESS_RTSP_URL
 #   3. sudo systemctl enable --now witnessd.service
+#   4. Pair a Witness Wall once the kernel has started (docs/container.md):
+#        docker exec witnessd witness_api mint-viewer-token --label "living room tv"
 #
 # The device signing key is auto-generated on first start and persisted in
 # the data directory as witness.ed25519.seed — back that file up: it is
@@ -36,9 +38,14 @@ ExecStartPre=/usr/bin/install -d -o 1001 -g 1001 ${WITNESS_DATA_DIR}
 ExecStartPre=-/usr/bin/docker rm -f witnessd
 
 # The Event API is published on loopback only by default — widen the -p
-# binding deliberately (and put TLS in front) if other machines need it.
+# binding deliberately (and put TLS in front) if other machines need it; a
+# Witness Wall on a TV is one. WITNESS_API_TOKEN_PATH writes the rotating
+# capability token into the data volume and keeps the viewer-token and
+# pairing files beside it, so the mint above works and a minted token
+# survives --rm and a restart.
 ExecStart=/usr/bin/docker run --name witnessd --rm \
     -e WITNESS_RTSP_URL=${WITNESS_RTSP_URL} \
+    -e WITNESS_API_TOKEN_PATH=/data/api_token \
     -p 127.0.0.1:8799:8799 \
     -v ${WITNESS_DATA_DIR}:/data \
     ${WITNESS_IMAGE}
