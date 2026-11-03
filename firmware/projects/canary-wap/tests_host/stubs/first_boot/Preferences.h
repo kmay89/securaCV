@@ -37,7 +37,13 @@
  *                      check refuses; IDF also erases that entry in the
  *                      same read, which this fake does not: what the suite
  *                      holds is that the sketch's key block writes
- *                      nothing); Short
+ *                      nothing); Copies (copies the stored bytes, then
+ *                      answers 0: IDF copies the data before its data CRC
+ *                      check refuses it, so the buffer can hold a
+ *                      well-formed value behind a count of 0; with
+ *                      copy_flip_mask set, the copy has that byte's bits
+ *                      flipped at copy_flip_at, the flash bit flip the CRC
+ *                      caught, the F365 review); Short
  *                      (copies all but the last byte and answers that
  *                      count). */
 #ifndef STUB_FIRST_BOOT_PREFERENCES_H
@@ -56,7 +62,7 @@
 #include "esp_err.h"
 
 struct HostFirstBootNvs {
-  enum class Read { Ok, Fails, Garbles, Short };
+  enum class Read { Ok, Fails, Garbles, Copies, Short };
   struct Row {
     char type = 0;   // 'B' bool, 'U' u8, 'c' i8, 'S' u16, 'u' u32, 'L' ulong, 'b' blob, 's' string
     std::vector<uint8_t> bytes;
@@ -71,6 +77,8 @@ struct HostFirstBootNvs {
   bool prefs_begin_fails = false;      // Preferences refuses every open; IDF does not
   esp_err_t length_fault = ESP_OK;     // IDF's blob lookup fails with this
   Read read = Read::Ok;                // what a blob read does once its lookup succeeded
+  size_t copy_flip_at = 0;             // Copies: the byte whose bits flip…
+  uint8_t copy_flip_mask = 0;          // …by this mask (0: copied as stored)
   int blob_reads = 0;                  // getBytes() calls
   int rw_begins = 0;                   // read-write begin() calls, opened or refused
   int puts = 0;                        // put*() calls, stored or refused
@@ -153,6 +161,12 @@ class Preferences {
         return 0;
       case HostFirstBootNvs::Read::Garbles:
         memset(buf, 0xA5, len);
+        return 0;
+      case HostFirstBootNvs::Read::Copies:
+        memcpy(buf, r->bytes.data(), len);
+        if (host_nvs().copy_flip_at < len) {
+          static_cast<uint8_t*>(buf)[host_nvs().copy_flip_at] ^= host_nvs().copy_flip_mask;
+        }
         return 0;
       case HostFirstBootNvs::Read::Short:
         memcpy(buf, r->bytes.data(), len - 1);

@@ -72,18 +72,27 @@
 //     nvs_store.h. Only IDF's ESP_ERR_NVS_NOT_FOUND (no namespace, or no
 //     token in it) derives and stores a token, and the next boot loads it; a
 //     flasher-seeded base62 token is loaded as it is. Every other state, each
-//     built by hand (NVS refusing every open, IDF's lookup failing, the entry
-//     stored as another type, Preferences' session refused after IDF's
-//     probe, a read that fails its CRC with the buffer as it was or filled,
-//     a read a byte short, 34-, 36- and 0-byte entries, a NUL at byte 10,
-//     35 bytes that are not "cv_" and 32 letters or digits), is Refused:
-//     provisioning answers false, g_device.initialized stays false, no
-//     read-write session opens and nothing is put, so the stored bytes stay
-//     exactly as they were, no HMAC runs (no token rebuilt, no SoftAP key),
+//     built by hand (NVS refusing every open; two answers IDF does not give
+//     once the open succeeded, kept to hold the load to failing closed on an
+//     answer it does not know: the lookup failing with ESP_FAIL, and the
+//     fake's ESP_ERR_NVS_TYPE_MISMATCH for an entry stored as a string,
+//     which IDF answers ESP_ERR_NVS_NOT_FOUND, so Absent, on a device;
+//     Preferences' session refused after IDF's probe; a read that fails its
+//     CRC with the buffer as it was, filled with 0xA5, or holding the
+//     stored token or a copy of it one bit flip away, a well-formed token
+//     only the count refuses; a read a byte short; 34-, 36- and 0-byte
+//     entries; a NUL at byte 10; 35 bytes that are not "cv_" and 32 letters
+//     or digits), is Refused: provisioning answers false,
+//     g_device.initialized stays false, no read-write session opens on the
+//     token's NVS and nothing is put there, so the stored bytes stay
+//     exactly as they were (the boot count and, at genesis, the genesis
+//     head are stored before the token is read, as on every boot), no HMAC
+//     runs (no token rebuilt, no SoftAP key),
 //     the token buffer is zeroed, the stored chain is kept and the loader's
 //     line says why. Before, all but the first read as "no token" and a
-//     derived token was stored over the entry, and the CRC-failed read IDF
-//     had filled handed 35 bytes of 0xA5 out as the bearer token;
+//     derived token was stored over the entry, the CRC-failed read IDF had
+//     filled handed 35 bytes of 0xA5 out as the bearer token, and the one
+//     whose copy was a bit flip away handed that token out;
 //   - the sketch's text (every .ino, .h, .cpp and .c in the sketch directory,
 //     comments stripped): every call of hmac_sha256(), derive_api_token() and
 //     derive_ap_password() uses its result (the sketch builds without -Werror,
@@ -1150,14 +1159,17 @@ static void a_key_not_established_stops_first() {
 // or no token in it) may lead to a derived token being stored. Every other
 // way the stored token goes unread or unused is Refused: provisioning
 // answers false with g_device.initialized false, opens no read-write session
-// and writes nothing, so the stored bytes stay exactly as they were, runs no
-// HMAC (no token is derived, no SoftAP key either), leaves the token buffer
-// zeroed (api_auth.h matches no header against an empty token), keeps the
-// stored chain for the records setup() goes on to sign, and logs why. Before,
+// on the token's NVS and writes nothing there (this boot's count and, at
+// genesis, the genesis head go to the suite's own NVS maps before the token
+// is read), so the stored bytes stay exactly as they were, runs no HMAC (no
+// token is derived, no SoftAP key either), leaves the token buffer zeroed
+// (api_auth.h matches no header against an empty token), keeps the stored
+// chain for the records setup() goes on to sign, and logs why. Before,
 // every one of these but the namespace that would not open read as "no
-// token": provisioning derived one and stored it over the stored entry, and
-// the read IDF filled before its CRC check refused (Garbles) handed 35 bytes
-// of 0xA5 out as the bearer token, provisioning answering true.
+// token": provisioning derived one and stored it over the stored entry, the
+// read IDF filled before its CRC check refused (Garbles) handed 35 bytes of
+// 0xA5 out as the bearer token, provisioning answering true, and a read whose
+// copy was the stored token one bit flip away (Copies) handed that out.
 static std::string with_byte(std::string s, size_t at, char c) {
   s[at] = c;
   return s;
@@ -1174,15 +1186,19 @@ static void a_stored_token_is_never_written_over() {
     bool prefs_begin_fails;
     HostFirstBootNvs::Read read;
     const char* log;     // the loader's line
+    uint8_t flip_mask = 0;   // Copies: the copy's byte flip_at, bits flipped by this
+    size_t flip_at = 0;
   };
   const std::string tok = kStoredToken;
   using R = HostFirstBootNvs::Read;
   const std::vector<Case> cases = {
       {"NVS refuses every open (the namespace will not open)", tok, false, 'b', ESP_OK, true, false,
        R::Ok, "[!!] API token not loaded: NVS could not say whether one is stored (ESP_ERR_NVS_NOT_INITIALIZED)\n"},
-      {"IDF's blob lookup fails", tok, false, 'b', ESP_FAIL, false, false, R::Ok,
+      {"IDF's blob lookup fails (ESP_FAIL, an answer IDF does not give once the open succeeded)", tok,
+       false, 'b', ESP_FAIL, false, false, R::Ok,
        "[!!] API token not loaded: NVS could not say whether one is stored (ESP_FAIL)\n"},
-      {"the entry is not a blob", tok, false, 's', ESP_OK, false, false, R::Ok,
+      {"the fake's ESP_ERR_NVS_TYPE_MISMATCH for a string entry (IDF answers NOT_FOUND: Absent there)",
+       tok, false, 's', ESP_OK, false, false, R::Ok,
        "[!!] API token not loaded: NVS could not say whether one is stored (ESP_ERR_NVS_TYPE_MISMATCH)\n"},
       {"Preferences' session will not open after IDF's probe", tok, false, 'b', ESP_OK, false, true,
        R::Ok, "[!!] API token not loaded: the stored token could not be read (0 of 35 bytes)\n"},
@@ -1192,6 +1208,16 @@ static void a_stored_token_is_never_written_over() {
       {"a 35-byte entry whose read fails its CRC after IDF filled the buffer", tok, false, 'b', ESP_OK,
        false, false, R::Garbles,
        "[!!] API token not loaded: the stored token could not be read (0 of 35 bytes)\n"},
+      // IDF copies the data before its CRC check refuses it: the buffer holds
+      // a well-formed token behind a count of 0, and only the count refuses
+      // it (the F365 review). As stored (the CRC itself was hit), and after
+      // a flash bit flip that leaves the byte a letter ('o' to 'm').
+      {"a 35-byte entry whose read fails its CRC after IDF copied the stored token", tok, false, 'b',
+       ESP_OK, false, false, R::Copies,
+       "[!!] API token not loaded: the stored token could not be read (0 of 35 bytes)\n"},
+      {"a 35-byte entry whose read fails its CRC after IDF copied it with a bit flipped", tok, false,
+       'b', ESP_OK, false, false, R::Copies,
+       "[!!] API token not loaded: the stored token could not be read (0 of 35 bytes)\n", 0x02, 10},
       {"a 35-byte entry read a byte short", tok, false, 'b', ESP_OK, false, false, R::Short,
        "[!!] API token not loaded: the stored token could not be read (34 of 35 bytes)\n"},
       {"a 34-byte entry", tok.substr(0, 34), false, 'b', ESP_OK, false, false, R::Ok,
@@ -1222,6 +1248,16 @@ static void a_stored_token_is_never_written_over() {
       host_nvs().fail_begin = c.fail_begin;
       host_nvs().prefs_begin_fails = c.prefs_begin_fails;
       host_nvs().read = c.read;
+      host_nvs().copy_flip_mask = c.flip_mask;
+      host_nvs().copy_flip_at = c.flip_at;
+      if (c.read == R::Copies) {
+        // The fixture is what it says: the bytes IDF copies are a token the
+        // shape check alone would take.
+        std::string copied = c.bytes;
+        copied[c.flip_at] = (char)(copied[c.flip_at] ^ c.flip_mask);
+        CHECK_MSG(api_token_well_formed(copied.data(), copied.size()) && (c.flip_mask == 0) == (copied == tok),
+                  what + ": the copied bytes \"" + copied + "\" are not a well-formed token");
+      }
       std::vector<uint8_t> blob_before;
       if (!genesis) blob_before = prov::blobs[NVS_KEY_CHAINST];
       seam::arm(seam::Step::None);
