@@ -649,8 +649,11 @@ Receivers MUST:
    row pruned after `NEARBY_TIMEOUT_MS` (3 min) without a beacon, or a new
    session id, starts again (sweep F311: only a row was asked for, so a key
    first heard a second before its ACK counted). Presence beacons are
-   unsigned (§3.2), so this costs a device that wants many confirming keys
-   ten minutes of beacons per key, not more (sweep F232).
+   unsigned (§3.2; sweep F232), so one radio beacons any number of session
+   ids at once and their ten minutes run together, up to the table's free
+   rows: the rule delays a confirming key by ten minutes, it does not put a
+   price on each key. A suppress vote needs no presence row at all (§2.5.6;
+   sweep F234, open).
 5. Otherwise, add the pubkey to `confirmed_by[]`. If the chirp's confirmation
    threshold is now met, mark `validated = true` and (if `relay_enabled`)
    relay the chirp.
@@ -667,8 +670,11 @@ Receivers MUST:
   dropped the row, so one key with a nearby row took a chirp off a receiver
   that suppression asks more than half the rows, and at least three, to
   remove (sweep F305); it now changes nothing, as any `ack_type` other than
-  `confirmed` does, and a chirp its owner dismissed takes no confirmation in
-  the seconds before its row leaves.
+  `confirmed` does. A chirp its owner dismissed takes no confirmation in the
+  seconds before its row leaves, neither a neighbor's ACK nor its own
+  owner's confirm (§8.1: refused `not_found`); that confirm signed and
+  broadcast an ACK for the chirp its owner had just dismissed, and a
+  neighbor counted it like any other.
 
 ### 3.5 CHIRP_MUTE (Leave Me Alone)
 
@@ -965,7 +971,8 @@ A confirmation (`POST /api/chirp/confirm`, or `/api/chirp/ack` with
 `"type":"confirmed"`) that sends nothing says why, in this order:
 `chirp_disabled` (409), `presence_required` (409, ten minutes on),
 `clock_unsynced` (409), `not_found` (404, no chirp with that nonce in the
-recent list), `own_chirp` (409, the originator cannot confirm its own,
+recent list, or one this device's owner dismissed, §3.4), `own_chirp` (409,
+the originator cannot confirm its own,
 §3.4), each with a `message` (sweep F174: every one was `not_found`, and the
 ack's a bare `{"success":false}`). A dismiss (`POST /api/chirp/dismiss`, or
 the ack with `"resolved"`) hides the chirp on this device whatever happens,

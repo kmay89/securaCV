@@ -2609,6 +2609,61 @@ void test_a_dismiss_says_whether_its_vote_went() {
   std::printf("PASS a_dismiss_says_whether_its_vote_went\n");
 }
 
+// A chirp its owner dismissed is not confirmed from this device (sweep
+// F305, the sending side; spec §3.4, §8.1). The dismiss leaves the row in
+// the recent table, marked, until update()'s next prune, up to 30 s on, and
+// a confirm in those seconds signed and broadcast an ACK that a neighbor
+// counted like any other. It is refused not_found, as it is after the
+// prune, and sends nothing; a chirp not dismissed is confirmed. Dismissed
+// before its owner's ten minutes (no vote went out) it is refused the same.
+void test_a_dismissed_chirp_is_not_confirmed() {
+  boot();
+  enabled_channel();
+  const uint8_t a[8] = {0xE1, 1, 1, 1, 1, 1, 1, 1};
+  const uint8_t b[8] = {0xE2, 2, 2, 2, 2, 2, 2, 2};
+  neighbor_chirp(a);
+  neighbor_chirp(b);
+  size_t before = host_sim::espnow->sent.size();
+  Rest r = rest(nonce_cmd(cc::CHIRP_CMD_DISMISS, a));
+  CHECK(r.wait == lcr::Wait::kDone && r.r.ok && r.r.vote_sent);
+  CHECK(sent_types(before) == std::vector<uint8_t>{cc::CHIRP_MSG_SUPPRESS_VOTE});
+
+  before = host_sim::espnow->sent.size();
+  r = rest(nonce_cmd(cc::CHIRP_CMD_CONFIRM, a));
+  CHECK(cc::g_recent_chirp_count == 2 && cc::g_recent_chirps[0].dismissed);   // not pruned yet
+  CHECK(!r.r.ok && r.r.confirm_refusal == cc::CONFIRM_REFUSED_NOT_FOUND);
+  CHECK(named(r.r.confirm_refusal).status == 404 && named(r.r.confirm_refusal).error == "not_found");
+  CHECK(named(r.r.confirm_refusal).message == "Chirp not found or already dismissed");
+  CHECK(acks_since(before) == 0);
+
+  r = rest(nonce_cmd(cc::CHIRP_CMD_CONFIRM, b));                   // the control: not dismissed
+  CHECK(r.r.ok && r.r.confirm_refusal == cc::CONFIRM_REFUSED_NONE);
+  CHECK(acks_since(before) == 1);
+
+  host_sim::now_ms += 30001;                                       // past the prune: still not_found
+  cc::update();
+  CHECK(cc::g_recent_chirp_count == 1);
+  before = host_sim::espnow->sent.size();
+  r = rest(nonce_cmd(cc::CHIRP_CMD_CONFIRM, a));
+  CHECK(!r.r.ok && r.r.confirm_refusal == cc::CONFIRM_REFUSED_NOT_FOUND);
+  CHECK(acks_since(before) == 0);
+
+  boot();
+  enabled_channel(/*present=*/false);
+  const uint8_t c[8] = {0xE3, 3, 3, 3, 3, 3, 3, 3};
+  neighbor_chirp(c);
+  r = rest(nonce_cmd(cc::CHIRP_CMD_DISMISS, c));                   // before its ten minutes: no vote
+  CHECK(r.r.ok && !r.r.vote_sent && r.r.confirm_refusal == cc::CONFIRM_REFUSED_PRESENCE);
+  host_sim::now_ms += cc::PRESENCE_REQUIRED_MS;
+  before = host_sim::espnow->sent.size();
+  r = rest(nonce_cmd(cc::CHIRP_CMD_CONFIRM, c), 1, Turn::kDrain);
+  CHECK(cc::g_recent_chirp_count == 1 && cc::g_recent_chirps[0].dismissed);
+  CHECK(!r.r.ok && r.r.confirm_refusal == cc::CONFIRM_REFUSED_NOT_FOUND);
+  CHECK(acks_since(before) == 0);
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS a_dismissed_chirp_is_not_confirmed\n");
+}
+
 struct Test {
   const char* name;
   void (*fn)();
@@ -2636,6 +2691,7 @@ const Test kTests[] = {
     {"the_tiers_let_9_out_on_the_first_day_then_6", test_the_tiers_let_9_out_on_the_first_day_then_6},
     {"a_refused_confirm_names_why", test_a_refused_confirm_names_why},
     {"a_dismiss_says_whether_its_vote_went", test_a_dismiss_says_whether_its_vote_went},
+    {"a_dismissed_chirp_is_not_confirmed", test_a_dismissed_chirp_is_not_confirmed},
     {"a_send_carries_the_owners_fields", test_a_send_carries_the_owners_fields},
     {"a_settings_post_changes_only_what_it_names", test_a_settings_post_changes_only_what_it_names},
     {"a_command_the_loop_never_reaches_is_withdrawn", test_a_command_the_loop_never_reaches_is_withdrawn},

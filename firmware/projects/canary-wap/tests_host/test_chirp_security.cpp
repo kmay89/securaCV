@@ -419,6 +419,46 @@ void test_c13_presence_counts_from_the_row() {
   CHECK(c->confirm_count == 1);
 }
 
+// C13 (F311, F232): what the ten minutes cost. Presence beacons are
+// unsigned, so one radio beacons any number of session ids at once, and
+// their ten minutes run together: eight keys first heard in the same minute
+// are all refused at nine minutes and all count at ten, so eight keys cost
+// ten minutes, as one does (docs/FLEET_SEMANTICS.md §6, §8). The table's
+// free rows bound it: with MAX_NEARBY_CACHE rows held a 33rd key gets no row
+// (no eviction when full), and its ACK counts at no age.
+void test_c13_the_ten_minutes_run_together_for_every_key() {
+  boot_enabled();
+  std::vector<Neighbor> keys;
+  for (uint8_t i = 0; i < 8; ++i) keys.push_back(neighbor_of((uint8_t)(0x30 + i)));
+  for (const Neighbor& k : keys) deliver(k, presence_of(k));
+  const uint32_t t0 = host_sim::now_ms;
+  stay_present(keys, 9);
+  const Neighbor origin = neighbor_of(0x2F);
+  uint8_t nonce[8];
+  cc::ReceivedChirp* c = chirp_from(origin, 0x29, nonce);
+  uint8_t fb = 0x71;
+  for (const Neighbor& k : keys) deliver(k, confirm_of(k, nonce, fb++));
+  CHECK(c->confirm_count == 0 && !c->validated);
+  stay_present(keys, 1);
+  CHECK(host_sim::now_ms - t0 == cc::PRESENCE_REQUIRED_MS);
+  for (const Neighbor& k : keys) deliver(k, confirm_of(k, nonce, fb++));
+  CHECK(c->confirm_count == keys.size() && c->validated);
+
+  boot_enabled();
+  std::vector<Neighbor> full;
+  for (size_t i = 0; i < cc::MAX_NEARBY_CACHE + 1; ++i) full.push_back(neighbor_of((uint8_t)(0x40 + i)));
+  for (const Neighbor& k : full) deliver(k, presence_of(k));
+  CHECK(cc::g_nearby_count == cc::MAX_NEARBY_CACHE);
+  stay_present(full, 20);
+  const Neighbor& late = full.back();
+  CHECK(nearby_row_of(late) == nullptr);
+  c = chirp_from(origin, 0x2A, nonce);
+  deliver(late, confirm_of(late, nonce, 0x71));
+  CHECK(c->confirm_count == 0);
+  deliver(full.front(), confirm_of(full.front(), nonce, 0x72));
+  CHECK(c->confirm_count == 1);
+}
+
 // The relays this device sent since `from`, whole.
 std::vector<std::vector<uint8_t>> relay_frames_since(size_t from) {
   std::vector<std::vector<uint8_t>> out;
@@ -523,6 +563,7 @@ const Test kTests[] = {
     {"c9_bloom_flood", test_c9_bloom_flood},
     {"c13_an_ack_waits_for_ten_minutes_of_presence", test_c13_an_ack_waits_for_ten_minutes_of_presence},
     {"c13_presence_counts_from_the_row", test_c13_presence_counts_from_the_row},
+    {"c13_the_ten_minutes_run_together_for_every_key", test_c13_the_ten_minutes_run_together_for_every_key},
     {"c4_a_relay_keeps_the_signed_ttl", test_c4_a_relay_keeps_the_signed_ttl},
 };
 

@@ -692,8 +692,11 @@ static bool pubkey_rate_check_and_record(const uint8_t* pubkey) {
 // 2^32 ms (49.7 days): that key's ACKs are refused for those minutes, and
 // none ever counts early. has_presence_requirement() reads this device's
 // own session the same way.
-// Presence beacons are unsigned (§3.2; sweep F232), so what this costs a
-// device that wants many confirming keys is ten minutes of beacons per key.
+// Presence beacons are unsigned (§3.2; sweep F232), so one radio beacons any
+// number of session ids at once, and their ten minutes run together, up to
+// the table's free rows: the rule delays a confirming key by ten minutes, it
+// does not put a price on each one. A suppress vote reads no presence at all
+// (handle_suppress_vote(); sweep F234, open).
 static bool nearby_has_pubkey_with_presence(const uint8_t* pubkey) {
   uint8_t sid[SESSION_ID_SIZE];
   session_id_from_pubkey(pubkey, sid);
@@ -820,10 +823,12 @@ static void handle_presence(const uint8_t* data, size_t len, int8_t rssi) {
   if (!device && g_nearby_count < MAX_NEARBY_CACHE) {
     device = &g_nearby_devices[g_nearby_count++];
     new_device = true;
-    // A slot past the count keeps whatever row a prune or a disable left
-    // there, so a new row is cleared whole and its presence starts now
-    // (spec §3.4 rule 4; sweep F311). Only here: a refresh below never
-    // moves first_seen_ms.
+    // The assignment starts the new row's ten minutes (spec §3.4 rule 4;
+    // sweep F311), here and only here: a refresh below never moves
+    // first_seen_ms. The memset is not what does it, since every field is
+    // written below; a slot past the count keeps whatever row a prune or a
+    // disable left there, and the memset clears it so a field added later
+    // and not written here does not inherit that row's bytes.
     memset(device, 0, sizeof(*device));
     device->first_seen_ms = millis();
   }
@@ -1877,6 +1882,15 @@ static bool confirm_chirp(const uint8_t* nonce, ConfirmRefusal* why) {
   }
   for (size_t i = 0; i < g_recent_chirp_count; i++) {
     if (memcmp(g_recent_chirps[i].nonce, nonce, 8) != 0) continue;
+    // A chirp this device's owner dismissed is not confirmed from here: it
+    // is refused not_found ("Chirp not found or already dismissed"), as it
+    // is once update()'s next prune takes its row, and as a chirp the
+    // community suppressed is (F269). A confirm in the up to 30 s before
+    // that prune signed and broadcast an ACK, beside the suppress vote the
+    // dismiss sent when it could, and a neighbor counted it like any other,
+    // so the chirp the owner dismissed could be validated and relayed there.
+    // handle_ack() refuses a received ACK for such a row (sweep F305).
+    if (g_recent_chirps[i].dismissed) break;
     if (memcmp(g_recent_chirps[i].sender_pubkey, g_session.session_pubkey,
                SESSION_PUBKEY_SIZE) == 0) {
       *why = CONFIRM_REFUSED_OWN_CHIRP;   // the originator cannot confirm its own (spec 3.4)
