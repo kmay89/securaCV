@@ -10,20 +10,24 @@ an identifier the owner did not mean to publish (THREAT_MODEL.md principle
      event type / time bucket / attestation, evidence exports to a count;
   2. ``async_redact_data`` then sweeps the result for every key in
      ``TO_REDACT`` (tokens, the pairing token id, the kernel URL's host,
-     keys, hashes, entry ids, network and location identifiers, and the
+     keys, hashes, entry ids, network and location identifiers, the
      keys a Canary's answers use for its hardware, chip, module and radio
-     identifiers), so a value that reaches the dump through a path this
-     file did not foresee is still replaced.
+     identifiers, and its health counters), so a value that reaches the
+     dump through a path this file did not foresee is still replaced.
 
 Both layers cover what this function returns. Home Assistant adds every
 Repairs issue it holds for the integration to the downloaded file itself,
 outside them (ledger F399): the ones the owner ignored and those of the
-integration's other entries too, each with the time it was raised. An
-entry-scoped issue id ends in the entry id, and a kernel key-mismatch issue
-carries the kernel's URL and the key it served. Home Assistant also keys
-the file's ``setup_times`` section by the id of every entry of the
-integration it set up as it last started, and names the file after the
-entry.
+integration's other entries too, each with the time it was raised. So no
+issue holds a host or a key: a kernel key-mismatch issue carries the two
+key fingerprints and nothing else (repairs.py), and the other issues that
+carry a value about this install (the kernel's URL when it is unreachable,
+the storage wear, the MQTT prefix and error) are not persistent, and Home
+Assistant writes only such an issue's id and times to the file. An entry-scoped issue id
+still ends in the entry id: the fix flow finds the entry by it. Home
+Assistant also keys the file's ``setup_times`` section by the id of every
+entry of the integration it set up as it last started, and names the file
+after the entry.
 
 A Canary's key fingerprint carries none of its digits into the dump. Until
 the canary-wap stops serving it, the whole fingerprint is readable by anyone
@@ -118,6 +122,18 @@ TO_REDACT = {
     "local_address",
     "address",
     "peer_address",
+    # A Canary's health counters (device-details finding P18, ledger F391):
+    # how long it has been up, how often it booted, its card and web-server
+    # counts, how old its last camera frame is. Together they can single a
+    # device out across dumps and hint at when it reboots or is busy, so
+    # they are the second net behind the health projection device-details
+    # PR 16 is to add: no dump carries any of them today, and should a raw
+    # health payload ever reach one, these come out redacted.
+    "uptime",
+    "boot_count",
+    "sd_writes",
+    "http_requests",
+    "last_frame_age_ms",
 }
 
 # How many characters of the kernel id and of a Canary id the dump keeps.

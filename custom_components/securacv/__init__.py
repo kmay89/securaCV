@@ -292,7 +292,8 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     actions exist whether or not a config entry is loaded, so an
     automation that calls one too early gets an explanatory error instead
     of "service not found". Never fatal — the actions are optional, the
-    integration is not.
+    integration is not. Then, once per start and before any entry sets
+    up, every key-mismatch issue is rewritten to its two fingerprints.
     """
     try:
         from .services import async_setup_services
@@ -300,6 +301,15 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
         async_setup_services(hass)
     except Exception:  # noqa: BLE001 - the actions are optional, setup is not
         _LOGGER.warning("securacv actions not registered", exc_info=True)
+    # A key-mismatch issue an older integration raised held the kernel's
+    # URL and the served key; rewrite it to its fingerprints before any
+    # entry sets up (ledger F399, repairs.async_scrub_tofu_mismatch_issues).
+    try:
+        from .repairs import async_scrub_tofu_mismatch_issues
+
+        async_scrub_tofu_mismatch_issues(hass)
+    except Exception:  # noqa: BLE001 - never fatal, like the actions
+        _LOGGER.warning("securacv could not rewrite an older key-mismatch issue", exc_info=True)
     return True
 
 

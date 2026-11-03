@@ -889,6 +889,11 @@ def _augment_issue_registry() -> None:
         def __init__(self, hass) -> None:
             self._hass = hass
 
+        @property
+        def issues(self):
+            """Every issue, keyed (domain, issue_id), as the core's registry has them."""
+            return {key: self.async_get_issue(*key) for key in list(_issues(self._hass))}
+
         def async_get_issue(self, domain, issue_id):
             issue = _issues(self._hass).get((domain, issue_id))
             if issue is None:

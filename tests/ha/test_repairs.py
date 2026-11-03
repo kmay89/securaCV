@@ -64,11 +64,14 @@ async def test_tofu_mismatch_is_raised_and_fixed_through_the_repairs_api(
     assert issue.severity is ir.IssueSeverity.CRITICAL
     assert issue.is_fixable is True
     assert issue.translation_key == "tofu_mismatch"
-    assert issue.translation_placeholders == {
+    # The two fingerprints and nothing else: the kernel's URL and the key it
+    # served stay out of the issue (a diagnostics download carries it, F399).
+    fingerprints = {
         "pinned_fingerprint": fingerprint_of(pinned),
         "received_fingerprint": replacement.fingerprint,
-        "url": KERNEL_URL,
     }
+    assert issue.translation_placeholders == fingerprints
+    assert issue.data == fingerprints
     # The key change shows everywhere it should, and nowhere as "Failed".
     fingerprint = hass.states.get("sensor.securacv_kernel_key_fingerprint")
     assert fingerprint.attributes["key_mismatch"] is True
@@ -88,8 +91,7 @@ async def test_tofu_mismatch_is_raised_and_fixed_through_the_repairs_api(
     flow = await resp.json()
     assert flow["type"] == "form"
     assert flow["step_id"] == "confirm"
-    assert flow["description_placeholders"]["received_fingerprint"] == replacement.fingerprint
-    assert flow["description_placeholders"]["url"] == KERNEL_URL
+    assert flow["description_placeholders"] == fingerprints
 
     resp = await client.post(f"/api/repairs/issues/fix/{flow['flow_id']}", json={})
     assert resp.status == HTTPStatus.OK
@@ -104,6 +106,98 @@ async def test_tofu_mismatch_is_raised_and_fixed_through_the_repairs_api(
     # Verified against the new pin after the reload.
     assert hass.states.get("binary_sensor.securacv_chain_valid").state == "on"
     assert hass.states.get("sensor.securacv_kernel_key_fingerprint").state == replacement.fingerprint
+
+
+async def test_the_fix_flow_pins_only_the_key_the_coordinator_holds(
+    hass: HomeAssistant,
+    kernel: KernelMock,
+    mqtt_mock: MqttMockHAClient,
+    setup_kernel_entry,
+    hass_client: ClientSessionGenerator,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """The fix flow through the repairs API across a reload (ledger F399).
+
+    The issue holds fingerprints only, so the key the flow pins is the one
+    the entry's coordinator saw the kernel serve. After a reload, before the
+    reloaded coordinator has reached the kernel, it holds none: the flow
+    aborts with `no_received_key` (it does not raise on the missing key), and
+    a key an older integration left in the issue's data is never pinned. Once
+    the backstop sees a key the form shows its fingerprint; a third key
+    served before the submit is shown again rather than pinned unseen, and
+    the next submit pins exactly the key the coordinator holds then."""
+    assert await async_setup_component(hass, "repairs", {})
+    entry = await setup_kernel_entry(enable_mqtt=True)
+    pinned = kernel.verifying_key
+    issue_id = f"tofu_mismatch_{entry.entry_id}"
+    registry = ir.async_get(hass)
+    client = await hass_client()
+
+    second = SigningKernel()
+    kernel.verifying_key = second.verifying_key
+    kernel.kernel = second
+    await backstop(hass, freezer)
+    assert registry.async_get_issue(DOMAIN, issue_id) is not None
+
+    # A restart's worth of state: the issue stays, the coordinator is new,
+    # and the kernel does not answer its first refresh.
+    kernel.connection_down = True
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await settle(hass)
+    assert entry.state is ConfigEntryState.LOADED
+    # The issue as an older integration raised it: the served key and the
+    # URL in its data. The flow does not read them.
+    stale = SigningKernel()
+    ir.async_create_issue(
+        hass, DOMAIN, issue_id, is_fixable=True, is_persistent=True,
+        severity=ir.IssueSeverity.CRITICAL, translation_key="tofu_mismatch",
+        translation_placeholders={
+            "pinned_fingerprint": fingerprint_of(pinned), "received_fingerprint": stale.fingerprint, "url": KERNEL_URL,
+        },
+        data={
+            "pinned_fingerprint": fingerprint_of(pinned), "received_fingerprint": stale.fingerprint,
+            "received_key": stale.verifying_key, "url": KERNEL_URL,
+        },
+    )
+    resp = await client.post("/api/repairs/issues/fix", json={"handler": DOMAIN, "issue_id": issue_id})
+    assert resp.status == HTTPStatus.OK
+    aborted = await resp.json()
+    assert aborted["type"] == "abort" and aborted["reason"] == "no_received_key"
+    assert entry.data[CONF_KERNEL_VERIFYING_KEY] == pinned
+    assert entry.runtime_data.coordinator.received_key is None
+
+    # The kernel answers again: the backstop holds the second key and
+    # rewrites the issue to the fingerprints.
+    kernel.connection_down = False
+    await backstop(hass, freezer)
+    issue = registry.async_get_issue(DOMAIN, issue_id)
+    assert issue.data == issue.translation_placeholders == {
+        "pinned_fingerprint": fingerprint_of(pinned), "received_fingerprint": second.fingerprint,
+    }
+    resp = await client.post("/api/repairs/issues/fix", json={"handler": DOMAIN, "issue_id": issue_id})
+    flow = await resp.json()
+    assert flow["type"] == "form"
+    assert flow["description_placeholders"]["received_fingerprint"] == second.fingerprint
+
+    # A third key before the person submits: shown, not pinned.
+    third = SigningKernel()
+    kernel.verifying_key = third.verifying_key
+    kernel.kernel = third
+    await backstop(hass, freezer)
+    resp = await client.post(f"/api/repairs/issues/fix/{flow['flow_id']}", json={})
+    again = await resp.json()
+    assert again["type"] == "form" and again["step_id"] == "confirm"
+    assert again["description_placeholders"]["received_fingerprint"] == third.fingerprint
+    assert entry.data[CONF_KERNEL_VERIFYING_KEY] == pinned
+
+    resp = await client.post(f"/api/repairs/issues/fix/{flow['flow_id']}", json={})
+    done = await resp.json()
+    assert done["type"] == "create_entry"
+    await settle(hass)
+    assert entry.data[CONF_KERNEL_VERIFYING_KEY] == third.verifying_key
+    assert entry.data[CONF_KERNEL_PREVIOUS_KEYS] == [pinned]
+    assert stale.verifying_key not in (entry.data[CONF_KERNEL_VERIFYING_KEY], *entry.data[CONF_KERNEL_PREVIOUS_KEYS])
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
 
 
 async def test_kernel_unreachable_after_fifteen_minutes_and_cleared_on_recovery(

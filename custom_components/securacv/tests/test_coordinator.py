@@ -266,13 +266,21 @@ def test_a_different_served_key_is_a_repairs_issue_not_a_repin():
     assert entry.runtime_data.verification.key_mismatch is True
     issue = issues(hass)[(DOMAIN, f"{ISSUE_TOFU_MISMATCH}_{entry.entry_id}")]
     assert issue["is_fixable"] is True
-    assert issue["data"]["received_key"] == OTHER_KEY
-    assert issue["translation_placeholders"]["pinned_fingerprint"] == kernel_key_fingerprint(KEY)
+    # The issue holds the two fingerprints; the served key stays on the
+    # coordinator, where the fix flow reads it (F399).
+    fingerprints = {
+        "pinned_fingerprint": kernel_key_fingerprint(KEY),
+        "received_fingerprint": kernel_key_fingerprint(OTHER_KEY),
+    }
+    assert issue["data"] == fingerprints
+    assert issue["translation_placeholders"] == fingerprints
+    assert coordinator.received_key == OTHER_KEY
 
-    # The kernel serving the pinned key again clears it.
+    # The kernel serving the pinned key again clears it, and the held key.
     api.answers["identity"] = dict(IDENTITY)
     run(coordinator.async_refresh())
     assert coordinator.key_mismatch is False
+    assert coordinator.received_key is None
     assert (DOMAIN, f"{ISSUE_TOFU_MISMATCH}_{entry.entry_id}") not in issues(hass)
     assert entry.runtime_data.verification.key_mismatch is False
 
