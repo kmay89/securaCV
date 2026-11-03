@@ -5,6 +5,8 @@ tests run directly under the stub conftest harness.
 """
 from __future__ import annotations
 
+import json
+
 from ..health_metrics import (
     STORAGE_STATUS_CRITICAL,
     STORAGE_STATUS_DEGRADED,
@@ -137,6 +139,19 @@ def test_memory_free_reading_tells_no_reading_from_zero():
     for body in ({}, {"memory_free": None}, {"free_heap": "junk"}, {"memory_free": [1]}):
         assert memory_free_reading(body) is None, body
         assert memory_free_bytes(body) == 0, body
+
+
+def test_memory_free_reading_takes_a_non_finite_number_as_no_reading():
+    """json.loads takes Infinity, NaN and 1e400 (an infinity), and int()
+    raises OverflowError on the infinities: a non-finite value is no
+    reading, so the other spelling is read, else None, and nothing raises
+    out of the Health or Memory Critical callback."""
+    for raw in ('{"memory_free": Infinity}', '{"free_heap": -Infinity}',
+                '{"memory_free": 1e400}', '{"free_heap": NaN}'):
+        body = json.loads(raw)
+        assert memory_free_reading(body) is None, raw
+        assert memory_free_bytes(body) == 0, raw
+    assert memory_free_reading(json.loads('{"memory_free": Infinity, "free_heap": 4096}')) == 4096
 
 
 def test_battery_percent_reads_both_firmware_spellings():

@@ -1054,6 +1054,22 @@ def test_memory_critical_stays_off_on_a_health_without_a_memory_reading(record, 
         wap.broker.publish(health, json.dumps(body), True)
         assert _value(memory, "is_on") is on, body
 
+    # A non-finite number, which json.loads takes from an untrusted broker
+    # (Infinity, NaN, 1e400 for an infinity), is no reading either, and
+    # raises out of no health callback (this sensor's or the Health
+    # sensor's: the broker delivers to both, and the stub runs callbacks
+    # unguarded, so a raise fails here).
+    rest = json.dumps(without)[1:-1]
+    wap.broker.publish(health, json.dumps({**without, "free_heap": 4096}), True)
+    assert _value(memory, "is_on") is True
+    for spelled in ('"memory_free": Infinity', '"free_heap": Infinity',
+                    '"memory_free": 1e400', '"free_heap": -Infinity', '"memory_free": NaN'):
+        wap.broker.publish(health, "{" + rest + ", " + spelled + "}", True)
+        assert _value(memory, "is_on") is False, spelled
+    # And it does not hide the other spelling's reading.
+    wap.broker.publish(health, "{" + rest + ', "memory_free": Infinity, "free_heap": 4096}', True)
+    assert _value(memory, "is_on") is True
+
 
 # ─── what the record shows is wrong today ──────────────────────────────
 
