@@ -8,8 +8,10 @@
 #   1. sudo cp examples/witnessd.service /etc/systemd/system/witnessd.service
 #   2. sudo systemctl edit witnessd.service   # override WITNESS_RTSP_URL
 #   3. sudo systemctl enable --now witnessd.service
-#   4. Pair a Witness Wall once the kernel has started (docs/container.md):
-#        docker exec witnessd witness_api mint-viewer-token --label "living room tv"
+#   4. To pair a Witness Wall, first widen the -p binding below (the Wall
+#      runs on an Apple TV, another machine, and dials this host's port
+#      8799), then, once the kernel has started (docs/container.md):
+#        sudo docker exec witnessd witness_api mint-viewer-token --label "living room tv"
 #
 # The device signing key is auto-generated on first start and persisted in
 # the data directory as witness.ed25519.seed — back that file up: it is

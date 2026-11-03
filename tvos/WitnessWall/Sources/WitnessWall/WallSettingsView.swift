@@ -132,7 +132,7 @@ struct WallSettingsView: View {
                     // What the pairing is, what it opens, and what forgetting
                     // does — the whole promise, so nobody pastes a secret
                     // into a television without knowing what it can read.
-                    Text("To check your hub's sealed record on this Apple TV — Ed25519 signatures against a key pinned now — mint a viewer token on the hub (witness_api mint-viewer-token --label \"living room tv\"; the witnessd image: docker exec CONTAINER witness_api mint-viewer-token --label …; the Docker sidecar: docker compose exec securacv entrypoint.sh mint-viewer-token …) and paste the one line it prints; your iPhone's keyboard can paste here. The token opens the sealed record and nothing else. Forgetting deletes the token and the pinned key from this Apple TV; revoke it on the hub too.")
+                    Text("To check your hub's sealed record on this Apple TV — Ed25519 signatures against a key pinned now — mint a viewer token on the hub (witness_api mint-viewer-token --label \"living room tv\"; the witnessd image: docker exec CONTAINER witness_api mint-viewer-token --label …; the Docker sidecar: docker compose exec securacv entrypoint.sh mint-viewer-token --label …) and paste the one line it prints; your iPhone's keyboard can paste here. The token opens the sealed record and nothing else. Forgetting deletes the token and the pinned key from this Apple TV; revoke it on the hub too.")
                 }
 
                 Section("About") {

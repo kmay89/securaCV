@@ -51,11 +51,11 @@ categories are simply **empty**, and this app sits in all three:
    mint-viewer-token --label …` on a host install; `docker exec <container>
    witness_api mint-viewer-token --label …` in the `witnessd` image,
    started with a token path — [`docs/container.md`](../docs/container.md);
-   `entrypoint.sh mint-viewer-token` in the Docker sidecar) and pastes the
-   one line it prints into Settings → Verification. That receipt carries
-   the token — good for this one read and nothing else on the hub — and
-   the kernel's verifying key, which the Wall pins in the Keychain (never
-   in the defaults tvOS may purge). From
+   `entrypoint.sh mint-viewer-token --label …` in the Docker sidecar) and
+   pastes the one line it prints into Settings → Verification. That
+   receipt carries the token — good for this one read and nothing else on
+   the hub — and the kernel's verifying key, which the Wall pins in the
+   Keychain (never in the defaults tvOS may purge). From
    then on the header says **"Verified through <this TV's receipt time>"**
    only when every signature checked against that pinned key and at least
    one did (a log naming the pinned key over an empty tail reads "Paired ·

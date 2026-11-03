@@ -12,28 +12,43 @@ the unit's `docker run` to carry every `-e` it names, with the same value,
 on a path inside a volume the unit mounts (a token file outside the volume
 is gone after `--rm`). It also holds the unit's own header to the doc's
 mint command, under the container name the unit runs (`--name`, the
-`docker rm -f` before it and the `docker stop` after it).
+`docker rm -f` before it and the `docker stop` after it), with the `sudo`
+its other install steps use. The Wall runs on an Apple TV, another
+machine, so while the unit publishes the API on loopback only, the
+header's pairing step must say to widen the `-p` binding first and name
+the host port the Wall dials.
 
 The unit is read the way systemd.syntax(7) and systemd.service(5) read it,
 not the way a shell would: a line ending in a backslash joins the next one
 with a space, `${NAME}` is one word holding the Environment= value, and
-there is no shell. Quoting and escapes are where systemd and a plain
-whitespace split part ways, so a command line holding a quote or a
-backslash is refused here rather than split wrongly; so is a comment or a
-blank line inside a continuation, and every `${NAME}` a command uses must
-be set by an Environment= line of the same unit.
+there is no shell. Quoting, escapes and `%` specifiers (systemd.unit(5)
+"Specifiers": `%i`, `%n` and the rest are rewritten before the command
+runs) are where systemd and a plain whitespace split part ways, so a
+command line holding a quote, a backslash or a `%` is refused here rather
+than read wrongly; so is a comment or a blank line inside a continuation,
+and every `${NAME}` a command uses must be set by an Environment= line of
+the same unit.
 
 The tvOS Wall's Verification footer (WallSettingsView.swift) and
 tvos/README.md's pairing paragraph named the host binary and the sidecar's
 `entrypoint.sh` but not the root image's `docker exec <container>
 witness_api mint-viewer-token` (sweep A105). Both are held to all three
-forms here. The footer is read out of its Swift string literal by a small
-lexer: one line, no unescaped quote, no `\\(` interpolation. A `Text` given a
-literal is a LocalizedStringKey, which SwiftUI reads as Markdown, so the
-footer may not hold a backtick, an asterisk, a square bracket or an angle
-bracket either: to a CommonMark reader `<container>` is an HTML tag, and
-what SwiftUI draws for one is not proven here (no Swift toolchain), so the
-footer spells the placeholder CONTAINER, Docker's own usage word.
+forms here, each with the `--label` witness_api refuses a mint without.
+The footer is read out of its Swift string literal by a small lexer: one
+line, no unescaped quote, no `\\(` interpolation. A `Text` given a literal
+is a LocalizedStringKey, which SwiftUI reads as Markdown, so the footer
+may not hold these inline openers either: a backtick (code span), an
+asterisk or an underscore at a word boundary (emphasis), a tilde (GFM
+strikethrough), a square bracket (link), an angle bracket (autolink, raw
+HTML: to a CommonMark reader `<container>` is an HTML tag), an entity
+reference such as `&amp;`, or a backslash (an escape). Nor a `%`, which a
+LocalizedStringKey may read as a format specifier, nor a control
+character. What SwiftUI draws for any of those is not proven here (no
+Swift toolchain), so the footer avoids them all and spells the root
+form's placeholder CONTAINER, Docker's own usage word. An underscore
+inside a word (`witness_api`) cannot open emphasis and is allowed. A bare
+URL, which a GFM autolink extension could link, is not checked (the
+footer has none, and a link would not change the text it shows).
 
 docs/frigate_integration.md sent the receipt to "Settings → Pair"; the
 section is the one that holds the receipt field, and its header is read
@@ -85,9 +100,25 @@ DOCKER_RUN_VALUE_OPTS = {
 DOCKER_RUN_FLAGS = {"--rm"}
 
 # The three ways to mint, as the footer and the README must give them.
-ROOT_FORM = re.compile(r"docker exec (\S+) witness_api mint-viewer-token")
-SIDECAR_FORM = re.compile(r"entrypoint\.sh mint-viewer-token")
-HOST_FORM = re.compile(r"witness_api mint-viewer-token")
+# witness_api refuses a mint with no --label (src/bin/witness_api.rs), and
+# entrypoint.sh hands its arguments to witness_api, so each form carries it.
+ROOT_FORM = re.compile(r"docker exec (\S+) witness_api mint-viewer-token --label ")
+SIDECAR_FORM = re.compile(r"entrypoint\.sh mint-viewer-token --label ")
+HOST_FORM = re.compile(r"witness_api mint-viewer-token --label ")
+
+# What a LocalizedStringKey's Markdown reader could act on in the footer:
+# each CommonMark inline opener, a `%` and a control character.
+MARKDOWN_ACTIVE = (
+    ("a code span", re.compile(r"`")),
+    ("emphasis", re.compile(r"\*|(?<![A-Za-z0-9])_|_(?![A-Za-z0-9])")),
+    ("strikethrough", re.compile(r"~")),
+    ("a link", re.compile(r"[\[\]]")),
+    ("an autolink or raw HTML", re.compile(r"[<>]")),
+    ("an entity reference", re.compile(r"&(?:#[0-9]+|#[xX][0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]*);")),
+    ("a backslash escape", re.compile(r"\\")),
+    ("a format specifier", re.compile(r"%")),
+    ("a control character", re.compile(r"[\x00-\x1f\x7f]")),
+)
 
 
 def norm(text: str) -> str:
@@ -107,6 +138,25 @@ def unit_header(text: str) -> str:
         if raw.startswith("#"):
             lines.append(raw[1:])
     return "\n".join(lines)
+
+
+def header_steps(header: str) -> list[str]:
+    """The header's numbered install steps, each joined with its indented lines."""
+    steps: list[str] = []
+    current: str | None = None
+    for line in header.splitlines():
+        if re.match(r"\s+\d+\.\s", line):
+            if current is not None:
+                steps.append(current)
+            current = line.strip()
+        elif current is not None and line.startswith("    ") and line.strip():
+            current += " " + line.strip()
+        elif current is not None:
+            steps.append(current)
+            current = None
+    if current is not None:
+        steps.append(current)
+    return steps
 
 
 def unit_entries(text: str) -> list[tuple[str, str, str]]:
@@ -146,11 +196,12 @@ def unit_entries(text: str) -> list[tuple[str, str, str]]:
 def command_words(value: str) -> list[str]:
     """Split an Exec*= command line the way systemd does, or refuse it.
 
-    systemd.service(5) splits on whitespace and honors quotes and C escapes;
-    a value with none of those splits the same under both rules, and the
-    leading `-` (ignore failure) prefix is dropped from the path.
+    systemd.service(5) splits on whitespace and honors quotes and C escapes,
+    and systemd.unit(5) rewrites `%` specifiers first; a value with none of
+    those reads the same under both rules, and the leading `-` (ignore
+    failure) prefix is dropped from the path.
     """
-    for ch in "\"'\\":
+    for ch in "\"'\\%":
         if ch in value:
             raise ValueError(f"command line holds {ch!r}, which a whitespace split misreads")
     words = value.split()
@@ -396,11 +447,33 @@ class UnitCarriesTheDocsPairingStep(unittest.TestCase):
         self.assertIn(("ExecStop", ("/usr/bin/docker", "stop", name)), commands)
         header = norm(unit_header(self.unit_text))
         mint = doc_mint_command(self.doc)
-        want = f"docker exec {name} {mint} --label "
+        # The unit is root's (installed and run with sudo, like steps 1-3);
+        # without sudo, a user outside the docker group cannot reach the socket.
+        want = f"sudo docker exec {name} {mint} --label "
         self.assertTrue(
             want in header,
             f"the unit's header must name the doc's mint step under its --name: {want!r}",
         )
+
+    def test_pairing_step_widens_a_loopback_binding(self) -> None:
+        # The Wall runs on an Apple TV, another machine, and dials the
+        # host's published port: a receipt minted while the unit publishes
+        # on loopback only is one the Wall cannot use.
+        steps = [s for s in header_steps(unit_header(self.unit_text)) if "mint-viewer-token" in s]
+        self.assertEqual(len(steps), 1, f"one install step mints: {steps}")
+        step = steps[0]
+        publishes = self.opts.get("-p", []) + self.opts.get("--publish", [])
+        self.assertEqual(len(publishes), 1, publishes)
+        parts = publishes[0].rsplit(":", 2)
+        self.assertEqual(len(parts), 3, f"-p {publishes[0]!r} names no host address")
+        address, host_port, _ = parts
+        if address in ("127.0.0.1", "[::1]", "localhost"):
+            self.assertRegex(
+                step, r"first widen the -p binding.*mint-viewer-token",
+                f"the unit publishes on {address} only, so its pairing step must say to "
+                f"widen the -p binding before it mints: {step!r}",
+            )
+            self.assertIn(f"port {host_port}", step, "the step names the port the Wall dials")
 
 
 class ReaderRefusesWhatItCannotModel(unittest.TestCase):
@@ -408,6 +481,19 @@ class ReaderRefusesWhatItCannotModel(unittest.TestCase):
         for value in ('/usr/bin/docker run -e "A=b c" img', "/usr/bin/docker run -e A=b\\ c img"):
             with self.assertRaises(ValueError):
                 command_words(value)
+
+    def test_specifiers_are_refused(self) -> None:
+        # systemd rewrites %i (empty outside a template) before docker runs,
+        # so `--name w%i` would be compared as written and run as `--name w`.
+        for value in ("/usr/bin/docker run --name w%i img", "/usr/bin/docker stop w%n"):
+            with self.assertRaises(ValueError, msg=value):
+                command_words(value)
+
+    def test_header_steps(self) -> None:
+        header = unit_header(
+            "# Install:\n#   1. one\n#   2. two,\n#      wrapped\n#        cmd\n#\n# after\n[Unit]\n"
+        )
+        self.assertEqual(header_steps(header), ["1. one", "2. two, wrapped cmd"])
 
     def test_continuation_joins_with_a_space(self) -> None:
         # The backslash becomes a space; runs of whitespace are one word break.
@@ -448,8 +534,20 @@ class WallNamesEveryMintForm(unittest.TestCase):
         self.assertEqual(forms["root"], ["CONTAINER"], "the root form's placeholder is CONTAINER")
 
     def test_footer_is_plain_text_to_swiftui_markdown(self) -> None:
-        for ch in "`*<>[]":
-            self.assertNotIn(ch, self.footer, f"{ch!r} is Markdown to a Text literal")
+        for what, pattern in MARKDOWN_ACTIVE:
+            found = pattern.search(self.footer)
+            self.assertIsNone(
+                found, f"{found and found.group()!r} opens {what} to a Text literal's Markdown reader"
+            )
+
+    def test_markdown_guard_catches_each_opener(self) -> None:
+        # Each sample would render other than as written; the last is plain.
+        def hits(text: str) -> list[str]:
+            return [what for what, pattern in MARKDOWN_ACTIVE if pattern.search(text)]
+        for sample in ("`x`", "*x*", "_x_ y", "x _y_", "~~x~~", "[x](y)", "<x>",
+                       "a &amp; b", "a &#38; b", "a \\* b", "100%", "a\nb"):
+            self.assertTrue(hits(sample), f"the guard misses {sample!r}")
+        self.assertEqual(hits("witness_api mint-viewer-token --label \"tv\" — a & b …"), [])
 
     def test_readme_gives_the_three_forms(self) -> None:
         window = readme_pairing_window(TVOS_README.read_text(encoding="utf-8"))
