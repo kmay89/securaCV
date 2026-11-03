@@ -598,7 +598,7 @@
     },
     {
       "name": "Last Event",
-      "desc": "latest witness event type, with zone, confidence, modality and attestation; a 23:55 daily summary reads `daily_summary` and a Quiet Hours held summary `held_summary` (the two stateless rows named by their `type`, HA28), every other stateless row `unknown` (`last_event`; signed `events` topic)"
+      "desc": "latest witness event type, with zone, confidence, modality and attestation; a 23:55 daily summary reads `daily_summary` and a Quiet Hours held summary `held_summary` (the two stateless rows named by their `type`, HA28), every other stateless row `unknown`; the event that creates it (a device's first on the topic) is shown too, verified and replay-gated like any other (HA44) (`last_event`; signed `events` topic)"
     },
     {
       "name": "Health",
@@ -678,11 +678,11 @@
     },
     {
       "name": "Motion",
-      "desc": "standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)"
+      "desc": "standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic, the event that creates them included (HA44), and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)"
     },
     {
       "name": "Occupancy",
-      "desc": "standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)"
+      "desc": "standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic, the event that creates them included (HA44), and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)"
     },
     {
       "name": "WiFi AP",
