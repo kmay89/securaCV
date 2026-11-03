@@ -409,6 +409,55 @@ or ticks Beacon frames. Every row below assumes both.
   - Repro: trigger a beacon alarm via the happy-path test above.
   - Post-fix expected: HA automation fires within one 30 s publish cycle.
 
+- [ ] **HA16 — Home Assistant gives the kernel's and the canary-wap's
+  entities the ids their discovery configs ask for**
+  - Code: `src/bin/event_mqtt_bridge.rs` (`ha_entity_id()`: the sensor,
+    binary sensor and button configs carry `default_entity_id`) and
+    `firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp`
+    (`publish_one_discovery()` and the update and switch configs: every
+    entity config carries `def_ent_id`,
+    `<component>.<device id slug>_<object_id>`, and none `obj_id`). Sent
+    since #1762. Host-tested (`cargo test --bin event_mqtt_bridge`,
+    `tests_host/test_ha_discovery_ids.cpp`); the canary-wap's compile is
+    CI's; what Home Assistant does with the key was read from its core's
+    source (`homeassistant/components/mqtt/entity.py`), never seen in a
+    running Home Assistant. Owner: U1.
+  - Setup: Home Assistant 2025.10 or later with its MQTT integration on a
+    broker, and a fresh registration: a Home Assistant that has never seen
+    either device (a new or test instance), so every entity below is
+    registered for the first time. The kernel bridge publishing discovery
+    (`mqtt_publish.enabled`, no `--no-discovery` or `NO_DISCOVERY`) with
+    no SecuraCV integration claiming that kernel (a claimed kernel
+    withdraws its configs). A canary-wap DEV or FULL build on a board with the PDM mic
+    (XIAO ESP32-S3 Sense: the smoke and CO sensors compile only with
+    `FEATURE_ACOUSTIC_EVENTS`), discovery on, on the same broker.
+  - Repro: start the bridge and let one event reach a zone (a zone's
+    configs go out with its first event); connect the canary-wap. Open
+    each device under **Settings > Devices & Services** and read its
+    Entities tab.
+  - Expected (`<zone>` the zone id without its `zone:` prefix as Home
+    Assistant slugs it, `zone:back-gate` becoming `back_gate`; `<id>` the
+    canary-wap's device id as Home Assistant slugs it, `canary-s3-4dC2`
+    becoming `canary_s3_4dc2`):
+    - `binary_sensor.pwk_<zone>_motion`
+    - `binary_sensor.pwk_chain_problem`
+    - `sensor.pwk_last_event`
+    - `binary_sensor.<id>_smoke_alarm`
+    - `binary_sensor.<id>_co_alarm`
+
+    An id built from the device name and the entity name instead
+    (`binary_sensor.privacy_witness_kernel_pwk_<zone>_motion`,
+    `binary_sensor.canary_<id>_smoke_alarm_heard`) is what a release
+    before 2025.10 gives, and what an entity registered on one keeps after
+    an upgrade; on 2025.10 or later with a fresh registration it is a
+    fail. An id with `_2` on the end means another entity already held the
+    one asked for.
+  - On a pass: put back the three lines HA15 took out of the HomeKit
+    recipe's filter (`docs/integrations/apple-home-homekit-bridge.md` §4:
+    the kernel's `pwk_*_motion` and the canary-wap's `*_smoke_alarm` and
+    `*_co_alarm`), and say there which Home Assistant release showed them.
+  - Artifact: `docs/audit/repro/HA16/entity-ids/`.
+
 ## Canary base SD event log + reconnect backfill (F37) — on-device verification
 
 Code: `firmware/canary/src/csi_event_egress.cpp` over the loop-task adapter

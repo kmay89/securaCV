@@ -3410,6 +3410,22 @@ RETIRED_IN = (
     ("firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h",
      "* A bonded peer can write the WAP's Wi-Fi over BLE (CREDS).",
      "only a bond the pairing confirm or a passkey authenticated reaches the WRITE_AUTHEN credentials write"),
+    # HA16's feature_gaps row (H1) as it stood at 0a5ce01d: both publishers
+    # have asked for the documented ids since #1762, and no running Home
+    # Assistant has shown them. The needles run into the next cell, so the
+    # row passes only with its correction and its amendment written in.
+    ("docs/audit/feature_gaps_2026-09.md",
+     "so a new install names the entities differently from "
+     "`docs/homeassistant_setup.md`, the dashboard YAML and the HomeKit "
+     "recipe. | code (both publishers)",
+     "the row carries its correction: the kernel bridge sends "
+     "default_entity_id and the canary-wap def_ent_id since #1762 (HA16), "
+     "and the code half is done"),
+    ("docs/audit/feature_gaps_2026-09.md",
+     "re-read (no `default_entity_id` in `event_mqtt_bridge.rs` or "
+     "`csi_mqtt.cpp`) |",
+     "the evidence cell carries its amendment: sent since #1762; "
+     "unconfirmed in a live install (the checklist's HA16 row)"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -5829,6 +5845,15 @@ MUST_PASS_IN = [
     ("CHANGELOG.md",
      "earlier stays until the owner removes it, and the door Forget re-arms on\n"
      "  a unit not running standalone is still first-come.)"),
+    ("docs/audit/feature_gaps_2026-09.md",
+     "the HomeKit recipe. *Correction 2026-11-03 (HA16):* both publishers "
+     "have asked for the documented ids since #1762"),
+    ("docs/audit/feature_gaps_2026-09.md",
+     "| code (both publishers) *(done, #1762)*; bench | sweep HA16 |"),
+    ("docs/audit/feature_gaps_2026-09.md",
+     "re-read (no `default_entity_id` in `event_mqtt_bridge.rs` or "
+     "`csi_mqtt.cpp`) *(Amended 2026-11-03: sent since #1762; unconfirmed in "
+     "a live install."),
 
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
@@ -8436,6 +8461,15 @@ MUST_FAIL_IN = [
     ("firmware/projects/canary-wap/arduino/canary_wap/ble_provision.h",
      " * A bonded peer can write the WAP's Wi-Fi over BLE (CREDS). The iPhone\n"
      " * app never reaches this service on a WAP (ledger A65): a phone sets a WAP\n"),
+    ("docs/audit/feature_gaps_2026-09.md",
+     "| H1 | **HA entity ids are documented but never set.** Neither the kernel "
+     "bridge nor canary-wap sends `default_entity_id`, so a new install names "
+     "the entities differently from `docs/homeassistant_setup.md`, the "
+     "dashboard YAML and the HomeKit recipe. | code (both publishers) | sweep "
+     "HA16 |"),
+    ("docs/audit/feature_gaps_2026-09.md",
+     "| code (both publishers) | sweep HA16 | re-read (no `default_entity_id` "
+     "in `event_mqtt_bridge.rs` or `csi_mqtt.cpp`) |"),
 ]
 
 
@@ -9161,6 +9195,84 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
                       (WAP / "bluetooth_channel.h").read_text(encoding="utf-8"))
         self.assertIn('#define SCV_SERVICE_UUID          "a1b2c3d4-e5f6-7890-abcd-ef0123456001"',
                       (WAP / "ble_config.h").read_text(encoding="utf-8"))
+
+    def test_the_ha16_row_names_only_ids_a_publisher_asks_for(self):
+        # HA16 (#1762): feature_gaps H1 now says both publishers ask for the
+        # documented ids and that the checklist's HA16 row is the live check.
+        # Each id that row names is held to the default_entity_id the kernel
+        # bridge formats or the def_ent_id the canary-wap formats, domain
+        # included, so a row naming an id no publisher asks for, or a
+        # publisher that stops asking, fails here before anyone stands in
+        # front of a live install. The ids the row calls a fail are held to
+        # the names Home Assistant builds them from when it ignores the key.
+        checklist = (REPO / "docs/audit/hardware_verification_checklist.md").read_text(encoding="utf-8")
+        head = re.search(r"^- \[( |x)\] \*\*HA16 — Home Assistant gives", checklist, re.M)
+        self.assertIsNotNone(head, "the checklist lost its HA16 row, which feature_gaps H1 points at")
+        row = body_after(checklist, head.group(0), r"\n- \[[ x]\] |\n## ")
+        expected = body_after(row, "  - Expected", r"\n  - On a pass")
+        ids = re.findall(r"^    - `([^`]+)`$", expected, re.M)
+        self.assertEqual(ids, [
+            "binary_sensor.pwk_<zone>_motion",
+            "binary_sensor.pwk_chain_problem",
+            "sensor.pwk_last_event",
+            "binary_sensor.<id>_smoke_alarm",
+            "binary_sensor.<id>_co_alarm",
+        ])
+        bridge = (REPO / "src/bin/event_mqtt_bridge.rs").read_text(encoding="utf-8")
+        wap = (WAP / "csi_mqtt.cpp").read_text(encoding="utf-8")
+        # The kernel's key is `<domain>.<object id, slugged>` ...
+        self.assertTrue('fn ha_entity_id(domain: &str, object_id: &str) -> String {\n'
+                        '    format!("{domain}.{}", ha_slug(object_id))\n}' in bridge,
+                        "event_mqtt_bridge.rs: ha_entity_id() is no longer <domain>.<slug>")
+        # ... and the canary-wap's `<component>.<device id slug>_<object_id>`,
+        # over its discovery table.
+        self.assertTrue('"\\"def_ent_id\\":\\"%s.%s_%s\\","\n' in wap, "csi_mqtt.cpp: the table's def_ent_id format")
+        self.assertTrue("e.component, slug, e.object_id," in wap, "csi_mqtt.cpp: the table's def_ent_id arguments")
+        for entity_id in ids:
+            domain, _, object_id = entity_id.partition(".")
+            with self.subTest(entity_id=entity_id):
+                if object_id.startswith("pwk_"):
+                    if "<zone>" in object_id:
+                        rest = object_id.replace("<zone>", "{}")
+                        call = f'ha_entity_id("{domain}", &format!("{rest}", zone)),'
+                    else:
+                        call = f'ha_entity_id("{domain}", "{object_id}"),'
+                    self.assertTrue(f"default_entity_id: {call}" in bridge,
+                                    f"event_mqtt_bridge.rs asks for no {entity_id} (default_entity_id: {call})")
+                else:
+                    self.assertTrue(object_id.startswith("<id>_"), entity_id)
+                    obj = object_id[len("<id>_"):]
+                    self.assertTrue(f'{{ "{domain}", "{obj}", ' in wap,
+                                    f"csi_mqtt.cpp's discovery table has no {domain} {obj} row")
+        # Neither publisher sends the older object_id key, so a release
+        # before 2025.10 (which reads only that one) builds the id from the
+        # device name and the entity name: the two the row calls a fail.
+        self.assertFalse('\\"obj_id\\"' in wap, "csi_mqtt.cpp sends obj_id: a release before 2025.10 takes it")
+        self.assertFalse('\\"object_id\\"' in wap, "csi_mqtt.cpp sends object_id: a release before 2025.10 takes it")
+        self.assertIsNone(re.search(r"^\s*(pub\s+)?object_id:\s", bridge, re.M))
+
+        def slug(s: str) -> str:
+            return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
+
+        self.assertTrue('name: "Privacy Witness Kernel".to_string(),' in bridge, "the kernel's device name")
+        self.assertTrue('name: format!("PWK {} Motion", zone),' in bridge, "the zone motion entity's name")
+        self.assertTrue('"\\"name\\":\\"Canary %s\\","' in wap, "the canary-wap's device name")
+        self.assertTrue('{ "binary_sensor", "smoke_alarm", "Smoke Alarm Heard", ' in wap, "the smoke entity's name")
+        kernel = "binary_sensor." + slug("Privacy Witness Kernel PWK qzoneq Motion").replace("qzoneq", "<zone>")
+        canary = "binary_sensor." + slug("Canary qidq Smoke Alarm Heard").replace("qidq", "<id>")
+        self.assertEqual(kernel, "binary_sensor.privacy_witness_kernel_pwk_<zone>_motion")
+        self.assertEqual(canary, "binary_sensor.canary_<id>_smoke_alarm_heard")
+        for fallback in (kernel, canary):
+            with self.subTest(fallback=fallback):
+                self.assertIn(f"`{fallback}`", expected)
+        # The row's pass is the cue for HA15's three recipe lines: while it is
+        # open, the recipe keeps them out and says why.
+        if head.group(1) == " ":
+            recipe = normalized((REPO / "docs/integrations/apple-home-homekit-bridge.md").read_text(encoding="utf-8"))
+            self.assertTrue("Until a running Home Assistant has confirmed the new ids" in recipe,
+                            "the HomeKit recipe dropped its wait for a live install while HA16's row is open")
+            self.assertTrue("# add the ids your install shows (see below)." in recipe,
+                            "the HomeKit recipe's filter put HA15's lines back while HA16's row is open")
 
 
 if __name__ == "__main__":
