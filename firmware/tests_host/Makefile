@@ -645,6 +645,20 @@ DASHROUTES_JS = test_canary_dashboard_routes.test.js
 # Export saves the bundle POST /api/export answers inline (it named no file).
 DASHGATES_JS = test_canary_dashboard_gates.test.js
 
+# That dashboard's unlock banner and the BOOT tap (repo sweep F354): the
+# banner asks first, polling GET /api/provisioning-receipt from before the
+# press, takes the receipt's token without a reload, says so on a 409, and
+# stops on its window, on pagehide and while the tab is hidden, one timer and
+# one request at a time. Its two-asker cases meet the firmware's own tap
+# step: tap_step_oracle.cpp compiles provisioning_gate_take(), cut from
+# securacv_network.cpp (TAPSTEP_INC, the cut SECAUTH_NET_SIGS also takes),
+# over the real provisioning_gate.h, and the test drives it by
+# TAP_STEP_ORACLE (it builds one itself when run alone).
+BANNER_JS     = test_canary_provisioning_banner.test.js
+TAPSTEP_SIGS  = static bool provisioning_gate_take(httpd_req_t* req,
+TAPSTEP_INC   = $(BUILD_DIR)/tap_step.inc
+TAP_ORACLE    = $(BUILD_DIR)/tap_step_oracle
+
 # POST /api/logs/<seq>/ack on both trees (repo sweep F214). Both registered
 # "/api/logs/*/ack", which esp_http_server's httpd_uri_match_wildcard never
 # matches (a `*` counts only at a template's end), so the per-entry
@@ -1269,6 +1283,13 @@ $(CANDIAG_BIN): $(CANDIAG_SRC) $(CANDIAG_HDRS) $(CANDIAG_READS) Makefile | $(BUI
 	    -DCANARY_NETWORK_CPP='"$(abspath ../canary/lib/securacv_network/src/securacv_network.cpp)"' \
 	    $(CANDIAG_SRC) -o $@
 
+$(TAPSTEP_INC): $(SECAUTH_READS) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(TAPSTEP_SIGS)' -f cut_functions.awk $(SECAUTH_READS) > $@.tmp && mv $@.tmp $@
+
+$(TAP_ORACLE): tap_step_oracle.cpp $(PROVGATE_HDR) ../canary/include/canary_config.h $(TAPSTEP_INC) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I ../canary/include -I ../common \
+	    -DTAP_STEP_INC='"$(abspath $(TAPSTEP_INC))"' tap_step_oracle.cpp -o $@
+
 $(SECAUTH_NET_INC): $(SECAUTH_READS) cut_functions.awk Makefile | $(BUILD_DIR)
 	awk -v 'sigs=$(SECAUTH_NET_SIGS)' -f cut_functions.awk $(SECAUTH_READS) > $@.tmp && mv $@.tmp $@
 
@@ -1522,7 +1543,7 @@ $(CSIHAL_BIN): test_csi_hal_adapter.cpp $(CSIHAL_SRC) $(CSIHAL_HDRS) Makefile | 
 	    -I stubs/csi_hal -I ../canary/include -I $(CSIHAL_DIR) -I $(CSIHAL_ADP) \
 	    test_csi_hal_adapter.cpp $(CSIHAL_SRC) -o $@)
 
-run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(AUTHBACKOFF_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(APPW_BIN) $(APPW_FAIL_BIN) $(APPW_FAIL_MBED_BIN) $(FKFAIL_BIN) $(FKFAIL_MBED_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(SECAUTH_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(NVSKEY_BIN) $(NVSKEY_FE_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(VISMGR_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(SENT_LINKS_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE)
+run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN) $(CHAINST_BIN) $(WITHIST_BIN) $(WITHBR_BIN) $(TZRULE_BIN) $(USBONB_BIN) $(TESTCON_BIN) $(BOOTPOL_BIN) $(BOOTGUARD_BIN) $(SDMOUNT_BIN) $(WIFIJOIN_BIN) $(PROVGATE_BIN) $(IMPROV_BIN) $(HUBHO_BIN) $(CLAIM_BIN) $(AUTHBACKOFF_BIN) $(SHORTTAP_BIN) $(TLSPOL_BIN) $(APSEC_BIN) $(WIFICRED_BIN) $(ONBOARD_BIN) $(WIFISTORE_BIN) $(RESETHOLD_BIN) $(CANGLUE_BIN) $(NODESTATUS_BIN) $(CLOCKSYNC_BIN) $(MDNSTXT_BIN) $(FLEETKEY_BIN) $(APPW_BIN) $(APPW_FAIL_BIN) $(APPW_FAIL_MBED_BIN) $(FKFAIL_BIN) $(FKFAIL_MBED_BIN) $(PEERPROTO_BIN) $(MQTTTLS_BIN) $(MQTTFIELDS_BIN) $(HOSTGUARD_BIN) $(MQTTQUEUE_BIN) $(CONTACT_BIN) $(DOORBELL_BIN) $(DBAUDIO_BIN) $(EVWIRE_BIN) $(IDFLOOR_BIN) $(IDSPACE_BIN) $(CEILING_BIN) $(MODINT_BIN) $(MODBOOT_BIN) $(EVLINE_BIN) $(BACKFILL_BIN) $(CANEGR_BIN) $(CANDIAG_BIN) $(SECAUTH_BIN) $(PORTAL_BIN) $(POWEREVT_BIN) $(SCENE_BIN) $(FLEETVIEW_BIN) $(FLEETSR_BIN) $(MANIFEST_BIN) $(BIRTHDAY_BIN) $(KEYREST_BIN) $(NVSDEPTH_BIN) $(NVSLOCK_BIN) $(NVSSTORE_BIN) $(CHAINPERSIST_BIN) $(NVSKEY_BIN) $(NVSKEY_FE_BIN) $(OPTFEAT_BIN) $(VISION_PIPE_BIN) $(VISION_PIPE_UBSAN_BIN) $(VISPROF_BIN) $(VISFSM_BIN) $(VISFSM_GRACE_BIN) $(VISCORE_BIN) $(VISMGR_BIN) $(FUSION_BIN) $(PRESET_DOOR_BIN) $(PRESET_LITE_BIN) $(SENT_LINKS_BIN) $(LOOK_BIN) $(PLUMAGE_BIN) $(STORY_BIN) $(TUNECON_BIN) $(FIGART_BIN) $(CALMATH_BIN) $(WXCORE_BIN) $(CSIHAL_BIN) $(LOGACK_BIN) $(ROUTE_ORACLE) $(TAP_ORACLE)
 	./$(MR60_BIN)
 	./$(MR60_VITALS_BIN)
 	./$(DEVSIG_BIN)
@@ -1619,6 +1640,7 @@ run: $(MR60_BIN) $(MR60_VITALS_BIN) $(DEVSIG_BIN) $(WITCHAIN_BIN) $(WITSTORE_BIN
 	$(NODE) --test $(CHIRPPANEL_JS)
 	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) $(NODE) --test $(DASHROUTES_JS)
 	$(NODE) --test $(DASHGATES_JS)
+	TAP_STEP_ORACLE=$(abspath $(TAP_ORACLE)) $(NODE) --test $(BANNER_JS)
 	./$(LOGACK_BIN)
 	IDF_ROUTE_ORACLE=$(abspath $(ROUTE_ORACLE)) LOG_ACK_ROUTE_BIN=$(abspath $(LOGACK_BIN)) $(NODE) --test $(ROUTEMATCH_JS)
 
