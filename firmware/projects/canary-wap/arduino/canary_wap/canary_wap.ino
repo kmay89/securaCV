@@ -729,6 +729,16 @@ struct WitnessRecord {
 // hoists for nvs_load_key() sees it. One line: the host suite cuts it.
 enum class KeyLoad : uint8_t { Loaded, Absent, Refused };
 
+// What a record into g_last_record came to (sweep F364's review;
+// witness_record_last()): the serial log names a record only when one was
+// made. Before, setup() printed "[OK] Boot attestation" and loop() printed
+// the interval's table row after a record create_witness_record() refused (a
+// hash that did not run, or a chain provisioning refused), from
+// g_last_record as it stood: the zeros setup() left, or the last record
+// made, shown again as new. Here for the hoisted prototype, as KeyLoad is;
+// one line, which the host suite cuts.
+enum class RecordMade : uint8_t { Made, Unverified, Refused };
+
 struct DeviceIdentity {
   uint8_t  privkey[32];
   uint8_t  pubkey[32];
@@ -2306,8 +2316,9 @@ static bool tls_compute_cert_fingerprint() {
 // (sweep F364): no pin is handed out (tls_after_setup() reads the empty hex
 // and g_tls_cert_persisted), and init_tls_cert() answers false, so setup()
 // leaves g_tls_enabled false and start_http_server() opens no HTTPS listener
-// (it needs both buffers, freed here). NVS keeps the stored certificate; the
-// next boot reloads it and hashes it again.
+// (it needs both buffers, freed here). A loaded certificate stays in NVS and
+// the next boot reloads it and hashes it again; a generated one was not
+// stored (init_tls_cert() hashes it first), and the next boot makes another.
 static bool tls_refuse_unpinned_cert() {
   free(g_tls_cert_der);
   g_tls_cert_der = nullptr;
@@ -2469,6 +2480,12 @@ static bool init_tls_cert() {
     return false;
   }
 
+  // The pin before the store (sweep F364's review): a certificate whose
+  // fingerprint did not compute is never stored, so no later boot loads and
+  // serves a certificate whose pin no setup door handed out (the setup boot's
+  // receipt says http; stored, the next boot would turn HTTPS on with it).
+  if (!tls_compute_cert_fingerprint()) return tls_refuse_unpinned_cert();
+
   // Store in NVS for reuse across reboots. Only a confirmed store makes
   // this cert the one the next boot reloads; a failed store leaves it this
   // boot's alone (g_tls_cert_persisted false), so nothing pins it.
@@ -2479,7 +2496,6 @@ static bool init_tls_cert() {
     Serial.println("[TLS] WARNING: Failed to store cert in NVS — this boot's cert only; no pin will be handed out");
   }
 
-  if (!tls_compute_cert_fingerprint()) return tls_refuse_unpinned_cert();
   Serial.printf("[TLS] CN: securacv-%s\n", g_device.fingerprint_hex);
   Serial.printf("[TLS] Cert fingerprint: %.16s...\n", g_tls_cert_fp_hex);
   return true;
@@ -3036,8 +3052,12 @@ static void witness_hash_failed(const char* what) {
 
 static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out) {
   // Nothing is signed for an unnamed device or onto an unanchored chain
-  // (sweep F364): provisioning said so, and setup() went on.
-  if (g_device.chain_refused) return false;
+  // (sweep F364): provisioning said so, and setup() went on. Said once in the
+  // health log too; no record is made this boot to re-arm the line.
+  if (g_device.chain_refused) {
+    witness_hash_failed("identity not provisioned");
+    return false;
+  }
 
   // Hash payload. A hash that did not run makes no record (sweep F364): no
   // link, no seq, no signature, nothing in the page ring, on the card or in
@@ -3262,6 +3282,48 @@ static bool chain_tail_intact() {
   if (memcmp(recomputed, g_last_record.chain_hash, 32) != 0) return false;
   if (memcmp(g_last_record.chain_hash, g_device.chain_head, 32) != 0) return false;
   return verify_record_signature(&g_last_record);
+}
+
+// One record into g_last_record (RecordMade, among the types above).
+// Unverified is a record made whose signature
+// did not verify, logged here as loop() logged it: the chain moved and the
+// row shows it, "!!". Refused is one never made: create_witness_record()
+// logged why, once per run of failures, and g_last_record is as it was.
+static RecordMade witness_record_last(const uint8_t* payload, size_t len, RecordType type) {
+  const uint32_t verify_failures = g_health.verify_failures;
+  if (create_witness_record(payload, len, type, &g_last_record)) return RecordMade::Made;
+  if (g_health.verify_failures == verify_failures) return RecordMade::Refused;
+  log_health(SCV_LOG_ERROR, SCV_CAT_CRYPTO, "Record verification failed", nullptr);
+  return RecordMade::Unverified;
+}
+
+// setup()'s boot attestation: "[OK]" and the record's seq and chain only for
+// a record made. tools/serial-monitor/canary_monitor.py reads that line as
+// "Boot attestation record created".
+static void record_boot_attestation(const uint8_t* payload, size_t len) {
+  if (witness_record_last(payload, len, RECORD_BOOT_ATTESTATION) == RecordMade::Made) {
+    Serial.printf("[OK] Boot attestation: seq=%u chain=", g_last_record.seq);
+    hex_print(g_last_record.chain_hash, 8);
+    Serial.println("...");
+  } else {
+    Serial.println("[!!] Boot attestation not recorded: no record was made, or its signature did not verify");
+  }
+}
+
+// loop()'s periodic self-verification of the last record made. Before one
+// is made this boot there is nothing to verify (g_last_record.seq is 0:
+// setup() zeroed it, and every record's seq is 1 or more), and a boot whose
+// chain provisioning refused makes none: g_health.crypto_healthy stays as
+// provisioning left it (false), with no CRITICAL line each interval saying a
+// signature failed. Before, the zeroed record was verified and failed.
+static void self_verify_last_record() {
+  if (g_device.chain_refused || g_last_record.seq == 0) return;
+  if (!verify_record_signature(&g_last_record)) {
+    log_health(SCV_LOG_CRITICAL, SCV_CAT_CRYPTO, "Self-verification FAILED", nullptr);
+    g_health.crypto_healthy = false;
+  } else {
+    g_health.crypto_healthy = true;
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -13604,10 +13666,7 @@ void setup() {
   uint8_t boot_payload[256];
   size_t boot_len = 0;
   if (build_boot_attestation(boot_payload, sizeof(boot_payload), &boot_len)) {
-    create_witness_record(boot_payload, boot_len, RECORD_BOOT_ATTESTATION, &g_last_record);
-    Serial.printf("[OK] Boot attestation: seq=%u chain=", g_last_record.seq);
-    hex_print(g_last_record.chain_hash, 8);
-    Serial.println("...");
+    record_boot_attestation(boot_payload, boot_len);  // "[OK]" only for a record made (sweep F364)
   }
 
   #if FEATURE_ACOUSTIC_EVENTS
@@ -13764,6 +13823,21 @@ static volatile bool   g_ble_bringup_done      = false;  // worker -> loop hando
 static bool            g_ble_bringup_finalized = false;  // loop-only
 static volatile int8_t g_ble_mgr_result        = 0;      // 0=not attempted, 1=ok, -1=failed
 
+#if FEATURE_BLE
+// Whether BLE discovery may broadcast this boot's identity (sweep F364's
+// review). Opera's name and device-info id are the fingerprint's first bytes
+// and every chirp carries its first two and the chain head, to anyone in
+// range. After provisioning could not hash the fingerprint or the genesis
+// head (g_device.chain_refused), those are 8 or 32 zero bytes: every such
+// unit would advertise as SCV-0000 with an all-zero head, so discovery is
+// not started. setup() goes on otherwise (F336), and the pairing channel
+// still comes up. tests_host/test_wap_sha_fail.cpp drives it after each
+// refusal and holds ble_manager::init() behind it.
+static bool ble_discovery_identity_ready() {
+  return !g_device.chain_refused && fingerprint_is_nonzero(g_device.pubkey_fp);
+}
+#endif
+
 static void ble_bringup_task(void*) {
   Serial.printf("[HEAP] before BLE bring-up: internal free=%u largest=%u\n",
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
@@ -13829,7 +13903,14 @@ static void ble_bringup_task(void*) {
   // registry is up by now (web server started before the window cleared), so
   // the lifecycle witness events route through the chokepoint directly.
   #if FEATURE_BLE
-  {
+  if (!ble_discovery_identity_ready()) {
+    // Nothing named to broadcast (sweep F364's review): no init, no
+    // lifecycle event, and g_ble_mgr_result stays "not attempted".
+    g_ble_init_attempted = true;  // self-test: discovery is down, not skipped
+    Serial.println("[--] BLE Discovery not started: the device is not named or its chain not anchored this boot");
+    log_health(SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+               "BLE Discovery not started", "identity not provisioned (SHA-256 failed)");
+  } else {
     g_ble_init_attempted = true;  // self-test: distinguishes SKIP from FAIL
     Serial.println("[..] Initializing BLE Discovery subsystem...");
 
@@ -15061,19 +15142,19 @@ void loop() {
     }
 
     // A record refused before it was signed (a hash that did not run, or a
-    // chain provisioning refused, sweep F364) is no verification failure:
-    // create_witness_record() says so itself, once per run of failures.
-    const uint32_t verify_failures = g_health.verify_failures;
-    if (!create_witness_record(payload, payload_len, RECORD_WITNESS_EVENT, &g_last_record) &&
-        g_health.verify_failures != verify_failures) {
-      log_health(SCV_LOG_ERROR, SCV_CAT_CRYPTO, "Record verification failed", nullptr);
-    }
+    // chain provisioning refused, sweep F364) is no verification failure,
+    // and has no row: create_witness_record() logs why once per run of
+    // failures, and g_last_record still holds the last record made (or the
+    // zeros setup() left), whose row would read as this interval's. A
+    // record whose signature did not verify is logged as one and shown, "!!".
+    const RecordMade made = witness_record_last(payload, payload_len, RECORD_WITNESS_EVENT);
 
     // Print table row
-    print_table_row(&g_last_record, &g_fix, g_state);
+    if (made != RecordMade::Refused) print_table_row(&g_last_record, &g_fix, g_state);
 
-    // Periodic status every 20 records
-    if (g_health.records_created % 20 == 0) {
+    // Periodic status every 20 records (made ones: a boot that makes none
+    // would print it every interval, its count stuck at 0)
+    if (made == RecordMade::Made && g_health.records_created % 20 == 0) {
       print_status_bar();
       print_table_header();
     }
@@ -15113,16 +15194,11 @@ void loop() {
   }
   #endif
 
-  // Periodic self-verification
+  // Periodic self-verification (of the last record made; none yet, or a
+  // refused chain, verifies nothing: self_verify_last_record())
   if (now - g_last_verify_ms >= VERIFY_INTERVAL_SEC * 1000) {
     g_last_verify_ms = now;
-    
-    if (!verify_record_signature(&g_last_record)) {
-      log_health(SCV_LOG_CRITICAL, SCV_CAT_CRYPTO, "Self-verification FAILED", nullptr);
-      g_health.crypto_healthy = false;
-    } else {
-      g_health.crypto_healthy = true;
-    }
+    self_verify_last_record();
   }
   
   // Small delay to prevent tight loop

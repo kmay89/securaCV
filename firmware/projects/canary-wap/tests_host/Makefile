@@ -2123,11 +2123,14 @@ clean: clean-wap-hmac-fail
 # sha256_raw() and sha256_domain() answer whether every mbedTLS step ran and
 # zero their output when one did not, and each of the five callers refuses
 # what the hash was for. The six [[nodiscard]] declarations (the awk below
-# takes each, a two-line one whole), secure_zero(), hex_to_str(), the two
-# helpers, compute_fingerprint(), the certificate's fingerprint and its
-# refusal, compute_chain_hash(), update_chain(), the chain persist, the hash
-# latch line and witness_hash_failed(), create_witness_record(), the SD-tail
-# recovery, verify_record_signature() and chain_tail_intact() are cut
+# takes each, a two-line one whole), the one-line RecordMade enum,
+# hex_print(), secure_zero(), hex_to_str(), the two helpers,
+# compute_fingerprint(), the certificate's fingerprint and its refusal,
+# compute_chain_hash(), update_chain(), the chain persist, the hash latch
+# line and witness_hash_failed(), create_witness_record(), the SD-tail
+# recovery, verify_record_signature(), chain_tail_intact(), the boot
+# attestation's and loop()'s record and self-verify helpers,
+# fingerprint_is_nonzero() and BLE discovery's identity gate are cut
 # verbatim out of canary_wap.ino; tls_after_setup() on its own,
 # init_tls_cert() on its own (the suite includes it twice, with and without
 # the certificate generator) and provision_device() on its own (firmware/
@@ -2149,9 +2152,10 @@ $(SHAFAIL_CORE): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile
 	awk '/^\[\[nodiscard\]\] static bool / { n++; on = 1; printf "#line %d \"%s\"\n", FNR, FILENAME } \
 	  on { print; if ($$0 ~ /;/) on = 0 } \
 	  /^static bool g_witness_hash_warned = false;$$/ { w++; printf "#line %d \"%s\"\n", FNR, FILENAME; print } \
-	  END { if (n != 6 || w != 1) { print "canary_wap.ino: " n + 0 " [[nodiscard]] static bool declaration(s), expected 6, and " w + 0 " hash latch line(s), expected 1" > "/dev/stderr"; exit 1 } }' \
+	  /^enum class RecordMade : uint8_t \{ Made, Unverified, Refused \};$$/ { e++; printf "#line %d \"%s\"\n", FNR, FILENAME; print } \
+	  END { if (n != 6 || w != 1 || e != 1) { print "canary_wap.ino: " n + 0 " [[nodiscard]] static bool declaration(s), expected 6, " w + 0 " hash latch line(s), expected 1, and " e + 0 " one-line RecordMade enum(s), expected 1" > "/dev/stderr"; exit 1 } }' \
 	  $(SRC_DIR)/canary_wap.ino > $@.tmp
-	awk -v 'sigs=static void secure_zero(|static void hex_to_str(|static bool sha256_raw(|static bool sha256_domain(|static bool compute_fingerprint(|static bool tls_compute_cert_fingerprint() {|static bool tls_refuse_unpinned_cert() {|static bool compute_chain_hash(|static bool update_chain(|static bool persist_chain_blob() {|static void persist_chain_state() {|static void witness_recover_from_sd() {|static void witness_hash_failed(|static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out) {|static bool verify_record_signature(|static bool chain_tail_intact() {' \
+	awk -v 'sigs=static void hex_print(|static void secure_zero(|static void hex_to_str(|static bool sha256_raw(|static bool sha256_domain(|static bool compute_fingerprint(|static bool tls_compute_cert_fingerprint() {|static bool tls_refuse_unpinned_cert() {|static bool compute_chain_hash(|static bool update_chain(|static bool persist_chain_blob() {|static void persist_chain_state() {|static void witness_recover_from_sd() {|static void witness_hash_failed(|static bool create_witness_record(const uint8_t* payload, size_t len, RecordType type, WitnessRecord* out) {|static bool verify_record_signature(|static bool chain_tail_intact() {|static RecordMade witness_record_last(|static void record_boot_attestation(|static void self_verify_last_record() {|static bool fingerprint_is_nonzero(|static bool ble_discovery_identity_ready() {' \
 	  -f $(HMACFAIL_CUT) $(SRC_DIR)/canary_wap.ino >> $@.tmp && mv $@.tmp $@
 
 $(SHAFAIL_TLS): $(SRC_DIR)/canary_wap.ino $(HMACFAIL_CUT) Makefile

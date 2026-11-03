@@ -15,20 +15,25 @@
 // was for.
 //
 // This runs the REAL functions, cut verbatim out of the sketch
-// (firmware/tests_host/cut_functions.awk): secure_zero(), hex_to_str(),
-// sha256_raw(), sha256_domain(), compute_fingerprint(),
+// (firmware/tests_host/cut_functions.awk): hex_print(), secure_zero(),
+// hex_to_str(), sha256_raw(), sha256_domain(), compute_fingerprint(),
 // tls_compute_cert_fingerprint(), tls_refuse_unpinned_cert(),
 // compute_chain_hash(), update_chain(), persist_chain_blob(),
 // persist_chain_state(), witness_hash_failed() and its latch,
 // create_witness_record(), witness_recover_from_sd(),
-// verify_record_signature(), chain_tail_intact(), tls_after_setup(),
-// init_tls_cert() (twice: a build that can generate a certificate and one
-// that cannot) and provision_device(). Under them is a stand-in for mbedTLS's
+// verify_record_signature(), chain_tail_intact(), the RecordMade enum,
+// witness_record_last(), record_boot_attestation(),
+// self_verify_last_record(), fingerprint_is_nonzero(),
+// ble_discovery_identity_ready(), tls_after_setup(), init_tls_cert()
+// (twice: a build that can generate a certificate and one that cannot) and
+// provision_device(). Under them is a stand-in for mbedTLS's
 // streaming SHA-256 (declared and defined below) that runs a real SHA-256
-// over OpenSSL, or fails the step the test names in the hash it names (a
-// failing finish scribbles first; a step after a failed one refuses, as a
-// context left broken does), the fake SD card (stubs/sd_fake) and stand-ins
-// for NVS, the signer and the rest. What it pins:
+// over OpenSSL, or fails the step the test names in the hash it names, once
+// (a failing finish scribbles first; a failed update feeds nothing; every
+// other step runs as it would have, so a helper that drops one answer goes
+// on to a finish that answers 0 over the wrong input), the fake SD card
+// (stubs/sd_fake) and stand-ins for NVS, the signer and the rest. What it
+// pins:
 //   - sha256_raw() and sha256_domain(): known answers when every step runs;
 //     false and 32 zero bytes at a failing start, each update and the
 //     finish, the context freed on every path;
@@ -55,10 +60,26 @@
 //     persisted and both buffers are freed, so start_http_server() has no
 //     certificate to serve and tls_after_setup() hands out no pin in setup
 //     or out of it; no "Cert fingerprint" line is printed;
+//   - what that boot shows and broadcasts (the F364 review): BLE discovery's
+//     gate, ble_discovery_identity_ready(), is shut after either refusal, so
+//     Opera's name and device-info id and every chirp's id and chain head
+//     never carry the zeroed fingerprint or head; the boot attestation's
+//     line says it was not recorded, never "[OK]" over setup()'s zeroed
+//     record; loop()'s records are Refused (no table row) and logged once;
+//     and the periodic self-verify says nothing and leaves signing marked
+//     unhealthy. On a working unit the gate opens, the "[OK]" line names the
+//     record made, and self-verify passes it and catches a bad signature;
+//     a record whose hash fails is Refused with g_last_record as it was, and
+//     one made and not verified is Unverified and logged;
+//   - a certificate generated this boot whose pin did not compute is not
+//     stored, so no later boot serves a certificate no setup door pinned;
 //   - the sketch's text: every call of the six hashes uses its answer, each
 //     is declared [[nodiscard]], setup() turns HTTPS on only behind
-//     init_tls_cert()'s true, the HTTPS listener needs both buffers, and no
-//     mDNS TXT record carries the certificate's fingerprint.
+//     init_tls_cert()'s true, the HTTPS listener needs both buffers, no
+//     mDNS TXT record carries the certificate's fingerprint, the one
+//     ble_manager::init() call comes after the gate's refusal branch, and
+//     setup()'s boot attestation, loop()'s record, its row, its status bar
+//     and its self-verify go through the helpers above.
 // Host-tested; not run on a device.
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host run-wap-sha-fail
@@ -139,12 +160,16 @@ static bool all_zero(const void* p, size_t n) {
 
 // ── mbedTLS's streaming SHA-256, real or failing at a named step ─────────────
 // Each mbedtls_sha256_init() starts a hash, numbered from the last arm(). The
-// hash arm() names fails at its step: the start, the update it names
+// hash arm() names fails at its step, once: the start, the update it names
 // (counting from 0) or the finish, which writes 0xA5 over the output first
-// (so the zeros a caller sees are the helper's own). A failed step leaves the
-// context broken: every later step answers the same error and writes
-// nothing, so code that ignores an answer is left with the caller's bytes,
-// never a right hash.
+// (so the zeros a caller sees are the helper's own). Every other step runs
+// as it would have, over what it was fed: mbedTLS does not promise that a
+// step after a failed one fails, and IDF's DMA port keeps no error in the
+// context (the F364 review). So code that drops a failed update's answer
+// goes on to a finish that answers 0 over input missing that update (a
+// wrong digest, answered true), and code that drops a failed start's answer
+// gets the right digest, also answered true: either way the helper's answer
+// and its output give it away.
 namespace sha {
 enum class Step { None, Starts, Update, Finish };
 const int kFailed = -0x0037;  // mbedTLS's MBEDTLS_ERR_SHA256_HW_ACCEL_FAILED
@@ -180,7 +205,6 @@ struct mbedtls_sha256_context {
   EVP_MD_CTX* md;
   int index;
   int updates;
-  bool broken;
 };
 
 static bool failing_here(const mbedtls_sha256_context* ctx, sha::Step step) {
@@ -196,7 +220,6 @@ void mbedtls_sha256_init(mbedtls_sha256_context* ctx) {
   ctx->md = EVP_MD_CTX_new();
   ctx->index = sha::g_hashes++;
   ctx->updates = 0;
-  ctx->broken = false;
 }
 
 void mbedtls_sha256_free(mbedtls_sha256_context* ctx) {
@@ -209,29 +232,23 @@ void mbedtls_sha256_free(mbedtls_sha256_context* ctx) {
 
 int mbedtls_sha256_starts(mbedtls_sha256_context* ctx, int is224) {
   if (is224 != 0) return sha::kFailed;  // the sketch asks for SHA-256 only
-  if (failing_here(ctx, sha::Step::Starts)) {
-    ctx->broken = true;
-    return sha::kFailed;
-  }
-  return EVP_DigestInit_ex(ctx->md, EVP_sha256(), nullptr) == 1 ? 0 : sha::kFailed;
+  // A failed start still leaves a started state (an error answered after
+  // the engine was set up), so the steps after it run.
+  const bool fail = failing_here(ctx, sha::Step::Starts);
+  const bool ok = EVP_DigestInit_ex(ctx->md, EVP_sha256(), nullptr) == 1;
+  return fail || !ok ? sha::kFailed : 0;
 }
 
 int mbedtls_sha256_update(mbedtls_sha256_context* ctx, const unsigned char* in, size_t n) {
-  if (ctx->broken) return sha::kFailed;
   const bool fail = failing_here(ctx, sha::Step::Update);
   ctx->updates++;
-  if (fail) {
-    ctx->broken = true;
-    return sha::kFailed;
-  }
+  if (fail) return sha::kFailed;  // this update's bytes never reach the hash
   return EVP_DigestUpdate(ctx->md, in, n) == 1 ? 0 : sha::kFailed;
 }
 
 int mbedtls_sha256_finish(mbedtls_sha256_context* ctx, unsigned char* out) {
-  if (ctx->broken) return sha::kFailed;
   if (failing_here(ctx, sha::Step::Finish)) {
     std::memset(out, 0xA5, 32);
-    ctx->broken = true;
     return sha::kFailed;
   }
   unsigned int olen = 0;
@@ -257,11 +274,18 @@ static std::string openssl_sha(const std::string& domain, const uint8_t* data, s
 }
 
 // ── what the cut functions call ─────────────────────────────────────────────
+#define HEX 16
 struct HostSerial {
   std::string all;
   void println(const char* s = "") {
     all += s;
     all += '\n';
+  }
+  void print(char c) { all += c; }  // hex_print()'s two calls, as Print's
+  void print(unsigned char b, int base) {
+    char d[4];
+    std::snprintf(d, sizeof(d), base == HEX ? "%X" : "%u", (unsigned)b);
+    all += d;
   }
   __attribute__((format(printf, 2, 3))) int printf(const char* fmt, ...) {
     char line[256];
@@ -400,14 +424,17 @@ static bool nvs_store_bytes(const char* key, const uint8_t* data, size_t len) {
 }
 
 // The signer: a stand-in whose signature is the chain hash and the public
-// key, so verify_signature() can recompute it.
+// key, so verify_signature() can recompute it. g_sign_garbles makes the next
+// signatures fail to verify (a record made and not verified).
 static int g_signs = 0;
+static bool g_sign_garbles = false;
 static void sign_message(const uint8_t*, const uint8_t pub[32], const uint8_t* msg, size_t len,
                          uint8_t sig[64]) {
   ++g_signs;
   std::memset(sig, 0, 64);
   std::memcpy(sig, msg, len < 32 ? len : 32);
   std::memcpy(sig + 32, pub, 32);
+  if (g_sign_garbles) sig[63] ^= 0x01;
 }
 static bool verify_signature(const uint8_t pub[32], const uint8_t* msg, size_t len,
                              const uint8_t sig[64]) {
@@ -781,6 +808,89 @@ static void a_refused_chain_makes_no_record() {
   }
 }
 
+// What setup(), loop() and BLE discovery do on that boot (the F364 review):
+// the boot attestation's line names no record, loop()'s records are refused
+// and logged once, its self-verify says nothing and leaves signing marked
+// unhealthy, and BLE discovery's gate keeps the zeroed fingerprint and head
+// off the air (Opera's SCV-0000 name and device-info id, every chirp's id
+// and head).
+static void a_refused_chain_is_shown_and_broadcast_nowhere() {
+  for (int genesis = 0; genesis < 2; genesis++) {
+    for (const Failure& f : failures_of(3)) {
+      const std::string what = std::string(genesis ? "a refused genesis head, " : "a refused fingerprint, ") +
+                               sha::name_of(f.step, f.update);
+      uint8_t head[32];
+      stored_unit(/*with_chain=*/!genesis, head);
+      if (genesis) nvs::words[NVS_KEY_SEQ] = 0;
+      sha::arm(f.step, genesis ? 1 : 0, f.update);
+      CHECK_MSG(!provision() && g_device.chain_refused, what + ": provisioning not refused");
+      CHECK_MSG(!ble_discovery_identity_ready(),
+                what + ": BLE discovery would broadcast the id " + hex(g_device.pubkey_fp, 8) +
+                    " and the head " + hex(g_device.chain_head, 32));
+      std::memset(&g_last_record, 0, sizeof(g_last_record));  // as setup() leaves it
+      g_log.clear();
+      Serial.all.clear();
+      g_witness_hash_warned = false;
+      sha::arm(sha::Step::None);
+      const uint8_t payload[] = "boot attestation";
+      record_boot_attestation(payload, sizeof(payload));
+      CHECK_MSG(Serial.all.find("[OK] Boot attestation") == std::string::npos,
+                what + ": the boot attestation reported made: " + Serial.all);
+      CHECK_MSG(Serial.all.find("[!!] Boot attestation not recorded: no record was made, or its "
+                                "signature did not verify\n") != std::string::npos,
+                what + ": no line says the boot attestation was not recorded");
+      for (int i = 0; i < 25; i++) {
+        CHECK_MSG(witness_record_last(payload, sizeof(payload), RECORD_WITNESS_EVENT) ==
+                      RecordMade::Refused,
+                  what + ": loop()'s record not Refused (its row would print)");
+      }
+      CHECK_MSG(all_zero(&g_last_record, sizeof(g_last_record)), what + ": g_last_record written");
+      CHECK_MSG(g_log.size() == 1 && g_log[0].message == "Witness record not made: SHA-256 failed" &&
+                    g_log[0].detail == "identity not provisioned" && g_log[0].level == SCV_LOG_ERROR,
+                what + ": not one log line for 26 refused records (" + std::to_string(g_log.size()) + ")");
+      self_verify_last_record();
+      CHECK_MSG(g_log.size() == 1 && logged("Self-verification FAILED") == 0,
+                what + ": self-verify logged a signature failure for a record never made");
+      CHECK_MSG(!g_health.crypto_healthy, what + ": signing marked healthy");
+    }
+  }
+  // The gate holds to the fingerprint too, whatever the flag says.
+  std::memset(&g_device, 0, sizeof(g_device));
+  CHECK_MSG(!ble_discovery_identity_ready(), "BLE discovery: a zero fingerprint passes the gate");
+}
+
+// A working unit: the gate opens, the boot attestation's line names the
+// record made, and self-verify checks it (and catches a bad signature).
+static void a_working_unit_shows_its_records() {
+  for (int genesis = 0; genesis < 2; genesis++) {
+    const std::string what = genesis ? "a working unit at genesis" : "a working unit";
+    uint8_t head[32];
+    stored_unit(!genesis, head);
+    sha::arm(sha::Step::None);
+    CHECK_MSG(provision(), what + ": provisioning answered false");
+    CHECK_MSG(ble_discovery_identity_ready(), what + ": BLE discovery kept off");
+    const uint32_t seq = g_device.seq;
+    std::memset(&g_last_record, 0, sizeof(g_last_record));
+    g_log.clear();
+    Serial.all.clear();
+    const uint8_t payload[] = "boot attestation";
+    record_boot_attestation(payload, sizeof(payload));
+    char line[96];
+    std::snprintf(line, sizeof(line), "[OK] Boot attestation: seq=%u chain=", (unsigned)(seq + 1));
+    std::string chain = hex(g_last_record.chain_hash, 8);
+    for (char& ch : chain) ch = (char)std::toupper((unsigned char)ch);
+    CHECK_MSG(g_last_record.seq == seq + 1 &&
+                  Serial.all.find(std::string(line) + chain + "...\n") != std::string::npos,
+              what + ": the boot attestation's line: " + Serial.all);
+    self_verify_last_record();
+    CHECK_MSG(g_health.crypto_healthy && g_log.empty(), what + ": a made record failed self-verify");
+    g_last_record.signature[0] ^= 0x01;
+    self_verify_last_record();
+    CHECK_MSG(!g_health.crypto_healthy && logged("Self-verification FAILED") == 1,
+              what + ": a bad signature passed self-verify");
+  }
+}
+
 // ── create_witness_record(): the payload hash and the chain link ────────────
 static void ready_chain(uint8_t (&head)[32]) {
   std::memset(&g_device, 0, sizeof(g_device));
@@ -866,6 +976,61 @@ static void a_record_whose_hash_fails_is_not_made() {
                 what + ": a failure after a good record not logged");
     }
   }
+}
+
+// loop()'s and setup()'s record into g_last_record (the F364 review): a
+// record never made is Refused and leaves g_last_record as it was, so no
+// row repeats the last record as new and no "[OK]" names it; a record made
+// and not verified is Unverified, logged as before, and shown.
+static void a_record_not_made_is_not_shown() {
+  const uint8_t payload[] = "csi motion 4 5 6";
+  for (int hash = 0; hash < 2; hash++) {
+    for (const Failure& f : failures_of(3)) {
+      const std::string what = std::string(hash ? "the chain link, " : "the record payload hash, ") +
+                               sha::name_of(f.step, f.update);
+      uint8_t head[32];
+      ready_chain(head);
+      sha::arm(sha::Step::None);
+      CHECK_MSG(witness_record_last(payload, sizeof(payload), RECORD_WITNESS_EVENT) == RecordMade::Made,
+                what + ": the first record not made");
+      const WitnessRecord before = g_last_record;
+      g_log.clear();
+      Serial.all.clear();
+      sha::arm(f.step, hash, f.update);
+      CHECK_MSG(witness_record_last(payload, sizeof(payload), RECORD_WITNESS_EVENT) ==
+                    RecordMade::Refused,
+                what + ": not Refused");
+      CHECK_MSG(std::memcmp(&g_last_record, &before, sizeof(before)) == 0,
+                what + ": g_last_record written");
+      CHECK_MSG(logged("Record verification failed") == 0, what + ": logged as a verification failure");
+      sha::arm(f.step, hash, f.update);
+      record_boot_attestation(payload, sizeof(payload));
+      CHECK_MSG(Serial.all.find("[OK] Boot attestation") == std::string::npos &&
+                    Serial.all.find("[!!] Boot attestation not recorded") != std::string::npos,
+                what + ": the boot attestation's line: " + Serial.all);
+    }
+  }
+  // A record made whose signature does not verify.
+  uint8_t head[32];
+  ready_chain(head);
+  sha::arm(sha::Step::None);
+  g_sign_garbles = true;
+  Serial.all.clear();
+  CHECK_MSG(witness_record_last(payload, sizeof(payload), RECORD_WITNESS_EVENT) == RecordMade::Unverified &&
+                g_last_record.seq == 501 && !g_last_record.verified,
+            "a record not verified: not Unverified at seq 501");
+  CHECK_MSG(logged("Record verification failed") == 1, "a record not verified: not logged");
+  record_boot_attestation(payload, sizeof(payload));
+  CHECK_MSG(Serial.all.find("[OK] Boot attestation") == std::string::npos,
+            "a boot attestation not verified: reported made");
+  g_sign_garbles = false;
+  // Self-verify before any record this boot: nothing to verify, nothing said.
+  ready_chain(head);
+  std::memset(&g_last_record, 0, sizeof(g_last_record));
+  g_health.crypto_healthy = true;
+  self_verify_last_record();
+  CHECK_MSG(g_health.crypto_healthy && g_log.empty(),
+            "self-verify with no record yet: verified the zeroed record");
 }
 
 // ── the SD tail and chain_tail_intact() ─────────────────────────────────────
@@ -980,6 +1145,8 @@ static void a_certificate_not_hashed_is_not_used() {
       CHECK_MSG(sha::g_fired && sha::g_live == 0, what + ": the failure never fired");
       CHECK_MSG(g_tls_cert_fp_hex[0] == '\0', what + std::string(": a pin ") + g_tls_cert_fp_hex);
       CHECK_MSG(!g_tls_cert_persisted, what + ": the certificate marked persisted");
+      CHECK_MSG(g_cert_stores == 0 && g_cert_in_nvs == b.stored,
+                what + ": a certificate whose pin did not compute stored in NVS");
       CHECK_MSG(g_tls_cert_der == nullptr && g_tls_key_der == nullptr && g_tls_cert_der_len == 0 &&
                     g_tls_key_der_len == 0,
                 what + ": a certificate left for the HTTPS listener");
@@ -1126,6 +1293,56 @@ static void sketch_text() {
             "setup(): HTTPS turned on without init_tls_cert()'s true");
   CHECK_MSG(ino.find("if (g_tls_enabled && g_tls_cert_der && g_tls_key_der) {") != std::string::npos,
             "start_http_server(): the HTTPS listener does not need both buffers");
+  // BLE discovery broadcasts the identity only behind its gate (the F364
+  // review): the one ble_manager::init() call, and the id it is handed, come
+  // after the gate's refusal branch.
+  {
+    const size_t gate = ino.find("if (!ble_discovery_identity_ready()) {");
+    const size_t other = gate == std::string::npos ? gate : ino.find("} else {", gate);
+    const size_t init = ino.find("ble_manager::init(");
+    const size_t id = ino.find("hex_to_str(ble_device_id_hex, g_device.pubkey_fp, 8);");
+    CHECK_MSG(gate != std::string::npos && other != std::string::npos && init != std::string::npos &&
+                  id != std::string::npos && gate < other && other < id && id < init &&
+                  ino.find("ble_manager::", gate) > other,
+              "the BLE bring-up: ble_manager::init() not behind ble_discovery_identity_ready()");
+    int named = 0;
+    for (size_t at = ino.find("ble_discovery_identity_ready()"); at != std::string::npos;
+         at = ino.find("ble_discovery_identity_ready()", at + 1)) {
+      named++;
+    }
+    CHECK_MSG(ino.find("ble_manager::init(", init + 1) == std::string::npos && named == 2,
+              "the BLE bring-up: a second ble_manager::init() call, or the gate named " +
+                  std::to_string(named) + " time(s) (its definition and the bring-up's)");
+    for (const std::string& n : names) {
+      if (n == "canary_wap.ino") continue;
+      const std::string text = strip_comments(read_file(dir + "/" + n));
+      CHECK_MSG(text.find("ble_manager::init(") == std::string::npos,
+                n + ": calls ble_manager::init() outside the gated bring-up");
+    }
+  }
+  // setup()'s and loop()'s records into g_last_record go through the helpers
+  // the suite drives, and the self-verify through its own.
+  {
+    struct Once {
+      const char* text;
+      int count;
+    };
+    for (const Once& o : {Once{"record_boot_attestation(boot_payload, boot_len);", 1},
+                          Once{"Boot attestation:", 1},
+                          Once{"const RecordMade made = witness_record_last(payload, payload_len, "
+                               "RECORD_WITNESS_EVENT);", 1},
+                          Once{"if (made != RecordMade::Refused) print_table_row(&g_last_record, "
+                               "&g_fix, g_state);", 1},
+                          Once{"print_table_row(", 2},  // the definition and that call
+                          Once{"if (made == RecordMade::Made && g_health.records_created % 20 == 0) {", 1},
+                          Once{"self_verify_last_record();", 1},
+                          Once{"verify_record_signature(&g_last_record)", 2}}) {
+      int n = 0;
+      for (size_t at = ino.find(o.text); at != std::string::npos; at = ino.find(o.text, at + 1)) n++;
+      CHECK_MSG(n == o.count, std::string("canary_wap.ino: \"") + o.text + "\" " + std::to_string(n) +
+                                  " time(s), expected " + std::to_string(o.count));
+    }
+  }
   // No mDNS TXT record carries the certificate's pin.
   for (size_t at = ino.find("addServiceTxt("); at != std::string::npos;
        at = ino.find("addServiceTxt(", at + 1)) {
@@ -1142,7 +1359,10 @@ int main() {
   a_fingerprint_not_hashed_names_nothing();
   a_genesis_head_not_hashed_is_not_persisted();
   a_refused_chain_makes_no_record();
+  a_refused_chain_is_shown_and_broadcast_nowhere();
+  a_working_unit_shows_its_records();
   a_record_whose_hash_fails_is_not_made();
+  a_record_not_made_is_not_shown();
   the_tail_is_not_adopted_on_a_failed_hash();
   the_tail_is_not_vouched_for_on_a_failed_hash();
   a_certificate_not_hashed_is_not_used();
